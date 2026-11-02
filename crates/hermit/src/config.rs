@@ -157,6 +157,16 @@ pub struct MigrationJson {
     pub max_downtime_ms: u32,
     pub idle_cpu: f64,
     pub min_age_seconds: u32,
+    /// A sandbox with more than this in use on its scratch filesystem is not moved (13.10 `movable`): the final
+    /// scratch delta compares contents (rsync `--checksum`) while the sandbox is stopped, about 3.2 ms per MiB in use
+    /// (sandboxd tests/real-host), so 512 MiB adds about 1.7 s to the pause. An interim bound until the owner of 13
+    /// decides between it and a narrower checksum (WORK-PACKAGES WP-19 note); 0 = no bound.
+    #[serde(default = "max_scratch_mib")]
+    pub max_scratch_mib: u32,
+}
+
+fn max_scratch_mib() -> u32 {
+    512
 }
 
 #[derive(Clone, Debug, Deserialize)]

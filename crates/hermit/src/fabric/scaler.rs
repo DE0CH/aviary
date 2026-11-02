@@ -1171,6 +1171,15 @@ fn movable(cfg: &Config, s: &Movable, from: &HostRow, to: &HostRow) -> bool {
     if !image_ok {
         return false;
     }
+    // the stop of a full scratch's checksummed final delta (13.10; unknown: not reported, no bound)
+    let scratch = from
+        .info
+        .as_ref()
+        .and_then(|i| i.sandbox(&s.name))
+        .and_then(|x| x.scratch_used);
+    if m.max_scratch_mib > 0 && scratch.is_some_and(|b| b > u64::from(m.max_scratch_mib) << 20) {
+        return false;
+    }
     if from.kind != to.kind {
         let usage = from
             .info

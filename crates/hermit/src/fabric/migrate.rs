@@ -194,9 +194,13 @@ async fn resume(claim: &Claim, row: &SandboxRow, to: Option<&HostRow>, clients: 
 /// What a host lists of the sandbox in a settle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Seen {
-    /// Running and alive.
+    /// Running and alive, no send of it in progress.
     Alive,
-    /// A receive still in progress (it ends on its own: restored, failed, or the relay's timeout).
+    /// A source whose send is still in progress (`sending`; `alive`: not yet stopped by its checkpoint): it may still
+    /// switch, so it decides nothing until the send ends (sandboxd bounds it: its rsync and checkpoint timeouts).
+    Sending { alive: bool },
+    /// A receive still in progress (it ends on its own: restored, failed, the relay's 900 s, or a restore past
+    /// sandboxd's limit after End).
     Receiving,
     /// Not there, or there but not alive (a source its send's checkpoint stopped lists `alive: false`).
     No,
@@ -213,16 +217,23 @@ async fn lists(clients: &Clients, host: Option<&HostRow>, name: &str) -> Option<
 
 fn seen(listed: &[sandboxd_api::Listed], name: &str) -> Seen {
     match listed.iter().find(|s| s.name == name) {
+        Some(s) if s.state == sandboxd_api::SandboxState::Running && s.sending => Seen::Sending {
+            alive: s.alive != Some(false),
+        },
         Some(s) if s.state == sandboxd_api::SandboxState::Running && s.alive != Some(false) => Seen::Alive,
         Some(s) if s.state == sandboxd_api::SandboxState::Receiving => Seen::Receiving,
         _ => Seen::No,
     }
 }
 
-/// Step 6: settle by asking both hosts; retried while one does not answer or the target's receive is still in
-/// progress (and the claim holds). The source decides "kept" only while it lists the sandbox alive: sandboxd lists
-/// a source `alive: false` from the moment its send's checkpoint stopped it, so a target that may hold the only
-/// copy is never deleted on a stale reading, and a receive in progress is waited for rather than read as lost.
+/// Step 6: settle by asking both hosts; retried while one does not answer, the source's send or the target's receive
+/// is still in progress (and the claim holds). The source decides "kept" only while it lists the sandbox alive with
+/// no send of it running: sandboxd lists a source `sending` for its whole send and `alive: false` from the moment its
+/// checkpoint stopped it, so a target that may hold the only copy is never deleted on a stale reading, and a send or
+/// receive in progress is waited for rather than read as kept or lost. Both end on their own (sandboxd's limits); a
+/// migration older than [`crate::Timings::migration_limit`] (from `migration_started_at`) is ended all the same: the
+/// target's receive is deleted, then the source decides (alive: kept, even while its send still runs, which can no
+/// longer switch to a deleted receive; else lost).
 #[allow(clippy::too_many_arguments)]
 async fn settle(
     core: &Arc<Core>,
@@ -235,14 +246,30 @@ async fn settle(
     data: &(dyn Fn(serde_json::Value) -> serde_json::Value + Sync),
 ) -> Result<(), FabricError> {
     let to_name = row.migrating_to.clone().unwrap_or_default();
+    let mut ended = false;
     loop {
         if !claim.held() {
             return Ok(());
         }
+        // past the limit a receive that restored is still adopted (below); any other is ended first
+        if !ended && overdue(core, row.id).await && lists(clients, to, &row.name).await != Some(Seen::Alive) {
+            let Some(_effect) = claim.guard(core).await? else {
+                return Ok(());
+            };
+            tracing::warn!(sandbox = %row.id, why, "migration past its limit: the target's receive is deleted");
+            if let Some(t) = to {
+                delete(clients, t, &row.name).await;
+            }
+            ended = true;
+            continue;
+        }
         // a source lists no receive of its own sandbox; if it did, that is not the sandbox running there
-        let source = lists(clients, from, &row.name)
-            .await
-            .map(|s| if s == Seen::Receiving { Seen::No } else { s });
+        let source = lists(clients, from, &row.name).await.map(|s| match s {
+            Seen::Receiving => Seen::No,
+            Seen::Sending { alive: true } if ended => Seen::Alive,
+            Seen::Sending { alive: false } if ended => Seen::No,
+            s => s,
+        });
         if source == Some(Seen::Alive) {
             let Some(_effect) = claim.guard(core).await? else {
                 return Ok(());
@@ -256,11 +283,16 @@ async fn settle(
                 claim,
                 row,
                 "migration-failed",
-                data(serde_json::json!({"kept": true, "error": db::clip(why, 300)})),
+                // overdue: a send that still switched loses it on the source, which the vanished check then sees
+                data(serde_json::json!({"kept": true, "overdue": ended, "error": db::clip(why, 300)})),
             )
             .await;
         }
-        let target = lists(clients, to, &row.name).await;
+        let target = lists(clients, to, &row.name).await.map(|s| match s {
+            // a target lists no send of the sandbox it receives
+            Seen::Sending { .. } => Seen::No,
+            s => s,
+        });
         if target == Some(Seen::Alive) {
             return commit(
                 core,
@@ -280,7 +312,7 @@ async fn settle(
                 "migration-failed",
                 row.host.as_deref(),
                 Some(row.id),
-                data(serde_json::json!({"kept": false, "error": db::clip(why, 300)})),
+                data(serde_json::json!({"kept": false, "overdue": ended, "error": db::clip(why, 300)})),
             )
             .await;
             let latest = db::load(&core.pool, row.id).await?.unwrap_or_else(|| row.clone());
@@ -296,10 +328,32 @@ async fn settle(
             .await?;
             return Ok(());
         }
-        // a host that does not answer, or a receive still in progress, decides nothing: ask again (the host-loss
-        // rule may end it meanwhile)
+        // a host that does not answer, a send or a receive still in progress decides nothing: ask again (the
+        // host-loss rule may end it meanwhile, and the migration limit bounds it)
         tokio::time::sleep(core.timings.release_retry).await;
     }
+}
+
+/// The migration started longer ago than [`crate::Timings::migration_limit`] (`migration_started_at`); false when
+/// that is not known (the database does not answer: asked again on the next round).
+async fn overdue(core: &Core, id: Uuid) -> bool {
+    let limit = core.timings.migration_limit.as_secs_f64();
+    let r = async {
+        core.pool
+            .get()
+            .await?
+            .query_opt(
+                "select extract(epoch from now() - migration_started_at)::float8 > $2
+                   from sandboxes where id = $1 and migration_started_at is not null",
+                &[&id, &limit],
+            )
+            .await
+    }
+    .await;
+    r.ok()
+        .flatten()
+        .and_then(|r| r.try_get::<_, Option<bool>>(0).ok().flatten())
+        .unwrap_or(false)
 }
 
 async fn delete(clients: &Clients, h: &HostRow, name: &str) {

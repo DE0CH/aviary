@@ -99,6 +99,11 @@ pub struct Timings {
     /// 13.9).
     pub scaler: Duration,
     pub reconcile: Duration,
+    /// A migration still unsettled this long after `migration_started_at` is ended (25 min, hermit 13.10 step 6):
+    /// past sandboxd's own bounds on a receive (the relay's 900 s, then 300 s for the restore after End) and on a
+    /// send (its rsync and checkpoint timeouts against a receive that has ended), so it only ever acts for a host
+    /// whose sandboxd does not keep them.
+    pub migration_limit: Duration,
 }
 
 impl Default for Timings {
@@ -133,6 +138,7 @@ impl Default for Timings {
             start_pause: Duration::ZERO,
             scaler: s(5),
             reconcile: s(30),
+            migration_limit: s(1500),
         }
     }
 }

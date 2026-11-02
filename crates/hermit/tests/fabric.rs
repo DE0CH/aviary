@@ -55,6 +55,9 @@ struct OnHost {
     spec: Spec,
     state: HostState,
     alive: Option<bool>,
+    /// Listed `sending` (a send of it runs here).
+    sending: bool,
+    scratch_used: Option<u64>,
     created_at: String,
 }
 
@@ -78,6 +81,9 @@ struct HostSim {
     /// checkpoint stopped) and its answer is lost (500), with the target's receive still in progress; the test
     /// finishes the move itself (`Rig::finish_move`).
     stop_and_lose_answer: AtomicBool,
+    /// The next send's answer is lost (500) while the send goes on here: the source lists the sandbox running,
+    /// alive and `sending` until the test ends the send (`Rig::finish_move`, or `sending` cleared: it stayed).
+    lose_answer_keep_sending: AtomicBool,
 }
 
 impl HostSim {
@@ -104,8 +110,8 @@ impl HostSim {
                 cpu_usage: 0.0,
                 memory_current: 0,
                 alive: s.alive,
-                sending: false,
-                scratch_used: None,
+                sending: s.sending,
+                scratch_used: s.scratch_used,
             })
             .collect()
     }
@@ -182,6 +188,8 @@ impl Server for HostSim {
                 spec: spec.clone(),
                 state: HostState::Running,
                 alive: Some(true),
+                sending: false,
+                scratch_used: None,
                 created_at: iso_now(),
             },
         );
@@ -208,6 +216,8 @@ impl Server for HostSim {
                 spec: spec.clone(),
                 state: HostState::Receiving,
                 alive: Some(true),
+                sending: false,
+                scratch_used: None,
                 created_at: iso_now(),
             },
         );
@@ -252,6 +262,12 @@ impl Server for HostSim {
             me.sends_waiting.fetch_sub(1, Ordering::SeqCst);
             if me.refuse_send.swap(false, Ordering::SeqCst) {
                 return Err(ApiError::new(409, "not converging; the sandbox still runs here"));
+            }
+            if me.lose_answer_keep_sending.swap(false, Ordering::SeqCst) {
+                if let Some(s) = me.sandboxes.lock().unwrap().get_mut(&name) {
+                    s.sending = true;
+                }
+                return Err(ApiError::new(500, "connection reset"));
             }
             if me.stop_and_lose_answer.swap(false, Ordering::SeqCst) {
                 if let Some(s) = me.sandboxes.lock().unwrap().get_mut(&name) {
@@ -381,6 +397,7 @@ impl Fleet {
             send_gate: Notify::new(),
             sends_waiting: AtomicU32::new(0),
             stop_and_lose_answer: AtomicBool::new(false),
+            lose_answer_keep_sending: AtomicBool::new(false),
         });
         let host = Arc::new(FakeHost {
             sim: sim.clone(),
@@ -681,6 +698,8 @@ impl Rig {
                 spec,
                 state: HostState::Running,
                 alive: Some(true),
+                sending: false,
+                scratch_used: None,
                 created_at: iso_now(),
             },
         );
@@ -716,6 +735,7 @@ impl Rig {
         let mut s = self.fleet.sim(from).sandboxes.lock().unwrap().remove(name).unwrap();
         s.state = HostState::Running;
         s.alive = Some(true);
+        s.sending = false;
         self.fleet.sim(to).sandboxes.lock().unwrap().insert(name.into(), s);
     }
 
@@ -1415,6 +1435,8 @@ async fn ec2_reconcile_and_orphans() {
             },
             state: HostState::Running,
             alive: Some(true),
+            sending: false,
+            scratch_used: None,
             created_at: "2026-01-01T00:00:00.000Z".into(),
         },
     );
@@ -1595,6 +1617,170 @@ async fn a_stopped_source_never_settles_as_kept() {
     );
     assert_eq!(rig.events("migration-adopted").await.len(), 1);
     assert_eq!(rig.events("migration-failed").await, Vec::<serde_json::Value>::new());
+}
+
+/// Two sandboxes on host a, one on a fuller host b with room for a's: the setup of a packing move a -> b (the
+/// stopped-source test's), with every send of either host set up by `arm`. Returns the rig's replica and gvisor.
+async fn packing_pair(rig: &Rig, arm: impl Fn(&HostSim)) -> (Replica, Arc<Gvisor>) {
+    let (r1, g1) = rig.replica("hermit-a").await;
+    let a = one_host(rig, &g1, &r1).await;
+    rig.sql(&format!("update hosts set max_sandboxes = 1 where name = '{a}'"))
+        .await;
+    let (_, _) = rig.ready_on(&a, "198.18.0.80").await;
+    demand(rig, "b@example.org").await;
+    pass(&g1, &r1).await;
+    pass(&g1, &r1).await;
+    rig.sql("delete from demand_hints").await;
+    let b = rig.aws(1);
+    let (_, _) = rig.ready_on(&b, "198.18.0.81").await;
+    rig.sql(&format!("update hosts set max_sandboxes = null where name = '{a}'"))
+        .await;
+    for h in [&a, &b] {
+        arm(&rig.fleet.sim(h));
+    }
+    (r1, g1)
+}
+
+/// WP-19 review: a send that keeps running on the source after hermit's call failed (its answer lost) and its wait
+/// on the receive ended. The source lists the sandbox alive but `sending`, so the settle neither keeps it there
+/// (which would delete the target's receive while the send may still switch to it) nor declares it lost: it waits.
+/// The send then ends with the sandbox still on its source (not converged): kept, and the receive deleted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_source_still_sending_is_not_kept_until_its_send_ends() {
+    let rig = Rig::new("fabric_still_sending", |_| {}, manual()).await;
+    let (r1, g1) = packing_pair(&rig, |h| h.lose_answer_keep_sending.store(true, Ordering::SeqCst)).await;
+    let p = pass(&g1, &r1).await;
+    let (id, from, to) = p.migration.expect("a packing move");
+    let name = db::load(&rig.h.pool(), id).await.unwrap().unwrap().name;
+    let (src, dst) = (rig.fleet.sim(&from), rig.fleet.sim(&to));
+    assert!(eventually(|| async { src.calls().iter().any(|c| c.starts_with("send ")) }).await);
+    // hermit's wait on the receive (3 s in the fake) ends; the settle asks both hosts for a while
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    let row = db::load(&rig.h.pool(), id).await.unwrap().unwrap();
+    assert_eq!(
+        (row.status, row.host.as_deref(), row.migrating_to.as_deref()),
+        (SandboxState::Ready, Some(from.as_str()), Some(to.as_str())),
+        "undecided while the send runs"
+    );
+    assert!(
+        !dst.calls().iter().any(|c| c == &format!("delete {name}")),
+        "the target's receive is kept while the source sends: {:?}",
+        dst.calls()
+    );
+    // the send ends without the switch: the sandbox still runs on its source
+    src.sandboxes.lock().unwrap().get_mut(&name).unwrap().sending = false;
+    assert!(
+        eventually(|| async {
+            db::load(&rig.h.pool(), id)
+                .await
+                .unwrap()
+                .unwrap()
+                .migrating_to
+                .is_none()
+        })
+        .await
+    );
+    let row = db::load(&rig.h.pool(), id).await.unwrap().unwrap();
+    assert_eq!(
+        (row.status, row.host.as_deref()),
+        (SandboxState::Ready, Some(from.as_str()))
+    );
+    assert!(dst.calls().iter().any(|c| c == &format!("delete {name}")));
+    let failed = rig.events("migration-failed").await;
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0]["kept"], json!(true));
+}
+
+/// WP-19 review: the same lost answer, but the send then switches and hands over: adopted on the target, whose
+/// receive was never deleted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_source_still_sending_is_adopted_when_its_send_switches() {
+    let rig = Rig::new("fabric_sending_adopt", |_| {}, manual()).await;
+    let (r1, g1) = packing_pair(&rig, |h| h.lose_answer_keep_sending.store(true, Ordering::SeqCst)).await;
+    let p = pass(&g1, &r1).await;
+    let (id, from, to) = p.migration.expect("a packing move");
+    let name = db::load(&rig.h.pool(), id).await.unwrap().unwrap().name;
+    let (src, dst) = (rig.fleet.sim(&from), rig.fleet.sim(&to));
+    assert!(eventually(|| async { src.calls().iter().any(|c| c.starts_with("send ")) }).await);
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    // the checkpoint stops it (alive:false, still sending), then the hand-over
+    src.sandboxes.lock().unwrap().get_mut(&name).unwrap().alive = Some(false);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(rig.host_of(id).await.as_deref(), Some(from.as_str()));
+    rig.finish_move(&name, &from, &to);
+    assert!(eventually(|| async { rig.host_of(id).await.as_deref() == Some(to.as_str()) }).await);
+    assert!(
+        !dst.calls().iter().any(|c| c == &format!("delete {name}")),
+        "{:?}",
+        dst.calls()
+    );
+    assert_eq!(rig.events("migration-adopted").await.len(), 1);
+    assert_eq!(rig.events("migration-failed").await, Vec::<serde_json::Value>::new());
+}
+
+/// WP-19 review: a target that lists the receive `receiving` forever (a sandboxd that does not bound it) and a
+/// source its checkpoint stopped. Past `migration_limit` from `migration_started_at` the settle deletes the receive
+/// and ends the sandbox lost (`migration_failed` / `sandbox_lost`), so the conversation is not left on a row whose
+/// sandbox no longer runs anywhere.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_receive_that_never_ends_is_ended_at_the_migration_limit() {
+    let rig = Rig::new(
+        "fabric_receive_forever",
+        |_| {},
+        Timings {
+            migration_limit: Duration::from_secs(8),
+            ..manual()
+        },
+    )
+    .await;
+    let (r1, g1) = packing_pair(&rig, |h| h.stop_and_lose_answer.store(true, Ordering::SeqCst)).await;
+    let p = pass(&g1, &r1).await;
+    let (id, _from, to) = p.migration.expect("a packing move");
+    let name = db::load(&rig.h.pool(), id).await.unwrap().unwrap().name;
+    let dst = rig.fleet.sim(&to);
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_eq!(
+        db::load(&rig.h.pool(), id).await.unwrap().unwrap().status,
+        SandboxState::Ready,
+        "waits while the receive runs, within the limit"
+    );
+    assert!(
+        eventually(|| async { db::load(&rig.h.pool(), id).await.unwrap().unwrap().status == SandboxState::Gone }).await
+    );
+    let row = db::load(&rig.h.pool(), id).await.unwrap().unwrap();
+    assert_eq!(row.release_code.as_deref(), Some("sandbox_lost"), "{row:?}");
+    assert!(
+        dst.calls().iter().any(|c| c == &format!("delete {name}")),
+        "{:?}",
+        dst.calls()
+    );
+    let failed = rig.events("migration-failed").await;
+    assert_eq!(failed.len(), 1);
+    assert_eq!(
+        (&failed[0]["kept"], &failed[0]["overdue"]),
+        (&json!(false), &json!(true))
+    );
+}
+
+/// hermit 13.10 `movable`: a sandbox with more than `maxScratchMib` in use on its scratch is not moved (its
+/// checksummed final delta would stop it for seconds); under the bound it is.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_full_scratch_is_not_moved() {
+    let rig = Rig::new("fabric_full_scratch", |_| {}, manual()).await;
+    let (r1, g1) = packing_pair(&rig, |_| {}).await;
+    let set = |mib: u64| {
+        for h in [rig.aws(0), rig.aws(1)] {
+            for s in rig.fleet.sim(&h).sandboxes.lock().unwrap().values_mut() {
+                s.scratch_used = Some(mib << 20);
+            }
+        }
+    };
+    set(600);
+    let p = pass(&g1, &r1).await;
+    assert!(p.migration.is_none(), "{p:?}");
+    set(100);
+    let p = pass(&g1, &r1).await;
+    assert!(p.migration.is_some(), "{p:?}");
 }
 
 /// A start through the whole core on this fabric: `PUT` -> placed on the AWS host, created with the spec hermit

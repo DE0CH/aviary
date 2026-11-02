@@ -69,6 +69,8 @@ pub struct InfoSandbox {
     pub cpu_usage: f64,
     /// `None`: the host's sandboxd does not report it (read as alive).
     pub alive: Option<bool>,
+    /// Bytes in use on its scratch filesystem; `None`: not reported (a receive, an older sandboxd).
+    pub scratch_used: Option<u64>,
     pub created_at: String,
 }
 
@@ -128,6 +130,7 @@ impl HostInfo {
                     memory: s.memory,
                     cpu_usage: s.cpu_usage,
                     alive: s.alive,
+                    scratch_used: s.scratch_used,
                     created_at: s.created_at.clone(),
                 })
                 .collect(),
