@@ -1,0 +1,5 @@
+w.jsonl {"kind":"Lines","mode":420,"sha256":"3e09c6b81471c6973538d66831dfd7982dc641d6c34f75a531725dd30f2bf0d9","size":1048582,"version":4}
+new.jsonl absent
+newdir absent
+r-src.json {"kind":"Bytes","mode":420,"sha256":"ef8aed55fba64258003f3479ff60a060ddb8301d170110a0d2dfa0ce4ea04eb3","size":4,"version":3}
+r-dst.json absent

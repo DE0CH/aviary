@@ -1,0 +1,5 @@
+{"op":"create","layout":"tmpfs","loopback":"1","send_ms":64,"total_ms":128,"release_to_result_ms":2245}
+{"op": "create", "args": ["/home/sandbox/.claude/projects/p/new.jsonl"], "start": 1793648700.0114315, "ok": true, "end": 1793648703.531325}
+opIds: 1
+resend lines: 1
+PASS

@@ -1,0 +1,10 @@
+{"t":"2026-11-02T19:45:24.790Z","level":"info","svc":"supervisor-keeper","msg":"keeper started","pid":1}
+{"t":"2026-11-02T19:45:24.790Z","level":"info","svc":"supervisor-keeper","msg":"supervisor started","pid":16,"restarts":0}
+{"t":"2026-11-02T19:45:24.819Z","level":"info","svc":"supervisor","ver":"dev","msg":"supervisor started","version":"supervisor-dev","boot_id":"b6286b8f9e9748a6","restart":false}
+{"t":"2026-11-02T19:45:24.823Z","level":"warn","svc":"supervisor","ver":"dev","msg":"/etc/hosts not written","error":"Read-only file system (os error 30)"}
+{"t":"2026-11-02T19:45:24.825Z","level":"info","svc":"supervisor","ver":"dev","msg":"lease taken","epoch":1}
+{"t":"2026-11-02T19:45:24.826Z","level":"info","svc":"supervisor","ver":"dev","msg":"mounted ~/.claude","mount":"/home/sandbox/.claude"}
+{"t":"2026-11-02T19:45:24.828Z","level":"info","svc":"supervisor","ver":"dev","msg":"fuse connection","restart":false,"boot":"369dad9b-a9e8-4d8b-9bb8-a4c00a1c4eaf"}
+{"t":"2026-11-02T19:45:24.844Z","level":"info","svc":"supervisor","ver":"dev","msg":"fuse mounted"}
+{"t":"2026-11-02T19:45:24.846Z","level":"info","svc":"supervisor","ver":"dev","msg":"agent cgroup not created","error":"no cgroup hierarchy"}
+{"t":"2026-11-02T19:45:27.242Z","level":"info","svc":"supervisor","ver":"dev","msg":"resend of a request still in flight: waiting for its result","unique":84,"pid":102,"op":"CREATE"}

@@ -1,0 +1,5 @@
+{"op":"write","layout":"tmpfs","loopback":"","send_ms":121,"total_ms":322,"release_to_result_ms":3802}
+{"op": "write", "args": ["/home/sandbox/.claude/projects/p/w.jsonl", "1048576"], "start": 1793649665.962121, "ret": 1048576, "sha256": "8988f6e8cdebc61970f719899c913119f6f02c6e90e51d47e80f68ab53927c01", "ok": true, "end": 1793649671.0916922}
+opIds: 1
+resend lines: 1
+PASS

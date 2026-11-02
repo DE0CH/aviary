@@ -1,0 +1,5 @@
+{"op":"create","layout":"scratch","loopback":"","send_ms":1192,"total_ms":1319,"release_to_result_ms":3565}
+{"op": "create", "args": ["/home/sandbox/.claude/projects/p/new.jsonl"], "start": 1793649382.305143, "ok": true, "end": 1793649388.1711116}
+opIds: 1
+resend lines: 1
+PASS

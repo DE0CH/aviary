@@ -1,0 +1,5 @@
+{"op":"rename","layout":"tmpfs","loopback":"1","send_ms":64,"total_ms":123,"release_to_result_ms":2243}
+{"op": "rename", "args": ["/home/sandbox/.claude/projects/p/r-src.json", "/home/sandbox/.claude/projects/p/r-dst.json"], "start": 1793648712.0747879, "ok": true, "end": 1793648715.554138}
+opIds: 1
+resend lines: 1
+PASS

@@ -26,3 +26,23 @@ python3 uniques.py ops.tsv [boundary_us ...]   # item 4: unique never repeats (u
 
 Results land in `/root/out/`. Delete the hosts afterwards. IPv6-only hosts work (the rsync URL is bracketed, the
 relay listens on `[::]`; `GATE_RELAY_LISTEN` overrides).
+
+## The re-run on the real build (WP-22, `rig/`)
+
+The same hosts and `gate.sh`, with the real `supervisor` and `supervisor-keeper` (musl release builds of
+`crates/supervisor`; `supervisor-fi` built with `--features fault-injection`) and `fuse-rig` (`testing/fuse-rig`: fake
+hermit and fake magpie behind the reference gateway, inside the sandbox on loopback, with an admin port on
+`127.0.0.1:7300`) in `/var/lib/gate/bin/rig/` next to `rig/{init.sh,rigop.py,rigctl.py,locks.py}`, identical on both
+hosts. `gate.sh bundle` with `RIG=1` makes `rig/init.sh` the first process: it starts the world, then execs the
+keeper as PID 1, which starts `/usr/local/bin/supervisor run` (the rig's binary bound over the image's path).
+
+```bash
+./rig/rig-mount.sh m1                      # items 1 and 5 on the real build
+./rig/rig-kill.sh k1                       # item 4: the fault-injection build SIGKILLs itself at each journal point
+./rig/rig-mig.sh w1 write <target ip>      # one migration with a write (or create, mkdir, rename) held in magpie
+./rig/rig-batch.sh X 10 <target ip>        # 10 rounds of the four ops in both layouts (LAYOUTS, OPS)
+LOOPBACK=1 ./rig/rig-batch.sh L 10         # the same with the target on this host (gate.sh GATE_SIDE=b)
+```
+
+Results land in `/root/out/{rig,kill,rmount}-NAME/`. A target with no public address works over a private network
+(`rig-mig.sh` reaches it by SSH as root with `/root/.ssh/gate` and sends the stream to `[ip]:7000`).

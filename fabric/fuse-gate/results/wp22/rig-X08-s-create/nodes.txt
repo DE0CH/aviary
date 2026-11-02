@@ -1,0 +1,5 @@
+w.jsonl {"kind":"Lines","mode":420,"sha256":"46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5","size":6,"version":3}
+new.jsonl {"kind":"Lines","mode":384,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","size":0,"version":1}
+newdir absent
+r-src.json {"kind":"Bytes","mode":420,"sha256":"ef8aed55fba64258003f3479ff60a060ddb8301d170110a0d2dfa0ce4ea04eb3","size":4,"version":3}
+r-dst.json absent

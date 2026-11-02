@@ -1,0 +1,1 @@
+{"live_rounds":[{"files":6,"bytes":67895726,"ms":281},{"files":0,"bytes":0,"ms":194}],"checkpoint_ms":84,"final_rsync":{"files":0,"bytes":0,"ms":199,"checksum":true},"files_differing_after_final":"","compare_ms":374,"done_reply":"OK","stopped_until_done_ms":595}

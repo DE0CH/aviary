@@ -1,0 +1,16 @@
+relay exit 0
+2026/11/02 20:04:16 [82841] connect from UNDETERMINED (<private-ip>)
+2026/11/02 20:04:16 [82841] rsync allowed access on module scratch from UNDETERMINED (<private-ip>)
+2026/11/02 20:04:16 [82841] rsync to scratch/ from UNDETERMINED (<private-ip>)
+2026/11/02 20:04:16 [82841] receiving file list
+2026/11/02 20:04:17 [82841] sent 167 bytes  received 67912958 bytes  total size 67895726
+2026/11/02 20:04:17 [82843] connect from UNDETERMINED (<private-ip>)
+2026/11/02 20:04:17 [82843] rsync allowed access on module scratch from UNDETERMINED (<private-ip>)
+2026/11/02 20:04:17 [82843] rsync to scratch/ from UNDETERMINED (<private-ip>)
+2026/11/02 20:04:17 [82843] receiving file list
+2026/11/02 20:04:17 [82843] sent 37 bytes  received 390 bytes  total size 67895726
+2026/11/02 20:04:17 [82846] connect from UNDETERMINED (<private-ip>)
+2026/11/02 20:04:17 [82846] rsync allowed access on module scratch from UNDETERMINED (<private-ip>)
+2026/11/02 20:04:17 [82846] rsync to scratch/ from UNDETERMINED (<private-ip>)
+2026/11/02 20:04:17 [82846] receiving file list
+2026/11/02 20:04:17 [82846] sent 37 bytes  received 486 bytes  total size 67895726

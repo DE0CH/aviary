@@ -1,0 +1,5 @@
+{"op":"mkdir","layout":"scratch","loopback":"1","send_ms":981,"total_ms":1033,"release_to_result_ms":2243}
+{"op": "mkdir", "args": ["/home/sandbox/.claude/projects/p/newdir"], "start": 1793648836.3343887, "ok": true, "end": 1793648840.7429454}
+opIds: 1
+resend lines: 1
+PASS

@@ -1,0 +1,16 @@
+relay exit 0
+2026/11/02 19:46:25 [42139] connect from UNDETERMINED (::1)
+2026/11/02 19:46:25 [42139] rsync allowed access on module scratch from UNDETERMINED (::1)
+2026/11/02 19:46:25 [42139] rsync to scratch/ from UNDETERMINED (::1)
+2026/11/02 19:46:25 [42139] receiving file list
+2026/11/02 19:46:25 [42139] sent 167 bytes  received 67912954 bytes  total size 67895726
+2026/11/02 19:46:25 [42149] connect from UNDETERMINED (::1)
+2026/11/02 19:46:25 [42149] rsync allowed access on module scratch from UNDETERMINED (::1)
+2026/11/02 19:46:25 [42149] rsync to scratch/ from UNDETERMINED (::1)
+2026/11/02 19:46:25 [42149] receiving file list
+2026/11/02 19:46:25 [42149] sent 37 bytes  received 386 bytes  total size 67895726
+2026/11/02 19:46:25 [42185] connect from UNDETERMINED (::1)
+2026/11/02 19:46:25 [42185] rsync allowed access on module scratch from UNDETERMINED (::1)
+2026/11/02 19:46:25 [42185] rsync to scratch/ from UNDETERMINED (::1)
+2026/11/02 19:46:25 [42185] receiving file list
+2026/11/02 19:46:26 [42185] sent 37 bytes  received 490 bytes  total size 67895726

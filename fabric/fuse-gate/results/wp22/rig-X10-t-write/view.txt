@@ -1,0 +1,7 @@
+total 0
+drwxr-xr-x 2 node node       0 Nov  2 20:06 .
+drwxr-xr-x 2 node node       0 Nov  2 20:06 ..
+-rw-r--r-- 1 node node       4 Nov  2 20:06 r-src.json
+-rw-r--r-- 1 node node 1048582 Nov  2 20:07 w.jsonl
+3e09c6b81471c6973538d66831dfd7982dc641d6c34f75a531725dd30f2bf0d9  -
+1048582

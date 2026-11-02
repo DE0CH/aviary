@@ -437,3 +437,24 @@ uuid, not for Claude Code's result; it now says that the result is not that sign
    exit in any run; Claude Code exited non-zero only in `mig-e14` (-11, already failed); supervisor threads panicked
    in `mig-s06` (already failed) and `mig-s09` (counted as passed then; failed now). Since round 3 `init.sh` logs every
    exit to `exits.log` and `migrate.sh` fails a run on it, on a supervisor fault and on Claude Code's exit.
+
+## WP-22: the re-run on the real build (2026-11-02)
+
+The real `supervisor` and `supervisor-keeper` (musl release builds; the keeper is PID 1 of the sandbox and starts the
+supervisor, which mounts `~/.claude` with `fuse::FuseFs`) against `fuse-rig`'s world (fake hermit and fake magpie
+behind the reference gateway, inside the sandbox on loopback), with the gate's runtime flags and bundle shape
+(`fabric/fuse-gate/gate.sh` `RIG=1`, scripts in `fabric/fuse-gate/rig/`). Two throwaway Hetzner ccx23 (AMD
+EPYC-Milan), runsc `precopy-20261102.1` (WP-57's fix release). Raw outputs: `fabric/fuse-gate/results/wp22/`.
+
+| Item | Result |
+|---|---|
+| 1 | pass (`rmount-m1/item1.txt`): PID 1 is `supervisor-keeper`; `/dev/fuse` `crw-rw-rw- 10, 229`; the mount `fuse rw,nosuid,nodev,fd=11,rootmode=40755,user_id=0,group_id=0,default_permissions,allow_other`; uid 1000 created `projects/d1/d2`, wrote and appended `f.txt` and listed it (`1000:1000`, modes as created); magpie holds `hello\nmore\n`; a local-scope file (`sessions/s.txt`) is on `/var/lib/supervisor/local` and not in magpie; `settings.json` is refused (EACCES) |
+| 3 (the resend rule, the migration acceptance of WP-22) | pass, **160 of 160 migrations**: 80 from one host to the other (`rig-batch-X.log`) and 80 onto the same host (`rig-batch-L.log`), each with one WRITE (1 MiB, `O_APPEND`), CREATE `O_EXCL`, MKDIR or RENAME held in magpie across the checkpoint, both layouts. In every run the caller's syscall returned the original's success once (the write's full count), magpie saw one `opId` for the operation (every call of the route after the setup) and holds exactly the expected bytes or names, the supervisor never restarted (one `fuse connection`), nothing panicked, no process exited, and in the scratch layout no file differed after the final delta. In every run the restarted syscall's request arrived while the original was still held (`resend of a request still in flight: waiting for its result`, 160 lines); in one (`rig-X03-t-rename`) the original's reply was refused with ENOENT and kept before the waiting resend took the result, which then dropped the kept entry. Total migration 191-1,541 ms between hosts |
+| 4 | pass (`kill-k1`: journal on the scratch bind; `kill-k2`: tmpfs): the fault-injection build SIGKILLed itself at read-returned, call-sent, call-answered and reply-written of a WRITE, MKDIR, CREATE and RENAME, 16 cases each; the keeper restarted it, the new supervisor took the fd back and replayed the journal; every syscall returned success once, magpie applied each operation under one `opId` and holds the expected state |
+| 5 | pass (`rmount-m1/locks.txt`): flock and fcntl locks between two uid 1000 processes behave as on `/tmp` on a magpie-scope file and a local-scope file |
+| 2, 6, 9, 10 | not re-run: they need Claude Code launched by the real driver (WP-23, merged after this run started) in a sandbox that has it at `cc::launch::CLAUDE_BIN` with the managed files (WP-24's image) |
+
+Deviations: magpie is the fake in the sandbox (as in the gate); the hosts are Hetzner, not a fabric-AMI host; the
+cross-host runs go one way (the target's CPU has `erms` and `fsrm` on top of the source's, so the reverse restore is
+not expected to work); the 80 loopback runs restore on the same host from a second runsc root (`GATE_SIDE=b`), so
+they move no host files except the scratch layout's rsync into another directory.

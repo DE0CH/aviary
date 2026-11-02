@@ -127,6 +127,15 @@ heartbeat (the stuck rule's evidence that magpie answers other calls). The binar
   journal (slots across mappings, the short-read check, kept results). As root (`ci.yml`'s sudo step): a real kernel
   FUSE mount with supervisor 2's options serving ordinary syscalls on both scopes (append, read, stat, rename, a
   `mkdir` lock, readdir, a refused path, `link(2)` EPERM, unlink).
+- On the real runtime (`GATE.md` "WP-22", `fabric/fuse-gate/rig/`, outputs in `fabric/fuse-gate/results/wp22/`): the
+  release builds of `supervisor` and `supervisor-keeper` (PID 1) in a runsc sandbox against `fuse-rig`'s world (fake
+  hermit and fake magpie behind the reference gateway, in the sandbox). Gate items 1, 3, 4 and 5: the mount and uid
+  1000 I/O on both scopes; 160 live migrations, each with a WRITE, CREATE `O_EXCL`, MKDIR or RENAME held in magpie
+  across the checkpoint (80 between two hosts, 80 onto the same host; both layouts): the resend rule answered every
+  restarted syscall with the original's result and magpie applied each operation once; the `fault-injection` build
+  (which reads its point from `/run/fault-injection`, `fuse::FAULT_FILE`) SIGKILLed at each journal point of the four
+  operations, journal on scratch and on tmpfs; locks. Items 2, 6, 9 and 10 need Claude Code in the sandbox (WP-23's
+  driver, WP-24's image).
 
 ## Deviations from the spec text (WP-22)
 
@@ -159,6 +168,11 @@ heartbeat (the stuck rule's evidence that magpie answers other calls). The binar
    came back, before its answer is used; "magpie answered" is after the answer, before the tree and cache change.
 10. **The bootId of a fresh connection is stored before `PUT_FD`** (9.3 says after the mount and before the first
     read): a crash between the two then leaves no keeper fd, never a keeper fd without its id.
+11. **The migration acceptance ran against fake magpie** inside the sandbox (`fuse-rig`), on Hetzner hosts (not a
+    fabric-AMI host), one way between the two hosts (the target's CPU features are a superset of the source's) plus
+    80 restores onto the same host; the order "the original's reply refused with ENOENT before the resend arrives"
+    never occurred in a real migration (the restarted request always arrived while the original was held), so that
+    order is covered by the unit test only.
 
 ## Deviations from the spec text (WP-21)
 

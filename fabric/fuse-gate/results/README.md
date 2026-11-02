@@ -47,3 +47,5 @@ gzipped (`uniques.py` and `migsummary.py` read the unzipped files: `zcat` them f
 - `run1-hetzner/` — the gate's first run (Hetzner cx33, hel1 → fsn1). Superseded by the above; kept as it was. Its
   outputs are incomplete (the hosts were deleted before every run's files were saved): only the files present here
   exist.
+- `wp22/` — WP-22, the re-run on the real build (`fabric/fuse-gate/rig/`): 160 migrations with a WRITE, CREATE
+  `O_EXCL`, MKDIR or RENAME held, the SIGKILL test at each journal point, items 1 and 5 (README there).
