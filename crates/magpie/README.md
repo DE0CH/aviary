@@ -55,5 +55,9 @@ the conversation routes; `tests/changes.rs` the change feed and the fan-out acro
   separate `MAGPIE_POD`.
 - `/v1/ops/people`: `total` counts every conversation not purged (Recently deleted included); `today` and `last7d`
   count conversations active since the zone's midnight and in the last 7 days.
+- `GET /v1/ops/view-as` pages by `before=<id>` (magpie 13), not `before=<RFC 3339>` (platform 15.3): a time
+  truncated to the wire's milliseconds skips entries that share a time or differ by less than a millisecond. Each
+  entry carries its `id`; entries are ordered newest first by `(at, id)` and a page holds those older than the
+  `before` entry (migration `0003_view_as_order.sql` adds the index).
 - Until WP-14's admission, a create whose first message has text or attachments answers 501 `not_supported` and
   commits nothing; an empty first message creates the conversation without a turn.

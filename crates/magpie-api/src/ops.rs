@@ -112,9 +112,10 @@ pub struct ViewAsLogQuery {
     /// Default 100.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
-    /// Entries before this time.
+    /// Entries older than the entry with this id (the last `id` of the previous page; magpie 13 `before=<id>`).
+    /// Entries are ordered newest first by `(at, id)`, so a page never skips entries that share a time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub before: Option<Timestamp>,
+    pub before: Option<u64>,
 }
 
 /// `GET /v1/ops/view-as` response, newest first.
@@ -147,6 +148,8 @@ pub enum ViewAsEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ViewAsEntry {
+    /// The entry's id: the next page's `before`.
+    pub id: u64,
     /// When.
     pub at: Timestamp,
     /// The conversation (null for `start`).

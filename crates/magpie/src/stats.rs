@@ -73,19 +73,21 @@ fn view_as_event(s: &str) -> ViewAsEvent {
     }
 }
 
-/// `GET /v1/ops/view-as?limit=&before=`: the view-as audit, newest first.
+/// `GET /v1/ops/view-as?limit=&before=<id>`: the view-as audit, newest first by `(at, id)`; `before` is the last
+/// entry's id of the previous page, and the page holds the entries older than that entry (entries that share its
+/// time included, ordered by id). An id that names no entry gives an empty page.
 ///
 /// # Errors
 /// When a statement fails.
-pub async fn view_as(pool: &Pool, limit: Option<u32>, before: Option<Timestamp>) -> Result<ViewAsLog> {
+pub async fn view_as(pool: &Pool, limit: Option<u32>, before: Option<u64>) -> Result<ViewAsLog> {
     let limit = i64::from(limit.unwrap_or(VIEW_AS_DEFAULT).clamp(1, VIEW_AS_MAX));
-    let before = before.map(|t| t.0);
+    let before = before.map(|b| i64::try_from(b).unwrap_or(i64::MAX));
     let rows = pool
         .get()
         .await?
         .query(
-            "select at, conversation_id, event, admin, person, session, chars from view_as_log
-             where ($1::timestamptz is null or at < $1)
+            "select id, at, conversation_id, event, admin, person, session, chars from view_as_log
+             where $1::bigint is null or (at, id) < (select at, id from view_as_log where id = $1)
              order by at desc, id desc limit $2",
             &[&before, &limit],
         )
@@ -93,13 +95,14 @@ pub async fn view_as(pool: &Pool, limit: Option<u32>, before: Option<Timestamp>)
     let view_as = rows
         .iter()
         .map(|r| ViewAsEntry {
-            at: Timestamp(r.get(0)),
-            conversation_id: r.get(1),
-            event: view_as_event(r.get(2)),
-            admin: r.get(3),
-            user: r.get(4),
-            session: Some(r.get::<_, String>(5)).filter(|s| !s.is_empty()),
-            chars: r.get::<_, Option<i32>>(6).and_then(|c| u64::try_from(c).ok()),
+            id: u64::try_from(r.get::<_, i64>(0)).unwrap_or(0),
+            at: Timestamp(r.get(1)),
+            conversation_id: r.get(2),
+            event: view_as_event(r.get(3)),
+            admin: r.get(4),
+            user: r.get(5),
+            session: Some(r.get::<_, String>(6)).filter(|s| !s.is_empty()),
+            chars: r.get::<_, Option<i32>>(7).and_then(|c| u64::try_from(c).ok()),
         })
         .collect();
     Ok(ViewAsLog { view_as })

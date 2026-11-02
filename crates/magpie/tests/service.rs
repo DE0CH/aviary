@@ -733,6 +733,13 @@ async fn the_ops_reads() {
         .unwrap();
     assert_eq!(bad.tz, "UTC");
 
+    // events and rows are Postgres's estimates, which analyze brings up to date
+    sql.get()
+        .await
+        .unwrap()
+        .batch_execute("analyze events, rows")
+        .await
+        .unwrap();
     let stats = a.hermit().service(None).ops_stats().await.unwrap();
     assert_eq!((stats.conversations, stats.deleted), (2, 1));
     assert_eq!(stats.outbox_pending, 1);
@@ -765,4 +772,64 @@ async fn the_ops_reads() {
         .unwrap()
         .get(0);
     assert_eq!(viewer.as_deref(), Some("admin@example.com"));
+}
+
+/// The view-as audit pages by entry id with no entry lost, also when entries share a time (rows written in one
+/// transaction share `now()`) or differ by less than a millisecond (the wire's `at` precision).
+#[tokio::test]
+async fn the_view_as_log_pages_without_losing_entries() {
+    let db = common::fresh_db("viewaspage").await;
+    let t = common::Tokens::new();
+    let a = common::replica(&db.url, &t).await;
+    let sql = common::sql(&db.url);
+    let c = sql.get().await.unwrap();
+    // 5 entries at one instant, 4 a few microseconds apart within one millisecond, 3 older ones
+    c.batch_execute(
+        "insert into view_as_log (at, admin, person, session, event)
+           select '2026-11-02T03:00:00.123456Z', 'admin@example.com', 'bob@example.com', 's', 'start'
+           from generate_series(1, 5);
+         insert into view_as_log (at, admin, person, session, event)
+           select '2026-11-02T03:00:00.123000Z'::timestamptz + make_interval(secs => g * 0.0001),
+                  'admin@example.com', 'bob@example.com', 's', 'start'
+           from generate_series(1, 4) g;
+         insert into view_as_log (at, admin, person, session, event)
+           select '2026-11-01T03:00:00Z'::timestamptz + make_interval(secs => g),
+                  'admin@example.com', 'bob@example.com', 's', 'start'
+           from generate_series(1, 3) g;",
+    )
+    .await
+    .unwrap();
+    let all: Vec<i64> = c
+        .query("select id from view_as_log order by at desc, id desc", &[])
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(all.len(), 12);
+    let admin = a.admin();
+    let mut seen = Vec::new();
+    let mut before = None;
+    loop {
+        let page = admin
+            .service(None)
+            .ops_view_as(&ViewAsLogQuery { limit: Some(2), before })
+            .await
+            .unwrap()
+            .view_as;
+        let Some(last) = page.last() else { break };
+        before = Some(last.id);
+        seen.extend(page.iter().map(|e| i64::try_from(e.id).unwrap()));
+    }
+    assert_eq!(seen, all);
+    // an id that names no entry: an empty page
+    let none = admin
+        .service(None)
+        .ops_view_as(&ViewAsLogQuery {
+            limit: None,
+            before: Some(1_000_000),
+        })
+        .await
+        .unwrap();
+    assert!(none.view_as.is_empty());
 }
