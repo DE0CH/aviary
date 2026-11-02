@@ -1,5 +1,5 @@
-//! The client's per-host slots: long calls never make the heartbeat wait, and a call's timeout covers its wait for a
-//! slot.
+//! The client's per-host slots: long calls never make the heartbeat or the control calls wait, and a call's timeout
+//! covers its wait for a slot.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)] // tests may allow it (Cargo.toml lints)
 #![allow(clippy::unused_async_trait_impl)] // the fake answers at once; the trait is async
@@ -12,9 +12,9 @@ use std::time::{Duration, Instant};
 
 use common::fixture;
 use sandboxd_api::{
-    Answer, ApiError, Client, Deleted, EgressTargets, EnsureImage, Error, HEARTBEAT_SLOTS, HOST_TIMEOUT, Host,
-    ImageDigest, Listed, MAX_CONNECTIONS, Peers, ReceiveResult, Receiving, Sandboxes, SendRequest, SendResult, Server,
-    SetPeers, Spec, router,
+    Answer, ApiError, CONTROL_SLOTS, Client, Deleted, EgressTargets, EnsureImage, Error, HEARTBEAT_SLOTS, HOST_TIMEOUT,
+    Host, ImageDigest, LONG_SLOTS, Listed, MAX_CONNECTIONS, Peers, ReceiveResult, Receiving, Sandboxes, SendRequest,
+    SendResult, Server, SetPeers, Spec, router,
 };
 use tokio::sync::Notify;
 
@@ -100,11 +100,12 @@ async fn until(what: &str, f: impl Fn() -> bool) {
 }
 
 #[tokio::test]
-async fn heartbeat_answers_while_every_other_slot_is_held() {
+async fn heartbeat_and_control_calls_answer_while_every_long_slot_is_held() {
     let (s, c) = serve(Slow::default()).await;
     let spec: Spec = serde_json::from_str(&fixture("spec.json")).unwrap();
-    let long = MAX_CONNECTIONS - HEARTBEAT_SLOTS;
-    // every shared slot held by a long call, and two more calls queued behind them
+    assert_eq!(MAX_CONNECTIONS, HEARTBEAT_SLOTS + CONTROL_SLOTS + LONG_SLOTS);
+    let long = LONG_SLOTS;
+    // every long slot held by a long call, and two more calls queued behind them
     let mut calls = Vec::new();
     for i in 0..long + 2 {
         let (c, spec) = (c.clone(), spec.clone());
@@ -126,7 +127,15 @@ async fn heartbeat_answers_while_every_other_slot_is_held() {
         assert!(h.is_ok_and(|h| h.is_ok()), "heartbeat within {HOST_TIMEOUT:?}");
         assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
     }
-    // the queued calls never got past the client: at most MAX_CONNECTIONS requests at once
+    // a network push or a release's delete is not held up by the create burst either
+    for _ in 0..3 {
+        let t = Instant::now();
+        let (listed, deleted) = tokio::join!(c.list(), c.delete("sbx-a"));
+        listed.unwrap();
+        assert_eq!(deleted.unwrap().deleted, "sbx-a");
+        assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
+    }
+    // the queued calls never got past the client: at most LONG_SLOTS long requests at once
     assert_eq!(s.peak.load(Ordering::SeqCst), long);
     while calls.iter().any(|c| !c.is_finished()) {
         s.release.notify_waiters();

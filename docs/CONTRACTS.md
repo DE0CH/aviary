@@ -322,7 +322,23 @@ unknown path and for a known path with another method: 404 `not found`).
   writers are checked against them (`crates/sandboxd/src/contract.rs`), and `tests/live.rs` checks every route's
   answer of a running sandboxd key for key (the soak job).
 - Client timeouts and slots: hermit spec 13.15, with the deviations in the crate's `client` module docs (image
-  pulls 21 min, a receive's prepare 15 min); one of the 8 per-host slots is kept for the heartbeat.
+  pulls 21 min, a receive's prepare 15 min). The 8 per-host slots are split: 1 for the heartbeat, 2 for the short
+  control calls (peers, egress, delete, list, spec), 5 for the long ones (create, receive and its wait, send, image
+  pulls), so a create burst never holds up a heartbeat, a network push or a release's delete. Idle pooled
+  connections are dropped after 4 s, below sandboxd's `keep-alive: timeout=5` (it closes after 6 s idle), so no
+  request is written onto a connection sandboxd is closing (`tests/idle.rs`).
+- **Open spec question, connections across hermit replicas:** hermit spec 13.15 gives 8 connections per host per
+  client and sandboxd serves 16 at once. 2 replicas plus the surge pod of a roll (`maxSurge 1`, hermit spec 20) make
+  3 x 8 = 24. sandboxd does not refuse the other 8: they wait in the kernel's accept queue until one of its 16 workers
+  is free (a connection closes, or sits idle 6 s), so during a burst on every replica at once calls see latency, and
+  a heartbeat queued there can miss its 5 s. Settling it is hermit's (WP-19): either fewer slots per replica
+  (5 x 3 = 15), or sandboxd `limits.maxConnections` raised to 24 (its memory bound grows by 8 workers' buffers,
+  `sandboxd budget`).
+- **The router reads bodies as sandboxd does,** except for one leniency: the content type is ignored, an empty or
+  whitespace body and a JSON value that is not an object are `{}`, a body that is not JSON is 400, over 64 KiB is
+  413, and any `transfer-encoding` (a chunked body) is 411 (`tests/router.rs`). sandboxd also accepts a number sent
+  as a string and a string sent as a number in a field; the typed router answers 400 there. Fakes built on the
+  router (fake-sandboxd) differ from the daemon only in that.
 
 ## Points the crates settle
 

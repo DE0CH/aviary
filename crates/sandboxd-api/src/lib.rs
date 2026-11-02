@@ -42,8 +42,8 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub use client::{
-    CREATE_TIMEOUT, Client, Error, HEARTBEAT_SLOTS, HOST_TIMEOUT, IMAGE_TIMEOUT, MAX_CONNECTIONS, RECEIVE_TIMEOUT,
-    RECEIVE_WAIT_MS, SEND_TIMEOUT, TIMEOUT, Tls,
+    CONTROL_SLOTS, CREATE_TIMEOUT, Client, Error, HEARTBEAT_SLOTS, HOST_TIMEOUT, IMAGE_TIMEOUT, LONG_SLOTS,
+    MAX_CONNECTIONS, POOL_IDLE, RECEIVE_TIMEOUT, RECEIVE_WAIT_MS, SEND_TIMEOUT, TIMEOUT, Tls,
 };
 pub use server::{Answer, ApiError, Server, router};
 

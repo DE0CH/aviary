@@ -7,6 +7,8 @@ mod common;
 
 use std::sync::{Arc, Mutex};
 
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
 use common::fixture;
 use sandboxd_api::{
     Answer, ApiError, Client, Deleted, EgressTargets, EnsureImage, Error, Host, ImageDigest, Listed, Peer, Peers,
@@ -223,4 +225,53 @@ async fn receive_wait_is_read_as_sandboxd_reads_it() {
             "result sbx-0a1b2c 250",
         ]
     );
+}
+
+#[tokio::test]
+async fn bodies_are_read_as_sandboxd_reads_them() {
+    // the content type is ignored, an empty body or a JSON value that is not an object is `{}`, chunked is 411
+    let (_, _, base) = serve().await;
+    let http = reqwest::Client::new();
+    for (ct, b, want) in [
+        (None, "", r#"{"digest":""}"#),
+        (None, " \n\t", r#"{"digest":""}"#),
+        (None, "[1,2]", r#"{"digest":""}"#),
+        (Some("text/plain"), "null", r#"{"digest":""}"#),
+        (
+            Some("text/plain"),
+            r#"{"digest":"sha256:ab"}"#,
+            r#"{"digest":"sha256:ab"}"#,
+        ),
+    ] {
+        let mut r = http.post(format!("{base}/v1/images")).body(b);
+        if let Some(ct) = ct {
+            r = r.header("content-type", ct);
+        }
+        let r = r.send().await.unwrap();
+        assert_eq!(
+            (r.status().as_u16(), r.text().await.unwrap()),
+            (200, want.to_owned()),
+            "{ct:?} {b:?}"
+        );
+    }
+    let r = http
+        .post(format!("{base}/v1/images"))
+        .body("{nope")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 400);
+
+    let mut s = tokio::net::TcpStream::connect(base.trim_start_matches("http://"))
+        .await
+        .unwrap();
+    s.write_all(
+        b"POST /v1/images HTTP/1.1\r\nhost: x\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n2\r\n{}\r\n0\r\n\r\n",
+    )
+    .await
+    .unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).await.unwrap();
+    assert!(out.starts_with("HTTP/1.1 411"), "{out}");
+    assert!(out.ends_with(r#"{"error":"send a content-length"}"#), "{out}");
 }

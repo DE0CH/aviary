@@ -2,9 +2,21 @@
 //! the server certificate's name `sandboxd` is checked while connecting by address; TLS 1.3, the fabric CA, a client
 //! identity; keep-alive; at most [`MAX_CONNECTIONS`] requests at once per host (sandboxd serves 16).
 //!
-//! Of the [`MAX_CONNECTIONS`], one is kept for the heartbeat ([`Client::host`]) and the others are shared by every
-//! other call, so creates, sends and image pulls (minutes each) never make a heartbeat wait. A call's timeout covers
-//! its wait for a slot as well as the request: a call answers or fails within its timeout.
+//! The [`MAX_CONNECTIONS`] slots are split in three pools: [`HEARTBEAT_SLOTS`] for the heartbeat ([`Client::host`]),
+//! [`CONTROL_SLOTS`] for the short control calls (peers, egress, delete, list, spec) and [`LONG_SLOTS`] for the calls
+//! that can take minutes (create, receive and its wait, send, image pulls). A burst of creates therefore never makes
+//! a heartbeat, a network push (hermit spec 13.8) or a release's delete wait. A call's timeout covers its wait for a
+//! slot as well as the request: a call answers or fails within its timeout.
+//!
+//! Idle pooled connections are dropped after [`POOL_IDLE`] (4 s), below sandboxd's advertised `keep-alive:
+//! timeout=5` (it closes an idle connection after 6 s, `crates/sandboxd/src/server.rs` `IDLE_MS`), so a request is
+//! never written onto a connection sandboxd is closing; such a request fails without an answer, and a create, send
+//! or receive cannot be retried safely.
+//!
+//! Connections across replicas (an open spec question, recorded in docs/CONTRACTS.md): 2 hermit replicas plus a
+//! surge pod during a roll (`maxSurge 1`) at 8 each make 24 against sandboxd's 16 API workers. sandboxd does not
+//! refuse the rest: they wait in the kernel's accept queue until a worker is free (a worker is free when its
+//! connection closes, or after 6 s idle), so the cost is latency during a burst, not errors.
 //!
 //! Timeouts (hermit spec 13.15): heartbeat 5 s, create 15 min, send 15 min, receive wait 95 s, others 30 s, with two
 //! recorded deviations: `POST /v1/images` gets [`IMAGE_TIMEOUT`] (21 min) because sandboxd itself waits up to 20 min
@@ -28,10 +40,16 @@ use crate::{
     Sandboxes, SendRequest, SendResult, SetPeers, Spec, routes,
 };
 
-/// Requests in flight per host at most: [`HEARTBEAT_SLOTS`] for [`Client::host`], the rest for every other call.
-pub const MAX_CONNECTIONS: usize = 8;
+/// Requests in flight per host at most: [`HEARTBEAT_SLOTS`] + [`CONTROL_SLOTS`] + [`LONG_SLOTS`].
+pub const MAX_CONNECTIONS: usize = HEARTBEAT_SLOTS + CONTROL_SLOTS + LONG_SLOTS;
 /// The slots kept for the heartbeat (`GET /v1/host`, one at a time per host).
 pub const HEARTBEAT_SLOTS: usize = 1;
+/// The slots of the short control calls: peers, egress, delete, list, spec.
+pub const CONTROL_SLOTS: usize = 2;
+/// The slots of the calls that can take minutes: create, receive, its result wait, send, image pulls.
+pub const LONG_SLOTS: usize = 5;
+/// How long an idle pooled connection is kept: below sandboxd's advertised keep-alive timeout of 5 s.
+pub const POOL_IDLE: Duration = Duration::from_secs(4);
 /// `GET /v1/host` (the heartbeat).
 pub const HOST_TIMEOUT: Duration = Duration::from_secs(5);
 /// A create (it may pull and unpack the image).
@@ -94,10 +112,20 @@ pub enum Error {
 pub struct Client {
     http: reqwest::Client,
     base: String,
-    /// Every call but the heartbeat.
-    slots: Arc<Semaphore>,
+    /// The calls that can take minutes.
+    long: Arc<Semaphore>,
+    /// The short control calls.
+    control: Arc<Semaphore>,
     /// The heartbeat's own.
     beat: Arc<Semaphore>,
+}
+
+/// Which pool a call takes its slot from.
+#[derive(Clone, Copy)]
+enum Pool {
+    Beat,
+    Control,
+    Long,
 }
 
 fn tls_config(tls: &Tls) -> Result<rustls::ClientConfig, Error> {
@@ -128,6 +156,7 @@ impl Client {
             .use_preconfigured_tls(tls_config(tls)?)
             .resolve(crate::SERVER_NAME, SocketAddr::new(addr, port))
             .pool_max_idle_per_host(MAX_CONNECTIONS)
+            .pool_idle_timeout(POOL_IDLE)
             .http1_only()
             .user_agent("sandboxd-api")
             .build()?;
@@ -148,6 +177,7 @@ impl Client {
         let http = reqwest::Client::builder()
             .use_preconfigured_tls(none)
             .pool_max_idle_per_host(MAX_CONNECTIONS)
+            .pool_idle_timeout(POOL_IDLE)
             .http1_only()
             .build()?;
         Ok(Self::with(http, base.trim_end_matches('/').to_owned()))
@@ -157,24 +187,15 @@ impl Client {
         Self {
             http,
             base,
-            slots: Arc::new(Semaphore::new(MAX_CONNECTIONS - HEARTBEAT_SLOTS)),
+            long: Arc::new(Semaphore::new(LONG_SLOTS)),
+            control: Arc::new(Semaphore::new(CONTROL_SLOTS)),
             beat: Arc::new(Semaphore::new(HEARTBEAT_SLOTS)),
         }
     }
 
     async fn call<B: Serialize + ?Sized, T: DeserializeOwned>(
         &self,
-        method: Method,
-        path: &str,
-        body: Option<&B>,
-        timeout: Duration,
-    ) -> Result<T, Error> {
-        self.call_in(&self.slots, method, path, body, timeout).await
-    }
-
-    async fn call_in<B: Serialize + ?Sized, T: DeserializeOwned>(
-        &self,
-        slots: &Semaphore,
+        pool: Pool,
         method: Method,
         path: &str,
         body: Option<&B>,
@@ -187,8 +208,13 @@ impl Client {
                 .body(serde_json::to_vec(b)?);
         }
         let exchange = async {
-            // the semaphore is never closed
-            let _slot = slots.acquire().await.map_err(|e| Error::Tls(e.to_string()))?;
+            let slots = match pool {
+                Pool::Beat => &self.beat,
+                Pool::Control => &self.control,
+                Pool::Long => &self.long,
+            };
+            #[allow(clippy::expect_used)] // the client never closes its semaphores
+            let _slot = slots.acquire().await.expect("never closed");
             let res = req.send().await?;
             let status = res.status().as_u16();
             let bytes = res.bytes().await?;
@@ -210,7 +236,7 @@ impl Client {
     /// # Errors
     /// [`Error`].
     pub async fn host(&self) -> Result<Host, Error> {
-        self.call_in::<(), _>(&self.beat, Method::GET, routes::HOST, None, HOST_TIMEOUT)
+        self.call::<(), _>(Pool::Beat, Method::GET, routes::HOST, None, HOST_TIMEOUT)
             .await
     }
 
@@ -219,8 +245,14 @@ impl Client {
     /// # Errors
     /// [`Error`].
     pub async fn set_peers(&self, peers: Vec<Peer>) -> Result<Peers, Error> {
-        self.call(Method::PUT, routes::PEERS, Some(&SetPeers { peers }), TIMEOUT)
-            .await
+        self.call(
+            Pool::Control,
+            Method::PUT,
+            routes::PEERS,
+            Some(&SetPeers { peers }),
+            TIMEOUT,
+        )
+        .await
     }
 
     /// `PUT /v1/egress` (hub only).
@@ -228,8 +260,14 @@ impl Client {
     /// # Errors
     /// [`Error`].
     pub async fn set_egress(&self, targets: Vec<String>) -> Result<EgressTargets, Error> {
-        self.call(Method::PUT, routes::EGRESS, Some(&EgressTargets { targets }), TIMEOUT)
-            .await
+        self.call(
+            Pool::Control,
+            Method::PUT,
+            routes::EGRESS,
+            Some(&EgressTargets { targets }),
+            TIMEOUT,
+        )
+        .await
     }
 
     /// `POST /v1/images`.
@@ -237,7 +275,7 @@ impl Client {
     /// # Errors
     /// [`Error`].
     pub async fn ensure_image(&self, image: &EnsureImage) -> Result<ImageDigest, Error> {
-        self.call(Method::POST, routes::IMAGES, Some(image), IMAGE_TIMEOUT)
+        self.call(Pool::Long, Method::POST, routes::IMAGES, Some(image), IMAGE_TIMEOUT)
             .await
     }
 
@@ -246,7 +284,8 @@ impl Client {
     /// # Errors
     /// [`Error`].
     pub async fn list(&self) -> Result<Sandboxes, Error> {
-        self.call::<(), _>(Method::GET, routes::SANDBOXES, None, TIMEOUT).await
+        self.call::<(), _>(Pool::Control, Method::GET, routes::SANDBOXES, None, TIMEOUT)
+            .await
     }
 
     /// `POST /v1/sandboxes`.
@@ -254,7 +293,7 @@ impl Client {
     /// # Errors
     /// [`Error`].
     pub async fn create(&self, spec: &Spec) -> Result<Listed, Error> {
-        self.call(Method::POST, routes::SANDBOXES, Some(spec), CREATE_TIMEOUT)
+        self.call(Pool::Long, Method::POST, routes::SANDBOXES, Some(spec), CREATE_TIMEOUT)
             .await
     }
 
@@ -263,7 +302,7 @@ impl Client {
     /// # Errors
     /// [`Error`].
     pub async fn delete(&self, name: &str) -> Result<Deleted, Error> {
-        self.call::<(), _>(Method::DELETE, &routes::sandbox(name), None, TIMEOUT)
+        self.call::<(), _>(Pool::Control, Method::DELETE, &routes::sandbox(name), None, TIMEOUT)
             .await
     }
 
@@ -272,8 +311,14 @@ impl Client {
     /// # Errors
     /// [`Error`].
     pub async fn spec(&self, name: &str) -> Result<Spec, Error> {
-        self.call::<(), _>(Method::GET, &routes::sandbox_part(name, "spec"), None, TIMEOUT)
-            .await
+        self.call::<(), _>(
+            Pool::Control,
+            Method::GET,
+            &routes::sandbox_part(name, "spec"),
+            None,
+            TIMEOUT,
+        )
+        .await
     }
 
     /// `POST /v1/sandboxes/{name}/receive`: prepare as a migration target.
@@ -282,6 +327,7 @@ impl Client {
     /// [`Error`].
     pub async fn receive(&self, spec: &Spec) -> Result<Receiving, Error> {
         self.call(
+            Pool::Long,
             Method::POST,
             &routes::sandbox_part(&spec.name, "receive"),
             Some(spec),
@@ -298,7 +344,8 @@ impl Client {
     pub async fn receive_result(&self, name: &str, wait_ms: u64) -> Result<ReceiveResult, Error> {
         let wait = wait_ms.min(RECEIVE_WAIT_MS);
         let path = format!("{}?wait={wait}", routes::sandbox_part(name, "receive"));
-        self.call::<(), _>(Method::GET, &path, None, RECEIVE_TIMEOUT).await
+        self.call::<(), _>(Pool::Long, Method::GET, &path, None, RECEIVE_TIMEOUT)
+            .await
     }
 
     /// `POST /v1/sandboxes/{name}/send`: move it to a receive.
@@ -307,6 +354,7 @@ impl Client {
     /// [`Error`] (409: not moved, still running here; 502: lost after the switch).
     pub async fn send(&self, name: &str, req: &SendRequest) -> Result<SendResult, Error> {
         self.call(
+            Pool::Long,
             Method::POST,
             &routes::sandbox_part(name, "send"),
             Some(req),
