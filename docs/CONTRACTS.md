@@ -354,6 +354,14 @@ unknown path and for a known path with another method: 404 `not found`).
   as a string and a string sent as a number in a field; the typed router answers 400 there. Fakes built on the
   router (fake-sandboxd) differ from the daemon only in that.
 
+## Conformance
+
+`aviary-conformance` (in the `ghcr.io/de0ch/aviary-testing` image and the release) checks another hermit
+(`aviary-conformance hermit`, hermit spec 24.1), another gateway (`aviary-conformance gateway`, platform 8.2) or a
+model route (`aviary-conformance model`, platform 8.3) from the outside; `test-gateway` is the reference gateway it
+passes against. Flags, `tokens.json` formats, the checks by name and the points where the suite reads the specs one way
+are in `testing/conformance/README.md`.
+
 ## Points the crates settle
 
 Where the specs left a detail open or disagreed, the crates decide (platform R35: "the crates' golden fixtures settle

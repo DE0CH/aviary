@@ -93,6 +93,29 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 [[package]]
 name = "aviary-conformance"
 version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "aviary-core",
+ "aviary-fakes",
+ "axum",
+ "base64 0.23.1",
+ "clap",
+ "futures-util",
+ "gateway-api",
+ "hermit-api",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "mock-model",
+ "prometheus-client",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "test-gateway",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "aviary-core"
@@ -2606,6 +2629,23 @@ dependencies = [
 [[package]]
 name = "test-gateway"
 version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "aviary-core",
+ "axum",
+ "clap",
+ "futures-util",
+ "gateway-api",
+ "hermit-api",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "prometheus-client",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
 
 [[package]]
 name = "thiserror"
