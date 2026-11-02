@@ -63,7 +63,7 @@ use crate::limits::{
     STDIN_CLOSE_GRACE, STDOUT_ROTATE, SUPERSEDE_WAIT,
 };
 use crate::model::Model;
-use crate::state::{AskState, Change, Delivered, GenState, LastTurn, Persisted, RunPart, RunState};
+use crate::state::{AskState, Change, Delivered, EndingState, GenState, LastTurn, Persisted, RunPart, RunState};
 use crate::uploads::{self, Uploads};
 
 /// The namespace of the supervisor's derived ids: the stdin `msg_id` = `UUIDv5`(namespace, `boot_id` ‖ "stdin" ‖
@@ -154,6 +154,9 @@ enum Why {
     Stuck(String),
     /// The cache disagrees with magpie's bytes.
     Forked(String),
+    /// A restarted supervisor found it still initialising: nothing ran on it, and a new one is started (its
+    /// initialisation answer may have been read by the previous supervisor).
+    Stale,
 }
 
 /// An open turn.
@@ -214,6 +217,26 @@ struct Gen {
     writer: mpsc::UnboundedSender<Write>,
     /// The descriptor `etag` its managed files came from.
     etag: String,
+}
+
+/// A turn that ended and whose end report magpie has not answered yet: the heartbeat goes on naming it (magpie
+/// would otherwise take an idle heartbeat without it as a turn the sandbox forgot, magpie 8.5 rule 2).
+#[derive(Clone, Debug)]
+struct Ending {
+    id: Uuid,
+    report: TurnStateReport,
+    /// The uuids its end waits for (8.2), written by `generation`; `None`: the writes in flight only.
+    uuids: Option<Vec<String>>,
+    generation: u32,
+    stopping: bool,
+    last: LastTurn,
+}
+
+/// Why no generation was had for a turn.
+enum GenError {
+    /// The turn was interrupted or killed, or a release or pause began, while it waited.
+    Canceled,
+    Failed(String),
 }
 
 /// One stdin message for the generation's writer.
@@ -280,6 +303,10 @@ struct St {
     msg_seq: u64,
     /// The command loop is stopped (a pause or a release).
     quiesced: bool,
+    /// Turns whose end report is not answered yet.
+    ending: Vec<Ending>,
+    /// How the last generation's initialisation went.
+    init_verdict: Option<(u32, Result<(), String>)>,
 }
 
 impl St {
@@ -309,7 +336,15 @@ impl St {
             logged_types: HashSet::new(),
             msg_seq: 0,
             quiesced: false,
+            ending: Vec::new(),
+            init_verdict: None,
         }
+    }
+
+    /// Whether the preparation of `turn` (or a spawn for no turn) must stop: it was interrupted or killed, or a
+    /// release or pause began.
+    fn cancelled(&self, turn: Option<Uuid>) -> bool {
+        self.release.is_some() || self.quiesced || turn.is_some_and(|t| self.cancel_starting == Some(t))
     }
 
     fn status(&self) -> RunStatus {
@@ -422,6 +457,18 @@ fn wire(t: OffsetDateTime) -> magpie_api::Timestamp {
 fn rfc3339(t: OffsetDateTime) -> String {
     t.format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_default()
+}
+
+/// How long ago `m` was, in milliseconds (what `run.json` keeps of a monotonic instant).
+fn elapsed_ms(m: Instant) -> u64 {
+    u64::try_from(m.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// The monotonic instant `ms` milliseconds ago (a restored timer goes on from where it was).
+fn ago(ms: u64) -> Instant {
+    Instant::now()
+        .checked_sub(Duration::from_millis(ms))
+        .unwrap_or_else(Instant::now)
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -712,7 +759,9 @@ impl Driver {
                 stdout: g.stdout.to_string_lossy().into_owned(),
                 stdout_offset: g.offset,
                 initialized: g.initialized,
+                etag: g.etag.clone(),
             });
+            s.managed_etag.clone_from(&st.etag);
             let t = st.turn.as_ref();
             s.run = RunPart {
                 state: st.run.as_str().to_owned(),
@@ -720,12 +769,13 @@ impl Driver {
                 origin: t.map(|t| origin_str(t.origin).to_owned()),
                 pending_inputs: st.pending_inputs,
                 interrupt_sent_at: t.and_then(|t| t.interrupt_sent).map(rfc3339),
-                interrupt_elapsed_ms: t
-                    .and_then(|t| t.interrupt_mono)
-                    .map(|m| u64::try_from(m.elapsed().as_millis()).unwrap_or(u64::MAX)),
+                interrupt_elapsed_ms: t.and_then(|t| t.interrupt_mono).map(elapsed_ms),
                 pending_uuids: t.map(|t| t.uuids.clone()).unwrap_or_default(),
                 last_uuid: t.and_then(|t| t.uuids.last().cloned()),
                 queued_turn_id: st.queued.as_ref().map(|q| q.id.to_string()),
+                handed: t.map(|t| t.handed),
+                queued_interrupt_elapsed_ms: st.queued.as_ref().and_then(|q| q.interrupt_mono).map(elapsed_ms),
+                queued_handed: st.queued.as_ref().map(|q| q.handed),
             };
             s.last_turn.clone_from(&st.last_turn);
             s.tasks = st.tracker.saved();
@@ -737,6 +787,21 @@ impl Driver {
                     cli_request_id: a.cli_request_id.clone(),
                     tool_name: a.tool_name.clone(),
                     since: rfc3339(a.since),
+                    tool_use_id: a.tool_use_id.clone(),
+                    elapsed_ms: Some(elapsed_ms(a.since_mono)),
+                    lane: a.lane.map(|l| l.to_string()),
+                })
+                .collect();
+            s.ending = st
+                .ending
+                .iter()
+                .map(|e| EndingState {
+                    turn_id: e.id.to_string(),
+                    report: serde_json::to_value(&e.report).unwrap_or_default(),
+                    uuids: e.uuids.clone(),
+                    generation: e.generation,
+                    stopping: e.stopping,
+                    last: e.last.clone(),
                 })
                 .collect();
             s.delivered = st.delivered.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
@@ -838,27 +903,24 @@ impl Driver {
             usage: turn.usage,
             duration_ms: Some(ms),
         };
-        let id = turn.id;
-        let me = self.me.clone();
-        let last = LastTurn {
-            id: id.to_string(),
-            outcome: match out {
-                TurnOutcome::Completed => "completed".into(),
-                TurnOutcome::Failed => "failed".into(),
-                TurnOutcome::Canceled => "canceled".into(),
-            },
-            error: err.and_then(|e| serde_json::to_value(e).ok()),
-        };
-        fx.push(Fx::Report(Item::State {
-            turn: id,
+        let ending = Ending {
+            id: turn.id,
             report,
-            wait: if wait { Wait::Uuids(turn.uuids) } else { Wait::Settle },
-            done: Some(Box::new(move |ok| {
-                if ok && let Some(d) = me.upgrade() {
-                    d.with(Change::State, |st, _| st.last_turn = Some(last));
-                }
-            })),
-        }));
+            uuids: wait.then_some(turn.uuids),
+            generation: st.live.as_ref().map_or(st.last_gen, |g| g.n),
+            stopping: turn.interrupt_sent.is_some(),
+            last: LastTurn {
+                id: turn.id.to_string(),
+                outcome: match out {
+                    TurnOutcome::Completed => "completed".into(),
+                    TurnOutcome::Failed => "failed".into(),
+                    TurnOutcome::Canceled => "canceled".into(),
+                },
+                error: err.and_then(|e| serde_json::to_value(e).ok()),
+            },
+        };
+        fx.push(Fx::Report(self.end_item(&ending)));
+        st.ending.push(ending);
         if let Some(q) = st.queued.take() {
             // the person's turn written during an agent turn is now the turn; one stopped while it waited is
             // interrupted again now that Claude Code works on it (the 15 s grace runs from the first interrupt)
@@ -879,6 +941,34 @@ impl Driver {
         } else {
             st.set_run(RunKind::Idle);
             fx.push(Fx::IdlePoint);
+        }
+    }
+
+    /// The end report of `e`: once magpie answered it, the heartbeat stops naming the turn and names it as
+    /// `lastTurn` instead.
+    fn end_item(&self, e: &Ending) -> Item {
+        let me = self.me.clone();
+        let (id, last) = (e.id, e.last.clone());
+        Item::State {
+            turn: id,
+            report: e.report.clone(),
+            wait: match &e.uuids {
+                Some(u) => Wait::Uuids {
+                    uuids: u.clone(),
+                    generation: e.generation,
+                },
+                None => Wait::Settle,
+            },
+            done: Some(Box::new(move |ok| {
+                if let Some(d) = me.upgrade() {
+                    d.with(Change::State, |st, _| {
+                        st.ending.retain(|x| x.id != id);
+                        if ok {
+                            st.last_turn = Some(last);
+                        }
+                    });
+                }
+            })),
         }
     }
 
@@ -1138,6 +1228,8 @@ impl Driver {
                 st.set_run(RunKind::Idle);
             }
         });
+        // end reports still waiting for this generation's lines stop waiting: it writes nothing more
+        self.reporter.generation_ended(gen_n);
     }
 
     // ---- the tick ----
@@ -1227,9 +1319,20 @@ impl Driver {
         }
     }
 
+    /// Waits until the preparation of `turn` must stop ([`St::cancelled`]).
+    async fn until_cancelled(&self, turn: Option<Uuid>) {
+        self.wait_until(None, |s| s.cancelled(turn)).await;
+    }
+
     /// The live generation for `session`, spawned (and initialised) if there is none or it runs another session.
-    async fn ensure_gen(&self, session: &Session) -> Result<u32, String> {
-        let _lane = self.gen_lane.lock().await;
+    /// Every wait in it (another spawn, the models route, the initialisation) ends as soon as `turn` is interrupted
+    /// or killed or a release begins; a generation already started then goes on initialising by itself.
+    async fn ensure_gen(&self, session: &Session, turn: Option<Uuid>) -> Result<u32, GenError> {
+        let _lane = tokio::select! {
+            biased;
+            () = self.until_cancelled(turn) => return Err(GenError::Canceled),
+            l = self.gen_lane.lock() => l,
+        };
         let live = {
             let st = lock(&self.st);
             st.live.as_ref().map(|g| (g.n, g.session_id.clone(), g.initialized))
@@ -1239,16 +1342,20 @@ impl Driver {
                 if init {
                     return Ok(n);
                 }
-                // a generation spawned by another caller: wait for its initialisation
-                let ok = self
-                    .wait_until(Some(Instant::now() + INIT_WAIT), |s| {
-                        s.live.as_ref().is_none_or(|g| g.n != n || g.initialized)
-                    })
-                    .await;
-                let still = lock(&self.st).live.as_ref().is_some_and(|g| g.n == n && g.initialized);
-                if ok && still {
+                // initialising (a spawn whose turn was stopped meanwhile): wait for it
+                self.wait_until(Some(Instant::now() + INIT_WAIT), |s| {
+                    s.live.as_ref().is_none_or(|g| g.n != n || g.initialized) || s.cancelled(turn)
+                })
+                .await;
+                if lock(&self.st).cancelled(turn) {
+                    return Err(GenError::Canceled);
+                }
+                if lock(&self.st).live.as_ref().is_some_and(|g| g.n == n && g.initialized) {
                     return Ok(n);
                 }
+                // it never initialised: it ends before another starts on the same session
+                tracing::warn!(gen = n, "a generation that did not initialise is killed");
+                self.kill_gen(n, Why::Init).await;
             } else {
                 tracing::info!(live = %sid, wanted = %session.id(), "another session: generation ended");
                 self.end_generation(
@@ -1258,32 +1365,46 @@ impl Driver {
                 .await;
             }
         }
+        if let Some(g) = lock(&self.st).live.as_ref() {
+            // never two Claude Codes: one that would not end blocks the next
+            return Err(GenError::Failed(format!(
+                "the previous Claude Code (generation {}) would not end",
+                g.n
+            )));
+        }
         if let Some(until) = lock(&self.st).failing_until
             && Instant::now() < until
         {
-            return Err("Claude Code would not start".into());
+            return Err(GenError::Failed("Claude Code would not start".into()));
         }
-        self.spawn(session).await
+        self.spawn(session, turn).await
     }
 
-    async fn spawn(&self, session: &Session) -> Result<u32, String> {
+    async fn spawn(&self, session: &Session, turn: Option<Uuid>) -> Result<u32, GenError> {
         let Some(ctx) = self.ctx() else {
-            return Err("not attached".into());
+            return Err(GenError::Failed("not attached".into()));
         };
-        let models = self.models().await?;
-        let descriptor = self.hermit.descriptor().ok_or("no descriptor")?;
+        let models = tokio::select! {
+            biased;
+            () = self.until_cancelled(turn) => return Err(GenError::Canceled),
+            m = self.models() => m.map_err(GenError::Failed)?,
+        };
+        let descriptor = self
+            .hermit
+            .descriptor()
+            .ok_or_else(|| GenError::Failed("no descriptor".into()))?;
         let env = launch::env(&ctx.boot, &descriptor.env, &models);
         let n = {
             let mut st = lock(&self.st);
-            if st.release.is_some() || st.quiesced {
-                // a release or pause has begun: nothing new is started on this sandbox
-                return Err(Self::stopped_message(&st));
+            if st.cancelled(turn) {
+                // stopped, or a release or pause has begun: nothing new is started on this sandbox
+                return Err(GenError::Canceled);
             }
             st.last_gen += 1;
             st.last_gen
         };
         let dir = self.cfg.gen_dir.join(n.to_string());
-        std::fs::create_dir_all(&dir).map_err(|e| format!("generation directory: {e}"))?;
+        std::fs::create_dir_all(&dir).map_err(|e| GenError::Failed(format!("generation directory: {e}")))?;
         let stdout = dir.join("stdout.ndjson");
         let stderr = dir.join("stderr.log");
         let spec = self.cfg.launch.spec(
@@ -1293,7 +1414,10 @@ impl Driver {
             stderr.to_string_lossy().into_owned(),
             ctx.cgroup.clone(),
         );
-        let spawned = self.keeper_call(move |k| k.spawn_tracked(&spec)).await?;
+        let spawned = self
+            .keeper_call(move |k| k.spawn_tracked(&spec))
+            .await
+            .map_err(GenError::Failed)?;
         tracing::info!(gen = n, pid = spawned.pid, session = %session.id(), resume = matches!(session, Session::Resume(_)), "claude started");
         let (tx, rx) = mpsc::unbounded_channel();
         let (init_tx, init_rx) = oneshot::channel();
@@ -1311,7 +1435,8 @@ impl Driver {
                 started_at: now(),
                 why: None,
                 writer: tx.clone(),
-                etag: descriptor.etag.clone(),
+                // what the managed files hold now (written at attach and at each start's step 1)
+                etag: st.etag.clone(),
             });
             st.control_waiters.insert(init_id.clone(), init_tx);
         });
@@ -1322,26 +1447,37 @@ impl Driver {
             bytes: control::initialize(&init_id),
             done: None,
         });
-        let r = tokio::time::timeout(INIT_WAIT, init_rx).await;
-        match r {
-            Ok(Ok(Ok(()))) => {
-                self.with(Change::State, |st, _| {
-                    if let Some(g) = st.live.as_mut().filter(|g| g.n == n) {
-                        g.initialized = true;
-                    }
-                });
-                Ok(n)
-            }
-            other => {
-                let why = match other {
-                    Ok(Ok(Err(e))) => format!("Claude Code refused to initialise: {e}"),
-                    Ok(Err(_)) => "Claude Code exited before it initialised".into(),
-                    _ => "Claude Code did not initialise within 30 s".into(),
-                };
+        // the initialisation is seen through by its own task, so a turn stopped meanwhile does not wait for it
+        let me = self.arc();
+        self.go(async move {
+            let verdict = match tokio::time::timeout(INIT_WAIT, init_rx).await {
+                Ok(Ok(Ok(()))) => Ok(()),
+                Ok(Ok(Err(e))) => Err(format!("Claude Code refused to initialise: {e}")),
+                Ok(Err(_)) => Err("Claude Code exited before it initialised".into()),
+                Err(_) => Err("Claude Code did not initialise within 30 s".into()),
+            };
+            if let Err(why) = &verdict {
                 tracing::warn!(gen = n, why = %why, "claude not initialised");
-                self.kill_gen(n, Why::Init).await;
-                Err(why)
+                me.kill_gen(n, Why::Init).await;
             }
+            me.with(Change::State, |st, _| {
+                if verdict.is_ok()
+                    && let Some(g) = st.live.as_mut().filter(|g| g.n == n)
+                {
+                    g.initialized = true;
+                }
+                st.init_verdict = Some((n, verdict));
+            });
+        });
+        self.wait_until(None, |s| {
+            s.init_verdict.as_ref().is_some_and(|(v, _)| *v == n) || s.cancelled(turn)
+        })
+        .await;
+        let st = lock(&self.st);
+        match &st.init_verdict {
+            Some((v, Ok(()))) if *v == n => Ok(n),
+            Some((v, Err(e))) if *v == n => Err(GenError::Failed(e.clone())),
+            _ => Err(GenError::Canceled),
         }
     }
 
@@ -1700,81 +1836,57 @@ impl Driver {
         n
     }
 
-    #[allow(clippy::too_many_lines)] // the steps of 10.2 in order
-    async fn start_turn(&self, seq: u64, turn_id: Uuid, s: StartTurn) {
-        let _lane = self.turn_lane.lock().await;
-        let Some(ctx) = self.ctx() else { return };
-        let conversation = ctx.conversation;
-        let delivered = lock(&self.st).delivered.get(&seq).cloned().unwrap_or_default();
-        if delivered.state == "running" {
-            self.ack_in(
-                Some(turn_id),
-                seq,
-                AckResult {
-                    delivered: Some(true),
-                    ..AckResult::default()
-                },
-            );
-            return;
+    /// Where a `start_turn`'s message is kept between its `written` record and its delivery: a replay after a
+    /// restart sends these bytes again (10.2) rather than building them anew.
+    fn message_path(&self, n: u32, seq: u64) -> PathBuf {
+        self.cfg.gen_dir.join(n.to_string()).join(format!("stdin-{seq}.ndjson"))
+    }
+
+    async fn save_message(&self, n: u32, seq: u64, line: &[u8]) {
+        let path = self.message_path(n, seq);
+        let bytes = line.to_vec();
+        let r = tokio::task::spawn_blocking(move || {
+            let tmp = path.with_extension("tmp");
+            std::fs::write(&tmp, &bytes)?;
+            std::fs::rename(&tmp, &path)
+        })
+        .await
+        .map_err(std::io::Error::other)
+        .and_then(|r| r);
+        if let Err(e) = r {
+            // a replay then builds the message again
+            tracing::warn!(seq, error = %e, "the message was not kept for a replay");
         }
-        // the one door: busy at once, or refused because a release or pause has begun
-        let admitted = ctx.lifecycle.upgrade().is_some_and(|l| {
-            l.admit(|| {
-                self.with(Change::State, |st, _| st.starting = Some(turn_id));
-            })
-        });
-        if !admitted {
-            tracing::info!(turn = %turn_id, "start_turn not admitted: a release or pause has begun");
-            lock(&self.inflight).remove(&seq);
-            return;
+    }
+
+    fn drop_message(&self, n: u32, seq: u64) {
+        let _ = std::fs::remove_file(self.message_path(n, seq));
+    }
+
+    /// Ends the preparation of `turn_id` that was interrupted, killed, or overtaken by a release or pause: nothing
+    /// was written, and its end is reported (`canceled`, or `failed` `sandbox.lost`).
+    fn stop_preparing(st: &mut St, fx: &mut Vec<Fx>, turn_id: Uuid) {
+        st.starting = None;
+        if st.cancel_starting == Some(turn_id) {
+            st.cancel_starting = None;
         }
-        let fail = |me: &Self, msg: String| {
-            tracing::warn!(turn = %turn_id, error = %msg, "turn failed before it started");
-            me.with(Change::State, |st, fx| {
-                st.starting = None;
-                if st.cancel_starting == Some(turn_id) {
-                    st.cancel_starting = None;
-                }
-                let err = if st.release.is_some() {
-                    error(DataCode::SandboxLost, Self::stopped_message(st))
-                } else {
-                    error(DataCode::RunError, msg.clone())
-                };
-                fx.push(Fx::Report(Item::state(
-                    turn_id,
-                    end_report(ReportedState::Failed, Some(err)),
-                )));
-            });
-            me.ack_in(Some(turn_id), seq, err_ack(&msg));
+        let report = if st.release.is_some() || st.quiesced {
+            end_report(
+                ReportedState::Failed,
+                Some(error(DataCode::SandboxLost, Self::stopped_message(st))),
+            )
+        } else {
+            end_report(ReportedState::Canceled, None)
         };
-        let session = match &s.resume.provider_session_id {
-            Some(id) => Session::Resume(id.clone()),
-            None => Session::New(conversation.to_string()),
-        };
-        if delivered.state == "written" {
-            // a restart between the record and the report: the same message again, with the same msg_id (10.2)
-            let alive = lock(&self.st).live.as_ref().map(|g| g.n);
-            if alive.is_none() || alive != delivered.generation {
-                self.with(Change::State, |st, fx| {
-                    st.starting = None;
-                    fx.push(Fx::Report(Item::state(
-                        turn_id,
-                        end_report(
-                            ReportedState::Failed,
-                            Some(error(
-                                DataCode::RunExited,
-                                "Claude Code exited before the prompt was answered",
-                            )),
-                        ),
-                    )));
-                });
-                self.ack_in(Some(turn_id), seq, err_ack("Claude Code exited"));
-                return;
-            }
-        }
+        tracing::info!(turn = %turn_id, "turn stopped before its message was written");
+        fx.push(Fx::Report(Item::state(turn_id, report)));
+    }
+
+    /// Steps 1 to 3 of 10.2 for a new turn: the descriptor, the hold, the uploads; the message.
+    async fn prepare(&self, s: &StartTurn, replay: bool) -> Result<Vec<u8>, String> {
         // 1: the descriptor (a change is applied at the next idle point); 2: a hold is superseded (an agent turn
         // just takes the message, 7.5). A replay's turn already runs: neither applies.
-        if delivered.state != "written" {
+        if !replay {
             match self.hermit.refresh().await {
                 Ok(d) => {
                     self.apply_descriptor(&d);
@@ -1814,24 +1926,17 @@ impl Driver {
             });
         }
         let blob_deadline = Instant::now() + uploads::BLOB_RETRY_FOR;
-        let paths = match self
+        let paths = self
             .cfg
             .uploads
             .materialise(&self.reporter.calls(), &items, blob_deadline)
-            .await
-        {
-            Ok(p) => p,
-            Err(e) => return fail(self, e),
-        };
+            .await?;
         let mut images = Vec::new();
         for i in &s.images {
-            match uploads::blob(&self.reporter.calls(), &i.model_blob, blob_deadline).await {
-                Ok(bytes) => images.push(prompt::ImageBlock {
-                    media_type: i.model_mime.clone(),
-                    bytes,
-                }),
-                Err(e) => return fail(self, e),
-            }
+            images.push(prompt::ImageBlock {
+                media_type: i.model_mime.clone(),
+                bytes: uploads::blob(&self.reporter.calls(), &i.model_blob, blob_deadline).await?,
+            });
         }
         let files: Vec<prompt::Attached> = s
             .files
@@ -1852,16 +1957,144 @@ impl Driver {
             })
             .collect();
         let text = prompt::text(&s.text, &files, &shown);
-        let line = prompt::user_line(&prompt::content(text, &images), &s.sent_at.to_wire());
-        drop(images);
-        // 4: a generation
-        let n = match self.ensure_gen(&session).await {
-            Ok(n) => n,
-            Err(e) => return fail(self, e),
+        Ok(prompt::user_line(&prompt::content(text, &images), &s.sent_at.to_wire()))
+    }
+
+    #[allow(clippy::too_many_lines)] // the steps of 10.2 in order
+    async fn start_turn(&self, seq: u64, turn_id: Uuid, s: StartTurn) {
+        let _lane = self.turn_lane.lock().await;
+        let Some(ctx) = self.ctx() else { return };
+        let conversation = ctx.conversation;
+        let delivered = lock(&self.st).delivered.get(&seq).cloned().unwrap_or_default();
+        let delivered_ack = |me: &Self, yes: bool| {
+            me.ack_in(
+                Some(turn_id),
+                seq,
+                AckResult {
+                    delivered: Some(yes),
+                    ..AckResult::default()
+                },
+            );
+        };
+        if delivered.state == "running" {
+            return delivered_ack(self, true);
+        }
+        // a restart between the record and the report (10.2): the restored turn runs on that generation already
+        let replay = delivered.state == "written";
+        if replay {
+            let (alive, current) = {
+                let st = lock(&self.st);
+                (
+                    st.live.as_ref().map(|g| g.n),
+                    st.turn.as_ref().is_some_and(|t| t.id == turn_id)
+                        || st.queued.as_ref().is_some_and(|t| t.id == turn_id),
+                )
+            };
+            if alive.is_none() || alive != delivered.generation {
+                self.with(Change::State, |_, fx| {
+                    fx.push(Fx::Report(Item::state(
+                        turn_id,
+                        end_report(
+                            ReportedState::Failed,
+                            Some(error(
+                                DataCode::RunExited,
+                                "Claude Code exited before the prompt was answered",
+                            )),
+                        ),
+                    )));
+                });
+                return self.ack_in(Some(turn_id), seq, err_ack("Claude Code exited"));
+            }
+            if !current {
+                // the restored turn already ended: Claude Code had the message and answered it
+                return delivered_ack(self, true);
+            }
+        }
+        // the one door: busy at once, or refused because a release or pause has begun (a replay's turn is installed
+        // already: an interrupt or kill finds it there)
+        let admitted = ctx.lifecycle.upgrade().is_some_and(|l| {
+            l.admit(|| {
+                if !replay {
+                    self.with(Change::State, |st, _| st.starting = Some(turn_id));
+                }
+            })
+        });
+        if !admitted {
+            tracing::info!(turn = %turn_id, "start_turn not admitted: a release or pause has begun");
+            lock(&self.inflight).remove(&seq);
+            return;
+        }
+        let fail = |me: &Self, msg: String| {
+            tracing::warn!(turn = %turn_id, error = %msg, "turn failed before it started");
+            me.with(Change::State, |st, fx| {
+                st.starting = None;
+                if st.cancel_starting == Some(turn_id) {
+                    st.cancel_starting = None;
+                }
+                let err = if st.release.is_some() {
+                    error(DataCode::SandboxLost, Self::stopped_message(st))
+                } else {
+                    error(DataCode::RunError, msg.clone())
+                };
+                fx.push(Fx::Report(Item::state(
+                    turn_id,
+                    end_report(ReportedState::Failed, Some(err)),
+                )));
+            });
+            me.ack_in(Some(turn_id), seq, err_ack(&msg));
+        };
+        // stopped while it was prepared: nothing is written (a replay's turn ends as any running turn does)
+        let stopped = |me: &Self| {
+            me.with(Change::State, |st, fx| {
+                if replay {
+                    st.starting = None;
+                } else {
+                    Self::stop_preparing(st, fx, turn_id);
+                }
+            });
+            delivered_ack(me, false);
+        };
+        let session = match &s.resume.provider_session_id {
+            Some(id) => Session::Resume(id.clone()),
+            None => Session::New(conversation.to_string()),
+        };
+        // a replay sends the bytes it recorded: nothing is downloaded or renamed onto the workspace again (the
+        // agent may have changed those files since)
+        let kept = match (replay, delivered.generation) {
+            (true, Some(g)) => tokio::fs::read(self.message_path(g, seq)).await.ok().map(|b| (g, b)),
+            _ => None,
+        };
+        if replay && kept.is_none() {
+            tracing::warn!(seq, "the replayed message was not kept: built again");
+        }
+        let (n, line) = if let Some(k) = kept {
+            k
+        } else {
+                // 1-3, then 4: a generation; an interrupt, kill, release or pause ends the wait at once (7.8)
+                let line = tokio::select! {
+                    biased;
+                    () = self.until_cancelled(Some(turn_id)) => {
+                        self.cfg.uploads.sweep().await;
+                        return stopped(self);
+                    }
+                    r = self.prepare(&s, replay) => match r {
+                        Ok(l) => l,
+                        Err(e) => return fail(self, e),
+                    },
+                };
+                match self.ensure_gen(&session, Some(turn_id)).await {
+                    Ok(n) => {
+                        if !replay {
+                            self.save_message(n, seq, &line).await;
+                        }
+                        (n, line)
+                    }
+                    Err(GenError::Canceled) => return stopped(self),
+                    Err(GenError::Failed(e)) => return fail(self, e),
+                }
         };
         // 5: the record, the pending input and the person's turn together, before the keeper has the message:
         // Claude Code's answer can never be read without the turn it belongs to (7.5), and a restart finds both
-        let replay = delivered.state == "written";
         let id = if replay {
             delivered
                 .msg_id
@@ -1872,23 +2105,13 @@ impl Driver {
             msg_id(&ctx.boot_id, seq)
         };
         let prepared = self.with(Change::State, |st, fx| {
-            let cancel = st.cancel_starting == Some(turn_id);
-            if cancel {
-                st.cancel_starting = None;
-            }
-            if cancel || st.release.is_some() || st.quiesced {
+            if st.cancelled(Some(turn_id)) {
                 // stopped (or released) while it was prepared: the message is never written
-                st.starting = None;
-                let report = if st.release.is_some() || st.quiesced {
-                    end_report(
-                        ReportedState::Failed,
-                        Some(error(DataCode::SandboxLost, Self::stopped_message(st))),
-                    )
+                if replay {
+                    st.starting = None;
                 } else {
-                    end_report(ReportedState::Canceled, None)
-                };
-                tracing::info!(turn = %turn_id, "turn stopped before its message was written");
-                fx.push(Fx::Report(Item::state(turn_id, report)));
+                    Self::stop_preparing(st, fx, turn_id);
+                }
                 return Prepared::Stopped;
             }
             let Some(sid) = st.live.as_ref().filter(|g| g.n == n).map(|g| g.session_id.clone()) else {
@@ -1909,7 +2132,7 @@ impl Driver {
             let current = st.turn.as_ref().is_some_and(|t| t.id == turn_id)
                 || st.queued.as_ref().is_some_and(|t| t.id == turn_id);
             if replay && !current {
-                // the restored turn already ended: Claude Code had the message and answered it
+                // the restored turn ended meanwhile: Claude Code had the message and answered it
                 return Prepared::Answered;
             }
             let after = if replay {
@@ -1948,25 +2171,16 @@ impl Driver {
         match prepared {
             Prepared::Write => {}
             Prepared::Stopped => {
-                return self.ack_in(
-                    Some(turn_id),
-                    seq,
-                    AckResult {
-                        delivered: Some(false),
-                        ..AckResult::default()
-                    },
-                );
+                self.drop_message(n, seq);
+                return delivered_ack(self, false);
             }
-            Prepared::Gone => return self.ack_in(Some(turn_id), seq, err_ack("Claude Code exited")),
+            Prepared::Gone => {
+                self.drop_message(n, seq);
+                return self.ack_in(Some(turn_id), seq, err_ack("Claude Code exited"));
+            }
             Prepared::Answered => {
-                return self.ack_in(
-                    Some(turn_id),
-                    seq,
-                    AckResult {
-                        delivered: Some(true),
-                        ..AckResult::default()
-                    },
-                );
+                self.drop_message(n, seq);
+                return delivered_ack(self, true);
             }
         }
         ctx.persisted.flush().await;
@@ -1993,7 +2207,8 @@ impl Driver {
                 .into_iter()
                 .flatten()
                 .find(|t| t.id == turn_id)?;
-            t.handed = true;
+            // a restored turn whose message was with the writer had its interrupt written then: not again
+            let was_handed = std::mem::replace(&mut t.handed, true);
             let (tx, rx) = oneshot::channel();
             w.send(Write {
                 msg_id: id,
@@ -2001,7 +2216,7 @@ impl Driver {
                 done: Some(tx),
             })
             .ok()?;
-            if t.interrupt_sent.is_some() {
+            if t.interrupt_sent.is_some() && !was_handed {
                 tracing::info!(turn = %turn_id, "interrupt sent");
                 let _ = w.send(Write {
                     msg_id: keeper::new_msg_id(),
@@ -2013,14 +2228,8 @@ impl Driver {
         });
         let Some(rx) = rx else {
             // killed or exited before the message was handed over: its end is reported already
-            return self.ack_in(
-                Some(turn_id),
-                seq,
-                AckResult {
-                    delivered: Some(false),
-                    ..AckResult::default()
-                },
-            );
+            self.drop_message(n, seq);
+            return delivered_ack(self, false);
         };
         if let Err(e) = rx.await.unwrap_or_else(|_| Err("writer gone".into())) {
             tracing::warn!(turn = %turn_id, error = %e, "prompt not delivered");
@@ -2042,6 +2251,7 @@ impl Driver {
                     )));
                 }
             });
+            self.drop_message(n, seq);
             return self.ack_in(Some(turn_id), seq, err_ack(&e));
         }
         // 6: delivered (the `running` report went with step 5), then the ack
@@ -2054,14 +2264,8 @@ impl Driver {
                 },
             );
         });
-        self.ack_in(
-            Some(turn_id),
-            seq,
-            AckResult {
-                delivered: Some(true),
-                ..AckResult::default()
-            },
-        );
+        self.drop_message(n, seq);
+        delivered_ack(self, true);
     }
 
     /// The turn an interrupt or kill for `turn_id` means: the current one (any, without an id), or the person's
@@ -2217,13 +2421,17 @@ impl Driver {
     fn heartbeat(&self) -> Heartbeat {
         let st = lock(&self.st);
         let ctx = self.ctx();
+        // a turn whose end report is still on its way (waiting for its lines, 8.2, or for magpie) is still the turn:
+        // magpie must neither take it for one the sandbox forgot nor end it before its last row (magpie 8.5)
+        let ending = st.ending.first().filter(|_| st.turn.is_none());
         Heartbeat {
-            turn_id: st.turn.as_ref().map(|t| t.id),
-            state: match st.run {
-                RunKind::Running | RunKind::Starting => HeartbeatState::Running,
-                RunKind::Stopping => HeartbeatState::Stopping,
-                RunKind::Held => HeartbeatState::Held,
-                RunKind::Idle => HeartbeatState::Idle,
+            turn_id: st.turn.as_ref().map(|t| t.id).or(ending.map(|e| e.id)),
+            state: match (ending, st.run) {
+                (Some(e), _) if e.stopping => HeartbeatState::Stopping,
+                (Some(_), _) | (None, RunKind::Running | RunKind::Starting) => HeartbeatState::Running,
+                (None, RunKind::Stopping) => HeartbeatState::Stopping,
+                (None, RunKind::Held) => HeartbeatState::Held,
+                (None, RunKind::Idle) => HeartbeatState::Idle,
             },
             tasks: u32::try_from(st.tracker.len()).unwrap_or(u32::MAX),
             last_turn: st.last_turn.as_ref().and_then(|l| {
@@ -2290,10 +2498,10 @@ impl Driver {
                     t.uuids.clone_from(&prior.run.pending_uuids);
                     if prior.run.interrupt_sent_at.is_some() {
                         // the grace goes on from where it was (the monotonic clock does not survive the process)
-                        let gone = Duration::from_millis(prior.run.interrupt_elapsed_ms.unwrap_or(0));
                         t.interrupt_sent = Some(now());
-                        t.interrupt_mono = Some(Instant::now().checked_sub(gone).unwrap_or_else(Instant::now));
+                        t.interrupt_mono = Some(ago(prior.run.interrupt_elapsed_ms.unwrap_or(0)));
                     }
+                    t.handed = prior.run.handed.unwrap_or(true);
                     t
                 });
             let queued = prior
@@ -2301,7 +2509,34 @@ impl Driver {
                 .queued_turn_id
                 .as_deref()
                 .and_then(|t| Uuid::parse_str(t).ok())
-                .map(|id| Turn::new(id, TurnOrigin::Person));
+                .map(|id| {
+                    let mut t = Turn::new(id, TurnOrigin::Person);
+                    if let Some(ms) = prior.run.queued_interrupt_elapsed_ms {
+                        t.interrupt_sent = Some(now());
+                        t.interrupt_mono = Some(ago(ms));
+                    }
+                    t.handed = prior.run.queued_handed.unwrap_or(true);
+                    t
+                });
+            // ended turns whose end report the previous supervisor had not got answered: sent again (idempotent)
+            for e in &prior.ending {
+                let (Ok(id), Ok(report)) = (
+                    Uuid::parse_str(&e.turn_id),
+                    serde_json::from_value::<TurnStateReport>(e.report.clone()),
+                ) else {
+                    continue;
+                };
+                let ending = Ending {
+                    id,
+                    report,
+                    uuids: e.uuids.clone(),
+                    generation: e.generation,
+                    stopping: e.stopping,
+                    last: e.last.clone(),
+                };
+                fx.push(Fx::Report(self.end_item(&ending)));
+                st.ending.push(ending);
+            }
             if let (Some((n, pid)), Some(g)) = (alive, prior.generation.as_ref()) {
                 let sid = g.session_id.clone().unwrap_or_default();
                 st.live = Some(Gen {
@@ -2318,8 +2553,14 @@ impl Driver {
                     why: None,
                     // replaced when the writer starts
                     writer: mpsc::unbounded_channel().0,
-                    etag: String::new(),
+                    // the managed files it started with (a run.json without it: those on disk)
+                    etag: if g.etag.is_empty() {
+                        st.etag.clone()
+                    } else {
+                        g.etag.clone()
+                    },
                 });
+                self.reporter.generation_ended(n.saturating_sub(1));
                 for t in [turn.as_ref(), queued.as_ref()].into_iter().flatten() {
                     fx.push(Fx::Report(match t.origin {
                         TurnOrigin::Agent => Item::AgentTurn(AgentTurnRequest {
@@ -2342,10 +2583,12 @@ impl Driver {
                         ask_id: a.ask_id.clone(),
                         cli_request_id: a.cli_request_id.clone(),
                         tool_name: a.tool_name.clone(),
-                        tool_use_id: None,
-                        since: now(),
-                        since_mono: Instant::now(),
-                        lane,
+                        tool_use_id: a.tool_use_id.clone(),
+                        since: OffsetDateTime::parse(&a.since, &time::format_description::well_known::Rfc3339)
+                            .unwrap_or_else(|_| now()),
+                        // the 30 min timeout goes on from where it was
+                        since_mono: ago(a.elapsed_ms.unwrap_or(0)),
+                        lane: a.lane.as_deref().and_then(|l| Uuid::parse_str(l).ok()).or(lane),
                     })
                     .collect();
                 st.run = RunKind::parse(&prior.run.state);
@@ -2354,7 +2597,11 @@ impl Driver {
                 }
                 st.idle_since = (st.run == RunKind::Idle).then(now);
             } else {
-                // the generation died while no supervisor watched: its turn failed (7.9)
+                // the generation died while no supervisor watched: its turn failed (7.9), and nothing it wrote is
+                // waited for any more
+                if let Some(g) = prior.generation.as_ref() {
+                    self.reporter.generation_ended(g.n);
+                }
                 let tail = prior
                     .generation
                     .as_ref()
@@ -2503,7 +2750,11 @@ impl Agent for Driver {
                 conversation,
                 rt: tokio::runtime::Handle::current(),
             });
-            // 4: the managed files (at every start: idempotent, and the descriptor may have changed)
+            // 4: the managed files (at every start: idempotent, and the descriptor may have changed); what they held
+            // before is known from run.json, so a write that fails now leaves the old etag standing
+            if let Some(p) = &ctx.prior {
+                lock(&self.st).etag.clone_from(&p.managed_etag);
+            }
             self.apply_descriptor(&ctx.descriptor);
             let alive = match &ctx.generation {
                 crate::start::Reattach::Alive { n, pid } => Some((*n, *pid)),
@@ -2519,19 +2770,30 @@ impl Agent for Driver {
             // the live generation's loops, from the saved offset
             let resumed = {
                 let mut st = lock(&self.st);
-                let etag = st.etag.clone();
                 st.live.as_mut().map(|g| {
                     let (tx, rx) = mpsc::unbounded_channel();
                     g.writer = tx;
-                    g.etag = etag;
-                    (g.n, g.pid, g.since, g.stdout.clone(), g.stderr.clone(), g.offset, rx)
+                    (
+                        g.n,
+                        g.pid,
+                        g.since,
+                        g.stdout.clone(),
+                        g.stderr.clone(),
+                        g.offset,
+                        g.initialized,
+                        rx,
+                    )
                 })
             };
-            if let Some((n, pid, since, out, err, offset, rx)) = resumed {
-                tracing::info!(gen = n, pid, offset, "claude re-attached");
+            let mut stale = None;
+            if let Some((n, pid, since, out, err, offset, initialized, rx)) = resumed {
+                tracing::info!(gen = n, pid, offset, initialized, "claude re-attached");
                 let turn = lock(&self.st).turn.as_ref().map(|t| t.id);
                 self.transcript.set_turn(turn);
                 self.start_gen_tasks(n, pid, since, out, err, offset, rx);
+                // one still initialising when the previous supervisor went (its answer may be read already): ended
+                // and started again, never left beside a new one
+                stale = (!initialized).then_some(n);
             }
             let me = self.arc();
             me.go(me.reporter.clone().run());
@@ -2540,17 +2802,26 @@ impl Agent for Driver {
             me.go(me.clone().heartbeat_loop());
             self.start_poll();
             // pre-spawn (4.3 step 8) so the first turn does not pay for start-up and resume
-            if alive.is_none() {
+            if alive.is_none() || stale.is_some() {
                 let session = match &ctx.lease.provider_session_id {
                     Some(s) => Session::Resume(s.clone()),
                     None => Session::New(conversation.to_string()),
                 };
                 let me = self.arc();
                 self.go(async move {
-                    if let Err(e) = me.ensure_gen(&session).await {
+                    if let Some(n) = stale {
+                        tracing::warn!(gen = n, "a generation found initialising after a restart: ended");
+                        let _gen = me.gen_lane.lock().await;
+                        me.kill_gen(n, Why::Stale).await;
+                    }
+                    if let Err(GenError::Failed(e)) = me.ensure_gen(&session, None).await {
                         tracing::warn!(error = %e, first, "pre-spawn failed");
                     }
                 });
+            } else if lock(&self.st).run == RunKind::Idle {
+                // idle at the restart: an idle point (a configuration changed meanwhile is applied now, 6.4)
+                let me = self.arc();
+                self.go(async move { me.idle_point().await });
             }
         })
     }
@@ -2688,7 +2959,7 @@ impl Agent for Driver {
         req: supervisor_api::local::SendUserFileRequest,
         fds: Vec<std::os::fd::OwnedFd>,
     ) -> BoxFuture<'_, Result<supervisor_api::local::SendUserFileReply, String>> {
-        Box::pin(async move { crate::sent_files::send(self.reporter.calls(), req, fds).await })
+        Box::pin(async move { crate::sent_files::send(&self.reporter, req, fds).await })
     }
 
     fn asks(&self) -> Vec<Value> {

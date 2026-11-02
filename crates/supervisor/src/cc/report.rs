@@ -29,6 +29,13 @@ use crate::limits::{REPORT_RETRY_FIRST, REPORT_RETRY_MAX};
 pub const TASKS_BATCH: Duration = Duration::from_millis(250);
 /// The longest `retryAfterMs` honoured for one wait.
 const RETRY_AFTER_MAX: Duration = Duration::from_secs(30);
+/// The longest an end report waits for its uuids while the generation lives (a uuid stdout showed that Claude Code
+/// never writes to the main transcript would otherwise hold the turn's lane for ever). Well above the stuck rule's
+/// 10 min, so a slow magpie is never cut short.
+pub const UUID_WAIT_CAP: Duration = Duration::from_mins(30);
+/// After the generation exited and the writes in flight are answered: how long to look whether the uuids are
+/// stored after all.
+const UUID_LAST_LOOK: Duration = Duration::from_secs(2);
 
 /// Called once magpie answered an item (`true`) or it was given up (`false`: the lease was lost).
 pub type Done = Box<dyn FnOnce(bool) + Send>;
@@ -39,8 +46,11 @@ pub enum Wait {
     /// Nothing (a turn that never ran, a `running` report).
     #[default]
     Nothing,
-    /// magpie has acknowledged main-transcript writes holding these uuids.
-    Uuids(Vec<String>),
+    /// magpie has acknowledged main-transcript writes holding these uuids, written by `generation`. When that
+    /// generation exits first (a kill, a release, a crash after the result), the writes in flight are answered and
+    /// the report goes without `lastUuid` unless the lines are stored by then: lines a dead generation never wrote
+    /// cannot be waited for. [`UUID_WAIT_CAP`] bounds the wait as a last resort (logged as an error).
+    Uuids { uuids: Vec<String>, generation: u32 },
     /// The generation is gone: the filesystem writes already in flight are answered.
     Settle,
 }
@@ -107,7 +117,8 @@ enum Attempt {
     GiveUp(String),
 }
 
-fn retry_after(e: &ClientError) -> Option<Duration> {
+/// The wait magpie asked for (`retryAfterMs`, or `retry-after`), at most 30 s.
+pub(crate) fn retry_after(e: &ClientError) -> Option<Duration> {
     let r = e.api()?;
     r.retry_after_ms
         .map(Duration::from_millis)
@@ -150,6 +161,8 @@ pub struct Reporter {
     pending: watch::Sender<usize>,
     tasks: Mutex<Vec<TaskReportEvent>>,
     tasks_pending: watch::Sender<usize>,
+    /// The highest generation that has exited.
+    gone: watch::Sender<u32>,
     /// Agent-started turns magpie refused (409 `bad_transition`: a person's turn was active, 7.5's race).
     refused: Mutex<HashSet<Uuid>>,
 }
@@ -175,8 +188,49 @@ impl Reporter {
             pending: watch::channel(0).0,
             tasks: Mutex::new(Vec::new()),
             tasks_pending: watch::channel(0).0,
+            gone: watch::channel(0).0,
             refused: Mutex::new(HashSet::new()),
         })
+    }
+
+    /// Generation `n` exited (every earlier one is gone too): end reports waiting for its lines stop waiting.
+    pub fn generation_ended(&self, n: u32) {
+        self.gone.send_if_modified(|g| {
+            let later = n > *g;
+            if later {
+                *g = n;
+            }
+            later
+        });
+    }
+
+    /// Waits for `uuids` (8.2); `(stuck, keep lastUuid)`.
+    async fn wait_uuids(&self, turn: Uuid, uuids: Vec<String>, generation: u32) -> (bool, bool) {
+        if uuids.is_empty() {
+            return (false, false);
+        }
+        let mut gone = self.gone.subscribe();
+        let waited = tokio::select! {
+            biased;
+            s = self.transcript.wait_stored(uuids.clone()) => Some(s),
+            _ = gone.wait_for(|g| *g >= generation) => None,
+            () = tokio::time::sleep(UUID_WAIT_CAP) => {
+                tracing::error!(turn = %turn, generation, uuids = uuids.len(), "a turn's lines were not stored in 30 min: its end is sent without lastUuid");
+                return (false, false);
+            }
+        };
+        match waited {
+            Some(Stored::All) => (false, true),
+            Some(Stored::Stuck) => (true, false),
+            None => {
+                // the generation is gone: what it wrote is answered first, then one last look
+                self.transcript.settle().await;
+                let last = tokio::time::timeout(UUID_LAST_LOOK, self.transcript.wait_stored(uuids)).await;
+                let stored = matches!(last, Ok(Stored::All));
+                tracing::info!(turn = %turn, generation, stored, "the generation exited while the turn's end waited for its lines");
+                (false, stored)
+            }
+        }
     }
 
     /// The lease the reports carry.
@@ -296,7 +350,13 @@ impl Reporter {
             } => {
                 let stuck = match wait {
                     Wait::Nothing => false,
-                    Wait::Uuids(u) => !u.is_empty() && self.transcript.wait_stored(u).await == Stored::Stuck,
+                    Wait::Uuids { uuids, generation } => {
+                        let (stuck, keep) = self.wait_uuids(turn, uuids, generation).await;
+                        if !keep {
+                            report.last_uuid = None;
+                        }
+                        stuck
+                    }
                     Wait::Settle => {
                         self.transcript.settle().await;
                         false
@@ -499,6 +559,115 @@ mod tests {
             classify(&refusal(400, ErrorCode::BadRequest)),
             Attempt::GiveUp(_)
         ));
+    }
+
+    /// Real reports (an agent turn, its states, an ask, an ack) through fake magpie answering 503 to everything for
+    /// 20 min (paused time): none is dropped, each arrives exactly once, in its lane's order.
+    #[tokio::test(start_paused = true)]
+    #[allow(clippy::too_many_lines)] // the outage, then every report checked
+    async fn real_reports_survive_a_20_minute_fake_magpie_outage() {
+        use magpie_api::sandbox::{AgentTurnRequest, CommandBody};
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let magpie = aviary_fakes::magpie::FakeMagpie::unguarded();
+        let served = magpie.serve().await.unwrap();
+        let cid = Uuid::now_v7();
+        let mut h = reqwest::header::HeaderMap::new();
+        for (k, v) in [
+            ("aviary-sandbox-id", "sbx-outage".to_owned()),
+            ("aviary-sandbox-conversation", cid.to_string()),
+            ("aviary-sandbox-person", "staff@example.org".to_owned()),
+        ] {
+            h.insert(k, v.parse().unwrap());
+        }
+        let http = reqwest::Client::builder().default_headers(h).build().unwrap();
+        let client = magpie_api::client::Client::new(http, served.url(), "t");
+        let lease = client.sandbox(None).lease().await.unwrap();
+        let r = Reporter::new(client, Arc::new(crate::cc::Stored0));
+        r.set_lease(lease.lease_id);
+        let seq = magpie.push_command(cid, None, CommandBody::StopTasks(magpie_api::Empty {}));
+        let fault = magpie
+            .faults()
+            .everywhere(aviary_fakes::fault::FaultKind::Unavailable { retry_after_secs: 1 });
+        let runner = tokio::spawn(r.clone().run());
+        let turn = Uuid::now_v7();
+        let at = magpie_api::Timestamp::now();
+        let state = |state| TurnStateReport {
+            state,
+            at,
+            provider_session_id: None,
+            transcript_path: None,
+            exit_code: None,
+            error: None,
+            held: None,
+            tasks: None,
+            last_uuid: None,
+            usage: None,
+            duration_ms: None,
+        };
+        r.push(Item::AgentTurn(AgentTurnRequest {
+            turn_id: turn,
+            origin: magpie_api::turns::TurnOrigin::Agent,
+            at,
+        }));
+        r.push(Item::state(turn, state(ReportedState::Running)));
+        r.push_in(
+            Some(turn),
+            Item::AskOpen(AskReport {
+                ask_id: "ask-outage".into(),
+                tool_name: "AskUserQuestion".into(),
+                tool_use_id: Some("toolu_1".into()),
+                input: serde_json::Map::new(),
+            }),
+        );
+        r.push(Item::state(turn, state(ReportedState::Completed)));
+        r.push(Item::Ack {
+            seq,
+            result: AckResult::default(),
+            done: None,
+        });
+        let start = Instant::now();
+        tokio::time::sleep(Duration::from_mins(20)).await;
+        assert_eq!(
+            magpie.script().calls().len(),
+            1,
+            "nothing but the lease got through the outage"
+        );
+        assert!(
+            magpie.faults().hits() > 100,
+            "retried throughout: {}",
+            magpie.faults().hits()
+        );
+        magpie.faults().remove(fault);
+        assert!(r.drain(Instant::now() + Duration::from_secs(60)).await);
+        assert!(start.elapsed() < Duration::from_mins(21));
+        let routes: Vec<&str> = magpie
+            .script()
+            .calls()
+            .iter()
+            .map(|c| c.route)
+            .filter(|r| *r != "lease")
+            .collect();
+        let count = |n: &str| routes.iter().filter(|x| **x == n).count();
+        assert_eq!(count("agent_turn"), 1, "{routes:?}");
+        assert_eq!(count("turn_state"), 2, "{routes:?}");
+        assert_eq!(count("ask_open"), 1, "{routes:?}");
+        assert_eq!(count("ack_command"), 1, "{routes:?}");
+        let states: Vec<String> = magpie
+            .script()
+            .calls_to("turn_state")
+            .iter()
+            .map(|c| c.body.as_ref().unwrap()["state"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(states, ["running", "completed"]);
+        let lane: Vec<&str> = routes.iter().copied().filter(|x| *x != "ack_command").collect();
+        assert_eq!(
+            lane,
+            ["agent_turn", "turn_state", "ask_open", "turn_state"],
+            "the turn's lane in order"
+        );
+        assert!(magpie.acks(cid).contains_key(&seq));
+        assert_eq!(r.given_up(), 0);
+        runner.abort();
     }
 
     /// 7.5's race: magpie refuses an agent turn while a person's turn is active (409 `bad_transition`). The

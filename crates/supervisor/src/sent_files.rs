@@ -7,7 +7,9 @@
 //!   tool so the model knows.
 //! - The supervisor hashes each descriptor, stages the send with magpie (`POST /v1/sandbox/sent-files` →
 //!   `missing`), streams each missing blob from offset 0 (a `sha_mismatch`, the file changed between the passes:
-//!   one full retry, then "the file changed while it was being sent"), and commits, all within 110 s.
+//!   one full retry, then "the file changed while it was being sent"), and commits, all within 110 s. A file over
+//!   64 MiB is refused by its size before it is read; 5xx, 429, `conversation_migrating` and a lease the filesystem
+//!   re-took are retried within the budget.
 //! - [`serve_with_fds`] is `agent.sock`'s acceptor: the first read of each connection is a `recvmsg` whose
 //!   descriptors become the request's [`ReceivedFds`].
 
@@ -30,6 +32,7 @@ use supervisor_api::local::{
 };
 use tokio::io::{AsyncRead, AsyncWrite, Interest, ReadBuf};
 
+use crate::cc::report::Reporter;
 use crate::limits::{HOOK_BUDGET, REPORT_RETRY_FIRST, REPORT_RETRY_MAX};
 
 /// The hash pass's buffer.
@@ -64,7 +67,9 @@ fn pread(fd: RawFd, buf: &mut [u8], at: u64) -> io::Result<usize> {
 }
 
 /// Size and sha256 of a regular file's descriptor, read from offset 0.
-fn hash_fd(fd: &OwnedFd) -> io::Result<(u64, String)> {
+/// The size and sha256 of the regular file `fd`; `None` when it is (or grows while it is read) over `max` bytes,
+/// told by its size before a byte is read.
+fn hash_fd(fd: &OwnedFd, max: u64) -> io::Result<Option<(u64, String)>> {
     let f = fd.as_raw_fd();
     // SAFETY: fstat into a local struct.
     #[allow(unsafe_code)]
@@ -78,6 +83,9 @@ fn hash_fd(fd: &OwnedFd) -> io::Result<(u64, String)> {
     if st.st_mode & libc::S_IFMT != libc::S_IFREG {
         return Err(io::Error::other("not a regular file"));
     }
+    if u64::try_from(st.st_size).unwrap_or(u64::MAX) > max {
+        return Ok(None);
+    }
     let mut h = sha2::Sha256::new();
     let mut buf = vec![0u8; HASH_BUFFER];
     let mut at = 0u64;
@@ -88,8 +96,11 @@ fn hash_fd(fd: &OwnedFd) -> io::Result<(u64, String)> {
         }
         h.update(&buf[..n]);
         at += n as u64;
+        if at > max {
+            return Ok(None);
+        }
     }
-    Ok((at, hex(&h.finalize())))
+    Ok(Some((at, hex(&h.finalize()))))
 }
 
 /// The bytes of `fd` from offset 0 as a request body, read as the request goes.
@@ -120,27 +131,34 @@ fn body_of(fd: Arc<OwnedFd>) -> reqwest::Body {
     reqwest::Body::wrap_stream(stream)
 }
 
-fn retryable(e: &magpie_api::client::ClientError) -> bool {
-    e.is_retryable() || e.api().is_some_and(|r| r.status >= 500)
+/// Whether (and after how long) a refused call is tried again within the hook's budget: 5xx, transport errors,
+/// 429 and `409 conversation_migrating` (a migration or a replica draining), as the reports are; `lease_lost` when the
+/// lease changed meanwhile (the filesystem re-took it).
+/// A retry, after at least the wait magpie named (if any).
+struct Again(Option<Duration>);
+
+fn again(e: &magpie_api::client::ClientError, lease_changed: bool) -> Option<Again> {
+    let retry = match e.code() {
+        Some(ErrorCode::ConversationMigrating | ErrorCode::RateLimited) => true,
+        Some(ErrorCode::LeaseLost) => lease_changed,
+        _ => e.is_retryable() || e.api().is_some_and(|r| r.status >= 500 || r.status == 429),
+    };
+    retry.then(|| Again(crate::cc::report::retry_after(e)))
 }
 
 /// One staged-and-committed send; `Err(true)` when a blob arrived with another sha (the file changed).
-async fn attempt(
-    calls: &magpie_api::client::SandboxCalls<'_>,
-    req: &SendUserFileRequest,
-    fds: &[Arc<OwnedFd>],
-) -> Result<u32, (bool, String)> {
+async fn attempt(reporter: &Reporter, req: &SendUserFileRequest, fds: &[Arc<OwnedFd>]) -> Result<u32, (bool, String)> {
     let mut specs = Vec::with_capacity(fds.len());
     let mut total = 0u64;
     for (f, fd) in req.files.iter().zip(fds) {
         let d = fd.clone();
-        let (size, sha) = tokio::task::spawn_blocking(move || hash_fd(&d))
+        let hashed = tokio::task::spawn_blocking(move || hash_fd(&d, SENT_FILE_MAX_BYTES))
             .await
             .map_err(|e| (false, e.to_string()))?
             .map_err(|e| (false, format!("{}: {e}", f.path)))?;
-        if size > SENT_FILE_MAX_BYTES {
+        let Some((size, sha)) = hashed else {
             return Err((false, format!("{} is over {} MiB", f.path, SENT_FILE_MAX_BYTES >> 20)));
-        }
+        };
         total += size;
         specs.push(SentFileSpec {
             path: f.path.clone(),
@@ -160,51 +178,54 @@ async fn attempt(
         caption: req.caption.clone(),
         files: specs.clone(),
     };
-    let missing = retry_5xx(|| calls.sent_files(&staged))
+    let missing = retrying(reporter, || async { reporter.calls().sent_files(&staged).await })
         .await
-        .map_err(|e| (false, e))?
+        .map_err(|e| (false, e.to_string()))?
         .missing;
     for sha in missing {
         let Some(i) = specs.iter().position(|s| s.sha256 == sha) else {
             continue;
         };
         let fd = fds[i].clone();
-        let r = retry_5xx_raw(|| calls.sandbox_blob_put(&sha, body_of(fd.clone()))).await;
+        let r = retrying(reporter, || async {
+            reporter.calls().sandbox_blob_put(&sha, body_of(fd.clone())).await
+        })
+        .await;
         match r {
             Ok(_) => {}
             Err(e) if e.code() == Some(&ErrorCode::ShaMismatch) => return Err((true, e.to_string())),
             Err(e) => return Err((false, e.to_string())),
         }
     }
-    let done = retry_5xx(|| calls.sent_files_commit(&req.tool_use_id))
-        .await
-        .map_err(|e| (false, e))?;
+    let done = retrying(reporter, || async {
+        reporter.calls().sent_files_commit(&req.tool_use_id).await
+    })
+    .await
+    .map_err(|e| (false, e.to_string()))?;
     Ok(done.kept)
 }
 
-async fn retry_5xx_raw<T, F, Fut>(mut f: F) -> Result<T, magpie_api::client::ClientError>
+/// `f` until it succeeds or fails in a way no retry cures ([`again`]); the hook's budget bounds it.
+async fn retrying<T, F, Fut>(reporter: &Reporter, mut f: F) -> Result<T, magpie_api::client::ClientError>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, magpie_api::client::ClientError>>,
 {
     let mut delay = REPORT_RETRY_FIRST;
     loop {
+        let used = reporter.lease();
         match f().await {
-            Err(e) if retryable(&e) => {
-                tokio::time::sleep(delay).await;
-                delay = (delay * 2).min(REPORT_RETRY_MAX);
-            }
-            other => return other,
+            Err(e) => match again(&e, reporter.lease() != used) {
+                Some(Again(after)) => {
+                    tracing::info!(error = %e, "sent files: magpie refused, retried");
+                    tokio::time::sleep(after.map_or(delay, |a| a.max(delay))).await;
+                    delay = (delay * 2).min(REPORT_RETRY_MAX);
+                }
+                None => return Err(e),
+            },
+            ok => return ok,
         }
     }
-}
-
-async fn retry_5xx<T, F, Fut>(f: F) -> Result<T, String>
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<T, magpie_api::client::ClientError>>,
-{
-    retry_5xx_raw(f).await.map_err(|e| e.to_string())
 }
 
 /// Stores the hook's files with magpie (13; magpie 11.2). `Err` is the reason the hook prints.
@@ -212,7 +233,7 @@ where
 /// # Errors
 /// Why the files could not be kept.
 pub async fn send(
-    calls: magpie_api::client::SandboxCalls<'_>,
+    reporter: &Reporter,
     req: SendUserFileRequest,
     fds: Vec<OwnedFd>,
 ) -> Result<SendUserFileReply, String> {
@@ -228,9 +249,9 @@ pub async fn send(
     let fds: Vec<Arc<OwnedFd>> = fds.into_iter().map(Arc::new).collect();
     tracing::info!(tool_use = %req.tool_use_id, files = req.files.len(), "sent files");
     let run = async {
-        match attempt(&calls, &req, &fds).await {
+        match attempt(reporter, &req, &fds).await {
             Ok(n) => Ok(n),
-            Err((true, _)) => match attempt(&calls, &req, &fds).await {
+            Err((true, _)) => match attempt(reporter, &req, &fds).await {
                 Ok(n) => Ok(n),
                 Err((true, _)) => Err("the file changed while it was being sent".to_owned()),
                 Err((false, e)) => Err(e),

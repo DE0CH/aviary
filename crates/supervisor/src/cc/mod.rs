@@ -64,10 +64,24 @@ impl Transcript for crate::fuse::FuseFs {
         Box::pin(async move {
             let Some(c) = self.core() else { return Stored::All };
             let before = c.stuck_count();
-            let all = tokio::task::spawn_blocking(move || c.wait_uuids(&uuids, before))
+            let uuids = std::sync::Arc::new(uuids);
+            let mut scan = true;
+            // one bounded wait at a time, so a caller that stops waiting (the generation exited) leaves no thread
+            // blocked behind it
+            loop {
+                let (c, u) = (c.clone(), uuids.clone());
+                let r = tokio::task::spawn_blocking(move || {
+                    c.wait_uuids(&u, before, scan, std::time::Duration::from_secs(1))
+                })
                 .await
-                .unwrap_or(true);
-            if all { Stored::All } else { Stored::Stuck }
+                .unwrap_or(Some(true));
+                scan = false;
+                match r {
+                    Some(true) => return Stored::All,
+                    Some(false) => return Stored::Stuck,
+                    None => {}
+                }
+            }
         })
     }
     fn settle(&self) -> BoxFuture<'_, ()> {

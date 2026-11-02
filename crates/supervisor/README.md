@@ -295,7 +295,7 @@ symlinked root refused by the hook (`sent_files::tests::only_regular_files_are_o
 5. **The crash loop** counts exits the supervisor did not cause and exits after a failed initialisation (a refused
    `initialize`, the 30 s timeout): any three in 60 s. 7.9 names only exits "without a completed initialisation";
    the limits table (20) says "3 exits in 60 s". Both are counted because a generation that initialises and then
-   dies on resume is the same budget loop; DESIGN 12 does not settle it, so this is recorded for Deyao.
+   dies on resume is the same budget loop; DESIGN 12 does not settle it, so this is recorded for the operator.
 6. **`ScheduleWakeup`'s fire time** is read from `delaySeconds`/`delay_seconds`/`seconds`/`delay`, `delayMs`/`delay_ms`
    or `at`/`fireAt`/`fire_at`/`time` (2.1.304's input shape is not in the inventory); an input with none of them
    gives the pseudo-task no `until`, so only the silence ceiling ends it.
@@ -322,6 +322,27 @@ symlinked root refused by the hook (`sent_files::tests::only_regular_files_are_o
     settled, not retried or given up: magpie credits the lines written under its id to its active turn (magpie
     6.3), and that turn's own state reports answered 404 are settled too (11 says only that reports are never
     dropped). A 404 for any other turn is still a report given up.
+16. **A turn whose end report is on its way** (waiting for its lines, 8.2, or for magpie) stays the heartbeat's
+    `turnId` (state `running`, or `stopping` when interrupted) until magpie answers the end, and only then becomes
+    `lastTurn`; run.json keeps it (`ending`) and a restarted supervisor sends the end again. Reporting it idle with
+    no `turnId` would let magpie 8.5 rule 2 fail a completed turn; reporting `lastTurn` at once would let rule 1 end
+    it before its last row.
+17. **The uuid wait ends when its generation exits** (a kill, a release, a crash after the result): the writes in
+    flight are answered, the uuids get one last 2 s look, and the end goes with `lastUuid` only if they are stored.
+    A wait on a live generation is capped at 30 min (logged as an error) for a uuid stdout showed that Claude Code
+    never writes to the main transcript.
+18. **A `start_turn`'s message is kept** in the generation's directory (`stdin-<cmdSeq>.ndjson`) from its
+    `written` record until it is delivered; a replay after a restart sends those bytes again and fetches no blob and
+    renames nothing onto `/workspace/uploads` (the agent may have changed the files since). Without the file (it
+    could not be written) the replay builds the message again.
+19. **Preparation is cancellable** (7.8): an interrupt, kill, release or pause ends a start's blob retries, its
+    wait for another spawn, the models route or the initialisation at once (reported `canceled` or `sandbox.lost`,
+    acked `delivered: false`); a generation already started goes on initialising by itself.
+20. **A generation found initialising after a restart** is killed and a new one started (the previous supervisor
+    may have read its `initialize` answer); a spawn never starts while another generation lives.
+21. **Upload names** are at most 255 UTF-8 bytes (`magpie_api::sandbox::WORKSPACE_NAME_MAX_BYTES`; magpie's
+    `safe_name` cuts to 200 characters and 255 bytes, keeping the extension), and the part file is
+    `.upload.part-<32 hex>` whatever the name.
 
 ### Open items (WP-23)
 
@@ -335,4 +356,7 @@ symlinked root refused by the hook (`sent_files::tests::only_regular_files_are_o
   the workspace hooks ran. Control b (`--setting-sources=`, no `allowManagedHooksOnly`): the workspace stays out, so
   `--setting-sources=` alone keeps it out. The request's `SendUserFile` schema has `files` (string array) and
   `caption`. Items 8 and 13 need the full image and the mock model (WP-24's smoke, WP-22's re-run).
+  The spike runs the agent with `HOME=/home/node` (the container image's user) rather than the sandbox's
+  `/home/sandbox`; `--setting-sources=` and the managed settings path do not depend on `HOME`. It is a recorded
+  live check (the task record), not part of CI.
 - The soak's synthetic turns with 1 MiB lines (WP-21 deviation 6) and `nightly.yml` (WP-28).

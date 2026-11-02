@@ -40,6 +40,11 @@ pub struct RunState {
     pub asks: Vec<AskState>,
     /// Per `cmdSeq`: how far its delivery got (10.2).
     pub delivered: BTreeMap<String, Delivered>,
+    /// Turns that ended and whose end report magpie has not answered yet: the heartbeat still names them, and a
+    /// restarted supervisor sends their end again.
+    pub ending: Vec<EndingState>,
+    /// The descriptor `etag` the managed files on disk were written from.
+    pub managed_etag: String,
 }
 
 /// The live Claude Code generation (4.5).
@@ -53,6 +58,8 @@ pub struct GenState {
     pub stdout: String,
     pub stdout_offset: u64,
     pub initialized: bool,
+    /// The descriptor `etag` of the managed files it started with (an idle point ends it when they changed, 6.4).
+    pub etag: String,
 }
 
 /// The run state machine's persisted part (7.5).
@@ -71,6 +78,11 @@ pub struct RunPart {
     pub last_uuid: Option<String>,
     /// A person's turn written while an agent turn ran (7.5).
     pub queued_turn_id: Option<String>,
+    /// Whether the turn's message is with the writer (absent: it is).
+    pub handed: Option<bool>,
+    /// The queued turn's interrupt, as the turn's, and whether its message is with the writer.
+    pub queued_interrupt_elapsed_ms: Option<u64>,
+    pub queued_handed: Option<bool>,
 }
 
 impl Default for RunPart {
@@ -85,6 +97,9 @@ impl Default for RunPart {
             pending_uuids: Vec::new(),
             last_uuid: None,
             queued_turn_id: None,
+            handed: None,
+            queued_interrupt_elapsed_ms: None,
+            queued_handed: None,
         }
     }
 }
@@ -120,6 +135,29 @@ pub struct AskState {
     pub cli_request_id: String,
     pub tool_name: String,
     pub since: String,
+    pub tool_use_id: Option<String>,
+    /// How long it has been open, on the monotonic clock (its 30 min timeout goes on from here after a restart).
+    pub elapsed_ms: Option<u64>,
+    /// The turn it was opened in (its reports' lane).
+    pub lane: Option<String>,
+}
+
+/// A turn whose end report is not answered yet.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EndingState {
+    pub turn_id: String,
+    /// The end report (the wire's `TurnStateReport`).
+    pub report: serde_json::Value,
+    /// The uuids it waits for (8.2), with the generation that wrote them; `None`: it waits for the writes in
+    /// flight only.
+    pub uuids: Option<Vec<String>>,
+    #[serde(rename = "gen")]
+    pub generation: u32,
+    /// It was interrupted (the heartbeat says `stopping`).
+    pub stopping: bool,
+    /// The heartbeat's `lastTurn` once magpie answered.
+    pub last: LastTurn,
 }
 
 /// How far a command's delivery got: `received` (before any effect), `written` (with the `msg_id` and the

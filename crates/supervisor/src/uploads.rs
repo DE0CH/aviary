@@ -1,7 +1,10 @@
 //! Uploads into `/workspace/uploads` (supervisor 12.1). The supervisor is the only writer of uploads: each file and
-//! each image original is streamed from magpie's blob into `.<name>.part-<rand>` (created `O_EXCL|O_NOFOLLOW` as the
-//! agent, so ownership and the workspace quota apply as if the agent wrote it), checked against its sha256, and
-//! renamed onto its name. A symlinked `/workspace` or `/workspace/uploads` is refused. A blob read that fails in a
+//! each image original is streamed from magpie's blob into `.upload.part-<rand>` (a fixed-length name, so an upload
+//! name of up to 255 bytes still fits beside it; created `O_EXCL|O_NOFOLLOW` as the agent, so the file is the
+//! agent's), checked against its sha256, and renamed onto its name. The bytes are written on blocking threads whose
+//! filesystem ids are root's: the workspace quota still applies because it is the workspace directory's own
+//! (hermit's `JuiceFS` directory quota, hermit 15.5), which counts every writer; a per-uid quota would not bind those
+//! writes. The tests inject `EDQUOT` rather than run on a quota-enabled filesystem. A symlinked `/workspace` or `/workspace/uploads` is refused. A blob read that fails in a
 //! way a retry may cure (no answer, a reset mid-stream, 429 or 5xx: a magpie or gateway replica draining, spec 19)
 //! is retried with the reports' backoff until the start's deadline (inside magpie's 120 s `starting` watchdog),
 //! the `.part` file starting again from zero; a 404, a sha mismatch or a refused write fails the turn at once.
@@ -21,6 +24,9 @@ use sha2::Digest as _;
 use tokio::time::Instant;
 
 use crate::limits::{REPORT_RETRY_FIRST, REPORT_RETRY_MAX};
+
+/// The name of an upload being written (`.upload.part-<32 hex>`: 45 bytes whatever the upload's name).
+pub const PART_PREFIX: &str = ".upload.part-";
 
 /// How long a start retries its blob reads (magpie's `starting` watchdog is 120 s).
 pub const BLOB_RETRY_FOR: Duration = Duration::from_secs(90);
@@ -152,7 +158,7 @@ fn cstr(s: &str) -> std::io::Result<CString> {
 fn upload_name(workspace_path: &str) -> Option<&str> {
     let name = workspace_path.strip_prefix("uploads/")?;
     let ok = !name.is_empty()
-        && name.len() <= 255
+        && name.len() <= magpie_api::sandbox::WORKSPACE_NAME_MAX_BYTES
         && name != "."
         && name != ".."
         && !name.contains('/')
@@ -268,6 +274,29 @@ impl Uploads {
         }
     }
 
+    /// Removes the `.part` files a preparation left behind (one stopped mid-write; the supervisor is the only writer
+    /// of uploads and prepares one turn at a time).
+    pub async fn sweep(&self) {
+        let me = self.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            if std::fs::symlink_metadata(me.workspace.join("uploads")).is_err() {
+                return;
+            }
+            let Ok(dir) = me.open_dir() else { return };
+            let Ok(rd) = std::fs::read_dir(format!("/proc/self/fd/{}", dir.as_raw_fd())) else {
+                return;
+            };
+            for e in rd.flatten() {
+                if let Some(n) = e.file_name().to_str()
+                    && n.starts_with(PART_PREFIX)
+                {
+                    Self::unlink(&dir, n);
+                }
+            }
+        })
+        .await;
+    }
+
     /// Writes every item; the absolute paths. `Err` is the turn's `run.error` message.
     ///
     /// # Errors
@@ -278,6 +307,9 @@ impl Uploads {
         items: &[Item],
         deadline: Instant,
     ) -> Result<Vec<String>, String> {
+        if !items.is_empty() {
+            self.sweep().await;
+        }
         let mut out = Vec::with_capacity(items.len());
         for it in items {
             out.push(self.one(magpie, it, deadline).await?);
@@ -352,7 +384,7 @@ impl Uploads {
             .await
             .map_err(|e| e.to_string())??;
         let dir = std::sync::Arc::new(dir);
-        let part = format!(".{name}.part-{}", uuid::Uuid::new_v4().simple());
+        let part = format!("{PART_PREFIX}{}", uuid::Uuid::new_v4().simple());
         let me = self.clone();
         let (d, p) = (dir.clone(), part.clone());
         let file = tokio::task::spawn_blocking(move || me.create_part(&d, &p))
@@ -404,6 +436,10 @@ pub(crate) mod tests {
         ] {
             assert_eq!(upload_name(bad), None, "{bad}");
         }
+        // a name of one full directory entry (85 CJK characters) is accepted; one byte more is not
+        let full = format!("uploads/{}", "港".repeat(85));
+        assert_eq!(upload_name(&full).map(str::len), Some(255));
+        assert_eq!(upload_name(&format!("{full}x")), None);
         assert_eq!(reason(&std::io::Error::from_raw_os_error(libc::EDQUOT)), NO_SPACE);
         assert_eq!(reason(&std::io::Error::from_raw_os_error(libc::ENOSPC)), NO_SPACE);
     }

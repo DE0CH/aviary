@@ -287,30 +287,36 @@ impl Core {
         self.stuck.load(Ordering::SeqCst)
     }
 
-    /// Waits until magpie holds the transcript lines of `uuids` (8.2), with no time cap; `false` once the stuck
-    /// rule fires after `stuck_before` (`true` when the server stops: nothing more will be stored). Uuids not seen in this server's writes are first
-    /// looked for in the last 1 MiB of the main transcript as magpie holds it (writes answered before a restart).
-    /// Blocking.
+    /// Waits at most `max` until magpie holds the transcript lines of `uuids` (8.2): `Some(true)` once it does (or
+    /// the server stopped: nothing more will be stored), `Some(false)` once the stuck rule fires after
+    /// `stuck_before`, `None` when `max` passed first (the caller waits again, or gives up: the wait has no cap of
+    /// its own). With `scan`, uuids not seen in this server's writes are first looked for in the last 1 MiB of the
+    /// main transcript as magpie holds it (writes answered before a restart). Blocking.
     #[must_use]
-    pub fn wait_uuids(&self, uuids: &[String], stuck_before: u64) -> bool {
-        if !lock(&self.seen.0).holds(uuids) {
+    pub fn wait_uuids(&self, uuids: &[String], stuck_before: u64, scan: bool, max: Duration) -> Option<bool> {
+        if scan && !lock(&self.seen.0).holds(uuids) {
             self.scan_main_tail();
         }
+        let until = std::time::Instant::now() + max;
         let mut g = lock(&self.seen.0);
         loop {
             if g.holds(uuids) {
-                return true;
+                return Some(true);
             }
             if self.stopped.load(Ordering::SeqCst) {
-                return true;
+                return Some(true);
             }
             if self.stuck_count() > stuck_before {
-                return false;
+                return Some(false);
+            }
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return None;
             }
             g = self
                 .seen
                 .1
-                .wait_timeout(g, Duration::from_secs(1))
+                .wait_timeout(g, left.min(Duration::from_secs(1)))
                 .unwrap_or_else(PoisonError::into_inner)
                 .0;
         }

@@ -292,6 +292,7 @@ impl Fake {
             return;
         }
         let r = &v["response"]["response"];
+        self.note(&format!("answer {}", r["toolUseID"].as_str().unwrap_or("-")));
         let text = format!(
             "answered {} {}",
             r["behavior"].as_str().unwrap_or(""),
@@ -1007,14 +1008,27 @@ async fn uploads_are_materialised_and_tagged() {
         w.magpie.seed_blob(&img),
         w.magpie.seed_blob(&small),
     );
-    let files = vec![StartFile {
-        upload_id: Uuid::new_v4(),
-        name: "Q3 report.pdf".into(),
-        mime_type: "application/pdf".into(),
-        size: pdf.len() as u64,
-        workspace_path: "uploads/Q3 report.pdf".into(),
-        blob: pdf_sha,
-    }];
+    // a Traditional Chinese title of one full directory entry (251 bytes and ".pdf")
+    let long = format!("{}.pdf", "報".repeat(83));
+    assert_eq!(long.len(), 253);
+    let files = vec![
+        StartFile {
+            upload_id: Uuid::new_v4(),
+            name: "Q3 report.pdf".into(),
+            mime_type: "application/pdf".into(),
+            size: pdf.len() as u64,
+            workspace_path: "uploads/Q3 report.pdf".into(),
+            blob: pdf_sha.clone(),
+        },
+        StartFile {
+            upload_id: Uuid::new_v4(),
+            name: long.clone(),
+            mime_type: "application/pdf".into(),
+            size: pdf.len() as u64,
+            workspace_path: format!("uploads/{long}"),
+            blob: pdf_sha,
+        },
+    ];
     let images = vec![StartImage {
         upload_id: Uuid::new_v4(),
         mime_type: "image/png".into(),
@@ -1029,6 +1043,7 @@ async fn uploads_are_materialised_and_tagged() {
     let (t, _) = w.turn_with("echo", None, files.clone(), images.clone());
     assert_eq!(w.ended(t).await["state"], "completed");
     assert_eq!(std::fs::read(w.ws.join("uploads/Q3 report.pdf")).unwrap(), pdf);
+    assert_eq!(std::fs::read(w.ws.join("uploads").join(&long)).unwrap(), pdf);
     assert_eq!(std::fs::read(w.ws.join("uploads/IMG_1.png")).unwrap(), img);
     let leftovers: Vec<_> = std::fs::read_dir(w.ws.join("uploads"))
         .unwrap()
@@ -1468,16 +1483,24 @@ async fn a_turn_being_prepared_survives_an_outage_and_can_be_stopped() {
     let (t, s) = w.turn_with("say:never", Some(w.cid.to_string()), vec![file("b.pdf")], vec![]);
     let d = sup.driver.clone();
     until("starting", || lock(&d.st).starting == Some(t)).await;
+    let started = Instant::now();
     let i = w
         .magpie
         .push_command(w.cid, Some(t), CommandBody::Interrupt(magpie_api::Empty {}));
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    w.magpie.faults().remove(fault);
+    // the outage goes on: the interrupt does not wait for it (7.8)
     assert_eq!(w.ended(t).await["state"], "canceled");
     assert_eq!(w.acked(s).await.delivered, Some(false));
     w.acked(i).await;
+    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+    w.magpie.faults().remove(fault);
     assert_eq!(w.prompts().len(), prompts, "{}", texts(&w));
     assert!(lock(&d.st).cancel_starting.is_none());
+    let parts: Vec<_> = std::fs::read_dir(w.ws.join("uploads"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with(crate::uploads::PART_PREFIX))
+        .collect();
+    assert!(parts.is_empty(), "the stopped write's part file is gone");
     w.idle(&sup).await;
 
     // a forced release while preparing: failed sandbox.lost, nothing written, nothing spawned after it
@@ -1488,16 +1511,17 @@ async fn a_turn_being_prepared_survives_an_outage_and_can_be_stopped() {
     );
     let (t, _) = w.turn_with("say:never", Some(w.cid.to_string()), vec![file("c.pdf")], vec![]);
     until("starting", || lock(&d.st).starting == Some(t)).await;
+    let started = Instant::now();
     let release = {
         let l = sup.lifecycle.clone();
         tokio::spawn(async move { l.release(crate::lifecycle::sigterm_release()).await })
     };
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    w.magpie.faults().remove(fault);
     let end = w.ended(t).await;
+    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
     assert_eq!(end["state"], "failed");
     assert_eq!(end["error"]["code"], "sandbox.lost");
     assert_eq!(release.await.unwrap(), supervisor_api::control::Outcome::Done);
+    w.magpie.faults().remove(fault);
     assert_eq!(w.prompts().len(), prompts);
     assert_eq!(w.spawns().len(), spawns);
     assert!(sup.driver.claude_pid().is_none());
@@ -1582,4 +1606,384 @@ fn ids_derived_from_a_line_are_the_same_when_it_is_read_again() {
     assert_eq!(a.get_version_num(), 7);
     assert_eq!(ask_id("boot", 3, 10), ask_id("boot", 3, 10));
     assert_ne!(ask_id("boot", 3, 10), ask_id("boot", 4, 10));
+}
+
+/// A transcript whose end-of-turn wait (8.2) holds until the test opens it.
+#[derive(Default)]
+struct Gate(tokio::sync::Notify, std::sync::atomic::AtomicBool);
+
+impl Gate {
+    fn open(&self) {
+        self.1.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.0.notify_waiters();
+    }
+}
+
+impl Transcript for Gate {
+    fn set_turn(&self, _turn: Option<Uuid>) {}
+    fn wait_stored(&self, _uuids: Vec<String>) -> BoxFuture<'_, crate::cc::Stored> {
+        Box::pin(async move {
+            while !self.1.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = tokio::time::timeout(Duration::from_millis(50), self.0.notified()).await;
+            }
+            crate::cc::Stored::All
+        })
+    }
+    fn facts(&self) -> magpie_api::sandbox::CcFacts {
+        crate::cc::Stored0.facts()
+    }
+}
+
+/// magpie 8.5 rule 2 (crates/magpie/src/turns/reports.rs `reconcile_active`): an acked turn the heartbeat neither
+/// names nor reports as its `lastTurn`, with the sandbox idle, is failed "the sandbox no longer knows this turn".
+fn rule_2_fails(hb: &Heartbeat, turn: Uuid) -> bool {
+    hb.state == HeartbeatState::Idle && hb.turn_id.is_none() && hb.last_turn.as_ref().is_none_or(|l| l.id != turn)
+}
+
+/// A turn whose end report waits for its lines (8.2), or for magpie, is still the turn in the heartbeat: magpie's
+/// reconciliation must not fail it meanwhile. Once the end is answered, it is the `lastTurn`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_heartbeat_names_a_turn_whose_end_is_on_its_way() {
+    let w = world().await;
+    let gate = Arc::new(Gate::default());
+    let sup = w.attach_with(None, crate::start::Reattach::Nothing, gate.clone()).await;
+    let (t, _) = w.turn("say:x");
+    until("answered", || w.prompts().len() == 1).await;
+    let d = sup.driver.clone();
+    until("ended locally", || {
+        lock(&d.st).turn.is_none() && !lock(&d.st).ending.is_empty()
+    })
+    .await;
+    for _ in 0..5 {
+        let hb = sup.driver.heartbeat();
+        assert_eq!(hb.turn_id, Some(t), "{hb:?}");
+        assert_eq!(hb.state, HeartbeatState::Running);
+        assert!(!rule_2_fails(&hb, t));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    // a restart meanwhile: run.json keeps the ending turn, and the next supervisor sends its end
+    sup.persisted.flush().await;
+    let saved = sup.persisted.read(|s| s.ending.clone());
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].turn_id, t.to_string());
+    assert_eq!(saved[0].last.outcome, "completed");
+    // the lines are stored: the end goes, and the heartbeat names the turn as its lastTurn
+    gate.open();
+    assert_eq!(w.ended(t).await["state"], "completed");
+    until("answered by magpie", || lock(&d.st).ending.is_empty()).await;
+    let hb = sup.driver.heartbeat();
+    assert_eq!(hb.turn_id, None);
+    assert_eq!(hb.last_turn.as_ref().map(|l| l.id), Some(t));
+    assert!(!rule_2_fails(&hb, t));
+}
+
+/// A restarted supervisor sends the end of a turn the previous one had ended but not got answered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_restart_sends_the_end_magpie_had_not_answered() {
+    let w = world().await;
+    let first = w.attach(None, crate::start::Reattach::Nothing).await;
+    let fault = w.magpie.faults().on(
+        "turn_state",
+        aviary_fakes::fault::FaultKind::Unavailable { retry_after_secs: 1 },
+    );
+    let (t, _) = w.turn("say:x");
+    let d = first.driver.clone();
+    until("ended locally", || {
+        lock(&d.st).turn.is_none() && !lock(&d.st).ending.is_empty()
+    })
+    .await;
+    first.persisted.flush().await;
+    let prior = first.persisted.read(Clone::clone);
+    let (n, pid) = {
+        let st = lock(&first.driver.st);
+        let g = st.live.as_ref().unwrap();
+        (g.n, g.pid)
+    };
+    first.driver.abort_all();
+    drop(first);
+    w.magpie.faults().remove(fault);
+    let second = w.attach(Some(prior), crate::start::Reattach::Alive { n, pid }).await;
+    assert_eq!(w.ended(t).await["state"], "completed");
+    let d = second.driver.clone();
+    until("answered by magpie", || lock(&d.st).ending.is_empty()).await;
+    assert_eq!(second.driver.heartbeat().last_turn.map(|l| l.id), Some(t));
+}
+
+/// 8.2: a result whose lines are not stored yet, then the generation dies before it writes them: the end is sent
+/// (without `lastUuid`) rather than waited for for ever, and the turn's lane and a release's drain are free.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_end_waiting_for_lines_a_dead_generation_never_wrote_is_sent() {
+    let w = world().await;
+    let gate = Arc::new(Gate::default());
+    let sup = w.attach_with(None, crate::start::Reattach::Nothing, gate.clone()).await;
+    let (t, _) = w.turn("say:x");
+    let d = sup.driver.clone();
+    until("ended locally", || {
+        lock(&d.st).turn.is_none() && !lock(&d.st).ending.is_empty()
+    })
+    .await;
+    assert_eq!(w.state_names(t), ["running"]);
+    let n = lock(&d.st).live.as_ref().unwrap().n;
+    sup.driver.kill_gen(n, Why::Graceful).await;
+    let started = Instant::now();
+    let end = w.ended(t).await;
+    assert_eq!(end["state"], "completed");
+    assert!(end.get("lastUuid").is_none_or(Value::is_null), "{end}");
+    assert!(started.elapsed() < Duration::from_secs(8), "{:?}", started.elapsed());
+    until("answered by magpie", || lock(&d.st).ending.is_empty()).await;
+    assert!(
+        sup.driver
+            .reporter()
+            .drain(Instant::now() + Duration::from_secs(2))
+            .await
+    );
+}
+
+/// A supervisor restart while a generation initialises: that generation is ended before another starts, never left
+/// running beside it on the same session.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_restart_during_initialisation_leaves_no_orphan() {
+    let w = world().await;
+    std::fs::write(w.ws.join(".fake-noinit"), b"").unwrap();
+    let first = w.attach(None, crate::start::Reattach::Nothing).await;
+    let d = first.driver.clone();
+    until("spawned", || lock(&d.st).live.is_some()).await;
+    first.persisted.flush().await;
+    let prior = first.persisted.read(Clone::clone);
+    let (n, pid) = {
+        let st = lock(&first.driver.st);
+        let g = st.live.as_ref().unwrap();
+        assert!(!g.initialized);
+        (g.n, g.pid)
+    };
+    assert!(prior.generation.as_ref().is_some_and(|g| !g.initialized));
+    first.driver.abort_all();
+    drop(first);
+    std::fs::remove_file(w.ws.join(".fake-noinit")).unwrap();
+    let second = w.attach(Some(prior), crate::start::Reattach::Alive { n, pid }).await;
+    let rec = tokio::task::block_in_place(|| w.keeper.wait_exit(pid));
+    assert_eq!(rec.pid, pid, "the stale generation is gone");
+    let d = second.driver.clone();
+    until("a new generation initialised", || {
+        lock(&d.st).live.as_ref().is_some_and(|g| g.n > n && g.initialized)
+    })
+    .await;
+    let (t, _) = w.turn_with("say:x", Some(w.cid.to_string()), vec![], vec![]);
+    assert_eq!(w.ended(t).await["state"], "completed");
+    assert_eq!(w.spawns().len(), 2, "{}", texts(&w));
+}
+
+/// A replayed `written` command with a file sends the bytes it recorded: nothing is downloaded or renamed onto
+/// `/workspace/uploads` again (the agent edited the file since), even while magpie's blobs are unavailable.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_replay_with_a_file_rewrites_nothing() {
+    let w = world().await;
+    let first = w.attach(None, crate::start::Reattach::Nothing).await;
+    let d = first.driver.clone();
+    until("initialised", || {
+        lock(&d.st).live.as_ref().is_some_and(|g| g.initialized)
+    })
+    .await;
+    let (n, pid) = {
+        let st = lock(&first.driver.st);
+        let g = st.live.as_ref().unwrap();
+        (g.n, g.pid)
+    };
+    first.driver.abort_all();
+    first.persisted.flush().await;
+    let pdf = b"%PDF-1.4 original".to_vec();
+    let sha = w.magpie.seed_blob(&pdf);
+    let file = StartFile {
+        upload_id: Uuid::new_v4(),
+        name: "a.pdf".into(),
+        mime_type: "application/pdf".into(),
+        size: pdf.len() as u64,
+        workspace_path: "uploads/a.pdf".into(),
+        blob: sha,
+    };
+    let (turn, seq) = w.turn_with("say:once", None, vec![file], vec![]);
+    // what the first supervisor did before it went: the file written, the message kept, the record and the turn
+    std::fs::create_dir_all(w.ws.join("uploads")).unwrap();
+    std::fs::write(w.ws.join("uploads/a.pdf"), &pdf).unwrap();
+    let path = w.ws.join("uploads/a.pdf").to_string_lossy().into_owned();
+    let line = prompt::user_line(
+        &prompt::content(
+            prompt::text(
+                "say:once",
+                &[prompt::Attached {
+                    path,
+                    name: Some("a.pdf".into()),
+                }],
+                &[],
+            ),
+            &[],
+        ),
+        &magpie_api::Timestamp::now().to_wire(),
+    );
+    std::fs::write(w.dir.join(format!("gens/{n}/stdin-{seq}.ndjson")), &line).unwrap();
+    let boot_id = "b00700000000000a";
+    let mut prior = first.persisted.read(Clone::clone);
+    prior.delivered.insert(
+        seq.to_string(),
+        Delivered {
+            state: "written".into(),
+            msg_id: Some(hex(&msg_id(boot_id, seq))),
+            generation: Some(n),
+            pending_inputs_after: Some(1),
+            turn_id: Some(turn.to_string()),
+        },
+    );
+    prior.cmd_after = seq;
+    prior.run.state = "running".into();
+    prior.run.turn_id = Some(turn.to_string());
+    prior.run.origin = Some("person".into());
+    prior.run.pending_inputs = 1;
+    drop(first);
+    // the agent edits its upload, and magpie's blobs are unavailable
+    std::fs::write(w.ws.join("uploads/a.pdf"), b"edited by the agent").unwrap();
+    let fault = w.magpie.faults().on(
+        "sandbox_blob_get",
+        aviary_fakes::fault::FaultKind::Unavailable { retry_after_secs: 1 },
+    );
+    let second = w.attach(Some(prior), crate::start::Reattach::Alive { n, pid }).await;
+    assert_eq!(w.acked(seq).await.delivered, Some(true));
+    assert_eq!(w.ended(turn).await["state"], "completed");
+    assert_eq!(w.prompts(), ["prompt say:once"]);
+    assert_eq!(w.magpie.faults().hits(), 0, "no blob was read");
+    assert_eq!(
+        std::fs::read(w.ws.join("uploads/a.pdf")).unwrap(),
+        b"edited by the agent"
+    );
+    assert!(!w.dir.join(format!("gens/{n}/stdin-{seq}.ndjson")).exists());
+    w.magpie.faults().remove(fault);
+    w.idle(&second).await;
+}
+
+/// A restored ask keeps its `toolUseID` (the answer carries it) and its turn's lane.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_restored_ask_is_answered_with_its_tool_use_id() {
+    let w = world().await;
+    let first = w.attach(None, crate::start::Reattach::Nothing).await;
+    let (t, _) = w.turn("ask");
+    until("the ask", || !w.magpie.script().calls_to("ask_open").is_empty()).await;
+    let ask = w.magpie.script().calls_to("ask_open")[0].body.clone().unwrap()["askId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    first.persisted.flush().await;
+    let prior = first.persisted.read(Clone::clone);
+    assert_eq!(prior.asks[0].tool_use_id.as_deref(), Some("toolu_ask"));
+    let (n, pid) = {
+        let st = lock(&first.driver.st);
+        let g = st.live.as_ref().unwrap();
+        (g.n, g.pid)
+    };
+    first.driver.abort_all();
+    drop(first);
+    let second = w.attach(Some(prior), crate::start::Reattach::Alive { n, pid }).await;
+    let a = w.magpie.push_command(
+        w.cid,
+        Some(t),
+        CommandBody::AnswerAsk(AnswerAsk {
+            ask_id: ask,
+            allow: true,
+            updated_input: Some(serde_json::Map::new()),
+            message: None,
+        }),
+    );
+    assert!(w.acked(a).await.error.is_none());
+    assert_eq!(w.ended(t).await["state"], "completed");
+    assert!(w.fake_log().iter().any(|l| l == "answer toolu_ask"), "{}", texts(&w));
+    w.idle(&second).await;
+}
+
+/// 6.4: a configuration changed while no supervisor ran is applied at the restarted supervisor's first idle
+/// point: the generation's own etag is kept in run.json, not taken from the files just written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_configuration_changed_across_a_restart_ends_the_generation_when_idle() {
+    let w = world().await;
+    let first = w.attach(None, crate::start::Reattach::Nothing).await;
+    let d = first.driver.clone();
+    until("initialised", || {
+        lock(&d.st).live.as_ref().is_some_and(|g| g.initialized)
+    })
+    .await;
+    first.persisted.flush().await;
+    let prior = first.persisted.read(Clone::clone);
+    let (n, pid) = {
+        let st = lock(&first.driver.st);
+        let g = st.live.as_ref().unwrap();
+        (g.n, g.pid)
+    };
+    assert_ne!(prior.managed_etag, "");
+    assert_eq!(prior.generation.as_ref().unwrap().etag, prior.managed_etag);
+    first.driver.abort_all();
+    drop(first);
+    // unchanged: the generation lives on
+    let second = w
+        .attach(Some(prior.clone()), crate::start::Reattach::Alive { n, pid })
+        .await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(second.driver.claude_pid(), Some(pid));
+    second.persisted.flush().await;
+    second.driver.abort_all();
+    drop(second);
+    // started under an older CLAUDE.md: ended at the idle point
+    let mut stale = prior;
+    stale.managed_etag = "an-older-etag".into();
+    stale.generation.as_mut().unwrap().etag = "an-older-etag".into();
+    let third = w.attach(Some(stale), crate::start::Reattach::Alive { n, pid }).await;
+    let rec = tokio::task::block_in_place(|| w.keeper.wait_exit(pid));
+    assert_eq!(rec.pid, pid);
+    let (t, _) = w.turn_with("say:x", Some(w.cid.to_string()), vec![], vec![]);
+    assert_eq!(w.ended(t).await["state"], "completed");
+    assert!(third.driver.claude_pid().is_some_and(|p| p != pid));
+}
+
+/// The `SendUserFile` hook: a file over 64 MiB is refused by its size before it is read, and a send that meets a
+/// migration (`409 conversation_migrating`) is retried within the budget.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sent_files_refuse_oversized_files_at_once_and_wait_out_a_migration() {
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let local = Arc::new(crate::local::Local {
+        hermit: sup.driver.hermit.clone(),
+        agent: sup.driver.clone(),
+    });
+    let sock = w.dir.join("agent.sock");
+    let _srv = crate::sent_files::serve_with_fds(&sock, 0o666, supervisor_api::server::local_router(local)).unwrap();
+    std::fs::create_dir_all(w.ws.join("out")).unwrap();
+    // sparse: 4 GiB that would take minutes to hash
+    let big = std::fs::File::create(w.ws.join("out/huge.bin")).unwrap();
+    big.set_len(4 << 30).unwrap();
+    drop(big);
+    std::fs::write(w.ws.join("out/small.txt"), b"hello").unwrap();
+    let paths = crate::sent_files::HookPaths {
+        root: w.ws.clone(),
+        socket: sock.clone(),
+    };
+    let hook = |input: Value| {
+        let p = paths.clone();
+        tokio::task::spawn_blocking(move || crate::sent_files::hook(&p, &input))
+    };
+    let started = Instant::now();
+    let r = hook(json!({"tool_name": "SendUserFile", "tool_use_id": "toolu_big",
+                        "tool_input": {"files": ["out/huge.bin"]}}))
+    .await
+    .unwrap();
+    assert!(
+        matches!(&r, crate::sent_files::HookOutcome::Failed(m) if m.contains("over 64 MiB")),
+        "{r:?}"
+    );
+    assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+    w.magpie.script().once(
+        "sent_files",
+        aviary_fakes::script::Reply::error(409, "conversation_migrating", "moving").with_header("retry-after", "1"),
+    );
+    let r = hook(json!({"tool_name": "SendUserFile", "tool_use_id": "toolu_small",
+                        "tool_input": {"files": ["out/small.txt"]}}))
+    .await
+    .unwrap();
+    assert_eq!(r, crate::sent_files::HookOutcome::Sent(1));
+    assert_eq!(w.magpie.script().calls_to("sent_files").len(), 2, "retried once");
 }
