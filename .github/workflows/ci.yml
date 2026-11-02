@@ -153,6 +153,19 @@ jobs:
           docker build -f images/aviary-testing/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t aviary-testing:ci "$ctx"
           docker run --rm aviary-testing:ci test-gateway --version
           docker run --rm aviary-testing:ci aviary-conformance --help
+      - name: images/hermit (built and run here, pushing is the images job's)
+        # hermit spec 8.5: the binary and the juicefs CLI; the catalogue rules run in the image as YYC's CI runs them
+        run: |
+          ctx=$RUNNER_TEMP/hermit-image
+          mkdir -p "$ctx/dist"
+          cp dist/hermit "$ctx/dist/"
+          docker build -f images/hermit/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t hermit:ci "$ctx"
+          docker run --rm hermit:ci --help
+          docker run --rm --entrypoint /usr/local/bin/juicefs hermit:ci version
+          printf '{"users": ["@example.org"], "admins": []}' > "$RUNNER_TEMP/catalogue.json"
+          docker run --rm -v "$RUNNER_TEMP/catalogue.json:/c.json:ro" hermit:ci catalogue-check /c.json
+          # with no secrets it refuses to start (exit 78, platform 3.1)
+          code=0; docker run --rm hermit:ci serve || code=$?; test "$code" -eq 78
       - name: images/pigeon (built and run here, pushing is the images job's)
         # pigeon spec 3.3: with no secrets it refuses to start (exit 78), naming the variable, never a value
         run: |
