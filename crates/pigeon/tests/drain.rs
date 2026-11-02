@@ -81,12 +81,9 @@ async fn readiness_waits_for_every_teams_keys() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(h.readiness.why().is_empty(), "{:?}", h.readiness.why());
-    assert_eq!(h.get_as("/api/jarvis/me", STAFF).await.status(), 200);
+    assert_eq!(h.get_as(compat::ME, STAFF).await.status(), 200);
     let t2 = h.teams[1].token(STAFF);
-    assert_eq!(
-        h.as_token(h.get("/api/jarvis/me"), &t2).send().await.unwrap().status(),
-        200
-    );
+    assert_eq!(h.as_token(h.get(compat::ME), &t2).send().await.unwrap().status(), 200);
 }
 
 #[tokio::test]
