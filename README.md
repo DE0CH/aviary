@@ -66,6 +66,31 @@ addressing and create their own buckets. CI serves S3 with versitygw, pinned by 
   `_migrations`). A migration whose first line is `-- aviary-pg: no-transaction` runs outside a transaction and holds
   exactly one statement (for `create index concurrently … if not exists`).
 
+## The service runtime (`aviary-core`)
+
+Every service binary starts the same way: `version::Build` (name and protocol surfaces), `log::init` (JSON lines,
+every string field redacted), `auth::Callers::from_env` (`<CALLEE>_ACCEPT_<CALLER>`), `ops::Ops` on `:9090` with
+named readiness gates, the API router wrapped by `http::standard` and guarded per router by `auth::Guard`, then
+`drain::Drain::run` on SIGTERM. The crate docs (`crates/aviary-core/src/lib.rs`) show the outline.
+
+Where it differs from the platform spec (sections 3, 4.3, 15.1):
+
+- Test code reads `AVIARY_TEST_*` variables with `env::test_only`, which refuses any other name; there is no other
+  optional read, so services still have no optional configuration. The source rules allow `std::env::var*` only in
+  `aviary-core/src/env.rs`, and clippy's ban applies to tests too.
+- Pair tokens are compared with `subtle::ConstantTimeEq` on the SHA-256 digests. ring 0.17 deprecates
+  `constant_time::verify_slices_are_equal` (named by the spec) as an internal function "with no promises regarding
+  side channels".
+- `log::redact` runs the hermit-token rule (`hst1.`, `hct_`) before the long-run rule, so short tokens are caught too.
+  Inside a long run, a UUID or person key is kept and the pieces around it are judged on their own length, so ids in
+  URLs stay searchable.
+- Error answers that are not JSON (axum's extractor rejections, unmatched routes, wrong methods, a body over the
+  limit) are rewritten into the envelope by `http::envelope`; axum's 422 for an unusable JSON body becomes 400
+  `bad_request`, since the platform's code list has no 422.
+- `/version` lists every surface in `accepts`, including a surface at number 1 (`[1]`); the spec's example omits it.
+- Exit codes, which the spec leaves open: 78 (`EX_CONFIG`) for a missing or empty variable, 0 after a drain, 143
+  when a second signal cut the drain short.
+
 ## Source rules
 
 CI enforces these over the source tree (`testing/source-rules`, `clippy.toml`, `deny.toml`):
