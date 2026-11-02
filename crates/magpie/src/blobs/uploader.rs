@@ -5,7 +5,8 @@
 //! two replicas never upload the same blob at once and an item whose replica died is taken again after the claim
 //! lapses. The `PUT` runs outside any transaction under the blob's shared lock (on the lock session, holding no pooled
 //! connection); then one transaction sets `stored`
-//! and deletes the staging row. A failed `PUT` backs off (1 s doubling to 5 min) and logs `blob upload failing` at
+//! and deletes the staging row. The claim answers sizes only: each item reads its bytes once it holds that much of
+//! the buffered-body budget ([`Blobs::hold_body`]), so the uploader's blobs count against the replica's memory bound. A failed `PUT` backs off (1 s doubling to 5 min) and logs `blob upload failing` at
 //! most every 10 min per replica.
 
 use std::sync::Arc;
@@ -49,16 +50,16 @@ impl Uploader {
                 "update blob_staging s set next_at = now() + make_interval(secs => $2)
                  where s.sha256 in (select sha256 from blob_staging where next_at <= now()
                                     order by next_at limit $1 for update skip locked)
-                 returning s.sha256, s.bytes, s.attempts",
+                 returning s.sha256, octet_length(s.bytes)::int8, s.attempts",
                 &[&limits::UPLOAD_IN_FLIGHT_I64, &claim.as_seconds_f64()],
             )
             .await?;
         let jobs = rows.into_iter().filter_map(|r| {
             let sha: Vec<u8> = r.get(0);
             let sha = Sha::try_from(sha.as_slice()).ok()?;
-            let bytes = Bytes::from(r.get::<_, Vec<u8>>(1));
+            let size = u64::try_from(r.get::<_, i64>(1)).unwrap_or(0);
             let attempts: i32 = r.get(2);
-            Some(self.upload(pool, blobs, sha, bytes, attempts))
+            Some(self.upload(pool, blobs, sha, size, attempts))
         });
         let done = join_all(jobs).await;
         let mut n = 0;
@@ -70,7 +71,21 @@ impl Uploader {
         Ok(n)
     }
 
-    async fn upload(&self, pool: &Pool, blobs: &Arc<Blobs>, sha: Sha, bytes: Bytes, attempts: i32) -> Result<bool> {
+    async fn upload(&self, pool: &Pool, blobs: &Arc<Blobs>, sha: Sha, size: u64, attempts: i32) -> Result<bool> {
+        // twice the size while the row's buffer and its copy are both alive
+        let mut held = blobs.hold_body(size.saturating_mul(2)).await?;
+        let Some(row) = pool
+            .get()
+            .await?
+            .query_opt("select bytes from blob_staging where sha256 = $1", &[&sha.as_slice()])
+            .await?
+        else {
+            // stored meanwhile (another writer)
+            return Ok(false);
+        };
+        let bytes = Bytes::from(row.get::<_, Vec<u8>>(0));
+        drop(row);
+        held.keep(size);
         let lock = blobs.shared(&sha).await?;
         let put = blobs.put(&lock, &sha, bytes).await;
         let held = &lock;

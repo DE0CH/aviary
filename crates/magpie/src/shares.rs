@@ -61,23 +61,27 @@ pub fn local_part(email: &str) -> &str {
 }
 
 /// Copies cc scope `from` into `to` (files, lines, pages; a scope is a conversation or a share snapshot). With
-/// `cut = Some((path, ord))` the lines of `path` from `ord` on are left out and that file ends where they began.
-async fn copy_scope(t: &Tx<'_>, from: Uuid, to: Uuid, cut: Option<(&str, i64)>) -> Result<()> {
+/// `cut = Some(turn)` every lines file (the main transcript, a subagent's, any other) is cut at its first line of
+/// `turn` by `ord`: that line and every later one are left out, and the file ends where that line began. Byte files
+/// carry no turn and are copied whole.
+async fn copy_scope(t: &Tx<'_>, from: Uuid, to: Uuid, cut: Option<Uuid>) -> Result<()> {
     t.execute(
         "insert into cc_files (scope, path, kind, mode, mtime_ns, size, version, tail, next_ord, last_op_at)
          select $2, path, kind, mode, mtime_ns, size, version, tail, next_ord, last_op_at from cc_files where scope = $1",
         &[&from, &to],
     )
     .await?;
-    let (cut_path, cut_ord) = cut.map_or((None, i64::MAX), |(p, o)| (Some(p), o));
     t.execute(
-        "insert into cc_lines (file_id, ord, start_off, len, sha256, stub, spans, event_seq, turn_id, classified)
+        "with cut as (select l.file_id, min(l.ord) as ord from cc_lines l join cc_files o on o.id = l.file_id
+                      where o.scope = $1 and $3::uuid is not null and l.turn_id = $3 group by l.file_id)
+         insert into cc_lines (file_id, ord, start_off, len, sha256, stub, spans, event_seq, turn_id, classified)
          select n.id, l.ord, l.start_off, l.len, l.sha256, l.stub, l.spans, l.event_seq, l.turn_id, l.classified
          from cc_lines l
          join cc_files o on o.id = l.file_id and o.scope = $1
          join cc_files n on n.scope = $2 and n.path = o.path
-         where $3::text is null or o.path <> $3 or l.ord < $4",
-        &[&from, &to, &cut_path, &cut_ord],
+         left join cut on cut.file_id = l.file_id
+         where cut.ord is null or l.ord < cut.ord",
+        &[&from, &to, &cut],
     )
     .await?;
     t.execute(
@@ -94,14 +98,16 @@ async fn copy_scope(t: &Tx<'_>, from: Uuid, to: Uuid, cut: Option<(&str, i64)>) 
         &[&from, &to],
     )
     .await?;
-    if let Some(path) = cut_path {
-        // the cut file ends where its first left-out line began
+    if let Some(turn) = cut {
+        // each cut file ends where its first left-out line began
         t.execute(
-            "update cc_files f set tail = '', size = coalesce(
-                 (select l.start_off from cc_lines l join cc_files o on o.id = l.file_id
-                  where o.scope = $1 and o.path = $3 and l.ord = $4), f.size)
-             where f.scope = $2 and f.path = $3",
-            &[&from, &to, &path, &cut_ord],
+            "update cc_files f set tail = '', size = c.start_off
+             from (select o.path, l.start_off from cc_lines l join cc_files o on o.id = l.file_id
+                   where o.scope = $1 and (l.file_id, l.ord) in
+                         (select l2.file_id, min(l2.ord) from cc_lines l2 join cc_files o2 on o2.id = l2.file_id
+                          where o2.scope = $1 and l2.turn_id = $3 group by l2.file_id)) c
+             where f.scope = $2 and f.path = c.path",
+            &[&from, &to, &turn],
         )
         .await?;
     }
@@ -224,42 +230,48 @@ async fn drop_clone(app: &Magpie, workspace: Uuid) {
     }
 }
 
-/// What a freeze takes: the last event seq it includes, and where the main transcript is cut.
+/// What a freeze takes: the last event seq it includes, and the running turn whose lines are cut off.
 struct Freeze {
     upto: i64,
-    cut: Option<(String, i64)>,
+    cut: Option<Uuid>,
 }
 
 async fn freeze_point(db: &impl Db, conversation: Uuid) -> Result<Freeze> {
     let c = db
         .query_one(
-            "select c.head_seq, c.active_turn, c.main_transcript, t.user_seq, t.start_seq
+            "select c.head_seq, c.active_turn, t.user_seq, t.start_seq
              from conversations c left join turns t on t.id = c.active_turn where c.id = $1",
             &[&conversation],
         )
         .await?;
     let head: i64 = c.get(0);
     let active: Option<Uuid> = c.get(1);
-    let main: Option<String> = c.get(2);
     let Some(turn) = active else {
         return Ok(Freeze { upto: head, cut: None });
     };
     // only finished turns are shared: up to the event just before the running turn's user.sent
-    let first: Option<i64> = c.get::<_, Option<i64>>(3).or(c.get(4));
+    let first: Option<i64> = c.get::<_, Option<i64>>(2).or(c.get(3));
     let upto = first.map_or(head, |s| s - 1);
-    let cut = match main {
-        Some(path) => db
-            .query_opt(
-                "select min(l.ord) from cc_lines l join cc_files f on f.id = l.file_id
-                 where f.scope = $1 and f.path = $2 and l.turn_id = $3",
-                &[&conversation, &path, &turn],
-            )
-            .await?
-            .and_then(|r| r.get::<_, Option<i64>>(0))
-            .map(|ord| (path, ord)),
-        None => None,
-    };
-    Ok(Freeze { upto, cut })
+    Ok(Freeze { upto, cut: Some(turn) })
+}
+
+/// Whether an assistant row exists whose events are all at most `upto` (else 409 `nothing_to_share`).
+async fn has_reply(db: &impl Db, conversation: Uuid, upto: i64) -> Result<()> {
+    let any = db
+        .query_opt(
+            &format!(
+                "select 1 from rows where conversation_id = $1 and kind = 'assistant' and {} limit 1",
+                within(2)
+            ),
+            &[&conversation, &upto],
+        )
+        .await?
+        .is_some();
+    if any {
+        Ok(())
+    } else {
+        Err(Error::code(ErrorCode::NothingToShare, "no finished reply to share"))
+    }
 }
 
 /// M16 `POST /v1/conversations/{id}/shares`: freezes the conversation up to its last finished turn.
@@ -277,20 +289,8 @@ pub async fn create(app: &Magpie, person: &Person, conversation: Uuid) -> Result
         return Err(r.into());
     }
     let f = freeze_point(&conn, conversation).await?;
-    let any = conn
-        .query_opt(
-            &format!(
-                "select 1 from rows where conversation_id = $1 and kind = 'assistant' and {} limit 1",
-                within(2)
-            ),
-            &[&conversation, &f.upto],
-        )
-        .await?
-        .is_some();
+    has_reply(&conn, conversation, f.upto).await?;
     drop(conn);
-    if !any {
-        return Err(Error::code(ErrorCode::NothingToShare, "no finished reply to share"));
-    }
     let id = new_id()?;
     let workspace = workspace_of(&id);
     let clone = hermit_api::workspaces::CloneRequest { from: conversation };
@@ -306,8 +306,9 @@ pub async fn create(app: &Magpie, person: &Person, conversation: Uuid) -> Result
     let r = aviary_pg::tx!(&app.pool, |t| -> Result<OffsetDateTime> {
         let l = lock(t, &person.email, conversation).await?;
         l.refuse_migrating()?;
-        // the freeze point again, under the lock (a turn may have started meanwhile)
+        // the freeze point again, under the lock (a turn may have started meanwhile), and its reply checked again
         let f = freeze_point(t, conversation).await?;
+        has_reply(t, conversation, f.upto).await?;
         let row = t
             .query_one(
                 "insert into shares (id, conversation_id, owner, owner_name, title, upto_seq, snapshot,
@@ -327,8 +328,7 @@ pub async fn create(app: &Magpie, person: &Person, conversation: Uuid) -> Result
             within(3)
         );
         t.execute(&frozen, &[idr, &conversation, &f.upto]).await?;
-        let cut = f.cut.as_ref().map(|(p, o)| (p.as_str(), *o));
-        copy_scope(t, conversation, snapshot, cut).await?;
+        copy_scope(t, conversation, snapshot, f.cut).await?;
         copy_refs(t, conversation, snapshot, "share").await?;
         not_pending(t, workspace).await?;
         Ok(row.get(0))

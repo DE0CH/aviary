@@ -123,8 +123,13 @@ pub const BLOB_CACHE_BYTES: u64 = 256 << 20;
 /// Image decodes at once per replica.
 pub const DECODES: usize = 4;
 /// The memory image decodes may hold at once per replica (each takes its estimate, `images::decode_memory`; one over
-/// the budget runs alone). With the read cache and request bodies it keeps a replica inside its 1 GiB (magpie 18.2).
+/// the whole budget answers 415). With the read cache ([`BLOB_CACHE_BYTES`]) and the buffered bodies
+/// ([`BODY_MEMORY_BYTES`]) it keeps a replica inside its 1 GiB (magpie 18.2): 384 + 256 + 256 MiB, and 128 MiB for
+/// the rest.
 pub const DECODE_MEMORY_BYTES: u64 = 384 << 20;
+/// The memory request bodies read whole (uploads, the sandbox's blob `PUT`s) and the uploader's staged blobs may hold
+/// at once per replica; a body waits for its share (its `Content-Length`, else its route's limit) before it is read.
+pub const BODY_MEMORY_BYTES: u64 = 256 << 20;
 /// An image decode over this many pixels answers 415 (40 megapixels).
 pub const DECODE_MAX_PIXELS: u64 = 40_000_000;
 /// Thumbnail: long edge, pixels.
@@ -157,6 +162,8 @@ pub const UPLOAD_FAILING_LOG_EVERY: Duration = Duration::from_mins(10);
 pub const BLOB_GC_EVERY: Duration = Duration::from_hours(1);
 /// The blob GC: an unreferenced blob is freed only this long after its last reference.
 pub const BLOB_GC_GRACE: Duration = Duration::from_hours(24);
+/// The blob GC: how long it waits to take back a blob's lock it lost mid-delete, to re-verify the object.
+pub const BLOB_REVERIFY_WAIT: Duration = Duration::from_mins(5);
 /// The blob GC: candidates per query.
 pub const BLOB_GC_BATCH: i64 = 500;
 /// The bucket reconcile: how often.

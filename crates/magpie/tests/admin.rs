@@ -12,6 +12,7 @@
 mod common;
 
 use aviary_fakes::hermit::{FakeHermit, HermitConfig};
+use aviary_fakes::script::Reply;
 use common::ev::{self, assistant, text, turn_ended, turn_started, user_sent};
 use common::files::{gateway, grant_lease};
 use magpie_api::errors::ErrorCode;
@@ -63,6 +64,13 @@ async fn a_leaver_is_purged_only_when_hermit_no_longer_allows_them() {
     assert!(r.pigeon().person(STAFF).get_conversation(staff).await.is_ok());
 
     let a = with_reply(&r, LEAVER).await;
+    // a 404 from hermit (a route missing during version skew) is not a "no": 503, nothing purged
+    hermit
+        .script()
+        .once("person", Reply::error(404, "not_found", "no such route"));
+    let e = r.hermit().service(None).person_purge(LEAVER, &purge).await.unwrap_err();
+    assert_eq!(e.code(), Some(&ErrorCode::Unavailable));
+    assert!(r.pigeon().person(LEAVER).get_conversation(a).await.is_ok());
     let b = ev::conversation(&r.pigeon(), LEAVER).await;
     r.pigeon().person(LEAVER).delete_conversation(b).await.unwrap();
     hermit.write_file(a, "x.txt", b"x");
@@ -267,4 +275,35 @@ async fn admin_reads_are_audited_once_a_day() {
         .unwrap()
         .get(0);
     assert_eq!(n, 1);
+    // the list shows titles: each listed conversation is audited as read, once a day, for that admin
+    let admin3 = r.admin();
+    for _ in 0..3 {
+        let listed = admin3
+            .service(Some("lister@example.com"))
+            .admin_conversations(&AdminListQuery {
+                person: Some(STAFF.into()),
+                state: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(listed.conversations.len(), 2);
+    }
+    let listed: Vec<Uuid> = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query(
+            "select conversation_id from view_as_log where event = 'admin_read' and admin = 'lister@example.com'
+             order by conversation_id",
+            &[],
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.get(0))
+        .collect();
+    let mut want = vec![c, d];
+    want.sort();
+    assert_eq!(listed, want);
 }

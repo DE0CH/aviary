@@ -35,6 +35,37 @@ pub async fn read_body(body: Body, max: u64) -> Result<Bytes> {
     }
 }
 
+/// Reads `body` whole, at most `max` bytes, under the buffered-body memory budget ([`blobs::Blobs::hold_body`]):
+/// the body's `Content-Length` (413 at once when it is over `max`), else `max`, is taken before a byte is read, the
+/// buffer is allocated at that size once (no growth, no final copy: the bytes take their size once), and what the
+/// body did not use is given back. The rest is held for as long as the answer's [`blobs::BodyMemory`] is.
+///
+/// # Errors
+/// As [`read_body`].
+pub async fn read_body_held(app: &Magpie, body: Body, max: u64) -> Result<(Bytes, blobs::BodyMemory)> {
+    use http_body_util::BodyExt as _;
+    let declared = axum::body::HttpBody::size_hint(&body).exact();
+    if declared.is_some_and(|n| n > max) {
+        return Err(Error::code(ErrorCode::TooLarge, format!("over {max} bytes")));
+    }
+    let want = declared.unwrap_or(max);
+    let mut held = app.blobs.hold_body(want).await?;
+    let limit = usize::try_from(max).unwrap_or(usize::MAX);
+    let mut buf: Vec<u8> = Vec::with_capacity(usize::try_from(want).unwrap_or(limit));
+    let mut body = body;
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(|e| Error::bad_request(format!("body: {e}")))?;
+        if let Ok(data) = frame.into_data() {
+            if buf.len() + data.len() > limit {
+                return Err(Error::code(ErrorCode::TooLarge, format!("over {max} bytes")));
+            }
+            buf.extend_from_slice(&data);
+        }
+    }
+    held.keep(u64::try_from(buf.len()).unwrap_or(u64::MAX));
+    Ok((Bytes::from(buf), held))
+}
+
 /// The blob of a hex id (404 when it is not one, or no such blob exists).
 async fn blob_row(app: &Magpie, hex: &str) -> Result<blobs::BlobRow> {
     let sha = blobs::from_hex(hex).ok_or_else(Error::not_found)?;
@@ -170,7 +201,7 @@ pub async fn put_sandbox_blob(app: &Magpie, ctx: &Ctx, hex: &str, body: Body) ->
             return Ok(Admitted::Repeat(Empty {}));
         }
     }
-    let bytes = read_body(body, magpie_api::sandbox::SENT_FILE_MAX_BYTES).await?;
+    let (bytes, _held) = read_body_held(app, body, magpie_api::sandbox::SENT_FILE_MAX_BYTES).await?;
     if blobs::sha256(&bytes) != sha {
         return Err(Error::code(
             ErrorCode::ShaMismatch,

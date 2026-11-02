@@ -86,19 +86,38 @@ pub async fn start(db: &impl Db, req: &ViewAsRequest) -> Result<()> {
     Ok(())
 }
 
-/// An admin's read of `conversation` through the admin routes (magpie 13): the first one per admin, conversation
-/// and (UTC) day writes an `admin_read` row; a unique index makes concurrent first reads write one.
+/// The classid of the admin-read audit's transaction locks (the objid is a hash of the admin).
+const ADMIN_READ_LOCK: i32 = 0x6d61_6472; // "madr"
+
+/// Admin reads of `conversations` (each with its person) through the admin routes (magpie 13): the first read of
+/// each per admin, conversation and (UTC) day writes an `admin_read` row. The admin's audit writes are serialised by
+/// a transaction lock, so concurrent first reads write one row.
 ///
 /// # Errors
 /// When a statement fails.
-pub async fn admin_read(db: &impl Db, admin: &str, person: &str, conversation: Uuid) -> Result<()> {
-    db.execute(
-        "insert into view_as_log (admin, person, session, event, conversation_id)
-         values ($1, $2, 'admin', 'admin_read', $3)
-         on conflict (admin, conversation_id, ((at at time zone 'UTC')::date)) where event = 'admin_read'
-         do nothing",
-        &[&admin, &person, &conversation],
-    )
-    .await?;
-    Ok(())
+pub async fn admin_reads(pool: &aviary_pg::Pool, admin: &str, conversations: &[(String, Uuid)]) -> Result<()> {
+    if conversations.is_empty() {
+        return Ok(());
+    }
+    let people: Vec<&str> = conversations.iter().map(|(p, _)| p.as_str()).collect();
+    let ids: Vec<Uuid> = conversations.iter().map(|(_, c)| *c).collect();
+    let (people, ids) = (&people, &ids);
+    aviary_pg::tx!(pool, |t| -> Result<()> {
+        t.execute(
+            "select pg_advisory_xact_lock($1::int4, hashtext($2))",
+            &[&ADMIN_READ_LOCK, &admin],
+        )
+        .await?;
+        t.execute(
+            "insert into view_as_log (admin, person, session, event, conversation_id)
+             select $1, x.p, 'admin', 'admin_read', x.c from unnest($2::text[], $3::uuid[]) as x(p, c)
+             where not exists (select 1 from view_as_log v
+                               where v.event = 'admin_read' and v.admin = $1 and v.conversation_id = x.c
+                                 and v.at >= date_trunc('day', now() at time zone 'UTC') at time zone 'UTC')",
+            &[&admin, people, ids],
+        )
+        .await?;
+        Ok(())
+    })
+    .await
 }

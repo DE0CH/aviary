@@ -174,6 +174,18 @@ impl Bucket {
         Ok(body.into_bytes())
     }
 
+    /// Whether an object is at `key` (`HEAD`).
+    ///
+    /// # Errors
+    /// [`StoreError::Failed`].
+    pub async fn exists(&self, key: &str) -> Result<bool, StoreError> {
+        match self.s3.head_object().bucket(&self.bucket).key(key).send().await {
+            Ok(_) => Ok(true),
+            Err(e) if status(&e) == 404 => Ok(false),
+            Err(e) => Err(failed(&e)),
+        }
+    }
+
     /// Deletes the object at `key` (absent is fine).
     ///
     /// # Errors

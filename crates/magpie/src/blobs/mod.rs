@@ -149,8 +149,9 @@ fn i32_of(n: Option<u32>) -> Option<i32> {
 }
 
 /// Records `blob`, whose bytes are in the bucket (a writer holding [`Blobs::shared`] put them), in `db`: inserted as
-/// stored, or an existing row's `last_ref_at` bumped (which takes the row lock the GC needs). A staged row stays as
-/// it is: the uploader stores it.
+/// stored, or an existing row's `last_ref_at` bumped (which takes the row lock the GC needs) and `stored` set (the
+/// writer put the bytes whenever the row did not say stored, [`Blobs::put_bytes`]: this also repairs a row the GC
+/// found without its object, [`gc`]). A staged row's staging stays: the uploader puts it again and removes it.
 ///
 /// # Errors
 /// When the statement fails.
@@ -158,7 +159,7 @@ pub async fn record_stored(db: &impl Db, blob: &RawBlob) -> Result<()> {
     db.execute(
         "insert into blobs (sha256, size, kind, encoding, mime, width, height, stored)
          values ($1, $2, $3, 'raw', $4, $5, $6, true)
-         on conflict (sha256) do update set last_ref_at = now()",
+         on conflict (sha256) do update set last_ref_at = now(), stored = true",
         &[
             &blob.sha.as_slice(),
             &blob.size,
@@ -198,16 +199,34 @@ pub struct Blobs {
     cache: moka::future::Cache<Sha, axum::body::Bytes>,
     decodes: Arc<Semaphore>,
     decode_memory: Arc<Semaphore>,
-    writer_locks: locks::LockSession,
-    gc_locks: locks::LockSession,
+    body_memory: Arc<Semaphore>,
+    writer_locks: Arc<locks::LockSession>,
+    gc_locks: Arc<locks::LockSession>,
 }
 
-/// The decode memory budget in permits of 1 MiB.
-fn memory_permits(bytes: u64) -> u32 {
-    let budget = u32::try_from(limits::DECODE_MEMORY_BYTES >> 20).unwrap_or(u32::MAX);
-    u32::try_from(bytes.div_ceil(1 << 20))
-        .unwrap_or(u32::MAX)
-        .clamp(1, budget)
+/// `bytes` in permits of 1 MiB (at least one).
+fn mib_permits(bytes: u64) -> u32 {
+    u32::try_from(bytes.div_ceil(1 << 20)).unwrap_or(u32::MAX).max(1)
+}
+
+/// A memory budget of `bytes` as a semaphore of 1 MiB permits.
+fn budget(bytes: u64) -> Arc<Semaphore> {
+    Arc::new(Semaphore::new(usize::try_from(bytes >> 20).unwrap_or(usize::MAX)))
+}
+
+/// Memory held from [`Blobs::hold_body`]: given back when dropped.
+#[derive(Debug)]
+pub struct BodyMemory(tokio::sync::OwnedSemaphorePermit);
+
+impl BodyMemory {
+    /// Keeps `bytes` of the held memory (at least 1 MiB) and gives the rest back.
+    pub fn keep(&mut self, bytes: u64) {
+        let keep = usize::try_from(mib_permits(bytes)).unwrap_or(usize::MAX);
+        let extra = self.0.num_permits().saturating_sub(keep);
+        if extra > 0 {
+            drop(self.0.split(extra));
+        }
+    }
 }
 
 impl Blobs {
@@ -224,12 +243,28 @@ impl Blobs {
                 .weigher(|_, v: &axum::body::Bytes| u32::try_from(v.len()).unwrap_or(u32::MAX))
                 .build(),
             decodes: Arc::new(Semaphore::new(limits::DECODES)),
-            decode_memory: Arc::new(Semaphore::new(
-                usize::try_from(limits::DECODE_MEMORY_BYTES >> 20).unwrap_or(usize::MAX),
-            )),
-            writer_locks: locks::LockSession::new(database_url, "magpie-blob-locks")?,
-            gc_locks: locks::LockSession::new(database_url, "magpie-gc-locks")?,
+            decode_memory: budget(limits::DECODE_MEMORY_BYTES),
+            body_memory: budget(limits::BODY_MEMORY_BYTES),
+            writer_locks: Arc::new(locks::LockSession::new(database_url, "magpie-blob-locks")?),
+            gc_locks: Arc::new(locks::LockSession::new(database_url, "magpie-gc-locks")?),
         })
+    }
+
+    /// Takes `bytes` of the buffered-body budget ([`limits::BODY_MEMORY_BYTES`]): a request body read whole (an
+    /// upload, a sandbox blob `PUT`) or a staged blob the uploader holds, waiting until that much is free. Taken
+    /// before the bytes are read and held until they are dropped. A holder may then take decode memory
+    /// ([`Blobs::decode`]), never the other way round, so the two budgets cannot deadlock.
+    ///
+    /// # Errors
+    /// [`Error::Internal`] when the budget was closed (never).
+    pub async fn hold_body(&self, bytes: u64) -> Result<BodyMemory> {
+        let total = u32::try_from(limits::BODY_MEMORY_BYTES >> 20).unwrap_or(u32::MAX);
+        self.body_memory
+            .clone()
+            .acquire_many_owned(mib_permits(bytes).min(total))
+            .await
+            .map(BodyMemory)
+            .map_err(|_| Error::Internal("body memory closed".into()))
     }
 
     /// Takes `sha`'s shared lock (writers of its object; see the module docs), on the writers' lock session.
@@ -241,7 +276,7 @@ impl Blobs {
     }
 
     /// The GC's lock session.
-    pub(crate) fn gc_locks(&self) -> &locks::LockSession {
+    pub(crate) fn gc_locks(&self) -> &Arc<locks::LockSession> {
         &self.gc_locks
     }
 
@@ -285,7 +320,8 @@ impl Blobs {
     }
 
     /// Runs `f` (CPU-bound image work) on the blocking pool under a decode permit and `memory` bytes of the decode
-    /// memory budget ([`limits::DECODE_MEMORY_BYTES`]; [`images::decode_memory`] estimates it).
+    /// memory budget ([`limits::DECODE_MEMORY_BYTES`]; [`images::decode_memory`] estimates it). A decode whose
+    /// estimate is over the whole budget is not run: it answers [`images::ImageError::OverMemory`] (415).
     ///
     /// # Errors
     /// What `f` answers; [`Error::Internal`] when the task panicked.
@@ -295,10 +331,13 @@ impl Blobs {
         f: impl FnOnce() -> Result<T, images::ImageError> + Send + 'static,
     ) -> Result<Result<T, images::ImageError>> {
         let closed = |_| Error::Internal("decode permits closed".into());
+        if memory > limits::DECODE_MEMORY_BYTES {
+            return Ok(Err(images::ImageError::OverMemory(memory)));
+        }
         let _memory = self
             .decode_memory
             .clone()
-            .acquire_many_owned(memory_permits(memory))
+            .acquire_many_owned(mib_permits(memory))
             .await
             .map_err(closed)?;
         let _permit = self.decodes.clone().acquire_owned().await.map_err(closed)?;

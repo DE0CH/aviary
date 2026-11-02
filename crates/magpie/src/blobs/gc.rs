@@ -7,6 +7,13 @@
 //! writer of the blob's object holds shared (see [`super`]). The GC only tries that lock, on its own lock session
 //! ([`super::locks`]): a blob a writer is putting is left for the next pass, and no wait pins a connection.
 //!
+//! A lock session can end while the GC deletes (a database switchover): a writer may then take the shared lock on a
+//! new session, put the same key and commit a stored row while the GC's `DELETE`, already sent, lands after the
+//! `PUT`. So when the GC finds its lock lost after a delete, it waits to take the blob's lock again (every writer of
+//! that moment has finished), and if a row says the blob is stored, it asks the bucket (`HEAD`): a missing object
+//! clears `stored`, so the next writer of those bytes puts them again ([`super::record_stored`]), and logs
+//! `blob object lost`.
+//!
 //! The reconcile lists the bucket and deletes objects older than 24 h whose blob has no row (a `PUT` whose
 //! transaction then failed, a derived copy made after its blob was freed), each re-checked under the same lock.
 
@@ -120,6 +127,7 @@ async fn free_one(pool: &Pool, blobs: &Arc<Blobs>, sha: &Sha) -> Result<bool> {
             return Err(e);
         }
     };
+    let mut lost = false;
     if deleted {
         blobs.cache.invalidate(sha).await;
         let hex = to_hex(sha);
@@ -127,16 +135,65 @@ async fn free_one(pool: &Pool, blobs: &Arc<Blobs>, sha: &Sha) -> Result<bool> {
             if !lock.held().await {
                 // the lock session ended: a writer may be putting the object again (the reconcile deletes leftovers)
                 tracing::warn!(key = %key, "blob lock lost; freed blob's objects left for the reconcile");
+                lost = true;
                 break;
             }
             if let Err(e) = blobs.bucket.delete(&key).await {
                 // the reconcile deletes it later
                 tracing::warn!(error = %e, key = %key, "freed blob's object not deleted");
             }
+            if !lock.held().await {
+                // lost while the delete was in flight: it may have landed after a writer's put
+                lost = true;
+                break;
+            }
         }
     }
     lock.release().await;
+    if lost {
+        reverify(pool, blobs, sha).await?;
+    }
     Ok(deleted)
+}
+
+/// After the GC lost a blob's lock while deleting its objects: once the lock is had again (no writer is mid-put),
+/// a row that says stored is checked against the bucket, and `stored` is cleared when the object is gone.
+///
+/// # Errors
+/// When a statement fails.
+pub async fn reverify(pool: &Pool, blobs: &Arc<Blobs>, sha: &Sha) -> Result<()> {
+    let hex = to_hex(sha);
+    let start = Instant::now();
+    let lock = loop {
+        match blobs.gc_locks().try_exclusive(sha).await {
+            Ok(Some(l)) => break l,
+            Ok(None) | Err(_) if start.elapsed() < limits::BLOB_REVERIFY_WAIT => {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+            _ => {
+                tracing::error!(blob = %hex, "blob lock lost by the GC and not had again; its object is not re-verified");
+                return Ok(());
+            }
+        }
+    };
+    let stored = super::row(&pool.get().await?, sha).await?.is_some_and(|r| r.stored);
+    if stored {
+        match blobs.bucket.exists(&store::blob_key(&hex)).await {
+            Ok(true) => {}
+            Ok(false) => {
+                pool.get()
+                    .await?
+                    .execute("update blobs set stored = false where sha256 = $1", &[&sha.as_slice()])
+                    .await?;
+                tracing::error!(blob = %hex, "blob object lost to a GC delete; stored cleared for the next writer");
+            }
+            Err(e) => {
+                tracing::error!(blob = %hex, error = %e, "blob lock lost by the GC and its object not checked");
+            }
+        }
+    }
+    lock.release().await;
+    Ok(())
 }
 
 /// The sha a bucket key belongs to.

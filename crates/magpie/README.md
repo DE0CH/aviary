@@ -354,6 +354,15 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
 - An upload's or a sent file's body (at most 50 MiB and 64 MiB) is read whole, hashed, then put in the bucket under
   its content key with one `PUT`, rather than hashed while it streams (the key is the hash, known only at the end).
   No object magpie writes is over 64 MiB, so magpie 5.2's multipart path has nothing to carry and is not built.
+  Buffered bodies are admitted under a memory budget of their own (`limits::BODY_MEMORY_BYTES`, 256 MiB per replica,
+  shared with the uploader's staged blobs): a body takes its `Content-Length` (else its route's limit) before a byte
+  is read. With the decode budget (384 MiB) and the read cache (256 MiB) that keeps a replica inside magpie 18.2's
+  1 GiB (`tests/uploads_perf.rs` measures it with the cache full). A decode whose estimate is over the whole decode
+  budget answers 415, like one over 40 MP: in practice a 16-bit image above about 35 MP (an 8-bit one never is).
+- A blob lock is given back when its holder is dropped (a request whose client went away mid-`PUT`), not only by an
+  explicit release, and taking one runs in a task of its own, so cancellation never leaves a lock on the lock
+  session. A GC that loses its lock session mid-delete takes the blob's lock again and checks a stored row's object
+  with a `HEAD`: a lost object clears `stored` (the next writer puts the bytes again) and logs `blob object lost`.
 - The bucket and the GC are kept consistent by an advisory lock per blob (the two-key space, classid `mblb`):
   every writer of a blob's object holds it shared from before its `PUT` until its row commits (uploads, sent files,
   the uploader); the GC holds it exclusively from before it deletes a row until it has deleted the objects, and the
@@ -366,10 +375,13 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   `"<sha>"`. `display` of a media blob that is not an image (a PDF) answers 415 like `thumb`.
 - A derived copy (thumbnail, display copy) is served without being kept while the bucket cannot be reached.
 - An image upload's `width`/`height` are the upright dimensions (swapped for EXIF orientations 5-8).
-- A share freezes the rows whose identifying event (`source_seqs[1]`) is within `upto_seq`, as they are at the
-  freeze, rather than rows whose source events are all within it (magpie 12.1): a background task's notification
-  updates a finished turn's tool row after the turn, and the stricter rule would drop that row from the share.
-  `nothing_to_share` uses the same rule for the assistant row.
+- A share freezes the rows whose source events are all within `upto_seq`, as magpie 12.1 says, and
+  `nothing_to_share` uses the same rule for the assistant row (checked again under the conversation's lock, with the
+  freeze point recomputed there). The accepted consequence: a finished turn's row that a later event changed (a
+  background task's notification updating a tool row after its turn, a retract in the running turn) is not in the
+  share, nor in a conversation continued from it. The frozen Claude Code copy cuts every lines file of the scope
+  (the main transcript, subagent transcripts) at its first line of the running turn; byte files carry no turn and
+  are copied whole.
 - A share's blob references are a copy of the conversation's at the freeze (a superset of what the frozen lines,
   rows and events reference: it may keep a running turn's blobs alive for as long as the share lives).
 - `share_rows` keeps every column of `rows` (migration `0006_shares.sql`), so a continued conversation's rows are
@@ -379,6 +391,13 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
 - The admin reads show the lease's grant time and the last heartbeat's `gen`, `supervisor` and `cc` from two
   columns migration `0007_admin.sql` adds (`lease_granted_at`, set by the lease grant; `last_heartbeat`, set by the
   heartbeat route); magpie 4 keeps only `heartbeat_at`. `GET /v1/admin/conversations` lists at most 500, newest
-  activity first, and is not audited (it shows no content); the per-conversation reads are.
+  activity first. Its titles come from content (a provisional title is the start of the first message), so it is
+  audited like the per-conversation reads: an `admin_read` row for each listed conversation, the first per admin,
+  conversation and UTC day. Those rows are written under a per-admin transaction lock rather than a unique index
+  (migration `0012_admin_read_index.sql` builds a plain index concurrently), so no audit row is ever deleted and a
+  replica on older code never meets a conflict during a rolling update. Migration `0010_shares_frozen.sql` was
+  edited before any deployment (nothing of wave 1 is deployed) to drop its duplicate-deleting step and unique index.
+- A person purge goes ahead only on hermit's 200 `allowed: false`; any other answer from hermit, a 404 included
+  (hermit answers 200 for every well-formed address), is 503 and purges nothing.
 - A person purge also deletes the leaver's unattached uploads, and answers 409 `conversation_migrating` (after
   purging the rest) while the importer holds one of their conversations; a repeat finishes it.

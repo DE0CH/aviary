@@ -17,7 +17,7 @@ use crate::blobs::images::{self, ImageError};
 use crate::blobs::{self, RawBlob, SharedLock};
 use crate::conversations::{Person, ensure_person};
 use crate::error::{Error, Result};
-use crate::files::{raw_facts, read_body};
+use crate::files::{raw_facts, read_body_held};
 use crate::viewas;
 
 fn unsupported(e: &ImageError) -> Error {
@@ -88,7 +88,8 @@ async fn image_facts(app: &Magpie, bytes: &Bytes, name: &str) -> Result<ImageFac
 /// 413 `too_large`; 415 `unsupported_type` for an image upload that is not a supported image or is over the decode
 /// limit; 503 when the bucket cannot be reached; a statement error.
 pub async fn upload(app: &Magpie, person: &Person, meta: UploadMeta, body: Body) -> Result<UploadResponse> {
-    let bytes = read_body(body, UPLOAD_MAX_BYTES).await?;
+    // the body's memory is held until the upload is recorded (the bytes live that long)
+    let (bytes, _held) = read_body_held(app, body, UPLOAD_MAX_BYTES).await?;
     let name = meta.name.clone();
     let (mime, dims, copy) = match meta.kind {
         UploadKind::Image => {

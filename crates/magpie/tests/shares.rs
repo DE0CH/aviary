@@ -123,11 +123,28 @@ async fn conversation_with_turns(r: &common::Replica, hermit: &FakeHermit) -> (U
         .await
         .unwrap()
         .get(0);
-    for (ord, off, turn) in [(0i64, 0i64, t1), (1, 10, t2)] {
+    // a subagent's transcript: two lines of the finished turn, then two of the running one
+    let sub: i64 = sql
+        .query_one(
+            "insert into cc_files (scope, path, kind, mode, mtime_ns, size, next_ord)
+             values ($1, 'projects/-workspace/s1/subagents/agent-1.jsonl', 'lines', 420, 1, 40, 4) returning id",
+            &[&c],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    for (file, ord, off, turn) in [
+        (f, 0i64, 0i64, t1),
+        (f, 1, 10, t2),
+        (sub, 0, 0, t1),
+        (sub, 1, 10, t1),
+        (sub, 2, 20, t2),
+        (sub, 3, 30, t2),
+    ] {
         sql.execute(
             "insert into cc_lines (file_id, ord, start_off, len, sha256, stub, turn_id)
              values ($1, $2, $3, 10, $5, $6, $4)",
-            &[&f, &ord, &off, &turn, &vec![0u8; 32], &b"{\"a\":1}\n".to_vec()],
+            &[&file, &ord, &off, &turn, &vec![0u8; 32], &b"{\"a\":1}\n".to_vec()],
         )
         .await
         .unwrap();
@@ -215,20 +232,31 @@ async fn freeze_view_continue_revoke_and_purge() {
     assert_eq!(view.rows, first_rows);
     assert!(alice.person(ALICE).get_share(&share.id).await.unwrap().is_owner);
 
-    // the frozen Claude Code state: the main transcript ends before the running turn's line
-    let snap = r
+    // the frozen Claude Code state: every transcript (the main one, a subagent's) ends before the running turn's
+    // first line
+    let snap: Vec<(String, i64, i64)> = r
         .pool()
         .get()
         .await
         .unwrap()
-        .query_one(
-            "select f.size, (select count(*) from cc_lines l where l.file_id = f.id)
-             from shares s join cc_files f on f.scope = s.snapshot where s.id = $1",
+        .query(
+            "select f.path, f.size, (select count(*) from cc_lines l where l.file_id = f.id)
+             from shares s join cc_files f on f.scope = s.snapshot where s.id = $1 and f.kind = 'lines'
+             order by f.path",
             &[&share.id],
         )
         .await
-        .unwrap();
-    assert_eq!((snap.get::<_, i64>(0), snap.get::<_, i64>(1)), (10, 1));
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.get(0), r.get(1), r.get(2)))
+        .collect();
+    assert_eq!(
+        snap,
+        vec![
+            ("projects/-workspace/s1.jsonl".to_owned(), 10, 1),
+            ("projects/-workspace/s1/subagents/agent-1.jsonl".to_owned(), 20, 2),
+        ]
+    );
 
     // downloads: the send's snapshot; the frozen workspace, not the live one
     hermit.write_file(c, "report.txt", b"v2");

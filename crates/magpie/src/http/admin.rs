@@ -12,7 +12,7 @@ use crate::app::Magpie;
 
 /// `GET /v1/admin/conversations`.
 pub async fn conversations(app: &Magpie, ctx: Ctx, q: AdminListQuery) -> Answer<AdminConversationList> {
-    answer(async { admin::list(&app.pool.get().await?, &ctx, &q).await }.await)
+    answer(async { admin::list(&app.pool, &ctx, &q).await }.await)
 }
 
 /// `GET /v1/admin/conversations/{id}`.

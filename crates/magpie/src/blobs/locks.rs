@@ -13,6 +13,12 @@
 //! hold up the session for everyone else. A session that breaks loses its locks; a writer therefore checks, in the
 //! transaction that records its blob ([`SharedLock::check`]), that its lock is still held (Postgres' `pg_locks`),
 //! and answers 503 when it is not.
+//!
+//! A held lock is given back when its holder drops it, not only by [`SharedLock::release`]: a request whose client
+//! goes away mid-`PUT` drops its future, and a lock left on the long-lived session would stay held until the replica
+//! restarts (the GC could then never free that blob, nor any other whose sha shares its first four bytes). Taking a
+//! lock runs in a task of its own, so a caller dropped while the statement is in flight still gets the lock given
+//! back; dropping a [`SharedLock`] or [`ExclusiveLock`] spawns its unlock on the session.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -113,11 +119,25 @@ impl LockSession {
     ///
     /// # Errors
     /// 503 `unavailable` when it is not had in time or the session cannot be reached.
-    pub async fn shared(&self, sha: &Sha) -> Result<SharedLock> {
+    pub async fn shared(self: &Arc<Self>, sha: &Sha) -> Result<SharedLock> {
+        let me = self.clone();
+        let sha = *sha;
+        // in a task of its own: a caller dropped meanwhile drops the lock the task took, which gives it back
+        tokio::spawn(async move { me.shared_now(&sha).await })
+            .await
+            .map_err(|e| Error::Internal(format!("blob lock task: {e}")))?
+    }
+
+    async fn shared_now(&self, sha: &Sha) -> Result<SharedLock> {
         let start = Instant::now();
         loop {
             match self.try_lock(sha, false).await {
-                Ok(Some(session)) => return Ok(SharedLock { session, sha: *sha }),
+                Ok(Some(session)) => {
+                    return Ok(SharedLock {
+                        held: Some(session),
+                        sha: *sha,
+                    });
+                }
                 Ok(None) if start.elapsed() < SHARED_WAIT => tokio::time::sleep(RETRY).await,
                 Ok(None) => return Err(unavailable("the GC held it")),
                 Err(e) => {
@@ -132,19 +152,53 @@ impl LockSession {
     ///
     /// # Errors
     /// When the session cannot be reached.
-    pub async fn try_exclusive(&self, sha: &Sha) -> Result<Option<ExclusiveLock>> {
-        Ok(self
-            .try_lock(sha, true)
-            .await?
-            .map(|session| ExclusiveLock { session, sha: *sha }))
+    pub async fn try_exclusive(self: &Arc<Self>, sha: &Sha) -> Result<Option<ExclusiveLock>> {
+        let me = self.clone();
+        let sha = *sha;
+        tokio::spawn(async move {
+            Ok(me.try_lock(&sha, true).await?.map(|session| ExclusiveLock {
+                held: Some(session),
+                sha,
+            }))
+        })
+        .await
+        .map_err(|e| Error::Internal(format!("blob lock task: {e}")))?
     }
 }
 
-/// A held shared blob lock ([`LockSession::shared`]); [`SharedLock::release`] gives it back.
+const UNLOCK_SHARED: &str = "select pg_advisory_unlock_shared($1::int4, $2::int4)";
+const UNLOCK_EXCLUSIVE: &str = "select pg_advisory_unlock($1::int4, $2::int4)";
+
+/// Gives back one hold of `sha`'s lock on `session`, in a task of its own (so neither a dropped caller nor a drop
+/// outside an async context can skip it). A broken session has lost its locks already; the error is ignored.
+fn unlock(session: Arc<Session>, sha: Sha, sql: &'static str) -> Option<tokio::task::JoinHandle<()>> {
+    let rt = tokio::runtime::Handle::try_current().ok()?;
+    Some(rt.spawn(async move {
+        let _ = session.conn.execute(sql, &[&LOCK_CLASS, &lock_obj(&sha)]).await;
+    }))
+}
+
+/// A held shared blob lock ([`LockSession::shared`]); [`SharedLock::release`] or a drop gives it back.
 #[derive(Debug)]
 pub struct SharedLock {
-    session: Arc<Session>,
+    held: Option<Arc<Session>>,
     sha: Sha,
+}
+
+impl Drop for SharedLock {
+    fn drop(&mut self) {
+        if let Some(s) = self.held.take() {
+            unlock(s, self.sha, UNLOCK_SHARED);
+        }
+    }
+}
+
+impl Drop for ExclusiveLock {
+    fn drop(&mut self) {
+        if let Some(s) = self.held.take() {
+            unlock(s, self.sha, UNLOCK_EXCLUSIVE);
+        }
+    }
 }
 
 impl SharedLock {
@@ -160,7 +214,7 @@ impl SharedLock {
                 "select exists (select 1 from pg_locks where locktype = 'advisory' and pid = $1
                                  and classid = ($2::int4)::oid and objid = ($3::int4)::oid and objsubid = 2
                                  and mode = 'ShareLock' and granted)",
-                &[&self.session.pid, &LOCK_CLASS, &lock_obj(&self.sha)],
+                &[&self.pid(), &LOCK_CLASS, &lock_obj(&self.sha)],
             )
             .await?
             .get(0);
@@ -171,31 +225,34 @@ impl SharedLock {
         }
     }
 
-    /// Releases the lock.
-    pub async fn release(self) {
-        let _ = self
-            .session
-            .conn
-            .execute(
-                "select pg_advisory_unlock_shared($1::int4, $2::int4)",
-                &[&LOCK_CLASS, &lock_obj(&self.sha)],
-            )
-            .await;
+    fn pid(&self) -> i32 {
+        self.held.as_ref().map_or(0, |s| s.pid)
+    }
+
+    /// Releases the lock (and waits until it is given back).
+    pub async fn release(mut self) {
+        if let Some(s) = self.held.take()
+            && let Some(h) = unlock(s, self.sha, UNLOCK_SHARED)
+        {
+            let _ = h.await;
+        }
     }
 }
 
 /// A held exclusive blob lock ([`LockSession::try_exclusive`]).
 #[derive(Debug)]
 pub struct ExclusiveLock {
-    session: Arc<Session>,
+    held: Option<Arc<Session>>,
     sha: Sha,
 }
 
 impl ExclusiveLock {
     /// Whether the lock is still held (its session has not ended): the GC asks before each object it deletes.
     pub async fn held(&self) -> bool {
-        self.session
-            .conn
+        let Some(s) = self.held.as_ref() else {
+            return false;
+        };
+        s.conn
             .query_one(
                 "select exists (select 1 from pg_locks where locktype = 'advisory' and pid = pg_backend_pid()
                                  and classid = ($1::int4)::oid and objid = ($2::int4)::oid and objsubid = 2
@@ -206,15 +263,12 @@ impl ExclusiveLock {
             .is_ok_and(|r| r.get::<_, bool>(0))
     }
 
-    /// Releases the lock.
-    pub async fn release(self) {
-        let _ = self
-            .session
-            .conn
-            .execute(
-                "select pg_advisory_unlock($1::int4, $2::int4)",
-                &[&LOCK_CLASS, &lock_obj(&self.sha)],
-            )
-            .await;
+    /// Releases the lock (and waits until it is given back).
+    pub async fn release(mut self) {
+        if let Some(s) = self.held.take()
+            && let Some(h) = unlock(s, self.sha, UNLOCK_EXCLUSIVE)
+        {
+            let _ = h.await;
+        }
     }
 }

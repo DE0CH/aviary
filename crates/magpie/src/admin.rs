@@ -39,7 +39,8 @@ pub async fn purge_person(app: &Magpie, person: &str) -> Result<PersonPurgeRespo
             return Err(Error::code(ErrorCode::PersonAllowed, "hermit still allows this person"));
         }
         Ok(_) => {}
-        Err(e) if e.status() == Some(404) => {}
+        // hermit answers 200 for every well-formed address (H2): any other answer, a 404 included (a route missing
+        // during version skew), is not a "no" and never leads to a purge
         Err(e) => {
             tracing::warn!(error = %e, "person purge: hermit did not answer");
             return Err(Error::code(ErrorCode::Unavailable, "hermit cannot be reached"));
@@ -192,12 +193,14 @@ async fn admin_view(db: &impl Db, id: Uuid) -> Result<Option<AdminConversation>>
     }))
 }
 
-/// `GET /v1/admin/conversations?person=&state=` (not audited: it shows no content).
+/// `GET /v1/admin/conversations?person=&state=`: audited as a read of every conversation it lists (their titles come
+/// from their content: a provisional title is the start of the first message).
 ///
 /// # Errors
 /// 400 without `Aviary-Admin`; a statement error.
-pub async fn list(db: &impl Db, ctx: &Ctx, q: &AdminListQuery) -> Result<AdminConversationList> {
-    admin_of(ctx)?;
+pub async fn list(pool: &Pool, ctx: &Ctx, q: &AdminListQuery) -> Result<AdminConversationList> {
+    let admin = admin_of(ctx)?;
+    let db = &pool.get().await?;
     let deleted = matches!(q.state, Some(ListState::Deleted));
     let person = q.person.as_deref().map(|p| p.trim().to_lowercase());
     let ids: Vec<Uuid> = db
@@ -217,15 +220,21 @@ pub async fn list(db: &impl Db, ctx: &Ctx, q: &AdminListQuery) -> Result<AdminCo
             conversations.push(c);
         }
     }
+    let read: Vec<(String, Uuid)> = conversations
+        .iter()
+        .map(|c| (c.person.clone(), c.conversation.id))
+        .collect();
+    viewas::admin_reads(pool, &admin, &read).await?;
     Ok(AdminConversationList { conversations })
 }
 
 /// The conversation an admin reads, its first read today by this admin recorded (`admin_read`).
 async fn audited(pool: &Pool, ctx: &Ctx, id: Uuid) -> Result<String> {
     let admin = admin_of(ctx)?;
-    let conn = pool.get().await?;
-    let (person, _) = conversations::load(&conn, id).await?.ok_or_else(Error::not_found)?;
-    viewas::admin_read(&conn, &admin, &person, id).await?;
+    let (person, _) = conversations::load(&pool.get().await?, id)
+        .await?
+        .ok_or_else(Error::not_found)?;
+    viewas::admin_reads(pool, &admin, &[(person.clone(), id)]).await?;
     Ok(person)
 }
 

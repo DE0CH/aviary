@@ -129,6 +129,11 @@ jobs:
           CARGO_PROFILE_RELEASE_LTO: "false"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
         run: cargo test --release --locked -p magpie --test uploads_perf -- --ignored --nocapture
+      - name: many large bodies at once with the read cache full stay under 1 GiB of RSS (the buffered-body budget)
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+        run: cargo test --release --locked -p magpie --test bodies_perf -- --ignored --nocapture
 
   sandboxd-soak:
     # hermit spec 14.6: two daemons with stand-ins for runsc/ip/nft/wg, every endpoint, a migration, hostile clients,

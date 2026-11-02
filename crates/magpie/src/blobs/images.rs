@@ -21,6 +21,9 @@ pub enum ImageError {
     /// More pixels than [`limits::DECODE_MAX_PIXELS`].
     #[error("image of {0} pixels is over the decode limit")]
     TooLarge(u64),
+    /// A decode estimated to need more memory than the whole decode budget ([`limits::DECODE_MEMORY_BYTES`]).
+    #[error("image needing {0} bytes to decode is over the decode memory limit")]
+    OverMemory(u64),
 }
 
 /// The image types (by sniffed type, then extension; magpie 10.2). SVG is a file.
@@ -151,11 +154,16 @@ fn pixels(w: u32, h: u32) -> u64 {
     u64::from(w) * u64::from(h)
 }
 
+/// Working memory of a decode besides its full frames: the fitted copy (at most 2,000 px a side, 4 bytes a pixel)
+/// and the encoder's buffers.
+const DECODE_OVERHEAD: u64 = 32 << 20;
+
 /// The memory a decode of `bytes` holds at its peak, estimated from the header (for the decode memory budget,
-/// [`limits::DECODE_MEMORY_BYTES`]): two full frames at the decoded pixel size (the decoded image and the one
-/// turned upright or the decoder's own planes) and one 8-bit RGBA frame (the conversion of a 16-bit or grey image
-/// before resizing). An image over [`limits::DECODE_MAX_PIXELS`] or one whose header does not parse costs only its
-/// bytes: it is refused before anything is decoded.
+/// [`limits::DECODE_MEMORY_BYTES`]), with the input bytes and [`DECODE_OVERHEAD`]: per pixel, an 8-bit RGB(A) image
+/// holds two frames (the decoded one and the one a quarter turn makes); any other (16-bit, grey, palette) holds its
+/// decoded frame and its 8-bit conversion at once ([`decode`] converts before turning), then two 8-bit frames;
+/// HEIF holds libheif's planes and their copy. An image over [`limits::DECODE_MAX_PIXELS`] or one whose header does
+/// not parse costs only its bytes: it is refused before anything is decoded.
 #[must_use]
 pub fn decode_memory(bytes: &[u8], mime: &str) -> u64 {
     let small = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
@@ -167,17 +175,23 @@ pub fn decode_memory(bytes: &[u8], mime: &str) -> u64 {
         return small;
     }
     let per_pixel: u64 = if heif_family(mime) {
-        4
+        8
     } else {
-        format_of(mime)
-            .and_then(|f| {
-                image::ImageReader::with_format(Cursor::new(bytes), f)
-                    .into_decoder()
-                    .ok()
-            })
-            .map_or(8, |d| u64::from(d.color_type().bytes_per_pixel()))
+        let color = format_of(mime).and_then(|f| {
+            image::ImageReader::with_format(Cursor::new(bytes), f)
+                .into_decoder()
+                .ok()
+                .map(|d| d.color_type())
+        });
+        match color {
+            Some(c @ (image::ColorType::Rgb8 | image::ColorType::Rgba8)) => 2 * u64::from(c.bytes_per_pixel()),
+            Some(c) => (u64::from(c.bytes_per_pixel()) + 4).max(8),
+            None => 16 + 4,
+        }
     };
-    px.saturating_mul(per_pixel.saturating_mul(2) + 4).saturating_add(small)
+    px.saturating_mul(per_pixel)
+        .saturating_add(small)
+        .saturating_add(DECODE_OVERHEAD)
 }
 
 /// Decodes `bytes` (at most [`limits::DECODE_MAX_PIXELS`]), turned upright.
@@ -199,6 +213,12 @@ pub fn decode(bytes: &[u8], mime: &str) -> Result<DynamicImage, ImageError> {
         limits_.max_image_height = Some(h);
         reader.limits(limits_);
         reader.decode().map_err(|e| ImageError::Unsupported(e.to_string()))?
+    };
+    // 8-bit before turning: every copy made from it is 8-bit, and the deeper frame is freed at once
+    let img = match img {
+        DynamicImage::ImageRgb8(_) | DynamicImage::ImageRgba8(_) => img,
+        other if has_alpha(&other) => DynamicImage::ImageRgba8(other.to_rgba8()),
+        other => DynamicImage::ImageRgb8(other.to_rgb8()),
     };
     Ok(orient(img, orientation(bytes, mime)))
 }

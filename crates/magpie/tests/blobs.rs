@@ -670,6 +670,142 @@ async fn a_hanging_bucket_pins_no_request_connection() {
     proxy.restore();
 }
 
+/// The blob advisory locks (classid `mblb`) held on the database.
+async fn blob_locks(pool: &aviary_pg::Pool) -> i64 {
+    pool.get()
+        .await
+        .unwrap()
+        .query_one(
+            "select count(*) from pg_locks where locktype = 'advisory' and classid = 1835166818::oid
+               and objsubid = 2 and granted",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0)
+}
+
+#[tokio::test]
+async fn a_cancelled_upload_gives_its_blob_locks_back() {
+    // the bucket hangs; an image upload (with its model copy) is abandoned by its client mid-PUT: its locks go back
+    // at once, and the GC can free the blob later
+    let db = common::fresh_db("cancelled").await;
+    let t = common::Tokens::new();
+    let bucket = common::test_bucket(&db.url).await;
+    let s3: std::net::SocketAddr = bucket.endpoint.trim_start_matches("http://").parse().unwrap();
+    let proxy = common::CutProxy::start(s3).await;
+    let mut via_proxy = bucket.clone();
+    via_proxy.endpoint = format!("http://{}", proxy.addr);
+    let r = common::replica_full(&db.url, &t, "http://127.0.0.1:1", common::idle(), via_proxy).await;
+    proxy.stall();
+    let bytes = png(2100, 40, false);
+    let mut uploads = Vec::new();
+    for _ in 0..3 {
+        let c = r.pigeon();
+        let body = bytes.clone();
+        uploads.push(tokio::spawn(async move {
+            c.person(ALICE)
+                .upload("wide.png", magpie_api::uploads::UploadKind::Image, "image/png", body)
+                .await
+        }));
+    }
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(uploads.iter().all(|u| !u.is_finished()), "the uploads should hang");
+    assert!(blob_locks(r.pool()).await >= 1, "the hanging uploads hold their locks");
+    for u in uploads {
+        u.abort();
+    }
+    proxy.restore();
+    assert!(
+        common::eventually(Duration::from_secs(10), async || blob_locks(r.pool()).await == 0).await,
+        "{} blob locks left after the uploads were abandoned",
+        blob_locks(r.pool()).await
+    );
+    // the same image again, through: then unreferenced and aged, the GC frees both blobs (a lock left on the session
+    // would keep the GC's exclusive lock from ever being had)
+    let up = r
+        .pigeon()
+        .person(ALICE)
+        .upload("wide.png", magpie_api::uploads::UploadKind::Image, "image/png", bytes)
+        .await
+        .unwrap();
+    let sql = r.pool().get().await.unwrap();
+    sql.execute("delete from blob_refs where owner = $1", &[&up.upload_id])
+        .await
+        .unwrap();
+    sql.execute("delete from uploads where id = $1", &[&up.upload_id])
+        .await
+        .unwrap();
+    sql.execute("update blobs set last_ref_at = now() - interval '2 days'", &[])
+        .await
+        .unwrap();
+    assert_eq!(gc::free(r.pool(), &r.app().blobs).await.unwrap(), 2);
+    assert_eq!(blob_locks(r.pool()).await, 0);
+}
+
+#[tokio::test]
+async fn a_stored_row_whose_object_a_gc_delete_lost_is_put_again() {
+    // the GC's reverify (after it lost its lock mid-delete): a row that says stored with no object clears `stored`,
+    // and the next writer of those bytes puts them again
+    let db = common::fresh_db("reverify").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let bytes = b"a sent file whose object went".to_vec();
+    let sha = blobs::sha256(&bytes);
+    let sql = r.pool().get().await.unwrap();
+    sql.execute(
+        "insert into blobs (sha256, size, kind, encoding, stored) values ($1, $2, 'file', 'raw', true)",
+        &[&sha.as_slice(), &i64::try_from(bytes.len()).unwrap()],
+    )
+    .await
+    .unwrap();
+    gc::reverify(r.pool(), &r.app().blobs, &sha).await.unwrap();
+    let stored: bool = sql
+        .query_one("select stored from blobs where sha256 = $1", &[&sha.as_slice()])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(!stored);
+    let c = conversation(&r, ALICE, "k").await;
+    let lease = grant_lease(r.pool(), c).await;
+    let st = gateway(
+        &r,
+        reqwest::Method::PUT,
+        &format!("/v1/sandbox/blobs/{}", blobs::to_hex(&sha)),
+        c,
+        ALICE,
+        Some(lease),
+    )
+    .body(bytes.clone())
+    .send()
+    .await
+    .unwrap()
+    .status();
+    assert_eq!(st, 201);
+    let stored: bool = sql
+        .query_one("select stored from blobs where sha256 = $1", &[&sha.as_slice()])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(stored);
+    let got = r
+        .app()
+        .blobs
+        .bucket
+        .get(&store::blob_key(&blobs::to_hex(&sha)))
+        .await
+        .unwrap();
+    assert_eq!(got.as_ref(), bytes.as_slice());
+    // a stored row whose object is there is left as it is
+    gc::reverify(r.pool(), &r.app().blobs, &sha).await.unwrap();
+    let stored: bool = sql
+        .query_one("select stored from blobs where sha256 = $1", &[&sha.as_slice()])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(stored);
+}
+
 #[tokio::test]
 async fn a_revalidation_answers_304_before_the_bucket_is_asked() {
     let db = common::fresh_db("early304").await;

@@ -17,11 +17,3 @@ create table pending_workspaces (
   workspace_id uuid primary key,
   created_at   timestamptz not null default now()
 );
-
--- One `admin_read` row per admin, conversation and UTC day, even for concurrent first reads.
-delete from view_as_log a using view_as_log b
- where a.event = 'admin_read' and b.event = 'admin_read' and a.admin = b.admin
-   and a.conversation_id = b.conversation_id
-   and (a.at at time zone 'UTC')::date = (b.at at time zone 'UTC')::date and a.id > b.id;
-create unique index view_as_admin_read_once on view_as_log (admin, conversation_id, ((at at time zone 'UTC')::date))
-  where event = 'admin_read';
