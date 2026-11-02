@@ -19,7 +19,10 @@
 # RIG=1 (bundle): the real build instead of the spike (WP-22, fabric/fuse-gate/rig/): the first process is
 #   /media/rig/init.sh, which starts fuse-rig's world and execs the real supervisor-keeper as PID 1; the image's
 #   /usr/local/bin/supervisor{,-keeper} are the rig's binaries (RIG_FI=1: the fault-injection build of supervisor),
-#   /var/lib/supervisor is a tmpfs (LAYOUT=scratch: the scratch dir's supervisor/, as in production), /workspace a tmpfs.
+#   /var/lib/supervisor is a tmpfs (LAYOUT=scratch: the scratch dir's supervisor/, as in production), /workspace and
+#   /etc/claude-code (the managed files the supervisor writes, 6.4) tmpfs; Claude Code is the image's, at
+#   /opt/claude-code/bin/claude (rig/host-rig.sh); RIG_CC_TAP=1 binds rig/cc-tap over /opt/claude-code/bin (the
+#   stdout tap of item 10).
 # GATE_SIDE=b: a second, independent set of runtime state on the same host (runsc root, bundles, scratch, netns,
 #   cgroup, logs, checkpoint dir), so one host can be the source (no side) and the target (side b) of a migration
 #   (rig/rig-mig.sh LOOPBACK=1). TARGET_SIDE: the target's side, for send-scratch's source/destination comparison.
@@ -44,11 +47,11 @@ bundle)
   img=/var/lib/gate/image
   mkdir -p "$b" "$GB/scratch/$name"
   ip netns list | grep -qw "gate-$ln" || { ip netns add "gate-$ln"; ip -n "gate-$ln" link set lo up; }
-  rig=${RIG:-}; sup=supervisor; [ -n "${RIG_FI:-}" ] && sup=supervisor-fi
+  rig=${RIG:-}; sup=supervisor; [ -n "${RIG_FI:-}" ] && sup=supervisor-fi; tap=${RIG_CC_TAP:-}
   [ -n "$rig" ] && [ "$layout" = scratch ] && mkdir -p "$GB/scratch/$name/supervisor"
   jq -n --arg root "$(readlink -f $img)/rootfs" --arg ns "/var/run/netns/gate-$ln" --arg name "$ln" \
         --argjson caps "$caps" --argjson env "$(jq '.config.Env' $img/config.json)" --arg j "$journal" \
-        --arg scratch "$GB/scratch/$name" --arg layout "$layout" --arg rig "$rig" --arg sup "$sup" '{
+        --arg scratch "$GB/scratch/$name" --arg layout "$layout" --arg rig "$rig" --arg sup "$sup" --arg tap "$tap" '{
     ociVersion: "1.0.0",
     process: { user: {uid: 0, gid: 0}, cwd: "/",
       args: (if $rig != "" then ["/media/rig/init.sh"] else ["/usr/bin/tini", "--", "/media/init.sh"] end),
@@ -73,10 +76,13 @@ bundle)
       {destination: "/usr/local/bin/supervisor", type: "bind", source: "/var/lib/gate/bin/rig/\($sup)", options: ["bind","ro"]},
       {destination: "/usr/local/bin/supervisor-keeper", type: "bind", source: "/var/lib/gate/bin/rig/supervisor-keeper", options: ["bind","ro"]},
       {destination: "/workspace", type: "tmpfs", source: "tmpfs", options: ["nosuid","nodev","mode=777"]},
+      {destination: "/etc/claude-code", type: "tmpfs", source: "tmpfs", options: ["nosuid","nodev","mode=755"]},
       (if $layout == "scratch"
         then {destination: "/var/lib/supervisor", type: "bind", source: "\($scratch)/supervisor", options: ["rbind","rw"]}
         else {destination: "/var/lib/supervisor", type: "tmpfs", source: "tmpfs", options: ["nosuid","nodev","mode=755"]} end)
-    ] end)),
+    ] + (if $tap == "" then [] else [
+      {destination: "/opt/claude-code/bin", type: "bind", source: "/var/lib/gate/bin/rig/cc-tap", options: ["rbind","ro"]}
+    ] end) end)),
     linux: {
       namespaces: [{type: "pid"}, {type: "ipc"}, {type: "uts"}, {type: "mount"}, {type: "network", path: $ns}],
       cgroupsPath: "/gate/\($name)",

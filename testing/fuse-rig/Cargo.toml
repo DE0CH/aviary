@@ -14,11 +14,14 @@ path = "src/main.rs"
 aviary-core = { path = "../../crates/aviary-core" }
 aviary-fakes = { path = "../fakes" }
 axum.workspace = true
+fake-tools = { path = "../fake-tools" }
+magpie-api = { path = "../../crates/magpie-api" }
 gateway-api = { path = "../../crates/gateway-api" }
 hermit-api = { path = "../../crates/hermit-api" }
 prometheus-client.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 test-gateway = { path = "../test-gateway" }

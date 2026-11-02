@@ -14,6 +14,7 @@
 //!                                  HTTP 529 overloaded_error: with --fallback-model, Claude Code moves to the
 //!                                  fallback after its 529 retries (abandonAttempt("chain_advance") after a turn that
 //!                                  already wrote a tool_use and its tool_result)
+//! `GET /v1/aviary/models` answers the gateway's models route (supervisor 17.3), for the re-run on the real build.
 //! Every chunk's send time is logged, so token gaps can be measured against Claude Code's stream-json output.
 
 use crate::http::{self, Reply, Request};
@@ -158,6 +159,10 @@ pub fn run(listen: &str, logp: &str) -> std::io::Result<()> {
         let lg = |s: String| {
             let _ = log.lock().unwrap().write_all(format!("{} {s}\n", now_us()).as_bytes());
         };
+        if req.path.starts_with("/v1/aviary/models") {
+            // the gateway's models route (supervisor 17.3), for the re-run on the real build (WP-22)
+            return Reply::Full(200, "application/json", json!({"default": "claude-sonnet-4-5", "small": "claude-haiku-4-5", "title": "claude-haiku-4-5", "contextTokens": 200000, "models": [{"id": "claude-sonnet-4-5", "label": "Sonnet", "reasoning": null}, {"id": "claude-haiku-4-5", "label": "Haiku", "reasoning": null}]}).to_string().into_bytes());
+        }
         if req.path.starts_with("/v1/models") {
             return Reply::Full(200, "application/json", json!({"data": [{"id": "claude-sonnet-4-5", "type": "model", "display_name": "x", "created_at": "2025-01-01T00:00:00Z"}, {"id": "claude-haiku-4-5", "type": "model", "display_name": "y", "created_at": "2025-01-01T00:00:00Z"}], "has_more": false}).to_string().into_bytes());
         }
