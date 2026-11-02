@@ -522,7 +522,16 @@ async fn sends_at_once_admit_one_turn_and_a_repeat_answers_the_same_turn() {
 async fn a_deleted_conversation_refuses_a_send() {
     let w = World::new("turn_deleted", None).await;
     let conv = w.conversation().await;
+    // a turn waiting for its sandbox when the conversation is deleted gets no new sandbox
+    let turn = w.send(conv, "m0", "hi").await;
+    assert!(w.state_is(turn, "preparing").await);
     w.a.pigeon().person(ALICE).delete_conversation(conv).await.unwrap();
+    let gone = w.fake().live(conv).unwrap();
+    w.fake().end(conv, ReleaseReason::Deleted, "deleted");
+    assert!(w.state_is(turn, "failed").await);
+    assert_eq!(w.turn(turn).await.1.as_deref(), Some("sandbox.lost"));
+    assert_eq!(w.fake().live(conv), None, "no new sandbox for a deleted conversation");
+    assert_eq!(w.fake().sandboxes().len(), 1, "{gone:?}");
     let e =
         w.a.pigeon()
             .person(ALICE)
@@ -1627,4 +1636,128 @@ async fn a_create_with_a_first_message_admits_one_first_turn() {
     assert!(w.state_is(turn.id, "preparing").await);
     w.fake().make_ready(body.conversation.id);
     assert!(w.state_is(turn.id, "starting").await);
+}
+
+fn small_png() -> Vec<u8> {
+    let img = image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(16, 12, |x, y| {
+        image::Rgb([u8::try_from(x * 15).unwrap(), u8::try_from(y * 20).unwrap(), 99])
+    }));
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+#[tokio::test]
+async fn a_send_attaches_the_persons_uploads_with_unique_workspace_names() {
+    use magpie_api::turns::{FileRef, ImageRef};
+    use magpie_api::uploads::UploadKind;
+    let w = World::new("turn_attach", Some(Duration::ZERO)).await;
+    let me = w.a.pigeon();
+    let me = me.person(ALICE);
+    let pic = me
+        .upload("pic.png", UploadKind::Image, "image/png", small_png())
+        .await
+        .unwrap();
+    let n1 = me
+        .upload("notes.txt", UploadKind::File, "text/plain", b"one".to_vec())
+        .await
+        .unwrap();
+    let n2 = me
+        .upload("notes.txt", UploadKind::File, "text/plain", b"two".to_vec())
+        .await
+        .unwrap();
+    let file = |u: &magpie_api::uploads::UploadResponse| FileRef {
+        path: u.path.clone(),
+        name: u.name.clone(),
+        mime_type: u.mime_type.clone(),
+        size: u.size,
+    };
+    let conv = w.conversation().await;
+    let mut m = msg("m1", "see attached");
+    m.images = vec![ImageRef {
+        upload_id: pic.upload_id,
+    }];
+    m.files = vec![file(&n1), file(&n2)];
+    let turn = me.send_turn(conv, &m).await.unwrap().get().turn.id;
+    let sent: serde_json::Value = w
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select data from events where conversation_id = $1 and kind = 'user.sent'",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(sent["images"][0]["path"], "uploads/pic.png");
+    assert_eq!(sent["files"][0]["path"], "uploads/notes.txt");
+    assert_eq!(sent["files"][1]["path"], "uploads/notes (2).txt");
+    assert_eq!(sent["files"][1]["blob"]["$blob"]["bytes"], 3);
+    assert!(w.state_is(turn, "starting").await);
+    let sup = w.supervisor(conv).await;
+    let cmds = sup.poll(0, 0).await;
+    let CommandBody::StartTurn(st) = &cmds.commands[0].body else {
+        panic!()
+    };
+    assert_eq!(st.files.len(), 2);
+    assert_eq!(st.files[1].workspace_path, "uploads/notes (2).txt");
+    assert_eq!(st.files[1].blob.len(), 64);
+    assert_eq!(st.images[0].workspace_path, "uploads/pic.png");
+    assert_eq!(st.images[0].model_blob.len(), 64);
+    let attached: i64 = w
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select count(*) from uploads where conversation_id = $1 and attached_seq is not null",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(attached, 3);
+    // an attached upload, another person's, an unknown one, an old asset path: unknown_upload
+    let other = w.conversation().await;
+    let mut again = msg("m1", "again");
+    again.files = vec![file(&n1)];
+    assert_eq!(
+        code(&me.send_turn(other, &again).await.unwrap_err()),
+        ErrorCode::UnknownUpload
+    );
+    let bobs =
+        w.a.pigeon()
+            .person("bob@example.org")
+            .upload("b.txt", UploadKind::File, "text/plain", b"b".to_vec())
+            .await
+            .unwrap();
+    again.files = vec![file(&bobs)];
+    assert_eq!(
+        code(&me.send_turn(other, &again).await.unwrap_err()),
+        ErrorCode::UnknownUpload
+    );
+    again.files = vec![FileRef {
+        path: "cloudcli-assets/abc/report.pdf".into(),
+        name: "report.pdf".into(),
+        mime_type: "application/pdf".into(),
+        size: 1,
+    }];
+    assert_eq!(
+        code(&me.send_turn(other, &again).await.unwrap_err()),
+        ErrorCode::UnknownUpload
+    );
+    // nothing of a refused send is kept
+    assert_eq!(w.kinds(other).await, ["conversation.created"]);
+    again.files = Vec::new();
+    again.images = (0..11)
+        .map(|_| ImageRef {
+            upload_id: Uuid::new_v4(),
+        })
+        .collect();
+    assert_eq!(
+        code(&me.send_turn(other, &again).await.unwrap_err()),
+        ErrorCode::TooManyAttachments
+    );
 }

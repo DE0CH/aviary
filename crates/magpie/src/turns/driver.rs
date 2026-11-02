@@ -354,6 +354,12 @@ async fn acquire(d: &Driver, c: &Claimed, turn: Uuid) -> Result<()> {
                 if failures > 0 {
                     tokio::time::sleep(backoff(failures - 1)).await;
                 }
+                // a conversation deleted while its turn waited gets no new sandbox (its release already ran)
+                if deleted(d, c.conversation).await? {
+                    let e = ErrorInfo::new(DataCode::SandboxLost, "the conversation was deleted");
+                    step_fail(d, c.conversation, turn, e).await?;
+                    return Ok(());
+                }
                 let req = PutSandboxRequest {
                     person: c.person.clone(),
                 };
@@ -464,6 +470,19 @@ macro_rules! waiting_step {
         })
         .await
     }};
+}
+
+async fn deleted(d: &Driver, conversation: Uuid) -> Result<bool> {
+    let row = d
+        .pool
+        .get()
+        .await?
+        .query_opt(
+            "select deleted_at is not null from conversations where id = $1",
+            &[&conversation],
+        )
+        .await?;
+    Ok(row.is_none_or(|r| r.get(0)))
 }
 
 async fn still_waiting(d: &Driver, turn: Uuid) -> Result<bool> {
