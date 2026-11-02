@@ -58,8 +58,8 @@ pub fn tls_config() -> rustls::ClientConfig {
 /// <svc>/<sha12>`, `Aviary-Protocol: <surface>=<n>` on every request when `protocol` is given (one client per callee
 /// surface), HTTP/1.1 with a keep-alive pool, a 5 s connect timeout and a [`DEFAULT_READ_TIMEOUT`] read timeout.
 /// Each call sets its own overall timeout (`RequestBuilder::timeout`) where its spec names one; under
-/// [`crate::http::retry::send`] that timeout applies to each attempt, so the worst case is
-/// [`crate::http::retry::Backoff::worst_case`].
+/// [`crate::http::send`] that timeout applies to each attempt, so the worst case is
+/// [`crate::http::Backoff::worst_case`].
 pub fn client_builder(build: &Build, protocol: Option<Protocol>) -> reqwest::ClientBuilder {
     let mut headers = HeaderMap::new();
     if let Some(p) = protocol

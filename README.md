@@ -114,23 +114,41 @@ Where it differs from the platform spec (sections 3, 4.3, 15.1):
   URLs stay searchable. Beyond 15.1's list it also turns emails (`a@b.tld`, `a%40b.tld`) into their `person_key`
   (3.8: logs never carry emails), keeps jarvis3's parameter rule whole (`=` or `:`, optional quotes, the names
   `passwd` and `authorization` too, so JSON bodies, `Debug` structs and header dumps are covered; `person_key` is
-  exempt), redacts after `Bearer`/`Basic` only a token-shaped word (so `Basic info` in a message stays), takes URL
-  userinfo up to the last `@` of the authority, and counts `%XX` escapes as part of a long run.
+  exempt), and adds `cookie` (15.1: cookies are never logged; a `cookie`/`set-cookie` value goes to the end of the
+  line). That rule skips Debug wrappers (`password: Some("…")`), redacts wrappers named like a secret
+  (`Secret("…")`), takes a quoted value whole up to its closing quote, and redacts the word after `Bearer`/`Basic`
+  whatever its shape when a credential name comes before it. Without such a name, only a token-shaped word after
+  `Bearer`/`Basic` is redacted (so `Basic info` in a message stays). URL userinfo runs up to the last `@` of the
+  authority, or, for a `user:` password holding a raw `/`, `?` or `#`, up to the URL's last `@`. `%XX` escapes count
+  as part of a long run.
 - `/readyz` starts at 503 with `why: ["start"]` and is 200 only after `Readiness::started()`, so a process is never
   ready before its own start is done, even before its first named gate exists.
-- A token configured for two different callers fails start (`CallersError::SharedToken`).
+- A token configured for two different callers fails start (`CallersError::SharedToken`) with the start-failure
+  line (`msg` `invalid env`, the variable's name and which other variable shares its token) and exit 78.
+- `env::required` returns the value trimmed, as the callee side compares tokens, so a Secret written with a trailing
+  newline works on both sides.
+- debug and trace events are compiled out of release builds (tracing's `release_max_level_info`); test and dev
+  builds keep them, and the runtime filter still writes only `info` and above.
+- `/metrics` is labelled 0.0.4 as 3.2 says, so prometheus-client's OpenMetrics output is rewritten: a counter's
+  `# HELP`/`# TYPE` lines take the sample's `_total` name (a 0.0.4 parser types only a sample named exactly as its
+  `# TYPE` line), and `# UNIT`, `# EOF`, counters' `_created` samples and exemplars are dropped.
+- The outbound client has a 120 s read timeout (`http::DEFAULT_READ_TIMEOUT`, a stalled callee cannot hang a call
+  whose site forgot its own `.timeout()`); a client whose callee is silent longer sets its own on the builder. Under
+  `http::retry::send` a call's timeout applies per attempt; `Backoff::worst_case` gives the total bound.
 - `Aviary-Request` is kept only when it is a v7 UUID; any other value, a v4 UUID included, is replaced by a minted v7.
 - Error answers that are not JSON (axum's extractor rejections, unmatched routes, wrong methods, a body over the
   limit) are rewritten into the envelope by `http::envelope`; axum's 422 for an unusable JSON body becomes 400
   `bad_request`, since the platform's code list has no 422. The rewrite uses 3.6's codes, plus two that 3.6 does not
-  list and hermit's contract also uses: `method_not_allowed` (405) and `internal` (500, and any other status a
-  handler should have answered with its own envelope); 408/502/504 become `unavailable`, 411 `bad_request`.
+  list and hermit's contract also uses: `method_not_allowed` (405) and `internal` (500 and any other 5xx). 403
+  becomes `wrong_caller` and 410 `cursor_expired` (3.6's codes for them), 408/502/504 `unavailable`, and every other
+  4xx (409, 411, 412, 416, 431…) `bad_request`, so a client error is never reported as a server fault.
   `http::standard` is only for the `/v1` service APIs: pigeon's public paths (the frozen app protocol and the public
   site) keep their own error bodies and use `http::request_id` and `http::defaults` alone.
 - The missing-env line carries `t`, `level`, `svc`, `ver` and (once known) `pod` before `msg`; `svc` is the name
   given to `log::init`/`log::init_in_pod`, or the binary's name when the variable is read before that.
 - `/version` lists every surface in `accepts`, including a surface at number 1 (`[1]`); the spec's example omits it.
-- Exit codes, which the spec leaves open: 78 (`EX_CONFIG`) for a missing or empty variable, 0 after a drain, 143
+- The start-failure line goes where `log::init` sends logs (stderr for the supervisor), stdout before that.
+- Exit codes, which the spec leaves open: 78 (`EX_CONFIG`) for a missing, empty or invalid variable, 0 after a drain, 143
   when a second signal cut the drain short.
 
 ## Source rules

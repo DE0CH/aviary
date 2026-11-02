@@ -13,7 +13,7 @@ pub mod headers;
 mod middleware;
 mod retry;
 
-pub use client::{RequestBuilderExt, client_builder, tls_config};
+pub use client::{DEFAULT_READ_TIMEOUT, RequestBuilderExt, client_builder, tls_config};
 pub use error::{ApiError, ErrorBody};
 pub use middleware::{RequestId, current_request_id, defaults, envelope, json, request_id, standard, strip_all_aviary};
 pub use retry::{Backoff, Idempotence, send};

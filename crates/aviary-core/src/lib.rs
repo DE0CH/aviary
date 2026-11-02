@@ -1,7 +1,7 @@
 //! The service runtime shared by every aviary binary (platform spec 3.1-3.9, 4.3, 15.1). Nothing in it knows a
-//! deployment: every value a service needs comes from its environment through [`env`], and every behaviour is code.
+//! deployment: every value a service needs comes from its environment through [`env`](mod@env), and every behaviour is code.
 //!
-//! - [`env`]: the only place the process environment is read; a missing or empty value aborts start.
+//! - [`env`](mod@env): the only place the process environment is read; a missing or empty value aborts start.
 //! - [`log`]: one JSON object per line, every string field passed through [`log::redact`].
 //! - [`ops`]: the `:9090` server (`/healthz`, `/readyz`, `/version`, `/metrics`) and readiness gates.
 //! - [`drain`]: SIGTERM/SIGINT, ordered drain hooks with per-hook deadlines, a second signal exits at once.
