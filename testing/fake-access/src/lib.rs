@@ -84,24 +84,15 @@ impl Key {
         })
     }
 
-    /// A key from a PKCS#8 PEM (`-----BEGIN PRIVATE KEY-----`).
+    /// A key from a PKCS#8 PEM file's text.
     ///
     /// # Errors
     /// When the text is not one PKCS#8 PEM block of an RSA key.
     pub fn from_pem(kid: &str, pem: &str) -> Result<Self, Refused> {
-        let body: String = pem
-            .lines()
-            .skip_while(|l| !l.starts_with("-----BEGIN PRIVATE KEY-----"))
-            .skip(1)
-            .take_while(|l| !l.starts_with("-----END"))
-            .collect();
-        if body.is_empty() {
-            return Err(refused(format!("key {kid}: no PKCS#8 PEM block")));
-        }
-        let der = base64::engine::general_purpose::STANDARD
-            .decode(body.trim())
-            .map_err(|e| refused(format!("key {kid}: {e}")))?;
-        Self::from_pkcs8(kid, &der)
+        use rustls::pki_types::PrivatePkcs8KeyDer;
+        use rustls::pki_types::pem::PemObject as _;
+        let der = PrivatePkcs8KeyDer::from_pem_slice(pem.as_bytes()).map_err(|e| refused(format!("key {kid}: {e}")))?;
+        Self::from_pkcs8(kid, der.secret_pkcs8_der())
     }
 
     /// The key's id.
