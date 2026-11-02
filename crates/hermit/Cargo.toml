@@ -21,10 +21,14 @@ axum.workspace = true
 chrono-tz.workspace = true
 clap.workspace = true
 futures-util.workspace = true
+gateway-api = { path = "../gateway-api" }
 hermit-api = { path = "../hermit-api" }
+magpie-api = { path = "../magpie-api" }
 prometheus-client.workspace = true
 reqwest.workspace = true
 rustix = { workspace = true, features = ["fs"] }
+# the Kubernetes API client's CA (ops, hermit 18.5)
+rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -40,7 +44,6 @@ uuid.workspace = true
 aviary-core = { path = "../aviary-core", features = ["testing"] }
 aviary-conformance = { path = "../../testing/conformance" }
 aviary-fakes = { path = "../../testing/fakes" }
-rustls.workspace = true
 
 [lints]
 workspace = true

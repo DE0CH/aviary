@@ -1,5 +1,5 @@
-//! hermit's `hermit_api::Server`: every contract route of hermit 3 bound to the core. The operator page, the
-//! snapshot and the admin routes (3.11-3.12, 16, 18) are WP-20's and answer 501 `not_supported` until then.
+//! hermit's `hermit_api::Server`: every contract route of hermit 3 bound to the core, the operator page and
+//! snapshot (3.11, 18) and the admin routes (3.12, 16).
 
 // the trait's methods are async by contract; some of hermit's answers come from memory
 #![allow(clippy::unused_async_trait_impl)]
@@ -7,8 +7,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use hermit_api::admin::{
+    AdminEventsQuery, AdminRelease, AdminSandboxesQuery, FreshHost, HostPatch, PurgeReply, PurgeRequest, Recycle,
+    SandboxesEnabled,
+};
 use hermit_api::deployment::Deployment;
 use hermit_api::error::{self, ApiError, codes};
+use hermit_api::exec::{ExecRequest, ExecResult};
+use hermit_api::ops::SnapshotQuery;
 use hermit_api::people::{People, Person, WarmReply, WarmRequest};
 use hermit_api::sandbox::{
     PutSandbox, PutSandboxRequest, ReleaseReason, ReleaseSandboxReply, ReleaseSandboxRequest, Sandbox, SandboxEvents,
@@ -23,7 +29,9 @@ use hermit_api::workspaces::{
 use uuid::Uuid;
 
 use crate::sandboxes::OrUnavailable;
-use crate::{Core, db, deployment, feed, people, sandbox_routes, sandboxes, supervisor_client, warm};
+use crate::{
+    Core, admin, db, deployment, feed, ops, people, sandbox_routes, sandboxes, snapshot, supervisor_client, warm,
+};
 
 /// One replica's contract server.
 #[derive(Clone, Debug)]
@@ -220,5 +228,60 @@ impl Server for Hermit {
 
     async fn sandbox_activity(&self, ctx: Ctx, body: ActivityReport) -> Result<ActivityReply, ApiError> {
         sandbox_routes::activity(self.core(), &ctx, &body).await
+    }
+
+    async fn ops_page(&self, ctx: Ctx) -> Result<String, ApiError> {
+        ops::admit(self.core(), &ctx)?;
+        Ok(ops::page(self.core()))
+    }
+
+    async fn ops_snapshot(&self, ctx: Ctx, q: SnapshotQuery) -> Result<serde_json::Value, ApiError> {
+        ops::admit(self.core(), &ctx)?;
+        let v = Box::pin(snapshot::get(self.core(), q.tz.as_deref())).await?;
+        Ok((*v).clone())
+    }
+
+    async fn admin_hosts(&self, ctx: Ctx) -> Result<serde_json::Value, ApiError> {
+        admin::hosts(self.core(), &ctx).await
+    }
+
+    async fn admin_patch_host(&self, ctx: Ctx, name: String, body: HostPatch) -> Result<serde_json::Value, ApiError> {
+        admin::patch_host(self.core(), &ctx, &name, &body).await
+    }
+
+    async fn admin_sandboxes_enabled(&self, ctx: Ctx, body: SandboxesEnabled) -> Result<serde_json::Value, ApiError> {
+        admin::sandboxes_enabled(self.core(), &ctx, &body).await
+    }
+
+    async fn admin_fresh_host(&self, ctx: Ctx, body: FreshHost) -> Result<serde_json::Value, ApiError> {
+        admin::fresh_host(self.core(), &ctx, body).await
+    }
+
+    async fn admin_sandboxes(&self, ctx: Ctx, q: AdminSandboxesQuery) -> Result<serde_json::Value, ApiError> {
+        admin::sandboxes(self.core(), &ctx, &q).await
+    }
+
+    async fn admin_sandbox_log(&self, ctx: Ctx, id: Uuid) -> Result<serde_json::Value, ApiError> {
+        admin::sandbox_log(self.core(), &ctx, id).await
+    }
+
+    async fn admin_release(&self, ctx: Ctx, id: Uuid, body: AdminRelease) -> Result<serde_json::Value, ApiError> {
+        admin::release(self.core(), &ctx, id, &body).await
+    }
+
+    async fn admin_exec(&self, ctx: Ctx, id: Uuid, body: ExecRequest) -> Result<ExecResult, ApiError> {
+        admin::exec(self.core(), &ctx, id, &body).await
+    }
+
+    async fn admin_recycle(&self, ctx: Ctx, body: Recycle) -> Result<serde_json::Value, ApiError> {
+        admin::recycle(self.core(), &ctx, &body).await
+    }
+
+    async fn admin_purge(&self, ctx: Ctx, email: String, body: PurgeRequest) -> Result<PurgeReply, ApiError> {
+        admin::purge(self.core(), &ctx, &email, &body).await
+    }
+
+    async fn admin_events(&self, ctx: Ctx, q: AdminEventsQuery) -> Result<serde_json::Value, ApiError> {
+        admin::events(self.core(), &ctx, q).await
     }
 }

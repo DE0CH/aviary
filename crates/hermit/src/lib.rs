@@ -10,19 +10,24 @@
 
 #![allow(clippy::similar_names)] // `core` (the replica) beside `code` (a release code)
 
+pub mod admin;
 pub mod app;
 pub mod catalogue;
 pub mod config;
+pub mod console;
 pub mod db;
 pub mod deployment;
 pub mod fabric;
 pub mod feed;
+pub mod health_verdict;
 pub mod janitor;
 pub mod live;
+pub mod ops;
 pub mod people;
 pub mod sandbox_routes;
 pub mod sandboxes;
 pub mod server;
+pub mod snapshot;
 pub mod starts;
 pub mod supervisor_client;
 pub mod tasks;
@@ -135,6 +140,8 @@ pub struct Core {
     pub listener: Arc<Listener>,
     pub live: Arc<LiveMap>,
     pub providers: Providers,
+    /// The operator page's other sources and its snapshot cache (hermit 18).
+    pub ops: ops::OpsState,
     /// Calls to supervisors (no proxy, HTTP/1.1).
     pub http: reqwest::Client,
     /// This replica's name (`task_owner`).

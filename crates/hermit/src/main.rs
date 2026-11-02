@@ -119,6 +119,9 @@ async fn serve() -> ExitCode {
         }
     };
     let callers = Callers::from_env("HERMIT", &CALLERS);
+    let magpie_token = aviary_core::auth::outbound_token("HERMIT", "MAGPIE");
+    let egress_token = aviary_core::auth::outbound_token("HERMIT", "EGRESS");
+    let namespace = env::field("HERMIT_NAMESPACE");
     let juicefs = JuiceCli::new(
         env::required("HERMIT_JUICEFS_META_URL"),
         env::required("HERMIT_JUICEFS_META_PASSWORD"),
@@ -156,6 +159,13 @@ async fn serve() -> ExitCode {
             },
             timings: hermit::Timings::default(),
             callers: callers.clone(),
+            upstreams: hermit::ops::Upstreams::new(
+                "http://magpie",
+                magpie_token.clone(),
+                &format!("http://{}", config.file.fabric.egress_service),
+                egress_token.clone(),
+                Arc::new(hermit::ops::InCluster::new(namespace.clone())),
+            ),
         };
         match App::start(options).await {
             Ok(app) => break Arc::new(app),

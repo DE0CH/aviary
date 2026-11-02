@@ -928,18 +928,7 @@ pub async fn destroy_and_record(
 /// The console tail and sandboxd `DELETE` (no row change). A missing sandbox is fine; errors are logged.
 pub async fn destroy(core: &Core, row: &SandboxRow) {
     let fabric = &core.providers.fabric;
-    if let Some(host) = row.host.as_deref()
-        && let Some(bytes) = fabric.console_tail(host, &row.name).await
-        && let Ok(c) = core.pool.get().await
-    {
-        let _ = c
-            .execute(
-                "insert into sandbox_logs (sandbox_id, bytes, reason) values ($1, $2, 'release')
-                 on conflict (sandbox_id) do update set bytes = excluded.bytes, captured_at = now(), reason = excluded.reason",
-                &[&row.id, &bytes],
-            )
-            .await;
-    }
+    crate::console::capture(core, row).await;
     if (row.host.is_some() || row.ip.is_some())
         && let Err(e) = fabric
             .destroy(row.host.as_deref(), row.migrating_to.as_deref(), &row.name)

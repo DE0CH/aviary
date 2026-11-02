@@ -38,6 +38,8 @@ pub struct StartOptions {
     pub timings: Timings,
     /// The callers' pair tokens (hermit 3.2).
     pub callers: Callers,
+    /// magpie, egress and the cluster, for the operator page and the person purge (hermit 16, 18).
+    pub upstreams: crate::ops::Upstreams,
 }
 
 impl std::fmt::Debug for StartOptions {
@@ -120,6 +122,7 @@ impl App {
             listener,
             live,
             providers: o.providers,
+            ops: crate::ops::OpsState::new(o.upstreams),
             http,
             pod: o.pod,
             timings: o.timings,
@@ -162,6 +165,7 @@ impl App {
             Arc::new(Hermit(self.core.clone())),
             RouteGuard::new(self.callers.clone()),
         )
+        .layer(axum::middleware::from_fn(crate::ops::page_headers))
     }
 
     /// Readiness beyond the start (20.1): a catalogue loaded once and the live map loaded once; never Postgres,

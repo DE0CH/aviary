@@ -202,6 +202,8 @@ pub struct FakeFabric {
     pub place_error: AtomicBool,
     /// Every supervisor ever made, by sandbox id (their call logs outlive the destroy).
     pub all: Mutex<Vec<(Uuid, Arc<FakeSupervisor>)>>,
+    /// What the operator page is told of the fabric.
+    pub ops: Mutex<hermit::fabric::FabricOps>,
 }
 
 impl FakeFabric {
@@ -226,6 +228,7 @@ impl FakeFabric {
             place_gate: Gate::default(),
             place_error: AtomicBool::new(false),
             all: Mutex::new(Vec::new()),
+            ops: Mutex::new(hermit::fabric::FabricOps::default()),
         })
     }
 
@@ -382,6 +385,11 @@ impl Fabric for FakeFabric {
 
     fn gateway_settled(&self) -> bool {
         self.settled.load(Ordering::SeqCst)
+    }
+
+    fn ops(&self) -> Fut<'_, hermit::fabric::FabricOps> {
+        let ops = self.ops.lock().unwrap().clone();
+        Box::pin(async move { ops })
     }
 }
 
@@ -583,6 +591,19 @@ pub struct Harness {
     pub workspaces: Arc<FakeWorkspaces>,
     pub tokens: HashMap<Caller, String>,
     pub timings: Timings,
+    /// magpie, egress and the cluster of the replicas started next (nothing answers by default).
+    pub upstreams: Mutex<hermit::ops::Upstreams>,
+}
+
+/// Upstreams where nothing answers: the snapshot's magpie and egress sections fail, the cluster is absent.
+pub fn no_upstreams() -> hermit::ops::Upstreams {
+    hermit::ops::Upstreams::new(
+        "http://127.0.0.1:9",
+        "magpie-token".into(),
+        "http://127.0.0.1:9",
+        "egress-token".into(),
+        Arc::new(hermit::ops::NoCluster),
+    )
 }
 
 pub const CALLERS: [Caller; 6] = [
@@ -615,6 +636,7 @@ impl Harness {
             workspaces: Arc::new(FakeWorkspaces::default()),
             tokens,
             timings,
+            upstreams: Mutex::new(no_upstreams()),
         }
     }
 
@@ -628,6 +650,7 @@ impl Harness {
 
     /// A replica with its own workspace store (a real `JuiceFs` on a directory, or a broken one).
     pub async fn replica_with(&self, pod: &str, workspaces: Arc<dyn Workspaces>) -> Replica {
+        let upstreams = self.upstreams.lock().unwrap().clone();
         let app = App::start(StartOptions {
             config: self.config.clone(),
             catalogue: self.catalogue.clone(),
@@ -642,6 +665,7 @@ impl Harness {
             },
             timings: self.timings.clone(),
             callers: self.callers(),
+            upstreams,
         })
         .await
         .unwrap();

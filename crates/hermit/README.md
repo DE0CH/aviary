@@ -20,6 +20,10 @@ the binary (`src/main.rs`) runs it as `hermit serve` and checks catalogues as `h
 | `supervisor_client` | 3.10: health, release, the flush before a clone |
 | `fabric` | 8.1: the `Fabric` and `Workspaces` traits (one provider each; tests inject fakes) |
 | `workspaces`, `migrations/0002` | 3.8, 15: `/workspace` on `JuiceFS` (hermit's mount `/jfs`, the `juicefs` CLI for quotas, `clone`, `rmr`; `openat2` beneath the workspace for listing and reading); each replica's own state in `replicas` (its mount, its last refused delete) for the ops verdict and the start hand-over |
+| `console` | platform 15.4: the last 64 KiB of a sandbox's console in `sandbox_logs` at its destroy (a row saying so when nothing could be fetched) |
+| `admin` | 16: the admin routes, each audited in `admin_events` (in the change's transaction where there is one) |
+| `ops`, `ops_page.html` | 3.11, 18.1-18.2, 18.4-18.5: who may read `/ops/*`, the page (CSP, `no-referrer`), magpie's and egress's ops reads, the Kubernetes reader (`InCluster`, the Pod's ServiceAccount) |
+| `snapshot`, `health_verdict` | 18.3, 18.6: the snapshot's sections (8 s each, `null` + `errors[name]` on failure, cached 4 s per zone) and the verdict |
 | `server`, `app` | the `hermit_api::Server` implementation; start, loops, drain (20.2), kill |
 
 ## Tests
@@ -35,6 +39,14 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   read, Range and 416, listing pages, clone with its own quota after the live sandbox's flush, delete after the
   sandbox is gone, a refused delete (503, recorded for the verdict), a broken mount (503 with `retry-after: 2`, the
   start handed to the replica whose mount works).
+- `tests/ops.rs`: hermit 24.2 "Ops" (ported `ops.test.ts`) and the admin routes: pigeon's admin re-check, the
+  monitor token's snapshot-only scope, the page's headers and halves, every snapshot section from live-shaped rows
+  (hosts, sandboxes, events, starts and releases, an imported start keeping its `at`, hosts gone, the fabric's plan,
+  a fake Kubernetes API, a fake magpie and an egress stub), a failed source as a `null` section, the verdict, the
+  monitor's two contracts against `tests/fixtures/monitor-contract.json` (field paths and types, `what`, `owner`,
+  every `at` in the one format), and every admin route (caps, retire, the off switch seen by `PUT …/sandbox`,
+  fresh-host, the trace, exec through the supervisor, the operator's release and its console tail, recycle, purge
+  through magpie) audited in `admin_events` with an exec's argv and exit code but never its input or output.
 - `tests/lifecycle.rs`: hermit 24.2's ported tests for the core: one sandbox per conversation, the `PUT`
   reservation, the janitor's idle and lifetime rules (busy never idled, 9 h forced), release refusal restarting the
   idle clock, forced delete, a requested release carried in the activity reply and done at the idle report, a `PUT`
@@ -63,12 +75,10 @@ and replicas started in-process with short timings (`Timings` is code, not confi
 
 - The gVisor fabric (hermit 13-14, WP-19). Until it lands, `hermit serve` runs with `fabric::Unbuilt`, whose
   placement errors end every start `start_failed`/`placement` after `hostWaitSeconds`.
-- The operator page, the snapshot, the health verdict, admin routes and console tails (3.11-3.12, 16, 18; WP-20):
-  they answer 501 `not_supported` (the trait's default).
 - The janitor's orphan sweep (12 step 8) and vanished/host-loss judgement (13.4, 13.7) are the fabric's scaler.
 - Metrics (25) beyond the platform's defaults and `hermit_catalogue_refused_total` and `hermit_held_requests`
-  (3.4.1, 23; registered in `main.rs`): the lookups, sandbox, host, start and request families are left to the
-  package that builds the ops page and the health verdict (WP-20).
+  (3.4.1, 23; registered in `main.rs`): the lookups, sandbox, host, start and request families of hermit 25 are not
+  built (WP-20 built the page, the snapshot and the verdict, which read the tables directly).
 
 ## Deviations from the spec (recorded for the design's owners)
 
@@ -135,3 +145,24 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   `start_failed` (note `placement`) after `hostWaitSeconds` instead of waiting out the 8 min start deadline.
 - **The `Fabric` trait** (`place`, `request_host`, `create`, `control_url`, `console_tail`, `destroy`,
   `gateway_settled`) is the core's view of hermit 13; WP-19 implements it and may grow it.
+
+### WP-20 (workspaces, ops page, admin routes)
+
+- **The snapshot's extra top-level fields** `controls`, `catalogue`, `replicas` (each replica's workspace mount and
+  last refused delete) and `fabricOps` (`lastPassAt`, `egressTargets`) carry what 18.6's verdict judges beyond 18.3's
+  table; 18.3's fields are unchanged.
+- **The fabric's part of the page** is `Fabric::ops()` (`FabricOps`: the scaler's `plan`, the leader's last pass,
+  the egress target count, slots per host), a default method answering "nothing known" until WP-19 implements it.
+  Until then `scaler.plan` is `null` and `hosts.list[].slots` `null` (the monitor's `ai_slim` reads
+  `scaler.plan.*`, so the YYC deployment needs WP-19's plan before the switch).
+- **A workspace delete refused** (15.4) is a problem in the verdict while the refusal is younger than
+  `recentMinutes` (15 min): magpie's outbox retries the delete, so a lasting cause keeps the finding; 18.6 does not
+  say how long it shows.
+- **"Not reporting"** (18.6 watch) is a ready sandbox whose last activity report is older than three report periods
+  (`3 × activityEverySeconds`, 45 s).
+- **`Aviary-Admin` missing** on an admin route answers 400 `bad_request` (24.2 says only that it is required); the
+  person purge sends no `Aviary-Admin` to magpie (its caller is hermit) and records the operator in `admin_events`.
+- **Admin reads are audited too** (`hosts.read`, `sandboxes.read`, `sandbox.log`, `events.read`): 16 says each call
+  writes a row; a read has no change, so its row is written before it answers.
+- **The page's zone** is the browser's (`Intl`), falling back to `ops.timeZone`; times are shown in it (18.2: "polls
+  `./snapshot?tz=<browser zone>`").

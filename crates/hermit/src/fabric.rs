@@ -125,6 +125,43 @@ pub trait Fabric: Send + Sync + 'static {
     /// Whether the gateway has answered every heartbeat for the last `gatewaySettleSeconds` (hermit 12 step 3,
     /// 13.12 step 4): while it is down or settling, silence proves nothing and nothing is judged lost.
     fn gateway_settled(&self) -> bool;
+    /// What the operator page shows of the fabric (hermit 18.3, 18.6): the scaler's plan, the egress targets, the
+    /// slots per host. Nothing known by default.
+    fn ops(&self) -> Fut<'_, FabricOps> {
+        Box::pin(async { FabricOps::default() })
+    }
+}
+
+/// The scaler's plan as the page shows it (hermit 13.4, 18.3 `scaler.plan`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScalerPlan {
+    /// Slots needed now.
+    pub need: u32,
+    /// People typing (warm hints counted).
+    pub demand: u32,
+    /// Starts waiting for a host.
+    pub waiting: u32,
+    /// Hosts the plan launches.
+    pub planned: u32,
+    /// Free slots on ready hosts.
+    pub available: u32,
+    /// Slots on booting hosts.
+    pub pending: u32,
+    /// Slots per host.
+    pub per_host: u32,
+}
+
+/// The fabric's part of the operator page.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FabricOps {
+    pub plan: Option<ScalerPlan>,
+    /// When the scaler leader last finished a pass (a problem after 30 s, 18.6).
+    pub last_pass_at: Option<hermit_api::Timestamp>,
+    /// How many egress targets the gateway has now (0 is a problem, 18.6).
+    pub egress_targets: Option<usize>,
+    /// Sandbox slots per live host name.
+    pub slots: std::collections::BTreeMap<String, u32>,
 }
 
 /// Why a workspace call failed.
