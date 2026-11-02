@@ -2070,28 +2070,28 @@ impl Driver {
         let (n, line) = if let Some(k) = kept {
             k
         } else {
-                // 1-3, then 4: a generation; an interrupt, kill, release or pause ends the wait at once (7.8)
-                let line = tokio::select! {
-                    biased;
-                    () = self.until_cancelled(Some(turn_id)) => {
-                        self.cfg.uploads.sweep().await;
-                        return stopped(self);
-                    }
-                    r = self.prepare(&s, replay) => match r {
-                        Ok(l) => l,
-                        Err(e) => return fail(self, e),
-                    },
-                };
-                match self.ensure_gen(&session, Some(turn_id)).await {
-                    Ok(n) => {
-                        if !replay {
-                            self.save_message(n, seq, &line).await;
-                        }
-                        (n, line)
-                    }
-                    Err(GenError::Canceled) => return stopped(self),
-                    Err(GenError::Failed(e)) => return fail(self, e),
+            // 1-3, then 4: a generation; an interrupt, kill, release or pause ends the wait at once (7.8)
+            let line = tokio::select! {
+                biased;
+                () = self.until_cancelled(Some(turn_id)) => {
+                    self.cfg.uploads.sweep().await;
+                    return stopped(self);
                 }
+                r = self.prepare(&s, replay) => match r {
+                    Ok(l) => l,
+                    Err(e) => return fail(self, e),
+                },
+            };
+            match self.ensure_gen(&session, Some(turn_id)).await {
+                Ok(n) => {
+                    if !replay {
+                        self.save_message(n, seq, &line).await;
+                    }
+                    (n, line)
+                }
+                Err(GenError::Canceled) => return stopped(self),
+                Err(GenError::Failed(e)) => return fail(self, e),
+            }
         };
         // 5: the record, the pending input and the person's turn together, before the keeper has the message:
         // Claude Code's answer can never be read without the turn it belongs to (7.5), and a restart finds both
