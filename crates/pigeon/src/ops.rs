@@ -46,10 +46,15 @@ pub async fn handle(app: &App, req: Request, path: &str) -> Response {
     if method != Method::GET && method != Method::HEAD {
         return page(app, Page::ReadOnly, None);
     }
-    if path == "/ops" {
-        return redirect(StatusCode::FOUND, "/ops/", false);
-    }
     let query = query_without(query.as_deref(), compat::VIEW_AS_QUERY);
+    if path == "/ops" {
+        // the query stays (spec 5.11 `/ops?...`), without the view-as token
+        let to = match &query {
+            Some(q) => format!("/ops/?{q}"),
+            None => "/ops/".to_owned(),
+        };
+        return redirect(StatusCode::FOUND, &to, false);
+    }
     // the checked path, encoded again: nothing in it can become a dot segment, a query or a fragment upstream
     let path = encode_path(path);
     let url = match &query {

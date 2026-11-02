@@ -39,6 +39,10 @@ pub const APP_DIR: &str = "/srv/app";
 /// The public port (spec 3.2).
 pub const PORT: u16 = 8080;
 
+/// The upload client's read timeout, which reqwest runs from the request's start to the answer's headers: far past
+/// any upload, so only the upload's own idle and first-byte bounds end one (uploads.rs).
+const UPLOAD_READ_BACKSTOP: Duration = Duration::from_hours(24);
+
 /// Where pigeon finds its upstreams. In a deployment these are the fixed names of [`Upstreams::cluster`]; tests point
 /// the same fields at local fakes.
 #[derive(Clone)]
@@ -254,8 +258,10 @@ pub(crate) struct Inner {
     pub(crate) upstreams: Upstreams,
     /// magpie for small calls (15 s per call).
     pub(crate) magpie: magpie_api::client::Client,
-    /// magpie for streamed bytes (no total timeout; idle bound).
+    /// magpie for downloads (no total timeout; reqwest's read timeout, which resets on every body read).
     pub(crate) magpie_transfer: magpie_api::client::Client,
+    /// magpie for uploads (M13): the upload bounds its own waits ([`UPLOAD_READ_BACKSTOP`]).
+    pub(crate) magpie_upload: magpie_api::client::Client,
     pub(crate) hermit: hermit_api::Client,
     /// Plain client for hermit's `/ops/*` pages.
     pub(crate) hermit_http: reqwest::Client,
@@ -303,6 +309,16 @@ impl App {
             .unwrap_or_default();
         let magpie_transfer =
             magpie_api::client::Client::new(transfer_http, upstreams.magpie.clone(), secrets.token_magpie.clone());
+        // uploads: reqwest's read timeout would run from the request's start to magpie's answer, which comes only
+        // after the whole body, and so fail a slow upload that keeps moving. The upload enforces its own idle bound
+        // per chunk and its first-byte bound after the body (uploads.rs); this one only stops a connection that
+        // hangs past any upload's lifetime.
+        let upload_http = aviary_core::http::client_builder(&build, magpie_protocol)
+            .read_timeout(UPLOAD_READ_BACKSTOP)
+            .build()
+            .unwrap_or_default();
+        let magpie_upload =
+            magpie_api::client::Client::new(upload_http, upstreams.magpie.clone(), secrets.token_magpie.clone());
         let hermit_protocol = Some(Protocol::new(hermit_api::CORE.0, hermit_api::CORE.1));
         let hermit = hermit_api::Client::new(rpc(hermit_protocol, Duration::from_secs(10)), upstreams.hermit.clone())
             .bearer(secrets.token_hermit.clone());
@@ -325,6 +341,7 @@ impl App {
             upstreams,
             magpie,
             magpie_transfer,
+            magpie_upload,
             hermit,
             hermit_http,
             model_http,
@@ -381,7 +398,40 @@ impl App {
         &self.0.build
     }
 
-    /// Records how long the drain waited for transfers (`pigeon_drain_transfer_seconds`).
+    /// The process's drain (spec 11.2), as `main` runs it: on SIGTERM `readiness` turns draining (`/readyz` 503),
+    /// then one hook closes `server`'s listener, lets in-flight requests finish and waits for transfers, all within
+    /// the transfer bound counted from the signal (300 s; the pod is killed at 320 s). With nothing moving it ends
+    /// at once.
+    #[must_use]
+    pub fn drain(
+        &self,
+        readiness: &aviary_core::ops::Readiness,
+        server: server::Listener,
+    ) -> aviary_core::drain::Drain {
+        let bound = self.0.tuning.transfer_bound;
+        let mut d = aviary_core::drain::Drain::new(readiness.clone());
+        let app = self.clone();
+        // the hook's own deadline is a backstop a second past the bound the waits inside keep
+        d.hook(
+            "listener, requests and transfers",
+            bound + Duration::from_secs(1),
+            move || async move {
+                let started = std::time::Instant::now();
+                server.drain(bound).await;
+                let left = bound.saturating_sub(started.elapsed());
+                if tokio::time::timeout(left, app.transfers().idle()).await.is_err() {
+                    tracing::warn!(
+                        transfers = app.transfers().active(),
+                        "drain: transfers still running at the bound"
+                    );
+                }
+                app.observe_drain(started.elapsed());
+            },
+        );
+        d
+    }
+
+    /// Records how long the drain waited for requests and transfers (`pigeon_drain_transfer_seconds`).
     pub fn observe_drain(&self, waited: Duration) {
         self.0.metrics.drain_transfer(waited.as_secs_f64());
     }

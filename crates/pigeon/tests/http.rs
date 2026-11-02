@@ -5,7 +5,7 @@
 mod common;
 
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use aviary_fakes::{FaultKind, Reply};
 use common::*;
@@ -624,6 +624,20 @@ async fn app_sign_in_hands_the_token_to_the_app_scheme() {
         "a JWT is base64url and dots: nothing to encode"
     );
     assert_eq!(r.headers()["referrer-policy"], "no-referrer");
+    // the verified token is handed over, never a different cookie beside it (stale, or another team's)
+    let other = h.teams[1].token(STAFF);
+    let r = h
+        .get(&format!("{}?state={state}", compat::APP_SIGNIN))
+        .header("cf-access-jwt-assertion", &token)
+        .header("cookie", format!("CF_Authorization={other}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 302);
+    assert_eq!(
+        r.headers()["location"],
+        format!("dev.example.app://signed-in?state={state}#token={token}").as_str()
+    );
     let r = h.get_as(&format!("{}?state=short", compat::APP_SIGNIN), STAFF).await;
     assert_eq!(r.status(), 400);
     let r = h
@@ -696,6 +710,31 @@ async fn the_model_list_is_cached_and_kept_on_error() {
         want,
         "the last list stands while model fails"
     );
+}
+
+#[tokio::test]
+async fn a_stale_model_list_is_answered_at_once_while_one_refresh_hangs() {
+    let h = Harness::start().await;
+    let path = "/api/providers/claude/models";
+    let want = body_json(h.get_as(path, STAFF).await).await;
+    assert_eq!(want["success"], true);
+    assert_eq!(h.models_hits.load(Ordering::SeqCst), 1);
+    h.models_hang.store(true, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    for _ in 0..2 {
+        let started = Instant::now();
+        let burst = (0..20).map(|_| async { body_json(h.get_as(path, STAFF).await).await });
+        for got in futures_util::future::join_all(burst).await {
+            assert_eq!(got, want, "the stale list");
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "nobody waits for the hanging refresh: {:?}",
+            started.elapsed()
+        );
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    assert_eq!(h.models_hits.load(Ordering::SeqCst), 2, "one refresh for both bursts");
 }
 
 #[tokio::test]
@@ -1016,6 +1055,10 @@ async fn ops_is_admin_only_read_only_and_forwarded() {
     let r = h.get_as("/ops", ADMIN).await;
     assert_eq!(r.status(), 302);
     assert_eq!(r.headers()["location"], "/ops/");
+    // the query stays
+    let r = h.get_as("/ops?tz=Asia%2FHong_Kong&x=1", ADMIN).await;
+    assert_eq!(r.status(), 302);
+    assert_eq!(r.headers()["location"], "/ops/?tz=Asia%2FHong_Kong&x=1");
     // forwarded with the bearer and the admin
     let r = h
         .as_token(h.get("/ops/?tz=Asia%2FHong_Kong"), &h.token(ADMIN))
@@ -1237,6 +1280,101 @@ async fn uploads_stream_to_magpie_with_their_limits() {
         .unwrap();
     assert_eq!(r.status(), 502);
     assert_eq!(body_json(r).await["error"], "Upload failed. Please try again.");
+}
+
+/// Sends a one-file upload on a raw connection, one `chunk`-byte piece every `every`, `pieces` pieces, while reading
+/// the answer; returns the answer and when it arrived. The sender keeps going (ignoring a closed connection) so an
+/// early answer shows pigeon did not wait for the rest.
+async fn trickle_upload(h: &Harness, chunk: usize, pieces: usize, every: Duration) -> (String, Duration) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let boundary = "trickle";
+    let head = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"slow.bin\"\r\n\
+         Content-Type: application/octet-stream\r\n\r\n"
+    );
+    let tail = format!("\r\n--{boundary}--\r\n");
+    let len = head.len() + chunk * pieces + tail.len();
+    let c = tokio::net::TcpStream::connect(h.url.trim_start_matches("http://"))
+        .await
+        .unwrap();
+    let (mut rd, mut wr) = c.into_split();
+    let request = format!(
+        "POST /api/assets/files HTTP/1.1\r\nhost: pigeon.test\r\ncf-access-jwt-assertion: {}\r\n\
+         content-type: multipart/form-data; boundary={boundary}\r\ncontent-length: {len}\r\n\r\n{head}",
+        h.token(STAFF)
+    );
+    let started = Instant::now();
+    tokio::spawn(async move {
+        if wr.write_all(request.as_bytes()).await.is_err() {
+            return;
+        }
+        for _ in 0..pieces {
+            tokio::time::sleep(every).await;
+            if wr.write_all(&vec![b'q'; chunk]).await.is_err() {
+                return;
+            }
+        }
+        let _ = wr.write_all(tail.as_bytes()).await;
+        // hold the write half open until the answer is read
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    });
+    let mut buf = Vec::new();
+    let mut piece = [0u8; 4096];
+    loop {
+        let n = tokio::time::timeout(Duration::from_secs(30), rd.read(&mut piece))
+            .await
+            .unwrap()
+            .unwrap_or(0);
+        buf.extend_from_slice(&piece[..n]);
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        if n == 0 || text.contains('}') {
+            return (text, started.elapsed());
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_slow_upload_that_keeps_moving_outlasts_the_idle_bound() {
+    // spec 5.7 / 11.2 step 4 scaled: a 1 s idle bound, a 64 KiB piece every 300 ms for about 3.6 s (the review's
+    // 50 MiB at 2 Mbit/s case: never idle, several idle bounds long)
+    let h = Harness::start_with(pigeon::Tuning {
+        transfer_idle: Duration::from_secs(1),
+        ..tuning()
+    })
+    .await;
+    h.magpie.fake.script().always(
+        "upload",
+        Reply::json(
+            201,
+            json!({"uploadId": uuid::Uuid::new_v4(), "path": "uploads/1/slow.bin", "name": "slow.bin",
+                   "size": 786_432, "mimeType": "application/octet-stream"}),
+        ),
+    );
+    let (answer, took) = trickle_upload(&h, 65_536, 12, Duration::from_millis(300)).await;
+    assert!(answer.starts_with("HTTP/1.1 201"), "{answer}");
+    assert!(took > Duration::from_secs(3), "{took:?}");
+    let call = h.magpie.fake.script().calls_to("upload").pop().unwrap();
+    assert_eq!(call.bytes.unwrap().len(), 786_432, "every byte reached magpie");
+}
+
+#[tokio::test]
+async fn magpie_refusing_mid_body_is_answered_at_once() {
+    // magpie answers before reading the body: pigeon answers its mapped status at once with `connection: close`,
+    // without reading the client's remaining bytes (16 pieces, 300 ms apart, would take about 5 s)
+    let h = Harness::start_with(pigeon::Tuning {
+        transfer_idle: Duration::from_secs(1),
+        ..tuning()
+    })
+    .await;
+    h.magpie
+        .fake
+        .faults()
+        .on("upload", FaultKind::Unavailable { retry_after_secs: 1 });
+    let (answer, took) = trickle_upload(&h, 65_536, 16, Duration::from_millis(300)).await;
+    assert!(answer.starts_with("HTTP/1.1 502"), "{answer}");
+    assert!(answer.to_ascii_lowercase().contains("connection: close"), "{answer}");
+    assert!(answer.contains("上載失敗，請再試一次。"), "{answer}");
+    assert!(took < Duration::from_secs(2), "answered before the body ends: {took:?}");
 }
 
 // ---- Files and blobs (spec 5.8-5.9) ----

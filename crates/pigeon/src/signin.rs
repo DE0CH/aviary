@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::App;
 use crate::http::{Page, is_signed_in_path, json, not_found, page, query_param, redirect};
-use crate::identity::{ACCESS_COOKIE, ASSERTION_HEADER, Identity, cookie};
+use crate::identity::Identity;
 
 /// Whether `next` is a same-origin path pigeon may send a fresh sign-in to (spec 5.3.1): `^/(?![/\\])\S*$`, and its
 /// path part is not under a signed-in prefix.
@@ -88,18 +88,13 @@ pub fn app_signin(app: &App, req: &Parts, id: &Identity) -> Response {
             );
         }
     };
-    let token = cookie(&req.headers, ACCESS_COOKIE)
-        .or_else(|| {
-            req.headers
-                .get(ASSERTION_HEADER)
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_owned)
-        })
-        .unwrap_or_else(|| person.token.clone());
+    // the token pigeon verified for this identity (the assertion header, else the cookie, else `cf-access-token`):
+    // a different, unverified cookie beside it (stale, or another team's) is never handed to the app
+    let token = &person.token;
     tracing::info!(person = %aviary_core::log::person_key(&person.email), "app-signin");
     redirect(
         StatusCode::FOUND,
-        &format!("{scheme}://signed-in?state={state}#token={}", fragment_encode(&token)),
+        &format!("{scheme}://signed-in?state={state}#token={}", fragment_encode(token)),
         true,
     )
 }

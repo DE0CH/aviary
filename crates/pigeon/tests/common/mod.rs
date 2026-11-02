@@ -221,6 +221,8 @@ pub struct Harness {
     pub app: App,
     pub models_hits: Arc<AtomicUsize>,
     pub models_up: Arc<std::sync::atomic::AtomicBool>,
+    /// The model list stub answers only after 30 s.
+    pub models_hang: Arc<std::sync::atomic::AtomicBool>,
     pub listener: Option<pigeon::server::Listener>,
     pub readiness: aviary_core::ops::Readiness,
     pub dir: PathBuf,
@@ -267,15 +269,24 @@ const MODELS_JSON: &str = r#"{"default":"vendor/model-a","small":"vendor/model-s
 "contextTokens":200000,"models":[{"id":"vendor/model-a","label":"Model A","reasoning":null},
 {"id":"vendor/model-b","label":"","reasoning":null}]}"#;
 
-fn model_stub(hits: Arc<AtomicUsize>, up: Arc<std::sync::atomic::AtomicBool>, token: String) -> Router {
+fn model_stub(
+    hits: Arc<AtomicUsize>,
+    up: Arc<std::sync::atomic::AtomicBool>,
+    hang: Arc<std::sync::atomic::AtomicBool>,
+    token: String,
+) -> Router {
     Router::new().route(
         gateway_api::models::MODELS,
         axum::routing::get(move |h: axum::http::HeaderMap| {
             let hits = hits.clone();
             let up = up.clone();
+            let hang = hang.clone();
             let token = token.clone();
             async move {
                 hits.fetch_add(1, Ordering::SeqCst);
+                if hang.load(Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                }
                 let auth = h.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("");
                 let ok = up.load(Ordering::SeqCst) && auth == format!("Bearer {token}");
                 let (status, body) = if ok { (200, MODELS_JSON) } else { (503, "{}") };
@@ -338,10 +349,16 @@ impl Harness {
         let magpie = FakeMagpie::new().serve().await.unwrap();
         let models_hits = Arc::new(AtomicUsize::new(0));
         let models_up = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let models_hang = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let model_token = "model-token".to_owned();
-        let model = aviary_fakes::serve(model_stub(models_hits.clone(), models_up.clone(), model_token.clone()))
-            .await
-            .unwrap();
+        let model = aviary_fakes::serve(model_stub(
+            models_hits.clone(),
+            models_up.clone(),
+            models_hang.clone(),
+            model_token.clone(),
+        ))
+        .await
+        .unwrap();
         let origins: HashMap<String, String> = teams.iter().map(|t| (t.domain.to_owned(), t.served.url())).collect();
         let upstreams = Upstreams {
             magpie: magpie.url(),
@@ -404,6 +421,7 @@ impl Harness {
             app,
             models_hits,
             models_up,
+            models_hang,
             listener: Some(served),
             readiness,
             dir,

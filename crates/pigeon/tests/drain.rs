@@ -204,3 +204,50 @@ async fn an_upload_across_a_drain_completes() {
     );
     assert_eq!(h.app.transfers().active(), 0);
 }
+
+#[tokio::test]
+async fn sigterm_through_mains_wiring_turns_unready_closes_and_exits_at_once() {
+    // spec 18.3's unit case through `App::drain` (what `main` runs): SIGTERM -> /readyz 503, the listener closes,
+    // and with nothing transferring the drain ends well within 20 s
+    use aviary_core::drain::{Outcome, Signal, Signals};
+    let mut h = Harness::start().await;
+    let ops = aviary_core::ops::Ops::new(
+        aviary_core::version::Build::new("pigeon"),
+        aviary_core::ops::registry(&aviary_core::version::Build::new("pigeon")),
+    );
+    let ops_addr = ops.spawn("127.0.0.1:0".parse().unwrap()).await.unwrap();
+    h.app.start(ops.readiness());
+    ops.readiness().started();
+    let readyz = format!("http://{ops_addr}/readyz");
+    let started = Instant::now();
+    while reqwest::get(&readyz).await.unwrap().status() != 200 && started.elapsed() < Duration::from_secs(5) {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(reqwest::get(&readyz).await.unwrap().status(), 200);
+    // a kept-alive idle connection does not hold the drain
+    assert_eq!(h.get("/").send().await.unwrap().status(), 200);
+    let d = h.app.drain(ops.readiness(), h.listener.take().unwrap());
+    let (tx, mut signals) = Signals::channel();
+    let run = tokio::spawn(async move { d.run(&mut signals).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!run.is_finished(), "nothing happens before the signal");
+    let signalled = Instant::now();
+    tx.send(Signal::Term).unwrap();
+    let outcome = tokio::time::timeout(Duration::from_secs(20), run)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(outcome, Outcome::Drained);
+    assert!(
+        signalled.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        signalled.elapsed()
+    );
+    assert_eq!(
+        reqwest::get(&readyz).await.unwrap().status(),
+        503,
+        "/readyz after SIGTERM"
+    );
+    let refused = reqwest::Client::new().get(format!("{}/", h.url)).send().await;
+    assert!(refused.is_err(), "the listener is closed: {refused:?}");
+}

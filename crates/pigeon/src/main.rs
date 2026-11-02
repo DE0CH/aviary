@@ -4,7 +4,6 @@
 use std::io::Write as _;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::process::ExitCode;
-use std::time::Duration;
 
 use aviary_core::{drain, log, ops, version};
 use pigeon::{App, Config, PORT};
@@ -38,7 +37,6 @@ async fn run() -> ExitCode {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let mut registry = ops::registry(&build);
     let config = Config::from_env(build.clone());
-    let bound = config.tuning.transfer_bound;
     let app = match App::new(config, &mut registry) {
         Ok(app) => app,
         Err(e) => {
@@ -63,21 +61,8 @@ async fn run() -> ExitCode {
     let server = pigeon::server::serve(listener, app.router());
     ops.readiness().started();
     tracing::info!("serving");
-    let mut d = drain::Drain::new(ops.readiness().clone());
     // spec 11.2 steps 2 and 4: the listener closes, in-flight requests and transfers finish (up to the bound)
-    d.hook(
-        "listener and requests",
-        bound + Duration::from_secs(5),
-        move || async move {
-            server.drain(bound).await;
-        },
-    );
-    let waiting = app.clone();
-    d.hook("transfers", bound, move || async move {
-        let started = std::time::Instant::now();
-        waiting.transfers().idle().await;
-        waiting.observe_drain(started.elapsed());
-    });
+    let d = app.drain(ops.readiness(), server);
     let mut signals = match drain::Signals::os() {
         Ok(s) => s,
         Err(e) => {

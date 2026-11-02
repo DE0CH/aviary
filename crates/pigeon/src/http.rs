@@ -762,17 +762,75 @@ async fn warm(app: &App, body: Body, id: &Identity) -> Response {
     ok
 }
 
-/// The model list cache (spec 5.5). Cheap to clone.
-#[derive(Debug, Clone, Default)]
-pub struct Models(std::sync::Arc<Mutex<Option<(Instant, Value)>>>);
+/// After a failed refresh of a cached model list, the next refresh starts no sooner than this.
+const MODEL_RETRY: Duration = Duration::from_secs(5);
+
+/// The model list cache (spec 5.5): one refresh at a time, run in the background; a stale list is answered at once
+/// while it runs or after it failed. Cheap to clone.
+#[derive(Debug, Clone)]
+pub struct Models(std::sync::Arc<ModelsInner>);
+
+#[derive(Debug)]
+struct ModelsInner {
+    st: Mutex<ModelsState>,
+    /// Bumped when a refresh ends; a request with nothing cached waits for it.
+    done: tokio::sync::watch::Sender<u64>,
+}
+
+#[derive(Debug, Default)]
+struct ModelsState {
+    value: Option<(Instant, Value)>,
+    refreshing: bool,
+    failed_at: Option<Instant>,
+}
+
+impl Default for Models {
+    fn default() -> Self {
+        Self(std::sync::Arc::new(ModelsInner {
+            st: Mutex::new(ModelsState::default()),
+            done: tokio::sync::watch::channel(0).0,
+        }))
+    }
+}
 
 async fn models(app: &App) -> Response {
-    let cached = app.0.models.0.lock().ok().and_then(|c| c.clone());
-    if let Some((at, v)) = &cached
-        && at.elapsed() < app.0.tuning.model_ttl
-    {
-        return answer_models(v);
+    let mut ended = {
+        let Ok(mut st) = app.0.models.0.st.lock() else {
+            return models_unavailable();
+        };
+        if let Some((at, v)) = &st.value
+            && at.elapsed() < app.0.tuning.model_ttl
+        {
+            return answer_models(v);
+        }
+        // a stale list waits out the retry pause after a failure; with nothing cached every request may try
+        let may_start =
+            !st.refreshing && (st.value.is_none() || st.failed_at.is_none_or(|t| t.elapsed() >= MODEL_RETRY));
+        if may_start {
+            st.refreshing = true;
+            tokio::spawn(refresh_models(app.clone()));
+        }
+        if let Some((_, v)) = &st.value {
+            return answer_models(v);
+        }
+        app.0.models.0.done.subscribe()
+    };
+    let _ = tokio::time::timeout(MODEL_TIMEOUT + Duration::from_secs(1), ended.changed()).await;
+    let value = app
+        .0
+        .models
+        .0
+        .st
+        .lock()
+        .ok()
+        .and_then(|st| st.value.as_ref().map(|(_, v)| v.clone()));
+    match value {
+        Some(v) => answer_models(&v),
+        None => models_unavailable(),
     }
+}
+
+async fn refresh_models(app: App) {
     let fetched = tokio::time::timeout(
         MODEL_TIMEOUT,
         gateway_api::models::fetch(
@@ -782,7 +840,7 @@ async fn models(app: &App) -> Response {
         ),
     )
     .await;
-    match fetched {
+    let value = match fetched {
         Ok(Ok(m)) => {
             let options: Vec<Value> = m
                 .models
@@ -792,20 +850,35 @@ async fn models(app: &App) -> Response {
                     json!({"value": e.id, "label": label})
                 })
                 .collect();
-            let v = json!({"OPTIONS": options, "DEFAULT": m.default});
-            if let Ok(mut c) = app.0.models.0.lock() {
-                *c = Some((Instant::now(), v.clone()));
-            }
-            answer_models(&v)
+            Some(json!({"OPTIONS": options, "DEFAULT": m.default}))
         }
-        Ok(Err(_)) | Err(_) => match cached {
-            Some((_, v)) => answer_models(&v),
-            None => json(
-                StatusCode::BAD_GATEWAY,
-                &json!({"success": false, "error": {"code": "MODEL_LIST_UNAVAILABLE"}}),
-            ),
-        },
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "model list refresh failed");
+            None
+        }
+        Err(_) => {
+            tracing::warn!("model list refresh timed out");
+            None
+        }
+    };
+    if let Ok(mut st) = app.0.models.0.st.lock() {
+        st.refreshing = false;
+        match value {
+            Some(v) => {
+                st.value = Some((Instant::now(), v));
+                st.failed_at = None;
+            }
+            None => st.failed_at = Some(Instant::now()),
+        }
     }
+    app.0.models.0.done.send_modify(|n| *n += 1);
+}
+
+fn models_unavailable() -> Response {
+    json(
+        StatusCode::BAD_GATEWAY,
+        &json!({"success": false, "error": {"code": "MODEL_LIST_UNAVAILABLE"}}),
+    )
 }
 
 fn answer_models(models: &Value) -> Response {

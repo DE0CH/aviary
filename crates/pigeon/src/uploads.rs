@@ -1,6 +1,8 @@
 //! `POST /api/assets/files` (spec 5.7): one file per request, its bytes streamed straight to magpie's M13 with at
 //! most one chunk in flight (backpressure to the client), never buffered whole.
 
+use std::time::Duration;
+
 use axum::body::Bytes;
 use axum::extract::Request;
 use axum::http::{HeaderValue, StatusCode, header};
@@ -19,6 +21,8 @@ pub const MAX_FILE: u64 = 52_428_800;
 pub const MAX_BODY: u64 = 53_477_376;
 /// The longest stored file name, bytes.
 pub const MAX_NAME: usize = 255;
+/// magpie's longest wait to answer once the whole body is sent (spec 5.7: the first byte of its answer).
+pub const UPLOAD_FIRST_BYTE: Duration = Duration::from_secs(30);
 
 /// The content type of an upload from its file name, when the part names none (or `application/octet-stream`).
 #[must_use]
@@ -110,7 +114,7 @@ pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
     else {
         return error(app, StatusCode::BAD_REQUEST, "");
     };
-    let Some(calls) = person_calls(&app.0.magpie_transfer, id) else {
+    let Some(calls) = person_calls(&app.0.magpie_upload, id) else {
         return error(app, StatusCode::BAD_GATEWAY, "");
     };
     let _guard = app.0.transfers.guard();
@@ -121,7 +125,7 @@ pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
         boundary,
         multer::Constraints::new().size_limit(multer::SizeLimit::new().whole_stream(MAX_BODY)),
     );
-    let mut field = loop {
+    let field = loop {
         match tokio::time::timeout(idle, parts.next_field()).await {
             Ok(Ok(Some(f))) if f.name() == Some("files") && f.file_name().is_some() => break f,
             Ok(Ok(Some(_))) => {}
@@ -137,49 +141,50 @@ pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(1);
     let stream = futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|c| (c, rx)) });
     let upstream = calls_upload(calls, &name, &content_type, reqwest::Body::wrap_stream(stream));
-    // the file part is fed to magpie; the upstream body ends only after the rest of the multipart body has been
-    // read, so a second `files` part breaks the upstream body and magpie stores nothing (spec 5.7 step 3)
-    let feed = async move {
-        let mut total: u64 = 0;
-        let mut outcome = loop {
-            match tokio::time::timeout(idle, field.chunk()).await {
-                Ok(Ok(Some(chunk))) => {
-                    total += chunk.len() as u64;
-                    if total > MAX_FILE {
-                        break Some(StatusCode::PAYLOAD_TOO_LARGE);
-                    }
-                    if tx.send(Ok(chunk)).await.is_err() {
-                        // magpie stopped reading: its answer says why
-                        break None;
-                    }
-                }
-                Ok(Ok(None)) => break None,
-                Ok(Err(multer::Error::StreamSizeExceeded { .. })) => break Some(StatusCode::PAYLOAD_TOO_LARGE),
-                Ok(Err(_)) | Err(_) => break Some(StatusCode::BAD_REQUEST),
-            }
-        };
-        // exactly one file part (multer hands out the next part once this one is dropped)
-        drop(field);
-        while outcome.is_none() {
-            match tokio::time::timeout(idle, parts.next_field()).await {
-                Ok(Ok(None)) => break,
-                Ok(Ok(Some(f))) if f.name() == Some("files") => outcome = Some(StatusCode::BAD_REQUEST),
-                Ok(Ok(Some(_))) => {}
-                Ok(Err(multer::Error::StreamSizeExceeded { .. })) => outcome = Some(StatusCode::PAYLOAD_TOO_LARGE),
-                Ok(Err(_)) | Err(_) => outcome = Some(StatusCode::BAD_REQUEST),
-            }
-        }
-        if outcome.is_some() {
-            // a broken upstream body: magpie stores nothing
-            let _ = tx.send(Err(std::io::Error::other("upload aborted"))).await;
-        }
-        drop(tx);
-        (total, outcome)
+    tokio::pin!(upstream);
+    let feeding = feed(field, parts, tx, idle);
+    tokio::pin!(feeding);
+    // the feed and magpie's answer run together; magpie answers early only when it refuses or fails
+    let ended = tokio::select! {
+        fed = &mut feeding => Ok(fed),
+        sent = &mut upstream => Err(sent),
     };
-    let (sent, (total, outcome)) = tokio::join!(upstream, feed);
-    if let Some(status) = outcome {
-        return error(app, status, &name);
-    }
+    let fed = match ended {
+        Ok(fed) => fed,
+        // magpie answered before the body ended: the client's remainder is not read (the feed is dropped)
+        Err(sent) => {
+            let status = sent.err().unwrap_or(StatusCode::BAD_GATEWAY);
+            return close(error(app, status, &name));
+        }
+    };
+    let (total, sent) = match fed {
+        Fed::Done(total) => {
+            let Ok(sent) = tokio::time::timeout(UPLOAD_FIRST_BYTE, &mut upstream).await else {
+                tracing::warn!("upload: magpie did not answer after the body");
+                return error(app, StatusCode::BAD_GATEWAY, &name);
+            };
+            (total, sent)
+        }
+        Fed::Client(status, broken) => {
+            if broken {
+                // the upstream body ended in an error: let magpie see it (it stores nothing)
+                let _ = tokio::time::timeout(UPLOAD_FIRST_BYTE, &mut upstream).await;
+            }
+            // otherwise the upstream request is dropped mid-body, which magpie never commits either
+            return close(error(app, status, &name));
+        }
+        Fed::UpstreamGone => {
+            let status = match tokio::time::timeout(UPLOAD_FIRST_BYTE, &mut upstream).await {
+                Ok(Err(status)) => status,
+                Ok(Ok(_)) | Err(_) => StatusCode::BAD_GATEWAY,
+            };
+            return close(error(app, status, &name));
+        }
+        Fed::UpstreamStalled => {
+            tracing::warn!("upload: magpie took no bytes for the idle bound");
+            return close(error(app, StatusCode::BAD_GATEWAY, &name));
+        }
+    };
     app.0.metrics.upload_bytes(total);
     match sent {
         Ok(u) => {
@@ -193,6 +198,98 @@ pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
         }
         Err(status) => error(app, status, &name),
     }
+}
+
+/// How feeding the file part to magpie ended.
+enum Fed {
+    /// The whole multipart body was read, with exactly one file part of this many bytes, and the upstream body ended.
+    Done(u64),
+    /// The client's body is refused (a second file, too large, malformed or idle); `true` when the upstream body was
+    /// broken with an error (otherwise the upstream request must be dropped).
+    Client(StatusCode, bool),
+    /// magpie stopped reading the body: its answer says why.
+    UpstreamGone,
+    /// magpie took no chunk for the idle bound.
+    UpstreamStalled,
+}
+
+/// Feeds the file part to magpie. Every wait (the client's next chunk, magpie taking a chunk) is bounded by `idle`
+/// on its own, so an upload that keeps moving never times out (spec 5.7, 11.2). The upstream body ends only after
+/// the rest of the multipart body has been read, so a second `files` part breaks the upstream body and magpie
+/// stores nothing (spec 5.7 step 3).
+async fn feed(
+    mut field: multer::Field<'static>,
+    mut parts: multer::Multipart<'static>,
+    tx: mpsc::Sender<Result<Bytes, std::io::Error>>,
+    idle: Duration,
+) -> Fed {
+    let mut total: u64 = 0;
+    let refused = loop {
+        match tokio::time::timeout(idle, field.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                total += chunk.len() as u64;
+                if total > MAX_FILE {
+                    break StatusCode::PAYLOAD_TOO_LARGE;
+                }
+                match tokio::time::timeout(idle, tx.send(Ok(chunk))).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => return Fed::UpstreamGone,
+                    Err(_) => return Fed::UpstreamStalled,
+                }
+            }
+            Ok(Ok(None)) => {
+                // exactly one file part (multer hands out the next part once this one is dropped)
+                drop(field);
+                match rest(&mut parts, idle).await {
+                    None => {
+                        drop(tx);
+                        return Fed::Done(total);
+                    }
+                    Some(status) => break status,
+                }
+            }
+            Ok(Err(multer::Error::StreamSizeExceeded { .. })) => break StatusCode::PAYLOAD_TOO_LARGE,
+            Ok(Err(_)) | Err(_) => break StatusCode::BAD_REQUEST,
+        }
+    };
+    // a broken upstream body: magpie stores nothing
+    let broken = matches!(
+        tokio::time::timeout(idle, tx.send(Err(std::io::Error::other("upload aborted")))).await,
+        Ok(Ok(()))
+    );
+    Fed::Client(refused, broken)
+}
+
+/// Reads the multipart body after the file part: `None` when it ends with no other `files` part, else the refusal.
+async fn rest(parts: &mut multer::Multipart<'static>, idle: Duration) -> Option<StatusCode> {
+    loop {
+        match tokio::time::timeout(idle, parts.next_field()).await {
+            Ok(Ok(None)) => return None,
+            Ok(Ok(Some(f))) if f.name() == Some("files") => return Some(StatusCode::BAD_REQUEST),
+            Ok(Ok(Some(mut f))) => {
+                // another field's bytes, each wait bounded on its own
+                loop {
+                    match tokio::time::timeout(idle, f.chunk()).await {
+                        Ok(Ok(Some(_))) => {}
+                        Ok(Ok(None)) => break,
+                        Ok(Err(multer::Error::StreamSizeExceeded { .. })) => {
+                            return Some(StatusCode::PAYLOAD_TOO_LARGE);
+                        }
+                        Ok(Err(_)) | Err(_) => return Some(StatusCode::BAD_REQUEST),
+                    }
+                }
+            }
+            Ok(Err(multer::Error::StreamSizeExceeded { .. })) => return Some(StatusCode::PAYLOAD_TOO_LARGE),
+            Ok(Err(_)) | Err(_) => return Some(StatusCode::BAD_REQUEST),
+        }
+    }
+}
+
+/// An answer that closes its connection: the client's body was not read to its end.
+fn close(mut r: Response) -> Response {
+    r.headers_mut()
+        .insert(header::CONNECTION, HeaderValue::from_static("close"));
+    r
 }
 
 async fn calls_upload(
