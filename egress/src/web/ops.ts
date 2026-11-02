@@ -3,7 +3,7 @@
 // ops-page.ts (polled every 10 s). Two halves the page keeps apart:
 // - now: the service (Deployments and pods, read from the Kubernetes API with Role web-ops-read), the gateway and
 //   the hosts that exist, live sandboxes, the scaler's plan and warm hints, the budget, errors of the last 15 minutes,
-//   and `health`, a verdict over all of it (ok / warming / watch / problem, with the reasons);
+//   and `health`, a status over all of it (ok / warming / watch / problem, with the reasons);
 // - history: hosts gone, vm_events, sandbox starts and releases with timings, egress errors over 24 h, spend per
 //   day/person/model, conversations per staff member (each with 「View as」), and view-as sessions with every message
 //   and conversation an admin sent as someone (docs/CHAT.md "View as").
@@ -63,7 +63,7 @@ function secs(s: number): string {
   return `${(s / 3600).toFixed(1)} h`;
 }
 
-/** The verdict over the "now" half: every reason it isn't simply fine, worst first. */
+/** The status over the "now" half: every reason it isn't simply fine, worst first. */
 export function healthOf(d: Row): { state: Level; findings: Finding[] } {
   const out: Finding[] = [];
   const add = (level: Finding["level"], about: string, text: string) => out.push({ level, about, text });

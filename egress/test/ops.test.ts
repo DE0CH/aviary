@@ -212,7 +212,7 @@ test("the snapshot: now (service, hosts, sandboxes, scaler, budget, recent error
   assert.ok(!d.recent.list.some((x: any) => x.what === "inject 405"));
   assert.equal(d.recent.blocked, 1);
   assert.ok(d.recent.list.some((x: any) => x.what === "sandbox start failed"));
-  // the verdict: problems first (tools, ui, the unreachable retiring host is warming, recent errors)
+  // the status: problems first (tools, ui, the unreachable retiring host is warming, recent errors)
   assert.equal(d.health.state, "problem");
   const texts = d.health.findings.map((x: any) => `${x.level} ${x.text}`);
   assert.ok(texts.includes("problem tools: 1 of 2 pods ready"), texts.join(" | "));

@@ -1,5 +1,5 @@
 // The operator page (docs/CHAT.md, "Operator page"): one self-contained HTML page (no build, no external assets) that
-// polls ./snapshot every 10 s. Two halves, never mixed: NOW (is everything fine: the verdict and its reasons, the
+// polls ./snapshot every 10 s. Two halves, never mixed: NOW (is everything fine: the status and its reasons, the
 // service's pods, the gateway, hosts that exist, live sandboxes, the scaler, the budget, errors of the last 15 minutes)
 // and HISTORY (a log, newest first: sandbox starts and releases, host and sandbox events, hosts gone, egress errors over
 // 24 h, spend per day/person/model, conversations per staff member with a 「View as」 button each, the view-as log).
@@ -14,8 +14,8 @@ export const OPS_PAGE = `<!doctype html>
 <meta name="robots" content="noindex">
 <title>YYC AI Ops</title>
 <style>
-:root{--bg:#f5f5f2;--card:#fff;--fg:#1b1b1b;--mut:#6b6b6b;--line:#e4e4e0;--ok:#1f7a4d;--okbg:#e3f3ea;--warm:#8a5a00;--warmbg:#fbf0d9;--bad:#b3261e;--badbg:#fbe4e1;--chip:#efefeb;--bar:#2f6fde;--hist:#ecebe6}
-@media (prefers-color-scheme:dark){:root{--bg:#121212;--card:#1c1c1c;--fg:#ececec;--mut:#9a9a9a;--line:#2e2e2e;--ok:#4cc38a;--okbg:#15301f;--warm:#e6b04a;--warmbg:#33270f;--bad:#ff7a6e;--badbg:#3a1714;--chip:#2a2a2a;--bar:#6a9cff;--hist:#181818}}
+:root{--bg:#f5f5f2;--card:#fff;--fg:#1b1b1b;--mut:#6b6b6b;--line:#e4e4e0;--ok:#1f7a4d;--okbg:#e3f3ea;--warm:#8a5a00;--warmbg:#fbf0d9;--bad:#b3261e;--badbg:#fbe4e1;--info:#005eb8;--infobg:#e3eefa;--chip:#efefeb;--bar:#2f6fde;--hist:#ecebe6}
+@media (prefers-color-scheme:dark){:root{--bg:#121212;--card:#1c1c1c;--fg:#ececec;--mut:#9a9a9a;--line:#2e2e2e;--ok:#4cc38a;--okbg:#15301f;--warm:#e6b04a;--warmbg:#33270f;--bad:#ff7a6e;--badbg:#3a1714;--info:#5aa9ff;--infobg:#10233a;--chip:#2a2a2a;--bar:#6a9cff;--hist:#181818}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans HK",sans-serif}
 header{position:sticky;top:0;z-index:2;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 16px 0}
@@ -24,7 +24,7 @@ header h1{font-size:17px;margin:0}
 .meta{color:var(--mut);font-size:12px}
 .pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:14px;font-weight:600;font-size:13px}
 .pill::before{content:"";width:9px;height:9px;border-radius:50%;background:currentColor}
-.s-ok{color:var(--ok);background:var(--okbg)}.s-warming,.s-watch{color:var(--warm);background:var(--warmbg)}.s-problem{color:var(--bad);background:var(--badbg)}.s-none{color:var(--mut);background:var(--chip)}
+.s-ok{color:var(--ok);background:var(--okbg)}.s-warming{color:var(--info);background:var(--infobg)}.s-watch{color:var(--warm);background:var(--warmbg)}.s-problem{color:var(--bad);background:var(--badbg)}.s-none{color:var(--mut);background:var(--chip)}
 .tabs{display:flex;gap:4px;margin-top:8px}
 .tabs button{flex:1;border:0;background:none;color:var(--mut);font:600 14px system-ui,sans-serif;padding:8px 0;border-bottom:3px solid transparent;cursor:pointer}
 .tabs button.on{color:var(--fg);border-bottom-color:var(--fg)}
@@ -59,12 +59,12 @@ h4{font-size:13px;margin:12px 0 4px;color:var(--mut);font-weight:600}
 .chip{display:inline-block;padding:0 8px;border-radius:9px;background:var(--chip);font-size:12px;font-weight:600}
 .chip.s-ok,.chip.s-warming,.chip.s-watch,.chip.s-problem{font-weight:600}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:middle;background:var(--mut)}
-.dot.ok{background:var(--ok)}.dot.warming,.dot.watch{background:var(--warm)}.dot.problem{background:var(--bad)}
+.dot.ok{background:var(--ok)}.dot.warming{background:var(--info)}.dot.watch{background:var(--warm)}.dot.problem{background:var(--bad)}
 .find{display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--line)}
 .find:first-child{border-top:0}
 .find .dot{margin-top:6px;flex:none}
 .find .lv{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;flex:none;min-width:5.5em}
-.lv.problem{color:var(--bad)}.lv.warming,.lv.watch{color:var(--warm)}
+.lv.problem{color:var(--bad)}.lv.warming{color:var(--info)}.lv.watch{color:var(--warm)}
 .allok{color:var(--ok);font-weight:600}
 .pods{display:flex;flex-wrap:wrap;gap:4px 6px;width:100%}
 .pod{font-size:12px;padding:1px 7px;border-radius:8px;background:var(--chip)}
@@ -75,7 +75,7 @@ h4{font-size:13px;margin:12px 0 4px;color:var(--mut);font-weight:600}
 .mini i{display:block;height:100%;background:var(--bar)}
 .empty{color:var(--mut);font-size:13px}
 .err{color:var(--bad);font-size:12.5px;margin-top:6px}
-.bad{color:var(--bad)}.okc{color:var(--ok)}.warmc{color:var(--warm)}
+.bad{color:var(--bad)}.okc{color:var(--ok)}.warmc{color:var(--warm)}.infoc{color:var(--info)}
 code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
 form.va{margin:0 0 0 auto}
 form.va button{font:600 12px system-ui,sans-serif;padding:3px 10px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
@@ -84,7 +84,7 @@ form.va button:hover{border-color:var(--fg)}
 </head>
 <body class="tab-now">
 <header>
-  <div class="top"><h1>YYC AI Ops</h1><span class="pill s-none" id="verdict">loading…</span><span class="meta" id="meta"></span><span class="meta bad" id="stale">· not updating</span></div>
+  <div class="top"><h1>YYC AI Ops</h1><span class="pill s-none" id="status">loading…</span><span class="meta" id="meta"></span><span class="meta bad" id="stale">· not updating</span></div>
   <nav class="tabs"><button id="t-now" class="on" onclick="tab('now')">Now</button><button id="t-history" onclick="tab('history')">History (log)</button></nav>
 </header>
 <main>
@@ -134,7 +134,7 @@ function mib(b){ return Math.round(b / 1048576).toLocaleString("en-GB"); }
 
 function renderNow(d){
   var E = d.errors || {}, out = [], H = d.health || {state: "ok", findings: []};
-  // 1. the verdict and its reasons
+  // 1. the status and its reasons
   out.push(card("Status", "", H.findings.length ? H.findings.map(function(x){
     return '<div class="find"><span class="dot ' + x.level + '"></span><span class="lv ' + x.level + '">' + esc(LEVEL[x.level]) + "</span><span>" + esc(x.text) + "</span></div>";
   }).join("") : '<div class="allok">Everything is running normally.</div>', null));
@@ -188,8 +188,8 @@ function renderNow(d){
   if (sc) {
     var p = sc.plan;
     if (p) {
-      var verdict = p.want > 0 ? '<span class="warmc">wants ' + p.want + " more slot" + (p.want > 1 ? "s" : "") + "</span>" : '<span class="okc">has enough</span>';
-      scb += '<div class="row"><span class="main">Plan: ' + verdict + "</span>" + f("needs", p.need + " slot" + (p.need === 1 ? "" : "s")) + f("people typing", p.demand) + f("waiting for a sandbox", p.waiting) + f("free on ready hosts", p.available) + f("booting", p.pending) + f("per host", p.perHost) + "</div>";
+      var plan = p.want > 0 ? '<span class="infoc">wants ' + p.want + " more slot" + (p.want > 1 ? "s" : "") + "</span>" : '<span class="okc">has enough</span>';
+      scb += '<div class="row"><span class="main">Plan: ' + plan + "</span>" + f("needs", p.need + " slot" + (p.need === 1 ? "" : "s")) + f("people typing", p.demand) + f("waiting for a sandbox", p.waiting) + f("free on ready hosts", p.available) + f("booting", p.pending) + f("per host", p.perHost) + "</div>";
     } else scb += '<div class="empty">No scaler (provider ' + esc(d.provider) + ").</div>";
     scb += "<h4>Warm hints counted now (typing in the last " + sc.windowS + " s)</h4>" + rows(sc.hints, function(x){ return '<div class="row"><span class="main">' + who(x.who) + "</span>" + f("typed", ago(x.at)) + "</div>"; }, "Nobody is typing.");
   }
@@ -287,7 +287,7 @@ function renderHistory(d){
 
 function render(d){
   var H = d.health || {state: "ok", findings: []};
-  var v = document.getElementById("verdict");
+  var v = document.getElementById("status");
   v.className = "pill s-" + H.state;
   v.textContent = LABEL[H.state] + (H.findings.length ? " · " + H.findings.length : "");
   document.getElementById("now-body").innerHTML = renderNow(d);
