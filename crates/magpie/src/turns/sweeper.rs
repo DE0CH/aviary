@@ -5,7 +5,7 @@
 //!   accept heartbeats, so after an outage of any length a running turn gets a full 90 s for its supervisor's
 //!   retried heartbeat to land.
 //! - Lapsed driver claims: a waiting turn whose claim lapsed (its replica died) or that no driver claimed gets one.
-//! - Deadlines (magpie 8.8): `admitted`/`preparing` after 15 min → `sandbox.timeout`; `starting` with `start_turn`
+//! - Deadlines (magpie 8.8): `admitted`/`preparing` at their deadline (15 min) → `sandbox.timeout`; `starting` with `start_turn`
 //!   unacknowledged 120 s after ready → `sandbox.unreachable` and `kill {watchdog}` (acknowledged: 30 s more, while
 //!   the heartbeat reconciles it, [`super::reports::heartbeat`], until 5 min of magpie-available time after the
 //!   acknowledgement; then `sandbox.unreachable` and `kill {watchdog}`, so no starting turn waits for ever);
@@ -14,9 +14,14 @@
 //!   → 90 s more, no turn is failed on missing evidence); `stopping` 30 s after the stop → `stop.forced` and
 //!   `kill {stop}`.
 //!
-//! Each turn is handled in its own transaction under its conversation's lock, re-checked there; a sweep on another
-//! replica that got there first leaves nothing to do. Migrating conversations and `import` turns are skipped.
+//! `starting` unacknowledged and `stopping` count their 120 s and 30 s, like the running deadline, from the later of
+//! their start and `available_since`.
+//!
+//! The expired turns are claimed with `for update skip locked` (see [`pass`]); each is handled in its own transaction
+//! under its conversation's lock, re-checked there; a sweep on another replica that got there first leaves nothing
+//! to do. Migrating conversations and `import` turns are skipped.
 
+use futures_util::StreamExt as _;
 use hermit_api::sandbox::{SandboxQuery, SandboxState};
 use magpie_api::errors::{DataCode, ErrorInfo};
 use magpie_api::sandbox::KillReason;
@@ -76,6 +81,12 @@ pub async fn availability_tick(pool: &aviary_pg::Pool) -> Result<()> {
 
 /// One sweep: lapsed claims get a driver, expired deadlines are handled; how many turns it acted on.
 ///
+/// The expired turns are claimed first (`for update skip locked`, their deadline moved [`limits::SWEEP_CLAIM`]
+/// ahead), so the replicas' sweeps split them; each is then handled only while its deadline is still the claimed one
+/// (a report, a cancel or another sweep that moved it wins). The deadlines that need no hermit call (admitted,
+/// preparing, starting, stopping) go first, then the running ones, [`limits::SWEEP_HERMIT_CALLS`] hermit calls at a
+/// time, so a hanging hermit never holds a forced stop back.
+///
 /// # Errors
 /// When a statement fails.
 pub async fn pass(d: &Driver) -> Result<usize> {
@@ -91,11 +102,15 @@ pub async fn pass(d: &Driver) -> Result<usize> {
         .await?;
     let expired = conn
         .query(
-            "select t.id, t.conversation_id from turns t join conversations c on c.id = t.conversation_id
-             where t.state not in ('completed', 'failed', 'canceled') and t.deadline < now()
-               and not c.migrating and t.origin <> 'import'
-             order by t.deadline limit $1",
-            &[&limits::SWEEP_BATCH],
+            "update turns t set deadline = now() + make_interval(secs => $2)
+             from (select t.id from turns t join conversations c on c.id = t.conversation_id
+                   where t.state not in ('completed', 'failed', 'canceled') and t.deadline < now()
+                     and not c.migrating and t.origin <> 'import'
+                   order by t.deadline limit $1
+                   for update of t skip locked) due
+             where t.id = due.id
+             returning t.id, t.conversation_id, t.state, t.deadline",
+            &[&limits::SWEEP_BATCH, &secs(limits::SWEEP_CLAIM)],
         )
         .await?;
     drop(conn);
@@ -104,15 +119,37 @@ pub async fn pass(d: &Driver) -> Result<usize> {
         driver::spawn(d.clone(), r.get(0));
         n += 1;
     }
-    for r in expired {
-        let (turn, conversation): (Uuid, Uuid) = (r.get(0), r.get(1));
-        match expire(d, conversation, turn).await {
-            Ok(true) => n += 1,
-            Ok(false) => {}
-            Err(e) => tracing::warn!(turn = %turn, error = %e, "turn deadline not handled"),
+    let claimed: Vec<(Uuid, Uuid, State, OffsetDateTime)> = expired
+        .iter()
+        .map(|r| (r.get(0), r.get(1), State::of(r.get(2)), r.get(3)))
+        .collect();
+    let (running, rest): (Vec<_>, Vec<_>) = claimed.into_iter().partition(|c| c.2 == State::Running);
+    for (turn, conversation, _, at) in rest {
+        if handled(turn, expire(d, conversation, turn, at).await) {
+            n += 1;
+        }
+    }
+    let results: Vec<(Uuid, Result<bool>)> = futures_util::stream::iter(running)
+        .map(|(turn, conversation, _, at)| async move { (turn, expire(d, conversation, turn, at).await) })
+        .buffer_unordered(limits::SWEEP_HERMIT_CALLS)
+        .collect()
+        .await;
+    for (turn, r) in results {
+        if handled(turn, r) {
+            n += 1;
         }
     }
     Ok(n)
+}
+
+fn handled(turn: Uuid, r: Result<bool>) -> bool {
+    match r {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(turn = %turn, error = %e, "turn deadline not handled");
+            false
+        }
+    }
 }
 
 fn err(code: DataCode, message: &str) -> ErrorInfo {
@@ -161,25 +198,26 @@ async fn ask_hermit(d: &Driver, conversation: Uuid, sandbox: Option<Uuid>) -> He
     }
 }
 
-/// Handles one expired deadline; whether it changed the turn.
+/// Handles one expired deadline the sweep claimed (`claimed`: the deadline it set); whether it changed the turn.
 #[allow(clippy::too_many_lines)] // one match over the states of magpie 8.8, then the running check
-async fn expire(d: &Driver, conversation: Uuid, turn_id: Uuid) -> Result<bool> {
+async fn expire(d: &Driver, conversation: Uuid, turn_id: Uuid, claimed: OffsetDateTime) -> Result<bool> {
     // the running check asks hermit, outside any transaction: first see whether it is needed
-    let first = aviary_pg::tx!(&d.pool, |t| -> Result<Option<Turn>> {
+    let first = aviary_pg::tx!(&d.pool, |t| -> Result<(Option<Turn>, bool)> {
         let Some(c) = lock_id(t, conversation).await? else {
-            return Ok(None);
+            return Ok((None, false));
         };
         let Some(turn) = load(t, conversation, turn_id).await? else {
-            return Ok(None);
+            return Ok((None, false));
         };
-        if c.migrating || turn.state.is_ended() || turn.deadline.is_none_or(|dl| dl > OffsetDateTime::now_utc()) {
-            return Ok(None);
+        // a transition since the claim set its own deadline
+        if c.migrating || turn.state.is_ended() || turn.deadline != Some(claimed) {
+            return Ok((None, false));
         }
         match turn.state {
             State::Admitted | State::Preparing => {
-                let e = err(DataCode::SandboxTimeout, "the sandbox was not ready within 15 minutes");
+                let e = err(DataCode::SandboxTimeout, "the sandbox was not ready in time");
                 end::end(t, &c.person, &turn, Ending::failed(e)).await?;
-                Ok(None)
+                Ok((None, true))
             }
             State::Starting => {
                 let (_, acked) = start_turn_status(t, &turn).await?;
@@ -208,10 +246,26 @@ async fn expire(d: &Driver, conversation: Uuid, turn_id: Uuid) -> Result<bool> {
                     );
                     end::end(t, &c.person, &turn, Ending::failed(e).kill(KillReason::Watchdog)).await?;
                 } else {
-                    let e = err(DataCode::SandboxUnreachable, "the supervisor never took the turn");
-                    end::end(t, &c.person, &turn, Ending::failed(e).kill(KillReason::Watchdog)).await?;
+                    // 120 s of magpie-available time after ready: an outage since ready moves the deadline
+                    let row = t
+                        .query_one(
+                            "select greatest(coalesce(ready_at, now()),
+                                             (select available_since from availability where id))
+                                    + make_interval(secs => $2)
+                             from turns where id = $1",
+                            &[&turn.id, &secs(limits::START_ACK_TIMEOUT)],
+                        )
+                        .await?;
+                    let due: OffsetDateTime = row.get(0);
+                    if due > OffsetDateTime::now_utc() {
+                        t.execute("update turns set deadline = $2 where id = $1", &[&turn.id, &due])
+                            .await?;
+                    } else {
+                        let e = err(DataCode::SandboxUnreachable, "the supervisor never took the turn");
+                        end::end(t, &c.person, &turn, Ending::failed(e).kill(KillReason::Watchdog)).await?;
+                    }
                 }
-                Ok(None)
+                Ok((None, true))
             }
             State::Stopping => {
                 let row = t
@@ -235,23 +289,24 @@ async fn expire(d: &Driver, conversation: Uuid, turn_id: Uuid) -> Result<bool> {
                     };
                     end::end(t, &c.person, &turn, ending.kill(KillReason::Stop)).await?;
                 }
-                Ok(None)
+                Ok((None, true))
             }
             State::Running => {
                 let due = last_life(t, turn.id).await? + limits::HEARTBEAT_DEADLINE;
                 if due > OffsetDateTime::now_utc() {
                     t.execute("update turns set deadline = $2 where id = $1", &[&turn.id, &due])
                         .await?;
-                    return Ok(None);
+                    return Ok((None, true));
                 }
-                Ok(Some(turn))
+                Ok((Some(turn), true))
             }
-            State::Completed | State::Failed | State::Canceled => Ok(None),
+            State::Completed | State::Failed | State::Canceled => Ok((None, false)),
         }
     })
     .await?;
-    let Some(turn) = first else {
-        return Ok(true);
+    let (turn, acted) = first;
+    let Some(turn) = turn else {
+        return Ok(acted);
     };
     let verdict = ask_hermit(d, conversation, turn.sandbox).await;
     aviary_pg::tx!(&d.pool, |t| -> Result<bool> {
@@ -262,7 +317,7 @@ async fn expire(d: &Driver, conversation: Uuid, turn_id: Uuid) -> Result<bool> {
             return Ok(false);
         };
         let now = OffsetDateTime::now_utc();
-        if turn.state != State::Running || turn.deadline.is_none_or(|dl| dl > now) {
+        if turn.state != State::Running || turn.deadline != Some(claimed) {
             return Ok(false);
         }
         let silent_since = last_life(t, turn.id).await?;

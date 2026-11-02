@@ -158,6 +158,9 @@ pub const BUCKET_RECONCILE_EVERY: Duration = Duration::from_hours(7 * 24);
 /// Turns (magpie 8.8): an admitted or preparing turn whose sandbox is not ready this long after admission fails
 /// `sandbox.timeout`.
 pub const ADMIT_TIMEOUT: Duration = Duration::from_mins(15);
+/// A turn whose sandboxes keep going away before its `start_turn` is acknowledged gets a fresh [`ADMIT_TIMEOUT`] at
+/// each re-acquire, but never past this long after admission (then `sandbox.timeout`).
+pub const ADMIT_TOTAL_MAX: Duration = Duration::from_mins(45);
 /// The driver shows `sandbox.preparing` when no answer said ready this long after admission.
 pub const PREPARING_AFTER: Duration = Duration::from_secs(1);
 /// A starting turn whose `start_turn` is not acked this long after ready fails `sandbox.unreachable`.
@@ -192,6 +195,12 @@ pub const HERMIT_BACKOFF_MAX: Duration = Duration::from_secs(10);
 pub const SWEEP_EVERY: Duration = Duration::from_secs(5);
 /// Turns the sweeper handles per pass.
 pub const SWEEP_BATCH: i64 = 50;
+/// The sweeper claims an expired turn for this long (its deadline moves there), so replicas split the work and a
+/// replica that dies mid-pass leaves the turn to the next sweep.
+pub const SWEEP_CLAIM: Duration = Duration::from_secs(15);
+/// Running turns whose silence the sweeper checks with hermit at once (each call times out after
+/// [`HERMIT_READ_TIMEOUT`]).
+pub const SWEEP_HERMIT_CALLS: usize = 8;
 /// An availability tick that finds the last one older than this starts a new available period (magpie 8.8).
 pub const AVAILABILITY_GAP: Duration = Duration::from_secs(20);
 /// hermit's sandbox-events feed: page size, `waitMs`, client timeout.

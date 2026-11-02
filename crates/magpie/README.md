@@ -189,8 +189,26 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
     to preparing and gets a new sandbox (hermit spec 28, magpie item 1), in the driver's long-poll and in the feed;
     only `sandbox_busy` / `sandbox_failed` (a start that failed), a release of a conversation in Recently deleted,
     or a sandbox lost after the acknowledgement fail it. A replacement's deadline is 15 min from the replacement
-    (`turns.deadline`, which the driver follows rather than counting from admission), and the replaced sandbox's
-    delivery of `start_turn` is cleared, so a cancel while the replacement starts ends the turn at once.
+    (`turns.deadline`, which the driver follows rather than counting from admission), but never later than
+    admission + 45 min (`ADMIT_TOTAL_MAX`), so sandboxes that keep dying before the acknowledgement end the turn
+    `sandbox.timeout`; the replaced sandbox's delivery of `start_turn` is cleared, so a cancel while the replacement
+    starts ends the turn at once. A turn of a conversation in Recently deleted that never ran (waiting, or starting
+    before the acknowledgement) fails `sandbox.failed`, as 8.3 step 2 maps a loss before ready; after the
+    acknowledgement a loss is `sandbox.lost`.
+  - A `start_turn` delivered by the command poll to a turn that records no sandbox (the window after a re-acquire,
+    before the driver records the replacement) records the caller's sandbox, so a later `kill` of the turn reaches
+    it.
+  - hermit's `version` counts per sandbox, so only the feed (in `seq` order, or its recovery's re-read) records
+    another sandbox over the one recorded; a driver's answer records versions of the recorded sandbox, or a sandbox
+    when none is recorded. The lease route's own answer is recorded only when nothing was recorded since it asked
+    (WP-12).
+  - After 410 `cursor_expired` the feed's cursor moves to the head read before the re-reads only once every re-read
+    was answered; otherwise the step fails and the next one gets 410 again and re-reads everything (each effect is
+    idempotent).
+  - The sweeper claims expired turns with `for update skip locked` by moving their deadline 15 s ahead
+    (`SWEEP_CLAIM`) in that one statement, and handles a turn only while its deadline is still the claimed one; a
+    claim held as a row lock for the whole pass would block the turn's writers, which take the conversation lock
+    first. The deadlines that need no hermit call go first; the running checks ask hermit 8 at a time.
   - A `running` report may arrive while the turn is still `admitted`/`preparing` (the supervisor takes
     `start_turn` as soon as it boots, before hermit's ready reaches the driver): it is the turn's ready too. For the
     same reason an end report (`completed`, `failed`, `canceled`) is accepted from `admitted`, `preparing` and
@@ -214,7 +232,12 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
     `availability.available_since`, so an outage of magpie never fails a turn whose supervisor's ack or report was
     only waiting for magpie.
   - An agent-started turn reported while another turn is active answers 409 `bad_transition` (with the active
-    turn's state).
+    turn's state). The lines the supervisor writes under the refused turn's id are credited to the active turn
+    (6.3: a `turnId` magpie does not know falls back to the active turn), and the refused turn's end report answers
+    404; the supervisor treats both as settled and drops the refused turn's later reports (supervisor README).
+  - A `running` report for a turn already `running` or `stopping` (the heartbeat reconciled it first, or a replay)
+    still sets `provider_session_id` and `main_transcript` (promoting the earlier lines); an end report that carries
+    them sets them too, so a reconciled turn never loses its Claude Code session for the next `resume`.
   - M11 queues one `answer_ask` per ask (a second answer is 409 `already_resolved`); the command's stored payload
     also keeps the person's whole answer, which `ask.resolved` carries; the supervisor receives the typed command.
   - `title` is queued only while no `title` command is pending.

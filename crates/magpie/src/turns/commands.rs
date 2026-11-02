@@ -2,7 +2,8 @@
 //! after `after` that are neither canceled nor acknowledged (a restarted supervisor polls with a smaller `after` and
 //! gets its unacknowledged commands again), and marks them delivered. A `kill` queued for a turn of another sandbox
 //! (one that went away after the kill was queued) is canceled instead of served: its process died with that sandbox,
-//! and the caller's own generation must not be killed by it. `POST …/commands/{cmdSeq}/ack` records the
+//! and the caller's own generation must not be killed by it; a `start_turn` delivered to a turn that records no
+//! sandbox records the caller's. `POST …/commands/{cmdSeq}/ack` records the
 //! result (a `title` ack names the conversation, magpie 9.4).
 //!
 //! Commands are stored as `type` and `payload` and served through the contract's types, so what reaches the
@@ -57,6 +58,22 @@ async fn look(app: Read<'_>, caller: &Sandbox, after: i64) -> Result<(Vec<Comman
             &[&caller.conversation, &after],
         )
         .await?;
+    // a start_turn delivered while the turn records no sandbox (a re-acquire cleared it and the driver has not
+    // recorded the replacement yet) records the caller's, so a later kill of the turn reaches this sandbox
+    let started: Vec<uuid::Uuid> = rows
+        .iter()
+        .filter(|r| r.get::<_, &str>(1) == "start_turn")
+        .filter_map(|r| r.get::<_, Option<uuid::Uuid>>(2))
+        .collect();
+    if !started.is_empty() {
+        conn.execute(
+            "update turns set sandbox_id = $3
+             where conversation_id = $1 and id = any($2) and sandbox_id is null
+               and state not in ('completed', 'failed', 'canceled')",
+            &[&caller.conversation, &started, &caller.sandbox],
+        )
+        .await?;
+    }
     let mut commands = rows
         .into_iter()
         .map(|r| command_of(r.get(0), r.get::<_, &str>(1), r.get(2), &r.get::<_, Value>(3)))

@@ -5,7 +5,7 @@
 //! long-poll `GET …?waitMs=25000&afterVersion=<v>`, so the turn moves the moment hermit's state changes. No answer
 //! that says ready within 1 s of admission shows the preparing chip (`sandbox.preparing`). Errors and timeouts retry
 //! with backoff (0.5 s doubling to 10 s) until the turn's deadline (`turns.deadline`: admission + 15 min, and a fresh
-//! 15 min from a re-acquire, below).
+//! 15 min from a re-acquire, below, capped at admission + 45 min).
 //!
 //! A replica that dies stops renewing; the sweeper of any replica then claims the turn ([`super::sweeper`]) and
 //! continues it from its state (hermit's `PUT` is idempotent). A drain hands its claims back at once. Every write of
@@ -14,7 +14,8 @@
 //!
 //! A sandbox that goes away before the supervisor acknowledged `start_turn` (released, or lost) is replaced: the
 //! turn goes back to preparing and the driver asks hermit again (hermit spec 28, magpie item 1). Only a start that
-//! failed (`sandbox_busy`, `sandbox_failed`) or a release of a conversation in Recently deleted fails it.
+//! failed (`sandbox_busy`, `sandbox_failed`) or a release of a conversation in Recently deleted fails it
+//! (`sandbox.failed` for the latter too: before running, 8.3 step 2).
 
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
@@ -120,9 +121,21 @@ pub async fn lock_id(tx: &Tx<'_>, id: Uuid) -> Result<Option<Conv>> {
     }))
 }
 
-/// Records hermit's view of the conversation's sandbox when it is newer than the one recorded (magpie 8.7): another
-/// sandbox that is live, or the same sandbox at a higher version. A `gone` of a sandbox other than the recorded one
-/// changes nothing (a replacement may already be recorded).
+/// Who saw the sandbox state [`record_sandbox`] records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Seen {
+    /// hermit's feed (or its recovery's re-read), applied in `seq` order: it may name another sandbox.
+    Feed,
+    /// A driver's answer from hermit (`PUT`, long-poll). hermit's `version` counts per sandbox row, so it orders only
+    /// answers about one sandbox: an answer naming another sandbox than the one recorded may be older than the
+    /// feed's record of a replacement, and is recorded only when nothing is.
+    Answer,
+}
+
+/// Records hermit's view of the conversation's sandbox when it is newer than the one recorded (magpie 8.7): the same
+/// sandbox at a higher version; another sandbox that is live, only from the feed ([`Seen`]) or when nothing is
+/// recorded. A `gone` of a sandbox other than the recorded one changes nothing (a replacement may already be
+/// recorded).
 ///
 /// # Errors
 /// When a statement fails.
@@ -132,14 +145,21 @@ pub async fn record_sandbox(
     sandbox: Uuid,
     state: SandboxState,
     version: u64,
+    seen: Seen,
 ) -> Result<()> {
     let version = i64::try_from(version).unwrap_or(i64::MAX);
     tx.execute(
         "update conversations set hermit_sandbox = $2, hermit_state = $3, hermit_version = $4
          where id = $1
-           and ((hermit_sandbox is distinct from $2 and $3 <> 'gone')
+           and ((hermit_sandbox is distinct from $2 and $3 <> 'gone' and ($5 or hermit_sandbox is null))
                 or (hermit_sandbox = $2 and coalesce(hermit_version, -1) < $4))",
-        &[&conversation, &sandbox, &state.as_str(), &version],
+        &[
+            &conversation,
+            &sandbox,
+            &state.as_str(),
+            &version,
+            &(seen == Seen::Feed),
+        ],
     )
     .await?;
     Ok(())
@@ -173,6 +193,10 @@ pub fn gone_verdict(turn: &Turn, start_acked: bool, deleted: bool, release: Opti
             Gone::Fail(with(DataCode::SandboxFailed))
         }
         _ if !deleted && !start_acked && (turn.state.is_waiting() || turn.state == State::Starting) => Gone::Reacquire,
+        // a conversation in Recently deleted gets no new sandbox: a turn that never ran fails as a start that failed
+        _ if !start_acked && (turn.state.is_waiting() || turn.state == State::Starting) => {
+            Gone::Fail(with(DataCode::SandboxFailed))
+        }
         _ => Gone::Fail(with(DataCode::SandboxLost)),
     }
 }
@@ -180,7 +204,9 @@ pub fn gone_verdict(turn: &Turn, start_acked: bool, deleted: bool, release: Opti
 /// Moves a turn whose sandbox went away before its `start_turn` was acknowledged back to preparing (the chip shows
 /// again); `driver` keeps the claim (the driver itself), `None` (the feed) leaves a live driver's claim alone and
 /// otherwise hands the turn to the sweeper. The replacement gets a fresh
-/// 15 min deadline, which the driver reads from the row. `start_turn` (unacknowledged) loses the delivery the lost
+/// 15 min deadline, which the driver reads from the row, but never past admission + 45 min
+/// ([`limits::ADMIT_TOTAL_MAX`]), so sandboxes that keep dying before the acknowledgement end the turn
+/// (`sandbox.timeout`). `start_turn` (unacknowledged) loses the delivery the lost
 /// sandbox's supervisor took, so a cancel while the replacement starts ends the turn at once (8.6), and the next
 /// supervisor still receives it.
 ///
@@ -197,7 +223,7 @@ pub async fn reacquire(tx: &Tx<'_>, person: &str, c: &Conv, turn: &Turn, driver:
     }
     tx.execute(
         "update turns set state = 'preparing', sandbox_id = null, ready_at = null,
-                deadline = now() + make_interval(secs => $2),
+                deadline = least(now() + make_interval(secs => $2), created_at + make_interval(secs => $5)),
                 driver = case when $3::text is not null then $3 when driver_until > now() then driver end,
                 driver_until = case when $3::text is not null then now() + make_interval(secs => $4)
                                     when driver_until > now() then driver_until end
@@ -207,6 +233,7 @@ pub async fn reacquire(tx: &Tx<'_>, person: &str, c: &Conv, turn: &Turn, driver:
             &secs(limits::ADMIT_TIMEOUT),
             &driver,
             &secs(limits::DRIVER_CLAIM),
+            &secs(limits::ADMIT_TOTAL_MAX),
         ],
     )
     .await?;
@@ -399,7 +426,7 @@ async fn acquire(d: &Driver, c: &Claimed, turn: Uuid) -> Result<()> {
                 }
                 // a conversation deleted while its turn waited gets no new sandbox (its release already ran)
                 if deleted(d, c.conversation).await? {
-                    let e = ErrorInfo::new(DataCode::SandboxLost, "the conversation was deleted");
+                    let e = ErrorInfo::new(DataCode::SandboxFailed, "the conversation was deleted");
                     step_fail(d, c.conversation, turn, e).await?;
                     return Ok(());
                 }
@@ -558,7 +585,7 @@ async fn step_starting(d: &Driver, conversation: Uuid, turn: Uuid, s: &Sandbox) 
     waiting_step!(d, conversation, turn, |t, _c, tr| {
         t.execute("update turns set sandbox_id = $2 where id = $1", &[&tr.id, &s.id])
             .await?;
-        record_sandbox(t, conversation, s.id, s.state, s.version).await?;
+        record_sandbox(t, conversation, s.id, s.state, s.version, Seen::Answer).await?;
         Ok(true)
     })
 }
@@ -585,7 +612,7 @@ pub async fn mark_ready(tx: &Tx<'_>, c: &Conv, turn: &Turn, s: &Sandbox) -> Resu
         &[&turn.id, &s.id, &secs(limits::START_ACK_TIMEOUT)],
     )
     .await?;
-    record_sandbox(tx, turn.conversation, s.id, s.state, s.version).await?;
+    record_sandbox(tx, turn.conversation, s.id, s.state, s.version, Seen::Answer).await?;
     if c.sandbox_phase.as_deref() == Some("preparing") {
         events::append(
             tx,
@@ -618,7 +645,7 @@ async fn step_gone(d: &Driver, conversation: Uuid, turn: Uuid, s: &Sandbox) -> R
     let mut again = false;
     let again_ref = &mut again;
     waiting_step!(d, conversation, turn, |t, c, tr| {
-        record_sandbox(t, conversation, s.id, s.state, s.version).await?;
+        record_sandbox(t, conversation, s.id, s.state, s.version, Seen::Answer).await?;
         let (_, acked) = start_turn_status(t, &tr).await?;
         match gone_verdict(&tr, acked, c.deleted, s.release.as_ref()) {
             Gone::Fail(e) => end::end(t, &c.person, &tr, Ending::failed(e)).await?,
@@ -643,7 +670,7 @@ async fn step_timeout(d: &Driver, conversation: Uuid, turn: Uuid) -> Result<()> 
             .await?
             .get(0);
         if due {
-            let e = ErrorInfo::new(DataCode::SandboxTimeout, "the sandbox was not ready within 15 minutes");
+            let e = ErrorInfo::new(DataCode::SandboxTimeout, "the sandbox was not ready in time");
             end::end(t, &c.person, &tr, Ending::failed(e)).await?;
         }
         Ok(true)

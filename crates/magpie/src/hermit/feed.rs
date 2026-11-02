@@ -8,7 +8,7 @@
 //! turn of that sandbox ends (`sandbox.lost`; `sandbox.busy` / `sandbox.failed` for a start that failed) or, when
 //! its `start_turn` was never acknowledged, goes back to preparing for a new sandbox, and a held conversation goes
 //! idle. A 410 `cursor_expired` re-reads the sandbox of every conversation with an active turn or a lease and
-//! continues from `latest`.
+//! continues from `latest` once every re-read was answered (else the next step recovers again).
 
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ use uuid::Uuid;
 use crate::changes;
 use crate::error::{Error, Result};
 use crate::limits;
-use crate::turns::driver::{Driver, Gone, gone_verdict, lock_id, reacquire, record_sandbox};
+use crate::turns::driver::{Driver, Gone, Seen, gone_verdict, lock_id, reacquire, record_sandbox};
 use crate::turns::end::{self, Ending};
 use crate::turns::{active, start_turn_status};
 
@@ -139,7 +139,7 @@ pub async fn apply(tx: &Tx<'_>, ev: &SandboxEvent) -> Result<()> {
     if c.migrating {
         return Ok(());
     }
-    record_sandbox(tx, ev.conversation_id, ev.sandbox_id, ev.state, ev.version).await?;
+    record_sandbox(tx, ev.conversation_id, ev.sandbox_id, ev.state, ev.version, Seen::Feed).await?;
     if ev.state != SandboxState::Gone {
         return Ok(());
     }
@@ -193,10 +193,12 @@ async fn gone(
 }
 
 /// After `cursor_expired`: re-reads the sandbox of every conversation with an active turn or a lease, applies what
-/// hermit says, and continues from `latest` (taken first, so nothing between is missed).
+/// hermit says, and continues from `latest` (taken first, so nothing between is missed), but only once every re-read
+/// was answered.
 ///
 /// # Errors
-/// When hermit's head cannot be read or a statement fails.
+/// When hermit's head cannot be read, a re-read was not answered (the cursor stays, the next step recovers again),
+/// or a statement fails.
 pub async fn recover(d: &Driver) -> Result<()> {
     let h = head(d).await?;
     let rows = d
@@ -214,6 +216,7 @@ pub async fn recover(d: &Driver) -> Result<()> {
         conversations = rows.len(),
         "hermit feed: cursor expired, re-reading live sandboxes"
     );
+    let mut unread = 0usize;
     for r in rows {
         let (conversation, person, known): (Uuid, String, Vec<Uuid>) = (r.get(0), r.get(1), r.get(2));
         let read = tokio::time::timeout(
@@ -248,10 +251,12 @@ pub async fn recover(d: &Driver) -> Result<()> {
                 .collect(),
             Ok(Err(e)) => {
                 tracing::warn!(conversation = %conversation, error = %e, "hermit feed recovery: no answer");
+                unread += 1;
                 continue;
             }
             Err(_) => {
                 tracing::warn!(conversation = %conversation, "hermit feed recovery: timed out");
+                unread += 1;
                 continue;
             }
         };
@@ -271,6 +276,13 @@ pub async fn recover(d: &Driver) -> Result<()> {
             Ok(())
         })
         .await?;
+    }
+    // a conversation hermit did not answer for may have a `gone` in the expired range: the cursor stays, so the next
+    // step gets 410 again and re-reads (what was applied is idempotent)
+    if unread > 0 {
+        return Err(Error::Internal(format!(
+            "hermit feed recovery: {unread} conversations not re-read, retrying"
+        )));
     }
     d.pool
         .get()

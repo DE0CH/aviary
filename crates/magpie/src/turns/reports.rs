@@ -73,17 +73,31 @@ async fn running(tx: &Tx<'_>, c: &Locked, caller: &Sandbox, turn: &Turn, r: &Tur
     push_running_deadline(tx, turn.id).await?;
     tx.execute(
         "update conversations set run_state = 'running',
-                provider_session_id = coalesce($2, provider_session_id),
                 sandbox_phase = case when sandbox_phase = 'preparing' then 'ready' else sandbox_phase end
          where id = $1",
-        &[&c.id, &r.provider_session_id],
+        &[&c.id],
     )
     .await?;
-    // the main transcript, with the lines Claude Code wrote there before this report promoted (magpie 6.2)
-    if let Some(path) = &r.transcript_path {
-        crate::ccfs::lines::set_main_transcript(tx, c.id, path).await?;
-    }
+    session_facts(tx, c.id, r).await?;
     changes::upserted(tx, &c.person, c.id).await?;
+    Ok(())
+}
+
+/// A report's Claude Code session and main transcript path, when it names them (idempotent): the `running` report,
+/// and also a late `running` after the heartbeat reconciled the turn running without them, and an end report.
+/// Setting the path promotes the lines Claude Code wrote there before (magpie 6.2).
+async fn session_facts(tx: &Tx<'_>, conversation: Uuid, r: &TurnStateReport) -> Result<()> {
+    if r.provider_session_id.is_some() {
+        tx.execute(
+            "update conversations set provider_session_id = $2
+             where id = $1 and provider_session_id is distinct from $2",
+            &[&conversation, &r.provider_session_id],
+        )
+        .await?;
+    }
+    if let Some(path) = &r.transcript_path {
+        crate::ccfs::lines::set_main_transcript(tx, conversation, path).await?;
+    }
     Ok(())
 }
 
@@ -159,7 +173,8 @@ pub async fn turn_state(pool: &Pool, caller: &Sandbox, turn_id: Uuid, r: TurnSta
         }
         let Some(outcome) = outcome else {
             return match turn.state {
-                State::Running | State::Stopping => Ok(()),
+                // a replay, or the real report after the heartbeat reconciled the turn running: its facts still count
+                State::Running | State::Stopping => session_facts(t, c.id, &r).await,
                 _ => running(t, &c, caller, &turn, &r).await,
             };
         };
@@ -169,6 +184,7 @@ pub async fn turn_state(pool: &Pool, caller: &Sandbox, turn_id: Uuid, r: TurnSta
                 return Err(bad_transition(turn.state));
             }
         }
+        session_facts(t, c.id, &r).await?;
         if let Some(uuid) = r.last_uuid.as_deref()
             && !line_stored(t, c.id, r.transcript_path.as_deref(), uuid).await?
         {
