@@ -5,6 +5,7 @@
 //! second clippy pass with `CLIPPY_CONF_DIR=target/tx-rule … -A clippy::disallowed_methods`; the `aviary_pg::tx!`
 //! macro marks its closure `#[deny(clippy::disallowed_methods)]`, so the lint fires only there. The calls:
 //! - `reqwest`'s ([`REQWEST`]);
+//! - the Kubernetes API's (`kube`, [`KUBE`]), and `hyper`'s, `hyper-util`'s and `tokio`'s sockets ([`LOW_LEVEL`]);
 //! - every `pub async fn` of an inherent `impl` in a contract crate's typed client (`crates/*-api/src/client.rs`);
 //! - `aviary_core::http::send`, `aws-config`'s loaders, and reading the AWS SDKs' paginators and byte streams
 //!   ([`HELPERS`]);
@@ -38,7 +39,91 @@ pub const REQWEST: &[&str] = &[
     "reqwest::Response::json",
     "reqwest::Response::chunk",
     "reqwest::Response::bytes_stream",
+    "reqwest::Response::text_with_charset",
+    "reqwest::Response::upgrade",
     "reqwest::get",
+];
+
+/// The Kubernetes API (hermit): every `pub async fn` of `kube::Api` and `kube::Client` in kube-client 5.0.0 (the
+/// workspace pins it exactly; re-check this list when the pin moves), and `kube::runtime`'s one-shot waits. A
+/// `kube::runtime::watcher` stream polled with `StreamExt::next` is generic and not seen.
+pub const KUBE: &[&str] = &[
+    "kube::Api::get",
+    "kube::Api::get_metadata",
+    "kube::Api::get_with",
+    "kube::Api::get_metadata_with",
+    "kube::Api::get_opt",
+    "kube::Api::get_metadata_opt",
+    "kube::Api::get_metadata_opt_with",
+    "kube::Api::list",
+    "kube::Api::list_metadata",
+    "kube::Api::create",
+    "kube::Api::delete",
+    "kube::Api::delete_collection",
+    "kube::Api::patch",
+    "kube::Api::patch_metadata",
+    "kube::Api::replace",
+    "kube::Api::watch",
+    "kube::Api::watch_metadata",
+    "kube::Api::entry",
+    "kube::Api::get_scale",
+    "kube::Api::patch_scale",
+    "kube::Api::replace_scale",
+    "kube::Api::get_subresource",
+    "kube::Api::create_subresource",
+    "kube::Api::patch_subresource",
+    "kube::Api::replace_subresource",
+    "kube::Api::get_ephemeral_containers",
+    "kube::Api::patch_ephemeral_containers",
+    "kube::Api::replace_ephemeral_containers",
+    "kube::Api::get_resize",
+    "kube::Api::patch_resize",
+    "kube::Api::replace_resize",
+    "kube::Api::get_status",
+    "kube::Api::patch_status",
+    "kube::Api::replace_status",
+    "kube::Api::logs",
+    "kube::Api::log_stream",
+    "kube::Api::evict",
+    "kube::Api::attach",
+    "kube::Api::exec",
+    "kube::Api::portforward",
+    "kube::api::entry::Entry::commit",
+    "kube::Client::send",
+    "kube::Client::connect",
+    "kube::Client::request",
+    "kube::Client::request_text",
+    "kube::Client::request_stream",
+    "kube::Client::request_status",
+    "kube::Client::request_events",
+    "kube::Client::apiserver_version",
+    "kube::Client::list_api_groups",
+    "kube::Client::list_api_group_resources",
+    "kube::Client::list_core_api_versions",
+    "kube::Client::list_core_api_resources",
+    "kube::Client::list_api_groups_aggregated",
+    "kube::Client::list_core_api_versions_aggregated",
+    "kube::runtime::wait::await_condition",
+];
+
+/// Lower-level clients: `hyper`'s connections and `hyper-util`'s pooled client, and opening a socket with `tokio`.
+pub const LOW_LEVEL: &[&str] = &[
+    "hyper::client::conn::http1::handshake",
+    "hyper::client::conn::http1::SendRequest::send_request",
+    "hyper::client::conn::http1::SendRequest::try_send_request",
+    "hyper::client::conn::http1::SendRequest::ready",
+    "hyper::client::conn::http2::handshake",
+    "hyper::client::conn::http2::SendRequest::send_request",
+    "hyper::client::conn::http2::SendRequest::try_send_request",
+    "hyper::client::conn::http2::SendRequest::ready",
+    "hyper_util::client::legacy::Client::request",
+    "hyper_util::client::legacy::Client::get",
+    "tokio::net::TcpStream::connect",
+    "tokio::net::TcpSocket::connect",
+    "tokio::net::UdpSocket::connect",
+    "tokio::net::UdpSocket::send_to",
+    "tokio::net::UdpSocket::recv_from",
+    "tokio::net::lookup_host",
 ];
 
 /// The other network calls listed by hand.
@@ -217,7 +302,13 @@ pub fn tx_rule_conf(root: &Path, metadata: &serde_json::Value) -> io::Result<Str
             "clippy.toml does not end with the disallowed-methods list",
         )
     })?;
-    let mut paths: Vec<String> = REQWEST.iter().chain(HELPERS).map(|s| (*s).to_owned()).collect();
+    let mut paths: Vec<String> = REQWEST
+        .iter()
+        .chain(KUBE)
+        .chain(LOW_LEVEL)
+        .chain(HELPERS)
+        .map(|s| (*s).to_owned())
+        .collect();
     paths.extend(typed_client_methods(root)?);
     for sdk in sdks(metadata) {
         paths.extend(sdk_methods(&sdk)?);

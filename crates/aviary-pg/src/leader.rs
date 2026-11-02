@@ -38,7 +38,7 @@ pub struct Leader {
 }
 
 impl Leader {
-    /// Starts bidding for `key` with the retry interval of platform 4.3 ([`RETRY`]).
+    /// Starts bidding for `key` with the retry interval of platform 4.3 (5 s).
     #[must_use]
     pub fn start(pool: &Pool, key: LockKey) -> Self {
         Self::start_with(pool, key, RETRY)
@@ -101,7 +101,7 @@ impl Leader {
     }
 
     /// `true` when this process holds `key` and its leader connection answers `select 1` within
-    /// [`CONFIRM_TIMEOUT`]: run it before every pass of the loop `key` guards (hermit 10.3). `false` for a key it
+    /// 2 s: run it before every pass of the loop `key` guards (hermit 10.3). `false` for a key it
     /// does not bid for.
     pub async fn confirm_key(&self, key: &LockKey) -> bool {
         match self.index(key) {

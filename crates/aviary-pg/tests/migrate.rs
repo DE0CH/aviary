@@ -284,6 +284,98 @@ async fn an_invalid_index_from_a_failed_concurrent_build_is_dropped_and_rebuilt(
     assert_eq!(has_index(&c.query(VALIDITY, &[]).await.unwrap()), Some(true));
 }
 
+/// Only the index the migration builds is ever dropped: another invalid index (an operator's failed build, a
+/// partitioned table's `on only` index waiting for its partitions) stays.
+#[tokio::test]
+async fn only_the_migrations_own_invalid_index_is_dropped() {
+    let db = common::fresh_db("ownindex").await;
+    let pool = common::pool(&db, "ownindex");
+    let key = LockKey::Pair(1, 1);
+    let c = pool.get().await.unwrap();
+    c.batch_execute(
+        "create table other (x int); insert into other values (1), (1);
+         create table parts (x int) partition by range (x);
+         create table parts_1 partition of parts for values from (0) to (10);
+         create index parts_x on only parts (x);
+         create schema s; create table s.\"W\" (x int); insert into s.\"W\" values (1), (1)",
+    )
+    .await
+    .unwrap();
+    assert!(
+        c.batch_execute("create unique index concurrently other_x on other (x)")
+            .await
+            .is_err()
+    );
+    // the migration's own index, invalid from an earlier failed build, in a schema-qualified quoted table
+    assert!(
+        c.batch_execute("create unique index concurrently \"W_x\" on s.\"W\" (x)")
+            .await
+            .is_err()
+    );
+    c.batch_execute("delete from s.\"W\" where ctid <> (select min(ctid) from s.\"W\")")
+        .await
+        .unwrap();
+    let validity = |name: &'static str| {
+        let c = &c;
+        async move {
+            c.query_opt(
+                "select i.indisvalid from pg_index i join pg_class c on c.oid = i.indexrelid where c.relname = $1",
+                &[&name],
+            )
+            .await
+            .unwrap()
+            .map(|r| r.get::<_, bool>(0))
+        }
+    };
+    assert_eq!(validity("other_x").await, Some(false));
+    assert_eq!(validity("parts_x").await, Some(false));
+    assert_eq!(validity("W_x").await, Some(false));
+    let list = vec![m(
+        "0001_w.sql",
+        "-- aviary-pg: no-transaction\ncreate unique index concurrently if not exists \"W_x\" on s.\"W\" (x);\n",
+    )];
+    assert_eq!(aviary_pg::migrate(&pool, &key, &list).await.unwrap(), vec![1]);
+    assert_eq!(
+        validity("W_x").await,
+        Some(true),
+        "the migration's own invalid index was rebuilt"
+    );
+    assert_eq!(
+        validity("other_x").await,
+        Some(false),
+        "another invalid index was dropped"
+    );
+    assert_eq!(
+        validity("parts_x").await,
+        Some(false),
+        "a partitioned table's index was dropped"
+    );
+}
+
+/// A transactional migration that commits or begins by itself would split its SQL from its `_migrations` record.
+#[tokio::test]
+async fn a_transactional_migration_may_not_control_its_transaction() {
+    let db = common::fresh_db("txcontrol").await;
+    let pool = common::pool(&db, "txcontrol");
+    let key = LockKey::Pair(1, 1);
+    for sql in [
+        "create table a (x int); commit; create table b (x int);",
+        "begin; create table a (x int);",
+        "create table a (x int);\nEND;",
+    ] {
+        let list = vec![m("0001_a.sql", sql)];
+        let err = aviary_pg::migrate(&pool, &key, &list).await.unwrap_err();
+        assert!(matches!(err, Error::BadMigration(_)), "{sql}: {err:?}");
+    }
+    // savepoints and the words inside strings or bodies are fine
+    let list = vec![m(
+        "0001_a.sql",
+        "create table a (note text default 'commit;'); savepoint s; create table b (x int); release s;
+         create function f() returns int language plpgsql as $$ begin return 1; end $$;",
+    )];
+    assert_eq!(aviary_pg::migrate(&pool, &key, &list).await.unwrap(), vec![1]);
+}
+
 /// An `alter table` waiting behind a long transaction gives up after the lock timeout (so the queries queued
 /// behind it run) and is retried until it gets the lock.
 #[tokio::test]

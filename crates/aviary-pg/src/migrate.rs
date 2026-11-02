@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use tokio_postgres::Client;
 use tokio_postgres::error::SqlState;
 
-use crate::{Error, LockKey, Pool, sql};
+use crate::{Error, LockKey, Pool, sql, stmt};
 
 /// The table that records applied migrations, in each service's own database.
 pub const MIGRATIONS_TABLE: &str = "_migrations";
@@ -16,9 +16,11 @@ pub const MIGRATIONS_TABLE: &str = "_migrations";
 /// The first line that marks a migration to run outside a transaction (for `create index concurrently`, which
 /// Postgres refuses inside one). Such a migration holds exactly one statement and must be safe to run again: a crash
 /// between the statement and its record re-runs it on the next start, so write `create index concurrently if not
-/// exists`. A failed or interrupted concurrent build leaves an INVALID index, which `if not exists` would accept: so
-/// before each no-transaction migration [`migrate`] drops every invalid index of the database (one not being built
-/// right now), and after it fails the start if one is left ([`Error::InvalidIndex`], the index dropped).
+/// exists <name> on …`. A failed or interrupted concurrent build leaves an INVALID index, which `if not exists` would
+/// accept: so when the statement is `create [unique] index concurrently [if not exists] <name> on <table>`,
+/// [`migrate`] drops that one index first if it is invalid (and no build of it is under way), and fails the start if
+/// the statement leaves it invalid ([`Error::InvalidIndex`], the index dropped). No other index is touched: an
+/// operator's own build elsewhere in the database is never dropped.
 pub const NO_TRANSACTION_MARKER: &str = "-- aviary-pg: no-transaction";
 
 /// How long a migration's statement waits for a table lock before it gives up (`lock_timeout`). While an `alter
@@ -32,9 +34,12 @@ const LOCK_ATTEMPTS: u32 = 6;
 const LOCK_BACKOFF: Duration = Duration::from_secs(1);
 
 /// How often a starter waiting for another one's migrations retries the lock. Waiters poll with
-/// `pg_try_advisory_lock` rather than block in `pg_advisory_lock`: a blocked statement holds a snapshot, and
-/// `create index concurrently` in the holder waits for every older snapshot, so blocking waiters would deadlock it.
+/// `pg_try_advisory_lock` rather than block in platform 4.3's `pg_advisory_lock`: a blocked statement holds a
+/// snapshot, and `create index concurrently` in the holder waits for every older snapshot, so blocking waiters would
+/// deadlock it. The wait has no bound (the holder's migrations may take long); it logs the holder's pid every
+/// [`LOCK_WAIT_LOG`].
 const LOCK_POLL: Duration = Duration::from_millis(200);
+const LOCK_WAIT_LOG: Duration = Duration::from_secs(30);
 
 /// One embedded migration: `migrations/NNNN_name.sql`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,6 +154,12 @@ fn check_list(migrations: &[Migration]) -> Result<(), Error> {
                     m.version, m.name
                 )));
             }
+        } else if let Err(e) = stmt::refuse_control(m.sql, true) {
+            // `commit;` in the file would commit the SQL apart from its `_migrations` record
+            return Err(Error::BadMigration(format!(
+                "migration {} ({}) controls the transaction it runs in: {e}",
+                m.version, m.name
+            )));
         }
     }
     Ok(())
@@ -162,11 +173,17 @@ async fn run(client: &Client, key: &LockKey, migrations: &[Migration]) -> Result
             LOCK_TIMEOUT.as_millis()
         ))
         .await?;
-    let mut waited = false;
+    let mut next_log = Some(std::time::Instant::now());
+    let started = std::time::Instant::now();
     while !key.try_lock(client).await? {
-        if !waited {
-            tracing::info!("waiting for another starter's migrations");
-            waited = true;
+        if next_log.is_some_and(|t| t <= std::time::Instant::now()) {
+            let holders = key.holders(client).await.unwrap_or_default();
+            tracing::info!(
+                holder_pids = ?holders,
+                waited_s = started.elapsed().as_secs(),
+                "waiting for another starter's migrations"
+            );
+            next_log = Some(std::time::Instant::now() + LOCK_WAIT_LOG);
         }
         tokio::time::sleep(LOCK_POLL).await;
     }
@@ -261,18 +278,35 @@ async fn apply(client: &Client, m: &Migration) -> Result<(), tokio_postgres::Err
     res
 }
 
-/// A no-transaction migration: invalid indexes dropped first, its one statement without a lock limit, then no
-/// invalid index may be left.
+/// A no-transaction migration: the index it builds dropped first if a failed build left it invalid, its one
+/// statement without a lock limit, then that index may not be left invalid.
 async fn apply_no_transaction(client: &Client, m: &Migration) -> Result<(), Error> {
+    let target = sql::statements(m.sql).first().and_then(|s| sql::create_index_target(s));
     client.batch_execute("set lock_timeout = 0").await?;
-    for index in invalid_indexes(client).await? {
-        tracing::warn!(index = %index, "dropping an invalid index (an earlier concurrent build failed)");
-        drop_index(client, &index).await?;
+    if let Some((index, table)) = &target {
+        match invalid_index(client, index, table).await? {
+            Some(Invalid::Idle(q)) => {
+                tracing::warn!(index = %q, "dropping an invalid index (an earlier concurrent build failed)");
+                drop_index(client, &q).await?;
+            }
+            Some(Invalid::Building(q)) => {
+                // `if not exists` would accept it; the check after the statement fails the start
+                tracing::warn!(index = %q, "an invalid index may be being built by another session; left alone");
+            }
+            None => {}
+        }
     }
     let res = client.batch_execute(m.sql).await;
-    let left = invalid_indexes(client).await?;
-    for index in &left {
-        drop_index(client, index).await?;
+    let mut left = Vec::new();
+    if let Some((index, table)) = &target {
+        match invalid_index(client, index, table).await? {
+            Some(Invalid::Idle(q)) => {
+                drop_index(client, &q).await?;
+                left.push(q);
+            }
+            Some(Invalid::Building(q)) => left.push(q),
+            None => {}
+        }
     }
     client
         .batch_execute(&format!("set lock_timeout = {}", LOCK_TIMEOUT.as_millis()))
@@ -294,23 +328,45 @@ async fn apply_no_transaction(client: &Client, m: &Migration) -> Result<(), Erro
     Ok(())
 }
 
-/// The invalid indexes of this database outside the system schemas, quoted (`"schema"."name"`), except one being
-/// built right now.
-async fn invalid_indexes(client: &Client) -> Result<Vec<String>, Error> {
-    let rows = client
-        .query(
-            "select format('%I.%I', n.nspname, c.relname)
-             from pg_index i
-             join pg_class c on c.oid = i.indexrelid
+/// An invalid index, quoted (`"schema"."name"`).
+enum Invalid {
+    /// No session is building it: safe to drop.
+    Idle(String),
+    /// A build of it is under way, or this role cannot see every build in progress (without `pg_read_all_stats`
+    /// another role's rows of `pg_stat_progress_create_index` show no relation): never dropped.
+    Building(String),
+}
+
+/// The index `name` in `table`'s schema when it is a plain index (`relkind 'i'`; a partitioned parent's index is
+/// left alone) and invalid.
+async fn invalid_index(client: &Client, name: &str, table: &str) -> Result<Option<Invalid>, Error> {
+    let row = client
+        .query_opt(
+            "select format('%I.%I', n.nspname, c.relname),
+                    exists (select 1 from pg_stat_progress_create_index p
+                            where p.datid = (select oid from pg_database where datname = current_database())
+                              and (p.index_relid = c.oid or p.relid = i.indrelid or p.relid is null)
+                              and p.pid <> pg_backend_pid())
+             from pg_class c
+             join pg_index i on i.indexrelid = c.oid
              join pg_namespace n on n.oid = c.relnamespace
-             where not i.indisvalid
-               and n.nspname <> 'information_schema' and n.nspname not like 'pg\\_%'
-               and not exists (select 1 from pg_stat_progress_create_index p where p.index_relid = i.indexrelid)
-             order by 1",
-            &[],
+             where c.relname = $1
+               and c.relkind = 'i'
+               and c.relnamespace = (select relnamespace from pg_class where oid = to_regclass($2))
+               and not i.indisvalid",
+            &[&name, &table],
         )
         .await?;
-    Ok(rows.iter().map(|r| r.try_get(0)).collect::<Result<_, _>>()?)
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let quoted: String = row.try_get(0)?;
+    let building: bool = row.try_get(1)?;
+    Ok(Some(if building {
+        Invalid::Building(quoted)
+    } else {
+        Invalid::Idle(quoted)
+    }))
 }
 
 async fn drop_index(client: &Client, quoted: &str) -> Result<(), Error> {

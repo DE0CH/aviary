@@ -163,6 +163,117 @@ async fn a_cancelled_tx_never_returns_its_connection_inside_the_transaction() {
     assert!(!in_tx, "a session was left idle in transaction");
 }
 
+/// A `tx!` cancelled at any moment, from its first poll on (while the connection is handed out, while `begin` is in
+/// flight, inside the closure), never leaves the next `Conn` inside a transaction: its autocommit insert is seen by
+/// another pool at once.
+#[tokio::test]
+async fn a_tx_cancelled_from_its_first_poll_never_leaves_the_next_conn_in_a_transaction() {
+    let db = common::fresh_db("cancelfirst").await;
+    let pool = aviary_pg::connect(&db, "cancel-first", 1, Duration::from_secs(15)).unwrap();
+    let other = aviary_pg::connect(&db, "cancel-first-other", 1, Duration::from_secs(15)).unwrap();
+    pool.get()
+        .await
+        .unwrap()
+        .batch_execute("create table t (id int)")
+        .await
+        .unwrap();
+    let mut delays = vec![Duration::ZERO; 20];
+    delays.extend((1..=60).map(|i| Duration::from_micros(i * 100)));
+    for (i, delay) in delays.into_iter().enumerate() {
+        let i = i32::try_from(i).unwrap();
+        let _ = tokio::time::timeout(
+            delay,
+            aviary_pg::tx!(&pool, |t| {
+                t.execute("insert into t values (-1)", &[]).await?;
+                t.execute("select pg_sleep(0.01)", &[]).await?;
+                Ok(())
+            }),
+        )
+        .await;
+        // the next Conn's insert commits at once: another pool sees it while that Conn is still held
+        let c = pool.get().await.unwrap();
+        c.execute("insert into t values ($1)", &[&i]).await.unwrap();
+        let seen: i64 = other
+            .get()
+            .await
+            .unwrap()
+            .query_one("select count(*) from t where id = $1", &[&i])
+            .await
+            .unwrap()
+            .get(0);
+        drop(c);
+        assert_eq!(
+            seen, 1,
+            "round {i} (cancelled after {delay:?}): the insert was not committed"
+        );
+    }
+}
+
+async fn backend_pid(c: &aviary_pg::Conn) -> i32 {
+    c.query_one("select pg_backend_pid()", &[]).await.unwrap().get(0)
+}
+
+const SESSION_STATE: &str = "select current_setting('statement_timeout'), current_setting('search_path'),
+        current_setting('application_name'), current_setting('work_mem'), current_setting('lock_timeout'),
+        (current_user::text = session_user::text)::text,
+        (select count(*) from pg_class where relname = 'scratch' and relpersistence = 't')::text,
+        (select count(*) from pg_listening_channels())::text,
+        (select count(*) from pg_locks where locktype = 'advisory' and pid = pg_backend_pid())::text";
+
+async fn session_state(c: &aviary_pg::Conn) -> Vec<String> {
+    let row = c.query_one(SESSION_STATE, &[]).await.unwrap();
+    (0..row.len()).map(|i| row.get(i)).collect()
+}
+
+/// Session state set through a `Conn` or a `Tx` does not reach the pooled connection's next user; the connection's
+/// own settings (`statement_timeout`, `application_name`) stay, and so do the prepared statements.
+#[tokio::test]
+async fn session_state_never_leaks_to_the_next_user_of_a_connection() {
+    let db = common::fresh_db("sessionstate").await;
+    let pool = aviary_pg::connect(&db, "svc:state", 1, Duration::from_millis(1500)).unwrap();
+    let role = format!("aviary_pg_role_{}", uuid::Uuid::new_v4().simple());
+    let c = pool.get().await.unwrap();
+    c.batch_execute(&format!("create role {role} nologin")).await.unwrap();
+    let first = backend_pid(&c).await;
+    let before = session_state(&c).await;
+    assert_eq!(before[0], "1500ms");
+    assert_eq!(before[2], "svc:state");
+    assert_eq!(before[5..], ["true", "0", "0", "0"]);
+    c.batch_execute(&format!(
+        "set statement_timeout = 1000; set search_path = nowhere; set application_name = 'other';
+         select set_config('work_mem', '77MB', false); set role {role};
+         create temp table scratch (x int); listen aviary_pg_channel; select pg_advisory_lock(42)"
+    ))
+    .await
+    .unwrap();
+    assert_ne!(session_state(&c).await, before);
+    drop(c);
+
+    let c = pool.get().await.unwrap();
+    assert_eq!(backend_pid(&c).await, first, "the test wants the same connection");
+    assert_eq!(session_state(&c).await, before, "session state leaked from a Conn");
+    drop(c);
+
+    aviary_pg::tx!(&pool, |t| {
+        t.batch_execute("set search_path = elsewhere; set lock_timeout = 3; set statement_timeout = 2000")
+            .await?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let c = pool.get().await.unwrap();
+    assert_eq!(backend_pid(&c).await, first, "the test wants the same connection");
+    assert_eq!(session_state(&c).await, before, "session state leaked from a Tx");
+    // the statement cache's prepared statements survive the reset
+    let prepared: i64 = c
+        .query_one("select count(*) from pg_prepared_statements", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(prepared > 0);
+    c.batch_execute(&format!("drop role {role}")).await.unwrap();
+}
+
 async fn ids(pool: &aviary_pg::Pool, table: &str) -> Vec<i32> {
     pool.get()
         .await

@@ -404,3 +404,10 @@ platform R3) differ, or a detail was open:
 - A live `status` frame carries `attempt` and `retryInMs` (supervisor 8.3) beside `status`; `mtimeNs` is a signed
   64-bit integer; the `gen` field of a heartbeat is `generation` in Rust.
 - The switch window's routes (tickets, fence, `import_uploads`) are WP-51's and are added to this crate with it.
+
+For Postgres (`aviary-pg`), where platform 4.3 names a mechanism the crate changes:
+
+- `migrate` waits for `pg_advisory_lock(<service id>, 1)`'s key by polling `pg_try_advisory_lock` every 200 ms, not
+  by blocking in `pg_advisory_lock`: a starter blocked in that call holds a snapshot, and the holder's `create index
+  concurrently` waits for every older snapshot, so the two would deadlock. Same key, same exclusion; the wait has no
+  bound and logs the holder's pid every 30 s.

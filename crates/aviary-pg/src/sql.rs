@@ -112,6 +112,110 @@ pub(crate) fn controls_transaction(statement: &str, savepoints: bool) -> bool {
     }
 }
 
+/// One token of a statement for [`create_index_target`]: an identifier or keyword (unquoted ones lowercased, as
+/// Postgres folds them; `"…"` ones verbatim) or one other character.
+#[derive(Debug, PartialEq, Eq)]
+enum Token {
+    Word(String),
+    Quoted(String),
+    Punct(char),
+}
+
+fn tokens(statement: &str) -> Vec<Token> {
+    let mut out = Vec::new();
+    let mut chars = statement.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c.is_whitespace() {
+            continue;
+        }
+        if c == '"' {
+            let mut name = String::new();
+            while let Some(c) = chars.next() {
+                if c == '"' {
+                    if chars.peek() == Some(&'"') {
+                        chars.next();
+                        name.push('"');
+                    } else {
+                        break;
+                    }
+                } else {
+                    name.push(c);
+                }
+            }
+            out.push(Token::Quoted(name));
+        } else if c.is_alphanumeric() || c == '_' {
+            let mut word = String::from(c);
+            while let Some(&n) = chars.peek() {
+                if n.is_alphanumeric() || n == '_' || n == '$' {
+                    word.push(n);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            out.push(Token::Word(word.to_ascii_lowercase())); // Postgres folds ASCII only (UTF-8)
+        } else {
+            out.push(Token::Punct(c));
+        }
+    }
+    out
+}
+
+fn ident(t: Option<&Token>) -> Option<String> {
+    match t? {
+        Token::Word(w) | Token::Quoted(w) => Some(w.clone()),
+        Token::Punct(_) => None,
+    }
+}
+
+/// `"…"` with `"` doubled: an identifier as `to_regclass` and SQL read it.
+pub(crate) fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// For `create [unique] index concurrently [if not exists] <name> on [only] <table> …`: the index's name and its
+/// table, quoted (`"schema"."table"` or `"table"`, for `to_regclass`). `None` for any other statement, or an index
+/// without a name.
+pub(crate) fn create_index_target(statement: &str) -> Option<(String, String)> {
+    let t = tokens(statement);
+    let w = |i: usize, s: &str| matches!(t.get(i), Some(Token::Word(x)) if x == s);
+    let mut i = 0;
+    if !w(i, "create") {
+        return None;
+    }
+    i += 1;
+    if w(i, "unique") {
+        i += 1;
+    }
+    if !(w(i, "index") && w(i + 1, "concurrently")) {
+        return None;
+    }
+    i += 2;
+    if w(i, "if") && w(i + 1, "not") && w(i + 2, "exists") {
+        i += 3;
+    }
+    if w(i, "on") {
+        return None; // unnamed: Postgres picks the name
+    }
+    let name = ident(t.get(i))?;
+    i += 1;
+    if !w(i, "on") {
+        return None;
+    }
+    i += 1;
+    if w(i, "only") {
+        i += 1;
+    }
+    let mut parts = vec![ident(t.get(i))?];
+    i += 1;
+    while t.get(i) == Some(&Token::Punct('.')) {
+        parts.push(ident(t.get(i + 1))?);
+        i += 2;
+    }
+    let table = parts.iter().map(|p| quote_ident(p)).collect::<Vec<_>>().join(".");
+    Some((name, table))
+}
+
 fn push(out: &mut Vec<String>, cur: &mut String) {
     let s = cur.trim();
     if !s.is_empty() {
@@ -229,5 +333,24 @@ mod tests {
         ] {
             assert!(!controls_transaction(s, false), "{s}");
         }
+    }
+
+    #[test]
+    fn the_index_a_concurrent_build_creates_is_found() {
+        let t = |s: &str| create_index_target(s);
+        let pair = |a: &str, b: &str| Some((a.to_owned(), b.to_owned()));
+        assert_eq!(t("create index concurrently i on t (x)"), pair("i", "\"t\""));
+        assert_eq!(
+            t("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS U_X ON Public.U(x)"),
+            pair("u_x", "\"public\".\"u\"")
+        );
+        assert_eq!(
+            t("create index concurrently \"My \"\"Idx\"\"\" on only \"S\".\"T\" using btree (x)"),
+            pair("My \"Idx\"", "\"S\".\"T\"")
+        );
+        assert_eq!(t("create index concurrently on t (x)"), None);
+        assert_eq!(t("create index i on t (x)"), None);
+        assert_eq!(t("reindex index concurrently i"), None);
+        assert_eq!(t("drop index concurrently i"), None);
     }
 }

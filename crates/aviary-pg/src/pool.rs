@@ -32,6 +32,29 @@ const POOL_TIMEOUT: Duration = Duration::from_secs(5);
 /// The role-level backstop (platform 11.1), also set per connection.
 const IDLE_IN_TRANSACTION_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Run on every pooled connection before it is handed out again (deadpool's recycle). First a check that it is
+/// outside any transaction: a multi-statement simple query runs in one implicit transaction that starts with the
+/// message, so `transaction_timestamp()` equals `statement_timestamp()` unless an explicit transaction was already
+/// open; then the check raises and deadpool discards the connection instead of handing out one inside a transaction
+/// (a backstop: [`crate::tx!`] itself discards a connection it did not finish). Then deadpool's `Clean` reset, which
+/// keeps the prepared statements (no `DISCARD ALL`): session state set through a [`Conn`] or a [`crate::Tx`] (`set`,
+/// `set role`, `set_config(…, false)`, temp tables, `listen`, session advisory locks, open cursors) never reaches
+/// the connection's next user. `RESET ALL` goes back to the connection's startup values, so the per-pool
+/// `statement_timeout` and `application_name` of [`connect`] stay.
+pub(crate) const RECYCLE_SQL: &str = "\
+    do $aviary_recycle$ begin \
+      if transaction_timestamp() <> statement_timestamp() then \
+        raise exception 'aviary-pg: pooled connection returned inside a transaction'; \
+      end if; \
+    end $aviary_recycle$; \
+    close all; \
+    set session authorization default; \
+    reset all; \
+    unlisten *; \
+    select pg_advisory_unlock_all(); \
+    discard temp; \
+    discard sequences";
+
 pub(crate) type Connection = tokio_postgres::Connection<Socket, <MakeRustlsConnect as MakeTlsConnect<Socket>>::Stream>;
 
 /// A service's Postgres: the pool of request connections, and the settings to open the dedicated connections the
@@ -65,6 +88,24 @@ impl fmt::Debug for Pool {
 /// [`Error::Config`] when the URL cannot be parsed or `pool_size` is 0; [`Error::Tls`] when the TLS client cannot be
 /// built.
 pub fn connect(url: &str, app_name: &str, pool_size: usize, statement_timeout: Duration) -> Result<Pool, Error> {
+    connect_recycling(
+        url,
+        app_name,
+        pool_size,
+        statement_timeout,
+        RecyclingMethod::Custom(RECYCLE_SQL.to_owned()),
+    )
+}
+
+/// [`connect`] with another recycling method (the tests: `Fast`, to see `tx!`'s own cancellation handling without
+/// the recycle backstop).
+pub(crate) fn connect_recycling(
+    url: &str,
+    app_name: &str,
+    pool_size: usize,
+    statement_timeout: Duration,
+    recycling_method: RecyclingMethod,
+) -> Result<Pool, Error> {
     if pool_size == 0 {
         return Err(Error::Config("pool size 0".into()));
     }
@@ -84,13 +125,7 @@ pub fn connect(url: &str, app_name: &str, pool_size: usize, statement_timeout: D
             IDLE_IN_TRANSACTION_TIMEOUT.as_millis()
         ));
     let tls = tls()?;
-    let manager = Manager::from_config(
-        config.clone(),
-        tls.clone(),
-        ManagerConfig {
-            recycling_method: RecyclingMethod::Fast,
-        },
-    );
+    let manager = Manager::from_config(config.clone(), tls.clone(), ManagerConfig { recycling_method });
     let pool = deadpool_postgres::Pool::builder(manager)
         .max_size(pool_size)
         .runtime(Runtime::Tokio1)
@@ -120,9 +155,14 @@ impl Pool {
         })
     }
 
-    /// The underlying deadpool pool (status for metrics).
+    /// The pool's size, idle connections and waiters (for metrics). The deadpool pool itself is not handed out:
+    /// its connections would be a way into a transaction that is not [`crate::tx!`].
     #[must_use]
-    pub fn deadpool(&self) -> &deadpool_postgres::Pool {
+    pub fn status(&self) -> deadpool_postgres::Status {
+        self.inner.status()
+    }
+
+    pub(crate) fn deadpool(&self) -> &deadpool_postgres::Pool {
         &self.inner
     }
 
@@ -150,7 +190,8 @@ impl Pool {
 
 /// A pooled connection outside any transaction: every statement commits on its own. It refuses transaction control
 /// (`begin`, `commit`, `savepoint`, …) and has no `transaction()`, so a transaction is only ever [`crate::tx!`]
-/// (platform 4.3). Statements are prepared once per connection and cached; a stale cached statement clears the
+/// (platform 4.3). Session state it sets (`set`, temp tables, `listen`, …) lasts only until it goes back to the
+/// pool, which resets the connection before its next user (`RECYCLE_SQL`). Statements are prepared once per connection and cached; a stale cached statement clears the
 /// pool's caches and is retried once (`crate::stmt`).
 pub struct Conn {
     client: Object,
@@ -286,5 +327,57 @@ impl ServerCertVerifier for EncryptOnly {
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.0.supported_schemes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    /// The recycle check is a backstop for a connection handed back inside a transaction (which `tx!` no longer
+    /// does): deadpool discards it and opens a new one.
+    #[tokio::test]
+    async fn a_connection_returned_inside_a_transaction_is_never_handed_out() {
+        let pool = crate::testdb::pool("recycle-test", 1);
+        let other = crate::testdb::pool("recycle-test-other", 1);
+        let table = format!("recycle_{}", uuid::Uuid::new_v4().simple());
+        other
+            .get()
+            .await
+            .unwrap()
+            .batch_execute(&format!("create table {table} (id int)"))
+            .await
+            .unwrap();
+        for i in 0..5 {
+            let raw = pool.deadpool().get().await.unwrap();
+            raw.batch_execute("begin").await.unwrap();
+            let in_tx_pid: i32 = raw.query_one("select pg_backend_pid()", &[]).await.unwrap().get(0);
+            drop(raw); // back to the pool, still inside the transaction
+            let conn = pool.get().await.unwrap();
+            let pid: i32 = conn.query_one("select pg_backend_pid()", &[]).await.unwrap().get(0);
+            assert_ne!(
+                pid, in_tx_pid,
+                "round {i}: the connection inside a transaction was handed out"
+            );
+            conn.execute(&format!("insert into {table} values ($1)"), &[&i])
+                .await
+                .unwrap();
+            let seen: i64 = other
+                .get()
+                .await
+                .unwrap()
+                .query_one(&format!("select count(*) from {table} where id = $1"), &[&i])
+                .await
+                .unwrap()
+                .get(0);
+            assert_eq!(seen, 1, "round {i}: an autocommit insert was not committed");
+        }
+        other
+            .get()
+            .await
+            .unwrap()
+            .batch_execute(&format!("drop table {table}"))
+            .await
+            .unwrap();
     }
 }

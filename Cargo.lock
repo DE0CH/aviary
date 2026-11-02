@@ -89,6 +89,7 @@ dependencies = [
 name = "aviary-pg"
 version = "0.0.0"
 dependencies = [
+ "aviary-core",
  "aviary-source-rules",
  "deadpool-postgres",
  "rustls",

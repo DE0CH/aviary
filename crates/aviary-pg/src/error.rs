@@ -41,15 +41,16 @@ pub enum Error {
     /// refused: a transaction is only ever [`crate::tx!`] (platform 4.3).
     #[error("transaction control is refused here (use aviary_pg::tx!): {0}")]
     TransactionControl(String),
-    /// A no-transaction migration left an invalid index behind (a failed or interrupted
-    /// `create index concurrently`); it was dropped, and the start fails.
+    /// A no-transaction migration left the index it builds invalid (a failed or interrupted
+    /// `create index concurrently`); it was dropped (unless another session may be building it), and the start
+    /// fails.
     #[error("migration {version} ({name}) left invalid indexes: {indexes:?}")]
     InvalidIndex {
         /// The migration's version.
         version: i32,
         /// The migration's name.
         name: String,
-        /// The invalid indexes found (and dropped).
+        /// The invalid index found.
         indexes: Vec<String>,
     },
     /// A dedicated connection ended while it was in use.

@@ -97,6 +97,13 @@ fn clippy(case: &str, source: &str, tx_conf: bool) -> Option<String> {
         deps.push_str(&workspace_dep(&root, d));
         deps.push('\n');
     }
+    // hyper's client half (the workspace's line names no features)
+    let hyper = workspace_dep(&root, "hyper");
+    let version = hyper.strip_prefix("hyper = ").unwrap();
+    let _ = writeln!(
+        deps,
+        "hyper = {{ version = {version}, features = [\"client\", \"http1\"] }}"
+    );
     let manifest = format!(
         "[package]\nname = \"scratch-{case}\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n\n[dependencies]\n{deps}\n{}",
         aviary_source_rules::workspace_lints_as_package_lints(&root).unwrap(),
@@ -169,7 +176,15 @@ pub struct Clients {
 ///
 /// # Errors
 /// When the database fails.
-pub async fn calls(pool: &aviary_pg::Pool, c: &Clients) -> Result<(), aviary_pg::Error> {
+pub async fn calls<Io>(
+    pool: &aviary_pg::Pool,
+    c: &Clients,
+    h1: &mut hyper::client::conn::http1::SendRequest<String>,
+    io: Io,
+) -> Result<(), aviary_pg::Error>
+where
+    Io: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
+{
     $TX_OPEN
         let _ = c.http.post("http://hermit/v1/things").send().await;
         let _ = reqwest::get("http://hermit/v1/things").await;
@@ -187,6 +202,9 @@ pub async fn calls(pool: &aviary_pg::Pool, c: &Clients) -> Result<(), aviary_pg:
         let _ = c.s3.list_objects_v2().bucket("b").into_paginator().send().next().await;
         $EC2_CALLS
         let _ = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        let _ = hyper::client::conn::http1::handshake::<_, String>(io).await;
+        let _ = h1.send_request(hyper::Request::new(String::new())).await;
+        let _ = tokio::net::TcpStream::connect("hermit:80").await;
         Ok(())
     $TX_CLOSE
 }
@@ -207,6 +225,9 @@ const CALLED: &[&str] = &[
     "aws_smithy_async::future::pagination_stream::PaginationStream::next",
     "$EC2",
     "aws_config::load_defaults",
+    "hyper::client::conn::http1::handshake",
+    "hyper::client::conn::http1::SendRequest::send_request",
+    "tokio::net::TcpStream::connect",
 ];
 
 /// The EC2 calls, once a crate (hermit) depends on the SDK.
@@ -374,6 +395,12 @@ fn the_generated_configuration_lists_the_clients_and_the_sdks() {
         "aws_sdk_s3::operation::get_object::builders::GetObjectFluentBuilder::send",
         "aws_sdk_s3::operation::put_object::builders::PutObjectInputBuilder::send_with",
         "aws_sdk_s3::client::customize::CustomizableOperation::send",
+        "reqwest::Response::upgrade",
+        "kube::Api::patch",
+        "kube::Api::list",
+        "kube::Client::request",
+        "hyper::client::conn::http2::SendRequest::send_request",
+        "hyper_util::client::legacy::Client::request",
     ] {
         assert!(conf.contains(&format!("\"{must}\"")), "{must}");
     }

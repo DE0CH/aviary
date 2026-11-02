@@ -62,7 +62,15 @@ addressing and create their own buckets. CI serves S3 with versitygw, pinned by 
   set only on code the caller wrote, and a clippy `disallowed-methods` list has no scope, so "no network call inside
   the closure" takes the macro's `#[deny]` plus a second clippy pass with its own configuration (Source rules below).
   `Pool::get` returns an `aviary_pg::Conn`, not deadpool's client: it refuses `begin`, `commit`, savepoints and the
-  like and has no `transaction()`, so `tx!` is the only way into a transaction.
+  like and has no `transaction()`, and the deadpool pool itself is not public (`Pool::status()` gives its figures),
+  so `tx!` is the only way into a transaction. `tx!` owns its connection before it sends `begin`: a `tx!` future
+  cancelled at any point (a timeout, a `select!`, a dropped handler) closes the connection instead of handing it
+  back inside the transaction.
+- Every pooled connection is checked and reset before it is handed out again (deadpool's recycle, one round trip):
+  one inside a transaction is discarded (a backstop for the above), and the session state a `Conn` or a `Tx` set
+  (`set`, `set role`, `set_config(…, false)`, temp tables, `listen`, session advisory locks, cursors) is reset with
+  deadpool's `Clean` statements, which keep the prepared statements. `RESET ALL` returns to the connection's
+  startup values, so `connect`'s `statement_timeout` holds for every user.
 - A `tx!` closure that ignores a statement error and returns `Ok` gets `Error::RolledBack`: the failed statement
   aborted the transaction, and Postgres answers `COMMIT` of an aborted transaction with `ROLLBACK` and no error
   (tokio-postgres does not expose the command tag). Whenever a statement failed or was cancelled, `tx!` asks the
@@ -73,20 +81,26 @@ addressing and create their own buckets. CI serves S3 with versitygw, pinned by 
   transaction's first statement, which restarts it). Later in a transaction the error is returned; the next
   transaction works. Naming the columns avoids it.
 - `aviary_pg::migrate` waits for the migration lock by polling `pg_try_advisory_lock` every 200 ms, not by blocking
-  in `pg_advisory_lock`: a blocked statement holds a snapshot, and `create index concurrently` in the holder waits
-  for every older snapshot, so blocked starters would stall it. The lock, the one-transaction-per-migration rule and
+  in `pg_advisory_lock` (platform 4.3's wording): a blocked statement holds a snapshot, and `create index
+  concurrently` in the holder waits for every older snapshot, so blocked starters would stall it. The wait has no
+  bound; every 30 s it logs the holder's pid (from `pg_locks`). The lock, the one-transaction-per-migration rule and
   the `_migrations` table are as platform 4.3 says (magpie and hermit spec's `schema_migrations` is platform's
   `_migrations`). A migration whose first line is `-- aviary-pg: no-transaction` runs outside a transaction and holds
   exactly one statement (for `create index concurrently … if not exists`; comments, strings and dollar bodies are
-  lexed when counting).
+  lexed when counting). A transactional migration may not contain `begin`, `commit`, `end`, `rollback` or the like
+  (`Error::BadMigration`): its SQL and its `_migrations` record commit together.
 - The spec says nothing of lock waits during migrations. Each transactional migration runs with `lock_timeout = 5s`
   and is retried up to 6 times (pauses 1, 2, 4, 8, 16 s): an `alter table` queued behind a long transaction would
   otherwise hold every later query on the table behind its `ACCESS EXCLUSIVE` request and stall the running
   replicas. A no-transaction migration runs without the limit (`create index concurrently` blocks no reads or
   writes and waits for older transactions by design).
 - A failed or killed `create index concurrently` leaves an invalid index that `if not exists` would accept for good.
-  Before each no-transaction migration `migrate` drops every invalid index of the database that is not being built
-  right now, and after it fails the start (`Error::InvalidIndex`, the index dropped) if one is left.
+  When a no-transaction migration's statement is `create [unique] index concurrently [if not exists] <name> on
+  <table>`, `migrate` drops that index first if it is invalid, and fails the start (`Error::InvalidIndex`, the index
+  dropped) if the statement leaves it invalid. No other index is touched (an operator's own build, a partitioned
+  table's `on only` index). It is not dropped while any build that may be it is under way, including a build this
+  role cannot see (`pg_stat_progress_create_index` hides other roles' relations without `pg_read_all_stats`); then
+  the start fails instead.
 - `aviary_pg::Leader::start_many(pool, &[keys], retry)` holds several keys on one dedicated connection, so hermit's
   janitor (7300,3) and scaler (7300,4) use the one leader connection platform 11.4 budgets per pod. The holder
   checks its connection every `retry` in the background; callers run `Leader::confirm()` (`select 1` on the leader
@@ -164,10 +178,14 @@ CI enforces these over the source tree (`testing/source-rules`, `clippy.toml`, `
   error. The rule is a second clippy pass whose configuration `aviary_source_rules::tx_rule` generates from the tree
   (`--bin tx-rule-conf`): the repository's `clippy.toml` plus `reqwest`'s calls, every `pub async fn` of the
   contract crates' typed clients (`crates/*-api/src/client.rs`), `aviary_core::http::send`, `aws-config`'s loaders,
-  and every operation of the AWS SDKs the workspace depends on (S3 now; EC2 once hermit depends on it), with
+  the Kubernetes API (`kube::Api`'s and `kube::Client`'s calls, listed for the pinned kube 5.0.0), `hyper`'s client
+  connections, `hyper-util`'s client and `tokio`'s socket connects and DNS lookups, and every operation of the AWS
+  SDKs the workspace depends on (S3 now; EC2 once hermit depends on it), with
   `-A clippy::disallowed_methods`; the macro marks its closure `#[deny(clippy::disallowed_methods)]`, so the lint
   fires there only. A call made in a helper function that the closure calls is not seen (the lint level belongs to
-  the helper's own code), nor is a client the generator does not know. The first pass's `clippy.toml` disallows the
+  the helper's own code), nor is a client the generator does not know, nor a generic stream polled with
+  `StreamExt::next` (a `kube::runtime::watcher`). The tests (`crates/aviary-pg/tests/tx_rule.rs`) run clippy offline
+  on scratch crates: they need every locked crate in the local registry (`cargo fetch` first) and take about 25 s. The first pass's `clippy.toml` disallows the
   other ways into a transaction: `tokio-postgres`' and deadpool's `transaction()`/`build_transaction()`, and calling
   `aviary_pg::__run_tx` by hand.
 

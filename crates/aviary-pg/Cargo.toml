@@ -17,6 +17,8 @@ tokio-postgres-rustls.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+# env::test_only for the unit tests' AVIARY_TEST_DATABASE_URL
+aviary-core = { path = "../aviary-core", features = ["testing"] }
 aviary-source-rules = { path = "../../testing/source-rules" }
 serde_json.workspace = true
 uuid.workspace = true
