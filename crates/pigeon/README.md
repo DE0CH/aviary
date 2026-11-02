@@ -160,4 +160,10 @@ timeline pollers running) reach 1 000 sockets in 10.0 s: latency p50 16.6 / 19.4
   its stdin closes), with its control endpoint for magpie's side.
 - `tests/parity.rs`: every tool call of the recorded CloudCLI bridge log, rebuilt from the transcript the recorder fed
   the bridge (`testing/paseo-contract/record/cloudcli-bridge-488a7736.tools.json`, `node record/extract-tools.mjs`),
-  rendered as the bridge rendered it.
+  rendered as the bridge rendered it; and conversation A's whole history (a user row with an image and a file,
+  reasoning, every tool row across its two seqs, assistant and error rows) projected row by row through
+  `PaseoProjector` and compared, envelope and item, with the entry the bridge served at the same seq. pigeon's own
+  differences are asserted as such: image URLs are signed blob URLs with a thumbnail (5.9), the error row is pigeon's
+  sentence for magpie's code (7.9), and adjacent seqs form one `sourceSeqRanges` range (the same coverage). Real
+  imported transcripts are not compared here: their rows come from the importer (`crates/magpie-import`, WP-29, not
+  built yet), and render parity over the imported set is cutover 10.2 item 6 (WP-41).

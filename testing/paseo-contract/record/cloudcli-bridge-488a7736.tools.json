@@ -170,5 +170,209 @@
     "isError": false
    }
   }
+ ],
+ "history": [
+  {
+   "seq": 1,
+   "messageId": "m1",
+   "kind": "text",
+   "role": "user",
+   "content": "Summarise the attached figures",
+   "images": [
+    {
+     "data": "data:image/png;base64,iVBORw0KGgo="
+    }
+   ],
+   "files": [
+    {
+     "path": "/workspace/uploads/q3.xlsx",
+     "name": "q3.xlsx",
+     "size": 2048
+    }
+   ]
+  },
+  {
+   "seq": 2,
+   "messageId": "m2",
+   "kind": "thinking",
+   "content": "The sheet has three tabs."
+  },
+  {
+   "seq": 3,
+   "messageId": "m3",
+   "kind": "tool_use",
+   "callId": "t-bash"
+  },
+  {
+   "seq": 4,
+   "messageId": "m4",
+   "kind": "tool_result",
+   "callId": "t-bash"
+  },
+  {
+   "seq": 5,
+   "messageId": "m5",
+   "kind": "tool_use",
+   "callId": "t-read"
+  },
+  {
+   "seq": 6,
+   "messageId": "m6",
+   "kind": "tool_result",
+   "callId": "t-read"
+  },
+  {
+   "seq": 7,
+   "messageId": "m7",
+   "kind": "tool_use",
+   "callId": "t-edit"
+  },
+  {
+   "seq": 8,
+   "messageId": "m8",
+   "kind": "tool_result",
+   "callId": "t-edit"
+  },
+  {
+   "seq": 9,
+   "messageId": "m9",
+   "kind": "tool_use",
+   "callId": "t-search"
+  },
+  {
+   "seq": 10,
+   "messageId": "m10",
+   "kind": "tool_result",
+   "callId": "t-search"
+  },
+  {
+   "seq": 11,
+   "messageId": "m11",
+   "kind": "tool_use",
+   "callId": "t-search2"
+  },
+  {
+   "seq": 12,
+   "messageId": "m12",
+   "kind": "tool_result",
+   "callId": "t-search2"
+  },
+  {
+   "seq": 13,
+   "messageId": "m13",
+   "kind": "tool_use",
+   "callId": "t-web"
+  },
+  {
+   "seq": 14,
+   "messageId": "m14",
+   "kind": "tool_result",
+   "callId": "t-web"
+  },
+  {
+   "seq": 15,
+   "messageId": "m15",
+   "kind": "tool_use",
+   "callId": "t-todo"
+  },
+  {
+   "seq": 16,
+   "messageId": "m16",
+   "kind": "tool_result",
+   "callId": "t-todo"
+  },
+  {
+   "seq": 17,
+   "messageId": "m17",
+   "kind": "tool_use",
+   "callId": "t-write"
+  },
+  {
+   "seq": 18,
+   "messageId": "m18",
+   "kind": "tool_result",
+   "callId": "t-write"
+  },
+  {
+   "seq": 19,
+   "messageId": "m19",
+   "kind": "tool_use",
+   "callId": "t-send"
+  },
+  {
+   "seq": 20,
+   "messageId": "m20",
+   "kind": "tool_result",
+   "callId": "t-send"
+  },
+  {
+   "seq": 21,
+   "messageId": "m21",
+   "kind": "tool_use",
+   "callId": "t-task"
+  },
+  {
+   "seq": 22,
+   "messageId": "m22",
+   "kind": "tool_result",
+   "callId": "t-task"
+  },
+  {
+   "seq": 23,
+   "messageId": "m23",
+   "kind": "tool_use",
+   "callId": "t-glob"
+  },
+  {
+   "seq": 24,
+   "messageId": "m24",
+   "kind": "tool_use",
+   "callId": "t-grep"
+  },
+  {
+   "seq": 25,
+   "messageId": "m25",
+   "kind": "tool_result",
+   "callId": "t-grep"
+  },
+  {
+   "seq": 26,
+   "messageId": "m26",
+   "kind": "tool_use",
+   "callId": "t-fetch"
+  },
+  {
+   "seq": 27,
+   "messageId": "m27",
+   "kind": "tool_result",
+   "callId": "t-fetch"
+  },
+  {
+   "seq": 28,
+   "messageId": "m28",
+   "kind": "text",
+   "role": "assistant",
+   "content": "**Q3 revenue** rose 4%.\n\n| Tab | Rows |\n|---|---|\n| A | 10 |"
+  },
+  {
+   "seq": 29,
+   "messageId": "m29",
+   "kind": "error",
+   "content": "The model provider returned an error. Try again."
+  },
+  {
+   "seq": 30,
+   "messageId": "m30",
+   "kind": "text",
+   "role": "user",
+   "content": "用中文再說一次"
+  },
+  {
+   "seq": 31,
+   "messageId": "m31",
+   "kind": "text",
+   "role": "assistant",
+   "content": "第三季收入上升 4%。"
+  }
  ]
 }
