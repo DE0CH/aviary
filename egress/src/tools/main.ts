@@ -9,7 +9,9 @@
 //
 // SIGTERM (after Kubernetes' 10 s preStop): /readyz 503, no new connections, a request on a kept-alive connection is
 // served with `Connection: close`, in-flight calls finish up to 150 s, what is left is cut (tools_drain_cut_total),
-// the pending tool_calls rows are written (a cut call's row too, marked cut), exit 0 with log `drained`. A second SIGTERM exits at once.
+// the pending tool_calls rows are written (a cut call's row too, marked cut) within 8 s (rows still unwritten then
+// count as dropped), the pool closes within 2 s, exit 0 with log `drained`: 10 + 150 + 8 + 2 = 170 s, inside the
+// 180 s grace period even with the database blackholed (server.ts DRAIN_MS). A second SIGTERM exits at once.
 import { createServer } from "node:http";
 import { log, logError } from "../common/log.ts";
 import { hermitGetter } from "../egress/tokens.ts";
@@ -17,7 +19,7 @@ import { Catalogue } from "./catalogue.ts";
 import { checkConfigEnv, loadToolsConfig } from "./config.ts";
 import { CallLog, connect, migrate } from "./db.ts";
 import { Liveness } from "./liveness.ts";
-import { acceptList, createToolsServer, DRAIN_MS, type ToolsServer } from "./server.ts";
+import { acceptList, createToolsServer, DRAIN_MS, FLUSH_MS, POOL_END_MS, type ToolsServer } from "./server.ts";
 import type { Deps } from "./types.ts";
 import { startRefresh, Upstream } from "./upstream.ts";
 
@@ -76,6 +78,7 @@ export async function main(): Promise<void> {
         `tools_liveness_stale_served_total ${liveness.staleServed}`,
         `tools_catalogue_refused_total ${catalogue.refused}`,
         `tools_tool_calls_dropped_total ${calls.dropped}`,
+        ...upstreams.map((u) => `tools_upstream_tools{prefix="${u.cfg.prefix}"} ${u.count}`),
         "",
       );
       res.writeHead(200, { "content-type": "text/plain; version=0.0.4" });
@@ -99,10 +102,10 @@ export async function main(): Promise<void> {
     refresh?.stop();
     catalogue.stop();
     liveness.stop();
-    await calls.flush();
+    const unwritten = await calls.flush(FLUSH_MS);
     health.close();
-    await db.end().catch(() => {});
-    log("drained", { cut });
+    await Promise.race([db.end().catch(() => {}), sleep(POOL_END_MS)]);
+    log("drained", { cut, unwritten });
     process.exit(0);
   };
   process.on("SIGTERM", onSignal);
@@ -134,8 +137,9 @@ export async function main(): Promise<void> {
   })();
   liveness.start();
 
-  // upstream tool lists: the first read, bounded at 10 s per upstream (a failure or a hang is logged, the upstream then
-  // offers nothing until a later refresh works), so another service's health never holds a new pod unready for long
+  // upstream tool lists: the first read, bounded at 10 s per upstream (a failure or a hang is logged and read again
+  // soon with backoff; the upstream offers nothing until a read works), so another service's health never holds a new
+  // pod unready for long
   const r = startRefresh(upstreams);
   refresh = r;
   void r.ready.then(() => notReady.delete("upstreams"));

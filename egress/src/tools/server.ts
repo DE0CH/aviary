@@ -17,11 +17,17 @@ import { handleMessage, type McpHandlers } from "./mcp.ts";
 import type { Caller, Deps, ToolCtx, ToolDef, ToolResult } from "./types.ts";
 import type { Upstream } from "./upstream.ts";
 
-const MAX_BODY = 2_000_000;
+/** tools' own cap on a request body (platform 3.11.3); a bigger one is answered 413 too_large. */
+export const MAX_BODY = 2_000_000;
+class TooLarge extends Error {}
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-/** In-flight calls finish within this bound after SIGTERM (an upstream call's own timeout is 120 s); the pod's grace
- * period is 180 s (preStop 10 + 150 + margin). */
+/** In-flight calls finish within this bound after SIGTERM (an upstream call's own timeout is 120 s). The shutdown
+ * fits the pod's 180 s grace period (platform 9.7) with 10 s to spare, whatever the database does: preStop 10 s +
+ * this drain 150 s + the final tool_calls flush, bounded at FLUSH_MS 8 s + closing the pool, bounded at
+ * POOL_END_MS 2 s = 170 s (main.ts). */
 export const DRAIN_MS = 150_000;
+export const FLUSH_MS = 8_000;
+export const POOL_END_MS = 2_000;
 
 const digest = (s: string): Buffer => createHash("sha256").update(s).digest();
 
@@ -156,18 +162,18 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[], parts: Serv
   const refuse = (res: ServerResponse, status: number, code: string, message: string, headers: Record<string, string> = {}) =>
     send(res, status, { code, message }, headers);
 
+  // over MAX_BODY, the rest is read and dropped (requestTimeout bounds it) and the answer, 413 with Connection: close,
+  // goes once the body has ended, so the gateway reads a clear refusal rather than a reset connection
   const readBody = (req: IncomingMessage) =>
     new Promise<string>((ok, fail) => {
       const chunks: Buffer[] = [];
       let n = 0;
       req.on("data", (c: Buffer) => {
         n += c.length;
-        if (n > MAX_BODY) {
-          fail(new Error("too large"));
-          req.destroy();
-        } else chunks.push(c);
+        if (n <= MAX_BODY) chunks.push(c);
+        else chunks.length = 0;
       });
-      req.on("end", () => ok(Buffer.concat(chunks).toString("utf8")));
+      req.on("end", () => (n > MAX_BODY ? fail(new TooLarge()) : ok(Buffer.concat(chunks).toString("utf8"))));
       req.on("error", fail);
     });
 
@@ -197,9 +203,16 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[], parts: Serv
       const v = await parts.liveness.check(sandboxId, conversationId, person);
       if (!v.ok)
         return refuse(res, 403, "not_allowed", v.why === "mismatch" ? "the sandbox belongs to another conversation or person" : `the sandbox is not live (${v.state ?? "unknown"})`);
+      let body: string;
+      try {
+        body = await readBody(req);
+      } catch (e) {
+        if (e instanceof TooLarge) return refuse(res, 413, "too_large", `the request body is over tools' ${MAX_BODY} byte cap`, { connection: "close" });
+        throw e;
+      }
       let msg: unknown;
       try {
-        msg = JSON.parse(await readBody(req));
+        msg = JSON.parse(body);
       } catch {
         return send(res, 400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } });
       }

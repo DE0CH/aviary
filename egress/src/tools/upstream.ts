@@ -1,10 +1,13 @@
 // Upstream MCP servers (config.tools.upstreams): their tools appear as <prefix>_<tool>, calls are forwarded with the
 // configured headers, ${USER_EMAIL} = the staff member whose sandbox calls. Only the read-only tools the upstream's
-// `tools` list names are offered (default deny: a new upstream tool stays hidden until it is added to the list). The tool list is read at startup and every
-// 10 minutes (a failed refresh keeps the last good list). The first read is bounded at 10 s per upstream, so an
-// upstream that hangs never holds the pod unready: that upstream offers nothing until a later read works (each later
-// read is bounded at 2 minutes as a whole). Streamable HTTP client: JSON or SSE answers, a session id
-// when the server hands one out.
+// `tools` list names are offered (default deny: a new upstream tool stays hidden until it is added to the list). The
+// tool list is read at startup and every 10 minutes (a failed refresh keeps the last good list). The first read is
+// bounded at 10 s per upstream, so an upstream that hangs never holds the pod unready. An upstream with no list yet
+// (its first read failed or ran out of time) is read again soon, after 5 s, 10 s, 30 s, 1, 2 and 5 minutes, then at
+// the 10-minute cadence, since Claude Code reads the tool list once per conversation and a conversation started
+// meanwhile never sees that upstream's tools; /metrics shows tools_upstream_tools{prefix} so an empty list can be
+// alerted on. Each later read is bounded at 2 minutes as a whole. Streamable HTTP client: JSON or SSE answers, a
+// session id when the server hands one out.
 import { expandEnv } from "../common/config.ts";
 import type { UpstreamMcp } from "./config.ts";
 import { logError, log } from "../common/log.ts";
@@ -15,6 +18,8 @@ const CALL_TIMEOUT_MS = 120_000;
 /** The first tool-list read of each upstream at start; then each periodic read as a whole. */
 export const FIRST_LIST_MS = 10_000;
 export const LIST_MS = 120_000;
+/** The pauses before reading again an upstream that has no list yet (then the regular cadence). */
+export const FIRST_RETRY_MS = [5_000, 10_000, 30_000, 60_000, 120_000, 300_000];
 
 interface RpcOpts {
   retried?: boolean;
@@ -63,6 +68,8 @@ export class Upstream {
   readonly cfg: UpstreamMcp;
   readonly #deps: Deps;
   #tools: UpstreamTool[] = [];
+  /** a tool-list read has worked once */
+  listed = false;
   #nextId = 1;
   #sessions = new Map<string, string>(); // user -> Mcp-Session-Id (for servers that hand them out)
   constructor(cfg: UpstreamMcp, deps: Deps) {
@@ -137,8 +144,14 @@ export class Upstream {
     }
     const all = tools.filter((t) => t && typeof t.name === "string");
     this.#tools = all.filter((t) => readOnlyAllowed(this.cfg, t));
+    this.listed = true;
     const hidden = all.filter((t) => !this.#tools.includes(t)).map((t) => t.name);
     log("upstream tools", { prefix: this.cfg.prefix, count: this.#tools.length, hidden });
+  }
+
+  /** How many tools this upstream offers now (tools_upstream_tools). */
+  get count(): number {
+    return this.#tools.length;
   }
 
   tools(): ToolDef[] {
@@ -169,12 +182,41 @@ export function readOnlyAllowed(cfg: Pick<UpstreamMcp, "tools">, t: { name: stri
 
 /** Keep every upstream's list fresh (each read as its `listAs`): now (each bounded at `firstMs`; `ready` resolves when
  * every first read has worked, failed or run out of time), then every `everyMs`; a failure is logged and the old list
- * stays. */
-export function startRefresh(ups: Upstream[], everyMs = 600_000, firstMs = FIRST_LIST_MS): { stop(): void; ready: Promise<void> } {
-  const once = (boundMs: number) =>
-    Promise.all(ups.map((u) => u.refresh(undefined, boundMs).catch((e) => logError("upstream refresh", e, { prefix: u.cfg.prefix })))).then(() => {});
-  const ready = once(firstMs);
-  const t = setInterval(() => void once(LIST_MS), everyMs);
-  t.unref();
-  return { ready, stop: () => clearInterval(t) };
+ * stays. An upstream with no list yet is read again after each pause of `retryMs` in turn (capped at `everyMs`), then
+ * every `everyMs`. */
+export function startRefresh(
+  ups: Upstream[],
+  everyMs = 600_000,
+  firstMs = FIRST_LIST_MS,
+  retryMs: number[] = FIRST_RETRY_MS,
+): { stop(): void; ready: Promise<void> } {
+  let stopped = false;
+  const timers = new Set<NodeJS.Timeout>();
+  const read = (u: Upstream, boundMs: number) => u.refresh(undefined, boundMs).catch((e) => logError("upstream refresh", e, { prefix: u.cfg.prefix, listed: u.listed }));
+  const schedule = (u: Upstream, attempt: number) => {
+    if (stopped) return;
+    const ms = u.listed ? everyMs : Math.min(retryMs[attempt] ?? everyMs, everyMs);
+    const t = setTimeout(() => {
+      timers.delete(t);
+      // only the first read is bounded short (it holds readiness); a slow but working upstream gets the full bound here
+      void read(u, LIST_MS).then(() => schedule(u, u.listed ? 0 : attempt + 1));
+    }, ms);
+    t.unref();
+    timers.add(t);
+  };
+  const ready = Promise.all(
+    ups.map((u) =>
+      read(u, firstMs).then(() => {
+        schedule(u, 0);
+      }),
+    ),
+  ).then(() => {});
+  return {
+    ready,
+    stop: () => {
+      stopped = true;
+      for (const t of timers) clearTimeout(t);
+      timers.clear();
+    },
+  };
 }

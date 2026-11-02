@@ -19,7 +19,7 @@ import { CallLog, connect, migrate, MIGRATIONS } from "../src/tools/db.ts";
 import { Liveness } from "../src/tools/liveness.ts";
 import { isPrivateAddress, htmlToText } from "../src/tools/netguard.ts";
 import { iso } from "../src/tools/providers.ts";
-import { acceptList, createToolsServer, DRAIN_MS, toolList, type ToolsServer } from "../src/tools/server.ts";
+import { acceptList, createToolsServer, DRAIN_MS, FLUSH_MS, POOL_END_MS, toolList, type ToolsServer } from "../src/tools/server.ts";
 import type { Deps, ToolDef } from "../src/tools/types.ts";
 import { pickResponse, readOnlyAllowed, startRefresh, Upstream } from "../src/tools/upstream.ts";
 import { startFakes, type Fakes } from "./fakes/tools-upstreams.ts";
@@ -380,6 +380,26 @@ test("tool_calls: a database outage drops the row and never delays the call", as
   }
 });
 
+test("tool_calls: the final flush is bounded, so a blackholed database cannot hold the exit past the grace period", async () => {
+  assert.equal(DRAIN_MS + FLUSH_MS + POOL_END_MS + 10_000, 170_000, "preStop + drain + flush + pool end, 10 s inside the 180 s grace");
+  const { createServer: tcp } = await import("node:net");
+  const blackhole = tcp(() => {});
+  await new Promise<void>((r) => blackhole.listen(0, "127.0.0.1", r));
+  const db = connect(`postgres://tools:x@127.0.0.1:${(blackhole.address() as AddressInfo).port}/tools`);
+  const log = new CallLog(db);
+  try {
+    const s = sandbox();
+    log.write({ conversationId: s.conversationId, sandboxId: s.id, person: s.person, request: null, tool: "web_fetch", args: {}, ok: true, ms: 1, error: null, costUsd: null });
+    const t0 = Date.now();
+    assert.equal(await log.flush(300), 1, "one row unwritten at the bound");
+    assert.ok(Date.now() - t0 < 1000);
+    assert.equal(log.dropped, 1);
+  } finally {
+    blackhole.close();
+    void db.end().catch(() => {});
+  }
+});
+
 /** One request on a kept-alive connection of `agent` (node:http, so Connection headers are visible). */
 function post(base: string, s: Sbx, body: unknown, agent: import("node:http").Agent): Promise<{ status: number; headers: import("node:http").IncomingHttpHeaders; body: string }> {
   const u = new URL(`${base}/mcp`);
@@ -452,6 +472,37 @@ test("upstreams: the first tool-list read is bounded, so an upstream that hangs 
   }
 });
 
+test("upstreams: an upstream whose first read failed is read again soon (backoff), not at the next 10-minute refresh", async () => {
+  let seen = 0;
+  const flaky = createServer((req, res) => {
+    let b = "";
+    req.on("data", (c) => (b += c));
+    req.on("end", () => {
+      if (++seen === 1) return void req.socket.destroy(); // down for the first read
+      const { id } = JSON.parse(b);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ jsonrpc: "2.0", id, result: { tools: [{ name: "x", annotations: { readOnlyHint: true } }] } }));
+    });
+  });
+  await new Promise<void>((r) => flaky.listen(0, "127.0.0.1", r));
+  try {
+    const cfg = parseToolsConfig({ upstreams: [{ prefix: "flaky", url: `http://127.0.0.1:${(flaky.address() as AddressInfo).port}/mcp`, tools: ["x"], listAs: "lister@example.org" }] });
+    const ups = cfg.upstreams.map((u) => new Upstream(u, { ...deps, config: cfg }));
+    const r = startRefresh(ups, 600_000, 300, [50, 100]);
+    await r.ready;
+    assert.equal(ups[0]!.count, 0);
+    assert.equal(ups[0]!.listed, false);
+    for (let i = 0; i < 40 && !ups[0]!.listed; i++) await new Promise((r) => setTimeout(r, 50));
+    r.stop();
+    assert.equal(ups[0]!.listed, true, "read again within the backoff, long before the 10-minute refresh");
+    assert.deepEqual(ups[0]!.tools().map((t) => t.name), ["flaky_x"]);
+    assert.equal(seen, 2);
+  } finally {
+    flaky.closeAllConnections();
+    flaky.close();
+  }
+});
+
 // hermit's own cases, byte for byte (aviary crates/hermit/fixtures/catalogue-cases.json; chat.yml checks the copy), so
 // tools and hermit (and YYC's CI, `hermit catalogue-check`) accept and refuse the same files
 test("catalogue: hermit's shared cases", () => {
@@ -500,6 +551,31 @@ test("config, catalogue and migrations", async () => {
   assert.deepEqual(await migrate(t.db), []);
   await assert.rejects(migrate(t.db, [MIGRATIONS[0] + "-- edited"]), /was edited/);
   assert.deepEqual(await migrate(t.db, []), []);
+});
+
+test("a body over tools' 2 MB cap is answered 413 too_large with Connection: close, not a reset", async () => {
+  const big = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "slow_wait", arguments: { pad: "x".repeat(2_100_000) } } });
+  const { Agent } = await import("node:http");
+  const agent = new Agent({ keepAlive: true });
+  try {
+    const r = await new Promise<{ status: number; headers: import("node:http").IncomingHttpHeaders; body: string }>((resolve, reject) => {
+      const u = new URL(`${url}/mcp`);
+      const req = httpRequest({ hostname: u.hostname, port: u.port, path: u.pathname, method: "POST", headers: gw(sbx), agent }, (res) => {
+        let b = "";
+        res.on("data", (c) => (b += c));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: b }));
+      });
+      req.on("error", reject);
+      req.end(big);
+    });
+    assert.equal(r.status, 413);
+    assert.equal(JSON.parse(r.body).code, "too_large");
+    assert.equal(r.headers.connection, "close");
+  } finally {
+    agent.destroy();
+  }
+  // the server goes on serving
+  assert.equal((await rpc("ping")).status, 200);
 });
 
 test("MCP: initialize, ping, list, unknown method, notifications, batch", async () => {

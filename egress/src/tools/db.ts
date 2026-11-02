@@ -116,8 +116,23 @@ export class CallLog {
     this.#pending.add(p);
   }
 
-  /** Waits for the writes in flight (each bounded by the query timeout). */
-  async flush(): Promise<void> {
-    await Promise.all([...this.#pending]);
+  /** Waits for the writes in flight (each bounded by the connection and query timeouts, 5 + 10 s, but queued behind
+   * the pool's 4 connections), at most `boundMs` when given; returns how many were still unwritten then, which are
+   * counted as dropped (the process is about to exit). */
+  async flush(boundMs?: number): Promise<number> {
+    const all = Promise.all([...this.#pending]).then(() => {});
+    if (boundMs === undefined) {
+      await all;
+      return 0;
+    }
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([all, new Promise<void>((r) => (timer = setTimeout(r, boundMs)))]);
+    clearTimeout(timer);
+    const left = this.#pending.size;
+    if (left) {
+      this.dropped += left;
+      logError("tool_calls flush", new Error(`${left} rows unwritten at exit`), { boundMs });
+    }
+    return left;
   }
 }
