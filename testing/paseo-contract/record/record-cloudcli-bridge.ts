@@ -339,6 +339,16 @@ rows.clear();
 await ios.request({ type: 'fetch_workspaces_request' });
 await ios.request({ type: 'fetch_agents_request' });
 
+// ------------------------------------------------------------------- a client of a newer protocol than the bridge's
+// pigeon answers it with hello.rejected incompatible_protocol (pigeon spec 7.2; fixtures/pigeon-spec-frames.ndjson);
+// the bridge has no version gate and answers server_info, which is what this records.
+const newer = connect('newer-protocol');
+currentCase = 'hello with protocolVersion 2';
+newer.socket.client({ type: 'hello', clientId: 'cid-web-2', clientType: 'browser', protocolVersion: 2, appVersion: '0.14.0', capabilities: {} });
+await flush();
+newer.socket.client({ type: 'ping' });
+await flush();
+
 writeFileSync(out, `${lines.join('\n')}\n`);
 console.log(`recorded ${lines.length} frames to ${out}`);
 process.exit(0);

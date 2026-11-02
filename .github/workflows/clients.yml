@@ -1,8 +1,15 @@
 # Adds a Paseo client build to testing/paseo-contract/clients.txt (pigeon spec 17.1 step 9, 18.1). The app's workflows
 # in DE0CH/claudecodeui send a repository_dispatch of type paseo-client with {"commit": "<40 hex>", "kind": "web"|"ios"}
-# after each web bundle build and each TestFlight upload. The line is committed to main with a plain push (never
-# forced), the newest client's JSON Schema is re-exported, and the contract suite runs against the new list (a push
-# made with this workflow's token starts no other workflow, so the suite runs here).
+# after each web bundle build and each TestFlight upload (and pigeon-app seeds the pre-Paseo ui images, which are
+# listed as web-legacy). The line is inserted at its place by commit time, the newest client's JSON Schema is
+# re-exported, and the contract suite runs against the new list BEFORE anything is pushed, so main never gets a red
+# client list. The commit is then pushed with a plain push (never forced). A push made with this workflow's token starts
+# no other workflow, which is why the suite runs here.
+#
+# The job builds and runs code from the client commit (its zod-aot generator), so the checkout keeps no credentials and
+# the token reaches only the push step. If main moved meanwhile, the push step rebases onto it only when the move left
+# testing/paseo-contract alone (the tested state is then what lands); otherwise it fails, and a re-run of this workflow
+# redoes the append on the new main.
 name: clients
 
 on:
@@ -24,12 +31,14 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   append:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
+    permissions:
+      contents: write
     env:
       COMMIT: ${{ github.event.client_payload.commit || inputs.commit }}
       KIND: ${{ github.event.client_payload.kind || inputs.kind }}
@@ -40,31 +49,61 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.23.4
           cache: npm
           cache-dependency-path: testing/paseo-contract/package-lock.json
       - run: npm ci --no-audit --no-fund
-      - name: append the client (the script checks the hash, the kind and that the commit is a Paseo build)
+      - name: the commit is on claudecodeui main
+        run: |
+          [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "not a full commit hash: $COMMIT" >&2; exit 1; }
+          git init -q --bare "$RUNNER_TEMP/ccui-history"
+          # every commit of main, no trees or blobs
+          git -C "$RUNNER_TEMP/ccui-history" fetch -q --filter=tree:0 https://github.com/DE0CH/claudecodeui.git main
+          git -C "$RUNNER_TEMP/ccui-history" merge-base --is-ancestor "$COMMIT" FETCH_HEAD \
+            || { echo "claudecodeui $COMMIT is not on main" >&2; exit 1; }
+      - name: insert the client (the script checks the hash, the kind and that the commit is a client build)
         run: node append-client.mjs "$COMMIT" "$KIND"
       - name: export the newest client's schema
         run: node export-schema.mjs
-      - name: commit and push to main
+      - name: contract suite against the new client list
+        run: npm test
+      - name: commit
+        id: commit
         run: |
           git add clients.txt schema
           if git diff --cached --quiet; then
             echo "nothing to commit"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -q -m "paseo-contract: client claudecodeui ${COMMIT:0:12} (${KIND})"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+      - name: push to main
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          base=$(git rev-parse HEAD~1)
           for attempt in 1 2 3 4 5; do
-            if git push origin HEAD:main; then exit 0; fi
-            git pull --rebase origin main
+            if git -c "http.https://github.com/.extraheader=$auth" push -q origin HEAD:main; then
+              echo "pushed $(git rev-parse --short HEAD)"
+              exit 0
+            fi
+            git fetch -q origin main
+            if ! git diff --quiet "$base" FETCH_HEAD -- .; then
+              echo "testing/paseo-contract changed on main since $base: the tested client list is stale; re-run this workflow" >&2
+              exit 1
+            fi
+            # main moved elsewhere only: replay the one commit on it (no conflict is possible in this directory)
+            git rebase -q FETCH_HEAD || { git rebase --abort || true; echo "rebase onto main failed" >&2; exit 1; }
+            base=$(git rev-parse FETCH_HEAD)
           done
           echo "could not push after 5 attempts" >&2
           exit 1
-      - name: contract suite against the new client list
-        run: npm test

@@ -1,0 +1,2 @@
+{"case":"pigeon 7.2: hello from a client of an unsupported protocol","dir":"in","frame":{"type":"hello","clientId":"cid-web-2","clientType":"browser","protocolVersion":2,"appVersion":"0.14.0","capabilities":{}}}
+{"case":"pigeon 7.2: the reply to it, then close","dir":"out","frame":{"type":"hello.rejected","reason":"incompatible_protocol","accepts":[]}}

@@ -1,32 +1,62 @@
-# Paseo client builds that may be connected (pigeon spec 18.1, cutover 13.1): DE0CH/claudecodeui commits.
+# Client builds that may be connected (pigeon spec 18.1, cutover 13.1): DE0CH/claudecodeui commits.
 #
-#   <commit> <web|ios|web,ios> <commit date>
+#   <commit> <kinds> <commit time, UTC>
 #
-# web: the commit of a web bundle image served within the Access session lifetime (720 h), read from the deployment's
-#      image pin history. ios: the source commit of a build uploaded to TestFlight (the head_sha of each iOS workflow
-#      run whose upload step succeeded).
-# Earlier web images (before 2026-10-26) served the CloudCLI web UI, which has no Paseo client; they are not listed.
-# New builds are appended by .github/workflows/clients.yml (a repository_dispatch from the app's workflows); a build
-# leaves the file only when no connection with its version has been seen for 30 days. Oldest first: the last line is
-# the newest build, whose schema is exported to schema/<commit>.json.
-a93e3e695bd10f570f90a952d3e8572ba074e1a4 web      2026-10-26
-77febf7e0fdebe3e2a874e71208d82a1182a58ce ios      2026-10-26
-3051e217e784e1752396f3bb8b9a0c1396822fce web,ios  2026-10-27
-8876947704b6f4d5218f463634b9f6f3b89a008c web      2026-10-27
-0a7d4213543366aaf1d555733edb67a348a79351 ios      2026-10-27
-cfc6f7289e68b03794b1d11cd65053ce209d3118 ios      2026-10-27
-5c82a2812aae5bff01d34a09716af38ea79922ab web,ios  2026-10-27
-e4bd5771f5b745b7243d37d66d8a799d779f1f51 web,ios  2026-10-27
-7ccde223a2044a0bd953d01be511e76cd95966c0 web,ios  2026-10-27
-14ee1d5b91e6053a03feb9e91585c44580937faa web      2026-10-28
-f6c3f17e9e893a15944bda5b6ecc5acd9cef759c ios      2026-10-28
-6b16b24dd3406734529522ed60abb5de4519e08b web      2026-10-28
-1d9c4eb46fd8e215d72f23f63333f16de05c7f4d web      2026-10-28
-fe62bc33df017bd2dc610e69239c52fb2e3c4471 web,ios  2026-10-28
-a52836eaad3801f8ca7b1a3b1964ab333dfd01d3 web,ios  2026-10-28
-90a2603695b0550c6529fca4bd3449dad95b80cc web      2026-10-29
-f572bd246e2916dfe2d9d8978d9cd5d22fb80e09 web      2026-10-29
-140ed04178da91b5d62e424334f1184b732be212 web      2026-10-29
-9780d1861b0f085c556eae6ed59bfb5acdc4965f ios      2026-10-29
-3de3f5d8771bc5df24aaa95ba317bdbb2bd4d005 web      2026-10-29
-488a7736ef2c3783388fde060621c3d1df8e8f47 web      2026-11-02
+# Sorted by commit time, oldest first: the last line is the newest build, and the newest Paseo build's schema is
+# exported to schema/<commit>.json. append-client.mjs inserts each build at its place, whatever order builds finish in.
+#
+# Kinds (one or more, comma-separated):
+#   web        the commit of a ui web bundle image served within the Access session lifetime (720 h), from the ui image
+#              pin history in DE0CH/YYC; later, each pigeon-app build.
+#   ios        the source commit of a build uploaded to TestFlight (the head_sha of each iOS workflow run whose upload
+#              step succeeded).
+#   web-legacy a ui image from before the Paseo apps (before claudecodeui 3968b730, 2026-10-26): it served the CloudCLI
+#              web UI and has no Paseo client, so there is no protocol to validate; it is listed so this file is the
+#              one list of builds in use (DESIGN 9.6: their chunks seed pigeon-app), and the validators skip it.
+#
+# New builds are added by .github/workflows/clients.yml (a repository_dispatch from the app's workflows). A build
+# leaves the file only when no connection with its version has been seen for 30 days (for web-legacy: 720 h after the
+# image stopped being served).
+a684b2ebd5b5465b9c2efe4709d00be8d2cdd1a2 web-legacy 2026-10-21T14:19:07Z
+81a50961d5608b6c4a82840456be6b2c7399524f web-legacy 2026-10-21T15:22:19Z
+47c078900665128e49c5da86ea15273d84736174 web-legacy 2026-10-21T15:57:37Z
+04e84a86c3489a771b779fc8e3d72fc434612862 web-legacy 2026-10-21T17:33:52Z
+373231b265a7d0c5f681804626cc9370b47987f4 web-legacy 2026-10-21T22:54:02Z
+9dc1ed0543da58f6a556729043268351cb9cd93b web-legacy 2026-10-21T23:13:28Z
+040f1192c4f5250e72e431666b24eff6a7bda66c web-legacy 2026-10-22T00:29:05Z
+68b243cacc114b75f7ac8484324852d3f4dbb165 web-legacy 2026-10-22T02:04:14Z
+1766224a5f5d4739f3133ba2f9d047c937af0de9 web-legacy 2026-10-22T02:05:59Z
+9cced9abc9e38aacc285e79343d982a5d1e42044 web-legacy 2026-10-22T02:21:46Z
+61333d09d18c93d4d8c3b573dbbc0037a057ef6a web-legacy 2026-10-22T02:50:56Z
+35bcb453449d66c512fad27b0cddc34b1172ed24 web-legacy 2026-10-22T03:21:13Z
+b10198b10c2ba6462b8983da58e880e955987655 web-legacy 2026-10-22T03:25:48Z
+0501ffca98fcd44242d5745eb9a3227cd8aaa5d5 web-legacy 2026-10-22T03:27:01Z
+b3a1041b718fb7ca978c13a3ef38114165f21418 web-legacy 2026-10-22T03:46:43Z
+897636a888f7e5eb32be0f1322610325f63cc8fe web-legacy 2026-10-22T04:28:05Z
+bd08f103ae111ee0b57f9d85835b27824e0e9e61 web-legacy 2026-10-22T04:30:56Z
+620e141b2d44fe38ffb8e696ebbc924105ae0b5a web-legacy 2026-10-22T04:54:40Z
+41e917659f71d0e76040ce13f89c6ced4e3883fd web-legacy 2026-10-22T05:10:28Z
+82a4caeaf7a6ba64f1f23a7f90b9d0e070670f6d web-legacy 2026-10-23T03:50:08Z
+c5341232a4e7438c6fe3bfc83c43649809e1e204 web-legacy 2026-10-23T09:53:57Z
+f3f56c112a9d17c8a138a1748223930252b44b6d web-legacy 2026-10-23T10:06:44Z
+a93e3e695bd10f570f90a952d3e8572ba074e1a4 web        2026-10-26T19:46:28Z
+77febf7e0fdebe3e2a874e71208d82a1182a58ce ios        2026-10-26T23:46:20Z
+3051e217e784e1752396f3bb8b9a0c1396822fce web,ios    2026-10-27T01:06:40Z
+8876947704b6f4d5218f463634b9f6f3b89a008c web        2026-10-27T03:02:23Z
+0a7d4213543366aaf1d555733edb67a348a79351 ios        2026-10-27T03:34:50Z
+cfc6f7289e68b03794b1d11cd65053ce209d3118 ios        2026-10-27T07:37:07Z
+5c82a2812aae5bff01d34a09716af38ea79922ab web,ios    2026-10-27T07:38:49Z
+e4bd5771f5b745b7243d37d66d8a799d779f1f51 web,ios    2026-10-27T09:54:50Z
+7ccde223a2044a0bd953d01be511e76cd95966c0 web,ios    2026-10-27T10:13:08Z
+14ee1d5b91e6053a03feb9e91585c44580937faa web        2026-10-28T02:31:59Z
+f6c3f17e9e893a15944bda5b6ecc5acd9cef759c ios        2026-10-28T03:32:28Z
+6b16b24dd3406734529522ed60abb5de4519e08b web        2026-10-28T03:59:30Z
+1d9c4eb46fd8e215d72f23f63333f16de05c7f4d web        2026-10-28T04:24:32Z
+fe62bc33df017bd2dc610e69239c52fb2e3c4471 web,ios    2026-10-28T04:26:40Z
+a52836eaad3801f8ca7b1a3b1964ab333dfd01d3 web,ios    2026-10-28T06:19:12Z
+90a2603695b0550c6529fca4bd3449dad95b80cc web        2026-10-29T02:43:21Z
+f572bd246e2916dfe2d9d8978d9cd5d22fb80e09 web        2026-10-29T03:53:51Z
+140ed04178da91b5d62e424334f1184b732be212 web        2026-10-29T10:39:05Z
+9780d1861b0f085c556eae6ed59bfb5acdc4965f ios        2026-10-29T13:28:52Z
+3de3f5d8771bc5df24aaa95ba317bdbb2bd4d005 web        2026-10-29T17:27:19Z
+488a7736ef2c3783388fde060621c3d1df8e8f47 web        2026-11-02T08:29:13Z

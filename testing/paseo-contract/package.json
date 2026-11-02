@@ -9,8 +9,7 @@
     "node": ">=22"
   },
   "paseo": {
-    "repository": "https://github.com/DE0CH/claudecodeui.git",
-    "client": "488a7736ef2c3783388fde060621c3d1df8e8f47"
+    "repository": "https://github.com/DE0CH/claudecodeui.git"
   },
   "scripts": {
     "test": "node --test --test-concurrency=1 test/*.test.mjs",
@@ -18,8 +17,14 @@
     "export-schema": "node export-schema.mjs"
   },
   "dependencies": {
+    "@noble/ciphers": "2.4.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "base64-js": "1.5.1",
     "esbuild": "0.27.3",
-    "semver": "7.7.4",
+    "semver": "7.8.5",
+    "tweetnacl": "1.0.3",
+    "ws": "8.20.0",
     "zod": "4.4.3",
     "zod-aot": "0.20.4"
   },

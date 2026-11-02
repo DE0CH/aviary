@@ -4,7 +4,7 @@
 //
 //   node export-schema.mjs [--commit SHA] [--check]
 //
-// Default commit: the newest client (the last line of clients.txt). Writes schema/<commit>.json with the outbound
+// Default commit: the newest Paseo client (clients.txt is sorted by commit time; its last Paseo line). Writes schema/<commit>.json with the outbound
 // union (`WSOutboundMessageSchema`, what pigeon sends) and the inbound union (`WSInboundMessageSchema`, what pigeon
 // reads), both as the schema's input side (what the parser accepts), and removes the previous newest client's file.
 // `--check` writes nothing and exits 1 when the committed file differs from a fresh export, or when an older client's
@@ -13,7 +13,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { harnessRoot, protocolForCommit, readClients } from "./lib/protocol.mjs";
+import { harnessRoot, newestClient, protocolForCommit } from "./lib/protocol.mjs";
 
 const args = process.argv.slice(2);
 let commit = null;
@@ -43,8 +43,7 @@ async function exportSchema(sha) {
 }
 
 try {
-  const clients = readClients();
-  const sha = commit ?? clients.at(-1).sha;
+  const sha = commit ?? newestClient().sha;
   const dir = path.join(harnessRoot, "schema");
   const file = path.join(dir, `${sha}.json`);
   const text = await exportSchema(sha);
