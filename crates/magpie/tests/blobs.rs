@@ -8,60 +8,12 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
+use common::files::{conversation, gateway, grant_lease, png};
 use magpie::blobs::{self, Blobs, gc, store, uploader::Uploader};
-use magpie_api::conversations::CreateRequest;
-use magpie_api::turns::SendRequest;
 use magpie_api::uploads::{BlobQuery, BlobVariant};
 use uuid::Uuid;
 
 const ALICE: &str = "alice@example.com";
-
-fn empty(key: &str) -> CreateRequest {
-    CreateRequest {
-        idempotency_key: key.to_owned(),
-        message: SendRequest {
-            client_message_id: format!("{key}:m"),
-            text: String::new(),
-            images: Vec::new(),
-            files: Vec::new(),
-        },
-    }
-}
-
-async fn conversation(r: &common::Replica, person: &str, key: &str) -> Uuid {
-    r.pigeon()
-        .person(person)
-        .create_conversation(&empty(key))
-        .await
-        .unwrap()
-        .into_inner()
-        .conversation
-        .id
-}
-
-/// A PNG of `w`×`h` (a gradient; `alpha` adds a transparent corner).
-fn png(w: u32, h: u32, alpha: bool) -> Vec<u8> {
-    let img = image::RgbaImage::from_fn(w, h, |x, y| {
-        let a = if alpha && x < w / 4 && y < h / 4 { 0 } else { 255 };
-        image::Rgba([
-            u8::try_from(x * 255 / w.max(1)).unwrap(),
-            u8::try_from(y * 255 / h.max(1)).unwrap(),
-            128,
-            a,
-        ])
-    });
-    let mut out = std::io::Cursor::new(Vec::new());
-    if alpha {
-        image::DynamicImage::ImageRgba8(img)
-            .write_to(&mut out, image::ImageFormat::Png)
-            .unwrap();
-    } else {
-        image::DynamicImage::ImageRgb8(image::DynamicImage::ImageRgba8(img).to_rgb8())
-            .write_to(&mut out, image::ImageFormat::Png)
-            .unwrap();
-    }
-    out.into_inner()
-}
 
 /// Stages a blob as a cc write does (magpie 5.2) and references it from `conversation`.
 async fn stage(
@@ -99,44 +51,6 @@ async fn stage(
     .await
     .unwrap();
     sha
-}
-
-/// A gateway call for `conversation`'s sandbox (the identity headers the gateway adds, magpie 3.3).
-fn gateway(
-    r: &common::Replica,
-    method: reqwest::Method,
-    path: &str,
-    conversation: Uuid,
-    person: &str,
-    lease: Option<Uuid>,
-) -> reqwest::RequestBuilder {
-    let mut b = common::http()
-        .request(method, format!("{}{path}", r.url))
-        .bearer_auth(&r.tokens.gateway)
-        .header("aviary-request", Uuid::now_v7().to_string())
-        .header("aviary-protocol", "magpie-sandbox=1")
-        .header("aviary-sandbox-id", Uuid::new_v4().to_string())
-        .header("aviary-sandbox-conversation", conversation.to_string())
-        .header("aviary-sandbox-person", person);
-    if let Some(l) = lease {
-        b = b.header("aviary-lease", l.to_string());
-    }
-    b
-}
-
-/// Gives `conversation` a lease (the cc store's own lease route is WP-12's).
-async fn grant_lease(pool: &aviary_pg::Pool, conversation: Uuid) -> Uuid {
-    let lease = Uuid::new_v4();
-    pool.get()
-        .await
-        .unwrap()
-        .execute(
-            "update conversations set lease_id = $2 where id = $1",
-            &[&conversation, &lease],
-        )
-        .await
-        .unwrap();
-    lease
 }
 
 async fn get_blob(r: &common::Replica, hex: &str, variant: BlobVariant) -> reqwest::Response {

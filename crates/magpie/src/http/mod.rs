@@ -11,9 +11,13 @@ pub mod conversations;
 #[allow(clippy::missing_errors_doc)]
 pub mod creations;
 #[allow(clippy::missing_errors_doc)]
+pub mod files;
+#[allow(clippy::missing_errors_doc)]
 pub mod ops;
 #[allow(clippy::missing_errors_doc)]
 pub mod sandbox_cc;
+#[allow(clippy::missing_errors_doc)]
+pub mod sandbox_files;
 #[allow(clippy::missing_errors_doc)]
 pub mod sandbox_live;
 #[allow(clippy::missing_errors_doc)]

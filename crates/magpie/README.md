@@ -21,7 +21,7 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 | `src/changes.rs` | the per-person change feed (M12): `emit`/`upserted` in a transaction, `read` with its long-poll |
 | `src/fanout.rs` | the LISTEN hub (four channels) and the long-poll loop every held request uses |
 | `src/jobs/` | the job leader, purge, outbox (hermit calls), retention |
-| `src/files.rs` | blob reads (M15, the sandbox's), the sandbox's blob `PUT` |
+| `src/files.rs` | blob reads (M15, the sandbox's), the sandbox's blob `PUT`, sent-file snapshots (magpie 11.2), the files panel and downloads (M14: a send's snapshot, or the live workspace file streamed from hermit) |
 | `src/uploads.rs` | M13: uploads, image facts and the model copy |
 | `src/viewas.rs` | M17 and the view-as audit rows written with each change |
 | `src/sandbox.rs` | the conversation behind a gateway call, and its lease |
@@ -80,8 +80,9 @@ for a 1 MiB image line). The scanner, extraction and classification have unit an
 Tests that store blobs also need the CI S3 server (`AVIARY_TEST_S3_*`; each test database gets its own bucket):
 `tests/blobs.rs` (staged blobs served before the uploader stores them, a bucket outage, the GC's rules and the
 reconcile, M15's variants and headers, the sandbox's blob routes) and `tests/uploads.rs` (M13's limits and types,
-the model copy's bounds, EXIF rotation, HEIC through libheif, the decode cap, view-as recording, retention).
-`tests/fixtures/` holds a small HEIC made with libheif's `heif-enc`.
+the model copy's bounds, EXIF rotation, HEIC through libheif, the decode cap, view-as recording, retention). `tests/files.rs`: the two-phase
+sent-file snapshot, its validation and lease, the files panel, downloads of a send's snapshot with `Range`, live
+workspace files through fake-hermit. `tests/fixtures/` holds a small HEIC made with libheif's `heif-enc`.
 
 ## Deviations from the spec text
 
@@ -210,6 +211,4 @@ the model copy's bounds, EXIF rotation, HEIC through libheif, the decode cap, vi
 - The `display` and `thumb` variants have their own etags (`"<sha>-display"`, `"<sha>-thumb"`); `full` is
   `"<sha>"`. `display` of a media blob that is not an image (a PDF) answers 415 like `thumb`.
 - A derived copy (thumbnail, display copy) is served without being kept while the bucket cannot be reached.
-- Until WP-12's lease lands, the sandbox routes of this package check `Aviary-Lease` against `conversations.lease_id`
-  themselves (`src/sandbox.rs`).
 - An image upload's `width`/`height` are the upright dimensions (swapped for EXIF orientations 5-8).

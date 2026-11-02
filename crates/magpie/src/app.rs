@@ -17,6 +17,7 @@ use axum::body::Body;
 use axum::response::Response;
 use magpie_api::changes::{ChangesQuery, ChangesResponse};
 use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse, ListQuery, ListResponse, RenameRequest};
+use magpie_api::files::{FilesPanel, RawFileQuery};
 use magpie_api::live::{LiveFramesRequest, LiveState};
 use magpie_api::ops::{OpsStats, PeopleQuery, PeopleResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest};
 use magpie_api::rows::{PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery};
@@ -25,6 +26,7 @@ use magpie_api::sandbox::{
     CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery, CommandsQuery, CommandsResponse, Heartbeat,
     LeaseResponse, TasksReport, TurnStateReport,
 };
+use magpie_api::sandbox::{SentFilesCommitted, SentFilesRequest, SentFilesResponse};
 use magpie_api::server::{Ctx, Server};
 use magpie_api::turns::{AgentPermissionResponse, CancelResponse, SendRequest, SendResponse};
 use magpie_api::uploads::{BlobQuery, SandboxBlobQuery, UploadMeta, UploadResponse};
@@ -422,5 +424,21 @@ impl Server for Magpie {
 
     async fn heartbeat(&self, ctx: Ctx, body: Heartbeat) -> Answer<()> {
         http::sandbox_turns::heartbeat(self, ctx, body).await
+    }
+
+    async fn files_panel(&self, ctx: Ctx, id: Uuid) -> Answer<FilesPanel> {
+        http::files::panel(self, ctx, id).await
+    }
+
+    async fn files_raw(&self, ctx: Ctx, id: Uuid, query: RawFileQuery) -> Answer<Response> {
+        http::files::raw(self, ctx, id, query).await
+    }
+
+    async fn sent_files(&self, ctx: Ctx, body: SentFilesRequest) -> Answer<SentFilesResponse> {
+        http::sandbox_files::sent_files(self, ctx, body).await
+    }
+
+    async fn sent_files_commit(&self, ctx: Ctx, tool_use_id: String) -> Answer<SentFilesCommitted> {
+        http::sandbox_files::commit(self, ctx, tool_use_id).await
     }
 }

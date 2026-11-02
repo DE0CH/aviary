@@ -1,12 +1,14 @@
 //! The sandbox behind a gateway call (magpie 3.3): the conversation the gateway names, checked to exist and to
-//! belong to the person it names, and, on state-changing calls, the supervisor's lease (magpie 6.9).
+//! belong to the person it names, and, on state-changing calls, the supervisor's lease (magpie 6.9: the current
+//! `leaseId` presented by the sandbox that holds it, the same rule as the cc store's) and not migrating.
 
-use magpie_api::errors::ErrorCode;
+use magpie_api::errors::{ErrorCode, Refusal};
 use magpie_api::server::Ctx;
 use uuid::Uuid;
 
 use crate::db::Db;
 use crate::error::{Error, Result};
+use crate::limits;
 
 /// The sandbox's conversation, checked.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,7 +21,8 @@ pub struct SandboxConversation {
 
 /// The conversation of a gateway call: 404 when the identity headers are missing, the conversation does not exist
 /// or is not the named person's. With `lease`, the call's `Aviary-Lease` must be the conversation's current lease
-/// (409 `lease_lost` otherwise).
+/// from the sandbox that holds it (409 `lease_lost` otherwise), and the conversation must not be migrating (409
+/// `conversation_migrating`).
 ///
 /// # Errors
 /// Those refusals; a statement error.
@@ -27,7 +30,10 @@ pub async fn conversation(db: &impl Db, ctx: &Ctx, lease: bool) -> Result<Sandbo
     let sb = ctx.sandbox.as_ref().ok_or_else(Error::not_found)?;
     let id: Uuid = sb.conversation.parse().map_err(|_| Error::not_found())?;
     let row = db
-        .query_opt("select person, lease_id from conversations where id = $1", &[&id])
+        .query_opt(
+            "select person, lease_id, lease_sandbox, migrating from conversations where id = $1",
+            &[&id],
+        )
         .await?
         .ok_or_else(Error::not_found)?;
     let person: String = row.get(0);
@@ -35,9 +41,14 @@ pub async fn conversation(db: &impl Db, ctx: &Ctx, lease: bool) -> Result<Sandbo
         return Err(Error::not_found());
     }
     if lease {
+        if row.get::<_, bool>(3) {
+            return Err(Refusal::migrating(limits::MIGRATING_RETRY_AFTER_MS).into());
+        }
         let current: Option<Uuid> = row.get(1);
-        let given = ctx.lease.as_deref().and_then(|l| l.parse::<Uuid>().ok());
-        if current.is_none() || current != given {
+        let holder: Option<Uuid> = row.get(2);
+        let given = ctx.lease.as_deref().and_then(|l| l.trim().parse::<Uuid>().ok());
+        let sandbox = sb.id.trim().parse::<Uuid>().ok();
+        if current.is_none() || current != given || holder.is_none() || holder != sandbox {
             return Err(Error::code(
                 ErrorCode::LeaseLost,
                 "this sandbox does not hold the lease",

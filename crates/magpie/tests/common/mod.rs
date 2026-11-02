@@ -5,6 +5,7 @@
 
 pub mod cc;
 pub mod ev;
+pub mod files;
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
