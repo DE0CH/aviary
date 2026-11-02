@@ -6,12 +6,20 @@ import json, os, sys, time, urllib.request
 BASE = "http://127.0.0.1:7300"
 
 def call(method, path):
-    req = urllib.request.Request(BASE + path, method=method, data=b"" if method == "POST" else None)
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return r.status, r.read()
-    except urllib.error.HTTPError as e:
-        return e.code, e.read()
+    # retried on a connection error (one open across a checkpoint can be lost in the restore); a repeated POST /hold
+    # adds a second gate, which /release removes with the first
+    for attempt in range(6):
+        req = urllib.request.Request(BASE + path, method=method, data=b"" if method == "POST" else None)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+        except (urllib.error.URLError, OSError):
+            if attempt == 5:
+                raise
+            print(f"rigctl: retry {method} {path} after a connection error", file=sys.stderr)
+            time.sleep(0.5)
 
 def pids_of(*comms):
     out = []

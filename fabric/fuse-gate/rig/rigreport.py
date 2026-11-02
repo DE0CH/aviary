@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """After a session on the real build (root in the sandbox): every file under ~/.claude compared with fake magpie's
 copy (magpie scope) or found in the supervisor's local scope directory, JSONL validity of transcripts, and the
-magpie calls on each transcript that are not plain appends (a write below the end, a truncate). usage: rigreport.py"""
+magpie calls on each transcript that are not plain appends: `transcript_rewrites` lists every cc write below the
+highest end any earlier write of that path reached (per route the calls are in order, across routes they are not,
+so a truncate or a rename-over, listed beside it, also puts later appends there: read them together; with neither,
+a listed write is a rewrite). usage: rigreport.py"""
 import hashlib, json, os, urllib.parse, urllib.request
 
 BASE = "http://127.0.0.1:7300"

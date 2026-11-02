@@ -1,0 +1,32 @@
+1793655709392646 req=0 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793655709392971 req=0 recv msgs=1 model=claude-sonnet-4-5 stream=true plan=text:3x0ms
+1793655709393522 req=0 chunk=0 token=tk0x0
+1793655709393557 req=0 chunk=1 token=tk0x1
+1793655709393580 req=0 chunk=2 token=tk0x2
+1793655709393628 req=0 done stop=end_turn
+1793655709595032 req=1 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793655709595106 req=1 recv msgs=3 model=claude-sonnet-4-5 stream=true plan=trunconce
+1793655709595519 req=1 chunk=0 token=tk1x0
+1793655709595550 req=1 chunk=1 token=tk1x1
+1793655709595573 req=1 chunk=2 token=tk1x2
+1793655709595594 req=1 chunk=3 token=tk1x3
+1793655709896102 req=1 truncated (refusal, no message_stop)
+1793655709951433 req=2 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793655709951524 req=2 recv msgs=5 model=claude-sonnet-4-5 stream=true plan=trunconce
+1793655709951978 req=2 chunk=0 token=tk2x0
+1793655709952071 req=2 chunk=1 token=tk2x1
+1793655709952109 req=2 chunk=2 token=tk2x2
+1793655709952133 req=2 chunk=3 token=tk2x3
+1793655710253857 req=2 truncated (refusal, no message_stop)
+1793655710280108 req=3 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793655710280167 req=3 recv msgs=7 model=claude-opus-4-8 stream=true plan=text:4x0ms
+1793655710280579 req=3 chunk=0 token=tk3x0
+1793655710280705 req=3 chunk=1 token=tk3x1
+1793655710280813 req=3 chunk=2 token=tk3x2
+1793655710281156 req=3 chunk=3 token=tk3x3
+1793655710281676 req=3 done stop=end_turn
+1793655710419838 req=4 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793655710419885 req=4 recv msgs=10 model=claude-opus-4-8 stream=true plan=text:2x0ms
+1793655710420005 req=4 chunk=0 token=tk4x0
+1793655710420050 req=4 chunk=1 token=tk4x1
+1793655710420253 req=4 done stop=end_turn

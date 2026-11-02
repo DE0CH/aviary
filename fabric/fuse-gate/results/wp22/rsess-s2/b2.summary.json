@@ -1,0 +1,1 @@
+{"conversation": "01a19e40-3f08-743d-b09c-b93fa8bd06a2", "turns": [{"prompt": "Resumed after a line torn mid-way.\nGATE: text 5 0", "turnId": "01a19e40-6d9e-772f-afad-bcb45289a8b0", "start_us": 1793656384925552, "end_us": 1793656385580475, "state": "completed", "error": null, "exit_code": null, "duration_ms": 201, "reports": ["running", "completed"]}], "total_ms": 654}

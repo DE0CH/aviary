@@ -1,0 +1,77 @@
+{
+ "files": [
+  {
+   "path": ".last-cleanup",
+   "size": 24,
+   "sha256": "3f0ee45d5b93e9b7",
+   "scope": "local",
+   "equal_to_local": true
+  },
+  {
+   "path": "backups/.claude.json.backup.1793661639014",
+   "size": 84,
+   "sha256": "cd2e241769e1198c",
+   "scope": "local",
+   "equal_to_local": true
+  },
+  {
+   "path": "projects/-workspace/01a19e90-9783-77a2-9782-8bc68fdcd80e.jsonl",
+   "size": 263774,
+   "sha256": "b4e7939fec33cc43",
+   "scope": "magpie",
+   "equal_to_magpie": true,
+   "lines": 36,
+   "bad_lines": 0,
+   "ends_with_newline": true
+  },
+  {
+   "path": "projects/p/w.jsonl",
+   "size": 1048582,
+   "sha256": "3e09c6b81471c697",
+   "scope": "magpie",
+   "equal_to_magpie": true,
+   "lines": 8193,
+   "bad_lines": 8193,
+   "ends_with_newline": true
+  },
+  {
+   "path": "sessions/90.784efa866a5219dbafe176954537ccd671a0217eb9ec3211ba06f2ab3b6c9866.key",
+   "size": 94,
+   "sha256": "4b22c697ef41b0e4",
+   "scope": "local",
+   "equal_to_local": true
+  },
+  {
+   "path": "sessions/90.json",
+   "size": 500,
+   "sha256": "8543d33749fe59a0",
+   "scope": "local",
+   "equal_to_local": true
+  },
+  {
+   "path": "shell-snapshots/snapshot-bash-1793661639542-hj2bx2.sh",
+   "size": 3570,
+   "sha256": "f6bfc2e3ac4ec0da",
+   "scope": "local",
+   "equal_to_local": true
+  }
+ ],
+ "calls": {
+  "cc_write": 10,
+  "cc_truncate": 1,
+  "cc_setattr": 0,
+  "cc_rename": 0,
+  "cc_unlink": 0
+ },
+ "transcript_rewrites": [],
+ "truncates": [
+  {
+   "mtimeNs": 1793661639699909645,
+   "opId": "3de61659-f2c1-5f15-82ea-281673d59085",
+   "path": "projects/p/w.jsonl",
+   "size": 0
+  }
+ ],
+ "setattrs": [],
+ "renames": []
+}

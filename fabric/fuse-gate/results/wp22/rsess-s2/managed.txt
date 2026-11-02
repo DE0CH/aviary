@@ -1,0 +1,21 @@
+total 6
+drwxr-xr-x  2 root root  100 Nov  2 21:52 .
+drwxr-xr-x 43 root root 4096 Nov  2 21:40 ..
+-rw-r--r--  1 root root   78 Nov  2 21:52 CLAUDE.md
+-rw-r--r--  1 root root   71 Nov  2 21:52 managed-mcp.json
+-rw-r--r--  1 root root  259 Nov  2 21:52 managed-settings.json
+{
+  "allowManagedHooksOnly": true,
+  "cleanupPeriodDays": 36500,
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "SendUserFile",
+       "hooks": [{"type": "command", "command": "/usr/local/bin/supervisor hook send-user-file", "timeout": 120}]}
+    ]
+  }
+}
+{"mcpServers": {"tools": {"type": "http", "url": "http://tools/mcp"}}}
+
+You are the deployment's assistant.
+
+The workspace holds 1 GiB and 1000 files.

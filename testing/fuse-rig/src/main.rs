@@ -1,4 +1,4 @@
-//! `fuse-rig world DIR [MODEL_URL]`: the world a real `supervisor` (under a real `supervisor-keeper`) runs against inside a
+//! `fuse-rig world DIR [MODEL_URL [MEMORY_BYTES]]`: the world a real `supervisor` (under a real `supervisor-keeper`) runs against inside a
 //! sandbox, for the re-run of the FUSE gate on the real build (`crates/supervisor/GATE.md`, WP-22): fake hermit and
 //! fake magpie behind the reference gateway, all on loopback inside the sandbox, so their state moves with it in a
 //! live migration. It writes `DIR/proxy` (the boot environment's `HTTP_PROXY`, with a fresh sandbox token) and
@@ -18,6 +18,8 @@
 //! Claude Code's model is the gate's scripted mock (`fuse-gate model`, at the optional second argument,
 //! default `http://127.0.0.1:7200`) behind the gateway's `model` name, and its tools are `fake-tools` behind `tools`; the
 //! descriptor's `env` carries the proxy URL (`HTTP_PROXY` and the other three spellings), as YYC's does.
+//! `MEMORY_BYTES` replaces the descriptor's `resources.memoryBytes` (the supervisor's memory guard, supervisor 5,
+//! counts the world too, since it runs inside the sandbox).
 
 use std::collections::HashMap;
 use std::io::Write as _;
@@ -67,7 +69,10 @@ fn hex(b: &[u8]) -> String {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let (Some("world"), Some(dir)) = (args.get(1).map(String::as_str), args.get(2)) else {
-        let _ = writeln!(std::io::stderr(), "usage: fuse-rig world DIR [MODEL_URL]");
+        let _ = writeln!(
+            std::io::stderr(),
+            "usage: fuse-rig world DIR [MODEL_URL [MEMORY_BYTES]]"
+        );
         std::process::exit(2);
     };
     let dir = PathBuf::from(dir);
@@ -77,10 +82,11 @@ fn main() {
         .build()
         .unwrap_or_else(|e| fail(&e.to_string()));
     let model_url = args.get(3).cloned().unwrap_or_else(|| "http://127.0.0.1:7200".into());
-    rt.block_on(world(dir, model_url));
+    let memory: Option<u64> = args.get(4).map(|m| m.parse().unwrap_or_else(|_| fail("MEMORY_BYTES")));
+    rt.block_on(world(dir, model_url, memory));
 }
 
-async fn world(dir: PathBuf, model_url: String) {
+async fn world(dir: PathBuf, model_url: String, memory: Option<u64>) {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let hermit = FakeHermit::with_config(HermitConfig::default());
     let magpie = FakeMagpie::new();
@@ -137,11 +143,7 @@ async fn world(dir: PathBuf, model_url: String) {
         .mint_token(cid, Ipv4Addr::LOCALHOST)
         .unwrap_or_else(|| fail("sandbox token"));
     let proxy = format!("http://sbx:{st}@{}", gateway.proxy_addr());
-    hermit.configure(|c| {
-        for k in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
-            c.descriptor.env.insert(k.into(), proxy.clone());
-        }
-    });
+    configure_descriptor(&hermit, &proxy, memory);
     let admin = tokio::net::TcpListener::bind(ADMIN)
         .await
         .unwrap_or_else(|e| fail(&format!("bind {ADMIN}: {e}")));
@@ -190,6 +192,18 @@ async fn serve_tools(token: &str) -> String {
     let app = tools.router();
     tokio::spawn(async move { axum::serve(tl, app).await });
     url
+}
+
+/// The descriptor's proxy URL (the four spellings) and, when given, its `memoryBytes`.
+fn configure_descriptor(hermit: &FakeHermit, proxy: &str, memory: Option<u64>) {
+    hermit.configure(|c| {
+        if let Some(m) = memory {
+            c.descriptor.resources.memory_bytes = m;
+        }
+        for k in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
+            c.descriptor.env.insert(k.into(), proxy.to_owned());
+        }
+    });
 }
 
 fn token_of(n: &str) -> String {

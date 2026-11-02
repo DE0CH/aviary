@@ -37,12 +37,23 @@ hosts. `gate.sh bundle` with `RIG=1` makes `rig/init.sh` the first process: it s
 keeper as PID 1, which starts `/usr/local/bin/supervisor run` (the rig's binary bound over the image's path).
 
 ```bash
+./rig/host-rig.sh                          # once per host: Claude Code at /opt/claude-code/bin/claude, the stdout tap
 ./rig/rig-mount.sh m1                      # items 1 and 5 on the real build
 ./rig/rig-kill.sh k1                       # item 4: the fault-injection build SIGKILLs itself at each journal point
 ./rig/rig-mig.sh w1 write <target ip>      # one migration with a write (or create, mkdir, rename) held in magpie
 ./rig/rig-batch.sh X 10 <target ip>        # 10 rounds of the four ops in both layouts (LAYOUTS, OPS)
 LOOPBACK=1 ./rig/rig-batch.sh L 10         # the same with the target on this host (gate.sh GATE_SIDE=b)
+./rig/rig-session.sh s1                    # item 2: Claude Code launched by the real supervisor (6.1-6.4), turns as
+STRACE=1 ./rig/rig-session.sh s2           #   magpie start_turns; item 9 (then strace-inventory.py on the boot log)
+./rig/rig-tomb.sh t1 [catalog|catalog2]    # item 2's tombstone triggers under the supervisor's argv
+./rig/rig-latency.sh l1                    # items 6 and 10 (bench, message latency, 87 MiB cold resume)
+LOOPBACK=1 [FILL=1] ./rig/rig-migcc.sh m1  # item 3 with Claude Code mid-turn and every cc write held (FILL: full cache)
 ```
+
+For the Claude Code items fuse-rig's world also runs the gate's mock model (`/var/lib/gate/bin/fuse-gate`, started by
+`rig/init.sh`) and fake-tools behind the gateway; `rig/rigsession.py` drives turns through the world's admin port and
+`rig/mksessions.py` writes the scripted sessions. `rig-migcc.sh` needs `sandboxd` (its `migrate-relay`) at
+`/usr/local/bin/sandboxd` and `/root/.ssh/gate` accepted by the target (the host itself for `LOOPBACK=1`).
 
 Results land in `/root/out/{rig,kill,rmount}-NAME/`. A target with no public address works over a private network
 (`rig-mig.sh` reaches it by SSH as root with `/root/.ssh/gate` and sends the stream to `[ip]:7000`).

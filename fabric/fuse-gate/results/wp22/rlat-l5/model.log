@@ -1,0 +1,1001 @@
+1793659011641621 req=0 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659011641680 req=0 recv msgs=1 model=claude-sonnet-4-5 stream=true plan=tool:Bash
+1793659011642099 req=0 done stop=tool_use
+1793659011781102 req=1 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659011781157 req=1 recv msgs=3 model=claude-sonnet-4-5 stream=true plan=text:3x0ms
+1793659011781308 req=1 chunk=0 token=tk1x0
+1793659011781385 req=1 chunk=1 token=tk1x1
+1793659011781470 req=1 chunk=2 token=tk1x2
+1793659011781557 req=1 done stop=end_turn
+1793659012043045 req=2 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659012043116 req=2 recv msgs=5 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659012043419 req=2 done stop=tool_use
+1793659012112175 req=3 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659012112299 req=3 recv msgs=7 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659012112600 req=3 done stop=tool_use
+1793659012136808 req=4 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659012136866 req=4 recv msgs=9 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659012137700 req=4 chunk=0 token=tk4x0
+1793659012158340 req=4 chunk=1 token=tk4x1
+1793659012179592 req=4 chunk=2 token=tk4x2
+1793659012200997 req=4 chunk=3 token=tk4x3
+1793659012221409 req=4 chunk=4 token=tk4x4
+1793659012242531 req=4 chunk=5 token=tk4x5
+1793659012263690 req=4 chunk=6 token=tk4x6
+1793659012284819 req=4 chunk=7 token=tk4x7
+1793659012305747 req=4 chunk=8 token=tk4x8
+1793659012326324 req=4 chunk=9 token=tk4x9
+1793659012346633 req=4 chunk=10 token=tk4x10
+1793659012366895 req=4 chunk=11 token=tk4x11
+1793659012387868 req=4 chunk=12 token=tk4x12
+1793659012409307 req=4 chunk=13 token=tk4x13
+1793659012430084 req=4 chunk=14 token=tk4x14
+1793659012450800 req=4 chunk=15 token=tk4x15
+1793659012471352 req=4 chunk=16 token=tk4x16
+1793659012491877 req=4 chunk=17 token=tk4x17
+1793659012512453 req=4 chunk=18 token=tk4x18
+1793659012533045 req=4 chunk=19 token=tk4x19
+1793659012553244 req=4 chunk=20 token=tk4x20
+1793659012574455 req=4 chunk=21 token=tk4x21
+1793659012595164 req=4 chunk=22 token=tk4x22
+1793659012616152 req=4 chunk=23 token=tk4x23
+1793659012637407 req=4 chunk=24 token=tk4x24
+1793659012658324 req=4 chunk=25 token=tk4x25
+1793659012679396 req=4 chunk=26 token=tk4x26
+1793659012700524 req=4 chunk=27 token=tk4x27
+1793659012721881 req=4 chunk=28 token=tk4x28
+1793659012742623 req=4 chunk=29 token=tk4x29
+1793659012763659 req=4 chunk=30 token=tk4x30
+1793659012784174 req=4 chunk=31 token=tk4x31
+1793659012805099 req=4 chunk=32 token=tk4x32
+1793659012826483 req=4 chunk=33 token=tk4x33
+1793659012847461 req=4 chunk=34 token=tk4x34
+1793659012868472 req=4 chunk=35 token=tk4x35
+1793659012889331 req=4 chunk=36 token=tk4x36
+1793659012910555 req=4 chunk=37 token=tk4x37
+1793659012931680 req=4 chunk=38 token=tk4x38
+1793659012952863 req=4 chunk=39 token=tk4x39
+1793659012953187 req=4 done stop=end_turn
+1793659013111851 req=5 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659013111904 req=5 recv msgs=11 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659013112181 req=5 done stop=tool_use
+1793659013144593 req=6 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659013144654 req=6 recv msgs=13 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659013144999 req=6 done stop=tool_use
+1793659013167218 req=7 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659013167277 req=7 recv msgs=15 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659013167631 req=7 chunk=0 token=tk7x0
+1793659013188154 req=7 chunk=1 token=tk7x1
+1793659013208734 req=7 chunk=2 token=tk7x2
+1793659013229160 req=7 chunk=3 token=tk7x3
+1793659013249536 req=7 chunk=4 token=tk7x4
+1793659013269777 req=7 chunk=5 token=tk7x5
+1793659013290471 req=7 chunk=6 token=tk7x6
+1793659013311797 req=7 chunk=7 token=tk7x7
+1793659013333077 req=7 chunk=8 token=tk7x8
+1793659013353415 req=7 chunk=9 token=tk7x9
+1793659013373557 req=7 chunk=10 token=tk7x10
+1793659013394569 req=7 chunk=11 token=tk7x11
+1793659013414961 req=7 chunk=12 token=tk7x12
+1793659013435270 req=7 chunk=13 token=tk7x13
+1793659013456259 req=7 chunk=14 token=tk7x14
+1793659013477134 req=7 chunk=15 token=tk7x15
+1793659013498151 req=7 chunk=16 token=tk7x16
+1793659013518387 req=7 chunk=17 token=tk7x17
+1793659013538666 req=7 chunk=18 token=tk7x18
+1793659013559027 req=7 chunk=19 token=tk7x19
+1793659013580322 req=7 chunk=20 token=tk7x20
+1793659013600735 req=7 chunk=21 token=tk7x21
+1793659013621995 req=7 chunk=22 token=tk7x22
+1793659013642688 req=7 chunk=23 token=tk7x23
+1793659013663331 req=7 chunk=24 token=tk7x24
+1793659013683969 req=7 chunk=25 token=tk7x25
+1793659013704653 req=7 chunk=26 token=tk7x26
+1793659013725432 req=7 chunk=27 token=tk7x27
+1793659013746043 req=7 chunk=28 token=tk7x28
+1793659013767020 req=7 chunk=29 token=tk7x29
+1793659013787958 req=7 chunk=30 token=tk7x30
+1793659013809033 req=7 chunk=31 token=tk7x31
+1793659013829482 req=7 chunk=32 token=tk7x32
+1793659013850524 req=7 chunk=33 token=tk7x33
+1793659013871616 req=7 chunk=34 token=tk7x34
+1793659013892215 req=7 chunk=35 token=tk7x35
+1793659013912470 req=7 chunk=36 token=tk7x36
+1793659013933365 req=7 chunk=37 token=tk7x37
+1793659013954151 req=7 chunk=38 token=tk7x38
+1793659013975238 req=7 chunk=39 token=tk7x39
+1793659013975404 req=7 done stop=end_turn
+1793659014132610 req=8 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659014132632 req=8 recv msgs=17 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659014132960 req=8 done stop=tool_use
+1793659014168974 req=9 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659014168992 req=9 recv msgs=19 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659014169222 req=9 done stop=tool_use
+1793659014190407 req=10 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659014190424 req=10 recv msgs=21 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659014190527 req=10 chunk=0 token=tk10x0
+1793659014210695 req=10 chunk=1 token=tk10x1
+1793659014231844 req=10 chunk=2 token=tk10x2
+1793659014252181 req=10 chunk=3 token=tk10x3
+1793659014272876 req=10 chunk=4 token=tk10x4
+1793659014294081 req=10 chunk=5 token=tk10x5
+1793659014315158 req=10 chunk=6 token=tk10x6
+1793659014336153 req=10 chunk=7 token=tk10x7
+1793659014357147 req=10 chunk=8 token=tk10x8
+1793659014377684 req=10 chunk=9 token=tk10x9
+1793659014398126 req=10 chunk=10 token=tk10x10
+1793659014418515 req=10 chunk=11 token=tk10x11
+1793659014438988 req=10 chunk=12 token=tk10x12
+1793659014459458 req=10 chunk=13 token=tk10x13
+1793659014479916 req=10 chunk=14 token=tk10x14
+1793659014501064 req=10 chunk=15 token=tk10x15
+1793659014521974 req=10 chunk=16 token=tk10x16
+1793659014543097 req=10 chunk=17 token=tk10x17
+1793659014563665 req=10 chunk=18 token=tk10x18
+1793659014583934 req=10 chunk=19 token=tk10x19
+1793659014604288 req=10 chunk=20 token=tk10x20
+1793659014624857 req=10 chunk=21 token=tk10x21
+1793659014646031 req=10 chunk=22 token=tk10x22
+1793659014666989 req=10 chunk=23 token=tk10x23
+1793659014688004 req=10 chunk=24 token=tk10x24
+1793659014709317 req=10 chunk=25 token=tk10x25
+1793659014730404 req=10 chunk=26 token=tk10x26
+1793659014751450 req=10 chunk=27 token=tk10x27
+1793659014771838 req=10 chunk=28 token=tk10x28
+1793659014792212 req=10 chunk=29 token=tk10x29
+1793659014812318 req=10 chunk=30 token=tk10x30
+1793659014832437 req=10 chunk=31 token=tk10x31
+1793659014853014 req=10 chunk=32 token=tk10x32
+1793659014873145 req=10 chunk=33 token=tk10x33
+1793659014894189 req=10 chunk=34 token=tk10x34
+1793659014915111 req=10 chunk=35 token=tk10x35
+1793659014935369 req=10 chunk=36 token=tk10x36
+1793659014955912 req=10 chunk=37 token=tk10x37
+1793659014976561 req=10 chunk=38 token=tk10x38
+1793659014997713 req=10 chunk=39 token=tk10x39
+1793659014997935 req=10 done stop=end_turn
+1793659015191193 req=11 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659015191211 req=11 recv msgs=23 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659015191577 req=11 done stop=tool_use
+1793659015229644 req=12 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659015229663 req=12 recv msgs=25 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659015229826 req=12 done stop=tool_use
+1793659015253842 req=13 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659015253859 req=13 recv msgs=27 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659015253961 req=13 chunk=0 token=tk13x0
+1793659015275059 req=13 chunk=1 token=tk13x1
+1793659015295275 req=13 chunk=2 token=tk13x2
+1793659015316064 req=13 chunk=3 token=tk13x3
+1793659015336422 req=13 chunk=4 token=tk13x4
+1793659015357014 req=13 chunk=5 token=tk13x5
+1793659015377300 req=13 chunk=6 token=tk13x6
+1793659015397473 req=13 chunk=7 token=tk13x7
+1793659015418250 req=13 chunk=8 token=tk13x8
+1793659015438437 req=13 chunk=9 token=tk13x9
+1793659015458671 req=13 chunk=10 token=tk13x10
+1793659015479237 req=13 chunk=11 token=tk13x11
+1793659015500315 req=13 chunk=12 token=tk13x12
+1793659015521011 req=13 chunk=13 token=tk13x13
+1793659015541929 req=13 chunk=14 token=tk13x14
+1793659015562625 req=13 chunk=15 token=tk13x15
+1793659015582901 req=13 chunk=16 token=tk13x16
+1793659015603546 req=13 chunk=17 token=tk13x17
+1793659015623942 req=13 chunk=18 token=tk13x18
+1793659015644413 req=13 chunk=19 token=tk13x19
+1793659015665709 req=13 chunk=20 token=tk13x20
+1793659015686580 req=13 chunk=21 token=tk13x21
+1793659015707069 req=13 chunk=22 token=tk13x22
+1793659015727729 req=13 chunk=23 token=tk13x23
+1793659015748914 req=13 chunk=24 token=tk13x24
+1793659015769825 req=13 chunk=25 token=tk13x25
+1793659015790370 req=13 chunk=26 token=tk13x26
+1793659015811118 req=13 chunk=27 token=tk13x27
+1793659015831467 req=13 chunk=28 token=tk13x28
+1793659015852746 req=13 chunk=29 token=tk13x29
+1793659015873570 req=13 chunk=30 token=tk13x30
+1793659015893961 req=13 chunk=31 token=tk13x31
+1793659015915187 req=13 chunk=32 token=tk13x32
+1793659015936634 req=13 chunk=33 token=tk13x33
+1793659015956951 req=13 chunk=34 token=tk13x34
+1793659015978090 req=13 chunk=35 token=tk13x35
+1793659015998437 req=13 chunk=36 token=tk13x36
+1793659016019402 req=13 chunk=37 token=tk13x37
+1793659016040851 req=13 chunk=38 token=tk13x38
+1793659016061961 req=13 chunk=39 token=tk13x39
+1793659016062146 req=13 done stop=end_turn
+1793659016224619 req=14 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659016224647 req=14 recv msgs=29 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659016224884 req=14 done stop=tool_use
+1793659016265234 req=15 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659016265312 req=15 recv msgs=31 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659016265711 req=15 done stop=tool_use
+1793659016288972 req=16 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659016289025 req=16 recv msgs=33 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659016289153 req=16 chunk=0 token=tk16x0
+1793659016309389 req=16 chunk=1 token=tk16x1
+1793659016330543 req=16 chunk=2 token=tk16x2
+1793659016351003 req=16 chunk=3 token=tk16x3
+1793659016372229 req=16 chunk=4 token=tk16x4
+1793659016392525 req=16 chunk=5 token=tk16x5
+1793659016412783 req=16 chunk=6 token=tk16x6
+1793659016433044 req=16 chunk=7 token=tk16x7
+1793659016453702 req=16 chunk=8 token=tk16x8
+1793659016474184 req=16 chunk=9 token=tk16x9
+1793659016494326 req=16 chunk=10 token=tk16x10
+1793659016515389 req=16 chunk=11 token=tk16x11
+1793659016536103 req=16 chunk=12 token=tk16x12
+1793659016557319 req=16 chunk=13 token=tk16x13
+1793659016578705 req=16 chunk=14 token=tk16x14
+1793659016599559 req=16 chunk=15 token=tk16x15
+1793659016620357 req=16 chunk=16 token=tk16x16
+1793659016641463 req=16 chunk=17 token=tk16x17
+1793659016662181 req=16 chunk=18 token=tk16x18
+1793659016682789 req=16 chunk=19 token=tk16x19
+1793659016703738 req=16 chunk=20 token=tk16x20
+1793659016724412 req=16 chunk=21 token=tk16x21
+1793659016744883 req=16 chunk=22 token=tk16x22
+1793659016765980 req=16 chunk=23 token=tk16x23
+1793659016786607 req=16 chunk=24 token=tk16x24
+1793659016806828 req=16 chunk=25 token=tk16x25
+1793659016827635 req=16 chunk=26 token=tk16x26
+1793659016848628 req=16 chunk=27 token=tk16x27
+1793659016868989 req=16 chunk=28 token=tk16x28
+1793659016889701 req=16 chunk=29 token=tk16x29
+1793659016910747 req=16 chunk=30 token=tk16x30
+1793659016931660 req=16 chunk=31 token=tk16x31
+1793659016952677 req=16 chunk=32 token=tk16x32
+1793659016973847 req=16 chunk=33 token=tk16x33
+1793659016994666 req=16 chunk=34 token=tk16x34
+1793659017015610 req=16 chunk=35 token=tk16x35
+1793659017035900 req=16 chunk=36 token=tk16x36
+1793659017056257 req=16 chunk=37 token=tk16x37
+1793659017077300 req=16 chunk=38 token=tk16x38
+1793659017097396 req=16 chunk=39 token=tk16x39
+1793659017097575 req=16 done stop=end_turn
+1793659017411956 req=17 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659017411974 req=17 recv msgs=35 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659017412204 req=17 done stop=tool_use
+1793659017453115 req=18 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659017453146 req=18 recv msgs=37 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659017453503 req=18 done stop=tool_use
+1793659017477467 req=19 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659017477484 req=19 recv msgs=39 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659017477581 req=19 chunk=0 token=tk19x0
+1793659017498161 req=19 chunk=1 token=tk19x1
+1793659017518746 req=19 chunk=2 token=tk19x2
+1793659017538912 req=19 chunk=3 token=tk19x3
+1793659017559089 req=19 chunk=4 token=tk19x4
+1793659017579587 req=19 chunk=5 token=tk19x5
+1793659017599881 req=19 chunk=6 token=tk19x6
+1793659017620541 req=19 chunk=7 token=tk19x7
+1793659017640898 req=19 chunk=8 token=tk19x8
+1793659017662293 req=19 chunk=9 token=tk19x9
+1793659017682733 req=19 chunk=10 token=tk19x10
+1793659017703188 req=19 chunk=11 token=tk19x11
+1793659017724228 req=19 chunk=12 token=tk19x12
+1793659017745088 req=19 chunk=13 token=tk19x13
+1793659017766085 req=19 chunk=14 token=tk19x14
+1793659017787064 req=19 chunk=15 token=tk19x15
+1793659017807506 req=19 chunk=16 token=tk19x16
+1793659017827625 req=19 chunk=17 token=tk19x17
+1793659017848611 req=19 chunk=18 token=tk19x18
+1793659017869417 req=19 chunk=19 token=tk19x19
+1793659017889866 req=19 chunk=20 token=tk19x20
+1793659017910185 req=19 chunk=21 token=tk19x21
+1793659017930519 req=19 chunk=22 token=tk19x22
+1793659017951059 req=19 chunk=23 token=tk19x23
+1793659017972044 req=19 chunk=24 token=tk19x24
+1793659017992439 req=19 chunk=25 token=tk19x25
+1793659018012968 req=19 chunk=26 token=tk19x26
+1793659018033468 req=19 chunk=27 token=tk19x27
+1793659018053717 req=19 chunk=28 token=tk19x28
+1793659018075019 req=19 chunk=29 token=tk19x29
+1793659018095283 req=19 chunk=30 token=tk19x30
+1793659018116382 req=19 chunk=31 token=tk19x31
+1793659018137443 req=19 chunk=32 token=tk19x32
+1793659018158478 req=19 chunk=33 token=tk19x33
+1793659018179698 req=19 chunk=34 token=tk19x34
+1793659018200252 req=19 chunk=35 token=tk19x35
+1793659018220406 req=19 chunk=36 token=tk19x36
+1793659018240905 req=19 chunk=37 token=tk19x37
+1793659018261099 req=19 chunk=38 token=tk19x38
+1793659018282501 req=19 chunk=39 token=tk19x39
+1793659018283040 req=19 done stop=end_turn
+1793659018440532 req=20 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659018440554 req=20 recv msgs=41 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659018440958 req=20 done stop=tool_use
+1793659018477686 req=21 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659018477705 req=21 recv msgs=43 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659018477951 req=21 done stop=tool_use
+1793659018499952 req=22 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659018499983 req=22 recv msgs=45 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659018500088 req=22 chunk=0 token=tk22x0
+1793659018521221 req=22 chunk=1 token=tk22x1
+1793659018542187 req=22 chunk=2 token=tk22x2
+1793659018563216 req=22 chunk=3 token=tk22x3
+1793659018584362 req=22 chunk=4 token=tk22x4
+1793659018605424 req=22 chunk=5 token=tk22x5
+1793659018626544 req=22 chunk=6 token=tk22x6
+1793659018646981 req=22 chunk=7 token=tk22x7
+1793659018668133 req=22 chunk=8 token=tk22x8
+1793659018688783 req=22 chunk=9 token=tk22x9
+1793659018709107 req=22 chunk=10 token=tk22x10
+1793659018730032 req=22 chunk=11 token=tk22x11
+1793659018750697 req=22 chunk=12 token=tk22x12
+1793659018771750 req=22 chunk=13 token=tk22x13
+1793659018792700 req=22 chunk=14 token=tk22x14
+1793659018812888 req=22 chunk=15 token=tk22x15
+1793659018833013 req=22 chunk=16 token=tk22x16
+1793659018854198 req=22 chunk=17 token=tk22x17
+1793659018874628 req=22 chunk=18 token=tk22x18
+1793659018895023 req=22 chunk=19 token=tk22x19
+1793659018915831 req=22 chunk=20 token=tk22x20
+1793659018936370 req=22 chunk=21 token=tk22x21
+1793659018956687 req=22 chunk=22 token=tk22x22
+1793659018977992 req=22 chunk=23 token=tk22x23
+1793659018999164 req=22 chunk=24 token=tk22x24
+1793659019019387 req=22 chunk=25 token=tk22x25
+1793659019040853 req=22 chunk=26 token=tk22x26
+1793659019062207 req=22 chunk=27 token=tk22x27
+1793659019082635 req=22 chunk=28 token=tk22x28
+1793659019103246 req=22 chunk=29 token=tk22x29
+1793659019124437 req=22 chunk=30 token=tk22x30
+1793659019145481 req=22 chunk=31 token=tk22x31
+1793659019166645 req=22 chunk=32 token=tk22x32
+1793659019188064 req=22 chunk=33 token=tk22x33
+1793659019208743 req=22 chunk=34 token=tk22x34
+1793659019229874 req=22 chunk=35 token=tk22x35
+1793659019250109 req=22 chunk=36 token=tk22x36
+1793659019270933 req=22 chunk=37 token=tk22x37
+1793659019291101 req=22 chunk=38 token=tk22x38
+1793659019312156 req=22 chunk=39 token=tk22x39
+1793659019312353 req=22 done stop=end_turn
+1793659019464619 req=23 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659019464640 req=23 recv msgs=47 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659019465079 req=23 done stop=tool_use
+1793659019505048 req=24 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659019505071 req=24 recv msgs=49 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659019505385 req=24 done stop=tool_use
+1793659019526932 req=25 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659019526949 req=25 recv msgs=51 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659019527108 req=25 chunk=0 token=tk25x0
+1793659019548103 req=25 chunk=1 token=tk25x1
+1793659019568941 req=25 chunk=2 token=tk25x2
+1793659019589086 req=25 chunk=3 token=tk25x3
+1793659019610325 req=25 chunk=4 token=tk25x4
+1793659019630542 req=25 chunk=5 token=tk25x5
+1793659019650950 req=25 chunk=6 token=tk25x6
+1793659019671072 req=25 chunk=7 token=tk25x7
+1793659019691247 req=25 chunk=8 token=tk25x8
+1793659019712130 req=25 chunk=9 token=tk25x9
+1793659019732785 req=25 chunk=10 token=tk25x10
+1793659019753138 req=25 chunk=11 token=tk25x11
+1793659019773825 req=25 chunk=12 token=tk25x12
+1793659019794379 req=25 chunk=13 token=tk25x13
+1793659019815326 req=25 chunk=14 token=tk25x14
+1793659019836232 req=25 chunk=15 token=tk25x15
+1793659019857259 req=25 chunk=16 token=tk25x16
+1793659019878262 req=25 chunk=17 token=tk25x17
+1793659019898514 req=25 chunk=18 token=tk25x18
+1793659019918757 req=25 chunk=19 token=tk25x19
+1793659019939083 req=25 chunk=20 token=tk25x20
+1793659019960390 req=25 chunk=21 token=tk25x21
+1793659019981524 req=25 chunk=22 token=tk25x22
+1793659020001652 req=25 chunk=23 token=tk25x23
+1793659020022043 req=25 chunk=24 token=tk25x24
+1793659020042663 req=25 chunk=25 token=tk25x25
+1793659020063018 req=25 chunk=26 token=tk25x26
+1793659020083556 req=25 chunk=27 token=tk25x27
+1793659020103973 req=25 chunk=28 token=tk25x28
+1793659020125040 req=25 chunk=29 token=tk25x29
+1793659020145921 req=25 chunk=30 token=tk25x30
+1793659020166157 req=25 chunk=31 token=tk25x31
+1793659020187526 req=25 chunk=32 token=tk25x32
+1793659020208276 req=25 chunk=33 token=tk25x33
+1793659020229191 req=25 chunk=34 token=tk25x34
+1793659020249557 req=25 chunk=35 token=tk25x35
+1793659020270154 req=25 chunk=36 token=tk25x36
+1793659020290704 req=25 chunk=37 token=tk25x37
+1793659020311157 req=25 chunk=38 token=tk25x38
+1793659020331830 req=25 chunk=39 token=tk25x39
+1793659020332020 req=25 done stop=end_turn
+1793659020488205 req=26 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659020488233 req=26 recv msgs=53 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659020488518 req=26 done stop=tool_use
+1793659020522385 req=27 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659020522425 req=27 recv msgs=55 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659020522823 req=27 done stop=tool_use
+1793659020542890 req=28 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659020542949 req=28 recv msgs=57 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659020543908 req=28 chunk=0 token=tk28x0
+1793659020564450 req=28 chunk=1 token=tk28x1
+1793659020585817 req=28 chunk=2 token=tk28x2
+1793659020606816 req=28 chunk=3 token=tk28x3
+1793659020627524 req=28 chunk=4 token=tk28x4
+1793659020647806 req=28 chunk=5 token=tk28x5
+1793659020668897 req=28 chunk=6 token=tk28x6
+1793659020690140 req=28 chunk=7 token=tk28x7
+1793659020710883 req=28 chunk=8 token=tk28x8
+1793659020731855 req=28 chunk=9 token=tk28x9
+1793659020753214 req=28 chunk=10 token=tk28x10
+1793659020774507 req=28 chunk=11 token=tk28x11
+1793659020794927 req=28 chunk=12 token=tk28x12
+1793659020815281 req=28 chunk=13 token=tk28x13
+1793659020836241 req=28 chunk=14 token=tk28x14
+1793659020856708 req=28 chunk=15 token=tk28x15
+1793659020877542 req=28 chunk=16 token=tk28x16
+1793659020898642 req=28 chunk=17 token=tk28x17
+1793659020919129 req=28 chunk=18 token=tk28x18
+1793659020939782 req=28 chunk=19 token=tk28x19
+1793659020960896 req=28 chunk=20 token=tk28x20
+1793659020981626 req=28 chunk=21 token=tk28x21
+1793659021002973 req=28 chunk=22 token=tk28x22
+1793659021023729 req=28 chunk=23 token=tk28x23
+1793659021045412 req=28 chunk=24 token=tk28x24
+1793659021066962 req=28 chunk=25 token=tk28x25
+1793659021088472 req=28 chunk=26 token=tk28x26
+1793659021109458 req=28 chunk=27 token=tk28x27
+1793659021130907 req=28 chunk=28 token=tk28x28
+1793659021151506 req=28 chunk=29 token=tk28x29
+1793659021172551 req=28 chunk=30 token=tk28x30
+1793659021193055 req=28 chunk=31 token=tk28x31
+1793659021213910 req=28 chunk=32 token=tk28x32
+1793659021235164 req=28 chunk=33 token=tk28x33
+1793659021255778 req=28 chunk=34 token=tk28x34
+1793659021276177 req=28 chunk=35 token=tk28x35
+1793659021296707 req=28 chunk=36 token=tk28x36
+1793659021318007 req=28 chunk=37 token=tk28x37
+1793659021338913 req=28 chunk=38 token=tk28x38
+1793659021359424 req=28 chunk=39 token=tk28x39
+1793659021360440 req=28 done stop=end_turn
+1793659021514063 req=29 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659021514084 req=29 recv msgs=59 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659021514474 req=29 done stop=tool_use
+1793659021551824 req=30 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659021551844 req=30 recv msgs=61 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659021552024 req=30 done stop=tool_use
+1793659021572511 req=31 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659021572570 req=31 recv msgs=63 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659021572725 req=31 chunk=0 token=tk31x0
+1793659021593725 req=31 chunk=1 token=tk31x1
+1793659021613926 req=31 chunk=2 token=tk31x2
+1793659021634649 req=31 chunk=3 token=tk31x3
+1793659021655297 req=31 chunk=4 token=tk31x4
+1793659021676412 req=31 chunk=5 token=tk31x5
+1793659021696607 req=31 chunk=6 token=tk31x6
+1793659021716727 req=31 chunk=7 token=tk31x7
+1793659021737470 req=31 chunk=8 token=tk31x8
+1793659021758555 req=31 chunk=9 token=tk31x9
+1793659021779695 req=31 chunk=10 token=tk31x10
+1793659021800539 req=31 chunk=11 token=tk31x11
+1793659021820846 req=31 chunk=12 token=tk31x12
+1793659021841068 req=31 chunk=13 token=tk31x13
+1793659021861627 req=31 chunk=14 token=tk31x14
+1793659021882409 req=31 chunk=15 token=tk31x15
+1793659021902664 req=31 chunk=16 token=tk31x16
+1793659021923013 req=31 chunk=17 token=tk31x17
+1793659021943202 req=31 chunk=18 token=tk31x18
+1793659021963725 req=31 chunk=19 token=tk31x19
+1793659021984301 req=31 chunk=20 token=tk31x20
+1793659022005481 req=31 chunk=21 token=tk31x21
+1793659022025795 req=31 chunk=22 token=tk31x22
+1793659022046638 req=31 chunk=23 token=tk31x23
+1793659022067090 req=31 chunk=24 token=tk31x24
+1793659022087498 req=31 chunk=25 token=tk31x25
+1793659022108730 req=31 chunk=26 token=tk31x26
+1793659022129028 req=31 chunk=27 token=tk31x27
+1793659022149660 req=31 chunk=28 token=tk31x28
+1793659022170697 req=31 chunk=29 token=tk31x29
+1793659022191488 req=31 chunk=30 token=tk31x30
+1793659022212369 req=31 chunk=31 token=tk31x31
+1793659022232510 req=31 chunk=32 token=tk31x32
+1793659022252945 req=31 chunk=33 token=tk31x33
+1793659022273702 req=31 chunk=34 token=tk31x34
+1793659022294697 req=31 chunk=35 token=tk31x35
+1793659022315369 req=31 chunk=36 token=tk31x36
+1793659022335491 req=31 chunk=37 token=tk31x37
+1793659022356202 req=31 chunk=38 token=tk31x38
+1793659022377055 req=31 chunk=39 token=tk31x39
+1793659022377177 req=31 done stop=end_turn
+1793659022727205 req=32 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659022727224 req=32 recv msgs=65 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659022727574 req=32 done stop=tool_use
+1793659022763567 req=33 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659022763620 req=33 recv msgs=67 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659022763949 req=33 done stop=tool_use
+1793659022803364 req=34 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659022803425 req=34 recv msgs=69 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659022803540 req=34 chunk=0 token=tk34x0
+1793659022824082 req=34 chunk=1 token=tk34x1
+1793659022844669 req=34 chunk=2 token=tk34x2
+1793659022865716 req=34 chunk=3 token=tk34x3
+1793659022885903 req=34 chunk=4 token=tk34x4
+1793659022906021 req=34 chunk=5 token=tk34x5
+1793659022926225 req=34 chunk=6 token=tk34x6
+1793659022947206 req=34 chunk=7 token=tk34x7
+1793659022968362 req=34 chunk=8 token=tk34x8
+1793659022989587 req=34 chunk=9 token=tk34x9
+1793659023010115 req=34 chunk=10 token=tk34x10
+1793659023031225 req=34 chunk=11 token=tk34x11
+1793659023052340 req=34 chunk=12 token=tk34x12
+1793659023072496 req=34 chunk=13 token=tk34x13
+1793659023093416 req=34 chunk=14 token=tk34x14
+1793659023114334 req=34 chunk=15 token=tk34x15
+1793659023135294 req=34 chunk=16 token=tk34x16
+1793659023155594 req=34 chunk=17 token=tk34x17
+1793659023176037 req=34 chunk=18 token=tk34x18
+1793659023197042 req=34 chunk=19 token=tk34x19
+1793659023218550 req=34 chunk=20 token=tk34x20
+1793659023238791 req=34 chunk=21 token=tk34x21
+1793659023259780 req=34 chunk=22 token=tk34x22
+1793659023280923 req=34 chunk=23 token=tk34x23
+1793659023301670 req=34 chunk=24 token=tk34x24
+1793659023322055 req=34 chunk=25 token=tk34x25
+1793659023343054 req=34 chunk=26 token=tk34x26
+1793659023363981 req=34 chunk=27 token=tk34x27
+1793659023384631 req=34 chunk=28 token=tk34x28
+1793659023405028 req=34 chunk=29 token=tk34x29
+1793659023426229 req=34 chunk=30 token=tk34x30
+1793659023446385 req=34 chunk=31 token=tk34x31
+1793659023467622 req=34 chunk=32 token=tk34x32
+1793659023488024 req=34 chunk=33 token=tk34x33
+1793659023508976 req=34 chunk=34 token=tk34x34
+1793659023529286 req=34 chunk=35 token=tk34x35
+1793659023550028 req=34 chunk=36 token=tk34x36
+1793659023571110 req=34 chunk=37 token=tk34x37
+1793659023592002 req=34 chunk=38 token=tk34x38
+1793659023612974 req=34 chunk=39 token=tk34x39
+1793659023613151 req=34 done stop=end_turn
+1793659024174780 req=35 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659024174836 req=35 recv msgs=71 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659024175128 req=35 done stop=tool_use
+1793659024210350 req=36 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659024210421 req=36 recv msgs=73 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659024210655 req=36 done stop=tool_use
+1793659024232183 req=37 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659024232254 req=37 recv msgs=75 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659024232880 req=37 chunk=0 token=tk37x0
+1793659024253899 req=37 chunk=1 token=tk37x1
+1793659024274418 req=37 chunk=2 token=tk37x2
+1793659024295365 req=37 chunk=3 token=tk37x3
+1793659024316115 req=37 chunk=4 token=tk37x4
+1793659024336404 req=37 chunk=5 token=tk37x5
+1793659024356757 req=37 chunk=6 token=tk37x6
+1793659024376984 req=37 chunk=7 token=tk37x7
+1793659024397818 req=37 chunk=8 token=tk37x8
+1793659024418727 req=37 chunk=9 token=tk37x9
+1793659024439155 req=37 chunk=10 token=tk37x10
+1793659024460063 req=37 chunk=11 token=tk37x11
+1793659024480671 req=37 chunk=12 token=tk37x12
+1793659024500989 req=37 chunk=13 token=tk37x13
+1793659024521129 req=37 chunk=14 token=tk37x14
+1793659024541722 req=37 chunk=15 token=tk37x15
+1793659024562240 req=37 chunk=16 token=tk37x16
+1793659024582651 req=37 chunk=17 token=tk37x17
+1793659024603580 req=37 chunk=18 token=tk37x18
+1793659024623684 req=37 chunk=19 token=tk37x19
+1793659024644039 req=37 chunk=20 token=tk37x20
+1793659024664842 req=37 chunk=21 token=tk37x21
+1793659024685851 req=37 chunk=22 token=tk37x22
+1793659024707006 req=37 chunk=23 token=tk37x23
+1793659024727451 req=37 chunk=24 token=tk37x24
+1793659024748407 req=37 chunk=25 token=tk37x25
+1793659024769745 req=37 chunk=26 token=tk37x26
+1793659024790676 req=37 chunk=27 token=tk37x27
+1793659024810936 req=37 chunk=28 token=tk37x28
+1793659024831092 req=37 chunk=29 token=tk37x29
+1793659024854865 req=37 chunk=30 token=tk37x30
+1793659024875724 req=37 chunk=31 token=tk37x31
+1793659024896934 req=37 chunk=32 token=tk37x32
+1793659024918495 req=37 chunk=33 token=tk37x33
+1793659024939132 req=37 chunk=34 token=tk37x34
+1793659024960185 req=37 chunk=35 token=tk37x35
+1793659024980888 req=37 chunk=36 token=tk37x36
+1793659025001555 req=37 chunk=37 token=tk37x37
+1793659025022828 req=37 chunk=38 token=tk37x38
+1793659025044087 req=37 chunk=39 token=tk37x39
+1793659025044437 req=37 done stop=end_turn
+1793659025823779 req=38 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659025823841 req=38 recv msgs=77 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659025824145 req=38 done stop=tool_use
+1793659025862023 req=39 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659025862085 req=39 recv msgs=79 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659025862445 req=39 done stop=tool_use
+1793659025887486 req=40 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659025887506 req=40 recv msgs=81 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659025888953 req=40 chunk=0 token=tk40x0
+1793659025910239 req=40 chunk=1 token=tk40x1
+1793659025930867 req=40 chunk=2 token=tk40x2
+1793659025952500 req=40 chunk=3 token=tk40x3
+1793659025973483 req=40 chunk=4 token=tk40x4
+1793659025994978 req=40 chunk=5 token=tk40x5
+1793659026016363 req=40 chunk=6 token=tk40x6
+1793659026037614 req=40 chunk=7 token=tk40x7
+1793659026058814 req=40 chunk=8 token=tk40x8
+1793659026079162 req=40 chunk=9 token=tk40x9
+1793659026099629 req=40 chunk=10 token=tk40x10
+1793659026119892 req=40 chunk=11 token=tk40x11
+1793659026140832 req=40 chunk=12 token=tk40x12
+1793659026162125 req=40 chunk=13 token=tk40x13
+1793659026182650 req=40 chunk=14 token=tk40x14
+1793659026203162 req=40 chunk=15 token=tk40x15
+1793659026224325 req=40 chunk=16 token=tk40x16
+1793659026244740 req=40 chunk=17 token=tk40x17
+1793659026265998 req=40 chunk=18 token=tk40x18
+1793659026286562 req=40 chunk=19 token=tk40x19
+1793659026307307 req=40 chunk=20 token=tk40x20
+1793659026328459 req=40 chunk=21 token=tk40x21
+1793659026349389 req=40 chunk=22 token=tk40x22
+1793659026369902 req=40 chunk=23 token=tk40x23
+1793659026390475 req=40 chunk=24 token=tk40x24
+1793659026410780 req=40 chunk=25 token=tk40x25
+1793659026432208 req=40 chunk=26 token=tk40x26
+1793659026453199 req=40 chunk=27 token=tk40x27
+1793659026473513 req=40 chunk=28 token=tk40x28
+1793659026493880 req=40 chunk=29 token=tk40x29
+1793659026515292 req=40 chunk=30 token=tk40x30
+1793659026536129 req=40 chunk=31 token=tk40x31
+1793659026556711 req=40 chunk=32 token=tk40x32
+1793659026577055 req=40 chunk=33 token=tk40x33
+1793659026597985 req=40 chunk=34 token=tk40x34
+1793659026618297 req=40 chunk=35 token=tk40x35
+1793659026639520 req=40 chunk=36 token=tk40x36
+1793659026660127 req=40 chunk=37 token=tk40x37
+1793659026681509 req=40 chunk=38 token=tk40x38
+1793659026702123 req=40 chunk=39 token=tk40x39
+1793659026702393 req=40 done stop=end_turn
+1793659027259530 req=41 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659027259552 req=41 recv msgs=83 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659027259716 req=41 done stop=tool_use
+1793659027291234 req=42 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659027291254 req=42 recv msgs=85 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659027291401 req=42 done stop=tool_use
+1793659027310927 req=43 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659027310948 req=43 recv msgs=87 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659027311053 req=43 chunk=0 token=tk43x0
+1793659027331215 req=43 chunk=1 token=tk43x1
+1793659027351971 req=43 chunk=2 token=tk43x2
+1793659027372707 req=43 chunk=3 token=tk43x3
+1793659027393733 req=43 chunk=4 token=tk43x4
+1793659027414755 req=43 chunk=5 token=tk43x5
+1793659027435198 req=43 chunk=6 token=tk43x6
+1793659027455639 req=43 chunk=7 token=tk43x7
+1793659027476378 req=43 chunk=8 token=tk43x8
+1793659027497310 req=43 chunk=9 token=tk43x9
+1793659027517430 req=43 chunk=10 token=tk43x10
+1793659027537611 req=43 chunk=11 token=tk43x11
+1793659027558950 req=43 chunk=12 token=tk43x12
+1793659027579999 req=43 chunk=13 token=tk43x13
+1793659027600588 req=43 chunk=14 token=tk43x14
+1793659027620858 req=43 chunk=15 token=tk43x15
+1793659027641146 req=43 chunk=16 token=tk43x16
+1793659027661998 req=43 chunk=17 token=tk43x17
+1793659027683145 req=43 chunk=18 token=tk43x18
+1793659027704210 req=43 chunk=19 token=tk43x19
+1793659027724710 req=43 chunk=20 token=tk43x20
+1793659027744873 req=43 chunk=21 token=tk43x21
+1793659027765144 req=43 chunk=22 token=tk43x22
+1793659027785505 req=43 chunk=23 token=tk43x23
+1793659027805646 req=43 chunk=24 token=tk43x24
+1793659027826235 req=43 chunk=25 token=tk43x25
+1793659027846804 req=43 chunk=26 token=tk43x26
+1793659027867033 req=43 chunk=27 token=tk43x27
+1793659027888351 req=43 chunk=28 token=tk43x28
+1793659027909069 req=43 chunk=29 token=tk43x29
+1793659027929373 req=43 chunk=30 token=tk43x30
+1793659027951043 req=43 chunk=31 token=tk43x31
+1793659027972285 req=43 chunk=32 token=tk43x32
+1793659027993335 req=43 chunk=33 token=tk43x33
+1793659028013915 req=43 chunk=34 token=tk43x34
+1793659028034359 req=43 chunk=35 token=tk43x35
+1793659028054945 req=43 chunk=36 token=tk43x36
+1793659028075353 req=43 chunk=37 token=tk43x37
+1793659028096377 req=43 chunk=38 token=tk43x38
+1793659028117485 req=43 chunk=39 token=tk43x39
+1793659028117635 req=43 done stop=end_turn
+1793659028681343 req=44 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659028681359 req=44 recv msgs=89 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659028681850 req=44 done stop=tool_use
+1793659028721594 req=45 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659028721623 req=45 recv msgs=91 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659028722051 req=45 done stop=tool_use
+1793659028748623 req=46 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659028748639 req=46 recv msgs=93 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659028748803 req=46 chunk=0 token=tk46x0
+1793659028769804 req=46 chunk=1 token=tk46x1
+1793659028789946 req=46 chunk=2 token=tk46x2
+1793659028810653 req=46 chunk=3 token=tk46x3
+1793659028831454 req=46 chunk=4 token=tk46x4
+1793659028851972 req=46 chunk=5 token=tk46x5
+1793659028873029 req=46 chunk=6 token=tk46x6
+1793659028893530 req=46 chunk=7 token=tk46x7
+1793659028913945 req=46 chunk=8 token=tk46x8
+1793659028934252 req=46 chunk=9 token=tk46x9
+1793659028955416 req=46 chunk=10 token=tk46x10
+1793659028976265 req=46 chunk=11 token=tk46x11
+1793659028996525 req=46 chunk=12 token=tk46x12
+1793659029016813 req=46 chunk=13 token=tk46x13
+1793659029037120 req=46 chunk=14 token=tk46x14
+1793659029058113 req=46 chunk=15 token=tk46x15
+1793659029079056 req=46 chunk=16 token=tk46x16
+1793659029100380 req=46 chunk=17 token=tk46x17
+1793659029121559 req=46 chunk=18 token=tk46x18
+1793659029142136 req=46 chunk=19 token=tk46x19
+1793659029163049 req=46 chunk=20 token=tk46x20
+1793659029184240 req=46 chunk=21 token=tk46x21
+1793659029204406 req=46 chunk=22 token=tk46x22
+1793659029225073 req=46 chunk=23 token=tk46x23
+1793659029245396 req=46 chunk=24 token=tk46x24
+1793659029265850 req=46 chunk=25 token=tk46x25
+1793659029285986 req=46 chunk=26 token=tk46x26
+1793659029306168 req=46 chunk=27 token=tk46x27
+1793659029326757 req=46 chunk=28 token=tk46x28
+1793659029347611 req=46 chunk=29 token=tk46x29
+1793659029368602 req=46 chunk=30 token=tk46x30
+1793659029388739 req=46 chunk=31 token=tk46x31
+1793659029410045 req=46 chunk=32 token=tk46x32
+1793659029430703 req=46 chunk=33 token=tk46x33
+1793659029451095 req=46 chunk=34 token=tk46x34
+1793659029472135 req=46 chunk=35 token=tk46x35
+1793659029492690 req=46 chunk=36 token=tk46x36
+1793659029513052 req=46 chunk=37 token=tk46x37
+1793659029534151 req=46 chunk=38 token=tk46x38
+1793659029555022 req=46 chunk=39 token=tk46x39
+1793659029555259 req=46 done stop=end_turn
+1793659030553968 req=47 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659030553988 req=47 recv msgs=95 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659030554423 req=47 done stop=tool_use
+1793659030604214 req=48 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659030604235 req=48 recv msgs=97 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659030604495 req=48 done stop=tool_use
+1793659030623880 req=49 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659030623899 req=49 recv msgs=99 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659030624002 req=49 chunk=0 token=tk49x0
+1793659030644282 req=49 chunk=1 token=tk49x1
+1793659030665702 req=49 chunk=2 token=tk49x2
+1793659030686043 req=49 chunk=3 token=tk49x3
+1793659030706490 req=49 chunk=4 token=tk49x4
+1793659030726641 req=49 chunk=5 token=tk49x5
+1793659030747551 req=49 chunk=6 token=tk49x6
+1793659030768724 req=49 chunk=7 token=tk49x7
+1793659030789540 req=49 chunk=8 token=tk49x8
+1793659030810575 req=49 chunk=9 token=tk49x9
+1793659030831919 req=49 chunk=10 token=tk49x10
+1793659030852617 req=49 chunk=11 token=tk49x11
+1793659030872811 req=49 chunk=12 token=tk49x12
+1793659030892900 req=49 chunk=13 token=tk49x13
+1793659030913570 req=49 chunk=14 token=tk49x14
+1793659030934600 req=49 chunk=15 token=tk49x15
+1793659030955250 req=49 chunk=16 token=tk49x16
+1793659030975403 req=49 chunk=17 token=tk49x17
+1793659030996074 req=49 chunk=18 token=tk49x18
+1793659031017261 req=49 chunk=19 token=tk49x19
+1793659031037901 req=49 chunk=20 token=tk49x20
+1793659031059032 req=49 chunk=21 token=tk49x21
+1793659031079440 req=49 chunk=22 token=tk49x22
+1793659031100693 req=49 chunk=23 token=tk49x23
+1793659031121119 req=49 chunk=24 token=tk49x24
+1793659031141497 req=49 chunk=25 token=tk49x25
+1793659031162153 req=49 chunk=26 token=tk49x26
+1793659031182523 req=49 chunk=27 token=tk49x27
+1793659031202644 req=49 chunk=28 token=tk49x28
+1793659031223686 req=49 chunk=29 token=tk49x29
+1793659031244560 req=49 chunk=30 token=tk49x30
+1793659031264968 req=49 chunk=31 token=tk49x31
+1793659031285545 req=49 chunk=32 token=tk49x32
+1793659031305950 req=49 chunk=33 token=tk49x33
+1793659031327024 req=49 chunk=34 token=tk49x34
+1793659031347959 req=49 chunk=35 token=tk49x35
+1793659031369378 req=49 chunk=36 token=tk49x36
+1793659031390587 req=49 chunk=37 token=tk49x37
+1793659031411005 req=49 chunk=38 token=tk49x38
+1793659031431593 req=49 chunk=39 token=tk49x39
+1793659031431828 req=49 done stop=end_turn
+1793659031574651 req=50 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659031574672 req=50 recv msgs=101 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659031574945 req=50 done stop=tool_use
+1793659031612407 req=51 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659031612424 req=51 recv msgs=103 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659031612700 req=51 done stop=tool_use
+1793659031633828 req=52 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659031633851 req=52 recv msgs=105 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659031634131 req=52 chunk=0 token=tk52x0
+1793659031655570 req=52 chunk=1 token=tk52x1
+1793659031675731 req=52 chunk=2 token=tk52x2
+1793659031695907 req=52 chunk=3 token=tk52x3
+1793659031716578 req=52 chunk=4 token=tk52x4
+1793659031736926 req=52 chunk=5 token=tk52x5
+1793659031758157 req=52 chunk=6 token=tk52x6
+1793659031778569 req=52 chunk=7 token=tk52x7
+1793659031798865 req=52 chunk=8 token=tk52x8
+1793659031819864 req=52 chunk=9 token=tk52x9
+1793659031840534 req=52 chunk=10 token=tk52x10
+1793659031861094 req=52 chunk=11 token=tk52x11
+1793659031881998 req=52 chunk=12 token=tk52x12
+1793659031902613 req=52 chunk=13 token=tk52x13
+1793659031922848 req=52 chunk=14 token=tk52x14
+1793659031943833 req=52 chunk=15 token=tk52x15
+1793659031964716 req=52 chunk=16 token=tk52x16
+1793659031984863 req=52 chunk=17 token=tk52x17
+1793659032006075 req=52 chunk=18 token=tk52x18
+1793659032027145 req=52 chunk=19 token=tk52x19
+1793659032047703 req=52 chunk=20 token=tk52x20
+1793659032068800 req=52 chunk=21 token=tk52x21
+1793659032089828 req=52 chunk=22 token=tk52x22
+1793659032110139 req=52 chunk=23 token=tk52x23
+1793659032131302 req=52 chunk=24 token=tk52x24
+1793659032152242 req=52 chunk=25 token=tk52x25
+1793659032172996 req=52 chunk=26 token=tk52x26
+1793659032193739 req=52 chunk=27 token=tk52x27
+1793659032214086 req=52 chunk=28 token=tk52x28
+1793659032234378 req=52 chunk=29 token=tk52x29
+1793659032254785 req=52 chunk=30 token=tk52x30
+1793659032274964 req=52 chunk=31 token=tk52x31
+1793659032296053 req=52 chunk=32 token=tk52x32
+1793659032316778 req=52 chunk=33 token=tk52x33
+1793659032337866 req=52 chunk=34 token=tk52x34
+1793659032358561 req=52 chunk=35 token=tk52x35
+1793659032379649 req=52 chunk=36 token=tk52x36
+1793659032400896 req=52 chunk=37 token=tk52x37
+1793659032421268 req=52 chunk=38 token=tk52x38
+1793659032442343 req=52 chunk=39 token=tk52x39
+1793659032442559 req=52 done stop=end_turn
+1793659042523900 req=53 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659042523982 req=53 recv msgs=107 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659042524276 req=53 done stop=tool_use
+1793659042560873 req=54 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659042560946 req=54 recv msgs=109 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659042561221 req=54 done stop=tool_use
+1793659042582815 req=55 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659042582880 req=55 recv msgs=111 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659042582988 req=55 chunk=0 token=tk55x0
+1793659042603437 req=55 chunk=1 token=tk55x1
+1793659042623976 req=55 chunk=2 token=tk55x2
+1793659042644684 req=55 chunk=3 token=tk55x3
+1793659042665499 req=55 chunk=4 token=tk55x4
+1793659042686103 req=55 chunk=5 token=tk55x5
+1793659042706247 req=55 chunk=6 token=tk55x6
+1793659042727106 req=55 chunk=7 token=tk55x7
+1793659042748002 req=55 chunk=8 token=tk55x8
+1793659042768552 req=55 chunk=9 token=tk55x9
+1793659042788884 req=55 chunk=10 token=tk55x10
+1793659042809847 req=55 chunk=11 token=tk55x11
+1793659042830375 req=55 chunk=12 token=tk55x12
+1793659042850946 req=55 chunk=13 token=tk55x13
+1793659042872184 req=55 chunk=14 token=tk55x14
+1793659042892964 req=55 chunk=15 token=tk55x15
+1793659042913631 req=55 chunk=16 token=tk55x16
+1793659042933856 req=55 chunk=17 token=tk55x17
+1793659042954825 req=55 chunk=18 token=tk55x18
+1793659042975280 req=55 chunk=19 token=tk55x19
+1793659042996174 req=55 chunk=20 token=tk55x20
+1793659043017247 req=55 chunk=21 token=tk55x21
+1793659043038566 req=55 chunk=22 token=tk55x22
+1793659043058930 req=55 chunk=23 token=tk55x23
+1793659043080399 req=55 chunk=24 token=tk55x24
+1793659043100611 req=55 chunk=25 token=tk55x25
+1793659043121199 req=55 chunk=26 token=tk55x26
+1793659043142330 req=55 chunk=27 token=tk55x27
+1793659043163596 req=55 chunk=28 token=tk55x28
+1793659043184687 req=55 chunk=29 token=tk55x29
+1793659043205865 req=55 chunk=30 token=tk55x30
+1793659043227034 req=55 chunk=31 token=tk55x31
+1793659043247262 req=55 chunk=32 token=tk55x32
+1793659043268357 req=55 chunk=33 token=tk55x33
+1793659043288647 req=55 chunk=34 token=tk55x34
+1793659043309597 req=55 chunk=35 token=tk55x35
+1793659043330590 req=55 chunk=36 token=tk55x36
+1793659043351658 req=55 chunk=37 token=tk55x37
+1793659043372447 req=55 chunk=38 token=tk55x38
+1793659043393388 req=55 chunk=39 token=tk55x39
+1793659043393502 req=55 done stop=end_turn
+1793659053464840 req=56 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659053464957 req=56 recv msgs=113 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659053465298 req=56 done stop=tool_use
+1793659053512549 req=57 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659053512603 req=57 recv msgs=115 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659053512851 req=57 done stop=tool_use
+1793659053546593 req=58 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659053546650 req=58 recv msgs=117 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659053546819 req=58 chunk=0 token=tk58x0
+1793659053567630 req=58 chunk=1 token=tk58x1
+1793659053588726 req=58 chunk=2 token=tk58x2
+1793659053609091 req=58 chunk=3 token=tk58x3
+1793659053630134 req=58 chunk=4 token=tk58x4
+1793659053650667 req=58 chunk=5 token=tk58x5
+1793659053671002 req=58 chunk=6 token=tk58x6
+1793659053691218 req=58 chunk=7 token=tk58x7
+1793659053711547 req=58 chunk=8 token=tk58x8
+1793659053731984 req=58 chunk=9 token=tk58x9
+1793659053753051 req=58 chunk=10 token=tk58x10
+1793659053774154 req=58 chunk=11 token=tk58x11
+1793659053794347 req=58 chunk=12 token=tk58x12
+1793659053814943 req=58 chunk=13 token=tk58x13
+1793659053835859 req=58 chunk=14 token=tk58x14
+1793659053856530 req=58 chunk=15 token=tk58x15
+1793659053877655 req=58 chunk=16 token=tk58x16
+1793659053898048 req=58 chunk=17 token=tk58x17
+1793659053919276 req=58 chunk=18 token=tk58x18
+1793659053940357 req=58 chunk=19 token=tk58x19
+1793659053960853 req=58 chunk=20 token=tk58x20
+1793659053981823 req=58 chunk=21 token=tk58x21
+1793659054002079 req=58 chunk=22 token=tk58x22
+1793659054022517 req=58 chunk=23 token=tk58x23
+1793659054043479 req=58 chunk=24 token=tk58x24
+1793659054063840 req=58 chunk=25 token=tk58x25
+1793659054084234 req=58 chunk=26 token=tk58x26
+1793659054104433 req=58 chunk=27 token=tk58x27
+1793659054125611 req=58 chunk=28 token=tk58x28
+1793659054145940 req=58 chunk=29 token=tk58x29
+1793659054166665 req=58 chunk=30 token=tk58x30
+1793659054187552 req=58 chunk=31 token=tk58x31
+1793659054207858 req=58 chunk=32 token=tk58x32
+1793659054228479 req=58 chunk=33 token=tk58x33
+1793659054249046 req=58 chunk=34 token=tk58x34
+1793659054269685 req=58 chunk=35 token=tk58x35
+1793659054290984 req=58 chunk=36 token=tk58x36
+1793659054311152 req=58 chunk=37 token=tk58x37
+1793659054331835 req=58 chunk=38 token=tk58x38
+1793659054352988 req=58 chunk=39 token=tk58x39
+1793659054353120 req=58 done stop=end_turn
+1793659061693460 req=59 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659061693517 req=59 recv msgs=119 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793659061693853 req=59 done stop=tool_use
+1793659061731659 req=60 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659061731713 req=60 recv msgs=121 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793659061732212 req=60 done stop=tool_use
+1793659061756099 req=61 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659061756173 req=61 recv msgs=123 model=claude-sonnet-4-5 stream=true plan=text:40x20ms
+1793659061756849 req=61 chunk=0 token=tk61x0
+1793659061778603 req=61 chunk=1 token=tk61x1
+1793659061799872 req=61 chunk=2 token=tk61x2
+1793659061820865 req=61 chunk=3 token=tk61x3
+1793659061842314 req=61 chunk=4 token=tk61x4
+1793659061863219 req=61 chunk=5 token=tk61x5
+1793659061884372 req=61 chunk=6 token=tk61x6
+1793659061905529 req=61 chunk=7 token=tk61x7
+1793659061926155 req=61 chunk=8 token=tk61x8
+1793659061946676 req=61 chunk=9 token=tk61x9
+1793659061968184 req=61 chunk=10 token=tk61x10
+1793659061988718 req=61 chunk=11 token=tk61x11
+1793659062009759 req=61 chunk=12 token=tk61x12
+1793659062030723 req=61 chunk=13 token=tk61x13
+1793659062051718 req=61 chunk=14 token=tk61x14
+1793659062072552 req=61 chunk=15 token=tk61x15
+1793659062092887 req=61 chunk=16 token=tk61x16
+1793659062113259 req=61 chunk=17 token=tk61x17
+1793659062134860 req=61 chunk=18 token=tk61x18
+1793659062156444 req=61 chunk=19 token=tk61x19
+1793659062177161 req=61 chunk=20 token=tk61x20
+1793659062197338 req=61 chunk=21 token=tk61x21
+1793659062218684 req=61 chunk=22 token=tk61x22
+1793659062239624 req=61 chunk=23 token=tk61x23
+1793659062260572 req=61 chunk=24 token=tk61x24
+1793659062282127 req=61 chunk=25 token=tk61x25
+1793659062302440 req=61 chunk=26 token=tk61x26
+1793659062322904 req=61 chunk=27 token=tk61x27
+1793659062343261 req=61 chunk=28 token=tk61x28
+1793659062363638 req=61 chunk=29 token=tk61x29
+1793659062384629 req=61 chunk=30 token=tk61x30
+1793659062404875 req=61 chunk=31 token=tk61x31
+1793659062425273 req=61 chunk=32 token=tk61x32
+1793659062446527 req=61 chunk=33 token=tk61x33
+1793659062467727 req=61 chunk=34 token=tk61x34
+1793659062488828 req=61 chunk=35 token=tk61x35
+1793659062509473 req=61 chunk=36 token=tk61x36
+1793659062529966 req=61 chunk=37 token=tk61x37
+1793659062551249 req=61 chunk=38 token=tk61x38
+1793659062572386 req=61 chunk=39 token=tk61x39
+1793659062572854 req=61 done stop=end_turn
+1793659068314496 req=62 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659068314874 req=62 recv msgs=300 model=claude-sonnet-4-5 stream=true plan=text:3x0ms
+1793659068315248 req=62 chunk=0 token=tk62x0
+1793659068315331 req=62 chunk=1 token=tk62x1
+1793659068315465 req=62 chunk=2 token=tk62x2
+1793659068316031 req=62 done stop=end_turn
+1793659071517642 req=63 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793659071517690 req=63 recv msgs=302 model=claude-sonnet-4-5 stream=true plan=text:3x0ms
+1793659071517821 req=63 chunk=0 token=tk63x0
+1793659071518330 req=63 chunk=1 token=tk63x1
+1793659071518438 req=63 chunk=2 token=tk63x2
+1793659071518603 req=63 done stop=end_turn

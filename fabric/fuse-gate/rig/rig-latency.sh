@@ -11,7 +11,9 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 name=$1; out=/root/out/rlat-$name; rm -rf "$out"; mkdir -p "$out"
 ./gate.sh rm "$name"; rm -rf "/var/lib/gate/scratch/$name"; mkdir -p /var/log/gate; : > "/var/log/gate/$name.log"
-RIG=1 RIG_CC_TAP=1 LAYOUT=${LAYOUT:-scratch} ./gate.sh bundle "$name"; ./gate.sh run "$name"
+# fake magpie keeps every byte and every call body in memory (about 2 x the 400 MiB written here), inside the
+# sandbox, where the supervisor's memory guard counts it against the descriptor's memoryBytes
+RIG=1 RIG_CC_TAP=1 GATE_MEM=$((12 << 30)) RIG_SANDBOX_MEMORY=$((10 << 30)) LAYOUT=${LAYOUT:-scratch} ./gate.sh bundle "$name"; ./gate.sh run "$name"
 x() { ./gate.sh exec "$name" "$@"; }
 r() { ./gate.sh exec "$name" --root "$@"; }
 ctl() { r python3 /media/rig/rigctl.py "$@"; }
@@ -52,12 +54,16 @@ for run in cold warm; do
   fi
   r python3 /media/rig/rigsession.py /tmp/s/r.json "/tmp/r-$run" > "$out/r87-$run.summary.json"
 done
+r sh -c "grep -H VmHWM /proc/[0-9]*/status; cat /srv/log/exits.log 2>/dev/null" > "$out/memory.txt" 2>/dev/null
 r sh -c "cat /srv/log/supervisor.log" > "$out/supervisor.log"
 r sh -c "cat /tmp/cc-tap/stdout.jsonl" > "$out/cc-stdout.jsonl"
 r sh -c "cat /srv/model/chunks.log" > "$out/model.log"
 r python3 /media/rig/rigctl.py get /calls/turn_state > "$out/calls-turn_state.json"
+# what the cold resume fetched from magpie (the cache was empty): every cc_file call, with its range
+r python3 /media/rig/rigctl.py get /calls/cc_file > "$out/calls-cc_file.json"
 for f in "$out"/bench-*.json; do echo "$(basename "$f") $(jq -c '{n, size, MBps, p50_ms, p99_ms, max_ms}' "$f")"; done
 for v in 0 50 500 hold; do echo "c-$v $(jq -c '[.turns[] | [.state, ((.end_us-.start_us)/1000|floor)]]' "$out/c-$v.summary.json") $(cat "$out/msgs-$v.json")"; done
 for run in cold warm; do echo "r87-$run $(jq -c '[.turns[] | [.state, ((.end_us-.start_us)/1000|floor)]]' "$out/r87-$run.summary.json")"; done
 cat "$out/grow.json"
+echo "cc_file calls: $(jq -c '[.[] | {path: .query.path, offset: .query.offset, length: .query.length}]' "$out/calls-cc_file.json" | cut -c1-600)"
 ./gate.sh rm "$name"

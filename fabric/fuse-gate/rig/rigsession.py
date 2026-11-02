@@ -11,11 +11,20 @@ import json, os, sys, time, urllib.request
 BASE = "http://127.0.0.1:7300"
 
 def call(method, path, body=None):
+    # a connection open across a checkpoint can be lost in the restore (rig-migcc.sh): a GET is retried, a POST
+    # (not idempotent: /turn queues a command) is not
     data = json.dumps(body).encode() if body is not None else (b"" if method == "POST" else None)
-    req = urllib.request.Request(BASE + path, method=method, data=data, headers={"content-type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        b = r.read()
-        return json.loads(b) if b else None
+    for attempt in range(12 if method == "GET" else 1):
+        req = urllib.request.Request(BASE + path, method=method, data=data, headers={"content-type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                b = r.read()
+                return json.loads(b) if b else None
+        except (urllib.error.URLError, OSError):
+            if attempt == 11 or method != "GET":
+                raise
+            print(f"rigsession: retry {path} after a connection error at {now_us()}", file=sys.stderr)
+            time.sleep(0.5)
 
 def now_us():
     return time.time_ns() // 1000

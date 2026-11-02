@@ -1,0 +1,1 @@
+{"file": "/home/sandbox/.claude/projects/bench-5/bench-1000x4096.jsonl", "n": 1000, "size": 4096, "total_s": 7.724, "MBps": 0.53, "p50_ms": 7.646, "p90_ms": 8.34, "p99_ms": 8.904, "max_ms": 10.243}

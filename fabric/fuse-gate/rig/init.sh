@@ -9,7 +9,9 @@ set -u
 mkdir -p /run/rig /srv/log /srv/model /run/jobs /home/sandbox/.claude && chmod 1777 /run/jobs && chown 1000:1000 /home/sandbox
 ( /media/fuse-gate model 127.0.0.1:7200 /srv/model/chunks.log 2>>/srv/log/model.log
   echo "model exited status $? at $(date +%s.%N)" >>/srv/log/exits.log ) &
-( /media/rig/fuse-rig world /run/rig http://127.0.0.1:7200 2>>/srv/log/world.log
+# RIG_SANDBOX_MEMORY (gate.sh bundle): the descriptor's memoryBytes, which the supervisor's memory guard enforces
+# shellcheck disable=SC2086  # empty: no argument
+( /media/rig/fuse-rig world /run/rig http://127.0.0.1:7200 ${RIG_SANDBOX_MEMORY:-} 2>>/srv/log/world.log
   echo "world exited status $? at $(date +%s.%N)" >>/srv/log/exits.log ) &
 for _ in $(seq 400); do [ -f /run/rig/proxy ] && break; sleep 0.05; done
 # jobs: /run/jobs/NAME.sh run as uid 1000, children of the sandbox's own processes (not of a host `runsc exec`)

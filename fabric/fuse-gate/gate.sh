@@ -23,6 +23,10 @@
 #   /etc/claude-code (the managed files the supervisor writes, 6.4) tmpfs; Claude Code is the image's, at
 #   /opt/claude-code/bin/claude (rig/host-rig.sh); RIG_CC_TAP=1 binds rig/cc-tap over /opt/claude-code/bin (the
 #   stdout tap of item 10).
+# GATE_MEM (bundle): the sandbox's memory limit in bytes (default 4 GiB; rig-latency.sh raises it, since fake
+#   magpie keeps every byte written, and every call's body, in the world's memory inside the sandbox).
+# RIG_SANDBOX_MEMORY (bundle, RIG=1): the descriptor's resources.memoryBytes in fuse-rig's hermit (default the
+#   fixture's 1 GiB), which the supervisor's memory guard enforces on everything in the sandbox, the world included.
 # GATE_SIDE=b: a second, independent set of runtime state on the same host (runsc root, bundles, scratch, netns,
 #   cgroup, logs, checkpoint dir), so one host can be the source (no side) and the target (side b) of a migration
 #   (rig/rig-mig.sh LOOPBACK=1). TARGET_SIDE: the target's side, for send-scratch's source/destination comparison.
@@ -51,11 +55,11 @@ bundle)
   [ -n "$rig" ] && [ "$layout" = scratch ] && mkdir -p "$GB/scratch/$name/supervisor"
   jq -n --arg root "$(readlink -f $img)/rootfs" --arg ns "/var/run/netns/gate-$ln" --arg name "$ln" \
         --argjson caps "$caps" --argjson env "$(jq '.config.Env' $img/config.json)" --arg j "$journal" \
-        --arg scratch "$GB/scratch/$name" --arg layout "$layout" --arg rig "$rig" --arg sup "$sup" --arg tap "$tap" '{
+        --arg scratch "$GB/scratch/$name" --arg layout "$layout" --arg rig "$rig" --arg sup "$sup" --arg tap "$tap" --argjson mem "${GATE_MEM:-4294967296}" --arg rmem "${RIG_SANDBOX_MEMORY:-}" '{
     ociVersion: "1.0.0",
     process: { user: {uid: 0, gid: 0}, cwd: "/",
       args: (if $rig != "" then ["/media/rig/init.sh"] else ["/usr/bin/tini", "--", "/media/init.sh"] end),
-      env: ($env + ["GATE_JOURNAL=\($j)", "GATE_LAYOUT=\($layout)"]),
+      env: ($env + ["GATE_JOURNAL=\($j)", "GATE_LAYOUT=\($layout)", "RIG_SANDBOX_MEMORY=\($rmem)"]),
       capabilities: {bounding: $caps, effective: $caps, permitted: $caps, inheritable: [], ambient: []},
       rlimits: [{type: "RLIMIT_NOFILE", hard: 65536, soft: 65536}] },
     root: { path: $root, readonly: true },
@@ -86,7 +90,7 @@ bundle)
     linux: {
       namespaces: [{type: "pid"}, {type: "ipc"}, {type: "uts"}, {type: "mount"}, {type: "network", path: $ns}],
       cgroupsPath: "/gate/\($name)",
-      resources: { memory: {limit: 4294967296}, pids: {limit: 4096} }
+      resources: { memory: {limit: $mem}, pids: {limit: 4096} }
     }
   }' > "$b/config.json"
   ;;

@@ -1,0 +1,1 @@
+{"messages": 5, "missing": 0, "message_latency_ms": {"p50": 2.7, "p99": 3.2, "max": 3.2}, "chunk_spread_ms": {"p50": 808.4, "max": 817.8}, "tool_roundtrip_ms": {"n": 10, "p50": 33.5, "p99": 66.6, "max": 66.6}}

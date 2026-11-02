@@ -1,0 +1,20 @@
+{
+ "conversation": "01a19e91-dda5-7088-b505-651ac5f9d432",
+ "turns": [
+  {
+   "prompt": "Migration turn.\nGATE: text 80 100",
+   "turnId": "01a19e91-eebc-7264-a284-5ade3784e081",
+   "start_us": 1793661726386433,
+   "end_us": 1793661735360604,
+   "state": "completed",
+   "error": null,
+   "exit_code": null,
+   "duration_ms": 8919,
+   "reports": [
+    "running",
+    "completed"
+   ]
+  }
+ ],
+ "total_ms": 8974
+}

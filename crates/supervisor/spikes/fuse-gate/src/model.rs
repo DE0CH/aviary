@@ -6,6 +6,8 @@
 //!                                  message_stop (Claude Code tombstones the orphaned message and retries)
 //!                                  (how: close, reset, stall, garbage, refusal, refusalcat = a refusal with
 //!                                  stop_details category cyber; several trunconce lines fire one per request)
+//!   GATE: truncafter ID HOW        as trunconce, but only once every tool call of the turn was answered (a
+//!                                  refusal after a written tool_use and tool_result)
 //!   GATE: thinkfail ID [ERRTYPE]   the first response streams one complete thinking block, then an `error` event of
 //!                                  ERRTYPE (default api_error) mid-stream: with --fallback-model, Claude Code 2.1.304
 //!                                  moves to the fallback model and tombstones the thinking-only message
@@ -108,11 +110,16 @@ fn plan(body: &Value, failed: &Mutex<HashSet<String>>) -> Plan {
             ));
         } else if let Some(t) = rest.strip_prefix("overload529 ") {
             overload = Some(t.trim().to_string());
-        } else if let Some(t) = rest.strip_prefix("trunconce ") {
+        } else if let Some((late, t)) = rest
+            .strip_prefix("trunconce ")
+            .map(|t| (false, t))
+            .or_else(|| rest.strip_prefix("truncafter ").map(|t| (true, t)))
+        {
             let mut it = t.split_whitespace();
             trunc.push((
                 it.next().unwrap_or("").to_string(),
                 it.next().unwrap_or("close").to_string(),
+                late,
             ));
         }
     }
@@ -133,7 +140,11 @@ fn plan(body: &Value, failed: &Mutex<HashSet<String>>) -> Plan {
         return Plan::ThinkFail(kind);
     }
     // several trunconce lines fire one per request, in order (e.g. a refusal and then a refused continuation)
-    for (id, how) in trunc {
+    // truncafter waits until every tool call of the turn was answered (a refusal after written tool calls)
+    for (id, how, late) in trunc {
+        if late && after < tools.len() {
+            continue;
+        }
         if failed.lock().unwrap().insert(id) {
             return Plan::Trunc(n, d, how);
         }

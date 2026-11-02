@@ -1,0 +1,57 @@
+queue-operation  
+queue-operation  
+user 6016c22d "First turn.\nGATE: text 3 0"
+attachment c1ce0884 
+attachment 30126658 
+attachment 9f52f247 
+attachment b9bf2b5c 
+attachment d4ae4e81 
+attachment 1ba18bbe 
+atis-latch  
+attachment 363e7469 
+attachment 9bfb37ed 
+attachment 83f59d87 
+attachment 430a508b 
+attachment fc71c0c3 
+api-request-shape  
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n# Environment\nYou have been invoked in the following 
+api-request  
+assistant 63f296b6 [{"text": "tk0x0 tk0x1 tk0x2 ", "type": "text"}]
+attachment cf30f407 
+last-prompt  
+atis-latch  
+queue-operation  
+queue-operation  
+user 821ee592 "Tool, then refused twice.\nGATE: tool Bash {\"command\":\"echo tomb\",\"description\":\"tomb\"}\nGA
+attachment 8e58d26c 
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</s
+api-request  
+assistant 944d265d [{"id": "toolu_00000001", "input": {"command": "echo tomb", "description": "tomb"}, "name": "Bash", 
+user 319991d1 [{"tool_use_id": "toolu_00000001", "type": "tool_result", "content": "tomb", "is_error": false}]
+attachment 9cb5da13 
+api-request-blob  [{"tool_use_id": "toolu_00000001", "type": "tool_result", "content": "tomb\n\n<system-reminder>\n<to
+api-request  
+assistant 2cbeee77 [{"text": "tk2x0 tk2x1 tk2x2 tk2x3 ", "type": "text"}]
+system ffc8f77a informational
+user f06d5b36 "Your response above was stopped by a safety classifier \u2014 this is not a tool or API error. The 
+api-request  
+api-request-blob  [{"type": "text", "text": "<system-reminder>\nCodebase and user instructions are shown below. Be sur
+api-request-blob  "# Environment\nYou have been invoked in the following environment: \n - Primary working directory: 
+api-request-blob  "<total_tokens>15000000 tokens left</total_tokens>"
+api-request  
+system cab9d0c7 model_refusal_fallback
+assistant a3f8e565 [{"text": "tk4x0 tk4x1 tk4x2 tk4x3 ", "type": "text"}]
+attachment dd44895b 
+last-prompt  
+atis-latch  
+queue-operation  
+queue-operation  
+user 29b53294 "After.\nGATE: text 2 0"
+attachment 9e33a92a 
+attachment cc06a11e 
+attachment 08d018c9 
+attachment 860119e2 
+api-request-blob  [{"type": "text", "text": "<system-reminder>\nAttribution for git commits and pull requests you crea
+api-request-blob  [{"type": "text", "text": "You are powered by the model named Opus 4.8. The exact model ID is claude
+api-request  
+assistant febc54b8 [{"text": "tk5x0 tk5x1 ", "type": "text"}]

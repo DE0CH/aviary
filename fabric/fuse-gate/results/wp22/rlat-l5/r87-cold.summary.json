@@ -1,0 +1,1 @@
+{"conversation": "01a19e67-f808-73ec-ac2b-d13cd9d97643", "turns": [{"prompt": "Resumed.\nGATE: text 3 0", "turnId": "01a19e69-59ef-76bd-9053-2848caecdf9f", "start_us": 1793659066849458, "end_us": 1793659068362708, "state": "completed", "error": null, "exit_code": null, "duration_ms": 1472, "reports": ["running", "completed"]}], "total_ms": 1513}

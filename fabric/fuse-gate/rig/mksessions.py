@@ -6,7 +6,8 @@ descriptor's env instead (SandboxSelf.env, which the supervisor applies unchange
 a.json (tools, subagent, failure injection, growth past 5 MiB, /compact with CLAUDE_CODE_TRANSCRIPT_LOCAL_GC=1),
 b.json and b2.json (resumes after a torn tail; a new process, since b's env changes the etag), c.json (item 10's
 turns: Read, Glob, 40 chunks 20 ms apart, five turns), catalog.json (the tombstone trigger that got furthest in
-the gate: two refusals with the refusal fallback armed from the model catalog), r0.json/r.json (item 6: a seed turn,
+the gate: two refusals with the refusal fallback armed from the model catalog; catalog2: the same after a written
+tool call), r0.json/r.json (item 6: a seed turn,
 then a resume). usage: mksessions.py DIR"""
 import json, os, sys
 
@@ -49,7 +50,13 @@ catalog = {"env": {"CLAUDE_CODE_REFUSAL_FALLBACK_CATCH_ALL": "1",
            "turns": ["First turn.\nGATE: text 3 0",
                      g("Refused twice.", "GATE: trunconce r1 refusal", "GATE: trunconce r2 refusal", "GATE: text 4 0"),
                      "After.\nGATE: text 2 0"]}
+# the same refusals after a written tool call: refusal_retry abandons the attempt, whose tool_use and tool_result
+# are already in the transcript
+catalog2 = dict(catalog, turns=["First turn.\nGATE: text 3 0",
+                                g("Tool, then refused twice.", 'GATE: tool Bash {"command":"echo tomb","description":"tomb"}',
+                                  "GATE: truncafter r1 refusal", "GATE: truncafter r2 refusal", "GATE: text 4 0"),
+                                "After.\nGATE: text 2 0"])
 r0 = {"turns": [g("Seed.", 'GATE: tool Bash {"command":"echo seed","description":"seed"}', "GATE: text 3 0")]}
 r = {"resume": True, "turns": [g("Resumed.", "GATE: text 3 0")]}
-for n, s in (("a", a), ("b", b), ("b2", b2), ("c", c), ("catalog", catalog), ("r0", r0), ("r", r)):
+for n, s in (("a", a), ("b", b), ("b2", b2), ("c", c), ("catalog", catalog), ("catalog2", catalog2), ("r0", r0), ("r", r)):
     json.dump(s, open(os.path.join(d, n + ".json"), "w"), indent=1)

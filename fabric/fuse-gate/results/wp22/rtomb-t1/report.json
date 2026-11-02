@@ -1,0 +1,46 @@
+{
+ "files": [
+  {
+   "path": "backups/.claude.json.backup.1793655708237",
+   "size": 84,
+   "sha256": "f9ace0fc5d974080",
+   "scope": "local",
+   "equal_to_local": true
+  },
+  {
+   "path": "projects/-workspace/01a19e36-1735-7734-a912-76e1718cfb70.jsonl",
+   "size": 396354,
+   "sha256": "001b74a062620ec3",
+   "scope": "magpie",
+   "equal_to_magpie": true,
+   "lines": 52,
+   "bad_lines": 0,
+   "ends_with_newline": true
+  },
+  {
+   "path": "sessions/127.f8a9d8bd9f26b538e09fc65dab81b60176dbbba6af7d0bd4ab9ca09e09aa6877.key",
+   "size": 95,
+   "sha256": "70ff54cac8f0711c",
+   "scope": "local",
+   "equal_to_local": true
+  },
+  {
+   "path": "sessions/127.json",
+   "size": 503,
+   "sha256": "e4a90bed24e92174",
+   "scope": "local",
+   "equal_to_local": true
+  }
+ ],
+ "calls": {
+  "cc_write": 8,
+  "cc_truncate": 0,
+  "cc_setattr": 0,
+  "cc_rename": 0,
+  "cc_unlink": 0
+ },
+ "transcript_rewrites": [],
+ "truncates": [],
+ "setattrs": [],
+ "renames": []
+}

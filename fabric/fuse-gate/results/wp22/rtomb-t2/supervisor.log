@@ -1,0 +1,29 @@
+{"t":"2026-11-02T22:04:51.176Z","level":"info","svc":"supervisor-keeper","msg":"keeper started","pid":1}
+{"t":"2026-11-02T22:04:51.177Z","level":"info","svc":"supervisor-keeper","msg":"supervisor started","pid":17,"restarts":0}
+{"t":"2026-11-02T22:04:51.202Z","level":"info","svc":"supervisor","ver":"dev","msg":"supervisor started","version":"supervisor-dev","boot_id":"3fa3347883f20f46","restart":false}
+{"t":"2026-11-02T22:04:51.205Z","level":"warn","svc":"supervisor","ver":"dev","msg":"/etc/hosts not written","error":"Read-only file system (os error 30)"}
+{"t":"2026-11-02T22:04:51.205Z","level":"warn","svc":"supervisor","ver":"dev","msg":"apt proxy not written","error":"Read-only file system (os error 30)"}
+{"t":"2026-11-02T22:04:51.208Z","level":"info","svc":"supervisor","ver":"dev","msg":"lease taken","epoch":1}
+{"t":"2026-11-02T22:04:51.208Z","level":"info","svc":"supervisor","ver":"dev","msg":"mounted ~/.claude","mount":"/home/sandbox/.claude"}
+{"t":"2026-11-02T22:04:51.220Z","level":"info","svc":"supervisor","ver":"dev","msg":"fuse connection","restart":false,"boot":"08578654-46e7-4cc1-8af0-111dcb12d45f"}
+{"t":"2026-11-02T22:04:51.236Z","level":"info","svc":"supervisor","ver":"dev","msg":"fuse mounted"}
+{"t":"2026-11-02T22:04:51.237Z","level":"info","svc":"supervisor","ver":"dev","msg":"agent cgroup not created","error":"no cgroup hierarchy"}
+{"t":"2026-11-02T22:04:51.246Z","level":"info","svc":"supervisor","ver":"dev","msg":"claude started","gen":1,"pid":89,"session":"01a19e4b-341d-7553-b1bd-35dd52dbe99b","resume":false}
+{"t":"2026-11-02T22:04:51.493Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":".config.json"}
+{"t":"2026-11-02T22:04:51.499Z","level":"info","svc":"supervisor","ver":"dev","msg":"descriptor changed","etag":"\"[redacted]\""}
+{"t":"2026-11-02T22:04:51.499Z","level":"info","svc":"supervisor","ver":"dev","msg":"configuration changed: generation ended before the turn"}
+{"t":"2026-11-02T22:04:51.516Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":".credentials.json"}
+{"t":"2026-11-02T22:04:51.548Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"state"}
+{"t":"2026-11-02T22:04:51.636Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"themes"}
+{"t":"2026-11-02T22:04:51.807Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"[redacted]"}
+{"t":"2026-11-02T22:04:51.918Z","level":"info","svc":"supervisor","ver":"dev","msg":"claude exited","gen":1,"code":"Some(0)","signal":"None","why":"Some(Graceful)"}
+{"t":"2026-11-02T22:04:51.925Z","level":"info","svc":"supervisor","ver":"dev","msg":"claude started","gen":2,"pid":123,"session":"01a19e4b-341d-7553-b1bd-35dd52dbe99b","resume":false}
+{"t":"2026-11-02T22:04:52.313Z","level":"info","svc":"supervisor","ver":"dev","msg":"turn started","turn":"01a19e4b-359d-7200-8205-8fc85d95799f","origin":"person"}
+{"t":"2026-11-02T22:04:52.388Z","level":"info","svc":"supervisor","ver":"dev","msg":"claude initialised","gen":2,"model":"Some(\"claude-sonnet-4-5\")"}
+{"t":"2026-11-02T22:04:52.480Z","level":"info","svc":"supervisor","ver":"dev","msg":"turn ended","turn":"01a19e4b-359d-7200-8205-8fc85d95799f","origin":"person","outcome":"Completed","ms":167,"held":false}
+{"t":"2026-11-02T22:04:52.552Z","level":"info","svc":"supervisor","ver":"dev","msg":"turn started","turn":"01a19e4b-3984-768e-8290-d24cefe3c0d3","origin":"person"}
+{"t":"2026-11-02T22:04:52.569Z","level":"info","svc":"supervisor","ver":"dev","msg":"claude initialised","gen":2,"model":"Some(\"claude-sonnet-4-5\")"}
+{"t":"2026-11-02T22:04:53.385Z","level":"info","svc":"supervisor","ver":"dev","msg":"turn ended","turn":"01a19e4b-3984-768e-8290-d24cefe3c0d3","origin":"person","outcome":"Completed","ms":832,"held":false}
+{"t":"2026-11-02T22:04:53.477Z","level":"info","svc":"supervisor","ver":"dev","msg":"turn started","turn":"01a19e4b-3d0e-70b6-b9f9-809c0681a590","origin":"person"}
+{"t":"2026-11-02T22:04:53.496Z","level":"info","svc":"supervisor","ver":"dev","msg":"claude initialised","gen":2,"model":"Some(\"claude-opus-4-8\")"}
+{"t":"2026-11-02T22:04:53.519Z","level":"info","svc":"supervisor","ver":"dev","msg":"turn ended","turn":"01a19e4b-3d0e-70b6-b9f9-809c0681a590","origin":"person","outcome":"Completed","ms":41,"held":false}
