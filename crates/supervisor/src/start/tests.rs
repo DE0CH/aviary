@@ -132,7 +132,7 @@ impl World {
     async fn start(
         &self,
         agent: Arc<FakeAgent>,
-        fs: Arc<FakeFs>,
+        fs: Arc<dyn Filesystem>,
     ) -> (Running, tokio::task::JoinHandle<i32>, ControlClient, SocketAddr) {
         let boot = self.boot();
         let build = Build::new("supervisor");
@@ -285,6 +285,20 @@ async fn not_ready_until_the_lease_is_granted() {
     w.magpie.faults().remove(f);
     until("ready", || l.is_ready()).await;
     assert!(cc.health().await.unwrap().ready);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn not_ready_while_the_filesystem_refuses_to_mount() {
+    let w = world().await;
+    let fs: Arc<dyn Filesystem> = Arc::new(crate::lifecycle::UnbuiltFilesystem);
+    let (running, _done, cc, _) = w.start(FakeAgent::new(), fs).await;
+    let l = running.lifecycle.clone();
+    until("the lease", || l.readiness().lease).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let h = cc.health().await.unwrap();
+    assert!(h.ok && !h.ready, "{h:?}");
+    assert!(!l.readiness().mounted);
+    assert_eq!(l.phase(), Phase::Booting);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
