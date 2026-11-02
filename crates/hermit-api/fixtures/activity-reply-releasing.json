@@ -1,0 +1,9 @@
+{
+  "state": "releasing",
+  "release": {
+    "reason": "lifetime",
+    "code": "sandbox_released",
+    "force": false,
+    "deadlineAt": "2026-11-02T12:06:06.789Z"
+  }
+}

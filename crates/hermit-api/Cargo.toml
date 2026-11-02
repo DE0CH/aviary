@@ -1,10 +1,28 @@
 [package]
 name = "hermit-api"
-description = "hermit's contract: types, routes, protocol numbers and client."
+description = "hermit's contract: types, routes, protocol numbers, the sandbox token codec, client and server trait."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+
+[dependencies]
+axum.workspace = true
+base64.workspace = true
+reqwest.workspace = true
+ring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+time.workspace = true
+uuid = { workspace = true, features = ["v5"] }
+
+[dev-dependencies]
+proptest.workspace = true
+rustls.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

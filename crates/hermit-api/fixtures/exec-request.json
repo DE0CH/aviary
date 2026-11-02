@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "sh",
+    "-c",
+    "id -u"
+  ],
+  "cwd": "/workspace",
+  "stdin": "",
+  "timeoutMs": 10000,
+  "env": {
+    "LC_ALL": "C"
+  }
+}

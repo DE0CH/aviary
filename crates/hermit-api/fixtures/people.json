@@ -1,0 +1,17 @@
+{
+  "generation": "c0ffee0000000000000000000000000000000000000000000000000000000000",
+  "loadedAt": "2026-11-02T04:00:00.000Z",
+  "explicit": [
+    {
+      "email": "admin@example.net",
+      "role": "admin"
+    },
+    {
+      "email": "guest@example.com",
+      "role": "staff"
+    }
+  ],
+  "domains": [
+    "example.org"
+  ]
+}

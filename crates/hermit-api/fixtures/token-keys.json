@@ -1,0 +1,14 @@
+{
+  "keys": [
+    {
+      "kid": 1,
+      "alg": "Ed25519",
+      "publicKey": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+    },
+    {
+      "kid": 2,
+      "alg": "Ed25519",
+      "publicKey": "PUAXw-hDiVqStwqnTRt-vJyYLM8uxJaMwM1V8Sr0Zgw"
+    }
+  ]
+}

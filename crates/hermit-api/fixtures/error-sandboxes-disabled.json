@@ -1,0 +1,6 @@
+{
+  "code": "sandbox_busy",
+  "message": "sandboxes are disabled by the operator",
+  "reason": "disabled",
+  "retryAfterS": 300
+}

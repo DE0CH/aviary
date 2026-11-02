@@ -1,0 +1,17 @@
+{
+  "state": "idle",
+  "turnId": null,
+  "tasks": 0,
+  "idleSince": "2026-11-02T04:30:00.000Z",
+  "lastOutputAt": null,
+  "bootId": "b7e0c1d2-0000-4000-8000-000000000001",
+  "protocol": 1,
+  "version": "supervisor-1a2b3c4d5e6f",
+  "restarts": 1,
+  "rssBytes": 29360128,
+  "memory": {
+    "limit": 1073741824,
+    "used": 104857600
+  },
+  "events": []
+}

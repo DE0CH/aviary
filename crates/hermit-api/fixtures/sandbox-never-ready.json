@@ -1,0 +1,22 @@
+{
+  "id": "0190f6c2-5b1e-7a3c-9d4e-1f2a3b4c5d6e",
+  "conversationId": "0190f6c2-4a0d-7b2c-8e1f-0a1b2c3d4e5f",
+  "person": "staff@example.org",
+  "version": 4,
+  "createdAt": "2026-11-02T04:05:06.789Z",
+  "lastActiveAt": "2026-11-02T04:05:06.789Z",
+  "expiresAt": "2026-11-02T12:05:06.789Z",
+  "state": "gone",
+  "phase": null,
+  "readyAt": null,
+  "releasedAt": "2026-11-02T04:10:06.789Z",
+  "busy": false,
+  "image": null,
+  "supervisor": null,
+  "release": {
+    "reason": "start_failed",
+    "note": "image pull",
+    "code": "sandbox_failed",
+    "message": "image pull failed: 503"
+  }
+}

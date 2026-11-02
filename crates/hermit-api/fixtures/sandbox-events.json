@@ -1,0 +1,34 @@
+{
+  "headSeq": 98123,
+  "events": [
+    {
+      "seq": 98122,
+      "at": "2026-11-02T05:00:00.000Z",
+      "sandboxId": "0190f6c2-5b1e-7a3c-9d4e-1f2a3b4c5d6e",
+      "conversationId": "0190f6c2-4a0d-7b2c-8e1f-0a1b2c3d4e5f",
+      "person": "staff@example.org",
+      "state": "gone",
+      "phase": null,
+      "version": 9,
+      "busy": false,
+      "release": {
+        "reason": "host_lost",
+        "note": null,
+        "code": "sandbox_lost",
+        "message": "host-3f1c2a stopped answering for 30 s"
+      }
+    },
+    {
+      "seq": 98123,
+      "at": "2026-11-02T05:00:01.250Z",
+      "sandboxId": "0190f6c2-8e4b-7f60-8271-4d5e6f708192",
+      "conversationId": "0190f6c2-4a0d-7b2c-8e1f-0a1b2c3d4e5f",
+      "person": "staff@example.org",
+      "state": "starting",
+      "phase": "capacity",
+      "version": 1,
+      "busy": false,
+      "release": null
+    }
+  ]
+}

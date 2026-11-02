@@ -1,0 +1,26 @@
+{
+  "id": "0190f6c2-5b1e-7a3c-9d4e-1f2a3b4c5d6e",
+  "conversationId": "0190f6c2-4a0d-7b2c-8e1f-0a1b2c3d4e5f",
+  "person": "staff@example.org",
+  "version": 9,
+  "createdAt": "2026-11-02T04:05:06.789Z",
+  "lastActiveAt": "2026-11-02T04:05:06.789Z",
+  "expiresAt": "2026-11-02T12:05:06.789Z",
+  "state": "gone",
+  "phase": null,
+  "readyAt": "2026-11-02T04:05:21.004Z",
+  "releasedAt": "2026-11-02T05:00:00.000Z",
+  "busy": false,
+  "image": "sha256:3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f",
+  "supervisor": {
+    "protocol": 1,
+    "version": "supervisor-1a2b3c4d5e6f",
+    "bootId": "b7e0c1d2-0000-4000-8000-000000000001"
+  },
+  "release": {
+    "reason": "host_lost",
+    "note": null,
+    "code": "sandbox_lost",
+    "message": "host-3f1c2a stopped answering for 30 s"
+  }
+}

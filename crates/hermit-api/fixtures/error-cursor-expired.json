@@ -1,0 +1,4 @@
+{
+  "code": "cursor_expired",
+  "message": "after is older than the retention"
+}

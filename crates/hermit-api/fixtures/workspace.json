@@ -1,0 +1,12 @@
+{
+  "id": "0190f6c2-4a0d-7b2c-8e1f-0a1b2c3d4e5f",
+  "createdAt": "2026-11-01T09:00:00.000Z",
+  "quota": {
+    "bytes": 1073741824,
+    "inodes": 1000
+  },
+  "usage": {
+    "bytes": 52428800,
+    "inodes": 37
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "product": {
+    "name": "Example AI",
+    "locale": "en"
+  },
+  "signIn": {
+    "access": [],
+    "appScheme": null
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "state": "running",
+  "turnId": "0190f6c2-6c2f-7d4e-a05f-2b3c4d5e6f70",
+  "tasks": 2,
+  "idleSince": null,
+  "lastOutputAt": "2026-11-02T04:20:00.000Z",
+  "bootId": "b7e0c1d2-0000-4000-8000-000000000001",
+  "protocol": 1,
+  "version": "supervisor-1a2b3c4d5e6f",
+  "restarts": 0,
+  "rssBytes": 31457280,
+  "memory": {
+    "limit": 1073741824,
+    "used": 612368384
+  },
+  "events": [
+    {
+      "kind": "memory_kill",
+      "at": "2026-11-02T04:19:58.000Z",
+      "pid": 912,
+      "comm": "python3",
+      "rss": 402653184
+    },
+    {
+      "kind": "generation_exit",
+      "at": "2026-11-02T04:19:59.000Z",
+      "pid": 301,
+      "exitCode": 1
+    }
+  ]
+}

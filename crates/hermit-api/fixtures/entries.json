@@ -1,0 +1,30 @@
+{
+  "path": "uploads",
+  "entries": [
+    {
+      "name": "a.pdf",
+      "type": "file",
+      "size": 10240,
+      "mtime": "2026-11-02T04:00:00.000Z"
+    },
+    {
+      "name": "img",
+      "type": "dir",
+      "size": 0,
+      "mtime": "2026-11-02T04:00:00.000Z"
+    },
+    {
+      "name": "latest",
+      "type": "symlink",
+      "size": 5,
+      "mtime": "2026-11-02T04:00:00.000Z"
+    },
+    {
+      "name": "fifo",
+      "type": "other",
+      "size": 0,
+      "mtime": "2026-11-02T04:00:00.000Z"
+    }
+  ],
+  "nextCursor": "img"
+}
