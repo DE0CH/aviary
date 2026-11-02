@@ -73,7 +73,7 @@ router's `admins` check + web's own check, and web stays cluster-only.
 
 - `GET /internal/ops/` the page (self-contained HTML, strict CSP; polls `snapshot` every 10 s while visible). It keeps
   two halves apart: **Now** (is everything fine) and **History** (a log, newest first, Hong Kong time). A phone shows
-  them as tabs (`#now`, `#history`), a screen 1100 px or wider side by side. The header's pill is the verdict.
+  them as tabs (`#now`, `#history`), a screen 1100 px or wider side by side. The header's pill is the status.
 - `GET /internal/ops/snapshot?tz=<IANA zone>` → JSON (cached 4 s per zone; "today"/"this month" start at that zone's
   midnight, default Asia/Hong_Kong; the page asks for Asia/Hong_Kong). Each section is computed on its own (8 s
   timeout); a failed one is `null` with its message in `errors.<section>`.
