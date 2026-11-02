@@ -52,7 +52,7 @@ use hermit_api::server::{Ctx, RouteGuard, SelfAnswer, Server};
 use hermit_api::token::{Claims, MasterKey, TokenKeys, TokenLiveness, sha256_hex};
 use hermit_api::workspaces::{
     Amount, ByteRange, CloneRequest, ENTRIES_PAGE, Entries, EntriesQuery, Entry, EntryType, FileContent, FileMeta,
-    FilesQuery, PutWorkspace, Workspace,
+    FilesQuery, PutWorkspace, Workspace, valid_path,
 };
 use hermit_api::{Timestamp, routes};
 use serde::Serialize;
@@ -277,6 +277,11 @@ fn later(at: Timestamp, d: Duration) -> Timestamp {
 
 fn no_sandbox() -> ApiError {
     error::not_found(codes::NO_SANDBOX, "no live sandbox")
+}
+
+/// 400 `bad_path` (hermit 3.8's path rules).
+fn bad_path() -> ApiError {
+    error::api(400, codes::BAD_PATH, "not a relative path inside the workspace")
 }
 
 fn no_workspace() -> ApiError {
@@ -869,6 +874,9 @@ impl FakeHermit {
 
     fn model_entries(&self, wid: Uuid, q: &EntriesQuery) -> Result<Entries, ApiError> {
         let path = q.path.clone().unwrap_or_default();
+        if !valid_path(&path) {
+            return Err(bad_path());
+        }
         let m = self.lock();
         let ws = m.workspaces.get(&wid).ok_or_else(no_workspace)?;
         let prefix = if path.is_empty() {
@@ -909,6 +917,12 @@ impl FakeHermit {
     }
 
     fn model_file(&self, wid: Uuid, q: &FilesQuery, range: Option<ByteRange>) -> Result<FileContent, ApiError> {
+        if !valid_path(&q.path) {
+            return Err(bad_path());
+        }
+        if q.path.is_empty() {
+            return Err(error::api(409, codes::NOT_A_FILE, "the workspace root is a directory"));
+        }
         let m = self.lock();
         let ws = m.workspaces.get(&wid).ok_or_else(no_workspace)?;
         let (data, at) = ws
