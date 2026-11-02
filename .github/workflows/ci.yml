@@ -153,6 +153,21 @@ jobs:
           docker build -f images/aviary-testing/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t aviary-testing:ci "$ctx"
           docker run --rm aviary-testing:ci test-gateway --version
           docker run --rm aviary-testing:ci aviary-conformance --help
+      - name: images/pigeon (built and run here, pushing is the images job's)
+        # pigeon spec 3.3: with no secrets it refuses to start (exit 78), naming the variable, never a value
+        run: |
+          ctx=$RUNNER_TEMP/pigeon-image
+          mkdir -p "$ctx/dist"
+          cp dist/pigeon "$ctx/dist/"
+          docker build -f images/pigeon/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t pigeon:ci "$ctx"
+          docker run --rm pigeon:ci --version
+          set +e
+          out=$(docker run --rm --read-only -e POD_NAME=ci pigeon:ci 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          test "$code" = 78
+          grep -q '"name":"PIGEON_TOKEN_MAGPIE"' <<< "$out"
       - name: magpie (glibc, debian bookworm + libheif-dev)
         # a docker run of the pinned bookworm image + libheif-dev rather than a job container, so it shares this job's
         # dist/ and cargo cache and runs as the runner's uid (.github/ci/build-magpie.sh)
