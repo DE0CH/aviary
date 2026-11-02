@@ -279,9 +279,10 @@ jobs:
           if-no-files-found: warn
 
   paseo-contract:
-    # testing/paseo-contract (pigeon spec 18.1): frames validated against every client build in clients.txt
+    # testing/paseo-contract (pigeon spec 18.1): frames validated against every client build in clients.txt, and a
+    # running pigeon (crates/pigeon/tests/contract_server.rs) driven by the apps' client package and timeline reducers
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       PASEO_CONTRACT_CACHE: ${{ github.workspace }}/../paseo-contract-cache
     defaults:
@@ -294,6 +295,13 @@ jobs:
           node-version: 22.23.4
           cache: npm
           cache-dependency-path: testing/paseo-contract/package-lock.json
+      - name: toolchain (rust-toolchain.toml, exactly)
+        working-directory: .
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: the contract server test/pigeon.test.mjs runs
+        working-directory: .
+        run: cargo test --locked -p pigeon --test contract_server --no-run
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           # built client protocol packages, keyed by what decides them

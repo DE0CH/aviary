@@ -199,7 +199,7 @@ function generateAot(dir, runtimeDir) {
  * `work/<entryWorkspace>` so its imports resolve from that package) is bundled into `work/<outfile>`. Returns the
  * directory.
  */
-async function buildIn(runtimeDir, name, { populate, workspaces, entryWorkspace, entry, outfile, alias = {}, external = [], banner }) {
+async function buildIn(runtimeDir, name, { populate, workspaces, entryWorkspace, entry, outfile, alias = {}, external = [], banner, plugins }) {
   const dir = path.join(runtimeDir, name);
   if (existsSync(path.join(dir, outfile))) return dir;
   const work = scratch(dir);
@@ -223,6 +223,7 @@ async function buildIn(runtimeDir, name, { populate, workspaces, entryWorkspace,
       alias: Object.fromEntries(Object.entries(alias).map(([from, to]) => [from, path.join(work, to)])),
       external,
       banner: banner ? { js: banner } : undefined,
+      plugins: plugins ? plugins(work) : undefined,
       logLevel: "error",
       legalComments: "none",
     });
@@ -354,7 +355,14 @@ export async function clientForCommit(sha) {
     entryWorkspace: "client",
     entry: {
       name: "__contract_client.ts",
-      text: () => ['export * as sdk from "./src/index.ts";', 'export * as node from "./src/node/index.ts";', ""].join("\n"),
+      text: () =>
+        [
+          'export * as sdk from "./src/index.ts";',
+          'export * as node from "./src/node/index.ts";',
+          // the app's own driver of the socket (`@getpaseo/client/internal/daemon-client`): its fetch and observe paths
+          'export * as internal from "./src/daemon-client.ts";',
+          "",
+        ].join("\n"),
     },
     outfile: "client.mjs",
     alias: { "@getpaseo/protocol": "protocol/src", "@getpaseo/relay": "relay/src" },
@@ -365,10 +373,75 @@ export async function clientForCommit(sha) {
   });
   const mod = await import(pathToFileURL(path.join(dir, "client.mjs")).href);
   if (typeof mod.sdk.createPaseoClient !== "function") throw new Error(`claudecodeui ${sha.slice(0, 12)}: the client package exports no createPaseoClient`);
-  const client = { sdk: mod.sdk, node: mod.node, key: id, runtime: runtime.plan.versions };
+  const client = { sdk: mod.sdk, node: mod.node, internal: mod.internal, key: id, runtime: runtime.plan.versions };
   clientsLoaded.set(id, client);
   return { ...client, commit: sha };
 }
+
+/** The app's own modules the timeline driver bundles (`paseo/packages/app/src/…`), with their exports. */
+const APP_TIMELINE_ENTRY = [
+  'export * as reducers from "./src/timeline/session-stream-reducers.ts";',
+  'export * as plan from "./src/timeline/timeline-sync-plan.ts";',
+  'export * as stream from "./src/types/stream.ts";',
+  "",
+].join("\n");
+
+/** The zustand session store the reducers' queue reads: the pure reducers the harness calls never touch it. */
+const STORE_STUB = [
+  'const absent = () => { throw new Error("the session store is not part of the contract driver"); };',
+  "export const useSessionStore = { getState: absent, setState: absent, subscribe: absent };",
+  "export const selectAgentTimelineState = absent;",
+  "",
+].join("\n");
+
+/**
+ * The app's real timeline reducers of client commit `sha` (`paseo/packages/app/src/timeline`: `processAgentStreamEvent`,
+ * `processTimelineResponse`, the fetch plans, and `@/types/stream`), bundled from the commit's source with its
+ * protocol package under the zod its lockfile resolves. Only the zustand store is replaced (by a stub that throws if
+ * used): the pure reducers take the store's state as input. `{ reducers, plan, stream, commit }`.
+ */
+export async function appTimelineForCommit(sha) {
+  const app = packageTree(sha, "app/src");
+  if (!app) throw new Error(`claudecodeui ${sha} has no paseo/packages/app`);
+  const tree = protocolTree(sha);
+  const runtime = await runtimeFor(commitLock(sha), ["protocol"], `claudecodeui ${sha.slice(0, 12)}`);
+  const key = createHash("sha256").update(`${app} ${tree}`).digest("hex").slice(0, 20);
+  const id = `${key}-${runtime.plan.key}`;
+  if (timelinesLoaded.has(id)) return { ...timelinesLoaded.get(id), commit: sha };
+  const dir = await buildIn(runtime.dir, `app-timeline-${key}-${buildId}`, {
+    populate: (work) => {
+      extract(sha, ["protocol", "app/src"], work);
+    },
+    workspaces: ["protocol"],
+    entryWorkspace: "app",
+    entry: { name: "__contract_timeline.ts", text: () => APP_TIMELINE_ENTRY },
+    outfile: "app-timeline.mjs",
+    plugins: (work) => [
+      {
+        name: "app-paths",
+        setup(build) {
+          build.onResolve({ filter: /^@\/stores\/session-store$/ }, () => ({ path: "session-store", namespace: "contract-stub" }));
+          build.onLoad({ filter: /.*/, namespace: "contract-stub" }, () => ({ contents: STORE_STUB, loader: "js" }));
+          build.onResolve({ filter: /^@\// }, (args) =>
+            build.resolve(`./${args.path.slice(2)}`, { resolveDir: path.join(work, "app", "src"), kind: args.kind }),
+          );
+          build.onResolve({ filter: /^@getpaseo\/protocol(\/|$)/ }, (args) =>
+            build.resolve(`./${args.path.replace(/^@getpaseo\/protocol/, "protocol/src")}`, { resolveDir: work, kind: args.kind }),
+          );
+        },
+      },
+    ],
+  });
+  const mod = await import(pathToFileURL(path.join(dir, "app-timeline.mjs")).href);
+  for (const name of ["processAgentStreamEvent", "processTimelineResponse"]) {
+    if (typeof mod.reducers[name] !== "function") throw new Error(`claudecodeui ${sha.slice(0, 12)}: session-stream-reducers exports no ${name}`);
+  }
+  const loadedTimeline = { reducers: mod.reducers, plan: mod.plan, stream: mod.stream, key: id };
+  timelinesLoaded.set(id, loadedTimeline);
+  return { ...loadedTimeline, commit: sha };
+}
+
+const timelinesLoaded = new Map();
 
 /** The kinds of client a clients.txt line may name. `web-legacy`: a ui image from before the Paseo apps (no protocol). */
 export const KINDS = ["web", "ios", "web-legacy"];

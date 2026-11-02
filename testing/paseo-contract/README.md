@@ -45,14 +45,14 @@ clone).
 | `export-schema.mjs` | writes `schema/<newest Paseo commit>.json`: JSON Schema (zod `toJSONSchema`, input side) of the outbound and inbound unions, for pigeon's Rust type tests; `--check` fails when it is stale |
 | `append-client.mjs` | `node append-client.mjs <commit> <web\|ios> [<commit> <kind>]... [--file F]`: inserts builds at their place by commit time (run by `.github/workflows/clients.yml`) |
 | `ci/land.sh` | the land job of `clients.yml`: applies the tested patch on its base, pushes, replays it on a main that moved elsewhere, exit 3 when the list went stale |
-| `lib/protocol.mjs` | `protocolForCommit` (the validators of a build), `protocolForDirectory`, `clientForCommit` (its client SDK), `readClients`, `newestClient` |
+| `lib/protocol.mjs` | `protocolForCommit` (the validators of a build), `protocolForDirectory`, `clientForCommit` (its client SDK and its `DaemonClient`), `appTimelineForCommit` (its app's timeline reducers), `readClients`, `newestClient` |
 | `lib/runtime.mjs` | installs a build's runtime packages from its own lockfile |
 | `fixtures/cloudcli-bridge-488a7736.ndjson` | a recorded frame log of the CloudCLI Paseo bridge at 488a7736, the web build deployed when it was recorded (`record/`); the suite checks the commit the file name names is listed |
 | `fixtures/pigeon-spec-frames.ndjson` | frames pigeon sends that the CloudCLI bridge never does (`hello.rejected` `incompatible_protocol`, pigeon spec 7.2), which every client must accept |
 | `fixtures/pigeon-frames.ndjson` | one frame of every shape pigeon sends, recorded by its socket tests (`crates/pigeon/tests/socket.rs`; a shape missing here fails them); validated against every client build |
 | `fixtures/seeded-invalid.ndjson` | frames each client must reject (a type change, a new enum value, a missing field, a new message type …) |
 | `record/` | the recorder of the bridge log: `record/record.sh <claudecodeui checkout, after npm ci> OUT.ndjson` |
-| `test/` | the harness's own tests: `npm test` |
+| `test/` | the harness's own tests and pigeon driven by the apps' code (`test/pigeon.test.mjs`): `npm test` |
 
 ## The client SDK for drivers
 
@@ -65,6 +65,29 @@ module (ws, zod and the relay's crypto at the versions its lockfile resolves) an
 built, before its deploy (or without one), and a rollback serves an older pin. A driver that needs the deployed build
 takes its commit as an input, from the ui pin in the deploy repository. The suite checks that the newest web build's SDK
 connects to a server speaking the bridge's handshake.
+
+## pigeon driven by the apps' own code
+
+`test/pigeon.test.mjs` starts a real pigeon in front of an in-memory magpie (`crates/pigeon/tests/contract_server.rs`:
+`cargo test -p pigeon --test contract_server -- --ignored --exact --nocapture serve`, from the repository root, or the
+command in `$PIGEON_CONTRACT_SERVER`; `none` skips the file) and drives it with:
+
+- **the client packages**: the newest web and iOS builds' `paseo/packages/client` (`createPaseoClient`, with a
+  WebSocket factory that sends the Access assertion and records every frame as it is on the wire) connect, list and
+  subscribe to agents and workspaces, read a timeline, send, and receive a turn with a rename and the sandbox chip;
+  every frame both ways, unnormalised, is validated against every client build in `clients.txt`;
+- **the app's timeline reducers** (`appTimelineForCommit`: `paseo/packages/app/src/timeline/session-stream-reducers.ts`,
+  `timeline-sync-plan.ts` and `types/stream.ts` of the newest web build, bundled with its protocol under its own zod;
+  only the zustand store is a stub, which the pure reducers do not read), fed by the client package's own
+  `DaemonClient` (`observeTimeline` updates through `processAgentStreamEvent`, `fetchAgentTimeline` answers through
+  `processTimelineResponse`, a replacement refetching the tail, as `session-context` wires them). Two cases: a turn
+  whose rows interleave with a rename, list upserts, the sandbox chip, an ask and a tool row's update renders exactly
+  as a fresh tail fetch does, with no catch-up fetch; and a turn across a rewrite while connected (one replacement)
+  and a retract while the socket is closed (the resume answers with a reset) keeps every row exactly once and drops
+  the retracted ones. A dropped live row makes the first case fail (a catch-up fetch), which was checked by hand.
+
+CI runs it in the `paseo-contract` job (which builds the contract server first) and in `clients.yml`, so a new
+client build is also driven against pigeon before it is listed.
 
 ## The recorded bridge log
 

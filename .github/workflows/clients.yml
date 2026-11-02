@@ -87,6 +87,13 @@ jobs:
           echo "attempt=$ATTEMPT" >> "$GITHUB_OUTPUT"
           echo "builds (attempt $ATTEMPT): $list"
       - run: npm ci --no-audit --no-fund
+      - name: toolchain (rust-toolchain.toml, exactly)
+        working-directory: .
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: the contract server test/pigeon.test.mjs runs (the new builds drive a running pigeon)
+        working-directory: .
+        run: cargo test --locked -p pigeon --test contract_server --no-run
       - name: the commits are on claudecodeui main
         env:
           CLIENTS: ${{ steps.list.outputs.clients }}

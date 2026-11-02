@@ -84,8 +84,13 @@ WP-50 plugs into `feeds`:
   pigeon's own 15 s / 10 s / 300 s): on the shared build runner (2026-11-02) the send took 168.1 s, its reply came,
   then its 1012, and the drain ended 170.5 s after the send began.
 
-- **Socket message types** (spec 18.1): pigeon's frames are built as JSON in the app's schema shapes, not
-  hand-written serde types checked with the `jsonschema` crate. The drift protection is the frame corpus instead:
+- **Socket message types** (spec 18.1; DESIGN 12 D25): pigeon's frames are built as JSON in the app's schema shapes,
+  not hand-written serde types checked with the `jsonschema` crate. A JSON Schema exported from zod checks less than
+  the zod schemas and the zod-aot validators the shipped clients run (refinements, transforms and preprocessors do
+  not export), and serde types for a few dozen of about 430 message types would be a second copy of the shapes to keep
+  in step. The drift protection is the clients' own validators, on two paths: every frame of a running pigeon driven
+  by the clients' own package, as sent, is validated against every client build (`testing/paseo-contract/test/
+  pigeon.test.mjs`, below), and the frame corpus:
   every socket test (`tests/socket.rs`, `tests/transport.rs`) records every frame its sockets send and receive, and a
   shape missing from `testing/paseo-contract/fixtures/pigeon-frames.ndjson` fails that test (`tests/common/corpus.rs`;
   `cargo test -p pigeon --test socket merge_frame_corpus -- --ignored` adds the missing shapes). The paseo-contract
@@ -93,8 +98,15 @@ WP-50 plugs into `feeds`:
   validators, and the client messages pigeon reads (every type it handles is required to be in the corpus) against
   the inbound schema, so a client build that changes a message pigeon handles fails there. Frames a test sends on
   purpose as invalid go through `Ws::raw_invalid` / `session_invalid` / `rpc_invalid` and are not recorded.
-- **The app's reducer is not driven** (spec 18.1's "the app's real reducer" case): no harness feeds pigeon's frames
-  through `paseo/packages/app/src/timeline`. Not met; see the package report.
+- **The app's real reducer** (spec 18.1): `testing/paseo-contract/test/pigeon.test.mjs` drives a running pigeon
+  (`tests/contract_server.rs`: this router and socket in front of the in-memory magpie model, with a control endpoint
+  for magpie's side) with the newest web build's `DaemonClient` and feeds what it receives through the app's own
+  `processAgentStreamEvent` and `processTimelineResponse` (only the zustand store is a stub): no catch-up fetch when a
+  rename, list upserts, the sandbox chip, an ask and a tool row's update interleave with a turn's rows, and every row
+  exactly once across a rewrite while connected and a retract while the socket was closed. The same file drives pigeon
+  with the newest web and iOS builds' client packages and validates every frame as sent against every client build.
+  The client package's WebSocket factory is the harness's `ws` 8.20.0, which sends the Access assertion as a header
+  (the browser sends a cookie; Node's global WebSocket sends no headers).
 - **MCP tool names**: `mcp__<server>__<tool>` is shown and mapped as `<tool>`, so old-server history and
   `mcp__tools__*` calls get the same label and detail (spec 18.1); the old bridge showed the full name with an
   `unknown` detail, so render parity (cutover 10.2 item 6) must compare MCP tool names by their tool part.
@@ -140,6 +152,8 @@ two CPUs (`taskset -c 0,1`) that also run the 5 000 client sockets and the in-me
   socket, 4403 on re-check, the inbound rate), the drain (rows keep streaming until each socket's 1012, the 1012
   after the reply, a large send arriving across the drain and one waiting for a large-message slot), the WP-50 seams,
   the list cache per viewer without kept failures, and spec 19's metric names.
+- `tests/contract_server.rs`: the pigeon `testing/paseo-contract/test/pigeon.test.mjs` drives (ignored; it serves until
+  its stdin closes), with its control endpoint for magpie's side.
 - `tests/parity.rs`: every tool call of the recorded CloudCLI bridge log, rebuilt from the transcript the recorder fed
   the bridge (`testing/paseo-contract/record/cloudcli-bridge-488a7736.tools.json`, `node record/extract-tools.mjs`),
   rendered as the bridge rendered it.
