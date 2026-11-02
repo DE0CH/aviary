@@ -406,7 +406,7 @@ uuid, not for Claude Code's result; it now says that the result is not that sign
    `fabric/host/setup.sh` and `fabric/aws/infra.sh ami`): the kernel of Canonical's image on the AMI's bake date
    (these hosts: 7.0.0-1014-aws on 2026-11-02); sysctls `net.ipv4.ip_forward=1` and `rp_filter=0` (the gate sets only
    `vm.max_map_count=262144`, as the AMI does); systemd-networkd leaving foreign routes alone; sandboxd's unit and the
-   `/sbx` cgroup hierarchy with its memory reservation and cap (the gate: `/gate/<name>`, a 4 GiB limit); JuiceFS on
+   `/sbx` cgroup hierarchy with its memory reservation and cap (the gate: `/gate/<name>`, a 4 GiB limit); the shared workspace filesystem on
    `/var/lib/sbx/jfs` as `/workspace` (absent here); the scratch dir under `/var/lib/sbx` on the 40 GB gp3 root (here
    `/var/lib/gate/scratch` on the instance's root disk, same filesystem type: Canonical's ext4); the WireGuard
    interface and the sandbox network sandboxd builds (here a netns with only `lo`). Items 3 and 4 are to be repeated
