@@ -8,12 +8,16 @@
 #   as memory pages); LAYOUT=scratch: on the host-backed scratch dir, moved the way sandboxd moves scratch (rsync
 #   rounds while running, the final delta while stopped, behind `sandboxd migrate-relay`: gate.sh send-scratch).
 # HOLD=0: no hold, no blocked append, no probe (a control: migration with nothing held in the supervisor).
+# HOLD=2: the matched control: the same 3 x 1 MiB append process and the probe as HOLD=1, but the fake magpie does
+#   not hold (the append completes before the checkpoint; nothing is held in the supervisor across it).
 # MODE=local: Claude Code's HOME on the sandbox's /tmp (no FUSE in its path; a control). RESTORE_DEBUG=1: the target
 #   restores with runsc --debug and the faults it logs are collected (debug-faults.txt).
 # GATE_RUNSC_EXTRA: extra runsc flags on both hosts (an experiment, e.g. --systrap-disable-syscall-patching).
 # Every output lands in /root/out/mig-NAME (both hosts' runsc logs included). Exit 1 when the run fails: no
 # summary from the driver within 120 s of the release, a turn that is not `success`, the blocked append not exact,
-# a transcript that differs from magpie's copy, a repeated `unique`, or an in-sandbox process exit.
+# a transcript that differs from magpie's copy, a repeated `unique`, an in-sandbox process exit (exits.log: the
+# keeper, the supervisor, the fakes, a job exiting non-zero), Claude Code's own non-zero exit, or a fault in the
+# supervisor's log (a panicked thread, a request read incompletely: SHORTREAD).
 set -uo pipefail
 cd "$(dirname "$0")" || exit 1
 name=$1; dst=$2; fc=${3:-0}; fm=${4:-0}; layout=${LAYOUT:-tmpfs}; hold=${HOLD:-1}; mode=${MODE:-fuse}
@@ -41,8 +45,8 @@ fi
 # the directly blocked append goes to an existing file (a held CREATE would hold the mount's lock: GATE.md)
 x sh -c "echo start > ~/.claude/blocked.jsonl; echo probe > ~/.claude/keeper-probe.txt; cat ~/.claude/keeper-probe.txt >/dev/null"
 sleep 2.5
-if [ "$hold" = 1 ]; then
-  r touch /run/magpie-ctl/hold
+if [ "$hold" != 0 ]; then
+  [ "$hold" = 1 ] && r touch /run/magpie-ctl/hold
   job blocked "python3 /media/killtest.py append-existing /home/sandbox/.claude/blocked.jsonl 3 1048576 > /tmp/blocked.json"
 fi
 sleep 8
@@ -69,7 +73,7 @@ yr() { "${SSH[@]}" "cd /root/gate && ./gate.sh exec $name --root $*"; }
 yr sh -c "'grep -c HOLDING /srv/magpie/calls.log'" > "$out/held-after-move.txt"
 # a probe on the target while the hold is still on: how long a stat and a cached read of other files wait
 yj() { "${SSH[@]}" "cd /root/gate && ./gate.sh exec $name --root sh -c \"echo '$2' > /run/jobs/$1.tmp && mv /run/jobs/$1.tmp /run/jobs/$1.sh\""; }
-[ "$hold" = 1 ] && yj probe 'python3 /media/probe.py > /tmp/probe.json'
+[ "$hold" != 0 ] && yj probe 'python3 /media/probe.py > /tmp/probe.json'
 sleep 3
 yr sh -c "'ps -eo pid,stat,pcpu,comm; grep -c HOLDING /srv/magpie/calls.log; date +%s.%N'" >> "$out/held-after-move.txt"
 t3=$(ms)
@@ -79,7 +83,7 @@ t4=$(ms)
 y cat /tmp/out-m/summary.json > "$out/drive.json" 2>/dev/null || fail+=("no driver summary within 120 s of the release")
 y cat /tmp/out-m/stdout.jsonl > "$out/drive-stdout.jsonl" 2>/dev/null
 y cat /tmp/out-m/stderr.log > "$out/drive-stderr.log" 2>/dev/null
-if [ "$hold" = 1 ]; then
+if [ "$hold" != 0 ]; then
   y cat /tmp/blocked.json > "$out/blocked.json" 2>/dev/null || fail+=("the blocked append never returned")
   y cat /tmp/probe.json > "$out/probe.json"
 fi
@@ -108,6 +112,10 @@ fi
 [ "$mode" = local ] || jq -e '[.files[] | select(.path|endswith(".jsonl")) | .equal_to_magpie] | all' "$out/report.json" >/dev/null || fail+=("a transcript differs from magpie's copy")
 python3 ./uniques.py "$out/ops.tsv" "${t0}000" > "$out/uniques.json" || fail+=("unique check failed: $(cat "$out/uniques.json")")
 [ -s "$out/exits.log" ] && fail+=("an in-sandbox process exited: $(tr '\n' ';' < "$out/exits.log")")
+# a thread that panicked or a request read incompletely does not end a process; the supervisor's log says so
+grep -E 'panicked|short read|exited status' "$out/supervisor.log" > "$out/supervisor-faults.txt" && fail+=("the supervisor logged a fault: $(head -n 3 "$out/supervisor-faults.txt" | tr '\n' ';')")
+# Claude Code's own exit (the driver records it; a signal is a negative number)
+[ -s "$out/drive.json" ] && { jq -e '.exit == 0' "$out/drive.json" >/dev/null || fail+=("Claude Code exited $(jq -c .exit "$out/drive.json")"); }
 printf '%s\n' "${fail[@]}" > "$out/failures.txt"
 cat "$out/times.json" "$out/receive.json"; echo; [ -s "$out/send.json" ] && cat "$out/send.json"
 jq -c '{turns: [.turns[].result], exit}' "$out/drive.json" 2>/dev/null; jq -c '{exact, writes}' "$out/blocked.json" 2>/dev/null; cat "$out/probe.json"

@@ -156,6 +156,7 @@ pub struct Fs {
     die: Option<Die>,
     fd: RawFd,
     magpie: String,
+    journal: PathBuf,
 }
 
 pub struct Opts {
@@ -339,8 +340,50 @@ impl Fs {
         fs::write(&cf, &body).map_err(|_| EIO)
     }
 
+    /// Checks that `read(2)` left a whole request in the mapped slot (its header's length equals the count read).
+    /// When it did not (seen after a restore with the journal on the host-backed scratch bind: `mig-s06`, `mig-s09`),
+    /// logs a `SHORTREAD` line with the count, the mapping's header and the journal file's own bytes at that slot, then
+    /// serves the file's copy if that one is whole; otherwise the request is skipped (logged, not served).
+    fn whole_request(&self, s: usize, slot: &mut [u8], n: usize) -> bool {
+        let mlen = u32at(slot, 0) as usize;
+        if n >= 40 && mlen == n {
+            return true;
+        }
+        let mut fb = vec![0u8; 48];
+        let fread = File::open(&self.journal)
+            .and_then(|f| f.read_at(&mut fb, (s * SLOT) as u64))
+            .unwrap_or(0);
+        thread::sleep(Duration::from_millis(20));
+        let later = u32at(slot, 0);
+        let flen = u32at(&fb, 0) as usize;
+        let line = format!(
+            "{}\tSHORTREAD\t0\t\tslot={s} n={n} map_len={mlen} map_opcode={} map_unique={} map_len_20ms_later={later} \
+             file_read={fread} file_len={flen} file_opcode={} file_unique={}\t0\t0\t{}\n",
+            now_us(),
+            u32at(slot, 4),
+            u64at(slot, 8),
+            u32at(&fb, 4),
+            u64at(&fb, 8),
+            u64at(&fb, 8)
+        );
+        let _ = self.oplog.lock().unwrap().write_all(line.as_bytes());
+        eprintln!("worker {s}: short read: {}", line.trim_end());
+        if flen == n && (40..=48).contains(&n) {
+            slot[..48].copy_from_slice(&fb);
+            return true;
+        }
+        if flen == n && n > 48 {
+            let full = File::open(&self.journal).and_then(|f| f.read_at(&mut slot[..n], (s * SLOT) as u64));
+            return full.is_ok_and(|r| r == n);
+        }
+        false
+    }
+
     fn handle(&self, cl: &mut Client, req: &[u8], marked: bool) -> Option<Vec<u8>> {
         let len = u32at(req, 0) as usize;
+        if len < 40 {
+            return None;
+        }
         let opcode = u32at(req, 4);
         let unique = u64at(req, 8);
         let ino = u64at(req, 16);
@@ -349,6 +392,10 @@ impl Fs {
         let t0 = now_us();
         let mut detail = String::new();
         let res: Option<Result<Vec<u8>, i32>> = self.dispatch(cl, opcode, unique, ino, body, &ctx, &mut detail);
+        if matches!(opcode, 4 | 9 | 10 | 11 | 12 | 16 | 35) {
+            // the caller as the header names it (the key a resend after a checkpoint is matched on, GATE.md item 3)
+            detail.push_str(&format!(" pid={}", u32at(req, 32)));
+        }
         let path = self.node(ino).map(|n| n.path).unwrap_or_default();
         let err = match &res {
             Some(Err(e)) => *e,
@@ -997,6 +1044,7 @@ pub fn serve(o: Opts) -> std::io::Result<()> {
         die: o.die,
         fd,
         magpie: o.magpie.clone(),
+        journal: o.journal.clone(),
     });
     let journal = mmap_journal(&o.journal, o.workers)?;
     // replay every occupied slot, in `unique` order
@@ -1050,6 +1098,9 @@ pub fn serve(o: Opts) -> std::io::Result<()> {
                         }
                     }
                 }
+                if !f.whole_request(s, slot, n as usize) {
+                    continue;
+                }
                 let opcode = u32at(slot, 4);
                 let marked = f
                     .die
@@ -1058,6 +1109,18 @@ pub fn serve(o: Opts) -> std::io::Result<()> {
                 f.maybe_die("read", &Ctx { opcode, marked });
                 if let Some(r) = f.handle(&mut cl, slot, marked) {
                     let e = write_reply(f.fd, &r);
+                    if e != 0 {
+                        // ENOENT: the sentry no longer waits for this `unique` (its caller is gone, or a checkpoint
+                        // forgot the request and will resend it); logged so a resend can be matched to it
+                        let line = format!(
+                            "{}\tREPLYERR\t{}\t\t{} errno {e}\t{e}\t0\t{}\n",
+                            now_us(),
+                            u64at(slot, 16),
+                            opname(opcode),
+                            u64at(slot, 8)
+                        );
+                        let _ = f.oplog.lock().unwrap().write_all(line.as_bytes());
+                    }
                     if e != 0 && e != libc::ENOENT {
                         eprintln!("worker {s}: reply write errno {e}");
                     }

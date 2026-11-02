@@ -79,7 +79,7 @@ receive)
     </dev/null >"/var/log/gate/$name.restore.out" 2>>"/var/log/gate/$name.log"
   grep -m1 '^{"from"' "/var/log/gate/$name.restore.out" || cat "/var/log/gate/$name.restore.out" ;;
 send-scratch)
-  host=$3 port=$4; sd=/var/lib/gate/scratch/$name; url="rsync://$host:$port/scratch/"
+  host=$3 port=$4; sd=/var/lib/gate/scratch/$name; h=$host; [[ $h == *:* ]] && h="[$h]"; url="rsync://$h:$port/scratch/"
   ms() { date +%s%3N; }
   rs() { rsync -aHAX --numeric-ids --delete --exclude=/lost+found --stats --timeout=120 --contimeout=10 "$sd/" "$url"; }
   stat_of() { awk -F': ' '/^Number of regular files transferred:/{gsub(/,/,"",$2); f=$2} /^Total transferred file size:/{gsub(/[,a-z ]/,"",$2); b=$2} END{printf "{\"files\":%d,\"bytes\":%d", f, b}'; }
@@ -112,7 +112,7 @@ receive-relay)
   "${RUNSC[@]}" "${dbg[@]}" restore --migrate-listen "127.0.0.1:$((port + 1000))" --image-path "$dir" --background --bundle "$b" --detach "$name" \
     </dev/null >"/var/log/gate/$name.restore.out" 2>>"/var/log/gate/$name.log" & rp=$!
   for _ in $(seq 100); do ss -ltn | grep -q "127.0.0.1:$((port + 1000)) " && break; sleep 0.05; done
-  sandboxd migrate-relay "0.0.0.0:$port" "127.0.0.1:$((port + 1000))" "$conf" 900 2>>"/var/log/gate/$name.relay.log"; rc=$?
+  sandboxd migrate-relay "${GATE_RELAY_LISTEN:-[::]}:$port" "127.0.0.1:$((port + 1000))" "$conf" 900 2>>"/var/log/gate/$name.relay.log"; rc=$?
   wait $rp; echo "relay exit $rc" >> "/var/log/gate/$name.relay.log"
   grep -m1 '^{"from"' "/var/log/gate/$name.restore.out" || cat "/var/log/gate/$name.restore.out" ;;
 rm)

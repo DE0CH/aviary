@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Gate item 1: /dev/fuse in a running sandbox, the supervisor's mount (root in the sandbox), uid 1000 I/O on it.
+# Gate items 1 and 5: /dev/fuse in a running sandbox, the supervisor's mount (root in the sandbox), uid 1000 I/O on
+# it (item1.txt); flock and fcntl locks between two uid 1000 processes on a mount file and on /tmp (locks.txt, with
+# the lock opcodes the server received).
 # Usage: mount-check.sh NAME   -> /root/out/mount-NAME/
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -18,4 +20,13 @@ r() { ./gate.sh exec "$name" --root "$@"; }
   echo "magpie copy: $(r cat /srv/magpie/d/d1/d2/f.txt | tr '\n' '|')"
 } 2>&1 | cat > "$out/item1.txt"   # through a pipe: runsc exec reopens a file stdout at offset 0
 cat "$out/item1.txt"
+{
+  echo "mount: $(x python3 /media/locks.py /home/sandbox/.claude/lockfile)"
+  echo "tmp:   $(x python3 /media/locks.py /tmp/lockfile)"
+  # GETLK 31, SETLK 32, SETLKW 33 (and flock as SETLK with FUSE_LK_FLOCK): none reach the server when the sentry
+  # keeps the locks itself
+  echo "lock requests the server received: $(r sh -c "grep -c -P '\t(GETLK|SETLK|SETLKW)\t' /srv/supervisor/ops.tsv" || true)"
+  echo "opcodes the server received: $(r sh -c "cut -f2 /srv/supervisor/ops.tsv | sort | uniq -c | tr -s ' ' | tr '\n' ','")"
+} 2>&1 | cat > "$out/locks.txt"
+cat "$out/locks.txt"
 ./gate.sh rm "$name"

@@ -12,8 +12,11 @@ fi
 mkdir -p $S/supervisor $S/magpie/d $S/model $S/log /run/magpie-ctl /home/sandbox/.claude
 chown 1000:1000 /home/sandbox
 [ -d /media/seed ] && cp -a /media/seed/. $S/magpie/d/ 2>/dev/null
-/media/fuse-gate keeper /run/keeper.sock 2>>$S/log/keeper.log &
-# the fakes are restarted if they exit, and every exit is logged with its status (a crash would show here)
+# every exit of an in-sandbox process is logged to exits.log with its status (a crash shows there; migrate.sh fails
+# a run on any line): the keeper (never restarted: it holds the fd), the fakes (restarted), the supervisor (restarted
+# by the loop below; killtest.sh's deliberate kills land here too), and every job that exits non-zero
+( /media/fuse-gate keeper /run/keeper.sock 2>>$S/log/keeper.log
+  echo "keeper exited status $? at $(date +%s.%N)" >>$S/log/exits.log ) &
 ( while true; do /media/fuse-gate magpie 127.0.0.1:7100 $S/magpie /run/magpie-ctl 2>>$S/log/magpie.log
     echo "magpie exited status $? at $(date +%s.%N)" >>$S/log/exits.log; sleep 0.2; done ) &
 ( while true; do /media/fuse-gate model 127.0.0.1:7200 $S/model/chunks.log 2>>$S/log/model.log
@@ -26,7 +29,8 @@ mkdir -p /run/jobs && chmod 1777 /run/jobs
     for f in /run/jobs/*.sh; do
       [ -f "$f" ] || continue
       mv "$f" "$f.started"
-      setpriv --reuid=1000 --regid=1000 --clear-groups env HOME=/home/sandbox sh "$f.started" </dev/null >"$f.out" 2>&1 &
+      ( setpriv --reuid=1000 --regid=1000 --clear-groups env HOME=/home/sandbox sh "$f.started" </dev/null >"$f.out" 2>&1
+        st=$?; [ $st = 0 ] || echo "job $(basename "$f") exited status $st at $(date +%s.%N)" >>$S/log/exits.log ) &
     done
     sleep 0.1
   done ) &
@@ -38,6 +42,8 @@ while true; do
   if [ -f /run/gate-die-at ]; then extra="--die-at $(cat /run/gate-die-at)"; rm -f /run/gate-die-at; fi
   # shellcheck disable=SC2086
   /media/fuse-gate serve /home/sandbox/.claude 127.0.0.1:7100 $S/supervisor "$J" /run/keeper.sock $extra 2>>$S/log/supervisor.log
-  echo "supervisor exited status $? at $(date +%s.%N)" >>$S/log/supervisor.log
+  st=$?
+  echo "supervisor exited status $st at $(date +%s.%N)" >>$S/log/supervisor.log
+  echo "supervisor exited status $st at $(date +%s.%N)" >>$S/log/exits.log
   sleep 0.05
 done

@@ -10,6 +10,10 @@
 //!                                  ERRTYPE (default api_error) mid-stream: with --fallback-model, Claude Code 2.1.304
 //!                                  moves to the fallback model and tombstones the thinking-only message
 //!                                  (abandonAttempt("chain_advance"))
+//!   GATE: overload529 MODEL        every request for MODEL made after this turn's tool calls were answered gets
+//!                                  HTTP 529 overloaded_error: with --fallback-model, Claude Code moves to the
+//!                                  fallback after its 529 retries (abandonAttempt("chain_advance") after a turn that
+//!                                  already wrote a tool_use and its tool_result)
 //! Every chunk's send time is logged, so token gaps can be measured against Claude Code's stream-json output.
 
 use crate::http::{self, Reply, Request};
@@ -60,6 +64,7 @@ enum Plan {
     Fail(usize, u64),
     Trunc(usize, u64, String),
     ThinkFail(String),
+    Overloaded,
 }
 
 fn plan(body: &Value, failed: &Mutex<HashSet<String>>) -> Plan {
@@ -77,6 +82,7 @@ fn plan(body: &Value, failed: &Mutex<HashSet<String>>) -> Plan {
     let mut fail = None;
     let mut trunc = Vec::new();
     let mut think = None;
+    let mut overload = None;
     for l in text.lines() {
         let Some(rest) = l.trim().strip_prefix("GATE:") else {
             continue;
@@ -99,6 +105,8 @@ fn plan(body: &Value, failed: &Mutex<HashSet<String>>) -> Plan {
                 it.next().unwrap_or("").to_string(),
                 it.next().unwrap_or("api_error").to_string(),
             ));
+        } else if let Some(t) = rest.strip_prefix("overload529 ") {
+            overload = Some(t.trim().to_string());
         } else if let Some(t) = rest.strip_prefix("trunconce ") {
             let mut it = t.split_whitespace();
             trunc.push((
@@ -106,6 +114,12 @@ fn plan(body: &Value, failed: &Mutex<HashSet<String>>) -> Plan {
                 it.next().unwrap_or("close").to_string(),
             ));
         }
+    }
+    if let Some(m) = overload
+        && body["model"].as_str() == Some(m.as_str())
+        && after >= tools.len()
+    {
+        return Plan::Overloaded;
     }
     if let Some(id) = fail
         && failed.lock().unwrap().insert(id)
@@ -182,6 +196,16 @@ pub fn run(listen: &str, logp: &str) -> std::io::Result<()> {
             Plan::ThinkFail(k) => lg(format!(
                 "req={id} recv msgs={nmsg} model={model} stream={stream} plan=thinkfail:{k}"
             )),
+            Plan::Overloaded => {
+                lg(format!(
+                    "req={id} recv msgs={nmsg} model={model} stream={stream} plan=overload529"
+                ));
+                return Reply::Full(
+                    529,
+                    "application/json",
+                    br#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#.to_vec(),
+                );
+            }
         }
         if !stream {
             let content = match &p {
@@ -206,6 +230,7 @@ pub fn run(listen: &str, logp: &str) -> std::io::Result<()> {
                 &json!({"type": "message_start", "message": {"id": format!("msg_{id:08}"), "type": "message", "role": "assistant", "model": model, "content": [], "stop_reason": null, "stop_sequence": null, "usage": usage}}),
             )?;
             let stop = match &p {
+                Plan::Overloaded => unreachable!("answered with 529 above"),
                 Plan::ThinkFail(kind) => {
                     ev(
                         w,
