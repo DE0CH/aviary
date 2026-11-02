@@ -1,0 +1,12 @@
+{"name":"sbx-wp19q1","fill_mib":0,"binary":"quick","faults":16,"send_ms":656,"send":{"ms":626,"scratch":{"liveRounds":1,"liveFiles":23,"liveBytes":470697,"liveMs":140,"finalFiles":0,"finalBytes":0,"finalDeleted":0,"finalMs":113,"stoppedMs":136}},"receive":{"state":"running","stats":{"from":"127.0.0.1:34232","bytes":8209500,"page_bytes":8015872,"zero_bytes":2764800,"file_bytes":192047,"rounds":1,"final_page_bytes":110592,"final_zero_bytes":663552,"total_ms":301.262,"final_ms":152.515,"restore_ms":43.559}},"last_alive":{"alive": 1793656376.7850084, "i": 6863, "faults": 16}}
+{"fault": "mapping", "page": 0, "want": 4459, "got": 4292, "t": 1793656373.5522618}
+{"fault": "mapping", "page": 1, "want": 4459, "got": 4292, "t": 1793656373.5536547}
+{"fault": "mapping", "page": 2, "want": 4459, "got": 4292, "t": 1793656373.5538526}
+{"name":"sbx-wp19q2","fill_mib":0,"binary":"quick","faults":16,"send_ms":660,"send":{"ms":634,"scratch":{"liveRounds":1,"liveFiles":23,"liveBytes":470695,"liveMs":138,"finalFiles":0,"finalBytes":0,"finalDeleted":0,"finalMs":109,"stoppedMs":133}},"receive":{"state":"running","stats":{"from":"127.0.0.1:42520","bytes":8213585,"page_bytes":8019968,"zero_bytes":3248128,"file_bytes":192087,"rounds":1,"final_page_bytes":110592,"final_zero_bytes":663552,"total_ms":326.622,"final_ms":137.59,"restore_ms":44.044}},"last_alive":{"alive": 1793656386.9298563, "i": 6845, "faults": 16}}
+{"fault": "mapping", "page": 0, "want": 4428, "got": 4243, "t": 1793656383.6663709}
+{"fault": "mapping", "page": 1, "want": 4428, "got": 4243, "t": 1793656383.6682663}
+{"fault": "mapping", "page": 2, "want": 4428, "got": 4243, "t": 1793656383.6684103}
+{"name":"sbx-wp19q3","fill_mib":0,"binary":"quick","faults":16,"send_ms":681,"send":{"ms":651,"scratch":{"liveRounds":1,"liveFiles":23,"liveBytes":470697,"liveMs":139,"finalFiles":0,"finalBytes":0,"finalDeleted":0,"finalMs":125,"stoppedMs":147}},"receive":{"state":"running","stats":{"from":"127.0.0.1:53970","bytes":8225917,"page_bytes":8032256,"zero_bytes":3416064,"file_bytes":192097,"rounds":1,"final_page_bytes":122880,"final_zero_bytes":663552,"total_ms":337.485,"final_ms":163.095,"restore_ms":40.731}},"last_alive":{"alive": 1793656396.807627, "i": 6884, "faults": 16}}
+{"fault": "mapping", "page": 0, "want": 4504, "got": 4332, "t": 1793656393.607135}
+{"fault": "mapping", "page": 1, "want": 4504, "got": 4332, "t": 1793656393.608697}
+{"fault": "mapping", "page": 2, "want": 4504, "got": 4332, "t": 1793656393.6088502}

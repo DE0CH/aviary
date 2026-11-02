@@ -1,0 +1,18 @@
+tr: read error: No such process
+/root/wp19/kill-sentry.sh: line 9: /proc/18880/cmdline: No such file or directory
+/root/wp19/kill-sentry.sh: line 9: /proc/18881/cmdline: No such file or directory
+killed sentry 18854
+t+8121 ms: alive=false procs=0 populated 0 frozen 0 
+{"deleted":"sbx-wp19ks1"}
+/root/wp19/kill-sentry.sh: line 9: /proc/19172/cmdline: No such file or directory
+/root/wp19/kill-sentry.sh: line 9: /proc/19181/cmdline: No such file or directory
+/root/wp19/kill-sentry.sh: line 9: /proc/19182/cmdline: No such file or directory
+killed sentry 19154
+t+7584 ms: alive=false procs=0 populated 0 frozen 0 
+{"deleted":"sbx-wp19ks2"}
+tr: read error: No such process
+/root/wp19/kill-sentry.sh: line 9: /proc/19471/cmdline: No such file or directory
+/root/wp19/kill-sentry.sh: line 9: /proc/19472/cmdline: No such file or directory
+killed sentry 19447
+t+7592 ms: alive=false procs=0 populated 0 frozen 0 
+{"deleted":"sbx-wp19ks3"}

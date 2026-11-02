@@ -1,0 +1,41 @@
+{"state":"running","alive":true}
+before: populated 1 frozen 0  procs: 7 runsc-gofer --overlay2=none --network=sa
+; runsc-sandbox --root=/run/sbx/runsc --ho
+; ; ; ; ; ; 
+exec exit 137 after 546 ms
+oom 1 oom_kill 1 
+t+566 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+1606 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+2650 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+3695 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+4739 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+5783 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+6826 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+7872 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+8917 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+9961 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+11005 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+12049 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+13093 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+14137 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+15180 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+16227 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+17271 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+18315 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+19359 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+20403 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+21446 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+22491 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+23539 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+24584 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+25628 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+26671 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+27715 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+28760 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+29805 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+t+30850 ms: alive=true cgroup.events: populated 1 frozen 0  procs: 5
+runsc state: running
+Nov 02 22:03:16 wp19-a kernel: [  pid  ]   uid  tgid total_vm      rss rss_anon rss_file rss_shmem pgtables_bytes swapents oom_score_adj name
+Nov 02 22:03:16 wp19-a kernel: oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=sbx-wp19oom1,mems_allowed=0,oom_memcg=/sbx/sbx-wp19oom1,task_memcg=/sbx/sbx-wp19oom1,task=gvisor_sentry,pid=1
+Nov 02 22:03:16 wp19-a kernel: Memory cgroup out of memory: Killed process 17750 (gvisor_sentry) total-vm:529032kB, anon-rss:0kB, file-rss:5428kB, shmem-rss:50088kB, UID:0 pgtables:192kB oom_score_adj
+{"deleted":"sbx-wp19oom1"}

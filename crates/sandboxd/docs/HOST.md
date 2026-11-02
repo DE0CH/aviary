@@ -142,10 +142,11 @@ host disk, not memory, so it moves as files, with rsync, around the memory pre-c
    early once a round copies under 32 MiB and 2,000 files. A failure leaves the sandbox running (409).
 3. **Memory pre-copy** (`runsc checkpoint --migrate-to <relay>`). Its final step stops the sandbox and writes its
    dirty file data; the stream ends with End, which the relay keeps.
-4. **Sandbox stopped:** the final rsync delta, while `runsc delete` removes the stopped container (its gofer closes
-   the sandbox's files, so JuiceFS commits the last writes to `/workspace` for the target). Then `SBXDONE!`: the relay
-   hands End to the restore. A failure here loses the sandbox (502); `SBXFAIL!` makes the target's restore fail at
-   once.
+4. **Sandbox stopped:** the source lists it `alive: false` from here on (hermit's settle never keeps a stopped
+   source). The final rsync delta, with `--checksum` (below), while `runsc delete` removes the stopped container (its
+   gofer closes the sandbox's files, so JuiceFS commits the last writes to `/workspace` for the target). Then
+   `SBXDONE!`: the relay hands End to the restore. A failure here loses the sandbox (502); `SBXFAIL!` makes the
+   target's restore fail at once.
 5. **The upper directories on the way to the bind mounts** (`/tmp`, `/var/lib/docker`, `/workspace`,
    `/home/sandbox/.claude` and their parents) are made in `upper/` before the overlay is mounted, on every host:
    overlayfs caches a directory it found only in the image, and the bind mount pins it.
@@ -154,6 +155,13 @@ Preserved: contents, numeric owners, modes, mtimes to the nanosecond (gVisor's r
 open file), hard links, ACLs, xattrs (`trusted.overlay.*`) and devices (whiteouts). Measured on two m7i.large in one
 AZ: scratch live rounds 0.7-0.8 s for 230 MB, `send` 1.9 s, final memory 190-370 ms, final scratch delta 130 ms,
 restore 59-67 ms; the largest gap a busy process saw: 330-800 ms.
+
+The final delta compares contents (`rsync --checksum`), not size and mtime: a write through a `MAP_SHARED` mapping to
+a page that is already dirty leaves the file's mtime unchanged, so the quick check skips the file and the target
+restores an older copy (the supervisor's FUSE journal slots, SQLite's `-shm`; crates/supervisor/GATE.md "WP-57").
+It reads every scratch file on both hosts while the sandbox is stopped: measured on two Hetzner ccx13 hosts
+(`tests/real-host/`), 129-139 ms stopped with a near-empty scratch, 5.9 s with 2000 MiB in use and 15.5-15.8 s with
+4800 MiB (the quick check: 129-147 ms, and it lost the mapped writes in every run), about 3.2 ms per MiB in use.
 
 What moves: processes (same PIDs), the scratch filesystem and tmpfs mounts, memory, established TCP connections
 (gVisor's own stack, `--network=sandbox`), Docker state inside the sandbox. What does not: connections from outside in
