@@ -12,12 +12,12 @@ sends, posts or changes anything outside. So nobody is ever asked anything: ever
 such as sending mail are not offered at all), and the sandbox's internet access is decided automatically by an
 allowlist with no manual override.
 
-## Components (one image `ghcr.io/de0ch/jarvis3-chat`, role chosen by `JARVIS_ROLE`)
+## Components (one image `ghcr.io/de0ch/jarvis3-chat`, role chosen by the first argument: `args: [egress]`)
 
 | Role | What | Replicas |
 |---|---|---|
 | `web` | `/internal/cc/*` for the UI pods: the sandbox manager, its janitor and (provider `vm`) the scaler. No public route | 2, rolling, drained |
-| `egress` | The only way out of a sandbox: token identity, the automatic sandbox allowlist with threat-intel DNS, package mirror and cache, credential-injecting routes (the model with forced ZDR and the budget; our tools), logs every call | 2, rolling |
+| `egress` | The sandbox gateway (aviary's contract): hermit's sandbox tokens checked locally, the fixed names `magpie`, `hermit`, `model` (OpenRouter with forced ZDR and the budget), `tools`; the package mirror; the automatic sandbox allowlist with threat-intel DNS; its own database `egress` | 2, rolling, drained |
 | `tools` | MCP server (Streamable HTTP, JSON responses): news search, web search/fetch, social search, upstream MCP tools; read-only tools only | 2, rolling |
 
 Plus the sandbox image `ghcr.io/de0ch/jarvis3-sandbox` (Claude Code, Python/Node tools, Docker, the sandbox agent),
@@ -271,67 +271,100 @@ nothing (schema 10 comments them "unused"); dropping them is a decision for Deya
   the UI by `/internal/cc/sandbox`.
 - **`JARVIS_CC_TOKEN`**: the UI pods → web.
 
-### `egress` (port 3128, plus 9090 for /healthz and /metrics)
+### `egress`: the sandbox gateway (`node src/main.ts egress`; ports 3128 proxy, 8082 in-cluster API, 9090 health)
 
-1. **Forward proxy for sandboxes.** `CONNECT host:port` and absolute-URI HTTP requests with
-   `Proxy-Authorization: Basic base64("sbx:<egress token>")`. Unknown/expired token → 407. The host must pass the
-   sandbox allowlist (below; `deny:host`, `deny:denylist`, `deny:config`), then resolve through the threat-intel
-   resolvers (`deny:threat`, `deny:nxdomain`, `deny:dns`), then to a public address (`deny:address`: private,
-   loopback, link-local and cluster addresses are refused after resolution, no SSRF into the cluster). Ports: 80, 443
-   only (`deny:port`). A refusal is a 403 with a plain-text body: "egress: <host> is not on the sandbox's internet
-   allowlist, and it cannot be enabled from the chat. … To read a web page, use the web_fetch and web_search tools
-   instead of the sandbox." (or the DNS/address reason). Nobody is asked and nothing can grant a host. A tunnel or
-   request that sends more than `egress.maxUploadBytes` (default 8 MiB) is cut (`deny:upload`): bulk upload is the
-   exfiltration path, and installing packages or reading data sends little. Every request → `egress_log` with its
-   decision (`allow`, `allow:cache` or `deny:<reason>`).
-   **The wire:** `GET /wire` with a WebSocket upgrade and `Authorization: Bearer <egress token>` (401 otherwise):
-   the WebSocket's binary messages are one proxy connection, handed to this same server, so everything above
-   applies unchanged. Pings every 30 s. This is how hosted sandboxes (E2B) reach egress through the tunnel.
-2. **Package mirror** (cache on the pod's volume, LRU at `egress.cacheGiB`, default 5):
-   `GET /mirror/pypi/simple/...` (from pypi.org, links rewritten to `/mirror/pypi/files/...` = files.pythonhosted.org),
-   `GET /mirror/npm/...` (registry.npmjs.org, tarball URLs rewritten), apt via the forward proxy: plain-HTTP GETs to
-   `deb.debian.org`/`security.debian.org` are cached too. Immutable artefacts cached; index pages for 5 minutes.
-   Auth: same Basic token (pip/npm accept `http://sbx:<token>@host/...`), in `Authorization` or
-   `Proxy-Authorization`. A mirror or route request may also arrive in proxy form (`GET http://egress…/mirror/…`, what
-   pip/npm send with `HTTP_PROXY` set and an empty `NO_PROXY`): egress answers it itself when the host is one of its
-   own names (`EGRESS_SELF_HOSTS`, default `egress`, `egress.<POD_NAMESPACE>`, `….svc`, `….svc.cluster.local`; plus
-   always `127.0.0.1` and `localhost`, a hosted sandbox's end of the wire).
-   npm tarball URLs are rewritten to `http://<the request's Host>/mirror/npm/…`, pypi file links to the root-relative
-   `/mirror/pypi/files/…`.
-3. **Credential-injecting routes** `ANY /x/<route>/<path>`: routes from config `egress.routes`
-   (`{name, upstream, inject: {header: value-from-env-var}, model?, keepAuth?, allowPaths?}`), each authenticated by
-   a live sandbox's egress token (`Authorization: Bearer`/Basic or `Proxy-Authorization`; a vm sandbox's only from its
-   own address). The YYC instance has two. `claude` (`model: true`) → `https://openrouter.ai/api`: Claude Code's
-   model calls (`ANTHROPIC_BASE_URL=http://<egress>:3128/x/claude`, `ANTHROPIC_AUTH_TOKEN` = the egress token);
-   injects `Authorization: Bearer $OPENROUTER_API_KEY`, forces zero data retention into every request body (`provider.zdr: true`, `provider.data_collection: "deny"`, set over whatever the caller sent; a body that is
-   not one valid JSON object (RFC 8259, UTF-8) is refused with 400, `deny:body`; no config turns this off: `forceZdr`
-   in `chat/src/egress/modelbody.ts`, called from `proxy.ts`), streams responses through, logs `cost_usd` from
-   the response's `usage.cost` (SSE: the final `message_delta` usage) into `egress_log` (kind `model`).
-   The caller's `Authorization`, `x-api-key` and `Cookie` never go upstream; egress asks upstream for an
-   uncompressed body (`accept-encoding: identity`) so it can read the cost.
-   A model route also refuses, before anything goes upstream: a body whose `model` is not one of config `models`
-   or `titleModel` (400 `invalid_request_error`, `deny:model`), and every call once the shared budget is used up
-   (402 `{"type":"error","error":{"type":"budget_exceeded","message":"<budget message>"}}`, `deny:budget`; a model
-   call's `egress_log` row is written as soon as it ends and the budget is re-read at most every 0.5 s; see "Budget").
-   **Memory:** a Claude Code request carries the whole conversation, base64 images included (an agent that reads
-   page images reaches several MB per call). The body is read once into one Buffer and rewritten without parsing it
-   into objects: a strict byte scanner validates it and finds the top-level members, and the request goes upstream
-   as slices of that Buffer plus the rewritten members (`provider`, `reasoning`/`thinking`), so a call costs about
-   its own size (measured: 0.3 MiB extra for a 7.3 MiB body; parsing and re-serialising it took 95 MiB and once took
-   egress past a 128 MiB limit, 2026-10-28). At most 64 MiB of model bodies are held at once: a call waits its turn
-   until its body fits (one without a Content-Length counts as 64 MiB); a body over 64 MiB is refused with 413
-   `request_too_large`, `deny:upload`, before it is read.
-   A route with `identity: true` also gets `X-Jarvis-Conversation` and `X-Jarvis-Sandbox` as egress verified them
-   (callers' own copies of these headers are dropped on every route): YYC's `sent-files` route to the UI router's
-   sent-file snapshots (docs/CLAUDE-CODE.md "Sent files").
-   `tools` (`keepAuth: true`, `allowPaths: ["/mcp"]`) → `http://tools.<ns>.svc:8080`: Claude Code's MCP server
-   (`/x/tools/mcp`); the caller's `Authorization` (its egress token) goes on, so the tools role knows the sandbox.
-4. **Env:** `DATABASE_URL`, `JARVIS_CONFIG`, `JARVIS_CACHE_DIR` (default `/var/cache/jarvis-egress`, an emptyDir),
-   `EGRESS_SELF_HOSTS`, `POD_NAMESPACE`, `EGRESS_BLOCK_CIDRS` (extra refused ranges, comma list: the node's own
-   public /64 on YYC), `EGRESS_DRAIN_SECONDS` (default 120), and every variable a route's `inject` names
-   (`OPENROUTER_API_KEY`). Identity lookups are cached for 5 s. At start it logs `egress allowlist` with the lists'
-   version and sizes. On SIGTERM: `/healthz` turns 503, the listener closes, open requests and tunnels get up to the
-   drain time, the log is flushed.
+egress is YYC's implementation of the HTTP half of aviary's sandbox gateway contract (DE0CH/aviary platform spec
+3.11; the network half, the WireGuard hub and the sandbox-facing VIP on port 3128 translated to ready egress pods, is hermit's
+fabric). Every sandbox client (the supervisor, Claude Code, pip, npm, curl) sends absolute-form requests or
+`CONNECT host:443` to the proxy in its boot environment, `http://sbx:<sandbox token>@<vip>:3128`. Each request is
+decided in this order:
+
+1. **The credential.** `Proxy-Authorization: Basic base64("sbx:" + token)` (on self-host paths also `Authorization`,
+   which pip and npm send from the index URL). Missing: 407 with `Proxy-Authenticate: Basic realm="aviary-gateway"`.
+   The token is hermit's `hst1.<kid>.<payload>.<sig>`, checked locally (`chat/src/egress/tokens.ts`): the kid in
+   hermit's key set (`GET http://hermit/v1/sandbox-token-keys`, refreshed every 5 min and at most every 10 s on an
+   unknown kid, the last set kept when a fetch fails), the Ed25519 signature, the expiry, and the connection's source
+   IPv4 equal to the token's (unless it carries 0.0.0.0). A failure is final: 403 `{"code":"not_allowed"}` (JSON on a
+   fixed name, plain text otherwise). Then liveness: `GET http://hermit/v1/sandbox-tokens/{sandboxId}` with
+   `EGRESS_TOKEN_HERMIT`, 1 s timeout, cached 30 s and refreshed in the background; `live: false` or 404 → 403 within
+   30 s. **A hermit problem never refuses a valid token:** while hermit fails the last answer is served whatever its
+   age, and a sandbox never looked up yet is admitted while the lookup is retried.
+2. **The fixed names** `magpie`, `hermit`, `model`, `tools` (exact host, no port or port 80, never DNS). The client's
+   `Authorization`, `Proxy-Authorization`, `x-api-key` and every `Aviary-*` header except `Aviary-Protocol` and
+   `Aviary-Lease` are stripped; `Aviary-Sandbox-Id`, `-Conversation`, `-Person` (the lowercased email) from the
+   verified token, `Aviary-Request` (the client's if a lowercase uuid v7, else new) and the callee's bearer are added.
+   - `magpie`, `hermit` (built in, not configured): `/v1/sandbox/**` only (else 403; dot or encoded-dot paths never
+     routed) to `http://magpie` / `http://hermit` with `EGRESS_TOKEN_MAGPIE` / `EGRESS_TOKEN_HERMIT`; bodies up to
+     64 MiB (64 MiB + 1: 413 `too_large`); streamed both ways over a kept-alive pool; an upstream silent 120 s ends
+     the request. The hot path: no `egress_log` row, counters `egress_fixed_requests_total{route,status}` and
+     `egress_fixed_bytes_total{route,dir}` instead.
+   - `model`: `POST /v1/messages`, `POST /v1/messages/count_tokens` to egress.json's route `model` (OpenRouter), and
+     `GET /v1/aviary/models` answered by egress itself (below). The route injects `Authorization: Bearer
+     $OPENROUTER_API_KEY` and **forces zero data retention into every request body** (`provider.zdr: true`,
+     `provider.data_collection: "deny"`, set over whatever the caller sent; a body that is not one valid JSON object
+     is refused with 400, `deny:body`; no config turns this off: `forceZdr` in `chat/src/egress/modelbody.ts`, called
+     from `proxy.ts`), applies the configured thinking level, refuses a model outside `models[].id`, `defaultModel`,
+     `smallModel`, `titleModel` (400 `deny:model`) and every call once the budget is used up (402 `budget_exceeded`,
+     `deny:budget`), streams the answer back and logs its `usage.cost` (kind `model`). No `Aviary-*` header (no staff
+     identity) reaches OpenRouter. **Memory:** a request carries the whole conversation, base64 images included; the
+     body is read once into one Buffer and rewritten as slices of it plus the few rewritten members (about its own
+     size), at most 64 MiB of model bodies held at once (a call waits its turn), a body over 64 MiB refused with 413
+     `request_too_large` before it is read. No total timeout (Claude Code's own 600 s bounds it).
+   - `tools`: `/mcp` to egress.json's route `tools` (`http://tools`, `Authorization: Bearer $EGRESS_TOKEN_TOOLS`),
+     timeout 180 s; tools learns the owner from `Aviary-Sandbox-Person`. One log row per call (kind `tools`).
+3. **Self hosts** (`selfHosts` in egress.json, plus `127.0.0.1` and `localhost`; any port; also origin-form requests to
+   the proxy): local paths only, the **package mirror** (cache on the pod's volume, LRU at `cacheGiB`):
+   `GET /mirror/pypi/simple/...` (pypi.org, links rewritten to `/mirror/pypi/files/...` = files.pythonhosted.org),
+   `GET /mirror/npm/...` (registry.npmjs.org, tarball URLs rewritten to `http://<the request's Host>/mirror/npm/…`);
+   immutable artefacts cached, index pages for 5 minutes. Anything else: 404. A self host never reaches the internet
+   checks, so the VIP is never refused as a private address.
+4. **The internet**: ports 80 and 443 (`deny:port`), the sandbox allowlist (below; `deny:host`, `deny:denylist`,
+   `deny:config`), the threat-intel resolvers (`deny:threat`, `deny:nxdomain`, `deny:dns`), public addresses only
+   (`deny:address`; private, loopback, link-local, cluster and `blockCidrs` ranges refused after resolution). A refusal
+   is a 403 with a plain-text body: "egress: <host> is not on the sandbox's internet allowlist, and it cannot be enabled
+   from the chat. … To read a web page, use the web_fetch and web_search tools instead of the sandbox." Plain-HTTP
+   GETs to `deb.debian.org`/`security.debian.org` are cached (apt). **The upload cap** (`maxUploadBytes`, 8 MiB) counts
+   only internet traffic, a CONNECT tunnel's or a forward request's client-to-upstream bytes (`deny:upload`, the
+   connection cut): the fixed names and the mirror are never counted against it, so the supervisor's kept-alive
+   connection carrying transcript writes and uploads is never cut.
+
+Every request except the magpie and hermit calls → one `egress_log` row (kind `connect`, `http`, `mirror`, `model`,
+`tools`; decision `allow`, `allow:cache` or `deny:<reason>`; the sandbox, conversation, `person` and `request`).
+
+**In-cluster API (8082)**, callers by pair token (`EGRESS_ACCEPT_PIGEON`, `_HERMIT`, `_ADMIN`; comma lists, current
+first; 401 without one, 403 `wrong_caller` for the wrong one): `GET /v1/aviary/models` (pigeon, admin; Service
+`model`) → `{"default", "small", "title", "contextTokens", "models": [{"id", "label", "reasoning"}]}` from egress.json,
+the same answer sandboxes get at `http://model/v1/aviary/models`; `GET /v1/ops/summary?tz=&recentMinutes=` (hermit,
+admin): spend and the budget, refusals and errors (aviary platform spec 15.3; owners are emails);
+`GET /v1/admin/egress-log?conversation=&since=&limit=` (admin): one conversation's rows.
+
+**Health (9090):** `/healthz`; `/readyz` 503 until migrations are verified, the allowlist is loaded and hermit's key
+set has been fetched once, and while draining (not when Postgres or hermit fail later); `/version`; `/metrics`
+(the counters above, `egress_log_buffered`, `egress_log_dropped_total{kind}`, `egress_drain_cut_total{kind}`,
+`egress_in_flight{kind}`).
+
+**Its own database `egress`** (`EGRESS_DATABASE_URL`; `chat/src/egress/db.ts`, migrations under egress's own lock):
+`egress_log` (no retention: the budget sums every model row since `budget.since`) and `budget_state` (the last budget
+status a replica read). **A database outage never stops a running turn:** the budget gate serves its last known
+status plus the model costs this replica has logged since, so a replica does not overspend on stale data; log rows
+wait in memory (at most 50,000, the oldest non-model row dropped first when full, counted; never a model row) and are
+written in order once the database is back.
+
+**Drain** (SIGTERM, after Kubernetes' 10 s preStop): `/readyz` 503, no new connections, idle kept-alive connections
+closed, every answer from then on carries `Connection: close`; model streams and tunnels finish up to 600 s,
+magpie/hermit requests up to 60 s, tools calls up to 180 s; what is left at its bound is cut and counted in
+`egress_drain_cut_total{kind}`; the log is flushed; exit 0 with log `drained` (and the cuts). A second SIGTERM exits at
+once. Grace 625 s.
+
+**Configuration** `/etc/egress/egress.json` (`chat/src/egress/config.ts`): `product` (`name`, `locale` for the budget
+message), `models`, `defaultModel`, `smallModel`, `titleModel`, `titleReasoning`, `contextTokens`, `routes` (exactly
+`model` and `tools`: `{name, upstream, model?, inject, allowPaths?, timeoutSeconds?}`), `selfHosts`,
+`generatedAllowlist`, `defaultAllowedHosts`, `denyHosts`, `blockCidrs`, `maxUploadBytes`, `cacheGiB`, `budget`.
+**Env:** `EGRESS_DATABASE_URL`, `EGRESS_TOKEN_MAGPIE`, `EGRESS_TOKEN_HERMIT`, `EGRESS_ACCEPT_PIGEON`,
+`EGRESS_ACCEPT_HERMIT`, `EGRESS_ACCEPT_ADMIN` and every variable a route's `inject` names (`OPENROUTER_API_KEY`,
+`EGRESS_TOKEN_TOOLS`); a missing one is a start failure. **CI:** chat.yml's `conformance` job runs aviary's
+`gateway` and `model` suites against the image under test (`chat/test/conformance/run.sh`, the aviary commit in
+`chat/aviary.ref`); the image is pushed only when the tests and both suites pass.
 
 ### The sandbox allowlist (`chat/egress-allowlist/`, `chat/src/egress/allowlist.ts`, `threatdns.ts`)
 
@@ -484,7 +517,7 @@ A new version = bump the base `ref` and the image tags (chat image in `images:`,
 `sandbox.image`) to a commit whose `chat` workflow pushed images, and push; Flux rolls the Deployments one pod at a
 time. A new sandbox image reaches new sandboxes only (each host fetches it once); running ones keep theirs.
 
-## Budget (`budget`, optional; absent = no limit; `chat/src/common/budget.ts`)
+## Budget (`budget` in egress.json, optional; absent = no limit; `chat/src/egress/budget.ts`)
 
 One limit for everyone, admins included. Spend = `sum(egress_log.cost_usd)` of kind `model` (every model call Claude
 Code makes, its small/fast-model calls too) with `at >= since`. Spent ≥ `limitUsd` = used up: egress refuses every
@@ -492,8 +525,8 @@ model call with 402 `{"type":"error","error":{"type":"budget_exceeded","message"
 call already in flight when the limit is crossed completes, so the spend can end above the limit by about one model
 call per running conversation. Message (`product.locale`): zh-HK「<ownerName> 設定了 <limit> 美元的使用上限，目前已用完。」,
 English "<ownerName> has set a USD <limit> budget limit and it has now been used up." (no `ownerName`: 管理員 / The
-administrator). There is no automatic reset. To reset or raise: edit `budget` in the instance's config.json (`since`
-= now resets the spend to 0; a bigger `limitUsd` raises it) and roll out the config. Check:
+administrator). There is no automatic reset. To reset or raise: edit `budget` in egress.json (`since` = now resets
+the spend to 0; a bigger `limitUsd` raises it) and roll out egress. Check:
 `select sum(cost_usd) from egress_log where kind = 'model' and at >= '<since>'`.
 
 ## Config (`/etc/jarvis/config.json`, from the instance)
