@@ -303,3 +303,41 @@ async fn the_guard_admits_only_each_callers_routes() {
     let anonymous = hermit_api::Client::new(rig.http.clone(), rig.running.url());
     assert_eq!(anonymous.deployment().await.unwrap_err().status(), Some(401));
 }
+
+#[tokio::test]
+async fn the_remaining_request_fixtures_are_what_the_fake_records() {
+    let rig = Rig::new().await;
+    let magpie = rig.as_(Caller::Magpie);
+    let pigeon = rig.as_(Caller::Pigeon);
+    let admin = rig.as_(Caller::Admin).as_admin("admin@example.com");
+    let s = rig.running.fake.script();
+
+    s.once("put_workspace", Reply::json(201, fx("workspace")));
+    magpie.put_workspace(CID).await.unwrap();
+    assert_eq!(rig.last("put_workspace").body.unwrap(), fx("put-workspace-request"));
+
+    s.once("warm", Reply::json(202, fx("warm-reply")));
+    pigeon
+        .warm(&typed::<WarmRequest>("warm-request-no-conversation"))
+        .await
+        .unwrap();
+    assert_eq!(rig.last("warm").body.unwrap(), fx("warm-request-no-conversation"));
+
+    s.once("workspace_file", Reply::bytes(200, &b"%PDF-1.7"[..]));
+    let q: hermit_api::workspaces::FilesQuery = typed("query-files");
+    let file = magpie.workspace_file(CID, &q, None).await.unwrap();
+    assert_eq!(&file.bytes().await.unwrap()[..], b"%PDF-1.7");
+    assert_eq!(rig.last("workspace_file").query.unwrap(), fx("query-files"));
+
+    s.once("admin_sandboxes", Reply::ok(serde_json::json!({"sandboxes": []})));
+    admin.admin_sandboxes(&typed("query-admin-sandboxes")).await.unwrap();
+    assert_eq!(rig.last("admin_sandboxes").query.unwrap(), fx("query-admin-sandboxes"));
+
+    s.once("admin_events", Reply::ok(serde_json::json!({"events": []})));
+    admin.admin_events(typed("query-admin-events")).await.unwrap();
+    assert_eq!(rig.last("admin_events").query.unwrap(), fx("query-admin-events"));
+
+    s.once("ops_snapshot", Reply::ok(serde_json::json!({"verdict": "ok"})));
+    admin.ops_snapshot(Some("Asia/Hong_Kong")).await.unwrap();
+    assert_eq!(rig.last("ops_snapshot").query.unwrap(), fx("query-ops-snapshot"));
+}
