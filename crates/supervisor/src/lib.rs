@@ -1,0 +1,8 @@
+//! The in-sandbox supervisor and its keeper (supervisor spec; WP-21 builds the process model, the lifecycle and the
+//! hermit side, WP-22 the `~/.claude` filesystem, WP-23 the Claude Code driver).
+//!
+//! Nothing in this crate knows a deployment: the same build runs everywhere, every limit is a constant in
+//! [`limits`], and everything a deployment decides comes from hermit's descriptor.
+
+pub mod keeper;
+pub mod limits;

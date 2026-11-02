@@ -6,13 +6,42 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "supervisor"
 path = "src/bin/supervisor.rs"
 
+# PID 1 of the sandbox (supervisor 4.2): no async runtime, fixed buffers, no heap after start
 [[bin]]
 name = "supervisor-keeper"
-path = "src/bin/supervisor-keeper.rs"
+path = "src/bin/keeper.rs"
+
+[dependencies]
+aviary-core = { path = "../aviary-core" }
+axum.workspace = true
+base64.workspace = true
+hermit-api = { path = "../hermit-api" }
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["client", "http1"] }
+hyper-util = { workspace = true, features = ["tokio"] }
+libc.workspace = true
+magpie-api = { path = "../magpie-api" }
+reqwest.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+supervisor-api = { path = "../supervisor-api" }
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+aviary-fakes = { path = "../../testing/fakes" }
 
 [lints]
 workspace = true

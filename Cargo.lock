@@ -2554,6 +2554,29 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "supervisor"
 version = "0.0.0"
+dependencies = [
+ "aviary-core",
+ "aviary-fakes",
+ "axum",
+ "base64 0.23.1",
+ "hermit-api",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "libc",
+ "magpie-api",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "supervisor-api",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "uuid",
+]
 
 [[package]]
 name = "supervisor-api"
