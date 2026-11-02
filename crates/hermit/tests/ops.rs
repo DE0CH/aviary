@@ -1027,7 +1027,38 @@ async fn every_admin_call_is_audited_and_does_what_it_says() {
         .await;
     assert_eq!(a.status, 404, "no live sandbox");
 
-    // recycle: every live sandbox on another image (sb1, inserted with an old image)
+    // recycle: every live sandbox on another image (sb1, inserted with an old image). A start still in progress
+    // has no image yet and gets the configured one: recycling everything but that image leaves it alone
+    let starting = Uuid::new_v4();
+    h.sql(&format!(
+        "insert into sandboxes (id, conversation_id, person, status, name, cpu, memory_bytes, start_deadline,
+           expires_at, hard_expires_at, created_at)
+         values ('{starting}', '{}', '{STAFF}', 'starting', 'sbx-starting', 1, 1073741824, now() + interval '1 minute',
+           now() + interval '1 hour', now() + interval '9 hours', now())",
+        Uuid::new_v4()
+    ))
+    .await;
+    let a = admin
+        .call(
+            &r.url,
+            "POST",
+            "/v1/admin/recycle",
+            Some(json!({"exceptImage": h.config.image_digest, "onlyIdle": true})),
+            &as_admin,
+        )
+        .await;
+    assert_eq!((a.status, a.body["released"].clone()), (200, json!(1)), "{:?}", a.body);
+    let pending: Option<Value> = h
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select release_pending from sandboxes where id = $1", &[&starting])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(pending, None, "a start about to get the current image is not recycled");
+    h.sql(&format!("delete from sandboxes where id = '{starting}'")).await;
     let a = admin
         .call(
             &r.url,
@@ -1179,6 +1210,13 @@ async fn the_runbook_script_speaks_the_admin_routes() {
     assert_eq!(v["disabledReason"], reason);
     let out = run(&["enable"]).output().await.unwrap();
     assert!(out.status.success());
+    // a token that could bend curl's config line is refused before anything is sent
+    let out = run(&["hosts"])
+        .env("HERMIT_ADMIN_TOKEN", "abc\" -H \"x: y")
+        .output()
+        .await
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", String::from_utf8_lossy(&out.stderr));
     let out = run(&["sandboxes", &format!("person={STAFF}")]).output().await.unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();

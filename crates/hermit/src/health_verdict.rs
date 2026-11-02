@@ -76,11 +76,21 @@ pub fn health_of(d: &Value, budget_watch: f64, recent_minutes: u32) -> Health {
     let age = |v: &Value| ms_of(v).map(|t| (now - t) as f64 / 1000.0);
 
     if let Some(errors) = d["errors"].as_object() {
+        // one failed read can fill several sections (egress's summary feeds egress, budget and recent): one finding
+        // per message, naming every section it emptied
+        let mut by_msg: Vec<(&str, Vec<&str>)> = Vec::new();
         for (name, msg) in errors {
+            let msg = msg.as_str().unwrap_or("?");
+            match by_msg.iter_mut().find(|(m, _)| *m == msg) {
+                Some((_, names)) => names.push(name),
+                None => by_msg.push((msg, vec![name])),
+            }
+        }
+        for (msg, names) in by_msg {
             add(
                 Level::Problem,
                 "page",
-                format!("Could not read {name}: {}", msg.as_str().unwrap_or("?")),
+                format!("Could not read {}: {msg}", names.join(", ")),
             );
         }
     }
@@ -383,6 +393,24 @@ mod tests {
         assert_eq!(
             state(&json!({"at": at(), "errors": {"egress": "timeout"}})),
             Level::Problem
+        );
+        // one egress failure that emptied three sections is one finding
+        let texts: Vec<String> = health_of(
+            &json!({"at": at(), "errors": {"budget": "timeout", "egress": "timeout", "recent": "timeout", "hosts": "db"}}),
+            0.8,
+            15,
+        )
+        .findings
+        .into_iter()
+        .filter(|f| f.about == "page")
+        .map(|f| f.text)
+        .collect();
+        assert_eq!(
+            texts,
+            [
+                "Could not read budget, egress, recent: timeout",
+                "Could not read hosts: db"
+            ]
         );
         assert_eq!(
             state(

@@ -268,8 +268,6 @@ pub async fn build(core: &Arc<Core>, tz: &str) -> Value {
             .map_or(Value::Null, |p| serde_json::to_value(p).unwrap_or(Value::Null));
         sc
     });
-    // a silent replica whose pod still runs is a hung one; the silent rows of pods a rollout replaced are history.
-    // Without the pod list, a replica silent for under 2 minutes is still shown.
     let running: Option<Vec<String>> = service.as_ref().filter(|s| s["available"] == true).map(|s| {
         list_of(&s["deployments"])
             .iter()
@@ -278,27 +276,7 @@ pub async fn build(core: &Arc<Core>, tz: &str) -> Value {
             .filter_map(|p| p["name"].as_str().map(str::to_owned))
             .collect()
     });
-    let now = OffsetDateTime::now_utc();
-    let replicas = replicas.map(|r| {
-        Value::Array(
-            list_of(&r)
-                .iter()
-                .filter(|x| {
-                    x["reporting"] == true
-                        || running.as_ref().map_or_else(
-                            || {
-                                x["seenAt"]
-                                    .as_str()
-                                    .and_then(|t| Timestamp::parse(t).ok())
-                                    .is_some_and(|t| secs_between(t.datetime(), now) < 120)
-                            },
-                            |pods| x["pod"].as_str().is_some_and(|p| pods.iter().any(|q| q == p)),
-                        )
-                })
-                .cloned()
-                .collect(),
-        )
-    });
+    let replicas = replicas.map(|r| shown_replicas(&r, running.as_deref()));
     let catalogue = core.catalogue.get();
     let mut d = json!({
         "at": Timestamp::now(),
@@ -742,6 +720,23 @@ async fn controls_section(core: &Core) -> Result<Value, String> {
     }))
 }
 
+/// The replica rows the page shows: every reporting one, and a silent one while its pod still runs (a hung one; the
+/// silent rows of pods a rollout replaced are history). Without the pod list (`running` `None`: no Kubernetes
+/// answer) every silent row of the section's day stays, so a replica whose mount hangs while that read fails too is
+/// still "stopped reporting".
+fn shown_replicas(rows: &Value, running: Option<&[String]>) -> Value {
+    Value::Array(
+        list_of(rows)
+            .iter()
+            .filter(|x| {
+                x["reporting"] == true
+                    || running.is_none_or(|pods| x["pod"].as_str().is_some_and(|p| pods.iter().any(|q| q == p)))
+            })
+            .cloned()
+            .collect(),
+    )
+}
+
 /// A replica reports every 10 s; one silent for longer than this has stopped reporting.
 pub const REPLICA_SILENT_S: i64 = 30;
 
@@ -817,6 +812,28 @@ mod tests {
     use time::macros::datetime;
 
     use super::*;
+
+    #[test]
+    fn silent_replicas_stay_while_their_pod_runs_or_nobody_knows() {
+        let rows = json!([
+            {"pod": "hermit-a", "reporting": true},
+            {"pod": "hermit-b", "reporting": false, "seenAt": "2026-11-02T08:00:00.000Z"},
+            {"pod": "hermit-old", "reporting": false, "seenAt": "2026-11-02T07:00:00.000Z"}
+        ]);
+        let pods = |v: &Value| -> Vec<String> {
+            list_of(v)
+                .iter()
+                .map(|x| x["pod"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        let running = vec!["hermit-a".to_owned(), "hermit-b".to_owned()];
+        assert_eq!(pods(&shown_replicas(&rows, Some(&running))), ["hermit-a", "hermit-b"]);
+        // no pod list: hours-old silent rows stay (never dropped after 2 minutes)
+        assert_eq!(
+            pods(&shown_replicas(&rows, None)),
+            ["hermit-a", "hermit-b", "hermit-old"]
+        );
+    }
 
     #[test]
     fn day_and_month_in_the_zone() {

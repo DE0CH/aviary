@@ -1660,6 +1660,19 @@ async fn a_start_and_release_through_the_core() {
             .iter()
             .any(|p| p.allowed_ips.contains(&format!("{}/32", row.ip.unwrap())))
     );
+    // an earlier destroy whose host did not answer for the tail left a row without bytes: the next capture
+    // fetches again (only a stored tail or a lost host is final)
+    rig.h
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            "insert into sandbox_logs (sandbox_id, bytes, reason) values ($1, null, 'tail_unavailable')",
+            &[&row.id],
+        )
+        .await
+        .unwrap();
     // the conversation's delete: forced release, console tail kept, deleted on its host
     let rel = routes::fill(routes::SANDBOX_RELEASE, &[&cid.to_string()]);
     let a = rig
@@ -1683,5 +1696,9 @@ async fn a_start_and_release_through_the_core() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(tail, format!("console of {}\n", row.name).into_bytes());
+    assert_eq!(
+        tail,
+        format!("console of {}\n", row.name).into_bytes(),
+        "a tail_unavailable row is fetched again"
+    );
 }

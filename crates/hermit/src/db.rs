@@ -60,14 +60,15 @@ pub async fn workspace_created(pool: &Pool, wid: Uuid, seen: Timestamp, made: bo
             )
             .await?
         } else {
-            // the CTE's insert is not visible to the second select: exactly one of the two yields the row
-            c.query_one(
-                "with i as (insert into workspaces (id, created_at) values ($1, $2) on conflict (id) do nothing
-                            returning created_at)
-                 select created_at from i union all select created_at from workspaces where id = $1 limit 1",
+            // two statements: a select in the insert's statement would read that statement's snapshot, which misses
+            // the row of a concurrent first read the insert waited for
+            c.execute(
+                "insert into workspaces (id, created_at) values ($1, $2) on conflict (id) do nothing",
                 &[&wid, &at],
             )
-            .await?
+            .await?;
+            c.query_one("select created_at from workspaces where id = $1", &[&wid])
+                .await?
         };
         r.try_get::<_, OffsetDateTime>(0).map_err(aviary_pg::Error::from)
     }

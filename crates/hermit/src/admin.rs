@@ -430,13 +430,16 @@ pub async fn recycle(core: &Arc<Core>, ctx: &Ctx, body: &Recycle) -> Result<Valu
         return Err(error::api(400, codes::BAD_REQUEST, "exceptImage is sha256:<64 hex>"));
     }
     let (c, image, force) = (core.clone(), body.except_image.clone(), !body.only_idle);
+    // a starting row has no image until its creating step, and gets the configured one (starts.rs)
+    let current = core.cfg.image_digest.clone();
     // the audit row and every pending release commit together
     let (ids, took) = aviary_pg::tx!(&core.pool, |t| -> Result<(Vec<Uuid>, Vec<Uuid>), aviary_pg::Error> {
         let ids: Vec<Uuid> = t
             .query(
-                "select id from sandboxes where status in ('starting', 'ready') and image is distinct from $1
+                "select id from sandboxes where status in ('starting', 'ready')
+                    and coalesce(image, $2) is distinct from $1
                   order by id",
-                &[&image],
+                &[&image, &current],
             )
             .await?
             .iter()
@@ -471,12 +474,17 @@ pub async fn recycle(core: &Arc<Core>, ctx: &Ctx, body: &Recycle) -> Result<Valu
 /// purges their conversations (magpie 9.6). Idempotent.
 ///
 /// # Errors
-/// 400 `bad_email` / `bad_request` (confirm differs), 409 `still_allowed`, 503 (magpie or the database).
+/// 400 `bad_email` / `bad_request` (confirm differs), 409 `still_allowed`, 503 (no catalogue loaded, magpie or the
+/// database).
 pub async fn purge(core: &Arc<Core>, ctx: &Ctx, email: &str, body: &PurgeRequest) -> Result<PurgeReply, ApiError> {
     let who = actor(ctx)?;
     let person = normalise_email(email).ok_or_else(|| error::api(400, codes::BAD_EMAIL, "not an email address"))?;
     if normalise_email(&body.confirm).as_deref() != Some(person.as_str()) {
         return Err(error::api(400, codes::BAD_REQUEST, "confirm must repeat the email"));
+    }
+    // with no catalogue loaded nobody is known to be allowed: a purge then could delete current staff's data
+    if core.catalogue.get().is_none() {
+        return Err(error::api(503, codes::UNAVAILABLE, "no catalogue is loaded on this replica").retry_after(5));
     }
     if core.catalogue.allowed(&person) {
         return Err(error::api(

@@ -25,6 +25,12 @@ set -euo pipefail
 : "${HERMIT_ADMIN_TOKEN:?set HERMIT_ADMIN_TOKEN to the admin pair token}"
 : "${HERMIT_ADMIN:?set HERMIT_ADMIN to your email}"
 URL=${HERMIT_URL:-http://127.0.0.1:18080}
+# the token goes into a curl config line in double quotes: only a bearer token's characters (RFC 6750 b64token), so
+# no quote, backslash or newline can end or bend that line
+if ! [[ $HERMIT_ADMIN_TOKEN =~ ^[A-Za-z0-9._~+/-]+=*$ ]]; then
+  echo "HERMIT_ADMIN_TOKEN is not a bearer token (RFC 6750 b64token characters only)" >&2
+  exit 2
+fi
 
 call() { # method path [json body]
   local args=(-sS -X "$1" --fail-with-body -H "aviary-protocol: hermit-core=1" -H "aviary-admin: $HERMIT_ADMIN"

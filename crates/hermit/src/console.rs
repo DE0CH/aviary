@@ -21,16 +21,17 @@ pub const HOST_LOST: &str = "host_lost";
 pub const UNAVAILABLE: &str = "tail_unavailable";
 
 /// Fetches the console tail of `row` from its host (best effort, 5 s in the fabric) and stores it; when the host
-/// does not answer the row records that instead. Once per sandbox: a destroy the stuck rule retries, or one of a
-/// sandbox whose host was lost (its row written by [`record_lost`]), fetches nothing. Errors are logged: a tail
-/// never holds up a destroy.
+/// does not answer the row records that instead. Fetched once per sandbox: a destroy the stuck rule retries fetches
+/// again only while the stored row has no bytes and its host was not lost (a first fetch that met a host which did
+/// not answer, `tail_unavailable`); a stored tail, or a lost host (its row written by [`record_lost`]), fetches
+/// nothing. Errors are logged: a tail never holds up a destroy.
 pub async fn capture(core: &Core, row: &SandboxRow) {
     let Some(host) = row.host.as_deref() else {
         return;
     };
     match stored(core, row.id).await {
-        Ok(false) => {}
-        Ok(true) => return,
+        Ok(Stored::None | Stored::Retry) => {}
+        Ok(Stored::Final) => return,
         Err(e) => tracing::info!(sandbox = %row.id, error = %e, "console tail: no row read (fetching)"),
     }
     let tail = core.providers.fabric.console_tail(host, &row.name).await;
@@ -43,14 +44,30 @@ pub async fn record_lost(core: &Core, id: Uuid) {
     store(core, id, None, HOST_LOST).await;
 }
 
-async fn stored(core: &Core, id: Uuid) -> Result<bool, aviary_pg::Error> {
-    Ok(core
+/// What `sandbox_logs` holds for a sandbox.
+enum Stored {
+    None,
+    /// No bytes, and the host may still answer (`tail_unavailable`).
+    Retry,
+    /// Bytes, or a lost host: nothing more to fetch.
+    Final,
+}
+
+async fn stored(core: &Core, id: Uuid) -> Result<Stored, aviary_pg::Error> {
+    let row = core
         .pool
         .get()
         .await?
-        .query_opt("select 1 from sandbox_logs where sandbox_id = $1", &[&id])
-        .await?
-        .is_some())
+        .query_opt(
+            "select bytes is not null or reason = $2 from sandbox_logs where sandbox_id = $1",
+            &[&id, &HOST_LOST],
+        )
+        .await?;
+    Ok(match row {
+        None => Stored::None,
+        Some(r) if r.try_get::<_, Option<bool>>(0)?.unwrap_or(false) => Stored::Final,
+        Some(_) => Stored::Retry,
+    })
 }
 
 async fn store(core: &Core, id: Uuid, bytes: Option<Vec<u8>>, reason: &str) {
