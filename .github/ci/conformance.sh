@@ -12,6 +12,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"; jobs -p | xargs -r kill 2>/dev/null || true' EXIT
 
 # throwaway credentials, generated per run (platform 4.7)
+# a token may start with "-" (base64url), so a flag takes it as --flag=value
 tok() { head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n'; }
 GATEWAY_TOKEN_MAGPIE=$(tok)
 GATEWAY_TOKEN_HERMIT=$(tok)
@@ -68,6 +69,6 @@ fi
 "$bin/mock-model" --listen 127.0.0.1:18090 > "$out/mock-model.log" 2>&1 &
 mm=$!
 for _ in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/18090) 2>/dev/null && break; sleep 0.1; done
-"$bin/aviary-conformance" --junit "$out/model.xml" model --target http://127.0.0.1:18090 --token "$(tok)" || status=1
+"$bin/aviary-conformance" --junit "$out/model.xml" model --target http://127.0.0.1:18090 --token="$(tok)" || status=1
 kill "$mm" 2>/dev/null || true
 exit "$status"
