@@ -27,6 +27,16 @@ hermit's spec does not use. So a sandboxd built from aviary refuses jarvis3's co
 harmless while the old fabric runs jarvis3's own copy of sandboxd (until P5), and nothing on the old fabric installs
 aviary's binary. Everything else on the wire is unchanged.
 
+## hermit spec 13.2's changes (WP-19)
+
+Done: **pids from the spec** (item 9: `pids`, a whole number in [64, 1048576]; absent = 4096; written back by `GET
+…/spec` and the state file only when given, so a migration keeps it) and **the receive's state without a wait**
+(item 11: `GET …/receive` with no `wait` (or `wait=0`) about a name with no receive record answers `{"state":
+"none"}`; with a wait it is still `failed`/`not here`). Not done yet: items 1 (the first process from the image's
+`Entrypoint` + `Cmd`), 2 (no `~/.claude` bind, the spec's `user` refused), 3 (no quota), 4 (no `/etc/hosts`), 6
+(`alive` from `cgroup.events`), 7 (`/dev/fuse` and runsc's FUSE flag) and 10 (`GET …/log?tail=`); hermit already
+reads `alive` (absent = alive) and asks for the log (a 404 keeps no console tail).
+
 ## Deployment defaults still compiled in
 
 sandboxd was moved with its behaviour unchanged, so it still has these defaults of the old jarvis3 deployment (their

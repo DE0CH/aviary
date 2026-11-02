@@ -159,8 +159,10 @@ def functional(A, B, G, cl, intruder):
     check(cl.call(A.ip, "POST", "/v1/images", {"digest": DIGEST}) == (200, {"digest": DIGEST}), "images: have it")
     check(cl.call(A.ip, "GET", "/v1/nope")[0] == 404, "unknown path: 404")
     check(cl.call(A.ip, "PATCH", "/v1/host") == (404, {"error": "not found"}), "another method on a known path: 404")
-    check(cl.call(A.ip, "GET", "/v1/sandboxes/sbx-nope/receive?wait=abc") == (200, {"state": "failed", "error": "not here"}),
-          "a wait that is not a number is 0")
+    check(cl.call(A.ip, "GET", "/v1/sandboxes/sbx-nope/receive?wait=abc") == (200, {"state": "none"}),
+          "a wait that is not a number is 0: the state now, none for a name with no receive (hermit spec 13.2 item 11)")
+    check(cl.call(A.ip, "GET", "/v1/sandboxes/sbx-nope/receive?wait=1") == (200, {"state": "failed", "error": "not here"}),
+          "with a wait, a name with no receive has failed")
     check(cl.call(A.ip, "POST", "/v1/sandboxes", raw="x" * (70 << 10))[0] == 413, "body too large: 413")
     # migration A -> B
     s, sp = cl.call(A.ip, "GET", "/v1/sandboxes/sbx-f1/spec")

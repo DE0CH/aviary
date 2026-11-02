@@ -292,7 +292,12 @@ pub struct Spec {
     /// the user's `~/.claude` (Claude Code's transcripts and settings, shared by the user's sandboxes): folder
     /// `users/<user>/claude` of the JuiceFS mount; empty = none
     pub user: Str<64>,
+    /// the pids limit (hermit spec 13.2 item 9); 0 = not given (the bundle uses [`DEFAULT_PIDS`])
+    pub pids: u64,
 }
+
+/// The pids limit of a spec that gives none.
+pub const DEFAULT_PIDS: u64 = 4096;
 // SAFETY: Spec is only fixed strings, numbers and bools, for which all zeros is a valid value.
 unsafe impl crate::fixed::Zeroed for Spec {}
 
@@ -337,8 +342,10 @@ impl Spec {
             cpu_features: Str::new(),
             workspace: Str::new(),
             user: Str::new(),
+            pids: 0,
         };
         let mut memory = f64::NAN;
+        let mut pids = f64::NAN;
         let (mut have_name, mut have_ip, mut have_image) = (false, false, false);
         let mut envn = 0usize;
         let e400 = |m: &str| Error::new(400, m);
@@ -431,6 +438,16 @@ impl Spec {
                     return Err(e400("spec: bad user"));
                 }
                 sp.user = u;
+            } else if k.is("pids") {
+                pids = match v {
+                    Val::Null => f64::NAN,
+                    Val::Num(x) => x,
+                    Val::Str(s) => num_from_str(s),
+                    _ => -1.0,
+                };
+                if !(pids.is_nan() || (pids == pids.trunc() && (64.0..=1_048_576.0).contains(&pids))) {
+                    return Err(e400("spec: pids must be a whole number in [64, 1048576]"));
+                }
             } else if k.is("cpuFeatures") {
                 if matches!(v, Val::Null) {
                     return Ok(());
@@ -459,6 +476,9 @@ impl Spec {
             return Err(e400("spec: memory must be bytes >= 128 MiB"));
         }
         sp.memory = memory as u64;
+        if !pids.is_nan() {
+            sp.pids = pids as u64;
+        }
         Ok(sp)
     }
 
@@ -481,7 +501,15 @@ impl Spec {
         if !self.user.is_empty() {
             w.kstr("user", self.user.as_str());
         }
+        if self.pids != 0 {
+            w.ku64("pids", self.pids);
+        }
         w.end();
+    }
+
+    /// The pids limit the bundle gets.
+    pub fn pids_limit(&self) -> u64 {
+        if self.pids == 0 { DEFAULT_PIDS } else { self.pids }
     }
 
     #[cfg(test)]

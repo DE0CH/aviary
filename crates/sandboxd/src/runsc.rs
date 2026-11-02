@@ -162,7 +162,7 @@ pub fn bundle_spec(b: &mut Buf, spec: &Spec, image_env: &[&str], root: &str, scr
     w.key("resources").obj();
     w.key("memory").obj().ku64("limit", spec.memory).end();
     w.key("cpu").obj().key("quota").f64((spec.cpu * 100_000.0).round()).ku64("period", 100_000).end();
-    w.key("pids").obj().ku64("limit", 4096).end();
+    w.key("pids").obj().ku64("limit", spec.pids_limit()).end();
     w.end(); // resources
     w.end(); // linux
     w.end();
@@ -172,6 +172,20 @@ pub fn bundle_spec(b: &mut Buf, spec: &Spec, image_env: &[&str], root: &str, scr
 mod tests {
     use super::*;
     use crate::json::{self, Val};
+
+    #[test]
+    fn pids_from_the_spec() {
+        let body = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":1073741824,"pids":512}"#;
+        let spec = Spec::parse(body, "10.200.0.0/16").ok().unwrap();
+        let mut mem = [0u8; 16384];
+        let mut b = Buf::new(&mut mem);
+        bundle_spec(&mut b, &spec, &[], "/r", "/s");
+        let n = b.len;
+        let s = core::str::from_utf8(&mem[..n]).unwrap();
+        assert!(s.contains(r#""pids":{"limit":512}"#), "{s}");
+        let bad = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":1073741824,"pids":3}"#;
+        assert!(Spec::parse(bad, "10.200.0.0/16").is_err());
+    }
 
     #[test]
     fn flags() {
@@ -202,6 +216,7 @@ mod tests {
         assert!(s.contains(r#""env":["PATH=/x","HOME=/home/sandbox","LANG=C","HTTP_PROXY=http://sbx:t@10.201.1.1:3128","EXEC_TOKEN=e"]"#), "{s}");
         assert!(s.contains(r#""limit":2147483648"#));
         assert!(s.contains(r#""quota":150000"#));
+        assert!(s.contains(r#""pids":{"limit":4096}"#), "no pids in the spec: the default");
         assert!(s.contains(r#""path":"/var/run/netns/sbx-abc""#));
         assert!(s.contains(r#""cgroupsPath":"/sbx/sbx-abc""#));
         assert!(s.contains(r#""root":{"path":"/var/lib/sbx/root/sbx-abc","readonly":false}"#), "{s}");

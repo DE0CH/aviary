@@ -102,8 +102,8 @@ and replicas started in-process with short timings (`Timings` is code, not confi
 
 ## Not here yet
 
-- sandboxd's own side of hermit 13.2 (WP-19, `crates/sandboxd`): the fabric already reads `Listed.alive`, sends
-  `pids` and never `user`, asks `GET …/log` and `GET …/receive` without `wait`; an older sandboxd answers without
+- sandboxd's own side of hermit 13.2 beyond `pids` and the receive's state (`crates/sandboxd/README.md`): the
+  fabric already reads `Listed.alive`, never sends `user` and asks `GET …/log`; today's sandboxd answers without
   `alive` (read as alive) and 404 for the log (no console tail is kept).
 - Fabric acceptance on real hosts (24.3) is WP-40's; live migration's acceptance there waits for WP-57.
 - Metrics (25) beyond the platform's defaults and `hermit_catalogue_refused_total` and `hermit_held_requests`

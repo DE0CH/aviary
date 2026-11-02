@@ -41,7 +41,7 @@ fn written(f: impl FnOnce(&mut W)) -> Value {
 
 #[test]
 fn spec_fixtures_parse_and_write_back() {
-    for name in ["spec.json", "spec-minimal.json"] {
+    for name in ["spec.json", "spec-minimal.json", "spec-pids.json"] {
         let text = fixture(name);
         let s = Spec::parse(text.as_bytes(), "10.98.0.0/16").ok().unwrap();
         let bytes = written_bytes(|w| s.write(w));

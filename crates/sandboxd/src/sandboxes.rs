@@ -794,9 +794,11 @@ impl Sandboxes {
     pub fn receive_result(&self, name: &str, wait_ms: u64, w: &mut W) {
         let deadline = mono_ms() + wait_ms;
         let mut err: Option<Str<200>> = None;
+        let mut known = false;
         {
             let mut m = self.migt();
             while let Some(i) = m.iter().position(|x| x.in_use && x.name.as_str() == name) {
+                known = true;
                 if m[i].done {
                     if !m[i].error.is_empty() {
                         err = Some(m[i].error);
@@ -823,6 +825,10 @@ impl Sandboxes {
             }
             Some(_) => {
                 w.obj().kstr("state", "receiving").end();
+            }
+            // asked without a wait about a name with no receive record (hermit spec 13.2 item 11): nothing is known
+            None if wait_ms == 0 && !known => {
+                w.obj().kstr("state", "none").end();
             }
             None => {
                 w.obj()
