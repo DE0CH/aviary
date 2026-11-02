@@ -327,3 +327,46 @@ async fn live_workspace_files_come_from_hermit() {
         .unwrap_err();
     assert_eq!(e.code(), Some(&magpie_api::errors::ErrorCode::Unavailable));
 }
+
+#[tokio::test]
+async fn the_gc_never_frees_a_blob_a_staged_send_names() {
+    // a stored blob nothing references, its last reference long ago (left by a purged conversation): a send that
+    // names it finds it present, and the hourly GC running between phase 1 and the commit leaves it
+    let db = common::fresh_db("sendgc").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let c = conversation(&r, ALICE, "k").await;
+    let lease = grant_lease(r.pool(), c).await;
+    let (old, again) = (
+        b"left by a purged conversation".as_slice(),
+        b"put again by a sandbox".as_slice(),
+    );
+    assert_eq!(put(&r, c, lease, old).await, 201);
+    assert_eq!(put(&r, c, lease, again).await, 201);
+    let sql = common::sql(&db.url);
+    let age = |b: &'static [u8]| {
+        let sql = sql.clone();
+        async move {
+            sql.get()
+                .await
+                .unwrap()
+                .execute(
+                    "update blobs set last_ref_at = now() - interval '2 days' where sha256 = $1",
+                    &[&blobs::sha256(b).as_slice()],
+                )
+                .await
+                .unwrap();
+        }
+    };
+    age(old).await;
+    age(again).await;
+    let spec = json!({"toolUseId": "call_gc", "files": [{"path": "/workspace/a.txt", "size": old.len(), "sha256": hex(old), "mimeType": "text/plain"}]});
+    let (st, missing) = post(&r, c, Some(lease), "/v1/sandbox/sent-files", &spec).await;
+    assert_eq!((st, missing["missing"].clone()), (200, json!([])));
+    // a sandbox PUT of a blob magpie has answers 200 and keeps it from the GC as well
+    assert_eq!(put(&r, c, lease, again).await, 200);
+    assert_eq!(magpie::blobs::gc::free(r.pool(), &r.app().blobs).await.unwrap(), 0);
+    let (st, done) = post(&r, c, Some(lease), "/v1/sandbox/sent-files/call_gc/commit", &json!({})).await;
+    assert_eq!(st, 200, "{done}");
+    assert_eq!(done["kept"], 1);
+}

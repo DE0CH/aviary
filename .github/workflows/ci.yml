@@ -124,6 +124,11 @@ jobs:
           CARGO_PROFILE_RELEASE_LTO: "false"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
         run: cargo test --release --locked -p magpie --test ccfs_perf -- --ignored --nocapture
+      - name: four 40 MP image uploads at once stay under 1 GiB of RSS (magpie 18.2's pod limit)
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+        run: cargo test --release --locked -p magpie --test uploads_perf -- --ignored --nocapture
 
   sandboxd-soak:
     # hermit spec 14.6: two daemons with stand-ins for runsc/ip/nft/wg, every endpoint, a migration, hostile clients,
@@ -232,6 +237,17 @@ jobs:
           export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
           .github/ci/build-magpie.sh rust:1.99.1-trixie@sha256:09027f873d45b8ecd1dc86f1fa13b7a62b875c961f017a0e331267b350430137
           cp target/trixie/release/magpie dist/
+      - name: images/magpie (built and run here, pushing is the images job's)
+        # the runtime image decodes the HEIC fixture with the release binary: libheif1 and its HEVC plugin are there
+        run: |
+          ctx=$RUNNER_TEMP/magpie-image
+          mkdir -p "$ctx/dist"
+          cp dist/magpie "$ctx/dist/"
+          docker build -f images/magpie/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t magpie:ci "$ctx"
+          docker run --rm magpie:ci --version
+          out=$(docker run --rm -v "$PWD/crates/magpie/tests/fixtures/photo-640x480.heic:/photo.heic:ro" magpie:ci check-image /photo.heic)
+          echo "$out"
+          test "$out" = "image/heic 640x480"
       - name: SHA256SUMS
         run: cd dist && sha256sum * | tee SHA256SUMS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

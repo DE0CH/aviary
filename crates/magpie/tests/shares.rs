@@ -15,7 +15,7 @@ mod common;
 
 use aviary_fakes::fault::FaultKind;
 use aviary_fakes::hermit::{FakeHermit, HermitConfig};
-use common::ev::{self, assistant, text, turn_ended, turn_started, user_sent};
+use common::ev::{self, assistant, results, retract, text, tool_use, turn_ended, turn_started, user_sent};
 use common::files::{gateway, grant_lease};
 use magpie::blobs;
 use magpie_api::conversations::ListQuery;
@@ -401,4 +401,189 @@ async fn a_failed_clone_stores_nothing() {
         .await
         .unwrap();
     assert_eq!(theirs.conversations.len(), 0);
+}
+
+#[tokio::test]
+async fn a_share_freezes_only_rows_of_finished_events_and_continue_takes_the_frozen_state() {
+    let hermit = FakeHermit::unguarded(HermitConfig::default());
+    let running = hermit.serve().await.unwrap();
+    let db = common::fresh_db("sharefrozen").await;
+    let t = common::Tokens::new();
+    let r = common::replica_with(&db.url, &t, &running.url(), common::idle()).await;
+    let c = ev::conversation(&r.pigeon(), ALICE).await;
+    hermit.write_file(c, "notes.txt", b"n");
+    // a finished turn: an answer, a background tool call, a line the running turn will retract
+    let t1 = Uuid::new_v4();
+    let s1 = ev::append(
+        r.pool(),
+        ALICE,
+        c,
+        vec![
+            user_sent("m1", "first question"),
+            ev::in_turn(turn_started(t1), t1),
+            ev::in_turn(assistant("msg_1", json!([text("first answer")])), t1),
+            ev::in_turn(assistant("msg_2", json!([tool_use("call_bg", "Bash")])), t1),
+            ev::in_turn(assistant("msg_3", json!([text("soon retracted")])), t1),
+            ev::in_turn(turn_ended(t1, "completed"), t1),
+        ],
+    )
+    .await;
+    // the running turn: the background call's result lands in it, and it retracts a line of the finished turn
+    let t2 = Uuid::new_v4();
+    let s2 = ev::append(
+        r.pool(),
+        ALICE,
+        c,
+        vec![
+            user_sent("m2", "second question"),
+            ev::in_turn(turn_started(t2), t2),
+            ev::in_turn(results(&[("call_bg", "background output", false)]), t2),
+            ev::in_turn(retract(&[s1[4]]), t2),
+        ],
+    )
+    .await;
+    let sql = r.pool().get().await.unwrap();
+    sql.execute(
+        "insert into turns (id, conversation_id, origin, state, user_seq, start_seq) values ($1, $2, 'person', 'running', $3, $4)",
+        &[&t2, &c, &s2[0], &s2[1]],
+    )
+    .await
+    .unwrap();
+    sql.execute(
+        "update conversations set active_turn = $2, run_state = 'running', model = 'model-a' where id = $1",
+        &[&c, &t2],
+    )
+    .await
+    .unwrap();
+    let share = r.pigeon().person(ALICE).create_share(c).await.unwrap();
+    let upto: i64 = sql
+        .query_one("select upto_seq from shares where id = $1", &[&share.id])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(upto, s2[0] - 1);
+    // in the source, the finished turn's tool row took the result, and the retraction is recorded
+    let src = sql
+        .query_one(
+            "select (select count(*) from rows where conversation_id = $1 and row_id <= $2
+                       and exists (select 1 from unnest(source_seqs) x where x > $2)),
+                    (select count(*) from retracted where conversation_id = $1 and seq = $3)",
+            &[&c, &upto, &s1[4]],
+        )
+        .await
+        .unwrap();
+    assert!(
+        src.get::<_, i64>(0) >= 1,
+        "no finished-turn row was changed by the running turn"
+    );
+    assert_eq!(src.get::<_, i64>(1), 1);
+    // no frozen row has a source event of the running turn: the tool row the result updated is left out
+    let late: i64 = sql
+        .query_one(
+            "select count(*) from share_rows where share_id = $1 and exists (select 1 from unnest(source_seqs) x where x > $2)",
+            &[&share.id, &upto],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(late, 0);
+    let view = r.pigeon().person(BOB).get_share(&share.id).await.unwrap();
+    let items: Vec<String> = view
+        .rows
+        .iter()
+        .map(|r| serde_json::to_value(&r.item).unwrap().to_string())
+        .collect();
+    assert!(items.iter().any(|t| t.contains("first answer")), "{items:?}");
+    assert!(!items.iter().any(|t| t.contains("background output")), "{items:?}");
+    // the source moves on: a new model; the continue takes the share's
+    sql.execute("update conversations set model = 'model-b' where id = $1", &[&c])
+        .await
+        .unwrap();
+    let cont = r.pigeon().person(BOB).continue_share(&share.id).await.unwrap();
+    let row = sql
+        .query_one(
+            "select model, (select count(*) from retracted where conversation_id = $1),
+                    (select count(*) from events where conversation_id = $1 and seq > $2),
+                    (select count(*) from pending_workspaces)
+             from conversations where id = $1",
+            &[&cont.conversation_id, &upto],
+        )
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, Option<String>>(0).as_deref(), Some("model-a"));
+    assert_eq!(
+        row.get::<_, i64>(1),
+        0,
+        "the running turn's retraction reached the copy"
+    );
+    assert_eq!(row.get::<_, i64>(2), 0);
+    assert_eq!(row.get::<_, i64>(3), 0, "a committed clone stays pending");
+    let cpage = r
+        .pigeon()
+        .person(BOB)
+        .timeline(cont.conversation_id, &ev::tail(100))
+        .await
+        .unwrap();
+    assert_eq!(cpage.rows, view.rows);
+    // the source in Recently deleted: continue answers 404 as the view does
+    r.pigeon().person(ALICE).delete_conversation(c).await.unwrap();
+    assert_eq!(
+        code(&r.pigeon().person(BOB).continue_share(&share.id).await.unwrap_err()),
+        Some(ErrorCode::NotFound)
+    );
+}
+
+#[tokio::test]
+async fn clones_not_yet_committed_count_as_referenced_and_expire() {
+    let db = common::fresh_db("pendingws").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let (pending, stale, used) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let sql = r.pool().get().await.unwrap();
+    for w in [pending, stale, used] {
+        sql.execute("insert into pending_workspaces (workspace_id) values ($1)", &[&w])
+            .await
+            .unwrap();
+    }
+    let got = r
+        .hermit()
+        .service(None)
+        .workspaces_exists(&magpie_api::ops::WorkspacesExistsRequest {
+            ids: vec![pending, Uuid::new_v4()],
+        })
+        .await
+        .unwrap();
+    assert_eq!(got.exists, vec![pending]);
+    // a replica that died after its clone: given up after an hour, its clone's deletion queued unless referenced
+    let c = ev::conversation(&r.pigeon(), ALICE).await;
+    sql.execute(
+        "update pending_workspaces set workspace_id = $2, created_at = now() - interval '2 hours' where workspace_id = $1",
+        &[&used, &c],
+    )
+    .await
+    .unwrap();
+    sql.execute(
+        "update pending_workspaces set created_at = now() - interval '2 hours' where workspace_id = $1",
+        &[&stale],
+    )
+    .await
+    .unwrap();
+    assert_eq!(magpie::jobs::retention::pass(r.pool()).await.unwrap(), 2);
+    let left: Vec<Uuid> = sql
+        .query("select workspace_id from pending_workspaces", &[])
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(left, vec![pending]);
+    let queued: Vec<serde_json::Value> = sql
+        .query("select payload from outbox where kind = 'delete_workspace'", &[])
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(queued.len(), 1, "{queued:?}");
+    assert!(queued[0].to_string().contains(&stale.to_string()), "{queued:?}");
 }

@@ -238,4 +238,33 @@ async fn admin_reads_are_audited_once_a_day() {
         ("root@example.com", STAFF)
     );
     assert_eq!(reads[0].conversation_id, Some(c));
+    // concurrent first reads of another conversation by another admin: one row
+    let d = with_reply(&r, STAFF).await;
+    let mut reads = Vec::new();
+    for _ in 0..8 {
+        let a = r.admin();
+        reads.push(tokio::spawn(async move {
+            a.service(Some("other@example.com"))
+                .admin_conversation(d)
+                .await
+                .unwrap();
+        }));
+    }
+    for h in reads {
+        h.await.unwrap();
+    }
+    let n: i64 = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select count(*) from view_as_log where event = 'admin_read' and admin = 'other@example.com'
+               and conversation_id = $1",
+            &[&d],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(n, 1);
 }

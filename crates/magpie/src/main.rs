@@ -1,4 +1,6 @@
-//! `magpie serve`: one replica (magpie 18). `magpie --version` prints the build.
+//! `magpie serve`: one replica (magpie 18). `magpie --version` prints the build. `magpie check-image <file>` decodes
+//! an image as an upload would and prints its type and upright size (the image build's check that libheif and its
+//! decoder plugins are there).
 
 use std::process::ExitCode;
 use std::time::Duration;
@@ -28,6 +30,7 @@ fn main() -> ExitCode {
             let _ = std::io::Write::write_all(&mut out, format!("{}\n", build().version_line()).as_bytes());
             ExitCode::SUCCESS
         }
+        Some("check-image") => check_image(args.get(1).map(String::as_str)),
         Some("serve") => {
             let Ok(rt) = tokio::runtime::Runtime::new() else {
                 return ExitCode::FAILURE;
@@ -36,8 +39,35 @@ fn main() -> ExitCode {
         }
         _ => {
             let mut err = std::io::stderr().lock();
-            let _ = std::io::Write::write_all(&mut err, b"usage: magpie serve | magpie --version\n");
+            let _ = std::io::Write::write_all(
+                &mut err,
+                b"usage: magpie serve | magpie --version | magpie check-image <file>\n",
+            );
             ExitCode::from(2)
+        }
+    }
+}
+
+fn check_image(path: Option<&str>) -> ExitCode {
+    use magpie::blobs::images;
+    let mut err = std::io::stderr().lock();
+    let Some(bytes) = path.and_then(|p| std::fs::read(p).ok()) else {
+        let _ = std::io::Write::write_all(&mut err, b"check-image: no readable file\n");
+        return ExitCode::from(2);
+    };
+    let Some(mime) = images::sniff(&bytes).filter(|m| images::is_image(m)) else {
+        let _ = std::io::Write::write_all(&mut err, b"check-image: not an image type magpie reads\n");
+        return ExitCode::FAILURE;
+    };
+    match images::decode(&bytes, mime) {
+        Ok(img) => {
+            let line = format!("{mime} {}x{}\n", img.width(), img.height());
+            let _ = std::io::Write::write_all(&mut std::io::stdout().lock(), line.as_bytes());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            let _ = std::io::Write::write_all(&mut err, format!("check-image: {e}\n").as_bytes());
+            ExitCode::FAILURE
         }
     }
 }

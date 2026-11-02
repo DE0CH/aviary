@@ -20,7 +20,8 @@ the end-to-end harness, and `testing/paseo-contract` (Node) checks Paseo frames 
 
 The toolchain is pinned in `rust-toolchain.toml`; service binaries are static musl builds linked with rust-lld
 (`cargo build --release --target x86_64-unknown-linux-musl`), except magpie, which links libheif and is built on
-Debian bookworm with `libheif-dev` (`.github/ci/build-magpie.sh`).
+Debian trixie with `libheif-dev` (`.github/ci/build-magpie.sh`); its image (`images/magpie`) is `debian:trixie-slim`
+with `libheif1` and `libheif-plugin-libde265`, and CI decodes a HEIC photo with it.
 
 The musl build needs a musl C compiler as well as rust-lld: ring (under rustls) compiles C with cc-rs, and
 `.cargo/config.toml` points `CC_x86_64_unknown_linux_musl` at `musl-gcc` (Debian/Ubuntu package `musl-tools`).
@@ -56,7 +57,21 @@ addressing and create their own buckets. CI serves S3 with versitygw, pinned by 
   in a job container, so it shares the build job's `dist/` and cargo cache. That image is Debian trixie, not bookworm:
   libheif-rs (HEIC/HEIF/AVIF uploads) needs libheif 1.17 or later, and bookworm has 1.15, so magpie's runtime image
   is `debian:trixie-slim` with `libheif1` and `libheif-plugin-libde265` (the HEVC decoder libheif loads as a plugin).
-  The lint and test jobs install Ubuntu 24.04's `libheif-dev` (1.17).
+  The lint and test jobs install Ubuntu 24.04's `libheif-dev` (1.17). `images/magpie` is that runtime image; the
+  build job builds it and runs `magpie check-image` on the HEIC fixture inside it, so an image without the plugin
+  (where every HEIC upload would answer 415) fails CI.
+- magpie reads an upload (50 MiB at most) or a sandbox blob `PUT` (64 MiB) whole before it puts it in the bucket,
+  where magpie 5.2/10.1 stream the body: the bucket key is the body's SHA-256, known only at its end, and an image is
+  decoded from the whole body anyway. Memory is bounded instead: decodes take a byte-weighted budget
+  (`DECODE_MEMORY_BYTES`, 384 MiB, estimated from the image header) besides the count of 4, keep at most two full
+  frames, and bodies put in the bucket do not go into the read cache. Measured (`tests/uploads_perf.rs`, release,
+  ci.yml `magpie-perf`): four 40 MP JPEG uploads at once and their thumbnails peak at 305 MiB RSS for the whole test
+  process, against 1050 MiB before these bounds.
+- magpie's blob advisory locks (magpie 5.3) sit on two lock sessions of their own per replica (`blobs/locks.rs`, a
+  pool of 2 connections each, opened on first use: the writers' and, on the job leader, the GC's), not on the
+  request pool, so a bucket that hangs pins no request connection. That adds 1-2 connections per replica in normal
+  running (4 at most, while a broken session is replaced) to platform 11.4's budget of 14: at the largest scale
+  7 x 18 = 126 of `magpie-pg`'s 150.
 - `cargo deny` checks platform 4.5's EC2/Kubernetes ban with `deny-hermit-only.toml`, a second config run with hermit
   and the harness crates excluded, instead of wrappers in `deny.toml`. cargo-deny warns "unmatched wrapper" for every
   wrapper that is not in the graph.

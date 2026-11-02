@@ -604,3 +604,59 @@ async fn a_hanging_bucket_pins_no_request_connection() {
     }
     proxy.restore();
 }
+
+#[tokio::test]
+async fn a_revalidation_answers_304_before_the_bucket_is_asked() {
+    let db = common::fresh_db("early304").await;
+    let t = common::Tokens::new();
+    let bucket = common::test_bucket(&db.url).await;
+    let s3: std::net::SocketAddr = bucket.endpoint.trim_start_matches("http://").parse().unwrap();
+    let proxy = common::CutProxy::start(s3).await;
+    let mut via_proxy = bucket.clone();
+    via_proxy.endpoint = format!("http://{}", proxy.addr);
+    let r = common::replica_full(&db.url, &t, "http://127.0.0.1:1", common::idle(), via_proxy).await;
+    let up = r
+        .pigeon()
+        .person(ALICE)
+        .upload(
+            "p.png",
+            magpie_api::uploads::UploadKind::Image,
+            "image/png",
+            png(64, 48, false),
+        )
+        .await
+        .unwrap();
+    let sha: Vec<u8> = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select blob from uploads where id = $1", &[&up.upload_id])
+        .await
+        .unwrap()
+        .get(0);
+    let hex = blobs::to_hex(&<[u8; 32]>::try_from(sha.as_slice()).unwrap());
+    proxy.cut();
+    let get = |variant: &'static str, etag: Option<String>| {
+        let mut req = common::http()
+            .get(format!("{}/v1/blobs/{hex}?variant={variant}", r.url))
+            .bearer_auth(&t.pigeon);
+        if let Some(e) = etag {
+            req = req.header("if-none-match", e);
+        }
+        req.send()
+    };
+    // the bucket cut: a read needs it, a revalidation does not
+    assert_eq!(get("full", None).await.unwrap().status(), 503);
+    let full = get("full", Some(format!("\"{hex}\""))).await.unwrap();
+    assert_eq!(full.status(), 304);
+    assert_eq!(full.headers()["etag"], format!("\"{hex}\"").as_str());
+    let thumb = get("thumb", Some(format!("\"{hex}-thumb\""))).await.unwrap();
+    assert_eq!(thumb.status(), 304);
+    // another variant's etag is not a match
+    assert_eq!(
+        get("full", Some(format!("\"{hex}-thumb\""))).await.unwrap().status(),
+        503
+    );
+    proxy.restore();
+}
