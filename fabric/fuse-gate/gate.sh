@@ -16,15 +16,25 @@
 #   gate.sh receive-relay NAME PORT        restore behind `sandboxd migrate-relay` (it serves rsync into the scratch
 #                                   dir and holds the stream's End until SBXDONE), as sandboxd's receive
 #   gate.sh rm NAME
+# RIG=1 (bundle): the real build instead of the spike (WP-22, fabric/fuse-gate/rig/): the first process is
+#   /media/rig/init.sh, which starts fuse-rig's world and execs the real supervisor-keeper as PID 1; the image's
+#   /usr/local/bin/supervisor{,-keeper} are the rig's binaries (RIG_FI=1: the fault-injection build of supervisor),
+#   /var/lib/supervisor is a tmpfs (LAYOUT=scratch: the scratch dir's supervisor/, as in production), /workspace a tmpfs.
+# GATE_SIDE=b: a second, independent set of runtime state on the same host (runsc root, bundles, scratch, netns,
+#   cgroup, logs, checkpoint dir), so one host can be the source (no side) and the target (side b) of a migration
+#   (rig/rig-mig.sh LOOPBACK=1). TARGET_SIDE: the target's side, for send-scratch's source/destination comparison.
 set -euo pipefail
-ROOT=/run/gate/runsc
+SIDE=${GATE_SIDE:-}
+ROOT=/run/gate/runsc${SIDE:+-$SIDE}
+GB=/var/lib/gate${SIDE:+/$SIDE}
 RUNSC=(runsc --root "$ROOT" --platform=systrap --network=sandbox --overlay2=none --host-uds=none --host-fifo=none
        --net-raw --allow-packet-socket-write --allow-suid)
 # GATE_RUNSC_EXTRA: extra global flags for an experiment (e.g. --systrap-disable-syscall-patching); never production's
 # shellcheck disable=SC2206
 [ -n "${GATE_RUNSC_EXTRA:-}" ] && RUNSC+=($GATE_RUNSC_EXTRA)
 cmd=$1; name=${2:-}
-b=/var/lib/gate/bundles/$name
+b=$GB/bundles/$name
+ln=${SIDE:+$SIDE-}$name  # this side's name for logs, netns, cgroup and checkpoint dir
 caps='["CAP_CHOWN","CAP_DAC_OVERRIDE","CAP_FOWNER","CAP_FSETID","CAP_KILL","CAP_SETGID","CAP_SETUID","CAP_SETPCAP","CAP_NET_BIND_SERVICE","CAP_NET_RAW","CAP_NET_ADMIN","CAP_SYS_CHROOT","CAP_MKNOD","CAP_AUDIT_WRITE","CAP_SETFCAP","CAP_SYS_ADMIN","CAP_SYS_PTRACE","CAP_SYS_RESOURCE","CAP_IPC_LOCK","CAP_SYS_NICE"]'
 case $cmd in
 bundle)
@@ -32,20 +42,22 @@ bundle)
   layout=${LAYOUT:-tmpfs}
   [ "$layout" = scratch ] && journal=${3:-/mnt/supervisor/fuse-journal}
   img=/var/lib/gate/image
-  mkdir -p "$b" /var/lib/gate/scratch/"$name"
-  ip netns list | grep -qw "gate-$name" || { ip netns add "gate-$name"; ip -n "gate-$name" link set lo up; }
-  jq -n --arg root "$(readlink -f $img)/rootfs" --arg ns "/var/run/netns/gate-$name" --arg name "$name" \
+  mkdir -p "$b" "$GB/scratch/$name"
+  ip netns list | grep -qw "gate-$ln" || { ip netns add "gate-$ln"; ip -n "gate-$ln" link set lo up; }
+  rig=${RIG:-}; sup=supervisor; [ -n "${RIG_FI:-}" ] && sup=supervisor-fi
+  [ -n "$rig" ] && [ "$layout" = scratch ] && mkdir -p "$GB/scratch/$name/supervisor"
+  jq -n --arg root "$(readlink -f $img)/rootfs" --arg ns "/var/run/netns/gate-$ln" --arg name "$ln" \
         --argjson caps "$caps" --argjson env "$(jq '.config.Env' $img/config.json)" --arg j "$journal" \
-        --arg scratch "/var/lib/gate/scratch/$name" --arg layout "$layout" '{
+        --arg scratch "$GB/scratch/$name" --arg layout "$layout" --arg rig "$rig" --arg sup "$sup" '{
     ociVersion: "1.0.0",
     process: { user: {uid: 0, gid: 0}, cwd: "/",
-      args: ["/usr/bin/tini", "--", "/media/init.sh"],
+      args: (if $rig != "" then ["/media/rig/init.sh"] else ["/usr/bin/tini", "--", "/media/init.sh"] end),
       env: ($env + ["GATE_JOURNAL=\($j)", "GATE_LAYOUT=\($layout)"]),
       capabilities: {bounding: $caps, effective: $caps, permitted: $caps, inheritable: [], ambient: []},
       rlimits: [{type: "RLIMIT_NOFILE", hard: 65536, soft: 65536}] },
     root: { path: $root, readonly: true },
     hostname: "sandbox",
-    mounts: [
+    mounts: ([
       {destination: "/proc", type: "proc", source: "proc"},
       {destination: "/dev", type: "tmpfs", source: "tmpfs", options: ["nosuid","strictatime","mode=755","size=65536k"]},
       {destination: "/dev/pts", type: "devpts", source: "devpts", options: ["nosuid","noexec","newinstance","ptmxmode=0666","mode=0620"]},
@@ -57,7 +69,14 @@ bundle)
       {destination: "/srv", type: "tmpfs", source: "tmpfs", options: ["nosuid","nodev","mode=755"]},
       {destination: "/mnt", type: "bind", source: $scratch, options: ["rbind","rw"]},
       {destination: "/media", type: "bind", source: "/var/lib/gate/bin", options: ["rbind","ro"]}
-    ],
+    ] + (if $rig == "" then [] else [
+      {destination: "/usr/local/bin/supervisor", type: "bind", source: "/var/lib/gate/bin/rig/\($sup)", options: ["bind","ro"]},
+      {destination: "/usr/local/bin/supervisor-keeper", type: "bind", source: "/var/lib/gate/bin/rig/supervisor-keeper", options: ["bind","ro"]},
+      {destination: "/workspace", type: "tmpfs", source: "tmpfs", options: ["nosuid","nodev","mode=777"]},
+      (if $layout == "scratch"
+        then {destination: "/var/lib/supervisor", type: "bind", source: "\($scratch)/supervisor", options: ["rbind","rw"]}
+        else {destination: "/var/lib/supervisor", type: "tmpfs", source: "tmpfs", options: ["nosuid","nodev","mode=755"]} end)
+    ] end)),
     linux: {
       namespaces: [{type: "pid"}, {type: "ipc"}, {type: "uts"}, {type: "mount"}, {type: "network", path: $ns}],
       cgroupsPath: "/gate/\($name)",
@@ -65,21 +84,21 @@ bundle)
     }
   }' > "$b/config.json"
   ;;
-run) shift 2; mkdir -p /var/log/gate; "${RUNSC[@]}" "$@" run --bundle "$b" --detach "$name" </dev/null &>>"/var/log/gate/$name.log" ;;
+run) shift 2; mkdir -p /var/log/gate; "${RUNSC[@]}" "$@" run --bundle "$b" --detach "$name" </dev/null &>>"/var/log/gate/$ln.log" ;;
 exec)
   shift 2
   if [ "${1:-}" = --root ]; then shift; "${RUNSC[@]}" exec --cwd / "$name" "$@"
   else "${RUNSC[@]}" exec --user 1000:1000 --cwd /home/sandbox "$name" "$@"; fi ;;
 send) host=$3 port=$4; "${RUNSC[@]}" checkpoint --migrate-to "[$host]:$port" --migrate-downtime "${5:-100ms}" --migrate-max-rounds 20 "$name" ;;
 receive)
-  port=$3; dir=/run/gate/ckpt/in-$name; rm -rf "$dir"; mkdir -p /var/log/gate
+  port=$3; dir=/run/gate/ckpt/in-$ln; rm -rf "$dir"; mkdir -p /var/log/gate
   # RESTORE_DEBUG=1: the restored sandbox logs at debug level (a task's fatal fault shows as "Unhandled user fault")
-  dbg=(); [ -n "${RESTORE_DEBUG:-}" ] && { rm -rf "/var/log/gate/dbg-$name"; dbg=(--debug "--debug-log=/var/log/gate/dbg-$name/"); }
+  dbg=(); [ -n "${RESTORE_DEBUG:-}" ] && { rm -rf "/var/log/gate/dbg-$ln"; dbg=(--debug "--debug-log=/var/log/gate/dbg-$ln/"); }
   "${RUNSC[@]}" "${dbg[@]}" restore --migrate-listen "[::]:$port" --image-path "$dir" --background --bundle "$b" --detach "$name" \
-    </dev/null >"/var/log/gate/$name.restore.out" 2>>"/var/log/gate/$name.log"
-  grep -m1 '^{"from"' "/var/log/gate/$name.restore.out" || cat "/var/log/gate/$name.restore.out" ;;
+    </dev/null >"/var/log/gate/$ln.restore.out" 2>>"/var/log/gate/$ln.log"
+  grep -m1 '^{"from"' "/var/log/gate/$ln.restore.out" || cat "/var/log/gate/$ln.restore.out" ;;
 send-scratch)
-  host=$3 port=$4; sd=/var/lib/gate/scratch/$name; h=$host; [[ $h == *:* ]] && h="[$h]"; url="rsync://$h:$port/scratch/"
+  host=$3 port=$4; sd=$GB/scratch/$name; h=$host; [[ $h == *:* ]] && h="[$h]"; url="rsync://$h:$port/scratch/"
   ms() { date +%s%3N; }
   rs() { rsync -aHAX --numeric-ids --delete --exclude=/lost+found --stats --timeout=120 --contimeout=10 "$@" "$sd/" "$url"; }
   stat_of() { awk -F': ' '/^Number of regular files transferred:/{gsub(/,/,"",$2); f=$2} /^Total transferred file size:/{gsub(/[,a-z ]/,"",$2); b=$2} END{printf "{\"files\":%d,\"bytes\":%d", f, b}'; }
@@ -103,7 +122,7 @@ send-scratch)
   wait $dp || true
   # Every scratch file, source against destination, while both are stopped (before SBXDONE starts the restore)
   sh_of() { (cd "$1" && find . -type f ! -path './lost+found/*' -print0 | sort -z | xargs -0 -r sha256sum); }
-  diff_files=$(diff <(sh_of "$sd") <(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i /root/.ssh/gate "root@$host" "$(declare -f sh_of); sh_of /var/lib/gate/scratch/$name") | awk '/^</{print $3}' | sort -u | paste -sd, -)
+  diff_files=$(diff <(sh_of "$sd") <(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i /root/.ssh/gate "root@$host" "$(declare -f sh_of); sh_of /var/lib/gate${TARGET_SIDE:+/$TARGET_SIDE}/scratch/$name") | awk '/^</{print $3}' | sort -u | paste -sd, -)
   t3b=$(ms)
   ok=$(python3 -c "
 import socket,sys
@@ -113,16 +132,16 @@ print(c.recv(2).decode())")
   echo "{\"live_rounds\":$live,\"checkpoint_ms\":$((t2-t1)),\"final_rsync\":$fin,\"ms\":$((t3-t2)),\"checksum\":$([ ${#fx[@]} = 0 ] && echo false || echo true)},\"files_differing_after_final\":\"$diff_files\",\"compare_ms\":$((t3b-t3)),\"done_reply\":\"$ok\",\"stopped_until_done_ms\":$((t4-t2))}"
   ;;
 receive-relay)
-  port=$3; dir=/run/gate/ckpt/in-$name; rm -rf "$dir"; mkdir -p /var/log/gate
-  dbg=(); [ -n "${RESTORE_DEBUG:-}" ] && { rm -rf "/var/log/gate/dbg-$name"; dbg=(--debug "--debug-log=/var/log/gate/dbg-$name/"); }
-  conf=/var/lib/gate/bundles/$name/rsyncd.conf
-  printf 'use chroot = yes\nnumeric ids = yes\nuid = 0\ngid = 0\ntimeout = 300\nreverse lookup = no\nlog file = /var/log/gate/%s.rsync.log\n[scratch]\npath = /var/lib/gate/scratch/%s\nread only = no\nlist = no\nopen noatime = yes\n' "$name" "$name" > "$conf"
+  port=$3; dir=/run/gate/ckpt/in-$ln; rm -rf "$dir"; mkdir -p /var/log/gate
+  dbg=(); [ -n "${RESTORE_DEBUG:-}" ] && { rm -rf "/var/log/gate/dbg-$ln"; dbg=(--debug "--debug-log=/var/log/gate/dbg-$ln/"); }
+  conf=$b/rsyncd.conf
+  printf 'use chroot = yes\nnumeric ids = yes\nuid = 0\ngid = 0\ntimeout = 300\nreverse lookup = no\nlog file = /var/log/gate/%s.rsync.log\n[scratch]\npath = %s\nread only = no\nlist = no\nopen noatime = yes\n' "$ln" "$GB/scratch/$name" > "$conf"
   "${RUNSC[@]}" "${dbg[@]}" restore --migrate-listen "127.0.0.1:$((port + 1000))" --image-path "$dir" --background --bundle "$b" --detach "$name" \
-    </dev/null >"/var/log/gate/$name.restore.out" 2>>"/var/log/gate/$name.log" & rp=$!
+    </dev/null >"/var/log/gate/$ln.restore.out" 2>>"/var/log/gate/$ln.log" & rp=$!
   for _ in $(seq 100); do ss -ltn | grep -q "127.0.0.1:$((port + 1000)) " && break; sleep 0.05; done
-  sandboxd migrate-relay "${GATE_RELAY_LISTEN:-[::]}:$port" "127.0.0.1:$((port + 1000))" "$conf" 900 2>>"/var/log/gate/$name.relay.log"; rc=$?
-  wait $rp; echo "relay exit $rc" >> "/var/log/gate/$name.relay.log"
-  grep -m1 '^{"from"' "/var/log/gate/$name.restore.out" || cat "/var/log/gate/$name.restore.out" ;;
+  sandboxd migrate-relay "${GATE_RELAY_LISTEN:-[::]}:$port" "127.0.0.1:$((port + 1000))" "$conf" 900 2>>"/var/log/gate/$ln.relay.log"; rc=$?
+  wait $rp; echo "relay exit $rc" >> "/var/log/gate/$ln.relay.log"
+  grep -m1 '^{"from"' "/var/log/gate/$ln.restore.out" || cat "/var/log/gate/$ln.restore.out" ;;
 rm)
   "${RUNSC[@]}" kill "$name" KILL 2>/dev/null || true
   "${RUNSC[@]}" delete -force "$name" 2>/dev/null || true

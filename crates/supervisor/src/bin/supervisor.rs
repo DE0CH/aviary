@@ -105,6 +105,11 @@ fn run() -> i32 {
         let (running, done) = start.spawn();
         let (lost, regained) = (running.lifecycle.clone(), running.lifecycle.clone());
         let (a1, a2, a3) = (agent.clone(), agent.clone(), agent.clone());
+        // the fault-injection build (never a release image): the point in /run/fault-injection, read once
+        #[cfg(feature = "fault-injection")]
+        let fault = supervisor::fuse::fault_from_file(std::path::Path::new(supervisor::fuse::FAULT_FILE));
+        #[cfg(not(feature = "fault-injection"))]
+        let fault = None;
         fs.set_hooks(Hooks {
             // 9.5 item 7: unready while unleased (the generation killed, no more reports for its turn), ready again
             // with the new lease (no exit, no restart)
@@ -118,7 +123,7 @@ fn run() -> i32 {
             }),
             write_stuck: Arc::new(move |s| a2.write_stuck(&s.what, &s.message)),
             forked: Arc::new(move |m| a3.forked(&m)),
-            ..Hooks::default()
+            fault,
         });
         done.await.unwrap_or(EXIT_INTERNAL)
     })

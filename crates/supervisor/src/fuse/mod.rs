@@ -149,6 +149,37 @@ type Hook<A> = Arc<dyn Fn(A) + Send + Sync>;
 /// Decides whether to die at a fault point.
 pub type FaultHook = Arc<dyn Fn(Point, &proto::InHeader) -> bool + Send + Sync>;
 
+/// The `fault-injection` build's fault point, read once at start from [`FAULT_FILE`] (`POINT:OPCODE:NTH`, e.g.
+/// `call-answered:MKDIR:1`; points `read-returned`, `call-sent`, `call-answered`, `reply-written`) and removed, so the
+/// supervisor the keeper restarts after the SIGKILL runs without it (supervisor 22 item 4 on the real build).
+#[cfg(feature = "fault-injection")]
+pub const FAULT_FILE: &str = "/run/fault-injection";
+
+/// The hook for [`FAULT_FILE`], if it names a fault point; the file is removed either way.
+#[cfg(feature = "fault-injection")]
+#[must_use]
+pub fn fault_from_file(path: &Path) -> Option<FaultHook> {
+    let s = std::fs::read_to_string(path).ok()?;
+    let _ = std::fs::remove_file(path);
+    let mut it = s.trim().split(':');
+    let point = match it.next()? {
+        "read-returned" => Point::ReadReturned,
+        "call-sent" => Point::CallSent,
+        "call-answered" => Point::CallAnswered,
+        "reply-written" => Point::ReplyWritten,
+        _ => return None,
+    };
+    let opcode = it.next()?.to_owned();
+    let nth: u64 = it.next().and_then(|n| n.parse().ok()).unwrap_or(1);
+    tracing::warn!(?point, %opcode, nth, "fault-injection armed");
+    let seen = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    Some(Arc::new(move |p, h| {
+        p == point
+            && proto::opname(h.opcode) == opcode
+            && seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 == nth
+    }))
+}
+
 /// What the FUSE layer tells the rest of the supervisor (the agent, WP-23, and the lifecycle's readiness).
 #[derive(Clone)]
 pub struct Hooks {

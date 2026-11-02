@@ -8,6 +8,7 @@ members = [
   "testing/test-gateway",
   "testing/fake-sandboxd",
   "testing/fake-access",
+  "testing/fuse-rig",
   "testing/conformance",
   "testing/e2e",
   "testing/source-rules",

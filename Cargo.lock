@@ -1619,6 +1619,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "795cbfc56d419a7ce47ccbb7504dd9a5b7c484c083c356e797de08bd988d9629"
 
 [[package]]
+name = "fuse-rig"
+version = "0.0.0"
+dependencies = [
+ "aviary-core",
+ "aviary-fakes",
+ "axum",
+ "gateway-api",
+ "hermit-api",
+ "prometheus-client",
+ "reqwest",
+ "rustls",
+ "serde_json",
+ "sha2",
+ "test-gateway",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "futures"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"

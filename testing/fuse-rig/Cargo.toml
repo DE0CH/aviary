@@ -1,0 +1,29 @@
+[package]
+name = "fuse-rig"
+description = "The world a real supervisor runs against inside a sandbox for the FUSE gate's re-run (crates/supervisor/GATE.md): fake hermit and fake magpie behind the reference gateway, with an admin port to hold routes and read magpie's copy."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "fuse-rig"
+path = "src/main.rs"
+
+[dependencies]
+aviary-core = { path = "../../crates/aviary-core" }
+aviary-fakes = { path = "../fakes" }
+axum.workspace = true
+gateway-api = { path = "../../crates/gateway-api" }
+hermit-api = { path = "../../crates/hermit-api" }
+prometheus-client.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+test-gateway = { path = "../test-gateway" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
+uuid.workspace = true
+
+[lints]
+workspace = true
