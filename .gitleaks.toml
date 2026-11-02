@@ -1,0 +1,7 @@
+# gitleaks configuration: the default rules, plus the files that hold published test values by design.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "hermit-api's token known-answer vector: tokens derived from a fixed all-0x07 test key, published in docs/CONTRACTS.md"
+paths = ['''^crates/hermit-api/vectors/token-v1\.json$''']
