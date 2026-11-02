@@ -53,6 +53,10 @@ fn sandboxes() {
     let m: Spec = round_trip("spec-minimal.json");
     assert_eq!((m.image_ref, m.workspace, m.user), (None, None, None));
     let _: Listed = round_trip("listed.json");
+    let a: Listed = round_trip("listed-alive.json");
+    assert_eq!(a.alive, Some(false));
+    let p: Spec = round_trip("spec-pids.json");
+    assert_eq!((p.pids, p.user), (Some(4096), None));
     let _: Sandboxes = round_trip("sandboxes.json");
     let _: Deleted = round_trip("deleted.json");
 }
@@ -69,6 +73,7 @@ fn migration() {
         ReceiveResult::Receiving
     );
     assert!(matches!(round_trip("receive-failed.json"), ReceiveResult::Failed { error } if error == "not here"));
+    assert_eq!(round_trip::<ReceiveResult>("receive-none.json"), ReceiveResult::None);
     let s: SendRequest = round_trip("send-request.json");
     assert_eq!(s.max_downtime_ms, Some(500));
     let m: SendRequest = round_trip("send-request-minimal.json");
@@ -90,7 +95,7 @@ fn answers_of_a_newer_sandboxd_still_parse() {
     host["sandboxd"]["memory"]["newArena"] = Value::from(2);
     host["sandboxes"][0]["alive"] = Value::Bool(false);
     let _: Host = serde_json::from_value(host).unwrap();
-    let result: ReceiveResult = serde_json::from_value(serde_json::json!({"state": "none", "why": "x"})).unwrap();
+    let result: ReceiveResult = serde_json::from_value(serde_json::json!({"state": "moving", "why": "x"})).unwrap();
     assert_eq!(result, ReceiveResult::Unknown);
     let mut sent: Value = serde_json::from_str(&fixture("send-response.json")).unwrap();
     sent["scratch"]["extra"] = Value::from(0);

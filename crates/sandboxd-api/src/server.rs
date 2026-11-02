@@ -19,8 +19,9 @@ use axum::{Json, Router};
 use serde::de::DeserializeOwned;
 
 use crate::{
-    Deleted, EgressTargets, EnsureImage, ErrorBody, Host, ImageDigest, Listed, MAX_BODY, Peers, RECEIVE_WAIT_MAX_MS,
-    ReceiveResult, Receiving, Sandboxes, SendRequest, SendResult, SetPeers, Spec, routes, valid_name,
+    Deleted, EgressTargets, EnsureImage, ErrorBody, Host, ImageDigest, LOG_TAIL_MAX, Listed, MAX_BODY, Peers,
+    RECEIVE_WAIT_MAX_MS, ReceiveResult, Receiving, Sandboxes, SendRequest, SendResult, SetPeers, Spec, routes,
+    valid_name,
 };
 
 /// An error answer: `status` with `{"error": error}`.
@@ -76,6 +77,12 @@ pub trait Server: Send + Sync + 'static {
     fn receive_result(&self, name: String, wait_ms: u64) -> impl Future<Output = Answer<ReceiveResult>> + Send;
     /// `POST /v1/sandboxes/{name}/send`.
     fn send(&self, name: String, req: SendRequest) -> impl Future<Output = Answer<SendResult>> + Send;
+    /// `GET /v1/sandboxes/{name}/log?tail=<bytes>` (`tail` clamped to [`LOG_TAIL_MAX`]): the console's last bytes.
+    /// A server without consoles answers 404.
+    fn log(&self, name: String, tail: usize) -> impl Future<Output = Answer<Vec<u8>>> + Send {
+        let _ = (name, tail);
+        async { Err(ApiError::new(404, "no console")) }
+    }
 }
 
 /// A request body as sandboxd reads it (the module docs).
@@ -132,6 +139,18 @@ fn wait_ms(query: Option<&str>) -> u64 {
         .filter(|x| x.is_finite())
         .unwrap_or(0.0)
         .clamp(0.0, max) as u64
+}
+
+/// The `tail` of `GET …/log`: the first `tail=` as a whole number, clamped to [`LOG_TAIL_MAX`]; missing or not a
+/// number is the whole [`LOG_TAIL_MAX`].
+fn tail(query: Option<&str>) -> usize {
+    query
+        .unwrap_or("")
+        .split('&')
+        .find_map(|kv| kv.strip_prefix("tail="))
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(LOG_TAIL_MAX)
+        .min(LOG_TAIL_MAX)
 }
 
 /// sandboxd's routes over `server`, with its 64 KiB body limit, its reading of bodies (the module docs) and `{"error"}`
@@ -204,6 +223,13 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
                     s.send(name_ok(name)?, body::<SendRequest>(b)?).await.map(Json)
                 },
             ),
+        )
+        .route(
+            routes::SANDBOX_LOG,
+            get(|State(s): State<Arc<S>>, Path(name): Path<String>, RawQuery(q): RawQuery| async move {
+                let bytes = s.log(name_ok(name)?, tail(q.as_deref())).await?;
+                Ok::<_, ApiError>(([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], bytes))
+            }),
         )
         .fallback(|| async { ApiError::new(404, "not found") })
         .method_not_allowed_fallback(|| async { ApiError::new(404, "not found") })

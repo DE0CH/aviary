@@ -350,6 +350,11 @@ unknown path and for a known path with another method: 404 `not found`).
   a heartbeat queued there can miss its 5 s. Settling it is hermit's (WP-19): either fewer slots per replica
   (5 x 3 = 15), or sandboxd `limits.maxConnections` raised to 24 (its memory bound grows by 8 workers' buffers,
   `sandboxd budget`).
+- **hermit spec 13.2's additions** (WP-19), all optional so a host on an older sandboxd still parses: `Listed.alive`
+  (item 6; absent = not reported, read as alive), `Spec.pids` (item 9; absent = sandboxd's 4096), `GET
+  …/log?tail=<bytes>` (item 10, `text/plain`, at most 64 KiB; the `Server` trait's default answers 404) and `GET
+  …/receive` without `wait` with the state `none` (item 11, `ReceiveResult::None`). `Spec.user` stays in the type
+  until sandboxd drops the bind (item 2); hermit never sends it.
 - **The router reads bodies as sandboxd does,** except for one leniency: the content type is ignored, an empty or
   whitespace body and a JSON value that is not an object are `{}`, a body that is not JSON is 400, over 64 KiB is
   413, and any `transfer-encoding` (a chunked body) is 411 (`tests/router.rs`). sandboxd also accepts a number sent

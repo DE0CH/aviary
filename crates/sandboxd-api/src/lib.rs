@@ -20,6 +20,10 @@
 //! | `POST /v1/sandboxes/{name}/receive` | [`Spec`] | [`Receiving`] (migration target: prepare and listen) |
 //! | `GET /v1/sandboxes/{name}/receive?wait=<ms>` | — | [`ReceiveResult`] |
 //! | `POST /v1/sandboxes/{name}/send` | [`SendRequest`] | [`SendResult`] (409: not moved, still running here) |
+//! | `GET /v1/sandboxes/{name}/log?tail=<bytes>` | — | `text/plain`: the last bytes of the console (at most [`LOG_TAIL_MAX`]) |
+//!
+//! `GET …/receive` without `wait` answers the receive's state at once, [`ReceiveResult::None`] when nothing is known
+//! (hermit spec 13.2 item 11).
 //!
 //! **Answers only gain fields (expand-only).** A host runs the sandboxd of its AMI for hours while hermit rolls forward
 //! and back, so a client must read the answers of a newer sandboxd: the answer types ignore fields they do not know,
@@ -42,8 +46,8 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub use client::{
-    CONTROL_SLOTS, CREATE_TIMEOUT, Client, Error, HEARTBEAT_SLOTS, HOST_TIMEOUT, IMAGE_TIMEOUT, LONG_SLOTS,
-    MAX_CONNECTIONS, POOL_IDLE, RECEIVE_TIMEOUT, RECEIVE_WAIT_MS, SEND_TIMEOUT, TIMEOUT, Tls,
+    CONTROL_SLOTS, CREATE_TIMEOUT, Client, Error, HEARTBEAT_SLOTS, HOST_TIMEOUT, IMAGE_TIMEOUT, LOG_TIMEOUT,
+    LONG_SLOTS, MAX_CONNECTIONS, POOL_IDLE, RECEIVE_TIMEOUT, RECEIVE_WAIT_MS, SEND_TIMEOUT, TIMEOUT, Tls,
 };
 pub use server::{Answer, ApiError, Server, router};
 
@@ -59,6 +63,8 @@ pub const CLIENT_CN: &str = "hermit";
 pub const MAX_BODY: usize = 64 << 10;
 /// The longest `wait` of `GET …/receive` (larger values are clamped).
 pub const RECEIVE_WAIT_MAX_MS: u64 = 120_000;
+/// The longest console tail `GET …/log?tail=` answers, bytes (hermit spec 13.2 item 10).
+pub const LOG_TAIL_MAX: usize = 64 << 10;
 
 /// The route table (servers and clients use these, so they cannot drift).
 pub mod routes {
@@ -80,6 +86,8 @@ pub mod routes {
     pub const SANDBOX_RECEIVE: &str = "/v1/sandboxes/{name}/receive";
     /// The axum path of `POST …/send`.
     pub const SANDBOX_SEND: &str = "/v1/sandboxes/{name}/send";
+    /// The axum path of `GET …/log?tail=<bytes>`.
+    pub const SANDBOX_LOG: &str = "/v1/sandboxes/{name}/log";
 
     /// `/v1/sandboxes/<name>`.
     #[must_use]
@@ -358,9 +366,13 @@ pub struct Spec {
     /// Folder `ws/<workspace>` of the host's shared filesystem, mounted at `/workspace`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
-    /// Folder `users/<user>/claude` of the shared filesystem, mounted at `~/.claude`.
+    /// Folder `users/<user>/claude` of the shared filesystem, mounted at `~/.claude` (removed by hermit spec 13.2 item
+    /// 2 together with sandboxd's bind; hermit never sends it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
+    /// The sandbox's pids limit (hermit spec 13.2 item 9; sandboxd's default 4096 when absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pids: Option<u32>,
 }
 
 /// A sandbox's state on a host.
@@ -396,6 +408,10 @@ pub struct Listed {
     pub cpu_usage: f64,
     /// Its cgroup's `memory.current`, bytes.
     pub memory_current: u64,
+    /// Whether its cgroup still holds a process (`populated 1` in `cgroup.events`, read in the 10 s sampler): `false`
+    /// once the sentry was killed (hermit spec 13.2 item 6). Absent from a sandboxd that does not report it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alive: Option<bool>,
 }
 
 /// `GET /v1/sandboxes`.
@@ -438,6 +454,8 @@ pub enum ReceiveResult {
         /// Why (`not here` when nothing is known).
         error: String,
     },
+    /// No receive is known for this name (`GET …/receive` without `wait`, hermit spec 13.2 item 11).
+    None,
     /// A state this version does not know (a newer sandboxd): ask again.
     #[serde(other)]
     Unknown,

@@ -64,6 +64,8 @@ pub const RECEIVE_TIMEOUT: Duration = Duration::from_secs(95);
 pub const RECEIVE_WAIT_MS: u64 = 90_000;
 /// Every other call.
 pub const TIMEOUT: Duration = Duration::from_secs(30);
+/// `GET …/log` (a console tail, best effort).
+pub const LOG_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The PEM files of the client's TLS identity.
 #[derive(Clone)]
@@ -201,6 +203,19 @@ impl Client {
         body: Option<&B>,
         timeout: Duration,
     ) -> Result<T, Error> {
+        let bytes = self.call_raw(pool, method, path, body, timeout).await?;
+        Ok(serde_json::from_slice(&bytes)?)
+    }
+
+    /// A call whose answer body is returned as it is (errors are still [`Error::Status`]).
+    async fn call_raw<B: Serialize + ?Sized>(
+        &self,
+        pool: Pool,
+        method: Method,
+        path: &str,
+        body: Option<&B>,
+        timeout: Duration,
+    ) -> Result<axum::body::Bytes, Error> {
         let mut req = self.http.request(method, format!("{}{path}", self.base));
         if let Some(b) = body {
             req = req
@@ -228,7 +243,7 @@ impl Client {
                 .map_or_else(|_| String::from_utf8_lossy(&bytes).into_owned(), |e| e.error);
             return Err(Error::Status { status, body });
         }
-        Ok(serde_json::from_slice(&bytes)?)
+        Ok(bytes)
     }
 
     /// `GET /v1/host`.
@@ -346,6 +361,39 @@ impl Client {
         let path = format!("{}?wait={wait}", routes::sandbox_part(name, "receive"));
         self.call::<(), _>(Pool::Long, Method::GET, &path, None, RECEIVE_TIMEOUT)
             .await
+    }
+
+    /// `GET /v1/sandboxes/{name}/receive` without `wait`: the receive's state now ([`ReceiveResult::None`] when none
+    /// is known), so a replica taking over a migration can ask where it stands.
+    ///
+    /// # Errors
+    /// [`Error`].
+    pub async fn receive_status(&self, name: &str) -> Result<ReceiveResult, Error> {
+        self.call::<(), _>(
+            Pool::Control,
+            Method::GET,
+            &routes::sandbox_part(name, "receive"),
+            None,
+            TIMEOUT,
+        )
+        .await
+    }
+
+    /// `GET /v1/sandboxes/{name}/log?tail=<bytes>`: the last bytes of the sandbox's console (at most
+    /// [`LOG_TAIL_MAX`](crate::LOG_TAIL_MAX)).
+    ///
+    /// # Errors
+    /// [`Error`].
+    pub async fn log(&self, name: &str, tail: usize) -> Result<Vec<u8>, Error> {
+        let path = format!(
+            "{}?tail={}",
+            routes::sandbox_part(name, "log"),
+            tail.min(crate::LOG_TAIL_MAX)
+        );
+        let b = self
+            .call_raw::<()>(Pool::Control, Method::GET, &path, None, LOG_TIMEOUT)
+            .await?;
+        Ok(b.to_vec())
     }
 
     /// `POST /v1/sandboxes/{name}/send`: move it to a receive.

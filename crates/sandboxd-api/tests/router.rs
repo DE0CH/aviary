@@ -75,6 +75,10 @@ impl Server for Fake {
         self.saw(format!("send {name} {}", req.to));
         Ok(load("send-response.json"))
     }
+    async fn log(&self, name: String, tail: usize) -> Answer<Vec<u8>> {
+        self.saw(format!("log {name} {tail}"));
+        Ok(b"booted\n".to_vec())
+    }
 }
 
 async fn serve() -> (Arc<Fake>, Client, String) {
@@ -117,6 +121,8 @@ async fn every_route_through_the_client() {
     );
     let sent = c.send("sbx-0a1b2c", &load("send-request.json")).await.unwrap();
     assert_eq!(sent.scratch.stopped_ms, 150);
+    assert_eq!(c.receive_status("sbx-0a1b2c").await.unwrap(), ReceiveResult::Receiving);
+    assert_eq!(c.log("sbx-0a1b2c", 1 << 20).await.unwrap(), b"booted\n");
     assert_eq!(
         *fake.calls.lock().unwrap(),
         [
@@ -125,6 +131,8 @@ async fn every_route_through_the_client() {
             "receive sbx-0a1b2c",
             "result sbx-0a1b2c 90000", // the client asks for at most RECEIVE_WAIT_MS
             "send sbx-0a1b2c 10.99.0.11:7142",
+            "result sbx-0a1b2c 0",  // without wait: the state now
+            "log sbx-0a1b2c 65536", // clamped to LOG_TAIL_MAX
         ]
     );
 }
