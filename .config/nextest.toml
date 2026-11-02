@@ -1,0 +1,8 @@
+# cargo-nextest configuration (ci.yml's test job runs the default profile).
+
+# magpie's cross-replica wake-up latency tests (WP-11 M12, WP-13 M9) measure 50 ms bounds: they run with the
+# machine to themselves, so the CPU-heavy tests around them (image decodes and encodes, the property tests) cannot
+# stretch a measured wake-up past the bound.
+[[profile.default.overrides]]
+filter = 'package(magpie) & (test(/within_50_?ms/))'
+threads-required = 'num-cpus'
