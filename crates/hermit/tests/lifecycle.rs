@@ -734,3 +734,23 @@ async fn callers_only_reach_their_routes() {
     assert_eq!(a.status, 401);
     assert!(a.headers.contains_key("www-authenticate"));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_start_killed_while_waiting_for_the_supervisor_is_finished_by_another_replica() {
+    let h = Harness::new("lifecycle_takeover_supervisor").await;
+    *h.fabric.ready_delay.lock().unwrap() = Duration::from_secs(3);
+    let a = h.replica("hermit-a").await;
+    let cid = Uuid::now_v7();
+    put(&h, &a, cid, STAFF).await;
+    let in_phase = common::eventually(WAIT, || async {
+        row(&h, cid).await.phase == Some(hermit_api::sandbox::SandboxPhase::Supervisor)
+    })
+    .await;
+    assert!(in_phase);
+    a.kill();
+    let _b = h.replica("hermit-b").await;
+    let s = wait_state(&h, cid, SandboxState::Ready).await;
+    // the sandbox A created is the one B found ready: created once
+    assert_eq!(h.fabric.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(*h.fabric.created.lock().unwrap(), vec![s.name]);
+}
