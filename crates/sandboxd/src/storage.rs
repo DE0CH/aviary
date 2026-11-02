@@ -7,20 +7,18 @@
 //! - root: Linux overlayfs, the image's rootfs (read-only, shared) under scratch/upper, at /var/lib/sbx/root/<name>;
 //!   runsc runs with --overlay2=none, so nothing of the root lives in gVisor's memory file.
 //! - persistent, on the host's JuiceFS mount (/var/lib/sbx/jfs, mounted by the host setup): `/workspace` is folder
-//!   ws/<workspace> (one per conversation; quota 1 GiB and 1,000 files), `~/.claude` is users/<user>/claude (one per
-//!   user: Claude Code's transcripts of all the user's conversations, which the UI reads).
+//!   ws/<workspace> (one per conversation). hermit makes the folder and sets its quota before the create (hermit spec
+//!   15.5); sandboxd only binds it, and refuses a create whose folder is missing (409), so a sandbox never makes an
+//!   unquota'd one. `~/.claude` is no bind: the supervisor inside the sandbox mounts its FUSE filesystem there
+//!   (hermit spec 13.2 items 2, 3).
 use crate::config::Spec;
 use crate::path;
 use crate::paths::{self, P};
-use crate::proc::{quiet, run_env, sh};
+use crate::proc::{quiet, sh};
 use crate::util::{Error, Res};
 use core::fmt::Write as _;
 
 pub const SCRATCH_BYTES: &str = "5G";
-const WORKSPACE_GIB: &str = "1";
-const WORKSPACE_FILES: &str = "1000";
-/// the sandbox user (uid 1000 inside gVisor; a uid inside gVisor is not a host uid, but the files are owned by it)
-const UID: &str = "1000:1000";
 
 pub fn scratch_img(name: &str) -> P {
     path!("/var/lib/sbx/scratch/{name}.img")
@@ -36,9 +34,6 @@ pub fn jfs_root() -> P {
 }
 pub fn workspace_dir(ws: &str) -> P {
     path!("/var/lib/sbx/jfs/ws/{ws}")
-}
-pub fn claude_dir(user: &str) -> P {
-    path!("/var/lib/sbx/jfs/users/{user}/claude")
 }
 
 fn is_mount(dir: &str) -> bool {
@@ -97,6 +92,9 @@ fn jfs_mounted() -> bool {
 /// Returns the root path for the OCI bundle.
 pub fn setup(spec: &Spec) -> Res<P> {
     let name = spec.name.as_str();
+    if !spec.workspace.is_empty() {
+        workspace(spec.workspace.as_str())?;
+    }
     let img = scratch_img(name);
     let sd = scratch_dir(name);
     crate::util::mkdir(path!("/var/lib/sbx/scratch").as_str(), 0o700)?;
@@ -136,26 +134,6 @@ pub fn setup(spec: &Spec) -> Res<P> {
             return Err(Error::new(500, "overlay options too long"));
         }
         sh(&["mount", "-t", "overlay", "overlay", "-o", opts.as_str(), root.as_str()])?;
-    }
-    if (!spec.workspace.is_empty() || !spec.user.is_empty()) && !jfs_mounted() {
-        return Err(Error::new(503, "the workspace store (JuiceFS) is not mounted on this host"));
-    }
-    // the top folders belong to the sandbox user (uid 1000) too, so the UI (CloudCLI, uid 1000, the same volume
-    // at /jfs) can remove a deleted conversation's ws/<id> and not only empty it; no sandbox sees them (each gets
-    // its own folder bind-mounted)
-    let persistent = !spec.workspace.is_empty() || !spec.user.is_empty();
-    for top in ["/var/lib/sbx/jfs/ws", "/var/lib/sbx/jfs/users"].iter().filter(|_| persistent) {
-        let t = path!("{top}");
-        sh(&["mkdir", "-p", t.as_str()])?;
-        sh(&["chown", UID, t.as_str()])?;
-    }
-    if !spec.user.is_empty() {
-        let cd = claude_dir(spec.user.as_str());
-        sh(&["mkdir", "-p", cd.as_str()])?;
-        sh(&["chown", UID, cd.as_str()])?;
-    }
-    if !spec.workspace.is_empty() {
-        workspace(spec.workspace.as_str())?;
     }
     Ok(root)
 }
@@ -289,60 +267,16 @@ fn parse_stats(text: &str) -> SyncStats {
     st
 }
 
-/// The conversation's `/workspace`; a new one gets its quota (1 GiB, 1,000 files) at once.
+/// The conversation's `/workspace` folder must be there: the JuiceFS mount (503 without it, after waiting for a
+/// remount) and ws/<ws> in it, made with its quota by hermit (409 `workspace missing` otherwise; nothing is created).
 fn workspace(ws: &str) -> Res<()> {
-    let wd = workspace_dir(ws);
-    let fresh = std::fs::metadata(wd.as_str()).is_err();
-    sh(&["mkdir", "-p", wd.as_str()])?;
-    sh(&["chown", UID, wd.as_str()])?;
-    if fresh {
-        set_quota(ws)?;
+    if !jfs_mounted() {
+        return Err(Error::new(503, "the workspace store (JuiceFS) is not mounted on this host"));
     }
-    Ok(())
-}
-
-/// `juicefs quota set` on ws/<ws>. The metadata URL and its password come from /etc/sbx/juicefs.env
-/// (META_URL without the password, META_PASSWORD; host setup writes it, mode 600).
-fn set_quota(ws: &str) -> Res<()> {
-    let mut buf = [0u8; 1024];
-    let text = crate::util::read_file(path!("/etc/sbx/juicefs.env").as_str(), &mut buf)
-        .map_err(|_| Error::new(503, "/etc/sbx/juicefs.env is missing"))?;
-    let text = core::str::from_utf8(text).map_err(|_| Error::new(500, "juicefs.env is not UTF-8"))?;
-    let (mut url, mut pw) = ("", "");
-    for line in text.lines() {
-        if let Some(v) = line.strip_prefix("META_URL=") {
-            url = v.trim();
-        } else if let Some(v) = line.strip_prefix("META_PASSWORD=") {
-            pw = v.trim();
-        }
+    match std::fs::metadata(workspace_dir(ws).as_str()) {
+        Ok(m) if m.is_dir() => Ok(()),
+        _ => Err(Error::new(409, "workspace missing")),
     }
-    if url.is_empty() {
-        return Err(Error::new(503, "juicefs.env has no META_URL"));
-    }
-    let mut env_pw: crate::fixed::Str<300> = crate::fixed::Str::new();
-    if !(env_pw.push("META_PASSWORD=") && env_pw.push(pw)) {
-        return Err(Error::new(500, "META_PASSWORD too long"));
-    }
-    let mut rel: crate::fixed::Str<100> = crate::fixed::Str::new();
-    let _ = rel.push("/ws/") && rel.push(ws);
-    let mut out = [0u8; 4096];
-    let argv = [
-        "juicefs",
-        "quota",
-        "set",
-        url,
-        "--path",
-        rel.as_str(),
-        "--capacity",
-        WORKSPACE_GIB,
-        "--inodes",
-        WORKSPACE_FILES,
-    ];
-    let o = run_env(&argv, &[env_pw.as_str()], &mut out, 60_000)?;
-    if o.code != 0 {
-        return Err(Error::new(500, "juicefs quota set failed"));
-    }
-    Ok(())
 }
 
 /// Undo `setup` (every step may already be gone).

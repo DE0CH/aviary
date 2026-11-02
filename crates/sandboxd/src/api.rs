@@ -11,6 +11,8 @@
 //!   POST   /v1/sandboxes/{name}/receive {spec}   migration target: prepare and listen; returns {port, address}
 //!   GET    /v1/sandboxes/{name}/receive?wait=ms  migration target: the receive's result
 //!   GET    /v1/sandboxes/{name}/spec       its spec
+//!   GET    /v1/sandboxes/{name}/log?tail=bytes   text/plain: the console's last bytes (at most 64 KiB; also for 10
+//!                                          min after the sandbox ended)
 //!   POST   /v1/sandboxes/{name}/send {to, downtimeMs?, maxRounds?, maxDowntimeMs?}   migration source (scratch
 //!                                          rounds, memory pre-copy, final scratch delta; returns {ms, scratch})
 //!
@@ -20,7 +22,7 @@ use crate::fixed::{Buf, Str};
 use crate::json::{self, Val, W};
 use crate::net::{self, HostNet, MAX_PEERS, MAX_TARGETS};
 use crate::sandboxes::{Sandboxes, Scratch};
-use crate::server::{self, Conn, IoErr, ReadErr, Req, Stream, Tls, error_body, respond};
+use crate::server::{self, Conn, IoErr, ReadErr, Req, Stream, Tls, error_body, respond, respond_as};
 use crate::util::{Error, Log, Res, in_cidr, read_small};
 use crate::{alloc, err, images, storage};
 use core::fmt::Write as _;
@@ -109,12 +111,12 @@ fn connection(app: &App, sock: TcpStream, w: &mut Worker) {
         };
         let close = req.close;
         let t0 = crate::util::mono_ms();
-        let (status, len) = if controller {
+        let (status, len, text) = if controller {
             let mut sc = Scratch { big: &mut *w.big, small: &mut *w.small };
             handle(app, &req, w.out, &mut sc)
         } else {
             let b = error_body(w.out, "not the controller");
-            (403, b.len())
+            (403, b.len(), false)
         };
         if status >= 500 {
             let msg = core::str::from_utf8(&w.out[..len]).unwrap_or("");
@@ -126,15 +128,52 @@ fn connection(app: &App, sock: TcpStream, w: &mut Worker) {
                 .n("ms", crate::util::mono_ms() - t0)
                 .emit();
         }
-        if respond(&mut tls, status, &w.out[..len], close || !controller).is_err() || close || !controller {
+        let ctype = if text { "text/plain; charset=utf-8" } else { "application/json" };
+        if respond_as(&mut tls, status, ctype, &w.out[..len], close || !controller).is_err() || close || !controller {
             break;
         }
     }
     tls.close();
 }
 
-/// Runs one request; returns (status, length of the body in `out`).
-pub fn handle(app: &App, req: &Req, out: &mut [u8], sc: &mut Scratch) -> (u16, usize) {
+/// The longest console tail `GET …/log` answers (sandboxd-api `LOG_TAIL_MAX`; `out` holds it: budget::out_size).
+pub const LOG_TAIL_MAX: usize = 64 << 10;
+
+/// `GET /v1/sandboxes/{name}/log` on a host with sandboxes: the name, if this request is one.
+fn log_request<'a>(app: &App, req: &Req<'a>) -> Option<&'a str> {
+    let rest = req.path.strip_prefix("/v1/sandboxes/")?;
+    let name = rest.strip_suffix("/log")?;
+    (req.method == "GET" && !app.cfg.gateway && !name.contains('/')).then_some(name)
+}
+
+/// The `tail=` of a query: a whole number, at most [`LOG_TAIL_MAX`]; missing or not a number is [`LOG_TAIL_MAX`].
+fn tail_of(query: &str) -> usize {
+    query
+        .split('&')
+        .find_map(|kv| kv.strip_prefix("tail="))
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(LOG_TAIL_MAX)
+        .min(LOG_TAIL_MAX)
+}
+
+/// Runs one request; returns (status, length of the body in `out`, whether it is text rather than JSON).
+pub fn handle(app: &App, req: &Req, out: &mut [u8], sc: &mut Scratch) -> (u16, usize, bool) {
+    if let Some(name) = log_request(app, req) {
+        let r = if crate::config::valid_name(name) {
+            app.sbx.log_tail(name, tail_of(req.query), out)
+        } else {
+            Err(Error::new(400, "bad sandbox name"))
+        };
+        return match r {
+            Ok(n) => (200, n, true),
+            Err(e) => (e.status, error_body(out, e.msg.as_str()).len(), false),
+        };
+    }
+    let (status, len) = handle_json(app, req, out, sc);
+    (status, len, false)
+}
+
+fn handle_json(app: &App, req: &Req, out: &mut [u8], sc: &mut Scratch) -> (u16, usize) {
     let mut b = Buf::new(out);
     let r = route(app, req, &mut W::new(&mut b), sc);
     match r {

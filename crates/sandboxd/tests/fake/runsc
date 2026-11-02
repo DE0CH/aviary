@@ -12,6 +12,22 @@ def opt(name, default=None):
     return rest[rest.index(name) + 1] if name in rest else default
 cid = rest[-1] if rest else ""
 path = os.path.join(root, cid)
+# the sandbox's cgroup as runsc's cgroupsPath /sbx/<name> leaves it: cgroup.events says whether a process is in it
+cg = os.path.join(os.environ.get("SBX_ROOT", ""), "sys/fs/cgroup/sbx", cid) if cid else ""
+def populated(yes):
+    if yes:
+        os.makedirs(cg, exist_ok=True)
+        open(os.path.join(cg, "cgroup.events"), "w").write("populated 1\nfrozen 0\n")
+    elif os.path.isdir(cg):
+        for f in os.listdir(cg):
+            os.remove(os.path.join(cg, f))
+        os.rmdir(cg)
+def check_bundle():
+    b = json.load(open(os.path.join(opt("--bundle"), "config.json")))
+    # the first process is the image's Entrypoint + Cmd (hermit spec 13.2 item 1)
+    if not b["process"]["args"]:
+        print("bundle without process.args", file=sys.stderr); sys.exit(1)
+    return b
 if cmd == "--version":
     print("runsc version fake\nspec: 1.1.0")
 elif cmd == "cpu-features":
@@ -23,13 +39,17 @@ elif cmd == "state":
 elif cmd == "list":
     print(json.dumps([{"id": c, "status": "running", "annotations": {}} for c in sorted(os.listdir(root))]))
 elif cmd == "run":
-    json.load(open(os.path.join(opt("--bundle"), "config.json")))
+    b = check_bundle()
     if os.environ.get("FAKE_RUN_FAIL"):
         print("run failed", file=sys.stderr); sys.exit(1)
     open(path, "w").write("running")
+    populated(True)
+    # the console (stdout is the sandbox's log file)
+    print("fake console: " + " ".join(b["process"]["args"]), flush=True)
 elif cmd in ("delete", "kill"):
     if cmd == "delete" and os.path.exists(path):
         os.remove(path)
+    populated(False)
 elif cmd == "checkpoint":
     # the fork's pre-copy stream framing: magic, Pages records, End (pkg/sentry/state/precopy)
     to = opt("--migrate-to"); host, port = to.rsplit(":", 1)
@@ -46,9 +66,10 @@ elif cmd == "checkpoint":
     s.sendall(b"\x05")
     s.close()
     open(path, "w").write("stopped")
+    populated(False)
 elif cmd == "restore":
     host, port = opt("--migrate-listen").rsplit(":", 1)
-    json.load(open(os.path.join(opt("--bundle"), "config.json")))
+    check_bundle()
     l = socket.socket(); l.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); l.bind((host, int(port))); l.listen(1)
     l.settimeout(120)
     c, peer = l.accept(); got = 0; last = b""; t0 = time.time()
@@ -59,6 +80,7 @@ elif cmd == "restore":
     if last != b"\x05":
         print("pre-copy stream ended before it was complete", file=sys.stderr); sys.exit(1)
     open(path, "w").write("running")
+    populated(True)
     print(json.dumps({"from": "%s:%d" % peer, "bytes": got, "rounds": 1, "total_ms": round((time.time() - t0) * 1000, 3)}))
 else:
     print("fake runsc: unknown " + " ".join(sys.argv[1:]), file=sys.stderr); sys.exit(2)

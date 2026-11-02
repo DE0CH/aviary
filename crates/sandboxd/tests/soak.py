@@ -37,7 +37,8 @@ class Daemon:
         self.root = f"{self.base}/root"
         img = f"{self.root}/var/lib/sbx/images/{DIGEST}"
         os.makedirs(f"{img}/rootfs", exist_ok=True)
-        json.dump({"config": {"Env": ["PATH=/usr/local/bin:/usr/bin", "LANG=C.UTF-8", "HOME=/root"]}}, open(f"{img}/config.json", "w"))
+        json.dump({"config": {"Env": ["PATH=/usr/local/bin:/usr/bin", "LANG=C.UTF-8", "HOME=/root"],
+                              "Entrypoint": ["/usr/bin/tini", "--", "/opt/keeper"], "Cmd": ["--serve"]}}, open(f"{img}/config.json", "w"))
         open(f"{img}/.done", "w").close()
         lim = {"cgroups": False, "mlock": True}
         lim.update(limits or {})
@@ -94,6 +95,15 @@ class Client:
     def conn(self, ip):
         return http.client.HTTPSConnection(ip, 17443, context=self.ctx, timeout=60)
 
+    def text(self, ip, path):
+        """GET a text/plain answer: (status, content type, bytes)."""
+        c = self.conn(ip)
+        c.request("GET", path)
+        r = c.getresponse()
+        out = r.status, r.getheader("content-type"), r.read()
+        c.close()
+        return out
+
     def call(self, ip, method, path, body=None, conn=None, raw=None):
         c = conn or self.conn(ip)
         data = raw if raw is not None else (json.dumps(body) if body is not None else None)
@@ -146,6 +156,41 @@ def functional(A, B, G, cl, intruder):
     check(cl.call(A.ip, "POST", "/v1/sandboxes", spec("f2", "10.200.0.11"))[0] == 409, "ip in use: 409")
     bundle = json.load(open(f"{A.root}/var/lib/sbx/bundles/sbx-f1/config.json"))
     check("HOME=/home/sandbox" in bundle["process"]["env"] and "LANG=C.UTF-8" in bundle["process"]["env"], "bundle env")
+    # hermit spec 13.2: the first process from the image (item 1); no ~/.claude or /etc/hosts bind (2, 4); /dev/fuse (7)
+    check(bundle["process"]["args"] == ["/usr/bin/tini", "--", "/opt/keeper", "--serve"], "bundle args: Entrypoint + Cmd")
+    dests = [m["destination"] for m in bundle["mounts"]]
+    check("/home/sandbox/.claude" not in dests and "/etc/hosts" not in dests, f"no ~/.claude or /etc/hosts bind {dests}")
+    check(bundle["linux"]["devices"] == [{"path": "/dev/fuse", "type": "c", "major": 10, "minor": 229, "fileMode": 0o666, "uid": 0, "gid": 0}]
+          and {"allow": True, "type": "c", "major": 10, "minor": 229, "access": "rwm"} in bundle["linux"]["resources"]["devices"], "bundle: /dev/fuse")
+    s, r = cl.call(A.ip, "POST", "/v1/sandboxes", dict(spec("x", "10.200.0.12"), user="u-1"))
+    check(s == 400 and "unknown field user" in r["error"], f"the spec's user is refused (item 2): {s} {r}")
+    # an image without an entrypoint is refused (item 1)
+    bare = f"{A.root}/var/lib/sbx/images/{'d' * 64}"
+    os.makedirs(f"{bare}/rootfs", exist_ok=True)
+    json.dump({"config": {"Env": ["PATH=/usr/bin"], "Cmd": ["/bin/sh"]}}, open(f"{bare}/config.json", "w"))
+    open(f"{bare}/.done", "w").close()
+    s, r = cl.call(A.ip, "POST", "/v1/sandboxes", dict(spec("x", "10.200.0.12"), image="d" * 64))
+    check(s == 400 and "Entrypoint" in r["error"], f"an image without an entrypoint: 400 {s} {r}")
+    shutil.rmtree(bare)
+    check([x["name"] for x in cl.call(A.ip, "GET", "/v1/sandboxes")[1]["sandboxes"]] == ["sbx-f1"], "the refused create left nothing")
+    # console tail (item 10)
+    s, ct, body = cl.text(A.ip, "/v1/sandboxes/sbx-f1/log?tail=65536")
+    check(s == 200 and ct.startswith("text/plain") and body.endswith(b"fake console: /usr/bin/tini -- /opt/keeper --serve\n"), f"log {s} {ct} {body[-200:]}")
+    s, ct, body = cl.text(A.ip, "/v1/sandboxes/sbx-f1/log?tail=6")
+    check(s == 200 and body == b"serve\n", f"log?tail=6 {body}")
+    check(cl.call(A.ip, "GET", "/v1/sandboxes/sbx-nope/log?tail=10") == (404, {"error": "sbx-nope has no console here"}), "log of a name never here: 404")
+    # liveness (item 6): alive while its cgroup holds a process; false within 10 s once it is empty
+    s, r = cl.call(A.ip, "POST", "/v1/sandboxes", spec("f3", "10.200.0.13"))
+    check(s == 200 and r["alive"] is True, f"created: alive {r}")
+    open(f"{A.root}/sys/fs/cgroup/sbx/sbx-f3/cgroup.events", "w").write("populated 0\nfrozen 0\n")
+    t0, alive = time.time(), True
+    while alive and time.time() - t0 < 12:
+        time.sleep(0.5)
+        alive = [x for x in cl.call(A.ip, "GET", "/v1/sandboxes")[1]["sandboxes"] if x["name"] == "sbx-f3"][0]["alive"]
+    check(not alive, f"a sandbox whose cgroup emptied is alive:false within 10 s ({time.time() - t0:.1f} s)")
+    check(cl.call(A.ip, "DELETE", "/v1/sandboxes/sbx-f3")[0] == 200, "delete the dead one")
+    s, ct, body = cl.text(A.ip, "/v1/sandboxes/sbx-f3/log")
+    check(s == 200 and b"fake console" in body, "its console is still served after it ended")
     s, sp = cl.call(A.ip, "GET", "/v1/sandboxes/sbx-f1/spec")
     check(s == 200 and sp["env"]["EXEC_TOKEN"] == "e" * 40 and sp["imageRef"].endswith(":test"), "spec")
     check(cl.call(A.ip, "GET", "/v1/sandboxes/sbx-nope/spec")[0] == 404, "spec of a missing one: 404")

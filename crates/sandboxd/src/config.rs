@@ -289,9 +289,6 @@ pub struct Spec {
     /// the conversation's `/workspace` (docs/HOST.md): folder `ws/<workspace>` of the host's JuiceFS mount;
     /// empty = none (a plain folder in scratch)
     pub workspace: Str<64>,
-    /// the user's `~/.claude` (Claude Code's transcripts and settings, shared by the user's sandboxes): folder
-    /// `users/<user>/claude` of the JuiceFS mount; empty = none
-    pub user: Str<64>,
     /// the pids limit (hermit spec 13.2 item 9); 0 = not given (the bundle uses [`DEFAULT_PIDS`])
     pub pids: u64,
 }
@@ -324,13 +321,14 @@ impl Spec {
         self.env.as_str().split('\0').filter(|p| !p.is_empty()).map(|p| p.split_once('=').unwrap_or((p, "")))
     }
 
-    /// validateSpec(): the controller's spec, checked. Errors are 400s.
+    /// validateSpec(): the controller's spec, checked (an unknown field included). Errors are 400s.
     pub fn parse(body: &[u8], sandbox_cidr: &str) -> Res<Spec> {
         let Val::Obj(o) = json::parse(body)? else { return Err(Error::new(400, "spec: must be an object")) };
-        Self::parse_obj(o, sandbox_cidr)
+        Self::parse_obj(o, sandbox_cidr, true)
     }
 
-    pub fn parse_obj(o: &[u8], sandbox_cidr: &str) -> Res<Spec> {
+    /// `strict`: unknown fields are a 400 (the API); a state file's spec skips them (one written by an older version).
+    pub fn parse_obj(o: &[u8], sandbox_cidr: &str, strict: bool) -> Res<Spec> {
         let mut sp = Spec {
             name: Str::new(),
             ip: Str::new(),
@@ -341,7 +339,6 @@ impl Spec {
             memory: 0,
             cpu_features: Str::new(),
             workspace: Str::new(),
-            user: Str::new(),
             pids: 0,
         };
         let mut memory = f64::NAN;
@@ -429,15 +426,6 @@ impl Spec {
                     return Err(e400("spec: bad workspace"));
                 }
                 sp.workspace = ws;
-            } else if k.is("user") {
-                if matches!(v, Val::Null) {
-                    return Ok(());
-                }
-                let u: Str<64> = spec_str(v).ok_or_else(|| e400("spec: bad user"))?;
-                if !valid_workspace(u.as_str()) {
-                    return Err(e400("spec: bad user"));
-                }
-                sp.user = u;
             } else if k.is("pids") {
                 pids = match v {
                     Val::Null => f64::NAN,
@@ -457,6 +445,10 @@ impl Spec {
                     return Err(e400("spec: bad cpuFeatures"));
                 }
                 sp.cpu_features = f;
+            } else if strict {
+                // an old controller's `user` (the `~/.claude` bind, gone with hermit spec 13.2 item 2) or any other
+                // field this version does not know is refused, never dropped
+                return Err(err!(400, "spec: unknown field {}", Str::<64>::lossy(core::str::from_utf8(k.0).unwrap_or("?"))));
             }
             Ok(())
         })?;
@@ -493,13 +485,10 @@ impl Spec {
         }
         w.end();
         w.kf64("cpu", self.cpu).ku64("memory", self.memory).kstr("cpuFeatures", self.cpu_features.as_str());
-        // the persistent folders: a migration's destination (GET spec → receive) and the state file need them, or
-        // the restored sandbox lacks /workspace and ~/.claude (runsc refuses the restore: "Mounts" differ)
+        // the persistent folder: a migration's destination (GET spec → receive) and the state file need it, or the
+        // restored sandbox lacks /workspace (runsc refuses the restore: "Mounts" differ)
         if !self.workspace.is_empty() {
             w.kstr("workspace", self.workspace.as_str());
-        }
-        if !self.user.is_empty() {
-            w.kstr("user", self.user.as_str());
         }
         if self.pids != 0 {
             w.ku64("pids", self.pids);
@@ -555,11 +544,11 @@ mod tests {
         assert_eq!(back.env.as_str(), s.env.as_str());
         assert_eq!(back.memory, 2 << 30);
         // the persistent folders survive the round trip (GET spec → a migration's receive; the state file)
-        let cc = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{},"cpu":1,"memory":2147483648,"cpuFeatures":"fpu","workspace":"c0ffee-1","user":"u-1"}"#;
+        let cc = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{},"cpu":1,"memory":2147483648,"cpuFeatures":"fpu","workspace":"c0ffee-1"}"#;
         let s2 = Spec::parse(cc, "10.200.0.0/16").ok().unwrap();
         let mut out2 = [0u8; 4096];
         let back2 = Spec::parse(s2.write_json(&mut out2).unwrap(), "10.200.0.0/16").ok().unwrap();
-        assert_eq!((back2.workspace.as_str(), back2.user.as_str()), ("c0ffee-1", "u-1"));
+        assert_eq!(back2.workspace.as_str(), "c0ffee-1");
         let bad = |b: &[u8], m: &str| {
             let e = Spec::parse(b, "10.200.0.0/16").err().unwrap();
             assert_eq!(e.status, 400);
@@ -570,6 +559,12 @@ mod tests {
         bad(br#"{"name":"sbx-a","ip":"10.200.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"A B":"x"},"cpu":1,"memory":2147483648}"#, "bad env");
         bad(br#"{"name":"sbx-a","ip":"10.200.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":0,"memory":2147483648}"#, "cpu");
         bad(br#"{"name":"sbx-a","ip":"10.200.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":1000}"#, "memory");
+        // hermit spec 13.2 item 2: no `user` (an old controller's ~/.claude bind), nor any other unknown field
+        bad(br#"{"name":"sbx-a","ip":"10.200.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":2147483648,"user":"u-1"}"#, "unknown field user");
+        bad(br#"{"name":"sbx-a","ip":"10.200.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":2147483648,"args":["x"]}"#, "unknown field args");
+        // a state file's spec (an older version's) skips them
+        let Ok(Val::Obj(o)) = json::parse(br#"{"name":"sbx-a","ip":"10.200.0.5","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":2147483648,"user":"u-1"}"#) else { panic!() };
+        assert!(Spec::parse_obj(o, "10.200.0.0/16", false).is_ok());
         bad(b"[1]", "object");
         bad(b"{", "JSON");
     }

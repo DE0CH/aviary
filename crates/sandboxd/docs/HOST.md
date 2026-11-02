@@ -76,11 +76,22 @@ the node's IPv6; the egress VIP translation; the image source for burst hosts (:
   sandboxes running, same PIDs).
 - Every sandbox: `runsc --platform=systrap --network=sandbox --overlay2=none --host-uds=none --host-fifo=none
   --net-raw --allow-packet-socket-write --allow-suid`, the pool's CPU features (annotation), cgroup `/sbx/<name>`
-  (memory and CPU quota from its spec, pids 4096), its own netns.
+  (memory and CPU quota from its spec, pids from its spec or 4096), its own netns. The first process (uid 0, cwd
+  `/work`) is the image config's `Entrypoint` + `Cmd`; an image without an entrypoint is refused (400). The spec has
+  no `args` or `user`: an unknown spec field is a 400. `/dev/fuse` (`c 10:229`, 0666) is in the bundle's
+  `linux.devices` and the device allow-list; runsc needs no FUSE flag (the fork registers FUSE unconditionally), so
+  the flags above are the same on every host.
 - Its files ("Storage"): root = Linux overlayfs (the image read-only + `upper/` on the sandbox's 5 GiB ext4 scratch
-  file), `/tmp` and `/var/lib/docker` on the same scratch, `/workspace` (`ws/<workspace>`) and, while the spec has
-  `user`, `~/.claude` (`users/<user>/claude`) from the host's JuiceFS mount (`sbx-jfs`); hermit spec 13.2 removes the
-  latter.
+  file), `/tmp` and `/var/lib/docker` on the same scratch, and `/workspace` = `ws/<workspace>` of the host's JuiceFS
+  mount (`sbx-jfs`). hermit makes `ws/<workspace>` and sets its quota (hermit spec 15.5); sandboxd makes, chowns and
+  quotas nothing there and refuses a create whose folder is missing (409 `workspace missing`). No `~/.claude` bind
+  (the supervisor mounts its FUSE filesystem on the pre-made `/home/sandbox/.claude`) and no `/etc/hosts` bind (the
+  supervisor writes it).
+- Liveness: `Listed.alive` is `populated 1` in `/sys/fs/cgroup/sbx/<name>/cgroup.events`, read by the 10 s sampler
+  (no runsc call); a sentry the host's memcg OOM-killed shows `alive:false` within 10 s. A receive is always alive.
+- Console: `GET /v1/sandboxes/<name>/log?tail=<bytes>` answers `text/plain`, the last bytes (at most 64 KiB) of
+  `/var/log/sbx/<name>.log`, while the sandbox is here and for 10 min after it ended (from the log's mtime, which the
+  delete sets); 404 otherwise.
 - `GET /v1/host` reports `jfsMounted` from `/proc/self/mountinfo` (never a stat of the FUSE root, so a wedged juicefs
   cannot stop the endpoint answering; null on a host without `/etc/sbx/juicefs.env`, the gateway). A sandbox with a
   workspace waits up to 30 s for the mount before it is refused (503).

@@ -28,10 +28,25 @@ pub fn each_image(mut f: impl FnMut(&str)) {
     });
 }
 
-/// The image config's Env, as (key, value) pairs, from config.json read into `buf`.
-pub fn image_env(digest: &str, buf: &mut [u8], mut f: impl FnMut(&str)) -> Res<()> {
+/// A list of the image config (`config.Env`, `config.Entrypoint`, `config.Cmd`); never 0 as a byte (a NUL separates
+/// the copies `Sandboxes::prepare` makes).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum ConfigList {
+    Env = 1,
+    Entrypoint = 2,
+    Cmd = 3,
+}
+
+/// The image config's lists: `f(list, item)` for each string of `config.Env`, `config.Entrypoint` and `config.Cmd`
+/// (in the file's order; a missing or null list has none), from config.json read into `buf`.
+pub fn image_config(digest: &str, buf: &mut [u8], f: impl FnMut(ConfigList, &str)) -> Res<()> {
     let text = read_file(path!("/var/lib/sbx/images/{digest}/config.json").as_str(), buf)
         .map_err(|e| err!(500, "image config: {}", crate::util::io_msg(&e)))?;
+    config_lists(text, f)
+}
+
+fn config_lists(text: &[u8], mut f: impl FnMut(ConfigList, &str)) -> Res<()> {
     let Val::Obj(o) = json::parse(text).map_err(|_| Error::new(500, "image config is not JSON"))? else {
         return Ok(());
     };
@@ -41,14 +56,20 @@ pub fn image_env(digest: &str, buf: &mut [u8], mut f: impl FnMut(&str)) -> Res<(
         }
         let Val::Obj(c) = v else { return Ok(()) };
         json::object::<Error>(c, |k, v| {
-            if !k.is("Env") {
+            let list = if k.is("Env") {
+                ConfigList::Env
+            } else if k.is("Entrypoint") {
+                ConfigList::Entrypoint
+            } else if k.is("Cmd") {
+                ConfigList::Cmd
+            } else {
                 return Ok(());
-            }
+            };
             let Val::Arr(a) = v else { return Ok(()) };
             json::array::<Error>(a, |e| {
                 let mut tmp = [0u8; 8192];
                 if let Some(s) = e.str().and_then(|s| s.decode(&mut tmp)) {
-                    f(s);
+                    f(list, s);
                 }
                 Ok(())
             })
@@ -203,5 +224,38 @@ fn unpack(cfg: &HostConfig, env: &[&str], d: &str, image_ref: Option<&str>) -> R
             crate::proc::quiet(&["rm", "-rf", tmp.as_str()]);
             Err(e)
         }
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    fn lists(text: &str) -> Vec<(ConfigList, String)> {
+        let mut v = Vec::new();
+        config_lists(text.as_bytes(), |l, s| v.push((l, s.to_owned()))).ok().unwrap();
+        v
+    }
+
+    #[test]
+    fn env_entrypoint_and_cmd() {
+        use ConfigList::{Cmd, Entrypoint, Env};
+        let v = lists(
+            r#"{"architecture":"amd64","config":{"Cmd":["--serve"],"Env":["PATH=/usr/bin","A=b"],"Entrypoint":["/usr/bin/tini","--","/opt/keeper"],"WorkingDir":"/"}}"#,
+        );
+        let got: Vec<(ConfigList, &str)> = v.iter().map(|(l, s)| (*l, s.as_str())).collect();
+        assert_eq!(
+            got,
+            [
+                (Cmd, "--serve"),
+                (Env, "PATH=/usr/bin"),
+                (Env, "A=b"),
+                (Entrypoint, "/usr/bin/tini"),
+                (Entrypoint, "--"),
+                (Entrypoint, "/opt/keeper")
+            ]
+        );
+        assert_eq!(lists(r#"{"config":{"Entrypoint":null,"Cmd":null}}"#), []);
+        assert_eq!(lists(r#"{"rootfs":{}}"#), []);
     }
 }

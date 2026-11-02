@@ -406,12 +406,17 @@ pub fn reason(status: u16) -> &'static str {
 
 /// Writes a complete response (JSON body).
 pub fn respond<S: Stream>(s: &mut S, status: u16, body: &[u8], close: bool) -> IoRes<()> {
+    respond_as(s, status, "application/json", body, close)
+}
+
+/// `respond` with another content type (`GET …/log`: `text/plain; charset=utf-8`).
+pub fn respond_as<S: Stream>(s: &mut S, status: u16, ctype: &str, body: &[u8], close: bool) -> IoRes<()> {
     let _ = s.sock().set_write_timeout(Some(Duration::from_millis(REQUEST_MS)));
     let mut mem = [0u8; 256];
     let mut h = Buf::new(&mut mem);
     let _ = write!(
         h,
-        "HTTP/1.1 {status} {}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n{}\r\n",
+        "HTTP/1.1 {status} {}\r\ncontent-type: {ctype}\r\ncontent-length: {}\r\n{}\r\n",
         reason(status),
         body.len(),
         if close { "connection: close\r\n" } else { "connection: keep-alive\r\nkeep-alive: timeout=5\r\n" }

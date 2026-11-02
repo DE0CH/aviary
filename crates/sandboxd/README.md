@@ -29,13 +29,14 @@ aviary's binary. Everything else on the wire is unchanged.
 
 ## hermit spec 13.2's changes (WP-19)
 
-Done: **pids from the spec** (item 9: `pids`, a whole number in [64, 1048576]; absent = 4096; written back by `GET
-…/spec` and the state file only when given, so a migration keeps it) and **the receive's state without a wait**
-(item 11: `GET …/receive` with no `wait` (or `wait=0`) about a name with no receive record answers `{"state":
-"none"}`; with a wait it is still `failed`/`not here`). Not done yet: items 1 (the first process from the image's
-`Entrypoint` + `Cmd`), 2 (no `~/.claude` bind, the spec's `user` refused), 3 (no quota), 4 (no `/etc/hosts`), 6
-(`alive` from `cgroup.events`), 7 (`/dev/fuse` and runsc's FUSE flag) and 10 (`GET …/log?tail=`); hermit already
-reads `alive` (absent = alive) and asks for the log (a 404 keeps no console tail).
+All done (docs/HOST.md, "sandboxd"): the first process from the image's `Entrypoint` + `Cmd` (item 1; 400 without an
+entrypoint), no `~/.claude` bind and no `user` (item 2; an unknown spec field is a 400), no quota and no folders made
+or chowned on JuiceFS (item 3; 503 without the mount, 409 `workspace missing`), no `/etc/hosts` (item 4; there was
+none in this version), `alive` from `cgroup.events` (item 6), `/dev/fuse` in the bundle (item 7; no runsc flag: the
+fork registers FUSE unconditionally, `runsc/boot/vfs.go`, and the FUSE gate ran with these flags), the CN `hermit`
+(item 8), pids from the spec (item 9; `pids` in [64, 1048576], absent = 4096, written back only when given),
+`GET …/log?tail=` (item 10) and the receive's state without a wait (item 11; `{"state": "none"}` for a name with no
+receive record). Items 5 (network) and everything else are unchanged.
 
 ## Deployment defaults still compiled in
 

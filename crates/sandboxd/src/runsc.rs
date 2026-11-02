@@ -4,6 +4,9 @@
 //! gVisor's memory file, so installs don't count as sandbox memory and a migration copies them as files.
 //! `--allow-suid`: set-user-ID binaries work inside the sandbox (sudo for package installs, docs/HOST.md
 //! "Installing packages"); a uid inside gVisor is never a host uid, and the setting is saved in the sandbox's state.
+//! FUSE needs no flag: the fork's runsc registers `/dev/fuse` and the FUSE filesystem unconditionally
+//! (`runsc/boot/vfs.go`, `fuse.Register`; the FUSE gate ran with exactly these flags, crates/supervisor/GATE.md), so
+//! the flags stay as they were on every host (hermit spec 13.2 item 7); the bundle lists the device (`bundle_spec`).
 use crate::config::Spec;
 use crate::fixed::Buf;
 use crate::json::W;
@@ -36,8 +39,8 @@ pub fn argv<'a>(out: &'a mut [&'a str; 40], args: &[&'a str]) -> Res<&'a [&'a st
     Ok(&out[..n])
 }
 
-/// The capabilities a sandbox's root has INSIDE gVisor (dockerd, and sudo for package installs); the agent runs as
-/// uid 1000 with none of them and gets them back only through sudo (sbx-init.mjs).
+/// The capabilities a sandbox's root has INSIDE gVisor (the image's first process: the keeper and the supervisor,
+/// dockerd, sudo for package installs); Claude Code runs as uid 1000 with none of them.
 const DOCKER_CAPS: [&str; 20] = [
     "CAP_CHOWN",
     "CAP_DAC_OVERRIDE",
@@ -61,9 +64,14 @@ const DOCKER_CAPS: [&str; 20] = [
     "CAP_SYS_NICE",
 ];
 
-/// The OCI runtime spec of a sandbox (pure: tested). `image_env` is the image config's Env ("K=V" each); `root` is
-/// the sandbox's overlay root and `scratch` its scratch filesystem (storage.rs).
-pub fn bundle_spec(b: &mut Buf, spec: &Spec, image_env: &[&str], root: &str, scratch: &str) {
+/// The FUSE device inside the sandbox (the supervisor's `~/.claude` mount, hermit spec 13.2 item 7).
+pub const FUSE_MAJOR: u64 = 10;
+pub const FUSE_MINOR: u64 = 229;
+
+/// The OCI runtime spec of a sandbox (pure: tested). `image_env` is the image config's Env ("K=V" each), `args` its
+/// Entrypoint + Cmd (the first process, never empty: `images::image_config` refuses an image without an
+/// entrypoint); `root` is the sandbox's overlay root and `scratch` its scratch filesystem (storage.rs).
+pub fn bundle_spec(b: &mut Buf, spec: &Spec, image_env: &[&str], args: &[&str], root: &str, scratch: &str) {
     let mut w = W::new(b);
     w.obj().kstr("ociVersion", "1.0.0").key("annotations").obj();
     if !spec.cpu_features.is_empty() {
@@ -73,7 +81,11 @@ pub fn bundle_spec(b: &mut Buf, spec: &Spec, image_env: &[&str], root: &str, scr
     w.key("process").obj();
     w.key("user").obj().ku64("uid", 0).ku64("gid", 0).end();
     w.kstr("cwd", "/work");
-    w.key("args").arr().str("/usr/bin/tini").str("--").str("node").str("/opt/agent/sbx-init.mjs").end_arr();
+    w.key("args").arr();
+    for a in args {
+        w.str(a);
+    }
+    w.end_arr();
     // env: the image's, then the spec's, then HOME; a later value replaces an earlier one in place (Map semantics)
     w.key("env").arr();
     for kv in image_env {
@@ -139,14 +151,11 @@ pub fn bundle_spec(b: &mut Buf, spec: &Spec, image_env: &[&str], root: &str, scr
     let docker = crate::paths::join(scratch, "/docker");
     mount(&mut w, "/tmp", "bind", tmp.as_str(), &["rbind", "rw"]);
     mount(&mut w, "/var/lib/docker", "bind", docker.as_str(), &["rbind", "rw"]);
-    // the persistent folders on JuiceFS (docs/HOST.md): the conversation's /workspace, the user's ~/.claude
+    // the persistent folder on JuiceFS (docs/HOST.md): the conversation's /workspace. No ~/.claude bind (the
+    // supervisor's FUSE mount) and no /etc/hosts (the supervisor writes it; hermit spec 13.2 items 2, 4)
     if !spec.workspace.is_empty() {
         let ws = crate::storage::workspace_dir(spec.workspace.as_str());
         mount(&mut w, "/workspace", "bind", ws.as_str(), &["rbind", "rw"]);
-    }
-    if !spec.user.is_empty() {
-        let cl = crate::storage::claude_dir(spec.user.as_str());
-        mount(&mut w, "/home/sandbox/.claude", "bind", cl.as_str(), &["rbind", "rw"]);
     }
     w.end_arr();
     w.key("linux").obj().key("namespaces").arr();
@@ -157,12 +166,34 @@ pub fn bundle_spec(b: &mut Buf, spec: &Spec, image_env: &[&str], root: &str, scr
     w.str_parts(&["/var/run/netns/", spec.name.as_str()]);
     w.end();
     w.end_arr();
+    w.key("devices").arr();
+    w.obj()
+        .kstr("path", "/dev/fuse")
+        .kstr("type", "c")
+        .ku64("major", FUSE_MAJOR)
+        .ku64("minor", FUSE_MINOR)
+        .ku64("fileMode", 0o666)
+        .ku64("uid", 0)
+        .ku64("gid", 0)
+        .end();
+    w.end_arr();
     w.key("cgroupsPath");
     w.str_parts(&["/sbx/", spec.name.as_str()]);
     w.key("resources").obj();
     w.key("memory").obj().ku64("limit", spec.memory).end();
     w.key("cpu").obj().key("quota").f64((spec.cpu * 100_000.0).round()).ku64("period", 100_000).end();
     w.key("pids").obj().ku64("limit", spec.pids_limit()).end();
+    // the device allow-list: only additions (runsc applies no device cgroup; a runtime that does keeps its defaults)
+    w.key("devices").arr();
+    w.obj()
+        .key("allow")
+        .bool(true)
+        .kstr("type", "c")
+        .ku64("major", FUSE_MAJOR)
+        .ku64("minor", FUSE_MINOR)
+        .kstr("access", "rwm")
+        .end();
+    w.end_arr();
     w.end(); // resources
     w.end(); // linux
     w.end();
@@ -179,7 +210,7 @@ mod tests {
         let spec = Spec::parse(body, "10.200.0.0/16").ok().unwrap();
         let mut mem = [0u8; 16384];
         let mut b = Buf::new(&mut mem);
-        bundle_spec(&mut b, &spec, &[], "/r", "/s");
+        bundle_spec(&mut b, &spec, &[], &["/init"], "/r", "/s");
         let n = b.len;
         let s = core::str::from_utf8(&mem[..n]).unwrap();
         assert!(s.contains(r#""pids":{"limit":512}"#), "{s}");
@@ -197,7 +228,7 @@ mod tests {
 
     #[test]
     fn bundle() {
-        let body = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"HTTP_PROXY":"http://sbx:t@10.201.1.1:3128","EXEC_TOKEN":"e","PATH":"/x"},"cpu":1.5,"memory":2147483648,"cpuFeatures":"fpu,sse2","workspace":"c0ffee-1","user":"u-1"}"#;
+        let body = br#"{"name":"sbx-abc","ip":"10.200.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"HTTP_PROXY":"http://sbx:t@10.201.1.1:3128","EXEC_TOKEN":"e","PATH":"/x"},"cpu":1.5,"memory":2147483648,"cpuFeatures":"fpu,sse2","workspace":"c0ffee-1"}"#;
         let spec = Spec::parse(body, "10.200.0.0/16").ok().unwrap();
         let mut mem = [0u8; 16384];
         let mut b = Buf::new(&mut mem);
@@ -205,6 +236,7 @@ mod tests {
             &mut b,
             &spec,
             &["PATH=/usr/bin", "HOME=/root", "LANG=C"],
+            &["/usr/bin/tini", "--", "/opt/keeper", "--serve"],
             "/var/lib/sbx/root/sbx-abc",
             "/var/lib/sbx/scratch/sbx-abc",
         );
@@ -212,7 +244,8 @@ mod tests {
         let s = b.as_str();
         assert!(json::parse(s.as_bytes()).is_ok(), "{s}");
         assert!(s.contains(r#""dev.gvisor.internal.cpufeatures":"fpu,sse2""#));
-        assert!(s.contains(r#""args":["/usr/bin/tini","--","node","/opt/agent/sbx-init.mjs"]"#));
+        assert!(s.contains(r#""args":["/usr/bin/tini","--","/opt/keeper","--serve"]"#), "{s}");
+        assert!(s.contains(r#""user":{"uid":0,"gid":0},"cwd":"/work""#), "{s}");
         assert!(s.contains(r#""env":["PATH=/x","HOME=/home/sandbox","LANG=C","HTTP_PROXY=http://sbx:t@10.201.1.1:3128","EXEC_TOKEN=e"]"#), "{s}");
         assert!(s.contains(r#""limit":2147483648"#));
         assert!(s.contains(r#""quota":150000"#));
@@ -228,10 +261,17 @@ mod tests {
             s.contains(r#"{"destination":"/workspace","type":"bind","source":"/var/lib/sbx/jfs/ws/c0ffee-1""#),
             "{s}"
         );
+        // hermit spec 13.2 items 2, 4: no ~/.claude bind, no /etc/hosts
+        assert!(!s.contains(".claude") && !s.contains("/etc/hosts") && !s.contains("users/"), "{s}");
+        // item 7: /dev/fuse in the sandbox and on the device allow-list
         assert!(
             s.contains(
-                r#"{"destination":"/home/sandbox/.claude","type":"bind","source":"/var/lib/sbx/jfs/users/u-1/claude""#
+                r#""devices":[{"path":"/dev/fuse","type":"c","major":10,"minor":229,"fileMode":438,"uid":0,"gid":0}]"#
             ),
+            "{s}"
+        );
+        assert!(
+            s.contains(r#""devices":[{"allow":true,"type":"c","major":10,"minor":229,"access":"rwm"}]"#),
             "{s}"
         );
         assert!(!s.contains("tmpfs\",\"source\":\"tmpfs\",\"options\":[\"mode=711"));

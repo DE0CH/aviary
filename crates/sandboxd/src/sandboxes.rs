@@ -41,6 +41,9 @@ pub struct Entry {
     cpu_usec: u64,
     cpu_rate: f64,
     cpu_have: bool,
+    /// its cgroup holds a process (`populated 1` in `cgroup.events`, read by the 10 s sampler; hermit spec 13.2
+    /// item 6); true until the first sample
+    alive: bool,
 }
 // SAFETY: Entry is only fixed strings, numbers and bools, for which all zeros is a valid value.
 unsafe impl Zeroed for Entry {}
@@ -198,12 +201,12 @@ impl Sandboxes {
             let mut t = self.table();
             let sl = &mut t[lk.idx];
             let keep = if sl.used {
-                (sl.entry.cpu_at, sl.entry.cpu_usec, sl.entry.cpu_rate, sl.entry.cpu_have)
+                (sl.entry.cpu_at, sl.entry.cpu_usec, sl.entry.cpu_rate, sl.entry.cpu_have, sl.entry.alive)
             } else {
-                (0, 0, 0.0, false)
+                (0, 0, 0.0, false, true)
             };
             sl.entry = *e;
-            (sl.entry.cpu_at, sl.entry.cpu_usec, sl.entry.cpu_rate, sl.entry.cpu_have) = keep;
+            (sl.entry.cpu_at, sl.entry.cpu_usec, sl.entry.cpu_rate, sl.entry.cpu_have, sl.entry.alive) = keep;
             sl.used = true;
         }
         let mut b = Buf::new(buf);
@@ -245,7 +248,7 @@ impl Sandboxes {
         json::object::<Error>(o, |k, v| {
             if k.is("spec") {
                 if let Val::Obj(so) = v {
-                    spec = Some(Spec::parse_obj(so, sandbox_cidr)?);
+                    spec = Some(Spec::parse_obj(so, sandbox_cidr, false)?);
                 }
             } else if k.is("state") {
                 state = if v.str().is_some_and(|s| s.is("running")) { RUNNING } else { RECEIVING };
@@ -278,6 +281,7 @@ impl Sandboxes {
             cpu_usec: 0,
             cpu_rate: 0.0,
             cpu_have: false,
+            alive: true,
         })
     }
 
@@ -366,11 +370,18 @@ impl Sandboxes {
         }
     }
 
-    /// Every 10 s: CPU use per sandbox (cores, averaged over the interval).
+    /// Every 10 s: CPU use per sandbox (cores, averaged over the interval) and whether it is alive: its cgroup's
+    /// `cgroup.events` says `populated 1` (no runsc call). A sentry the host's memcg OOM-killed leaves the cgroup
+    /// empty (or gone): `alive:false` within 10 s, and hermit ends the sandbox (`vanished`). A receive is alive
+    /// (hermit judges a migration from both hosts, not from this).
     pub fn sample_cpu(&self) {
         let now = mono_ms();
         let mut t = self.table();
         for sl in t.iter_mut().filter(|s| s.used) {
+            let ev = paths::sbx_cgroup(sl.entry.spec.name.as_str(), "cgroup.events");
+            let mut eb = [0u8; 256];
+            let populated = read_file(ev.as_str(), &mut eb).is_ok_and(|t| core::str::from_utf8(t).unwrap_or("").lines().any(|l| l.trim() == "populated 1"));
+            sl.entry.alive = populated || sl.entry.state != RUNNING;
             let p = paths::sbx_cgroup(sl.entry.spec.name.as_str(), "cpu.stat");
             let mut b = [0u8; 1024];
             let Ok(text) = read_file(p.as_str(), &mut b) else { continue };
@@ -404,6 +415,8 @@ impl Sandboxes {
             .ku64("memory", e.spec.memory)
             .kf64("cpuUsage", (e.cpu_rate * 1000.0).round() / 1000.0)
             .ku64("memoryCurrent", cur)
+            .key("alive")
+            .bool(e.alive || e.state != RUNNING)
             .end();
     }
 
@@ -449,44 +462,63 @@ impl Sandboxes {
     fn prepare(&self, spec: &Spec, route: bool, sc: &mut Scratch) -> Res<paths::P> {
         let image_ref = if spec.image_ref.is_empty() { None } else { Some(spec.image_ref.as_str()) };
         images::ensure_image(self.cfg, &self.pulls, Some(spec.image.as_str()), image_ref)?;
-        let mut a = [""; 40];
-        quiet(runsc::argv(&mut a, &["delete", "-force", spec.name.as_str()])?);
-        net::add_sandbox_net(self.cfg, spec.name.as_str(), spec.ip.as_str(), route)?;
-        // the image's Env, copied out of the config (read into `big`) into `small`, NUL-separated
+        // the image config's Env, Entrypoint and Cmd, copied out of the config (read into `big`) into `small`: each
+        // item a tag byte (its list), the text, NUL
         let mut used = 0usize;
         let mut overflow = false;
         {
             let small = &mut *sc.small;
-            images::image_env(spec.image.as_str(), sc.big, |kv| {
-                if used + kv.len() + 1 > small.len() {
+            images::image_config(spec.image.as_str(), sc.big, |list, item| {
+                if used + item.len() + 2 > small.len() || item.contains('\0') {
                     overflow = true;
                     return;
                 }
-                small[used..used + kv.len()].copy_from_slice(kv.as_bytes());
-                small[used + kv.len()] = 0;
-                used += kv.len() + 1;
+                small[used] = list as u8;
+                small[used + 1..used + 1 + item.len()].copy_from_slice(item.as_bytes());
+                small[used + 1 + item.len()] = 0;
+                used += item.len() + 2;
             })?;
         }
         if overflow {
-            return Err(Error::new(500, "image Env is too large"));
+            return Err(Error::new(500, "image config is too large (or has a NUL)"));
         }
-        let env_text =
-            core::str::from_utf8(&sc.small[..used]).map_err(|_| Error::new(500, "image Env is not UTF-8"))?;
+        let text = core::str::from_utf8(&sc.small[..used]).map_err(|_| Error::new(500, "image config is not UTF-8"))?;
+        let items = || {
+            text.split('\0').filter(|s| !s.is_empty()).map(|s| (s.as_bytes()[0], &s[1..]))
+        };
         let mut env: [&str; 256] = [""; 256];
         let mut n = 0;
-        for kv in env_text.split('\0').filter(|s| !s.is_empty()) {
+        for (_, kv) in items().filter(|(t, kv)| *t == images::ConfigList::Env as u8 && !kv.is_empty()) {
             if n == env.len() {
                 return Err(Error::new(500, "image Env has too many entries"));
             }
             env[n] = kv;
             n += 1;
         }
+        // the first process: Entrypoint + Cmd (hermit spec 13.2 item 1); the spec has no args of its own
+        let mut args: [&str; 64] = [""; 64];
+        let mut na = 0;
+        for list in [images::ConfigList::Entrypoint, images::ConfigList::Cmd] {
+            for (_, a) in items().filter(|(t, _)| *t == list as u8) {
+                if na == args.len() {
+                    return Err(Error::new(400, "the image's Entrypoint and Cmd have too many arguments"));
+                }
+                args[na] = a;
+                na += 1;
+            }
+            if na == 0 {
+                return Err(Error::new(400, "the image has no Entrypoint (its first process)"));
+            }
+        }
+        let mut a = [""; 40];
+        quiet(runsc::argv(&mut a, &["delete", "-force", spec.name.as_str()])?);
+        net::add_sandbox_net(self.cfg, spec.name.as_str(), spec.ip.as_str(), route)?;
         let dir = path!("/var/lib/sbx/bundles/{}", spec.name);
         crate::util::mkdir(dir.as_str(), 0o700)?;
         let mut b = Buf::new(sc.big);
         let root = crate::storage::setup(spec)?;
         let scratch = crate::storage::scratch_dir(spec.name.as_str());
-        runsc::bundle_spec(&mut b, spec, &env[..n], root.as_str(), scratch.as_str());
+        runsc::bundle_spec(&mut b, spec, &env[..n], &args[..na], root.as_str(), scratch.as_str());
         if b.full {
             return Err(Error::new(500, "bundle too large"));
         }
@@ -536,6 +568,7 @@ impl Sandboxes {
                 cpu_usec: 0,
                 cpu_rate: 0.0,
                 cpu_have: false,
+                alive: true,
             };
             self.save(&lk, &e, sc.big)
         })();
@@ -567,6 +600,39 @@ impl Sandboxes {
         });
         crate::storage::teardown(name);
         self.forget(lk, name);
+        // the console is served for LOG_KEEP_MS after the sandbox ended: from this mtime
+        touch(path!("/var/log/sbx/{name}.log").as_str());
+    }
+
+    /// `GET …/log?tail=`: the last `tail` bytes (at most `out.len()`) of the sandbox's console
+    /// (/var/log/sbx/<name>.log), into `out`; also for [`LOG_KEEP_MS`] after it ended (hermit spec 13.2 item 10).
+    pub fn log_tail(&self, name: &str, tail: usize, out: &mut [u8]) -> Res<usize> {
+        use std::io::{Read, Seek, SeekFrom};
+        let p = path!("/var/log/sbx/{name}.log");
+        let here = self.get(name).is_some() || self.receiving(name);
+        let not_here = || err!(404, "{name} has no console here");
+        let mut f = std::fs::File::open(p.as_str()).map_err(|_| not_here())?;
+        let meta = f.metadata().map_err(|_| not_here())?;
+        if !here {
+            let age = meta.modified().ok().and_then(|m| std::time::SystemTime::now().duration_since(m).ok());
+            if age.is_none_or(|a| a.as_millis() > u128::from(LOG_KEEP_MS)) {
+                return Err(not_here());
+            }
+        }
+        let want = tail.min(out.len()) as u64;
+        let start = meta.len().saturating_sub(want);
+        f.seek(SeekFrom::Start(start)).map_err(|e| crate::util::at(p.as_str(), e))?;
+        let mut n = 0usize;
+        let want = want as usize;
+        while n < want {
+            match f.read(&mut out[n..want]) {
+                Ok(0) => break,
+                Ok(k) => n += k,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(crate::util::at(p.as_str(), e)),
+            }
+        }
+        Ok(n)
     }
 
     pub fn delete(&self, name: &str) -> Res<()> {
@@ -645,6 +711,7 @@ impl Sandboxes {
                 cpu_usec: 0,
                 cpu_rate: 0.0,
                 cpu_have: false,
+                alive: true,
             };
             self.save(&lk, &e, sc.big)?;
             let out = log_file(name, true)?;
@@ -1093,6 +1160,20 @@ fn tail_chars(s: &str, n: usize) -> &str {
         i += 1;
     }
     &s[i..]
+}
+
+/// How long a sandbox's console is served after it ended.
+pub const LOG_KEEP_MS: u64 = 10 * 60_000;
+
+/// Sets a file's times to now (a missing file stays missing).
+fn touch(path: &str) {
+    let mut b = [0u8; 512];
+    if let Some(c) = crate::fixed::cstr(path, &mut b) {
+        // SAFETY: `c` is a NUL-terminated path in `b`; a null `times` means now, and utimensat reads nothing else.
+        unsafe {
+            libc::utimensat(libc::AT_FDCWD, c.as_ptr(), core::ptr::null(), 0);
+        }
+    }
 }
 
 fn log_file(name: &str, restore_out: bool) -> Res<std::fs::File> {
