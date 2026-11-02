@@ -24,7 +24,7 @@ header h1{font-size:17px;margin:0}
 .meta{color:var(--mut);font-size:12px}
 .pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:14px;font-weight:600;font-size:13px}
 .pill::before{content:"";width:9px;height:9px;border-radius:50%;background:currentColor}
-.s-ok{color:var(--ok);background:var(--okbg)}.s-warming{color:var(--info);background:var(--infobg)}.s-watch{color:var(--warm);background:var(--warmbg)}.s-problem{color:var(--bad);background:var(--badbg)}.s-none{color:var(--mut);background:var(--chip)}
+.s-ok{color:var(--fg);background:var(--chip)}.pill.s-ok::before{background:var(--ok)}.s-warming{color:var(--info);background:var(--infobg)}.s-watch{color:var(--warm);background:var(--warmbg)}.s-problem{color:var(--bad);background:var(--badbg)}.s-none{color:var(--mut);background:var(--chip)}
 .tabs{display:flex;gap:4px;margin-top:8px}
 .tabs button{flex:1;border:0;background:none;color:var(--mut);font:600 14px system-ui,sans-serif;padding:8px 0;border-bottom:3px solid transparent;cursor:pointer}
 .tabs button.on{color:var(--fg);border-bottom-color:var(--fg)}
