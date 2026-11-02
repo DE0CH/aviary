@@ -8,7 +8,7 @@
 use std::os::fd::AsRawFd as _;
 use std::time::{Duration, Instant};
 
-use super::proto::{Op, Writer};
+use super::proto::{Op, STDIN_HEADER, Writer};
 use super::server::{Config, Keeper, Signals};
 use super::testing::Running;
 use super::{Client, KeeperError, StdinOutcome, sys};
@@ -290,4 +290,125 @@ fn boot_id_survives_a_keeper_restart() {
     let again = Keeper::new(cfg).unwrap();
     assert_eq!(again.boot_id(), id.as_bytes());
     sys::close(stop_w);
+}
+
+#[test]
+fn a_supervisor_that_exits_0_after_a_release_is_not_restarted() {
+    // released: the marker, then exit 0
+    let k = Running::start_with(|d| {
+        let marker = d.join("run").join(super::RELEASED_NAME);
+        Some(vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            format!("touch '{}'; exit 0", marker.display()),
+        ])
+    });
+    std::thread::sleep(Duration::from_millis(800));
+    let sup = |k: &Running| {
+        k.client
+            .exits(0)
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.name == "supervisor")
+            .count()
+    };
+    assert_eq!(sup(&k), 1);
+    assert!(
+        !k.client
+            .status()
+            .unwrap()
+            .children
+            .iter()
+            .any(|(_, n)| n == "supervisor")
+    );
+    // exit 0 without the marker is not a release: restarted
+    let k2 = Running::start(Some(vec!["/bin/sh".into(), "-c".into(), "exit 0".into()]));
+    std::thread::sleep(Duration::from_millis(800));
+    assert!(sup(&k2) >= 3, "{}", sup(&k2));
+    // a crash after the marker (exit 70) is restarted too: the new supervisor finds the marker and only reports
+    let k3 = Running::start_with(|d| {
+        let marker = d.join("run").join(super::RELEASED_NAME);
+        Some(vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            format!(
+                "if [ -e '{0}' ]; then exit 0; fi; touch '{0}'; exit 70",
+                marker.display()
+            ),
+        ])
+    });
+    std::thread::sleep(Duration::from_millis(800));
+    let codes: Vec<_> = k3
+        .client
+        .exits(0)
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.name == "supervisor")
+        .map(|e| e.code)
+        .collect();
+    assert_eq!(codes, vec![Some(70), Some(0)]);
+}
+
+#[test]
+fn a_child_slow_to_reach_exec_holds_up_only_its_own_spawn() {
+    let k = Running::start(None);
+    // its stdout is a FIFO nobody reads yet: the child blocks in open(2) before exec, as in a stalled chdir
+    let fifo = k.file("out.fifo");
+    let c = std::ffi::CString::new(fifo.clone()).unwrap();
+    // SAFETY: mkfifo on a NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    let mut s = k.spec("exec", &["/bin/echo", "hi"]);
+    s.stdout = Some(fifo.clone());
+    let client = k.client.clone();
+    let slow = std::thread::spawn(move || client.spawn(&s));
+    std::thread::sleep(Duration::from_millis(200));
+    let t = Instant::now();
+    k.client.status().unwrap();
+    k.client.exits(0).unwrap();
+    let other = k.client.spawn(&k.spec("exec", &["/bin/true"])).unwrap();
+    assert_eq!(k.wait_exit(other).code, Some(0));
+    assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
+    assert!(!slow.is_finished(), "answered before exec");
+    // a reader unblocks it: the spawn is answered with its pid
+    let mut out = std::fs::File::open(&fifo).unwrap();
+    let pid = slow.join().unwrap().unwrap();
+    let mut got = String::new();
+    std::io::Read::read_to_string(&mut out, &mut got).unwrap();
+    assert_eq!(got, "hi\n");
+    assert_eq!(k.wait_exit(pid).code, Some(0));
+}
+
+#[test]
+fn a_resend_while_the_original_is_still_being_written_is_already() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let k = Running::start(None);
+    let mut s = k.spec("claude", &["/bin/sh", "-c", "sleep 1; exec cat"]);
+    s.stdin_pipe = true;
+    let pid = k.client.spawn(&s).unwrap();
+    let data = vec![b'w'; 400 * 1024];
+    let id = super::new_msg_id();
+    // the supervisor sends the whole message, then dies before the answer
+    let fd = sys::connect_seqpacket(k.dir.join("run/keeper.sock").as_os_str().as_bytes()).unwrap();
+    let mut buf = vec![0u8; crate::limits::KEEPER_PACKET];
+    let first = crate::limits::KEEPER_PACKET - STDIN_HEADER;
+    let mut w = Writer::new(&mut buf);
+    w.u8(Op::Stdin as u8)
+        .i32(pid)
+        .bytes_raw(&id)
+        .u64(data.len() as u64)
+        .bytes_raw(&data[..first]);
+    let p = w.finish().unwrap().to_vec();
+    sys::send_packet(fd, &p, None, true).unwrap();
+    for chunk in data[first..].chunks(crate::limits::KEEPER_PACKET - 1) {
+        let mut pkt = vec![Op::StdinMore as u8];
+        pkt.extend_from_slice(chunk);
+        sys::send_packet(fd, &pkt, None, true).unwrap();
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    sys::close(fd);
+    // the restarted supervisor sends it again: held until the first is in the pipe, then ALREADY
+    assert_eq!(k.client.stdin(pid, id, &data).unwrap(), StdinOutcome::Already);
+    k.client.close_stdin(pid).unwrap();
+    assert_eq!(k.wait_exit(pid).code, Some(0));
+    assert_eq!(std::fs::read(k.file("claude.out")).unwrap().len(), data.len());
 }

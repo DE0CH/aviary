@@ -1,7 +1,9 @@
 //! The keeper (supervisor 4.1, 4.2): PID 1 of the sandbox. It starts the supervisor and restarts it with backoff,
 //! is the parent of every process the supervisor starts (so a supervisor restart never orphans or kills Claude
 //! Code), owns their stdin pipes (a message is written whole or not at all, and at most once per `msg_id`), keeps
-//! the `/dev/fuse` descriptor across supervisor restarts, reaps, and remembers the last exits.
+//! the `/dev/fuse` descriptor across supervisor restarts, reaps, and remembers the last exits of its own children
+//! (reparented orphans are reaped and only counted, so a burst of them never pushes a tracked exit out of the ring).
+//! A supervisor that exits 0 after writing the released marker ([`super::RELEASED_NAME`]) is not started again.
 //!
 //! One thread, `poll(2)` over a fixed set of descriptors, every table and buffer allocated by [`Keeper::new`]
 //! before the loop; the loop itself does not allocate. A stdin message is staged whole before its first byte
@@ -35,6 +37,9 @@ pub const STDIN_BUFFER: usize = 64 * 1024;
 /// Descriptors kept by name (`PUT_FD`).
 pub const HELD_FDS: usize = 4;
 const POLL_MS: i32 = 100;
+/// The listener, the signal source, every connection, every stdin message being written, and the error pipe of
+/// every spawn not yet answered.
+const POLL_SLOTS: usize = 2 + MAX_CONNS + STDIN_BUFFERS + MAX_CHILDREN;
 
 /// Where the keeper works and what it starts.
 #[derive(Debug, Clone)]
@@ -105,6 +110,13 @@ struct Child {
     ring_next: usize,
     /// The in-flight stdin message's slot.
     msg: Option<usize>,
+    /// A spawn not answered yet: the error pipe's read end (closed by the child's exec, or its errno), polled by the
+    /// loop so a child stuck before exec (a stalled `/workspace` in its `chdir`) never stops the keeper.
+    spawn_err: RawFd,
+    /// The connection waiting for that answer.
+    spawn_conn: Option<usize>,
+    /// Its exec failed: it exits 127, and is reaped without an exit record.
+    failed: bool,
 }
 
 impl Child {
@@ -119,6 +131,9 @@ impl Child {
         ring_len: 0,
         ring_next: 0,
         msg: None,
+        spawn_err: -1,
+        spawn_conn: None,
+        failed: false,
     };
 
     fn seen(&self, id: &[u8; MSG_ID]) -> bool {
@@ -171,6 +186,8 @@ enum ConnState {
     Waiting(usize),
     /// A `STDIN` header is queued in the socket for a busy child or a full buffer pool.
     Blocked,
+    /// Waiting for child `n`'s exec (its `SPAWN` answer).
+    Spawning(usize),
 }
 
 #[derive(Clone, Copy)]
@@ -201,6 +218,7 @@ enum Slot {
     Signals,
     Conn(usize),
     Pipe(usize),
+    SpawnErr(usize),
 }
 
 /// The keeper's state; every buffer is allocated here.
@@ -220,6 +238,11 @@ pub struct Keeper {
     backoff: usize,
     next_start_mono: Option<u64>,
     stopping_since: Option<u64>,
+    /// `run_dir/released`: the supervisor finished a release; once it has exited 0 it is not started again.
+    released_marker: CString,
+    supervisor_done: bool,
+    /// Reparented processes reaped (PID 1 only); counted, never in the exits ring.
+    orphans: u64,
 
     children: Box<[Child; MAX_CHILDREN]>,
     conns: [RawFd; MAX_CONNS],
@@ -235,8 +258,8 @@ pub struct Keeper {
     rx: Box<[u8]>,
     tx: Box<[u8]>,
     spawn_buf: Box<[u8]>,
-    pollfds: Box<[libc::pollfd; 2 + MAX_CONNS + MAX_CHILDREN]>,
-    slots: Box<[Slot; 2 + MAX_CONNS + MAX_CHILDREN]>,
+    pollfds: Box<[libc::pollfd; POLL_SLOTS]>,
+    slots: Box<[Slot; POLL_SLOTS]>,
 }
 
 // SAFETY: the only non-Send fields are `supervisor_ptrs`, pointers into the `CString`s of `supervisor_argv`, which
@@ -386,6 +409,7 @@ impl Keeper {
             .collect::<io::Result<_>>()?;
         let mut supervisor_ptrs: Vec<*const libc::c_char> = supervisor_argv.iter().map(|a| a.as_ptr()).collect();
         supervisor_ptrs.push(std::ptr::null());
+        let released_marker = cstr(&cfg.run_dir.join(super::RELEASED_NAME))?;
         let spool_paths = (0..STDIN_BUFFERS)
             .map(|i| cstr(&cfg.spool_dir.join(format!("stdin-{i}.spool"))))
             .collect::<io::Result<Vec<_>>>()?;
@@ -405,6 +429,9 @@ impl Keeper {
             supervisor_restarts: 0,
             backoff: 0,
             stopping_since: None,
+            released_marker,
+            supervisor_done: false,
+            orphans: 0,
             children: Box::new([Child::EMPTY; MAX_CHILDREN]),
             conns: [-1; MAX_CONNS],
             conn_state: [ConnState::Free; MAX_CONNS],
@@ -423,9 +450,9 @@ impl Keeper {
                     fd: -1,
                     events: 0,
                     revents: 0,
-                }; 2 + MAX_CONNS + MAX_CHILDREN],
+                }; POLL_SLOTS],
             ),
-            slots: Box::new([Slot::Listener; 2 + MAX_CONNS + MAX_CHILDREN]),
+            slots: Box::new([Slot::Listener; POLL_SLOTS]),
         })
     }
 
@@ -455,8 +482,9 @@ impl Keeper {
                     Slot::Listener => self.accept_all(),
                     Slot::Signals => self.read_signals(),
                     Slot::Conn(c) if self.conns[c] == self.pollfds[i].fd => self.conn_ready(c, rev),
-                    Slot::Conn(_) => {}
                     Slot::Pipe(m) => self.pipe_ready(m),
+                    Slot::SpawnErr(ch) if self.children[ch].spawn_err == self.pollfds[i].fd => self.resolve_spawn(ch),
+                    Slot::Conn(_) | Slot::SpawnErr(_) => {}
                 }
             }
         }
@@ -479,9 +507,14 @@ impl Keeper {
                 ConnState::Free => continue,
                 ConnState::Idle | ConnState::Receiving(_) => libc::POLLIN,
                 // only hang-ups (always reported): the connection waits for an answer or a free child
-                ConnState::Waiting(_) | ConnState::Blocked => 0,
+                ConnState::Waiting(_) | ConnState::Blocked | ConnState::Spawning(_) => 0,
             };
             push(self.conns[c], events, Slot::Conn(c), pf, sl);
+        }
+        for (i, ch) in self.children.iter().enumerate() {
+            if ch.spawn_err >= 0 {
+                push(ch.spawn_err, libc::POLLIN, Slot::SpawnErr(i), pf, sl);
+            }
         }
         for m in 0..STDIN_BUFFERS {
             if let Some(msg) = &self.msgs[m]
@@ -571,7 +604,7 @@ impl Keeper {
     }
 
     fn maybe_start_supervisor(&mut self, now: u64) {
-        if self.stopping_since.is_some() || self.supervisor_pid.is_some() {
+        if self.stopping_since.is_some() || self.supervisor_pid.is_some() || self.supervisor_done {
             return;
         }
         let Some(at) = self.next_start_mono else { return };
@@ -654,16 +687,32 @@ impl Keeper {
                     ("signal", i64::from(r.signal.unwrap_or(0))),
                 ],
             );
-            if self.stopping_since.is_none() {
+            // exit 0 after the release's marker: the release is final (4.3, 15.5); anything else is restarted
+            // SAFETY: access(2) on a NUL-terminated path prepared before the loop.
+            let released = r.code == Some(0) && unsafe { libc::access(self.released_marker.as_ptr(), libc::F_OK) } == 0;
+            if released {
+                self.supervisor_done = true;
+                log("supervisor released, not restarted", &[]);
+            } else if self.stopping_since.is_none() {
                 self.schedule_restart(now);
             }
             Name::new(b"supervisor")
         } else if let Some(i) = self.children.iter().position(|c| c.pid == r.pid) {
+            if self.children[i].spawn_err >= 0 {
+                // it ended before the loop read its error pipe: answer the SPAWN first
+                self.resolve_spawn(i);
+            }
             let name = self.children[i].name;
+            let failed = self.children[i].failed;
             self.drop_child(i);
+            if failed {
+                return; // its exec failed and SPAWN said so: not an exit anyone waits for
+            }
             name
         } else {
-            Name::new(b"orphan")
+            // a reparented descendant (PID 1 reaps them all): counted, kept out of the ring of tracked exits
+            self.orphans += 1;
+            return;
         };
         self.exit_n += 1;
         self.exits[(self.exit_n as usize - 1) % KEEPER_EXITS] = Exit {
@@ -707,6 +756,7 @@ impl Keeper {
                     msg.conn = None;
                 }
             }
+            ConnState::Spawning(i) => self.children[i].spawn_conn = None,
             _ => {}
         }
         sys::close(self.conns[c]);
@@ -911,15 +961,16 @@ impl Keeper {
                         .bytes(&self.boot_id)
                         .u32(self.supervisor_restarts)
                         .u64(self.started_at_ms);
-                    let count = self.children.iter().filter(|ch| ch.pid > 0).count()
-                        + usize::from(self.supervisor_pid.is_some());
+                    let live = |ch: &&Child| ch.pid > 0 && !ch.failed;
+                    let count = self.children.iter().filter(live).count() + usize::from(self.supervisor_pid.is_some());
                     w.u32(count as u32);
                     if let Some(pid) = self.supervisor_pid {
                         w.i32(pid).bytes(b"supervisor");
                     }
-                    for ch in self.children.iter().filter(|ch| ch.pid > 0) {
+                    for ch in self.children.iter().filter(live) {
                         w.i32(ch.pid).bytes(ch.name.get());
                     }
+                    w.u64(self.orphans);
                     w.len()
                 };
                 self.reply(c, len, None);
@@ -975,28 +1026,8 @@ impl Keeper {
             self.reply_err(c, e, "fork");
             return Ok(());
         }
-        // the child's exec closes the error pipe (success) or writes its errno into it
-        let mut eb = [0u8; 4];
-        let got = loop {
-            match sys::read(err_r, &mut eb) {
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-                r => break r.unwrap_or(0),
-            }
-        };
-        sys::close(err_r);
-        let name = spec.name;
-        if got == 4 {
-            let e = i32::from_le_bytes(eb);
-            if let Some((_, w)) = stdin_pipe {
-                sys::close(w);
-            }
-            // the child has exited (127); reap it so it is not counted later
-            let mut status = 0;
-            // SAFETY: waitpid on our own child, status into a local.
-            unsafe { libc::waitpid(pid, &raw mut status, 0) };
-            self.reply_err(c, e, "exec");
-            return Ok(());
-        }
+        // the child's exec closes the error pipe (success) or writes its errno into it; the loop polls it, so a
+        // child slow to reach exec holds up only this SPAWN's answer
         let stdin = match stdin_pipe {
             Some((_, w)) => {
                 let _ = sys::set_nonblocking(w);
@@ -1006,17 +1037,57 @@ impl Keeper {
         };
         self.children[slot] = Child {
             pid,
-            name,
+            name: spec.name,
             stdin,
+            spawn_err: err_r,
+            spawn_conn: Some(c),
             ..Child::EMPTY
         };
-        let len = {
-            let mut w = Writer::new(&mut self.tx[..]);
-            w.u8(Status::Ok as u8).i32(pid);
-            w.len()
-        };
-        self.reply(c, len, None);
+        self.conn_state[c] = ConnState::Spawning(slot);
         Ok(())
+    }
+
+    /// Reads child `i`'s error pipe (readable, or the child has ended) and answers its `SPAWN`.
+    fn resolve_spawn(&mut self, i: usize) {
+        let fd = self.children[i].spawn_err;
+        if fd < 0 {
+            return;
+        }
+        let mut eb = [0u8; 4];
+        let got = loop {
+            match sys::read(fd, &mut eb) {
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                r => break r.unwrap_or(0),
+            }
+        };
+        sys::close(fd);
+        self.children[i].spawn_err = -1;
+        let conn = self.children[i].spawn_conn.take();
+        if got > 0 {
+            // exec failed: the child exits 127 and is reaped without an exit record
+            let e = if got == 4 { i32::from_le_bytes(eb) } else { libc::EIO };
+            self.children[i].failed = true;
+            if let Some(m) = self.children[i].msg {
+                self.fail_msg(m, libc::EPIPE);
+            }
+            sys::close(self.children[i].stdin);
+            self.children[i].stdin = -1;
+            if let Some(c) = conn {
+                self.conn_state[c] = ConnState::Idle;
+                self.reply_err(c, e, "exec");
+            }
+            return;
+        }
+        if let Some(c) = conn {
+            self.conn_state[c] = ConnState::Idle;
+            let pid = self.children[i].pid;
+            let len = {
+                let mut w = Writer::new(&mut self.tx[..]);
+                w.u8(Status::Ok as u8).i32(pid);
+                w.len()
+            };
+            self.reply(c, len, None);
+        }
     }
 
     // STDIN
@@ -1513,6 +1584,48 @@ mod tests {
         w.bytes(b"exec").u32(0);
         let p = w.finish().unwrap().to_vec();
         assert!(parse_spawn(&p, &mut buf).is_err());
+    }
+
+    #[test]
+    fn orphans_are_counted_and_kept_out_of_the_exits_ring() {
+        let dir = std::env::temp_dir().join(format!("keeper-orphans-{}", uuid::Uuid::new_v4().simple()));
+        let (r, w) = sys::pipe().unwrap();
+        let mut k = Keeper::new(Config {
+            run_dir: dir.join("run"),
+            mount_run_tmpfs: false,
+            spool_dir: dir.join("spool"),
+            supervisor: None,
+            protect_self: false,
+            signals: Signals::Pipe(r),
+        })
+        .unwrap();
+        k.children[0] = Child {
+            pid: 4242,
+            name: Name::new(b"claude"),
+            ..Child::EMPTY
+        };
+        for pid in 10_000..10_100 {
+            k.on_reaped(
+                sys::Reaped {
+                    pid,
+                    code: Some(0),
+                    signal: None,
+                },
+                0,
+            );
+        }
+        k.on_reaped(
+            sys::Reaped {
+                pid: 4242,
+                code: Some(3),
+                signal: None,
+            },
+            0,
+        );
+        assert_eq!((k.orphans, k.exit_n), (100, 1));
+        assert_eq!((k.exits[0].pid, k.exits[0].code), (4242, Some(3)));
+        sys::close(w);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

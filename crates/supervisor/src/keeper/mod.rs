@@ -28,6 +28,10 @@ pub const RUN_DIR: &str = "/run/supervisor";
 pub const KEEPER_SOCKET_NAME: &str = "keeper.sock";
 /// The boot id's file name in [`RUN_DIR`].
 pub const BOOT_ID_NAME: &str = "boot_id";
+/// The marker the supervisor writes in [`RUN_DIR`] once a release has finished: the keeper does not start a
+/// supervisor again after it exits 0, and a supervisor that finds it (it crashed after the release) only reports
+/// `released` and exits 0. The tmpfs is part of a checkpoint, so a restored released sandbox stays released.
+pub const RELEASED_NAME: &str = "released";
 /// Where stdin messages larger than a pooled buffer are staged (the scratch disk).
 pub const SPOOL_DIR: &str = "/var/lib/supervisor/keeper";
 /// The supervisor binary the keeper starts as `supervisor run`.
@@ -119,6 +123,8 @@ pub struct KeeperStatus {
     pub supervisor_restarts: u32,
     pub started_at_ms: u64,
     pub children: Vec<(i32, String)>,
+    /// Reparented processes the keeper reaped (not in the exits ring).
+    pub orphans: u64,
 }
 
 /// The supervisor's client of the keeper.
@@ -311,7 +317,8 @@ impl Client {
         }
     }
 
-    /// `EXITS` after counter `after` (the last 64 at most).
+    /// `EXITS` after counter `after` (the last 64 at most; when more than 64 exits happened since `after`, the first
+    /// record's `n` is above `after + 1`: a gap, see [`watch::Exits`]).
     ///
     /// # Errors
     /// The socket's or the keeper's error.
@@ -351,11 +358,13 @@ impl Client {
         for _ in 0..n {
             children.push((r.i32()?, String::from_utf8_lossy(r.bytes()?).into_owned()));
         }
+        let orphans = r.u64()?;
         Ok(KeeperStatus {
             boot_id,
             supervisor_restarts,
             started_at_ms,
             children,
+            orphans,
         })
     }
 }

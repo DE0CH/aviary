@@ -19,8 +19,14 @@ pub(crate) struct Running {
 
 impl Running {
     pub fn start(supervisor: Option<Vec<String>>) -> Self {
+        Self::start_with(|_| supervisor)
+    }
+
+    /// A keeper whose supervisor argv is made from the test directory.
+    pub fn start_with(supervisor: impl FnOnce(&std::path::Path) -> Option<Vec<String>>) -> Self {
         let dir = std::env::temp_dir().join(format!("keeper-test-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
+        let supervisor = supervisor(&dir);
         let (stop_r, stop_w) = sys::pipe().unwrap();
         let cfg = Config {
             run_dir: dir.join("run"),
