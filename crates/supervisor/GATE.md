@@ -12,8 +12,9 @@ crate for the same rule). This is the gate's second run, with a third round on H
 ## Verdict
 
 **Not a plain pass, and the package is not done:** three measured facts are negative against the spec text as it
-stood, two faults after a restore are unexplained (handed to WP-57), and the tombstone rewrite was not reproduced
-(a question for Deyao, DESIGN 14):
+stood, two faults after a restore were handed to WP-57 (verdicts 4 and 5: a fork bug was found and fixed whose link
+to verdict 4 is probable, not proven; verdict 5's mechanism is reproduced, its end-to-end failure was not), and the
+tombstone rewrite was not reproduced (a question for Deyao, DESIGN 14):
 
 1. **Negative: a checkpoint resends every request in flight** (item 3). The spec said "the runtime's FUSE has no resend"
    (9.9) and "every write is stored once ... across a migration" (22.4). Measured: the sentry forgets the request at
@@ -46,19 +47,23 @@ stood, two faults after a restore are unexplained (handed to WP-57), and the tom
    the rules of round 3, `mig-s09` fails as well (7 of the 72 hold-on AWS migrations fail). Cause: the scratch move's
    final delta used rsync's quick check, which cannot see a write through a shared mapping (section "WP-57"; the
    mechanism is reproduced, the end-to-end short read was not: 0 of 24 hold-on runs with the quick check). Fixed in
-   the gate's `send-scratch`; the same fix in sandboxd is WP-19's (split c); supervisor 9.9 keeps the reader's check.
+   the gate's `send-scratch`, and in sandboxd's final delta by WP-19 (aviary `eedfbda`); supervisor 9.9 keeps the reader's check.
 
-**WP-57 (2026-11-02): both faults are explained and fixed** (section "WP-57" below). Item 4 is the fork's: the final,
-stopped round of a pre-copy migration did not resend pages that had been sent earlier and were then freed or found
-zero, so the target kept their old bytes and handed them out as fresh memory; fixed in the fork release
-`precopy-20261102.1`. Item 5 is the scratch move's (the gate's copy of sandboxd's `send_locked`, and sandboxd
-itself): rsync's quick check cannot see a write made through a shared mapping, and the INTERRUPT read during the stop
-was such a write; the gate's final delta now compares contents. On the same two Hetzner hosts, `precopy-20261021.2`
-lost a process in 4 of 50 hold-on migrations and `precopy-20261102.1` in 0 of 150 (one-sided Fisher exact
-0.0036); on two other Hetzner hosts the new release had 0 lost processes and 0 short reads in 100 tmpfs and 100
-scratch hold-on migrations, and 0 short reads in 60 scratch runs with production's stopped-time path. The link from
-the fixed bug to the gate's own SIGSEGVs is probable, not traced to a page; the end-to-end short read was not
-reproduced, only its mechanism; the fabric's AMI on AWS is untested and is WP-40's must-pass check.
+**WP-57 (2026-11-02): a fork bug found and fixed, probably verdict 4's cause; verdict 5's mechanism found, its
+failure not reproduced** (section "WP-57" below). The fork's final, stopped round of a pre-copy migration did not
+resend pages that had been sent earlier and were then freed or found zero, so the target kept their old bytes and
+handed them out as fresh memory; fixed in the fork release `precopy-20261102.1`. That this bug caused verdict 4's
+SIGSEGVs is Claude's inference, not traced to a page. For verdict 5, rsync's quick check in the scratch move (the
+gate's copy of sandboxd's `send_locked`, and sandboxd itself until aviary `eedfbda`) cannot see a write made through a
+shared mapping, and the INTERRUPT read during the stop is such a write; the gate's final delta now compares contents.
+The end-to-end short read was not reproduced (0 of 24 runs with the quick check). On the same two Hetzner hosts, run
+one after the other and not interleaved, `precopy-20261021.2` lost a process in 4 of 50 hold-on migrations (1
+SIGSEGV, 3 SIGABRT) and `precopy-20261102.1` in 0 of 150, tmpfs layout only (section "Same hosts, both releases" for
+what that comparison does and does not show). For the scratch layout there is no old-release baseline: the new
+release had 0 lost processes and 0 short reads in 100 scratch hold-on runs on other hosts with the gate's diagnostic
+comparison, and in 60 scratch runs with production's stopped-time path; so the fix's effect is shown for tmpfs only.
+The fabric's AMI on AWS is untested and is WP-40's must-pass check, which is also the first scratch-layout evidence
+for the fix.
 
 **The corrections are handed back to the design of record** (text changed on 2026-11-02, marked "WP-07 gate"):
 supervisor spec 2.5, 8.2, 9.1 (the gate's path findings are provisional until WP-22's re-run under 6.1-6.4), 9.3
@@ -210,7 +215,8 @@ checkpoint end to `SBXDONE` 141-276 ms (median 153); pause 468.8-750.9 ms (media
 (`nc02`, `nc24`, `nc33`, `nc44`, `nc57`). With no comparison these runs cannot tell whether a file still differed;
 they check only that nothing failed.
 
-These batches alone do not show that the fix cured anything: they ran on hosts where the old release was not
+For the 100-per-layout count, the scratch layout's 100 are the `x` batch, which ran with the gate's diagnostic
+comparison; the production-path scratch runs (`nc`) are 60, not 100. These batches alone do not show that the fix cured anything: they ran on hosts where the old release was not
 measured, and every arm passed, so the controls (`HOLD=2`, `HOLD=3`) separate nothing here either (a control only
 says something against a hold-on arm that fails). The AWS rate (6 of 72) does not carry over to other hosts, so it
 gives no probability for these 0-in-100s. The same-host batches below supply the old-release rate.
@@ -219,7 +225,14 @@ gives no probability for these 0-in-100s. The same-host batches below supply the
 
 Two further throwaway Hetzner cx33, in nbg1 (`runsc cpu-features` identical to the fsn1 hosts above and to round
 3's), the same `migrate-batch.sh`, tmpfs layout, first on `precopy-20261021.2` and then, after `host-setup.sh` moved
-both hosts to `precopy-20261102.1`, on the new release (`results/wp57/samehost/`: `mig-ob*`, `mig-nb*`, `mig-nd*`,
+both hosts to `precopy-20261102.1`, on the new release. **The batches ran one after another, not interleaved**: `ob`
+(2026-11-02, first migration 20:34:23 UTC, last 21:13:24), then the release change, then `nb` (first migration
+21:14:10), `nc` and `nd` (last migration 22:57:05). **`ob` was
+started as a 200-run batch and stopped at 100; that stop was chosen during the batch, after its first 36 runs, when
+3 of its losses (ob005, ob015, ob023) had already been seen** (ob051 came later). The reason was the plan, not the
+data: a second host pair for the new release could not be created (Hetzner's shared-core limit for the project), so
+the new release had to follow on the same pair. Still, a stop chosen with the failures in view is a data-dependent
+stop and can bias the old release's rate upwards (`results/wp57/samehost/`: `mig-ob*`, `mig-nb*`, `mig-nd*`,
 their `batch-*.log` and `run-*.txt`, `migrations.json`):
 
 | Release | Batch | Configuration | Runs | Lost a process |
@@ -234,17 +247,31 @@ their `batch-*.log` and `run-*.txt`, `migrations.json`):
 
 The old release loses a process on these hosts in 4 of 50 hold-on runs and in none of the 50 controls; the new
 release in 0 of 150 hold-on runs on the same hosts (0 of 100 more on the fsn1 hosts above). 4 of 50 against 0
-of 150, with every run equally likely to fail, comes out this lopsided by chance with probability 0.0036
-(one-sided Fisher exact test: C(50,4)/C(200,4)). The gate's fail rule counts the SIGABRTs and the SIGSEGV
+of 150, if every run were equally likely to fail, would come out this lopsided by chance with probability 0.0036
+(one-sided Fisher exact test: C(50,4)/C(200,4)). That premise does not hold for this design: the releases did not
+alternate, so anything that changed over time on these hosts (a neighbour's load on the shared cx33 cores, a host's
+state after 100 migrations) is mixed in with the release; the stop above was not fixed in advance; and the 150 pool
+`nb` (`HOLDS="1 2 1 3"`, the same configuration as `ob`) with `nd` (`HOLD=1` only, hold-on runs back to back). Against
+`nb` alone, the matching configuration, 4 of 50 against 0 of 50 gives C(50,4)/C(100,4) = 0.059. So the figure is
+indicative, not a test result. The gate's fail rule counts the SIGABRTs and the SIGSEGV
 alike as an in-sandbox process exit; that the SIGABRT is the same fault (the fake magpie's Rust runtime finding its
 thread-spawn bookkeeping in memory that should have been zero) is Claude's inference from the message. The controls' 0 of 50 on the old release is consistent with
 the AWS controls (0 of 30), but with only 4 failures among 50 hold-on runs it separates nothing: 4 of 50 against 0
 of 25 comes out this way by chance with probability C(50,4)/C(75,4) = 0.19 for each control, so whether the held
 requests themselves or the larger final round raise the rate is not measured.
 
-**Still untested: the fabric's AMI on AWS**, where the gate measured the fault first. WP-40 runs it as a must-pass
-check (WORK-PACKAGES WP-40): both layouts on two fabric-AMI hosts, the old release first (a non-zero hold-on rate),
-then `precopy-20261102.1` with 0 lost processes and 0 short reads in 100 hold-on runs each.
+**Still untested: the fabric's AMI on AWS**, where the gate measured the fault first, **and the fix's effect in the
+scratch layout** (no old-release scratch batch ran on the same hosts as a new-release one). WP-40 runs it as a
+must-pass check (WORK-PACKAGES WP-40), designed against the faults of the comparison above: two fabric-AMI hosts,
+both layouts, the run count fixed before starting (100 hold-on runs per release per layout), the two releases
+alternating run by run on the same host pair (`precopy-20261021.2`, `precopy-20261102.1`, `precopy-20261021.2`, ...;
+both binaries installed, the runtime switched before each run) or run at once on two host pairs. It passes only if the
+old release loses a process in at least one of its runs and the new release in none of its 100. If the old release
+also shows 0, the fix is recorded as not shown on the fabric AMI and escalated to Deyao, not counted as a pass. The
+short read is checked separately, because its fix is in the scratch move (the gate's `send-scratch`, sandboxd since
+`eedfbda`), not in the fork, so the old-versus-new release comparison cannot tell it apart: on the new release, the
+mapped-counter migration (`mapcount-mig.sh`, or `mig.sh` in `crates/sandboxd/tests/real-host/`) with the quick-check
+final delta against the checksummed one (the quick check losing writes, the checksum none).
 
 ## Setup
 
