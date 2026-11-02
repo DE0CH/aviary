@@ -9,6 +9,8 @@ pub mod proto;
 pub mod server;
 mod sys;
 #[cfg(test)]
+pub(crate) mod testing;
+#[cfg(test)]
 mod tests;
 
 use std::io;
