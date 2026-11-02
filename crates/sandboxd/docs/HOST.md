@@ -8,16 +8,31 @@ those of 2026-10-21. The memory bound of sandboxd itself is [MEMORY.md](MEMORY.m
 
 ## Addresses and paths
 
-| What | Range (hermit spec 13.1) |
-|---|---|
-| Hosts on wg0 | 10.202.0.0/24 (gateway .1, burst hosts .10-.250) |
-| Egress VIP | 10.202.1.1, tcp 3128 only |
-| Sandboxes | 10.203.0.0/16, one fixed /32 each, which follows it across hosts |
-| The private network's route to the gateway node | 10.202.0.0/15 |
+Every address is the deployment's: sandboxd reads them from host.json (below), which the deployment writes (the
+gateway's from hermit's ConfigMap through `fabric/host/gateway.sh`, a burst host's from the user data hermit's scaler
+gives it, a test hub's through `setup.sh hub`). aviary's scripts carry none. The table shows, as an example, the
+ranges hermit spec 13.1 uses (and the soak and fixtures use alike):
 
-These come from host.json (`hostCidr`, `egressVip`, `sandboxCidr`, written by `fabric/host/gateway.sh` and by hermit
-into each burst host's user data); sandboxd's built-in defaults are the older fabric's 10.201/10.200 ranges and are
-not relied on.
+| What | host.json | Example (hermit spec 13.1) |
+|---|---|---|
+| Hosts on wg0 | `hostCidr`, `wgAddress` | 10.202.0.0/24 (gateway .1, burst hosts .10-.250) |
+| Egress VIP | `egressVip` (tcp 3128 only) | 10.202.1.1 |
+| Sandboxes | `sandboxCidr` | 10.203.0.0/16, one fixed /32 each, which follows it across hosts |
+| The private network's route to the gateway node | (the cloud network's, `gateway-net.sh`) | 10.202.0.0/15 |
+| hermit's sources (the nodes' private addresses) | `controlCidr` | the cluster's private network |
+| Pods (egress targets) and their next hop | `podCidr`, `privateGateway` | the cluster's pod range and private gateway |
+
+sandboxd still has built-in defaults for some of these, carried over from jarvis3 unchanged (README.md, "Deployment
+defaults still compiled in"); deployments set every field and do not rely on them.
+
+### host.json
+
+`/etc/sbx/host.json` (`SBX_CONFIG` to point elsewhere), parsed by `src/config.rs`: `name`, `role` (`hub` | `burst`),
+`gateway` (hub only: no sandboxes), `wgAddress`, `hostCidr`, `wgPort`, `wgKeyFile`, `apiPort` (7443), `imagePort`
+(7444), `tls` {`ca`, `cert`, `key`}, `controlCidr`, `sandboxCidr`, `egressVip`, `podCidr`, `privateGateway`, `hub`
+(burst: the hub peer {`publicKey`, `endpoint`, `allowedIps`}), `reserveMemory` (bytes), `registryConfigDir`,
+`imageSource`, `mtu`, `limits`. Unknown keys are ignored, so a host.json may already carry fields of a later sandboxd
+(hermit spec 14.2 lists `egressPorts` for the gateway, which sandboxd reads from hermit spec 13.2 on).
 
 - **Sandbox → egress:** sandbox → its host's veth → wg0 → gateway, which DNATs VIP:3128 to one egress pod (`numgen
   random` over the targets hermit pushes with `PUT /v1/egress`) → private network → egress pod. The **source is never
@@ -25,7 +40,7 @@ not relied on.
   their conntrack entry on the gateway, which is on every path, and survive the move.
 - **hermit → sandboxd / sandbox:** pod → node (masqueraded to the node's private address, the `controlCidr` that each
   sandbox's nft lock admits on :7070) → gateway → wg0 → host.
-- Burst hosts peer the gateway (its public IPv6, udp 51821) and each other (VPC addresses, for host-to-host
+- Burst hosts peer the gateway (its public IPv6, host.json `wgPort`, 51821 in hermit's deployment) and each other (VPC addresses, for host-to-host
   migrations); the gateway learns their endpoints from the handshakes. hermit rewrites the gateway's peer list (each
   host's /32 plus its sandboxes' /32s) after every placement and migration.
 
@@ -33,7 +48,7 @@ not relied on.
 
 sandboxd as the hub with `gateway: true` (`fabric/host/gateway.sh`, a systemd unit on a cluster node, installed by
 hermit's gateway DaemonSet, hermit spec 14.2) runs no sandboxes and no runsc (it reports all memory reserved: 0
-slots). Its jobs: the WireGuard hub for the burst hosts on udp 51821 (flannel's own WireGuard has 51820), reached over
+slots). Its jobs: the WireGuard hub for the burst hosts on its `wgPort` (not 51820, flannel's own WireGuard), reached over
 the node's IPv6; the egress VIP translation; the image source for burst hosts (:7444).
 
 - Host rules touch only wg0's traffic: nothing from wg0 to the public interface or back, wg0 may reach only

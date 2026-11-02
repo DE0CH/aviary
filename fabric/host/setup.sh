@@ -5,18 +5,23 @@
 #
 # Usage (as root, from a copy of aviary's fabric/: host/ and bin/sandboxd side by side; host/fetch-sandboxd.sh puts the
 # released binary into bin/):
-#   setup.sh hub   [image ref]   a hub that also runs sandboxes: writes /etc/sbx/host.json from the environment below,
+#   setup.sh hub   [image ref]   a hub that also runs sandboxes: installs the host.json it is given (SBX_HOST_JSON),
 #                                starts sandboxd (the deployed fabric uses a gateway instead: gateway.sh)
 #   setup.sh burst [image ref]   an AWS image (AMI) bake: everything but host.json, which each instance gets from its
 #                                user data at first boot (sbx-userdata.service)
 # Environment:
 #   GV           DE0CH/gvisor release tag (required: the deployment's pin, hermit.json fabric.runsc)
-#   hub: SBX_NAME (default hermit-hub), SBX_RESERVE_MIB (default 1536), SBX_PRIVATE_GATEWAY (10.0.0.1),
-#        SBX_POD_CIDR (10.244.0.0/16), SBX_CONTROL_CIDR (10.0.0.0/16); TLS files in /etc/sbx/tls/{ca.crt,host.crt,host.key}
-#        (installed beforehand); a registry login for private images in /etc/sbx/docker/config.json (beforehand)
+#   hub: SBX_HOST_JSON (required) the hub's host.json with the deployment's addresses (role hub; wgAddress, hostCidr,
+#        controlCidr, sandboxCidr, egressVip, podCidr, privateGateway, reserveMemory: crates/sandboxd/docs/HOST.md
+#        "host.json"); `tls` and `registryConfigDir` are filled in with the files below unless it names its own.
+#        TLS files in /etc/sbx/tls/{ca.crt,host.crt,host.key} (installed beforehand); a registry login for private
+#        images in /etc/sbx/docker/config.json (beforehand)
 #   bake: REGISTRY_AUTH_FILE  a docker config.json used only while pre-pulling the image, then deleted
 set -euo pipefail
 ROLE=${1:?hub or burst}; IMAGE=${2:-}
+if [ "$ROLE" = hub ]; then
+  [ -s "${SBX_HOST_JSON:?hub: the host.json to install}" ] || { echo "missing $SBX_HOST_JSON" >&2; exit 1; }
+fi
 GV=${GV:?the DE0CH/gvisor release (hermit.json fabric.runsc)}
 CRANE_VERSION=0.20.6
 here=$(cd "$(dirname "$0")" && pwd)
@@ -256,13 +261,11 @@ fi
 
 if [ "$ROLE" = hub ]; then
   for f in ca.crt host.crt host.key; do [ -s /etc/sbx/tls/$f ] || { echo "missing /etc/sbx/tls/$f" >&2; exit 1; }; done
-  jq -n --arg name "${SBX_NAME:-hermit-hub}" --argjson reserve "$(( ${SBX_RESERVE_MIB:-1536} * 1024 * 1024 ))" \
-        --arg gw "${SBX_PRIVATE_GATEWAY:-10.0.0.1}" --arg pods "${SBX_POD_CIDR:-10.244.0.0/16}" --arg ctl "${SBX_CONTROL_CIDR:-10.0.0.0/16}" '{
-    name: $name, role: "hub", wgAddress: "10.202.0.1", hostCidr: "10.202.0.0/24", controlCidr: $ctl,
-    sandboxCidr: "10.203.0.0/16", egressVip: "10.202.1.1", podCidr: $pods, privateGateway: $gw,
-    reserveMemory: $reserve, registryConfigDir: "/etc/sbx/docker",
-    tls: {ca: "/etc/sbx/tls/ca.crt", cert: "/etc/sbx/tls/host.crt", key: "/etc/sbx/tls/host.key"}
-  }' > /etc/sbx/host.json.new
+  jq -e '.role == "hub" and (.gateway | not)' "$SBX_HOST_JSON" >/dev/null \
+    || { echo "$SBX_HOST_JSON: role must be hub, without gateway (a gateway is gateway.sh's)" >&2; exit 1; }
+  jq '{registryConfigDir: "/etc/sbx/docker",
+       tls: {ca: "/etc/sbx/tls/ca.crt", cert: "/etc/sbx/tls/host.crt", key: "/etc/sbx/tls/host.key"}} + .' \
+    "$SBX_HOST_JSON" > /etc/sbx/host.json.new
   chmod 600 /etc/sbx/host.json.new; mv /etc/sbx/host.json.new /etc/sbx/host.json
   systemctl restart sandboxd
   for _ in $(seq 30); do systemctl is-active -q sandboxd && ss -Hltn 'sport = :7443' | grep -q . && break; sleep 1; done

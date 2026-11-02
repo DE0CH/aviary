@@ -22,11 +22,11 @@
 #   infra.sh --config F sync           makes the template's AMI hold the pins: if `check` fails (or FORCE=1), bakes an
 #                                      AMI from the pins, then `template` and `prune-amis` (the deployment's AMI
 #                                      workflow runs it when a pin changes, hermit spec 14.3)
-#   infra.sh --config F template <ami> launch template (new default version): m7i.xlarge, that AMI, the SG, a public
+#   infra.sh --config F template <ami> launch template (new default version): fabric.aws.instanceType (default m7i.xlarge), that AMI, the SG, a public
 #                                      IPv4 and an IPv6 address, one subnet (one AZ: host-to-host traffic is free),
 #                                      IMDSv2 with hop limit 1, no instance profile, no key pair, gp3 40 GB deleted with
 #                                      the instance, terminate on shutdown; the template's other versions are deleted
-#   infra.sh --config F iam            IAM user hermit-scaler with only: RunInstances from that template (m7i.xlarge,
+#   infra.sh --config F iam            IAM user hermit-scaler with only: RunInstances from that template (its instance type,
 #                                      tag app=<tags.app>), tags at launch, TerminateInstances of app=<tags.app>
 #                                      instances, DescribeInstances (scaler-policy.json). Prints nothing secret;
 #                                      `iam-key` makes an access key and writes it to $KEY_OUT (mode 600), never stdout.
@@ -50,7 +50,7 @@ TAGS_JSON=$(cfg '.fabric.aws.tags | to_entries | map({Key: .key, Value: (.value 
 PIN_IMAGE=$(cfg .sandbox.image)
 PIN_SANDBOXD=$(cfg .fabric.sandboxd)
 PIN_RUNSC=$(cfg .fabric.runsc)
-INSTANCE_TYPE=m7i.xlarge
+INSTANCE_TYPE=$(jq -r '.fabric.aws.instanceType // "m7i.xlarge"' "$CONFIG")   # hermit spec 13.1's host size
 SCALER_USER=hermit-scaler
 CI_USER=hermit-ami-ci
 
@@ -84,7 +84,18 @@ digest_of() {
 }
 
 sg_id() { aws ec2 describe-security-groups --filters Name=group-name,Values="$NAME" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null | grep -v None || true; }
-policy() { sed -e "s/ACCOUNT/$2/g" -e "s/LT_ID/$3/g" -e "s/REGION/$REGION/g" -e "s/TAG_APP/$APP/g" -e "s/TEMPLATE/$NAME/g" "$here/$1"; }
+# policy FILE ACCOUNT LT_ID: the policy with its placeholders filled in, in one pass (a value is never read as another
+# placeholder). Every value must be a plain name ([A-Za-z0-9._-]), so nothing in the config can change the policy's
+# shape or widen an ARN.
+policy() {
+  jq --arg ACCOUNT "$2" --arg LT_ID "$3" --arg REGION "$REGION" --arg TAG_APP "$APP" --arg TEMPLATE "$NAME" \
+     --arg INSTANCE_TYPE "$INSTANCE_TYPE" '
+    $ARGS.named as $v
+    | [$v | to_entries[] | select(.value | test("^[A-Za-z0-9][A-Za-z0-9._-]*$") | not) | .key] as $bad
+    | if ($bad | length) > 0 then error("not a plain name in the config: \($bad | join(", "))") else . end
+    | walk(if type == "string" then gsub("(?<p>ACCOUNT|LT_ID|REGION|TAG_APP|TEMPLATE|INSTANCE_TYPE)"; $v[.p]) else . end)
+  ' "$here/$1"
+}
 
 case ${1:-} in
 sg)

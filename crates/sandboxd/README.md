@@ -17,6 +17,19 @@ filesystem by rsync). hermit is its only client.
 Moved from DE0CH/jarvis3 `chat/sandboxd/daemon` on 2026-11-02 (jarvis3 commit 52c9b8c, platform spec 4.1); jarvis3
 keeps its own copy for the old fabric until the switch's P5.
 
+## Deployment defaults still compiled in
+
+sandboxd was moved with its behaviour unchanged, so it still has these defaults of the old jarvis3 deployment. Every
+deployment sets the fields in host.json or the spec, and hermit spec 13.2 (WP-19) makes them required or neutral:
+
+| Default | Where | Value |
+|---|---|---|
+| `controlCidr` | `src/config.rs` | 10.0.0.0/16 (the old Hetzner private network) |
+| `hostCidr`, `sandboxCidr`, `egressVip` | `src/config.rs` | 10.201.0.0/24, 10.200.0.0/16, 10.201.1.1 (the old fabric) |
+| `privateGateway` when empty | `src/net.rs` (gateway and hub branches) | 10.0.0.1 |
+| `podCidr` when empty | `src/net.rs` | 10.244.0.0/16 |
+| the image base of a pull without a reference (`ref`, `imageRef`) | `src/images.rs` | `ghcr.io/de0ch/jarvis3-sandbox` (wrong once hermit's sandbox image replaces it) |
+
 ## Build and test
 
 ```
@@ -29,7 +42,12 @@ SANDBOXD_DUMP=/tmp/sbx-dump cargo test -p sandboxd-api --test live -- --ignored
 
 The release build must use profile `sandboxd` (`panic = "unwind"`: each connection runs in `catch_unwind`); the
 workspace release profile aborts on panic. CI (`ci.yml`): `test` runs the unit tests, `sandboxd-soak` the soak and
-the live contract check, `build` puts the binary in `dist` (checked static, `--version`, `budget`).
+the live contract check, `build` puts the binary in `dist` (checked static, `--version`, `budget`) and builds and runs
+the gateway installer image `images/sandboxd` (not pushed).
+
+No `aviary-<sha12>` release is published yet: that is the `publish` job of WP-28 (main only, after every gate). Until
+it exists, `fabric/host/fetch-sandboxd.sh` (and so `setup.sh`, `gateway.sh` and `infra.sh ami`/`sync`) installs
+sandboxd only from a local build or the `dist` artifact, with `SANDBOXD_BINARY=<path>`.
 
 ## Commands
 

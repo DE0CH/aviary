@@ -135,6 +135,16 @@ jobs:
           "$b" --version
           "$b" budget
           cp "$b" dist/
+      - name: images/sandboxd (the gateway installer; built and run here, pushing is the images job's)
+        # a context of just the two files the Dockerfile copies (the checkout's target/ would make it gigabytes)
+        run: |
+          ctx=$RUNNER_TEMP/sandboxd-image
+          mkdir -p "$ctx/dist" "$ctx/fabric/host"
+          cp dist/sandboxd "$ctx/dist/"
+          cp fabric/host/gateway.sh "$ctx/fabric/host/"
+          docker build -f images/sandboxd/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t sandboxd-installer:ci "$ctx"
+          docker run --rm sandboxd-installer:ci /opt/hermit-gateway/sandboxd --version
+          docker run --rm sandboxd-installer:ci sh -c '/opt/hermit-gateway/crane version && test -x /opt/hermit-gateway/gateway.sh'
       - name: magpie (glibc, debian bookworm + libheif-dev)
         # a docker run of the pinned bookworm image + libheif-dev rather than a job container, so it shares this job's
         # dist/ and cargo cache and runs as the runner's uid (.github/ci/build-magpie.sh)

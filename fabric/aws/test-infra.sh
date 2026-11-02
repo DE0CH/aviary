@@ -66,6 +66,8 @@ pol=$(grep -F "put-user-policy --user-name hermit-scaler" "$AWS_LOG" | sed 's/.*
 jq -e . <<< "$pol" > /dev/null || fail "scaler policy is not JSON"
 grep -q 'arn:aws:ec2:xx-test-1:123456789012:launch-template/lt-0abc' <<< "$pol" || fail "scaler policy ARNs"
 grep -q '"aws:RequestTag/app":"test-host"' <<< "$pol" || fail "scaler policy tag"
+grep -q '"ec2:InstanceType":"m7i.xlarge"' <<< "$pol" || fail "scaler policy instance type (the default)"
+! grep -qE 'ACCOUNT|LT_ID|REGION|TAG_APP|TEMPLATE|INSTANCE_TYPE' <<< "$pol" || fail "a placeholder left in the scaler policy"
 if grep -qE 'REGION|ACCOUNT|LT_ID|TAG_APP|TEMPLATE' <<< "$pol"; then fail "placeholders left: $pol"; fi
 echo "ok  iam: hermit-scaler's policy filled in ($(wc -c <<< "$pol") bytes)"
 
@@ -80,6 +82,18 @@ long=$(printf 'x%.0s' $(seq 24))
 size=$(sed -e "s/LT_ID/lt-0123456789abcdef0/g" -e "s/TAG_APP/$long/g" -e "s/TEMPLATE/$long/g" "$here/ami-ci-policy.json" | jq -c . | wc -c)
 [ "$size" -le 2048 ] || fail "ci policy is $size characters with 24-character names"
 echo "ok  ci-iam: hermit-ami-ci's policy filled in, $size characters with 24-character names (limit 2048)"
+
+# a config value that is not a plain name never reaches a policy (no sed injection, no widened ARN)
+jq '.fabric.aws.launchTemplate = "a/*"' "$t/hermit.json" > "$t/bad.json"
+: > "$AWS_LOG"
+if bash "$here/infra.sh" --config "$t/bad.json" iam > /dev/null 2>&1; then fail "iam with a template name a/*"; fi
+! grep -q put-user-policy "$AWS_LOG" || fail "a policy was put with a template name a/*"
+jq '.fabric.aws.instanceType = "c7i.2xlarge" | .fabric.aws.tags.app = "REGION"' "$t/hermit.json" > "$t/other.json"
+: > "$AWS_LOG"; bash "$here/infra.sh" --config "$t/other.json" iam > /dev/null
+pol=$(grep -F "put-user-policy --user-name hermit-scaler" "$AWS_LOG" | sed 's/.*--policy-document //')
+grep -q '"ec2:InstanceType":"c7i.2xlarge"' <<< "$pol" || fail "the config's instance type"
+grep -q '"aws:RequestTag/app":"REGION"' <<< "$pol" || fail "a value that is a placeholder's name is not filled in again"
+echo "ok  policies: values checked, filled in one pass, the config's instance type"
 
 run sg > /dev/null
 echo "ok  sg: finds the group by the template's name"

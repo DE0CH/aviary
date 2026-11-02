@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Makes a k3s node the sandbox hosts' gateway (crates/sandboxd/docs/HOST.md, "Gateway"): sandboxd as the hub with
-# `gateway: true` runs no sandboxes; it is the WireGuard hub for the AWS hosts (overlay address 10.202.0.1), translates
-# the egress address 10.202.1.1:3128 to an egress pod, and serves sandbox images to the AWS hosts. The private network's
-# route 10.202.0.0/15 points at this node (gateway-net.sh).
+# `gateway: true` runs no sandboxes; it is the WireGuard hub for the AWS hosts (host.json `wgAddress`), translates the
+# egress address (`egressVip`, `egressPorts`) to an egress pod, and serves sandbox images to the AWS hosts. Every
+# address is the deployment's and comes from the host.json it is given (hermit spec 14.2: the DaemonSet's ConfigMap).
 #
 # The node is shared with the cluster, so this changes nothing of it beyond: crane and sandboxd (one static binary) in
 # /usr/local/bin, /etc/sbx, /var/lib/sbx (images), the unit sandboxd.service, wg0
-# (UDP port $SBX_WG_PORT; flannel's own WireGuard has 51820) and nft table `ip sbxhost`, whose rules only concern wg0's
+# (UDP port host.json `wgPort`; flannel's own WireGuard has 51820) and nft table `ip sbxhost`, whose rules only concern wg0's
 # traffic. No packages, no sysctl beyond ip_forward (already on), no nftables.service.
 #
 # Usage (as root, from a copy of aviary's fabric/: host/ and bin/sandboxd side by side, host/fetch-sandboxd.sh fills
@@ -14,14 +14,18 @@
 #   gateway.sh [image ref]
 # Beforehand: /etc/sbx/tls/{ca.crt,host.crt,host.key} (the gateway's server certificate, make-certs.sh `gateway`) and,
 # optionally, /etc/sbx/wg.key (a kept key, so AWS hosts that know its public key keep working).
-# Environment: SBX_NAME (hermit-gw), SBX_WG_PORT (51821), SBX_PRIVATE_GATEWAY (10.0.0.1), SBX_CONTROL_CIDR (10.0.0.0/16),
-#              SBX_START (1: start or restart sandboxd now; 0: install only)
+# Environment:
+#   SBX_HOST_JSON  (required) the gateway's host.json, installed as /etc/sbx/host.json as it is: role hub,
+#                  "gateway": true, wgAddress, hostCidr, wgPort, controlCidr, sandboxCidr, egressVip, egressPorts,
+#                  podCidr, privateGateway, reserveMemory 0, limits, and tls naming the three files above (the fields:
+#                  crates/sandboxd/docs/HOST.md "host.json")
+#   SBX_START      1 (default): start sandboxd, or restart it when its binary or host.json changed; 0: install only
 set -euo pipefail
 IMAGE=${1:-}
 CRANE_VERSION=0.20.6
 here=$(cd "$(dirname "$0")" && pwd)
 
-for t in nft wg zstd curl ip; do command -v $t >/dev/null || { echo "missing $t on this node" >&2; exit 1; }; done
+for t in nft wg zstd curl ip cmp; do command -v $t >/dev/null || { echo "missing $t on this node" >&2; exit 1; }; done
 
 if [ -x "$here/crane" ] && [ "$("$here/crane" version)" = "$CRANE_VERSION" ]; then
   install -m755 "$here/crane" /usr/local/bin/crane.new && mv /usr/local/bin/crane.new /usr/local/bin/crane
@@ -37,25 +41,21 @@ printf '[Network]\nManageForeignRoutes=no\nManageForeignRoutingPolicyRules=no\n'
 
 bin=$here/../bin/sandboxd; [ -x "$bin" ] || bin=$here/sandboxd
 [ -x "$bin" ] || { echo "missing $here/../bin/sandboxd (host/fetch-sandboxd.sh)" >&2; exit 1; }
-install -m755 "$bin" /usr/local/bin/sandboxd.new && mv /usr/local/bin/sandboxd.new /usr/local/bin/sandboxd
 rm -rf /opt/node /opt/sandboxd /opt/sandboxd.old   # the Node sandboxd's leftovers
 
 install -d -m 700 /etc/sbx /etc/sbx/tls /var/lib/sbx /var/lib/sbx/images /var/log/sbx
 [ -s /etc/sbx/wg.key ] || (umask 077; wg genkey > /etc/sbx/wg.key)
 for f in ca.crt host.crt host.key; do [ -s /etc/sbx/tls/$f ] || { echo "missing /etc/sbx/tls/$f" >&2; exit 1; }; done
 
-umask 077
-cat > /etc/sbx/host.json.new <<EOF
-{
-  "name": "${SBX_NAME:-hermit-gw}", "role": "hub", "gateway": true,
-  "wgAddress": "10.202.0.1", "hostCidr": "10.202.0.0/24", "wgPort": ${SBX_WG_PORT:-51821},
-  "controlCidr": "${SBX_CONTROL_CIDR:-10.0.0.0/16}", "sandboxCidr": "10.203.0.0/16", "egressVip": "10.202.1.1",
-  "privateGateway": "${SBX_PRIVATE_GATEWAY:-10.0.0.1}", "reserveMemory": 0,
-  "tls": {"ca": "/etc/sbx/tls/ca.crt", "cert": "/etc/sbx/tls/host.crt", "key": "/etc/sbx/tls/host.key"}
-}
-EOF
-mv /etc/sbx/host.json.new /etc/sbx/host.json
-umask 022
+# host.json: the deployment's, as given; only checked to be a gateway's
+src=${SBX_HOST_JSON:?the gateway host.json (hermit spec 14.2: ConfigMap hermit-gateway)}
+[ -s "$src" ] || { echo "missing $src" >&2; exit 1; }
+tr -d ' \n\t' < "$src" | grep -q '"gateway":true' || { echo "$src is not a gateway's host.json (\"gateway\": true)" >&2; exit 1; }
+changed=0
+cmp -s "$src" /etc/sbx/host.json || changed=1
+cmp -s "$bin" /usr/local/bin/sandboxd || changed=1
+install -m600 "$src" /etc/sbx/host.json.new && mv /etc/sbx/host.json.new /etc/sbx/host.json
+install -m755 "$bin" /usr/local/bin/sandboxd.new && mv /usr/local/bin/sandboxd.new /usr/local/bin/sandboxd
 
 cat > /etc/systemd/system/sandboxd.service <<'EOF'
 [Unit]
@@ -96,7 +96,8 @@ if [ -n "$IMAGE" ]; then
 fi
 
 if [ "${SBX_START:-1}" = 1 ]; then
-  systemctl restart sandboxd
+  # a restart never touches wg0 or nft (the data plane keeps flowing); without a change there is none
+  if [ "$changed" = 1 ] || ! systemctl is-active -q sandboxd; then systemctl restart sandboxd; fi
   for _ in $(seq 30); do systemctl is-active -q sandboxd && ss -Hltn 'sport = :7443' | grep -q . && break; sleep 1; done
   systemctl is-active sandboxd >/dev/null || { journalctl -u sandboxd -n 30 --no-pager >&2; exit 1; }
   echo "gateway ready: wg $(wg show wg0 public-key) port $(wg show wg0 listen-port)"

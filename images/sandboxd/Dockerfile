@@ -1,8 +1,8 @@
 # ghcr.io/de0ch/sandboxd:<sha12> (platform 5.2): the installer of hermit's gateway DaemonSet (hermit spec 14.2). Its
 # initContainer copies /opt/hermit-gateway (sandboxd, crane, gateway.sh) to the node and runs gateway.sh there; the
-# main container sleeps. Built from the repository root after the `build` job: dist/sandboxd is the static musl
-# binary (cargo build --profile sandboxd).
-#   docker build -f images/sandboxd/Dockerfile --build-arg REVISION=<40 hex> .
+# main container sleeps. Its context needs only dist/sandboxd (the static musl binary, cargo build --profile sandboxd)
+# and fabric/host/gateway.sh; ci.yml's `build` job builds it from a context of those two:
+#   docker build -f images/sandboxd/Dockerfile --build-arg REVISION=<40 hex> <context>
 FROM busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
 
 ARG REVISION=dev

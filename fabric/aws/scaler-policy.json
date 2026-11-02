@@ -9,7 +9,7 @@
       "Condition": {
         "ArnLike": {"ec2:LaunchTemplate": "arn:aws:ec2:REGION:ACCOUNT:launch-template/LT_ID"},
         "Bool": {"ec2:IsLaunchTemplateResource": "true"},
-        "StringEquals": {"aws:RequestTag/app": "TAG_APP", "ec2:InstanceType": "m7i.xlarge"}
+        "StringEquals": {"aws:RequestTag/app": "TAG_APP", "ec2:InstanceType": "INSTANCE_TYPE"}
       }
     },
     {
