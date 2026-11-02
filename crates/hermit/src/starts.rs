@@ -295,6 +295,7 @@ impl Start {
     async fn workspace(&mut self, row: &SandboxRow) -> Step {
         let ws = &self.core.providers.workspaces;
         let mut last = String::new();
+        let mut unmounted = true;
         for attempt in 0..3 {
             if attempt > 0 {
                 tokio::time::sleep(self.core.timings.workspace_retry).await;
@@ -304,12 +305,42 @@ impl Start {
             }
             match ws.ensure(row.conversation_id).await {
                 Ok(_) => return self.next(SandboxPhase::Placing, "", vec![]).await,
-                Err(e) => last = e.to_string(),
+                Err(e) => {
+                    unmounted &= matches!(e, crate::fabric::WorkspaceError::NotMounted(_));
+                    last = e.to_string();
+                }
             }
+        }
+        // this replica's mount is broken and another replica's works: hand the start over (15.6) instead of
+        // failing it; this replica's sweep leaves workspace-step starts alone while its mount is broken
+        if unmounted && self.hand_over(row.id).await {
+            tracing::info!(sandbox = %row.id, error = %last, "start handed over: workspace store not mounted here");
+            self.claim.mark_lost();
+            return Step::Stop;
         }
         let mut f = Fail::new(ReleaseReason::WorkspaceUnavailable, last);
         f.note = Some("workspace".into());
         Step::Fail(f)
+    }
+
+    /// Hands this start's claim back when another replica reported a working workspace mount in the last 30 s.
+    async fn hand_over(&self, id: Uuid) -> bool {
+        let res = async {
+            self.core
+                .pool
+                .get()
+                .await?
+                .execute(
+                    "update sandboxes set task_owner = null, task_until = now()
+                     where id = $1 and task = 'start' and task_owner = $2
+                       and exists (select 1 from replicas where pod <> $2 and store_error is null
+                                     and seen_at > now() - interval '30 seconds')",
+                    &[&id, &self.core.pod],
+                )
+                .await
+        }
+        .await;
+        matches!(res, Ok(1))
     }
 
     async fn placing(&mut self, row: &SandboxRow) -> Step {

@@ -19,6 +19,7 @@ the binary (`src/main.rs`) runs it as `hermit serve` and checks catalogues as `h
 | `janitor` | 12, 10.6: the leader's pass and daily retention |
 | `supervisor_client` | 3.10: health, release, the flush before a clone |
 | `fabric` | 8.1: the `Fabric` and `Workspaces` traits (one provider each; tests inject fakes) |
+| `workspaces`, `migrations/0002` | 3.8, 15: `/workspace` on `JuiceFS` (hermit's mount `/jfs`, the `juicefs` CLI for quotas, `clone`, `rmr`; `openat2` beneath the workspace for listing and reading); each replica's own state in `replicas` (its mount, its last refused delete) for the ops verdict and the start hand-over |
 | `server`, `app` | the `hermit_api::Server` implementation; start, loops, drain (20.2), kill |
 
 ## Tests
@@ -28,6 +29,12 @@ database per test, a fake fabric whose sandboxes are `aviary-fakes` supervisors 
 and replicas started in-process with short timings (`Timings` is code, not configuration).
 
 - `tests/conformance.rs`: `aviary-conformance hermit` (24.1) against a replica, every check passing, none skipped.
+- `tests/workspaces.rs`: hermit 24.2 "Workspaces" on the real `JuiceFs` store over a plain directory (the CLI
+  replaced by a copy/remove fake with an in-memory quota table): the quota on every ensure, path escapes refused
+  (an absolute symlink, `..` through a symlink into a neighbour), symlinks inside followed, a FIFO never blocking a
+  read, Range and 416, listing pages, clone with its own quota after the live sandbox's flush, delete after the
+  sandbox is gone, a refused delete (503, recorded for the verdict), a broken mount (503 with `retry-after: 2`, the
+  start handed to the replica whose mount works).
 - `tests/lifecycle.rs`: hermit 24.2's ported tests for the core: one sandbox per conversation, the `PUT`
   reservation, the janitor's idle and lifetime rules (busy never idled, 9 h forced), release refusal restarting the
   idle clock, forced delete, a requested release carried in the activity reply and done at the idle report, a `PUT`
@@ -54,10 +61,8 @@ and replicas started in-process with short timings (`Timings` is code, not confi
 
 ## Not here yet
 
-- The gVisor fabric (hermit 13-14, WP-19) and JuiceFS workspaces (15, WP-20). Until they land, `hermit serve` runs
-  with `fabric::Unbuilt`: every workspace call is 503 `workspace_unavailable`, so every start ends at its
-  `workspace` step, after 3 tries 2 s apart, as `gone` `workspace_unavailable` (`sandbox_failed`). (Past that step
-  the `Unbuilt` fabric's placement errors would end it `start_failed`/`placement` after `hostWaitSeconds`.)
+- The gVisor fabric (hermit 13-14, WP-19). Until it lands, `hermit serve` runs with `fabric::Unbuilt`, whose
+  placement errors end every start `start_failed`/`placement` after `hostWaitSeconds`.
 - The operator page, the snapshot, the health verdict, admin routes and console tails (3.11-3.12, 16, 18; WP-20):
   they answer 501 `not_supported` (the trait's default).
 - The janitor's orphan sweep (12 step 8) and vanished/host-loss judgement (13.4, 13.7) are the fabric's scaler.
@@ -106,9 +111,16 @@ and replicas started in-process with short timings (`Timings` is code, not confi
 - **A forced or lost release asked for a starting sandbox** ends the start at its next step or poll (the host and
   supervisor waits re-read the row each poll), destroying what was made, rather than only once it reaches `ready`
   (11.2 step 6): a deleted conversation or a person who left has nothing to start for. A soft release (`requested`) still waits for `ready` and an idle point.
-- **The workspace step's hand-over** to another replica on a broken local mount (11.2 step 2, 15.6) is not built:
-  the core retries `ensure` 3 times 2 s apart, then fails `workspace_unavailable`. The hand-over needs the JuiceFS
-  store's own "broken here" signal (WP-20), which `WorkspaceError::Unavailable` is the place for.
+- **The workspace step's hand-over** (11.2 step 2, 15.6): after 3 tries 2 s apart that all met this replica's
+  broken mount (`WorkspaceError::NotMounted`), the start hands its claim back when another replica reported a working
+  mount in the last 30 s (`replicas`, written every 10 s); this replica's sweep skips workspace-step starts while its
+  own mount is broken. Otherwise (a CLI or metadata failure, or no replica with a working mount) it fails
+  `workspace_unavailable` as before.
+- **Workspace usage** comes from `juicefs quota get`, whose table prints sizes in JuiceFS's human form (`1.5 MiB`),
+  so `usage.bytes` is exact to the unit's first decimal (3.8 does not say how exact it must be). A workspace whose
+  quota is missing reports `quota` and `usage` as zeros until its next ensure sets the quota.
+- **uid 1000** (15.4) is the mount's (`all-squash=1000:1000`), not code: nothing in hermit chowns, and the tests,
+  which run the store on a plain directory, do not check ownership; the fabric acceptance (24.3) does.
 - **Migrations are recorded in `_migrations`** (aviary-pg's table, with each file's sha256) rather than
   `schema_migrations` (10.2).
 - **`TokenLiveness.expiresAt`** is the row's hard expiry (the token's own expiry, 6.1); 3.9 does not say which.

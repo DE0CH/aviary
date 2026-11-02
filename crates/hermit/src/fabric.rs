@@ -130,9 +130,13 @@ pub trait Fabric: Send + Sync + 'static {
 /// Why a workspace call failed.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum WorkspaceError {
-    /// The store is not usable from this replica (503 `workspace_unavailable`, a start hands over).
+    /// The store is not usable (503 `workspace_unavailable`): a CLI or metadata failure, a refused delete.
     #[error("workspace store unavailable: {0}")]
     Unavailable(String),
+    /// This replica's mount is broken or missing (15.6): 503 `workspace_unavailable`, and a start at its workspace
+    /// step hands over to a replica whose mount works.
+    #[error("workspace store not mounted: {0}")]
+    NotMounted(String),
     /// A contract answer (`no_workspace`, `no_path`, `not_a_dir`, `exists`, 416, …).
     #[error("{0:?}")]
     Api(ApiError),
@@ -141,12 +145,21 @@ pub enum WorkspaceError {
 impl From<WorkspaceError> for ApiError {
     fn from(e: WorkspaceError) -> Self {
         match e {
-            WorkspaceError::Unavailable(m) => {
+            WorkspaceError::Unavailable(m) | WorkspaceError::NotMounted(m) => {
                 hermit_api::error::api(503, hermit_api::error::codes::WORKSPACE_UNAVAILABLE, m).retry_after(2)
             }
             WorkspaceError::Api(a) => a,
         }
     }
+}
+
+/// What the ops verdict needs to know of a replica's workspace store (hermit 15.4, 15.6, 18.6).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StoreHealth {
+    /// Why the mount is unusable, while it is.
+    pub unmounted: Option<String>,
+    /// The last delete refused for an entry hermit may not remove (when, which workspace path).
+    pub delete_refused: Option<(hermit_api::Timestamp, String)>,
 }
 
 /// `/workspace` storage (hermit 3.8, 15). Paths reaching it are already checked against 3.8's rules; the
@@ -171,6 +184,14 @@ pub trait Workspaces: Send + Sync + 'static {
     fn clone_workspace(&self, wid: Uuid, from: Uuid) -> Fut<'_, Result<Workspace, WorkspaceError>>;
     /// Removes the tree and its quota (absent is fine).
     fn delete(&self, wid: Uuid) -> Fut<'_, Result<(), WorkspaceError>>;
+    /// The store's state as this replica sees it (fine unless a store says otherwise).
+    fn health(&self) -> StoreHealth {
+        StoreHealth::default()
+    }
+    /// Checks the store now (the mount) and answers [`Workspaces::health`].
+    fn probe(&self) -> Fut<'_, StoreHealth> {
+        Box::pin(async { self.health() })
+    }
 }
 
 /// The fabric and the workspace store a replica uses.

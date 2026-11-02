@@ -354,6 +354,8 @@ pub async fn sweep_once(core: &Arc<Core>) -> Result<Option<(Uuid, Kind)>, aviary
     if core.is_draining() {
         return Ok(None);
     }
+    // a start at its workspace step is left to a replica whose workspace mount works (hermit 15.6)
+    let unmounted = core.providers.workspaces.health().unmounted.is_some();
     let row = core
         .pool
         .get()
@@ -361,9 +363,10 @@ pub async fn sweep_once(core: &Arc<Core>) -> Result<Option<(Uuid, Kind)>, aviary
         .query_opt(
             "update sandboxes set task_owner = $1, task_until = now() + $2::bigint * interval '1 millisecond'
              where id = (select id from sandboxes where task is not null and task_until < now() and status <> 'gone'
+                           and not ($3 and task = 'start' and phase = 'workspace')
                          order by task_until limit 1 for update skip locked)
              returning id, task",
-            &[&core.pod, &core.claim_ms()],
+            &[&core.pod, &core.claim_ms(), &unmounted],
         )
         .await?;
     let Some(row) = row else {

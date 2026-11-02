@@ -37,7 +37,7 @@ pub fn connect(url: &str, pod: &str, pool_size: usize) -> Result<Pool, aviary_pg
 /// # Errors
 /// A migration failure or an edited shipped migration.
 pub async fn migrate(pool: &Pool) -> Result<Vec<i32>, aviary_pg::Error> {
-    let list = aviary_pg::migrations!["0001_init.sql"]?;
+    let list = aviary_pg::migrations!["0001_init.sql", "0002_replicas.sql"]?;
     aviary_pg::migrate(pool, &LOCK_MIGRATIONS, &list).await
 }
 

@@ -13,6 +13,7 @@ use hermit::catalogue::{self, Catalogue};
 use hermit::config::{CONFIG_PATH, Config};
 use hermit::fabric::{Providers, Unbuilt};
 use hermit::tokens::Keys;
+use hermit::workspaces::{JuiceCli, JuiceFs, MOUNT};
 
 #[derive(Parser, Debug)]
 #[command(about = "hermit: sandbox lifecycle")]
@@ -118,6 +119,10 @@ async fn serve() -> ExitCode {
         }
     };
     let callers = Callers::from_env("HERMIT", &CALLERS);
+    let juicefs = JuiceCli::new(
+        env::required("HERMIT_JUICEFS_META_URL"),
+        env::required("HERMIT_JUICEFS_META_PASSWORD"),
+    );
 
     let config = match config {
         Ok(c) => Arc::new(c),
@@ -132,6 +137,8 @@ async fn serve() -> ExitCode {
     let Some(staff) = staff else {
         return ExitCode::FAILURE;
     };
+    let ws = &config.file.sandbox.workspace;
+    let workspaces = Arc::new(JuiceFs::new(MOUNT, Arc::new(juicefs), ws.quota_gib, ws.quota_inodes));
 
     let app = loop {
         let options = StartOptions {
@@ -142,10 +149,10 @@ async fn serve() -> ExitCode {
             database_url: database_url.clone(),
             pod: pod.clone(),
             pool_size: 10,
-            // the gVisor fabric (WP-19) and JuiceFS workspaces (WP-20) replace these
+            // the gVisor fabric (WP-19) replaces `Unbuilt`
             providers: Providers {
                 fabric: Arc::new(Unbuilt),
-                workspaces: Arc::new(Unbuilt),
+                workspaces: workspaces.clone(),
             },
             timings: hermit::Timings::default(),
             callers: callers.clone(),

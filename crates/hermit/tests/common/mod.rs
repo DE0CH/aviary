@@ -623,6 +623,11 @@ impl Harness {
     }
 
     pub async fn replica(&self, pod: &str) -> Replica {
+        self.replica_with(pod, self.workspaces.clone()).await
+    }
+
+    /// A replica with its own workspace store (a real `JuiceFs` on a directory, or a broken one).
+    pub async fn replica_with(&self, pod: &str, workspaces: Arc<dyn Workspaces>) -> Replica {
         let app = App::start(StartOptions {
             config: self.config.clone(),
             catalogue: self.catalogue.clone(),
@@ -633,7 +638,7 @@ impl Harness {
             pool_size: 4,
             providers: Providers {
                 fabric: self.fabric.clone(),
-                workspaces: self.workspaces.clone(),
+                workspaces,
             },
             timings: self.timings.clone(),
             callers: self.callers(),

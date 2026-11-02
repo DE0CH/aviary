@@ -28,6 +28,7 @@ pub mod supervisor_client;
 pub mod tasks;
 pub mod tokens;
 pub mod warm;
+pub mod workspaces;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -84,6 +85,8 @@ pub struct Timings {
     /// How long a `PUT` waits for a releasing sandbox to end (5 s), and a workspace delete for its sandbox (60 s).
     pub put_release_wait: Duration,
     pub delete_wait: Duration,
+    /// How often a replica writes its own state (`replicas`: the workspace mount, a refused delete) (10 s).
+    pub replica_report: Duration,
     /// A pause before a new start's first step: zero in production; the conformance test uses it to see a
     /// long-poll time out on a row that has not changed since its `PUT`.
     pub start_pause: Duration,
@@ -117,6 +120,7 @@ impl Default for Timings {
             gone_visible: s(600),
             put_release_wait: s(5),
             delete_wait: s(60),
+            replica_report: s(10),
             start_pause: Duration::ZERO,
         }
     }

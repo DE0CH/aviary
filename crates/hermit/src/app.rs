@@ -145,6 +145,8 @@ impl App {
             app.spawn(catalogue_loop(core.clone()));
         }
         app.spawn(sweep_loop(core.clone()));
+        app.spawn(replica_loop(core.clone()));
+        // the janitor is spawned last: the drain stops it first (`begin_drain` pops it)
         app.spawn(janitor::run(core, leader));
         Ok(app)
     }
@@ -323,4 +325,39 @@ async fn sweep_loop(core: Arc<Core>) {
             tracing::warn!(error = %e, "takeover sweep failed");
         }
     }
+}
+
+/// Writes this replica's own state every `replica_report` (hermit 15.6, 18.6): its workspace mount and the last
+/// workspace delete it was refused.
+async fn replica_loop(core: Arc<Core>) {
+    loop {
+        if let Err(e) = report_replica(&core).await {
+            tracing::warn!(error = %e, "replica report failed");
+        }
+        tokio::time::sleep(core.timings.replica_report).await;
+    }
+}
+
+/// One report of [`replica_loop`].
+///
+/// # Errors
+/// A database error.
+pub async fn report_replica(core: &Core) -> Result<(), aviary_pg::Error> {
+    let h = core.providers.workspaces.probe().await;
+    let (refused_at, refused_path) = h
+        .delete_refused
+        .map(|(at, p)| (Some(at.datetime()), Some(p)))
+        .unwrap_or_default();
+    core.pool
+        .get()
+        .await?
+        .execute(
+            "insert into replicas (pod, seen_at, store_error, delete_refused_at, delete_refused_path)
+             values ($1, now(), $2, $3, $4)
+             on conflict (pod) do update set seen_at = now(), store_error = excluded.store_error,
+               delete_refused_at = excluded.delete_refused_at, delete_refused_path = excluded.delete_refused_path",
+            &[&core.pod, &h.unmounted, &refused_at, &refused_path],
+        )
+        .await?;
+    Ok(())
 }
