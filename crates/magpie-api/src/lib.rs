@@ -22,6 +22,7 @@ pub mod errors;
 pub mod events;
 pub mod files;
 pub mod live;
+pub mod mime;
 pub mod ops;
 pub mod routes;
 pub mod rows;

@@ -24,43 +24,6 @@ pub const MAX_NAME: usize = 255;
 /// magpie's longest wait to answer once the whole body is sent (spec 5.7: the first byte of its answer).
 pub const UPLOAD_FIRST_BYTE: Duration = Duration::from_secs(30);
 
-/// The content type of an upload from its file name, when the part names none (or `application/octet-stream`).
-#[must_use]
-pub fn type_from_name(name: &str) -> &'static str {
-    let ext = name
-        .rsplit_once('.')
-        .map(|(_, e)| e.to_ascii_lowercase())
-        .unwrap_or_default();
-    match ext.as_str() {
-        "pdf" => "application/pdf",
-        "txt" | "log" => "text/plain",
-        "md" => "text/markdown",
-        "csv" => "text/csv",
-        "tsv" => "text/tab-separated-values",
-        "json" => "application/json",
-        "xml" => "application/xml",
-        "html" | "htm" => "text/html",
-        "doc" => "application/msword",
-        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "xls" => "application/vnd.ms-excel",
-        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "ppt" => "application/vnd.ms-powerpoint",
-        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        "zip" => "application/zip",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "heic" => "image/heic",
-        "heif" => "image/heif",
-        "svg" => "image/svg+xml",
-        "mp3" => "audio/mpeg",
-        "mp4" => "video/mp4",
-        "mov" => "video/quicktime",
-        _ => "application/octet-stream",
-    }
-}
-
 /// The file name as stored: no `/`, `\`, NUL or control characters (each becomes `_`), at most 255 bytes.
 #[must_use]
 pub fn sanitise_name(raw: &str) -> String {
@@ -135,7 +98,7 @@ pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
     let name = sanitise_name(field.file_name().unwrap_or("file"));
     let content_type = match field.content_type().map(ToString::to_string) {
         Some(t) if !t.is_empty() && t != "application/octet-stream" => t,
-        _ => type_from_name(&name).to_owned(),
+        _ => magpie_api::mime::from_name(&name).to_owned(),
     };
     // one chunk in flight: the client is read only as fast as magpie takes the bytes
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(1);
@@ -321,10 +284,5 @@ mod tests {
         assert_eq!(sanitise_name("a/b\\c\u{0}d.txt"), "a_b_c_d.txt");
         assert_eq!(sanitise_name("  "), "file");
         assert!(sanitise_name(&"報".repeat(200)).len() <= MAX_NAME);
-        assert_eq!(
-            type_from_name("Report.XLSX"),
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        );
-        assert_eq!(type_from_name("x"), "application/octet-stream");
     }
 }

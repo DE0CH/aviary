@@ -104,7 +104,7 @@ impl RowProjector for BasicProjector {
                     .filter(|f| safe_path(&f.path))
                     .map(|f| {
                         let mime = if f.mime_type.is_empty() {
-                            crate::uploads::type_from_name(&f.name).to_owned()
+                            magpie_api::mime::from_name(&f.name).to_owned()
                         } else {
                             f.mime_type.clone()
                         };
