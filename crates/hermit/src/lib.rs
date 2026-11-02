@@ -95,6 +95,10 @@ pub struct Timings {
     /// A pause before a new start's first step: zero in production; the conformance test uses it to see a
     /// long-poll time out on a row that has not changed since its `PUT`.
     pub start_pause: Duration,
+    /// The scaler's tick (5 s, hermit 13.4) and the EC2 reconcile and orphan sweep within it (at most every 30 s,
+    /// 13.9).
+    pub scaler: Duration,
+    pub reconcile: Duration,
 }
 
 impl Default for Timings {
@@ -127,6 +131,8 @@ impl Default for Timings {
             delete_wait: s(60),
             replica_report: s(10),
             start_pause: Duration::ZERO,
+            scaler: s(5),
+            reconcile: s(30),
         }
     }
 }

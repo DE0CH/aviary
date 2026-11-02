@@ -336,12 +336,8 @@ pub fn run(core: &Arc<Core>, claim: Claim) {
     match kind {
         Kind::Start => core.tasks.spawn(id, kind, crate::starts::run(c, claim)),
         Kind::Release => core.tasks.spawn(id, kind, crate::sandboxes::run_release(c, claim)),
-        Kind::Migrate => core.tasks.spawn(id, kind, async move {
-            // live migration is the fabric's task (hermit 13.10, WP-19): until it exists, a migrate claim is
-            // cleared so the row is judged again by its state
-            tracing::warn!(sandbox = %claim.id, "migrate task without a fabric: claim cleared");
-            let _ = clear(&c, &claim).await;
-        }),
+        // live migration is the fabric's task (hermit 13.10)
+        Kind::Migrate => core.tasks.spawn(id, kind, core.providers.fabric.migrate(c, claim)),
     }
 }
 

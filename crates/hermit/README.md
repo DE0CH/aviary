@@ -1,7 +1,8 @@
 # hermit (the YYC implementation of the hermit contract)
 
-hermit spec sections 3-12, 19, 20, 23 and 24.1-24.2 (WP-18, the core). The library (`src/lib.rs`) is one replica;
-the binary (`src/main.rs`) runs it as `hermit serve` and checks catalogues as `hermit catalogue-check <file>`.
+hermit spec sections 3-12, 19, 20, 23 and 24.1-24.2 (WP-18, the core) and 13 (WP-19, the fabric). The library
+(`src/lib.rs`) is one replica; the binary (`src/main.rs`) runs it as `hermit serve` and checks catalogues as
+`hermit catalogue-check <file>`.
 
 | Module | Spec |
 |---|---|
@@ -25,6 +26,15 @@ the binary (`src/main.rs`) runs it as `hermit serve` and checks catalogues as `h
 | `ops`, `ops_page.html` | 3.11, 18.1-18.2, 18.4-18.5: who may read `/ops/*`, the page (CSP, `no-referrer`), magpie's and egress's ops reads, the Kubernetes reader (`InCluster`, the Pod's ServiceAccount) |
 | `snapshot`, `health_verdict` | 18.3, 18.6: the snapshot's sections (8 s each, `null` + `errors[name]` on failure, cached 4 s per zone) and the verdict |
 | `scripts/hermit-admin.sh` | 16: the operator's and runbooks' client of the admin routes (token from `HERMIT_ADMIN_TOKEN`, passed to curl on stdin) |
+| `fabric::gvisor` | 13: `Gvisor`, the fabric the binary runs (its outside world in `Deps`, so tests replace it) |
+| `fabric::sandboxd` | 13.15: one mTLS `sandboxd_api::Client` per host, the create errors as the start reads them |
+| `fabric::hosts`, `fabric::placement` | 10.2 `hosts`, `host_events`; 13.3 slots, units, placeability, `pick`, placement under lock 7300/5 |
+| `fabric::scaler` | 13.4-13.9: the pass (leader of 7300/4), heartbeats, vanished, host loss, `JuiceFS` gating, launches under 7300/7, release of an empty host, moves off retiring hosts, packing, EC2 reconcile, the orphan sweep (12 step 8) |
+| `fabric::packing` | 13.11: `plan_packing`, ported as is |
+| `fabric::migrate` | 13.10: the resumable `migrate` task and its takeover |
+| `fabric::network` | 13.8: gateway and mesh peers, the egress targets from the `EndpointSlices` watch |
+| `fabric::ec2` | 13.5, 14.4: `RunInstances`/`TerminateInstances`/`DescribeInstances` (`aws-sdk-ec2`), `WireGuard` keys |
+| `fabric::images` | 13.14: the warm-up of a host that just became active |
 | `server`, `app` | the `hermit_api::Server` implementation; start, loops, drain (20.2), kill |
 
 ## Tests
@@ -53,6 +63,19 @@ and replicas started in-process with short timings (`Timings` is code, not confi
 - `tests/common_port.rs`: the hermit parts of jarvis3 `common.test.ts`: who is a user (`@domain` entries, no
   subdomains, a bare `@domain` or an empty address never), migrations applied twice change nothing, one janitor
   leader at a time with a takeover.
+- `tests/fabric.rs`: the fabric against fake sandboxd hosts (`sandboxd-api`'s router over in-memory hosts on local
+  ports, which can go down and come back) and a fake EC2 (a launched instance becomes a fake host named and
+  addressed by its user data): ported `vm.test.ts` (burst to AWS with the user data, active once mounted, the image
+  warm-up, placement, the gateway's peers and egress targets, packing by live migration, not across gVisor releases,
+  a send that would not converge, the emptied host terminated past its minimum lifetime; `maxHosts` and a full pool
+  reported; capacity planning across two replicas and a burst; the demand window; the renamed gateway; host loss not
+  judged while the gateway is away or settling; `JuiceFS` gating, retirement and the boot timeout), and what the
+  port adds: host loss and vanished sandboxes (`alive:false`, not listed) `gone`/`sandbox_lost` within 10 s with the
+  scaler running by itself, a migrating row never judged from its source, a CPU feature missing, the EC2 reconcile
+  (orphan instances, a missing instance, a failed launch with its AWS code), orphan sandbox names, a migration
+  resumed by another replica after the first one died mid-send, and a start and release through the whole core.
+- Unit tests in `src/fabric/`: slots and sizes, `pick`, placeability (the fresh-host switch), addresses, packing
+  (ported `packing.test.ts`), peers, `EndpointSlice` readiness, `WireGuard` keys (RFC 7748's vector), create errors.
 - `tests/lifecycle.rs`: hermit 24.2's ported tests for the core: one sandbox per conversation, the `PUT`
   reservation, the janitor's idle and lifetime rules (busy never idled, 9 h forced), release refusal restarting the
   idle clock, forced delete, a requested release carried in the activity reply and done at the idle report, a `PUT`
@@ -79,9 +102,10 @@ and replicas started in-process with short timings (`Timings` is code, not confi
 
 ## Not here yet
 
-- The gVisor fabric (hermit 13-14, WP-19). Until it lands, `hermit serve` runs with `fabric::Unbuilt`, whose
-  placement errors end every start `start_failed`/`placement` after `hostWaitSeconds`.
-- The janitor's orphan sweep (12 step 8) and vanished/host-loss judgement (13.4, 13.7) are the fabric's scaler.
+- sandboxd's own side of hermit 13.2 (WP-19, `crates/sandboxd`): the fabric already reads `Listed.alive`, sends
+  `pids` and never `user`, asks `GET …/log` and `GET …/receive` without `wait`; an older sandboxd answers without
+  `alive` (read as alive) and 404 for the log (no console tail is kept).
+- Fabric acceptance on real hosts (24.3) is WP-40's; live migration's acceptance there waits for WP-57.
 - Metrics (25) beyond the platform's defaults and `hermit_catalogue_refused_total` and `hermit_held_requests`
   (3.4.1, 23; registered in `main.rs`): the lookups, sandbox, host, start and request families of hermit 25 are not
   built (WP-20 built the page, the snapshot and the verdict, which read the tables directly).
@@ -150,7 +174,9 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   fails at once (11.2 step 5). A placement that keeps failing (a fabric error, not "no slot") ends
   `start_failed` (note `placement`) after `hostWaitSeconds` instead of waiting out the 8 min start deadline.
 - **The `Fabric` trait** (`place`, `request_host`, `create`, `control_url`, `console_tail`, `destroy`,
-  `gateway_settled`) is the core's view of hermit 13; WP-19 implements it and may grow it.
+  `gateway_settled`) is the core's view of hermit 13; WP-19 grew it by `attach` (the fabric reads the database and
+  the configuration through the replica's core), `tick` (the scaler loop, every 5 s, the pass on the leader of
+  7300/4) and `migrate` (the `migrate` task), each with a default so the tests' fake fabric is unchanged.
 
 ### WP-20 (workspaces, ops page, admin routes)
 
@@ -158,9 +184,9 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   last refused delete) and `fabricOps` (`lastPassAt`, `egressTargets`) carry what 18.6's verdict judges beyond 18.3's
   table; 18.3's fields are unchanged.
 - **The fabric's part of the page** is `Fabric::ops()` (`FabricOps`: the scaler's `plan`, the leader's last pass,
-  the egress target count, slots per host), a default method answering "nothing known" until WP-19 implements it.
-  Until then `scaler.plan` is `null` and `hosts.list[].slots` `null` (the monitor's `ai_slim` reads
-  `scaler.plan.*`, so the YYC deployment needs WP-19's plan before the switch).
+  the egress target count, slots per host), a default method answering "nothing known"; the gVisor fabric (WP-19)
+  answers it from the database (the plan as a launch would compute it, the leader's last pass and the gateway's
+  egress targets from the gateway's row).
 - **A workspace delete refused** (15.4) is a problem in the verdict while the refusal is younger than
   `recentMinutes` (15 min): magpie's outbox retries the delete, so a lasting cause keeps the finding; 18.6 does not
   say how long it shows.
@@ -174,3 +200,34 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   matched a bare `@domain` before; every caller normalises the address first, so no request could use that).
 - **The page's zone** is the browser's (`Intl`), falling back to `ops.timeZone`; times are shown in it (18.2: "polls
   `./snapshot?tz=<browser zone>`").
+### The fabric (WP-19)
+
+- **User data names the hub peer `hub`**, as sandboxd's `host.json` parser does (`crates/sandboxd/src/config.rs`),
+  not `hubPeer` as the example in 13.5; `egressPorts` is written as the spec has it (today's sandboxd ignores it).
+- **Placement records `host` and `ip` on the row itself**, in the transaction that holds lock 7300/5, so the next
+  placement on any replica counts the slot (13.3's `units` are rows); the start's own write of the same values
+  follows. A row already placed is answered with its place (the host wait's poll may have placed it).
+- **A migration's intent** (the `migrate` claim, `migrating_to`, `migration_started_at`, event `migration-start`) is
+  written by the scaler in one transaction under the placement lock that also checks the target still has room,
+  rather than by the task's step 1, so two passes cannot both count the same free slot. The task then begins at step
+  2; a takeover (no memory of a fresh start) always asks the target first (13.10 "Takeover"). A takeover of an
+  intent whose receive was never asked finds `none` and settles: the source lists the sandbox, so it is kept.
+- **`maxDowntimeMs`** is sent only when the two hosts' kinds differ (0, no limit, otherwise): 13.10's cross-cloud
+  rule; its step 4 lists 500 for every move.
+- **A `host_lost` release pending on a row whose migration settled onto a live AWS host is dropped** when the
+  migration ends (step 7), so a sandbox that moved off a dying source is not destroyed after it survived.
+- **The orphan sweep** (janitor 12 step 8) runs in the scaler at the reconcile cadence (30 s), from the lists the
+  pass's heartbeats just read.
+- **Vanished** (13.4 step 3) judges only rows that were `ready` before the heartbeat was asked and have not moved
+  since it was asked: a list read before a row became ready or moved cannot hold it.
+- **The gateway's "answering since"** is kept on its row (`info.upSince`) by the leader and read by every other
+  replica each tick, so `gateway_settled()` (the silence rule, the soft release's settle time) answers the same on
+  every replica. AWS hosts are judged once the gateway has answered for `hostDeadSeconds` (13.4 step 4 says 30 s,
+  YYC's `hostDeadSeconds`).
+- **The fresh-host switch** (16) compares a host's activation time (`info.activeAt`, written when it turns active)
+  with `controls.updated_at` while `fresh_host_until` is in the future.
+- **A launch before the gateway's first heartbeat** (its `WireGuard` key unknown) answers `planned`: the start waits
+  and the next pass launches (the waiting row counts in the plan).
+- **`openFiles`** has no field in sandboxd's spec; it is not sent (sandboxd's own limit applies).
+- **sandboxd connections across replicas** (docs/CONTRACTS.md's open question): kept at 8 per host per replica; the
+  queueing beyond sandboxd's 16 workers costs latency during a burst only.

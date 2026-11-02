@@ -645,11 +645,22 @@ impl Harness {
     }
 
     pub async fn replica(&self, pod: &str) -> Replica {
-        self.replica_with(pod, self.workspaces.clone()).await
+        self.replica_full(pod, self.fabric.clone(), self.workspaces.clone())
+            .await
     }
 
     /// A replica with its own workspace store (a real `JuiceFs` on a directory, or a broken one).
     pub async fn replica_with(&self, pod: &str, workspaces: Arc<dyn Workspaces>) -> Replica {
+        self.replica_full(pod, self.fabric.clone(), workspaces).await
+    }
+
+    /// A replica on another fabric (the gVisor fabric's tests).
+    pub async fn replica_on(&self, pod: &str, fabric: Arc<dyn Fabric>) -> Replica {
+        self.replica_full(pod, fabric, self.workspaces.clone()).await
+    }
+
+    /// A replica on the given fabric and workspace store.
+    pub async fn replica_full(&self, pod: &str, fabric: Arc<dyn Fabric>, workspaces: Arc<dyn Workspaces>) -> Replica {
         let upstreams = self.upstreams.lock().unwrap().clone();
         let app = App::start(StartOptions {
             config: self.config.clone(),
@@ -659,10 +670,7 @@ impl Harness {
             database_url: self.db.url.clone(),
             pod: pod.to_owned(),
             pool_size: 4,
-            providers: Providers {
-                fabric: self.fabric.clone(),
-                workspaces,
-            },
+            providers: Providers { fabric, workspaces },
             timings: self.timings.clone(),
             callers: self.callers(),
             upstreams,

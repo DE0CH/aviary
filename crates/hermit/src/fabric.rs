@@ -3,6 +3,19 @@
 //! traits exist only so tests inject fakes: no configuration selects an implementation.
 //!
 //! Every method is a network call (sandboxd, EC2, `JuiceFS`) and is never made inside a transaction.
+//!
+//! The fabric itself is [`gvisor::Gvisor`] with its parts in the submodules.
+
+pub mod ec2;
+pub mod gvisor;
+pub mod hosts;
+pub mod images;
+pub mod migrate;
+pub mod network;
+pub mod packing;
+pub mod placement;
+pub mod sandboxd;
+pub mod scaler;
 
 use std::future::Future;
 use std::net::IpAddr;
@@ -100,6 +113,18 @@ pub enum CreateError {
 #[error("{0}")]
 pub struct FabricError(pub String);
 
+impl From<aviary_pg::Error> for FabricError {
+    fn from(e: aviary_pg::Error) -> Self {
+        Self(format!("database: {e}"))
+    }
+}
+
+impl From<aviary_pg::reexports::tokio_postgres::Error> for FabricError {
+    fn from(e: aviary_pg::reexports::tokio_postgres::Error) -> Self {
+        Self(format!("database: {e}"))
+    }
+}
+
 /// Where sandboxes run.
 pub trait Fabric: Send + Sync + 'static {
     /// Chooses a host and an address for sandbox `id` (step 3). The core records them on the row; an address the
@@ -125,6 +150,21 @@ pub trait Fabric: Send + Sync + 'static {
     /// Whether the gateway has answered every heartbeat for the last `gatewaySettleSeconds` (hermit 12 step 3,
     /// 13.12 step 4): while it is down or settling, silence proves nothing and nothing is judged lost.
     fn gateway_settled(&self) -> bool;
+    /// Called once the replica's core exists (the fabric reads the database and the configuration through it).
+    fn attach(&self, _core: &Arc<crate::Core>) {}
+    /// One scaler tick (every [`crate::Timings::scaler`]): the pass of hermit 13.4 when `leader` (this replica holds
+    /// lock 7300/4), otherwise only what every replica reads (the gateway's state).
+    fn tick<'a>(&'a self, _core: &'a Arc<crate::Core>, _leader: bool) -> Fut<'a, ()> {
+        Box::pin(async {})
+    }
+    /// The `migrate` task of a claim this replica holds (13.10). A fabric without live migration clears the claim,
+    /// so the row is judged again by its state.
+    fn migrate(&self, core: Arc<crate::Core>, claim: crate::tasks::Claim) -> Fut<'static, ()> {
+        Box::pin(async move {
+            tracing::warn!(sandbox = %claim.id, "migrate task without live migration: claim cleared");
+            let _ = crate::tasks::clear(&core, &claim).await;
+        })
+    }
     /// What the operator page shows of the fabric (hermit 18.3, 18.6): the scaler's plan, the egress targets, the
     /// slots per host. Nothing known by default.
     fn ops(&self) -> Fut<'_, FabricOps> {

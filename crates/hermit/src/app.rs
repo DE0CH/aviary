@@ -65,6 +65,8 @@ pub struct App {
     callers: Callers,
     draining: watch::Sender<bool>,
     loops: Mutex<Vec<AbortHandle>>,
+    /// The loops that run under leadership (janitor, scaler): stopped first in a drain.
+    leader_loops: Mutex<Vec<AbortHandle>>,
     leader: Mutex<Option<Arc<Leader>>>,
 }
 
@@ -131,9 +133,10 @@ impl App {
             sweep_lock: tokio::sync::Mutex::new(()),
             claims: Arc::default(),
         });
+        core.providers.fabric.attach(&core);
         let leader = Arc::new(Leader::start_many(
             &pool,
-            &[db::LOCK_JANITOR],
+            &[db::LOCK_JANITOR, db::LOCK_SCALER],
             core.timings.leader_retry,
         ));
         let app = Self {
@@ -141,6 +144,7 @@ impl App {
             callers: o.callers,
             draining: draining_tx,
             loops: Mutex::new(Vec::new()),
+            leader_loops: Mutex::new(Vec::new()),
             leader: Mutex::new(Some(leader.clone())),
         };
         app.spawn(live_loop(core.clone()));
@@ -149,9 +153,14 @@ impl App {
         }
         app.spawn(sweep_loop(core.clone()));
         app.spawn(replica_loop(core.clone()));
-        // the janitor is spawned last: the drain stops it first (`begin_drain` pops it)
-        app.spawn(janitor::run(core, leader));
+        app.spawn_led(janitor::run(core.clone(), leader.clone()));
+        app.spawn_led(scaler_loop(core, leader));
         Ok(app)
+    }
+
+    fn spawn_led(&self, fut: impl std::future::Future<Output = ()> + Send + 'static) {
+        let h = tokio::spawn(fut).abort_handle();
+        self.leader_loops.lock().unwrap_or_else(PoisonError::into_inner).push(h);
     }
 
     fn spawn(&self, fut: impl std::future::Future<Output = ()> + Send + 'static) {
@@ -207,13 +216,17 @@ impl App {
                 None
             }
         };
-        let janitor = self.loops.lock().unwrap_or_else(PoisonError::into_inner).pop();
-        if let Some(h) = janitor {
+        for h in self
+            .leader_loops
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain(..)
+        {
             h.abort();
         }
         let leader = self.leader.lock().unwrap_or_else(PoisonError::into_inner).take();
         if let Some(l) = leader {
-            // the janitor loop held the other reference: wait for its abort to drop it
+            // the janitor and scaler loops held the other references: wait for their aborts to drop them
             for _ in 0..50 {
                 if Arc::strong_count(&l) == 1 {
                     break;
@@ -247,6 +260,14 @@ impl App {
         for h in self.loops.lock().unwrap_or_else(PoisonError::into_inner).drain(..) {
             h.abort();
         }
+        for h in self
+            .leader_loops
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain(..)
+        {
+            h.abort();
+        }
         self.core.tasks.abort_all();
         // a claim taken by a request that began before the drain is handed back too
         if let Err(e) = tasks::hand_back(&self.core).await {
@@ -258,6 +279,14 @@ impl App {
     /// Ends the replica the way SIGKILL would: nothing handed back (claims lapse, the leader's connection closes).
     pub fn kill(&self) {
         for h in self.loops.lock().unwrap_or_else(PoisonError::into_inner).drain(..) {
+            h.abort();
+        }
+        for h in self
+            .leader_loops
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain(..)
+        {
             h.abort();
         }
         self.core.tasks.abort_all();
@@ -319,6 +348,19 @@ async fn catalogue_loop(core: Arc<Core>) {
         tokio::time::sleep(core.timings.catalogue_reload).await;
         let c = core.catalogue.clone();
         let _ = tokio::task::spawn_blocking(move || c.reload()).await;
+    }
+}
+
+/// The scaler (hermit 13.4): every `Timings::scaler`, the pass on the leader of lock 7300/4 (confirmed before each
+/// pass, 10.3); every other replica only follows the gateway's state.
+async fn scaler_loop(core: Arc<Core>, leader: Arc<Leader>) {
+    loop {
+        tokio::time::sleep(core.timings.scaler).await;
+        if core.is_draining() {
+            continue;
+        }
+        let leads = leader.confirm_key(&db::LOCK_SCALER).await;
+        core.providers.fabric.tick(&core, leads).await;
     }
 }
 

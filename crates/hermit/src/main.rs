@@ -11,7 +11,9 @@ use clap::{Parser, Subcommand};
 use hermit::app::{App, StartOptions};
 use hermit::catalogue::{self, Catalogue};
 use hermit::config::{CONFIG_PATH, Config};
-use hermit::fabric::{Providers, Unbuilt};
+use hermit::fabric::gvisor::{Deps, Gvisor, HostSecrets, Port7070};
+use hermit::fabric::network::{EgressSource, Fixed, Watched};
+use hermit::fabric::{Providers, ec2, sandboxd};
 use hermit::tokens::Keys;
 use hermit::workspaces::{JuiceCli, JuiceFs, MOUNT};
 
@@ -126,6 +128,23 @@ async fn serve() -> ExitCode {
         env::required("HERMIT_JUICEFS_META_URL"),
         env::required("HERMIT_JUICEFS_META_PASSWORD"),
     );
+    // the fabric's credentials (8.4): mTLS to sandboxd, the AWS hosts' certificate, EC2, JuiceFS
+    let fabric_tls = sandboxd_api::Tls {
+        ca_pem: env::required("HERMIT_FABRIC_CA"),
+        cert_pem: env::required("HERMIT_FABRIC_CLIENT_CERT"),
+        key_pem: env::required("HERMIT_FABRIC_CLIENT_KEY"),
+    };
+    let host_secrets = HostSecrets {
+        ca: fabric_tls.ca_pem.clone(),
+        cert: env::required("HERMIT_FABRIC_HOST_CERT"),
+        key: env::required("HERMIT_FABRIC_HOST_KEY"),
+        juicefs_meta_url: env::required("HERMIT_JUICEFS_META_URL"),
+        juicefs_meta_password: env::required("HERMIT_JUICEFS_META_PASSWORD"),
+    };
+    let aws_key = (
+        env::required("HERMIT_AWS_ACCESS_KEY_ID"),
+        env::required("HERMIT_AWS_SECRET_ACCESS_KEY"),
+    );
 
     let config = match config {
         Ok(c) => Arc::new(c),
@@ -142,6 +161,27 @@ async fn serve() -> ExitCode {
     };
     let ws = &config.file.sandbox.workspace;
     let workspaces = Arc::new(JuiceFs::new(MOUNT, Arc::new(juicefs), ws.quota_gib, ws.quota_inodes));
+    // the Kubernetes client builds its TLS from the process's provider: ring, the workspace's only one
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let egress: Arc<dyn EgressSource> = match Watched::start(&namespace, &config.file.fabric.egress_service).await {
+        Ok(w) => Arc::new(w),
+        Err(e) => {
+            // the gateway keeps its last targets; the ops page shows that none were read
+            tracing::error!(error = %e, "egress endpoint watch not started");
+            Arc::new(Fixed::default())
+        }
+    };
+    let fabric = Arc::new(Gvisor::new(Deps {
+        connect: Arc::new(sandboxd::Mtls::new(fabric_tls)),
+        ec2: Some(Arc::new(ec2::Aws::new(
+            &config.file.fabric.aws.region,
+            &aws_key.0,
+            &aws_key.1,
+        ))),
+        egress,
+        host_secrets: Some(host_secrets),
+        control: Arc::new(Port7070),
+    }));
 
     let app = loop {
         let options = StartOptions {
@@ -152,9 +192,8 @@ async fn serve() -> ExitCode {
             database_url: database_url.clone(),
             pod: pod.clone(),
             pool_size: 10,
-            // the gVisor fabric (WP-19) replaces `Unbuilt`
             providers: Providers {
-                fabric: Arc::new(Unbuilt),
+                fabric: fabric.clone(),
                 workspaces: workspaces.clone(),
             },
             timings: hermit::Timings::default(),
