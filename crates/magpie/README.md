@@ -76,7 +76,10 @@ a person's echo through every rewrite, the per-turn flush, appends' `offset_mism
 feed record, a 30,000-line transcript in bounded time); `tests/ccfs_model.rs` (random operation sequences with
 person turns against a byte-vector model, 64 cases from a seed that changes every run and is printed,
 `AVIARY_TEST_CCFS_SEED`/`AVIARY_TEST_CCFS_CASES` to repeat one: the file and the visible events plus limbo against the
-classification of the model's lines after every step); `tests/ccfs_claude_code.rs` (Claude Code 2.1.304's
+classification of the model's lines after every step); `tests/ccfs_rows.rs` (the timeline of a main transcript after
+random appends, truncates, rewrites of a line with its uuid, limbo take-backs and flushes, against a fresh projection
+of only the transcript's surviving lines in file order, an oracle that shares none of the rewrite handling; and the
+review's truncate, rewrite, truncate, original-bytes sequence); `tests/ccfs_claude_code.rs` (Claude Code 2.1.304's
 transcripts from the FUSE gate, product text replaced by same-length placeholders, replayed in the shape of the
 gate's recorded calls with every prompt a person turn's echo, with pinned event counts); `tests/ccfs_perf.rs` (ignored here; ci.yml's `magpie-perf` job runs it with a release build against
 `.github/ci/postgres-sync.sh`'s primary and synchronous standby: p50 <= 15 ms for a 10 KiB append, p99 <= 150 ms
@@ -128,6 +131,20 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
     R the new line has no block for, or of another kind, is deleted with a new epoch, as rule 9 would. R's retract
     then touches no row. So no commit shows two rows with one `(messageId, blockIndex)` or two tool rows with one
     `callId`. A `replaces` naming any other event is ignored.
+  - A rewritten prompt line (`cc.user` with `meta.prompt` and `meta.replaces = R`, R a `cc.user` line with the same
+    `uuid` that still counts) takes over R's `user` row the same way (same `row_id`, a new row seq only when the text,
+    images or files changed), so no commit shows two prompt rows with one `messageId`.
+  - A retract whose rebuild of a tool row gives the item the row already shows (a rewritten result line with the same
+    content took the retracted one's place) only replaces the row's sources: no row seq, no new epoch. magpie 7.3
+    rule 9 says a rebuilt row takes a new `rowSeq`; an unchanged one is no rebuild.
+  - The block index of a new line is also past every row of the message's earlier lines. A line that counted while
+    it waited in truncate limbo and was retracted at the flush leaves a gap in the indexes of the rows numbered
+    meanwhile; counting alone would then give a later line an index a row already has. Indexes are never renumbered
+    (a gap, not a duplicate or a reorder; `tests/ccfs_rows.rs` compares the order, not the numbers).
+  - The derivation-rebuild job (below) must clear the conversation's `line_pos` and `retracted` (and its rows,
+    `row_seqs` and `row_head`) before it projects the events again: `retracted` holds both the seqs retract events
+    removed and the lines a rewrite took over, and the projection fills both as it goes. `line_pos` is written with
+    `on conflict do nothing`, so a repeated projection of one event does not fail the transaction.
   - An event that changes nothing visible on its row (a repeated `task.status` progress report, an identical
     `files.sent` or result) takes no row seq and writes no version: it is only added to the row's sources (a
     rebuild reads it). magpie 7.3 says rules 5-7 update the row; an unchanged item is no update.
@@ -137,6 +154,15 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
     `killed`/`stopped` is `task.status: stopped`, row status `canceled`. `meta.taskNotification` gained an optional
     `taskId` (magpie-api).
   - A failed `turn.ended` without an error makes an `error` row `run.error`; failed tool rows carry the turn's error.
+  - Spec gap (magpie 7.3 rule 8, "background launches stay running until their notification"): a notification
+    may never come (a canceled turn, a kill after the 30 s force, a lost sandbox). magpie appends a `task.status`
+    (event `updated`, status `stopped`) for every task of the conversation's `background` that it stops tracking
+    without the supervisor's terminal report: at a turn's end, the tasks the supervisor's end report no longer holds
+    (all of them for an end without one); when the supervisor's heartbeat goes idle; when hermit's feed says the
+    sandbox of a held conversation is gone. Rule 7 then ends the launch's row (`canceled`); a later notification or
+    report still updates it. The reverse race (the turn's end lands before the supervisor's `started` report, so
+    rule 8 ends a row whose task then reports `running`): a `running` task report on a row that rule 8 canceled or
+    failed (no result) sets it back to `running`, until one of the ends above.
   - A rebuilt tool row (rule 9) is made from its surviving source events in the order they first landed on it, and
     keeps its `row_id` and block index.
   - No `derivationVersion` lazy rebuild (pigeon 14.1.18 item 3): magpie 7.3 changes the epoch only under rule 9.
@@ -239,7 +265,16 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   emits `conversation_upserted`, a context-token change alone does not (the next turn change carries it). The
   model `<synthetic>` (Claude Code's own API error lines) is not recorded as the conversation's model.
 - `meta.replaces` also names the event of an old line that this operation's rewrite replaces, or that waits in the
-  file's limbo (a truncate-then-rewrite of a changed line retracts it only at the flush, after the new line).
+  file's limbo, and of the candidates (a retracted line, an old line of the rewritten suffix, a limbo line) it names
+  the most recent: truncate, rewrite, truncate, rewrite again replaces the first rewrite, not the original.
+- A line the new line rewrites this way is retracted at the end of the same operation (WP-13 review), not at the
+  limbo flush: its `truncated` limbo entry is dropped and a later line with its bytes no longer takes its event back
+  (it makes a new event that replaces the rewrite), and an old line of an overwritten suffix whose event a rewrite
+  replaced makes a new event if its bytes come back in the same write. 6.7 has limbo take lines back by sha256 only
+  so a byte-identical truncate-then-rewrite retracts nothing; a line with the same uuid and new content is gone from
+  the transcript for good, and the projection has already handed its rows to the rewrite (magpie 7.3 rule 4), so a
+  take-back would bring back an event that counts as gone with no rows. `tests/ccfs_rows.rs` checks the rows after
+  random appends, truncates, rewrites and take-backs against a fresh projection of the transcript's lines.
 - Migration `0004_ccfs.sql` adds the blob's preview and line count (an event for a stored line is made without
   its bytes), `cc_lines.classified` (a promotion classifies only lines never classified, so an echo or an
   internal line is never classified twice), `cc_retracted` (uuids of retracted lines, for `meta.replaces` by index)

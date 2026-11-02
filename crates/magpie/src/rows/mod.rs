@@ -8,14 +8,18 @@
 //! - a row keeps its identity (`row_id` = its first row seq) through updates; `source_seqs` lists the events it was
 //!   built from, the identifying one first, then the updates in the order they landed;
 //! - a `retract` (rule 9) deletes the rows whose identifying event left the transcript, rebuilds a tool row that lost
-//!   only a later event, and when it did either, bumps the epoch and writes `timeline_replaced` to the person's
-//!   changes;
+//!   only a later event (only its sources change when the rebuilt item is the one it shows), and when it deleted or
+//!   changed a row, bumps the epoch and writes `timeline_replaced` to the person's changes;
+//! - a rewritten line (`meta.replaces`) of an assistant message or a prompt takes over the rows of the line it
+//!   replaces before that line's retract lands ([`assistant`], [`prompt_takeover`]);
 //! - every transaction that wrote a row or bumped the epoch sends [`crate::fanout::ROWS`] `<conversation>:<row_head>`.
 //!
 //! The reads (pages, prompts, search) are [`read`].
 
 pub mod derive;
 pub mod read;
+
+use std::collections::HashSet;
 
 use aviary_pg::Tx;
 use magpie_api::changes::ChangeBody;
@@ -291,20 +295,24 @@ pub async fn project(tx: &Tx<'_>, ev: &Stored) -> Result<()> {
                             RowItem::User(u) => Some(u.message_id.clone()),
                             _ => None,
                         };
-                        w.insert(
-                            tx,
-                            NewRow {
-                                item,
-                                at,
-                                turn_id,
-                                sources: vec![ev.seq],
-                                tool_use_id: None,
-                                message_id,
-                                block_index: None,
-                                is_prompt: true,
-                            },
-                        )
-                        .await?;
+                        if prompt_takeover(tx, &mut w, ev, &meta, &item).await? {
+                            // the rewritten prompt line kept the row of the line it replaces
+                        } else {
+                            w.insert(
+                                tx,
+                                NewRow {
+                                    item,
+                                    at,
+                                    turn_id,
+                                    sources: vec![ev.seq],
+                                    tool_use_id: None,
+                                    message_id,
+                                    block_index: None,
+                                    is_prompt: true,
+                                },
+                            )
+                            .await?;
+                        }
                     }
                 } else {
                     // rule 5
@@ -383,6 +391,54 @@ pub async fn project(tx: &Tx<'_>, ev: &Stored) -> Result<()> {
     Ok(())
 }
 
+/// Rule 2 for a rewritten prompt line (`meta.replaces = R`, R a `cc.user` line with the same `uuid` that still
+/// counts): the new line takes over R's `user` row, as rule 4 does for an assistant line. R counts as gone from now
+/// on (`retracted`), the row keeps its `row_id` and is updated at a new row seq, or keeps its version when the text,
+/// images and files are the same. R's retract then touches no row, so no commit shows two `user` rows with one
+/// `messageId`. `false` when there is nothing to take over (the caller inserts a new row).
+async fn prompt_takeover(tx: &Tx<'_>, w: &mut Writer, ev: &Stored, meta: &EventMeta, item: &RowItem) -> Result<bool> {
+    let RowItem::User(u) = item else {
+        return Ok(false);
+    };
+    let Some(r) = meta
+        .replaces
+        .and_then(|r| i64::try_from(r).ok())
+        .filter(|r| *r < ev.seq)
+    else {
+        return Ok(false);
+    };
+    let counts = tx
+        .query_opt(
+            "select 1 from events e
+             where e.conversation_id = $1 and e.seq = $2 and e.kind = 'cc.user' and (e.data->>'uuid') = $3
+               and not exists (select 1 from retracted x where x.conversation_id = e.conversation_id and x.seq = e.seq)",
+            &[&w.conversation, &r, &u.message_id],
+        )
+        .await?
+        .is_some();
+    if !counts {
+        return Ok(false);
+    }
+    let Some(old) = rows_of(tx, w.conversation, r)
+        .await?
+        .into_iter()
+        .find(|o| o.kind == "user")
+    else {
+        return Ok(false);
+    };
+    tx.execute(
+        "insert into retracted (conversation_id, seq) values ($1, $2) on conflict do nothing",
+        &[&w.conversation, &r],
+    )
+    .await?;
+    if *item == old.item {
+        w.set_sources(tx, old.row_id, &[ev.seq]).await?;
+    } else {
+        w.update_row(tx, old.row_id, item, &[ev.seq]).await?;
+    }
+    Ok(true)
+}
+
 /// A row made from the line a rewritten line replaces, as rule 4 finds it to take it over.
 struct OldRow {
     row_id: i64,
@@ -432,8 +488,7 @@ async fn rows_of(tx: &Tx<'_>, conversation: Uuid, seq: i64) -> Result<Vec<OldRow
     .collect()
 }
 
-/// Where a line of message `mid` stands, and the rows it takes over: `(position, rows of the replaced line,
-/// whether it takes them over)`. Its position is its own seq, or where the line it rewrites (`replaced`, a line of
+/// Where a line of message `mid` stands, and the rows it takes over: `(position, rows of the replaced line)`. Its position is its own seq, or where the line it rewrites (`replaced`, a line of
 /// the same message) stood, recorded in `line_pos`; when that line still counts it is recorded in `retracted` and
 /// its rows are handed over.
 async fn place(
@@ -442,27 +497,27 @@ async fn place(
     seq: i64,
     replaced: Option<i64>,
     mid: &str,
-) -> Result<(i64, Vec<OldRow>, bool)> {
+) -> Result<(i64, Vec<OldRow>)> {
     let Some(r) = replaced else {
-        return Ok((seq, Vec::new(), false));
+        return Ok((seq, Vec::new()));
     };
     let Some((counts, pos)) = replaced_line(tx, conversation, r, mid).await? else {
-        return Ok((seq, Vec::new(), false));
+        return Ok((seq, Vec::new()));
     };
     tx.execute(
-        "insert into line_pos (conversation_id, seq, pos) values ($1, $2, $3)",
+        "insert into line_pos (conversation_id, seq, pos) values ($1, $2, $3) on conflict do nothing",
         &[&conversation, &seq, &pos],
     )
     .await?;
     if !counts {
-        return Ok((pos, Vec::new(), false));
+        return Ok((pos, Vec::new()));
     }
     tx.execute(
         "insert into retracted (conversation_id, seq, by_seq) values ($1, $2, $3) on conflict do nothing",
         &[&conversation, &r, &seq],
     )
     .await?;
-    Ok((pos, rows_of(tx, conversation, r).await?, true))
+    Ok((pos, rows_of(tx, conversation, r).await?))
 }
 
 /// Rule 4: one row per non-empty block of an assistant line; a tool row picks up a sent-file snapshot that came
@@ -485,8 +540,7 @@ async fn assistant(tx: &Tx<'_>, w: &mut Writer, ev: &Stored, line: &Value, meta:
         .replaces
         .and_then(|r| i64::try_from(r).ok())
         .filter(|r| *r < ev.seq);
-    let (bound, old, takeover) = place(tx, w.conversation, ev.seq, replaced, mid).await?;
-    let mut old = old;
+    let (bound, mut old) = place(tx, w.conversation, ev.seq, replaced, mid).await?;
     // the blocks of the message's lines that still count and stand before this one (Claude Code writes one line
     // per block)
     let first: i64 = tx
@@ -502,19 +556,19 @@ async fn assistant(tx: &Tx<'_>, w: &mut Writer, ev: &Stored, line: &Value, meta:
         )
         .await?
         .get(0);
-    let first = u32::try_from(first).unwrap_or(u32::MAX);
-    let gone: Vec<i64> = if takeover {
-        tx.query(
-            "select seq from retracted where conversation_id = $1",
-            &[&w.conversation],
+    // and past every row of the message's earlier lines: a line that counted when a later row was numbered and was
+    // retracted since leaves a gap, and counting alone would give a later line an index a row already has
+    let past: i64 = tx
+        .query_one(
+            "select coalesce(max(r.block_index) + 1, 0)::bigint from rows r
+             left join line_pos p on p.conversation_id = r.conversation_id and p.seq = r.source_seqs[1]
+             where r.conversation_id = $1 and r.message_id = $2 and r.block_index is not null and not r.is_prompt
+               and coalesce(p.pos, r.source_seqs[1]) < $3",
+            &[&w.conversation, &mid, &bound],
         )
         .await?
-        .iter()
-        .map(|r| r.get(0))
-        .collect()
-    } else {
-        Vec::new()
-    };
+        .get(0);
+    let first = u32::try_from(first.max(past)).unwrap_or(u32::MAX);
     let mut replaced_rows = false;
     for b in derive::assistant(line, meta, first) {
         let block_index = i32::try_from(b.block_index).unwrap_or(i32::MAX);
@@ -528,6 +582,7 @@ async fn assistant(tx: &Tx<'_>, w: &mut Writer, ev: &Stored, line: &Value, meta:
                 (RowItem::Tool(_), Some(id)) => {
                     let mut sources = vec![ev.seq];
                     sources.extend(o.sources.iter().skip(1).copied());
+                    let gone = gone_among(tx, w.conversation, &sources).await?;
                     match rebuild_tool(tx, w.conversation, id, b.block_index, &sources, &gone).await? {
                         Some((t, kept)) => (RowItem::Tool(t), kept),
                         None => (b.item.clone(), vec![ev.seq]),
@@ -627,38 +682,56 @@ async fn retract(tx: &Tx<'_>, w: &mut Writer, seqs: Vec<i64>, by: i64) -> Result
     if touched.is_empty() {
         return Ok(());
     }
-    let gone: Vec<i64> = tx
-        .query(
-            "select seq from retracted where conversation_id = $1",
-            &[&w.conversation],
-        )
-        .await?
-        .iter()
-        .map(|r| r.get(0))
-        .collect();
     let mut changed = false;
     for r in touched {
         let row_id: i64 = r.get(0);
         let kind: String = r.get(1);
         let sources: Vec<i64> = r.get(3);
+        let gone = gone_among(tx, w.conversation, &sources).await?;
         let identifying_gone = sources.first().is_none_or(|s| gone.contains(s));
         let rebuilt = if identifying_gone || kind != "tool" {
             None
         } else {
             let old = tool_of(r.get(2))?;
             let block_index = u32::try_from(r.get::<_, Option<i32>>(4).unwrap_or(0)).unwrap_or(0);
-            rebuild_tool(tx, w.conversation, &old.call_id, block_index, &sources, &gone).await?
+            rebuild_tool(tx, w.conversation, &old.call_id, block_index, &sources, &gone)
+                .await?
+                .map(|x| (old, x))
         };
         match rebuilt {
-            Some((item, surviving)) => w.update(tx, row_id, &item, &surviving).await?,
-            None => w.delete(tx, row_id).await?,
+            Some((old, (item, surviving))) if item == old => {
+                // the surviving events make the row it already shows (a rewritten result line that took the
+                // retracted one's place): only its sources change, no row seq, no new epoch
+                w.set_sources(tx, row_id, &surviving).await?;
+            }
+            Some((_, (item, surviving))) => {
+                w.update(tx, row_id, &item, &surviving).await?;
+                changed = true;
+            }
+            None => {
+                w.delete(tx, row_id).await?;
+                changed = true;
+            }
         }
-        changed = true;
     }
     if changed {
         w.replace_epoch(tx).await?;
     }
     Ok(())
+}
+
+/// Which of `seqs` count as gone from the transcript (`retracted`: a retract, or a rewrite that took the line's
+/// place). Only those seqs are read, so the cost does not grow with the conversation's retracts.
+async fn gone_among(tx: &Tx<'_>, conversation: Uuid, seqs: &[i64]) -> Result<HashSet<i64>> {
+    Ok(tx
+        .query(
+            "select seq from retracted where conversation_id = $1 and seq = any($2)",
+            &[&conversation, &seqs],
+        )
+        .await?
+        .iter()
+        .map(|r| r.get(0))
+        .collect())
 }
 
 /// A tool row made again from its surviving events, in the order they first landed on it; `None` when its
@@ -669,7 +742,7 @@ async fn rebuild_tool(
     call_id: &str,
     block_index: u32,
     sources: &[i64],
-    gone: &[i64],
+    gone: &HashSet<i64>,
 ) -> Result<Option<(ToolItem, Vec<i64>)>> {
     let surviving: Vec<i64> = sources.iter().copied().filter(|s| !gone.contains(s)).collect();
     let rows = tx

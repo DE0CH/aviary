@@ -31,6 +31,42 @@ use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::fanout;
 
+/// The background tasks of `before` (the conversation's `background`) that `after` no longer lists: magpie stops
+/// tracking them without the supervisor's terminal report (the turn ended and the supervisor did not hold them, the
+/// sandbox went away, the supervisor's heartbeat went idle). Each gets a `task.status` (event `updated`, status
+/// `stopped`), so its launch's tool row ends (magpie 7.3 rule 7) instead of showing `running` for ever. A later
+/// notification or report of the task still updates the row (it is only the last word so far).
+///
+/// # Errors
+/// When a statement fails.
+pub async fn untracked(
+    tx: &Tx<'_>,
+    conversation: Uuid,
+    turn: Option<Uuid>,
+    before: &serde_json::Value,
+    after: &[magpie_api::conversations::BackgroundTask],
+) -> Result<()> {
+    use magpie_api::events::{EventBody, TaskEvent, TaskState, TaskStatus};
+    let before: Vec<magpie_api::conversations::BackgroundTask> =
+        serde_json::from_value(before.clone()).unwrap_or_default();
+    for b in before {
+        if after.iter().any(|a| a.task_id == b.task_id) {
+            continue;
+        }
+        let body = EventBody::TaskStatus(TaskStatus {
+            task_id: b.task_id,
+            tool_use_id: b.tool_use_id,
+            event: TaskEvent::Updated,
+            status: TaskState::Stopped,
+            description: b.description,
+            summary: None,
+            output_file: None,
+        });
+        crate::events::append(tx, conversation, crate::events::NewEvent::of(&body)?.turn(turn)).await?;
+    }
+    Ok(())
+}
+
 /// Whether a message carries anything to admit (text or attachments, magpie 9.2).
 #[must_use]
 pub fn has_content(message: &SendRequest) -> bool {

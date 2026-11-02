@@ -249,6 +249,10 @@ struct Writer {
     moved: limbo::Candidates,
     /// New lines not inserted yet.
     rows: Vec<Row>,
+    /// Events a new line of this operation rewrote (its `meta.replaces`): old lines of the rewritten suffix or lines
+    /// in the file's truncate limbo. They are retracted at the operation's end whatever later lines match, so the
+    /// projection's takeover of their rows (magpie 7.3 rule 4) is never undone by a take-back.
+    superseded: Vec<i64>,
 }
 
 /// New lines are inserted this many at a time.
@@ -348,7 +352,7 @@ async fn apply(
     stub: &[u8],
     spans: &[(usize, Sha)],
     meta: &HashMap<Sha, blobs::Meta>,
-    w: Option<&Writer>,
+    w: Option<&mut Writer>,
 ) -> Result<Option<i64>> {
     let data = event_data(stub, spans, meta);
     let cx = Context {
@@ -382,7 +386,16 @@ async fn apply(
                 }
             }
             if let Some(u) = &e.uuid {
-                m.replaces = replaces(tx, op, u, w).await?.and_then(|s| u64::try_from(s).ok());
+                let r = replaces(tx, op, u, w.as_deref()).await?;
+                if let (Some((seq, from)), Some(w)) = (r, w)
+                    && from != From::Retracted
+                {
+                    if from == From::Limbo {
+                        w.trunc.supersede(tx, op.conv.id, seq).await?;
+                    }
+                    w.superseded.push(seq);
+                }
+                m.replaces = r.and_then(|(s, _)| u64::try_from(s).ok());
             }
             let meta_json = serde_json::to_value(&m)?;
             let meta_json = meta_json
@@ -433,25 +446,49 @@ async fn apply(
     }
 }
 
-/// The event a new line with `uuid` replaces (6.7): a retracted line's, or one this operation is about to retract
-/// (an old line of the rewritten suffix) or that waits in the file's limbo.
-async fn replaces(tx: &Tx<'_>, op: &Op<'_>, uuid: &str, w: Option<&Writer>) -> Result<Option<i64>> {
-    if let Some(seq) = limbo::replaced(tx, op.conv.id, uuid).await? {
-        return Ok(Some(seq));
-    }
+/// Where the line a new line replaces is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum From {
+    /// Retracted already.
+    Retracted,
+    /// An old line of the suffix this operation rewrites.
+    Pending,
+    /// The file's truncate limbo.
+    Limbo,
+}
+
+/// The event a new line with `uuid` replaces (6.7): the most recent of a retracted line's, one this operation is
+/// about to retract (an old line of the rewritten suffix not already rewritten) and one that waits in the file's
+/// limbo. The most recent, because that is the version the transcript showed last (truncate, rewrite, truncate,
+/// rewrite again: the second rewrite replaces the first, not the original).
+async fn replaces(tx: &Tx<'_>, op: &Op<'_>, uuid: &str, w: Option<&Writer>) -> Result<Option<(i64, From)>> {
+    let mut best = limbo::replaced(tx, op.conv.id, uuid)
+        .await?
+        .map(|s| (s, From::Retracted));
     let Some(w) = w else {
-        return Ok(None);
+        return Ok(best);
     };
-    if !w.pending.is_empty() {
+    let mut consider = |seq: Option<i64>, from: From| {
+        if let Some(seq) = seq
+            && best.is_none_or(|(b, _)| seq > b)
+        {
+            best = Some((seq, from));
+        }
+    };
+    let pending: Vec<i64> = w
+        .pending
+        .iter()
+        .copied()
+        .filter(|s| !w.superseded.contains(s))
+        .collect();
+    if !pending.is_empty() {
         let row = tx
             .query_one(
                 "select max(seq) from events where conversation_id = $1 and seq = any($2) and data->>'uuid' = $3",
-                &[&op.conv.id, &w.pending, &uuid],
+                &[&op.conv.id, &pending, &uuid],
             )
             .await?;
-        if let Some(seq) = row.get::<_, Option<i64>>(0) {
-            return Ok(Some(seq));
-        }
+        consider(row.get(0), From::Pending);
     }
     if w.limbo_truncated {
         // limbo entries another new line of this operation took back are not replaced
@@ -463,9 +500,9 @@ async fn replaces(tx: &Tx<'_>, op: &Op<'_>, uuid: &str, w: Option<&Writer>) -> R
                 &[&op.conv.id, &w.file, &uuid, &w.trunc.used],
             )
             .await?;
-        return Ok(row.get(0));
+        consider(row.get(0), From::Limbo);
     }
-    Ok(None)
+    Ok(best)
 }
 
 /// Claude Code's own title record (`custom-title`, `ai-title`): the provisional title while no title model or rename
@@ -496,11 +533,28 @@ async fn title_record(tx: &Tx<'_>, op: &mut Op<'_>, title: &str) -> Result<()> {
 /// classification) or extracted, its blobs staged, then taken back from limbo (its event, turn and classification)
 /// or, on the main transcript, classified.
 async fn put_line(tx: &Tx<'_>, op: &mut Op<'_>, w: &mut Writer, line: &[u8], sha: Sha, m: &mut Matcher) -> Result<()> {
-    let row = if let Some(old) = m.take(&sha) {
-        Row {
-            ord: w.ord,
-            start_off: w.off,
-            ..old.clone()
+    let matched = m.take(&sha).cloned();
+    let row = if let Some(old) = matched {
+        if old.event_seq.is_some_and(|s| w.superseded.contains(&s)) {
+            // the old line's event was rewritten earlier in this operation and is retracted at its end: the line
+            // makes a new event
+            let shas: Vec<Sha> = old.spans.iter().map(|s| s.1).collect();
+            let meta = blobs::meta(tx, &shas).await?;
+            let event_seq = apply(tx, op, &old.stub, &old.spans, &meta, Some(&mut *w)).await?;
+            Row {
+                ord: w.ord,
+                start_off: w.off,
+                event_seq,
+                turn_id: op.turn_id(),
+                classified: true,
+                ..old
+            }
+        } else {
+            Row {
+                ord: w.ord,
+                start_off: w.off,
+                ..old
+            }
         }
     } else {
         let x = extract::extract(line);
@@ -547,7 +601,7 @@ async fn put_line(tx: &Tx<'_>, op: &mut Op<'_>, w: &mut Writer, line: &[u8], sha
             // a line set aside comes back as it was: its event, its own turn (6.3), never classified again (6.5)
             Some(e) => (e.event_seq, e.turn_id, true),
             None if w.main => (
-                apply(tx, op, &x.stub, &x.spans, &meta, Some(&*w)).await?,
+                apply(tx, op, &x.stub, &x.spans, &meta, Some(&mut *w)).await?,
                 op.turn_id(),
                 true,
             ),
@@ -626,6 +680,7 @@ async fn writer(tx: &Tx<'_>, op: &Op<'_>, f: &File) -> Result<Writer> {
         trunc: limbo::Candidates::default(),
         moved: limbo::Candidates::default(),
         rows: Vec::new(),
+        superseded: Vec::new(),
     })
 }
 
@@ -657,6 +712,9 @@ pub async fn write(tx: &Tx<'_>, op: &mut Op<'_>, f: &mut File, offset: i64, data
         f.tail = rest;
         f.next_ord = w.ord;
         f.size = tail_start + n64(suffix.len());
+        if w.main {
+            limbo::retract(tx, op.conv.id, op.turn_id(), w.superseded).await?;
+        }
         return Ok(());
     }
     // the lines the write touches (and the one it ends at); the lines after them keep their bytes
@@ -710,7 +768,9 @@ pub async fn write(tx: &Tx<'_>, op: &mut Op<'_>, f: &mut File, offset: i64, data
     f.next_ord = w.ord;
     f.size = f.size.max(end);
     if w.main {
-        limbo::retract(tx, op.conv.id, op.turn_id(), m.unused_events()).await?;
+        let mut gone = m.unused_events();
+        gone.extend(&w.superseded);
+        limbo::retract(tx, op.conv.id, op.turn_id(), gone).await?;
     }
     Ok(())
 }

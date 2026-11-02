@@ -188,6 +188,28 @@ impl Reference {
                     if results.is_empty() {
                         if meta.prompt == Some(true) {
                             let item = derive::prompt(line, &meta, e.text.as_deref());
+                            // a rewritten prompt line takes over the row of the line it replaces while that counts
+                            let uuid = line["uuid"].as_str();
+                            let old = meta.replaces.map(|r| r as i64).filter(|r| *r < seq).and_then(|r| {
+                                let counts = !self.retracted.contains(&r)
+                                    && self
+                                        .events
+                                        .iter()
+                                        .any(|x| x.seq == r && x.kind == "cc.user" && x.data["uuid"].as_str() == uuid);
+                                let row = self.rows.values().find(|x| x.sources[0] == r && x.kind == "user")?;
+                                counts.then_some((r, row.row_id, row.item.clone()))
+                            });
+                            if let Some((r, row_id, old_item)) = old {
+                                self.retracted.insert(r);
+                                self.taken_over += 1;
+                                if old_item == item {
+                                    self.rows.get_mut(&row_id).unwrap().sources = vec![seq];
+                                } else {
+                                    self.update_row(row_id, item, vec![seq]);
+                                }
+                                self.events.push(e);
+                                return;
+                            }
                             let mut r = Self::new_row(item, e.turn_id, vec![seq]);
                             if let RowItem::User(u) = &r.item {
                                 r.message_id = Some(u.message_id.clone());
@@ -236,6 +258,18 @@ impl Reference {
                     })
                     .map(|x| derive::block_count(&x.data))
                     .sum();
+                let past = self
+                    .rows
+                    .values()
+                    .filter(|x| {
+                        x.message_id.as_deref() == Some(mid.as_str())
+                            && x.kind != "user"
+                            && self.pos.get(&x.sources[0]).copied().unwrap_or(x.sources[0]) < bound
+                    })
+                    .filter_map(|x| x.block_index)
+                    .max()
+                    .map_or(0, |b| b as u32 + 1);
+                let first = first.max(past);
                 // the rebuild reads this event too
                 self.events.push(copy_ref(&e));
                 let mut replaced_rows = false;
@@ -339,6 +373,7 @@ impl Reference {
                     .filter(|x| x.sources.iter().any(|s| seqs.contains(s)))
                     .map(|x| x.row_id)
                     .collect();
+                let mut changed = false;
                 for row_id in &touched {
                     let row = self.rows[row_id].clone();
                     let gone = self.retracted.contains(&row.sources[0]);
@@ -348,13 +383,20 @@ impl Reference {
                         self.rebuild(&row)
                     };
                     match rebuilt {
-                        Some((item, kept)) => self.update(*row_id, item, kept),
+                        Some((item, kept)) if RowItem::Tool(item.clone()) == row.item => {
+                            self.rows.get_mut(row_id).unwrap().sources = kept;
+                        }
+                        Some((item, kept)) => {
+                            self.update(*row_id, item, kept);
+                            changed = true;
+                        }
                         None => {
                             self.rows.remove(row_id);
+                            changed = true;
                         }
                     }
                 }
-                if !touched.is_empty() {
+                if changed {
                     self.epoch += 1;
                     self.replaced += 1;
                 }
@@ -405,6 +447,8 @@ struct Gen {
     cc_seqs: Vec<i64>,
     /// `(message, seq)` of the assistant lines so far.
     lines: Vec<(String, i64)>,
+    /// `(uuid, seq)` of the prompt lines so far.
+    prompts: Vec<(String, i64)>,
     next_seq: i64,
 }
 
@@ -419,6 +463,7 @@ impl Gen {
             tool_n: 0,
             cc_seqs: Vec::new(),
             lines: Vec::new(),
+            prompts: Vec::new(),
             next_seq: first_seq,
         }
     }
@@ -511,7 +556,28 @@ impl Gen {
                 let outcome = *self.rng.pick(&["completed", "failed", "canceled"]).unwrap();
                 ev::turn_ended(self.turn, outcome)
             }
-            81..=84 => ev::prompt(&format!("u{}", self.rng.next() % 1000), "a queued prompt"),
+            81..=84 => {
+                // sometimes Claude Code's rewrite of an earlier prompt line (the same uuid, maybe new text)
+                if self.rng.chance(30)
+                    && let Some((uuid, old)) = self.rng.pick(&self.prompts).cloned()
+                {
+                    let text = if self.rng.chance(50) {
+                        "a queued prompt"
+                    } else {
+                        "edited"
+                    };
+                    let mut e = ev::prompt(&uuid, text);
+                    let mut m = e.meta.take().unwrap_or_else(|| json!({}));
+                    m["replaces"] = json!(old);
+                    e.meta = Some(m);
+                    self.prompts.push((uuid, self.next_seq));
+                    e
+                } else {
+                    let uuid = format!("u{}", self.rng.next() % 1000);
+                    self.prompts.push((uuid.clone(), self.next_seq));
+                    ev::prompt(&uuid, "a queued prompt")
+                }
+            }
             85..=92 => {
                 let mut seqs = Vec::new();
                 for _ in 0..=self.rng.below(3) {

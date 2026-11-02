@@ -144,6 +144,24 @@ impl Candidates {
         Some(e)
     }
 
+    /// Drops the entry of event `seq` from the candidates and from limbo: a new line rewrote that line (its
+    /// `meta.replaces`), so the event is retracted with the rewrite and no later line of the operation may take it
+    /// back.
+    ///
+    /// # Errors
+    /// When the statement fails.
+    pub async fn supersede(&mut self, tx: &Tx<'_>, scope: Uuid, seq: i64) -> Result<()> {
+        for q in self.by_sha.values_mut() {
+            q.retain(|(_, e)| e.event_seq != Some(seq));
+        }
+        tx.execute(
+            "delete from cc_limbo where scope = $1 and reason = 'truncated' and event_seq = $2",
+            &[&scope, &seq],
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Deletes the entries taken.
     ///
     /// # Errors

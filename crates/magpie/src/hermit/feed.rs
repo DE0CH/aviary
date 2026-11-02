@@ -169,6 +169,16 @@ async fn gone(
         }
         return Ok(());
     }
+    let held = tx
+        .query_opt(
+            "select background from conversations where id = $1 and run_state = 'held' and active_turn is null",
+            &[&conversation],
+        )
+        .await?;
+    if let Some(r) = &held {
+        // the sandbox's tasks went with it: their launch rows end (rule 7)
+        crate::turns::untracked(tx, conversation, None, &r.get(0), &[]).await?;
+    }
     let n = tx
         .execute(
             "update conversations set run_state = 'idle', background = '[]'::jsonb

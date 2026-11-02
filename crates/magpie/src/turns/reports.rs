@@ -543,6 +543,12 @@ pub async fn heartbeat(pool: &Pool, caller: &Sandbox, hb: Heartbeat) -> Result<(
             _ => None,
         };
         if let Some(to) = to {
+            if to == "idle" {
+                let before = t
+                    .query_one("select background from conversations where id = $1", &[&c.id])
+                    .await?;
+                super::untracked(t, c.id, None, &before.get(0), &[]).await?;
+            }
             t.execute(
                 "update conversations set run_state = $2,
                         background = case when $2 = 'idle' then '[]'::jsonb else background end

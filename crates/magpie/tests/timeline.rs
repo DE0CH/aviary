@@ -562,6 +562,107 @@ async fn a_rewritten_line_takes_over_its_row_before_the_retract_lands() {
 }
 
 #[tokio::test]
+async fn a_rewritten_prompt_or_result_line_keeps_its_row_and_the_retract_changes_nothing() {
+    let db = common::fresh_db("replaces_user").await;
+    let t = common::Tokens::new();
+    let a = common::replica(&db.url, &t).await;
+    let sql = common::sql(&db.url);
+    let pigeon = a.pigeon();
+    let alice = pigeon.person(ALICE);
+    let id = ev::conversation(&pigeon, ALICE).await;
+    let pool = a.pool();
+    let seqs = ev::append(
+        pool,
+        ALICE,
+        id,
+        vec![
+            ev::prompt("p1", "queued"),
+            ev::assistant("m1", json!([ev::tool_use("tu1", "Bash")])),
+            ev::results(&[("tu1", "out", false)]),
+        ],
+    )
+    .await;
+    let page = async || alice.timeline(id, &ev::tail(500)).await.unwrap();
+    let prompts = |p: &TimelinePage| -> Vec<(u64, String)> {
+        p.rows
+            .iter()
+            .filter_map(|r| match &r.item {
+                RowItem::User(u) if u.message_id == "p1" => Some((r.seq_start, u.text.clone())),
+                _ => None,
+            })
+            .collect()
+    };
+    let start = epoch_and_head(&sql, id).await;
+    let row_of_p1 = prompts(&page().await)[0].0;
+    // the prompt line rewritten with new text (a truncate's rewrite: its retract lands later)
+    let x = ev::append1(
+        pool,
+        ALICE,
+        id,
+        ev::with_meta(
+            ev::prompt("p1", "queued, edited"),
+            json!({"prompt": true, "replaces": seqs[0]}),
+        ),
+    )
+    .await;
+    let p = page().await;
+    assert_eq!(
+        prompts(&p),
+        vec![(row_of_p1, "queued, edited".to_owned())],
+        "one row, the same identity"
+    );
+    assert_eq!(epoch_and_head(&sql, id).await, (start.0, start.1 + 1));
+    // rewritten again with the same text: no new version
+    let y = ev::append1(
+        pool,
+        ALICE,
+        id,
+        ev::with_meta(
+            ev::prompt("p1", "queued, edited"),
+            json!({"prompt": true, "replaces": x}),
+        ),
+    )
+    .await;
+    assert_eq!(epoch_and_head(&sql, id).await, (start.0, start.1 + 1));
+    // the result line rewritten with the same content
+    let z = ev::append1(
+        pool,
+        ALICE,
+        id,
+        ev::with_meta(ev::results(&[("tu1", "out", false)]), json!({"replaces": seqs[2]})),
+    )
+    .await;
+    assert_eq!(epoch_and_head(&sql, id).await, (start.0, start.1 + 1));
+    // the old lines' retract (the limbo flush): nothing visible changes, so no row seq and no new epoch
+    ev::append1(pool, ALICE, id, ev::retract(&[seqs[0], x, seqs[2]])).await;
+    let p = page().await;
+    assert_eq!(epoch_and_head(&sql, id).await, (start.0, start.1 + 1));
+    assert_eq!(prompts(&p), vec![(row_of_p1, "queued, edited".to_owned())]);
+    let tr = p.rows.iter().find(|r| matches!(r.item, RowItem::Tool(_))).unwrap();
+    assert_eq!(tool(tr).result.as_ref().map(|r| r.text.as_str()), Some("out"));
+    let sources: Vec<Vec<i64>> = sql
+        .get()
+        .await
+        .unwrap()
+        .query(
+            "select source_seqs from rows where conversation_id = $1 and (message_id = 'p1' or tool_use_id = 'tu1')
+             order by row_id",
+            &[&id],
+        )
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(sources, vec![vec![y], vec![seqs[1], z]]);
+    // a retract of the prompt line that counts now does delete its row (a new epoch)
+    ev::append1(pool, ALICE, id, ev::retract(&[y])).await;
+    let p = page().await;
+    assert!(prompts(&p).is_empty());
+    assert_eq!(epoch_and_head(&sql, id).await.0, start.0 + 1);
+}
+
+#[tokio::test]
 async fn an_event_that_changes_nothing_takes_no_row_seq() {
     let db = common::fresh_db("noop").await;
     let t = common::Tokens::new();
@@ -609,14 +710,27 @@ async fn an_event_that_changes_nothing_takes_no_row_seq() {
         ],
     )
     .await;
-    let head = epoch_and_head(&sql, id).await.1;
+    let before = epoch_and_head(&sql, id).await;
     ev::append1(pool, ALICE, id, ev::retract(&[r[0]])).await;
     let p = pigeon.person(ALICE).timeline(id, &ev::tail(10)).await.unwrap();
     assert_eq!(
         tool(&p.rows[0]).result.as_ref().map(|x| x.text.as_str()),
         Some("started")
     );
-    assert_eq!(epoch_and_head(&sql, id).await, (2, head + 1));
+    // the row it rebuilds is the row it shows: only its sources change (no row seq, no new epoch)
+    assert_eq!(epoch_and_head(&sql, id).await, before);
+    let sources: Vec<i64> = sql
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select source_seqs from rows where conversation_id = $1 and tool_use_id = 'tb'",
+            &[&id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(!sources.contains(&r[0]) && sources.contains(&r[1]), "{sources:?}");
 }
 
 /// A conversation with `turns` turns of 4 rows (prompt, reasoning, tool call, text) and 5 row seqs each (the tool

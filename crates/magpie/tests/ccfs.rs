@@ -564,7 +564,9 @@ async fn main_transcript_events() {
     let tail = [&a2b[..], &content[pos + a2.len()..]].concat();
     s.truncate(&p, pos as u64).await.unwrap();
     s.write(&p, pos as u64, &tail).await.unwrap();
-    assert_eq!(flush(&sql, conv).await, 1);
+    // the rewritten line's old event leaves limbo and is retracted with the rewrite (it can no longer come back)
+    assert_eq!(kinds(&sql, conv).await.last().map(String::as_str), Some("retract"));
+    assert_eq!(flush(&sql, conv).await, 0);
     let v = visible(&sql, conv).await;
     assert_eq!(v.len(), 2);
     let replaces: Option<i64> = sql

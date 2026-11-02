@@ -425,7 +425,15 @@ pub fn apply_task(t: &mut ToolItem, s: &TaskStatus) {
             .or_else(|| t.task.as_ref().and_then(|k| k.summary.clone())),
     });
     match s.status {
-        TaskState::Running => {}
+        TaskState::Running => {
+            // a launch the end of its turn canceled or failed before the supervisor's report of the task landed: the
+            // task runs, so the row does too (it ends on the notification, a terminal report, or the stop magpie
+            // reports when the supervisor no longer tracks the task)
+            if matches!(t.status, ToolStatus::Canceled | ToolStatus::Failed) && t.result.is_none() {
+                t.status = ToolStatus::Running;
+                t.error = None;
+            }
+        }
         TaskState::Completed => t.status = ToolStatus::Completed,
         TaskState::Failed => t.status = ToolStatus::Failed,
         TaskState::Stopped => t.status = ToolStatus::Canceled,
@@ -651,6 +659,24 @@ mod tests {
         // a plain running call does end with the turn
         let mut t = launch();
         assert!(apply_turn_end(&mut t, &ended("canceled")));
+        assert_eq!(t.status, ToolStatus::Canceled);
+        // the task's start report landed after the turn's end: the launch runs again, and a stop ends it
+        apply_task(&mut t, &s);
+        assert_eq!(t.status, ToolStatus::Running);
+        assert_eq!(t.error, None);
+        let stopped: TaskStatus =
+            serde_json::from_value(json!({"taskId": "k", "toolUseId": "t", "event": "updated", "status": "stopped"}))
+                .unwrap();
+        apply_task(&mut t, &stopped);
+        assert_eq!(t.status, ToolStatus::Canceled);
+        // a call that has its result does not come back
+        let mut t = launch();
+        apply_result(
+            &mut t,
+            &json!({"type": "tool_result", "tool_use_id": "t", "content": "started"}),
+        );
+        t.status = ToolStatus::Canceled;
+        apply_task(&mut t, &s);
         assert_eq!(t.status, ToolStatus::Canceled);
     }
 }

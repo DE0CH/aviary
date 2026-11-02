@@ -142,6 +142,8 @@ pub async fn end(tx: &Tx<'_>, person: &str, turn: &Turn, ending: Ending) -> Resu
     }
     let held = ending.held.filter(|t| !t.is_empty());
     let run_state = if held.is_some() { "held" } else { "idle" };
+    // the tasks the supervisor no longer holds at the end end their launch rows (rule 7)
+    untracked_at_end(tx, turn, held.as_deref().unwrap_or_default()).await?;
     let background = serde_json::to_value(held.unwrap_or_default())?;
     let row = tx
         .query_one(
@@ -180,5 +182,20 @@ pub async fn end(tx: &Tx<'_>, person: &str, turn: &Turn, ending: Ending) -> Resu
     )
     .await?;
     changes::upserted(tx, person, turn.conversation).await?;
+    Ok(())
+}
+
+/// [`super::untracked`] for the end of `turn`, while it is its conversation's active turn: the conversation's
+/// `background` tasks that `held` no longer lists.
+async fn untracked_at_end(tx: &Tx<'_>, turn: &Turn, held: &[BackgroundTask]) -> Result<()> {
+    if let Some(r) = tx
+        .query_opt(
+            "select background from conversations where id = $1 and active_turn = $2",
+            &[&turn.conversation, &turn.id],
+        )
+        .await?
+    {
+        super::untracked(tx, turn.conversation, Some(turn.id), &r.get(0), held).await?;
+    }
     Ok(())
 }

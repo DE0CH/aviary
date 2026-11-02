@@ -1290,6 +1290,118 @@ async fn agent_turns_held_tasks_and_stop_tasks() {
     assert_eq!(code(&e), ErrorCode::BadTransition);
 }
 
+/// A background launch's tool row ends when magpie stops tracking its task without a terminal report: a canceled
+/// turn whose supervisor no longer holds the task, and a held task the supervisor's heartbeat no longer has.
+#[tokio::test]
+async fn a_background_launch_whose_task_never_reports_ends_with_its_tracking() {
+    use magpie_api::events::{TaskEvent, TaskState};
+    use magpie_api::rows::{RowItem, ToolStatus};
+    let w = World::new("turn_task_lost", Some(Duration::ZERO)).await;
+    let conv = w.conversation().await;
+    let first = w.send(conv, "m0", "run it in the background").await;
+    assert!(w.state_is(first, "starting").await);
+    let sup = w.supervisor(conv).await;
+    let status = async |call: &str| -> ToolStatus {
+        let p =
+            w.a.pigeon()
+                .person(ALICE)
+                .timeline(conv, &common::ev::tail(50))
+                .await
+                .unwrap();
+        p.rows
+            .iter()
+            .find_map(|r| match &r.item {
+                RowItem::Tool(t) if t.call_id == call => Some(t.status),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let started = |n: u32, call: &str| TasksReport {
+        events: vec![TaskReportEvent {
+            id: format!("{call}:{n}"),
+            task_id: format!("task-{call}"),
+            tool_use_id: Some(call.into()),
+            event: TaskEvent::Started,
+            status: TaskState::Running,
+            description: None,
+            summary: None,
+            output_file: None,
+            at: Timestamp::now(),
+        }],
+    };
+    let held = |call: &str| magpie_api::sandbox::ReportedTask {
+        task_id: format!("task-{call}"),
+        tool_use_id: Some(call.into()),
+        kind: "local_bash".into(),
+        description: None,
+        started_at: None,
+    };
+    for (round, call) in ["toolu_a", "toolu_b"].into_iter().enumerate() {
+        let t = if round == 0 {
+            first
+        } else {
+            let t = w.send(conv, &format!("m{round}"), "run it in the background").await;
+            assert!(w.state_is(t, "starting").await);
+            t
+        };
+        sup.run(t).await;
+        common::ev::append(
+            w.a.pool(),
+            ALICE,
+            conv,
+            vec![common::ev::in_turn(
+                common::ev::assistant(&format!("msg_{call}"), json!([common::ev::tool_use(call, "Bash")])),
+                t,
+            )],
+        )
+        .await;
+        sup.calls().tasks(&started(0, call)).await.unwrap();
+        assert_eq!(status(call).await, ToolStatus::Running);
+        if round == 0 {
+            // canceled; Claude Code never writes the notification and the supervisor no longer holds the task
+            sup.calls()
+                .turn_state(t, &report(ReportedState::Canceled))
+                .await
+                .unwrap();
+            assert_eq!(
+                status(call).await,
+                ToolStatus::Canceled,
+                "the turn's end stops tracking the task"
+            );
+        } else {
+            // canceled while the task still runs: held, the row stays running ...
+            let mut end = report(ReportedState::Canceled);
+            end.held = Some(true);
+            end.tasks = Some(vec![held(call)]);
+            sup.calls().turn_state(t, &end).await.unwrap();
+            assert_eq!(status(call).await, ToolStatus::Running);
+            // ... until the supervisor goes idle with no report of the task
+            sup.heartbeat(None, HeartbeatState::Idle, None).await;
+            assert_eq!(
+                status(call).await,
+                ToolStatus::Canceled,
+                "an idle heartbeat stops tracking it"
+            );
+        }
+    }
+    // a late report of the task still has the last word
+    let done = TasksReport {
+        events: vec![TaskReportEvent {
+            id: "toolu_a:done".into(),
+            task_id: "task-toolu_a".into(),
+            tool_use_id: Some("toolu_a".into()),
+            event: TaskEvent::Notification,
+            status: TaskState::Completed,
+            description: None,
+            summary: Some("finished".into()),
+            output_file: None,
+            at: Timestamp::now(),
+        }],
+    };
+    sup.calls().tasks(&done).await.unwrap();
+    assert_eq!(status("toolu_a").await, ToolStatus::Completed);
+}
+
 #[tokio::test]
 async fn asks_are_opened_answered_and_resolved_once() {
     let w = World::new("turn_asks", Some(Duration::ZERO)).await;
