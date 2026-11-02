@@ -140,6 +140,31 @@ pub fn catalogue() -> Arc<Catalogue> {
     Arc::new(Catalogue::fixed(Loaded::parse(bytes.as_bytes()).unwrap()))
 }
 
+/// A gate a fake call waits at while it is shut (a start held in one of its phases).
+#[derive(Default)]
+pub struct Gate {
+    shut: AtomicBool,
+    /// Calls that reached the gate.
+    pub reached: AtomicU32,
+}
+
+impl Gate {
+    pub fn shut(&self) {
+        self.shut.store(true, Ordering::SeqCst);
+    }
+
+    pub fn open(&self) {
+        self.shut.store(false, Ordering::SeqCst);
+    }
+
+    async fn pass(&self) {
+        self.reached.fetch_add(1, Ordering::SeqCst);
+        while self.shut.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+}
+
 /// One fake sandbox: a fake supervisor on a local port.
 pub struct FakeSandbox {
     pub supervisor: Arc<FakeSupervisor>,
@@ -167,6 +192,12 @@ pub struct FakeFabric {
     pub settled: AtomicBool,
     /// A create that fails with this class.
     pub fail_create: Mutex<Option<String>>,
+    /// This many creates fail as unreachable (a transport error) before the next ones work.
+    pub unreachable_creates: AtomicU32,
+    /// Placement waits here (a start held in `placing`, or in `host` while it polls).
+    pub place_gate: Gate,
+    /// Placement fails with a fabric error while set.
+    pub place_error: AtomicBool,
     /// Every supervisor ever made, by sandbox id (their call logs outlive the destroy).
     pub all: Mutex<Vec<(Uuid, Arc<FakeSupervisor>)>>,
 }
@@ -188,6 +219,9 @@ impl FakeFabric {
             launch: Mutex::new(Launch::Full),
             settled: AtomicBool::new(true),
             fail_create: Mutex::new(None),
+            unreachable_creates: AtomicU32::new(0),
+            place_gate: Gate::default(),
+            place_error: AtomicBool::new(false),
             all: Mutex::new(Vec::new()),
         })
     }
@@ -232,6 +266,10 @@ impl FakeFabric {
 impl Fabric for FakeFabric {
     fn place(&self, _id: Uuid, _memory: u64) -> Fut<'_, Result<Place, FabricError>> {
         Box::pin(async move {
+            self.place_gate.pass().await;
+            if self.place_error.load(Ordering::SeqCst) {
+                return Err(FabricError("the fake fabric was told to fail placement".into()));
+            }
             if self.no_slot.load(Ordering::SeqCst) {
                 return Ok(Place::NoSlot);
             }
@@ -262,6 +300,13 @@ impl Fabric for FakeFabric {
                     break;
                 }
                 let _ = tokio::time::timeout(Duration::from_millis(100), n).await;
+            }
+            if self
+                .unreachable_creates
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .is_ok()
+            {
+                return Err(CreateError::Unreachable("connection refused (fake)".into()));
             }
             if let Some(class) = self.fail_create.lock().unwrap().clone() {
                 return Err(CreateError::Failed {
@@ -342,6 +387,8 @@ pub struct FakeWorkspaces {
     ws: Mutex<HashMap<Uuid, Ws>>,
     pub ensured: Mutex<Vec<Uuid>>,
     pub broken: AtomicBool,
+    /// `ensure` waits here (a start held in `workspace`).
+    pub ensure_gate: Gate,
 }
 
 const QUOTA: Amount = Amount {
@@ -390,6 +437,7 @@ fn no_workspace() -> WorkspaceError {
 impl Workspaces for FakeWorkspaces {
     fn ensure(&self, wid: Uuid) -> Fut<'_, Result<(Workspace, bool), WorkspaceError>> {
         Box::pin(async move {
+            self.ensure_gate.pass().await;
             self.check()?;
             self.ensured.lock().unwrap().push(wid);
             let mut ws = self.ws.lock().unwrap();

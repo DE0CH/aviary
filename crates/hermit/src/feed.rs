@@ -4,7 +4,7 @@
 //! starts draining.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use hermit_api::Timestamp;
@@ -12,6 +12,7 @@ use hermit_api::error::{self, ApiError, codes};
 use hermit_api::sandbox::{
     Cursor, MAX_WAIT_MS, Release, Sandbox, SandboxEvent, SandboxEvents, SandboxEventsQuery, SandboxQuery, SandboxState,
 };
+use prometheus_client::metrics::gauge::Gauge;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -22,14 +23,14 @@ use crate::sandboxes::OrUnavailable;
 /// At most this many held requests per replica (23): 503 `unavailable` above.
 pub const MAX_HELD: usize = 2000;
 
-static HELD: AtomicUsize = AtomicUsize::new(0);
+static HELD: LazyLock<Gauge> = LazyLock::new(Gauge::default);
 
 struct Held;
 
 impl Held {
     fn enter() -> Result<Self, ApiError> {
-        if HELD.fetch_add(1, Ordering::AcqRel) >= MAX_HELD {
-            HELD.fetch_sub(1, Ordering::AcqRel);
+        if HELD.inc() >= i64::try_from(MAX_HELD).unwrap_or(i64::MAX) {
+            HELD.dec();
             return Err(ApiError::unavailable("too many held requests", 1));
         }
         Ok(Self)
@@ -38,14 +39,20 @@ impl Held {
 
 impl Drop for Held {
     fn drop(&mut self) {
-        HELD.fetch_sub(1, Ordering::AcqRel);
+        HELD.dec();
     }
 }
 
-/// `hermit_held_requests`.
+/// How many requests this replica holds now (`hermit_held_requests`).
 #[must_use]
 pub fn held() -> usize {
-    HELD.load(Ordering::Acquire)
+    usize::try_from(HELD.get()).unwrap_or(0)
+}
+
+/// The gauge behind [`held`], for the ops registry.
+#[must_use]
+pub fn held_gauge() -> Gauge {
+    HELD.clone()
 }
 
 fn wait_of(ms: Option<u32>) -> Result<Duration, ApiError> {
@@ -82,7 +89,11 @@ pub async fn get_sandbox(core: &Arc<Core>, cid: Uuid, q: SandboxQuery) -> Result
         return Ok(first);
     }
     let after = q.after_version.unwrap_or(first.version);
-    let settled = |s: &Sandbox| s.version > after || s.state != SandboxState::Starting;
+    // a sandbox on its way (`starting`, or `releasing` towards `gone`) is held until it changes; any other state
+    // answers at once (3.6.3 names only `starting`: a `releasing` answer at once would make magpie's loop, which
+    // waits for `ready` or `gone`, spin)
+    let settled =
+        |s: &Sandbox| s.version > after || !matches!(s.state, SandboxState::Starting | SandboxState::Releasing);
     if settled(&first) {
         return Ok(first);
     }

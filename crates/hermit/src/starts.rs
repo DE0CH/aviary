@@ -63,6 +63,7 @@ pub async fn run(core: Arc<Core>, claim: Claim) {
         phase_seen: None,
         create_tries: 0,
         ip_retry_done: false,
+        place_failing_since: None,
     };
     s.run().await;
 }
@@ -76,9 +77,15 @@ struct Start {
     /// `start_deadline` bounds them).
     phase_since: tokio::time::Instant,
     phase_seen: Option<SandboxPhase>,
+    /// Creates that found sandboxd unreachable (3 tries in all, 11.2 step 5).
     create_tries: u32,
     ip_retry_done: bool,
+    /// When placement started failing (a fabric error, not "no slot"): bounded by `hostWaitSeconds`.
+    place_failing_since: Option<tokio::time::Instant>,
 }
+
+/// Tries of a create that finds sandboxd unreachable before the start fails (11.2 step 5).
+const CREATE_TRIES: u32 = 3;
 
 impl Start {
     fn id(&self) -> Uuid {
@@ -317,6 +324,7 @@ impl Start {
             .await
         {
             Ok(Place::Placed(p)) => {
+                self.place_failing_since = None;
                 let r = self
                     .advance(
                         SandboxPhase::Image,
@@ -335,8 +343,20 @@ impl Start {
                     }
                 }
             }
-            Ok(Place::NoSlot) => self.next(SandboxPhase::Host, "", vec![]).await,
+            Ok(Place::NoSlot) => {
+                self.place_failing_since = None;
+                self.next(SandboxPhase::Host, "", vec![]).await
+            }
             Err(e) => {
+                // a fabric that keeps failing is a failed start after `hostWaitSeconds`, not an 8 min wait for the
+                // start deadline
+                let since = *self.place_failing_since.get_or_insert_with(tokio::time::Instant::now);
+                let wait = Duration::from_secs(u64::from(self.core.cfg.sandbox().host_wait_seconds));
+                if since.elapsed() >= wait {
+                    let mut f = Fail::new(ReleaseReason::StartFailed, format!("placement failed: {e}"));
+                    f.note = Some("placement".into());
+                    return Step::Fail(f);
+                }
                 tracing::warn!(sandbox = %row.id, error = %e, "placement failed (retrying)");
                 tokio::time::sleep(self.core.timings.host_poll).await;
                 Step::Next
@@ -439,10 +459,16 @@ impl Start {
                 let _ = self.core.providers.fabric.destroy(Some(&spec.host), None, &other).await;
                 Step::Next
             }
-            Err(e) => {
+            Err(CreateError::Unreachable(why)) if self.create_tries + 1 < CREATE_TRIES => {
                 self.create_tries += 1;
+                tracing::warn!(sandbox = %row.id, error = %why, tries = self.create_tries, "sandboxd unreachable (retrying)");
+                tokio::time::sleep(self.core.timings.busy_retry).await;
+                Step::Next
+            }
+            Err(e) => {
                 let class = match &e {
                     CreateError::Failed { class, .. } => class.clone(),
+                    CreateError::Unreachable(_) => "unreachable".into(),
                     CreateError::IpInUse(_) => "ip_in_use".into(),
                     CreateError::Busy => "busy".into(),
                 };
@@ -494,7 +520,6 @@ impl Start {
             h.boot_id.clone(),
         );
         let created = row.created_at;
-        let start_ms = i32::try_from(self.phase_since.elapsed().as_millis()).unwrap_or(i32::MAX);
         let host = row.host.clone();
         let (cid, person) = (row.conversation_id, row.person.clone());
         let ready = aviary_pg::tx!(&self.core.pool, |t| -> Result<Option<SandboxRow>, aviary_pg::Error> {
@@ -510,10 +535,15 @@ impl Start {
             if n == 0 {
                 return Ok(None);
             }
-            let total = i32::try_from(((OffsetDateTime::now_utc() - created).whole_milliseconds()).max(0)).unwrap_or(i32::MAX);
+            let total =
+                i32::try_from(((OffsetDateTime::now_utc() - created).whole_milliseconds()).max(0)).unwrap_or(i32::MAX);
+            // start_ms = now - the start of step 5 (11.2 step 6): the feed event that recorded `creating` first, so
+            // a takeover does not restart it
             t.execute(
-                "insert into sandbox_starts (ok, ms, start_ms, sandbox_id, conversation_id, person, host) values (true, $1, $2, $3, $4, $5, $6)",
-                &[&total, &start_ms, &id, &cid, &person, &host],
+                "insert into sandbox_starts (ok, ms, start_ms, sandbox_id, conversation_id, person, host)
+                 values (true, $1, (select (extract(epoch from now() - min(at)) * 1000)::int from sandbox_events
+                                    where sandbox_id = $2 and phase = 'creating'), $2, $3, $4, $5)",
+                &[&total, &id, &cid, &person, &host],
             )
             .await?;
             Ok(Some(bump(t, id).await?))

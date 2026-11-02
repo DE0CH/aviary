@@ -1394,6 +1394,7 @@ dependencies = [
  "axum",
  "clap",
  "hermit-api",
+ "prometheus-client",
  "reqwest",
  "rustls",
  "serde",

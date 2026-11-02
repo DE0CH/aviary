@@ -85,7 +85,12 @@ pub enum CreateError {
     /// 409: the address is held by a stale sandbox (destroyed, then retried once).
     #[error("address in use by {0}")]
     IpInUse(String),
-    /// Anything else: the start fails with `start_failed` and `class` as its note.
+    /// sandboxd could not be reached or did not answer in time (a transport error or a timeout): retried, up to 3
+    /// tries in all, before `start_failed` (note `unreachable`).
+    #[error("sandboxd unreachable: {0}")]
+    Unreachable(String),
+    /// A definitive sandboxd answer (any other 4xx/5xx): the start fails at once with `start_failed` and `class` as
+    /// its note.
     #[error("{class}: {message}")]
     Failed { class: String, message: String },
 }

@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use hermit_api::Timestamp;
 use hermit_api::people::{ExplicitPerson, People, Person, Role, normalise_email};
+use prometheus_client::metrics::counter::Counter;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -192,7 +193,7 @@ pub struct Catalogue {
     path: PathBuf,
     current: RwLock<Option<Arc<Loaded>>>,
     refused: Mutex<Option<(String, Instant)>>,
-    refusals: std::sync::atomic::AtomicU64,
+    refusals: Counter,
 }
 
 impl Catalogue {
@@ -203,7 +204,7 @@ impl Catalogue {
             path: path.into(),
             current: RwLock::new(None),
             refused: Mutex::new(None),
-            refusals: std::sync::atomic::AtomicU64::new(0),
+            refusals: Counter::default(),
         }
     }
 
@@ -231,10 +232,16 @@ impl Catalogue {
             .map(|(r, _)| r.clone())
     }
 
-    /// `hermit_catalogue_refused_total`.
+    /// How many re-reads were refused (`hermit_catalogue_refused_total`).
     #[must_use]
     pub fn refusals(&self) -> u64 {
-        self.refusals.load(std::sync::atomic::Ordering::Relaxed)
+        self.refusals.get()
+    }
+
+    /// The counter behind [`Catalogue::refusals`], for the ops registry.
+    #[must_use]
+    pub fn refusals_counter(&self) -> Counter {
+        self.refusals.clone()
     }
 
     /// Whether `email` (normalised) is allowed now; `false` with no catalogue.
@@ -292,7 +299,7 @@ impl Catalogue {
             None => true,
         };
         if log {
-            self.refusals.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.refusals.inc();
             tracing::warn!(path = %self.path.display(), error = %reason, "catalogue refused");
             *r = Some((reason, Instant::now()));
         }

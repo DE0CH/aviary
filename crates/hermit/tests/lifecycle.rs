@@ -20,7 +20,7 @@ use ::hermit::janitor;
 use aviary_core::auth::Caller;
 use common::{Harness, Replica, STAFF};
 use hermit_api::routes;
-use hermit_api::sandbox::{ReleaseReason, SandboxState};
+use hermit_api::sandbox::{ReleaseReason, SandboxPhase, SandboxState};
 use hermit_api::sandbox_surface::ActivityState;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -383,41 +383,6 @@ async fn silence_releases_only_after_two_unanswered_checks_and_never_while_the_g
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_start_resumes_on_another_replica_after_a_kill_with_the_same_token() {
-    let h = Harness::new("lifecycle_takeover").await;
-    let a = h.replica("hermit-a").await;
-    h.fabric.hold_create.store(true, Ordering::SeqCst);
-    let cid = Uuid::now_v7();
-    assert_eq!(put(&h, &a, cid, STAFF).await.status, 202);
-    // A is inside `creating` (the fake holds the call) when it dies
-    assert!(common::eventually(WAIT, || async { h.fabric.creates.load(Ordering::SeqCst) >= 1 }).await);
-    let at_kill = row(&h, cid).await;
-    assert_eq!(at_kill.phase, Some(hermit_api::sandbox::SandboxPhase::Creating));
-    assert_eq!(at_kill.task_owner.as_deref(), Some("hermit-a"));
-    a.kill();
-    let b = h.replica("hermit-b").await;
-    h.fabric.release_create();
-    let s = wait_state(&h, cid, SandboxState::Ready).await;
-    assert_eq!(s.id, at_kill.id);
-    assert!(s.task.is_none());
-    // the token B created the sandbox with is the one any replica derives from the row
-    let sbx = h.fabric.sandbox_by_name(&s.name).unwrap();
-    let proxy = sbx.spec_env.iter().find(|(k, _)| k == "HTTPS_PROXY").unwrap().1.clone();
-    let token = ::hermit::starts::sandbox_token(b.core(), &s).unwrap();
-    assert!(proxy.contains(&token), "{proxy}");
-    let starts: i64 = h
-        .pool()
-        .get()
-        .await
-        .unwrap()
-        .query_one("select count(*) from sandbox_starts where ok", &[])
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(starts, 1);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_release_resumes_on_another_replica_after_a_kill() {
     let h = Harness::new("lifecycle_release_takeover").await;
     let a = h.replica("hermit-a").await;
@@ -735,22 +700,477 @@ async fn callers_only_reach_their_routes() {
     assert!(a.headers.contains_key("www-authenticate"));
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_start_killed_while_waiting_for_the_supervisor_is_finished_by_another_replica() {
-    let h = Harness::new("lifecycle_takeover_supervisor").await;
-    *h.fabric.ready_delay.lock().unwrap() = Duration::from_secs(3);
+/// hermit 24.2 "Resumable tasks": a replica killed while its start is in `phase` (held there by the fake), another
+/// replica's takeover sweep finishes the same row: one sandbox created, the token any replica derives, one start
+/// recorded. `image` has no call to hold it in, so its replica dies in `placing` and the row is set to what the
+/// placing step leaves (host, address, phase `image`), the state a death right after that step finds.
+async fn takeover_in(phase: SandboxPhase) {
+    let cfg = common::config(|v| {
+        if phase == SandboxPhase::Capacity {
+            v["sandbox"]["maxActive"] = 1.into();
+        }
+    });
+    let h = Harness::with(&format!("takeover_{phase}"), cfg, common::timings()).await;
     let a = h.replica("hermit-a").await;
+    // the hold for the phase; for capacity, a sandbox holding the one slot (reserved by its PUT, so no pool victim)
+    let mut blocker = None;
+    match phase {
+        SandboxPhase::Capacity => blocker = Some(ready(&h, &a, STAFF).await.1),
+        SandboxPhase::Workspace => h.workspaces.ensure_gate.shut(),
+        SandboxPhase::Placing | SandboxPhase::Image => h.fabric.place_gate.shut(),
+        SandboxPhase::Host => {
+            h.fabric.no_slot.store(true, Ordering::SeqCst);
+            *h.fabric.launch.lock().unwrap() = ::hermit::fabric::Launch::Launched;
+        }
+        SandboxPhase::Creating => h.fabric.hold_create.store(true, Ordering::SeqCst),
+        SandboxPhase::Supervisor => *h.fabric.ready_delay.lock().unwrap() = Duration::from_secs(3),
+        SandboxPhase::Unknown => unreachable!(),
+    }
     let cid = Uuid::now_v7();
-    put(&h, &a, cid, STAFF).await;
+    assert_eq!(put(&h, &a, cid, STAFF).await.status, 202);
+    let held_in = if phase == SandboxPhase::Image {
+        SandboxPhase::Placing
+    } else {
+        phase
+    };
     let in_phase = common::eventually(WAIT, || async {
-        row(&h, cid).await.phase == Some(hermit_api::sandbox::SandboxPhase::Supervisor)
+        let r = row(&h, cid).await;
+        let at_call = match held_in {
+            SandboxPhase::Workspace => h.workspaces.ensure_gate.reached.load(Ordering::SeqCst) >= 1,
+            SandboxPhase::Placing => h.fabric.place_gate.reached.load(Ordering::SeqCst) >= 1,
+            SandboxPhase::Creating => h.fabric.creates.load(Ordering::SeqCst) >= 1,
+            _ => true,
+        };
+        r.phase == Some(held_in) && at_call
     })
     .await;
-    assert!(in_phase);
+    let at_kill = row(&h, cid).await;
+    assert!(in_phase, "not held in {held_in}: {at_kill:?}");
+    assert_eq!(at_kill.task_owner.as_deref(), Some("hermit-a"));
     a.kill();
-    let _b = h.replica("hermit-b").await;
+    if phase == SandboxPhase::Image {
+        h.sql(&format!(
+            "update sandboxes set phase = 'image', host = 'fake-1', ip = '198.18.9.9' where id = '{}'",
+            at_kill.id
+        ))
+        .await;
+    }
+    let b = h.replica("hermit-b").await;
+    match phase {
+        SandboxPhase::Capacity => {
+            let s0 = blocker.take().unwrap();
+            ::hermit::sandboxes::request(b.core(), s0.id, ReleaseReason::Operator, true, None)
+                .await
+                .unwrap();
+        }
+        SandboxPhase::Workspace => h.workspaces.ensure_gate.open(),
+        SandboxPhase::Placing | SandboxPhase::Image => h.fabric.place_gate.open(),
+        SandboxPhase::Host => h.fabric.no_slot.store(false, Ordering::SeqCst),
+        SandboxPhase::Creating => h.fabric.release_create(),
+        _ => {}
+    }
     let s = wait_state(&h, cid, SandboxState::Ready).await;
-    // the sandbox A created is the one B found ready: created once
-    assert_eq!(h.fabric.creates.load(Ordering::SeqCst), 1);
-    assert_eq!(*h.fabric.created.lock().unwrap(), vec![s.name]);
+    assert_eq!(s.id, at_kill.id);
+    assert!(s.task.is_none());
+    // created once: A died before its create, or B's create of the same name and address was sandboxd's
+    // idempotent repeat
+    let created = h
+        .fabric
+        .created
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|n| **n == s.name)
+        .count();
+    assert_eq!(created, 1, "{phase}");
+    // the token B's sandbox runs with is the one any replica derives from the row
+    let sbx = h.fabric.sandbox_by_name(&s.name).unwrap();
+    let proxy = sbx.spec_env.iter().find(|(k, _)| k == "HTTPS_PROXY").unwrap().1.clone();
+    let token = ::hermit::starts::sandbox_token(b.core(), &s).unwrap();
+    assert!(proxy.contains(&token), "{proxy}");
+    let starts = h
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query(
+            "select ok, start_ms from sandbox_starts where sandbox_id = $1",
+            &[&s.id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(starts.len(), 1, "{phase}");
+    let (ok, start_ms): (bool, Option<i32>) = (starts[0].get(0), starts[0].get(1));
+    assert!(ok);
+    // start_ms runs from the start of `creating` (11.2 step 6), not from the takeover: the supervisor became ready
+    // 3 s after the create, whoever was waiting for it
+    let start_ms = start_ms.expect("start_ms");
+    if phase == SandboxPhase::Supervisor {
+        assert!(start_ms >= 2500, "start_ms {start_ms}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_start_killed_in_capacity_is_finished_by_another_replica() {
+    takeover_in(SandboxPhase::Capacity).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_start_killed_in_workspace_is_finished_by_another_replica() {
+    takeover_in(SandboxPhase::Workspace).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_start_killed_in_placing_is_finished_by_another_replica() {
+    takeover_in(SandboxPhase::Placing).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_start_killed_waiting_for_a_host_is_finished_by_another_replica() {
+    takeover_in(SandboxPhase::Host).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_start_killed_after_image_is_finished_by_another_replica() {
+    takeover_in(SandboxPhase::Image).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_start_killed_in_creating_is_finished_by_another_replica_with_the_same_token() {
+    takeover_in(SandboxPhase::Creating).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_start_killed_waiting_for_the_supervisor_is_finished_by_another_replica() {
+    takeover_in(SandboxPhase::Supervisor).await;
+    // (the supervisor phase's own check: no second create, start_ms from creating, both in takeover_in)
+}
+
+/// magpie's driver (magpie 8.3 steps 1-2): `PUT` (other 5xx: retry with backoff), then on 202 long-poll until
+/// `ready` or `gone`. Returns the ready sandbox and every answer it saw; a `gone` is a failed turn.
+async fn drive(h: &Harness, r: &Replica, cid: Uuid) -> (Value, Vec<(u16, Value)>) {
+    let mut seen = Vec::new();
+    let mut backoff = Duration::from_millis(500);
+    loop {
+        let a = put(h, r, cid, STAFF).await;
+        seen.push((a.status, a.body.clone()));
+        match a.status {
+            200 => return (a.body, seen),
+            202 => {
+                let mut v = a.body["version"].as_u64().unwrap();
+                loop {
+                    let g = h
+                        .client(Caller::Magpie)
+                        .call(
+                            &r.url,
+                            "GET",
+                            &format!("{}?waitMs=25000&afterVersion={v}", sandbox_path(cid)),
+                            None,
+                            &[],
+                        )
+                        .await;
+                    assert_eq!(g.status, 200, "{}", g.body);
+                    seen.push((g.status, g.body.clone()));
+                    match g.body["state"].as_str() {
+                        Some("ready") => return (g.body, seen),
+                        Some("gone") => panic!("the turn would fail: {seen:?}"),
+                        _ => v = g.body["version"].as_u64().unwrap(),
+                    }
+                }
+            }
+            503 => {
+                assert_eq!(a.body["code"], "unavailable", "{}", a.body);
+                assert!(a.headers.contains_key("retry-after"));
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(Duration::from_secs(10));
+            }
+            other => panic!("PUT {other}: {}", a.body),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_put_during_a_long_forced_release_ends_with_a_new_ready_sandbox_and_no_failed_turn() {
+    // a forced release whose supervisor never answers runs to its 10 s deadline
+    let timings = ::hermit::Timings {
+        release_deadline: Duration::from_secs(10),
+        ..common::timings()
+    };
+    let h = Harness::with("lifecycle_put_while_releasing", common::config(|_| {}), timings).await;
+    let r = h.replica("hermit-a").await;
+    let (cid, s) = ready(&h, &r, STAFF).await;
+    let hold = aviary_fakes::Hold::new();
+    sup(&h, &s)
+        .faults()
+        .on("release", aviary_fakes::FaultKind::Hold(hold.clone()));
+    ::hermit::sandboxes::request(r.core(), s.id, ReleaseReason::Operator, true, None)
+        .await
+        .unwrap();
+    assert!(hold.wait_held(1, WAIT).await);
+    assert_eq!(row(&h, cid).await.status, SandboxState::Releasing);
+    let t = std::time::Instant::now();
+    let (sbx, seen) = tokio::time::timeout(Duration::from_secs(60), drive(&h, &r, cid))
+        .await
+        .expect("the driver got a sandbox");
+    assert_ne!(sbx["id"], json!(s.id), "{seen:?}");
+    assert_eq!(sbx["state"], "ready");
+    // the PUTs during the release were retryable 503s, never the releasing sandbox
+    assert!(seen.iter().any(|(st, _)| *st == 503), "{seen:?}");
+    assert!(
+        seen.iter().all(|(_, b)| b["id"] != json!(s.id)),
+        "the releasing sandbox was handed out: {seen:?}"
+    );
+    assert!(t.elapsed() >= Duration::from_secs(7), "{:?}", t.elapsed());
+    let old = db::load(&h.pool(), s.id).await.unwrap().unwrap();
+    assert_eq!(
+        (old.status, old.release_reason.as_deref()),
+        (SandboxState::Gone, Some("operator"))
+    );
+    hold.release();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_forced_release_asked_while_a_soft_one_is_refused_still_ends_the_sandbox() {
+    let h = Harness::new("lifecycle_forced_over_soft").await;
+    let r = h.replica("hermit-a").await;
+    let (cid, s) = ready(&h, &r, STAFF).await;
+    // busy: a soft release is refused; the call is held at the supervisor while magpie deletes the conversation
+    sup(&h, &s).set_run(ActivityState::Held, None, 1);
+    let hold = aviary_fakes::Hold::new();
+    sup(&h, &s)
+        .faults()
+        .on("release", aviary_fakes::FaultKind::Hold(hold.clone()));
+    ::hermit::sandboxes::request(r.core(), s.id, ReleaseReason::Idle, false, None)
+        .await
+        .unwrap();
+    assert!(hold.wait_held(1, WAIT).await);
+    let rel = routes::fill(routes::SANDBOX_RELEASE, &[&cid.to_string()]);
+    let a = h
+        .client(Caller::Magpie)
+        .call(&r.url, "POST", &rel, Some(json!({"reason": "deleted"})), &[])
+        .await;
+    assert_eq!((a.status, a.body["released"].clone()), (200, json!(1)));
+    hold.release();
+    let gone = wait_state(&h, cid, SandboxState::Gone).await;
+    assert_eq!(gone.release_reason.as_deref(), Some("deleted"));
+    let calls = sup_calls(&h, &s);
+    assert_eq!(
+        calls
+            .iter()
+            .map(|c| (c["reason"].clone(), c["force"].clone()))
+            .collect::<Vec<_>>(),
+        vec![(json!("idle"), json!(false)), (json!("deleted"), json!(true))]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_put_while_the_supervisor_is_asked_a_soft_release_never_answers_a_dying_sandbox() {
+    let h = Harness::new("lifecycle_put_vs_soft").await;
+    let r = h.replica("hermit-a").await;
+    // the supervisor agrees (idle): the PUT waits for that answer and gets a new sandbox, 202
+    let (cid, s) = ready(&h, &r, STAFF).await;
+    let hold = aviary_fakes::Hold::new();
+    sup(&h, &s)
+        .faults()
+        .on("release", aviary_fakes::FaultKind::Hold(hold.clone()));
+    ::hermit::sandboxes::request(r.core(), s.id, ReleaseReason::Idle, false, None)
+        .await
+        .unwrap();
+    assert!(hold.wait_held(1, WAIT).await);
+    let (h2, url) = (h.client(Caller::Magpie), r.url.clone());
+    let p = tokio::spawn(async move {
+        h2.call(&url, "PUT", &sandbox_path(cid), Some(json!({"person": STAFF})), &[])
+            .await
+    });
+    // the cancellation is on the row at once
+    assert!(
+        common::eventually(WAIT, || async {
+            db::load(&h.pool(), s.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .release_pending
+                .is_none()
+        })
+        .await
+    );
+    hold.release();
+    let a = p.await.unwrap();
+    assert_eq!(a.status, 202, "{}", a.body);
+    assert_ne!(a.body["id"], json!(s.id));
+    let old = db::load(&h.pool(), s.id).await.unwrap().unwrap();
+    assert_eq!(
+        (old.status, old.release_reason.as_deref()),
+        (SandboxState::Gone, Some("idle"))
+    );
+    wait_state(&h, cid, SandboxState::Ready).await;
+
+    // the supervisor refuses (busy): the PUT answers 200 with the same sandbox, the release is gone
+    let (cid, s) = ready(&h, &r, STAFF).await;
+    sup(&h, &s).set_run(ActivityState::Held, None, 1);
+    let hold = aviary_fakes::Hold::new();
+    sup(&h, &s)
+        .faults()
+        .on("release", aviary_fakes::FaultKind::Hold(hold.clone()));
+    ::hermit::sandboxes::request(r.core(), s.id, ReleaseReason::Idle, false, None)
+        .await
+        .unwrap();
+    assert!(hold.wait_held(1, WAIT).await);
+    let (h2, url) = (h.client(Caller::Magpie), r.url.clone());
+    let p = tokio::spawn(async move {
+        h2.call(&url, "PUT", &sandbox_path(cid), Some(json!({"person": STAFF})), &[])
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    hold.release();
+    let a = p.await.unwrap();
+    assert_eq!((a.status, a.body["id"].clone()), (200, json!(s.id)), "{}", a.body);
+    let now = row(&h, cid).await;
+    assert_eq!(now.status, SandboxState::Ready);
+    assert!(now.release_pending.is_none() && now.task.is_none(), "{now:?}");
+    assert_eq!(sup_calls(&h, &s).len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_forced_release_run_late_still_asks_the_supervisor_to_end_the_turn() {
+    let h = Harness::new("lifecycle_forced_late").await;
+    let r = h.replica("hermit-a").await;
+    let (cid, s) = ready(&h, &r, STAFF).await;
+    sup(&h, &s).set_run(ActivityState::Running, None, 0);
+    // a forced release asked long ago (its claim could not be taken then): its old deadline has passed
+    h.sql(&format!(
+        "update sandboxes set release_pending = '{{\"reason\":\"operator\",\"note\":null,\"force\":true,\"deadlineAt\":\"2020-01-01T00:00:00.000Z\",\"askedAt\":\"2020-01-01T00:00:00.000Z\",\"refusals\":0}}' where id = '{}'",
+        s.id
+    ))
+    .await;
+    let claim = ::hermit::tasks::take(r.core(), s.id, ::hermit::tasks::Kind::Release)
+        .await
+        .unwrap()
+        .unwrap();
+    ::hermit::tasks::run(r.core(), claim);
+    let gone = wait_state(&h, cid, SandboxState::Gone).await;
+    assert_eq!(gone.release_reason.as_deref(), Some("operator"));
+    assert!(
+        sup_calls(&h, &s)
+            .iter()
+            .any(|c| c["force"] == true && c["reason"] == "operator"),
+        "the running turn was cut by a bare destroy"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sigterm_drains_through_the_binarys_hooks() {
+    use aviary_core::drain::{Drain, Outcome, Signal, Signals};
+    use aviary_core::{ops, version};
+    let h = Harness::new("lifecycle_sigterm").await;
+    let a = h.replica("hermit-a").await;
+    assert!(common::eventually(WAIT, || async { a.app.leads() }).await);
+    let b = h.replica("hermit-b").await;
+    // A's start is inside a sandboxd call when the signal comes
+    h.fabric.hold_create.store(true, Ordering::SeqCst);
+    let cid = Uuid::now_v7();
+    put(&h, &a, cid, STAFF).await;
+    assert!(common::eventually(WAIT, || async { h.fabric.creates.load(Ordering::SeqCst) >= 1 }).await);
+    // a long-poll A holds
+    let v = row(&h, cid).await.version;
+    let (m, url) = (h.client(Caller::Magpie), a.url.clone());
+    let poll = tokio::spawn(async move {
+        let t = std::time::Instant::now();
+        let g = m
+            .call(
+                &url,
+                "GET",
+                &format!("{}?waitMs=25000&afterVersion={v}", sandbox_path(cid)),
+                None,
+                &[],
+            )
+            .await;
+        (g.status, t)
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // the ops server and the drain as main.rs builds them
+    let build = version::Build::new("hermit");
+    let o = ops::Ops::new(build.clone(), ops::registry(&build));
+    let addr = o.spawn("127.0.0.1:0".parse().unwrap()).await.unwrap();
+    o.readiness().started();
+    let readyz = format!("http://{addr}/readyz");
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    assert_eq!(http.get(&readyz).send().await.unwrap().status(), 200);
+    let mut d = Drain::new(o.readiness().clone());
+    let stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let st = stopped.clone();
+    ::hermit::app::drain_hooks(&mut d, a.app.clone(), move || async move {
+        st.store(true, Ordering::SeqCst);
+    });
+    let (sig, mut signals) = Signals::channel();
+    let t = std::time::Instant::now();
+    let drain = tokio::spawn(async move { d.run(&mut signals).await });
+    sig.send(Signal::Term).unwrap();
+    // readiness 503 through the ops server; the held long-poll answered at once
+    let unready = common::eventually(Duration::from_secs(2), || async {
+        http.get(&readyz).send().await.unwrap().status() == 503
+    })
+    .await;
+    assert!(unready);
+    let (status, _) = tokio::time::timeout(Duration::from_secs(3), poll)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(status, 200);
+    // the claim and the leadership move to B while A's call is still out
+    assert!(
+        common::eventually(WAIT, || async {
+            row(&h, cid).await.task_owner.as_deref() == Some("hermit-b")
+        })
+        .await
+    );
+    assert!(common::eventually(WAIT, || async { b.app.leads() }).await);
+    assert!(
+        !drain.is_finished(),
+        "the drain waits for the sandboxd call already sent"
+    );
+    // the call returns: A writes nothing (the claim is B's), its task ends, the drain completes
+    h.fabric.release_create();
+    let outcome = tokio::time::timeout(Duration::from_secs(90), drain)
+        .await
+        .expect("drained within terminationGracePeriodSeconds")
+        .unwrap();
+    assert_eq!(outcome, Outcome::Drained);
+    assert!(t.elapsed() < Duration::from_secs(30), "{:?}", t.elapsed());
+    assert!(stopped.load(Ordering::SeqCst));
+    assert!(a.core().tasks.is_empty());
+    let s = wait_state(&h, cid, SandboxState::Ready).await;
+    assert!(s.task.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unreachable_sandboxd_is_retried_and_a_failing_placement_is_bounded() {
+    let cfg = common::config(|v| v["sandbox"]["hostWaitSeconds"] = 1.into());
+    let h = Harness::with("lifecycle_create_retries", cfg, common::timings()).await;
+    let r = h.replica("hermit-a").await;
+    // two transport failures, then sandboxd answers: ready
+    h.fabric.unreachable_creates.store(2, Ordering::SeqCst);
+    let (_, s) = ready(&h, &r, STAFF).await;
+    assert_eq!(h.fabric.creates.load(Ordering::SeqCst), 3);
+    assert_eq!(s.status, SandboxState::Ready);
+    // three: start_failed, note unreachable
+    h.fabric.unreachable_creates.store(3, Ordering::SeqCst);
+    let cid = Uuid::now_v7();
+    put(&h, &r, cid, STAFF).await;
+    let gone = wait_state(&h, cid, SandboxState::Gone).await;
+    assert_eq!(
+        (gone.release_reason.as_deref(), gone.release_note.as_deref()),
+        (Some("start_failed"), Some("unreachable"))
+    );
+    // a fabric whose placement keeps failing: start_failed after hostWaitSeconds, not at the 8 min deadline
+    h.fabric.place_error.store(true, Ordering::SeqCst);
+    let cid = Uuid::now_v7();
+    let t = std::time::Instant::now();
+    put(&h, &r, cid, STAFF).await;
+    let gone = wait_state(&h, cid, SandboxState::Gone).await;
+    assert_eq!(
+        (gone.release_reason.as_deref(), gone.release_note.as_deref()),
+        (Some("start_failed"), Some("placement"))
+    );
+    assert!(t.elapsed() < Duration::from_secs(10), "{:?}", t.elapsed());
 }

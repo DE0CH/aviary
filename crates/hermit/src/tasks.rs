@@ -214,7 +214,20 @@ impl TaskSet {
             .is_some_and(|h| !h.is_finished())
     }
 
-    /// Stops every task (drain, after the claims were handed back; or a kill).
+    /// Waits up to `max` for every task to end by itself (drain step 5: the supervisor and sandboxd calls already
+    /// sent finish; a task whose claim was handed back writes nothing and stops at its next guarded write or
+    /// renewal), then stops the rest. Returns how many were stopped.
+    pub async fn settle(&self, max: std::time::Duration) -> usize {
+        let end = tokio::time::Instant::now() + max;
+        while !self.is_empty() && tokio::time::Instant::now() < end {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let left = self.len();
+        self.abort_all();
+        left
+    }
+
+    /// Stops every task (the end of a drain, or a kill).
     pub fn abort_all(&self) {
         for (_, h) in self.running.lock().unwrap_or_else(PoisonError::into_inner).drain() {
             h.abort();
@@ -284,16 +297,16 @@ pub async fn sweep_once(core: &Arc<Core>) -> Result<Option<(Uuid, Kind)>, aviary
     Ok(Some((id, kind)))
 }
 
-/// Drain step 3: stops this replica's tasks, then hands back every claim it holds (`task_until = now()`, owner
-/// cleared so a late write of a stopped task finds nothing); another replica's sweep resumes them. Retried a few
-/// times: a claim not handed back lapses on its own 15 s after its last renewal.
+/// Drain step 3: hands back every claim this replica holds (`task_until = now()`, owner cleared so a later write of
+/// one of its tasks finds nothing); another replica's sweep resumes them. The tasks are not stopped here: a call
+/// they already sent finishes (step 5, [`TaskSet::settle`]) and its result is dropped, and the new owner repeats
+/// the idempotent step. Retried a few times: a claim not handed back lapses on its own 15 s after its last renewal.
 ///
 /// # Errors
 /// The last database error.
 pub async fn hand_back(core: &Core) -> Result<u64, aviary_pg::Error> {
     // a sweep pass in flight finishes first; the next ones see the drain
     let _pass = core.sweep_lock.lock().await;
-    core.tasks.abort_all();
     let mut last = None;
     for attempt in 0..3u32 {
         if attempt > 0 {

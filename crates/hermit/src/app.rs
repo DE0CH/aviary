@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use aviary_core::auth::Callers;
+use aviary_core::drain;
 use aviary_pg::{Leader, Listener};
 use axum::Router;
 use hermit_api::server::{RouteGuard, guarded_router};
@@ -223,11 +224,23 @@ impl App {
         handed
     }
 
-    /// Step 6: the loops stopped, the pool closed.
+    /// Step 5's second half: waits up to `max` for the supervisor and sandboxd calls this replica's tasks already
+    /// sent (their claims were handed back, so their results are not written), then stops what is left. Returns
+    /// how many tasks were stopped.
+    pub async fn settle_tasks(&self, max: Duration) -> usize {
+        let stopped = self.core.tasks.settle(max).await;
+        if stopped > 0 {
+            tracing::info!(tasks = stopped, "tasks stopped at the drain's deadline");
+        }
+        stopped
+    }
+
+    /// Step 6: the loops and any task left stopped, the pool closed.
     pub async fn finish_drain(&self) {
         for h in self.loops.lock().unwrap_or_else(PoisonError::into_inner).drain(..) {
             h.abort();
         }
+        self.core.tasks.abort_all();
         // a claim taken by a request that began before the drain is handed back too
         if let Err(e) = tasks::hand_back(&self.core).await {
             tracing::warn!(error = %e, "late claims not handed back (they lapse in 15 s)");
@@ -244,6 +257,42 @@ impl App {
         drop(self.leader.lock().unwrap_or_else(PoisonError::into_inner).take());
         self.core.pool.close();
     }
+}
+
+/// The drain of hermit 20.2 as the binary runs it on SIGTERM: [`drain::Drain`] marks `/readyz` 503 first, then
+/// these hooks in order (preStop 10 s + 10 + 35 + 5 s stays inside `terminationGracePeriodSeconds: 90`):
+/// 1. steps 2-4: draining (held long-polls answered, warm off), claims handed back, leadership released;
+/// 2. step 5: `stop_requests` (the API server's graceful shutdown: in-flight requests finish) and, at the same
+///    time, the supervisor and sandboxd calls already sent, both within 35 s;
+/// 3. step 6: the loops stopped and the pool closed.
+pub fn drain_hooks<F, Fut>(d: &mut drain::Drain, app: Arc<App>, stop_requests: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    const IN_FLIGHT: Duration = Duration::from_secs(35);
+    {
+        let app = app.clone();
+        d.hook(
+            "hand back claims and leadership",
+            Duration::from_secs(10),
+            move || async move {
+                let _ = app.begin_drain().await;
+            },
+        );
+    }
+    {
+        let app = app.clone();
+        d.hook("in-flight requests and calls", IN_FLIGHT, move || async move {
+            // the hook's own deadline is the same 35 s; the tasks' wait ends a little earlier so they are stopped
+            // here rather than abandoned
+            let tasks = app.settle_tasks(IN_FLIGHT.saturating_sub(Duration::from_millis(500)));
+            tokio::join!(stop_requests(), tasks);
+        });
+    }
+    d.hook("close", Duration::from_secs(5), move || async move {
+        app.finish_drain().await;
+    });
 }
 
 async fn live_loop(core: Arc<Core>) {

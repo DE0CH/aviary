@@ -48,7 +48,7 @@ pub struct Pending {
     pub reason: ReleaseReason,
     pub note: Option<String>,
     pub force: bool,
-    /// When a forced release stops waiting for the supervisor.
+    /// When a forced release stops waiting for the supervisor: written when the row enters `releasing`.
     pub deadline_at: Timestamp,
     pub asked_at: Timestamp,
     #[serde(default)]

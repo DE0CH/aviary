@@ -20,6 +20,7 @@ aviary-pg = { path = "../aviary-pg" }
 axum.workspace = true
 clap.workspace = true
 hermit-api = { path = "../hermit-api" }
+prometheus-client.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

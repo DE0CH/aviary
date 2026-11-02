@@ -78,7 +78,26 @@ async fn serve() -> ExitCode {
         .surface(hermit_api::SANDBOX.0, hermit_api::SANDBOX.1);
     let pod = env::field("HERMIT_POD");
     log::init(&build, Some(pod.clone()), log::Output::Stdout);
-    let registry = ops::registry(&build);
+    let mut registry = ops::registry(&build);
+    let config_path = std::path::Path::new(CONFIG_PATH);
+    // hermit.json is read before the registry is handed over, so the catalogue's counter can be registered
+    let config = Config::load(config_path);
+    let staff = config
+        .as_ref()
+        .ok()
+        .map(|c| Arc::new(Catalogue::new(c.file.catalogue.clone())));
+    if let Some(s) = &staff {
+        registry.register(
+            "catalogue_refused",
+            "Catalogue re-reads refused (the last good catalogue kept)",
+            s.refusals_counter(),
+        );
+    }
+    registry.register(
+        "held_requests",
+        "Long-polls this replica holds now",
+        hermit::feed::held_gauge(),
+    );
     let ops = ops::Ops::new(build, registry);
     if let Err(e) = ops.spawn(ops::ADDR).await {
         tracing::error!(error = %e, "ops listener");
@@ -100,7 +119,7 @@ async fn serve() -> ExitCode {
     };
     let callers = Callers::from_env("HERMIT", &CALLERS);
 
-    let config = match Config::load(std::path::Path::new(CONFIG_PATH)) {
+    let config = match config {
         Ok(c) => Arc::new(c),
         Err(e) => {
             // never ready: the old pods keep serving (hermit 9)
@@ -110,7 +129,9 @@ async fn serve() -> ExitCode {
         }
     };
     config_gate.open();
-    let staff = Arc::new(Catalogue::new(config.file.catalogue.clone()));
+    let Some(staff) = staff else {
+        return ExitCode::FAILURE;
+    };
 
     let app = loop {
         let options = StartOptions {
@@ -175,26 +196,10 @@ async fn serve() -> ExitCode {
     readiness.started();
 
     let mut d = drain::Drain::new(readiness);
-    {
-        let app = app.clone();
-        d.hook(
-            "hand back claims and leadership",
-            Duration::from_secs(10),
-            move || async move {
-                let _ = app.begin_drain().await;
-            },
-        );
-    }
-    d.hook("in-flight requests", Duration::from_secs(35), move || async move {
+    hermit::app::drain_hooks(&mut d, app, move || async move {
         let _ = stop_tx.send(true);
         let _ = server.await;
     });
-    {
-        let app = app.clone();
-        d.hook("close", Duration::from_secs(5), move || async move {
-            app.finish_drain().await;
-        });
-    }
     let Ok(mut signals) = drain::Signals::os() else {
         return ExitCode::FAILURE;
     };
