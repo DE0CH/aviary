@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Gate item 9: every syscall that names a path under the mount (/home/sandbox/.claude), from the sentry's --strace
-log, grouped by syscall, answer and path class, split by program. usage: strace-inventory.py BOOT_LOG > inventory.json"""
-import collections, json, re, sys
+log, grouped by syscall, answer and path class, split by program. usage: [MOUNT=DIR] strace-inventory.py BOOT_LOG > inventory.json"""
 
-MOUNT = "/home/sandbox/.claude"
+import collections, json, os, re, sys
+MOUNT = os.environ.get("MOUNT", "/home/sandbox/.claude")  # the local reference run: MOUNT=/tmp/lh/.claude
 line_re = re.compile(r"\] \[ *(\d+): *(\d+)\] (.+?) X (\w+)\((.*)\) = (.*?) \((?:[\d.]+[µnm]?s)\)\s*$")
 path_re = re.compile(re.escape(MOUNT) + r"(?=[/\s,\"\)\]]|$)(?:/[^\s,\"\)\]]*)?")
 

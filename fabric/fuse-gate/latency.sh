@@ -47,5 +47,36 @@ lat 0
 x python3 /media/drive.py /tmp/s/session-c.json /tmp/c-hold > "$out/c-hold.summary.json"
 wait
 r sh -c "python3 /media/gaps.py /srv/model/chunks.log /tmp/c-hold/stdout.jsonl" > "$out/gaps-hold.json"
+# the same hold with CLAUDE_CODE_EAGER_FLUSH=1: 2.1.304 then waits for its transcript drain before the result
+# without the 10 s cap ("transcript drain still running after 10000ms; the result goes out without it")
+x sh -c "python3 -c \"import json; s=json.load(open('/tmp/s/session-c.json')); s['env']={'CLAUDE_CODE_EAGER_FLUSH': '1'}; json.dump(s, open('/tmp/s/session-ce.json','w'))\""
+( sleep 1; r touch /run/magpie-ctl/hold; sleep 30; r rm -f /run/magpie-ctl/hold ) &
+x python3 /media/drive.py /tmp/s/session-ce.json /tmp/c-hold-eager > "$out/c-hold-eager.summary.json"
+wait
+# when each held transcript append landed (ops.tsv: start + duration) against each turn's result
+r cat /srv/supervisor/ops.tsv > "$out/ops.tsv"
+r cat /srv/magpie/calls.log > "$out/calls.log"
+for v in hold hold-eager; do
+  python3 - "$out/c-$v.summary.json" "$out/ops.tsv" > "$out/order-$v.json" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+w = []
+for l in open(sys.argv[2]):
+    f = l.rstrip("\n").split("\t")
+    if len(f) >= 8 and f[1] == "WRITE" and f[3].startswith("projects/") and f[3].count("/") == 2 and f[3].endswith(".jsonl"):
+        w.append((int(f[0]), int(f[0]) + int(f[6])))
+t0 = s["turns"][0]["start_us"]
+turns = []
+for t in s["turns"]:
+    during = [e for b, e in w if t["start_us"] <= b <= t["end_us"]]
+    pend = [e for b, e in w if b <= t["end_us"] < e]
+    turns.append({"start_s": round((t["start_us"] - t0) / 1e6, 3), "result_s": round((t["end_us"] - t0) / 1e6, 3),
+                  "result": t["result"], "appends_started": len(during),
+                  "appends_still_pending_at_result": len(pend),
+                  "last_pending_landed_s": round((max(pend) - t0) / 1e6, 3) if pend else None})
+print(json.dumps({"turns": turns}))
+PY
+done
 for f in "$out"/bench-*.json "$out"/read87-*.json; do echo "$(basename "$f") $(cat "$f")"; done
+for v in hold hold-eager; do echo "order-$v $(cat "$out/order-$v.json")"; done
 for v in 0 50 500 hold; do echo "c-$v $(jq -c '{turns:[.turns[] | [.result, ((.end_us-.start_us)/1000|floor)]]}' "$out/c-$v.summary.json") $(cat "$out/gaps-$v.json")"; done
