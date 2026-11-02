@@ -39,6 +39,9 @@
 //! - `GET /v1/sandbox/blobs/{sha}` is unscoped: it answers any stored blob to any conversation with or without a
 //!   lease, and `as` is ignored (the stored bytes); magpie answers only blobs the sandbox's conversation
 //!   references, and decodes for `as=media|text`;
+//! - M9 (`timeline`, `admin_timeline`) is scripted, but the query rule magpie checks first is modelled: `liveAfter`
+//!   without `liveTurn` (or the other way round), or `waitMs`/`liveAfter`/`liveTurn` without `after`, answers 400
+//!   `bad_request` before any scripted answer, so a caller that forgets `liveTurn` fails its test;
 //! - a sent-files commit missing a blob answers 400 `bad_request` (magpie 11.2 names no code), and the commit's
 //!   `seq` counts the conversation's commits from 1, since the fake writes no `files.sent` event.
 //!
@@ -1126,6 +1129,19 @@ fn raw(r: &Reply, _route: &str) -> Result<Response, ApiError> {
     r.response()
 }
 
+/// M9's rule that magpie checks before anything else: `liveAfter` goes with `liveTurn` (frames are numbered per
+/// turn), and both, like `waitMs`, only with `after`. A caller that sends one without the other gets magpie's 400,
+/// whatever the test scripted.
+fn live_pair(q: &TimelineQuery) -> Result<(), ApiError> {
+    if q.after.is_none() && (q.wait_ms.is_some() || q.live_after.is_some() || q.live_turn.is_some()) {
+        return Err(ApiError::bad_request("waitMs, liveAfter and liveTurn go with after"));
+    }
+    if q.live_after.is_some() != q.live_turn.is_some() {
+        return Err(ApiError::bad_request("liveAfter and liveTurn go together"));
+    }
+    Ok(())
+}
+
 fn id(v: Uuid) -> Value {
     json!({"id": v.to_string()})
 }
@@ -1181,6 +1197,7 @@ impl Server for FakeMagpie {
     }
 
     async fn timeline(&self, ctx: Ctx, id_: Uuid, query: TimelineQuery) -> Result<TimelinePage, ApiError> {
+        live_pair(&query)?;
         scripted!(self, "timeline", ctx, id(id_), ser(&query), None, typed)
     }
 
@@ -1495,6 +1512,7 @@ impl Server for FakeMagpie {
     }
 
     async fn admin_timeline(&self, ctx: Ctx, id_: Uuid, query: TimelineQuery) -> Result<TimelinePage, ApiError> {
+        live_pair(&query)?;
         scripted!(self, "admin_timeline", ctx, id(id_), ser(&query), None, typed)
     }
 }

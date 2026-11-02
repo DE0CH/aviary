@@ -96,6 +96,11 @@ WP-50 plugs into `feeds`:
   port keeps that.
 - **No 7.10 migration retry and no "being moved" sentence** (DESIGN 12 D14, D24); a `conversation_migrating` answer
   is the unreachable sentence until WP-50's delegate routes such conversations.
+- **Live frames in M9 (`liveAfter`)**: off in this release (R36), so `timeline_poller` sends neither `liveAfter` nor
+  `liveTurn`. When live frames are turned on (WP-17/WP-50, magpie 21.2), every `liveAfter` must go with `liveTurn`,
+  the `LiveState.turnId` the frame number counts in: magpie answers 400 for either alone (frames are numbered per
+  turn) and `reset: true` for a `liveTurn` that is not the active turn. fake-magpie applies the same 400 before any
+  scripted answer (`testing/fakes/tests/timeline_query.rs`).
 - **Updated rows**: a tool row updated before the poll read it is sent once, with its latest `seqEnd` (M9 `after`
   returns rows by `seqEnd`); the app sees a gap and fetches, as spec 8.3 describes for joins.
 - **The drain and large inbound messages**: tungstenite gives the socket whole messages only, so the listener counts
