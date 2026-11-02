@@ -1,0 +1,1 @@
+{"layout":"tmpfs","runsc_extra":"--systrap-disable-syscall-patching","hold":1,"mode":"fuse","send_ms":279,"total_ms":361,"release_to_turn_done_ms":624,"migrate_start_us":1793626168259000}

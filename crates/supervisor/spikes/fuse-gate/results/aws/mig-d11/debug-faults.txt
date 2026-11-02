@@ -1,0 +1,8 @@
+D1102 13:11:12.911837       1 config.go:658] Config.PanicLog (--panic-log): (empty)
+D1102 13:11:12.912072       1 config.go:658] Config.PanicSignal (--panic-signal): -1
+D1102 13:11:12.912275       1 config.go:658] Config.TestOnlyAFSSyscallPanic (--TESTONLY-afs-syscall-panic): false
+D1102 13:11:17.611621       1 task_signals.go:601] [   7:  50] Notified of signal 11
+D1102 13:11:17.611652       1 task_signals.go:280] [   7:  50] Signal 11: delivering to handler
+D1102 13:11:17.612436       1 task_signals.go:601] [   7:  50] Notified of signal 11
+D1102 13:11:17.612460       1 task_signals.go:264] [   7:  50] Signal 11, PID: 7, TID: 50, fault addr: 0x0: terminating thread group
+1.4M	/var/log/gate/dbg-d11

@@ -1,0 +1,457 @@
+{
+ "files": [
+  {
+   "path": ".last-cleanup",
+   "size": 24,
+   "equal_to_magpie": true,
+   "sha256": "6d1091ea13be3a37"
+  },
+  {
+   "path": "blocked.jsonl",
+   "size": 3145734,
+   "equal_to_magpie": true,
+   "sha256": "e84a50615aec1f00",
+   "lines": 4,
+   "bad_lines": 4,
+   "ends_with_newline": true
+  },
+  {
+   "path": "keeper-probe.txt",
+   "size": 6,
+   "equal_to_magpie": true,
+   "sha256": "25be323556dad377"
+  },
+  {
+   "path": "backups/.claude.json.backup.1793624770238",
+   "size": 84,
+   "equal_to_magpie": true,
+   "sha256": "660a92b511550319"
+  },
+  {
+   "path": "projects/-home-sandbox/3b83dca6-0827-4b33-9a81-d9524ef2476e.jsonl",
+   "size": 259928,
+   "equal_to_magpie": true,
+   "sha256": "4d2676bb70599631",
+   "lines": 42,
+   "bad_lines": 0,
+   "ends_with_newline": true
+  },
+  {
+   "path": "projects/fill/big.jsonl",
+   "size": 91226112,
+   "equal_to_magpie": true,
+   "sha256": "a9d296dfb0b18b77",
+   "lines": 87,
+   "bad_lines": 87,
+   "ends_with_newline": true
+  },
+  {
+   "path": "projects/fill/tool-results/r0.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r1.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r10.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r11.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r12.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r13.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r14.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r15.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r16.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r17.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r18.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r19.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r2.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r20.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r21.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r22.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r23.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r24.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r25.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r26.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r27.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r28.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r29.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r3.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r30.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r31.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r32.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r33.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r34.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r35.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r36.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r37.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r38.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r39.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r4.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r40.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r41.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r42.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r43.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r44.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r45.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r46.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r47.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r48.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r49.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r5.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r50.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r51.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r52.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r53.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r54.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r55.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r56.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r57.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r58.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r59.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r6.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r60.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r61.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r62.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r63.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r7.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r8.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  },
+  {
+   "path": "projects/fill/tool-results/r9.txt",
+   "size": 4194304,
+   "equal_to_magpie": true,
+   "sha256": "dcfbb6fb6fe60ed9"
+  }
+ ],
+ "opcodes": {
+  "INIT": 1,
+  "GETATTR": 279,
+  "LOOKUP": 396,
+  "MKDIR": 10,
+  "CREATE": 74,
+  "SETATTR": 78,
+  "WRITE": 380,
+  "FLUSH": 200,
+  "RELEASE": 185,
+  "OPEN": 111,
+  "READ": 370,
+  "OPENDIR": 47,
+  "READDIR": 94,
+  "RELEASEDIR": 47,
+  "RENAME": 1,
+  "INTERRUPT": 2,
+  "RMDIR": 5,
+  "UNLINK": 4
+ },
+ "errors": {
+  "LOOKUP errno 2": 281,
+  "RMDIR errno 39": 5
+ }
+}

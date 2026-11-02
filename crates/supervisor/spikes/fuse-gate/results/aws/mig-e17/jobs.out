@@ -1,0 +1,4 @@
+== /run/jobs/blocked.sh.out
+== /run/jobs/drive.sh.out
+{"args": ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--dangerously-skip-permissions", "--model", "claude-sonnet-4-5"], "turns": [{"prompt": "Migration turn.\nGATE: tool Bash {\"command\":\"echo before-move; sleep 1\",\"description\":\"pre\"}\nGATE: text 80 100", "start_us": 1793624364551926, "end_us": 1793624380309678, "result": "success", "is_error": false}, {"prompt": "After the move.\nGATE: tool Bash {\"command\":\"tail -c 200 ~/.claude/projects/*/*.jsonl | head -c 100; echo; ls ~/.claude\",\"description\":\"post\"}\nGATE: text 5 0", "start_us": 1793624380309689, "end_us": 1793624380511851, "result": "success", "is_error": false}], "session_id": "7348db4c-1df4-420e-bffb-8bc0e3e81822", "exit": 0, "total_ms": 16030}
+== /run/jobs/probe.sh.out

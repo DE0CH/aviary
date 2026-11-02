@@ -1,0 +1,41 @@
+queue-operation  
+queue-operation  
+user 9127d4b0 "First turn.\nGATE: text 3 0"
+attachment e4e10189 
+attachment d484629c 
+attachment 58ccfc48 
+attachment bb606a47 
+attachment 8414785e 
+attachment e90a614c 
+atis-latch  
+attachment 3ac61043 
+attachment b8b26d89 
+attachment f7d9eda3 
+attachment 1c1c592b 
+api-request-shape  
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n# Environment\nYou have been invoked in the following 
+api-request  
+last-prompt  
+atis-latch  
+assistant 88c1140d [{"text": "tk0x0 tk0x1 tk0x2 ", "type": "text"}]
+attachment 87ffb662 
+last-prompt  
+atis-latch  
+queue-operation  
+queue-operation  
+user 16af98de "Thinking then a server error.\nGATE: thinkfail tf1 api_error\nGATE: text 4 0"
+attachment 25f78275 
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</s
+api-request  
+api-request  
+system 88c1971f model_fallback
+assistant cc7f14b0 [{"text": "tk2x0 tk2x1 tk2x2 tk2x3 ", "type": "text"}]
+queue-operation  
+queue-operation  
+user a79c7500 "After.\nGATE: text 2 0"
+attachment 6a8a94a3 
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</s
+api-request  
+assistant 5a311edc [{"text": "tk3x0 tk3x1 ", "type": "text"}]
+last-prompt  
+cost-state  

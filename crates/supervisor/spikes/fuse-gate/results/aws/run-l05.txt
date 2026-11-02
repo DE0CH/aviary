@@ -1,0 +1,7 @@
+{"layout":"tmpfs","runsc_extra":"","hold":0,"mode":"local","send_ms":40,"total_ms":97,"release_to_turn_done_ms":483,"migrate_start_us":1793625564191000}
+{"from":"<host-ip>:52346","bytes":2288919,"page_bytes":1646592,"zero_bytes":17313792,"file_bytes":638740,"rounds":1,"total_ms":33.363,"final_ms":28.164,"restore_ms":49.298}
+
+{"turns":["success","success"],"exit":0}
+cat: /root/out/mig-l05/probe.json: No such file or directory
+{"uniques":71,"replayed_lines":0,"repeat_count":0,"boundaries":[{"boundary_us":1793625564191000,"requests_before":71,"max_unique_before":142,"requests_after":0,"min_unique_after":null,"increasing":true}]}
+PASS

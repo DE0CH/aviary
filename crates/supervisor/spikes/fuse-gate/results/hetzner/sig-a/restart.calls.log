@@ -1,0 +1,4 @@
+1793624300937145 /write sig-restart.jsonl off=0 len=0 op=c91825b672072ecd-0000000000000008-0 code=200 waited_us=37 took_us=97
+1793624300939036 /truncate sig-restart.jsonl off= len=0 op=c91825b672072ecd-000000000000000a-0 code=200 waited_us=133 took_us=176
+1793624300944455 /write sig-restart.jsonl off=0 len=6 op=c91825b672072ecd-000000000000000e-0 code=200 waited_us=442 took_us=1537
+1793624301229112 /write sig-restart.jsonl off=6 len=1048576 op=c91825b672072ecd-0000000000000016-0 code=200 waited_us=3849899 took_us=3850740

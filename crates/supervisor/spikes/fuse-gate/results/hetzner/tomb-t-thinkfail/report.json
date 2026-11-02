@@ -1,0 +1,40 @@
+{
+ "files": [
+  {
+   "path": "backups/.claude.json.backup.1793623507841",
+   "size": 84,
+   "equal_to_magpie": true,
+   "sha256": "fa39b03025846ba9"
+  },
+  {
+   "path": "projects/-home-sandbox/1c01ee4e-dc79-4ec4-ac36-68a47e8034a9.jsonl",
+   "size": 255607,
+   "equal_to_magpie": true,
+   "sha256": "d6223697ae63f02f",
+   "lines": 41,
+   "bad_lines": 0,
+   "ends_with_newline": true
+  }
+ ],
+ "opcodes": {
+  "INIT": 1,
+  "GETATTR": 28,
+  "LOOKUP": 111,
+  "MKDIR": 5,
+  "OPENDIR": 21,
+  "READDIR": 42,
+  "RELEASEDIR": 21,
+  "CREATE": 5,
+  "WRITE": 19,
+  "SETATTR": 12,
+  "FLUSH": 32,
+  "RELEASE": 32,
+  "RENAME": 1,
+  "OPEN": 27,
+  "READ": 44,
+  "UNLINK": 3
+ },
+ "errors": {
+  "LOOKUP errno 2": 105
+ }
+}

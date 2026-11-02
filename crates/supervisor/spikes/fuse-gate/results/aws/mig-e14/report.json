@@ -1,0 +1,75 @@
+{
+ "files": [
+  {
+   "path": "blocked.jsonl",
+   "size": 3145734,
+   "equal_to_magpie": true,
+   "sha256": "e84a50615aec1f00",
+   "lines": 4,
+   "bad_lines": 4,
+   "ends_with_newline": true
+  },
+  {
+   "path": "keeper-probe.txt",
+   "size": 6,
+   "equal_to_magpie": true,
+   "sha256": "25be323556dad377"
+  },
+  {
+   "path": "backups/.claude.json.backup.1793624301192",
+   "size": 84,
+   "equal_to_magpie": true,
+   "sha256": "bdbbf99f1ba50040"
+  },
+  {
+   "path": "projects/-home-sandbox/69b8d9d3-f6cc-4e63-85ca-58979461db56.jsonl",
+   "size": 248283,
+   "equal_to_magpie": true,
+   "sha256": "e4934248d6fdb948",
+   "lines": 27,
+   "bad_lines": 0,
+   "ends_with_newline": true
+  },
+  {
+   "path": "sessions/50.97fda4174e4d2e920cb6be4ef1f26d69aead47f979135ec32afdb0478a4c532e.key",
+   "size": 95,
+   "equal_to_magpie": true,
+   "sha256": "7cd2df48739eea7f"
+  },
+  {
+   "path": "sessions/50.json",
+   "size": 502,
+   "equal_to_magpie": true,
+   "sha256": "e2167d6d6b3cfb61"
+  },
+  {
+   "path": "shell-snapshots/snapshot-bash-1793624301458-hzm1un.sh",
+   "size": 3570,
+   "equal_to_magpie": true,
+   "sha256": "f6bfc2e3ac4ec0da"
+  }
+ ],
+ "opcodes": {
+  "INIT": 1,
+  "GETATTR": 59,
+  "LOOKUP": 136,
+  "CREATE": 7,
+  "SETATTR": 10,
+  "FLUSH": 56,
+  "WRITE": 28,
+  "RELEASE": 41,
+  "OPEN": 34,
+  "READ": 22,
+  "MKDIR": 8,
+  "OPENDIR": 27,
+  "READDIR": 54,
+  "RELEASEDIR": 27,
+  "RENAME": 1,
+  "INTERRUPT": 3,
+  "RMDIR": 2
+ },
+ "errors": {
+  "LOOKUP errno 2": 107,
+  "RMDIR errno 39": 2
+ }
+}

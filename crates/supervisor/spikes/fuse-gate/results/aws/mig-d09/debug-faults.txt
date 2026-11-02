@@ -1,0 +1,4 @@
+D1102 13:10:29.587089       1 config.go:658] Config.PanicLog (--panic-log): (empty)
+D1102 13:10:29.587283       1 config.go:658] Config.PanicSignal (--panic-signal): -1
+D1102 13:10:29.587409       1 config.go:658] Config.TestOnlyAFSSyscallPanic (--TESTONLY-afs-syscall-panic): false
+1.3M	/var/log/gate/dbg-d09

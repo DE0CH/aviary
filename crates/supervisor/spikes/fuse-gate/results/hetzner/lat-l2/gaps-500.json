@@ -1,0 +1,1 @@
+{"tokens": 200, "missing": 0, "token_latency_ms": {"p50": 1.2, "p99": 17.2, "max": 19.0}, "token_gap_ms": {"p50": 21.0, "p99": 37.1, "max": 38.9}, "tool_roundtrip_ms": {"n": 10, "p50": 78.0, "p99": 614.7, "max": 614.7}}

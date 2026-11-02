@@ -1,0 +1,69 @@
+mounted /home/sandbox/.claude (fd=3,rootmode=40755,user_id=0,group_id=0,default_permissions,allow_other)
+supervisor up: fresh_mount=true boot=7928048436265f72 replayed=0 cache_kept=0 start_ms=3
+Killed
+supervisor exited status 137 at 1793624851.017848460
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=0 cache_kept=1 start_ms=1
+Killed
+supervisor exited status 137 at 1793624853.942463466
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=0 cache_kept=2 start_ms=1
+fault-injection: SIGKILL at read (WRITE)
+Killed
+supervisor exited status 137 at 1793624854.285369889
+replayed slot 8 unique 70 WRITE -> reply write errno 0
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=1 cache_kept=3 start_ms=5
+Killed
+supervisor exited status 137 at 1793624854.514826332
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=0 cache_kept=0 start_ms=5
+fault-injection: SIGKILL at read (READ)
+Killed
+supervisor exited status 137 at 1793624854.915320464
+replayed slot 15 unique 104 READ -> reply write errno 0
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=1 cache_kept=1 start_ms=4
+Killed
+supervisor exited status 137 at 1793624855.104697772
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=0 cache_kept=1 start_ms=3
+fault-injection: SIGKILL at sent (WRITE)
+Killed
+supervisor exited status 137 at 1793624855.450027347
+replayed slot 0 unique 120 WRITE -> reply write errno 0
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=1 cache_kept=1 start_ms=3
+Killed
+supervisor exited status 137 at 1793624855.652140668
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=0 cache_kept=0 start_ms=2
+fault-injection: SIGKILL at sent (READ)
+Killed
+supervisor exited status 137 at 1793624855.980996581
+replayed slot 5 unique 150 READ -> reply write errno 0
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=1 cache_kept=0 start_ms=15
+Killed
+supervisor exited status 137 at 1793624856.170191321
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=0 cache_kept=1 start_ms=3
+fault-injection: SIGKILL at answered (WRITE)
+Killed
+supervisor exited status 137 at 1793624856.509454534
+replayed slot 2 unique 168 WRITE -> reply write errno 0
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=1 cache_kept=1 start_ms=3
+Killed
+supervisor exited status 137 at 1793624856.738679504
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=0 cache_kept=0 start_ms=2
+fault-injection: SIGKILL at answered (READ)
+Killed
+supervisor exited status 137 at 1793624857.059628119
+replayed slot 3 unique 198 READ -> reply write errno 0
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=1 cache_kept=0 start_ms=12
+Killed
+supervisor exited status 137 at 1793624857.244603453
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=0 cache_kept=1 start_ms=1
+fault-injection: SIGKILL at replied (WRITE)
+Killed
+supervisor exited status 137 at 1793624857.561589748
+replayed slot 1 unique 216 WRITE -> reply write errno 2
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=1 cache_kept=2 start_ms=3
+Killed
+supervisor exited status 137 at 1793624857.759702742
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=0 cache_kept=0 start_ms=1
+fault-injection: SIGKILL at replied (READ)
+Killed
+supervisor exited status 137 at 1793624858.096485317
+replayed slot 6 unique 248 READ -> reply write errno 2
+supervisor up: fresh_mount=false boot=7928048436265f72 replayed=1 cache_kept=1 start_ms=4

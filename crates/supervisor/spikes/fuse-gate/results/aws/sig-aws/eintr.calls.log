@@ -1,0 +1,4 @@
+1793624907323111 /write sig-eintr.jsonl off=0 len=0 op=45edf440f1473a1a-0000000000000024-0 code=200 waited_us=92 took_us=154
+1793624907323682 /truncate sig-eintr.jsonl off= len=0 op=45edf440f1473a1a-0000000000000026-0 code=200 waited_us=36 took_us=72
+1793624907324445 /write sig-eintr.jsonl off=0 len=6 op=45edf440f1473a1a-000000000000002a-0 code=200 waited_us=72 took_us=109
+1793624907501403 /write sig-eintr.jsonl off=6 len=1048576 op=45edf440f1473a1a-0000000000000032-0 code=200 waited_us=3901904 took_us=3902414

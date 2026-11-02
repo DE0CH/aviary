@@ -1,0 +1,21 @@
+e01 tmpfs fill=0/0 exit=0 PASS
+e02 tmpfs fill=0/0 exit=1 FAIL: an in-sandbox process exited: magpie exited status 139 at 1793624060.875048474;;
+e03 tmpfs fill=0/0 exit=0 PASS
+e04 tmpfs fill=0/0 exit=0 PASS
+e05 tmpfs fill=0/0 exit=0 PASS
+e06 tmpfs fill=0/0 exit=0 PASS
+e07 tmpfs fill=0/0 exit=0 PASS
+e08 tmpfs fill=0/0 exit=0 PASS
+e09 tmpfs fill=0/0 exit=0 PASS
+e10 tmpfs fill=0/0 exit=0 PASS
+e11 tmpfs fill=0/0 exit=0 PASS
+e12 tmpfs fill=0/0 exit=0 PASS
+e13 tmpfs fill=0/0 exit=0 PASS
+e14 tmpfs fill=0/0 exit=1 FAIL: a turn did not end success: [null];
+e15 tmpfs fill=0/0 exit=0 PASS
+e16 tmpfs fill=0/0 exit=0 PASS
+e17 tmpfs fill=0/0 exit=0 PASS
+e18 tmpfs fill=0/0 exit=0 PASS
+e19 tmpfs fill=0/0 exit=0 PASS
+e20 tmpfs fill=0/0 exit=0 PASS
+done

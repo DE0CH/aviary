@@ -1,0 +1,19 @@
+============================================================
+Bun v1.4.4 (de4bc695b) Linux x64
+Linux Kernel v4.19.0 | glibc v2.41
+CPU: sse42 popcnt avx avx2 avx512
+Args: "claude" "-p" "--input-format" "stream-json" "--output-format" "stream-json" "--verbose" "--include-partial-messages" "--dangerously-skip-permissions" "--model" "claude-sonnet-4-5"
+Features: Bun.stderr(2) Bun.stdin(2) Bun.stdout(2) fetch(2) jsc spawn(11) standalone_executable claude_code 
+Builtins: "bun:main" "node:assert" "node:async_hooks" "node:buffer" "node:child_process" "node:constants" "node:crypto" "node:dns" "node:dns/promises" "node:events" "node:fs" "node:fs/promises" "node:http" "node:http2" "node:https" "node:net" "node:os" "node:path" "node:path/posix" "node:path/win32" "node:perf_hooks" "node:process" "node:readline" "node:stream" "node:stream/consumers" "node:stream/promises" "node:string_decoder" "node:timers/promises" "node:tls" "node:tty" "node:url" "node:util" "node:util/types" "node:vm" "node:zlib" "ws" 
+
+Elapsed: 12787ms | User: 1040ms | Sys: 3070ms
+RSS: 0.47 GB | Peak: 0.49 GB | Commit: 0.28 GB | Faults: 0 | Machine: 4.29 GB
+
+panic(main thread): Segmentation fault at address 0x0
+oh no: Bun has crashed. This indicates a bug in Bun, not your code.
+
+To send a redacted crash report to Bun's team,
+please file a GitHub issue using the link below:
+
+ https://bun.report/1.4.4/l_1de4bc69mggggQugogC+mlp8Fquuw8Fui1q8F69iq8F4uks8Figth9F6/yy8F6zw5oC07192Cgj3olC6pl7gCilttmCy7yrmC2rztoCA2AA
+

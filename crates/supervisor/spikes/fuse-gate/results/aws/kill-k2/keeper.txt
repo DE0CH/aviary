@@ -1,0 +1,10 @@
+mounts before: 1
+supervisor pids after the kill: []
+keeper pid 5 holds: 1 /dev/fuse fd(s)
+after 2 s with only the keeper: write returned = no
+write: {"issued": 1793624860.087026, "returned": 1793624862.0451257}
+issued_us=1793624859977730 restart_us=1793624862016914
+served by the new supervisor: 1793624862043420	WRITE	2	keeper.txt	off=7 size=19	0	1355	22
+new supervisor: supervisor up: fresh_mount=false boot=c0ea8da5ca426805 replayed=0 cache_kept=1 start_ms=1
+mounts after: 1
+file: before|during-keeper-only|

@@ -1,0 +1,16 @@
+d01 tmpfs fill=0/0 hold=1 mode=fuse debug=1 exit=0 PASS
+d02 tmpfs fill=0/0 hold=1 mode=fuse debug=1 exit=0 PASS
+d03 tmpfs fill=0/0 hold=1 mode=fuse debug=1 exit=0 PASS
+d04 tmpfs fill=0/0 hold=1 mode=fuse debug=1 exit=0 PASS
+d05 tmpfs fill=0/0 hold=1 mode=fuse debug=1 exit=0 PASS
+d06 tmpfs fill=0/0 hold=1 mode=fuse debug=1 exit=0 PASS
+d07 tmpfs fill=0/0 hold=1 mode=fuse debug=1 exit=1 FAIL: an in-sandbox process exited: magpie exited status 139 at 1793624989.551883713;;
+d08 tmpfs fill=0/0 hold=1 mode=fuse debug=1 exit=0 PASS
+d09 tmpfs fill=0/0 hold=1 mode=fuse debug=1 exit=0 PASS
+d10 tmpfs fill=0/0 hold=1 mode=fuse debug=1 exit=0 PASS
+d11 tmpfs fill=0/0 hold=1 mode=fuse debug=1 exit=1 FAIL: an in-sandbox process exited: magpie exited status 139 at 1793625077.624535369;;
+d12 tmpfs fill=0/0 hold=1 mode=fuse debug=1 exit=0 PASS
+d13 tmpfs fill=0/0 hold=1 mode=fuse debug=1 exit=0 PASS
+d14 tmpfs fill=0/0 hold=1 mode=fuse debug=1 exit=0 PASS
+d15 tmpfs fill=0/0 hold=1 mode=fuse debug=1 exit=0 PASS
+done

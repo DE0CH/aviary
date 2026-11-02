@@ -1,0 +1,3 @@
+filled 343 MiB
+343	/srv/supervisor/cache/
+343	/srv/magpie/d/

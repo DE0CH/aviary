@@ -1,0 +1,45 @@
+queue-operation  
+queue-operation  
+user 55e9e658 "First turn.\nGATE: text 3 0"
+attachment 1d191494 
+attachment f39ba7e7 
+attachment 77ae9753 
+attachment 7d924c97 
+attachment cd3455f2 
+attachment 5f69bebe 
+atis-latch  
+attachment e26e2477 
+attachment 532cb7ce 
+attachment 919b0d84 
+attachment 28a343b4 
+api-request-shape  
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n# Environment\nYou have been invoked in the following 
+api-request  
+last-prompt  
+atis-latch  
+assistant b8a3fda6 [{"text": "tk0x0 tk0x1 tk0x2 ", "type": "text"}]
+attachment 6283daf7 
+last-prompt  
+atis-latch  
+queue-operation  
+queue-operation  
+user 27291128 "Refused twice.\nGATE: trunconce r1 refusalcat\nGATE: trunconce r2 refusalcat\nGATE: text 4 0"
+attachment 684c482e 
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</s
+api-request  
+assistant c6ed0107 [{"text": "tk1x0 tk1x1 tk1x2 tk1x3 ", "type": "text"}]
+system 6120496f informational
+user e0b41500 "Your response above was stopped by a safety classifier \u2014 this is not a tool or API error. The 
+api-request  
+assistant 68642401 [{"text": "tk2x0 tk2x1 tk2x2 tk2x3 ", "type": "text"}]
+system 7cc37ece model_refusal_no_fallback
+assistant 0c8dca56 [{"type": "text", "text": "API Error: Sonnet 4.5's safeguards flagged this message. Our intentionall
+queue-operation  
+queue-operation  
+user 07524ed9 "After.\nGATE: text 2 0"
+attachment 686f6033 
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</s
+api-request  
+assistant 2a982370 [{"text": "tk3x0 tk3x1 ", "type": "text"}]
+last-prompt  
+cost-state  

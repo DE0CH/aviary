@@ -1,0 +1,37 @@
+{
+ "files": [
+  {
+   "path": "blocked.jsonl",
+   "size": 6,
+   "equal_to_magpie": true,
+   "sha256": "46210dddc66714c3",
+   "lines": 1,
+   "bad_lines": 1,
+   "ends_with_newline": true
+  },
+  {
+   "path": "keeper-probe.txt",
+   "size": 6,
+   "equal_to_magpie": true,
+   "sha256": "25be323556dad377"
+  }
+ ],
+ "opcodes": {
+  "INIT": 1,
+  "GETATTR": 10,
+  "LOOKUP": 41,
+  "CREATE": 2,
+  "SETATTR": 2,
+  "FLUSH": 7,
+  "WRITE": 2,
+  "RELEASE": 5,
+  "OPEN": 3,
+  "READ": 3,
+  "OPENDIR": 4,
+  "READDIR": 8,
+  "RELEASEDIR": 4
+ },
+ "errors": {
+  "LOOKUP errno 2": 39
+ }
+}

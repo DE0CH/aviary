@@ -1,0 +1,21 @@
+1793623508289849 req=0 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793623508289915 req=0 recv msgs=1 model=claude-sonnet-4-5 stream=true plan=text:3x0ms
+1793623508290674 req=0 chunk=0 token=tk0x0
+1793623508290737 req=0 chunk=1 token=tk0x1
+1793623508290784 req=0 chunk=2 token=tk0x2
+1793623508290912 req=0 done stop=end_turn
+1793623508388560 req=1 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793623508388607 req=1 recv msgs=3 model=claude-sonnet-4-5 stream=true plan=thinkfail:api_error
+1793623508690922 req=1 thinkfail (api_error) after a thinking block
+1793623508730961 req=2 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793623508731001 req=2 recv msgs=3 model=claude-haiku-4-5 stream=true plan=text:4x0ms
+1793623508732475 req=2 chunk=0 token=tk2x0
+1793623508732776 req=2 chunk=1 token=tk2x1
+1793623508733020 req=2 chunk=2 token=tk2x2
+1793623508733210 req=2 chunk=3 token=tk2x3
+1793623508733547 req=2 done stop=end_turn
+1793623508800007 req=3 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793623508800159 req=3 recv msgs=5 model=claude-sonnet-4-5 stream=true plan=text:2x0ms
+1793623508801283 req=3 chunk=0 token=tk3x0
+1793623508801518 req=3 chunk=1 token=tk3x1
+1793623508802366 req=3 done stop=end_turn

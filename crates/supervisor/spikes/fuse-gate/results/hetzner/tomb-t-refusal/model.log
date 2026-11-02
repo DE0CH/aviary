@@ -1,0 +1,25 @@
+1793623521722467 req=0 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793623521722580 req=0 recv msgs=1 model=claude-sonnet-4-5 stream=true plan=text:3x0ms
+1793623521723438 req=0 chunk=0 token=tk0x0
+1793623521723685 req=0 chunk=1 token=tk0x1
+1793623521724078 req=0 chunk=2 token=tk0x2
+1793623521724324 req=0 done stop=end_turn
+1793623521820032 req=1 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793623521820054 req=1 recv msgs=3 model=claude-sonnet-4-5 stream=true plan=trunconce
+1793623521820942 req=1 chunk=0 token=tk1x0
+1793623521821393 req=1 chunk=1 token=tk1x1
+1793623521821608 req=1 chunk=2 token=tk1x2
+1793623521822179 req=1 chunk=3 token=tk1x3
+1793623522123717 req=1 truncated (refusalcat, no message_stop)
+1793623522176755 req=2 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793623522176834 req=2 recv msgs=5 model=claude-sonnet-4-5 stream=true plan=trunconce
+1793623522177146 req=2 chunk=0 token=tk2x0
+1793623522177187 req=2 chunk=1 token=tk2x1
+1793623522177257 req=2 chunk=2 token=tk2x2
+1793623522177289 req=2 chunk=3 token=tk2x3
+1793623522477817 req=2 truncated (refusalcat, no message_stop)
+1793623522531714 req=3 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793623522531736 req=3 recv msgs=7 model=claude-sonnet-4-5 stream=true plan=text:2x0ms
+1793623522531937 req=3 chunk=0 token=tk3x0
+1793623522532008 req=3 chunk=1 token=tk3x1
+1793623522532105 req=3 done stop=end_turn

@@ -1,0 +1,11 @@
+s01 scratch fill=0/0 exit=0 PASS
+s02 scratch fill=0/0 exit=0 PASS
+s03 scratch fill=0/0 exit=0 PASS
+s04 scratch fill=0/0 exit=0 PASS
+s05 scratch fill=0/0 exit=0 PASS
+s06 scratch fill=0/0 exit=1 FAIL: an in-sandbox process exited: magpie exited status 139 at 1793624574.151675146;;
+s07 scratch fill=0/0 exit=0 PASS
+s08 scratch fill=0/0 exit=0 PASS
+s09 scratch fill=0/0 exit=0 PASS
+s10 scratch fill=0/0 exit=0 PASS
+done

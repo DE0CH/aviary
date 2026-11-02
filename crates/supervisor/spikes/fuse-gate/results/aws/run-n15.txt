@@ -1,0 +1,7 @@
+{"layout":"tmpfs","runsc_extra":"","hold":0,"mode":"fuse","send_ms":52,"total_ms":118,"release_to_turn_done_ms":726,"migrate_start_us":1793625463645000}
+{"from":"<host-ip>:47742","bytes":3422220,"page_bytes":2560000,"zero_bytes":36929536,"file_bytes":856372,"rounds":1,"total_ms":44.341,"final_ms":37.737,"restore_ms":60.603}
+
+{"turns":["success","success"],"exit":0}
+cat: /root/out/mig-n15/probe.json: No such file or directory
+{"uniques":614,"replayed_lines":0,"repeat_count":0,"boundaries":[{"boundary_us":1793625463645000,"requests_before":614,"max_unique_before":1228,"requests_after":0,"min_unique_after":null,"increasing":true}]}
+PASS

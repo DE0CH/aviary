@@ -1,0 +1,29 @@
+{
+ "args": [
+  "claude",
+  "-p",
+  "--input-format",
+  "stream-json",
+  "--output-format",
+  "stream-json",
+  "--verbose",
+  "--include-partial-messages",
+  "--dangerously-skip-permissions",
+  "--model",
+  "claude-sonnet-4-5",
+  "--resume",
+  "11111111-2222-4333-8444-555555555555"
+ ],
+ "turns": [
+  {
+   "prompt": "Resumed after a torn tail.\nGATE: tool Bash {\"command\":\"tail -c 300 ~/.claude/projects/-home-sandbox-work/*.jsonl | od -c | tail -5\",\"description\":\"tail\"}\nGATE: text 5 0",
+   "start_us": 1793623771224731,
+   "end_us": 1793623771906845,
+   "result": "success",
+   "is_error": false
+  }
+ ],
+ "session_id": "11111111-2222-4333-8444-555555555555",
+ "exit": 0,
+ "total_ms": 718
+}

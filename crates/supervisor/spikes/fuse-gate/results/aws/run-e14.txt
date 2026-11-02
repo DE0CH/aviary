@@ -1,0 +1,11 @@
+{"layout":"tmpfs","send_ms":285,"total_ms":364,"release_to_turn_done_ms":477,"migrate_start_us":1793624312417000}
+{"from":"<host-ip>:38310","bytes":128742250,"page_bytes":127373312,"zero_bytes":145408000,"file_bytes":1324477,"rounds":1,"total_ms":276.146,"final_ms":53.751,"restore_ms":71.043}
+
+{"turns":[null],"exit":-11}
+{"exact":true,"writes":[{"i":0,"returned":1048576,"ms":13133.1},{"i":1,"returned":1048576,"ms":4.0},{"i":2,"returned":1048576,"ms":3.9}]}
+{"start": 1793624313.821, "stat_s": 0.42, "read_s": 0.001}
+INTERRUPT	target 736
+INTERRUPT	target 692
+INTERRUPT	target 756
+{"uniques":404,"replayed_lines":0,"repeat_count":0,"boundaries":[{"boundary_us":1793624312417000,"requests_before":368,"max_unique_before":736,"requests_after":36,"min_unique_after":740,"increasing":true}]}
+FAIL: a turn did not end success: [null];

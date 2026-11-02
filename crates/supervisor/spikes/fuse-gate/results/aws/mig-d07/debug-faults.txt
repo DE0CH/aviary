@@ -1,0 +1,10 @@
+D1102 13:09:44.859585       1 config.go:658] Config.PanicLog (--panic-log): (empty)
+D1102 13:09:44.859735       1 config.go:658] Config.PanicSignal (--panic-signal): -1
+D1102 13:09:44.859850       1 config.go:658] Config.TestOnlyAFSSyscallPanic (--TESTONLY-afs-syscall-panic): false
+D1102 13:09:49.542683       1 task_signals.go:601] [   8:  46] Notified of signal 11
+D1102 13:09:49.542706       1 task_signals.go:280] [   8:  46] Signal 11: delivering to handler
+D1102 13:09:49.543070       1 task_signals.go:601] [   8:  46] Notified of signal 11
+D1102 13:09:49.543091       1 task_signals.go:264] [   8:  46] Signal 11, PID: 8, TID: 46, fault addr: 0x0: terminating thread group
+D1102 13:09:49.543179       1 task_run.go:319] [   8:  80] Unhandled user fault: addr=7eb0dda2e1ad ip=556142db2e26 access=r-- sig=11 err=interrupted system call
+D1102 13:09:49.543869       1 task_signals.go:612] [   8:  80] No task notified of signal 11
+1.5M	/var/log/gate/dbg-d07

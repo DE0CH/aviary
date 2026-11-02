@@ -1,0 +1,2 @@
+keeper on /run/keeper.sock
+keeper: holding fd 5

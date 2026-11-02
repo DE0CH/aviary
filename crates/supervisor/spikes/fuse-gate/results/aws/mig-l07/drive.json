@@ -1,0 +1,34 @@
+{
+ "args": [
+  "claude",
+  "-p",
+  "--input-format",
+  "stream-json",
+  "--output-format",
+  "stream-json",
+  "--verbose",
+  "--include-partial-messages",
+  "--dangerously-skip-permissions",
+  "--model",
+  "claude-sonnet-4-5"
+ ],
+ "turns": [
+  {
+   "prompt": "Migration turn.\nGATE: tool Bash {\"command\":\"echo before-move; sleep 1\",\"description\":\"pre\"}\nGATE: text 80 100",
+   "start_us": 1793625593429541,
+   "end_us": 1793625603002737,
+   "result": "success",
+   "is_error": false
+  },
+  {
+   "prompt": "After the move.\nGATE: tool Bash {\"command\":\"tail -c 200 ~/.claude/projects/*/*.jsonl | head -c 100; echo; ls ~/.claude\",\"description\":\"post\"}\nGATE: text 5 0",
+   "start_us": 1793625603002744,
+   "end_us": 1793625603109777,
+   "result": "success",
+   "is_error": false
+  }
+ ],
+ "session_id": "e6aac87a-d9c3-415e-86e3-ef04ab9a3ff3",
+ "exit": 0,
+ "total_ms": 9714
+}

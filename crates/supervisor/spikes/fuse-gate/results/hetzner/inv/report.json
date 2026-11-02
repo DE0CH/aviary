@@ -1,0 +1,120 @@
+{
+ "files": [
+  {
+   "path": ".last-cleanup",
+   "size": 24,
+   "equal_to_magpie": true,
+   "sha256": "a963b962706ec79f"
+  },
+  {
+   "path": "backups/.claude.json.backup.1793623764488",
+   "size": 84,
+   "equal_to_magpie": true,
+   "sha256": "81286c2c2d92f028"
+  },
+  {
+   "path": "file-history/11111111-2222-4333-8444-555555555555/1c6fb2dabdfb1565@v2",
+   "size": 1049360,
+   "equal_to_magpie": true,
+   "sha256": "4d9971dab0c093fa"
+  },
+  {
+   "path": "file-history/11111111-2222-4333-8444-555555555555/3e7cf2743e24eaf5@v2",
+   "size": 1049360,
+   "equal_to_magpie": true,
+   "sha256": "4d9971dab0c093fa"
+  },
+  {
+   "path": "file-history/11111111-2222-4333-8444-555555555555/42d1e871505181ee@v2",
+   "size": 15,
+   "equal_to_magpie": true,
+   "sha256": "8cf4528098bf49d6"
+  },
+  {
+   "path": "file-history/11111111-2222-4333-8444-555555555555/9854be6be1009d27@v2",
+   "size": 1049360,
+   "equal_to_magpie": true,
+   "sha256": "4d9971dab0c093fa"
+  },
+  {
+   "path": "file-history/11111111-2222-4333-8444-555555555555/a979cdc214828d41@v2",
+   "size": 720896,
+   "equal_to_magpie": true,
+   "sha256": "da2075df8f70853c"
+  },
+  {
+   "path": "file-history/11111111-2222-4333-8444-555555555555/b039b129a2480cde@v2",
+   "size": 720896,
+   "equal_to_magpie": true,
+   "sha256": "da2075df8f70853c"
+  },
+  {
+   "path": "file-history/11111111-2222-4333-8444-555555555555/ce4cd1ab081d2b8a@v2",
+   "size": 1049360,
+   "equal_to_magpie": true,
+   "sha256": "4d9971dab0c093fa"
+  },
+  {
+   "path": "file-history/11111111-2222-4333-8444-555555555555/d0a71a20e920bd2c@v2",
+   "size": 851968,
+   "equal_to_magpie": true,
+   "sha256": "748d98c8789f9b49"
+  },
+  {
+   "path": "projects/-home-sandbox-work/11111111-2222-4333-8444-555555555555.jsonl",
+   "size": 485201,
+   "equal_to_magpie": true,
+   "sha256": "bc83290b0b840edc",
+   "lines": 65,
+   "bad_lines": 1,
+   "ends_with_newline": true
+  },
+  {
+   "path": "projects/-home-sandbox-work/11111111-2222-4333-8444-555555555555.jsonl.superseded-1793623768993",
+   "size": 18,
+   "equal_to_magpie": true,
+   "sha256": "9f78ac12bb6bf0da"
+  },
+  {
+   "path": "projects/-home-sandbox-work/11111111-2222-4333-8444-555555555555/subagents/agent-ada6b7d9483c81dd4.jsonl",
+   "size": 146388,
+   "equal_to_magpie": true,
+   "sha256": "c4a6dcc0d952f387",
+   "lines": 20,
+   "bad_lines": 0,
+   "ends_with_newline": true
+  },
+  {
+   "path": "projects/-home-sandbox-work/11111111-2222-4333-8444-555555555555/subagents/agent-ada6b7d9483c81dd4.meta.json",
+   "size": 178,
+   "equal_to_magpie": true,
+   "sha256": "81ec1862a945ffeb"
+  }
+ ],
+ "opcodes": {
+  "INIT": 1,
+  "GETATTR": 219,
+  "MKDIR": 14,
+  "OPENDIR": 66,
+  "RELEASEDIR": 66,
+  "LOOKUP": 1124,
+  "CREATE": 27,
+  "SETATTR": 64,
+  "FLUSH": 264,
+  "WRITE": 258,
+  "RELEASE": 240,
+  "READDIR": 130,
+  "RENAME": 9,
+  "OPEN": 213,
+  "READ": 676,
+  "LISTXATTR": 7,
+  "RMDIR": 5,
+  "FSYNC": 1,
+  "UNLINK": 11,
+  "INTERRUPT": 3
+ },
+ "errors": {
+  "LOOKUP errno 2": 1003,
+  "RMDIR errno 39": 5
+ }
+}

@@ -1,0 +1,1 @@
+supervisor up: fresh_mount=false boot=10b480428036bc14 replayed=0 cache_kept=0 start_ms=4

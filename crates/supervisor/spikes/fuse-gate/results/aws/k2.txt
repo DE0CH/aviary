@@ -1,0 +1,29 @@
+write-answered.json: {"exact":true,"slow":[{"i":1,"returned":1048576,"ms":69.6}]}
+write-read.json: {"exact":true,"slow":[{"i":1,"returned":1048576,"ms":67.1}]}
+write-replied.json: {"exact":true,"slow":[{"i":2,"returned":1048576,"ms":69.0}]}
+write-sent.json: {"exact":true,"slow":[{"i":1,"returned":1048576,"ms":67.3}]}
+read-answered.json: {"exact":true,"slow":[{"i":0,"got":1048576,"ms":85.0}]}
+read-read.json: {"exact":true,"slow":[{"i":1,"got":1048576,"ms":65.7}]}
+read-replied.json: {"exact":true,"slow":[{"i":2,"got":1048576,"ms":68.0}]}
+read-sent.json: {"exact":true,"slow":[{"i":0,"got":1048576,"ms":76.4}]}
+kills: 8
+  replayed slot 1 unique 70 WRITE -> reply write errno 0
+  replayed slot 1 unique 104 READ -> reply write errno 0
+  replayed slot 14 unique 120 WRITE -> reply write errno 0
+  replayed slot 15 unique 150 READ -> reply write errno 0
+  replayed slot 15 unique 168 WRITE -> reply write errno 0
+  replayed slot 14 unique 198 READ -> reply write errno 0
+  replayed slot 9 unique 216 WRITE -> reply write errno 2
+  replayed slot 1 unique 248 READ -> reply write errno 2
+unique values seen more than once in ops.tsv (replays): 2
+mounts before: 1
+supervisor pids after the kill: []
+keeper pid 5 holds: 1 /dev/fuse fd(s)
+after 2 s with only the keeper: write returned = no
+write: {"issued": 1793624860.087026, "returned": 1793624862.0451257}
+issued_us=1793624859977730 restart_us=1793624862016914
+served by the new supervisor: 1793624862043420	WRITE	2	keeper.txt	off=7 size=19	0	1355	22
+new supervisor: supervisor up: fresh_mount=false boot=c0ea8da5ca426805 replayed=0 cache_kept=1 start_ms=1
+mounts after: 1
+file: before|during-keeper-only|
+{"uniques":128,"replayed_lines":2,"repeat_count":0,"ok":true}

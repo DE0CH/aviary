@@ -1,0 +1,9 @@
+mounted /home/sandbox/.claude (fd=3,rootmode=40755,user_id=0,group_id=0,default_permissions,allow_other)
+supervisor up: fresh_mount=true boot=4c381d066944ae3a replayed=0 cache_kept=0 start_ms=2
+
+thread '<unnamed>' (32) panicked at src/fuse.rs:347:24:
+slice index starts at 40 but ends at 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread '<unnamed>' (20) panicked at src/fuse.rs:347:24:
+slice index starts at 40 but ends at 0

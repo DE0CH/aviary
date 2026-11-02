@@ -1,0 +1,1 @@
+{"file": "/home/sandbox/.claude/bench-5/bench-50x1048576.jsonl", "n": 50, "size": 1048576, "total_s": 0.608, "MBps": 86.29, "p50_ms": 12.053, "p90_ms": 13.883, "p99_ms": 15.365, "max_ms": 15.365}
