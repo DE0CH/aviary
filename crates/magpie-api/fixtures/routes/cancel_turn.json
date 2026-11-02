@@ -1,0 +1,36 @@
+{
+  "route": "cancel_turn",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "request": {},
+  "responses": [
+    {
+      "status": 202,
+      "body": {
+        "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f"
+      }
+    },
+    {
+      "status": 202,
+      "body": {
+        "turnId": null
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "conversation_migrating",
+        "message": "conversation is being moved",
+        "retryAfterMs": 2000
+      }
+    }
+  ]
+}

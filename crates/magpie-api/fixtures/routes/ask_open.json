@@ -1,0 +1,35 @@
+{
+  "route": "ask_open",
+  "request": {
+    "askId": "ask_01",
+    "toolName": "AskUserQuestion",
+    "toolUseId": "toolu_01AskQ",
+    "input": {
+      "questions": [
+        {
+          "question": "邊個日期？",
+          "header": "日期",
+          "multiSelect": false,
+          "options": [
+            {
+              "label": "今日"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "responses": [
+    {
+      "status": 201,
+      "body": {}
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

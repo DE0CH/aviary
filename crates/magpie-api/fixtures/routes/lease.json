@@ -1,0 +1,39 @@
+{
+  "route": "lease",
+  "request": {},
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "leaseId": "7d2f4e6a-8b9c-4d0e-a1f2-3b4c5d6e7f80",
+        "epoch": 7,
+        "conversationId": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a",
+        "providerSessionId": "279aabf0-3c4d-4e5f-8a9b-0c1d2e3f4a5b",
+        "mainTranscript": "projects/-workspace/279aabf0-3c4d-4e5f-8a9b-0c1d2e3f4a5b.jsonl",
+        "resync": false
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "not_current_sandbox",
+        "message": "hermit names another sandbox for this conversation"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "conversation_migrating",
+        "message": "conversation is being moved",
+        "retryAfterMs": 2000
+      }
+    },
+    {
+      "status": 503,
+      "body": {
+        "code": "unavailable",
+        "message": "hermit cannot be reached"
+      }
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "route": "workspaces_exists",
+  "request": {
+    "ids": [
+      "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a",
+      "c2b1a0f9-8e7d-5c6b-9a59-483726150f4e",
+      "e5f6a7b8-c9d0-4e1f-a2b3-c4d5e6f7a8b9"
+    ]
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "exists": [
+          "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a",
+          "c2b1a0f9-8e7d-5c6b-9a59-483726150f4e"
+        ]
+      }
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "bad_request",
+        "message": "at most 1000 ids"
+      }
+    },
+    {
+      "status": 403,
+      "body": {
+        "code": "wrong_caller",
+        "message": "this caller may not use this route"
+      }
+    }
+  ]
+}

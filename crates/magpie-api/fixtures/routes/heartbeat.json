@@ -1,0 +1,46 @@
+{
+  "route": "heartbeat",
+  "request": {
+    "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+    "state": "running",
+    "tasks": 2,
+    "lastTurn": {
+      "id": "0190f6b0-0a1b-7c2d-9e3f-4a5b6c7d8e9f",
+      "outcome": "failed",
+      "error": {
+        "code": "run.oom",
+        "message": "the memory guard killed Claude Code"
+      }
+    },
+    "gen": 3,
+    "supervisor": {
+      "version": "supervisor-1a2b3c4d5e6f",
+      "bootId": "b0f1e2d3-c4b5-4a69-8788-96a5b4c3d2e1",
+      "restarts": 0
+    },
+    "cc": {
+      "quotaExceeded": false,
+      "blockedWrites": 0,
+      "oldestBlockedMs": 0
+    }
+  },
+  "responses": [
+    {
+      "status": 204
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    },
+    {
+      "status": 503,
+      "body": {
+        "code": "unavailable",
+        "message": "the database cannot be reached"
+      }
+    }
+  ]
+}

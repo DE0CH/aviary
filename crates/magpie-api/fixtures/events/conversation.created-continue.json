@@ -1,0 +1,15 @@
+{
+  "seq": 1,
+  "kind": "conversation.created",
+  "data": {
+    "title": "港珠澳大橋今日新聞",
+    "origin": {
+      "kind": "continue",
+      "shareId": "Qk3vT9xLm2Pa7RwZc4HdNg"
+    }
+  },
+  "at": "2026-11-02T03:46:10.120Z",
+  "turnId": null,
+  "meta": {},
+  "viewer": null
+}

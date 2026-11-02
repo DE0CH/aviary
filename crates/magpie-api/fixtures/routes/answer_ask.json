@@ -1,0 +1,51 @@
+{
+  "route": "answer_ask",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a",
+    "askId": "ask_01"
+  },
+  "request": {
+    "behavior": "allow",
+    "selectedActionId": "today",
+    "updatedInput": {
+      "answers": {
+        "邊個日期？": "今日"
+      }
+    }
+  },
+  "responses": [
+    {
+      "status": 202,
+      "body": {}
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "already_resolved",
+        "message": "the ask is resolved"
+      }
+    },
+    {
+      "status": 403,
+      "body": {
+        "code": "view_as_read_only",
+        "message": "not allowed while viewing as the person"
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "conversation_migrating",
+        "message": "conversation is being moved",
+        "retryAfterMs": 2000
+      }
+    }
+  ]
+}

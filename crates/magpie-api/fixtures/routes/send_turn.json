@@ -1,0 +1,86 @@
+{
+  "route": "send_turn",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "request": {
+    "clientMessageId": "draft-7f3a:initial-message",
+    "text": "幫我整理今日有關港珠澳大橋嘅新聞",
+    "images": [
+      {
+        "uploadId": "1c5d3e2f-4a5b-4c6d-9e7f-8091a2b3c4d5"
+      }
+    ],
+    "files": [
+      {
+        "path": "uploads/0b4c2d1e-3f4a-4b5c-8d6e-7f8091a2b3c4/Q3 report.pdf",
+        "name": "Q3 report.pdf",
+        "mimeType": "application/pdf",
+        "size": 812345
+      }
+    ]
+  },
+  "responses": [
+    {
+      "status": 202,
+      "body": {
+        "turn": {
+          "id": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+          "startedAt": "2026-11-02T03:46:10.120Z"
+        }
+      }
+    },
+    {
+      "status": 200,
+      "body": {
+        "turn": {
+          "id": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+          "startedAt": "2026-11-02T03:46:10.120Z"
+        }
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "turn_running",
+        "message": "a turn is running"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "conversation_deleted",
+        "message": "the conversation is in Recently deleted"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "conversation_migrating",
+        "message": "conversation is owned by the old stack",
+        "route": "legacy"
+      }
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "unknown_upload",
+        "message": "no unattached upload of the person has that path"
+      }
+    },
+    {
+      "status": 415,
+      "body": {
+        "code": "unsupported_type",
+        "message": "not a supported image"
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

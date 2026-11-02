@@ -1,0 +1,28 @@
+{
+  "route": "ask_resolved",
+  "params": {
+    "askId": "ask_01"
+  },
+  "request": {
+    "outcome": "answered"
+  },
+  "responses": [
+    {
+      "status": 204
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

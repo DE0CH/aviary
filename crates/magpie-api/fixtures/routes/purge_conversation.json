@@ -1,0 +1,32 @@
+{
+  "route": "purge_conversation",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "responses": [
+    {
+      "status": 204
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "not_deleted",
+        "message": "only a conversation in Recently deleted can be deleted for good"
+      }
+    },
+    {
+      "status": 403,
+      "body": {
+        "code": "view_as_read_only",
+        "message": "not allowed while viewing as the person"
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

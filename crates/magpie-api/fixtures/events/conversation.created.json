@@ -1,0 +1,14 @@
+{
+  "seq": 1,
+  "kind": "conversation.created",
+  "data": {
+    "title": "幫我整理今日有關港珠澳大橋嘅新聞…",
+    "origin": {
+      "kind": "new"
+    }
+  },
+  "at": "2026-11-02T03:46:10.120Z",
+  "turnId": null,
+  "meta": {},
+  "viewer": null
+}

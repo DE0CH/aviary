@@ -1,0 +1,12 @@
+{
+  "seq": 30,
+  "kind": "turn.started",
+  "data": {
+    "turnId": "0190f6c9-1d2e-7f30-a142-5b6c7d8e9f00",
+    "origin": "agent"
+  },
+  "at": "2026-11-02T03:46:12.345Z",
+  "turnId": "0190f6c9-1d2e-7f30-a142-5b6c7d8e9f00",
+  "meta": {},
+  "viewer": null
+}

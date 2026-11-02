@@ -1,0 +1,46 @@
+{
+  "seq": 11,
+  "kind": "cc.user",
+  "data": {
+    "type": "user",
+    "uuid": "0e3f4a5b-6c7d-4e8f-9a0b-1c2d3e4f5a6b",
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01Search",
+          "is_error": false,
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "$blob": {
+                  "blobId": "c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2",
+                  "bytes": 48211,
+                  "kind": "text",
+                  "preview": "1. 港珠澳大橋…",
+                  "lines": 912
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "toolUseResult": {
+      "stdout": ""
+    }
+  },
+  "at": "2026-11-02T03:46:12.345Z",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "meta": {
+    "results": [
+      {
+        "toolUseId": "toolu_01Search",
+        "toolUseSeq": 10
+      }
+    ]
+  },
+  "viewer": null
+}

@@ -1,0 +1,14 @@
+{
+  "seq": 2,
+  "kind": "user.sent",
+  "data": {
+    "clientMessageId": "m-2",
+    "text": "試吓",
+    "files": [],
+    "images": []
+  },
+  "at": "2026-11-02T03:46:10.120Z",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "meta": {},
+  "viewer": "admin@example.com"
+}

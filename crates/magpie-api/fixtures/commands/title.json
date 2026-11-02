@@ -1,0 +1,8 @@
+{
+  "cmdSeq": 42,
+  "type": "title",
+  "payload": {
+    "userPrompt": "Here is the first message of the conversation:\n\n<message>\n幫我整理今日有關港珠澳大橋嘅新聞\n</message>\n\nReply with only the title.",
+    "maxTokens": 100
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "seq": 1231,
+  "at": "2026-11-02T03:46:12.345Z",
+  "conversationId": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a",
+  "type": "conversation_upserted",
+  "conversation": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a",
+    "title": "港珠澳大橋今日新聞",
+    "titleSource": "generated",
+    "createdAt": "2026-11-02T03:46:10.120Z",
+    "updatedAt": "2026-11-02T03:47:01.002Z",
+    "lastUserMessageAt": "2026-11-02T03:46:10.120Z",
+    "deletedAt": "2026-11-02T05:00:00.000Z",
+    "purgeAt": "2026-12-02T05:00:00.000Z",
+    "claudeSessionId": "279aabf0-3c4d-4e5f-8a9b-0c1d2e3f4a5b",
+    "turn": null,
+    "lastTurn": {
+      "id": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+      "outcome": "completed",
+      "endedAt": "2026-11-02T03:47:01.002Z",
+      "error": null
+    },
+    "sandbox": null,
+    "asks": [],
+    "migrating": false,
+    "run": {
+      "state": "idle",
+      "background": []
+    },
+    "model": "deepseek/deepseek-v4.1-flash-1017",
+    "contextTokens": 51234,
+    "origin": {
+      "kind": "new"
+    }
+  }
+}

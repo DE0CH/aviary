@@ -1,0 +1,53 @@
+{
+  "route": "get_creation",
+  "params": {
+    "idempotencyKey": "draft-7f3a"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "conversation": {
+          "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a",
+          "title": "幫我整理今日有關港珠澳大橋嘅新聞…",
+          "titleSource": "provisional",
+          "createdAt": "2026-11-02T03:46:10.120Z",
+          "updatedAt": "2026-11-02T03:46:10.120Z",
+          "lastUserMessageAt": "2026-11-02T03:46:10.120Z",
+          "deletedAt": null,
+          "purgeAt": null,
+          "claudeSessionId": null,
+          "turn": {
+            "id": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+            "startedAt": "2026-11-02T03:46:10.120Z",
+            "origin": "person"
+          },
+          "lastTurn": null,
+          "sandbox": null,
+          "asks": [],
+          "migrating": false,
+          "run": {
+            "state": "admitted",
+            "background": []
+          },
+          "model": null,
+          "contextTokens": null,
+          "origin": {
+            "kind": "new"
+          }
+        },
+        "turn": {
+          "id": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+          "startedAt": "2026-11-02T03:46:10.120Z"
+        }
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

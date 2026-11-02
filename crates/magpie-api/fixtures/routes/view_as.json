@@ -1,0 +1,22 @@
+{
+  "route": "view_as",
+  "request": {
+    "admin": "admin@example.com",
+    "person": "chan.tai.man@example.com",
+    "session": "vs_4f2a9c",
+    "expiresAt": "2026-11-02T04:46:10.000Z"
+  },
+  "responses": [
+    {
+      "status": 201,
+      "body": {}
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "bad_request",
+        "message": "session is over 64 characters"
+      }
+    }
+  ]
+}

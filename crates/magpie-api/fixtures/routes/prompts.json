@@ -1,0 +1,33 @@
+{
+  "route": "prompts",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "epoch": "3",
+        "prompts": [
+          {
+            "seq": 1,
+            "timestamp": "2026-11-02T03:46:10.120Z",
+            "preview": "幫我整理今日有關港珠澳大橋嘅新聞"
+          },
+          {
+            "seq": 7,
+            "timestamp": "2026-10-20T08:00:00.000Z",
+            "preview": "再搵多啲資料"
+          }
+        ]
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

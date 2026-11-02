@@ -1,0 +1,30 @@
+{
+  "route": "ack_command",
+  "params": {
+    "cmdSeq": "41"
+  },
+  "request": {
+    "result": {
+      "delivered": true
+    }
+  },
+  "responses": [
+    {
+      "status": 204
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

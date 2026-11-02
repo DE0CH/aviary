@@ -1,0 +1,30 @@
+{
+  "route": "share_files_raw",
+  "params": {
+    "shareId": "Qk3vT9xLm2Pa7RwZc4HdNg"
+  },
+  "query": {
+    "path": "uploads/Q3 report.pdf",
+    "inline": "1"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "bytes": "%PDF-1.7 …"
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "bad_path",
+        "message": "the path has .."
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

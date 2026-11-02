@@ -1,0 +1,46 @@
+{
+  "route": "sent_files",
+  "request": {
+    "toolUseId": "call_9f",
+    "caption": "Q3",
+    "files": [
+      {
+        "path": "/workspace/report/q3.xlsx",
+        "size": 48211,
+        "sha256": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+        "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      }
+    ]
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "missing": [
+          "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+        ]
+      }
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "bad_path",
+        "message": "the path is not under /workspace"
+      }
+    },
+    {
+      "status": 413,
+      "body": {
+        "code": "too_large",
+        "message": "a sent file is at most 64 MiB"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

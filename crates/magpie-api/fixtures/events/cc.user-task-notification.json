@@ -1,0 +1,22 @@
+{
+  "seq": 14,
+  "kind": "cc.user",
+  "data": {
+    "type": "user",
+    "uuid": "1f4a5b6c-7d8e-4f9a-8b1c-2d3e4f5a6b7c",
+    "message": {
+      "role": "user",
+      "content": "<task-notification>\n<task-id>b7x2k9</task-id>\n<status>completed</status>\n</task-notification>"
+    }
+  },
+  "at": "2026-11-02T03:46:12.345Z",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "meta": {
+    "taskNotification": {
+      "toolUseId": "toolu_01Bg",
+      "status": "completed",
+      "summary": "Build finished."
+    }
+  },
+  "viewer": null
+}

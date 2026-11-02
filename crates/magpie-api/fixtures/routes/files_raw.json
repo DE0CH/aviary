@@ -1,0 +1,30 @@
+{
+  "route": "files_raw",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "query": {
+    "path": "report/q3.xlsx",
+    "sent": "call_9f"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "bytes": "PK…xlsx bytes"
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "bad_path",
+        "message": "the path is not relative and normalised"
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

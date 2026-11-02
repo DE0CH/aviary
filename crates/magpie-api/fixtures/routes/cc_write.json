@@ -1,0 +1,71 @@
+{
+  "route": "cc_write",
+  "query": {
+    "path": "projects/-workspace/279aabf0-3c4d-4e5f-8a9b-0c1d2e3f4a5b.jsonl",
+    "offset": 1398220,
+    "mtimeNs": 1793936812345000000,
+    "opId": "3a4b5c6d-7e8f-4a0b-9c1d-2e3f4a5b6c7d",
+    "create": "0",
+    "mode": 384,
+    "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f"
+  },
+  "requestBytes": "{\"type\":\"assistant\"}\n",
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "size": 1398300,
+        "version": 58
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "offset_mismatch",
+        "message": "the append's offset is not the file's size"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "offset_beyond_eof",
+        "message": "the offset is past the end"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    },
+    {
+      "status": 413,
+      "body": {
+        "code": "too_large",
+        "message": "the line is over 64 MiB"
+      }
+    },
+    {
+      "status": 507,
+      "body": {
+        "code": "quota_exceeded",
+        "message": "the conversation's Claude Code state is over 2 GiB"
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "the parent directory does not exist"
+      }
+    },
+    {
+      "status": 503,
+      "body": {
+        "code": "unavailable",
+        "message": "blob staging is full"
+      }
+    }
+  ]
+}

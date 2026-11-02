@@ -1,0 +1,14 @@
+{
+  "cmdSeq": 45,
+  "type": "answer_ask",
+  "payload": {
+    "askId": "ask_01",
+    "allow": true,
+    "updatedInput": {
+      "answers": {
+        "邊個日期？": "今日"
+      }
+    },
+    "message": null
+  }
+}

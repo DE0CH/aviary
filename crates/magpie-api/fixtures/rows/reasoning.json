@@ -1,0 +1,22 @@
+{
+  "seqStart": 2,
+  "seqEnd": 2,
+  "seqs": [
+    2
+  ],
+  "sourceSeqRanges": [
+    {
+      "startSeq": 2,
+      "endSeq": 2
+    }
+  ],
+  "updated": false,
+  "timestamp": "2026-11-02T03:46:12.345Z",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "item": {
+    "kind": "reasoning",
+    "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+    "blockIndex": 0,
+    "text": "The person wants today's news."
+  }
+}

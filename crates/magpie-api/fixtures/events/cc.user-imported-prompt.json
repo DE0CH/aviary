@@ -1,0 +1,29 @@
+{
+  "seq": 7,
+  "kind": "cc.user",
+  "data": {
+    "type": "user",
+    "uuid": "5b7d9f1a-2c4e-4a6b-8d0f-1a3c5e7b9d2f",
+    "message": {
+      "role": "user",
+      "content": "再搵多啲資料\n\n<files_input>…</files_input>"
+    }
+  },
+  "at": "2026-10-20T08:00:00.000Z",
+  "turnId": null,
+  "meta": {
+    "prompt": true,
+    "displayText": "再搵多啲資料",
+    "replaces": 5,
+    "attachments": [
+      {
+        "path": "uploads/old.docx",
+        "name": "old.docx",
+        "mimeType": "",
+        "size": 0,
+        "missing": true
+      }
+    ]
+  },
+  "viewer": null
+}

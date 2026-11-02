@@ -1,0 +1,27 @@
+{
+  "seqStart": 13,
+  "seqEnd": 13,
+  "seqs": [
+    13
+  ],
+  "sourceSeqRanges": [
+    {
+      "startSeq": 13,
+      "endSeq": 13
+    }
+  ],
+  "updated": false,
+  "timestamp": "2026-11-02T03:46:53.575Z",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "item": {
+    "kind": "assistant",
+    "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X7B",
+    "blockIndex": 0,
+    "text": "API Error: 402 {\"error\":{\"message\":\"budget used up\"}}",
+    "error": {
+      "code": "model.budget",
+      "message": "此服務的使用預算已用完，請聯絡管理員。",
+      "status": 402
+    }
+  }
+}

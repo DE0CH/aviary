@@ -1,0 +1,33 @@
+{
+  "route": "files_panel",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "files": [
+          {
+            "path": "report/q3.xlsx",
+            "name": "q3.xlsx",
+            "size": 48211,
+            "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "isImage": false,
+            "sentAt": "2026-11-02T03:46:53.575Z",
+            "caption": "Q3",
+            "toolUseId": "call_9f",
+            "blobId": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+          }
+        ]
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

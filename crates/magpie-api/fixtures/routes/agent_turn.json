@@ -1,0 +1,25 @@
+{
+  "route": "agent_turn",
+  "request": {
+    "turnId": "0190f6c9-1d2e-7f30-a142-5b6c7d8e9f00",
+    "origin": "agent",
+    "at": "2026-11-02T03:47:01.002Z"
+  },
+  "responses": [
+    {
+      "status": 201,
+      "body": {}
+    },
+    {
+      "status": 200,
+      "body": {}
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

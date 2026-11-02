@@ -1,0 +1,370 @@
+{
+  "route": "timeline",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "query": {
+    "tail": "1",
+    "limit": 40
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "epoch": "3",
+        "minSeq": 1,
+        "maxSeq": 15,
+        "hasOlder": false,
+        "hasNewer": false,
+        "rows": [
+          {
+            "seqStart": 1,
+            "seqEnd": 1,
+            "seqs": [
+              1
+            ],
+            "sourceSeqRanges": [
+              {
+                "startSeq": 1,
+                "endSeq": 1
+              }
+            ],
+            "updated": false,
+            "timestamp": "2026-11-02T03:46:10.120Z",
+            "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+            "item": {
+              "kind": "user",
+              "messageId": "draft-7f3a:initial-message",
+              "clientMessageId": "draft-7f3a:initial-message",
+              "text": "幫我整理今日有關港珠澳大橋嘅新聞",
+              "images": [
+                {
+                  "blobId": "4e1a7c9b2d5f8e3a6c0b9d2f5a8e1c4b7d0a3f6c9e2b5d8a1f4c7e0b3d6a9c2f",
+                  "mimeType": "image/heic",
+                  "width": 4032,
+                  "height": 3024
+                }
+              ],
+              "files": [
+                {
+                  "path": "uploads/Q3 report.pdf",
+                  "name": "Q3 report.pdf",
+                  "mimeType": "application/pdf",
+                  "size": 812345
+                }
+              ]
+            }
+          },
+          {
+            "seqStart": 2,
+            "seqEnd": 2,
+            "seqs": [
+              2
+            ],
+            "sourceSeqRanges": [
+              {
+                "startSeq": 2,
+                "endSeq": 2
+              }
+            ],
+            "updated": false,
+            "timestamp": "2026-11-02T03:46:12.345Z",
+            "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+            "item": {
+              "kind": "reasoning",
+              "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+              "blockIndex": 0,
+              "text": "The person wants today's news."
+            }
+          },
+          {
+            "seqStart": 3,
+            "seqEnd": 5,
+            "seqs": [
+              3,
+              5
+            ],
+            "sourceSeqRanges": [
+              {
+                "startSeq": 3,
+                "endSeq": 3
+              },
+              {
+                "startSeq": 5,
+                "endSeq": 5
+              }
+            ],
+            "updated": true,
+            "timestamp": "2026-11-02T03:46:12.345Z",
+            "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+            "item": {
+              "kind": "tool",
+              "callId": "toolu_01Search",
+              "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+              "blockIndex": 1,
+              "name": "mcp__tools__search",
+              "input": {
+                "query": "港珠澳大橋 新聞",
+                "max_results": 10
+              },
+              "status": "completed",
+              "result": {
+                "text": "1. 港珠澳大橋…",
+                "truncated": true,
+                "bytes": 48211,
+                "blobId": "c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2",
+                "isError": false,
+                "images": [
+                  {
+                    "blobId": "b7d0a3f6c9e2b5d8a1f4c7e0b3d6a9c2f4e1a7c9b2d5f8e3a6c0b9d2f5a8e1c4",
+                    "mimeType": "image/png"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "seqStart": 4,
+            "seqEnd": 6,
+            "seqs": [
+              4,
+              6
+            ],
+            "sourceSeqRanges": [
+              {
+                "startSeq": 4,
+                "endSeq": 4
+              },
+              {
+                "startSeq": 6,
+                "endSeq": 6
+              }
+            ],
+            "updated": true,
+            "timestamp": "2026-11-02T03:46:12.345Z",
+            "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+            "item": {
+              "kind": "tool",
+              "callId": "call_9f",
+              "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+              "blockIndex": 2,
+              "name": "SendUserFile",
+              "input": {
+                "files": [
+                  "/workspace/report/q3.xlsx"
+                ],
+                "caption": "Q3"
+              },
+              "status": "completed",
+              "result": {
+                "text": "Sent 1 file.",
+                "truncated": false,
+                "bytes": 12,
+                "isError": false
+              },
+              "sentFiles": [
+                {
+                  "path": "report/q3.xlsx",
+                  "name": "q3.xlsx",
+                  "size": 48211,
+                  "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                  "isImage": false
+                }
+              ]
+            }
+          },
+          {
+            "seqStart": 7,
+            "seqEnd": 7,
+            "seqs": [
+              7
+            ],
+            "sourceSeqRanges": [
+              {
+                "startSeq": 7,
+                "endSeq": 7
+              }
+            ],
+            "updated": false,
+            "timestamp": "2026-10-20T08:00:00.000Z",
+            "item": {
+              "kind": "user",
+              "messageId": "5b7d9f1a-2c4e-4a6b-8d0f-1a3c5e7b9d2f",
+              "text": "再搵多啲資料",
+              "images": [],
+              "files": [
+                {
+                  "path": "uploads/old.docx",
+                  "name": "old.docx",
+                  "mimeType": "",
+                  "size": 0,
+                  "missing": true
+                }
+              ]
+            }
+          },
+          {
+            "seqStart": 8,
+            "seqEnd": 11,
+            "seqs": [
+              8,
+              10,
+              11
+            ],
+            "sourceSeqRanges": [
+              {
+                "startSeq": 8,
+                "endSeq": 8
+              },
+              {
+                "startSeq": 10,
+                "endSeq": 11
+              }
+            ],
+            "updated": true,
+            "timestamp": "2026-11-02T03:46:53.575Z",
+            "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+            "item": {
+              "kind": "tool",
+              "callId": "toolu_01Bg",
+              "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+              "blockIndex": 3,
+              "name": "Bash",
+              "input": {
+                "command": "npm run build",
+                "run_in_background": true
+              },
+              "status": "completed",
+              "result": {
+                "text": "Build finished.",
+                "truncated": false,
+                "bytes": 15,
+                "isError": false
+              },
+              "task": {
+                "taskId": "b7x2k9",
+                "status": "completed",
+                "summary": "Build finished."
+              }
+            }
+          },
+          {
+            "seqStart": 9,
+            "seqEnd": 9,
+            "seqs": [
+              9
+            ],
+            "sourceSeqRanges": [
+              {
+                "startSeq": 9,
+                "endSeq": 9
+              }
+            ],
+            "updated": false,
+            "timestamp": "2026-11-02T03:46:53.575Z",
+            "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+            "item": {
+              "kind": "assistant",
+              "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+              "blockIndex": 4,
+              "text": "今日港珠澳大橋有三則新聞：…"
+            }
+          },
+          {
+            "seqStart": 12,
+            "seqEnd": 14,
+            "seqs": [
+              12,
+              14
+            ],
+            "sourceSeqRanges": [
+              {
+                "startSeq": 12,
+                "endSeq": 12
+              },
+              {
+                "startSeq": 14,
+                "endSeq": 14
+              }
+            ],
+            "updated": true,
+            "timestamp": "2026-11-02T03:46:53.575Z",
+            "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+            "item": {
+              "kind": "tool",
+              "callId": "toolu_01Read",
+              "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X7A",
+              "blockIndex": 0,
+              "name": "Read",
+              "input": {
+                "file_path": "/workspace/uploads/Q3 report.pdf"
+              },
+              "status": "failed",
+              "error": {
+                "code": "sandbox.lost",
+                "message": "the sandbox was released mid-turn"
+              }
+            }
+          },
+          {
+            "seqStart": 13,
+            "seqEnd": 13,
+            "seqs": [
+              13
+            ],
+            "sourceSeqRanges": [
+              {
+                "startSeq": 13,
+                "endSeq": 13
+              }
+            ],
+            "updated": false,
+            "timestamp": "2026-11-02T03:46:53.575Z",
+            "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+            "item": {
+              "kind": "assistant",
+              "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X7B",
+              "blockIndex": 0,
+              "text": "API Error: 402 {\"error\":{\"message\":\"budget used up\"}}",
+              "error": {
+                "code": "model.budget",
+                "message": "此服務的使用預算已用完，請聯絡管理員。",
+                "status": 402
+              }
+            }
+          },
+          {
+            "seqStart": 15,
+            "seqEnd": 15,
+            "seqs": [
+              15
+            ],
+            "sourceSeqRanges": [
+              {
+                "startSeq": 15,
+                "endSeq": 15
+              }
+            ],
+            "updated": false,
+            "timestamp": "2026-11-02T03:47:01.002Z",
+            "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+            "item": {
+              "kind": "error",
+              "code": "sandbox.lost",
+              "message": "the sandbox was released mid-turn",
+              "detail": "host_lost"
+            }
+          }
+        ],
+        "live": null
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

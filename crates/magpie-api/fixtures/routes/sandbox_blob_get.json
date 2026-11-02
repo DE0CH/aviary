@@ -1,0 +1,22 @@
+{
+  "route": "sandbox_blob_get",
+  "params": {
+    "sha": "9f2c1e7b4a8d3c6f5e0b1a2d4c7e9f8a3b6d5c2e1f0a9b8c7d6e5f4a3b2c1d0e"
+  },
+  "query": {
+    "as": "raw"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "bytes": "%PDF-1.7 …"
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

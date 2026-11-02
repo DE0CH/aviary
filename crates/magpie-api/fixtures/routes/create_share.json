@@ -1,0 +1,45 @@
+{
+  "route": "create_share",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "request": {},
+  "responses": [
+    {
+      "status": 201,
+      "body": {
+        "id": "Qk3vT9xLm2Pa7RwZc4HdNg",
+        "createdAt": "2026-11-02T03:47:01.002Z"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "nothing_to_share",
+        "message": "no finished reply to share"
+      }
+    },
+    {
+      "status": 500,
+      "body": {
+        "code": "share_failed",
+        "message": "the workspace clone failed"
+      }
+    },
+    {
+      "status": 403,
+      "body": {
+        "code": "view_as_read_only",
+        "message": "not allowed while viewing as the person"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "conversation_migrating",
+        "message": "conversation is being moved",
+        "retryAfterMs": 2000
+      }
+    }
+  ]
+}

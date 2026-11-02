@@ -1,0 +1,137 @@
+{
+  "route": "list_conversations",
+  "query": {
+    "state": "active",
+    "limit": 200,
+    "cursor": "eyJhIjoiMjAyNi0xMS0wMSJ9"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "conversations": [
+          {
+            "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a",
+            "title": "港珠澳大橋今日新聞",
+            "titleSource": "generated",
+            "createdAt": "2026-11-02T03:46:10.120Z",
+            "updatedAt": "2026-11-02T03:46:53.575Z",
+            "lastUserMessageAt": "2026-11-02T03:46:10.120Z",
+            "deletedAt": null,
+            "purgeAt": null,
+            "claudeSessionId": "279aabf0-3c4d-4e5f-8a9b-0c1d2e3f4a5b",
+            "turn": {
+              "id": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+              "startedAt": "2026-11-02T03:46:10.120Z",
+              "origin": "person"
+            },
+            "lastTurn": {
+              "id": "0190f6b0-0a1b-7c2d-9e3f-4a5b6c7d8e9f",
+              "outcome": "failed",
+              "endedAt": "2026-11-01T09:12:44.010Z",
+              "error": {
+                "code": "sandbox.busy",
+                "message": "hermit has no capacity",
+                "detail": "capacity",
+                "retryAfterS": 60
+              }
+            },
+            "sandbox": "ready",
+            "asks": [
+              {
+                "id": "ask_01",
+                "toolName": "AskUserQuestion",
+                "toolUseId": "toolu_01AskQ",
+                "input": {
+                  "questions": [
+                    {
+                      "question": "邊個日期？",
+                      "header": "日期",
+                      "multiSelect": false,
+                      "options": [
+                        {
+                          "label": "今日"
+                        },
+                        {
+                          "label": "尋日"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "createdAt": "2026-11-02T03:46:12.345Z"
+              }
+            ],
+            "migrating": false,
+            "run": {
+              "state": "running",
+              "background": []
+            },
+            "model": "deepseek/deepseek-v4.1-flash-1017",
+            "contextTokens": 51234,
+            "origin": {
+              "kind": "new"
+            }
+          },
+          {
+            "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a",
+            "title": "港珠澳大橋今日新聞",
+            "titleSource": "generated",
+            "createdAt": "2026-11-02T03:46:10.120Z",
+            "updatedAt": "2026-11-02T03:47:01.002Z",
+            "lastUserMessageAt": "2026-11-02T03:46:10.120Z",
+            "deletedAt": null,
+            "purgeAt": null,
+            "claudeSessionId": "279aabf0-3c4d-4e5f-8a9b-0c1d2e3f4a5b",
+            "turn": null,
+            "lastTurn": {
+              "id": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+              "outcome": "completed",
+              "endedAt": "2026-11-02T03:47:01.002Z",
+              "error": null
+            },
+            "sandbox": null,
+            "asks": [],
+            "migrating": false,
+            "run": {
+              "state": "held",
+              "background": [
+                {
+                  "taskId": "b7x2k9",
+                  "toolUseId": "toolu_01Bg",
+                  "type": "local_bash",
+                  "description": "npm run build",
+                  "startedAt": "2026-11-02T03:46:53.575Z"
+                }
+              ]
+            },
+            "model": "deepseek/deepseek-v4.1-flash-1017",
+            "contextTokens": 51234,
+            "origin": {
+              "kind": "new"
+            }
+          }
+        ],
+        "nextCursor": "eyJhIjoiMjAyNi0xMS0wMiJ9",
+        "list": {
+          "generation": "6a1e9c3b",
+          "headSeq": 1236
+        }
+      }
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "bad_cursor",
+        "message": "the cursor does not parse"
+      }
+    },
+    {
+      "status": 401,
+      "body": {
+        "code": "unauthenticated",
+        "message": "missing or unknown bearer token"
+      }
+    }
+  ]
+}

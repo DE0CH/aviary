@@ -1,0 +1,37 @@
+{
+  "route": "upload",
+  "requestBytes": "(image bytes)",
+  "headers": {
+    "aviary-upload-name": "IMG_0042.HEIC",
+    "aviary-upload-kind": "image",
+    "content-type": "image/heic"
+  },
+  "responses": [
+    {
+      "status": 201,
+      "body": {
+        "uploadId": "1c5d3e2f-4a5b-4c6d-9e7f-8091a2b3c4d5",
+        "path": "uploads/1c5d3e2f-4a5b-4c6d-9e7f-8091a2b3c4d5/IMG_0042.HEIC",
+        "name": "IMG_0042.HEIC",
+        "size": 2211234,
+        "mimeType": "image/heic",
+        "width": 4032,
+        "height": 3024
+      }
+    },
+    {
+      "status": 413,
+      "body": {
+        "code": "too_large",
+        "message": "uploads are at most 52428800 bytes"
+      }
+    },
+    {
+      "status": 415,
+      "body": {
+        "code": "unsupported_type",
+        "message": "not a supported image"
+      }
+    }
+  ]
+}

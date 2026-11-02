@@ -1,0 +1,8 @@
+{
+  "cmdSeq": 44,
+  "type": "kill",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "payload": {
+    "reason": "watchdog"
+  }
+}

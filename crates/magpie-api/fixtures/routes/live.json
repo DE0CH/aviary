@@ -1,0 +1,49 @@
+{
+  "route": "live",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+        "n": 122,
+        "reset": true,
+        "blocks": [
+          {
+            "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+            "blockIndex": 4,
+            "block": "text",
+            "name": null,
+            "offset": 0,
+            "text": "今日港珠澳大橋…",
+            "done": false,
+            "afterRowSeq": 8
+          },
+          {
+            "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+            "blockIndex": 5,
+            "block": "tool_use",
+            "name": "mcp__tools__search",
+            "offset": 0,
+            "text": "",
+            "done": false,
+            "afterRowSeq": 9
+          }
+        ],
+        "status": null
+      }
+    },
+    {
+      "status": 204
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

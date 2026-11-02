@@ -1,0 +1,17 @@
+{
+  "seq": 14,
+  "kind": "task.status",
+  "data": {
+    "taskId": "b7x2k9",
+    "toolUseId": "toolu_01Bg",
+    "event": "notification",
+    "status": "completed",
+    "description": "npm run build",
+    "summary": "Build finished.",
+    "outputFile": "/tmp/claude/tasks/b7x2k9.output"
+  },
+  "at": "2026-11-02T03:46:12.345Z",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "meta": {},
+  "viewer": null
+}

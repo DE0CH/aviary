@@ -1,0 +1,50 @@
+{
+  "seqStart": 4,
+  "seqEnd": 6,
+  "seqs": [
+    4,
+    6
+  ],
+  "sourceSeqRanges": [
+    {
+      "startSeq": 4,
+      "endSeq": 4
+    },
+    {
+      "startSeq": 6,
+      "endSeq": 6
+    }
+  ],
+  "updated": true,
+  "timestamp": "2026-11-02T03:46:12.345Z",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "item": {
+    "kind": "tool",
+    "callId": "call_9f",
+    "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+    "blockIndex": 2,
+    "name": "SendUserFile",
+    "input": {
+      "files": [
+        "/workspace/report/q3.xlsx"
+      ],
+      "caption": "Q3"
+    },
+    "status": "completed",
+    "result": {
+      "text": "Sent 1 file.",
+      "truncated": false,
+      "bytes": 12,
+      "isError": false
+    },
+    "sentFiles": [
+      {
+        "path": "report/q3.xlsx",
+        "name": "q3.xlsx",
+        "size": 48211,
+        "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "isImage": false
+      }
+    ]
+  }
+}

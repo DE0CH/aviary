@@ -1,0 +1,45 @@
+{
+  "route": "cc_tree",
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "files": [
+          {
+            "path": "projects",
+            "kind": "dir",
+            "size": 0,
+            "mtimeNs": 1793936770120000000,
+            "mode": 448,
+            "version": 1
+          },
+          {
+            "path": "projects/-workspace/279aabf0-3c4d-4e5f-8a9b-0c1d2e3f4a5b.jsonl",
+            "kind": "lines",
+            "size": 1398220,
+            "mtimeNs": 1793936812345000000,
+            "mode": 384,
+            "version": 57
+          },
+          {
+            "path": "todos/279aabf0-3c4d-4e5f-8a9b-0c1d2e3f4a5b-agent.json",
+            "kind": "bytes",
+            "size": 2,
+            "mtimeNs": 1793936812345678901,
+            "mode": 420,
+            "version": 2
+          }
+        ],
+        "ccBytes": 1402311,
+        "quotaBytes": 2147483648
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

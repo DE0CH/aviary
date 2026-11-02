@@ -1,0 +1,38 @@
+{
+  "route": "tasks",
+  "request": {
+    "events": [
+      {
+        "id": "3:18211",
+        "taskId": "b7x2k9",
+        "toolUseId": "toolu_01Bg",
+        "event": "started",
+        "status": "running",
+        "description": "npm run build",
+        "at": "2026-11-02T03:46:53.575Z"
+      },
+      {
+        "id": "3:19004",
+        "taskId": "b7x2k9",
+        "toolUseId": null,
+        "event": "notification",
+        "status": "completed",
+        "summary": "Build finished.",
+        "outputFile": "/tmp/claude/tasks/b7x2k9.output",
+        "at": "2026-11-02T03:47:01.002Z"
+      }
+    ]
+  },
+  "responses": [
+    {
+      "status": 204
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

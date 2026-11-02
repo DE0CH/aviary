@@ -1,0 +1,45 @@
+{
+  "seqStart": 8,
+  "seqEnd": 11,
+  "seqs": [
+    8,
+    10,
+    11
+  ],
+  "sourceSeqRanges": [
+    {
+      "startSeq": 8,
+      "endSeq": 8
+    },
+    {
+      "startSeq": 10,
+      "endSeq": 11
+    }
+  ],
+  "updated": true,
+  "timestamp": "2026-11-02T03:46:53.575Z",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "item": {
+    "kind": "tool",
+    "callId": "toolu_01Bg",
+    "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+    "blockIndex": 3,
+    "name": "Bash",
+    "input": {
+      "command": "npm run build",
+      "run_in_background": true
+    },
+    "status": "completed",
+    "result": {
+      "text": "Build finished.",
+      "truncated": false,
+      "bytes": 15,
+      "isError": false
+    },
+    "task": {
+      "taskId": "b7x2k9",
+      "status": "completed",
+      "summary": "Build finished."
+    }
+  }
+}

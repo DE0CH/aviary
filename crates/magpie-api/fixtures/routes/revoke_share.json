@@ -1,0 +1,18 @@
+{
+  "route": "revoke_share",
+  "params": {
+    "shareId": "Qk3vT9xLm2Pa7RwZc4HdNg"
+  },
+  "responses": [
+    {
+      "status": 204
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "route": "admin_timeline",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "query": {
+    "after": 8,
+    "limit": 40,
+    "waitMs": 0,
+    "liveAfter": 117
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "epoch": "3",
+        "minSeq": 1,
+        "maxSeq": 9,
+        "hasOlder": true,
+        "hasNewer": false,
+        "rows": [
+          {
+            "seqStart": 9,
+            "seqEnd": 9,
+            "seqs": [
+              9
+            ],
+            "sourceSeqRanges": [
+              {
+                "startSeq": 9,
+                "endSeq": 9
+              }
+            ],
+            "updated": false,
+            "timestamp": "2026-11-02T03:46:53.575Z",
+            "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+            "item": {
+              "kind": "assistant",
+              "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+              "blockIndex": 4,
+              "text": "今日港珠澳大橋有三則新聞：…"
+            }
+          }
+        ],
+        "live": {
+          "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+          "n": 122,
+          "reset": false,
+          "blocks": [
+            {
+              "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+              "blockIndex": 4,
+              "block": "text",
+              "name": null,
+              "offset": 18,
+              "text": "今日港珠澳大橋…",
+              "done": false,
+              "afterRowSeq": 8
+            },
+            {
+              "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+              "blockIndex": 5,
+              "block": "tool_use",
+              "name": "mcp__tools__search",
+              "offset": 0,
+              "text": "",
+              "done": false,
+              "afterRowSeq": 9
+            }
+          ],
+          "status": {
+            "status": "api_retry",
+            "attempt": 2,
+            "retryInMs": 4000
+          }
+        }
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    },
+    {
+      "status": 403,
+      "body": {
+        "code": "wrong_caller",
+        "message": "this caller may not use this route"
+      }
+    }
+  ]
+}

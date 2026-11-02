@@ -1,0 +1,36 @@
+{
+  "seqStart": 12,
+  "seqEnd": 14,
+  "seqs": [
+    12,
+    14
+  ],
+  "sourceSeqRanges": [
+    {
+      "startSeq": 12,
+      "endSeq": 12
+    },
+    {
+      "startSeq": 14,
+      "endSeq": 14
+    }
+  ],
+  "updated": true,
+  "timestamp": "2026-11-02T03:46:53.575Z",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "item": {
+    "kind": "tool",
+    "callId": "toolu_01Read",
+    "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X7A",
+    "blockIndex": 0,
+    "name": "Read",
+    "input": {
+      "file_path": "/workspace/uploads/Q3 report.pdf"
+    },
+    "status": "failed",
+    "error": {
+      "code": "sandbox.lost",
+      "message": "the sandbox was released mid-turn"
+    }
+  }
+}

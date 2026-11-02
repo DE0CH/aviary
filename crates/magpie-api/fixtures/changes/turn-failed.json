@@ -1,0 +1,14 @@
+{
+  "seq": 1234,
+  "at": "2026-11-02T03:46:12.345Z",
+  "conversationId": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a",
+  "type": "turn",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "phase": "failed",
+  "origin": "agent",
+  "error": {
+    "code": "sandbox.lost",
+    "message": "the sandbox was released mid-turn"
+  },
+  "timelineSeq": 15
+}

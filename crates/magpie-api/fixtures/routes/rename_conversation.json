@@ -1,0 +1,88 @@
+{
+  "route": "rename_conversation",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "request": {
+    "title": "港珠澳大橋"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a",
+        "title": "港珠澳大橋",
+        "titleSource": "user",
+        "createdAt": "2026-11-02T03:46:10.120Z",
+        "updatedAt": "2026-11-02T03:47:01.002Z",
+        "lastUserMessageAt": "2026-11-02T03:46:10.120Z",
+        "deletedAt": null,
+        "purgeAt": null,
+        "claudeSessionId": "279aabf0-3c4d-4e5f-8a9b-0c1d2e3f4a5b",
+        "turn": null,
+        "lastTurn": {
+          "id": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+          "outcome": "completed",
+          "endedAt": "2026-11-02T03:47:01.002Z",
+          "error": null
+        },
+        "sandbox": null,
+        "asks": [],
+        "migrating": false,
+        "run": {
+          "state": "held",
+          "background": [
+            {
+              "taskId": "b7x2k9",
+              "toolUseId": "toolu_01Bg",
+              "type": "local_bash",
+              "description": "npm run build",
+              "startedAt": "2026-11-02T03:46:53.575Z"
+            }
+          ]
+        },
+        "model": "deepseek/deepseek-v4.1-flash-1017",
+        "contextTokens": 51234,
+        "origin": {
+          "kind": "new"
+        }
+      }
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "empty_title",
+        "message": "the title is empty"
+      }
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "title_too_long",
+        "message": "the title is over 200 characters"
+      }
+    },
+    {
+      "status": 403,
+      "body": {
+        "code": "view_as_read_only",
+        "message": "not allowed while viewing as the person"
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "conversation_migrating",
+        "message": "conversation is being moved",
+        "retryAfterMs": 2000
+      }
+    }
+  ]
+}

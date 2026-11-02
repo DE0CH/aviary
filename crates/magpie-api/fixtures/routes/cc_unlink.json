@@ -1,0 +1,33 @@
+{
+  "route": "cc_unlink",
+  "request": {
+    "path": "todos/279aabf0-3c4d-4e5f-8a9b-0c1d2e3f4a5b-agent.json",
+    "opId": "3a4b5c6d-7e8f-4a0b-9c1d-2e3f4a5b6c7d"
+  },
+  "responses": [
+    {
+      "status": 204
+    },
+    {
+      "status": 403,
+      "body": {
+        "code": "protected",
+        "message": "the main transcript cannot be removed"
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

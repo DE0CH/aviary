@@ -1,0 +1,38 @@
+{
+  "seqStart": 1,
+  "seqEnd": 1,
+  "seqs": [
+    1
+  ],
+  "sourceSeqRanges": [
+    {
+      "startSeq": 1,
+      "endSeq": 1
+    }
+  ],
+  "updated": false,
+  "timestamp": "2026-11-02T03:46:10.120Z",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "item": {
+    "kind": "user",
+    "messageId": "draft-7f3a:initial-message",
+    "clientMessageId": "draft-7f3a:initial-message",
+    "text": "幫我整理今日有關港珠澳大橋嘅新聞",
+    "images": [
+      {
+        "blobId": "4e1a7c9b2d5f8e3a6c0b9d2f5a8e1c4b7d0a3f6c9e2b5d8a1f4c7e0b3d6a9c2f",
+        "mimeType": "image/heic",
+        "width": 4032,
+        "height": 3024
+      }
+    ],
+    "files": [
+      {
+        "path": "uploads/Q3 report.pdf",
+        "name": "Q3 report.pdf",
+        "mimeType": "application/pdf",
+        "size": 812345
+      }
+    ]
+  }
+}

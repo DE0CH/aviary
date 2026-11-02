@@ -1,0 +1,30 @@
+{
+  "seqStart": 7,
+  "seqEnd": 7,
+  "seqs": [
+    7
+  ],
+  "sourceSeqRanges": [
+    {
+      "startSeq": 7,
+      "endSeq": 7
+    }
+  ],
+  "updated": false,
+  "timestamp": "2026-10-20T08:00:00.000Z",
+  "item": {
+    "kind": "user",
+    "messageId": "5b7d9f1a-2c4e-4a6b-8d0f-1a3c5e7b9d2f",
+    "text": "再搵多啲資料",
+    "images": [],
+    "files": [
+      {
+        "path": "uploads/old.docx",
+        "name": "old.docx",
+        "mimeType": "",
+        "size": 0,
+        "missing": true
+      }
+    ]
+  }
+}

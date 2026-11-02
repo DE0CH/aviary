@@ -1,0 +1,31 @@
+{
+  "route": "sandbox_blob_put",
+  "params": {
+    "sha": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+  },
+  "requestBytes": "PK…xlsx bytes",
+  "responses": [
+    {
+      "status": 201,
+      "body": {}
+    },
+    {
+      "status": 200,
+      "body": {}
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "sha_mismatch",
+        "message": "the body does not hash to the named sha"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

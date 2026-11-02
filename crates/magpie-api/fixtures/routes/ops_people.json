@@ -1,0 +1,43 @@
+{
+  "route": "ops_people",
+  "query": {
+    "tz": "Asia/Hong_Kong"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "tz": "Asia/Hong_Kong",
+        "people": [
+          {
+            "owner": "chan.tai.man@example.com",
+            "total": 12,
+            "today": 1,
+            "last7d": 4,
+            "live": 0,
+            "deleted": 2,
+            "purged": 0,
+            "lastActiveAt": "2026-11-02T03:47:01.002Z"
+          },
+          {
+            "owner": "new.staff@example.com",
+            "total": 0,
+            "today": 0,
+            "last7d": 0,
+            "live": 0,
+            "deleted": 0,
+            "purged": 0,
+            "lastActiveAt": null
+          }
+        ]
+      }
+    },
+    {
+      "status": 403,
+      "body": {
+        "code": "wrong_caller",
+        "message": "this caller may not use this route"
+      }
+    }
+  ]
+}

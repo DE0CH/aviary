@@ -1,0 +1,21 @@
+{
+  "route": "cc_file",
+  "query": {
+    "path": "projects/-workspace/279aabf0-3c4d-4e5f-8a9b-0c1d2e3f4a5b.jsonl",
+    "offset": 0,
+    "length": 65536
+  },
+  "responses": [
+    {
+      "status": 206,
+      "bytes": "{\"type\":\"user\"}\n"
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

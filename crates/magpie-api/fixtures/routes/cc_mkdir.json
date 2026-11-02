@@ -1,0 +1,28 @@
+{
+  "route": "cc_mkdir",
+  "request": {
+    "path": "projects/-workspace/279aabf0-3c4d-4e5f-8a9b-0c1d2e3f4a5b/tool-results",
+    "mode": 448,
+    "mtimeNs": 1793936812345000000,
+    "opId": "3a4b5c6d-7e8f-4a0b-9c1d-2e3f4a5b6c7d"
+  },
+  "responses": [
+    {
+      "status": 204
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "exists",
+        "message": "the path exists"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "route": "person_purge",
+  "params": {
+    "person": "leaver@example.com"
+  },
+  "request": {
+    "reason": "offboarded"
+  },
+  "responses": [
+    {
+      "status": 202,
+      "body": {
+        "conversations": 12
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "person_allowed",
+        "message": "hermit still allows the person"
+      }
+    },
+    {
+      "status": 403,
+      "body": {
+        "code": "wrong_caller",
+        "message": "this caller may not use this route"
+      }
+    }
+  ]
+}

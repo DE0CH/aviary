@@ -1,0 +1,59 @@
+{
+  "seq": 2,
+  "kind": "user.sent",
+  "data": {
+    "clientMessageId": "draft-7f3a:initial-message",
+    "text": "幫我整理今日有關港珠澳大橋嘅新聞",
+    "files": [
+      {
+        "uploadId": "0b4c2d1e-3f4a-4b5c-8d6e-7f8091a2b3c4",
+        "name": "Q3 report.pdf",
+        "mimeType": "application/pdf",
+        "size": 812345,
+        "path": "uploads/Q3 report.pdf",
+        "blob": {
+          "$blob": {
+            "blobId": "9f2c1e7b4a8d3c6f5e0b1a2d4c7e9f8a3b6d5c2e1f0a9b8c7d6e5f4a3b2c1d0e",
+            "bytes": 812345,
+            "kind": "file",
+            "mime": "application/pdf"
+          }
+        }
+      }
+    ],
+    "images": [
+      {
+        "uploadId": "1c5d3e2f-4a5b-4c6d-9e7f-8091a2b3c4d5",
+        "mimeType": "image/heic",
+        "size": 2211234,
+        "width": 4032,
+        "height": 3024,
+        "path": "uploads/IMG_0042.HEIC",
+        "blob": {
+          "$blob": {
+            "blobId": "4e1a7c9b2d5f8e3a6c0b9d2f5a8e1c4b7d0a3f6c9e2b5d8a1f4c7e0b3d6a9c2f",
+            "bytes": 2211234,
+            "kind": "media",
+            "mime": "image/heic",
+            "width": 4032,
+            "height": 3024
+          }
+        },
+        "modelBlob": {
+          "$blob": {
+            "blobId": "b7d0a3f6c9e2b5d8a1f4c7e0b3d6a9c2f4e1a7c9b2d5f8e3a6c0b9d2f5a8e1c4",
+            "bytes": 612001,
+            "kind": "media",
+            "mime": "image/jpeg",
+            "width": 2000,
+            "height": 1500
+          }
+        }
+      }
+    ]
+  },
+  "at": "2026-11-02T03:46:10.120Z",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "meta": {},
+  "viewer": null
+}

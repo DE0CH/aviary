@@ -1,0 +1,71 @@
+{
+  "route": "live_frames",
+  "params": {
+    "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f"
+  },
+  "request": {
+    "frames": [
+      {
+        "n": 118,
+        "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+        "index": 4,
+        "op": "start",
+        "block": "text",
+        "parentToolUseId": "toolu_01Task",
+        "at": "2026-11-02T03:46:12.345Z"
+      },
+      {
+        "n": 119,
+        "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+        "index": 4,
+        "op": "delta",
+        "offset": 0,
+        "text": "今日港珠澳大橋…"
+      },
+      {
+        "n": 120,
+        "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+        "index": 5,
+        "op": "start",
+        "block": "tool_use",
+        "name": "mcp__tools__search"
+      },
+      {
+        "n": 121,
+        "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+        "index": 4,
+        "op": "stop"
+      },
+      {
+        "n": 122,
+        "op": "status",
+        "status": "api_retry",
+        "attempt": 2,
+        "retryInMs": 4000
+      },
+      {
+        "n": 123,
+        "op": "gap"
+      }
+    ]
+  },
+  "responses": [
+    {
+      "status": 204
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "turn_not_active",
+        "message": "the turn is not the conversation's active turn"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

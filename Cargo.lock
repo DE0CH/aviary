@@ -1525,6 +1525,17 @@ version = "0.0.0"
 [[package]]
 name = "magpie-api"
 version = "0.0.0"
+dependencies = [
+ "aviary-core",
+ "axum",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "magpie-import"
@@ -1894,6 +1905,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

@@ -1,0 +1,29 @@
+{
+  "route": "blob",
+  "params": {
+    "blobId": "4e1a7c9b2d5f8e3a6c0b9d2f5a8e1c4b7d0a3f6c9e2b5d8a1f4c7e0b3d6a9c2f"
+  },
+  "query": {
+    "variant": "thumb"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "bytes": "(webp bytes)"
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    },
+    {
+      "status": 415,
+      "body": {
+        "code": "unsupported_type",
+        "message": "not an image"
+      }
+    }
+  ]
+}

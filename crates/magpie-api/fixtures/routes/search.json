@@ -1,0 +1,38 @@
+{
+  "route": "search",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "query": {
+    "q": "港珠澳",
+    "limit": 50
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "epoch": "3",
+        "locations": [
+          {
+            "seq": 1,
+            "kind": "user",
+            "count": 1
+          },
+          {
+            "seq": 9,
+            "kind": "assistant",
+            "count": 2
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "route": "ops_stats",
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "conversations": 812,
+        "deleted": 31,
+        "events": 1912334,
+        "rows": 702113,
+        "ccBytes": 9123456789,
+        "blobs": 40211,
+        "blobBytes": 31234567890,
+        "stagedBlobs": 0,
+        "stagedBytes": 0,
+        "outboxPending": 1,
+        "oldestOutboxAt": "2026-11-02T03:46:53.575Z",
+        "oldestDuePurgeAt": null,
+        "hermitFeedLagSeconds": 0.4
+      }
+    },
+    {
+      "status": 403,
+      "body": {
+        "code": "wrong_caller",
+        "message": "this caller may not use this route"
+      }
+    }
+  ]
+}

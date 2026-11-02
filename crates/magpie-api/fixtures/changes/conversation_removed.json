@@ -1,0 +1,7 @@
+{
+  "seq": 1232,
+  "at": "2026-11-02T03:46:12.345Z",
+  "conversationId": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a",
+  "type": "conversation_removed",
+  "reason": "purged"
+}

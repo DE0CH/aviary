@@ -1,0 +1,32 @@
+{
+  "route": "cc_truncate",
+  "request": {
+    "path": "projects/-workspace/279aabf0-3c4d-4e5f-8a9b-0c1d2e3f4a5b.jsonl",
+    "size": 1300000,
+    "mtimeNs": 1793936813000000000,
+    "opId": "3a4b5c6d-7e8f-4a0b-9c1d-2e3f4a5b6c7d"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "size": 1300000,
+        "version": 59
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "offset_beyond_eof",
+        "message": "the size is past the end"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

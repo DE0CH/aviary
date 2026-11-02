@@ -1,0 +1,14 @@
+{
+  "seq": 40,
+  "kind": "retract",
+  "data": {
+    "seqs": [
+      431,
+      432
+    ]
+  },
+  "at": "2026-11-02T03:46:12.345Z",
+  "turnId": null,
+  "meta": {},
+  "viewer": null
+}

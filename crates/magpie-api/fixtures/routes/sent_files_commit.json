@@ -1,0 +1,30 @@
+{
+  "route": "sent_files_commit",
+  "params": {
+    "toolUseId": "call_9f"
+  },
+  "request": {},
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "kept": 1,
+        "seq": 650
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

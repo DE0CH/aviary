@@ -1,0 +1,30 @@
+{
+  "seq": 13,
+  "kind": "cc.assistant",
+  "data": {
+    "type": "assistant",
+    "uuid": "9d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a",
+    "message": {
+      "id": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X7B",
+      "role": "assistant",
+      "model": "<synthetic>",
+      "content": [
+        {
+          "type": "text",
+          "text": "API Error: 402 {\"error\":{\"message\":\"budget used up\"}}"
+        }
+      ]
+    },
+    "isApiErrorMessage": true
+  },
+  "at": "2026-11-02T03:46:12.345Z",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "meta": {
+    "error": {
+      "code": "model.budget",
+      "message": "此服務的使用預算已用完，請聯絡管理員。",
+      "status": 402
+    }
+  },
+  "viewer": null
+}

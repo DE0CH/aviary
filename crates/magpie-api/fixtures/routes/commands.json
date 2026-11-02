@@ -1,0 +1,97 @@
+{
+  "route": "commands",
+  "query": {
+    "after": 40,
+    "waitMs": 25000
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "commands": [
+          {
+            "cmdSeq": 41,
+            "type": "start_turn",
+            "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+            "payload": {
+              "text": "幫我整理今日有關港珠澳大橋嘅新聞",
+              "files": [
+                {
+                  "uploadId": "0b4c2d1e-3f4a-4b5c-8d6e-7f8091a2b3c4",
+                  "name": "Q3 report.pdf",
+                  "mimeType": "application/pdf",
+                  "size": 812345,
+                  "workspacePath": "uploads/Q3 report.pdf",
+                  "blob": "9f2c1e7b4a8d3c6f5e0b1a2d4c7e9f8a3b6d5c2e1f0a9b8c7d6e5f4a3b2c1d0e"
+                }
+              ],
+              "images": [
+                {
+                  "uploadId": "1c5d3e2f-4a5b-4c6d-9e7f-8091a2b3c4d5",
+                  "mimeType": "image/heic",
+                  "workspacePath": "uploads/IMG_0042.HEIC",
+                  "blob": "4e1a7c9b2d5f8e3a6c0b9d2f5a8e1c4b7d0a3f6c9e2b5d8a1f4c7e0b3d6a9c2f",
+                  "modelBlob": "b7d0a3f6c9e2b5d8a1f4c7e0b3d6a9c2f4e1a7c9b2d5f8e3a6c0b9d2f5a8e1c4",
+                  "modelMime": "image/jpeg"
+                }
+              ],
+              "resume": {
+                "providerSessionId": "279aabf0-3c4d-4e5f-8a9b-0c1d2e3f4a5b"
+              },
+              "sentAt": "2026-11-02T03:46:10.120Z"
+            }
+          },
+          {
+            "cmdSeq": 42,
+            "type": "title",
+            "payload": {
+              "userPrompt": "Here is the first message of the conversation:\n\n<message>\n幫我整理今日有關港珠澳大橋嘅新聞\n</message>\n\nReply with only the title.",
+              "maxTokens": 100
+            }
+          },
+          {
+            "cmdSeq": 43,
+            "type": "interrupt",
+            "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+            "payload": {}
+          },
+          {
+            "cmdSeq": 44,
+            "type": "kill",
+            "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+            "payload": {
+              "reason": "watchdog"
+            }
+          },
+          {
+            "cmdSeq": 45,
+            "type": "answer_ask",
+            "payload": {
+              "askId": "ask_01",
+              "allow": true,
+              "updatedInput": {
+                "answers": {
+                  "邊個日期？": "今日"
+                }
+              },
+              "message": null
+            }
+          },
+          {
+            "cmdSeq": 46,
+            "type": "stop_tasks",
+            "payload": {}
+          }
+        ],
+        "head": 46
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

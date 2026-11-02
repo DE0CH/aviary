@@ -1,0 +1,30 @@
+{
+  "seq": 12,
+  "kind": "files.sent",
+  "data": {
+    "toolUseId": "call_9f",
+    "toolUseSeq": 11,
+    "caption": "Q3",
+    "files": [
+      {
+        "path": "report/q3.xlsx",
+        "name": "q3.xlsx",
+        "size": 48211,
+        "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "isImage": false,
+        "blob": {
+          "$blob": {
+            "blobId": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0",
+            "bytes": 48211,
+            "kind": "file",
+            "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          }
+        }
+      }
+    ]
+  },
+  "at": "2026-11-02T03:46:12.345Z",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "meta": {},
+  "viewer": null
+}

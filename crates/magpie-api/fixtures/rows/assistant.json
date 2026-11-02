@@ -1,0 +1,22 @@
+{
+  "seqStart": 9,
+  "seqEnd": 9,
+  "seqs": [
+    9
+  ],
+  "sourceSeqRanges": [
+    {
+      "startSeq": 9,
+      "endSeq": 9
+    }
+  ],
+  "updated": false,
+  "timestamp": "2026-11-02T03:46:53.575Z",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "item": {
+    "kind": "assistant",
+    "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+    "blockIndex": 4,
+    "text": "今日港珠澳大橋有三則新聞：…"
+  }
+}

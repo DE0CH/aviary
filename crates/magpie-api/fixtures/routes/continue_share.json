@@ -1,0 +1,36 @@
+{
+  "route": "continue_share",
+  "params": {
+    "shareId": "Qk3vT9xLm2Pa7RwZc4HdNg"
+  },
+  "request": {},
+  "responses": [
+    {
+      "status": 201,
+      "body": {
+        "conversationId": "5e0c8a41-27d3-4f6b-b1a9-0d4c3e2f1a6b"
+      }
+    },
+    {
+      "status": 500,
+      "body": {
+        "code": "continue_failed",
+        "message": "the workspace clone failed"
+      }
+    },
+    {
+      "status": 403,
+      "body": {
+        "code": "view_as_read_only",
+        "message": "not allowed while viewing as the person"
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}
