@@ -7,12 +7,14 @@
 //! - [`headers`]: what the gateway strips and adds.
 //! - [`liveness`]: the revocation view of R33 (served stale without limit while hermit fails).
 //! - [`models`]: the models route of R18 and its client.
+//! - [`ops`]: the in-cluster ops summary (platform 3.11.7, 15.3).
 //! - Re-exported from `hermit-api`: the `hst1.` token codec and key set, the token-keys and liveness types and routes.
 
 pub mod credential;
 pub mod headers;
 pub mod liveness;
 pub mod models;
+pub mod ops;
 
 use std::time::Duration;
 

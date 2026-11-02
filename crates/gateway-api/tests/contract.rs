@@ -32,6 +32,7 @@ fn round_trip<T: DeserializeOwned + Serialize>(name: &str) -> T {
 
 const NAMES: &[&str] = &[
     "models",
+    "ops-summary",
     "error-not-allowed",
     "error-upstream-unreachable",
     "error-unavailable",
@@ -42,7 +43,9 @@ const NAMES: &[&str] = &[
 fn fixtures_round_trip_and_are_camel_case() {
     let m: Models = round_trip("models");
     assert!(m.models.iter().any(|x| x.id == m.default));
-    for name in &NAMES[1..] {
+    let s: gateway_api::ops::OpsSummary = round_trip("ops-summary");
+    assert_eq!(s.budget.by_user[0].owner, "staff@example.org");
+    for name in &NAMES[2..] {
         let e: ErrorBody = round_trip(name);
         assert!(e.fields.is_empty());
     }
@@ -110,6 +113,11 @@ fn a_sandbox_request_from_boot_environment_to_identity_headers() {
     assert_eq!(ids[0].1, "0190f6c2-5b1e-7a3c-9d4e-1f2a3b4c5d6e");
     assert_eq!(ids[2].1, "staff@example.org");
     assert!(headers::is_stripped("Proxy-Authorization"));
+    assert!(headers::is_stripped("Aviary-Sandbox-Id"));
+    assert!(
+        !headers::is_stripped("Aviary-Protocol"),
+        "the callee needs the client's protocol number"
+    );
 }
 
 #[tokio::test]

@@ -12,13 +12,13 @@ hermit-api = { path = "../hermit-api" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
 proptest.workspace = true
 rustls.workspace = true
 tokio.workspace = true
-uuid.workspace = true
 
 [lints]
 workspace = true

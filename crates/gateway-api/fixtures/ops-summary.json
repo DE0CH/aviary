@@ -1,0 +1,88 @@
+{
+  "budget": {
+    "status": {
+      "spentUsd": 12.5,
+      "limitUsd": 300.5,
+      "since": "2026-11-01T00:00:00.000Z",
+      "exhausted": false
+    },
+    "total": {
+      "today": 1.25,
+      "month": 12.5,
+      "sinceBudget": 12.5,
+      "callsToday": 40,
+      "callsMonth": 410
+    },
+    "byUser": [
+      {
+        "owner": "staff@example.org",
+        "today": 1.25,
+        "month": 12.5,
+        "sinceBudget": 12.5,
+        "callsToday": 40,
+        "callsMonth": 410
+      }
+    ],
+    "byModel": [
+      {
+        "model": "example/model-large-1017",
+        "today": 1.25,
+        "month": 12.5,
+        "sinceBudget": 12.5,
+        "callsToday": 40,
+        "callsMonth": 410
+      }
+    ],
+    "byDay": [
+      {
+        "day": "2026-11-02",
+        "usd": 1.25,
+        "calls": 40,
+        "people": 1
+      }
+    ]
+  },
+  "egress": {
+    "byStatus": [
+      {
+        "kind": "model",
+        "status": 200,
+        "decision": "allow",
+        "n": 40,
+        "lastAt": "2026-11-02T04:05:06.789Z"
+      }
+    ],
+    "recent": [
+      {
+        "at": "2026-11-02T04:05:06.789Z",
+        "kind": "internet",
+        "host": "unlisted.example",
+        "path": null,
+        "status": 403,
+        "decision": "deny:not_allowed",
+        "owner": "staff@example.org",
+        "conversationId": "0190f6c2-4a0d-7b2c-8e1f-0a1b2c3d4e5f"
+      }
+    ],
+    "deniedHosts": [
+      {
+        "host": "unlisted.example",
+        "why": "not_allowed",
+        "n": 1,
+        "lastAt": "2026-11-02T04:05:06.789Z"
+      }
+    ]
+  },
+  "recent": {
+    "modelErrors": 0,
+    "blocked": 1,
+    "list": [
+      {
+        "at": "2026-11-02T04:05:06.789Z",
+        "what": "blocked",
+        "detail": "unlisted.example",
+        "owner": "staff@example.org"
+      }
+    ]
+  }
+}

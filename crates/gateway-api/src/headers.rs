@@ -2,14 +2,21 @@
 
 pub use hermit_api::headers::{REQUEST, SANDBOX_CONVERSATION, SANDBOX_ID, SANDBOX_PERSON};
 
-/// Client headers removed from every fixed-name request, besides every `Aviary-*` header.
+/// Client headers removed from every fixed-name request, besides every `Aviary-*` header but [`FORWARDED`].
 pub const STRIPPED: [&str; 3] = ["authorization", "proxy-authorization", "x-api-key"];
+
+/// The one client `Aviary-*` header forwarded unchanged: `Aviary-Protocol` says which surface number the client
+/// speaks, which the callee requires on every call (platform 3.4; hermit answers 400 `unsupported_protocol`
+/// without it). It names no identity, so a sandbox setting it gains nothing. `Aviary-Request` is stripped and added
+/// again by the gateway ([`keep_request_id`]).
+pub const FORWARDED: [&str; 1] = ["aviary-protocol"];
 
 /// Whether a client header must be removed before forwarding to a fixed name.
 #[must_use]
 pub fn is_stripped(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    STRIPPED.contains(&lower.as_str()) || lower.starts_with(hermit_api::headers::PREFIX)
+    STRIPPED.contains(&lower.as_str())
+        || (lower.starts_with(hermit_api::headers::PREFIX) && !FORWARDED.contains(&lower.as_str()))
 }
 
 /// The three identity headers the gateway adds, from the verified token: `(name, value)`.
@@ -51,6 +58,7 @@ mod tests {
             assert!(is_stripped(h), "{h}");
         }
         assert!(!is_stripped("content-type"));
+        assert!(!is_stripped("Aviary-Protocol"));
         assert!(!is_stripped("anthropic-version"));
     }
 

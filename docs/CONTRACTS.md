@@ -156,7 +156,9 @@ its age; with no answer yet, admit on the verified token. A hermit problem never
 
 **Routes.** On a fixed name only the paths of the table above are routed (anything else, and any path with a dot
 segment, an empty segment or a percent-encoded `.`, `/` or `\`, is 403 `not_allowed`: `FixedName::allows`). Strip the
-client's `Authorization`, `Proxy-Authorization`, `x-api-key` and every `Aviary-*` header; add `Aviary-Sandbox-Id`,
+client's `Authorization`, `Proxy-Authorization`, `x-api-key` and every `Aviary-*` header but `Aviary-Protocol`
+(forwarded unchanged: the callee requires the client's surface number on every call and it names no identity;
+`headers::FORWARDED`); add `Aviary-Sandbox-Id`,
 `Aviary-Sandbox-Conversation`, `Aviary-Sandbox-Person` (trimmed, lowercased) from the verified token
 (`headers::identity`), `Aviary-Request` (the client's if it is a uuid v7, else new) and the callee's credential: the
 gateway→magpie, gateway→hermit or gateway→tools pair bearer, or the model's own credential.
@@ -177,6 +179,10 @@ counted in `<gw>_drain_cut_total{kind}`.
 
 **Models route.** `GET /v1/aviary/models` → `{"default", "small", "title", "contextTokens", "models": [{"id", "label",
 "reasoning"}]}` (`models::Models`), for a sandbox through the proxy and for pigeon in-cluster with its pair token.
+
+**In-cluster API.** On the implementation's in-cluster port (YYC: egress 8082): the models route for pigeon's pair
+bearer, and `GET /v1/ops/summary?tz=&recentMinutes=` for hermit's (`ops::OpsSummary`, platform 15.3's shape:
+`budget`, `egress`, `recent`); without a known bearer 401.
 
 ## The hermit contract
 
