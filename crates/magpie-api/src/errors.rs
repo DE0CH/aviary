@@ -81,7 +81,9 @@ open_enum! {
         NotCurrentSandbox = "not_current_sandbox",
         /// 409: the call's lease is not the current one (the supervisor answers EIO and stops).
         LeaseLost = "lease_lost",
-        /// 409 (cc write): the append's offset is not the file's size.
+        /// 409 (cc write): the append's offset is not the file's size, and the range at that offset does not
+        /// already hold exactly the written bytes (an identical write there, e.g. the sentry's resend of a request
+        /// after a checkpoint, is answered 200 with the current size and version: magpie spec 6.6 rule 0).
         OffsetMismatch = "offset_mismatch",
         /// 409 (cc write/truncate): the offset is past the end of the file.
         OffsetBeyondEof = "offset_beyond_eof",
