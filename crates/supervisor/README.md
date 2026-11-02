@@ -269,7 +269,9 @@ checked over a 20 min outage on paused time (`src/cc/report.rs`).
 
 ### Open items (WP-23)
 
-- Gate item 7 (`--setting-sources=` ignores `/workspace/.claude/settings.json` and `/workspace/CLAUDE.md`) and items
-  8 and 13 need the real Claude Code 2.1.304 binary against the mock model; they run with WP-22's re-run of the gate
-  on the real build and in the image smoke (WP-24).
+- Gate item 7 ran on 2026-11-02 with the real Claude Code 2.1.304 (`spikes/setting-sources/run.sh`: the argv of
+  6.1 in a container, a recorder in place of the model): with `--setting-sources=` the managed CLAUDE.md was in all 4
+  requests, `/workspace/CLAUDE.md` in none, and the `/workspace/.claude/settings.json` hook did not run; the control
+  (`SOURCES=project,user,local`) had `/workspace/CLAUDE.md` in all 4 (its hook did not run there either, so the hook
+  half has no positive control). Items 8 and 13 need the full image and the mock model (WP-24's smoke, WP-22's re-run).
 - The soak's synthetic turns with 1 MiB lines (WP-21 deviation 6) and `nightly.yml` (WP-28).
