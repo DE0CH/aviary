@@ -75,6 +75,7 @@ dependencies = [
  "aviary-source-rules",
  "deadpool-postgres",
  "rustls",
+ "serde_json",
  "sha2",
  "thiserror",
  "tokio",

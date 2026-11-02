@@ -3,6 +3,7 @@
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use deadpool_postgres::{Manager, ManagerConfig, Object, RecyclingMethod, Runtime};
@@ -13,10 +14,12 @@ use rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
 use tokio::task::JoinHandle;
 use tokio_postgres::config::SslMode;
 use tokio_postgres::tls::MakeTlsConnect;
-use tokio_postgres::{Client, Socket};
+use tokio_postgres::types::ToSql;
+use tokio_postgres::{Client, Row, Socket, Statement};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 use crate::Error;
+use crate::stmt::{self, StmtGuard, statement};
 
 /// TCP keepalives, matching the server's (platform 4.3): idle 60 s, interval 10 s, 6 probes, so a dead peer's
 /// session (and its advisory locks) is gone within about two minutes.
@@ -104,12 +107,17 @@ pub fn connect(url: &str, app_name: &str, pool_size: usize, statement_timeout: D
 }
 
 impl Pool {
-    /// A pooled connection. Hold it for one short piece of work; never across a network call.
+    /// A pooled connection for statements outside a transaction (each its own). Hold it for one short piece of
+    /// work; a transaction is [`crate::tx!`].
     ///
     /// # Errors
     /// [`Error::Pool`] when none is free within 5 s, a new one cannot be opened, or the pool is closed.
-    pub async fn get(&self) -> Result<Object, Error> {
-        Ok(self.inner.get().await?)
+    pub async fn get(&self) -> Result<Conn, Error> {
+        Ok(Conn {
+            client: self.inner.get().await?,
+            pool: self.inner.clone(),
+            doubt: AtomicBool::new(false),
+        })
     }
 
     /// The underlying deadpool pool (status for metrics).
@@ -137,6 +145,97 @@ impl Pool {
             }
         });
         Ok((client, task))
+    }
+}
+
+/// A pooled connection outside any transaction: every statement commits on its own. It refuses transaction control
+/// (`begin`, `commit`, `savepoint`, …) and has no `transaction()`, so a transaction is only ever [`crate::tx!`]
+/// (platform 4.3). Statements are prepared once per connection and cached; a stale cached statement clears the
+/// pool's caches and is retried once (`crate::stmt`).
+pub struct Conn {
+    client: Object,
+    pool: deadpool_postgres::Pool,
+    /// Unused here (a statement outside a transaction aborts nothing); [`StmtGuard`] wants one.
+    doubt: AtomicBool,
+}
+
+impl fmt::Debug for Conn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Conn").finish_non_exhaustive()
+    }
+}
+
+impl Conn {
+    #[allow(clippy::unnecessary_wraps)] // the shape `statement!` expects
+    fn client(&self) -> Result<&Object, Error> {
+        Ok(&self.client)
+    }
+
+    async fn prepare(&self, sql: &str) -> Result<Statement, Error> {
+        Ok(self.client.prepare_cached(sql).await?)
+    }
+
+    fn guard(&self, sql: &str) -> Result<StmtGuard<'_>, Error> {
+        stmt::refuse_control(sql, false)?;
+        Ok(StmtGuard::new(&self.doubt, true))
+    }
+
+    /// On a stale cached statement: clear the pool's caches and retry once (the failed statement did nothing).
+    #[allow(clippy::unused_async, clippy::unused_async_trait_impl)] // the shape `statement!` expects (Tx's awaits)
+    async fn recover(&self, g: &mut StmtGuard<'_>, e: tokio_postgres::Error) -> Result<(), Error> {
+        if !stmt::is_stale(&e) || g.retried {
+            return Err(e.into());
+        }
+        tracing::info!(error = %e, "stale cached statement: caches cleared, retrying");
+        stmt::clear_caches(&self.pool);
+        g.retried = true;
+        Ok(())
+    }
+
+    /// Runs one statement; the number of rows it affected.
+    ///
+    /// # Errors
+    /// When the statement fails, or [`Error::TransactionControl`] for `begin`, `commit`, `savepoint` and the like.
+    pub async fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<u64, Error> {
+        let mut g = self.guard(sql)?;
+        statement!(self, g, sql, params, execute)
+    }
+
+    /// Runs one query; every row.
+    ///
+    /// # Errors
+    /// As [`Conn::execute`].
+    pub async fn query(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Vec<Row>, Error> {
+        let mut g = self.guard(sql)?;
+        statement!(self, g, sql, params, query)
+    }
+
+    /// Runs one query that returns exactly one row.
+    ///
+    /// # Errors
+    /// As [`Conn::execute`], or when it does not return exactly one row.
+    pub async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Row, Error> {
+        let mut g = self.guard(sql)?;
+        statement!(self, g, sql, params, query_one)
+    }
+
+    /// Runs one query that returns at most one row.
+    ///
+    /// # Errors
+    /// As [`Conn::execute`], or when it returns more than one row.
+    pub async fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Option<Row>, Error> {
+        let mut g = self.guard(sql)?;
+        statement!(self, g, sql, params, query_opt)
+    }
+
+    /// Runs statements without parameters (the simple query protocol), each committing on its own.
+    ///
+    /// # Errors
+    /// When a statement fails, or [`Error::TransactionControl`] when one controls the transaction.
+    pub async fn batch_execute(&self, sql: &str) -> Result<(), Error> {
+        let g = self.guard(sql)?;
+        self.client.batch_execute(sql).await?;
+        g.ok(Ok(()))
     }
 }
 

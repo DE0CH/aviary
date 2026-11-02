@@ -93,3 +93,77 @@ async fn a_follower_survives_the_database_being_unreachable_and_leads_when_it_re
     );
     assert!(common::eventually(Duration::from_secs(3), || leads(&l)).await);
 }
+
+async fn connections(admin: &aviary_pg::Pool, app: &str) -> i64 {
+    admin
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select count(*) from pg_stat_activity where application_name = $1 and datname = current_database()",
+            &[&app],
+        )
+        .await
+        .unwrap()
+        .get(0)
+}
+
+/// hermit's janitor and scaler lead on one dedicated connection (hermit 10.3, platform 11.4).
+#[tokio::test]
+async fn several_keys_share_one_connection_and_lead_on_their_own() {
+    let db = common::fresh_db("many").await;
+    let admin = common::pool(&db, "admin");
+    let janitor = LockKey::Pair(7300, 3);
+    let scaler = LockKey::Pair(7300, 4);
+    // another pod holds the scaler
+    let other = Leader::start_with(&common::pool(&db, "other"), scaler.clone(), Duration::from_millis(200));
+    assert!(common::eventually(Duration::from_secs(5), || leads(&other)).await);
+
+    let many = Leader::start_many(
+        &common::pool(&db, "many"),
+        &[janitor.clone(), scaler.clone()],
+        Duration::from_millis(300),
+    );
+    let j = many.watch(&janitor).unwrap();
+    let s = many.watch(&scaler).unwrap();
+    assert!(
+        common::eventually(Duration::from_secs(5), || *j.borrow()).await,
+        "janitor never led"
+    );
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(!*s.borrow(), "two scaler leaders");
+    assert!(many.confirm_key(&janitor).await);
+    assert!(many.confirm().await, "confirm() is the first key");
+    assert!(!many.confirm_key(&scaler).await);
+    assert!(!many.confirm_key(&LockKey::Pair(7300, 9)).await);
+    assert!(many.watch(&LockKey::Pair(7300, 9)).is_none());
+    assert_eq!(connections(&admin, "many").await, 1);
+
+    // the other pod drains: the scaler moves over, on the same connection
+    other.release().await;
+    assert!(
+        common::eventually(Duration::from_secs(3), || *s.borrow()).await,
+        "scaler not taken over"
+    );
+    assert!(many.confirm_key(&scaler).await);
+    assert_eq!(connections(&admin, "many").await, 1);
+
+    // the leader connection dies: confirm says so at once, whatever the background view still shows
+    admin
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            "select pg_terminate_backend(pid) from pg_stat_activity where application_name = 'many'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(!many.confirm_key(&janitor).await);
+    assert!(!many.confirm_key(&scaler).await);
+    assert!(common::eventually(Duration::from_secs(2), || !*j.borrow() && !*s.borrow()).await);
+    // and both come back on a new connection
+    assert!(common::eventually(Duration::from_secs(5), || *j.borrow() && *s.borrow()).await);
+    assert_eq!(connections(&admin, "many").await, 1);
+    many.release().await;
+}

@@ -10,6 +10,8 @@
 //!   `src/paseo/compat.rs` ([`name_violations`]).
 //! - No crate under `crates/` turns on `aviary-core`'s `testing` feature (`env::test_only`, the one optional read)
 //!   outside `[dev-dependencies]` ([`testing_feature_violations`]), so no service gets optional configuration.
+//! - No network call inside `aviary_pg::tx!` (platform 4.3): [`tx_rule`] generates the configuration of the second
+//!   clippy pass (the `tx-rule-conf` binary writes it for CI).
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
@@ -17,6 +19,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+pub mod tx_rule;
 
 /// One broken rule: where, and what.
 #[derive(Debug, Clone, PartialEq, Eq)]

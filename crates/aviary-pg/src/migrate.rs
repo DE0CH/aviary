@@ -6,16 +6,30 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 use tokio_postgres::Client;
+use tokio_postgres::error::SqlState;
 
-use crate::{Error, LockKey, Pool};
+use crate::{Error, LockKey, Pool, sql};
 
 /// The table that records applied migrations, in each service's own database.
 pub const MIGRATIONS_TABLE: &str = "_migrations";
 
 /// The first line that marks a migration to run outside a transaction (for `create index concurrently`, which
-/// Postgres refuses inside one). Such a migration holds exactly one statement and must be safe to run again
-/// (`if not exists`): a crash between the statement and its record re-runs it on the next start.
+/// Postgres refuses inside one). Such a migration holds exactly one statement and must be safe to run again: a crash
+/// between the statement and its record re-runs it on the next start, so write `create index concurrently if not
+/// exists`. A failed or interrupted concurrent build leaves an INVALID index, which `if not exists` would accept: so
+/// before each no-transaction migration [`migrate`] drops every invalid index of the database (one not being built
+/// right now), and after it fails the start if one is left ([`Error::InvalidIndex`], the index dropped).
 pub const NO_TRANSACTION_MARKER: &str = "-- aviary-pg: no-transaction";
+
+/// How long a migration's statement waits for a table lock before it gives up (`lock_timeout`). While an `alter
+/// table` waits for its `ACCESS EXCLUSIVE` lock, every later query on the table queues behind it; a short wait,
+/// rolled back and retried, keeps the running replicas serving (zero downtime, platform 3.3). A no-transaction
+/// migration (`create index concurrently`) takes a lock that does not block reads or writes and waits for older
+/// transactions by design, so it runs without the limit.
+const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+/// Attempts of a migration that gave up waiting for a lock, and the first pause between them (doubling).
+const LOCK_ATTEMPTS: u32 = 6;
+const LOCK_BACKOFF: Duration = Duration::from_secs(1);
 
 /// How often a starter waiting for another one's migrations retries the lock. Waiters poll with
 /// `pg_try_advisory_lock` rather than block in `pg_advisory_lock`: a blocked statement holds a snapshot, and
@@ -127,14 +141,8 @@ fn check_list(migrations: &[Migration]) -> Result<(), Error> {
         }
         last = m.version;
         if m.no_transaction() {
-            let statements = m
-                .sql
-                .lines()
-                .filter(|l| !l.trim_start().starts_with("--"))
-                .collect::<String>()
-                .split(';')
-                .filter(|s| !s.trim().is_empty())
-                .count();
+            // comments, strings, quoted names and dollar bodies are lexed, so only real statements count
+            let statements = sql::statements(m.sql).len();
             if statements != 1 {
                 return Err(Error::BadMigration(format!(
                     "no-transaction migration {} ({}) holds {statements} statements, not 1",
@@ -148,7 +156,12 @@ fn check_list(migrations: &[Migration]) -> Result<(), Error> {
 
 async fn run(client: &Client, key: &LockKey, migrations: &[Migration]) -> Result<Vec<i32>, Error> {
     // DDL may take longer than the request timeout; this session only migrates
-    client.batch_execute("set statement_timeout = 0").await?;
+    client
+        .batch_execute(&format!(
+            "set statement_timeout = 0; set lock_timeout = {}",
+            LOCK_TIMEOUT.as_millis()
+        ))
+        .await?;
     let mut waited = false;
     while !key.try_lock(client).await? {
         if !waited {
@@ -189,7 +202,11 @@ async fn run(client: &Client, key: &LockKey, migrations: &[Migration]) -> Result
     }
     let mut applied = Vec::new();
     for m in migrations.iter().filter(|m| !recorded.contains_key(&m.version)) {
-        apply(client, m).await?;
+        if m.no_transaction() {
+            apply_no_transaction(client, m).await?;
+        } else {
+            apply_retrying(client, m).await?;
+        }
         tracing::info!(version = m.version, migration = %m.name, "migration applied");
         applied.push(m.version);
     }
@@ -197,25 +214,108 @@ async fn run(client: &Client, key: &LockKey, migrations: &[Migration]) -> Result
     Ok(applied)
 }
 
-async fn apply(client: &Client, m: &Migration) -> Result<(), Error> {
-    let record = format!("insert into {MIGRATIONS_TABLE} (version, name, sha256) values ($1, $2, $3)");
-    let sha = m.sha256();
-    if m.no_transaction() {
-        client.batch_execute(m.sql).await?;
-        client.execute(&record, &[&m.version, &m.name, &sha]).await?;
-        return Ok(());
+fn record_sql() -> String {
+    format!("insert into {MIGRATIONS_TABLE} (version, name, sha256) values ($1, $2, $3)")
+}
+
+/// A transactional migration, retried with backoff when it gave up waiting for a lock.
+async fn apply_retrying(client: &Client, m: &Migration) -> Result<(), Error> {
+    let mut pause = LOCK_BACKOFF;
+    for attempt in 1..=LOCK_ATTEMPTS {
+        match apply(client, m).await {
+            Err(e) if attempt < LOCK_ATTEMPTS && e.code() == Some(&SqlState::LOCK_NOT_AVAILABLE) => {
+                tracing::warn!(
+                    version = m.version,
+                    migration = %m.name,
+                    attempt,
+                    retry_in_ms = u64::try_from(pause.as_millis()).unwrap_or(u64::MAX),
+                    "migration gave up waiting for a lock; retrying"
+                );
+                tokio::time::sleep(pause).await;
+                pause *= 2;
+            }
+            Err(e) => {
+                tracing::error!(version = m.version, migration = %m.name, attempt, error = %e, "migration failed");
+                return Err(e.into());
+            }
+            Ok(()) => return Ok(()),
+        }
     }
+    unreachable!("the last attempt returns")
+}
+
+/// One attempt: the SQL and its record in one transaction, rolled back on any error.
+async fn apply(client: &Client, m: &Migration) -> Result<(), tokio_postgres::Error> {
     client.batch_execute("begin").await?;
     let res = async {
         client.batch_execute(m.sql).await?;
-        client.execute(&record, &[&m.version, &m.name, &sha]).await?;
+        client
+            .execute(&record_sql(), &[&m.version, &m.name, &m.sha256()])
+            .await?;
         client.batch_execute("commit").await
     }
     .await;
-    if let Err(e) = res {
+    if res.is_err() {
         let _ = client.batch_execute("rollback").await;
-        tracing::error!(version = m.version, migration = %m.name, error = %e, "migration failed");
+    }
+    res
+}
+
+/// A no-transaction migration: invalid indexes dropped first, its one statement without a lock limit, then no
+/// invalid index may be left.
+async fn apply_no_transaction(client: &Client, m: &Migration) -> Result<(), Error> {
+    client.batch_execute("set lock_timeout = 0").await?;
+    for index in invalid_indexes(client).await? {
+        tracing::warn!(index = %index, "dropping an invalid index (an earlier concurrent build failed)");
+        drop_index(client, &index).await?;
+    }
+    let res = client.batch_execute(m.sql).await;
+    let left = invalid_indexes(client).await?;
+    for index in &left {
+        drop_index(client, index).await?;
+    }
+    client
+        .batch_execute(&format!("set lock_timeout = {}", LOCK_TIMEOUT.as_millis()))
+        .await?;
+    if let Err(e) = res {
+        tracing::error!(version = m.version, migration = %m.name, error = %e, invalid = ?left, "migration failed");
         return Err(e.into());
     }
+    if !left.is_empty() {
+        return Err(Error::InvalidIndex {
+            version: m.version,
+            name: m.name.clone(),
+            indexes: left,
+        });
+    }
+    client
+        .execute(&record_sql(), &[&m.version, &m.name, &m.sha256()])
+        .await?;
+    Ok(())
+}
+
+/// The invalid indexes of this database outside the system schemas, quoted (`"schema"."name"`), except one being
+/// built right now.
+async fn invalid_indexes(client: &Client) -> Result<Vec<String>, Error> {
+    let rows = client
+        .query(
+            "select format('%I.%I', n.nspname, c.relname)
+             from pg_index i
+             join pg_class c on c.oid = i.indexrelid
+             join pg_namespace n on n.oid = c.relnamespace
+             where not i.indisvalid
+               and n.nspname <> 'information_schema' and n.nspname not like 'pg\\_%'
+               and not exists (select 1 from pg_stat_progress_create_index p where p.index_relid = i.indexrelid)
+             order by 1",
+            &[],
+        )
+        .await?;
+    Ok(rows.iter().map(|r| r.try_get(0)).collect::<Result<_, _>>()?)
+}
+
+async fn drop_index(client: &Client, quoted: &str) -> Result<(), Error> {
+    client
+        .batch_execute(&format!("drop index concurrently if exists {quoted}"))
+        .await?;
     Ok(())
 }

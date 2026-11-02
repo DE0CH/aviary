@@ -9,4 +9,13 @@ disallowed-methods = [
   { path = "std::env::var_os", reason = "read configuration through aviary_core::env (platform 4.5)" },
   { path = "std::env::vars", reason = "read configuration through aviary_core::env (platform 4.5)" },
   { path = "std::env::vars_os", reason = "read configuration through aviary_core::env (platform 4.5)" },
+  # platform 4.3: a transaction is only ever aviary_pg::tx! (whose closure cannot call out; the macro allows its own
+  # call to __run_tx). aviary_pg::Pool::get hands out a connection that refuses `begin`/`commit` and has no transaction().
+  { path = "aviary_pg::__run_tx", reason = "run a transaction with aviary_pg::tx! (platform 4.3)", allow-invalid = true },
+  { path = "tokio_postgres::Client::transaction", reason = "run a transaction with aviary_pg::tx! (platform 4.3)", allow-invalid = true },
+  { path = "tokio_postgres::Client::build_transaction", reason = "run a transaction with aviary_pg::tx! (platform 4.3)", allow-invalid = true },
+  { path = "tokio_postgres::GenericClient::transaction", reason = "run a transaction with aviary_pg::tx! (platform 4.3)", allow-invalid = true },
+  { path = "deadpool_postgres::ClientWrapper::transaction", reason = "run a transaction with aviary_pg::tx! (platform 4.3)", allow-invalid = true },
+  { path = "deadpool_postgres::ClientWrapper::build_transaction", reason = "run a transaction with aviary_pg::tx! (platform 4.3)", allow-invalid = true },
+  { path = "deadpool_postgres::GenericClient::transaction", reason = "run a transaction with aviary_pg::tx! (platform 4.3)", allow-invalid = true },
 ]

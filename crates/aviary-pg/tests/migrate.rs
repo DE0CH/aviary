@@ -230,3 +230,139 @@ async fn the_macro_embeds_files_in_order() {
         vec![1, 2]
     );
 }
+
+fn has_index(rows: &[aviary_pg::Row]) -> Option<bool> {
+    rows.first().map(|r| r.get(0))
+}
+
+const VALIDITY: &str =
+    "select i.indisvalid from pg_index i join pg_class c on c.oid = i.indexrelid where c.relname = 'u_x'";
+
+/// A failed or interrupted `create index concurrently` leaves an INVALID index, which `if not exists` would accept.
+#[tokio::test]
+async fn an_invalid_index_from_a_failed_concurrent_build_is_dropped_and_rebuilt() {
+    let db = common::fresh_db("invalid").await;
+    let pool = common::pool(&db, "invalid");
+    let key = LockKey::Pair(1, 1);
+    let list = vec![
+        m("0001_u.sql", "create table u (x int); insert into u values (1), (1);"),
+        m(
+            "0002_u_x.sql",
+            "-- aviary-pg: no-transaction\ncreate unique index concurrently if not exists u_x on u (x); -- one; statement\n",
+        ),
+    ];
+    // the build fails on the duplicates: the start fails, the invalid index is gone, nothing recorded
+    let err = aviary_pg::migrate(&pool, &key, &list).await.unwrap_err();
+    assert_eq!(
+        err.code(),
+        Some(&aviary_pg::reexports::tokio_postgres::error::SqlState::UNIQUE_VIOLATION),
+        "{err:?}"
+    );
+    let c = pool.get().await.unwrap();
+    assert_eq!(has_index(&c.query(VALIDITY, &[]).await.unwrap()), None);
+    let recorded: Vec<i32> = c
+        .query("select version from _migrations order by 1", &[])
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(recorded, vec![1]);
+
+    // a build interrupted earlier (here: failed outside migrate) left u_x invalid; with the data fixed, the next
+    // start drops it and builds it for real instead of accepting it through `if not exists`
+    assert!(
+        c.batch_execute("create unique index concurrently u_x on u (x)")
+            .await
+            .is_err()
+    );
+    assert_eq!(has_index(&c.query(VALIDITY, &[]).await.unwrap()), Some(false));
+    c.batch_execute("delete from u where ctid <> (select min(ctid) from u)")
+        .await
+        .unwrap();
+    assert_eq!(aviary_pg::migrate(&pool, &key, &list).await.unwrap(), vec![2]);
+    assert_eq!(has_index(&c.query(VALIDITY, &[]).await.unwrap()), Some(true));
+}
+
+/// An `alter table` waiting behind a long transaction gives up after the lock timeout (so the queries queued
+/// behind it run) and is retried until it gets the lock.
+#[tokio::test]
+async fn a_migration_waiting_for_a_lock_gives_way_and_is_retried() {
+    let db = common::fresh_db("locktimeout").await;
+    let key = LockKey::Pair(1, 1);
+    let pool = common::pool(&db, "starter");
+    let first = vec![m("0001_l.sql", "create table l (id int); insert into l values (1);")];
+    aviary_pg::migrate(&pool, &key, &first).await.unwrap();
+
+    // a running replica's long transaction holds the table for 6.5 s
+    let holder = common::pool(&db, "holder");
+    let (locked_tx, locked_rx) = tokio::sync::oneshot::channel();
+    let hold = tokio::spawn(async move {
+        aviary_pg::tx!(&holder, |t| {
+            t.execute("select count(*) from l", &[]).await?;
+            let _ = locked_tx.send(());
+            tokio::time::sleep(std::time::Duration::from_millis(6500)).await;
+            Ok(())
+        })
+        .await
+    });
+    locked_rx.await.unwrap();
+
+    let mut list = first.clone();
+    list.push(m("0002_l_note.sql", "alter table l add column note text;"));
+    let started = std::time::Instant::now();
+    let migrating = tokio::spawn({
+        let pool = pool.clone();
+        async move { aviary_pg::migrate(&pool, &key, &list).await }
+    });
+    // a reader arriving while the alter waits is served once the alter gives up, not after the long transaction
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+    let reader = common::pool(&db, "reader");
+    let n: i64 = reader
+        .get()
+        .await
+        .unwrap()
+        .query_one("select count(*) from l", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(n, 1);
+    assert!(
+        started.elapsed() < std::time::Duration::from_millis(6000),
+        "the reader waited {:?}",
+        started.elapsed()
+    );
+    assert_eq!(migrating.await.unwrap().unwrap(), vec![2]);
+    assert!(started.elapsed() >= std::time::Duration::from_millis(6000));
+    hold.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn no_transaction_statements_are_counted_past_comments_and_strings() {
+    let db = common::fresh_db("count").await;
+    let pool = common::pool(&db, "count");
+    let key = LockKey::Pair(1, 1);
+    let list = vec![
+        m("0001_t.sql", "create table t (x int, note text);"),
+        m(
+            "0002_a.sql",
+            "-- aviary-pg: no-transaction\n/* builds a; then b? no */\ncreate index concurrently if not exists a on t (x) where note <> ';'; -- trailing; comment\n",
+        ),
+        m(
+            "0003_b.sql",
+            "-- aviary-pg: no-transaction\ncreate index concurrently if not exists b on t (note) where note <> $$;$$\n",
+        ),
+    ];
+    assert_eq!(aviary_pg::migrate(&pool, &key, &list).await.unwrap(), vec![1, 2, 3]);
+    for two in [
+        "-- aviary-pg: no-transaction\ncreate index concurrently c on t (x) /* ; */; create index concurrently d on t (x)\n",
+        "-- aviary-pg: no-transaction\ncreate index concurrently c on t (x); -- x\ncreate index concurrently d on t (x);",
+    ] {
+        let mut bad = list.clone();
+        bad.push(m("0004_two.sql", two));
+        assert!(
+            matches!(aviary_pg::migrate(&pool, &key, &bad).await, Err(Error::BadMigration(_))),
+            "{two}"
+        );
+    }
+}

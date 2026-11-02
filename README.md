@@ -35,7 +35,8 @@ bans them). The AWS SDK crates have their default features off, so they have no 
 ```
 cargo fmt --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-CLIPPY_CONF_DIR=crates/aviary-pg/tx-rule cargo clippy --workspace --all-targets --locked -- -A clippy::disallowed_methods -D warnings
+cargo run --locked -q -p aviary-source-rules --bin tx-rule-conf -- target/tx-rule
+CLIPPY_CONF_DIR=target/tx-rule cargo clippy --workspace --all-targets --locked -- -A clippy::disallowed_methods -D warnings
 cargo nextest run --workspace --locked
 cargo deny --locked check && cargo audit --deny warnings
 ```
@@ -58,14 +59,38 @@ addressing and create their own buckets. CI serves S3 with versitygw, pinned by 
   wrapper that is not in the graph.
 
 - `aviary-pg`'s transactions are a macro, `aviary_pg::tx!(&pool, |t| { … })`, not a function: a lint level can be
-  set only on code the caller wrote, and a clippy `disallowed-methods` list has no scope, so "no `reqwest` inside the
-  closure" takes the macro's `#[deny]` plus a second clippy pass with its own configuration (Source rules below).
+  set only on code the caller wrote, and a clippy `disallowed-methods` list has no scope, so "no network call inside
+  the closure" takes the macro's `#[deny]` plus a second clippy pass with its own configuration (Source rules below).
+  `Pool::get` returns an `aviary_pg::Conn`, not deadpool's client: it refuses `begin`, `commit`, savepoints and the
+  like and has no `transaction()`, so `tx!` is the only way into a transaction.
+- A `tx!` closure that ignores a statement error and returns `Ok` gets `Error::RolledBack`: the failed statement
+  aborted the transaction, and Postgres answers `COMMIT` of an aborted transaction with `ROLLBACK` and no error
+  (tokio-postgres does not expose the command tag). Whenever a statement failed or was cancelled, `tx!` asks the
+  server (`select 1` fails with `25P02` in an aborted transaction) before it commits.
+- Statements are cached per connection. A rolling release whose migration adds a column makes an old replica's
+  cached `select *` / `returning *` fail with `cached plan must not change result type` (`0A000`); aviary-pg then
+  clears every cached statement of the pool and retries where that is safe (outside a transaction, or as a
+  transaction's first statement, which restarts it). Later in a transaction the error is returned; the next
+  transaction works. Naming the columns avoids it.
 - `aviary_pg::migrate` waits for the migration lock by polling `pg_try_advisory_lock` every 200 ms, not by blocking
   in `pg_advisory_lock`: a blocked statement holds a snapshot, and `create index concurrently` in the holder waits
   for every older snapshot, so blocked starters would stall it. The lock, the one-transaction-per-migration rule and
   the `_migrations` table are as platform 4.3 says (magpie and hermit spec's `schema_migrations` is platform's
   `_migrations`). A migration whose first line is `-- aviary-pg: no-transaction` runs outside a transaction and holds
-  exactly one statement (for `create index concurrently … if not exists`).
+  exactly one statement (for `create index concurrently … if not exists`; comments, strings and dollar bodies are
+  lexed when counting).
+- The spec says nothing of lock waits during migrations. Each transactional migration runs with `lock_timeout = 5s`
+  and is retried up to 6 times (pauses 1, 2, 4, 8, 16 s): an `alter table` queued behind a long transaction would
+  otherwise hold every later query on the table behind its `ACCESS EXCLUSIVE` request and stall the running
+  replicas. A no-transaction migration runs without the limit (`create index concurrently` blocks no reads or
+  writes and waits for older transactions by design).
+- A failed or killed `create index concurrently` leaves an invalid index that `if not exists` would accept for good.
+  Before each no-transaction migration `migrate` drops every invalid index of the database that is not being built
+  right now, and after it fails the start (`Error::InvalidIndex`, the index dropped) if one is left.
+- `aviary_pg::Leader::start_many(pool, &[keys], retry)` holds several keys on one dedicated connection, so hermit's
+  janitor (7300,3) and scaler (7300,4) use the one leader connection platform 11.4 budgets per pod. The holder
+  checks its connection every `retry` in the background; callers run `Leader::confirm()` (`select 1` on the leader
+  connection, 2 s timeout) before every pass, as hermit 10.3 says, so a half-open connection stops the loop at once.
 
 ## The service runtime (`aviary-core`)
 
@@ -117,11 +142,16 @@ CI enforces these over the source tree (`testing/source-rules`, `clippy.toml`, `
 - `crates/pigeon`, `crates/magpie`, `crates/supervisor` and `crates/*-api` name no particular deployment or provider,
   and pigeon's frozen app wire constants live only in `crates/pigeon/src/paseo/compat.rs`;
 - every dependency's licence is compatible with AGPL-3.0-or-later; advisories fail the build;
-- no transaction is held across a network call: a `reqwest` call inside the closure of `aviary_pg::tx!` is a clippy
-  error. The rule is a second clippy pass with `crates/aviary-pg/tx-rule/clippy.toml` (the repository's
-  `clippy.toml` plus `reqwest`'s calls as disallowed methods) and `-A clippy::disallowed_methods`; the macro marks its
-  closure `#[deny(clippy::disallowed_methods)]`, so the lint fires there only. A call made in a helper function that
-  the closure calls is not seen (the lint level belongs to the helper's own code).
+- no transaction is held across a network call: a network call inside the closure of `aviary_pg::tx!` is a clippy
+  error. The rule is a second clippy pass whose configuration `aviary_source_rules::tx_rule` generates from the tree
+  (`--bin tx-rule-conf`): the repository's `clippy.toml` plus `reqwest`'s calls, every `pub async fn` of the
+  contract crates' typed clients (`crates/*-api/src/client.rs`), `aviary_core::http::send`, `aws-config`'s loaders,
+  and every operation of the AWS SDKs the workspace depends on (S3 now; EC2 once hermit depends on it), with
+  `-A clippy::disallowed_methods`; the macro marks its closure `#[deny(clippy::disallowed_methods)]`, so the lint
+  fires there only. A call made in a helper function that the closure calls is not seen (the lint level belongs to
+  the helper's own code), nor is a client the generator does not know. The first pass's `clippy.toml` disallows the
+  other ways into a transaction: `tokio-postgres`' and deadpool's `transaction()`/`build_transaction()`, and calling
+  `aviary_pg::__run_tx` by hand.
 
 The repository is public: it holds no keys, tokens or deployment configuration. Test credentials are generated at run
 time.

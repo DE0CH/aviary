@@ -18,6 +18,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 aviary-source-rules = { path = "../../testing/source-rules" }
+serde_json.workspace = true
 uuid.workspace = true
 
 [lints]

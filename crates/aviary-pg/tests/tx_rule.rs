@@ -1,13 +1,24 @@
-//! The tx rule (platform 4.3), compile-fail style: clippy, configured as CI's second lint pass
-//! (`CLIPPY_CONF_DIR=crates/aviary-pg/tx-rule`, `-A clippy::disallowed_methods -D warnings`), rejects a `reqwest` call
-//! inside the closure of `aviary_pg::tx!` and accepts the same call outside it. Each case is a scratch crate depending
-//! on this crate and on the workspace's reqwest, checked offline with the workspace's lockfile and lint levels.
+//! The tx rule (platform 4.3), compile-fail style.
+//!
+//! - CI's second lint pass (`CLIPPY_CONF_DIR=target/tx-rule`, `-A clippy::disallowed_methods -D warnings`)
+//!   rejects a network call inside the closure of `aviary_pg::tx!` (`reqwest`, every typed client of the contract
+//!   crates, `aviary_core::http::send`, the AWS SDKs) and accepts the same calls outside it.
+//! - The repository's `clippy.toml` (the first pass) rejects every other way into a transaction: `tokio-postgres`' and
+//!   deadpool's `transaction()`/`build_transaction()` and calling `aviary_pg::__run_tx` directly, and accepts `tx!`.
+//! - The second pass's configuration is generated (`aviary_source_rules::tx_rule`, written for CI by the
+//!   `tx-rule-conf` binary): the repository's `clippy.toml` plus the network calls, found in the contract crates'
+//!   `client.rs` files and the AWS SDK sources. These tests generate it the same way.
+//!
+//! Each case is a scratch crate depending on this workspace's crates and on its `reqwest`, `tokio` and AWS SDKs,
+//! checked offline with the workspace's lockfile and lint levels.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -16,8 +27,33 @@ fn repo_root() -> PathBuf {
         .unwrap()
 }
 
+fn metadata() -> &'static serde_json::Value {
+    static META: OnceLock<serde_json::Value> = OnceLock::new();
+    META.get_or_init(|| aviary_source_rules::cargo_metadata(env!("CARGO"), &repo_root()).unwrap())
+}
+
+/// The tx rule's configuration, generated as CI's lint job does, in a directory of its own.
 fn tx_conf_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tx-rule")
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = scratch_base().join("conf");
+        fs::create_dir_all(&dir).unwrap();
+        let conf = aviary_source_rules::tx_rule::tx_rule_conf(&repo_root(), metadata()).unwrap();
+        fs::write(dir.join("clippy.toml"), conf).unwrap();
+        dir
+    })
+    .clone()
+}
+
+fn sdk_names() -> Vec<&'static str> {
+    aviary_source_rules::tx_rule::sdks(metadata())
+        .iter()
+        .map(|s| s.name)
+        .collect()
+}
+
+fn scratch_base() -> PathBuf {
+    Path::new(env!("CARGO_TARGET_TMPDIR")).join("tx-rule")
 }
 
 /// The `[workspace.dependencies]` line for `name`, verbatim.
@@ -30,18 +66,39 @@ fn workspace_dep(root: &Path, name: &str) -> String {
         .to_owned()
 }
 
-/// Runs clippy over a scratch crate whose `lib.rs` is `source`; `Some(stderr)` when it was rejected.
+/// The workspace crates a case may call.
+const PATH_DEPS: &[&str] = &[
+    "aviary-pg",
+    "aviary-core",
+    "hermit-api",
+    "magpie-api",
+    "sandboxd-api",
+    "supervisor-api",
+];
+const REGISTRY_DEPS: &[&str] = &["reqwest", "tokio", "uuid", "aws-config"];
+
+/// Runs clippy over a scratch crate whose `lib.rs` is `source`; `Some(stderr)` when it was rejected. `tx_conf`:
+/// the second pass (the tx rule's configuration, the lint allowed outside `tx!`), else the first.
 fn clippy(case: &str, source: &str, tx_conf: bool) -> Option<String> {
     let root = repo_root();
-    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("tx-rule");
+    let base = scratch_base();
     let dir = base.join(case);
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("src")).unwrap();
+    let mut deps = String::new();
+    for d in PATH_DEPS {
+        let _ = writeln!(
+            deps,
+            "{d} = {{ path = {:?} }}",
+            root.join("crates").join(d).display().to_string()
+        );
+    }
+    for d in REGISTRY_DEPS.iter().copied().chain(sdk_names()) {
+        deps.push_str(&workspace_dep(&root, d));
+        deps.push('\n');
+    }
     let manifest = format!(
-        "[package]\nname = \"scratch-{case}\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n\n[dependencies]\naviary-pg = {{ path = {:?} }}\n{}\n{}\n\n{}",
-        Path::new(env!("CARGO_MANIFEST_DIR")).display().to_string(),
-        workspace_dep(&root, "reqwest"),
-        workspace_dep(&root, "tokio"),
+        "[package]\nname = \"scratch-{case}\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n\n[dependencies]\n{deps}\n{}",
         aviary_source_rules::workspace_lints_as_package_lints(&root).unwrap(),
     );
     fs::write(dir.join("Cargo.toml"), manifest).unwrap();
@@ -69,20 +126,148 @@ fn clippy(case: &str, source: &str, tx_conf: bool) -> Option<String> {
     }
 }
 
-const INSIDE: &str = r#"//! seeded: a network call inside a transaction
-/// Records a thing after asking another service about it.
+/// The disallowed methods clippy reported, sorted (clippy reports a chain's inner call first).
+fn reported(stderr: &str) -> Vec<String> {
+    let mut v: Vec<String> = stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix("error: use of a disallowed method `"))
+        .map(|l| l.trim_end_matches('`').to_owned())
+        .collect();
+    v.sort();
+    v
+}
+
+fn sorted(v: &[&str]) -> Vec<String> {
+    let mut v: Vec<String> = v.iter().map(|s| (*s).to_owned()).collect();
+    v.sort();
+    v
+}
+
+/// Every kind of network call, as a service makes it. `$TX_OPEN` / `$TX_CLOSE` wrap the calls in a transaction or
+/// not.
+const CALLS: &str = r#"//! seeded: network calls
+
+/// The clients a service holds.
+#[allow(missing_debug_implementations)]
+pub struct Clients {
+    /// raw HTTP
+    pub http: reqwest::Client,
+    /// hermit
+    pub hermit: hermit_api::Client,
+    /// magpie
+    pub magpie: magpie_api::client::Client,
+    /// a host's sandboxd
+    pub sandboxd: sandboxd_api::Client,
+    /// a sandbox's supervisor
+    pub supervisor: supervisor_api::client::ControlClient,
+    /// the bucket
+    pub s3: aws_sdk_s3::Client,
+    $EC2_FIELD
+}
+
+/// Calls out.
 ///
 /// # Errors
 /// When the database fails.
-pub async fn record(pool: &aviary_pg::Pool, http: &reqwest::Client) -> Result<u64, aviary_pg::Error> {
-    aviary_pg::tx!(pool, |t| {
-        let n = t.execute("insert into things default values", &[]).await?;
-        let _ = http.post("http://hermit/v1/things").send().await;
-        Ok(n)
-    })
-    .await
+pub async fn calls(pool: &aviary_pg::Pool, c: &Clients) -> Result<(), aviary_pg::Error> {
+    $TX_OPEN
+        let _ = c.http.post("http://hermit/v1/things").send().await;
+        let _ = reqwest::get("http://hermit/v1/things").await;
+        let _ = aviary_core::http::send(
+            c.http.get("http://magpie/v1/x"),
+            aviary_core::http::Backoff::default(),
+            aviary_core::http::Idempotence::ByMethod,
+        )
+        .await;
+        let _ = c.hermit.people().await;
+        let _ = c.magpie.person("p").cancel_turn(uuid::Uuid::nil()).await;
+        let _ = c.sandboxd.host().await;
+        let _ = c.supervisor.health().await;
+        let _ = c.s3.put_object().bucket("b").key("k").send().await;
+        let _ = c.s3.list_objects_v2().bucket("b").into_paginator().send().next().await;
+        $EC2_CALLS
+        let _ = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        Ok(())
+    $TX_CLOSE
 }
 "#;
+
+/// What the calls of [`CALLS`] are reported as.
+const CALLED: &[&str] = &[
+    "reqwest::Client::post",
+    "reqwest::RequestBuilder::send",
+    "reqwest::get",
+    "reqwest::Client::get",
+    "aviary_core::http::send",
+    "hermit_api::client::Client::people",
+    "magpie_api::client::PersonCalls::cancel_turn",
+    "sandboxd_api::client::Client::host",
+    "supervisor_api::client::ControlClient::health",
+    "aws_sdk_s3::operation::put_object::builders::PutObjectFluentBuilder::send",
+    "aws_smithy_async::future::pagination_stream::PaginationStream::next",
+    "$EC2",
+    "aws_config::load_defaults",
+];
+
+/// The EC2 calls, once a crate (hermit) depends on the SDK.
+const EC2_CALLS: &str = r#"let _ = c.ec2.describe_instances().customize().send().await;
+        let _ = c.ec2.terminate_instances().instance_ids("i-1").send().await;
+        let _ = aws_sdk_ec2::operation::describe_instances::builders::DescribeInstancesInputBuilder::default()
+            .send_with(&c.ec2)
+            .await;
+        let _ = c.ec2.wait_until_instance_running().wait(std::time::Duration::from_secs(1)).await;"#;
+const EC2_CALLED: &[&str] = &[
+    "aws_sdk_ec2::client::customize::CustomizableOperation::send",
+    "aws_sdk_ec2::operation::terminate_instances::builders::TerminateInstancesFluentBuilder::send",
+    "aws_sdk_ec2::operation::describe_instances::builders::DescribeInstancesInputBuilder::send_with",
+    "aws_sdk_ec2::waiters::instance_running::InstanceRunningFluentBuilder::wait",
+];
+
+fn ec2_present() -> bool {
+    sdk_names().contains(&"aws-sdk-ec2")
+}
+
+fn called() -> Vec<&'static str> {
+    let ec2 = ec2_present();
+    CALLED
+        .iter()
+        .flat_map(|c| {
+            if *c == "$EC2" {
+                if ec2 { EC2_CALLED } else { &[] }
+            } else {
+                std::slice::from_ref(c)
+            }
+        })
+        .copied()
+        .collect()
+}
+
+fn calls(tx: bool) -> String {
+    let (open, close) = if tx {
+        (
+            "aviary_pg::tx!(pool, |t| {\n        t.execute(\"select 1\", &[]).await?;",
+            "})\n    .await",
+        )
+    } else {
+        (
+            "aviary_pg::tx!(pool, |t| t.execute(\"select 1\", &[]).await).await?;",
+            "",
+        )
+    };
+    let ec2 = ec2_present();
+    CALLS
+        .replace("$TX_OPEN", open)
+        .replace("$TX_CLOSE", close)
+        .replace("$EC2_CALLS", if ec2 { EC2_CALLS } else { "" })
+        .replace(
+            "$EC2_FIELD",
+            if ec2 {
+                "/// EC2\n    pub ec2: aws_sdk_ec2::Client,"
+            } else {
+                ""
+            },
+        )
+}
 
 const INSIDE_TYPED: &str = r#"//! seeded: a network call inside a transaction with the caller's error type
 /// The caller's error.
@@ -107,71 +292,97 @@ pub async fn record(pool: &aviary_pg::Pool, http: &reqwest::Client) -> Result<St
 }
 "#;
 
-const OUTSIDE: &str = r#"//! the same calls outside the transaction
-/// Records a thing, then tells another service.
-///
-/// # Errors
-/// When the database fails.
-pub async fn record(pool: &aviary_pg::Pool, http: &reqwest::Client) -> Result<u64, aviary_pg::Error> {
-    let n = aviary_pg::tx!(pool, |t| t.execute("insert into things default values", &[]).await).await?;
-    let _ = http.post("http://hermit/v1/things").send().await;
-    let _ = reqwest::get("http://hermit/v1/things").await;
-    Ok(n)
-}
-"#;
-
 #[test]
-fn reqwest_inside_tx_is_rejected_and_outside_is_accepted() {
-    let stderr = clippy("inside", INSIDE, true).expect("clippy accepted a reqwest call inside aviary_pg::tx!");
-    for method in ["reqwest::Client::post", "reqwest::RequestBuilder::send"] {
-        assert!(
-            stderr.contains(&format!("error: use of a disallowed method `{method}`")),
-            "{method} not reported: {stderr}"
-        );
-    }
+fn network_calls_inside_tx_are_rejected_and_outside_are_accepted() {
+    let stderr = clippy("inside", &calls(true), true).expect("clippy accepted network calls inside aviary_pg::tx!");
+    assert_eq!(reported(&stderr), sorted(&called()), "{stderr}");
     assert!(stderr.contains("no network call inside aviary_pg::tx!"), "{stderr}");
 
     let stderr = clippy("typed", INSIDE_TYPED, true).expect("clippy accepted a reqwest body read inside the typed tx!");
-    assert!(
-        stderr.contains("error: use of a disallowed method `reqwest::Response::text`"),
-        "{stderr}"
-    );
     // the call before the transaction is not reported
-    assert!(!stderr.contains("reqwest::Client::get"), "{stderr}");
+    assert_eq!(reported(&stderr), ["reqwest::Response::text"], "{stderr}");
 
     assert_eq!(
-        clippy("outside", OUTSIDE, true),
+        clippy("outside", &calls(false), true),
         None,
         "the tx rule rejected calls outside a transaction"
     );
 }
 
 #[test]
-fn the_main_configuration_does_not_forbid_reqwest() {
-    assert_eq!(clippy("main", OUTSIDE, false), None);
-    // and the main pass alone does not see the tx rule: the second pass is needed
-    assert_eq!(clippy("main-inside", INSIDE, false), None);
+fn the_first_pass_allows_network_calls_and_only_tx_into_a_transaction() {
+    // the main pass alone does not see the tx rule: the second pass is needed
+    assert_eq!(clippy("main-outside", &calls(false), false), None);
+    assert_eq!(clippy("main-inside", &calls(true), false), None);
+
+    let other_ways = r#"//! seeded: transactions without tx!
+use aviary_pg::reexports::{deadpool_postgres, tokio_postgres};
+
+/// tokio-postgres' own transactions.
+///
+/// # Errors
+/// Never mind.
+pub async fn raw(c: &mut tokio_postgres::Client) -> Result<(), tokio_postgres::Error> {
+    c.transaction().await?.commit().await?;
+    c.build_transaction().start().await?.commit().await
 }
 
-/// The tx rule's configuration is the repository's `clippy.toml` plus the tx entries, so the second pass judges
-/// everything else exactly as the first.
+/// deadpool's.
+///
+/// # Errors
+/// Never mind.
+pub async fn pooled(c: &mut deadpool_postgres::Object) -> Result<(), tokio_postgres::Error> {
+    c.transaction().await?.commit().await?;
+    c.build_transaction().start().await?.commit().await
+}
+
+/// The macro's runner called by hand.
+///
+/// # Errors
+/// Never mind.
+pub async fn by_hand(pool: &aviary_pg::Pool) -> Result<(), aviary_pg::Error> {
+    aviary_pg::__run_tx(pool, aviary_pg::__tx_fn(|t| Box::pin(async move { t.execute("select 1", &[]).await.map(drop) }))).await
+}
+"#;
+    let stderr = clippy("other-ways", other_ways, false).expect("clippy accepted a transaction without tx!");
+    assert_eq!(
+        reported(&stderr),
+        sorted(&[
+            "tokio_postgres::Client::transaction",
+            "tokio_postgres::Client::build_transaction",
+            "deadpool_postgres::ClientWrapper::transaction",
+            "deadpool_postgres::ClientWrapper::build_transaction",
+            "aviary_pg::__run_tx",
+        ]),
+        "{stderr}"
+    );
+    assert!(stderr.contains("aviary_pg::tx!"), "{stderr}");
+}
+
+/// The generator finds the calls it should.
 #[test]
-fn the_tx_configuration_extends_the_main_one() {
-    let main = fs::read_to_string(repo_root().join("clippy.toml")).unwrap();
-    let tx = fs::read_to_string(tx_conf_dir().join("clippy.toml")).unwrap();
-    let main = main
-        .trim_end()
-        .strip_suffix(']')
-        .expect("clippy.toml ends with the disallowed-methods list");
-    let tail = tx
-        .split_once(main)
-        .map(|(_, t)| t)
-        .expect("tx-rule/clippy.toml does not contain clippy.toml verbatim");
-    assert!(tail.starts_with("  # the tx rule\n"), "{tail}");
-    for line in tail.lines().skip(1).filter(|l| *l != "]") {
-        assert!(
-            line.contains("path = \"reqwest::") && line.contains("allow-invalid = true"),
-            "{line}"
-        );
+fn the_generated_configuration_lists_the_clients_and_the_sdks() {
+    let conf = std::fs::read_to_string(tx_conf_dir().join("clippy.toml")).unwrap();
+    for must in [
+        "reqwest::RequestBuilder::send",
+        "aviary_core::http::send",
+        "hermit_api::client::Client::put_sandbox",
+        "magpie_api::client::PersonCalls::send_turn",
+        "magpie_api::client::SandboxCalls::heartbeat",
+        "sandboxd_api::client::Client::create",
+        "supervisor_api::client::ControlClient::release",
+        "aws_sdk_s3::operation::get_object::builders::GetObjectFluentBuilder::send",
+        "aws_sdk_s3::operation::put_object::builders::PutObjectInputBuilder::send_with",
+        "aws_sdk_s3::client::customize::CustomizableOperation::send",
+    ] {
+        assert!(conf.contains(&format!("\"{must}\"")), "{must}");
     }
+    if ec2_present() {
+        assert!(conf.contains("\"aws_sdk_ec2::operation::run_instances::builders::RunInstancesFluentBuilder::send\""));
+    }
+    // sync builders are not calls
+    assert!(!conf.contains("hermit_api::client::Client::bearer\""));
+    // everything of clippy.toml is in it, so the second pass judges the rest exactly as the first
+    let main = std::fs::read_to_string(repo_root().join("clippy.toml")).unwrap();
+    assert!(conf.contains(main.trim_end().strip_suffix(']').unwrap()));
 }

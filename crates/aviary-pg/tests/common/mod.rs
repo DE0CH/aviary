@@ -22,18 +22,81 @@ pub fn with_db(url: &str, db: &str) -> String {
     out
 }
 
-/// Creates an empty database and returns its URL.
-pub async fn fresh_db(test: &str) -> String {
+/// A test's own database: its URL (it derefs to it), dropped with the guard (`drop database … with (force)`, which
+/// also ends the test's remaining sessions), so a long-lived Postgres does not collect them.
+pub struct TestDb {
+    url: String,
+    name: String,
+}
+
+impl std::ops::Deref for TestDb {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.url
+    }
+}
+
+impl Drop for TestDb {
+    fn drop(&mut self) {
+        let name = self.name.clone();
+        // Drop is sync and the test's runtime may be shutting down: a thread with its own runtime
+        let dropped = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                admin()
+                    .get()
+                    .await?
+                    .batch_execute(&format!("drop database if exists {name} with (force)"))
+                    .await
+            })
+        })
+        .join();
+        if !matches!(dropped, Ok(Ok(()))) {
+            eprintln!("could not drop test database {}: {dropped:?}", self.name);
+        }
+    }
+}
+
+fn admin() -> aviary_pg::Pool {
+    aviary_pg::connect(&admin_url(), "aviary-pg-test", 1, Duration::from_secs(15)).unwrap()
+}
+
+/// Creates an empty database; the guard drops it.
+pub async fn fresh_db(test: &str) -> TestDb {
     let name = format!("aviary_pg_{test}_{}", uuid::Uuid::new_v4().simple());
-    let admin = aviary_pg::connect(&admin_url(), "aviary-pg-test", 1, Duration::from_secs(15)).unwrap();
-    admin
+    admin()
         .get()
         .await
         .unwrap()
         .batch_execute(&format!("create database {name}"))
         .await
         .unwrap();
-    with_db(&admin_url(), &name)
+    TestDb {
+        url: with_db(&admin_url(), &name),
+        name,
+    }
+}
+
+/// Whether a database of this name exists.
+pub async fn database_exists(name: &str) -> bool {
+    admin()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select count(*) > 0 from pg_database where datname = $1", &[&name])
+        .await
+        .unwrap()
+        .get(0)
+}
+
+impl TestDb {
+    /// The database's name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 /// A pool on `url` with a test application name.
