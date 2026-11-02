@@ -204,6 +204,136 @@ fn mkdir(p: &str) -> CcMkdir {
 }
 
 #[tokio::test]
+async fn magpie_a_write_of_bytes_already_in_place_changes_nothing() {
+    setup();
+    let running = FakeMagpie::new().serve().await.unwrap();
+    let fake = &running.fake;
+    let c = running.client(gateway_http("sbx-1", CONV), Caller::Gateway);
+    let lease = c.sandbox(None).lease().await.unwrap();
+    let s = c.sandbox(Some(lease.lease_id));
+    let t = "s1.jsonl";
+    s.cc_write(&write(t, 0, true), b"{\"a\":1}\n".to_vec()).await.unwrap();
+    let w = s.cc_write(&write(t, 8, false), b"{\"b\":2}\n".to_vec()).await.unwrap();
+    assert_eq!((w.size, w.version), (16, 2));
+
+    // the sentry's resend under a new opId: the same offset and bytes apply once
+    let mut resend = write(t, 8, false);
+    resend.mtime_ns = 99;
+    let again = s.cc_write(&resend, b"{\"b\":2}\n".to_vec()).await.unwrap();
+    assert_eq!((again.size, again.version), (16, 2));
+    let node = fake.node(CONV, t).unwrap();
+    assert_eq!((node.version, node.mtime_ns), (2, 1));
+    // any range inside the file that matches, a create flag included
+    let mid = s.cc_write(&write(t, 2, true), b"a\":1".to_vec()).await.unwrap();
+    assert_eq!((mid.size, mid.version), (16, 2));
+    // the rule comes before every other one: the quota, even when it is already exceeded
+    fake.set_quota(1);
+    let q = s.cc_write(&write(t, 0, false), b"{\"a\":1}\n".to_vec()).await.unwrap();
+    assert_eq!((q.size, q.version), (16, 2));
+    fake.set_quota(1 << 30);
+    // different bytes, or a range running past the end, are ordinary writes
+    let other = s.cc_write(&write(t, 8, false), b"{\"b\":3}\n".to_vec()).await.unwrap();
+    assert_eq!((other.size, other.version), (16, 3));
+    let past = s.cc_write(&write(t, 8, false), b"{\"b\":3}\nX".to_vec()).await.unwrap();
+    assert_eq!((past.size, past.version), (17, 4));
+}
+
+#[tokio::test]
+async fn magpie_a_refused_create_leaves_no_path() {
+    setup();
+    let running = FakeMagpie::new().serve().await.unwrap();
+    let fake = &running.fake;
+    let c = running.client(gateway_http("sbx-1", CONV), Caller::Gateway);
+    let lease = c.sandbox(None).lease().await.unwrap();
+    let s = c.sandbox(Some(lease.lease_id));
+    fake.set_quota(5);
+    assert_eq!(
+        code(s.cc_write(&write("big.json", 0, true), vec![b'x'; 10]).await),
+        (507, "quota_exceeded".into())
+    );
+    assert_eq!(
+        code(s.cc_write(&write("far.json", 3, true), b"x".to_vec()).await).1,
+        "offset_beyond_eof"
+    );
+    assert_eq!(fake.paths(CONV), Vec::<String>::new());
+    assert_eq!(s.cc_tree().await.unwrap().files.len(), 0);
+    // within the quota the same create goes through
+    let w = s.cc_write(&write("big.json", 0, true), vec![b'x'; 5]).await.unwrap();
+    assert_eq!((w.size, w.version), (5, 1));
+}
+
+#[tokio::test]
+async fn magpie_sent_files_stage_put_and_commit_once_per_tool_use_id() {
+    use magpie_api::sandbox::{SentFileSpec, SentFilesRequest};
+    setup();
+    let running = FakeMagpie::new().serve().await.unwrap();
+    let fake = &running.fake;
+    let c = running.client(gateway_http("sbx-1", CONV), Caller::Gateway);
+    let lease = c.sandbox(None).lease().await.unwrap();
+    let s = c.sandbox(Some(lease.lease_id));
+    let have = b"already stored".to_vec();
+    let have_sha = fake.seed_blob(&have);
+    let new = b"the report".to_vec();
+    let new_sha = aviary_fakes_sha(&new);
+    let spec = |path: &str, data: &[u8], sha: &str| SentFileSpec {
+        path: path.into(),
+        size: data.len() as u64,
+        sha256: sha.into(),
+        mime_type: "text/plain".into(),
+    };
+    let req = SentFilesRequest {
+        tool_use_id: "call_9f01".into(),
+        caption: Some("the files".into()),
+        files: vec![
+            spec("file:///workspace/report/q3.txt", &new, &new_sha),
+            spec("/workspace/a.txt", &have, &have_sha),
+            spec("/workspace/b.txt", &new, &new_sha),
+        ],
+    };
+    // no lease, no send
+    assert_eq!(code(c.sandbox(None).sent_files(&req).await).1, "lease_lost");
+    // the answer names each blob magpie lacks once
+    assert_eq!(s.sent_files(&req).await.unwrap().missing, vec![new_sha.clone()]);
+    // the commit needs every blob
+    assert_eq!(code(s.sent_files_commit("call_9f01").await).0, 400);
+    s.sandbox_blob_put(&new_sha, new.clone()).await.unwrap();
+    assert_eq!(s.sent_files(&req).await.unwrap().missing, Vec::<String>::new());
+    let done = s.sent_files_commit("call_9f01").await.unwrap();
+    assert_eq!((done.kept, done.seq), (3, 1));
+    // idempotent per toolUseId
+    assert_eq!(s.sent_files_commit("call_9f01").await.unwrap(), done);
+    s.sent_files(&req).await.unwrap();
+    assert_eq!(s.sent_files_commit("call_9f01").await.unwrap(), done);
+    let sent = fake.sent(CONV);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent["call_9f01"].request.files[0].path, "/workspace/report/q3.txt");
+    assert_eq!(sent["call_9f01"].request.caption.as_deref(), Some("the files"));
+
+    // validation
+    assert_eq!(
+        code(s.sent_files_commit("never-staged").await),
+        (404, "not_found".into())
+    );
+    assert_eq!(code(s.sent_files_commit("bad id!").await).0, 400);
+    let mut bad = req.clone();
+    bad.tool_use_id = "call_2".into();
+    bad.files[0].path = "/workspace/../etc/passwd".into();
+    assert_eq!(code(s.sent_files(&bad).await).1, "bad_path");
+    bad.files[0].path = "/tmp/x".into();
+    assert_eq!(code(s.sent_files(&bad).await).1, "bad_path");
+    bad.files[0].path = "/workspace/x".into();
+    bad.files[0].size = (64 << 20) + 1;
+    assert_eq!(code(s.sent_files(&bad).await).1, "too_large");
+    bad.files.clear();
+    assert_eq!(code(s.sent_files(&bad).await).0, 400);
+    // a later send gets the next seq
+    let mut next = req.clone();
+    next.tool_use_id = "call_2".into();
+    s.sent_files(&next).await.unwrap();
+    assert_eq!(s.sent_files_commit("call_2").await.unwrap().seq, 2);
+}
+
+#[tokio::test]
 async fn magpie_lease_only_for_hermits_current_sandbox() {
     setup();
     let running = FakeMagpie::new().serve().await.unwrap();

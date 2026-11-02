@@ -2,6 +2,11 @@
 //! order a real upstream sends them, so a scripted reply can match a recorded response byte for byte
 //! (`recorded/*.sse`, recorded from `OpenRouter`'s Messages API, the upstream YYC's gateway relays to).
 //!
+//! Two framings ([`Wire`]): `OpenRouter`'s (the recorded one: `provider`, `cost`, `is_byok`, `cost_details`,
+//! `container`/`stop_details`, `input_tokens` 0 in `message_start`, no `ping`) and Anthropic's native one (a `ping`
+//! after `message_start`, the input usage in `message_start`, no `OpenRouter` fields, `toolu_` ids). Anthropic's
+//! framing follows its streaming documentation; it is not checked against a recording.
+//!
 //! The JSON is written by hand rather than through a map: `serde_json`'s map sorts keys (its `preserve_order` feature
 //! would change every crate in the workspace), and a cost such as `0.00001407` must stay in its decimal form
 //! (`serde_json` writes `1.407e-5`).
@@ -14,9 +19,34 @@ pub fn s(v: &str) -> String {
     serde_json::to_string(v).unwrap_or_else(|_| "\"\"".to_owned())
 }
 
+/// Whose framing a reply is written in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Wire {
+    /// `OpenRouter`'s Messages API (the recordings).
+    #[default]
+    Openrouter,
+    /// Anthropic's own Messages API.
+    Anthropic,
+}
+
+impl std::str::FromStr for Wire {
+    type Err = String;
+
+    fn from_str(v: &str) -> Result<Self, Self::Err> {
+        match v {
+            "openrouter" => Ok(Self::Openrouter),
+            "anthropic" => Ok(Self::Anthropic),
+            other => Err(format!("wire {other:?}: openrouter or anthropic")),
+        }
+    }
+}
+
 /// The envelope of one reply: what the upstream says about the message besides its content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Envelope {
+    /// The framing.
+    pub wire: Wire,
     /// `msg_…`.
     pub id: String,
     /// The model, as the request named it.
@@ -66,15 +96,23 @@ pub enum Block {
 }
 
 impl Block {
-    fn start(&self) -> String {
-        match self {
-            Block::Thinking { .. } => r#"{"type":"thinking","thinking":"","signature":""}"#.to_owned(),
-            Block::Text { .. } => r#"{"type":"text","text":"","citations":[]}"#.to_owned(),
-            Block::ToolUse { id, name, .. } => format!(
+    fn start(&self, wire: Wire) -> String {
+        match (self, wire) {
+            (Block::Thinking { .. }, _) => r#"{"type":"thinking","thinking":"","signature":""}"#.to_owned(),
+            (Block::Text { .. }, Wire::Openrouter) => r#"{"type":"text","text":"","citations":[]}"#.to_owned(),
+            (Block::Text { .. }, Wire::Anthropic) => r#"{"type":"text","text":""}"#.to_owned(),
+            (Block::ToolUse { id, name, .. }, Wire::Openrouter) => format!(
                 r#"{{"type":"tool_use","id":{},"caller":{{"type":"direct"}},"name":{},"input":{{}}}}"#,
                 s(id),
                 s(name)
             ),
+            (Block::ToolUse { id, name, .. }, Wire::Anthropic) => {
+                format!(
+                    r#"{{"type":"tool_use","id":{},"name":{},"input":{{}}}}"#,
+                    s(id),
+                    s(name)
+                )
+            }
         }
     }
 
@@ -103,19 +141,26 @@ impl Block {
     }
 
     /// The block as it appears whole in a non-streaming message.
-    fn whole(&self) -> String {
+    fn whole(&self, wire: Wire) -> String {
+        let anthropic = wire == Wire::Anthropic;
         match self {
             Block::Thinking { chunks, signature } => format!(
                 r#"{{"type":"thinking","thinking":{},"signature":{}}}"#,
                 s(&chunks.concat()),
                 s(signature)
             ),
+            Block::Text { chunks } if anthropic => format!(r#"{{"type":"text","text":{}}}"#, s(&chunks.concat())),
             Block::Text { chunks } => format!(r#"{{"type":"text","text":{},"citations":[]}}"#, s(&chunks.concat())),
             Block::ToolUse { id, name, partial_json } => {
                 let input = partial_json.concat();
                 let input = if input.is_empty() { "{}".to_owned() } else { input };
+                let caller = if anthropic {
+                    ""
+                } else {
+                    r#""caller":{"type":"direct"},"#
+                };
                 format!(
-                    r#"{{"type":"tool_use","id":{},"caller":{{"type":"direct"}},"name":{},"input":{input}}}"#,
+                    r#"{{"type":"tool_use","id":{},{caller}"name":{},"input":{input}}}"#,
                     s(id),
                     s(name)
                 )
@@ -130,9 +175,25 @@ pub fn event(name: &str, data: &str) -> String {
     format!("event: {name}\ndata: {data}\n\n")
 }
 
-/// The `message_start` event.
+/// The `message_start` event (and, in Anthropic's framing, the `ping` that follows it).
 #[must_use]
 pub fn message_start(e: &Envelope) -> String {
+    if e.wire == Wire::Anthropic {
+        let data = format!(
+            concat!(
+                r#"{{"type":"message_start","message":{{"id":{},"type":"message","role":"assistant","model":{},"#,
+                r#""content":[],"stop_reason":null,"stop_sequence":null,"usage":{{"input_tokens":{},"#,
+                r#""cache_creation_input_tokens":0,"cache_read_input_tokens":{},"output_tokens":1}}}}}}"#
+            ),
+            s(&e.id),
+            s(&e.model),
+            e.input_tokens,
+            e.cache_read_input_tokens
+        );
+        let mut out = event("message_start", &data);
+        out.push_str(&event("ping", r#"{"type": "ping"}"#));
+        return out;
+    }
     let data = format!(
         concat!(
             r#"{{"type":"message_start","message":{{"id":{},"type":"message","role":"assistant","container":null,"#,
@@ -151,12 +212,12 @@ pub fn message_start(e: &Envelope) -> String {
 
 /// `content_block_start`, its deltas (one string each, to be paced) and `content_block_stop`.
 #[must_use]
-pub fn block_events(index: usize, b: &Block) -> Vec<String> {
+pub fn block_events(wire: Wire, index: usize, b: &Block) -> Vec<String> {
     let mut out = vec![event(
         "content_block_start",
         &format!(
             r#"{{"type":"content_block_start","index":{index},"content_block":{}}}"#,
-            b.start()
+            b.start(wire)
         ),
     )];
     for d in b.deltas() {
@@ -173,6 +234,15 @@ pub fn block_events(index: usize, b: &Block) -> Vec<String> {
 }
 
 fn usage(e: &Envelope) -> String {
+    if e.wire == Wire::Anthropic {
+        return format!(
+            concat!(
+                r#"{{"input_tokens":{},"cache_creation_input_tokens":0,"cache_read_input_tokens":{},"#,
+                r#""output_tokens":{}}}"#
+            ),
+            e.input_tokens, e.cache_read_input_tokens, e.output_tokens
+        );
+    }
     format!(
         concat!(
             r#"{{"input_tokens":{},"output_tokens":{},"output_tokens_details":{{"thinking_tokens":{}}},"#,
@@ -195,6 +265,19 @@ fn usage(e: &Envelope) -> String {
 /// `message_delta` and `message_stop`.
 #[must_use]
 pub fn message_end(e: &Envelope, stop_reason: &str) -> String {
+    if e.wire == Wire::Anthropic {
+        let delta = format!(
+            concat!(
+                r#"{{"type":"message_delta","delta":{{"stop_reason":{},"stop_sequence":null}},"#,
+                r#""usage":{}}}"#
+            ),
+            s(stop_reason),
+            usage(e)
+        );
+        let mut out = event("message_delta", &delta);
+        out.push_str(&event("message_stop", r#"{"type":"message_stop"}"#));
+        return out;
+    }
     let delta = format!(
         concat!(
             r#"{{"type":"message_delta","delta":{{"container":null,"stop_details":null,"stop_reason":{},"#,
@@ -232,9 +315,24 @@ pub fn message_json(e: &Envelope, blocks: &[Block], stop_reason: &str) -> String
         if i > 0 {
             content.push(',');
         }
-        content.push_str(&b.whole());
+        content.push_str(&b.whole(e.wire));
     }
     let mut out = String::new();
+    if e.wire == Wire::Anthropic {
+        let _ = write!(
+            out,
+            concat!(
+                r#"{{"id":{},"type":"message","role":"assistant","model":{},"content":[{}],"#,
+                r#""stop_reason":{},"stop_sequence":null,"usage":{}}}"#
+            ),
+            s(&e.id),
+            s(&e.model),
+            content,
+            s(stop_reason),
+            usage(e)
+        );
+        return out;
+    }
     let _ = write!(
         out,
         concat!(

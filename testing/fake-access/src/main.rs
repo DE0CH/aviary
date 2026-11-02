@@ -15,6 +15,9 @@ struct Args {
     /// The team domain (`iss` = `https://<team domain>`).
     #[arg(long)]
     team_domain: String,
+    /// The Access application's audience tag: get-identity refuses (401) a token whose `aud` does not list it.
+    #[arg(long)]
+    aud: Option<String>,
     /// A signing key as `<kid>=<path of a PKCS#8 PEM RSA key>`; repeat for a second key (the first signs by
     /// default).
     #[arg(long = "key", required = true)]
@@ -49,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
         let key = fake_access::Key::from_pem(kid, &read(&PathBuf::from(path))?)?;
         keys.push(if published { key } else { key.unpublished() });
     }
-    let issuer = fake_access::Issuer::new(&args.team_domain, keys)?;
+    let issuer = fake_access::Issuer::with_audience(&args.team_domain, keys, args.aud.as_deref())?;
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
     eprintln!("fake-access listening on {}", listener.local_addr()?);
     match (&args.tls_cert, &args.tls_key) {

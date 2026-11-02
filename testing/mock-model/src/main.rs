@@ -15,18 +15,22 @@ struct Args {
     /// The models route's answer (gateway-api's `Models` JSON); default: gateway-api's fixture.
     #[arg(long)]
     models: Option<PathBuf>,
+    /// The replies' framing, `openrouter` (default) or `anthropic`; a script entry's `wire` overrides it.
+    #[arg(long, default_value = "openrouter")]
+    wire: mock_model::sse::Wire,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let mock = match &args.models {
+    let models: gateway_api::models::Models = match &args.models {
         Some(p) => {
             let text = std::fs::read_to_string(p).with_context(|| p.display().to_string())?;
-            mock_model::MockModel::new(serde_json::from_str(&text).context("models")?)
+            serde_json::from_str(&text).context("models")?
         }
-        None => mock_model::MockModel::with_default_models(),
+        None => serde_json::from_str(mock_model::DEFAULT_MODELS).context("the default models")?,
     };
+    let mock = mock_model::MockModel::with_wire(models, args.wire);
     let listener = tokio::net::TcpListener::bind(args.listen).await?;
     eprintln!("mock-model listening on {}", listener.local_addr()?);
     axum::serve(listener, mock.router()).await?;

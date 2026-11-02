@@ -1,16 +1,20 @@
 //! fake-magpie: `magpie_api::server::Server` with scripted answers on every route, and a model of the sandbox
-//! surface (magpie 6, 8.4, 16.2) for the supervisor's tests.
+//! surface (magpie 6, 8.4, 11.2, 16.2) for the supervisor's tests.
 //!
 //! - **Every route** answers what the test scripted ([`crate::script`]): straight from the golden fixtures
-//!   ([`FakeMagpie::script_fixture`]) or by hand. pigeon's, hermit's and the ops routes have no model: unscripted,
-//!   they answer 501 `not_supported`.
+//!   ([`FakeMagpie::script_fixture`]) or by hand. pigeon's (the person routes), hermit's and the ops routes have no
+//!   model: unscripted, they answer 501 `not_supported`. Every `/v1/sandbox/**` route has one.
 //! - **The sandbox surface** has a model, per conversation (from `Aviary-Sandbox-Conversation`): the lease (a fresh
 //!   id and epoch per grant, every earlier lease dead at once, `not_current_sandbox` when the test names another
 //!   sandbox as hermit's current one), `~/.claude` as files and directories (the write, truncate, rename, unlink,
-//!   mkdir, rmdir and setattr rules of magpie 6.6-6.8 as the supervisor sees them: `offset_beyond_eof`, a missing
-//!   parent 404, `protected` main transcript, `exists`, `not_empty`, the quota, `opId` replays answering the stored
-//!   result), the command queue with its long-poll and acks, blobs by sha256, and the reports (accepted and
-//!   recorded; `turn_state` `running` sets the main transcript). It keeps no events, rows or timeline.
+//!   mkdir, rmdir and setattr rules of magpie 6.6-6.8 as the supervisor sees them: rule 0 (a write whose range is
+//!   inside the file and already holds exactly those bytes answers the current `{size, version}` and changes
+//!   nothing, checked first), `offset_beyond_eof`, a missing parent 404, `protected` main transcript, `exists`,
+//!   `not_empty`, the quota, `opId` replays answering the stored result), the command queue with its long-poll and
+//!   acks, blobs by sha256, `SendUserFile` snapshots (`sent-files` stages a send per `toolUseId` and answers the shas
+//!   not stored yet; the commit needs every blob, answers `{kept, seq}` once and the same answer on a repeat;
+//!   [`FakeMagpie::sent`]), and the reports (accepted and recorded; `turn_state` `running` sets the main
+//!   transcript). It keeps no events, rows or timeline.
 //!
 //! - **Callers** ([`FakeMagpie::new`]): a generated pair token per caller of magpie's route table; an unknown bearer
 //!   answers 401 `unauthenticated` and a caller the route does not list 403 `wrong_caller`, before any scripted
@@ -18,8 +22,9 @@
 //! - **Renames** follow `rename(2)`: onto an existing empty directory (from a directory) or a file (from a file)
 //!   it replaces the target; onto a non-empty directory 409 `not_empty`; a file onto a directory or the other way
 //!   409 `exists`; a directory into its own subtree 400 `bad_path`.
-//! - **opId**: a committed result is stored and a replay answers it; a refused operation is not stored (magpie
-//!   rolls the transaction back, magpie 6.5), so a retry after a refusal runs again.
+//! - **opId**: a committed result is stored and a replay answers it; a refused operation is not stored and changes
+//!   nothing, a refused create included (magpie rolls the transaction back, magpie 6.5), so a retry after a
+//!   refusal runs again.
 //!
 //! Deliberate differences from magpie, and codes the model never produces (script them with
 //! [`crate::script`] or [`crate::fault`] when a test needs them):
@@ -30,7 +35,12 @@
 //! - 409 `conversation_migrating` (no migrations), 503 `unavailable` on the lease (hermit always answers; use the
 //!   `Unavailable` fault), 413 `too_large` for the per-line cap (only the 16 MiB body cap is modelled), 409
 //!   `offset_mismatch` (an append at a stale offset inside the file overwrites, as `pwrite` would; only
-//!   `offset_beyond_eof` is refused).
+//!   `offset_beyond_eof` is refused);
+//! - `GET /v1/sandbox/blobs/{sha}` is unscoped: it answers any stored blob to any conversation with or without a
+//!   lease, and `as` is ignored (the stored bytes); magpie answers only blobs the sandbox's conversation
+//!   references, and decodes for `as=media|text`;
+//! - a sent-files commit missing a blob answers 400 `bad_request` (magpie 11.2 names no code), and the commit's
+//!   `seq` counts the conversation's commits from 1, since the fake writes no `files.sent` event.
 //!
 //! Faults ([`crate::fault`]) apply by route id or path template.
 
@@ -98,6 +108,15 @@ fn not_found(message: &str) -> ApiError {
     refuse(ErrorCode::NotFound, message)
 }
 
+/// A committed `SendUserFile` snapshot (magpie 11.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentSend {
+    /// The request the commit kept (paths with a `file://` prefix stripped).
+    pub request: SentFilesRequest,
+    /// The commit's answer.
+    pub committed: SentFilesCommitted,
+}
+
 /// A file or directory of one conversation's `~/.claude`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CcNode {
@@ -129,6 +148,27 @@ fn parent(path: &str) -> Option<&str> {
     path.rsplit_once('/').map(|(p, _)| p)
 }
 
+/// At most this many files in one send (magpie 11.2).
+const SENT_FILES_MAX: usize = 100;
+/// Each sent file's cap (magpie 11.2: the app's download cap).
+const SENT_FILE_MAX_BYTES: u64 = 64 << 20;
+/// One send's total cap.
+const SENT_TOTAL_MAX_BYTES: u64 = 256 << 20;
+
+fn check_tool_use_id(id: &str) -> Result<(), ApiError> {
+    let ok = (1..=128).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    if ok {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request("toolUseId is not ^[A-Za-z0-9_-]{1,128}$"))
+    }
+}
+
+/// Absolute under `/workspace`, normalised, no `..`, no NUL, at most 4,096 bytes (magpie 11.2).
+fn valid_workspace_path(path: &str) -> bool {
+    path.len() <= 4096 && !path.contains('\0') && path.strip_prefix("/workspace/").is_some_and(valid_path)
+}
+
 fn valid_path(path: &str) -> bool {
     !path.is_empty()
         && !path.starts_with('/')
@@ -150,6 +190,12 @@ struct Conv {
     commands: Vec<Command>,
     acks: BTreeMap<u64, AckResult>,
     agent_turns: HashSet<Uuid>,
+    /// `sent-files` requests waiting for their commit, by `toolUseId`.
+    sent_staging: HashMap<String, SentFilesRequest>,
+    /// Committed sends, by `toolUseId`.
+    sent: BTreeMap<String, SentSend>,
+    /// The last `seq` a commit answered (the fake keeps no events; commits count from 1).
+    sent_seq: u64,
 }
 
 impl Conv {
@@ -495,6 +541,16 @@ impl FakeMagpie {
             .unwrap_or_default()
     }
 
+    /// The committed sends of `conversation`, by `toolUseId`.
+    #[must_use]
+    pub fn sent(&self, conversation: Uuid) -> BTreeMap<String, SentSend> {
+        self.lock()
+            .convs
+            .get(&conversation)
+            .map(|c| c.sent.clone())
+            .unwrap_or_default()
+    }
+
     /// A stored blob.
     #[must_use]
     pub fn blob(&self, sha: &str) -> Option<Bytes> {
@@ -642,27 +698,29 @@ impl FakeMagpie {
             return Err(refuse(ErrorCode::TooLarge, "the write is over 16 MiB"));
         }
         self.op(ctx, q.op_id, |c, quota| {
+            // magpie 6.6 rule 0, before every other rule: a range inside the file that already holds exactly these
+            // bytes is a success that changes nothing (the sentry's resend under a new opId applies once)
+            if let Some(n) = c.nodes.get(&q.path).filter(|n| n.kind != CcKind::Dir) {
+                let size = n.data.len() as u64;
+                let end = q.offset.saturating_add(data.len() as u64);
+                #[allow(clippy::cast_possible_truncation)] // in-memory sizes
+                if end <= size && n.data[q.offset as usize..end as usize] == *data {
+                    return Ok(CcSizeVersion {
+                        size,
+                        version: n.version,
+                    });
+                }
+            }
             if !c.dir_exists(parent(&q.path)) {
                 return Err(not_found("the parent directory does not exist"));
             }
-            let used = c.cc_bytes();
-            if q.offset > 0 && !c.nodes.contains_key(&q.path) && q.create {
-                // refused before the file exists, so a refusal creates nothing
-                return Err(refuse(ErrorCode::OffsetBeyondEof, "the offset is past the end"));
-            }
-            let node = match c.nodes.get_mut(&q.path) {
+            // every check runs before a new file is inserted, so a refused create leaves no path behind
+            let size = match c.nodes.get(&q.path) {
                 Some(n) if n.kind == CcKind::Dir => return Err(ApiError::bad_request("a directory")),
-                Some(n) => n,
-                None if q.create => c.nodes.entry(q.path.clone()).or_insert(CcNode {
-                    kind: kind_of(&q.path),
-                    data: Vec::new(),
-                    mtime_ns: q.mtime_ns,
-                    mode: q.mode,
-                    version: 0,
-                }),
+                Some(n) => n.data.len() as u64,
+                None if q.create => 0,
                 None => return Err(not_found("not found")),
             };
-            let size = node.data.len() as u64;
             if q.offset > size {
                 return Err(refuse(ErrorCode::OffsetBeyondEof, "the offset is past the end"));
             }
@@ -671,12 +729,19 @@ impl FakeMagpie {
             if new_size > CC_FILE_MAX_BYTES {
                 return Err(refuse(ErrorCode::TooLarge, "the file is over 256 MiB"));
             }
-            if used - size + new_size > quota {
+            if c.cc_bytes() - size + new_size > quota {
                 return Err(refuse(
                     ErrorCode::QuotaExceeded,
                     "the conversation's Claude Code state is over its quota",
                 ));
             }
+            let node = c.nodes.entry(q.path.clone()).or_insert(CcNode {
+                kind: kind_of(&q.path),
+                data: Vec::new(),
+                mtime_ns: q.mtime_ns,
+                mode: q.mode,
+                version: 0,
+            });
             #[allow(clippy::cast_possible_truncation)] // in-memory sizes
             {
                 node.data.resize(new_size as usize, 0);
@@ -877,6 +942,82 @@ impl FakeMagpie {
             c.acks.insert(seq, body.result);
             Ok(())
         })
+    }
+
+    fn model_sent_files(&self, ctx: &Ctx, mut req: SentFilesRequest) -> Result<SentFilesResponse, ApiError> {
+        check_tool_use_id(&req.tool_use_id)?;
+        if req.files.is_empty() || req.files.len() > SENT_FILES_MAX {
+            return Err(ApiError::bad_request("a send has 1-100 files"));
+        }
+        let mut total = 0u64;
+        for f in &mut req.files {
+            if let Some(rest) = f.path.strip_prefix("file://") {
+                f.path = rest.to_owned();
+            }
+            if !valid_workspace_path(&f.path) {
+                return Err(refuse(
+                    ErrorCode::BadPath,
+                    "a path is not a normalised path under /workspace",
+                ));
+            }
+            if f.size > SENT_FILE_MAX_BYTES {
+                return Err(refuse(ErrorCode::TooLarge, "a file is over 64 MiB"));
+            }
+            if f.sha256.len() != 64 || !f.sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(ApiError::bad_request("sha256 is not 64 hex digits"));
+            }
+            total += f.size;
+        }
+        if total > SENT_TOTAL_MAX_BYTES {
+            return Err(refuse(ErrorCode::TooLarge, "the send is over 256 MiB"));
+        }
+        let missing = {
+            let blobs = &self.lock().blobs;
+            let mut seen = HashSet::new();
+            req.files
+                .iter()
+                .map(|f| f.sha256.clone())
+                .filter(|sha| !blobs.contains_key(sha) && seen.insert(sha.clone()))
+                .collect::<Vec<_>>()
+        };
+        self.with_conv(ctx, true, |c, _| {
+            if !c.sent.contains_key(&req.tool_use_id) {
+                c.sent_staging.insert(req.tool_use_id.clone(), req);
+            }
+            Ok(())
+        })?;
+        Ok(SentFilesResponse { missing })
+    }
+
+    fn model_sent_files_commit(&self, ctx: &Ctx, tool_use_id: &str) -> Result<SentFilesCommitted, ApiError> {
+        check_tool_use_id(tool_use_id)?;
+        let id = Self::conversation(ctx)?;
+        let mut m = self.lock();
+        let Model { convs, blobs, .. } = &mut *m;
+        let c = convs.entry(id).or_default();
+        let presented = ctx.lease.as_deref().and_then(|l| Uuid::parse_str(l).ok());
+        if presented.is_none() || presented != c.lease {
+            return Err(lease_lost());
+        }
+        if let Some(done) = c.sent.get(tool_use_id) {
+            return Ok(done.committed);
+        }
+        let staged = c
+            .sent_staging
+            .get(tool_use_id)
+            .ok_or_else(|| not_found("no sent-files request for this toolUseId"))?;
+        if staged.files.iter().any(|f| !blobs.contains_key(&f.sha256)) {
+            return Err(ApiError::bad_request("a blob of the send has not been put"));
+        }
+        let request = c.sent_staging.remove(tool_use_id).unwrap_or_else(|| unreachable!());
+        c.sent_seq += 1;
+        #[allow(clippy::cast_possible_truncation)] // at most 100 files
+        let committed = SentFilesCommitted {
+            kept: request.files.len() as u32,
+            seq: c.sent_seq,
+        };
+        c.sent.insert(tool_use_id.to_owned(), SentSend { request, committed });
+        Ok(committed)
     }
 
     fn model_report(&self, ctx: &Ctx) -> Result<(), ApiError> {
@@ -1282,12 +1423,18 @@ impl Server for FakeMagpie {
     }
 
     async fn sent_files(&self, ctx: Ctx, body: SentFilesRequest) -> Result<SentFilesResponse, ApiError> {
-        scripted!(self, "sent_files", ctx, json!({}), None, ser(&body), typed)
+        match self.record("sent_files", &ctx, json!({}), None, ser(&body), None) {
+            Some(r) => r.typed("sent_files"),
+            None => self.model_sent_files(&ctx, body),
+        }
     }
 
     async fn sent_files_commit(&self, ctx: Ctx, tool_use_id: String) -> Result<SentFilesCommitted, ApiError> {
         let params = json!({"toolUseId": tool_use_id});
-        scripted!(self, "sent_files_commit", ctx, params, None, Some(json!({})), typed)
+        match self.record("sent_files_commit", &ctx, params, None, Some(json!({})), None) {
+            Some(r) => r.typed("sent_files_commit"),
+            None => self.model_sent_files_commit(&ctx, &tool_use_id),
+        }
     }
 
     async fn person_purge(

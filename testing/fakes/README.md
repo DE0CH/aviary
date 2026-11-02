@@ -24,12 +24,15 @@ let calls = magpie.fake.script().wait_calls("heartbeat", 2, Duration::from_secs(
   given once, a handler that sees the call, or an answer given every time, tried in that order. Every call is
   recorded (path parameters, parsed query and body, raw bytes, headers).
 - **Models**, used when nothing is scripted:
-  - magpie: the sandbox surface (lease and epochs, `not_current_sandbox`, `lease_lost`; `~/.claude` files and
-    directories with the `offset_beyond_eof`, missing-parent, `protected`, `exists`, `not_empty` and quota rules
-    and `opId` replays; renames as `rename(2)`; the command queue with its long-poll and acks; blobs by sha256;
-    reports accepted). The person, hermit and ops routes have no model and answer 501 `not_supported` unless
-    scripted. The module docs list the deliberate differences (the lease with no current sandbox named) and the
-    codes only a script produces (`conversation_migrating`, lease 503, the per-line 413, `offset_mismatch`).
+  - magpie: every `/v1/sandbox/**` route (lease and epochs, `not_current_sandbox`, `lease_lost`; `~/.claude`
+    files and directories with magpie 6.6 rule 0 (a write of bytes already in place changes nothing), the
+    `offset_beyond_eof`, missing-parent, `protected`, `exists`, `not_empty` and quota rules and `opId` replays, a
+    refused operation leaving nothing behind; renames as `rename(2)`; the command queue with its long-poll and
+    acks; blobs by sha256; SendUserFile snapshots, `sent-files` and its commit per `toolUseId`; reports
+    accepted). The person, hermit and ops routes have no model and answer 501 `not_supported` unless scripted.
+    The module docs list the deliberate differences (the lease with no current sandbox named; blob `GET` unscoped
+    by conversation or lease, `as` ignored; the commit's `seq` and missing-blob code) and the codes only a script
+    produces (`conversation_migrating`, lease 503, the per-line 413, `offset_mismatch`).
   - hermit: deployment, the catalogue rules, one sandbox per conversation (idempotent `PUT`, the long-poll `GET`,
     release, the YYC 501 for pause/resume/snapshot), the feed (`latest`, order, `limit`, long-poll, 410), signed
     sandbox tokens and their keys, liveness, the descriptor with etag and 304, secrets by grant, activity reports,
@@ -48,26 +51,32 @@ contract clients against the fakes; `tests/faults.rs` exercises each knob; `test
 
 ## mock-model
 
-The Messages API and the models route, scripted with `POST /__script` (platform 7.5). Its streams are written in
-the wire form of the upstream YYC's gateway relays to (OpenRouter's Messages API), field by field, and
-`tests/mock.rs` checks them byte for byte against the recordings in `testing/mock-model/recorded/`. Anthropic's
-native framing (`ping`, `signature_delta`) is not recorded; a scripted thinking `signature` is streamed as a
-`signature_delta` (see `recorded/README.md`). An unscripted title request answers `測試標題`: one for the title model
-id, or, when the models file gives default, small and title one id (as YYC's `egress.json` does), one shaped like
-the supervisor's title call.
-`mock-model --listen 0.0.0.0:80 [--models models.json]`.
+The Messages API and the models route, scripted with `POST /__script` (platform 7.5), taking request bodies up to
+64 MiB (the gateway's `model` route limit, platform 3.11.3; above it the Messages API's 413 `request_too_large`).
+Replies come in one of two framings (`--wire`, or `wire` on a script entry): `openrouter` (the default), the wire
+form of the upstream YYC's gateway relays to, written field by field and checked byte for byte by `tests/mock.rs`
+against the recordings in `testing/mock-model/recorded/`; or `anthropic`, Anthropic's native framing (`ping` after
+`message_start`, the input usage in `message_start`, no `provider`/`cost` fields, `toolu_` ids), written from
+Anthropic's streaming documentation and checked by its own test, with no recording behind it (see
+`recorded/README.md`). A scripted thinking `signature` is streamed as a `signature_delta` in both. An unscripted
+title request answers `測試標題`: one for the title model id, or, when the models file gives default, small and
+title one id (as YYC's `egress.json` does), one shaped like the supervisor's title call.
+`mock-model --listen 0.0.0.0:80 [--models models.json] [--wire openrouter|anthropic]`.
 
 ## fake-tools
 
 A Streamable-HTTP MCP server at `/mcp` with `echo` and `slow_echo` behind the tools pair tokens (one per line of
 the token file, for a rotation), with sessions (400 without one, 404 for an unknown or ended one; `DELETE` ends
-it), recording calls with `Aviary-Sandbox-Person` (`GET /__calls`). `fake-tools --listen 0.0.0.0:80 --token-file
-<path>`.
+it), recording calls with `Aviary-Sandbox-Person` (`GET /__calls`). The token file is read again on every request, so a
+rotation is driven by changing the mounted Secret (current plus `_NEXT`, then the next one alone) without a
+restart; an unreadable or empty file keeps the last tokens. `fake-tools --listen 0.0.0.0:80 --token-file <path>`.
 
 ## fake-access
 
-Cloudflare Access's JWKS, `get-identity` (cookie `CF_Authorization`), `POST /__mint` and `POST /__keys` (publish or
-retire a loaded kid at run time, for the rotation test), RS256 with ring, TLS with the harness CA. RSA keys come from the harness (`openssl genpkey`, PKCS#8 PEM): ring cannot generate RSA keys and
+Cloudflare Access's JWKS, `get-identity` (cookie `CF_Authorization`; checks `exp`, `nbf` and, with `--aud`, that
+the token's `aud` lists the application's audience tag, as Cloudflare's per-application identity endpoint does),
+`POST /__mint` (`nbfSeconds` for a not-yet-valid token) and `POST /__keys` (publish or retire a loaded kid at run
+time, for the rotation test), RS256 with ring, TLS with the harness CA. RSA keys come from the harness (`openssl genpkey`, PKCS#8 PEM): ring cannot generate RSA keys and
 the `rsa` crate has an unfixed advisory (RUSTSEC-2023-0071) that `cargo audit --deny warnings` refuses.
-`fake-access --team-domain <d> --key k1=<pem> [--key k2=<pem>] [--next-key k3=<pem>] [--tls-cert <pem> --tls-key
+`fake-access --team-domain <d> [--aud <tag>] --key k1=<pem> [--key k2=<pem>] [--next-key k3=<pem>] [--tls-cert <pem> --tls-key
 <pem>]` (a `--next-key` is loaded but published only by `/__keys`).

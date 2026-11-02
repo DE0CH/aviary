@@ -352,3 +352,172 @@ async fn with_one_id_for_default_small_and_title_only_a_title_shaped_request_get
     title["system"] = json!("the deployment's title instructions");
     assert_eq!(ask(title).await, mock_model::TITLE_TEXT);
 }
+
+#[tokio::test]
+async fn a_request_with_a_3_mib_image_streams_and_count_tokens_takes_it_too() {
+    let rig = Rig::new().await;
+    // a PNG header naming 4000x3000, padded to 3 MiB of image bytes (about 4 MiB of base64)
+    let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+    png.extend_from_slice(&4000u32.to_be_bytes());
+    png.extend_from_slice(&3000u32.to_be_bytes());
+    png.resize(3 << 20, 0);
+    let data = base64::engine::general_purpose::STANDARD.encode(&png);
+    let req = json!({
+        "model": "example/model-large-1017", "max_tokens": 10, "stream": true,
+        "messages": [{"role": "user", "content": [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": data}},
+            {"type": "text", "text": "describe the big picture"}
+        ]}]
+    });
+    let size = serde_json::to_vec(&req).unwrap().len();
+    assert!(size > 4 << 20, "{size}");
+    rig.script(json!({"match": {"textContains": "big picture"}, "reply": [{"text": "A large image."}]}))
+        .await;
+    let res = rig.messages(req.clone(), None).await;
+    assert_eq!(res.status(), 200);
+    let body = res.text().await.unwrap();
+    assert!(body.contains("message_stop") && body.contains("large"), "{body}");
+    let log: Value = rig
+        .http
+        .get(format!("{}/__requests", rig.url))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        log[0]["images"],
+        json!([{"width": 4000, "height": 3000, "bytes": 3 << 20}])
+    );
+    let count: Value = rig
+        .http
+        .post(format!("{}/v1/messages/count_tokens", rig.url))
+        .json(&req)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(count["input_tokens"], (size as u64).div_ceil(4));
+}
+
+#[tokio::test]
+async fn a_body_over_64_mib_gets_the_messages_api_413() {
+    let rig = Rig::new().await;
+    let body = vec![b' '; mock_model::MAX_BODY + 1];
+    for path in ["/v1/messages", "/v1/messages/count_tokens"] {
+        let res = rig
+            .http
+            .post(format!("{}{path}", rig.url))
+            .header("content-type", "application/json")
+            .body(body.clone())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 413, "{path}");
+        let e: Value = res.json().await.unwrap();
+        assert_eq!(e["type"], "error");
+        assert_eq!(e["error"]["type"], "request_too_large");
+    }
+}
+
+#[tokio::test]
+async fn the_anthropic_wire_frames_a_stream_with_ping_and_no_openrouter_fields() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let mock = MockModel::with_wire(
+        serde_json::from_str(mock_model::DEFAULT_MODELS).unwrap(),
+        mock_model::sse::Wire::Anthropic,
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, mock.router()).await.unwrap() });
+    let rig = Rig {
+        url,
+        http: reqwest::Client::new(),
+    };
+    rig.script(json!({
+        "match": {"textContains": "native"},
+        "message": {"id": "msg_01native", "inputTokens": 25, "outputTokens": 15},
+        "reply": [
+            {"thinking": "Think.", "signature": "EqQBCgIYAhIM"},
+            {"text": "Hi there", "chunks": ["Hi", " there"]},
+            {"toolUse": {"name": "Bash", "input": {"command": "ls"}, "id": "toolu_01abc"}}
+        ]
+    }))
+    .await;
+    let body = rig
+        .messages(request("native framing", true), None)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let model = "deepseek/deepseek-v4.1-flash-1017";
+    let expected = [
+        format!(
+            "event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"id\":\"msg_01native\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"{model}\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{{\"input_tokens\":25,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":1}}}}}}\n\n"
+        ),
+        "event: ping\ndata: {\"type\": \"ping\"}\n\n".to_owned(),
+        "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}\n\n".to_owned(),
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Think.\"}}\n\n".to_owned(),
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"EqQBCgIYAhIM\"}}\n\n".to_owned(),
+        "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n".to_owned(),
+        "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n".to_owned(),
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\n\n".to_owned(),
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\" there\"}}\n\n".to_owned(),
+        "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n".to_owned(),
+        "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_01abc\",\"name\":\"Bash\",\"input\":{}}}\n\n".to_owned(),
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\":\\\"ls\\\"}\"}}\n\n".to_owned(),
+        "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":2}\n\n".to_owned(),
+        "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"input_tokens\":25,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":15}}\n\n".to_owned(),
+        "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".to_owned(),
+    ]
+    .concat();
+    assert_eq!(body, expected);
+    for f in [
+        "provider",
+        "cost",
+        "is_byok",
+        "container",
+        "stop_details",
+        "caller",
+        "citations",
+    ] {
+        assert!(!body.contains(&format!("\"{f}\"")), "{f} in {body}");
+    }
+
+    // non-streaming, and the default tool id prefix
+    let msg: Value = rig
+        .messages(request("anything", false), None)
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        msg.get("provider").is_none() && msg["usage"].get("cost").is_none(),
+        "{msg}"
+    );
+    assert_eq!(msg["content"], json!([{"type": "text", "text": "ok"}]));
+    rig.script(json!({"reply": [{"toolUse": {"name": "Read"}}]})).await;
+    let tool: Value = rig
+        .messages(request("read it", false), None)
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        tool["content"][0]["id"].as_str().unwrap().starts_with("toolu_"),
+        "{tool}"
+    );
+    assert_eq!(tool["stop_reason"], "tool_use");
+
+    // a script entry can ask for the other framing
+    rig.script(json!({"wire": "openrouter", "reply": [{"text": "routed"}]}))
+        .await;
+    let routed = rig.messages(request("x", true), None).await.text().await.unwrap();
+    assert!(
+        routed.contains("\"provider\":\"mock-model\"") && !routed.contains("event: ping"),
+        "{routed}"
+    );
+}

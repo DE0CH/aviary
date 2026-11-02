@@ -2,7 +2,9 @@
 //! (R18), scripted by the test driver.
 //!
 //! - `POST /v1/messages`: streaming SSE (`message_start`, `content_block_start/delta/stop`, `message_delta`,
-//!   `message_stop`) or one JSON message, in the wire form of `OpenRouter`'s Messages API ([`sse`]);
+//!   `message_stop`) or one JSON message, in `OpenRouter`'s wire form (the default, byte-checked against recordings)
+//!   or Anthropic's native one ([`sse::Wire`]: per process, [`MockModel::with_wire`] / `--wire`, or per script
+//!   entry, `wire`); bodies up to [`MAX_BODY`] (the gateway's `model` route limit, platform 3.11.3);
 //! - `POST /v1/messages/count_tokens`: a fixed estimate (`ceil(request bytes / 4)`);
 //! - `GET /v1/aviary/models`: the configured [`gateway_api::models::Models`];
 //! - `POST /__script`: queue a reply for requests that match (`conversation` from `Aviary-Sandbox-Conversation`,
@@ -29,7 +31,8 @@ use std::time::Duration;
 use aviary_core::http::headers::AVIARY_SANDBOX_CONVERSATION;
 use axum::Router;
 use axum::body::{Body, Bytes};
-use axum::extract::{Query, State};
+use axum::extract::rejection::BytesRejection;
+use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -40,7 +43,10 @@ use serde_json::{Value, json};
 use sha2::Digest;
 use uuid::Uuid;
 
-use crate::sse::{Block, Envelope};
+use crate::sse::{Block, Envelope, Wire};
+
+/// The largest request body (platform 3.11.3: the gateway's `model` route passes up to 64 MiB).
+pub const MAX_BODY: usize = 64 << 20;
 
 /// The default models route answer (gateway-api's fixture).
 pub const DEFAULT_MODELS: &str = include_str!("../../../crates/gateway-api/fixtures/models.json");
@@ -198,6 +204,9 @@ pub struct ScriptEntry {
     /// Envelope values.
     #[serde(default)]
     pub message: Option<EnvelopeOverride>,
+    /// The framing of this reply (default: the process's).
+    #[serde(default)]
+    pub wire: Option<Wire>,
 }
 
 impl ScriptEntry {
@@ -293,6 +302,7 @@ struct Inner {
 #[derive(Debug)]
 pub struct MockModel {
     models: Models,
+    wire: Wire,
     inner: Mutex<Inner>,
 }
 
@@ -300,8 +310,15 @@ impl MockModel {
     /// A mock answering `models` on the models route.
     #[must_use]
     pub fn new(models: Models) -> Arc<Self> {
+        Self::with_wire(models, Wire::default())
+    }
+
+    /// A mock answering `models` whose replies use `wire` unless a script entry names another.
+    #[must_use]
+    pub fn with_wire(models: Models, wire: Wire) -> Arc<Self> {
         Arc::new(Self {
             models,
+            wire,
             inner: Mutex::new(Inner::default()),
         })
     }
@@ -354,6 +371,7 @@ impl MockModel {
             .route("/__script", post(script))
             .route("/__requests", get(requests))
             .route("/__reset", post(reset))
+            .layer(DefaultBodyLimit::max(MAX_BODY))
             .with_state(self.clone())
     }
 
@@ -518,7 +536,7 @@ enum Part {
     Error(ErrorItem),
 }
 
-fn plan(model: &str, input_bytes: usize, entry: &ScriptEntry) -> Plan {
+fn plan(wire: Wire, model: &str, input_bytes: usize, entry: &ScriptEntry) -> Plan {
     let mut blocks = Vec::new();
     let mut order = Vec::new();
     let mut out_chars = 0usize;
@@ -555,7 +573,10 @@ fn plan(model: &str, input_bytes: usize, entry: &ScriptEntry) -> Plan {
             out_chars += partial.concat().len();
             blocks.push((
                 Block::ToolUse {
-                    id: tu.id.clone().unwrap_or_else(|| format!("call_{}", hex_id(24))),
+                    id: tu.id.clone().unwrap_or_else(|| {
+                        let prefix = if wire == Wire::Anthropic { "toolu_" } else { "call_" };
+                        format!("{prefix}{}", hex_id(24))
+                    }),
                     name: tu.name.clone(),
                     partial_json: partial,
                 },
@@ -571,6 +592,7 @@ fn plan(model: &str, input_bytes: usize, entry: &ScriptEntry) -> Plan {
     let o = entry.message.clone().unwrap_or_default();
     let thinking_tokens = (thinking_chars as u64).div_ceil(4);
     let envelope = Envelope {
+        wire,
         id: o.id.unwrap_or_else(|| format!("msg_{}", hex_id(20))),
         model: model.to_owned(),
         provider: o.provider.unwrap_or_else(|| "mock-model".to_owned()),
@@ -612,7 +634,7 @@ fn streamed(p: &Plan) -> Response {
         match part {
             Part::Block(i) => {
                 let (block, pace) = &p.blocks[*i];
-                let events = sse::block_events(index, block);
+                let events = sse::block_events(p.envelope.wire, index, block);
                 let last = events.len() - 1;
                 for (k, ev) in events.into_iter().enumerate() {
                     steps.push(Step::Bytes(ev));
@@ -678,7 +700,31 @@ fn bad_request(message: &str) -> Response {
     res
 }
 
-async fn messages(State(m): State<Arc<MockModel>>, headers: HeaderMap, body: Bytes) -> Response {
+/// A body over [`MAX_BODY`] gets the Messages API's own 413 (`request_too_large`), not axum's plain text.
+fn body_or_413(body: Result<Bytes, BytesRejection>) -> Result<Bytes, Box<Response>> {
+    body.map_err(|e| {
+        let status = e.status();
+        let kind = if status == StatusCode::PAYLOAD_TOO_LARGE {
+            "request_too_large"
+        } else {
+            "invalid_request_error"
+        };
+        let mut res = (status, sse::error_body(kind, &e.body_text())).into_response();
+        res.headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        Box::new(res)
+    })
+}
+
+async fn messages(
+    State(m): State<Arc<MockModel>>,
+    headers: HeaderMap,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    let body = match body_or_413(body) {
+        Ok(b) => b,
+        Err(res) => return *res,
+    };
     let Ok(req) = serde_json::from_slice::<Value>(&body) else {
         return bad_request("the body is not JSON");
     };
@@ -694,12 +740,17 @@ async fn messages(State(m): State<Arc<MockModel>>, headers: HeaderMap, body: Byt
         }],
         times: 1,
         message: None,
+        wire: None,
     });
-    let p = plan(&model, body.len(), &entry);
+    let p = plan(entry.wire.unwrap_or(m.wire), &model, body.len(), &entry);
     if stream { streamed(&p) } else { whole(p).await }
 }
 
-async fn count_tokens(body: Bytes) -> Response {
+async fn count_tokens(body: Result<Bytes, BytesRejection>) -> Response {
+    let body = match body_or_413(body) {
+        Ok(b) => b,
+        Err(res) => return *res,
+    };
     aviary_core::http::json(
         StatusCode::OK,
         &json!({"input_tokens": (body.len() as u64).div_ceil(4)}),

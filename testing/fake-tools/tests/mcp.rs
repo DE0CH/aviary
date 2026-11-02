@@ -217,3 +217,42 @@ async fn a_token_rotation_accepts_both_tokens_then_only_the_new_one() {
     // a session is not tied to the token that opened it (the gateway's bearer changes under a live session)
     assert_eq!(rpc(&http, &url, "next-token", Some(&s_old), ping()).await.status(), 200);
 }
+
+#[tokio::test]
+async fn a_token_file_changed_in_place_changes_the_accepted_tokens() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let dir = std::env::temp_dir().join(format!("fake-tools-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("tokens");
+    // a mounted Secret is swapped by a rename, as the kubelet's `..data` link is
+    let swap = |text: &str| {
+        let tmp = dir.join("tokens.new");
+        std::fs::write(&tmp, text).unwrap();
+        std::fs::rename(&tmp, &file).unwrap();
+    };
+    swap("old-token\n");
+    assert!(fake_tools::FakeTools::from_token_file(&dir.join("absent")).is_err());
+    let tools = fake_tools::FakeTools::from_token_file(&file).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let router = tools.router();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let http = reqwest::Client::new();
+    let s = initialize(&http, &url, "old-token").await;
+    assert_eq!(rpc(&http, &url, "next-token", Some(&s), ping()).await.status(), 401);
+    // the overlap: both
+    swap("old-token\nnext-token\n");
+    assert_eq!(rpc(&http, &url, "old-token", Some(&s), ping()).await.status(), 200);
+    assert_eq!(rpc(&http, &url, "next-token", Some(&s), ping()).await.status(), 200);
+    // the old one dropped
+    swap("next-token\n");
+    assert_eq!(rpc(&http, &url, "old-token", Some(&s), ping()).await.status(), 401);
+    assert_eq!(rpc(&http, &url, "next-token", Some(&s), ping()).await.status(), 200);
+    // an empty or missing file keeps the last set
+    swap("\n");
+    assert_eq!(rpc(&http, &url, "next-token", Some(&s), ping()).await.status(), 200);
+    std::fs::remove_file(&file).unwrap();
+    assert_eq!(rpc(&http, &url, "next-token", Some(&s), ping()).await.status(), 200);
+    assert_eq!(rpc(&http, &url, "old-token", Some(&s), ping()).await.status(), 401);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

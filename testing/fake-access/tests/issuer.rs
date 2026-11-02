@@ -52,6 +52,7 @@ fn mint(email: &str, exp: i64, kid: Option<&str>) -> MintRequest {
         name: Some("Chan Tai Man".into()),
         aud: "aud-tag".into(),
         exp_seconds: exp,
+        nbf_seconds: None,
         kid: kid.map(str::to_owned),
     }
 }
@@ -316,5 +317,50 @@ async fn rotation_a_new_kid_verifies_only_after_it_is_published_and_a_retired_ki
         .unwrap();
     assert_eq!(r.status(), 404);
     server.abort();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn nbf_and_with_an_audience_a_token_for_another_application_are_refused() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let dir = tmp();
+    let k1 = Key::from_pem("k1", &rsa_key(&dir, "k1.pem")).unwrap();
+    let i = Issuer::with_audience("access.aviary-e2e.svc.cluster.local", vec![k1], Some("aud-tag")).unwrap();
+    let ok = i.mint(&mint("staff@example.org", 600, None)).unwrap();
+    assert_eq!(i.verify(&ok).unwrap()["email"], "staff@example.org");
+    let mut other = mint("staff@example.org", 600, None);
+    other.aud = "another-app".into();
+    let other = i.mint(&other).unwrap();
+    assert_eq!(i.verify(&other).unwrap_err().0, "wrong audience");
+    let mut early = mint("staff@example.org", 600, None);
+    early.nbf_seconds = Some(300);
+    let early = i.mint(&early).unwrap();
+    assert_eq!(i.verify(&early).unwrap_err().0, "not yet valid");
+    // the same through get-identity, the route pigeon's tests call
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let router = i.router();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let http = reqwest::Client::new();
+    assert_eq!(get_identity(&http, &base, Some(&ok)).await.0, 200);
+    let (status, body) = get_identity(&http, &base, Some(&other)).await;
+    assert_eq!((status, body["err"].as_str()), (401, Some("wrong audience")));
+    let (status, body) = get_identity(&http, &base, Some(&early)).await;
+    assert_eq!((status, body["err"].as_str()), (401, Some("not yet valid")));
+    // without an audience the issuer answers any application's token (one issuer for several applications)
+    let k = Key::from_pem("k1", &std::fs::read_to_string(dir.join("k1.pem")).unwrap()).unwrap();
+    let any = Issuer::new("access.aviary-e2e.svc.cluster.local", vec![k]).unwrap();
+    assert!(any.verify(&other).is_ok());
+    // nbfSeconds over /__mint
+    let res: Value = http
+        .post(format!("{base}{}", fake_access::MINT))
+        .json(&json!({"email": "staff@example.org", "aud": "aud-tag", "expSeconds": 600, "nbfSeconds": 120}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(i.verify(res["token"].as_str().unwrap()).unwrap_err().0, "not yet valid");
     std::fs::remove_dir_all(dir).unwrap();
 }

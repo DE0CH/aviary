@@ -10,10 +10,13 @@
 //!
 //! It accepts a list of bearers (each the gateway's tools pair token), so a rotation through the gateway (the
 //! current token and the `_NEXT` one both accepted, then the old one dropped) can be driven: [`FakeTools::with_tokens`],
-//! [`FakeTools::set_tokens`], or one token per line of `--token-file`.
+//! [`FakeTools::set_tokens`], or one token per line of a token file ([`FakeTools::from_token_file`], `--token-file`),
+//! read again on every request, so a mounted Secret that changes in place changes the accepted tokens at once (a
+//! file that cannot be read or holds no token keeps the last set).
 //! Assertions read `GET /__calls`; `POST /__reset` clears them and the sessions.
 
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -52,6 +55,7 @@ pub struct ToolCall {
 #[derive(Debug)]
 pub struct FakeTools {
     tokens: Mutex<Vec<String>>,
+    token_file: Option<PathBuf>,
     calls: Mutex<Vec<ToolCall>>,
     sessions: Mutex<HashSet<String>>,
 }
@@ -90,9 +94,24 @@ impl FakeTools {
     pub fn with_tokens(tokens: &[&str]) -> Arc<Self> {
         Arc::new(Self {
             tokens: Mutex::new(tokens.iter().map(|t| (*t).to_owned()).collect()),
+            token_file: None,
             calls: Mutex::new(Vec::new()),
             sessions: Mutex::new(HashSet::new()),
         })
+    }
+
+    /// A server accepting the tokens of `path` (one per line), read again on every request.
+    ///
+    /// # Errors
+    /// When the file cannot be read or holds no token now.
+    pub fn from_token_file(path: &Path) -> std::io::Result<Arc<Self>> {
+        let tokens = read_tokens(path)?;
+        Ok(Arc::new(Self {
+            tokens: Mutex::new(tokens),
+            token_file: Some(path.to_owned()),
+            calls: Mutex::new(Vec::new()),
+            sessions: Mutex::new(HashSet::new()),
+        }))
     }
 
     /// Replace the accepted bearers (the rotation's next step).
@@ -139,6 +158,12 @@ impl FakeTools {
         let Some(t) = aviary_core::auth::bearer(h) else {
             return false;
         };
+        if let Some(path) = &self.token_file {
+            match read_tokens(path) {
+                Ok(fresh) => *lock(&self.tokens) = fresh,
+                Err(e) => eprintln!("fake-tools: {}: {e}; keeping the last tokens", path.display()),
+            }
+        }
         // compare against every token, without stopping at a match
         lock(&self.tokens)
             .iter()
@@ -169,6 +194,20 @@ impl FakeTools {
         }
         Ok(json!({"content": [{"type": "text", "text": text}], "isError": false}))
     }
+}
+
+/// The non-empty, trimmed lines of `path`; an error when there is none.
+fn read_tokens(path: &Path) -> std::io::Result<Vec<String>> {
+    let tokens: Vec<String> = std::fs::read_to_string(path)?
+        .lines()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if tokens.is_empty() {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "no token"));
+    }
+    Ok(tokens)
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {

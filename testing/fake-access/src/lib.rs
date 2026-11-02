@@ -2,9 +2,12 @@
 //!
 //! - `GET /cdn-cgi/access/certs`: the JWKS (RS256), every **published** key;
 //! - `GET /cdn-cgi/access/get-identity`: the `CF_Authorization` cookie's token verified against the published keys
-//!   → `{"email", "name", "given_name"}`, 401 for a missing, tampered, expired, unknown-key or retired-key token;
-//! - `POST /__mint` `{"email", "name", "aud", "expSeconds", "kid"?}` → `{"token"}` for the driver; any loaded key
-//!   signs, published or not (default: the first published key);
+//!   → `{"email", "name", "given_name"}`, 401 for a missing, tampered, expired, not-yet-valid (`nbf`),
+//!   unknown-key or retired-key token, and, when the issuer has an audience ([`Issuer::with_audience`], `--aud`),
+//!   for a token whose `aud` does not list it (Cloudflare's identity endpoint is per application);
+//! - `POST /__mint` `{"email", "name", "aud", "expSeconds", "nbfSeconds"?, "kid"?}` → `{"token"}` for the driver;
+//!   any loaded key signs, published or not (default: the first published key); `nbfSeconds` puts `nbf` that far
+//!   from now (default 0);
 //! - `POST /__keys` `{"kid", "published"}` → the new JWKS: publishes a loaded key or retires one, so the rotation
 //!   test can change the JWKS under a running verifier (a key loaded unpublished, `--next-key`, is how a new kid
 //!   appears; retiring the old kid ends it).
@@ -141,6 +144,9 @@ pub struct MintRequest {
     pub aud: String,
     /// Lifetime from now; negative mints an expired token.
     pub exp_seconds: i64,
+    /// `nbf` from now (default 0); positive mints a token not valid yet.
+    #[serde(default)]
+    pub nbf_seconds: Option<i64>,
     /// Which loaded key signs (default: the first published one).
     #[serde(default)]
     pub kid: Option<String>,
@@ -151,6 +157,7 @@ pub struct MintRequest {
 pub struct Issuer {
     keys: Vec<Key>,
     team_domain: String,
+    audience: Option<String>,
     rng: SystemRandom,
 }
 
@@ -166,6 +173,15 @@ impl Issuer {
     /// # Errors
     /// With no keys or two keys of one kid.
     pub fn new(team_domain: &str, keys: Vec<Key>) -> Result<Arc<Self>, Refused> {
+        Self::with_audience(team_domain, keys, None)
+    }
+
+    /// As [`Issuer::new`], refusing on verification (and so on `get-identity`) a token whose `aud` does not list
+    /// `audience` (the Access application's audience tag), when one is given.
+    ///
+    /// # Errors
+    /// With no keys or two keys of one kid.
+    pub fn with_audience(team_domain: &str, keys: Vec<Key>, audience: Option<&str>) -> Result<Arc<Self>, Refused> {
         if keys.is_empty() {
             return Err(refused("no keys"));
         }
@@ -177,6 +193,7 @@ impl Issuer {
         Ok(Arc::new(Self {
             keys,
             team_domain: team_domain.to_owned(),
+            audience: audience.map(str::to_owned),
             rng: SystemRandom::new(),
         }))
     }
@@ -225,7 +242,7 @@ impl Issuer {
             "email": req.email,
             "exp": iat + req.exp_seconds,
             "iat": iat,
-            "nbf": iat,
+            "nbf": iat + req.nbf_seconds.unwrap_or(0),
             "iss": format!("https://{}", self.team_domain),
             "type": "app",
             "identity_nonce": uuid::Uuid::new_v4().simple().to_string(),
@@ -246,10 +263,11 @@ impl Issuer {
         Ok(format!("{signing_input}.{}", B64.encode(sig)))
     }
 
-    /// The claims of a token this issuer signed, if it verifies and has not expired.
+    /// The claims of a token this issuer signed, if it verifies, is within `nbf`..`exp` and (when the issuer has an
+    /// audience) lists that audience in `aud`.
     ///
     /// # Errors
-    /// Malformed, unknown kid, bad signature, wrong issuer, expired.
+    /// Malformed, unknown kid, bad signature, wrong issuer, expired, not yet valid, wrong audience.
     pub fn verify(&self, token: &str) -> Result<Value, Refused> {
         let mut parts = token.split('.');
         let (Some(h), Some(c), Some(s), None) = (parts.next(), parts.next(), parts.next(), parts.next()) else {
@@ -278,8 +296,22 @@ impl Issuer {
         if claims["iss"] != format!("https://{}", self.team_domain) {
             return Err(refused("wrong issuer"));
         }
-        if claims["exp"].as_i64().is_none_or(|e| e <= now()) {
+        let at = now();
+        if claims["exp"].as_i64().is_none_or(|e| e <= at) {
             return Err(refused("expired"));
+        }
+        if claims["nbf"].as_i64().is_none_or(|n| n > at) {
+            return Err(refused("not yet valid"));
+        }
+        if let Some(want) = &self.audience {
+            let listed = match &claims["aud"] {
+                Value::String(one) => one == want,
+                Value::Array(list) => list.iter().any(|x| x.as_str() == Some(want)),
+                _ => false,
+            };
+            if !listed {
+                return Err(refused("wrong audience"));
+            }
         }
         Ok(claims)
     }

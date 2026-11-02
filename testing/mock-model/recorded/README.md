@@ -16,9 +16,11 @@ new upstream wire form), repeat the request, replace the file and update the scr
 
 ## What is not covered
 
-Only OpenRouter's wire form is recorded and byte-checked: `provider`, `cost` and `cost_details` fields, no `ping`
-events, and no `signature_delta` (DeepSeek's thinking blocks are unsigned). Anthropic's native Messages API frames a
-stream differently (`ping` after `message_start`, a `signature_delta` closing each thinking block, no OpenRouter
-fields), and Claude Code against that framing is not exercised here. mock-model does write a `signature_delta`
-before `content_block_stop` when a script gives a thinking block a `signature`, in Anthropic's form, but no
-recording checks it byte for byte.
+Only OpenRouter's wire form (mock-model's default, `--wire openrouter`) is recorded and byte-checked: `provider`,
+`cost` and `cost_details` fields, no `ping` events, and no `signature_delta` (DeepSeek's thinking blocks are
+unsigned). mock-model's `--wire anthropic` (or `"wire": "anthropic"` on a script entry) writes Anthropic's native
+framing (`ping` after `message_start`, the input usage in `message_start`, a `signature_delta` closing a signed
+thinking block, no OpenRouter fields, `toolu_` ids); it follows Anthropic's streaming documentation and
+`tests/mock.rs` checks it as a whole stream, but no recording from Anthropic's API stands behind it (the deployment
+has no Anthropic key to record with). A scripted thinking `signature` is streamed as a `signature_delta` in either
+framing.
