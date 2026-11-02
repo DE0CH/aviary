@@ -28,6 +28,7 @@ use magpie_api::sandbox::{
 };
 use magpie_api::sandbox::{SentFilesCommitted, SentFilesRequest, SentFilesResponse};
 use magpie_api::server::{Ctx, Server};
+use magpie_api::shares::{ContinueResponse, ShareRef, ShareView, SharesList};
 use magpie_api::turns::{AgentPermissionResponse, CancelResponse, SendRequest, SendResponse};
 use magpie_api::uploads::{BlobQuery, SandboxBlobQuery, UploadMeta, UploadResponse};
 use magpie_api::{Admitted, Empty};
@@ -440,5 +441,29 @@ impl Server for Magpie {
 
     async fn sent_files_commit(&self, ctx: Ctx, tool_use_id: String) -> Answer<SentFilesCommitted> {
         http::sandbox_files::commit(self, ctx, tool_use_id).await
+    }
+
+    async fn list_shares(&self, ctx: Ctx, id: Uuid) -> Answer<SharesList> {
+        http::shares::list(self, ctx, id).await
+    }
+
+    async fn create_share(&self, ctx: Ctx, id: Uuid) -> Answer<ShareRef> {
+        http::shares::create(self, ctx, id).await
+    }
+
+    async fn revoke_share(&self, ctx: Ctx, share_id: String) -> Answer<()> {
+        http::shares::revoke(self, ctx, share_id).await
+    }
+
+    async fn get_share(&self, ctx: Ctx, share_id: String) -> Answer<ShareView> {
+        http::shares::view(self, ctx, share_id).await
+    }
+
+    async fn share_files_raw(&self, ctx: Ctx, share_id: String, query: RawFileQuery) -> Answer<Response> {
+        http::shares::files_raw(self, ctx, share_id, query).await
+    }
+
+    async fn continue_share(&self, ctx: Ctx, share_id: String) -> Answer<ContinueResponse> {
+        http::shares::continue_share(self, ctx, share_id).await
     }
 }

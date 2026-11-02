@@ -23,6 +23,7 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 | `src/jobs/` | the job leader, purge, outbox (hermit calls), retention |
 | `src/files.rs` | blob reads (M15, the sandbox's), the sandbox's blob `PUT`, sent-file snapshots (magpie 11.2), the files panel and downloads (M14: a send's snapshot, or the live workspace file streamed from hermit) |
 | `src/uploads.rs` | M13: uploads, image facts and the model copy |
+| `src/shares.rs` | M16: freeze (rows, the cc scope cut before a running turn, blob refs, hermit's clone), list, revoke, view, downloads from the frozen copy, continue |
 | `src/viewas.rs` | M17 and the view-as audit rows written with each change |
 | `src/sandbox.rs` | the conversation behind a gateway call, and its lease |
 | `src/stats.rs` | the ops reads (`/v1/ops/people`, `/v1/ops/view-as`, `/v1/ops/stats`) |
@@ -82,7 +83,9 @@ Tests that store blobs also need the CI S3 server (`AVIARY_TEST_S3_*`; each test
 reconcile, M15's variants and headers, the sandbox's blob routes) and `tests/uploads.rs` (M13's limits and types,
 the model copy's bounds, EXIF rotation, HEIC through libheif, the decode cap, view-as recording, retention). `tests/files.rs`: the two-phase
 sent-file snapshot, its validation and lease, the files panel, downloads of a send's snapshot with `Range`, live
-workspace files through fake-hermit. `tests/fixtures/` holds a small HEIC made with libheif's `heif-enc`.
+workspace files through fake-hermit. `tests/shares.rs`: the freeze leaves a running turn out, the view equals the
+timeline at the freeze, the frozen workspace is a clone, soft delete hides a link and restore brings it back,
+continue, revoke, purge, view-as, a failed clone. `tests/fixtures/` holds a small HEIC made with libheif's `heif-enc`.
 
 ## Deviations from the spec text
 
@@ -212,3 +215,13 @@ workspace files through fake-hermit. `tests/fixtures/` holds a small HEIC made w
   `"<sha>"`. `display` of a media blob that is not an image (a PDF) answers 415 like `thumb`.
 - A derived copy (thumbnail, display copy) is served without being kept while the bucket cannot be reached.
 - An image upload's `width`/`height` are the upright dimensions (swapped for EXIF orientations 5-8).
+- A share freezes the rows whose identifying event (`source_seqs[1]`) is within `upto_seq`, as they are at the
+  freeze, rather than rows whose source events are all within it (magpie 12.1): a background task's notification
+  updates a finished turn's tool row after the turn, and the stricter rule would drop that row from the share.
+  `nothing_to_share` uses the same rule for the assistant row.
+- A share's blob references are a copy of the conversation's at the freeze (a superset of what the frozen lines,
+  rows and events reference: it may keep a running turn's blobs alive for as long as the share lives).
+- `share_rows` keeps every column of `rows` (migration `0006_shares.sql`), so a continued conversation's rows are
+  rows the projection can go on updating; a continue also copies `retracted` and `cc_retracted` within `upto_seq`.
+  A continued conversation's `cc_bytes` is the sum of its copied files' sizes.
+- `ShareView.epoch` is `"1"`: a share's rows never change.

@@ -2615,6 +2615,7 @@ dependencies = [
  "moka",
  "proptest",
  "reqwest",
+ "ring",
  "rustls",
  "serde",
  "serde_json",
