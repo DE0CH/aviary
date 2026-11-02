@@ -226,6 +226,7 @@ fn tag<'a>(text: &'a str, name: &str) -> Option<&'a str> {
 fn task_notification(text: &str) -> Option<TaskNotification> {
     Some(TaskNotification {
         tool_use_id: tag(text, "tool-use-id")?.to_owned(),
+        task_id: tag(text, "task-id").map(str::to_owned),
         status: tag(text, "status").unwrap_or_default().to_owned(),
         summary: tag(text, "summary").map(str::to_owned),
     })
@@ -383,6 +384,7 @@ mod tests {
             e.meta.task_notification,
             Some(TaskNotification {
                 tool_use_id: "toolu_01Bg".into(),
+                task_id: Some("b7".into()),
                 status: "completed".into(),
                 summary: Some("Build finished.".into()),
             })

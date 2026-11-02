@@ -379,6 +379,9 @@ pub struct EventMeta {
 pub struct TaskNotification {
     /// The launching tool call.
     pub tool_use_id: String,
+    /// Claude Code's task id (`<task-id>`), when the notification names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
     /// The notification's status (`completed`, `failed`, `killed`, `stopped`).
     pub status: String,
     /// The notification's summary.
