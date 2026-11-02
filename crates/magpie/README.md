@@ -155,4 +155,6 @@ for a 1 MiB image line). The scanner, extraction and classification have unit an
 - The 2.1.304 acceptance replays the real binary's transcripts from the FUSE gate through the routes, in the shape
   of the gate's recorded calls; the real binary against a mock Messages API through a FUSE supervisor is the e2e
   harness's (WP-28). The latency figures are measured at the client over loopback HTTP (they include the round
-  trip), with a 2-node synchronously replicated Postgres in CI.
+  trip), with a 2-node synchronously replicated Postgres in CI whose WAL is warmed first (segments written once and
+  recycled, as on a cluster that has run for a while; on a fresh cluster each new 16 MiB segment file costs one
+  write about 150 ms on a CI runner's disk).

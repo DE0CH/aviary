@@ -102,6 +102,7 @@ async fn cc_write_latency_with_synchronous_replication() {
         pct(&small, 0.99),
         pct(&big, 0.5)
     );
+    println!("slowest 1 MiB writes: {:?}", &big[big.len() - 5..]);
     assert!(p50 <= Duration::from_millis(15), "10 KiB append p50 {p50:?}");
     assert!(p99 <= Duration::from_millis(150), "1 MiB image line p99 {p99:?}");
     assert_eq!(s.read(&p).await.unwrap().len() as u64, at);

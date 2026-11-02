@@ -21,7 +21,8 @@ docker run -d --name aviary-ci-pg-primary --network "$net" -p "127.0.0.1:$port:5
   printf "local all all trust\nhostssl all all all scram-sha-256\nhost replication postgres all scram-sha-256\n" \
     > /tmp/pgdata/pg_hba.conf
   exec "$bin/postgres" -D /tmp/pgdata -c listen_addresses="*" -c ssl=on -c max_connections=200 \
-    -c wal_level=replica -c max_wal_senders=4 -c synchronous_standby_names=standby1 -c synchronous_commit=on
+    -c wal_level=replica -c max_wal_senders=4 -c synchronous_standby_names=standby1 -c synchronous_commit=on \
+    -c min_wal_size=2GB -c max_wal_size=4GB
 ' >/dev/null
 for _ in $(seq 1 60); do
   docker exec aviary-ci-pg-primary pg_isready -q -h 127.0.0.1 2>/dev/null && break
@@ -34,12 +35,19 @@ docker run -d --name aviary-ci-pg-standby --network "$net" -v "$dir:/ci:ro" "$im
   "$bin/pg_basebackup" -h aviary-ci-pg-primary -U postgres -D /tmp/pgdata -X stream -R \
     -d "application_name=standby1 sslmode=disable" >/dev/null
   chmod 0700 /tmp/pgdata
-  exec "$bin/postgres" -D /tmp/pgdata -c hot_standby=on -c ssl=on -c max_connections=200 -c max_wal_senders=4
+  exec "$bin/postgres" -D /tmp/pgdata -c hot_standby=on -c ssl=on -c max_connections=200 -c max_wal_senders=4 \
+    -c min_wal_size=2GB -c max_wal_size=4GB
 ' >/dev/null
 for _ in $(seq 1 60); do
   state=$(docker exec aviary-ci-pg-primary psql -U postgres -tAc \
     "select sync_state from pg_stat_replication where application_name = 'standby1'" 2>/dev/null || true)
   if [ "$state" = sync ]; then
+    # a long-running cluster's WAL: segments written once, then recycled by a checkpoint (primary) and a
+    # restartpoint (standby), so the measured writes do not pay for creating new 16 MiB segment files
+    docker exec aviary-ci-pg-primary psql -U postgres -q -c \
+      "create table wal_warmup as select repeat('x', 2000) as x from generate_series(1, 400000)" \
+      -c "drop table wal_warmup" -c checkpoint >/dev/null
+    docker exec aviary-ci-pg-standby psql -U postgres -q -c checkpoint >/dev/null
     echo "postgres://postgres:$password@127.0.0.1:$port/postgres?sslmode=require"
     exit 0
   fi
