@@ -1,7 +1,9 @@
 // Upstream MCP servers (config.tools.upstreams): their tools appear as <prefix>_<tool>, calls are forwarded with the
 // configured headers, ${USER_EMAIL} = the staff member whose sandbox calls. Only the read-only tools the upstream's
 // `tools` list names are offered (default deny: a new upstream tool stays hidden until it is added to the list). The tool list is read at startup and every
-// 10 minutes (a failed refresh keeps the last good list). Streamable HTTP client: JSON or SSE answers, a session id
+// 10 minutes (a failed refresh keeps the last good list). The first read is bounded at 10 s per upstream, so an
+// upstream that hangs never holds the pod unready: that upstream offers nothing until a later read works (each later
+// read is bounded at 2 minutes as a whole). Streamable HTTP client: JSON or SSE answers, a session id
 // when the server hands one out.
 import { expandEnv } from "../common/config.ts";
 import type { UpstreamMcp } from "./config.ts";
@@ -9,6 +11,16 @@ import { logError, log } from "../common/log.ts";
 import type { Annotations, Content, Deps, ToolDef, ToolResult } from "./types.ts";
 
 const PROTOCOL = "2025-06-18";
+const CALL_TIMEOUT_MS = 120_000;
+/** The first tool-list read of each upstream at start; then each periodic read as a whole. */
+export const FIRST_LIST_MS = 10_000;
+export const LIST_MS = 120_000;
+
+interface RpcOpts {
+  retried?: boolean;
+  /** aborts the request (with the 120 s timeout) */
+  signal?: AbortSignal;
+}
 
 interface UpstreamTool {
   name: string;
@@ -65,7 +77,9 @@ export class Upstream {
     return h;
   }
 
-  async #rpc(user: string, method: string, params: Record<string, unknown>, retried = false): Promise<any> {
+  async #rpc(user: string, method: string, params: Record<string, unknown>, o: RpcOpts = {}): Promise<any> {
+    const timeout = AbortSignal.timeout(CALL_TIMEOUT_MS);
+    const signal = o.signal ? AbortSignal.any([timeout, o.signal]) : timeout;
     const id = this.#nextId++;
     const session = this.#sessions.get(user);
     const r = await this.#deps.fetch(this.cfg.url, {
@@ -78,13 +92,13 @@ export class Upstream {
         ...(session ? { "mcp-session-id": session } : {}),
       },
       body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
-      signal: AbortSignal.timeout(120_000),
+      signal,
     });
     const body = await r.text();
-    if ((r.status === 400 || r.status === 404) && !retried && method !== "initialize") {
+    if ((r.status === 400 || r.status === 404) && !o.retried && method !== "initialize") {
       // a server that wants a session: open one and ask again
-      await this.#initialize(user);
-      return this.#rpc(user, method, params, true);
+      await this.#initialize(user, o.signal);
+      return this.#rpc(user, method, params, { retried: true, signal: o.signal });
     }
     if (!r.ok) throw new Error(`${this.cfg.prefix} answered HTTP ${r.status}: ${body.slice(0, 300)}`);
     const sid = r.headers.get("mcp-session-id");
@@ -94,26 +108,29 @@ export class Upstream {
     return m.result;
   }
 
-  async #initialize(user: string): Promise<void> {
+  async #initialize(user: string, signal?: AbortSignal): Promise<void> {
     this.#sessions.delete(user);
-    await this.#rpc(user, "initialize", { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: "chat-tools", version: "1" } }, true);
+    await this.#rpc(user, "initialize", { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: "chat-tools", version: "1" } }, { retried: true, signal });
     const sid = this.#sessions.get(user);
     await this.#deps
       .fetch(this.cfg.url, {
         method: "POST",
         headers: { ...this.#headers(user), "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-protocol-version": PROTOCOL, ...(sid ? { "mcp-session-id": sid } : {}) },
         body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+        signal: signal ? AbortSignal.any([AbortSignal.timeout(CALL_TIMEOUT_MS), signal]) : AbortSignal.timeout(CALL_TIMEOUT_MS),
       })
       .then((r) => r.text())
       .catch(() => {});
   }
 
-  /** Re-read the tool list (as `listUser`, default the upstream's `listAs`). */
-  async refresh(listUser = this.cfg.listAs): Promise<void> {
+  /** Re-read the tool list (as `listUser`, default the upstream's `listAs`), all pages within `boundMs`; a read that
+   * fails or runs out of time keeps the last list. */
+  async refresh(listUser = this.cfg.listAs, boundMs = LIST_MS): Promise<void> {
+    const signal = AbortSignal.timeout(boundMs);
     const tools: UpstreamTool[] = [];
     let cursor: string | undefined;
     for (let i = 0; i < 20; i++) {
-      const r = await this.#rpc(listUser, "tools/list", cursor ? { cursor } : {});
+      const r = await this.#rpc(listUser, "tools/list", cursor ? { cursor } : {}, { signal });
       tools.push(...((r?.tools ?? []) as UpstreamTool[]));
       cursor = r?.nextCursor;
       if (!cursor) break;
@@ -133,7 +150,7 @@ export class Upstream {
       ...(t.outputSchema ? { outputSchema: t.outputSchema } : {}),
       ...(t.annotations ? { annotations: t.annotations } : {}),
       run: async (args, ctx): Promise<ToolResult> => {
-        const r = await this.#rpc(ctx.caller.person, "tools/call", { name: t.name, arguments: args });
+        const r = await this.#rpc(ctx.caller.person, "tools/call", { name: t.name, arguments: args }, { signal: ctx.signal });
         return {
           content: (Array.isArray(r?.content) ? r.content : [{ type: "text", text: JSON.stringify(r ?? null) }]) as Content[],
           ...(r?.isError ? { isError: true } : {}),
@@ -150,13 +167,14 @@ export function readOnlyAllowed(cfg: Pick<UpstreamMcp, "tools">, t: { name: stri
   return t.annotations?.readOnlyHint !== false && t.annotations?.destructiveHint !== true;
 }
 
-/** Keep every upstream's list fresh (each read as its `listAs`): now, then every `everyMs`; a failure is logged and the
- * old list stays. */
-export function startRefresh(ups: Upstream[], everyMs = 600_000): { stop(): void; ready: Promise<void> } {
-  const once = () =>
-    Promise.all(ups.map((u) => u.refresh().catch((e) => logError("upstream refresh", e, { prefix: u.cfg.prefix })))).then(() => {});
-  const ready = once();
-  const t = setInterval(once, everyMs);
+/** Keep every upstream's list fresh (each read as its `listAs`): now (each bounded at `firstMs`; `ready` resolves when
+ * every first read has worked, failed or run out of time), then every `everyMs`; a failure is logged and the old list
+ * stays. */
+export function startRefresh(ups: Upstream[], everyMs = 600_000, firstMs = FIRST_LIST_MS): { stop(): void; ready: Promise<void> } {
+  const once = (boundMs: number) =>
+    Promise.all(ups.map((u) => u.refresh(undefined, boundMs).catch((e) => logError("upstream refresh", e, { prefix: u.cfg.prefix })))).then(() => {});
+  const ready = once(firstMs);
+  const t = setInterval(() => void once(LIST_MS), everyMs);
   t.unref();
   return { ready, stop: () => clearInterval(t) };
 }

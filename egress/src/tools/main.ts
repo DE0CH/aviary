@@ -9,7 +9,7 @@
 //
 // SIGTERM (after Kubernetes' 10 s preStop): /readyz 503, no new connections, a request on a kept-alive connection is
 // served with `Connection: close`, in-flight calls finish up to 150 s, what is left is cut (tools_drain_cut_total),
-// the pending tool_calls rows are written, exit 0 with log `drained`. A second SIGTERM exits at once.
+// the pending tool_calls rows are written (a cut call's row too, marked cut), exit 0 with log `drained`. A second SIGTERM exits at once.
 import { createServer } from "node:http";
 import { log, logError } from "../common/log.ts";
 import { hermitGetter } from "../egress/tokens.ts";
@@ -71,7 +71,8 @@ export async function main(): Promise<void> {
       const lines = api ? api.metrics() : [];
       lines.push(
         `tools_ready ${notReady.size ? 0 : 1}`,
-        `tools_liveness_lookup_failures_total ${liveness.failures}`,
+        ...Object.entries(liveness.failuresBy).map(([k, n]) => `tools_liveness_lookup_failures_total{reason="${k}"} ${n}`),
+        `tools_liveness_auth_fault ${liveness.authFault ? 1 : 0}`,
         `tools_liveness_stale_served_total ${liveness.staleServed}`,
         `tools_catalogue_refused_total ${catalogue.refused}`,
         `tools_tool_calls_dropped_total ${calls.dropped}`,
@@ -133,7 +134,8 @@ export async function main(): Promise<void> {
   })();
   liveness.start();
 
-  // upstream tool lists: the first read (each failure logged, the upstream then offers nothing until the next refresh)
+  // upstream tool lists: the first read, bounded at 10 s per upstream (a failure or a hang is logged, the upstream then
+  // offers nothing until a later refresh works), so another service's health never holds a new pod unready for long
   const r = startRefresh(upstreams);
   refresh = r;
   void r.ready.then(() => notReady.delete("upstreams"));

@@ -53,6 +53,8 @@ export interface Deps {
 export interface ToolCtx {
   caller: Caller;
   deps: Deps;
+  /** Aborted when the drain cuts the call (upstream calls stop waiting on their upstream). */
+  signal?: AbortSignal;
 }
 
 export const text = (t: string, isError = false): ToolResult => ({ content: [{ type: "text", text: t }], ...(isError ? { isError } : {}) });

@@ -21,7 +21,7 @@ import { isPrivateAddress, htmlToText } from "../src/tools/netguard.ts";
 import { iso } from "../src/tools/providers.ts";
 import { acceptList, createToolsServer, DRAIN_MS, toolList, type ToolsServer } from "../src/tools/server.ts";
 import type { Deps, ToolDef } from "../src/tools/types.ts";
-import { pickResponse, readOnlyAllowed, Upstream } from "../src/tools/upstream.ts";
+import { pickResponse, readOnlyAllowed, startRefresh, Upstream } from "../src/tools/upstream.ts";
 import { startFakes, type Fakes } from "./fakes/tools-upstreams.ts";
 
 const GW = "gateway-pair-token-current";
@@ -61,11 +61,15 @@ type Live = { state: string; live: boolean; conversationId: string; person: stri
 class FakeHermit {
   readonly answers = new Map<string, Live>();
   readonly lookups = new Map<string, number>();
-  outage: "up" | "reset" | "hang" | "unavailable" = "up";
+  outage: "up" | "reset" | "hang" | "unavailable" | "auth" = "up";
+  /** each answer waits this long */
+  delayMs = 0;
   server: Server;
   url = "";
   constructor() {
-    this.server = createServer((req, res) => {
+    this.server = createServer(async (req, res) => {
+      if (this.delayMs) await new Promise((r) => setTimeout(r, this.delayMs));
+      if (this.outage === "auth") return void res.writeHead(401).end('{"code":"unauthenticated"}');
       if (this.outage === "reset") return void req.socket.destroy();
       if (this.outage === "hang") return;
       if (this.outage === "unavailable") return void res.writeHead(503).end('{"code":"unavailable"}');
@@ -283,6 +287,43 @@ test("liveness: cached 30 s; a hermit outage serves the last answer whatever its
   assert.ok(liveness.failures >= 3);
 });
 
+test("liveness: calls that arrive together for a sandbox not yet looked up all wait for the one lookup", async () => {
+  hermit.delayMs = 300;
+  try {
+    const gone = sandbox({ state: "gone", live: false });
+    const first = rpc("tools/list", {}, gone);
+    await new Promise((r) => setTimeout(r, 10));
+    const second = rpc("tools/list", {}, gone);
+    await new Promise((r) => setTimeout(r, 10));
+    const third = rpc("tools/call", { name: "slow_wait", arguments: { ms: 0 } }, gone);
+    const rs = await Promise.all([first, second, third]);
+    assert.deepEqual(rs.map((r) => r.status), [403, 403, 403]);
+    assert.equal(hermit.lookups.get(gone.id), 1, "one lookup for all three");
+    const ok = sandbox();
+    const both = await Promise.all([rpc("tools/list", {}, ok), rpc("tools/list", {}, ok)]);
+    assert.deepEqual(both.map((r) => r.status), [200, 200]);
+  } finally {
+    hermit.delayMs = 0;
+  }
+});
+
+test("liveness: hermit refusing tools' bearer (401/403) is a configuration fault, counted apart; calls are still served", async () => {
+  const s = sandbox();
+  const before = liveness.failuresBy.auth;
+  hermit.outage = "auth";
+  try {
+    assert.equal((await rpc("tools/list", {}, s)).status, 200, "a hermit problem never refuses a call the gateway verified");
+    assert.equal(liveness.failuresBy.auth, before + 1);
+    assert.equal(liveness.authFault, true);
+  } finally {
+    hermit.outage = "up";
+  }
+  clock += 2500; // past the retry pause
+  const later = sandbox({ state: "releasing" });
+  assert.equal((await rpc("tools/list", {}, later)).status, 403);
+  assert.equal(liveness.authFault, false, "cleared by the next answer");
+});
+
 test("tool_calls: a database outage drops the row and never delays the call", async () => {
   const dead = connect("postgres://tools:x@127.0.0.1:1/tools");
   const deadLog = new CallLog(dead);
@@ -342,9 +383,36 @@ test("drain: 150 s bound; in-flight calls finish, a kept-alive request is answer
   const two = await startServer();
   const p = fetch(`${two.url}/mcp`, { method: "POST", headers: gw(s), body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "slow_wait", arguments: { ms: 5000 } } }) }).catch((e) => e);
   await new Promise((r) => setTimeout(r, 100));
-  assert.equal(await two.srv.drain(300), 1);
+  const cutRequest = "0190f6c2-0000-7000-8000-0000000000cc";
+  const p2 = fetch(`${two.url}/mcp`, { method: "POST", headers: gw(s, GW, cutRequest), body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "slow_wait", arguments: { ms: 5000 } } }) }).catch((e) => e);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(await two.srv.drain(300), 2);
   assert.ok((await p) instanceof Error);
-  assert.ok(two.srv.metrics().includes("tools_drain_cut_total 1"));
+  assert.ok((await p2) instanceof Error);
+  assert.ok(two.srv.metrics().includes("tools_drain_cut_total 2"));
+  // the cut calls' rows are in the log's pending writes when drain returns (main flushes them before it exits)
+  const { rows } = await q(`select ok, error from tool_calls where request = '${cutRequest}'`);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].ok, false);
+  assert.match(rows[0].error, /cut by the drain/);
+});
+
+test("upstreams: the first tool-list read is bounded, so an upstream that hangs never holds the pod unready", async () => {
+  const hang = createServer(() => {});
+  await new Promise<void>((r) => hang.listen(0, "127.0.0.1", r));
+  try {
+    const cfg = parseToolsConfig({ upstreams: [{ prefix: "stuck", url: `http://127.0.0.1:${(hang.address() as AddressInfo).port}/mcp`, tools: ["x"], listAs: "lister@example.org" }] });
+    const ups = cfg.upstreams.map((u) => new Upstream(u, { ...deps, config: cfg }));
+    const t0 = Date.now();
+    const r = startRefresh(ups, 600_000, 300);
+    await r.ready;
+    r.stop();
+    assert.ok(Date.now() - t0 < 2000, "ready without the upstream's answer");
+    assert.deepEqual(ups[0]!.tools(), []);
+  } finally {
+    hang.closeAllConnections();
+    hang.close();
+  }
 });
 
 test("config, catalogue and migrations", async () => {

@@ -73,7 +73,8 @@ export interface ServerParts {
 export interface ToolsServer {
   server: Server;
   /** Stops new connections; a request on a kept-alive connection is served with `Connection: close`; in-flight calls
-   * finish up to `boundMs`, then what is left is cut. Resolves with the number of requests cut. */
+   * finish up to `boundMs`, then what is left is cut: each tool call still running has its tool_calls row written
+   * (ok false, "cut by the drain") and is aborted. Resolves with the number of requests cut. */
   drain(boundMs?: number): Promise<number>;
   readonly inFlight: number;
   metrics(): string[];
@@ -86,6 +87,8 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[], parts: Serv
   const answered = new Map<string, number>();
   const callsDone = new Map<string, number>();
   const count = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
+  /** the tool calls running now: each entry writes the call's row as cut and aborts it */
+  const runningCalls = new Set<() => void>();
 
   const handlers: McpHandlers = {
     serverName: "tools",
@@ -96,14 +99,13 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[], parts: Serv
       const t0 = Date.now();
       let r: ToolResult | undefined;
       let err: string | null = null;
-      try {
-        r = await tool.run(args, ctx);
-        return r;
-      } catch (e) {
-        err = (e as Error).message;
-        throw e;
-      } finally {
-        const ok = !err && !r?.isError;
+      let written = false;
+      // the call's tool_calls row, written once: when the call ends, or at the drain's cut (then the row says so and is
+      // in CallLog's pending writes before main flushes them)
+      const writeRow = (cut: boolean) => {
+        if (written) return;
+        written = true;
+        const ok = !cut && !err && !r?.isError;
         count(callsDone, ok ? "true" : "false");
         parts.calls.write({
           conversationId: ctx.caller.conversationId,
@@ -114,9 +116,27 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[], parts: Serv
           args,
           ok,
           ms: Date.now() - t0,
-          error: err ?? (r?.isError ? r.content.map((c) => (c as { text?: string }).text ?? "").join(" ").slice(0, 500) : null),
-          costUsd: r?.costUsd ?? null,
+          error: cut
+            ? `cut by the drain after ${Math.round((Date.now() - t0) / 1000)} s`
+            : (err ?? (r?.isError ? r.content.map((c) => (c as { text?: string }).text ?? "").join(" ").slice(0, 500) : null)),
+          costUsd: cut ? null : (r?.costUsd ?? null),
         });
+      };
+      const ac = new AbortController();
+      const cutThis = () => {
+        writeRow(true);
+        ac.abort(new Error("the tools server is shutting down"));
+      };
+      runningCalls.add(cutThis);
+      try {
+        r = await tool.run(args, { ...ctx, signal: ac.signal });
+        return r;
+      } catch (e) {
+        err = (e as Error).message;
+        throw e;
+      } finally {
+        runningCalls.delete(cutThis);
+        writeRow(false);
       }
     },
   };
@@ -229,6 +249,8 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[], parts: Serv
       }
       const cut = active;
       cutTotal += cut;
+      // every tool call still running gets its tool_calls row now (marked cut) and is aborted, so main's flush writes it
+      for (const c of [...runningCalls]) c();
       for (const s of sockets) s.destroy();
       await closed;
       return cut;
