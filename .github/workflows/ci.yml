@@ -112,6 +112,13 @@ jobs:
           url=$(.github/ci/postgres-sync.sh ghcr.io/cloudnative-pg/postgresql:17.11-standard-trixie@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3 5432)
           echo "::add-mask::$url"
           echo "AVIARY_TEST_DATABASE_URL=$url" >> "$GITHUB_ENV"
+      - name: libheif (magpie's HEIF/AVIF decoder)
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends libheif-dev
+      - name: s3 (every magpie replica has a bucket; versitygw as in the test job)
+        run: |
+          lines=$(.github/ci/s3.sh versity/versitygw:v1.9.0@sha256:eb7f786fcd91e72194e48fcf1ac16302d686bf8e3a71434bdbc067a6efd3fdc7 9000)
+          echo "::add-mask::$(grep '^AVIARY_TEST_S3_SECRET_ACCESS_KEY=' <<< "$lines" | cut -d= -f2-)"
+          echo "$lines" >> "$GITHUB_ENV"
       - name: p50 <= 15 ms for a 10 KiB append, p99 <= 150 ms for a 1 MiB image line
         env:
           CARGO_PROFILE_RELEASE_LTO: "false"
