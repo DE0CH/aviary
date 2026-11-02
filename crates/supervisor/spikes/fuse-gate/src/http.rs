@@ -27,12 +27,13 @@ pub fn pct_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(v);
-                i += 3;
-                continue;
-            }
+        if b[i] == b'%'
+            && i + 2 < b.len()
+            && let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16)
+        {
+            out.push(v);
+            i += 3;
+            continue;
         }
         out.push(if b[i] == b'+' { b' ' } else { b[i] });
         i += 1;
@@ -122,15 +123,20 @@ fn read_request(r: &mut BufReader<TcpStream>) -> io::Result<Option<Request>> {
         if h.is_empty() {
             break;
         }
-        if let Some((k, v)) = h.split_once(':') {
-            if k.eq_ignore_ascii_case("content-length") {
-                len = v.trim().parse().unwrap_or(0);
-            }
+        if let Some((k, v)) = h.split_once(':')
+            && k.eq_ignore_ascii_case("content-length")
+        {
+            len = v.trim().parse().unwrap_or(0);
         }
     }
     let mut body = vec![0; len];
     r.read_exact(&mut body)?;
-    Ok(Some(Request { method, path, query, body }))
+    Ok(Some(Request {
+        method,
+        path,
+        query,
+        body,
+    }))
 }
 
 /// A keep-alive client to one address; reconnects on any error (the caller retries).
@@ -141,7 +147,10 @@ pub struct Client {
 
 impl Client {
     pub fn new(addr: &str) -> Self {
-        Self { addr: addr.to_string(), conn: None }
+        Self {
+            addr: addr.to_string(),
+            conn: None,
+        }
     }
 
     /// Sends the request; `after_send` runs once the request bytes are written (fault injection).
@@ -160,7 +169,10 @@ impl Client {
         }
         let res = (|| {
             let (w, r) = self.conn.as_mut().ok_or_else(|| io::Error::other("no conn"))?;
-            let head = format!("{method} {target} HTTP/1.1\r\nHost: m\r\nContent-Length: {}\r\n\r\n", body.len());
+            let head = format!(
+                "{method} {target} HTTP/1.1\r\nHost: m\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
             w.write_all(head.as_bytes())?;
             w.write_all(body)?;
             after_send();
@@ -179,10 +191,10 @@ impl Client {
                 if h.is_empty() {
                     break;
                 }
-                if let Some((k, v)) = h.split_once(':') {
-                    if k.eq_ignore_ascii_case("content-length") {
-                        len = v.trim().parse().unwrap_or(0);
-                    }
+                if let Some((k, v)) = h.split_once(':')
+                    && k.eq_ignore_ascii_case("content-length")
+                {
+                    len = v.trim().parse().unwrap_or(0);
                 }
             }
             let mut b = vec![0; len];

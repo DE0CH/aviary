@@ -28,11 +28,17 @@ args += script.get("args", [])
 log = open(os.path.join(out, "stdout.jsonl"), "w")
 err = open(os.path.join(out, "stderr.log"), "w")
 t0 = now_us()
-p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, env=env, cwd="/home/sandbox")
+p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, env=env, cwd=script.get("cwd", "/home/sandbox"))
 summary = {"args": args, "turns": [], "session_id": None}
-for prompt in script["turns"]:
+for n_turn, prompt in enumerate(script["turns"]):
     ts = now_us()
-    msg = {"type": "user", "message": {"role": "user", "content": prompt}}
+    ctl = prompt.get("control") if isinstance(prompt, dict) else None
+    if ctl is not None:
+        # a control request (e.g. {"subtype": "set_cwd", "directory": ...}), answered by a control_response
+        msg = {"type": "control_request", "request_id": f"gate-{n_turn}", "request": ctl}
+        prompt = json.dumps(ctl)
+    else:
+        msg = {"type": "user", "message": {"role": "user", "content": prompt}}
     p.stdin.write((json.dumps(msg) + "\n").encode())
     p.stdin.flush()
     result = None
@@ -49,11 +55,16 @@ for prompt in script["turns"]:
             continue
         if m.get("session_id"):
             summary["session_id"] = m["session_id"]
-        if m.get("type") == "result":
+        if m.get("type") == "result" and ctl is None:
             result = m
             break
+        if m.get("type") == "control_response" and ctl is not None:
+            r = m.get("response", {})
+            result = {"subtype": r.get("subtype", "success"), "is_error": r.get("subtype") == "error", "control": r}
+            break
     summary["turns"].append({"prompt": prompt[:200], "start_us": ts, "end_us": now_us(),
-                             "result": (result or {}).get("subtype"), "is_error": (result or {}).get("is_error")})
+                             "result": (result or {}).get("subtype"), "is_error": (result or {}).get("is_error"),
+                             **({"control": result.get("control")} if result and "control" in result else {})})
     if result is None:
         break
 p.stdin.close()

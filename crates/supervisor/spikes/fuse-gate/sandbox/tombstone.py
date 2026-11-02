@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Claude Code 2.1.304's tombstone removal (performRemoveByUuid, read from the binary) replayed on a transcript:
+"""A REPLAY, not Claude Code: 2.1.304's tombstone removal (performRemoveByUuid, read from the binary) done by this
+script on a transcript (Claude Code's own trigger was not reproduced, GATE.md item 2):
 open r+, read the last 64 KiB, ftruncate at the start of the line holding UUID, pwrite the rest of the tail back.
 usage: tombstone.py TRANSCRIPT [UUID]   (default: the last assistant line's uuid)"""
 import json, os, sys
@@ -44,8 +45,16 @@ if start >= 0 and tail.rfind(b"\n", 0, start) >= 0:
 else:
     # not in the tail: the whole-file rewrite (files under 50 MiB)
     mode = "whole-file"
+    # exactly the line whose own uuid is UUID goes; every other byte (empty lines, other lines naming the uuid as a
+    # parent) stays as it was
     data = os.pread(fd, size, 0)
-    out = b"".join(l + b"\n" for l in data.split(b"\n") if l and key not in l)
+    def own(l):
+        try:
+            return json.loads(l).get("uuid") == uuid
+        except Exception:
+            return False
+    parts = data.split(b"\n")
+    out = b"\n".join(l for l in parts if not (key in l and own(l)))
     os.ftruncate(fd, 0)
     os.pwrite(fd, out, 0)
     removed = size - len(out)

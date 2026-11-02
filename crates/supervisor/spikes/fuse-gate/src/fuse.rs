@@ -116,7 +116,18 @@ impl Inner {
         let i = self.next;
         self.next += 1;
         let _ = writeln!(self.nlog, "a {i} {path}");
-        self.nodes.insert(i, Node { path: path.to_string(), dir, mode, size, mtime, ctime: mtime, gone: false });
+        self.nodes.insert(
+            i,
+            Node {
+                path: path.to_string(),
+                dir,
+                mode,
+                size,
+                mtime,
+                ctime: mtime,
+                gone: false,
+            },
+        );
         self.by_path.insert(path.to_string(), i);
         i
     }
@@ -158,11 +169,17 @@ pub struct Opts {
 }
 
 fn now_ns() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64)
 }
 
 fn join(parent: &str, name: &str) -> String {
-    if parent.is_empty() { name.to_string() } else { format!("{parent}/{name}") }
+    if parent.is_empty() {
+        name.to_string()
+    } else {
+        format!("{parent}/{name}")
+    }
 }
 
 fn parent_of(p: &str) -> &str {
@@ -188,7 +205,11 @@ fn attr(ino: u64, n: &Node, o: &mut Vec<u8>) {
     for v in [ino, n.size, n.size.div_ceil(512), s, s, cs] {
         o.extend_from_slice(&v.to_le_bytes());
     }
-    let mode = if n.dir { libc::S_IFDIR | n.mode } else { libc::S_IFREG | n.mode };
+    let mode = if n.dir {
+        libc::S_IFDIR | n.mode
+    } else {
+        libc::S_IFREG | n.mode
+    };
     for v in [ns, ns, cns, mode, if n.dir { 2 } else { 1 }, 1000, 1000, 0, 4096, 0] {
         o.extend_from_slice(&v.to_le_bytes());
     }
@@ -249,12 +270,13 @@ struct Ctx {
 
 impl Fs {
     fn maybe_die(&self, point: &str, ctx: &Ctx) {
-        if let Some(d) = &self.die {
-            if ctx.marked && d.point == point {
-                eprintln!("fault-injection: SIGKILL at {point} ({})", opname(ctx.opcode));
-                // SAFETY: kill(2) on ourselves.
-                unsafe { libc::kill(libc::getpid(), libc::SIGKILL) };
-            }
+        if let Some(d) = &self.die
+            && ctx.marked
+            && d.point == point
+        {
+            eprintln!("fault-injection: SIGKILL at {point} ({})", opname(ctx.opcode));
+            // SAFETY: kill(2) on ourselves.
+            unsafe { libc::kill(libc::getpid(), libc::SIGKILL) };
         }
     }
 
@@ -300,7 +322,9 @@ impl Fs {
         }
         let mut wait = 200;
         let body = loop {
-            match cl.call("GET", &format!("/file?path={}", pct_encode(&n.path)), &[], &mut || self.maybe_die("sent", ctx)) {
+            match cl.call("GET", &format!("/file?path={}", pct_encode(&n.path)), &[], &mut || {
+                self.maybe_die("sent", ctx)
+            }) {
                 Ok((200, b)) => {
                     self.maybe_die("answered", ctx);
                     break b;
@@ -330,7 +354,11 @@ impl Fs {
             Some(Err(e)) => *e,
             _ => 0,
         };
-        let line = format!("{t0}\t{}\t{ino}\t{path}\t{detail}\t{err}\t{}\t{unique}\n", opname(opcode), now_us() - t0);
+        let line = format!(
+            "{t0}\t{}\t{ino}\t{path}\t{detail}\t{err}\t{}\t{unique}\n",
+            opname(opcode),
+            now_us() - t0
+        );
         let _ = self.oplog.lock().unwrap().write_all(line.as_bytes());
         match res {
             None => None,
@@ -355,7 +383,12 @@ impl Fs {
             26 => {
                 let minor = u32at(b, 4).min(31);
                 let flags = u32at(b, 12) & ((1 << 3) | (1 << 5) | (1 << 22));
-                *detail = format!("kernel {}.{} flags {:#x} -> {flags:#x}", u32at(b, 0), u32at(b, 4), u32at(b, 12));
+                *detail = format!(
+                    "kernel {}.{} flags {:#x} -> {flags:#x}",
+                    u32at(b, 0),
+                    u32at(b, 4),
+                    u32at(b, 12)
+                );
                 let mut o = Vec::with_capacity(64);
                 for v in [7u32, minor, u32at(b, 8), flags] {
                     o.extend_from_slice(&v.to_le_bytes());
@@ -378,7 +411,9 @@ impl Fs {
                 let (name, _) = cstr(b);
                 *detail = name.to_string();
                 let s = self.inner.lock().unwrap();
-                let Some(p) = s.nodes.get(&ino) else { return Some(Err(ENOENT)) };
+                let Some(p) = s.nodes.get(&ino) else {
+                    return Some(Err(ENOENT));
+                };
                 let cp = join(&p.path, name);
                 match s.by_path.get(&cp) {
                     Some(&ci) => Ok(entry(ci, &s.nodes[&ci])),
@@ -391,7 +426,9 @@ impl Fs {
             },
             4 => {
                 let valid = u32at(b, 0);
-                let Some(n) = self.node(ino) else { return Some(Err(ENOENT)) };
+                let Some(n) = self.node(ino) else {
+                    return Some(Err(ENOENT));
+                };
                 *detail = format!("valid={valid:#x}");
                 if valid & (2 | 4) != 0 {
                     let (uid, gid) = (u32at(b, 76), u32at(b, 80));
@@ -403,7 +440,12 @@ impl Fs {
                 if valid & 8 != 0 {
                     let size = u64at(b, 16);
                     detail.push_str(&format!(" size={size}"));
-                    if let Err(e) = self.call(cl, &format!("/truncate?path={p}&size={size}&mtime={mtime}&op={}", self.op(unique, 0)), &[], ctx) {
+                    if let Err(e) = self.call(
+                        cl,
+                        &format!("/truncate?path={p}&size={size}&mtime={mtime}&op={}", self.op(unique, 0)),
+                        &[],
+                        ctx,
+                    ) {
                         return Some(Err(e));
                     }
                     let cf = self.cache_file(ino);
@@ -420,7 +462,12 @@ impl Fs {
                 }
                 if valid & 1 != 0 {
                     let mode = u32at(b, 68) & 0o7777;
-                    if let Err(e) = self.call(cl, &format!("/setattr?path={p}&mode={mode}&op={}", self.op(unique, 1)), &[], ctx) {
+                    if let Err(e) = self.call(
+                        cl,
+                        &format!("/setattr?path={p}&mode={mode}&op={}", self.op(unique, 1)),
+                        &[],
+                        ctx,
+                    ) {
                         return Some(Err(e));
                     }
                     let mut s = self.inner.lock().unwrap();
@@ -429,8 +476,17 @@ impl Fs {
                     m.ctime = mtime;
                 }
                 if valid & (32 | 256) != 0 {
-                    let mt = if valid & 256 != 0 { mtime } else { u64at(b, 40) * 1_000_000_000 + u64::from(u32at(b, 60)) };
-                    if let Err(e) = self.call(cl, &format!("/setattr?path={p}&mtime={mt}&op={}", self.op(unique, 2)), &[], ctx) {
+                    let mt = if valid & 256 != 0 {
+                        mtime
+                    } else {
+                        u64at(b, 40) * 1_000_000_000 + u64::from(u32at(b, 60))
+                    };
+                    if let Err(e) = self.call(
+                        cl,
+                        &format!("/setattr?path={p}&mtime={mt}&op={}", self.op(unique, 2)),
+                        &[],
+                        ctx,
+                    ) {
                         return Some(Err(e));
                     }
                     let mut s = self.inner.lock().unwrap();
@@ -445,10 +501,21 @@ impl Fs {
             9 => {
                 let mode = u32at(b, 0) & 0o7777 & !u32at(b, 4);
                 let (name, _) = cstr(&b[8..]);
-                let Some(par) = self.node(ino) else { return Some(Err(ENOENT)) };
+                let Some(par) = self.node(ino) else {
+                    return Some(Err(ENOENT));
+                };
                 let cp = join(&par.path, name);
                 *detail = name.to_string();
-                if let Err(e) = self.call(cl, &format!("/mkdir?path={}&mode={mode}&mtime={mtime}&op={}", pct_encode(&cp), self.op(unique, 0)), &[], ctx) {
+                if let Err(e) = self.call(
+                    cl,
+                    &format!(
+                        "/mkdir?path={}&mode={mode}&mtime={mtime}&op={}",
+                        pct_encode(&cp),
+                        self.op(unique, 0)
+                    ),
+                    &[],
+                    ctx,
+                ) {
                     return Some(Err(e));
                 }
                 let mut s = self.inner.lock().unwrap();
@@ -457,11 +524,18 @@ impl Fs {
             }
             10 | 11 => {
                 let (name, _) = cstr(b);
-                let Some(par) = self.node(ino) else { return Some(Err(ENOENT)) };
+                let Some(par) = self.node(ino) else {
+                    return Some(Err(ENOENT));
+                };
                 let cp = join(&par.path, name);
                 *detail = name.to_string();
                 let route = if opcode == 10 { "unlink" } else { "rmdir" };
-                if let Err(e) = self.call(cl, &format!("/{route}?path={}&op={}", pct_encode(&cp), self.op(unique, 0)), &[], ctx) {
+                if let Err(e) = self.call(
+                    cl,
+                    &format!("/{route}?path={}&op={}", pct_encode(&cp), self.op(unique, 0)),
+                    &[],
+                    ctx,
+                ) {
                     return Some(Err(e));
                 }
                 self.inner.lock().unwrap().drop_path(&cp);
@@ -475,11 +549,23 @@ impl Fs {
                 if opcode == 45 && u32at(b, 8) != 0 {
                     return Some(Err(EINVAL));
                 }
-                let (Some(pa), Some(pb)) = (self.node(ino), self.node(newdir)) else { return Some(Err(ENOENT)) };
+                let (Some(pa), Some(pb)) = (self.node(ino), self.node(newdir)) else {
+                    return Some(Err(ENOENT));
+                };
                 let from = join(&pa.path, old);
                 let to = join(&pb.path, new);
                 *detail = format!("{from} -> {to}");
-                if let Err(e) = self.call(cl, &format!("/rename?path={}&to={}&op={}", pct_encode(&from), pct_encode(&to), self.op(unique, 0)), &[], ctx) {
+                if let Err(e) = self.call(
+                    cl,
+                    &format!(
+                        "/rename?path={}&to={}&op={}",
+                        pct_encode(&from),
+                        pct_encode(&to),
+                        self.op(unique, 0)
+                    ),
+                    &[],
+                    ctx,
+                ) {
                     return Some(Err(e));
                 }
                 let mut s = self.inner.lock().unwrap();
@@ -488,8 +574,12 @@ impl Fs {
                 }
                 if let Some(i) = s.by_path.remove(&from) {
                     let pre = format!("{from}/");
-                    let kids: Vec<(String, u64)> =
-                        s.by_path.iter().filter(|(k, _)| k.starts_with(&pre)).map(|(k, v)| (k.clone(), *v)).collect();
+                    let kids: Vec<(String, u64)> = s
+                        .by_path
+                        .iter()
+                        .filter(|(k, _)| k.starts_with(&pre))
+                        .map(|(k, v)| (k.clone(), *v))
+                        .collect();
                     s.by_path.insert(to.clone(), i);
                     s.nodes.get_mut(&i).unwrap().path = to.clone();
                     let _ = writeln!(s.nlog, "r {i} {to}");
@@ -505,10 +595,21 @@ impl Fs {
             }
             14 => {
                 let flags = u32at(b, 0) as i32;
-                let Some(n) = self.node(ino) else { return Some(Err(ENOENT)) };
+                let Some(n) = self.node(ino) else {
+                    return Some(Err(ENOENT));
+                };
                 *detail = format!("flags={flags:#o}");
                 if flags & libc::O_TRUNC != 0 && !n.dir && n.size > 0 {
-                    if let Err(e) = self.call(cl, &format!("/truncate?path={}&size=0&mtime={mtime}&op={}", pct_encode(&n.path), self.op(unique, 0)), &[], ctx) {
+                    if let Err(e) = self.call(
+                        cl,
+                        &format!(
+                            "/truncate?path={}&size=0&mtime={mtime}&op={}",
+                            pct_encode(&n.path),
+                            self.op(unique, 0)
+                        ),
+                        &[],
+                        ctx,
+                    ) {
                         return Some(Err(e));
                     }
                     let _ = File::create(self.cache_file(ino));
@@ -524,7 +625,9 @@ impl Fs {
                 let off = u64at(b, 8);
                 let size = u64::from(u32at(b, 16));
                 *detail = format!("off={off} size={size}");
-                let Some(n) = self.node(ino) else { return Some(Err(ENOENT)) };
+                let Some(n) = self.node(ino) else {
+                    return Some(Err(ENOENT));
+                };
                 if let Err(e) = self.ensure_cached(cl, ino, &n, ctx) {
                     return Some(Err(e));
                 }
@@ -547,13 +650,27 @@ impl Fs {
                 let size = u32at(b, 16) as usize;
                 let data = &b[40..40 + size];
                 *detail = format!("off={off} size={size}");
-                let Some(n) = self.node(ino) else { return Some(Err(ENOENT)) };
-                if let Err(e) = self.call(cl, &format!("/write?path={}&offset={off}&mtime={mtime}&create=0&op={}", pct_encode(&n.path), self.op(unique, 0)), data, ctx) {
+                let Some(n) = self.node(ino) else {
+                    return Some(Err(ENOENT));
+                };
+                if let Err(e) = self.call(
+                    cl,
+                    &format!(
+                        "/write?path={}&offset={off}&mtime={mtime}&create=0&op={}",
+                        pct_encode(&n.path),
+                        self.op(unique, 0)
+                    ),
+                    data,
+                    ctx,
+                ) {
                     return Some(Err(e));
                 }
                 let cf = self.cache_file(ino);
                 if fs::metadata(&cf).is_ok_and(|m| m.len() == n.size) {
-                    let _ = OpenOptions::new().write(true).open(&cf).and_then(|f| f.write_all_at(data, off));
+                    let _ = OpenOptions::new()
+                        .write(true)
+                        .open(&cf)
+                        .and_then(|f| f.write_all_at(data, off));
                 } else {
                     let _ = fs::remove_file(&cf);
                 }
@@ -591,7 +708,9 @@ impl Fs {
                 let off = u64at(b, 8) as usize;
                 let size = u32at(b, 16) as usize;
                 let s = self.inner.lock().unwrap();
-                let Some(d) = s.nodes.get(&ino) else { return Some(Err(ENOENT)) };
+                let Some(d) = s.nodes.get(&ino) else {
+                    return Some(Err(ENOENT));
+                };
                 let mut kids: Vec<(String, u64, bool)> = s
                     .by_path
                     .iter()
@@ -621,13 +740,23 @@ impl Fs {
                 let flags = u32at(b, 0) as i32;
                 let mode = u32at(b, 4) & 0o7777 & !u32at(b, 8);
                 let (name, _) = cstr(&b[16..]);
-                let Some(par) = self.node(ino) else { return Some(Err(ENOENT)) };
+                let Some(par) = self.node(ino) else {
+                    return Some(Err(ENOENT));
+                };
                 let cp = join(&par.path, name);
                 *detail = format!("{name} flags={flags:#o} mode={mode:o}");
-                if let Err(e) = self.call(cl, &format!("/write?path={}&offset=0&mtime={mtime}&create=1&mode={mode}&op={}", pct_encode(&cp), self.op(unique, 0)), &[], ctx) {
-                    if e != EEXIST || flags & libc::O_EXCL != 0 {
-                        return Some(Err(e));
-                    }
+                if let Err(e) = self.call(
+                    cl,
+                    &format!(
+                        "/write?path={}&offset=0&mtime={mtime}&create=1&mode={mode}&op={}",
+                        pct_encode(&cp),
+                        self.op(unique, 0)
+                    ),
+                    &[],
+                    ctx,
+                ) && (e != EEXIST || flags & libc::O_EXCL != 0)
+                {
+                    return Some(Err(e));
                 }
                 let mut s = self.inner.lock().unwrap();
                 let ci = match s.by_path.get(&cp) {
@@ -646,12 +775,24 @@ impl Fs {
 }
 
 fn mmap_journal(path: &PathBuf, slots: usize) -> std::io::Result<*mut u8> {
-    let f = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path)?;
+    let f = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
     f.set_len((slots * SLOT) as u64)?;
     use std::os::fd::AsRawFd;
     // SAFETY: a shared read/write mapping of a file we just sized; it lives for the whole process.
     let p = unsafe {
-        libc::mmap(std::ptr::null_mut(), slots * SLOT, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, f.as_raw_fd(), 0)
+        libc::mmap(
+            std::ptr::null_mut(),
+            slots * SLOT,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_SHARED,
+            f.as_raw_fd(),
+            0,
+        )
     };
     if p == libc::MAP_FAILED {
         return Err(std::io::Error::last_os_error());
@@ -667,24 +808,17 @@ unsafe impl Sync for SendPtr {}
 fn write_reply(fd: RawFd, r: &[u8]) -> i32 {
     // SAFETY: write(2) of an owned buffer.
     let n = unsafe { libc::write(fd, r.as_ptr().cast(), r.len()) };
-    if n < 0 { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) } else { 0 }
+    if n < 0 {
+        std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+    } else {
+        0
+    }
 }
 
 pub fn serve(o: Opts) -> std::io::Result<()> {
     fs::create_dir_all(&o.state)?;
     let cache = o.state.join("cache");
     fs::create_dir_all(&cache)?;
-    let boot_f = o.state.join("boot");
-    let boot = match fs::read_to_string(&boot_f) {
-        Ok(s) => u64::from_str_radix(s.trim(), 16).unwrap_or(1),
-        Err(_) => {
-            let mut b = [0u8; 8];
-            File::open("/dev/urandom")?.read_exact(&mut b)?;
-            let v = u64::from_le_bytes(b);
-            fs::write(&boot_f, format!("{v:016x}"))?;
-            v
-        }
-    };
     let t_start = now_us();
     let (fd, fresh) = match keeper::get(&o.keeper)? {
         Some(fd) => (fd, false),
@@ -702,7 +836,13 @@ pub fn serve(o: Opts) -> std::io::Result<()> {
             let d = std::ffi::CString::new(data.clone()).unwrap();
             // SAFETY: mount(2) with NUL-terminated strings.
             let r = unsafe {
-                libc::mount(src.as_ptr(), tgt.as_ptr(), ty.as_ptr(), libc::MS_NOSUID | libc::MS_NODEV, d.as_ptr().cast())
+                libc::mount(
+                    src.as_ptr(),
+                    tgt.as_ptr(),
+                    ty.as_ptr(),
+                    libc::MS_NOSUID | libc::MS_NODEV,
+                    d.as_ptr().cast(),
+                )
             };
             if r < 0 {
                 let e = std::io::Error::last_os_error();
@@ -714,23 +854,66 @@ pub fn serve(o: Opts) -> std::io::Result<()> {
             (fd, true)
         }
     };
+    // bootId: one per /dev/fuse connection (its `unique` counter starts again on a new one), so a fresh mount always
+    // draws a new id and only a restart that took the connection from the keeper reuses the stored one; op ids
+    // `bootId-unique-step` then never repeat for different requests even if the state dir survives a remount.
+    let boot_f = o.state.join("boot");
+    let stored = fs::read_to_string(&boot_f)
+        .ok()
+        .and_then(|s| u64::from_str_radix(s.trim(), 16).ok());
+    let boot = match stored {
+        Some(v) if !fresh => v,
+        _ => {
+            let mut b = [0u8; 8];
+            File::open("/dev/urandom")?.read_exact(&mut b)?;
+            let v = u64::from_le_bytes(b);
+            fs::write(&boot_f, format!("{v:016x}"))?;
+            v
+        }
+    };
     // node ids
     let nl = o.state.join("nodes.log");
     let mut by_path = HashMap::new();
     let mut nodes = HashMap::new();
     let mut next = 2;
-    nodes.insert(1, Node { path: String::new(), dir: true, mode: 0o700, size: 0, mtime: now_ns(), ctime: now_ns(), gone: false });
+    nodes.insert(
+        1,
+        Node {
+            path: String::new(),
+            dir: true,
+            mode: 0o700,
+            size: 0,
+            mtime: now_ns(),
+            ctime: now_ns(),
+            gone: false,
+        },
+    );
     by_path.insert(String::new(), 1u64);
     if let Ok(f) = File::open(&nl) {
         for l in BufReader::new(f).lines().map_while(Result::ok) {
             let mut it = l.splitn(3, ' ');
-            let (k, i, p) = (it.next().unwrap_or(""), it.next().unwrap_or("0").parse::<u64>().unwrap_or(0), it.next().unwrap_or(""));
+            let (k, i, p) = (
+                it.next().unwrap_or(""),
+                it.next().unwrap_or("0").parse::<u64>().unwrap_or(0),
+                it.next().unwrap_or(""),
+            );
             match k {
                 "a" | "r" => {
                     if let Some(n) = nodes.get(&i).cloned() {
                         by_path.remove(&n.path);
                     }
-                    nodes.insert(i, Node { path: p.to_string(), dir: false, mode: 0o600, size: 0, mtime: 0, ctime: 0, gone: true });
+                    nodes.insert(
+                        i,
+                        Node {
+                            path: p.to_string(),
+                            dir: false,
+                            mode: 0o600,
+                            size: 0,
+                            mtime: 0,
+                            ctime: 0,
+                            gone: true,
+                        },
+                    );
                     by_path.insert(p.to_string(), i);
                     next = next.max(i + 1);
                 }
@@ -748,7 +931,12 @@ pub fn serve(o: Opts) -> std::io::Result<()> {
         }
     }
     let nlog = OpenOptions::new().create(true).append(true).open(&nl)?;
-    let mut inner = Inner { nodes, by_path, next, nlog };
+    let mut inner = Inner {
+        nodes,
+        by_path,
+        next,
+        nlog,
+    };
     // tree from magpie
     let mut cl = Client::new(&o.magpie);
     let tree = loop {
@@ -769,7 +957,12 @@ pub fn serve(o: Opts) -> std::io::Result<()> {
         let i = inner.assign(p, k == "d", mode, size, mtime);
         seen.insert(i);
     }
-    let stale: Vec<String> = inner.by_path.iter().filter(|(_, i)| !seen.contains(i)).map(|(p, _)| p.clone()).collect();
+    let stale: Vec<String> = inner
+        .by_path
+        .iter()
+        .filter(|(_, i)| !seen.contains(i))
+        .map(|(p, _)| p.clone())
+        .collect();
     for p in stale {
         inner.by_path.remove(&p);
     }
@@ -781,7 +974,10 @@ pub fn serve(o: Opts) -> std::io::Result<()> {
     let mut kept = 0;
     for e in fs::read_dir(&cache)?.flatten() {
         let i: u64 = e.file_name().to_string_lossy().parse().unwrap_or(0);
-        let ok = inner.nodes.get(&i).is_some_and(|n| !n.gone && e.metadata().is_ok_and(|m| m.len() == n.size));
+        let ok = inner
+            .nodes
+            .get(&i)
+            .is_some_and(|n| !n.gone && e.metadata().is_ok_and(|m| m.len() == n.size));
         if ok {
             kept += 1;
         } else {
@@ -792,7 +988,12 @@ pub fn serve(o: Opts) -> std::io::Result<()> {
         inner: Mutex::new(inner),
         boot,
         cache,
-        oplog: Mutex::new(OpenOptions::new().create(true).append(true).open(o.state.join("ops.tsv"))?),
+        oplog: Mutex::new(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(o.state.join("ops.tsv"))?,
+        ),
         die: o.die,
         fd,
         magpie: o.magpie.clone(),
@@ -815,7 +1016,10 @@ pub fn serve(o: Opts) -> std::io::Result<()> {
         let opcode = u32at(slot, 4);
         let r = fs_.handle(&mut cl, slot, false);
         let werr = r.as_ref().map_or(0, |r| write_reply(fd, r));
-        eprintln!("replayed slot {s} unique {unique} {} -> reply write errno {werr}", opname(opcode));
+        eprintln!(
+            "replayed slot {s} unique {unique} {} -> reply write errno {werr}",
+            opname(opcode)
+        );
         slot[0..4].copy_from_slice(&0u32.to_le_bytes());
     }
     eprintln!(
@@ -847,9 +1051,10 @@ pub fn serve(o: Opts) -> std::io::Result<()> {
                     }
                 }
                 let opcode = u32at(slot, 4);
-                let marked = f.die.as_ref().is_some_and(|d| {
-                    d.opcode == opcode && d.seen.fetch_add(1, Ordering::SeqCst) + 1 == d.nth
-                });
+                let marked = f
+                    .die
+                    .as_ref()
+                    .is_some_and(|d| d.opcode == opcode && d.seen.fetch_add(1, Ordering::SeqCst) + 1 == d.nth);
                 f.maybe_die("read", &Ctx { opcode, marked });
                 if let Some(r) = f.handle(&mut cl, slot, marked) {
                     let e = write_reply(f.fd, &r);

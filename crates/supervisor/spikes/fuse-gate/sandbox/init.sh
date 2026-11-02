@@ -4,6 +4,11 @@
 # /run/gate-die-at (POINT:OPCODE:NTH), when present at a supervisor start, is passed as --die-at once.
 set -u
 S=/srv
+# GATE_LAYOUT=scratch: supervisor state (cache, journal, ops log, node ids) and the fake magpie's store on the
+# host-backed scratch dir /mnt (moved by rsync on a migration, as sandboxd moves scratch); the paths under /srv stay
+if [ "${GATE_LAYOUT:-tmpfs}" = scratch ]; then
+  mkdir -p /mnt/supervisor /mnt/magpie && ln -sfn /mnt/supervisor $S/supervisor && ln -sfn /mnt/magpie $S/magpie
+fi
 mkdir -p $S/supervisor $S/magpie/d $S/model $S/log /run/magpie-ctl /home/sandbox/.claude
 chown 1000:1000 /home/sandbox
 [ -d /media/seed ] && cp -a /media/seed/. $S/magpie/d/ 2>/dev/null
@@ -27,6 +32,8 @@ mkdir -p /run/jobs && chmod 1777 /run/jobs
   done ) &
 J=${GATE_JOURNAL:-$S/supervisor/fuse-journal}
 while true; do
+  # /run/gate-hold-restart: no new supervisor while it exists (the keeper-only test holds the connection alone)
+  while [ -f /run/gate-hold-restart ]; do sleep 0.05; done
   extra=""
   if [ -f /run/gate-die-at ]; then extra="--die-at $(cat /run/gate-die-at)"; rm -f /run/gate-die-at; fi
   # shellcheck disable=SC2086

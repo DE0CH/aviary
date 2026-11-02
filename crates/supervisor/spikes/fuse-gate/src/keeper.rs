@@ -8,7 +8,10 @@ use std::os::unix::net::{UnixListener, UnixStream};
 pub fn send_fd(s: &UnixStream, msg: &[u8], fd: Option<RawFd>) -> io::Result<()> {
     // SAFETY: plain sendmsg with a stack buffer for one fd's control message.
     unsafe {
-        let mut iov = libc::iovec { iov_base: msg.as_ptr() as *mut _, iov_len: msg.len() };
+        let mut iov = libc::iovec {
+            iov_base: msg.as_ptr() as *mut _,
+            iov_len: msg.len(),
+        };
         let mut cbuf = [0u8; 64];
         let mut m: libc::msghdr = std::mem::zeroed();
         m.msg_iov = &mut iov;
@@ -33,7 +36,10 @@ pub fn recv_fd(s: &UnixStream) -> io::Result<(Vec<u8>, Option<RawFd>)> {
     // SAFETY: recvmsg into stack buffers; the control message is parsed with the libc CMSG macros.
     unsafe {
         let mut buf = [0u8; 64];
-        let mut iov = libc::iovec { iov_base: buf.as_mut_ptr().cast(), iov_len: buf.len() };
+        let mut iov = libc::iovec {
+            iov_base: buf.as_mut_ptr().cast(),
+            iov_len: buf.len(),
+        };
         let mut cbuf = [0u8; 64];
         let mut m: libc::msghdr = std::mem::zeroed();
         m.msg_iov = &mut iov;
