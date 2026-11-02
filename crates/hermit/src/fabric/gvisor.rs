@@ -264,7 +264,6 @@ impl Fabric for Gvisor {
                 memory: spec.memory_bytes,
                 cpu_features: core.cfg.file.fabric.cpu_features.clone(),
                 workspace: Some(spec.workspace.to_string()),
-                user: None,
                 pids: Some(spec.pids),
             };
             client.create(&s).await.map_err(|e| sandboxd::create_error(&e))?;

@@ -660,7 +660,6 @@ impl Rig {
             memory: 2 * GIB,
             cpu_features: String::new(),
             workspace: None,
-            user: None,
             pids: None,
         };
         self.fleet.sim(host).sandboxes.lock().unwrap().insert(
@@ -1377,7 +1376,6 @@ async fn ec2_reconcile_and_orphans() {
                 memory: GIB,
                 cpu_features: String::new(),
                 workspace: None,
-                user: None,
                 pids: None,
             },
             state: HostState::Running,
@@ -1561,7 +1559,6 @@ async fn a_start_and_release_through_the_core() {
         .clone();
     assert_eq!(spec.image, rig.h.config.image_digest.trim_start_matches("sha256:"));
     assert_eq!(spec.pids, Some(4096));
-    assert_eq!(spec.user, None);
     assert_eq!(spec.workspace, Some(cid.to_string()));
     assert_eq!(spec.cpu_features, "sse4_2,avx2");
     assert!(

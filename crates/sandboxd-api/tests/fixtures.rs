@@ -51,12 +51,12 @@ fn sandboxes() {
     assert_eq!(s.env.0[0].0, "HTTP_PROXY", "env keeps its order");
     assert_eq!(s.env.0.last().map(|(k, _)| k.as_str()), Some("AVIARY_SANDBOX"));
     let m: Spec = round_trip("spec-minimal.json");
-    assert_eq!((m.image_ref, m.workspace, m.user), (None, None, None));
+    assert_eq!((m.image_ref, m.workspace), (None, None));
     let _: Listed = round_trip("listed.json");
     let a: Listed = round_trip("listed-alive.json");
     assert_eq!(a.alive, Some(false));
     let p: Spec = round_trip("spec-pids.json");
-    assert_eq!((p.pids, p.user), (Some(4096), None));
+    assert_eq!(p.pids, Some(4096));
     let _: Sandboxes = round_trip("sandboxes.json");
     let _: Deleted = round_trip("deleted.json");
 }

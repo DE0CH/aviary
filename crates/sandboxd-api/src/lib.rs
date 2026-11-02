@@ -366,10 +366,6 @@ pub struct Spec {
     /// Folder `ws/<workspace>` of the host's shared filesystem, mounted at `/workspace`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
-    /// Folder `users/<user>/claude` of the shared filesystem, mounted at `~/.claude` (removed by hermit spec 13.2 item
-    /// 2 together with sandboxd's bind; hermit never sends it).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub user: Option<String>,
     /// The sandbox's pids limit (hermit spec 13.2 item 9; sandboxd's default 4096 when absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pids: Option<u32>,
