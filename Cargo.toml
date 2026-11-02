@@ -59,6 +59,8 @@ debug = false
 tokio = { version = "=1.54.1", features = ["full"] }
 axum = "=0.8.9"
 hyper = "=1.12.0"
+# the fakes' own accept loop (testing/fakes: a fault can drop the connection); axum::serve already uses it
+hyper-util = { version = "=0.1.21", default-features = false, features = ["tokio"] }
 tower = "=0.5.3"
 tower-http = "=0.7.1"
 reqwest = { version = "=0.13.5", default-features = false, features = ["rustls-no-provider", "http2", "stream", "json"] }

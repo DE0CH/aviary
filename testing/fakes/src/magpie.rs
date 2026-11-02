@@ -1,0 +1,1207 @@
+//! fake-magpie: `magpie_api::server::Server` with scripted answers on every route, and a model of the sandbox
+//! surface (magpie 6, 8.4, 16.2) for the supervisor's tests.
+//!
+//! - **Every route** answers what the test scripted ([`crate::script`]): straight from the golden fixtures
+//!   ([`FakeMagpie::script_fixture`]) or by hand. pigeon's, hermit's and the ops routes have no model: unscripted,
+//!   they answer 501 `not_supported`.
+//! - **The sandbox surface** has a model, per conversation (from `Aviary-Sandbox-Conversation`): the lease (a fresh
+//!   id and epoch per grant, every earlier lease dead at once, `not_current_sandbox` when the test names another
+//!   sandbox as hermit's current one), `~/.claude` as files and directories (the write, truncate, rename, unlink,
+//!   mkdir, rmdir and setattr rules of magpie 6.6-6.8 as the supervisor sees them: `offset_beyond_eof`, a missing
+//!   parent 404, `protected` main transcript, `exists`, `not_empty`, the quota, `opId` replays answering the stored
+//!   result), the command queue with its long-poll and acks, blobs by sha256, and the reports (accepted and
+//!   recorded; `turn_state` `running` sets the main transcript). It keeps no events, rows or timeline.
+//!
+//! Faults ([`crate::fault`]) apply by route id or path template.
+
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
+
+use aviary_core::http::ApiError;
+use axum::Router;
+use axum::body::{Body, Bytes};
+use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use magpie_api::changes::{ChangesQuery, ChangesResponse};
+use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse, ListQuery, ListResponse, RenameRequest};
+use magpie_api::errors::{ErrorCode, Refusal};
+use magpie_api::events::{EventsPage, EventsQuery};
+use magpie_api::files::{FilesPanel, RawFileQuery};
+use magpie_api::live::{LiveFramesRequest, LiveState};
+use magpie_api::ops::{
+    AdminConversation, AdminConversationList, AdminListQuery, OpsStats, PeopleQuery, PeopleResponse,
+    PersonPurgeRequest, PersonPurgeResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest, WorkspacesExistsRequest,
+    WorkspacesExistsResponse,
+};
+use magpie_api::rows::{PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery};
+use magpie_api::sandbox::{
+    AckRequest, AckResult, AgentTurnRequest, AskReport, AskResolvedReport, CC_FILE_MAX_BYTES, CC_QUOTA_BYTES,
+    CC_WRITE_MAX_BYTES, CcEntry, CcFileQuery, CcKind, CcMkdir, CcPathOp, CcRename, CcSetattr, CcSizeVersion, CcTree,
+    CcTruncate, CcVersion, CcWriteQuery, Command, CommandBody, CommandsQuery, CommandsResponse, Heartbeat,
+    LeaseResponse, ReportedState, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport,
+    TurnStateReport,
+};
+use magpie_api::server::{Ctx, Server};
+use magpie_api::shares::{ContinueResponse, ShareRef, ShareView, SharesList};
+use magpie_api::turns::{AgentPermissionResponse, CancelResponse, SendRequest, SendResponse};
+use magpie_api::uploads::{BlobQuery, SandboxBlobQuery, UploadMeta, UploadResponse};
+use magpie_api::{Admitted, Empty};
+use serde::Serialize;
+use serde_json::{Value, json};
+use sha2::Digest;
+use tokio::sync::Notify;
+use uuid::Uuid;
+
+use crate::answer::{admitted, not_supported, option};
+use crate::fault::{self, Faults, Names};
+use crate::fixtures;
+use crate::script::{Call, Reply, Script};
+use crate::serve::{Served, serve};
+
+/// The longest a command long-poll is held (magpie 8.4: `waitMs` up to 25 s).
+pub const MAX_COMMANDS_WAIT: Duration = Duration::from_secs(25);
+
+fn refuse(code: ErrorCode, message: &str) -> ApiError {
+    Refusal::new(code, message).into()
+}
+
+fn lease_lost() -> ApiError {
+    refuse(ErrorCode::LeaseLost, "the lease is not current")
+}
+
+fn not_found(message: &str) -> ApiError {
+    refuse(ErrorCode::NotFound, message)
+}
+
+/// A file or directory of one conversation's `~/.claude`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CcNode {
+    /// `lines`, `bytes` or `dir`.
+    pub kind: CcKind,
+    /// The file's bytes (empty for a directory).
+    pub data: Vec<u8>,
+    /// `mtimeNs` as last set.
+    pub mtime_ns: i64,
+    /// The mode bits.
+    pub mode: u32,
+    /// +1 on every change.
+    pub version: u64,
+}
+
+/// magpie 6.2: a lines file is any path whose last component ends in `.jsonl` or contains `.jsonl.`.
+#[must_use]
+pub fn kind_of(path: &str) -> CcKind {
+    let last = path.rsplit('/').next().unwrap_or(path);
+    #[allow(clippy::case_sensitive_file_extension_comparisons)] // magpie's rule is by exact name
+    if last.ends_with(".jsonl") || last.contains(".jsonl.") {
+        CcKind::Lines
+    } else {
+        CcKind::Bytes
+    }
+}
+
+fn parent(path: &str) -> Option<&str> {
+    path.rsplit_once('/').map(|(p, _)| p)
+}
+
+fn valid_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.ends_with('/')
+        && path.split('/').all(|c| !c.is_empty() && c != "." && c != "..")
+}
+
+/// One conversation's sandbox-side state in the model.
+#[derive(Debug, Default)]
+struct Conv {
+    lease: Option<Uuid>,
+    epoch: u64,
+    current_sandbox: Option<String>,
+    provider_session_id: Option<String>,
+    main_transcript: Option<String>,
+    resync: bool,
+    nodes: BTreeMap<String, CcNode>,
+    ops: HashMap<Uuid, Value>,
+    commands: Vec<Command>,
+    acks: BTreeMap<u64, AckResult>,
+    agent_turns: HashSet<Uuid>,
+}
+
+impl Conv {
+    fn cc_bytes(&self) -> u64 {
+        self.nodes.values().map(|n| n.data.len() as u64).sum()
+    }
+
+    fn dir_exists(&self, path: Option<&str>) -> bool {
+        match path {
+            None => true,
+            Some(p) => self.nodes.get(p).is_some_and(|n| n.kind == CcKind::Dir),
+        }
+    }
+
+    fn children(&self, dir: &str) -> impl Iterator<Item = &String> {
+        let prefix = format!("{dir}/");
+        self.nodes.keys().filter(move |k| k.starts_with(&prefix))
+    }
+}
+
+#[derive(Debug)]
+struct Model {
+    convs: HashMap<Uuid, Conv>,
+    blobs: HashMap<String, Bytes>,
+    quota: u64,
+}
+
+/// The fake magpie.
+#[derive(Debug)]
+pub struct FakeMagpie {
+    script: Script,
+    faults: Arc<Faults>,
+    model: Mutex<Model>,
+    commands_changed: Notify,
+}
+
+impl Default for FakeMagpie {
+    fn default() -> Self {
+        Self {
+            script: Script::default(),
+            faults: Arc::new(Faults::default()),
+            model: Mutex::new(Model {
+                convs: HashMap::new(),
+                blobs: HashMap::new(),
+                quota: CC_QUOTA_BYTES,
+            }),
+            commands_changed: Notify::new(),
+        }
+    }
+}
+
+/// A [`FakeMagpie`] served on a local port.
+#[derive(Debug)]
+pub struct Running {
+    /// The fake (script it, inspect it).
+    pub fake: Arc<FakeMagpie>,
+    /// The listener.
+    pub served: Served,
+}
+
+impl Running {
+    /// The base URL.
+    #[must_use]
+    pub fn url(&self) -> String {
+        self.served.url()
+    }
+}
+
+fn names() -> Names {
+    Arc::new(|method: &Method, template: &str| {
+        magpie_api::routes::ROUTES
+            .iter()
+            .find(|r| r.path == template && r.method.as_str() == method.as_str())
+            .map(|r| r.id)
+    })
+}
+
+fn ser<T: Serialize>(v: &T) -> Option<Value> {
+    serde_json::to_value(v).ok()
+}
+
+impl FakeMagpie {
+    /// A fake with nothing scripted and an empty model.
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// The router (magpie-api's, with the faults applied).
+    pub fn router(self: &Arc<Self>) -> Router {
+        fault::layer(magpie_api::server::router(self.clone()), self.faults.clone(), names())
+    }
+
+    /// Serve on a fresh local port.
+    ///
+    /// # Errors
+    /// When no port can be bound.
+    pub async fn serve(self: &Arc<Self>) -> std::io::Result<Running> {
+        Ok(Running {
+            fake: self.clone(),
+            served: serve(self.router()).await?,
+        })
+    }
+
+    /// The scripted answers and the call log.
+    #[must_use]
+    pub fn script(&self) -> &Script {
+        &self.script
+    }
+
+    /// The faults.
+    #[must_use]
+    pub fn faults(&self) -> &Faults {
+        &self.faults
+    }
+
+    /// Queue response `index` of `fixtures/routes/<route>.json` as the next answer of `route`.
+    ///
+    /// # Panics
+    /// When the fixture or the index is missing.
+    pub fn script_fixture(&self, route: &str, index: usize) {
+        let replies = fixtures::magpie_replies(route);
+        let r = replies
+            .get(index)
+            .unwrap_or_else(|| panic!("{route}: no response {index}"))
+            .clone();
+        self.script.once(route, r);
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Model> {
+        self.model.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn record(
+        &self,
+        route: &'static str,
+        ctx: &Ctx,
+        params: Value,
+        query: Option<Value>,
+        body: Option<Value>,
+        bytes: Option<Bytes>,
+    ) -> Option<Reply> {
+        self.script.take(Call {
+            route,
+            params,
+            query,
+            body,
+            bytes,
+            headers: ctx.headers.clone(),
+        })
+    }
+
+    // ---- the model's test controls ----
+
+    /// The quota of every conversation's `~/.claude` (magpie 17: 2 GiB).
+    pub fn set_quota(&self, bytes: u64) {
+        self.lock().quota = bytes;
+    }
+
+    /// Name hermit's current sandbox of `conversation`: a lease asked by any other sandbox answers 409
+    /// `not_current_sandbox`. `None` grants every caller (the default).
+    pub fn set_current_sandbox(&self, conversation: Uuid, sandbox: Option<&str>) {
+        self.lock().convs.entry(conversation).or_default().current_sandbox = sandbox.map(str::to_owned);
+    }
+
+    /// Make the next lease of `conversation` answer `resync: true` (magpie 6.12).
+    pub fn set_resync(&self, conversation: Uuid) {
+        self.lock().convs.entry(conversation).or_default().resync = true;
+    }
+
+    /// Set the provider session (and so the main transcript path) as the importer or a `running` report would.
+    pub fn set_provider_session(&self, conversation: Uuid, session: &str) {
+        let mut m = self.lock();
+        let c = m.convs.entry(conversation).or_default();
+        c.provider_session_id = Some(session.to_owned());
+        c.main_transcript = Some(format!("projects/-workspace/{session}.jsonl"));
+    }
+
+    /// Put a file (and its parent directories) into `conversation`'s `~/.claude` without an operation.
+    pub fn seed_file(&self, conversation: Uuid, path: &str, data: &[u8]) {
+        let mut m = self.lock();
+        let c = m.convs.entry(conversation).or_default();
+        let mut dir = String::new();
+        if let Some(p) = parent(path) {
+            for part in p.split('/') {
+                if !dir.is_empty() {
+                    dir.push('/');
+                }
+                dir.push_str(part);
+                c.nodes.entry(dir.clone()).or_insert(CcNode {
+                    kind: CcKind::Dir,
+                    data: Vec::new(),
+                    mtime_ns: 0,
+                    mode: 0o700,
+                    version: 1,
+                });
+            }
+        }
+        let version = c.nodes.get(path).map_or(1, |n| n.version + 1);
+        c.nodes.insert(
+            path.to_owned(),
+            CcNode {
+                kind: kind_of(path),
+                data: data.to_vec(),
+                mtime_ns: 0,
+                mode: 0o600,
+                version,
+            },
+        );
+    }
+
+    /// A node of `conversation`'s `~/.claude`.
+    #[must_use]
+    pub fn node(&self, conversation: Uuid, path: &str) -> Option<CcNode> {
+        self.lock().convs.get(&conversation)?.nodes.get(path).cloned()
+    }
+
+    /// Every path of `conversation`'s `~/.claude`, sorted.
+    #[must_use]
+    pub fn paths(&self, conversation: Uuid) -> Vec<String> {
+        self.lock()
+            .convs
+            .get(&conversation)
+            .map(|c| c.nodes.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// The current lease epoch of `conversation` (0 before the first grant).
+    #[must_use]
+    pub fn lease_epoch(&self, conversation: Uuid) -> u64 {
+        self.lock().convs.get(&conversation).map_or(0, |c| c.epoch)
+    }
+
+    /// Queue a command for `conversation`'s supervisor; its `cmdSeq`. Wakes held command polls.
+    pub fn push_command(&self, conversation: Uuid, turn_id: Option<Uuid>, body: CommandBody) -> u64 {
+        let seq = {
+            let mut m = self.lock();
+            let c = m.convs.entry(conversation).or_default();
+            let seq = c.commands.last().map_or(1, |l| l.cmd_seq + 1);
+            c.commands.push(Command {
+                cmd_seq: seq,
+                turn_id,
+                body,
+            });
+            seq
+        };
+        self.commands_changed.notify_waiters();
+        seq
+    }
+
+    /// The acks received for `conversation`'s commands, by `cmdSeq`.
+    #[must_use]
+    pub fn acks(&self, conversation: Uuid) -> BTreeMap<u64, AckResult> {
+        self.lock()
+            .convs
+            .get(&conversation)
+            .map(|c| c.acks.clone())
+            .unwrap_or_default()
+    }
+
+    /// A stored blob.
+    #[must_use]
+    pub fn blob(&self, sha: &str) -> Option<Bytes> {
+        self.lock().blobs.get(sha).cloned()
+    }
+
+    /// Store a blob (as the person's upload would).
+    pub fn seed_blob(&self, data: &[u8]) -> String {
+        let sha = hex_digest(&sha2::Sha256::digest(data));
+        self.lock().blobs.insert(sha.clone(), Bytes::from(data.to_vec()));
+        sha
+    }
+
+    // ---- the model ----
+
+    fn conversation(ctx: &Ctx) -> Result<Uuid, ApiError> {
+        ctx.sandbox
+            .as_ref()
+            .and_then(|s| Uuid::parse_str(&s.conversation).ok())
+            .ok_or_else(|| ApiError::bad_request("fake: no Aviary-Sandbox-* identity"))
+    }
+
+    fn with_conv<T>(
+        &self,
+        ctx: &Ctx,
+        lease: bool,
+        f: impl FnOnce(&mut Conv, u64) -> Result<T, ApiError>,
+    ) -> Result<T, ApiError> {
+        let id = Self::conversation(ctx)?;
+        let mut m = self.lock();
+        let quota = m.quota;
+        let c = m.convs.entry(id).or_default();
+        if lease {
+            let presented = ctx.lease.as_deref().and_then(|l| Uuid::parse_str(l).ok());
+            if presented.is_none() || presented != c.lease {
+                return Err(lease_lost());
+            }
+        }
+        f(c, quota)
+    }
+
+    /// Run an operation once per `opId`: a replay answers the stored result.
+    fn op<T: Serialize + serde::de::DeserializeOwned>(
+        &self,
+        ctx: &Ctx,
+        op_id: Uuid,
+        f: impl FnOnce(&mut Conv, u64) -> Result<T, ApiError>,
+    ) -> Result<T, ApiError> {
+        self.with_conv(ctx, true, |c, quota| {
+            if let Some(v) = c.ops.get(&op_id) {
+                return serde_json::from_value(v.clone()).map_err(|e| ApiError::internal(e.to_string()));
+            }
+            let r = f(c, quota)?;
+            c.ops.insert(op_id, serde_json::to_value(&r).unwrap_or(Value::Null));
+            Ok(r)
+        })
+    }
+
+    fn model_lease(&self, ctx: &Ctx) -> Result<LeaseResponse, ApiError> {
+        let sandbox = ctx.sandbox.as_ref().map(|s| s.id.clone());
+        self.with_conv(ctx, false, |c, _| {
+            if let Some(current) = &c.current_sandbox
+                && sandbox.as_ref() != Some(current)
+            {
+                return Err(refuse(
+                    ErrorCode::NotCurrentSandbox,
+                    "hermit names another sandbox for this conversation",
+                ));
+            }
+            let lease = Uuid::new_v4();
+            c.lease = Some(lease);
+            c.epoch += 1;
+            let resync = std::mem::take(&mut c.resync);
+            Ok(LeaseResponse {
+                lease_id: lease,
+                epoch: c.epoch,
+                conversation_id: Uuid::nil(),
+                provider_session_id: c.provider_session_id.clone(),
+                main_transcript: c.main_transcript.clone(),
+                resync,
+            })
+        })
+        .map(|mut l| {
+            l.conversation_id = Self::conversation(ctx).unwrap_or_default();
+            l
+        })
+    }
+
+    fn model_tree(&self, ctx: &Ctx) -> Result<CcTree, ApiError> {
+        self.with_conv(ctx, false, |c, quota| {
+            Ok(CcTree {
+                files: c
+                    .nodes
+                    .iter()
+                    .map(|(p, n)| CcEntry {
+                        path: p.clone(),
+                        kind: n.kind,
+                        size: n.data.len() as u64,
+                        mtime_ns: n.mtime_ns,
+                        mode: n.mode,
+                        version: n.version,
+                    })
+                    .collect(),
+                cc_bytes: c.cc_bytes(),
+                quota_bytes: quota,
+            })
+        })
+    }
+
+    fn model_file(&self, ctx: &Ctx, q: &CcFileQuery) -> Result<Response, ApiError> {
+        let (data, ranged) = self.with_conv(ctx, false, |c, _| {
+            let n = c
+                .nodes
+                .get(&q.path)
+                .filter(|n| n.kind != CcKind::Dir)
+                .ok_or_else(|| not_found("not found"))?;
+            let len = n.data.len() as u64;
+            let start = q.offset.unwrap_or(0).min(len);
+            let end = q.length.map_or(len, |l| start.saturating_add(l).min(len));
+            let ranged = q.offset.is_some() || q.length.is_some();
+            #[allow(clippy::cast_possible_truncation)] // in-memory sizes
+            Ok((n.data[start as usize..end as usize].to_vec(), ranged))
+        })?;
+        let status = if ranged {
+            StatusCode::PARTIAL_CONTENT
+        } else {
+            StatusCode::OK
+        };
+        let mut res = (status, data).into_response();
+        res.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/octet-stream"),
+        );
+        Ok(res)
+    }
+
+    fn model_write(&self, ctx: &Ctx, q: &CcWriteQuery, data: &[u8]) -> Result<CcSizeVersion, ApiError> {
+        if !valid_path(&q.path) {
+            return Err(refuse(ErrorCode::BadPath, "bad path"));
+        }
+        if data.len() > CC_WRITE_MAX_BYTES {
+            return Err(refuse(ErrorCode::TooLarge, "the write is over 16 MiB"));
+        }
+        self.op(ctx, q.op_id, |c, quota| {
+            if !c.dir_exists(parent(&q.path)) {
+                return Err(not_found("the parent directory does not exist"));
+            }
+            let used = c.cc_bytes();
+            let node = match c.nodes.get_mut(&q.path) {
+                Some(n) if n.kind == CcKind::Dir => return Err(ApiError::bad_request("a directory")),
+                Some(n) => n,
+                None if q.create => c.nodes.entry(q.path.clone()).or_insert(CcNode {
+                    kind: kind_of(&q.path),
+                    data: Vec::new(),
+                    mtime_ns: q.mtime_ns,
+                    mode: q.mode,
+                    version: 0,
+                }),
+                None => return Err(not_found("not found")),
+            };
+            let size = node.data.len() as u64;
+            if q.offset > size {
+                return Err(refuse(ErrorCode::OffsetBeyondEof, "the offset is past the end"));
+            }
+            let end = q.offset + data.len() as u64;
+            let new_size = end.max(size);
+            if new_size > CC_FILE_MAX_BYTES {
+                return Err(refuse(ErrorCode::TooLarge, "the file is over 256 MiB"));
+            }
+            if used - size + new_size > quota {
+                return Err(refuse(
+                    ErrorCode::QuotaExceeded,
+                    "the conversation's Claude Code state is over its quota",
+                ));
+            }
+            #[allow(clippy::cast_possible_truncation)] // in-memory sizes
+            {
+                node.data.resize(new_size as usize, 0);
+                node.data[q.offset as usize..end as usize].copy_from_slice(data);
+            }
+            node.mtime_ns = q.mtime_ns;
+            node.version += 1;
+            Ok(CcSizeVersion {
+                size: new_size,
+                version: node.version,
+            })
+        })
+    }
+
+    fn model_truncate(&self, ctx: &Ctx, b: &CcTruncate) -> Result<CcSizeVersion, ApiError> {
+        self.op(ctx, b.op_id, |c, quota| {
+            let used = c.cc_bytes();
+            let n = c
+                .nodes
+                .get_mut(&b.path)
+                .filter(|n| n.kind != CcKind::Dir)
+                .ok_or_else(|| not_found("not found"))?;
+            let size = n.data.len() as u64;
+            if b.size > size && n.kind == CcKind::Lines {
+                return Err(refuse(ErrorCode::OffsetBeyondEof, "the size is past the end"));
+            }
+            if b.size > size && used - size + b.size > quota {
+                return Err(refuse(ErrorCode::QuotaExceeded, "over the quota"));
+            }
+            #[allow(clippy::cast_possible_truncation)] // in-memory sizes
+            n.data.resize(b.size as usize, 0);
+            n.mtime_ns = b.mtime_ns;
+            n.version += 1;
+            Ok(CcSizeVersion {
+                size: b.size,
+                version: n.version,
+            })
+        })
+    }
+
+    fn model_rename(&self, ctx: &Ctx, b: &CcRename) -> Result<CcVersion, ApiError> {
+        if !valid_path(&b.to) {
+            return Err(refuse(ErrorCode::BadPath, "bad path"));
+        }
+        self.op(ctx, b.op_id, |c, _| {
+            let from = c.nodes.get(&b.from).cloned().ok_or_else(|| not_found("not found"))?;
+            if !c.dir_exists(parent(&b.to)) {
+                return Err(not_found("the parent directory does not exist"));
+            }
+            if from.kind == CcKind::Dir {
+                let moved: Vec<String> = c.children(&b.from).cloned().collect();
+                for old in moved {
+                    if let Some(n) = c.nodes.remove(&old) {
+                        let new = format!("{}{}", b.to, &old[b.from.len()..]);
+                        c.nodes.insert(new, n);
+                    }
+                }
+            }
+            c.nodes.remove(&b.from);
+            let version = c.nodes.get(&b.to).map_or(0, |n| n.version).max(from.version) + 1;
+            c.nodes.insert(
+                b.to.clone(),
+                CcNode {
+                    kind: if from.kind == CcKind::Dir {
+                        CcKind::Dir
+                    } else {
+                        kind_of(&b.to)
+                    },
+                    version,
+                    ..from
+                },
+            );
+            Ok(CcVersion { version })
+        })
+    }
+
+    fn model_unlink(&self, ctx: &Ctx, b: &CcPathOp) -> Result<(), ApiError> {
+        self.op(ctx, b.op_id, |c, _| {
+            if c.main_transcript.as_deref() == Some(b.path.as_str()) {
+                return Err(refuse(ErrorCode::Protected, "the main transcript cannot be removed"));
+            }
+            match c.nodes.get(&b.path) {
+                Some(n) if n.kind != CcKind::Dir => {
+                    c.nodes.remove(&b.path);
+                    Ok(())
+                }
+                _ => Err(not_found("not found")),
+            }
+        })
+    }
+
+    fn model_mkdir(&self, ctx: &Ctx, b: &CcMkdir) -> Result<(), ApiError> {
+        if !valid_path(&b.path) {
+            return Err(refuse(ErrorCode::BadPath, "bad path"));
+        }
+        self.op(ctx, b.op_id, |c, _| {
+            if c.nodes.contains_key(&b.path) {
+                return Err(refuse(ErrorCode::Exists, "the path exists"));
+            }
+            if !c.dir_exists(parent(&b.path)) {
+                return Err(not_found("the parent directory does not exist"));
+            }
+            c.nodes.insert(
+                b.path.clone(),
+                CcNode {
+                    kind: CcKind::Dir,
+                    data: Vec::new(),
+                    mtime_ns: b.mtime_ns,
+                    mode: b.mode,
+                    version: 1,
+                },
+            );
+            Ok(())
+        })
+    }
+
+    fn model_rmdir(&self, ctx: &Ctx, b: &CcPathOp) -> Result<(), ApiError> {
+        self.op(ctx, b.op_id, |c, _| {
+            match c.nodes.get(&b.path) {
+                Some(n) if n.kind == CcKind::Dir => {}
+                _ => return Err(not_found("not found")),
+            }
+            if c.children(&b.path).next().is_some() {
+                return Err(refuse(ErrorCode::NotEmpty, "the directory is not empty"));
+            }
+            c.nodes.remove(&b.path);
+            Ok(())
+        })
+    }
+
+    fn model_setattr(&self, ctx: &Ctx, b: &CcSetattr) -> Result<CcVersion, ApiError> {
+        self.op(ctx, b.op_id, |c, _| {
+            let n = c.nodes.get_mut(&b.path).ok_or_else(|| not_found("not found"))?;
+            if let Some(m) = b.mode {
+                n.mode = m;
+            }
+            if let Some(t) = b.mtime_ns {
+                n.mtime_ns = t;
+            }
+            n.version += 1;
+            Ok(CcVersion { version: n.version })
+        })
+    }
+
+    async fn model_commands(&self, ctx: &Ctx, q: CommandsQuery) -> Result<CommandsResponse, ApiError> {
+        let wait = Duration::from_millis(q.wait_ms.unwrap_or(0)).min(MAX_COMMANDS_WAIT);
+        let deadline = tokio::time::Instant::now() + wait;
+        loop {
+            let changed = self.commands_changed.notified();
+            let found = self.with_conv(ctx, true, |c, _| {
+                let head = c.commands.last().map_or(0, |l| l.cmd_seq);
+                let cmds: Vec<Command> = c.commands.iter().filter(|x| x.cmd_seq > q.after).cloned().collect();
+                Ok(CommandsResponse { commands: cmds, head })
+            })?;
+            if !found.commands.is_empty() || tokio::time::Instant::now() >= deadline {
+                return Ok(found);
+            }
+            if tokio::time::timeout_at(deadline, changed).await.is_err() {
+                // one last look, then the timeout answer (the lease is checked again)
+                return self.with_conv(ctx, true, |c, _| {
+                    let head = c.commands.last().map_or(0, |l| l.cmd_seq);
+                    Ok(CommandsResponse {
+                        commands: c.commands.iter().filter(|x| x.cmd_seq > q.after).cloned().collect(),
+                        head,
+                    })
+                });
+            }
+        }
+    }
+
+    fn model_ack(&self, ctx: &Ctx, seq: u64, body: AckRequest) -> Result<(), ApiError> {
+        self.with_conv(ctx, true, |c, _| {
+            if !c.commands.iter().any(|x| x.cmd_seq == seq) {
+                return Err(not_found("not found"));
+            }
+            c.acks.insert(seq, body.result);
+            Ok(())
+        })
+    }
+
+    fn model_report(&self, ctx: &Ctx) -> Result<(), ApiError> {
+        self.with_conv(ctx, true, |_, _| Ok(()))
+    }
+
+    fn model_turn_state(&self, ctx: &Ctx, body: &TurnStateReport) -> Result<(), ApiError> {
+        self.with_conv(ctx, true, |c, _| {
+            if body.state == ReportedState::Running
+                && let Some(sid) = &body.provider_session_id
+            {
+                c.provider_session_id = Some(sid.clone());
+                c.main_transcript = Some(
+                    body.transcript_path
+                        .clone()
+                        .unwrap_or_else(|| format!("projects/-workspace/{sid}.jsonl")),
+                );
+            }
+            Ok(())
+        })
+    }
+
+    fn model_agent_turn(&self, ctx: &Ctx, body: &AgentTurnRequest) -> Result<Admitted<Empty>, ApiError> {
+        self.with_conv(ctx, true, |c, _| {
+            Ok(if c.agent_turns.insert(body.turn_id) {
+                Admitted::New(Empty {})
+            } else {
+                Admitted::Repeat(Empty {})
+            })
+        })
+    }
+
+    fn model_blob_put(&self, ctx: &Ctx, sha: &str, data: Bytes) -> Result<Admitted<Empty>, ApiError> {
+        self.with_conv(ctx, true, |_, _| Ok(()))?;
+        if hex_digest(&sha2::Sha256::digest(&data)) != sha {
+            return Err(refuse(
+                ErrorCode::ShaMismatch,
+                "the bytes do not hash to the path's sha256",
+            ));
+        }
+        let mut m = self.lock();
+        Ok(if m.blobs.insert(sha.to_owned(), data).is_some() {
+            Admitted::Repeat(Empty {})
+        } else {
+            Admitted::New(Empty {})
+        })
+    }
+
+    fn model_blob_get(&self, sha: &str) -> Result<Response, ApiError> {
+        let data = self
+            .lock()
+            .blobs
+            .get(sha)
+            .cloned()
+            .ok_or_else(|| not_found("not found"))?;
+        let mut res = (StatusCode::OK, data).into_response();
+        res.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/octet-stream"),
+        );
+        Ok(res)
+    }
+}
+
+pub(crate) fn hex_digest(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
+}
+
+async fn bytes_of(body: Body) -> Result<Bytes, ApiError> {
+    axum::body::to_bytes(body, usize::MAX)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("body: {e}")))
+}
+
+/// A scripted-only route: the scripted answer converted with `$conv`, else 501.
+macro_rules! scripted {
+    ($s:ident, $route:literal, $ctx:expr, $params:expr, $query:expr, $body:expr, $conv:expr) => {
+        match $s.record($route, &$ctx, $params, $query, $body, None) {
+            Some(r) => $conv(&r, $route),
+            None => Err(not_supported($route)),
+        }
+    };
+}
+
+fn typed<T: serde::de::DeserializeOwned>(r: &Reply, route: &str) -> Result<T, ApiError> {
+    r.typed(route)
+}
+
+fn unit(r: &Reply, _route: &str) -> Result<(), ApiError> {
+    r.unit()
+}
+
+fn raw(r: &Reply, _route: &str) -> Result<Response, ApiError> {
+    r.response()
+}
+
+fn id(v: Uuid) -> Value {
+    json!({"id": v.to_string()})
+}
+
+#[allow(clippy::too_many_lines, clippy::unused_async_trait_impl)] // every method is async, as the trait
+impl Server for FakeMagpie {
+    async fn list_conversations(&self, ctx: Ctx, query: ListQuery) -> Result<ListResponse, ApiError> {
+        scripted!(self, "list_conversations", ctx, json!({}), ser(&query), None, typed)
+    }
+
+    async fn get_conversation(&self, ctx: Ctx, id_: Uuid) -> Result<Conversation, ApiError> {
+        scripted!(self, "get_conversation", ctx, id(id_), None, None, typed)
+    }
+
+    async fn create_conversation(&self, ctx: Ctx, body: CreateRequest) -> Result<Admitted<CreateResponse>, ApiError> {
+        scripted!(self, "create_conversation", ctx, json!({}), None, ser(&body), admitted)
+    }
+
+    async fn get_creation(&self, ctx: Ctx, key: String) -> Result<CreateResponse, ApiError> {
+        scripted!(
+            self,
+            "get_creation",
+            ctx,
+            json!({"idempotencyKey": key}),
+            None,
+            None,
+            typed
+        )
+    }
+
+    async fn rename_conversation(&self, ctx: Ctx, id_: Uuid, body: RenameRequest) -> Result<Conversation, ApiError> {
+        scripted!(self, "rename_conversation", ctx, id(id_), None, ser(&body), typed)
+    }
+
+    async fn delete_conversation(&self, ctx: Ctx, id_: Uuid) -> Result<Conversation, ApiError> {
+        scripted!(self, "delete_conversation", ctx, id(id_), None, Some(json!({})), typed)
+    }
+
+    async fn restore_conversation(&self, ctx: Ctx, id_: Uuid) -> Result<Conversation, ApiError> {
+        scripted!(self, "restore_conversation", ctx, id(id_), None, Some(json!({})), typed)
+    }
+
+    async fn purge_conversation(&self, ctx: Ctx, id_: Uuid) -> Result<(), ApiError> {
+        scripted!(self, "purge_conversation", ctx, id(id_), None, None, unit)
+    }
+
+    async fn send_turn(&self, ctx: Ctx, id_: Uuid, body: SendRequest) -> Result<Admitted<SendResponse>, ApiError> {
+        scripted!(self, "send_turn", ctx, id(id_), None, ser(&body), admitted)
+    }
+
+    async fn cancel_turn(&self, ctx: Ctx, id_: Uuid) -> Result<CancelResponse, ApiError> {
+        scripted!(self, "cancel_turn", ctx, id(id_), None, Some(json!({})), typed)
+    }
+
+    async fn timeline(&self, ctx: Ctx, id_: Uuid, query: TimelineQuery) -> Result<TimelinePage, ApiError> {
+        scripted!(self, "timeline", ctx, id(id_), ser(&query), None, typed)
+    }
+
+    async fn live(&self, ctx: Ctx, id_: Uuid) -> Result<Option<LiveState>, ApiError> {
+        scripted!(self, "live", ctx, id(id_), None, None, option)
+    }
+
+    async fn prompts(&self, ctx: Ctx, id_: Uuid) -> Result<PromptsResponse, ApiError> {
+        scripted!(self, "prompts", ctx, id(id_), None, None, typed)
+    }
+
+    async fn search(&self, ctx: Ctx, id_: Uuid, query: SearchQuery) -> Result<SearchResponse, ApiError> {
+        scripted!(self, "search", ctx, id(id_), ser(&query), None, typed)
+    }
+
+    async fn answer_ask(
+        &self,
+        ctx: Ctx,
+        id_: Uuid,
+        ask_id: String,
+        body: AgentPermissionResponse,
+    ) -> Result<(), ApiError> {
+        let params = json!({"id": id_.to_string(), "askId": ask_id});
+        scripted!(self, "answer_ask", ctx, params, None, ser(&body), unit)
+    }
+
+    async fn changes(&self, ctx: Ctx, query: ChangesQuery) -> Result<ChangesResponse, ApiError> {
+        scripted!(self, "changes", ctx, json!({}), ser(&query), None, typed)
+    }
+
+    async fn upload(&self, ctx: Ctx, meta: UploadMeta, body: Body) -> Result<UploadResponse, ApiError> {
+        // the name, kind and content type are in the recorded headers
+        let _ = meta;
+        let bytes = bytes_of(body).await?;
+        match self.record("upload", &ctx, json!({}), None, None, Some(bytes)) {
+            Some(r) => r.typed("upload"),
+            None => Err(not_supported("upload")),
+        }
+    }
+
+    async fn files_raw(&self, ctx: Ctx, id_: Uuid, query: RawFileQuery) -> Result<Response, ApiError> {
+        scripted!(self, "files_raw", ctx, id(id_), ser(&query), None, raw)
+    }
+
+    async fn files_panel(&self, ctx: Ctx, id_: Uuid) -> Result<FilesPanel, ApiError> {
+        scripted!(self, "files_panel", ctx, id(id_), None, None, typed)
+    }
+
+    async fn blob(&self, ctx: Ctx, blob_id: String, query: BlobQuery) -> Result<Response, ApiError> {
+        scripted!(self, "blob", ctx, json!({"blobId": blob_id}), ser(&query), None, raw)
+    }
+
+    async fn list_shares(&self, ctx: Ctx, id_: Uuid) -> Result<SharesList, ApiError> {
+        scripted!(self, "list_shares", ctx, id(id_), None, None, typed)
+    }
+
+    async fn create_share(&self, ctx: Ctx, id_: Uuid) -> Result<ShareRef, ApiError> {
+        scripted!(self, "create_share", ctx, id(id_), None, Some(json!({})), typed)
+    }
+
+    async fn revoke_share(&self, ctx: Ctx, share_id: String) -> Result<(), ApiError> {
+        scripted!(
+            self,
+            "revoke_share",
+            ctx,
+            json!({"shareId": share_id}),
+            None,
+            None,
+            unit
+        )
+    }
+
+    async fn get_share(&self, ctx: Ctx, share_id: String) -> Result<ShareView, ApiError> {
+        scripted!(self, "get_share", ctx, json!({"shareId": share_id}), None, None, typed)
+    }
+
+    async fn share_files_raw(&self, ctx: Ctx, share_id: String, query: RawFileQuery) -> Result<Response, ApiError> {
+        let params = json!({"shareId": share_id});
+        scripted!(self, "share_files_raw", ctx, params, ser(&query), None, raw)
+    }
+
+    async fn continue_share(&self, ctx: Ctx, share_id: String) -> Result<ContinueResponse, ApiError> {
+        let params = json!({"shareId": share_id});
+        scripted!(self, "continue_share", ctx, params, None, Some(json!({})), typed)
+    }
+
+    async fn view_as(&self, ctx: Ctx, body: ViewAsRequest) -> Result<(), ApiError> {
+        scripted!(self, "view_as", ctx, json!({}), None, ser(&body), unit)
+    }
+
+    async fn lease(&self, ctx: Ctx) -> Result<LeaseResponse, ApiError> {
+        match self.record("lease", &ctx, json!({}), None, Some(json!({})), None) {
+            Some(r) => r.typed("lease"),
+            None => self.model_lease(&ctx),
+        }
+    }
+
+    async fn cc_tree(&self, ctx: Ctx) -> Result<CcTree, ApiError> {
+        match self.record("cc_tree", &ctx, json!({}), None, None, None) {
+            Some(r) => r.typed("cc_tree"),
+            None => self.model_tree(&ctx),
+        }
+    }
+
+    async fn cc_file(&self, ctx: Ctx, query: CcFileQuery) -> Result<Response, ApiError> {
+        match self.record("cc_file", &ctx, json!({}), ser(&query), None, None) {
+            Some(r) => r.response(),
+            None => self.model_file(&ctx, &query),
+        }
+    }
+
+    async fn cc_write(&self, ctx: Ctx, query: CcWriteQuery, body: Body) -> Result<CcSizeVersion, ApiError> {
+        let bytes = bytes_of(body).await?;
+        match self.record("cc_write", &ctx, json!({}), ser(&query), None, Some(bytes.clone())) {
+            Some(r) => r.typed("cc_write"),
+            None => self.model_write(&ctx, &query, &bytes),
+        }
+    }
+
+    async fn cc_truncate(&self, ctx: Ctx, body: CcTruncate) -> Result<CcSizeVersion, ApiError> {
+        match self.record("cc_truncate", &ctx, json!({}), None, ser(&body), None) {
+            Some(r) => r.typed("cc_truncate"),
+            None => self.model_truncate(&ctx, &body),
+        }
+    }
+
+    async fn cc_rename(&self, ctx: Ctx, body: CcRename) -> Result<CcVersion, ApiError> {
+        match self.record("cc_rename", &ctx, json!({}), None, ser(&body), None) {
+            Some(r) => r.typed("cc_rename"),
+            None => self.model_rename(&ctx, &body),
+        }
+    }
+
+    async fn cc_unlink(&self, ctx: Ctx, body: CcPathOp) -> Result<(), ApiError> {
+        match self.record("cc_unlink", &ctx, json!({}), None, ser(&body), None) {
+            Some(r) => r.unit(),
+            None => self.model_unlink(&ctx, &body),
+        }
+    }
+
+    async fn cc_mkdir(&self, ctx: Ctx, body: CcMkdir) -> Result<(), ApiError> {
+        match self.record("cc_mkdir", &ctx, json!({}), None, ser(&body), None) {
+            Some(r) => r.unit(),
+            None => self.model_mkdir(&ctx, &body),
+        }
+    }
+
+    async fn cc_rmdir(&self, ctx: Ctx, body: CcPathOp) -> Result<(), ApiError> {
+        match self.record("cc_rmdir", &ctx, json!({}), None, ser(&body), None) {
+            Some(r) => r.unit(),
+            None => self.model_rmdir(&ctx, &body),
+        }
+    }
+
+    async fn cc_setattr(&self, ctx: Ctx, body: CcSetattr) -> Result<CcVersion, ApiError> {
+        match self.record("cc_setattr", &ctx, json!({}), None, ser(&body), None) {
+            Some(r) => r.typed("cc_setattr"),
+            None => self.model_setattr(&ctx, &body),
+        }
+    }
+
+    async fn commands(&self, ctx: Ctx, query: CommandsQuery) -> Result<CommandsResponse, ApiError> {
+        match self.record("commands", &ctx, json!({}), ser(&query), None, None) {
+            Some(r) => r.typed("commands"),
+            None => self.model_commands(&ctx, query).await,
+        }
+    }
+
+    async fn ack_command(&self, ctx: Ctx, cmd_seq: u64, body: AckRequest) -> Result<(), ApiError> {
+        let params = json!({"cmdSeq": cmd_seq.to_string()});
+        match self.record("ack_command", &ctx, params, None, ser(&body), None) {
+            Some(r) => r.unit(),
+            None => self.model_ack(&ctx, cmd_seq, body),
+        }
+    }
+
+    async fn agent_turn(&self, ctx: Ctx, body: AgentTurnRequest) -> Result<Admitted<Empty>, ApiError> {
+        match self.record("agent_turn", &ctx, json!({}), None, ser(&body), None) {
+            Some(r) => admitted(&r, "agent_turn"),
+            None => self.model_agent_turn(&ctx, &body),
+        }
+    }
+
+    async fn turn_state(&self, ctx: Ctx, turn_id: Uuid, body: TurnStateReport) -> Result<(), ApiError> {
+        let params = json!({"turnId": turn_id.to_string()});
+        match self.record("turn_state", &ctx, params, None, ser(&body), None) {
+            Some(r) => r.unit(),
+            None => self.model_turn_state(&ctx, &body),
+        }
+    }
+
+    async fn live_frames(&self, ctx: Ctx, turn_id: Uuid, body: LiveFramesRequest) -> Result<(), ApiError> {
+        let params = json!({"turnId": turn_id.to_string()});
+        match self.record("live_frames", &ctx, params, None, ser(&body), None) {
+            Some(r) => r.unit(),
+            None => self.model_report(&ctx),
+        }
+    }
+
+    async fn tasks(&self, ctx: Ctx, body: TasksReport) -> Result<(), ApiError> {
+        match self.record("tasks", &ctx, json!({}), None, ser(&body), None) {
+            Some(r) => r.unit(),
+            None => self.model_report(&ctx),
+        }
+    }
+
+    async fn ask_open(&self, ctx: Ctx, body: AskReport) -> Result<(), ApiError> {
+        match self.record("ask_open", &ctx, json!({}), None, ser(&body), None) {
+            Some(r) => r.unit(),
+            None => self.model_report(&ctx),
+        }
+    }
+
+    async fn ask_resolved(&self, ctx: Ctx, ask_id: String, body: AskResolvedReport) -> Result<(), ApiError> {
+        match self.record("ask_resolved", &ctx, json!({"askId": ask_id}), None, ser(&body), None) {
+            Some(r) => r.unit(),
+            None => self.model_report(&ctx),
+        }
+    }
+
+    async fn heartbeat(&self, ctx: Ctx, body: Heartbeat) -> Result<(), ApiError> {
+        match self.record("heartbeat", &ctx, json!({}), None, ser(&body), None) {
+            Some(r) => r.unit(),
+            None => self.model_report(&ctx),
+        }
+    }
+
+    async fn sandbox_blob_get(&self, ctx: Ctx, sha: String, query: SandboxBlobQuery) -> Result<Response, ApiError> {
+        match self.record("sandbox_blob_get", &ctx, json!({"sha": sha}), ser(&query), None, None) {
+            Some(r) => r.response(),
+            None => self.model_blob_get(&sha),
+        }
+    }
+
+    async fn sandbox_blob_put(&self, ctx: Ctx, sha: String, body: Body) -> Result<Admitted<Empty>, ApiError> {
+        let bytes = bytes_of(body).await?;
+        match self.record(
+            "sandbox_blob_put",
+            &ctx,
+            json!({"sha": sha}),
+            None,
+            None,
+            Some(bytes.clone()),
+        ) {
+            Some(r) => admitted(&r, "sandbox_blob_put"),
+            None => self.model_blob_put(&ctx, &sha, bytes),
+        }
+    }
+
+    async fn sent_files(&self, ctx: Ctx, body: SentFilesRequest) -> Result<SentFilesResponse, ApiError> {
+        scripted!(self, "sent_files", ctx, json!({}), None, ser(&body), typed)
+    }
+
+    async fn sent_files_commit(&self, ctx: Ctx, tool_use_id: String) -> Result<SentFilesCommitted, ApiError> {
+        let params = json!({"toolUseId": tool_use_id});
+        scripted!(self, "sent_files_commit", ctx, params, None, Some(json!({})), typed)
+    }
+
+    async fn person_purge(
+        &self,
+        ctx: Ctx,
+        person: String,
+        body: PersonPurgeRequest,
+    ) -> Result<PersonPurgeResponse, ApiError> {
+        scripted!(
+            self,
+            "person_purge",
+            ctx,
+            json!({"person": person}),
+            None,
+            ser(&body),
+            typed
+        )
+    }
+
+    async fn workspaces_exists(
+        &self,
+        ctx: Ctx,
+        body: WorkspacesExistsRequest,
+    ) -> Result<WorkspacesExistsResponse, ApiError> {
+        scripted!(self, "workspaces_exists", ctx, json!({}), None, ser(&body), typed)
+    }
+
+    async fn ops_people(&self, ctx: Ctx, query: PeopleQuery) -> Result<PeopleResponse, ApiError> {
+        scripted!(self, "ops_people", ctx, json!({}), ser(&query), None, typed)
+    }
+
+    async fn ops_view_as(&self, ctx: Ctx, query: ViewAsLogQuery) -> Result<ViewAsLog, ApiError> {
+        scripted!(self, "ops_view_as", ctx, json!({}), ser(&query), None, typed)
+    }
+
+    async fn ops_stats(&self, ctx: Ctx) -> Result<OpsStats, ApiError> {
+        scripted!(self, "ops_stats", ctx, json!({}), None, None, typed)
+    }
+
+    async fn admin_conversations(&self, ctx: Ctx, query: AdminListQuery) -> Result<AdminConversationList, ApiError> {
+        scripted!(self, "admin_conversations", ctx, json!({}), ser(&query), None, typed)
+    }
+
+    async fn admin_conversation(&self, ctx: Ctx, id_: Uuid) -> Result<AdminConversation, ApiError> {
+        scripted!(self, "admin_conversation", ctx, id(id_), None, None, typed)
+    }
+
+    async fn admin_events(&self, ctx: Ctx, id_: Uuid, query: EventsQuery) -> Result<EventsPage, ApiError> {
+        scripted!(self, "admin_events", ctx, id(id_), ser(&query), None, typed)
+    }
+
+    async fn admin_timeline(&self, ctx: Ctx, id_: Uuid, query: TimelineQuery) -> Result<TimelinePage, ApiError> {
+        scripted!(self, "admin_timeline", ctx, id(id_), ser(&query), None, typed)
+    }
+}

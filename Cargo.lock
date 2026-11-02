@@ -67,6 +67,23 @@ version = "0.0.0"
 [[package]]
 name = "aviary-fakes"
 version = "0.0.0"
+dependencies = [
+ "aviary-core",
+ "axum",
+ "hermit-api",
+ "hyper",
+ "hyper-util",
+ "magpie-api",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "supervisor-api",
+ "tokio",
+ "tower",
+ "uuid",
+]
 
 [[package]]
 name = "aviary-pg"

@@ -6,5 +6,24 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[dependencies]
+aviary-core = { path = "../../crates/aviary-core" }
+axum.workspace = true
+hermit-api = { path = "../../crates/hermit-api" }
+hyper = { workspace = true, features = ["server", "http1"] }
+hyper-util.workspace = true
+magpie-api = { path = "../../crates/magpie-api" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+supervisor-api = { path = "../../crates/supervisor-api" }
+tokio.workspace = true
+tower.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+rustls.workspace = true
+
 [lints]
 workspace = true
