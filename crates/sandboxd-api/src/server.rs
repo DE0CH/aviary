@@ -75,7 +75,11 @@ pub trait Server: Send + Sync + 'static {
 fn body<T>(r: Result<Json<T>, JsonRejection>) -> Answer<T> {
     // as sandboxd: 413 for a body over the limit, 400 for anything else wrong with it
     r.map(|Json(v)| v).map_err(|e| {
-        let status = if e.status() == StatusCode::PAYLOAD_TOO_LARGE { 413 } else { 400 };
+        let status = if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            413
+        } else {
+            400
+        };
         ApiError::new(status, e.body_text())
     })
 }
