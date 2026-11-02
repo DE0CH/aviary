@@ -283,8 +283,11 @@ decided in this order:
    which pip and npm send from the index URL). Missing: 407 with `Proxy-Authenticate: Basic realm="aviary-gateway"`.
    The token is hermit's `hst1.<kid>.<payload>.<sig>`, checked locally (`chat/src/egress/tokens.ts`): the kid in
    hermit's key set (`GET http://hermit/v1/sandbox-token-keys`, refreshed every 5 min and at most every 10 s on an
-   unknown kid, the last set kept when a fetch fails), the Ed25519 signature, the expiry, and the connection's source
-   IPv4 equal to the token's (unless it carries 0.0.0.0). A failure is final: 403 `{"code":"not_allowed"}` (JSON on a
+   unknown kid, the last set kept when a fetch fails and stored in table `token_keys`), the Ed25519 signature, the expiry, and the connection's source
+   IPv4 equal to the token's (unless it carries 0.0.0.0). A token naming a kid the set lacks is held for up to two
+   refetches (the first at once unless one ran in the last 10 s, the second 10 s later; the unknown-kid clock is its
+   own, so the 5-minute refresh never delays it): during a hermit key rotation a refetch can land on a replica that
+   does not publish the new kid yet. A failure is final: 403 `{"code":"not_allowed"}` (JSON on a
    fixed name, plain text otherwise). Then liveness: `GET http://hermit/v1/sandbox-tokens/{sandboxId}` with
    `EGRESS_TOKEN_HERMIT`, 1 s timeout, cached 30 s and refreshed in the background; `live: false` or 404 → 403 within
    30 s. **A hermit problem never refuses a valid token:** while hermit fails the last answer is served whatever its
@@ -297,7 +300,9 @@ decided in this order:
      routed) to `http://magpie` / `http://hermit` with `EGRESS_TOKEN_MAGPIE` / `EGRESS_TOKEN_HERMIT`; bodies up to
      64 MiB (64 MiB + 1: 413 `too_large`); streamed both ways over a kept-alive pool; an upstream silent 120 s ends
      the request. The hot path: no `egress_log` row, counters `egress_fixed_requests_total{route,status}` and
-     `egress_fixed_bytes_total{route,dir}` instead.
+     `egress_fixed_bytes_total{route,dir}` instead; a gateway-side failure (502 unreachable, 504 idle, an answer cut)
+     is logged (`egress fixed-name upstream`: route, status, request, conversation, `person_key`, never the path),
+     at most one line per route per second with the left-out count in the next.
    - `model`: `POST /v1/messages`, `POST /v1/messages/count_tokens` to egress.json's route `model` (OpenRouter), and
      `GET /v1/aviary/models` answered by egress itself (below). The route injects `Authorization: Bearer
      $OPENROUTER_API_KEY` and **forces zero data retention into every request body** (`provider.zdr: true`,
@@ -338,23 +343,43 @@ the same answer sandboxes get at `http://model/v1/aviary/models`; `GET /v1/ops/s
 admin): spend and the budget, refusals and errors (aviary platform spec 15.3; owners are emails);
 `GET /v1/admin/egress-log?conversation=&since=&limit=` (admin): one conversation's rows.
 
-**Health (9090):** `/healthz`; `/readyz` 503 until migrations are verified, the allowlist is loaded and hermit's key
-set has been fetched once, and while draining (not when Postgres or hermit fail later); `/version`; `/metrics`
-(the counters above, `egress_log_buffered`, `egress_log_dropped_total{kind}`, `egress_drain_cut_total{kind}`,
-`egress_in_flight{kind}`).
+**Health (9090):** `/healthz`; `/readyz` 503 until migrations are verified, the allowlist is loaded and tokens can be
+verified (hermit's key set fetched once, or, while hermit is away at this start, the set stored in `token_keys`), and
+while draining (not when Postgres or hermit fail later); `/version` (`builtAt` from the image's `CHAT_BUILT_AT`);
+`/metrics` (the counters above, `egress_log_buffered`, `egress_log_dropped_total{kind}`,
+`egress_drain_cut_total{kind}`, `egress_in_flight{kind}`, `egress_token_keys_from_store`,
+`egress_budget_unknown_served_total`).
 
 **Its own database `egress`** (`EGRESS_DATABASE_URL`; `chat/src/egress/db.ts`, migrations under egress's own lock):
-`egress_log` (no retention: the budget sums every model row since `budget.since`) and `budget_state` (the last budget
-status a replica read). **A database outage never stops a running turn:** the budget gate serves its last known
-status plus the model costs this replica has logged since, so a replica does not overspend on stale data; log rows
-wait in memory (at most 50,000, the oldest non-model row dropped first when full, counted; never a model row) and are
-written in order once the database is back.
+`egress_log` (no retention: the budget sums every model row since `budget.since`), `budget_state` (the last budget
+status a replica read) and `token_keys` (hermit's last key set). **A database outage never stops a running turn:** the
+budget gate serves its last known status plus the model costs this replica has logged since, so a replica does not
+overspend on stale data; a call waits for a budget read at most 250 ms after that read began and not at all while
+reads fail, so a database that hangs rather than refuses costs one such wait at its start; with no status ever known
+(no `budget_state` row, every read failed) it counts this replica's own costs from zero against the limit (counted,
+logged). Log rows wait in memory (at most 50,000, the oldest non-model row dropped first when full, counted; never a
+model row) and are written in order once the database is back.
 
 **Drain** (SIGTERM, after Kubernetes' 10 s preStop): `/readyz` 503, no new connections, idle kept-alive connections
 closed, every answer from then on carries `Connection: close`; model streams and tunnels finish up to 600 s,
 magpie/hermit requests up to 60 s, tools calls up to 180 s; what is left at its bound is cut and counted in
-`egress_drain_cut_total{kind}`; the log is flushed; exit 0 with log `drained` (and the cuts). A second SIGTERM exits at
-once. Grace 625 s.
+`egress_drain_cut_total{kind}`; the log is flushed, retried every second for what the grace period has left (at least
+10 s); exit 0 with log `drained` (and the cuts). A second SIGTERM exits at once. Grace 625 s.
+
+**Known gaps** (aviary refactor WP-25 review):
+- Rows still unwritten when the pod is killed are lost (a rollout or eviction during a database outage longer than the
+  grace left after the drain): logged as `egress log lost at exit` with their count and model cost. The shared budget
+  then undercounts that cost for good and the calls are missing from the ops summary. The pod's cache is an emptyDir
+  that goes with the pod, so there is nowhere local to keep them.
+- Readiness waits for a usable key set. If both replicas restart while hermit is away **and** the database has no
+  `token_keys` row or is away too, no egress pod becomes ready: the VIP has no target and every sandbox loses magpie,
+  hermit, the model and the internet together, so running turns stop until hermit or the database is back (aviary
+  platform 3.2 wants readiness independent of other services; a gateway that cannot verify a token cannot serve).
+- The hermit-outage check in CI is accept-and-reset only, not connection refused (`run.sh`, the suite's fakes keep
+  :80); the conformance suites are built from source at `chat/aviary.ref`, not run from the published
+  `ghcr.io/de0ch/aviary-testing` image (aviary WP-28).
+- The old relay listener (staff's own Claude Code on the model route, `EGRESS_RELAY_PORT`, table `relay_tokens`) is
+  not in this egress: awaiting Deyao's decision (aviary refactor DESIGN 10, "Open: the relay").
 
 **Configuration** `/etc/egress/egress.json` (`chat/src/egress/config.ts`): `product` (`name`, `locale` for the budget
 message), `models`, `defaultModel`, `smallModel`, `titleModel`, `titleReasoning`, `contextTokens`, `routes` (exactly
@@ -512,6 +537,14 @@ An instance is a Kustomization (YYC: `DE0CH/YYC` `yyc-ai/deploy/`) that
   `OPENROUTER_API_KEY`), `tools-env` (`DATABASE_URL` + the tool keys its config names), `tunnel` (`token`), plus a
   `ghcr-pull` docker-registry Secret patched onto the Deployments while the GHCR packages are private;
 - defines the PriorityClass `serving` the base's pods use (or patches `priorityClassName`).
+
+**The old stack's egress is pinned (aviary refactor, until A6).** From WP-25 on, this repo's egress is aviary's sandbox
+gateway (section "`egress`: the sandbox gateway"), which this base cannot run. `deploy/chat/egress.yaml` therefore
+names `ghcr.io/de0ch/jarvis3-chat:f91907d349e6` itself (the last image of the old egress, whose allowlist is the
+refresh of 2026-11-02), and an instance's `images:` entry for `jarvis3-chat` does not touch it. web and tools still
+start from `JARVIS_ROLE` with no argument, so bumping the base and the image tag ships web and tools fixes to the old
+stack as before; its egress gets no more changes, the weekly allowlist refresh included. The new stack (YYC's own
+manifests, `args: [egress]`) takes the new egress. Both go in A6 with `deploy/chat/**` and `JARVIS_ROLE`.
 
 A new version = bump the base `ref` and the image tags (chat image in `images:`, the sandbox's in `config.json`
 `sandbox.image`) to a commit whose `chat` workflow pushed images, and push; Flux rolls the Deployments one pod at a
