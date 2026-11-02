@@ -17,7 +17,7 @@ use magpie_api::Admitted;
 use magpie_api::Timestamp;
 use magpie_api::errors::ErrorCode;
 use magpie_api::events::{EventBody, TurnStartedData, UserSent};
-use magpie_api::sandbox::{Resume, StartFile, StartImage, StartTurn, TitleCommand};
+use magpie_api::sandbox::{Resume, StartFile, StartImage, StartTurn, TitleCommand, WORKSPACE_NAME_MAX_BYTES};
 use magpie_api::turns::{SendRequest, SendResponse, TurnOrigin, TurnPhase, TurnStarted};
 use magpie_api::uploads::{AttachedImage, Attachment, BlobKind, BlobPointer, BlobRef};
 use time::OffsetDateTime;
@@ -138,8 +138,20 @@ fn upload_id_of(path: &str) -> Option<Uuid> {
     Uuid::parse_str(id).ok()
 }
 
+/// The longest prefix of `s` within `chars` characters and `bytes` UTF-8 bytes (whole characters only).
+fn fit(s: &str, chars: usize, bytes: usize) -> &str {
+    let mut end = 0;
+    for (n, (i, c)) in s.char_indices().enumerate() {
+        if n >= chars || i + c.len_utf8() > bytes {
+            break;
+        }
+        end = i + c.len_utf8();
+    }
+    &s[..end]
+}
+
 /// A file name made safe for `/workspace/uploads/` (magpie 8.2): `/` and NUL replaced, leading dots replaced, at most
-/// 200 characters.
+/// 200 characters and 255 bytes (one directory entry: a Traditional Chinese title of 200 characters is 600 bytes).
 #[must_use]
 pub fn safe_name(name: &str) -> String {
     // trimmed first, so no leading space hides a leading dot (and `.` / `..` become `_` / `__`)
@@ -151,11 +163,22 @@ pub fn safe_name(name: &str) -> String {
     let dots = s.chars().take_while(|c| *c == '.').count();
     let s = format!("{}{}", "_".repeat(dots), &s[dots..]);
     let s = if s.is_empty() { "file".to_owned() } else { s };
-    let s: String = s.chars().take(limits::WORKSPACE_NAME_MAX_CHARS).collect();
-    s.trim_end().to_owned()
+    // the extension is kept when the name is cut
+    let (base, ext) = match s.rfind('.') {
+        Some(i) if i > 0 && s.len() - i <= 16 => (&s[..i], &s[i..]),
+        _ => (s.as_str(), ""),
+    };
+    let room_chars = limits::WORKSPACE_NAME_MAX_CHARS.saturating_sub(ext.chars().count());
+    let room_bytes = WORKSPACE_NAME_MAX_BYTES.saturating_sub(ext.len());
+    let cut = fit(base, room_chars, room_bytes).trim_end();
+    if cut.len() == base.len() {
+        return s.trim_end().to_owned();
+    }
+    let out = format!("{cut}{ext}");
+    if out.is_empty() { "file".to_owned() } else { out }
 }
 
-/// `name`, or `name (2).ext`, `name (3).ext`, … — the first not in `taken`, at most 200 characters.
+/// `name`, or `name (2).ext`, `name (3).ext`, … — the first not in `taken`, at most 200 characters and 255 bytes.
 #[must_use]
 pub fn unique_name<S: std::hash::BuildHasher>(name: &str, taken: &HashSet<String, S>) -> String {
     if !taken.contains(name) {
@@ -168,7 +191,8 @@ pub fn unique_name<S: std::hash::BuildHasher>(name: &str, taken: &HashSet<String
     for n in 2.. {
         let suffix = format!(" ({n}){ext}");
         let room = limits::WORKSPACE_NAME_MAX_CHARS.saturating_sub(suffix.chars().count());
-        let candidate: String = base.chars().take(room).collect::<String>() + &suffix;
+        let room_bytes = WORKSPACE_NAME_MAX_BYTES.saturating_sub(suffix.len());
+        let candidate = format!("{}{suffix}", fit(base, room, room_bytes));
         if !taken.contains(&candidate) {
             return candidate;
         }
@@ -497,7 +521,24 @@ mod tests {
         assert_eq!(safe_name(".."), "__");
         assert_eq!(safe_name("\t../x"), "___x");
         assert_eq!(safe_name("  Q3 report.pdf  "), "Q3 report.pdf");
-        assert_eq!(safe_name(&"港".repeat(300)).chars().count(), 200);
+        assert_eq!(safe_name(&"x".repeat(300)).chars().count(), 200);
+        // a long Traditional Chinese title: cut to one directory entry (255 bytes), its extension kept
+        let title = format!("{}.pdf", "香港公司年度業務報告".repeat(10));
+        let cut = safe_name(&title);
+        assert!(
+            cut.len() <= 255 && cut.rsplit_once('.').map(|x| x.1) == Some("pdf"),
+            "{cut} {}",
+            cut.len()
+        );
+        assert_eq!(cut.chars().count(), 83 + 4);
+        assert!(title.starts_with(cut.trim_end_matches(".pdf")));
+        let mut t = HashSet::new();
+        t.insert(cut.clone());
+        let again = unique_name(&cut, &t);
+        assert!(
+            again.len() <= 255 && again.rsplit_once(" (2).").map(|x| x.1) == Some("pdf"),
+            "{again}"
+        );
         let mut taken = HashSet::new();
         assert_eq!(unique_name("a.pdf", &taken), "a.pdf");
         taken.insert("a.pdf".to_owned());

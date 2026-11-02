@@ -24,6 +24,9 @@ pub const SENT_FILES_MAX: usize = 100;
 pub const SENT_FILE_MAX_BYTES: u64 = 64 << 20;
 /// Sent files per send, total.
 pub const SENT_TOTAL_MAX_BYTES: u64 = 256 << 20;
+/// The longest upload name in a `start_turn`'s `workspacePath` (`uploads/<name>`), in UTF-8 bytes: one directory
+/// entry (`NAME_MAX`). magpie also keeps names to 200 characters.
+pub const WORKSPACE_NAME_MAX_BYTES: usize = 255;
 
 /// `POST /v1/sandbox/lease` → 200 (body `{}`); 409 `not_current_sandbox` / `conversation_migrating`; 503.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -343,7 +346,8 @@ pub struct StartFile {
     pub mime_type: String,
     /// Bytes.
     pub size: u64,
-    /// Where to write it, relative to `/workspace` (`uploads/<name>`, unique in the conversation).
+    /// Where to write it, relative to `/workspace` (`uploads/<name>`, unique in the conversation; `<name>` at most
+    /// [`WORKSPACE_NAME_MAX_BYTES`] bytes).
     pub workspace_path: String,
     /// The bytes' blob (`GET /v1/sandbox/blobs/{sha}?as=raw`).
     pub blob: BlobId,
