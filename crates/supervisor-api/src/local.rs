@@ -72,6 +72,13 @@ impl ReceivedFds {
         Self(Arc::new(Mutex::new(fds)))
     }
 
+    /// Adds descriptors (the acceptor, once the connection's first message is read).
+    pub fn put(&self, fds: Vec<OwnedFd>) {
+        if let Ok(mut v) = self.0.lock() {
+            v.extend(fds);
+        }
+    }
+
     /// Takes the descriptors (empty after the first call).
     #[must_use]
     pub fn take(&self) -> Vec<OwnedFd> {
