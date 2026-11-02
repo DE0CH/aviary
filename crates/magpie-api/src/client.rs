@@ -44,6 +44,15 @@ use crate::turns::{AgentPermissionResponse, CancelResponse, SendRequest, SendRes
 use crate::uploads::{BlobQuery, SandboxBlobQuery, UploadKind, UploadResponse};
 use crate::{Admitted, Empty, PROTOCOL_PERSON, PROTOCOL_SANDBOX, SURFACE_PERSON, SURFACE_SANDBOX};
 
+/// The request headers a byte relay forwards to magpie's byte routes (M14, M15, M16 download): the range and the
+/// conditional headers of the app's request, so magpie answers 206, 304 or 416 itself (pigeon 5.8).
+pub const RELAY_REQUEST_HEADERS: [reqwest::header::HeaderName; 4] = [
+    reqwest::header::RANGE,
+    reqwest::header::IF_NONE_MATCH,
+    reqwest::header::IF_MODIFIED_SINCE,
+    reqwest::header::IF_RANGE,
+];
+
 /// A failed call.
 #[derive(Debug)]
 pub enum ClientError {
@@ -215,15 +224,46 @@ impl Client {
             .map(drop)
     }
 
-    async fn exec<Q: Serialize + ?Sized>(
+    /// M15 for a byte relay (pigeon's `/api/blobs/…`): `forward` holds the client's request headers of
+    /// [`RELAY_REQUEST_HEADERS`] (others are ignored), and the answer comes back whatever its status (200, 304, 404
+    /// …) for the caller to pass on; only a transport failure is an error.
+    ///
+    /// # Errors
+    /// [`ClientError::Http`].
+    pub async fn blob_relay(
+        &self,
+        blob_id: &str,
+        q: &BlobQuery,
+        forward: &reqwest::header::HeaderMap,
+    ) -> Result<reqwest::Response, ClientError> {
+        let r = route("blob");
+        self.relay(&Scope::default(), r, &[blob_id], q, forward).await
+    }
+
+    async fn relay<Q: Serialize + ?Sized>(
+        &self,
+        scope: &Scope,
+        route: &'static Route,
+        params: &[&str],
+        query: &Q,
+        forward: &reqwest::header::HeaderMap,
+    ) -> Result<reqwest::Response, ClientError> {
+        let mut b = self.request(scope, route, params, Some(query));
+        for name in &RELAY_REQUEST_HEADERS {
+            for v in forward.get_all(name) {
+                b = b.header(name.clone(), v.clone());
+            }
+        }
+        Ok(b.send().await?)
+    }
+
+    fn request<Q: Serialize + ?Sized>(
         &self,
         scope: &Scope,
         route: &'static Route,
         params: &[&str],
         query: Option<&Q>,
-        body: Body,
-        range: Option<&str>,
-    ) -> Result<reqwest::Response, ClientError> {
+    ) -> reqwest::RequestBuilder {
         let url = format!("{}{}", self.base, routes::fill(route.path, params));
         let method = match route.method {
             routes::Method::Get => reqwest::Method::GET,
@@ -258,6 +298,19 @@ impl Client {
         if let Some(l) = &scope.lease {
             b = b.header(AVIARY_LEASE, l.to_string());
         }
+        b
+    }
+
+    async fn exec<Q: Serialize + ?Sized>(
+        &self,
+        scope: &Scope,
+        route: &'static Route,
+        params: &[&str],
+        query: Option<&Q>,
+        body: Body,
+        range: Option<&str>,
+    ) -> Result<reqwest::Response, ClientError> {
+        let mut b = self.request(scope, route, params, query);
         if let Some(range) = range {
             b = b.header(reqwest::header::RANGE, range);
         }
@@ -561,6 +614,18 @@ impl PersonCalls<'_> {
             .await
     }
 
+    /// M14 for a byte relay: as [`Client::blob_relay`], the answer whatever its status.
+    pub async fn files_raw_relay(
+        &self,
+        id: Uuid,
+        q: &RawFileQuery,
+        forward: &reqwest::header::HeaderMap,
+    ) -> Result<reqwest::Response, ClientError> {
+        self.client
+            .relay(&self.scope, route("files_raw"), &[&id.to_string()], q, forward)
+            .await
+    }
+
     /// The files panel.
     pub async fn files_panel(&self, id: Uuid) -> Result<FilesPanel, ClientError> {
         self.get("files_panel", &[&id.to_string()], NO_QUERY).await
@@ -602,6 +667,18 @@ impl PersonCalls<'_> {
                 Body::None,
                 range,
             )
+            .await
+    }
+
+    /// M16 download for a byte relay: as [`Client::blob_relay`], the answer whatever its status.
+    pub async fn share_files_raw_relay(
+        &self,
+        share_id: &str,
+        q: &RawFileQuery,
+        forward: &reqwest::header::HeaderMap,
+    ) -> Result<reqwest::Response, ClientError> {
+        self.client
+            .relay(&self.scope, route("share_files_raw"), &[share_id], q, forward)
             .await
     }
 
