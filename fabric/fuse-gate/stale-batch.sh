@@ -7,4 +7,4 @@ log=/root/out/stale-batch-$pre.log; : > "$log"
 for i in $(seq -w 1 "$n"); do
   timeout 180 ./stale-mig.sh "$pre$i" "$dst" "$mib" "$dirty" 2>/dev/null | tail -n 1 >> "$log"
 done
-echo done >> "$log"
+echo "done" >> "$log"
