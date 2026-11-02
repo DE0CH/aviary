@@ -1,0 +1,10 @@
+[package]
+name = "aviary-fakes"
+description = "In-process fake magpie, hermit and supervisor implementing their -api server traits."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

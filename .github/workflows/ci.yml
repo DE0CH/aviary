@@ -1,0 +1,100 @@
+# platform spec 6.1. Jobs still to come with their packages: sandboxd-soak, images, sandbox-smoke, gvisor, e2e,
+# publish (main only, needs every gate). Actions are pinned by commit SHA (6.3).
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # gitleaks scans the whole history
+      - name: toolchain (rust-toolchain.toml, exactly)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
+        with:
+          tool: cargo-deny@0.20.2,cargo-audit@0.22.2
+      - name: gitleaks 8.30.1
+        run: |
+          curl -sSfL -o /tmp/gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tgz" | sha256sum -c -
+          tar xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo deny --locked check
+      - run: cargo audit --deny warnings
+      - run: gitleaks git --redact --verbose .
+      - name: source rules (platform 4.5)
+        run: cargo test --locked -p aviary-source-rules
+      - name: shellcheck
+        run: |
+          shopt -s globstar nullglob
+          files=(.github/ci/*.sh fabric/**/*.sh images/sandbox/*.sh)
+          shellcheck "${files[@]}"
+
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: toolchain (rust-toolchain.toml, exactly)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
+        with:
+          tool: cargo-nextest@0.9.150
+      - name: postgres (the production version, TLS on)
+        run: |
+          url=$(.github/ci/postgres.sh ghcr.io/cloudnative-pg/postgresql:17.11-standard-trixie 5432)
+          echo "::add-mask::$url"
+          echo "AVIARY_TEST_DATABASE_URL=$url" >> "$GITHUB_ENV"
+      - run: cargo nextest run --workspace --locked --no-tests=pass
+
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      AVIARY_REVISION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: toolchain (rust-toolchain.toml, exactly)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: musl binaries (rust-lld, static)
+        run: |
+          export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          cargo build --release --locked --target x86_64-unknown-linux-musl --workspace --exclude magpie --bins
+          mkdir -p dist
+          find target/x86_64-unknown-linux-musl/release -maxdepth 1 -type f -executable -exec cp {} dist/ \;
+      - name: magpie (glibc, debian bookworm)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src -e AVIARY_REVISION \
+            -e SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) -e CARGO_TARGET_DIR=/src/target/bookworm \
+            rust:1.99.1-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b \
+            cargo build --release --locked -p magpie --bin magpie
+          sudo cp target/bookworm/release/magpie dist/
+      - name: SHA256SUMS
+        run: cd dist && sha256sum * | tee SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error

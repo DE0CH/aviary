@@ -1,0 +1,10 @@
+[package]
+name = "magpie"
+description = "magpie: conversations, events, turns, files and uploads."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,10 @@
+[package]
+name = "hermit"
+description = "hermit: sandbox lifecycle (the YYC implementation of the hermit contract)."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,12 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-print-in-tests = true
+allow-dbg-in-tests = false
+
+# platform 4.5: configuration comes only through aviary-core::env (which allows these per function)
+disallowed-methods = [
+  { path = "std::env::var", reason = "read configuration through aviary_core::env (platform 4.5)" },
+  { path = "std::env::var_os", reason = "read configuration through aviary_core::env (platform 4.5)" },
+  { path = "std::env::vars", reason = "read configuration through aviary_core::env (platform 4.5)" },
+  { path = "std::env::vars_os", reason = "read configuration through aviary_core::env (platform 4.5)" },
+]

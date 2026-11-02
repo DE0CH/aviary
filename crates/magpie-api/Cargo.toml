@@ -1,0 +1,10 @@
+[package]
+name = "magpie-api"
+description = "magpie's contract: types, routes, client and fixtures for the person, sandbox and hermit/ops/admin surfaces."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,14 @@
+# Static musl binaries linked with the self-contained rust-lld (no musl-gcc needed; platform 5.1).
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"
+
+[build]
+# Reproducible builds (platform 5.1): workspace sources already reach rustc as relative paths and the standard
+# library as /rustc/<hash>; registry sources are remapped from every CARGO_HOME the builds use (the hosted runner,
+# the rust/debian build containers, the build runner) to one fixed prefix. `profile.trim-paths` would do this but is
+# not stable in 1.99. Setting RUSTFLAGS in the environment replaces this list, so CI never sets it.
+rustflags = [
+  "--remap-path-prefix=/home/runner/.cargo=/cargo",
+  "--remap-path-prefix=/usr/local/cargo=/cargo",
+  "--remap-path-prefix=/root/.cargo=/cargo",
+]

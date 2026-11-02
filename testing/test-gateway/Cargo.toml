@@ -1,0 +1,10 @@
+[package]
+name = "test-gateway"
+description = "The reference sandbox gateway and gateway conformance oracle."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

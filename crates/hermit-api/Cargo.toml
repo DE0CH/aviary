@@ -1,0 +1,10 @@
+[package]
+name = "hermit-api"
+description = "hermit's contract: types, routes, protocol numbers and client."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

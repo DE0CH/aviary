@@ -1,0 +1,89 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/*",
+  "testing/fakes",
+  "testing/mock-model",
+  "testing/fake-tools",
+  "testing/test-gateway",
+  "testing/fake-sandboxd",
+  "testing/fake-access",
+  "testing/conformance",
+  "testing/e2e",
+  "testing/source-rules",
+]
+
+[workspace.package]
+edition = "2024"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/DE0CH/aviary"
+publish = false
+
+[workspace.lints.rust]
+# crates/supervisor (FUSE, fd passing) and crates/sandboxd allow it per module with #[allow(unsafe_code)] and a
+# // SAFETY: comment on every block
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny" # tests may allow it (clippy.toml allow-unwrap-in-tests)
+expect_used = "warn"
+dbg_macro = "deny"
+print_stdout = "deny" # logs go through tracing; CLIs use a dedicated writer
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort" # a panic ends the process; Kubernetes or the keeper restarts it
+
+# Exact pins, once. Crates write `tokio.workspace = true` and may add features on top.
+[workspace.dependencies]
+tokio = { version = "=1.54.1", features = ["full"] }
+axum = "=0.8.9"
+hyper = "=1.12.0"
+tower = "=0.5.3"
+tower-http = "=0.7.1"
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls-no-provider", "http2", "stream", "json"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+tokio-postgres = { version = "=0.7.18", features = ["with-uuid-1", "with-time-0_3", "with-serde_json-1"] }
+tokio-postgres-rustls = "=0.14.0"
+deadpool-postgres = "=0.14.2"
+postgres-types = { version = "=0.2.14", features = ["derive", "with-uuid-1", "with-time-0_3", "with-serde_json-1"] }
+uuid = { version = "=1.29.0", features = ["v4", "v7", "serde"] }
+time = { version = "=0.3.55", features = ["serde", "formatting", "parsing", "macros"] }
+chrono-tz = "=0.10.4"
+tracing = "=0.1.44"
+# env-filter off: levels are compiled-in defaults (platform 4.3)
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["std", "fmt", "json", "registry"] }
+prometheus-client = "=0.25.2"
+ring = "=0.17.14"
+subtle = "=2.6.1"
+base64 = "=0.23.1"
+sha2 = "=0.11.1"
+moka = { version = "=0.12.16", features = ["future"] }
+aws-config = { version = "=1.13.0", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
+aws-sdk-s3 = { version = "=1.157.0", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
+aws-sdk-ec2 = { version = "=1.274.0", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
+kube = { version = "=5.0.0", default-features = false, features = ["client", "runtime", "ws", "rustls-tls", "ring"] }
+k8s-openapi = { version = "=0.29.0", features = ["v1_36"] }
+image = "=0.25.10"
+fast_image_resize = "=6.1.0"
+libheif-rs = "=3.0.0"
+webp = "=0.3.1"
+kamadak-exif = "=0.6.1"
+multer = "=3.1.0"
+jsonwebtoken = { version = "=11.1.0", default-features = false, features = ["rust_crypto", "use_pem"] }
+x25519-dalek = "=3.0.0"
+rustix = "=1.1.6"
+nix = "=0.31.3"
+thiserror = "=2.0.21"
+anyhow = "=1.0.104" # bins only
+clap = { version = "=4.6.7", features = ["derive"] }
+# dev
+proptest = "=1.12.0"
+insta = { version = "=1.49.0", features = ["json"] }

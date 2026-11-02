@@ -1,0 +1,10 @@
+[package]
+name = "aviary-pg"
+description = "Postgres pool, migrations, leader lock and LISTEN helper for aviary services."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

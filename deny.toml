@@ -1,0 +1,62 @@
+# cargo-deny (platform 4.1, 4.5, 4.6). `cargo deny check` runs in ci.yml's lint job.
+
+[graph]
+all-features = false
+targets = ["x86_64-unknown-linux-musl", "x86_64-unknown-linux-gnu"]
+
+[advisories]
+# every advisory fails the build (yanked crates too); an exception needs an `ignore` entry with a reason
+yanked = "deny"
+ignore = []
+
+[licenses]
+# only licences compatible with AGPL-3.0-or-later (platform 4.6)
+allow = [
+  "AGPL-3.0-or-later",
+  "AGPL-3.0-only",
+  "GPL-3.0-or-later",
+  "LGPL-2.1-or-later",
+  "LGPL-3.0-or-later",
+  "MPL-2.0",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "MIT",
+  "MIT-0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "0BSD",
+  "BSL-1.0",
+  "CC0-1.0",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.9
+unused-allowed-license = "allow"
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = [
+  # one version each of the async/TLS stack (platform 4.1)
+  { crate = "tokio", deny-multiple-versions = true },
+  { crate = "hyper", deny-multiple-versions = true },
+  { crate = "rustls", deny-multiple-versions = true },
+  # platform 4.5: EC2 and Kubernetes clients only in hermit (and the test crates that drive Kubernetes)
+  { crate = "aws-sdk-ec2", wrappers = ["hermit"], reason = "only hermit talks to EC2 (platform 4.5)" },
+  { crate = "kube", wrappers = ["hermit", "fake-sandboxd", "aviary-e2e"], reason = "only hermit and the harness talk to Kubernetes (platform 4.5)" },
+  { crate = "kube-client", wrappers = ["kube", "kube-runtime"], reason = "use kube (platform 4.5)" },
+  { crate = "kube-runtime", wrappers = ["kube"], reason = "use kube (platform 4.5)" },
+  # no OpenSSL anywhere: rustls only, and musl builds have no C TLS library
+  { crate = "openssl-sys", reason = "rustls only" },
+  { crate = "native-tls", reason = "rustls only" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

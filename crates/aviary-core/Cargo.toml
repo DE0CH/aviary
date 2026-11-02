@@ -1,0 +1,10 @@
+[package]
+name = "aviary-core"
+description = "The service runtime shared by every aviary binary: env, log, ops, drain, auth, http, version."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

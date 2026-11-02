@@ -1,0 +1,10 @@
+[package]
+name = "gateway-api"
+description = "The sandbox gateway contract: proxy credential format, Aviary-Sandbox-* headers, fixed names, models route."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

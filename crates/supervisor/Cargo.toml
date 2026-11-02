@@ -1,0 +1,18 @@
+[package]
+name = "supervisor"
+description = "The in-sandbox supervisor and its keeper."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "supervisor"
+path = "src/bin/supervisor.rs"
+
+[[bin]]
+name = "supervisor-keeper"
+path = "src/bin/supervisor-keeper.rs"
+
+[lints]
+workspace = true

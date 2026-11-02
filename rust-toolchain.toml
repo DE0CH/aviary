@@ -1,0 +1,6 @@
+[toolchain]
+# the stable release current at the repository's creation (2026-11-02), recorded exactly
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+targets = ["x86_64-unknown-linux-musl"]
+profile = "minimal"

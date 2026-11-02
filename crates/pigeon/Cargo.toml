@@ -1,0 +1,10 @@
+[package]
+name = "pigeon"
+description = "pigeon: the app-facing front end (Paseo protocol) of aviary."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

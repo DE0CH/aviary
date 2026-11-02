@@ -1,0 +1,13 @@
+[package]
+name = "aviary-source-rules"
+description = "The source rules of platform 4.5, checked over the repository by tests."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
