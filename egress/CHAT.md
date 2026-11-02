@@ -18,7 +18,7 @@ allowlist with no manual override.
 |---|---|---|
 | `web` | `/internal/cc/*` for the UI pods: the sandbox manager, its janitor and (provider `vm`) the scaler. No public route | 2, rolling, drained |
 | `egress` | The sandbox gateway (aviary's contract): hermit's sandbox tokens checked locally, the fixed names `magpie`, `hermit`, `model` (OpenRouter with forced ZDR and the budget), `tools`; the package mirror; the automatic sandbox allowlist with threat-intel DNS; its own database `egress` | 2, rolling, drained |
-| `tools` | MCP server (Streamable HTTP, JSON responses): news search, web search/fetch, social search, upstream MCP tools; read-only tools only | 2, rolling |
+| `tools` | MCP server `tools` (Streamable HTTP, JSON responses) for aviary's gateway: web search/fetch, social search, AnyAPI, upstream MCP tools; read-only tools only; owner from `Aviary-Sandbox-Person`, liveness from hermit; its own database `tools` | 2, rolling, drained |
 
 Plus the sandbox image `ghcr.io/de0ch/jarvis3-sandbox` (Claude Code, Python/Node tools, Docker, the sandbox agent),
 run by our own sandbox hosts (`sandbox.provider: "vm"`: gVisor, AWS burst hosts behind a gateway on a cluster node,
@@ -471,17 +471,37 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
   allowlist are reachable, a refused site cannot be enabled, and web pages are read with the web search and fetch
   tools (server-side, any public site).
 
-### `tools` (port 8080, `POST /mcp`, MCP Streamable HTTP, stateless, JSON responses)
+### `tools` (`node src/main.ts tools`; ports 8080 `POST /mcp`, 9090 health; MCP Streamable HTTP, stateless, JSON responses)
 
-- Auth: `Authorization: Bearer <egress token>` of a live sandbox made for a person (`sandboxes.owner`), passed on by
-  egress's `tools` route → conversation and owner email. Anything else → 401.
-- Every call → `tool_calls`.
+aviary platform spec 17.2 tools. The MCP server Claude Code in a sandbox sees is named `tools` (tool names
+`mcp__tools__*`); it reaches it as `http://tools/mcp` through the gateway (egress's route `tools`).
+
+- **Caller: the gateway only.** `Authorization: Bearer <pair token>`, one of `TOOLS_ACCEPT_GATEWAY` (comma-separated,
+  current first; two during a rotation; compared by SHA-256, constant-time). Anything else → 401 `unauthenticated`.
+  The gateway names the sandbox it verified: `Aviary-Sandbox-Id`, `Aviary-Sandbox-Conversation`,
+  `Aviary-Sandbox-Person` (the owner's lowercased email) and `Aviary-Request`; without the three sandbox headers → 400
+  `bad_request`.
+- **Owner = `Aviary-Sandbox-Person`.** It is `${USER_EMAIL}` in upstream headers (so yyc-mcp gets
+  `X-YYC-User: <email>` and checks it against the catalogue) and `tool_calls.user_email`.
+- **Access checks**, each refused with 403 `not_allowed`: the person must be allowed by the staff catalogue
+  (`/etc/tools/catalogue/catalogue.json`, ConfigMap `catalogue`; hermit's rules: exact address or `@domain`, re-read
+  every 30 s, a file that fails validation is refused and the last good one kept); and hermit's liveness answer for
+  the sandbox (`GET http://hermit/v1/sandbox-tokens/{sandboxId}`, bearer `TOOLS_TOKEN_HERMIT`, timeout 1 s) must say
+  `live`, state `starting` or `ready` (`paused`, `releasing`, `gone` and a 404 are refused), and the conversation and
+  person the gateway named. The answer is cached 30 s and refreshed in the background; while hermit is unreachable,
+  slow or failing, the last answer is served whatever its age, and a sandbox with no answer yet is served on the
+  gateway's verification. So a hermit outage never stops a running turn's tool calls; a release takes effect within
+  30 s once hermit answers. No database is read for any of this.
+- Every call → a `tool_calls` row in tools' own database (`TOOLS_DATABASE_URL`, migrations in
+  `chat/src/tools/db.ts` under tools' own advisory lock): conversation, sandbox, person, request, tool, args, ok, ms,
+  error, cost. Written without waiting: while the database is away a row is dropped and counted
+  (`tools_tool_calls_dropped_total`), the call answers as usual.
 - **Read-only tools only.** Nothing here sends, posts, writes or changes anything outside, and nothing asks for or
   waits on a confirmation. Tools (names lowercase, `snake_case`; annotations set `readOnlyHint`): `web_search`,
   `web_fetch`, `social_search` (TikHub), the AnyAPI tools (below), plus the **listed** tools of each configured upstream
   MCP server, exposed as `<prefix>_<tool>` (YYC: prefix `yyc`, the yyc-mcp Worker, whose `wisers_*` tools are YYC's WiseSearch, service token +
   `X-YYC-User: <owner email>`).
-- **Upstream tools: an explicit read-only allowlist, default deny.** `tools.upstreams[].tools` names the upstream's
+- **Upstream tools: an explicit read-only allowlist, default deny.** `upstreams[].tools` (tools.json) names the upstream's
   tools (their own names, without the prefix) that may be offered: search/get/list-style tools only. A tool not on
   the list is hidden (a new upstream tool stays hidden until someone adds it), and so is a listed tool the upstream
   marks `readOnlyHint: false` or `destructiveHint: true`. An upstream without a `tools` list offers nothing. Hidden
@@ -496,47 +516,39 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
   that server marks `run_api` destructive (it spends money), which the upstream rule above hides, and its
   `report_bug`/`send_feedback` send things to AnyAPI. Every catalog API only reads; `denySkus` keeps an id out
   anyway. HTTP 402 / `insufficient_balance` is answered "AnyAPI's balance has run out … the admin has to add funds".
-- A built-in tool whose provider is not configured is left out of `tools/list` (`web_search` needs `tools.exa`,
-  `social_search` `tools.tikhub`, the `anyapi_*` tools `tools.anyapi`; `web_fetch`
+- A built-in tool whose provider is not configured is left out of `tools/list` (`web_search` needs `exa`,
+  `social_search` `tikhub`, the `anyapi_*` tools `anyapi`; `web_fetch`
   without Exa reads pages directly).
   `web_fetch`'s direct path refuses non-public addresses (checked after DNS, connecting to the checked address) and
-  ports other than 80/443/8080/8443. With `tools.capture` (`{url, tokenEnv, name}`: the instance's own page capture,
+  ports other than 80/443/8080/8443. With `capture` (`{url, tokenEnv, name}`: the instance's own page capture,
   POST `{url}` with that bearer → `kind` cache / capture / none), `web_fetch` asks it first: a `cache` or `capture`
   answer is returned with its source on the first line ("Source: YYC's stored copy (captured …)" / "YYC's capture,
   read just now") and `structuredContent.via` `own-cache` / `own-capture`; `none`, an error or `original: true` reads
-  the page as before (Exa, then directly). YYC: its news monitor (news-stream webfetch.py). `tools.tikhub.platforms` (optional) limits `social_search` to a subset of
+  the page as before (Exa, then directly). YYC: its news monitor (news-stream webfetch.py). `tikhub.platforms` (optional) limits `social_search` to a subset of
   `xiaohongshu, douyin, weibo, x, threads, youtube, instagram, reddit`. Upstream tool lists are read at startup and
-  every 10 minutes as the first admin (`${USER_EMAIL}` = that admin while listing, the sandbox's owner on calls).
-- Env: `PORT` (8080), `JARVIS_DRAIN_MS` (150 s: an upstream call, up to 2 minutes, finishes before the pod stops;
-  `terminationGracePeriodSeconds` 180), plus `DATABASE_URL` and the key env vars the config names.
+  every 10 minutes as the upstream's `listAs` (`${USER_EMAIL}` = that address while listing, the sandbox's owner on
+  calls); a failed read keeps the last list.
+- Config `/etc/tools/tools.json` (ConfigMap `tools-config`), the old shared config's `tools` section plus `listAs`:
 
-### The sandbox agent (`chat/sandbox/agent.mjs`, port 7070)
-
-The only process the server side talks to inside a sandbox; runs as uid 1000.
-
-- `GET /healthz` → 200 `{ok:true, boot_id}` (no token needed); 503 while it waits for `/init`. `GET /livez` → 200.
-- Auth: the exec token in `X-Jarvis-Exec-Token` (survives a provider's port proxy) or `Authorization: Bearer`.
-- `GET /proc` with `Connection: Upgrade`, `Upgrade: jarvis-proc`, `X-Proc: <base64 JSON {args, cwd?, env?}>` → 101,
-  then frames both ways (1 byte type, 4 bytes big-endian length, payload). Client → agent: 0 stdin, 4 stdin end, 5
-  signal (its name). Agent → client: 1 stdout, 2 stderr, 3 exit (`{code, signal}`), then the socket closes. `args[0]`
-  is looked up on PATH; `cwd` must be `/workspace` or a folder in it (made if missing; default `/workspace`); `env` is
-  added for that process only. A dropped connection (close or FIN) kills the process group (SIGTERM, SIGKILL 2 s
-  later): the caller owns its life. This is how the UI runs `claude` in the sandbox.
-- `POST /init` (only with `JARVIS_INIT=1` and no `JARVIS_EXEC_TOKEN`, once, no token; provider `e2b`): `{token, env,
-  wire?: {url, headers}}` sets the exec token, adds `env` to every process's environment and, with `wire`, starts the
-  local proxy on `127.0.0.1:3128` that carries each connection to egress's `/wire` over a WebSocket. A second call
-  answers 409.
-- Nothing else is served (404).
-
-### `web` deployment needs
-
-- Env: `JARVIS_ROLE=web`, `DATABASE_URL`, `JARVIS_CC_TOKEN`, `JARVIS_NAMESPACE` (default `jarvis`),
-  `JARVIS_DRAIN_SECONDS` (default 300). Config at `/etc/jarvis/config.json` and the system prompt file it names (the
-  managed CLAUDE.md starts with it).
-- Provider `vm`: the `sandbox-vm` Secret's PEMs and AWS key; `JARVIS_JUICEFS_META_URL`/`_PASSWORD`; egress to the
-  sandbox hosts (sandboxd :7443, agents :7070). Provider `kubernetes`: a ServiceAccount bound to a Role in the sandbox
-  namespace (`pods`: create, get, list, watch, delete; `pods/status`: get). Provider `e2b`: `E2B_API_KEY` and any
-  variable `sandbox.e2b.egressHeaders` names.
+  ```json
+  {"exa": {"keyEnv": "EXA_API_KEY"}, "tikhub": {"keyEnv": "TIKHUB_API", "platforms": ["xiaohongshu", "douyin", "weibo"]},
+   "anyapi": {"keyEnv": "ANYAPI_API_KEY"}, "capture": {"url": "http://capture.example/fetch", "tokenEnv": "WEB_FETCH_TOKEN", "name": "YYC"},
+   "upstreams": [{"prefix": "yyc", "url": "http://mcp.example/mcp", "listAs": "<an allowed address>",
+                  "headers": {"Authorization": "Bearer ${YYC_MCP_TOKEN}", "X-YYC-User": "${USER_EMAIL}"},
+                  "tools": ["posts_search", "post_get", "streams_list"]}]}
+  ```
+  Every variable it names must be set at start (a start failure names it, never its value).
+- Env, all required: `TOOLS_DATABASE_URL`, `TOOLS_ACCEPT_GATEWAY`, `TOOLS_TOKEN_HERMIT`, plus the key variables the
+  config names.
+- Health on 9090: `/healthz`, `/readyz` (503 until migrations are applied, the catalogue has been read once and the
+  first upstream refresh has run, and while draining; never for a database or hermit outage later), `/metrics`
+  (`tools_requests_total{status}`, `tools_calls_total{ok}`, `tools_liveness_lookup_failures_total`,
+  `tools_liveness_stale_served_total`, `tools_catalogue_refused_total`, `tools_tool_calls_dropped_total`,
+  `tools_drain_cut_total`), `/version`.
+- Drain (SIGTERM after the 10 s preStop): `/readyz` 503, no new connections, a request on a kept-alive connection is
+  served with `Connection: close`, in-flight calls finish up to 150 s (an upstream call's own timeout is 120 s), what
+  is left is cut and counted, exit 0 with log `drained`. `terminationGracePeriodSeconds` 180. The bound is code, not
+  configuration.
 
 ## Deploying an instance
 
@@ -556,13 +568,15 @@ An instance is a Kustomization (YYC: `DE0CH/YYC` `yyc-ai/deploy/`) that
   `ghcr-pull` docker-registry Secret patched onto the Deployments while the GHCR packages are private;
 - defines the PriorityClass `serving` the base's pods use (or patches `priorityClassName`).
 
-**The old stack's egress is pinned (aviary refactor, until A6).** From WP-25 on, this repo's egress is aviary's sandbox
-gateway (section "`egress`: the sandbox gateway"), which this base cannot run. `deploy/chat/egress.yaml` therefore
-names `ghcr.io/de0ch/jarvis3-chat:f91907d349e6` itself (the last image of the old egress, whose allowlist is the
-refresh of 2026-11-02), and an instance's `images:` entry for `jarvis3-chat` does not touch it. web and tools still
-start from `JARVIS_ROLE` with no argument, so bumping the base and the image tag ships web and tools fixes to the old
-stack as before; its egress gets no more changes, the weekly allowlist refresh included. The new stack (YYC's own
-manifests, `args: [egress]`) takes the new egress. Both go in A6 with `deploy/chat/**` and `JARVIS_ROLE`.
+**The old stack's egress and tools are pinned (aviary refactor, until A6).** From WP-25 on, this repo's egress is
+aviary's sandbox gateway (section "`egress`: the sandbox gateway"), and from WP-26 on its tools serve that gateway
+(section "`tools`"); this base can run neither. `deploy/chat/egress.yaml` and `deploy/chat/tools.yaml` therefore name
+`ghcr.io/de0ch/jarvis3-chat:f91907d349e6` themselves (the last image of the old egress, whose allowlist is the
+refresh of 2026-11-02, and of the old tools), and an instance's `images:` entry for `jarvis3-chat` does not touch
+them. web still starts from `JARVIS_ROLE` with no argument, so bumping the base and the image tag ships web fixes to
+the old stack as before; its egress and tools get no more changes, the weekly allowlist refresh included. The new
+stack (YYC's own manifests, `args: [egress]`, `args: [tools]`) takes the new ones. All of it goes in A6 with
+`deploy/chat/**` and `JARVIS_ROLE`.
 
 A new version = bump the base `ref` and the image tags (chat image in `images:`, the sandbox's in `config.json`
 `sandbox.image`) to a commit whose `chat` workflow pushed images, and push; Flux rolls the Deployments one pod at a
@@ -618,7 +632,7 @@ the spend to 0; a bigger `limitUsd` raises it) and roll out egress. Check:
 
 **Who and which models:** `users` (lower-cased) is who may sign in (the UI's router checks it; web checks
 `/internal/cc/sandbox`'s owner against it); `admins` may open the operator page (router and web check it) and the
-first admin is the identity the tools role lists upstream tools as. `access` is the Cloudflare Access app the UI's router verifies. `models`/`defaultModel`/`titleModel`: egress's
+first admin is the identity the old stack's tools (the pinned image) list upstream tools as. `access` is the Cloudflare Access app the UI's router verifies. `models`/`defaultModel`/`titleModel`: egress's
 model routes refuse any other id (400, `deny:model`); `defaultModel` is Claude Code's model in the sandbox
 (`ANTHROPIC_MODEL`), `titleModel` its small/fast model. Thinking: a model's `reasoning` (`none`, `low`, `medium`,
 `high`, `max`) is set by egress on that model's requests that carry tools (Claude Code's turns), `titleReasoning` on the
