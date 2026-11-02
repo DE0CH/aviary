@@ -31,8 +31,14 @@ const HOST_BOOT_SLOW_S = 300;
 const SANDBOX_START_SLOW_S = 180;
 /** the budget is worth a look from this share on */
 const BUDGET_WATCH = 0.8;
-/** not an error: an MCP client's optional GET stream that the tools server turns down with 405 (MCP streamable HTTP) */
-const NOT_NOISE = "not (kind = 'inject' and status = 405)";
+/** not an error: an MCP client's optional GET stream that the tools server turns down with 405 (MCP streamable HTTP),
+ *  and Claude Code's token count that a model without one answers 404 (it counts locally then) */
+const NOISE = (e = "") => `((${e}kind = 'inject' and ${e}status = 405) or (${e}path like '%/count_tokens' and ${e}status = 404))`;
+/** a glitch, not an error (Deyao, 2026-11-02): the provider busy or its upstream down for a moment (429, 5xx, no answer
+ *  at all); Claude Code retries it. Only a burst of them (GLITCH_WATCH in RECENT_MIN) is worth a look. */
+const GLITCH = (e = "") => `(${e}decision = 'allow' and (${e}status = 429 or ${e}status >= 500 or ${e}status is null))`;
+const QUIET = (e = "") => `(${NOISE(e)} or ${GLITCH(e)})`;
+const GLITCH_WATCH = 5;
 
 type Row = Record<string, any>;
 export type Level = "ok" | "warming" | "watch" | "problem";
@@ -107,6 +113,7 @@ export function healthOf(d: Row): { state: Level; findings: Finding[] } {
   if (r) {
     if (r.failedStarts) add("problem", "errors", `${r.failedStarts} sandbox start${r.failedStarts > 1 ? "s" : ""} failed in the last ${RECENT_MIN} min`);
     if (r.modelErrors) add("problem", "errors", `${r.modelErrors} model or route call${r.modelErrors > 1 ? "s" : ""} failed in the last ${RECENT_MIN} min`);
+    if (r.glitches >= GLITCH_WATCH) add("watch", "errors", `${r.glitches} model calls hit a provider hiccup (busy or 5xx) in the last ${RECENT_MIN} min`);
     if (r.hostErrors) add("problem", "errors", `${r.hostErrors} host or move error${r.hostErrors > 1 ? "s" : ""} in the last ${RECENT_MIN} min`);
   }
   out.sort((a, b) => RANK[b.level] - RANK[a.level]);
@@ -344,7 +351,8 @@ export class OpsSnapshot {
     const [{ rows: c }, { rows: list }] = await Promise.all([
       db.query(
         `select (select count(*) from ops_events where kind = 'sandbox_start' and not ok and at > ${win})::int as "failedStarts",
-                (select count(*) from egress_log where at > ${win} and kind in ('model', 'inject') and (status >= 400 or decision like 'deny%') and ${NOT_NOISE})::int as "modelErrors",
+                (select count(*) from egress_log where at > ${win} and kind in ('model', 'inject') and (status >= 400 or decision like 'deny%') and not ${QUIET()})::int as "modelErrors",
+                (select count(*) from egress_log where at > ${win} and kind = 'model' and ${GLITCH()})::int as "glitches",
                 (select count(*) from vm_events where at > ${win} and (kind like '%fail%' or kind like '%lost%' or data ? 'error'))::int as "hostErrors",
                 (select count(*) from egress_log where at > ${win} and kind not in ('model', 'inject') and decision like 'deny%')::int as "blocked"`,
       ),
@@ -356,7 +364,7 @@ export class OpsSnapshot {
          (select e.at, e.kind || ' ' || coalesce(e.status::text, '–') as what, e.decision || ' ' || coalesce(e.host, '') as detail,
                  coalesce(e.owner, s.owner) as owner
             from egress_log e left join sandboxes s on s.id = e.sandbox_id
-           where e.at > ${win} and e.kind in ('model', 'inject') and (e.status >= 400 or e.decision like 'deny%') and ${NOT_NOISE.replace(/\b(kind|status)\b/g, "e.$1")})
+           where e.at > ${win} and e.kind in ('model', 'inject') and (e.status >= 400 or e.decision like 'deny%') and not ${QUIET("e.")})
          union all
          (select v.at, v.kind as what, coalesce(v.host, '') || coalesce(' ' || (v.data->>'error'), '') as detail, s.owner
             from vm_events v left join sandboxes s on s.id = v.sandbox_id
@@ -462,7 +470,8 @@ export class OpsSnapshot {
           group by 1, 2, 3 order by n desc limit 20`,
       ),
       db.query(
-        `select e.at, e.kind, e.host, e.path, e.status, e.decision, coalesce(e.owner, s.owner) as owner, e.conversation_id as "conversationId"
+        `select e.at, e.kind, e.host, e.path, e.status, e.decision, coalesce(e.owner, s.owner) as owner, e.conversation_id as "conversationId",
+                ${QUIET("e.")} as quiet
            from egress_log e left join sandboxes s on s.id = e.sandbox_id
           where e.at > now() - interval '24 hours' and (e.status >= 400 or e.decision like 'deny%')
           order by e.id desc limit 30`,

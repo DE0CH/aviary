@@ -63,6 +63,8 @@ after(async () => {
 const get = (path: string, headers: Record<string, string> = {}) => fetch(base + path, { headers });
 const as = (user: string | null, token = CC_TOKEN) => ({ authorization: `Bearer ${token}`, ...(user ? { "x-jarvis-user": user } : {}) });
 
+const texts0 = (d: any) => d.health.findings.map((x: any) => x.text);
+
 test("only an admin with the UI pods' token gets the page and the snapshot", async () => {
   assert.equal((await get("/internal/ops/")).status, 401);
   assert.equal((await get("/internal/ops/", as(A, "wrong"))).status, 401);
@@ -151,6 +153,8 @@ test("the snapshot: now (service, hosts, sandboxes, scaler, budget, recent error
        ('model', 'openrouter.ai', 402, 'deny:budget', null, $2, $4, 'anthropic/claude-sonnet-5.5', now()),
        ('connect', 'pastebin.com', 403, 'deny:denylist', null, $1, $3, null, now()),
        ('inject', 'tools.jarvis.svc.cluster.local', 405, 'allow', null, $1, $3, null, now()),
+       ('model', 'openrouter.ai', 502, 'allow', null, $1, $3, 'deepseek/deepseek-v4.1-flash-1017', now()),
+       ('model', 'openrouter.ai', 429, 'allow', null, $1, $3, 'deepseek/deepseek-v4.1-flash-1017', now()),
        ('model', 'openrouter.ai', 200, 'allow', 9, $1, $3, 'anthropic/claude-sonnet-5.5', now() - interval '3 hours')`,
     [sb1, sb2, conv1, conv2],
   );
@@ -208,7 +212,10 @@ test("the snapshot: now (service, hosts, sandboxes, scaler, budget, recent error
   for (let i = 1; i < d.starts.list.length; i++) assert.ok(d.starts.list[i - 1].at >= d.starts.list[i].at, "newest first");
   // errors of the last 15 minutes: the failed start and the 402
   assert.equal(d.recent.failedStarts, 1);
-  assert.equal(d.recent.modelErrors, 1, "an MCP GET turned down with 405 is not an error now");
+  assert.equal(d.recent.modelErrors, 1, "an MCP GET turned down with 405, a 502 or a 429 is not an error now");
+  assert.equal(d.recent.glitches, 2);
+  assert.ok(!texts0(d).some((x: string) => x.includes("hiccup")), "two glitches are not worth a look");
+  assert.deepEqual(d.egress.recent.filter((x: any) => x.quiet).map((x: any) => x.status).sort(), [405, 429, 502]);
   assert.ok(!d.recent.list.some((x: any) => x.what === "inject 405"));
   assert.equal(d.recent.blocked, 1);
   assert.ok(d.recent.list.some((x: any) => x.what === "sandbox start failed"));
@@ -236,7 +243,7 @@ test("the snapshot: now (service, hosts, sandboxes, scaler, budget, recent error
   // egress errors: the 402 and the blocked host
   assert.ok(d.egress.byStatus.some((x: any) => x.status === "402" && x.decision === "deny:budget"));
   assert.deepEqual(d.egress.deniedHosts.map((x: any) => [x.host, x.why]), [["pastebin.com", "denylist"]]);
-  assert.equal(d.egress.recent.length, 3, "the 24 h log keeps the MCP 405");
+  assert.equal(d.egress.recent.length, 5, "the 24 h log keeps the MCP 405 and the glitches, marked quiet");
   // conversations per person: every config user, with none too
   const p = (e: string) => d.people.find((u: any) => u.owner === e);
   assert.equal(p(A).total, 1);
