@@ -30,10 +30,15 @@ browser ─Access─▶ UI pod (router → one CloudCLI server per person; DE0CH
                     │ GET /proc (upgrade, exec token) ─▶ sandbox agent :7070 ─▶ `claude` (cwd /workspace)
                     ▼                                                              │ all traffic (HTTP(S)_PROXY)
                   /jfs (JuiceFS: ws/<conversation>, users/<key>/claude)            ▼
-                                     egress :3128 ── sandbox allowlist → threat DNS → public internet
-                                                 ├─ /x/claude ─▶ OpenRouter (key injected, ZDR forced, budget)
-                                                 └─ /x/tools/mcp ─▶ tools ─▶ Exa / TikHub / Wisers relay / yyc-mcp
-State: Postgres (sandboxes, vm hosts and events, egress_log, tool_calls, kv); /workspace and ~/.claude on JuiceFS.
+                          egress :3128 (hermit's sbx token checked locally, liveness from hermit)
+                            ├─ http://magpie/v1/sandbox/** ─▶ magpie   (pair bearer, verified identity)
+                            ├─ http://hermit/v1/sandbox/** ─▶ hermit   (pair bearer, verified identity)
+                            ├─ http://model/v1/messages ─▶ OpenRouter (key injected, ZDR forced, budget)
+                            ├─ http://tools/mcp ─▶ tools ─▶ Exa / TikHub / Wisers relay / yyc-mcp
+                            ├─ self hosts (selfHosts, 127.0.0.1, localhost) /mirror/… ─▶ PyPI / npm mirror
+                            └─ anything else ── sandbox allowlist → threat DNS → public internet
+State: Postgres (sandboxes, vm hosts and events, tool_calls, kv); egress's own database `egress` (egress_log,
+budget_state, token_keys); /workspace and ~/.claude on JuiceFS.
 ```
 
 ## Control plane (`web`, `/internal/cc/*`)
@@ -184,8 +189,10 @@ those, so they serve tests and a future instance, not YYC AI as it is.
   - **Ready:** `http://<ip>:7070/healthz` (no provider headers); the URL never changes, also across migrations.
   - **keepAlive:** a no-op; the janitor releases.
   - **Egress:** sandboxes reach egress at `sandbox.vm.egressVip`, which the hub translates (DNAT only) to an egress
-    pod: egress sees the sandbox's own address, and egress only accepts a vm sandbox's token from that address. Each
-    egress pod announces `POD_IP` in `kv egress_pod:<pod>`; the scaler hands the live ones to the hub.
+    pod: egress sees the sandbox's own address, and egress only accepts a vm sandbox's token from that address.
+    *Old stack only* (the egress pinned at image `f91907d349e6`, deploy/chat/egress.yaml): each egress pod announces
+    `POD_IP` in `kv egress_pod:<pod>` and the scaler hands the live ones to the hub. The new egress announces nothing:
+    in the new stack the VIP's targets are hermit's fabric (ready egress endpoints).
   - **Janitor:** `list()` = every host's `GET /v1/sandboxes` (an unreachable host's rows count as present; the scaler
     decides when a host is lost). `sandbox.vm.legacyProvider: "kubernetes"` during a switch: the previous provider's
     sandboxes (rows without a host) stay listed and are removed through it once released.
@@ -255,7 +262,7 @@ create table tool_calls (id bigserial primary key, at timestamptz not null defau
 create table ops_events (id bigserial primary key, at timestamptz not null default now(), kind text not null,
   ok boolean, ms int, sandbox_id uuid, conversation_id uuid, host text, detail jsonb not null default '{}');
   -- kind 'sandbox_start': ok, ms = start latency incl. pool wait, detail {reason, error, provider, startMs}; 30 days
-create table kv (key text primary key, value jsonb not null);  -- egress_pod:<pod>, sandbox_demand:<email>
+create table kv (key text primary key, value jsonb not null);  -- sandbox_demand:<email>; egress_pod:<pod> (old-stack egress only)
 ```
 
 The old chat UI's tables (`users`, `conversations`, `messages`, `turns`, `events`, `claw_sessions`, `files`,
@@ -284,10 +291,12 @@ decided in this order:
    The token is hermit's `hst1.<kid>.<payload>.<sig>`, checked locally (`chat/src/egress/tokens.ts`): the kid in
    hermit's key set (`GET http://hermit/v1/sandbox-token-keys`, refreshed every 5 min and at most every 10 s on an
    unknown kid, the last set kept when a fetch fails and stored in table `token_keys`), the Ed25519 signature, the expiry, and the connection's source
-   IPv4 equal to the token's (unless it carries 0.0.0.0). A token naming a kid the set lacks is held for up to two
-   refetches (the first at once unless one ran in the last 10 s, the second 10 s later; the unknown-kid clock is its
-   own, so the 5-minute refresh never delays it): during a hermit key rotation a refetch can land on a replica that
-   does not publish the new kid yet. A failure is final: 403 `{"code":"not_allowed"}` (JSON on a
+   IPv4 equal to the token's (unless it carries 0.0.0.0). A token naming a kid the set lacks waits for at most one
+   refetch: one at once unless an unknown-kid refetch began in the last 10 s (or it joins the one running), else the
+   403 is at once; the unknown-kid clock is its own, so the 5-minute refresh never delays it. During a hermit key
+   rotation a refetch can land on a replica that does not publish the new kid yet: the client's retry after the 10 s
+   mark refetches again. A fetched set with no usable key (empty, or only keys of another algorithm or length) is a
+   failed fetch: the last set stays in use and in `token_keys`. A failure is final: 403 `{"code":"not_allowed"}` (JSON on a
    fixed name, plain text otherwise). Then liveness: `GET http://hermit/v1/sandbox-tokens/{sandboxId}` with
    `EGRESS_TOKEN_HERMIT`, 1 s timeout, cached 30 s and refreshed in the background; `live: false` or 404 → 403 within
    30 s. **A hermit problem never refuses a valid token:** while hermit fails the last answer is served whatever its
@@ -314,7 +323,8 @@ decided in this order:
      identity) reaches OpenRouter. **Memory:** a request carries the whole conversation, base64 images included; the
      body is read once into one Buffer and rewritten as slices of it plus the few rewritten members (about its own
      size), at most 64 MiB of model bodies held at once (a call waits its turn), a body over 64 MiB refused with 413
-     `request_too_large` before it is read. No total timeout (Claude Code's own 600 s bounds it).
+     `request_too_large` before it is read. No total timeout (Claude Code's own 600 s bounds it); an upstream silent
+     120 s ends the call (504 `upstream_timeout` before the answer's head, the stream cut after it).
    - `tools`: `/mcp` to egress.json's route `tools` (`http://tools`, `Authorization: Bearer $EGRESS_TOKEN_TOOLS`),
      timeout 180 s; tools learns the owner from `Aviary-Sandbox-Person`. One log row per call (kind `tools`).
 3. **Self hosts** (`selfHosts` in egress.json, plus `127.0.0.1` and `localhost`; any port; also origin-form requests to
@@ -358,10 +368,17 @@ overspend on stale data; a call waits for a budget read at most 250 ms after tha
 reads fail, so a database that hangs rather than refuses costs one such wait at its start; with no status ever known
 (no `budget_state` row, every read failed) it counts this replica's own costs from zero against the limit (counted,
 logged). Log rows wait in memory (at most 50,000, the oldest non-model row dropped first when full, counted; never a
-model row) and are written in order once the database is back.
+model row) and are written in order once the database is back. A row is cleaned before it is buffered (port 1-65535
+or null, no NUL in text, text capped, a bad uuid null), and a row Postgres still refuses as data (SQLSTATE class 22 or
+23) is a bad row, not an outage: its batch is written row by row, that row dropped (logged, counted in
+`egress_log_dropped_total{kind}`) and the rest written in order. **Migrations** are expand-only: a database at a newer
+migration than the build knows is served (a rollback, or an old pod restarting mid-rollout); each migration's sha256 is
+recorded, and a recorded migration whose SQL this build has differently is the one start failure (exit 2).
 
-**Drain** (SIGTERM, after Kubernetes' 10 s preStop): `/readyz` 503, no new connections, idle kept-alive connections
-closed, every answer from then on carries `Connection: close`; model streams and tunnels finish up to 600 s,
+**Drain** (SIGTERM, after Kubernetes' 10 s preStop): `/readyz` 503, no new connections, the kept-alive connections
+idle at that moment closed, every answer from then on carries `Connection: close` (a new request on a kept-alive
+connection, such as one whose answer began before the drain, is served that way; a connection that goes idle later is
+not closed under its client); model streams and tunnels finish up to 600 s,
 magpie/hermit requests up to 60 s, tools calls up to 180 s; what is left at its bound is cut and counted in
 `egress_drain_cut_total{kind}`; the log is flushed, retried every second for what the grace period has left (at least
 10 s); exit 0 with log `drained` (and the cuts). A second SIGTERM exits at once. Grace 625 s.
@@ -389,7 +406,8 @@ message), `models`, `defaultModel`, `smallModel`, `titleModel`, `titleReasoning`
 `EGRESS_ACCEPT_HERMIT`, `EGRESS_ACCEPT_ADMIN` and every variable a route's `inject` names (`OPENROUTER_API_KEY`,
 `EGRESS_TOKEN_TOOLS`); a missing one is a start failure. **CI:** chat.yml's `conformance` job runs aviary's
 `gateway` and `model` suites against the image under test (`chat/test/conformance/run.sh`, the aviary commit in
-`chat/aviary.ref`); the image is pushed only when the tests and both suites pass.
+`chat/aviary.ref`) on the chat image built once by the `chat-image` job; `images` pushes that same image (its id
+checked), only when the tests and both suites pass.
 
 ### The sandbox allowlist (`chat/egress-allowlist/`, `chat/src/egress/allowlist.ts`, `threatdns.ts`)
 
