@@ -387,9 +387,13 @@ pub struct TimelineQuery {
     /// `after` only: hold until something is past `after` or live frames change, up to 25,000 ms.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_ms: Option<u64>,
-    /// `after` only: send live text added after frame `n`.
+    /// `after` only, with `liveTurn`: send live text added after frame `n` of turn `liveTurn`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_after: Option<u64>,
+    /// `after` only, with `liveAfter`: the turn `liveAfter` counts in (the last `LiveState.turnId` seen). Frames are
+    /// numbered per turn, so a `liveAfter` of another turn than the active one answers `reset: true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_turn: Option<Uuid>,
 }
 
 /// M9 response.

@@ -94,7 +94,8 @@ pub struct LiveState {
     pub turn_id: Uuid,
     /// The last frame included.
     pub n: u64,
-    /// Every open block is sent whole from offset 0 (no `liveAfter`, another turn's, after a gap or a truncation).
+    /// Every open block is sent whole from offset 0 (no `liveAfter`, a `liveTurn` that is not this turn, after a gap
+    /// or a truncation).
     pub reset: bool,
     /// The open blocks.
     pub blocks: Vec<LiveBlock>,
