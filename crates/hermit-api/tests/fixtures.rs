@@ -6,17 +6,22 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use hermit_api::admin::{AdminRelease, FreshHost, HostPatch, PurgeReply, PurgeRequest, Recycle, SandboxesEnabled};
+use hermit_api::admin::{
+    AdminEventsQuery, AdminRelease, AdminSandboxesQuery, FreshHost, HostPatch, PurgeReply, PurgeRequest, Recycle,
+    SandboxesEnabled,
+};
 use hermit_api::deployment::Deployment;
 use hermit_api::error::ErrorBody;
 use hermit_api::exec::{ExecRequest, ExecResult};
+use hermit_api::ops::SnapshotQuery;
 use hermit_api::people::{People, Person, WarmReply, WarmRequest};
 use hermit_api::sandbox::{
-    PutSandboxRequest, ReleaseSandboxReply, ReleaseSandboxRequest, Sandbox, SandboxEvents, SnapshotReply,
+    PutSandboxRequest, ReleaseSandboxReply, ReleaseSandboxRequest, Sandbox, SandboxEvents, SandboxEventsQuery,
+    SandboxQuery, SnapshotReply,
 };
 use hermit_api::sandbox_surface::{ActivityReply, ActivityReport, SandboxSelf, SecretKeys, SecretValue};
 use hermit_api::token::{KeySet, TokenKeys, TokenLiveness};
-use hermit_api::workspaces::{CloneRequest, Entries, Workspace};
+use hermit_api::workspaces::{CloneRequest, Entries, EntriesQuery, FilesQuery, PutWorkspaceRequest, Workspace};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -96,6 +101,16 @@ fixtures! {
     "error-not-granted" => ErrorBody,
     "error-person-mismatch" => ErrorBody,
     "error-cursor-expired" => ErrorBody,
+    "put-workspace-request" => PutWorkspaceRequest,
+    // query strings, as their JSON objects (the HTTP tests cover the URL form)
+    "query-sandbox" => SandboxQuery,
+    "query-sandbox-events" => SandboxEventsQuery,
+    "query-sandbox-events-seq" => SandboxEventsQuery,
+    "query-entries" => EntriesQuery,
+    "query-files" => FilesQuery,
+    "query-admin-sandboxes" => AdminSandboxesQuery,
+    "query-admin-events" => AdminEventsQuery,
+    "query-ops-snapshot" => SnapshotQuery,
 }
 
 #[test]
