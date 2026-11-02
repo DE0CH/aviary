@@ -340,6 +340,36 @@ async fn an_upload_while_viewing_as_is_recorded_and_unattached_uploads_expire() 
             (ViewAsEvent::Start, None, "root@example.com".to_owned()),
         ]
     );
+    // a send while viewing as: its view_as_log row (the text's length, never the text) and the event's viewer, in
+    // the send's own transaction
+    let c = common::files::conversation(&r, ALICE, "v").await;
+    let send = magpie_api::turns::SendRequest {
+        client_message_id: "v:1".into(),
+        text: "看看這個".into(),
+        images: Vec::new(),
+        files: Vec::new(),
+    };
+    r.pigeon()
+        .viewing_as(ALICE, "root@example.com", "s-1")
+        .send_turn(c, &send)
+        .await
+        .unwrap();
+    let row = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select l.chars, l.seq, e.viewer, e.kind from view_as_log l
+             join events e on e.conversation_id = l.conversation_id and e.seq = l.seq
+             where l.event = 'send' and l.conversation_id = $1",
+            &[&c],
+        )
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, Option<i32>>(0), Some(4));
+    assert_eq!(row.get::<_, Option<String>>(2).as_deref(), Some("root@example.com"));
+    assert_eq!(row.get::<_, String>(3), "user.sent");
     // 24 h later retention deletes the unattached upload and its references; the GC can then free the blob
     let sql = r.pool().get().await.unwrap();
     sql.execute("update uploads set created_at = now() - interval '25 hours'", &[])

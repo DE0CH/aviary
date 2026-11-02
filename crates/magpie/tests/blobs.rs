@@ -446,3 +446,69 @@ async fn the_sandbox_puts_blobs_with_its_lease_verified_against_the_sha() {
     .unwrap();
     assert_eq!(theirs.status(), 404);
 }
+
+#[tokio::test]
+async fn cc_writes_that_add_blobs_keep_working_while_the_bucket_is_unreachable() {
+    let db = common::fresh_db("ccoutage").await;
+    let t = common::Tokens::new();
+    let bucket = common::test_bucket(&db.url).await;
+    let s3: std::net::SocketAddr = bucket.endpoint.trim_start_matches("http://").parse().unwrap();
+    let proxy = common::CutProxy::start(s3).await;
+    let mut via_proxy = bucket.clone();
+    via_proxy.endpoint = format!("http://{}", proxy.addr);
+    let r = common::replica_full(&db.url, &t, "http://127.0.0.1:1", common::fast(), via_proxy).await;
+    let sb = common::cc::Sandbox::leased(&r, ALICE).await;
+    sb.mkdirs("projects/-workspace").await;
+    proxy.cut();
+    // a line with an image of more than 1 KiB of base64: extracted into a staged blob, the write never waits for the
+    // bucket
+    let noise: Vec<u8> = (0..4096u32).flat_map(|i| blobs::sha256(&i.to_le_bytes())).collect();
+    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, noise);
+    let line = format!(
+        "{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"image\",\"source\":{{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"{b64}\"}}}}]}}}}\n"
+    );
+    let path = "projects/-workspace/side.jsonl";
+    sb.write(path, 0, line.as_bytes()).await.unwrap();
+    let staged: i64 = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select count(*) from blob_staging", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(staged >= 1, "the image was not staged");
+    sb.write(path, u64::try_from(line.len()).unwrap(), line.as_bytes())
+        .await
+        .unwrap();
+    // the file reads back byte for byte from staging, the bucket still cut
+    let mut want = line.clone().into_bytes();
+    want.extend_from_slice(line.as_bytes());
+    assert_eq!(sb.read(path).await.unwrap(), want);
+    // the bucket back: the uploader (every 100 ms here) drains staging
+    proxy.restore();
+    r.pool()
+        .get()
+        .await
+        .unwrap()
+        .execute("update blob_staging set next_at = now()", &[])
+        .await
+        .unwrap();
+    assert!(
+        common::eventually(Duration::from_secs(30), async || {
+            r.pool()
+                .get()
+                .await
+                .unwrap()
+                .query_one("select count(*) from blob_staging", &[])
+                .await
+                .unwrap()
+                .get::<_, i64>(0)
+                == 0
+        })
+        .await,
+        "staging did not drain"
+    );
+    assert_eq!(sb.read(path).await.unwrap(), want);
+}

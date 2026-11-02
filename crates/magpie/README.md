@@ -81,8 +81,8 @@ for a 1 MiB image line). The scanner, extraction and classification have unit an
 
 Tests that store blobs also need the CI S3 server (`AVIARY_TEST_S3_*`; each test database gets its own bucket):
 `tests/blobs.rs` (staged blobs served before the uploader stores them, a bucket outage, the GC's rules and the
-reconcile, M15's variants and headers, the sandbox's blob routes) and `tests/uploads.rs` (M13's limits and types,
-the model copy's bounds, EXIF rotation, HEIC through libheif, the decode cap, view-as recording, retention). `tests/files.rs`: the two-phase
+reconcile, M15's variants and headers, the sandbox's blob routes, cc writes that add blobs while the bucket is unreachable) and `tests/uploads.rs` (M13's limits and types,
+the model copy's bounds, EXIF rotation, HEIC through libheif, the decode cap, view-as recording of an upload and of a send, retention). `tests/files.rs`: the two-phase
 sent-file snapshot, its validation and lease, the files panel, downloads of a send's snapshot with `Range`, live
 workspace files through fake-hermit. `tests/shares.rs`: the freeze leaves a running turn out, the view equals the
 timeline at the freeze, the frozen workspace is a clone, soft delete hides a link and restore brings it back,
