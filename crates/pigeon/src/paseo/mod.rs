@@ -59,6 +59,11 @@ pub trait SocketHandler: Send + Sync {
         let _ = (jitter, rpc_wait);
         Box::pin(async {})
     }
+
+    /// The replica's sockets and pollers, for a handler that has them.
+    fn hub(&self) -> Option<crate::feeds::Hub> {
+        None
+    }
 }
 
 /// The socket before the socket package: every upgrade gets 503.

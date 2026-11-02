@@ -67,7 +67,8 @@ impl Owners for NativeOnly {
     }
 }
 
-type ListKey = (String, Option<String>, u32);
+/// (person, viewer (admin, view session) of a view-as socket, cursor, limit).
+type ListKey = (String, Option<(String, String)>, Option<String>, u32);
 type ListCell = Arc<OnceCell<Result<ListResponse, Fail>>>;
 
 #[derive(Default)]
@@ -79,7 +80,10 @@ struct State {
     change_pollers: HashMap<String, mpsc::UnboundedSender<change_poller::Ctl>>,
     timeline_pollers: HashMap<(String, Uuid), mpsc::UnboundedSender<timeline_poller::Ctl>>,
     lists: HashMap<ListKey, (Instant, ListCell)>,
+    /// SIGTERM: new upgrades get 503; the pollers keep feeding the sockets still open.
     draining: bool,
+    /// The drain ended: no socket is left and no poller starts again.
+    drained: bool,
 }
 
 /// The sockets and pollers of this replica. Cheap to clone.
@@ -286,7 +290,14 @@ impl Hub {
             conn.send_sub("agent.timeline.replacement", &conn.timeline_sub(), &rest);
         }
         if self.delegate(person, &conversation).is_none() {
-            self.ensure_timeline_poller(person, conversation);
+            // a native poller still lingering from before the delegation holds an old cursor and epoch: it starts
+            // again from the tail, with this replacement counted as sent
+            let restart = timeline_poller::Ctl::Restart {
+                announced: epoch.to_owned(),
+            };
+            if !self.to_timeline(person, conversation, restart) {
+                self.ensure_timeline_poller(person, conversation);
+            }
         }
     }
 
@@ -322,20 +333,27 @@ impl Hub {
             return;
         };
         let mut st = self.st();
-        if st.draining {
+        if st.drained {
             return;
         }
         if st.change_pollers.get(person).is_some_and(|tx| !tx.is_closed()) {
             return;
         }
         if Self::poller_count(&st) >= MAX_POLLERS {
+            drop(st);
             tracing::warn!("poller limit reached: no change feed for a person");
+            app.0.metrics.poller_limit("change");
             return;
         }
         let (tx, rx) = mpsc::unbounded_channel();
         st.change_pollers.insert(person.to_owned(), tx);
         drop(st);
-        tokio::spawn(change_poller::run(self.clone(), app, person.to_owned(), rx));
+        let gauge = app.0.metrics.poller("change");
+        let run = change_poller::run(self.clone(), app, person.to_owned(), rx);
+        tokio::spawn(async move {
+            let _gauge = gauge;
+            run.await;
+        });
     }
 
     pub(crate) fn ensure_timeline_poller(&self, person: &str, conversation: Uuid) {
@@ -344,33 +362,35 @@ impl Hub {
         };
         let key = (person.to_owned(), conversation);
         let mut st = self.st();
-        if st.draining {
+        if st.drained {
             return;
         }
         if st.timeline_pollers.get(&key).is_some_and(|tx| !tx.is_closed()) {
             return;
         }
         if Self::poller_count(&st) >= MAX_POLLERS {
+            drop(st);
             tracing::warn!("poller limit reached: a timeline is served without live rows");
+            app.0.metrics.poller_limit("timeline");
             return;
         }
         let (tx, rx) = mpsc::unbounded_channel();
         st.timeline_pollers.insert(key, tx);
         drop(st);
-        tokio::spawn(timeline_poller::run(
-            self.clone(),
-            app,
-            person.to_owned(),
-            conversation,
-            rx,
-        ));
+        let gauge = app.0.metrics.poller("timeline");
+        let run = timeline_poller::run(self.clone(), app, person.to_owned(), conversation, rx);
+        tokio::spawn(async move {
+            let _gauge = gauge;
+            run.await;
+        });
     }
 
-    /// Ends a change poller when the person has had no socket here for `linger`; `true` when it should stop.
+    /// Ends a change poller when the person has had no socket here for `linger` (or the drain ended); `true` when
+    /// it should stop. While the drain runs the poller keeps feeding the sockets still open (11.2: pollers stop
+    /// after the sockets).
     pub(crate) fn change_poller_done(&self, person: &str, idle_since: &mut Option<Instant>, linger: Duration) -> bool {
         let mut st = self.st();
-        if st.draining {
-            st.change_pollers.remove(person);
+        if st.drained {
             return true;
         }
         if st.by_person.contains_key(person) {
@@ -394,15 +414,19 @@ impl Hub {
         linger: Duration,
     ) -> bool {
         let key = (person.to_owned(), conversation);
-        let mut st = self.st();
-        if st.draining {
-            st.timeline_pollers.remove(&key);
-            return true;
-        }
-        if st.timeline.contains_key(&key) && self.0.owners.delegate(person, &conversation).is_none() {
+        let watched = {
+            let st = self.st();
+            if st.drained {
+                return true;
+            }
+            st.timeline.contains_key(&key)
+        };
+        // the owner decision is read without the hub's lock: an `Owners` may consult the hub
+        if watched && self.0.owners.delegate(person, &conversation).is_none() {
             *idle_since = None;
             return false;
         }
+        let mut st = self.st();
         let since = *idle_since.get_or_insert_with(Instant::now);
         if since.elapsed() >= linger {
             st.timeline_pollers.remove(&key);
@@ -418,46 +442,54 @@ impl Hub {
 
     /// M1 for a person, with one magpie call per (person, cursor, limit) in [`LIST_CACHE`] (7.5.2: the two list
     /// requests of a connect share it).
+    /// The call carries the socket's identity (the viewer headers of a view-as socket), and a view-as socket shares
+    /// answers only with sockets of the same view session. A failed answer is not kept: the next request asks again.
     pub(crate) async fn list(
         &self,
         app: &App,
-        person: &str,
+        conn: &Conn,
         cursor: Option<String>,
         limit: u32,
     ) -> Result<ListResponse, Fail> {
-        let key = (person.to_owned(), cursor.clone(), limit);
+        let viewer = conn.viewer.as_ref().map(|v| (v.admin.clone(), v.session.clone()));
+        let key = (conn.person.clone(), viewer, cursor.clone(), limit);
         let cell = {
             let mut st = self.st();
             st.lists.retain(|_, (at, _)| at.elapsed() < LIST_CACHE);
             st.lists
-                .entry(key)
+                .entry(key.clone())
                 .or_insert_with(|| (Instant::now(), Arc::new(OnceCell::new())))
                 .1
                 .clone()
         };
-        cell.get_or_init(|| async {
-            let q = ListQuery {
-                state: None,
-                limit: Some(limit),
-                cursor,
-                search: None,
-            };
-            app.0
-                .magpie
-                .person(person)
-                .with_request_id(Uuid::now_v7().to_string())
-                .list_conversations(&q)
-                .await
-                .map_err(fail)
-        })
-        .await
-        .clone()
+        let r = cell
+            .get_or_init(|| async {
+                let q = ListQuery {
+                    state: None,
+                    limit: Some(limit),
+                    cursor,
+                    search: None,
+                };
+                conn.calls(&app.0.magpie).list_conversations(&q).await.map_err(fail)
+            })
+            .await
+            .clone();
+        if r.is_err() {
+            // callers already waiting on this cell share the failure; later ones call again
+            let mut st = self.st();
+            if st.lists.get(&key).is_some_and(|(_, c)| Arc::ptr_eq(c, &cell)) {
+                st.lists.remove(&key);
+            }
+        }
+        r
     }
 
     /// Spec 11.2 step 3 (and its request-free-first rule, DESIGN 9.3): every socket is closed 1012 at a moment
-    /// within `jitter`, request-free sockets first (no request in flight, nothing but heartbeats for 5 s) in the
-    /// first half, the rest in the second half once their in-flight requests have answered (or `rpc_wait` passed).
-    /// Then the pollers stop. Returns when every socket is gone, or at `jitter + rpc_wait`.
+    /// within `jitter`, request-free sockets first (no request in flight, no message arriving, nothing but
+    /// heartbeats for 5 s) in the first half, the rest in the second half once their in-flight requests have
+    /// answered and their arriving messages have been handled (or `rpc_wait` passed). The 1012 follows every frame
+    /// already queued for the socket (the reply it waited for, rows). Until the sockets are gone the pollers keep
+    /// feeding them; then the pollers stop (step 5). Returns when every socket is gone, or at `jitter + rpc_wait`.
     pub async fn drain(&self, jitter: Duration, rpc_wait: Duration) {
         let conns: Vec<Arc<Conn>> = {
             let mut st = self.st();
@@ -480,12 +512,10 @@ impl Hub {
             let at = random_within(half);
             tasks.spawn(async move {
                 tokio::time::sleep(at).await;
-                if c.request_free() {
-                    c.close(1012, "service restart");
-                } else {
+                if !c.request_free() {
                     c.wait_requests(rpc_wait).await;
-                    c.close(1012, "service restart");
                 }
+                c.close_after_queued(1012, "service restart");
             });
         }
         for c in later {
@@ -493,7 +523,7 @@ impl Hub {
             tasks.spawn(async move {
                 tokio::time::sleep(at).await;
                 c.wait_requests(rpc_wait).await;
-                c.close(1012, "service restart");
+                c.close_after_queued(1012, "service restart");
             });
         }
         while tasks.join_next().await.is_some() {}
@@ -501,7 +531,9 @@ impl Hub {
         while self.sockets() > 0 && Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
+        // step 5: the pollers stop (their control channels close)
         let mut st = self.st();
+        st.drained = true;
         st.change_pollers.clear();
         st.timeline_pollers.clear();
     }

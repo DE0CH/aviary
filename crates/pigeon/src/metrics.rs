@@ -33,9 +33,10 @@ struct Code {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+#[allow(non_snake_case)] // the label is spec 19's `clientType`
 struct Hello {
     protocol: String,
-    client_type: String,
+    clientType: String,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
@@ -46,6 +47,28 @@ struct Reason {
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct Kind {
     kind: String,
+}
+
+/// A message type (spec 19's `type` label).
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct Type {
+    r#type: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct TypeCode {
+    r#type: String,
+    code: String,
+}
+
+/// Counts a running poller in `pigeon_pollers{kind}` until dropped.
+#[derive(Debug)]
+pub struct PollerGauge(prometheus_client::metrics::gauge::Gauge);
+
+impl Drop for PollerGauge {
+    fn drop(&mut self) {
+        self.0.dec();
+    }
 }
 
 /// The handles. Cheap to clone.
@@ -61,7 +84,12 @@ pub struct Metrics {
     closes: Family<Code, Counter>,
     hellos: Family<Hello, Counter>,
     dropped: Family<Reason, Counter>,
-    rpc: Family<Kind, Histogram>,
+    rpc: Family<Type, Histogram>,
+    rpc_errors: Family<TypeCode, Counter>,
+    pollers: Family<Kind, prometheus_client::metrics::gauge::Gauge>,
+    poller_limit: Family<Kind, Counter>,
+    poll: Family<Kind, Histogram>,
+    frames_out: Family<Type, Counter>,
 }
 
 impl Metrics {
@@ -81,6 +109,13 @@ impl Metrics {
             rpc: Family::new_with_constructor(|| {
                 Histogram::new([0.005, 0.02, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 15.0, 30.0])
             }),
+            rpc_errors: Family::default(),
+            pollers: Family::default(),
+            poller_limit: Family::default(),
+            poll: Family::new_with_constructor(|| {
+                Histogram::new([0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 20.0, 25.0, 30.0, 35.0])
+            }),
+            frames_out: Family::default(),
         };
         registry.register("sockets", "Open sockets", m.sockets.clone());
         registry.register("socket_closes", "Socket closes by close code", m.closes.clone());
@@ -91,6 +126,27 @@ impl Metrics {
         );
         registry.register("frames_dropped", "Inbound frames dropped by reason", m.dropped.clone());
         registry.register("rpc_seconds", "Socket request handling time by type", m.rpc.clone());
+        registry.register(
+            "rpc_errors",
+            "rpc_error answers by request type and code",
+            m.rpc_errors.clone(),
+        );
+        registry.register(
+            "pollers",
+            "Running magpie pollers by kind (spec 8.2)",
+            m.pollers.clone(),
+        );
+        registry.register(
+            "poller_limit",
+            "Pollers not started because the replica's poller limit was reached (spec 8.2)",
+            m.poller_limit.clone(),
+        );
+        registry.register("poll_seconds", "magpie poll time by poller kind", m.poll.clone());
+        registry.register(
+            "frames_out",
+            "Frames queued to sockets by message type",
+            m.frames_out.clone(),
+        );
         registry.register(
             "http_requests",
             "Answers on port 8080 by route and status",
@@ -177,7 +233,7 @@ impl Metrics {
         self.hellos
             .get_or_create(&Hello {
                 protocol: protocol.chars().take(8).collect(),
-                client_type: client_type.to_owned(),
+                clientType: client_type.to_owned(),
             })
             .inc();
     }
@@ -191,7 +247,43 @@ impl Metrics {
     }
 
     pub(crate) fn rpc(&self, kind: &str, secs: f64) {
-        self.rpc.get_or_create(&Kind { kind: kind.to_owned() }).observe(secs);
+        self.rpc
+            .get_or_create(&Type {
+                r#type: kind.to_owned(),
+            })
+            .observe(secs);
+    }
+
+    pub(crate) fn rpc_error(&self, kind: &str, code: &str) {
+        self.rpc_errors
+            .get_or_create(&TypeCode {
+                r#type: kind.chars().take(64).collect(),
+                code: code.chars().take(64).collect(),
+            })
+            .inc();
+    }
+
+    /// Counts a poller of `kind` running until the guard drops.
+    pub(crate) fn poller(&self, kind: &str) -> PollerGauge {
+        let g = self.pollers.get_or_create(&Kind { kind: kind.to_owned() }).clone();
+        g.inc();
+        PollerGauge(g)
+    }
+
+    pub(crate) fn poller_limit(&self, kind: &str) {
+        self.poller_limit.get_or_create(&Kind { kind: kind.to_owned() }).inc();
+    }
+
+    pub(crate) fn poll(&self, kind: &str, secs: f64) {
+        self.poll.get_or_create(&Kind { kind: kind.to_owned() }).observe(secs);
+    }
+
+    pub(crate) fn frame_out(&self, kind: &str) {
+        self.frames_out
+            .get_or_create(&Type {
+                r#type: kind.to_owned(),
+            })
+            .inc();
     }
 
     pub(crate) fn drain_transfer(&self, secs: f64) {

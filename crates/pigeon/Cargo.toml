@@ -27,6 +27,8 @@ serde_json.workspace = true
 subtle.workspace = true
 time.workspace = true
 tokio.workspace = true
+# the WebSocket library axum's `ws` feature serves with: its error type tells an over-size message apart
+tokio-tungstenite.workspace = true
 tower.workspace = true
 tracing.workspace = true
 uuid.workspace = true
@@ -34,7 +36,6 @@ uuid.workspace = true
 [dev-dependencies]
 aviary-fakes = { path = "../../testing/fakes" }
 fake-access = { path = "../../testing/fake-access" }
-tokio-tungstenite.workspace = true
 
 [lints]
 workspace = true

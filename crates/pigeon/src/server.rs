@@ -8,8 +8,10 @@
 //! closed under it). A recorded deviation.
 
 use std::convert::Infallible;
+use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use axum::Router;
@@ -17,6 +19,7 @@ use axum::body::Body;
 use axum::extract::Request;
 use hyper::body::Incoming;
 use hyper_util::rt::{TokioIo, TokioTimer};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpListener;
 use tokio::sync::{Notify, watch};
 use tower::Service as _;
@@ -69,6 +72,55 @@ impl Transfers {
             }
             notified.await;
         }
+    }
+}
+
+/// The bytes read so far from the connection a request came on (a request extension): a socket upgraded on it keeps
+/// counting, so the drain sees a large message arriving before its last byte.
+#[derive(Debug, Clone, Default)]
+pub struct InboundBytes(pub Arc<AtomicU64>);
+
+/// A connection's IO that counts the bytes read.
+struct Counted<T> {
+    io: T,
+    read: Arc<AtomicU64>,
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for Counted<T> {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let r = Pin::new(&mut self.io).poll_read(cx, buf);
+        let n = buf.filled().len().saturating_sub(before);
+        if n > 0 {
+            self.read.fetch_add(n as u64, Ordering::SeqCst);
+        }
+        r
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for Counted<T> {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.io).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.io).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.io).poll_shutdown(cx)
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.io).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.io.is_write_vectored()
     }
 }
 
@@ -147,16 +199,22 @@ pub fn serve(listener: TcpListener, router: Router) -> Listener {
 }
 
 async fn connection(stream: tokio::net::TcpStream, router: Router, mut stop: watch::Receiver<bool>) {
+    let inbound = InboundBytes::default();
+    let io = Counted {
+        io: stream,
+        read: inbound.0.clone(),
+    };
     let svc = hyper::service::service_fn(move |req: hyper::Request<Incoming>| {
         let mut router = router.clone();
-        let req: Request = req.map(Body::new);
+        let mut req: Request = req.map(Body::new);
+        req.extensions_mut().insert(inbound.clone());
         async move { Ok::<_, Infallible>(router.call(req).await.unwrap_or_else(|e| match e {})) }
     });
     let conn = hyper::server::conn::http1::Builder::new()
         .timer(TokioTimer::new())
         .header_read_timeout(IDLE)
         .keep_alive(true)
-        .serve_connection(TokioIo::new(stream), svc)
+        .serve_connection(TokioIo::new(io), svc)
         .with_upgrades();
     tokio::pin!(conn);
     let mut stopping = *stop.borrow();

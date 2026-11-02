@@ -83,6 +83,34 @@ impl Ws {
         self.stream.send(Message::Text(v.to_string().into())).await.unwrap();
     }
 
+    /// Writes raw bytes to the socket's TCP stream (hand-built frames: a header only, a message in slow chunks).
+    pub async fn raw_bytes(&mut self, b: &[u8]) {
+        use tokio::io::AsyncWriteExt;
+        match self.stream.get_mut() {
+            tokio_tungstenite::MaybeTlsStream::Plain(s) => {
+                s.write_all(b).await.unwrap();
+                s.flush().await.unwrap();
+            }
+            _ => panic!("not a plain TCP stream"),
+        }
+    }
+
+    /// The header of a masked (all-zero key: the payload goes as is) final text frame of `len` bytes.
+    pub fn text_header(len: u64) -> Vec<u8> {
+        let mut h = vec![0x81u8];
+        if len < 126 {
+            h.push(0x80 | u8::try_from(len).unwrap());
+        } else if len <= 0xffff {
+            h.push(0x80 | 0x7e);
+            h.extend_from_slice(&u16::try_from(len).unwrap().to_be_bytes());
+        } else {
+            h.push(0x80 | 0x7f);
+            h.extend_from_slice(&len.to_be_bytes());
+        }
+        h.extend_from_slice(&[0, 0, 0, 0]);
+        h
+    }
+
     /// Sends a text frame as is.
     pub async fn text(&mut self, s: &str) {
         self.stream.send(Message::Text(s.to_owned().into())).await.unwrap();

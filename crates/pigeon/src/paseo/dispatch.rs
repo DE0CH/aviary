@@ -320,7 +320,7 @@ impl Handler {
     async fn fetch_list(&self, kind: ListKind) {
         let (limit, cursor) = self.page(magpie_api::conversations::LIST_MAX);
         let first = cursor.is_none();
-        let Ok(list) = self.hub.list(&self.app, &self.conn.person, cursor, limit).await else {
+        let Ok(list) = self.hub.list(&self.app, &self.conn, cursor, limit).await else {
             return self.rpc_failed(self.locale().unreachable());
         };
         let o = self.owned();
@@ -986,7 +986,7 @@ impl Handler {
     async fn project_list(&self) {
         let (generation, head) = match self
             .hub
-            .list(&self.app, &self.conn.person, None, magpie_api::conversations::LIST_MAX)
+            .list(&self.app, &self.conn, None, magpie_api::conversations::LIST_MAX)
             .await
         {
             Ok(l) => (l.list.generation, l.list.head_seq),

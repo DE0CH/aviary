@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -44,6 +44,9 @@ pub const MAX_TIMELINE_AGENTS: usize = 64;
 const CLOSE_MARKER: &str = "\u{0}close:";
 /// The longest one frame write may take before the socket is dropped.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Bytes received past the last whole message beyond which a message is arriving (the socket is not request-free;
+/// above any read-ahead of small frames).
+pub const ARRIVING: u64 = 256 << 10;
 
 /// Which list a subscription is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -96,6 +99,11 @@ pub struct Conn {
     idle: tokio::sync::Notify,
     pong: AtomicBool,
     quiet: Duration,
+    metrics: crate::metrics::Metrics,
+    /// Bytes read from the socket's connection so far (`server::InboundBytes`), when the listener counts them.
+    inbound: Option<Arc<AtomicU64>>,
+    /// [`Self::inbound`] when the reader last had a whole message.
+    consumed: AtomicU64,
 }
 
 impl std::fmt::Debug for Conn {
@@ -121,11 +129,13 @@ impl Conn {
         self.st.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Enqueues a frame; skipped when the socket is closing. A full queue closes the socket 1013 (8.5).
-    pub fn send(&self, frame: String) -> bool {
+    /// Enqueues a frame of message type `kind`; skipped when the socket is closing. A full queue closes the socket
+    /// 1013 (8.5).
+    pub fn send(&self, kind: &str, frame: String) -> bool {
         if self.closing.load(Ordering::SeqCst) {
             return false;
         }
+        self.metrics.frame_out(kind);
         let len = frame.len();
         if self.out_bytes.fetch_add(len, Ordering::SeqCst) + len > QUEUE_BYTES {
             self.out_bytes.fetch_sub(len, Ordering::SeqCst);
@@ -147,23 +157,39 @@ impl Conn {
 
     /// Enqueues a session frame of `kind` whose payload is `{"subscriptionId": sub, …rest}`.
     pub fn send_sub(&self, kind: &str, sub: &str, rest: &str) -> bool {
-        self.send(super::messages::session_with_subscription(kind, sub, rest))
+        self.send(kind, super::messages::session_with_subscription(kind, sub, rest))
     }
 
     /// Enqueues a session reply.
     pub fn reply(&self, kind: &str, payload: &Value) -> bool {
-        self.send(super::messages::session(kind, payload))
+        if kind == "rpc_error" {
+            let code = payload.get("code").and_then(Value::as_str).unwrap_or("");
+            // the request type is the client's: unknown ones are counted together
+            let ty = if code == "unsupported" {
+                "other"
+            } else {
+                payload.get("requestType").and_then(Value::as_str).unwrap_or("")
+            };
+            self.metrics.rpc_error(ty, code);
+        }
+        self.send(kind, super::messages::session(kind, payload))
     }
 
-    /// Closes the socket with `code` (once; later calls do nothing). Frames already queued are dropped.
+    /// Closes the socket with `code` (once; later calls do nothing). Frames already queued are dropped: for a slow
+    /// socket (1013), one over its limits (1008, 1009) or a signed-out one; a close that must follow what was
+    /// queued is [`Self::close_after_queued`].
     pub fn close(&self, code: u16, reason: &str) {
         if !self.closing.swap(true, Ordering::SeqCst) {
             let _ = self.close_tx.send(Some((code, reason.to_owned())));
         }
     }
 
-    /// Closes the socket with `code` after the frames already queued are written (a `hello.rejected`).
+    /// Closes the socket with `code` after the frames already queued are written (a `hello.rejected`, the drain's
+    /// 1012 after the replies it waited for, a resync).
     pub fn close_after_queued(&self, code: u16, reason: &str) {
+        if self.closing.load(Ordering::SeqCst) {
+            return;
+        }
         let marker = format!("{CLOSE_MARKER}{code}:{reason}");
         if self.out.try_send(marker).is_err() {
             self.close(code, reason);
@@ -191,23 +217,49 @@ impl Conn {
         self.inflight.load(Ordering::SeqCst)
     }
 
-    /// No request in flight and nothing but heartbeats for the quiet time (5 s, DESIGN 9.3).
+    /// Whether a message is arriving: more than [`ARRIVING`] bytes came in since the reader last had a whole
+    /// message (a large send in transfer).
     #[must_use]
-    pub fn request_free(&self) -> bool {
-        self.requests() == 0 && self.st().last_request.elapsed() >= self.quiet
+    pub fn arriving(&self) -> bool {
+        self.inbound.as_ref().is_some_and(|n| {
+            n.load(Ordering::SeqCst)
+                .saturating_sub(self.consumed.load(Ordering::SeqCst))
+                > ARRIVING
+        })
     }
 
-    /// Waits until no request is in flight, at most `bound`.
+    /// A request in flight or a message arriving.
+    #[must_use]
+    pub fn busy(&self) -> bool {
+        self.requests() > 0 || self.arriving()
+    }
+
+    /// Not [`Self::busy`] and nothing but heartbeats for the quiet time (5 s, DESIGN 9.3).
+    #[must_use]
+    pub fn request_free(&self) -> bool {
+        !self.busy() && self.st().last_request.elapsed() >= self.quiet
+    }
+
+    /// Waits until no request is in flight and no message is arriving (its handler then counts as in flight), at
+    /// most `bound`.
     pub async fn wait_requests(&self, bound: Duration) {
         let deadline = tokio::time::Instant::now() + bound;
         loop {
             let idle = self.idle.notified();
-            if self.requests() == 0 {
+            if !self.busy() {
                 return;
             }
-            if tokio::time::timeout_at(deadline, idle).await.is_err() {
+            let step = (tokio::time::Instant::now() + Duration::from_millis(50)).min(deadline);
+            let _ = tokio::time::timeout_at(step, idle).await;
+            if tokio::time::Instant::now() >= deadline {
                 return;
             }
+        }
+    }
+
+    fn received_message(&self) {
+        if let Some(n) = &self.inbound {
+            self.consumed.store(n.load(Ordering::SeqCst), Ordering::SeqCst);
         }
     }
 
@@ -372,15 +424,23 @@ impl SocketHandler for PaseoSocket {
                 Err(r) => return r.into_response(),
             };
             hub.set_app(&app);
+            let inbound = parts
+                .extensions
+                .get::<crate::server::InboundBytes>()
+                .map(|b| b.0.clone());
             ws.max_message_size(MAX_INBOUND)
                 .max_frame_size(MAX_INBOUND)
-                .on_upgrade(move |socket| run(app, hub, socket, id))
+                .on_upgrade(move |socket| run(app, hub, socket, id, inbound))
         })
     }
 
     fn drain(&self, jitter: Duration, rpc_wait: Duration) -> Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
         let hub = self.hub.clone();
         Box::pin(async move { hub.drain(jitter, rpc_wait).await })
+    }
+
+    fn hub(&self) -> Option<Hub> {
+        Some(self.hub.clone())
     }
 }
 
@@ -399,7 +459,7 @@ fn person_of(id: &Identity) -> Option<(String, Option<Viewer>, i64)> {
     }
 }
 
-async fn run(app: App, hub: Hub, socket: WebSocket, id: Identity) {
+async fn run(app: App, hub: Hub, socket: WebSocket, id: Identity, inbound: Option<Arc<AtomicU64>>) {
     let Some((person, viewer, exp)) = person_of(&id) else {
         return;
     };
@@ -431,12 +491,15 @@ async fn run(app: App, hub: Hub, socket: WebSocket, id: Identity) {
         idle: tokio::sync::Notify::new(),
         pong: AtomicBool::new(true),
         quiet: app.0.tuning.socket_quiet,
+        metrics: app.0.metrics.clone(),
+        consumed: AtomicU64::new(inbound.as_ref().map_or(0, |n| n.load(Ordering::SeqCst))),
+        inbound,
     });
     hub.register(&conn);
     app.0.metrics.socket_opened(conn.viewer.is_some());
     tracing::info!(conn = %conn.id, viewas = conn.viewer.is_some(), "socket open");
     let (sink, stream) = socket.split();
-    let writer = tokio::spawn(write_loop(
+    let mut writer = tokio::spawn(write_loop(
         conn.clone(),
         sink,
         rx,
@@ -444,9 +507,26 @@ async fn run(app: App, hub: Hub, socket: WebSocket, id: Identity) {
         app.0.tuning.socket_ping,
     ));
     let checks = tokio::spawn(recheck_loop(app.clone(), conn.clone(), exp, close_rx.clone()));
-    read_loop(&app, &hub, &conn, stream, close_rx).await;
-    conn.close(1000, "");
-    let code = writer.await.unwrap_or(1006);
+    let reader = read_loop(&app, &hub, &conn, stream, close_rx);
+    tokio::pin!(reader);
+    let code = tokio::select! {
+        () = &mut reader => {
+            conn.close(1000, "");
+            writer.await.map_or(1006, |w| w.code)
+        }
+        w = &mut writer => match w {
+            // a close the server sent: the reader waits (briefly) for the client's answer to it
+            Ok(w) if w.sent_close => {
+                reader.await;
+                w.code
+            }
+            // the peer is gone (a missed ping, a write that failed or timed out): drop both halves now
+            w => {
+                conn.close(1006, "");
+                w.map_or(1006, |w| w.code)
+            }
+        },
+    };
     checks.abort();
     hub.unregister(&conn);
     app.0.metrics.socket_closed(conn.viewer.is_some(), code);
@@ -457,15 +537,27 @@ async fn run(app: App, hub: Hub, socket: WebSocket, id: Identity) {
     tracing::info!(conn = %conn.id, code, client_type, app_version, "socket closed");
 }
 
+/// How the writer ended.
+struct WriterEnd {
+    code: u16,
+    /// A close frame was sent (else the peer is gone).
+    sent_close: bool,
+}
+
+const GONE: WriterEnd = WriterEnd {
+    code: 1006,
+    sent_close: false,
+};
+
 /// Writes queued frames in order, a ping every `ping_every` (a socket that did not answer the previous ping is
-/// dropped, 7.1.3), and the close frame when asked; returns the close code.
+/// dropped, 7.1.3), and the close frame when asked.
 async fn write_loop(
     conn: Arc<Conn>,
     mut sink: futures_util::stream::SplitSink<WebSocket, Message>,
     mut rx: mpsc::Receiver<String>,
     mut close_rx: watch::Receiver<Option<(u16, String)>>,
     ping_every: Duration,
-) -> u16 {
+) -> WriterEnd {
     let mut ping = tokio::time::interval(ping_every);
     ping.tick().await;
     loop {
@@ -474,40 +566,42 @@ async fn write_loop(
             changed = close_rx.changed() => {
                 let close = close_rx.borrow().clone();
                 if let Some((code, reason)) = close {
+                    if code == 1006 {
+                        return GONE;
+                    }
                     let frame = Message::Close(Some(CloseFrame { code, reason: reason.into() }));
                     let _ = tokio::time::timeout(Duration::from_secs(2), sink.send(frame)).await;
-                    return code;
+                    return WriterEnd { code, sent_close: true };
                 }
                 if changed.is_err() {
-                    return 1006;
+                    return GONE;
                 }
             }
             frame = rx.recv() => {
-                let Some(frame) = frame else { return 1006 };
+                let Some(frame) = frame else { return GONE };
                 if let Some(close) = frame.strip_prefix(CLOSE_MARKER) {
                     let (code, reason) = close.split_once(':').unwrap_or((close, ""));
                     let code: u16 = code.parse().unwrap_or(1000);
                     let frame = Message::Close(Some(CloseFrame { code, reason: reason.to_owned().into() }));
                     let _ = tokio::time::timeout(Duration::from_secs(2), sink.send(frame)).await;
                     let _ = conn.close_tx.send(Some((code, reason.to_owned())));
-                    return code;
+                    return WriterEnd { code, sent_close: true };
                 }
                 conn.out_bytes.fetch_sub(frame.len(), Ordering::SeqCst);
                 let sent = tokio::time::timeout(WRITE_TIMEOUT, sink.send(Message::Text(frame.into()))).await;
                 if !matches!(sent, Ok(Ok(()))) {
-                    conn.closing.store(true, Ordering::SeqCst);
-                    return 1006;
+                    tracing::info!(conn = %conn.id, "socket write failed or timed out");
+                    return GONE;
                 }
             }
             _ = ping.tick() => {
                 if !conn.pong.swap(false, Ordering::SeqCst) {
                     tracing::info!(conn = %conn.id, "socket missed a ping");
-                    conn.closing.store(true, Ordering::SeqCst);
-                    return 1006;
+                    return GONE;
                 }
-                if tokio::time::timeout(WRITE_TIMEOUT, sink.send(Message::Ping(Vec::new().into()))).await.is_err() {
-                    conn.closing.store(true, Ordering::SeqCst);
-                    return 1006;
+                let sent = tokio::time::timeout(WRITE_TIMEOUT, sink.send(Message::Ping(Vec::new().into()))).await;
+                if !matches!(sent, Ok(Ok(()))) {
+                    return GONE;
                 }
             }
         }
@@ -592,6 +686,10 @@ async fn read_loop(
             }
         };
         let Some(msg) = msg else { return };
+        // busy from the moment the message is in until its handler (which counts itself) has started: taken before
+        // the arriving count resets, so the drain never sees the socket idle in between
+        let busy = conn.in_flight();
+        conn.received_message();
         let text = match msg {
             Ok(Message::Text(t)) => t,
             Ok(Message::Pong(_)) => {
@@ -601,7 +699,7 @@ async fn read_loop(
             Ok(Message::Close(_)) => return,
             Ok(Message::Ping(_) | Message::Binary(_)) => continue,
             Err(e) => {
-                if e.to_string().contains("Message too long") || e.to_string().contains("Space limit") {
+                if too_big(e) {
                     conn.close(1009, "message too big");
                     let _ = tokio::time::timeout(Duration::from_secs(2), close_rx.changed()).await;
                 }
@@ -620,7 +718,7 @@ async fn read_loop(
         }
         let large = text.len() > LARGE_MESSAGE;
         let permit = if large {
-            // pauses reading this socket until one of the large-message slots is free
+            // pauses reading this socket until one of the large-message slots is free (the socket stays busy)
             hub.large().acquire_owned().await.ok()
         } else {
             None
@@ -633,5 +731,14 @@ async fn read_loop(
             conn.touched();
         }
         handshake::frame(app, hub, conn, &frame, permit);
+        drop(busy);
     }
+}
+
+/// An inbound message over the size limit (tungstenite's capacity error, by variant, not by its text).
+fn too_big(e: axum::Error) -> bool {
+    use tokio_tungstenite::tungstenite::Error;
+    e.into_inner()
+        .downcast::<Error>()
+        .is_ok_and(|e| matches!(*e, Error::Capacity(_)))
 }

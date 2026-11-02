@@ -59,11 +59,14 @@ async fn fetch(app: &App, person: &str, after: After, wait: bool) -> Result<Chan
         wait_ms: wait.then(|| u64::try_from(app.0.tuning.poll_wait.as_millis()).unwrap_or(25_000)),
     };
     let client = if wait { &app.0.magpie_poll } else { &app.0.magpie };
-    client
+    let started = Instant::now();
+    let r = client
         .person(person)
         .with_request_id(Uuid::now_v7().to_string())
         .changes(&q)
-        .await
+        .await;
+    app.0.metrics.poll("change", started.elapsed().as_secs_f64());
+    r
 }
 
 /// Runs until the person has had no socket here for the linger time, or the drain.
@@ -119,7 +122,7 @@ pub async fn run(hub: Hub, app: App, person: String, mut ctl: mpsc::UnboundedRec
                             p.pos = r.head_seq;
                         }
                         for conn in p.hub.conns_of(&p.person) {
-                            conn.close(1012, "resync");
+                            conn.close_after_queued(1012, "resync");
                         }
                     }
                     Err(e) => {
@@ -176,7 +179,7 @@ impl Poller {
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "change feed catch-up failed; the socket re-snapshots");
-                    conn.close(1012, "resync");
+                    conn.close_after_queued(1012, "resync");
                     return;
                 }
             }
@@ -264,7 +267,7 @@ impl Poller {
                         &pushes::sandbox_status(&c, "ready"),
                     );
                     for conn in conns {
-                        conn.send(f.clone());
+                        conn.send(crate::paseo::messages::sandbox_status_type(), f.clone());
                     }
                 }
             }
@@ -284,13 +287,13 @@ impl Poller {
                     &pushes::sandbox_status(&c, state),
                 );
                 for conn in conns {
-                    conn.send(f.clone());
+                    conn.send(crate::paseo::messages::sandbox_status_type(), f.clone());
                 }
             }
             ChangeBody::Ask { ask } => {
                 let f = session("agent_permission_request", &pushes::permission(&c, ask));
                 for conn in conns.iter().filter(|k| k.watches(&c) || k.lists()) {
-                    conn.send(f.clone());
+                    conn.send("agent_permission_request", f.clone());
                 }
             }
             ChangeBody::AskResolved(r) => {
@@ -299,7 +302,7 @@ impl Poller {
                     &pushes::permission_resolved(&c, &r.ask_id, &r.resolution),
                 );
                 for conn in conns.iter().filter(|k| k.watches(&c) || k.lists()) {
-                    conn.send(f.clone());
+                    conn.send("agent_permission_resolved", f.clone());
                 }
             }
             ChangeBody::TimelineReplaced { epoch } => {

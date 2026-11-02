@@ -39,6 +39,12 @@ pub enum Ctl {
         /// The new epoch.
         epoch: String,
     },
+    /// The conversation came back from a delegate (WP-50's release): start again from the tail; `announced` is the
+    /// epoch whose replacement the watchers already got.
+    Restart {
+        /// That epoch.
+        announced: String,
+    },
 }
 
 const PAGE: u32 = 200;
@@ -51,12 +57,14 @@ enum Poll {
 
 async fn poll(app: App, person: String, c: Uuid, q: TimelineQuery, wait: bool) -> Poll {
     let client = if wait { &app.0.magpie_poll } else { &app.0.magpie };
-    match client
+    let started = Instant::now();
+    let r = client
         .person(&person)
         .with_request_id(Uuid::now_v7().to_string())
         .timeline(c, &q)
-        .await
-    {
+        .await;
+    app.0.metrics.poll("timeline", started.elapsed().as_secs_f64());
+    match r {
         Ok(p) => Poll::Rows(p),
         Err(e) if e.api().is_some_and(|r| r.status == 404) => Poll::Gone,
         Err(e) => Poll::Failed(e),
@@ -115,6 +123,12 @@ pub async fn run(hub: Hub, app: App, person: String, c: Uuid, mut ctl: mpsc::Unb
                     p.pending.push_back((turn, received));
                     p.release(false);
                 }
+                Some(Ctl::Restart { announced }) => {
+                    p.announced = Some(announced);
+                    p.epoch = None;
+                    p.pending.clear();
+                    fut = Box::pin(poll(p.app.clone(), p.person.clone(), c, tail(), false));
+                }
                 Some(Ctl::Replaced { epoch }) => {
                     if p.epoch.as_deref() != Some(epoch.as_str()) && p.announced.as_deref() != Some(epoch.as_str()) {
                         p.replaced(&epoch);
@@ -162,6 +176,15 @@ async fn sleep_until(at: Option<Instant>) {
 }
 
 impl Poller {
+    /// The sockets to feed: none while a delegate serves the conversation (a poller lingering from before the
+    /// delegation must not send beside it).
+    fn subscribers(&self) -> Vec<std::sync::Arc<crate::paseo::transport::Conn>> {
+        if self.hub.delegate(&self.person, &self.c).is_some() {
+            return Vec::new();
+        }
+        self.hub.timeline_subscribers(&self.person, &self.c)
+    }
+
     fn locale(&self) -> Locale {
         Locale::from_zh(self.app.identities().is_zh())
     }
@@ -202,7 +225,7 @@ impl Poller {
             zh: locale == Locale::Zh,
             signer: &signer,
         };
-        let subscribers = self.hub.timeline_subscribers(&self.person, &self.c);
+        let subscribers = self.subscribers();
         let mut rows = page.rows;
         rows.sort_by_key(|r| r.seq_end);
         for row in rows {
@@ -234,7 +257,7 @@ impl Poller {
             };
             let payload = pushes::turn_event(&self.c, t.phase, &t.turn_id, t.error.as_ref(), self.locale());
             let rest = payload_rest(&payload);
-            for conn in self.hub.timeline_subscribers(&self.person, &self.c) {
+            for conn in self.subscribers() {
                 conn.send_sub("agent_stream", &conn.timeline_sub(), &rest);
             }
         }
@@ -246,7 +269,7 @@ impl Poller {
         }
         self.announced = Some(epoch.to_owned());
         let rest = payload_rest(&pushes::replacement(&self.c, epoch));
-        for conn in self.hub.timeline_subscribers(&self.person, &self.c) {
+        for conn in self.subscribers() {
             conn.send_sub("agent.timeline.replacement", &conn.timeline_sub(), &rest);
         }
     }

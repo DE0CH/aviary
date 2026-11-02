@@ -30,7 +30,7 @@ pub fn is_heartbeat(frame: &Value) -> bool {
 pub fn frame(app: &App, hub: &Hub, conn: &Arc<Conn>, frame: &Value, permit: Option<OwnedSemaphorePermit>) {
     match str_field(frame, "type") {
         Some("ping") => {
-            conn.send(PONG.to_owned());
+            conn.send("pong", PONG.to_owned());
         }
         Some("hello") => hello(app, conn, frame),
         Some("session") => {
@@ -55,7 +55,7 @@ fn hello(app: &App, conn: &Arc<Conn>, frame: &Value) {
     app.0.metrics.hello(&label, &client_type);
     let Some(protocol) = protocol.filter(|p| PROTOCOLS.contains(p)) else {
         tracing::info!(conn = %conn.id, protocol = %label, client_type, app_version, "hello rejected");
-        conn.send(hello_rejected());
+        conn.send("hello.rejected", hello_rejected());
         conn.close_after_queued(1002, "incompatible protocol");
         return;
     };

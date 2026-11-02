@@ -34,17 +34,23 @@ Upstreams are the fixed names `http://magpie`, `http://hermit`, `http://model` a
 in the one drain hook.
 
 WP-50 plugs into `feeds`:
-- **Per-conversation owner switch**: `feeds::Owners` (installed with `Hub::new`; the default `NativeOnly` serves
+- **Per-conversation owner switch**: `feeds::Owners` (installed with `App::with_owners`, or `Hub::new` behind
+  `App::with_socket`; the default `NativeOnly` serves
   everything from magpie) names, per person and conversation, a `feeds::Delegate`. A delegated conversation's
   requests (every conversation-scoped message, by `agentId` or `workspaceId`) go to `Delegate::request` with the
-  socket, and its timeline subscriptions to `Delegate::subscribe` / `unsubscribe` instead of a native poller.
+  socket, and its timeline subscriptions to `Delegate::subscribe` / `unsubscribe` instead of a native poller. The hub
+  calls `Owners` without holding its own lock, so an `Owners` may consult the hub; a native poller lingering from
+  before a delegation sends nothing while the conversation is delegated.
 - **Per-socket subscription tracking**: `Hub::timeline_subscribers(person, conversation)`, `Hub::conns_of(person)`,
   `Conn::timeline_agents`, `Conn::send` / `send_sub`.
 - **The release**: `Hub::owner_changed(person, conversation, epoch)` sends one `agent.timeline.replacement` in magpie's
-  epoch to every socket watching the conversation and starts its native poller.
-- **Request-free first**: `Hub::drain` closes sockets with no request in flight and nothing but heartbeats for 5 s
-  (`Tuning::socket_quiet`) in the first half of the 15 s jitter; the rest in the second half once their requests have
-  answered (at most 10 s). `Conn::request_free` is the same test for the move.
+  epoch to every socket watching the conversation and (re)starts its native poller from the tail of that epoch, with
+  that replacement counted as sent.
+- **Request-free first**: `Hub::drain` closes sockets with no request in flight, no message arriving and nothing but
+  heartbeats for 5 s (`Tuning::socket_quiet`) in the first half of the 15 s jitter; the rest in the second half once
+  their requests have answered and their arriving messages have been handled (at most 10 s). Each 1012 follows the
+  frames already queued (the reply it waited for). The pollers keep feeding open sockets until the drain ends.
+  `Conn::request_free` is the same test for the move.
 
 ## Deviations (recorded)
 
@@ -87,11 +93,10 @@ WP-50 plugs into `feeds`:
   is the unreachable sentence until WP-50's delegate routes such conversations.
 - **Updated rows**: a tool row updated before the poll read it is sent once, with its latest `seqEnd` (M9 `after`
   returns rows by `seqEnd`); the app sees a gap and fetches, as spec 8.3 describes for joins.
-- **The drain and large inbound messages**: tungstenite gives the socket whole messages only, so "after the message
-  being received has been read" is approximated by waiting for in-flight handlers (a send being handled holds its
-  socket open, up to the 10 s request wait).
-- **Metric labels** `type` and `clientType` are `kind` and `client_type` (prometheus-client derives label names from
-  field names).
+- **The drain and large inbound messages**: tungstenite gives the socket whole messages only, so the listener counts
+  the bytes read on each connection (`server::InboundBytes`): a socket with more than 256 KiB received past its last
+  whole message is busy (a message arriving), and so is one whose message waits for a large-message slot, until its
+  handler ends (bounded by the 10 s request wait).
 
 ## Throughput (spec 8.6)
 
@@ -111,4 +116,8 @@ two CPUs (`taskset -c 0,1`) that also run the 5 000 client sockets and the in-me
   without loss or duplicate, one replacement per rewrite, the sandbox chip, 1013 for a slow socket, the drain's
   request-free-first rule, sends, creates, cancels, renames, deletes, asks, view-as, 4401), the frame corpus, and the
   ignored benchmark.
+- `tests/transport.rs`: the transport limits (a missed ping drops and unregisters the socket, 1009, 1008 at the 65th
+  socket, 4403 on re-check, the inbound rate), the drain (rows keep streaming until each socket's 1012, the 1012
+  after the reply, a large send arriving across the drain and one waiting for a large-message slot), the WP-50 seams,
+  the list cache per viewer without kept failures, and spec 19's metric names.
 - `tests/parity.rs`: every tool call of the recorded CloudCLI bridge log rendered as the bridge rendered it.

@@ -415,6 +415,22 @@ impl App {
         Self(Arc::new(inner))
     }
 
+    /// The same state with the Paseo socket on a hub whose conversations `owners` routes (WP-50's switch window:
+    /// its [`feeds::Owners`] hands conversations to a [`feeds::Delegate`]; outside it, [`feeds::NativeOnly`], the
+    /// default of [`App::new`]).
+    #[must_use]
+    pub fn with_owners(self, owners: Arc<dyn feeds::Owners>) -> Self {
+        let projector = self.0.projector.clone();
+        let socket = paseo::transport::PaseoSocket::new(feeds::Hub::new(owners));
+        self.with_socket(Arc::new(socket), projector)
+    }
+
+    /// The replica's sockets and pollers (the Paseo socket's hub).
+    #[must_use]
+    pub fn hub(&self) -> Option<feeds::Hub> {
+        self.0.socket.hub()
+    }
+
     /// Starts the background work that gates readiness: the deployment facts (every 60 s), then every team's JWKS.
     /// `deployment` and `jwks` open once each has loaded.
     pub fn start(&self, readiness: &aviary_core::ops::Readiness) {

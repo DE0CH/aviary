@@ -229,6 +229,8 @@ pub struct Harness {
     pub listener: Option<pigeon::server::Listener>,
     pub readiness: aviary_core::ops::Readiness,
     pub dir: PathBuf,
+    /// pigeon's metrics (prefix `pigeon`).
+    pub registry: prometheus_client::registry::Registry,
 }
 
 /// How [`Harness::start_opts`] starts.
@@ -242,6 +244,8 @@ pub struct Opts {
     pub wait_ready: bool,
     /// Another magpie (its base URL) instead of fake-magpie: the socket tests' model.
     pub magpie: Option<String>,
+    /// Who serves each conversation (WP-50's seam); `None`: pigeon's default (native only).
+    pub owners: Option<Arc<dyn pigeon::feeds::Owners>>,
 }
 
 impl Default for Opts {
@@ -252,6 +256,7 @@ impl Default for Opts {
             teams_in_facts: 2,
             wait_ready: true,
             magpie: None,
+            owners: None,
         }
     }
 }
@@ -326,6 +331,7 @@ impl Harness {
             teams_in_facts,
             wait_ready,
             magpie: magpie_url,
+            owners,
         } = opts;
         let _ = rustls::crypto::ring::default_provider().install_default();
         let dir = tmp("keys");
@@ -388,7 +394,7 @@ impl Harness {
             blob_keys: KeyList(vec![BLOB_KEY]),
         };
         let app_dir = bundle();
-        let mut registry = prometheus_client::registry::Registry::default();
+        let mut registry = prometheus_client::registry::Registry::with_prefix("pigeon");
         let app = App::new(
             Config {
                 build: aviary_core::version::Build::new("pigeon"),
@@ -400,6 +406,10 @@ impl Harness {
             &mut registry,
         )
         .unwrap();
+        let app = match owners {
+            Some(o) => app.with_owners(o),
+            None => app,
+        };
         let readiness = aviary_core::ops::Readiness::detached();
         app.start(&readiness);
         readiness.started();
@@ -432,7 +442,26 @@ impl Harness {
             listener: Some(served),
             readiness,
             dir,
+            registry,
         }
+    }
+
+    /// The metrics text (the `OpenMetrics` format).
+    pub fn metrics(&self) -> String {
+        let mut out = String::new();
+        prometheus_client::encoding::text::encode(&mut out, &self.registry).unwrap();
+        out
+    }
+
+    /// The value of the metric line that starts with `series` (name and labels as written), 0 when absent.
+    pub fn metric(&self, series: &str) -> f64 {
+        self.metrics()
+            .lines()
+            .find_map(|l| {
+                l.strip_prefix(series)
+                    .and_then(|r| r.trim().split(' ').next()?.parse().ok())
+            })
+            .unwrap_or(0.0)
     }
 
     pub fn get(&self, path: &str) -> reqwest::RequestBuilder {
