@@ -18,15 +18,33 @@ Upstreams are the fixed names `http://magpie`, `http://hermit`, `http://model` a
 | `signin`, `viewas`, `ops`, `uploads`, `blobs`, `shares` | 5.3-5.4, 6, 5.11, 5.7, 5.8-5.9, 5.10 | the REST routes beside the socket |
 | `server` | 5.13, 11.2 | the 8080 listener: connection tracking, `connection: close` while draining, the transfer bound |
 | `paseo::compat` | 1.2 | the shipped clients' wire constants: the only file in the crate that may name them (source rule, platform 4.5) |
-| `paseo` | 7 | the seams the socket package fills: `SocketHandler` (`/paseo-ws`) and `RowProjector` (spec 7.8; also used by the share view) |
+| `paseo` | 7 | the seams: `SocketHandler` (`/paseo-ws`, with its drain) and `RowProjector` (spec 7.8; also used by the share view) |
+| `paseo::transport` | 7.1 | the upgrade (100 MiB messages, 1009 beyond), per-socket state, the ordered bounded outbound queue (16 MiB / 4 096 frames, 1013), pings every 30 s, the 200/s (burst 400) inbound rate, the large-message semaphore (3 over 8 MiB), the 60 s re-checks (4403) and the token expiry (4401), 10 000 sockets per replica and 64 per person (1008) |
+| `paseo::handshake` | 7.2, 7.3 | `ping` / `pong` (before hello too), `hello` (protocol 1; else `hello.rejected` then 1002), session frames before hello ignored |
+| `paseo::dispatch` | 7.3, 7.5, 6.4 | every client message: static replies inline, the rest as concurrent tasks that always answer; view-as refusals before any call; the delegate seam |
+| `paseo::messages`, `paseo::pushes` | 7.2-7.6 | envelopes, `server_info`, the static replies, `DAEMON_CONFIG`, the push payloads (built once, the socket's subscription id spliced in) |
+| `paseo::mapping` | 7.4, 7.7, 7.8 | the object projections and `PaseoProjector`: rows of every kind, the ported Paseo tool-call mapper (Apache-2.0 notice in the file), the 16 MiB cap |
+| `paseo::strings` | 7.9 | the zh (HK) / en sentences by data code and the fixed strings |
+| `feeds` | 8 | the replica's `Hub` (sockets, who watches which timeline, pollers, the 2 s list single-flight), `change_poller` (M12 per person: list pushes, joins, sandbox chip, asks, turn events handed on) and `timeline_poller` (M9 per conversation: rows in `seqEnd` order, turn events after their rows, one replacement per new epoch) |
 
-## Seams for the socket package (WP-17)
+## The socket (WP-17) and the seams for the switch window (WP-50)
 
-`App::with_socket(handler, projector)` installs the `/paseo-ws` handler and the row projection. Until then
-`paseo::NoSocket` answers every authorised upgrade with 503 and `paseo::BasicProjector` projects every row kind of
-7.8 without the ported tool-call mapper (a tool row's `detail` is the mapper's `unknown` kind) and without the 7.9
-sentences (error rows show magpie's `message`). The socket's drain step (11.2 step 3, sockets closed with 1012 and
-jitter) is a drain hook the socket package adds before the listener's.
+`App::new` installs `paseo::transport::PaseoSocket` and `paseo::mapping::PaseoProjector`; `NoSocket` and
+`BasicProjector` remain for tests of the HTTP surface alone. The socket's drain (11.2 step 3) runs beside the listener's
+in the one drain hook.
+
+WP-50 plugs into `feeds`:
+- **Per-conversation owner switch**: `feeds::Owners` (installed with `Hub::new`; the default `NativeOnly` serves
+  everything from magpie) names, per person and conversation, a `feeds::Delegate`. A delegated conversation's
+  requests (every conversation-scoped message, by `agentId` or `workspaceId`) go to `Delegate::request` with the
+  socket, and its timeline subscriptions to `Delegate::subscribe` / `unsubscribe` instead of a native poller.
+- **Per-socket subscription tracking**: `Hub::timeline_subscribers(person, conversation)`, `Hub::conns_of(person)`,
+  `Conn::timeline_agents`, `Conn::send` / `send_sub`.
+- **The release**: `Hub::owner_changed(person, conversation, epoch)` sends one `agent.timeline.replacement` in magpie's
+  epoch to every socket watching the conversation and starts its native poller.
+- **Request-free first**: `Hub::drain` closes sockets with no request in flight and nothing but heartbeats for 5 s
+  (`Tuning::socket_quiet`) in the first half of the 15 s jitter; the rest in the second half once their requests have
+  answered (at most 10 s). `Conn::request_free` is the same test for the move.
 
 ## Deviations (recorded)
 
@@ -54,9 +72,43 @@ jitter) is a drain hook the socket package adds before the listener's.
 - **Drain test at CI scale** (spec 18.3): the upload across a drain is 4 MiB at about 2 MiB/s with the drain
   0.5 s in, not 50 MiB at 2 Mbit/s (210 s).
 
+- **Socket message types** (spec 18.1): pigeon's frames are built as JSON in the app's schema shapes, not
+  hand-written serde types checked with the `jsonschema` crate. Instead the socket tests record every frame shape
+  pigeon sends (`tests/socket.rs`, the tour run in both locales) into `testing/paseo-contract/fixtures/pigeon-frames.ndjson`,
+  which the paseo-contract job validates against every client build in `clients.txt`; a frame shape missing from the
+  committed corpus fails the Rust test (the run's corpus is written to `target/tmp/pigeon-frames.ndjson` to copy over).
+  The app's real reducer is not driven (the Node harness drives frames, not the app's timeline code).
+- **MCP tool names**: `mcp__<server>__<tool>` is shown and mapped as `<tool>`, so old-server history and
+  `mcp__tools__*` calls get the same label and detail (spec 18.1); the old bridge showed the full name with an
+  `unknown` detail, so render parity (cutover 10.2 item 6) must compare MCP tool names by their tool part.
+- **`sub_agent`**: the vendored mapper has no `sub_agent` branch (`Task` is `unknown`, as the bridge showed it); the
+  port keeps that.
+- **No 7.10 migration retry and no "being moved" sentence** (DESIGN 12 D14, D24); a `conversation_migrating` answer
+  is the unreachable sentence until WP-50's delegate routes such conversations.
+- **Updated rows**: a tool row updated before the poll read it is sent once, with its latest `seqEnd` (M9 `after`
+  returns rows by `seqEnd`); the app sees a gap and fetches, as spec 8.3 describes for joins.
+- **The drain and large inbound messages**: tungstenite gives the socket whole messages only, so "after the message
+  being received has been read" is approximated by waiting for in-flight handlers (a send being handled holds its
+  socket open, up to the 10 s request wait).
+- **Metric labels** `type` and `clientType` are `kind` and `client_type` (prometheus-client derives label names from
+  field names).
+
+## Throughput (spec 8.6)
+
+`cargo test --release -p pigeon --test socket bench -- --ignored --nocapture`, on the shared build runner pinned to
+two CPUs (`taskset -c 0,1`) that also run the 5 000 client sockets and the in-memory magpie: 5 000 sockets open in
+1.8 s; 20 000 frames to 1 000 watching sockets in 10 s (2 000 frames/s): latency p50 21.3 ms, p99 73.4 ms, max
+123.5 ms (2026-11-02). Unpinned (16 CPUs): p50 12.2 ms, p99 59.1 ms.
+
 ## Tests
 
 - `tests/http.rs`: spec 18.2 (Access, people, shell, routing, sign-in, view-as, ops, uploads, files and blobs,
   shares, same origin) against fake-hermit, fake-magpie, a model stub and two fake Access teams (keys from `openssl`
   per run).
 - `tests/drain.rs`: readiness gates and spec 18.3's HTTP drain cases.
+- `tests/socket.rs`: spec 18.1's socket cases against `tests/common/model.rs`, an in-memory magpie with both long-polls
+  (handshake, dispatch, paging, timeline and stale epochs, live rows and `turn_completed` after the last row, joins
+  without loss or duplicate, one replacement per rewrite, the sandbox chip, 1013 for a slow socket, the drain's
+  request-free-first rule, sends, creates, cancels, renames, deletes, asks, view-as, 4401), the frame corpus, and the
+  ignored benchmark.
+- `tests/parity.rs`: every tool call of the recorded CloudCLI bridge log rendered as the bridge rendered it.

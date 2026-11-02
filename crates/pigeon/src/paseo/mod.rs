@@ -6,6 +6,13 @@
 //! row kinds without the tool-call mapper or the localised error sentences.
 
 pub mod compat;
+pub mod dispatch;
+pub mod handshake;
+pub mod mapping;
+pub mod messages;
+pub mod pushes;
+pub mod strings;
+pub mod transport;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -41,6 +48,17 @@ pub trait RowProjector: Send + Sync {
 pub trait SocketHandler: Send + Sync {
     /// Answers the upgrade request.
     fn upgrade(&self, app: App, req: Request, id: Identity) -> Pin<Box<dyn Future<Output = Response> + Send>>;
+
+    /// Spec 11.2 step 3: closes every open socket 1012 within `jitter` (request-free ones first), each after its
+    /// in-flight requests answered or `rpc_wait` passed. The default has no sockets to close.
+    fn drain(
+        &self,
+        jitter: std::time::Duration,
+        rpc_wait: std::time::Duration,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        let _ = (jitter, rpc_wait);
+        Box::pin(async {})
+    }
 }
 
 /// The socket before the socket package: every upgrade gets 503.

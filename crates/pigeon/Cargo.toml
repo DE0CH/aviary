@@ -8,7 +8,7 @@ publish.workspace = true
 
 [dependencies]
 aviary-core = { path = "../aviary-core" }
-axum.workspace = true
+axum = { workspace = true, features = ["ws"] }
 base64.workspace = true
 futures-util.workspace = true
 gateway-api = { path = "../gateway-api" }
@@ -34,6 +34,7 @@ uuid.workspace = true
 [dev-dependencies]
 aviary-fakes = { path = "../../testing/fakes" }
 fake-access = { path = "../../testing/fake-access" }
+tokio-tungstenite.workspace = true
 
 [lints]
 workspace = true

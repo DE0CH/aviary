@@ -27,6 +27,8 @@ import { inboundProblem, outboundProblem, readFrameLog, validateRecords } from "
 const fixtures = path.join(harnessRoot, "fixtures");
 const bridgeLogs = readdirSync(fixtures).filter((name) => name.startsWith("cloudcli-bridge-")).map((name) => path.join(fixtures, name));
 const specFrames = path.join(fixtures, "pigeon-spec-frames.ndjson");
+// every frame shape pigeon sends, recorded by its socket tests (crates/pigeon/tests/socket.rs, pigeon spec 18.1)
+const pigeonFrames = path.join(fixtures, "pigeon-frames.ndjson");
 const seeded = path.join(fixtures, "seeded-invalid.ndjson");
 const nested = process.env.PASEO_CONTRACT_NESTED === "1";
 
@@ -105,6 +107,16 @@ describe("paseo contract harness", () => {
     assert.match(text, /"images":\[\{"url":"data:image\/png/);
     assert.match(text, /"attachments":\[\{"type":"uploaded_file"/);
     assert.ok(records.some((r) => r.dir === "in" && r.frame.type === "hello" && r.frame.protocolVersion === 2));
+  });
+
+  it("every frame pigeon's socket tests recorded is valid for every client", () => {
+    const records = readFrameLog(pigeonFrames);
+    assert.ok(records.length >= 60, `pigeon frames: ${records.length}`);
+    for (const protocol of protocols.values()) {
+      const { checked, failures } = validateRecords(protocol, records);
+      assert.deepEqual(failures.map((f) => `${f.file}:${f.line} ${f.type}: ${f.problem}`), [], protocol.label);
+      assert.equal(checked.out, records.length);
+    }
   });
 
   it("every seeded invalid frame is rejected by every client", () => {

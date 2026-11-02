@@ -49,6 +49,7 @@ clone).
 | `lib/runtime.mjs` | installs a build's runtime packages from its own lockfile |
 | `fixtures/cloudcli-bridge-488a7736.ndjson` | a recorded frame log of the CloudCLI Paseo bridge at 488a7736, the web build deployed when it was recorded (`record/`); the suite checks the commit the file name names is listed |
 | `fixtures/pigeon-spec-frames.ndjson` | frames pigeon sends that the CloudCLI bridge never does (`hello.rejected` `incompatible_protocol`, pigeon spec 7.2), which every client must accept |
+| `fixtures/pigeon-frames.ndjson` | one frame of every shape pigeon sends, recorded by its socket tests (`crates/pigeon/tests/socket.rs`; a shape missing here fails them); validated against every client build |
 | `fixtures/seeded-invalid.ndjson` | frames each client must reject (a type change, a new enum value, a missing field, a new message type …) |
 | `record/` | the recorder of the bridge log: `record/record.sh <claudecodeui checkout, after npm ci> OUT.ndjson` |
 | `test/` | the harness's own tests: `npm test` |

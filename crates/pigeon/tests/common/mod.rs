@@ -2,6 +2,9 @@
 //! fake-magpie, a model stub and two fake Access teams, with a small app bundle on disk.
 #![allow(dead_code, clippy::unwrap_used, clippy::missing_panics_doc, clippy::unused_self)] // tests
 
+pub mod model;
+pub mod ws;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -237,6 +240,8 @@ pub struct Opts {
     pub teams_in_facts: usize,
     /// Wait until pigeon is ready (else return at once).
     pub wait_ready: bool,
+    /// Another magpie (its base URL) instead of fake-magpie: the socket tests' model.
+    pub magpie: Option<String>,
 }
 
 impl Default for Opts {
@@ -246,6 +251,7 @@ impl Default for Opts {
             certs_down: Vec::new(),
             teams_in_facts: 2,
             wait_ready: true,
+            magpie: None,
         }
     }
 }
@@ -319,6 +325,7 @@ impl Harness {
             certs_down,
             teams_in_facts,
             wait_ready,
+            magpie: magpie_url,
         } = opts;
         let _ = rustls::crypto::ring::default_provider().install_default();
         let dir = tmp("keys");
@@ -361,7 +368,7 @@ impl Harness {
         .unwrap();
         let origins: HashMap<String, String> = teams.iter().map(|t| (t.domain.to_owned(), t.served.url())).collect();
         let upstreams = Upstreams {
-            magpie: magpie.url(),
+            magpie: magpie_url.unwrap_or_else(|| magpie.url()),
             hermit: hermit.url(),
             model: model.url(),
             access: Arc::new(move |team| {

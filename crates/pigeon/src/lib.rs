@@ -7,12 +7,14 @@
 //! - [`static_files`] and [`shell`]: the app bundle at `/srv/app` and the rewritten `index.html`.
 //! - [`signin`], [`viewas`], [`ops`], [`uploads`], [`blobs`], [`shares`]: the REST routes beside the socket.
 //! - [`server`]: the 8080 listener (timeouts, connection tracking, the drain of 11.2).
-//! - [`paseo`]: the socket protocol's wire constants ([`paseo::compat`]) and the seams the socket package plugs into.
+//! - [`paseo`]: the `/paseo-ws` protocol (spec 7): transport, handshake, dispatch, pushes, the row and object
+//!   projections, the strings; [`feeds`]: live streaming from magpie (spec 8).
 //!
 //! pigeon holds no durable state: everything in memory is a cache of an upstream answer. It reaches its upstreams by
 //! fixed names ([`Upstreams::cluster`]); its only configuration is the secrets of [`Secrets::from_env`].
 
 pub mod blobs;
+pub mod feeds;
 pub mod http;
 pub mod identity;
 pub mod metrics;
@@ -189,6 +191,26 @@ pub struct Tuning {
     pub transfer_bound: Duration,
     /// A transfer's longest wait for its next bytes (60 s).
     pub transfer_idle: Duration,
+    /// The server's WebSocket ping period (30 s, 7.1.3).
+    pub socket_ping: Duration,
+    /// The open-socket re-check period (60 s, 7.1.4).
+    pub socket_recheck: Duration,
+    /// A long-poll's `waitMs` (25 s, 8.1).
+    pub poll_wait: Duration,
+    /// The pollers' backoff after an error: first wait (0.5 s)…
+    pub poll_backoff_min: Duration,
+    /// …doubling up to this (5 s, 8.2).
+    pub poll_backoff_max: Duration,
+    /// A poller outlives its last socket by this (30 s, 8.2).
+    pub poller_linger: Duration,
+    /// The longest a turn event waits for its rows (2 s, 8.4).
+    pub turn_hold: Duration,
+    /// Sockets close within this after SIGTERM (15 s, 11.2 step 3)…
+    pub drain_jitter: Duration,
+    /// …each after its in-flight requests, at most this (10 s).
+    pub drain_rpc_wait: Duration,
+    /// A socket is request-free after this long with nothing but heartbeats (5 s, DESIGN 9.3).
+    pub socket_quiet: Duration,
 }
 
 impl Default for Tuning {
@@ -207,6 +229,16 @@ impl Default for Tuning {
             warm_every: Duration::from_secs(30),
             transfer_bound: Duration::from_secs(300),
             transfer_idle: Duration::from_secs(60),
+            socket_ping: Duration::from_secs(30),
+            socket_recheck: Duration::from_secs(60),
+            poll_wait: Duration::from_secs(25),
+            poll_backoff_min: Duration::from_millis(500),
+            poll_backoff_max: Duration::from_secs(5),
+            poller_linger: Duration::from_secs(30),
+            turn_hold: Duration::from_secs(2),
+            drain_jitter: Duration::from_secs(15),
+            drain_rpc_wait: Duration::from_secs(10),
+            socket_quiet: Duration::from_secs(5),
         }
     }
 }
@@ -258,6 +290,10 @@ pub(crate) struct Inner {
     pub(crate) upstreams: Upstreams,
     /// magpie for small calls (15 s per call).
     pub(crate) magpie: magpie_api::client::Client,
+    /// magpie for sends and creates (20 s, spec 13).
+    pub(crate) magpie_turns: magpie_api::client::Client,
+    /// magpie's long-polls (`waitMs` plus 10 s: 35 s).
+    pub(crate) magpie_poll: magpie_api::client::Client,
     /// magpie for downloads (no total timeout; reqwest's read timeout, which resets on every body read).
     pub(crate) magpie_transfer: magpie_api::client::Client,
     /// magpie for uploads (M13): the upload bounds its own waits ([`UPLOAD_READ_BACKSTOP`]).
@@ -303,6 +339,16 @@ impl App {
             upstreams.magpie.clone(),
             secrets.token_magpie.clone(),
         );
+        let magpie_turns = magpie_api::client::Client::new(
+            rpc(magpie_protocol, Duration::from_secs(20)),
+            upstreams.magpie.clone(),
+            secrets.token_magpie.clone(),
+        );
+        let magpie_poll = magpie_api::client::Client::new(
+            rpc(magpie_protocol, tuning.poll_wait + Duration::from_secs(10)),
+            upstreams.magpie.clone(),
+            secrets.token_magpie.clone(),
+        );
         let transfer_http = aviary_core::http::client_builder(&build, magpie_protocol)
             .read_timeout(tuning.transfer_idle)
             .build()
@@ -340,6 +386,8 @@ impl App {
             secrets,
             upstreams,
             magpie,
+            magpie_turns,
+            magpie_poll,
             magpie_transfer,
             magpie_upload,
             hermit,
@@ -351,8 +399,8 @@ impl App {
             warm: http::Warm::new(tuning.warm_every),
             models: http::Models::default(),
             metrics,
-            socket: Arc::new(paseo::NoSocket),
-            projector: Arc::new(paseo::BasicProjector),
+            socket: Arc::new(paseo::transport::PaseoSocket::default()),
+            projector: Arc::new(paseo::mapping::PaseoProjector),
             transfers: server::Transfers::default(),
             tuning,
         })))
@@ -379,6 +427,12 @@ impl App {
     #[must_use]
     pub fn identities(&self) -> &identity::Identities {
         &self.0.identity
+    }
+
+    /// The `/paseo-ws` handler (its drain, for tests and the process's drain).
+    #[must_use]
+    pub fn socket(&self) -> Arc<dyn paseo::SocketHandler> {
+        self.0.socket.clone()
     }
 
     /// The image URL signer (spec 5.9) for the socket's row projection.
@@ -417,7 +471,10 @@ impl App {
             bound + Duration::from_secs(1),
             move || async move {
                 let started = std::time::Instant::now();
-                server.drain(bound).await;
+                // step 3 (sockets, request-free first) runs beside steps 2 and 4 (the listener and transfers)
+                let tuning = &app.0.tuning;
+                let sockets = app.0.socket.drain(tuning.drain_jitter, tuning.drain_rpc_wait);
+                let ((), ()) = tokio::join!(sockets, server.drain(bound));
                 let left = bound.saturating_sub(started.elapsed());
                 if tokio::time::timeout(left, app.transfers().idle()).await.is_err() {
                     tracing::warn!(

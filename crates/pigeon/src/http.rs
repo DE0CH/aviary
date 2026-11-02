@@ -794,14 +794,38 @@ impl Default for Models {
 }
 
 async fn models(app: &App) -> Response {
+    match models_value(app).await {
+        Some(v) => answer_models(&v),
+        None => models_unavailable(),
+    }
+}
+
+/// The cached model list without waiting (a stale one too), starting a refresh when it is stale or missing.
+pub(crate) fn models_cached(app: &App) -> Option<Value> {
+    let mut st = app.0.models.0.st.lock().ok()?;
+    let fresh = st
+        .value
+        .as_ref()
+        .is_some_and(|(at, _)| at.elapsed() < app.0.tuning.model_ttl);
+    if !fresh && !st.refreshing && st.failed_at.is_none_or(|t| t.elapsed() >= MODEL_RETRY) {
+        st.refreshing = true;
+        tokio::spawn(refresh_models(app.clone()));
+    }
+    st.value.as_ref().map(|(_, v)| v.clone())
+}
+
+/// The model list (5.5): `{"OPTIONS": [{value, label}], "DEFAULT": id}`, from the cache (60 s), refreshed in the
+/// background; with nothing cached a caller waits for the refresh (at most its timeout). `None` when `model` cannot be
+/// reached and nothing is cached.
+pub(crate) async fn models_value(app: &App) -> Option<Value> {
     let mut ended = {
         let Ok(mut st) = app.0.models.0.st.lock() else {
-            return models_unavailable();
+            return None;
         };
         if let Some((at, v)) = &st.value
             && at.elapsed() < app.0.tuning.model_ttl
         {
-            return answer_models(v);
+            return Some(v.clone());
         }
         // a stale list waits out the retry pause after a failure; with nothing cached every request may try
         let may_start =
@@ -811,23 +835,18 @@ async fn models(app: &App) -> Response {
             tokio::spawn(refresh_models(app.clone()));
         }
         if let Some((_, v)) = &st.value {
-            return answer_models(v);
+            return Some(v.clone());
         }
         app.0.models.0.done.subscribe()
     };
     let _ = tokio::time::timeout(MODEL_TIMEOUT + Duration::from_secs(1), ended.changed()).await;
-    let value = app
-        .0
+    app.0
         .models
         .0
         .st
         .lock()
         .ok()
-        .and_then(|st| st.value.as_ref().map(|(_, v)| v.clone()));
-    match value {
-        Some(v) => answer_models(&v),
-        None => models_unavailable(),
-    }
+        .and_then(|st| st.value.as_ref().map(|(_, v)| v.clone()))
 }
 
 async fn refresh_models(app: App) {
