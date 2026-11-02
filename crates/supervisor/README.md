@@ -116,7 +116,9 @@ heartbeat (the stuck rule's evidence that magpie answers other calls).
   fork answering EIO; `lease_lost` and `not_current_sandbox` without a restart loop (unleased: magpie scope EIO);
   `bootId` per connection; an INTERRUPT before any attempt reached magpie answers EINTR. Unit tests: the wire
   layouts, the errno table, the scope table, node-log restarts, the tree and the cache (LRU, pin, reconcile), the
-  journal (slots across mappings, the short-read check, kept results).
+  journal (slots across mappings, the short-read check, kept results). As root (`ci.yml`'s sudo step): a real kernel
+  FUSE mount with supervisor 2's options serving ordinary syscalls on both scopes (append, read, stat, rename, a
+  `mkdir` lock, readdir, a refused path, `link(2)` EPERM, unlink).
 
 ## Deviations from the spec text (WP-22)
 

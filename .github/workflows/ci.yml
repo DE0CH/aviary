@@ -81,13 +81,17 @@ jobs:
           echo "::add-mask::$(grep '^AVIARY_TEST_S3_SECRET_ACCESS_KEY=' <<< "$lines" | cut -d= -f2-)"
           echo "$lines" >> "$GITHUB_ENV"
       - run: cargo nextest run --workspace --locked --no-tests=pass
-      - name: supervisor as root (dockerd spawned as uid 0, daemon.json, the _ping wait; the job runs as a user)
+      - name: supervisor as root (dockerd spawned as uid 0, daemon.json, the _ping wait; a kernel FUSE mount; the job runs as a user)
         run: |
           bin=$(cargo test --locked -p supervisor --lib --no-run --message-format=json \
             | jq -r 'select(.reason == "compiler-artifact" and .profile.test and .target.kind == ["lib"]) | .executable')
           sudo "$bin" --exact docker::tests::start_spawns_once_and_waits_for_ping --nocapture 2>&1 | tee "$RUNNER_TEMP/root.log"
           grep -q 'dockerd spawned as root and answered _ping' "$RUNNER_TEMP/root.log"
           grep -q '1 passed' "$RUNNER_TEMP/root.log"
+          # ~/.claude over the kernel's /dev/fuse: mount(2) with supervisor 2's options, real syscalls on both scopes
+          sudo "$bin" --exact fuse::tests::a_kernel_mount_serves_real_syscalls --nocapture 2>&1 | tee "$RUNNER_TEMP/fuse.log"
+          grep -q 'kernel fuse mount served real syscalls' "$RUNNER_TEMP/fuse.log"
+          grep -q '1 passed' "$RUNNER_TEMP/fuse.log"
 
   sandboxd-soak:
     # hermit spec 14.6: two daemons with stand-ins for runsc/ip/nft/wg, every endpoint, a migration, hostile clients,

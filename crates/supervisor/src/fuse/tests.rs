@@ -812,3 +812,89 @@ fn an_interrupt_before_any_attempt_is_eintr() {
         "the retry is served on its own",
     );
 }
+
+/// The wire format against a real kernel FUSE client (root only; ci.yml runs it under sudo, as the dockerd test):
+/// a fresh connection mounted with supervisor 2's options, then ordinary syscalls from another thread on both
+/// scopes. The sandbox runtime's client is the target; the kernel's speaks the same protocol (it offers a newer minor
+/// and the reply's 7.31 is accepted).
+#[test]
+fn a_kernel_mount_serves_real_syscalls() {
+    use std::io::{Read, Write};
+    use std::os::unix::fs::OpenOptionsExt;
+    // SAFETY: geteuid(2) has no arguments.
+    #[allow(unsafe_code)]
+    let root = unsafe { libc::geteuid() } == 0;
+    if !root || !std::path::Path::new("/dev/fuse").exists() {
+        eprintln!("kernel fuse test skipped: not root or no /dev/fuse");
+        return;
+    }
+    let w = world();
+    let fs = w.fs(fast());
+    let mnt = w.dir.join("mnt");
+    let fd = super::mount_fresh(&mnt).unwrap();
+    let lease = w.lease();
+    let core =
+        w.rt.block_on(fs.serve(Arc::new(super::FdDevice(fd)), Uuid::new_v4(), false, &lease))
+            .unwrap();
+    let m = mnt.clone();
+    let worker = std::thread::spawn(move || {
+        let ws = m.join("projects/-workspace");
+        std::fs::create_dir_all(&ws).unwrap();
+        let t = ws.join("s.jsonl");
+        for line in ["{\"a\":1}\n", "{\"b\":2}\n"] {
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .mode(0o600)
+                .open(&t)
+                .unwrap();
+            f.write_all(line.as_bytes()).unwrap();
+        }
+        let mut s = String::new();
+        std::fs::File::open(&t).unwrap().read_to_string(&mut s).unwrap();
+        assert_eq!(s, "{\"a\":1}\n{\"b\":2}\n");
+        let md = std::fs::metadata(&t).unwrap();
+        assert_eq!(md.len(), 16);
+        std::fs::rename(&t, ws.join("r.jsonl")).unwrap();
+        assert!(std::fs::create_dir(ws.join("r.jsonl.lock")).is_ok());
+        assert_eq!(
+            std::fs::create_dir(ws.join("r.jsonl.lock")).unwrap_err().raw_os_error(),
+            Some(libc::EEXIST)
+        );
+        std::fs::remove_dir(ws.join("r.jsonl.lock")).unwrap();
+        let names: Vec<String> = std::fs::read_dir(&ws)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(names, ["r.jsonl"]);
+        std::fs::create_dir_all(m.join("sessions")).unwrap();
+        std::fs::write(m.join("sessions/1.json"), b"{}").unwrap();
+        assert_eq!(std::fs::read(m.join("sessions/1.json")).unwrap(), b"{}");
+        assert_eq!(
+            std::fs::write(m.join("settings.json"), b"{}")
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::EACCES)
+        );
+        assert_eq!(
+            std::fs::hard_link(ws.join("r.jsonl"), ws.join("h.jsonl"))
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::EPERM)
+        );
+        std::fs::remove_file(ws.join("r.jsonl")).unwrap();
+    });
+    let r = worker.join();
+    let c = std::ffi::CString::new(mnt.to_string_lossy().as_bytes()).unwrap();
+    // SAFETY: umount2(2) of a NUL-terminated path.
+    #[allow(unsafe_code)]
+    unsafe {
+        libc::umount2(c.as_ptr(), libc::MNT_DETACH);
+    }
+    core.stop();
+    r.unwrap();
+    assert!(w.dir.join("local/sessions/1.json").exists());
+    assert!(w.data("projects/-workspace/r.jsonl").is_none());
+    assert!(w.magpie.node(w.cid, "projects/-workspace").is_some());
+    eprintln!("kernel fuse mount served real syscalls");
+}
