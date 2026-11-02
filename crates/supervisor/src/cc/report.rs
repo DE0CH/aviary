@@ -1,9 +1,14 @@
-//! Reports to magpie (supervisor 11): turn states, agent-started turns, asks and command acks in one ordered queue,
-//! task events in 250 ms batches. Every report is retried on 5xx, connection errors and `409 transcript_pending`
-//! (0.5 s doubling to 10 s) for as long as the lease is valid: none is ever dropped. A turn's end report first waits
-//! for the turn's transcript lines (8.2).
+//! Reports to magpie (supervisor 11): turn states, agent-started turns, asks and command acks, task events in
+//! 250 ms batches. Reports are ordered per lane: one lane per turn (its agent-turn open, its states, the asks opened
+//! during it and the acks of the commands about it, so `running` precedes the end and an interrupt's ack follows
+//! the outcome) and one lane for everything else; lanes do not wait for each other, so a turn whose end waits for
+//! its transcript lines (8.2) holds back nothing but itself. Every report is retried on 5xx, connection errors,
+//! 429, `409 transcript_pending` and `409 conversation_migrating` (0.5 s doubling to 10 s, or magpie's
+//! `retryAfterMs`) for as long as the lease is valid; a refusal that no retry can cure is logged as an error and
+//! counted.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -22,17 +27,31 @@ use crate::limits::{REPORT_RETRY_FIRST, REPORT_RETRY_MAX};
 
 /// How often task events are sent.
 pub const TASKS_BATCH: Duration = Duration::from_millis(250);
+/// The longest `retryAfterMs` honoured for one wait.
+const RETRY_AFTER_MAX: Duration = Duration::from_secs(30);
 
 /// Called once magpie answered an item (`true`) or it was given up (`false`: the lease was lost).
 pub type Done = Box<dyn FnOnce(bool) + Send>;
 
+/// What an end report waits for before it is sent (8.2).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Wait {
+    /// Nothing (a turn that never ran, a `running` report).
+    #[default]
+    Nothing,
+    /// magpie has acknowledged main-transcript writes holding these uuids.
+    Uuids(Vec<String>),
+    /// The generation is gone: the filesystem writes already in flight are answered.
+    Settle,
+}
+
 /// One report.
 pub enum Item {
-    /// `POST /v1/sandbox/turns/{turnId}/state`; an end report with `wait` first waits for those uuids.
+    /// `POST /v1/sandbox/turns/{turnId}/state`, after `wait`.
     State {
         turn: Uuid,
         report: TurnStateReport,
-        wait: Vec<String>,
+        wait: Wait,
         done: Option<Done>,
     },
     AgentTurn(AgentTurnRequest),
@@ -43,6 +62,28 @@ pub enum Item {
         result: AckResult,
         done: Option<Done>,
     },
+}
+
+impl Item {
+    /// A state report that waits for nothing.
+    #[must_use]
+    pub fn state(turn: Uuid, report: TurnStateReport) -> Self {
+        Item::State {
+            turn,
+            report,
+            wait: Wait::Nothing,
+            done: None,
+        }
+    }
+
+    /// The lane an item goes in when none is named: its turn's, or the shared one.
+    fn lane(&self) -> Option<Uuid> {
+        match self {
+            Item::State { turn, .. } => Some(*turn),
+            Item::AgentTurn(r) => Some(r.turn_id),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Debug for Item {
@@ -60,21 +101,40 @@ impl std::fmt::Debug for Item {
 /// What an attempt came to.
 enum Attempt {
     Done,
-    Retry(String),
+    /// Retried, after at least the given wait when magpie named one.
+    Retry(String, Option<Duration>),
     /// The lease is gone (or the call can never succeed): stop with this item.
     GiveUp(String),
+}
+
+fn retry_after(e: &ClientError) -> Option<Duration> {
+    let r = e.api()?;
+    r.retry_after_ms
+        .map(Duration::from_millis)
+        .or(r.retry_after.map(Duration::from_secs))
+        .map(|d| d.min(RETRY_AFTER_MAX))
 }
 
 fn classify(e: &ClientError) -> Attempt {
     match e.code() {
         Some(ErrorCode::LeaseLost) => Attempt::GiveUp("lease lost".into()),
-        Some(ErrorCode::TranscriptPending) => Attempt::Retry(e.to_string()),
-        _ if e.is_retryable() => Attempt::Retry(e.to_string()),
+        Some(ErrorCode::TranscriptPending | ErrorCode::ConversationMigrating | ErrorCode::RateLimited) => {
+            Attempt::Retry(e.to_string(), retry_after(e))
+        }
+        _ if e.is_retryable() => Attempt::Retry(e.to_string(), retry_after(e)),
         _ => match e.api() {
-            Some(r) if r.status >= 500 => Attempt::Retry(e.to_string()),
+            Some(r) if r.status >= 500 || r.status == 429 => Attempt::Retry(e.to_string(), retry_after(e)),
             _ => Attempt::GiveUp(e.to_string()),
         },
     }
+}
+
+/// One lane's queue.
+#[derive(Default)]
+struct Lane {
+    items: VecDeque<Item>,
+    /// A task is draining it.
+    active: bool,
 }
 
 /// The reporter.
@@ -82,8 +142,10 @@ pub struct Reporter {
     magpie: magpie_api::client::Client,
     lease: Mutex<Option<Uuid>>,
     transcript: Arc<dyn Transcript>,
-    queue: Mutex<VecDeque<Item>>,
+    lanes: Mutex<HashMap<Option<Uuid>, Lane>>,
     wake: Notify,
+    /// Reports given up for a reason other than the lease (each one logged as an error).
+    given_up: AtomicU64,
     /// Items queued and not yet answered (the queue plus the one in flight).
     pending: watch::Sender<usize>,
     tasks: Mutex<Vec<TaskReportEvent>>,
@@ -105,8 +167,9 @@ impl Reporter {
             magpie,
             lease: Mutex::new(None),
             transcript,
-            queue: Mutex::new(VecDeque::new()),
+            lanes: Mutex::new(HashMap::new()),
             wake: Notify::new(),
+            given_up: AtomicU64::new(0),
             pending: watch::channel(0).0,
             tasks: Mutex::new(Vec::new()),
             tasks_pending: watch::channel(0).0,
@@ -132,14 +195,30 @@ impl Reporter {
         self.magpie.sandbox(self.lease())
     }
 
-    /// Queues a report (sent in order after every earlier one).
+    /// Queues a report in its own lane (its turn's, or the shared one).
     pub fn push(&self, item: Item) {
-        self.queue
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push_back(item);
+        let lane = item.lane();
+        self.push_in(lane, item);
+    }
+
+    /// Queues a report in `lane` (sent after every earlier report of that lane).
+    pub fn push_in(&self, lane: Option<Uuid>, item: Item) {
         self.pending.send_modify(|n| *n += 1);
-        self.wake.notify_one();
+        let idle = {
+            let mut lanes = self.lanes.lock().unwrap_or_else(PoisonError::into_inner);
+            let l = lanes.entry(lane).or_default();
+            l.items.push_back(item);
+            !l.active
+        };
+        if idle {
+            self.wake.notify_one();
+        }
+    }
+
+    /// How many reports were given up for a reason other than a lost lease.
+    #[must_use]
+    pub fn given_up(&self) -> u64 {
+        self.given_up.load(Ordering::SeqCst)
     }
 
     /// Queues a task event for the next batch.
@@ -171,15 +250,20 @@ impl Reporter {
             match f().await {
                 Attempt::Done => return true,
                 Attempt::GiveUp(why) => {
-                    tracing::warn!(report = what, why = %why, "report given up");
+                    if why == "lease lost" {
+                        tracing::warn!(report = what, why = %why, "report given up");
+                    } else {
+                        let n = self.given_up.fetch_add(1, Ordering::SeqCst) + 1;
+                        tracing::error!(event = "report_given_up", report = what, why = %why, given_up = n, "a report magpie refused for good was dropped");
+                    }
                     return false;
                 }
-                Attempt::Retry(why) => {
+                Attempt::Retry(why, after) => {
                     if !logged {
                         tracing::info!(report = what, why = %why, "magpie unavailable: report retried");
                         logged = true;
                     }
-                    tokio::time::sleep(delay).await;
+                    tokio::time::sleep(after.map_or(delay, |a| a.max(delay))).await;
                     delay = (delay * 2).min(REPORT_RETRY_MAX);
                 }
             }
@@ -195,7 +279,15 @@ impl Reporter {
                 wait,
                 done,
             } => {
-                if !wait.is_empty() && self.transcript.wait_stored(wait).await == Stored::Stuck {
+                let stuck = match wait {
+                    Wait::Nothing => false,
+                    Wait::Uuids(u) => !u.is_empty() && self.transcript.wait_stored(u).await == Stored::Stuck,
+                    Wait::Settle => {
+                        self.transcript.settle().await;
+                        false
+                    }
+                };
+                if stuck {
                     report.state = ReportedState::Failed;
                     report.error = Some(ReportError {
                         code: magpie_api::errors::DataCode::CcWriteStuck,
@@ -264,17 +356,44 @@ impl Reporter {
         }
     }
 
-    /// The ordered queue's task.
+    /// The reporter's task: one task per lane with reports, each sending its lane's reports in order (ending the
+    /// reporter ends them all).
     pub async fn run(self: Arc<Self>) {
+        let mut set = tokio::task::JoinSet::new();
         loop {
-            let next = self.queue.lock().unwrap_or_else(PoisonError::into_inner).pop_front();
-            match next {
-                Some(item) => {
-                    self.send(item).await;
-                    self.pending.send_modify(|n| *n = n.saturating_sub(1));
-                }
-                None => self.wake.notified().await,
+            let start: Vec<Option<Uuid>> = {
+                let mut lanes = self.lanes.lock().unwrap_or_else(PoisonError::into_inner);
+                lanes
+                    .iter_mut()
+                    .filter(|(_, l)| !l.active && !l.items.is_empty())
+                    .map(|(k, l)| {
+                        l.active = true;
+                        *k
+                    })
+                    .collect()
+            };
+            for k in start {
+                set.spawn(self.clone().lane(k));
             }
+            tokio::select! {
+                () = self.wake.notified() => {}
+                Some(_) = set.join_next(), if !set.is_empty() => {}
+            }
+        }
+    }
+
+    async fn lane(self: Arc<Self>, key: Option<Uuid>) {
+        loop {
+            let next = {
+                let mut lanes = self.lanes.lock().unwrap_or_else(PoisonError::into_inner);
+                let Some(i) = lanes.get_mut(&key).and_then(|l| l.items.pop_front()) else {
+                    lanes.remove(&key);
+                    return;
+                };
+                i
+            };
+            self.send(next).await;
+            self.pending.send_modify(|n| *n = n.saturating_sub(1));
         }
     }
 
@@ -324,16 +443,25 @@ mod tests {
     fn what_is_retried() {
         assert!(matches!(
             classify(&refusal(503, ErrorCode::Unavailable)),
-            Attempt::Retry(_)
+            Attempt::Retry(..)
         ));
         assert!(matches!(
             classify(&refusal(409, ErrorCode::TranscriptPending)),
-            Attempt::Retry(_)
+            Attempt::Retry(..)
         ));
         assert!(matches!(
             classify(&refusal(500, ErrorCode::Internal)),
-            Attempt::Retry(_)
+            Attempt::Retry(..)
         ));
+        assert!(matches!(
+            classify(&refusal(429, ErrorCode::RateLimited)),
+            Attempt::Retry(..)
+        ));
+        let mut m = refusal(409, ErrorCode::ConversationMigrating);
+        if let ClientError::Api(r) = &mut m {
+            r.retry_after_ms = Some(1500);
+        }
+        assert!(matches!(classify(&m), Attempt::Retry(_, Some(d)) if d == Duration::from_millis(1500)));
         assert!(matches!(
             classify(&refusal(409, ErrorCode::LeaseLost)),
             Attempt::GiveUp(_)
@@ -356,7 +484,7 @@ mod tests {
             .retry("test", || async {
                 attempts.fetch_add(1, Ordering::SeqCst);
                 if start.elapsed() < Duration::from_mins(20) {
-                    Attempt::Retry("magpie down".into())
+                    Attempt::Retry("magpie down".into(), None)
                 } else {
                     Attempt::Done
                 }

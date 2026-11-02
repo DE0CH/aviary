@@ -12,6 +12,7 @@ pub mod nodes;
 pub mod proto;
 pub mod remote;
 pub mod scope;
+pub mod seen;
 #[cfg(test)]
 pub(crate) mod testing;
 #[cfg(test)]

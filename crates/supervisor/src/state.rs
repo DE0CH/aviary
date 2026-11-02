@@ -65,6 +65,8 @@ pub struct RunPart {
     pub origin: Option<String>,
     pub pending_inputs: u32,
     pub interrupt_sent_at: Option<String>,
+    /// How long ago the interrupt was sent, on the monotonic clock (a restart resumes the 15 s grace from here).
+    pub interrupt_elapsed_ms: Option<u64>,
     pub pending_uuids: Vec<String>,
     pub last_uuid: Option<String>,
     /// A person's turn written while an agent turn ran (7.5).
@@ -79,6 +81,7 @@ impl Default for RunPart {
             origin: None,
             pending_inputs: 0,
             interrupt_sent_at: None,
+            interrupt_elapsed_ms: None,
             pending_uuids: Vec::new(),
             last_uuid: None,
             queued_turn_id: None,
@@ -129,6 +132,8 @@ pub struct Delivered {
     #[serde(rename = "gen")]
     pub generation: Option<u32>,
     pub pending_inputs_after: Option<u32>,
+    /// The turn a `start_turn` command started (its person's turn is installed with the `written` record).
+    pub turn_id: Option<String>,
 }
 
 /// The file `run.json` in a state directory.

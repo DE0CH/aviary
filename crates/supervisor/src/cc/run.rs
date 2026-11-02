@@ -49,7 +49,7 @@ use uuid::Uuid;
 use crate::boot::BootEnv;
 use crate::cc::control::{self, Answer};
 use crate::cc::launch::{self, Launch, Session};
-use crate::cc::report::{Item, Reporter};
+use crate::cc::report::{Item, Reporter, Wait};
 use crate::cc::stream::{Line, Out, ResultMsg, Tail, TaskKind, TaskMsg};
 use crate::cc::tasks::{Change as TaskChange, Tracker};
 use crate::cc::{Transcript, managed, prompt};
@@ -66,8 +66,8 @@ use crate::model::Model;
 use crate::state::{AskState, Change, Delivered, GenState, LastTurn, Persisted, RunPart, RunState};
 use crate::uploads::{self, Uploads};
 
-/// The namespace of the stdin `msg_id`s: `msg_id` = the first 16 bytes of SHA-256(namespace ‖ `boot_id` ‖ "stdin" ‖
-/// `cmdSeq`), so a restarted supervisor derives the same id for the same command (10.2 step 5).
+/// The namespace of the supervisor's derived ids: the stdin `msg_id` = `UUIDv5`(namespace, `boot_id` ‖ "stdin" ‖
+/// `cmdSeq`) (10.2 step 5), so a restarted supervisor derives the same id for the same command.
 pub const SUPERVISOR_OP_NS: Uuid = Uuid::from_u128(0x6a1f_3c2e_9b4d_4e7a_8c55_0d2b_71e4_a903);
 /// The driver's tick (interrupt grace, asks, the hold).
 const TICK: Duration = Duration::from_secs(1);
@@ -162,10 +162,16 @@ struct Turn {
     id: Uuid,
     origin: TurnOrigin,
     started: Instant,
+    /// When the interrupt was sent: the wall clock for `run.json`, the monotonic clock for the 15 s grace (a clock
+    /// step must neither fire nor stretch it).
     interrupt_sent: Option<OffsetDateTime>,
+    interrupt_mono: Option<Instant>,
     /// uuids of the main-thread messages stdout showed during the turn (8.2).
     uuids: Vec<String>,
     usage: Option<magpie_api::sandbox::Usage>,
+    /// The person's message is with the writer (a turn is installed before its message is handed over, so stdout
+    /// can never open an agent turn for its answer; an interrupt meanwhile is written right after the message).
+    handed: bool,
 }
 
 impl Turn {
@@ -175,9 +181,21 @@ impl Turn {
             origin,
             started: Instant::now(),
             interrupt_sent: None,
+            interrupt_mono: None,
             uuids: Vec::new(),
             usage: None,
+            handed: true,
         }
+    }
+
+    /// Marks the interrupt sent; whether it was not yet.
+    fn mark_interrupt(&mut self) -> bool {
+        if self.interrupt_sent.is_some() {
+            return false;
+        }
+        self.interrupt_sent = Some(now());
+        self.interrupt_mono = Some(Instant::now());
+        true
     }
 }
 
@@ -215,6 +233,18 @@ struct Ask {
     tool_use_id: Option<String>,
     since: OffsetDateTime,
     since_mono: Instant,
+    /// The report lane of the turn it was opened in.
+    lane: Option<Uuid>,
+}
+
+impl Ask {
+    /// Its resolved report, in the lane it was opened in.
+    fn resolved(&self, outcome: AskOutcome) -> Fx {
+        Fx::ReportIn(
+            self.lane,
+            Item::AskResolved(self.ask_id.clone(), AskResolvedReport { outcome }),
+        )
+    }
 }
 
 /// The state behind the lock.
@@ -236,6 +266,8 @@ struct St {
     cmd_after: u64,
     last_turn: Option<LastTurn>,
     last_output: OffsetDateTime,
+    /// The same on the monotonic clock (the hold's silence ceiling).
+    last_output_mono: Instant,
     idle_since: Option<OffsetDateTime>,
     crashes: VecDeque<Instant>,
     failing_until: Option<Instant>,
@@ -267,6 +299,7 @@ impl St {
             cmd_after: 0,
             last_turn: None,
             last_output: OffsetDateTime::now_utc(),
+            last_output_mono: Instant::now(),
             idle_since: Some(OffsetDateTime::now_utc()),
             crashes: VecDeque::new(),
             failing_until: None,
@@ -306,9 +339,15 @@ impl St {
     }
 }
 
+/// Tests: how long the writer holds back the keeper's answer to a prompt (Claude Code answers in the meantime).
+#[cfg(test)]
+pub(crate) static STDIN_ACK_DELAY_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// What to do once the lock is released.
 enum Fx {
     Report(Item),
+    /// A report in a named lane (asks: their turn's).
+    ReportIn(Option<Uuid>, Item),
     Task(TaskReportEvent),
     Stdin(Vec<u8>),
     SetTurn(Option<Uuid>),
@@ -389,18 +428,47 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// The stdin `msg_id` of command `seq` (10.2 step 5).
+/// The stdin `msg_id` of command `seq` (10.2 step 5): `UUIDv5`(`SUPERVISOR_OP_NS`, `boot_id` ‖ "stdin" ‖ `seq` as
+/// 8 big-endian bytes).
 #[must_use]
 pub fn msg_id(boot_id: &str, seq: u64) -> [u8; 16] {
+    let mut name = Vec::with_capacity(boot_id.len() + 13);
+    name.extend_from_slice(boot_id.as_bytes());
+    name.extend_from_slice(b"stdin");
+    name.extend_from_slice(&seq.to_be_bytes());
+    *Uuid::new_v5(&SUPERVISOR_OP_NS, &name).as_bytes()
+}
+
+fn derived(boot_id: &str, what: &[u8], gen_n: u32, offset: u64) -> [u8; 32] {
     let mut h = sha2::Sha256::new();
     h.update(SUPERVISOR_OP_NS.as_bytes());
     h.update(boot_id.as_bytes());
-    h.update(b"stdin");
-    h.update(seq.to_be_bytes());
-    let d = h.finalize();
-    let mut id = [0u8; 16];
-    id.copy_from_slice(&d[..16]);
-    id
+    h.update(what);
+    h.update(gen_n.to_be_bytes());
+    h.update(offset.to_be_bytes());
+    h.finalize().into()
+}
+
+/// The id of the agent turn opened by generation `gen_n`'s stdout line ending at `offset`: a `UUIDv7` with the
+/// generation's start as its time and the rest derived from (`boot_id`, generation, offset), so the line read again
+/// after a restart opens the same turn (4.5).
+#[must_use]
+pub fn agent_turn_id(boot_id: &str, gen_n: u32, offset: u64, gen_started: OffsetDateTime) -> Uuid {
+    let d = derived(boot_id, b"agent-turn", gen_n, offset);
+    let mut r = [0u8; 10];
+    r.copy_from_slice(&d[..10]);
+    let ms = u64::try_from(gen_started.unix_timestamp_nanos() / 1_000_000).unwrap_or(0);
+    uuid::Builder::from_unix_timestamp_millis(ms, &r).into_uuid()
+}
+
+/// The `askId` of the `can_use_tool` request on generation `gen_n`'s stdout line ending at `offset` (as
+/// [`agent_turn_id`]: the same line gives the same ask).
+#[must_use]
+pub fn ask_id(boot_id: &str, gen_n: u32, offset: u64) -> Uuid {
+    let d = derived(boot_id, b"ask", gen_n, offset);
+    let mut r = [0u8; 16];
+    r.copy_from_slice(&d[..16]);
+    uuid::Builder::from_random_bytes(r).into_uuid()
 }
 
 fn hex(b: &[u8]) -> String {
@@ -606,10 +674,15 @@ impl Driver {
 
     /// Runs `f` under the lock, persists, publishes the status, then runs the effects.
     fn with<R>(&self, change: Change, f: impl FnOnce(&mut St, &mut Vec<Fx>) -> R) -> R {
+        self.with_change(|st, fx| (f(st, fx), change))
+    }
+
+    /// As [`Driver::with`], with `f` saying how urgently the change is persisted.
+    fn with_change<R>(&self, f: impl FnOnce(&mut St, &mut Vec<Fx>) -> (R, Change)) -> R {
         let mut fx = Vec::new();
         let r = {
             let mut st = lock(&self.st);
-            let r = f(&mut st, &mut fx);
+            let (r, change) = f(&mut st, &mut fx);
             self.save(&st, change);
             let s = st.status();
             self.status.send_if_modified(|old| {
@@ -647,6 +720,9 @@ impl Driver {
                 origin: t.map(|t| origin_str(t.origin).to_owned()),
                 pending_inputs: st.pending_inputs,
                 interrupt_sent_at: t.and_then(|t| t.interrupt_sent).map(rfc3339),
+                interrupt_elapsed_ms: t
+                    .and_then(|t| t.interrupt_mono)
+                    .map(|m| u64::try_from(m.elapsed().as_millis()).unwrap_or(u64::MAX)),
                 pending_uuids: t.map(|t| t.uuids.clone()).unwrap_or_default(),
                 last_uuid: t.and_then(|t| t.uuids.last().cloned()),
                 queued_turn_id: st.queued.as_ref().map(|q| q.id.to_string()),
@@ -671,6 +747,7 @@ impl Driver {
         for f in fx {
             match f {
                 Fx::Report(item) => self.reporter.push(item),
+                Fx::ReportIn(lane, item) => self.reporter.push_in(lane, item),
                 Fx::Task(ev) => self.reporter.task_event(ev),
                 Fx::Stdin(bytes) => {
                     let w = lock(&self.st).live.as_ref().map(|g| g.writer.clone());
@@ -735,7 +812,8 @@ impl Driver {
     // ---- turn ends ----
 
     /// Ends the open turn with `outcome` (the run goes `held` or `idle`), and queues its end report. `wait`: the
-    /// turn's uuids must be stored first (8.2); not for a generation that exited (it writes nothing more).
+    /// turn's uuids must be stored first (8.2); otherwise (a generation that exited writes nothing more) the
+    /// filesystem writes already in flight are answered first.
     #[allow(clippy::needless_pass_by_value)] // an outcome is consumed by the turn's end
     fn end_turn_now(&self, st: &mut St, fx: &mut Vec<Fx>, outcome: Outcome, wait: bool, exit_code: Option<i32>) {
         let Some(turn) = st.turn.take() else { return };
@@ -774,7 +852,7 @@ impl Driver {
         fx.push(Fx::Report(Item::State {
             turn: id,
             report,
-            wait: if wait { turn.uuids } else { Vec::new() },
+            wait: if wait { Wait::Uuids(turn.uuids) } else { Wait::Settle },
             done: Some(Box::new(move |ok| {
                 if ok && let Some(d) = me.upgrade() {
                     d.with(Change::State, |st, _| st.last_turn = Some(last));
@@ -782,10 +860,15 @@ impl Driver {
             })),
         }));
         if let Some(q) = st.queued.take() {
-            // the person's turn written during an agent turn is now the turn
+            // the person's turn written during an agent turn is now the turn; one stopped while it waited is
+            // interrupted again now that Claude Code works on it (the 15 s grace runs from the first interrupt)
+            if q.interrupt_sent.is_some() && q.handed {
+                fx.push(Fx::Stdin(control::interrupt(&format!("intr-{}", Uuid::new_v4()))));
+            }
+            let stopping = q.interrupt_sent.is_some();
             st.turn = Some(q);
             fx.push(Fx::SetTurn(st.turn.as_ref().map(|t| t.id)));
-            st.set_run(RunKind::Running);
+            st.set_run(if stopping { RunKind::Stopping } else { RunKind::Running });
             return;
         }
         st.pending_inputs = 0;
@@ -799,9 +882,9 @@ impl Driver {
         }
     }
 
-    /// Opens an agent-started turn (7.5, 11.2).
-    fn open_agent_turn(st: &mut St, fx: &mut Vec<Fx>) {
-        let id = Uuid::now_v7();
+    /// Opens an agent-started turn (7.5, 11.2) under `id` (derived from the line that opened it, so a restarted
+    /// supervisor that re-reads the line opens the same turn).
+    fn open_agent_turn(st: &mut St, fx: &mut Vec<Fx>, id: Uuid) {
         tracing::info!(turn = %id, origin = "agent", "turn started");
         st.turn = Some(Turn::new(id, TurnOrigin::Agent));
         st.set_run(RunKind::Running);
@@ -823,145 +906,169 @@ impl Driver {
 
     // ---- stdout ----
 
-    #[allow(clippy::too_many_lines)] // one arm per stdout message of 7.4
     fn on_line(&self, gen_n: u32, line: Line) {
-        self.with(Change::Progress, |st, fx| {
-            let Some(g) = st.live.as_mut() else { return };
-            if g.n != gen_n {
-                return;
+        let boot = self.ctx().map(|c| c.boot_id.clone()).unwrap_or_default();
+        self.with_change(|st, fx| ((), self.line_in(st, fx, gen_n, line, &boot)));
+    }
+
+    /// One stdout line under the lock; how urgently it is persisted: a line that changes the run, its tasks or its
+    /// asks at once (4.4: a restart must not re-read it as new), any other with the throttled offset.
+    #[allow(clippy::too_many_lines)] // one arm per stdout message of 7.4
+    fn line_in(&self, st: &mut St, fx: &mut Vec<Fx>, gen_n: u32, line: Line, boot: &str) -> Change {
+        let Some(g) = st.live.as_mut() else {
+            return Change::Progress;
+        };
+        if g.n != gen_n {
+            return Change::Progress;
+        }
+        g.offset = line.end;
+        let gen_started = g.started_at;
+        let gen_key = format!("{gen_n}:{}", line.end);
+        if !matches!(line.out, Out::KeepAlive | Out::Unparsed) {
+            st.last_output = now();
+            st.last_output_mono = Instant::now();
+        }
+        let mut change = match &line.out {
+            Out::Init { .. }
+            | Out::Task(_)
+            | Out::Result(_)
+            | Out::ControlRequest { .. }
+            | Out::ControlCancel { .. } => Change::State,
+            Out::Message {
+                tool_uses,
+                task_notification,
+                ..
+            } if !tool_uses.is_empty() || task_notification.is_some() => Change::State,
+            _ => Change::Progress,
+        };
+        // an assistant message, a stream event, or a task-notification wake-up opens an agent turn; a bare
+        // `user` line (a tool result, the interrupt marker) does not
+        let opens = match &line.out {
+            Out::Message {
+                assistant,
+                task_notification,
+                ..
+            } => *assistant || task_notification.is_some(),
+            other => other.is_turn_output(),
+        };
+        if opens && st.pending_inputs == 0 && st.turn.is_none() && matches!(st.run, RunKind::Idle | RunKind::Held) {
+            Self::open_agent_turn(st, fx, agent_turn_id(boot, gen_n, line.end, gen_started));
+            change = Change::State;
+        }
+        match line.out {
+            Out::Init { session_id, model } => {
+                tracing::info!(gen = gen_n, model = ?model, "claude initialised");
+                if let (Some(sid), Some(g)) = (session_id, st.live.as_mut())
+                    && sid != g.session_id
+                {
+                    tracing::warn!(expected = %g.session_id, reported = %sid, "claude reports another session id");
+                    g.session_id = sid;
+                }
             }
-            g.offset = line.end;
-            let gen_key = format!("{gen_n}:{}", line.end);
-            if !matches!(line.out, Out::KeepAlive | Out::Unparsed) {
-                st.last_output = now();
-            }
-            // an assistant message, a stream event, or a task-notification wake-up opens an agent turn; a bare
-            // `user` line (a tool result, the interrupt marker) does not
-            let opens = match &line.out {
-                Out::Message {
-                    assistant,
-                    task_notification,
-                    ..
-                } => *assistant || task_notification.is_some(),
-                other => other.is_turn_output(),
-            };
-            if opens && st.pending_inputs == 0 && st.turn.is_none() && matches!(st.run, RunKind::Idle | RunKind::Held) {
-                Self::open_agent_turn(st, fx);
-            }
-            match line.out {
-                Out::Init { session_id, model } => {
-                    tracing::info!(gen = gen_n, model = ?model, "claude initialised");
-                    if let (Some(sid), Some(g)) = (session_id, st.live.as_mut())
-                        && sid != g.session_id
+            Out::Message {
+                uuid,
+                main,
+                tool_uses,
+                task_notification,
+                ..
+            } => {
+                if let Some(text) = task_notification {
+                    st.tracker.on_notification(&text);
+                }
+                if main {
+                    let t = now();
+                    for tu in &tool_uses {
+                        st.tracker.on_tool_use(tu, t);
+                    }
+                    if let (Some(u), Some(turn)) = (uuid, st.turn.as_mut())
+                        && !turn.uuids.contains(&u)
                     {
-                        tracing::warn!(expected = %g.session_id, reported = %sid, "claude reports another session id");
-                        g.session_id = sid;
+                        turn.uuids.push(u);
                     }
                 }
-                Out::Message {
-                    uuid,
-                    main,
-                    tool_uses,
-                    task_notification,
-                    ..
+            }
+            Out::StreamEvent | Out::KeepAlive => {}
+            Out::Task(m) => {
+                let change = st.tracker.on_task(&m, now());
+                fx.push(Fx::Task(TaskReportEvent {
+                    id: gen_key,
+                    task_id: m.task_id.clone(),
+                    tool_use_id: m.tool_use_id.clone(),
+                    event: match m.kind {
+                        TaskKind::Started => TaskEvent::Started,
+                        TaskKind::Updated => TaskEvent::Updated,
+                        TaskKind::Notification => TaskEvent::Notification,
+                        TaskKind::Progress => TaskEvent::Progress,
+                    },
+                    status: task_state(&m),
+                    description: m.description.clone(),
+                    summary: m.summary.clone(),
+                    output_file: m.output_file.clone(),
+                    at: wire(now()),
+                }));
+                if change == TaskChange::Removed {
+                    Self::hold_check(st, fx, "tasks done");
+                }
+            }
+            Out::Result(r) => self.on_result(st, fx, &r),
+            Out::ControlRequest {
+                request_id,
+                subtype,
+                request,
+            } => match control::answer(&request_id, &subtype, &request) {
+                Answer::Now(bytes) => fx.push(Fx::Stdin(bytes)),
+                Answer::Ask {
+                    tool_name,
+                    tool_use_id,
+                    input,
                 } => {
-                    if let Some(text) = task_notification {
-                        st.tracker.on_notification(&text);
-                    }
-                    if main {
-                        let t = now();
-                        for tu in &tool_uses {
-                            st.tracker.on_tool_use(tu, t);
-                        }
-                        if let (Some(u), Some(turn)) = (uuid, st.turn.as_mut())
-                            && !turn.uuids.contains(&u)
-                        {
-                            turn.uuids.push(u);
-                        }
-                    }
-                }
-                Out::StreamEvent | Out::KeepAlive => {}
-                Out::Task(m) => {
-                    let change = st.tracker.on_task(&m, now());
-                    fx.push(Fx::Task(TaskReportEvent {
-                        id: gen_key,
-                        task_id: m.task_id.clone(),
-                        tool_use_id: m.tool_use_id.clone(),
-                        event: match m.kind {
-                            TaskKind::Started => TaskEvent::Started,
-                            TaskKind::Updated => TaskEvent::Updated,
-                            TaskKind::Notification => TaskEvent::Notification,
-                            TaskKind::Progress => TaskEvent::Progress,
-                        },
-                        status: task_state(&m),
-                        description: m.description.clone(),
-                        summary: m.summary.clone(),
-                        output_file: m.output_file.clone(),
-                        at: wire(now()),
-                    }));
-                    if change == TaskChange::Removed {
-                        Self::hold_check(st, fx, "tasks done");
-                    }
-                }
-                Out::Result(r) => self.on_result(st, fx, &r),
-                Out::ControlRequest {
-                    request_id,
-                    subtype,
-                    request,
-                } => match control::answer(&request_id, &subtype, &request) {
-                    Answer::Now(bytes) => fx.push(Fx::Stdin(bytes)),
-                    Answer::Ask {
-                        tool_name,
-                        tool_use_id,
-                        input,
-                    } => {
-                        let ask_id = Uuid::new_v4().to_string();
-                        tracing::info!(ask = %ask_id, tool = %tool_name, "ask opened");
-                        st.asks.push(Ask {
-                            ask_id: ask_id.clone(),
-                            cli_request_id: request_id,
-                            tool_name: tool_name.clone(),
-                            tool_use_id: tool_use_id.clone(),
-                            since: now(),
-                            since_mono: Instant::now(),
-                        });
-                        fx.push(Fx::Report(Item::AskOpen(AskReport {
+                    let ask_id = ask_id(boot, gen_n, line.end).to_string();
+                    let ask_lane = st.turn.as_ref().map(|t| t.id);
+                    tracing::info!(ask = %ask_id, tool = %tool_name, "ask opened");
+                    st.asks.push(Ask {
+                        ask_id: ask_id.clone(),
+                        cli_request_id: request_id,
+                        tool_name: tool_name.clone(),
+                        tool_use_id: tool_use_id.clone(),
+                        since: now(),
+                        since_mono: Instant::now(),
+                        lane: ask_lane,
+                    });
+                    fx.push(Fx::ReportIn(
+                        ask_lane,
+                        Item::AskOpen(AskReport {
                             ask_id,
                             tool_name,
                             tool_use_id,
                             input,
-                        })));
-                    }
-                },
-                Out::ControlResponse { request_id, ok, error } => {
-                    if let Some(w) = st.control_waiters.remove(&request_id) {
-                        let _ = w.send(if ok { Ok(()) } else { Err(error.unwrap_or_default()) });
-                    }
+                        }),
+                    ));
                 }
-                Out::ControlCancel { request_id } => {
-                    if let Some(i) = st.asks.iter().position(|a| a.cli_request_id == request_id) {
-                        let a = st.asks.remove(i);
-                        fx.push(Fx::Report(Item::AskResolved(
-                            a.ask_id,
-                            AskResolvedReport {
-                                outcome: AskOutcome::Canceled,
-                            },
-                        )));
-                    }
-                }
-                Out::Logged(kind) => tracing::debug!(kind = %kind, "claude system message"),
-                Out::Other(kind) => {
-                    if st.logged_types.insert(kind.clone()) {
-                        tracing::info!(kind = %kind, "unknown stdout message type: ignored");
-                    }
-                }
-                Out::Unparsed => {
-                    if st.logged_types.insert("<unparsed>".into()) {
-                        tracing::info!("a stdout line that does not parse (or is over the parse limit): ignored");
-                    }
+            },
+            Out::ControlResponse { request_id, ok, error } => {
+                if let Some(w) = st.control_waiters.remove(&request_id) {
+                    let _ = w.send(if ok { Ok(()) } else { Err(error.unwrap_or_default()) });
                 }
             }
-        });
+            Out::ControlCancel { request_id } => {
+                if let Some(i) = st.asks.iter().position(|a| a.cli_request_id == request_id) {
+                    let a = st.asks.remove(i);
+                    fx.push(a.resolved(AskOutcome::Canceled));
+                }
+            }
+            Out::Logged(kind) => tracing::debug!(kind = %kind, "claude system message"),
+            Out::Other(kind) => {
+                if st.logged_types.insert(kind.clone()) {
+                    tracing::info!(kind = %kind, "unknown stdout message type: ignored");
+                }
+            }
+            Out::Unparsed => {
+                if st.logged_types.insert("<unparsed>".into()) {
+                    tracing::info!("a stdout line that does not parse (or is over the parse limit): ignored");
+                }
+            }
+        }
+        change
     }
 
     fn on_result(&self, st: &mut St, fx: &mut Vec<Fx>, r: &ResultMsg) {
@@ -1004,7 +1111,9 @@ impl Driver {
             for (_, w) in st.control_waiters.drain() {
                 let _ = w.send(Err("Claude Code exited".into()));
             }
-            if g.why.is_none() {
+            // an exit nobody asked for, or one after a failed initialisation, counts towards the crash loop (7.9;
+            // the limits table's "3 exits in 60 s")
+            if matches!(g.why, None | Some(Why::Init)) {
                 let t = Instant::now();
                 st.crashes.push_back(t);
                 while st.crashes.front().is_some_and(|c| t.duration_since(*c) > CRASH_LOOP_WINDOW) {
@@ -1023,12 +1132,7 @@ impl Driver {
             st.tracker.clear();
             st.pending_inputs = 0;
             for a in st.asks.drain(..) {
-                fx.push(Fx::Report(Item::AskResolved(
-                    a.ask_id,
-                    AskResolvedReport {
-                        outcome: AskOutcome::Canceled,
-                    },
-                )));
+                fx.push(a.resolved(AskOutcome::Canceled));
             }
             if st.run != RunKind::Idle {
                 st.set_run(RunKind::Idle);
@@ -1044,8 +1148,8 @@ impl Driver {
             let mono = Instant::now();
             // interrupt grace
             if let (Some(turn), Some(g)) = (st.turn.as_ref(), st.live.as_mut())
-                && let Some(sent) = turn.interrupt_sent
-                && t - sent > INTERRUPT_GRACE
+                && let Some(sent) = turn.interrupt_mono
+                && mono.duration_since(sent) > INTERRUPT_GRACE
                 && g.why.is_none()
             {
                 tracing::warn!(turn = %turn.id, "interrupt forced kill");
@@ -1066,18 +1170,16 @@ impl Driver {
                     "No answer was given.",
                     a.tool_use_id.as_deref(),
                 )));
-                fx.push(Fx::Report(Item::AskResolved(
-                    a.ask_id,
-                    AskResolvedReport {
-                        outcome: AskOutcome::Canceled,
-                    },
-                )));
+                fx.push(a.resolved(AskOutcome::Canceled));
             }
             // pseudo-tasks and the silence ceiling
             if st.tracker.expire(t) > 0 {
                 Self::hold_check(st, fx, "tasks done");
             }
-            if st.run == RunKind::Held && t - st.last_output > HOLD_SILENCE && !st.tracker.until_ahead(t) {
+            if st.run == RunKind::Held
+                && mono.duration_since(st.last_output_mono) > HOLD_SILENCE
+                && !st.tracker.until_ahead(t)
+            {
                 let tasks: Vec<String> = st.tracker.tasks().iter().map(|x| x.task_id.clone()).collect();
                 tracing::warn!(tasks = ?tasks, reason = "silence ceiling", "hold ended");
                 for id in st.tracker.event_ids() {
@@ -1173,6 +1275,10 @@ impl Driver {
         let env = launch::env(&ctx.boot, &descriptor.env, &models);
         let n = {
             let mut st = lock(&self.st);
+            if st.release.is_some() || st.quiesced {
+                // a release or pause has begun: nothing new is started on this sandbox
+                return Err(Self::stopped_message(&st));
+            }
             st.last_gen += 1;
             st.last_gen
         };
@@ -1239,6 +1345,12 @@ impl Driver {
         }
     }
 
+    fn stopped_message(st: &St) -> String {
+        st.release
+            .as_ref()
+            .map_or_else(|| "the sandbox is pausing".into(), |r| format!("released: {r}"))
+    }
+
     /// The generation's tail, exit watch, stderr copy and stdin writer.
     #[allow(clippy::too_many_arguments)]
     fn start_gen_tasks(
@@ -1264,6 +1376,13 @@ impl Driver {
                         .and_then(|r| r);
                 if let Err(e) = &r {
                     tracing::debug!(gen = n, error = %e, "stdin write failed");
+                }
+                #[cfg(test)]
+                {
+                    let ms = STDIN_ACK_DELAY_MS.load(std::sync::atomic::Ordering::SeqCst);
+                    if ms > 0 && w.done.is_some() {
+                        tokio::time::sleep(Duration::from_millis(ms)).await;
+                    }
                 }
                 if let Some(d) = w.done {
                     let _ = d.send(r);
@@ -1458,28 +1577,36 @@ impl Driver {
     }
 
     fn ack(&self, seq: u64, result: AckResult) {
+        self.ack_in(None, seq, result);
+    }
+
+    /// Acks `seq` in `lane` (a command about a turn: after that turn's reports).
+    fn ack_in(&self, lane: Option<Uuid>, seq: u64, result: AckResult) {
         let me = self.me.clone();
-        self.reporter.push(Item::Ack {
-            seq,
-            result,
-            done: Some(Box::new(move |ok| {
-                if let Some(d) = me.upgrade() {
-                    lock(&d.inflight).remove(&seq);
-                    if ok {
-                        d.with(Change::State, |st, _| {
-                            st.delivered.insert(
-                                seq,
-                                Delivered {
-                                    state: "acked".into(),
-                                    ..Delivered::default()
-                                },
-                            );
-                            prune(&mut st.delivered);
-                        });
+        self.reporter.push_in(
+            lane,
+            Item::Ack {
+                seq,
+                result,
+                done: Some(Box::new(move |ok| {
+                    if let Some(d) = me.upgrade() {
+                        lock(&d.inflight).remove(&seq);
+                        if ok {
+                            d.with(Change::State, |st, _| {
+                                st.delivered.insert(
+                                    seq,
+                                    Delivered {
+                                        state: "acked".into(),
+                                        ..Delivered::default()
+                                    },
+                                );
+                                prune(&mut st.delivered);
+                            });
+                        }
                     }
-                }
-            })),
-        });
+                })),
+            },
+        );
     }
 
     fn dispatch(&self, c: Command) {
@@ -1580,7 +1707,8 @@ impl Driver {
         let conversation = ctx.conversation;
         let delivered = lock(&self.st).delivered.get(&seq).cloned().unwrap_or_default();
         if delivered.state == "running" {
-            self.ack(
+            self.ack_in(
+                Some(turn_id),
                 seq,
                 AckResult {
                     delivered: Some(true),
@@ -1604,14 +1732,20 @@ impl Driver {
             tracing::warn!(turn = %turn_id, error = %msg, "turn failed before it started");
             me.with(Change::State, |st, fx| {
                 st.starting = None;
-                fx.push(Fx::Report(Item::State {
-                    turn: turn_id,
-                    report: end_report(ReportedState::Failed, Some(error(DataCode::RunError, msg.clone()))),
-                    wait: Vec::new(),
-                    done: None,
-                }));
+                if st.cancel_starting == Some(turn_id) {
+                    st.cancel_starting = None;
+                }
+                let err = if st.release.is_some() {
+                    error(DataCode::SandboxLost, Self::stopped_message(st))
+                } else {
+                    error(DataCode::RunError, msg.clone())
+                };
+                fx.push(Fx::Report(Item::state(
+                    turn_id,
+                    end_report(ReportedState::Failed, Some(err)),
+                )));
             });
-            me.ack(seq, err_ack(&msg));
+            me.ack_in(Some(turn_id), seq, err_ack(&msg));
         };
         let session = match &s.resume.provider_session_id {
             Some(id) => Session::Resume(id.clone()),
@@ -1623,45 +1757,47 @@ impl Driver {
             if alive.is_none() || alive != delivered.generation {
                 self.with(Change::State, |st, fx| {
                     st.starting = None;
-                    fx.push(Fx::Report(Item::State {
-                        turn: turn_id,
-                        report: end_report(
+                    fx.push(Fx::Report(Item::state(
+                        turn_id,
+                        end_report(
                             ReportedState::Failed,
                             Some(error(
                                 DataCode::RunExited,
                                 "Claude Code exited before the prompt was answered",
                             )),
                         ),
-                        wait: Vec::new(),
-                        done: None,
-                    }));
+                    )));
                 });
-                self.ack(seq, err_ack("Claude Code exited"));
+                self.ack_in(Some(turn_id), seq, err_ack("Claude Code exited"));
                 return;
             }
         }
-        // 1: the descriptor (a change is applied at the next idle point)
-        match self.hermit.refresh().await {
-            Ok(d) => {
-                self.apply_descriptor(&d);
-                let end = {
-                    let st = lock(&self.st);
-                    st.turn.is_none() && st.tracker.is_empty() && st.live.as_ref().is_some_and(|g| g.etag != st.etag)
-                };
-                if end {
-                    tracing::info!("configuration changed: generation ended before the turn");
-                    self.end_generation(
-                        Why::Graceful,
-                        Instant::now() + STDIN_CLOSE_GRACE + KILL_AFTER_TERM + Duration::from_secs(2),
-                    )
-                    .await;
+        // 1: the descriptor (a change is applied at the next idle point); 2: a hold is superseded (an agent turn
+        // just takes the message, 7.5). A replay's turn already runs: neither applies.
+        if delivered.state != "written" {
+            match self.hermit.refresh().await {
+                Ok(d) => {
+                    self.apply_descriptor(&d);
+                    let end = {
+                        let st = lock(&self.st);
+                        st.turn.is_none()
+                            && st.tracker.is_empty()
+                            && st.live.as_ref().is_some_and(|g| g.etag != st.etag)
+                    };
+                    if end {
+                        tracing::info!("configuration changed: generation ended before the turn");
+                        self.end_generation(
+                            Why::Graceful,
+                            Instant::now() + STDIN_CLOSE_GRACE + KILL_AFTER_TERM + Duration::from_secs(2),
+                        )
+                        .await;
+                    }
                 }
+                Err(e) => tracing::info!(error = %e, "descriptor not re-read"),
             }
-            Err(e) => tracing::info!(error = %e, "descriptor not re-read"),
-        }
-        // 2: a hold is superseded (an agent turn just takes the message, 7.5)
-        if lock(&self.st).run == RunKind::Held {
-            self.stop_tasks(Instant::now() + SUPERSEDE_WAIT, "supersede").await;
+            if lock(&self.st).run == RunKind::Held {
+                self.stop_tasks(Instant::now() + SUPERSEDE_WAIT, "supersede").await;
+            }
         }
         // 3: uploads
         let mut items = Vec::new();
@@ -1677,13 +1813,19 @@ impl Driver {
                 sha: i.blob.clone(),
             });
         }
-        let paths = match self.cfg.uploads.materialise(&self.reporter.calls(), &items).await {
+        let blob_deadline = Instant::now() + uploads::BLOB_RETRY_FOR;
+        let paths = match self
+            .cfg
+            .uploads
+            .materialise(&self.reporter.calls(), &items, blob_deadline)
+            .await
+        {
             Ok(p) => p,
             Err(e) => return fail(self, e),
         };
         let mut images = Vec::new();
         for i in &s.images {
-            match self.fetch_blob(&i.model_blob).await {
+            match uploads::blob(&self.reporter.calls(), &i.model_blob, blob_deadline).await {
                 Ok(bytes) => images.push(prompt::ImageBlock {
                     media_type: i.model_mime.clone(),
                     bytes,
@@ -1717,114 +1859,193 @@ impl Driver {
             Ok(n) => n,
             Err(e) => return fail(self, e),
         };
-        if lock(&self.st).cancel_starting == Some(turn_id) {
-            self.with(Change::State, |st, fx| {
-                st.starting = None;
+        // 5: the record, the pending input and the person's turn together, before the keeper has the message:
+        // Claude Code's answer can never be read without the turn it belongs to (7.5), and a restart finds both
+        let replay = delivered.state == "written";
+        let id = if replay {
+            delivered
+                .msg_id
+                .as_deref()
+                .and_then(unhex)
+                .unwrap_or_else(|| msg_id(&ctx.boot_id, seq))
+        } else {
+            msg_id(&ctx.boot_id, seq)
+        };
+        let prepared = self.with(Change::State, |st, fx| {
+            let cancel = st.cancel_starting == Some(turn_id);
+            if cancel {
                 st.cancel_starting = None;
-                fx.push(Fx::Report(Item::State {
-                    turn: turn_id,
-                    report: end_report(ReportedState::Canceled, None),
-                    wait: Vec::new(),
-                    done: None,
-                }));
-            });
-            self.ack(
+            }
+            if cancel || st.release.is_some() || st.quiesced {
+                // stopped (or released) while it was prepared: the message is never written
+                st.starting = None;
+                let report = if st.release.is_some() || st.quiesced {
+                    end_report(
+                        ReportedState::Failed,
+                        Some(error(DataCode::SandboxLost, Self::stopped_message(st))),
+                    )
+                } else {
+                    end_report(ReportedState::Canceled, None)
+                };
+                tracing::info!(turn = %turn_id, "turn stopped before its message was written");
+                fx.push(Fx::Report(Item::state(turn_id, report)));
+                return Prepared::Stopped;
+            }
+            let Some(sid) = st.live.as_ref().filter(|g| g.n == n).map(|g| g.session_id.clone()) else {
+                st.starting = None;
+                fx.push(Fx::Report(Item::state(
+                    turn_id,
+                    end_report(
+                        ReportedState::Failed,
+                        Some(error(
+                            DataCode::RunExited,
+                            "Claude Code exited before the prompt was written",
+                        )),
+                    ),
+                )));
+                return Prepared::Gone;
+            };
+            st.starting = None;
+            let current = st.turn.as_ref().is_some_and(|t| t.id == turn_id)
+                || st.queued.as_ref().is_some_and(|t| t.id == turn_id);
+            if replay && !current {
+                // the restored turn already ended: Claude Code had the message and answered it
+                return Prepared::Answered;
+            }
+            let after = if replay {
+                delivered.pending_inputs_after.unwrap_or(st.pending_inputs + 1)
+            } else {
+                st.pending_inputs + 1
+            };
+            st.msg_seq += 1;
+            st.delivered.insert(
                 seq,
-                AckResult {
-                    delivered: Some(false),
-                    ..AckResult::default()
+                Delivered {
+                    state: "written".into(),
+                    msg_id: Some(hex(&id)),
+                    generation: Some(n),
+                    pending_inputs_after: Some(after),
+                    turn_id: Some(turn_id.to_string()),
                 },
             );
-            return;
-        }
-        // 5: the record before the keeper has the message
-        let (id, after, writer) = {
-            let id = if delivered.state == "written" {
-                delivered
-                    .msg_id
-                    .as_deref()
-                    .and_then(unhex)
-                    .unwrap_or_else(|| msg_id(&ctx.boot_id, seq))
-            } else {
-                msg_id(&ctx.boot_id, seq)
-            };
-            let after = self.with(Change::State, |st, _| {
-                let after = if delivered.state == "written" {
-                    delivered.pending_inputs_after.unwrap_or(st.pending_inputs + 1)
-                } else {
-                    st.pending_inputs + 1
-                };
-                st.msg_seq += 1;
-                st.delivered.insert(
-                    seq,
-                    Delivered {
-                        state: "written".into(),
-                        msg_id: Some(hex(&id)),
-                        generation: Some(n),
-                        pending_inputs_after: Some(after),
-                    },
-                );
-                after
-            });
-            ctx.persisted.flush().await;
-            let writer = lock(&self.st)
-                .live
-                .as_ref()
-                .filter(|g| g.n == n)
-                .map(|g| g.writer.clone());
-            (id, after, writer)
-        };
-        let (tx, rx) = oneshot::channel();
-        let sent = writer.is_some_and(|w| {
-            w.send(Write {
-                msg_id: id,
-                bytes: line,
-                done: Some(tx),
-            })
-            .is_ok()
-        });
-        let written = if sent {
-            rx.await.unwrap_or_else(|_| Err("writer gone".into()))
-        } else {
-            Err("Claude Code exited".into())
-        };
-        if let Err(e) = written {
-            tracing::warn!(turn = %turn_id, error = %e, "prompt not delivered");
-            self.with(Change::State, |st, fx| {
-                st.starting = None;
-                fx.push(Fx::Report(Item::State {
-                    turn: turn_id,
-                    report: end_report(ReportedState::Failed, Some(error(DataCode::RunExited, e.clone()))),
-                    wait: Vec::new(),
-                    done: None,
-                }));
-            });
-            self.ack(seq, err_ack(&e));
-            return;
-        }
-        // 6: running, then the ack
-        self.with(Change::State, |st, fx| {
-            st.starting = None;
-            st.pending_inputs = after;
-            let sid = st
-                .live
-                .as_ref()
-                .map_or_else(|| session.id().to_owned(), |g| g.session_id.clone());
-            let agent_running = st.turn.as_ref().is_some_and(|t| t.origin == TurnOrigin::Agent);
-            let already = st.turn.as_ref().is_some_and(|t| t.id == turn_id)
-                || st.queued.as_ref().is_some_and(|t| t.id == turn_id);
-            if !already {
-                let t = Turn::new(turn_id, TurnOrigin::Person);
-                if agent_running {
+            if !current {
+                st.pending_inputs = after;
+                let mut t = Turn::new(turn_id, TurnOrigin::Person);
+                t.handed = false;
+                if st.turn.as_ref().is_some_and(|t| t.origin == TurnOrigin::Agent) {
                     st.queued = Some(t);
                 } else {
                     st.turn = Some(t);
                     st.set_run(RunKind::Running);
                     fx.push(Fx::SetTurn(Some(turn_id)));
                 }
+                tracing::info!(turn = %turn_id, origin = "person", "turn started");
+                fx.push(Fx::MainTranscript(format!("projects/-workspace/{sid}.jsonl")));
+                fx.push(Fx::Report(Item::state(turn_id, running_report(&sid))));
             }
-            tracing::info!(turn = %turn_id, origin = "person", "turn started");
-            fx.push(Fx::MainTranscript(format!("projects/-workspace/{sid}.jsonl")));
+            Prepared::Write
+        });
+        match prepared {
+            Prepared::Write => {}
+            Prepared::Stopped => {
+                return self.ack_in(
+                    Some(turn_id),
+                    seq,
+                    AckResult {
+                        delivered: Some(false),
+                        ..AckResult::default()
+                    },
+                );
+            }
+            Prepared::Gone => return self.ack_in(Some(turn_id), seq, err_ack("Claude Code exited")),
+            Prepared::Answered => {
+                return self.ack_in(
+                    Some(turn_id),
+                    seq,
+                    AckResult {
+                        delivered: Some(true),
+                        ..AckResult::default()
+                    },
+                );
+            }
+        }
+        ctx.persisted.flush().await;
+        // the message to the writer, under the lock: an interrupt that came meanwhile goes right after it
+        let rx = self.with(Change::State, |st, fx| {
+            if st.release.is_some() {
+                // released before the hand-over: the message is never written
+                let o = Outcome::Failed(error(DataCode::SandboxLost, Self::stopped_message(st)));
+                if st.turn.as_ref().is_some_and(|t| t.id == turn_id) {
+                    self.end_turn_now(st, fx, o, false, None);
+                } else if st.queued.take_if(|q| q.id == turn_id).is_some() {
+                    st.pending_inputs = st.pending_inputs.saturating_sub(1);
+                    if let Outcome::Failed(e) = o {
+                        fx.push(Fx::Report(Item::state(
+                            turn_id,
+                            end_report(ReportedState::Failed, Some(e)),
+                        )));
+                    }
+                }
+                return None;
+            }
+            let w = st.live.as_ref().filter(|g| g.n == n).map(|g| g.writer.clone())?;
+            let t = [st.turn.as_mut(), st.queued.as_mut()]
+                .into_iter()
+                .flatten()
+                .find(|t| t.id == turn_id)?;
+            t.handed = true;
+            let (tx, rx) = oneshot::channel();
+            w.send(Write {
+                msg_id: id,
+                bytes: line,
+                done: Some(tx),
+            })
+            .ok()?;
+            if t.interrupt_sent.is_some() {
+                tracing::info!(turn = %turn_id, "interrupt sent");
+                let _ = w.send(Write {
+                    msg_id: keeper::new_msg_id(),
+                    bytes: control::interrupt(&format!("intr-{}", Uuid::new_v4())),
+                    done: None,
+                });
+            }
+            Some(rx)
+        });
+        let Some(rx) = rx else {
+            // killed or exited before the message was handed over: its end is reported already
+            return self.ack_in(
+                Some(turn_id),
+                seq,
+                AckResult {
+                    delivered: Some(false),
+                    ..AckResult::default()
+                },
+            );
+        };
+        if let Err(e) = rx.await.unwrap_or_else(|_| Err("writer gone".into())) {
+            tracing::warn!(turn = %turn_id, error = %e, "prompt not delivered");
+            self.with(Change::State, |st, fx| {
+                if st.turn.as_ref().is_some_and(|t| t.id == turn_id) {
+                    self.end_turn_now(
+                        st,
+                        fx,
+                        Outcome::Failed(error(DataCode::RunExited, e.clone())),
+                        false,
+                        None,
+                    );
+                } else if st.queued.as_ref().is_some_and(|t| t.id == turn_id) {
+                    st.queued = None;
+                    st.pending_inputs = st.pending_inputs.saturating_sub(1);
+                    fx.push(Fx::Report(Item::state(
+                        turn_id,
+                        end_report(ReportedState::Failed, Some(error(DataCode::RunExited, e.clone()))),
+                    )));
+                }
+            });
+            return self.ack_in(Some(turn_id), seq, err_ack(&e));
+        }
+        // 6: delivered (the `running` report went with step 5), then the ack
+        self.with(Change::State, |st, _| {
             st.delivered.insert(
                 seq,
                 Delivered {
@@ -1832,18 +2053,9 @@ impl Driver {
                     ..st.delivered.get(&seq).cloned().unwrap_or_default()
                 },
             );
-            fx.push(Fx::Report(Item::State {
-                turn: turn_id,
-                report: TurnStateReport {
-                    provider_session_id: Some(sid.clone()),
-                    transcript_path: Some(format!("projects/-workspace/{sid}.jsonl")),
-                    ..end_report(ReportedState::Running, None)
-                },
-                wait: Vec::new(),
-                done: None,
-            }));
         });
-        self.ack(
+        self.ack_in(
+            Some(turn_id),
             seq,
             AckResult {
                 delivered: Some(true),
@@ -1852,35 +2064,44 @@ impl Driver {
         );
     }
 
-    async fn fetch_blob(&self, sha: &str) -> Result<Vec<u8>, String> {
-        let res = self
-            .reporter
-            .calls()
-            .sandbox_blob_get(
-                sha,
-                &magpie_api::uploads::SandboxBlobQuery {
-                    as_: Some(magpie_api::uploads::SandboxBlobAs::Raw),
-                },
-            )
-            .await
-            .map_err(|e| format!("blob {sha}: {e}"))?;
-        let b = res.bytes().await.map_err(|e| format!("blob {sha}: {e}"))?;
-        Ok(b.to_vec())
+    /// The turn an interrupt or kill for `turn_id` means: the current one (any, without an id), or the person's
+    /// turn queued behind an agent turn (magpie already has it `running`).
+    fn targets(st: &St, turn_id: Option<Uuid>) -> Option<Uuid> {
+        if let Some(q) = st.queued.as_ref()
+            && turn_id == Some(q.id)
+        {
+            return Some(q.id);
+        }
+        st.turn
+            .as_ref()
+            .filter(|t| turn_id.is_none_or(|id| id == t.id))
+            .map(|t| t.id)
     }
 
     async fn interrupt(&self, seq: u64, turn_id: Option<Uuid>) {
         let target = self.with(Change::State, |st, fx| {
             if turn_id.is_some() && st.starting == turn_id {
+                // being prepared: step 5 sees this and writes nothing
                 st.cancel_starting = turn_id;
                 return turn_id;
             }
-            let turn = st.turn.as_mut().filter(|t| turn_id.is_none_or(|id| id == t.id))?;
-            if turn.interrupt_sent.is_none() {
-                turn.interrupt_sent = Some(now());
-                tracing::info!(turn = %turn.id, "interrupt sent");
+            let id = Self::targets(st, turn_id)?;
+            let queued = st.queued.as_ref().is_some_and(|q| q.id == id);
+            // a queued turn: Claude Code works on the agent turn and takes the person's message next, so the
+            // interrupt stops both (the queued one is interrupted again once it is the turn)
+            let mut send = false;
+            for t in [st.turn.as_mut(), if queued { st.queued.as_mut() } else { None }]
+                .into_iter()
+                .flatten()
+            {
+                if t.mark_interrupt() && t.handed {
+                    send = true;
+                }
+            }
+            if send {
+                tracing::info!(turn = %id, queued, "interrupt sent");
                 fx.push(Fx::Stdin(control::interrupt(&format!("intr-{}", Uuid::new_v4()))));
             }
-            let id = turn.id;
             st.set_run(RunKind::Stopping);
             for a in st.asks.drain(..) {
                 fx.push(Fx::Stdin(control::deny(
@@ -1888,48 +2109,44 @@ impl Driver {
                     "The turn was stopped.",
                     a.tool_use_id.as_deref(),
                 )));
-                fx.push(Fx::Report(Item::AskResolved(
-                    a.ask_id,
-                    AskResolvedReport {
-                        outcome: AskOutcome::Canceled,
-                    },
-                )));
+                fx.push(a.resolved(AskOutcome::Canceled));
             }
             Some(id)
         });
         if let Some(id) = target {
             // the outcome first: the grace kill bounds the wait
             self.wait_until(None, |s| {
-                s.turn.as_ref().is_none_or(|t| t.id != id) && s.starting != Some(id)
+                s.turn.as_ref().is_none_or(|t| t.id != id)
+                    && s.queued.as_ref().is_none_or(|t| t.id != id)
+                    && s.starting != Some(id)
             })
             .await;
         }
-        self.ack(seq, AckResult::default());
+        self.ack_in(target, seq, AckResult::default());
     }
 
     async fn kill(&self, seq: u64, turn_id: Option<Uuid>, reason: KillReason) {
         let watchdog = reason == KillReason::Watchdog;
+        let starting = self.with(Change::State, |st, _| {
+            let s = turn_id.is_some() && st.starting == turn_id;
+            if s {
+                st.cancel_starting = turn_id;
+            }
+            s
+        });
+        if starting {
+            // step 5 either sees the cancel (nothing written) or installs the turn, which is then killed below
+            self.wait_until(None, |s| s.starting != turn_id).await;
+        }
         let target = {
             let st = lock(&self.st);
-            if turn_id.is_some() && st.starting == turn_id {
-                None
-            } else {
-                st.turn
-                    .as_ref()
-                    .filter(|t| turn_id.is_none_or(|id| id == t.id))
-                    .and_then(|_| st.live.as_ref().map(|g| g.n))
-            }
+            Self::targets(&st, turn_id).and_then(|id| st.live.as_ref().map(|g| (id, g.n)))
         };
-        if turn_id.is_some() && lock(&self.st).starting == turn_id {
-            self.with(Change::State, |st, _| st.cancel_starting = turn_id);
-            let id = turn_id;
-            self.wait_until(None, |s| s.starting != id).await;
-        }
-        if let Some(n) = target {
-            tracing::info!(turn = ?turn_id, watchdog, "kill");
+        if let Some((id, n)) = target {
+            tracing::info!(turn = %id, watchdog, "kill");
             self.kill_gen(n, Why::Kill { watchdog }).await;
         }
-        self.ack(seq, AckResult::default());
+        self.ack_in(target.map(|(id, _)| id).or(turn_id), seq, AckResult::default());
     }
 
     fn answer_ask(&self, seq: u64, a: &AnswerAsk) {
@@ -1947,18 +2164,12 @@ impl Driver {
                 )
             };
             fx.push(Fx::Stdin(line));
-            fx.push(Fx::Report(Item::AskResolved(
-                ask.ask_id,
-                AskResolvedReport {
-                    outcome: AskOutcome::Answered,
-                },
-            )));
-            Some(())
+            fx.push(ask.resolved(AskOutcome::Answered));
+            Some(ask.lane)
         });
-        if found.is_some() {
-            self.ack(seq, AckResult::default());
-        } else {
-            self.ack(seq, err_ack("no_such_ask"));
+        match found {
+            Some(lane) => self.ack_in(lane, seq, AckResult::default()),
+            None => self.ack(seq, err_ack("no_such_ask")),
         }
     }
 
@@ -2047,7 +2258,11 @@ impl Driver {
         }
     }
 
-    /// Restores the state of a previous supervisor of this boot (4.3 step 8).
+    /// Restores the state of a previous supervisor of this boot (4.3 step 8), before the stdout tail restarts: the
+    /// turns `run.json` holds (a person's turn is saved together with its message's `written` record) are the
+    /// turns again, so lines read again or answered meanwhile are credited to them; their `running` (or agent-turn)
+    /// report is sent again, idempotent, in case the previous supervisor's queue still held it.
+    #[allow(clippy::too_many_lines)] // one field of run.json after another
     fn restore(&self, prior: &RunState, alive: Option<(u32, i32)>, exit: Option<&ExitRecord>) {
         self.with(Change::State, |st, fx| {
             st.cmd_after = prior.cmd_after;
@@ -2064,16 +2279,22 @@ impl Driver {
                 .turn_id
                 .as_deref()
                 .and_then(|t| Uuid::parse_str(t).ok())
-                .map(|id| Turn {
-                    id,
-                    origin: match prior.run.origin.as_deref() {
-                        Some("agent") => TurnOrigin::Agent,
-                        _ => TurnOrigin::Person,
-                    },
-                    started: Instant::now(),
-                    interrupt_sent: prior.run.interrupt_sent_at.as_deref().map(|_| now()),
-                    uuids: prior.run.pending_uuids.clone(),
-                    usage: None,
+                .map(|id| {
+                    let mut t = Turn::new(
+                        id,
+                        match prior.run.origin.as_deref() {
+                            Some("agent") => TurnOrigin::Agent,
+                            _ => TurnOrigin::Person,
+                        },
+                    );
+                    t.uuids.clone_from(&prior.run.pending_uuids);
+                    if prior.run.interrupt_sent_at.is_some() {
+                        // the grace goes on from where it was (the monotonic clock does not survive the process)
+                        let gone = Duration::from_millis(prior.run.interrupt_elapsed_ms.unwrap_or(0));
+                        t.interrupt_sent = Some(now());
+                        t.interrupt_mono = Some(Instant::now().checked_sub(gone).unwrap_or_else(Instant::now));
+                    }
+                    t
                 });
             let queued = prior
                 .run
@@ -2082,71 +2303,77 @@ impl Driver {
                 .and_then(|t| Uuid::parse_str(t).ok())
                 .map(|id| Turn::new(id, TurnOrigin::Person));
             if let (Some((n, pid)), Some(g)) = (alive, prior.generation.as_ref()) {
-                {
-                    st.live = Some(Gen {
-                        n,
-                        pid,
-                        since: self.ctx().map_or(0, |c| c.exits.origin()),
-                        stdout: PathBuf::from(&g.stdout),
-                        stderr: PathBuf::from(&g.stdout).with_file_name("stderr.log"),
-                        offset: g.stdout_offset,
-                        session_id: g.session_id.clone().unwrap_or_default(),
-                        initialized: g.initialized,
-                        started_at: OffsetDateTime::parse(
-                            &g.started_at,
-                            &time::format_description::well_known::Rfc3339,
-                        )
+                let sid = g.session_id.clone().unwrap_or_default();
+                st.live = Some(Gen {
+                    n,
+                    pid,
+                    since: self.ctx().map_or(0, |c| c.exits.origin()),
+                    stdout: PathBuf::from(&g.stdout),
+                    stderr: PathBuf::from(&g.stdout).with_file_name("stderr.log"),
+                    offset: g.stdout_offset,
+                    session_id: sid.clone(),
+                    initialized: g.initialized,
+                    started_at: OffsetDateTime::parse(&g.started_at, &time::format_description::well_known::Rfc3339)
                         .unwrap_or_else(|_| now()),
-                        why: None,
-                        // replaced when the writer starts
-                        writer: mpsc::unbounded_channel().0,
-                        etag: String::new(),
-                    });
-                    st.turn = turn;
-                    st.queued = queued;
-                    st.pending_inputs = prior.run.pending_inputs;
-                    st.tracker = Tracker::from_saved(&prior.tasks);
-                    st.asks = prior
-                        .asks
-                        .iter()
-                        .map(|a| Ask {
-                            ask_id: a.ask_id.clone(),
-                            cli_request_id: a.cli_request_id.clone(),
-                            tool_name: a.tool_name.clone(),
-                            tool_use_id: None,
-                            since: now(),
-                            since_mono: Instant::now(),
-                        })
-                        .collect();
-                    st.run = RunKind::parse(&prior.run.state);
-                    if st.run == RunKind::Starting {
-                        st.run = RunKind::Idle;
-                    }
-                    st.idle_since = (st.run == RunKind::Idle).then(now);
+                    why: None,
+                    // replaced when the writer starts
+                    writer: mpsc::unbounded_channel().0,
+                    etag: String::new(),
+                });
+                for t in [turn.as_ref(), queued.as_ref()].into_iter().flatten() {
+                    fx.push(Fx::Report(match t.origin {
+                        TurnOrigin::Agent => Item::AgentTurn(AgentTurnRequest {
+                            turn_id: t.id,
+                            origin: magpie_api::turns::TurnOrigin::Agent,
+                            at: wire(now()),
+                        }),
+                        _ => Item::state(t.id, running_report(&sid)),
+                    }));
                 }
+                let lane = turn.as_ref().map(|t| t.id);
+                st.turn = turn;
+                st.queued = queued;
+                st.pending_inputs = prior.run.pending_inputs;
+                st.tracker = Tracker::from_saved(&prior.tasks);
+                st.asks = prior
+                    .asks
+                    .iter()
+                    .map(|a| Ask {
+                        ask_id: a.ask_id.clone(),
+                        cli_request_id: a.cli_request_id.clone(),
+                        tool_name: a.tool_name.clone(),
+                        tool_use_id: None,
+                        since: now(),
+                        since_mono: Instant::now(),
+                        lane,
+                    })
+                    .collect();
+                st.run = RunKind::parse(&prior.run.state);
+                if st.run == RunKind::Starting {
+                    st.run = RunKind::Idle;
+                }
+                st.idle_since = (st.run == RunKind::Idle).then(now);
             } else {
-                {
-                    // the generation died while no supervisor watched: its turn failed (7.9)
-                    let tail = prior
-                        .generation
-                        .as_ref()
-                        .map(|g| stderr_tail(&PathBuf::from(&g.stdout).with_file_name("stderr.log")))
-                        .unwrap_or_default();
-                    for t in [turn, queued].into_iter().flatten() {
-                        st.turn = Some(t.clone());
-                        let o = outcome_of_exit(None, &t, None, exit, &tail);
-                        self.end_turn_now(st, fx, o, false, exit.and_then(|e| e.code));
-                    }
-                    for a in &prior.asks {
-                        fx.push(Fx::Report(Item::AskResolved(
-                            a.ask_id.clone(),
-                            AskResolvedReport {
-                                outcome: AskOutcome::Canceled,
-                            },
-                        )));
-                    }
-                    st.set_run(RunKind::Idle);
+                // the generation died while no supervisor watched: its turn failed (7.9)
+                let tail = prior
+                    .generation
+                    .as_ref()
+                    .map(|g| stderr_tail(&PathBuf::from(&g.stdout).with_file_name("stderr.log")))
+                    .unwrap_or_default();
+                for t in [turn, queued].into_iter().flatten() {
+                    st.turn = Some(t.clone());
+                    let o = outcome_of_exit(None, &t, None, exit, &tail);
+                    self.end_turn_now(st, fx, o, false, exit.and_then(|e| e.code));
                 }
+                for a in &prior.asks {
+                    fx.push(Fx::Report(Item::AskResolved(
+                        a.ask_id.clone(),
+                        AskResolvedReport {
+                            outcome: AskOutcome::Canceled,
+                        },
+                    )));
+                }
+                st.set_run(RunKind::Idle);
             }
         });
     }
@@ -2158,6 +2385,26 @@ fn prune(d: &mut BTreeMap<u64, Delivered>) {
         for k in &acked[..acked.len() - DELIVERED_KEPT] {
             d.remove(k);
         }
+    }
+}
+
+/// What step 5 of `start_turn` found.
+enum Prepared {
+    /// The turn is installed: write the message.
+    Write,
+    /// Interrupted, killed or released while it was prepared.
+    Stopped,
+    /// The generation exited.
+    Gone,
+    /// A replayed turn that already ended.
+    Answered,
+}
+
+fn running_report(sid: &str) -> TurnStateReport {
+    TurnStateReport {
+        provider_session_id: Some(sid.to_owned()),
+        transcript_path: Some(format!("projects/-workspace/{sid}.jsonl")),
+        ..end_report(ReportedState::Running, None)
     }
 }
 
@@ -2328,14 +2575,21 @@ impl Agent for Driver {
         Box::pin(async move {
             let open = self.with(Change::State, |st, fx| {
                 st.release = Some(reason.clone());
-                let open = st.turn.as_mut().map(|t| {
-                    if t.interrupt_sent.is_none() {
-                        t.interrupt_sent = Some(now());
-                        fx.push(Fx::Stdin(control::interrupt(&format!("intr-{}", Uuid::new_v4()))));
+                // a turn still being prepared is ended by step 5 (failed sandbox.lost) and spawns nothing more
+                if let Some(s) = st.starting {
+                    st.cancel_starting = Some(s);
+                }
+                let mut send = false;
+                for t in [st.turn.as_mut(), st.queued.as_mut()].into_iter().flatten() {
+                    if t.mark_interrupt() && t.handed {
+                        send = true;
                     }
-                    t.id
-                });
-                if open.is_some() {
+                }
+                if send {
+                    fx.push(Fx::Stdin(control::interrupt(&format!("intr-{}", Uuid::new_v4()))));
+                }
+                let open = st.turn.is_some() || st.starting.is_some();
+                if st.turn.is_some() {
                     st.set_run(RunKind::Stopping);
                 }
                 for id in st.tracker.event_ids() {
@@ -2343,19 +2597,32 @@ impl Agent for Driver {
                 }
                 open
             });
-            if open.is_some() {
-                let ended = self.wait_until(Some(deadline), |s| s.turn.is_none()).await;
+            if open {
+                let ended = self
+                    .wait_until(Some(deadline), |s| {
+                        s.turn.is_none() && s.queued.is_none() && s.starting.is_none()
+                    })
+                    .await;
                 if !ended {
                     let n = lock(&self.st).live.as_ref().map(|g| g.n);
                     if let Some(n) = n {
                         tracing::warn!("the interrupt did not end the turn in time: killed");
                         self.kill_gen(n, Why::Release).await;
                     }
-                    // no generation (or it would not die): the turn is reported lost all the same
+                    // no generation (or it would not die), or a start still preparing: reported lost all the same
                     self.with(Change::State, |st, fx| {
-                        if st.turn.is_some() {
+                        while st.turn.is_some() {
                             let o = Outcome::Failed(error(DataCode::SandboxLost, format!("released: {reason}")));
                             self.end_turn_now(st, fx, o, false, None);
+                        }
+                        if let Some(s) = st.starting {
+                            fx.push(Fx::Report(Item::state(
+                                s,
+                                end_report(
+                                    ReportedState::Failed,
+                                    Some(error(DataCode::SandboxLost, format!("released: {reason}"))),
+                                ),
+                            )));
                         }
                     });
                 }
@@ -2367,6 +2634,10 @@ impl Agent for Driver {
         Box::pin(async move {
             self.stop_poll();
             self.with(Change::State, |st, _| st.quiesced = true);
+            // a start_turn or spawn in progress finishes (it refuses to start anything now) before the generation
+            // is ended, so nothing it spawned outlives the release
+            let _turn = tokio::time::timeout_at(deadline, self.turn_lane.lock()).await;
+            let _gen = tokio::time::timeout_at(deadline, self.gen_lane.lock()).await;
             self.end_generation(Why::Release, deadline).await;
             if !self.reporter.drain(deadline).await {
                 tracing::warn!("release: reports still unanswered at the deadline");

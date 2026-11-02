@@ -473,14 +473,21 @@ fn openat(dir: RawFd, name: &str, flags: libc::c_int) -> io::Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
-/// Opens `components` beneath `root`, one component at a time, never following a symlink (the same guarantee as
-/// `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)`, which some sandbox runtimes do not offer).
+/// Opens the regular file `components` beneath `root`, one component at a time, never following a symlink (the
+/// same guarantee as `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)`, which some sandbox runtimes do not offer);
+/// `root` itself must not be a symlink. The file is opened non-blocking and refused unless it is a regular file, so
+/// a FIFO or device cannot hold the hook in `open(2)`.
 fn open_beneath(root: &Path, components: &[String]) -> io::Result<OwnedFd> {
     let rc = std::ffi::CString::new(root.as_os_str().as_encoded_bytes())
         .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
     // SAFETY: a valid C string; the fd is owned below.
     #[allow(unsafe_code)]
-    let fd = unsafe { libc::open(rc.as_ptr(), libc::O_DIRECTORY | libc::O_RDONLY | libc::O_CLOEXEC) };
+    let fd = unsafe {
+        libc::open(
+            rc.as_ptr(),
+            libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_RDONLY | libc::O_CLOEXEC,
+        )
+    };
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
@@ -493,7 +500,23 @@ fn open_beneath(root: &Path, components: &[String]) -> io::Result<OwnedFd> {
     for d in dirs {
         dir = openat(dir.as_raw_fd(), d, libc::O_DIRECTORY | libc::O_RDONLY)?;
     }
-    openat(dir.as_raw_fd(), last, libc::O_RDONLY)
+    let f = openat(dir.as_raw_fd(), last, libc::O_RDONLY | libc::O_NONBLOCK)?;
+    // SAFETY: fstat into a local struct, fcntl on an fd we own.
+    #[allow(unsafe_code)]
+    unsafe {
+        let mut st: libc::stat = std::mem::zeroed();
+        if libc::fstat(f.as_raw_fd(), &raw mut st) != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if st.st_mode & libc::S_IFMT != libc::S_IFREG {
+            return Err(io::Error::from(io::ErrorKind::InvalidInput));
+        }
+        let fl = libc::fcntl(f.as_raw_fd(), libc::F_GETFL);
+        if fl < 0 || libc::fcntl(f.as_raw_fd(), libc::F_SETFL, fl & !libc::O_NONBLOCK) != 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(f)
 }
 
 /// Sends one HTTP request with `fds` on its first message over the socket at `path`; the status and body.
@@ -617,6 +640,9 @@ pub fn hook(paths: &HookPaths, input: &Value) -> HookOutcome {
             Err(e) if e.raw_os_error() == Some(libc::ELOOP) || e.raw_os_error() == Some(libc::ENOTDIR) => {
                 return HookOutcome::Failed(format!("{f} has a symlink in its path"));
             }
+            Err(e) if e.kind() == io::ErrorKind::InvalidInput => {
+                return HookOutcome::Failed(format!("{f} is not a regular file"));
+            }
             Err(e) => return HookOutcome::Failed(format!("{f}: {e}")),
         };
         // SAFETY: fstat into a local struct.
@@ -698,6 +724,34 @@ mod tests {
         assert!(open_beneath(&d, &["real".into(), "f.txt".into()]).is_ok());
         assert!(open_beneath(&d, &["link".into(), "f.txt".into()]).is_err());
         assert!(open_beneath(&d, &["real".into(), "l.txt".into()]).is_err());
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    /// A FIFO, a directory or a device is refused at once (the hook never blocks in `open`), the file's descriptor
+    /// is blocking again, and a symlinked root is refused.
+    #[test]
+    fn only_regular_files_are_opened() {
+        let d = std::env::temp_dir().join(format!("hook-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(d.join("dir")).unwrap();
+        std::fs::write(d.join("f.txt"), b"x").unwrap();
+        let fifo = std::ffi::CString::new(d.join("pipe").to_string_lossy().into_owned()).unwrap();
+        // SAFETY: a valid C string.
+        #[allow(unsafe_code)]
+        let r = unsafe { libc::mkfifo(fifo.as_ptr(), 0o644) };
+        assert_eq!(r, 0);
+        let started = std::time::Instant::now();
+        let e = open_beneath(&d, &["pipe".into()]).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(open_beneath(&d, &["dir".into()]).is_err());
+        let f = open_beneath(&d, &["f.txt".into()]).unwrap();
+        // SAFETY: fcntl on an fd we own.
+        #[allow(unsafe_code)]
+        let fl = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_GETFL) };
+        assert_eq!(fl & libc::O_NONBLOCK, 0);
+        std::os::unix::fs::symlink(&d, d.with_extension("link")).unwrap();
+        assert!(open_beneath(&d.with_extension("link"), &["f.txt".into()]).is_err());
+        let _ = std::fs::remove_file(d.with_extension("link"));
         let _ = std::fs::remove_dir_all(d);
     }
 

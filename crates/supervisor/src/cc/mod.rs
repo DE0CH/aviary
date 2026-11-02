@@ -35,6 +35,11 @@ pub trait Transcript: Send + Sync + 'static {
     /// Waits until magpie has acknowledged main-transcript writes holding every one of `uuids` (no time cap), or
     /// the stuck-operation rule fired.
     fn wait_stored(&self, uuids: Vec<String>) -> BoxFuture<'_, Stored>;
+    /// Waits until the filesystem requests already in flight are answered (a generation that exited writes nothing
+    /// more, but what it wrote may still be on its way to magpie).
+    fn settle(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
     /// The heartbeat's `cc` facts.
     fn facts(&self) -> CcFacts;
     /// The lease the filesystem holds now, when it has re-taken one (after a restore).
@@ -47,16 +52,37 @@ pub trait Transcript: Send + Sync + 'static {
     fn heartbeat_ok(&self) {}
 }
 
-/// The `~/.claude` layer of WP-22. Its uuid scan for 8.2 is not built yet, so `wait_stored` returns at once and
-/// magpie's `409 transcript_pending` (retried by the reporter) is what keeps an end report behind its last line.
+/// The `~/.claude` layer of WP-22: the uuids of the lines magpie acknowledged come from its write path
+/// ([`crate::fuse::seen`]); magpie's `409 transcript_pending` on `lastUuid` is the second check (8.2).
 impl Transcript for crate::fuse::FuseFs {
     fn set_turn(&self, turn: Option<Uuid>) {
         if let Some(c) = self.core() {
             c.set_turn(turn);
         }
     }
-    fn wait_stored(&self, _uuids: Vec<String>) -> BoxFuture<'_, Stored> {
-        Box::pin(async { Stored::All })
+    fn wait_stored(&self, uuids: Vec<String>) -> BoxFuture<'_, Stored> {
+        Box::pin(async move {
+            let Some(c) = self.core() else { return Stored::All };
+            let before = c.stuck_count();
+            let all = tokio::task::spawn_blocking(move || c.wait_uuids(&uuids, before))
+                .await
+                .unwrap_or(true);
+            if all { Stored::All } else { Stored::Stuck }
+        })
+    }
+    fn settle(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            let Some(c) = self.core() else { return };
+            loop {
+                let c = c.clone();
+                if tokio::task::spawn_blocking(move || c.settle(std::time::Duration::from_secs(1)))
+                    .await
+                    .unwrap_or(true)
+                {
+                    return;
+                }
+            }
+        })
     }
     fn facts(&self) -> CcFacts {
         let (blocked, oldest) = self.remote().blocked();

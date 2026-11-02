@@ -927,3 +927,75 @@ fn a_kernel_mount_serves_real_syscalls() {
     assert!(w.magpie.node(w.cid, "projects/-workspace").is_some());
     eprintln!("kernel fuse mount served real syscalls");
 }
+
+/// 8.2: a turn's end waits until magpie acknowledged the writes holding its uuids; a restarted server finds the
+/// uuids written before it in the main transcript's tail; the stuck rule ends the wait.
+#[test]
+fn the_end_report_waits_for_the_uuids_magpie_acknowledged() {
+    use crate::cc::{Stored, Transcript as _};
+    let w = world();
+    let fs = w.fs(fast());
+    let boot = Uuid::new_v4();
+    super::store_boot_id(&w.dir.join("state"), boot).unwrap();
+    let core = w.start(&fs, boot, false, Hooks::default());
+    core.set_main_transcript(Some("projects/-workspace/s.jsonl".into()));
+    let s = &w.sentry;
+    let ws = workspace_dir(&w);
+    let r = s.call(
+        op::CREATE,
+        ws,
+        PID,
+        &body::create("s.jsonl", O_RDWR | libc::O_CREAT, 0o600),
+    );
+    let (t, fh) = (out::node(&r), out::create_fh(&r));
+    let (a, b) = (Uuid::now_v7().to_string(), Uuid::now_v7().to_string());
+    let la = format!("{{\"type\":\"user\",\"uuid\":\"{a}\"}}\n");
+    ok(&s.call(op::WRITE, t, PID, &body::write(fh, 0, la.as_bytes())), "line a");
+    let wait = |u: Vec<String>, d: Duration| {
+        w.rt.block_on(async { tokio::time::timeout(d, fs.wait_stored(u)).await })
+            .ok()
+    };
+    assert_eq!(wait(vec![a.clone()], Duration::from_secs(5)), Some(Stored::All));
+    assert_eq!(
+        wait(vec![a.clone(), b.clone()], Duration::from_millis(1500)),
+        None,
+        "b is not written yet"
+    );
+    // b's line arrives in two writes while the wait runs
+    let lb = format!("{{\"type\":\"assistant\",\"uuid\":\"{b}\"}}\n");
+    let (b1, b2) = lb.as_bytes().split_at(20);
+    let off = la.len() as u64;
+    let waiting = w.rt.spawn({
+        let fs = fs.clone();
+        let u = vec![a.clone(), b.clone()];
+        async move { fs.wait_stored(u).await }
+    });
+    std::thread::sleep(Duration::from_millis(200));
+    ok(&s.call(op::WRITE, t, PID, &body::write(fh, off, b1)), "b, first half");
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!waiting.is_finished());
+    ok(
+        &s.call(op::WRITE, t, PID, &body::write(fh, off + b1.len() as u64, b2)),
+        "b, second half",
+    );
+    let r =
+        w.rt.block_on(async { tokio::time::timeout(Duration::from_secs(5), waiting).await });
+    assert_eq!(r.unwrap().unwrap(), Stored::All);
+    // a restarted server has not seen the writes: it finds them in what magpie holds
+    core.stop();
+    let core2 = w.start(&fs, boot, true, Hooks::default());
+    core2.set_main_transcript(Some("projects/-workspace/s.jsonl".into()));
+    assert_eq!(wait(vec![b.clone()], Duration::from_secs(5)), Some(Stored::All));
+    // a uuid never written, then the stuck rule fires: the wait ends Stuck
+    let c = vec![Uuid::now_v7().to_string()];
+    let waiting = w.rt.spawn({
+        let fs = fs.clone();
+        async move { fs.wait_stored(c).await }
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!waiting.is_finished());
+    core2.stuck_for_test();
+    let r =
+        w.rt.block_on(async { tokio::time::timeout(Duration::from_secs(5), waiting).await });
+    assert_eq!(r.unwrap().unwrap(), Stored::Stuck);
+}

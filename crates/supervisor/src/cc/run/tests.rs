@@ -251,6 +251,11 @@ impl Fake {
                 if Path::new(".fake-noinit").exists() {
                     return;
                 }
+                if Path::new(".fake-initerror").exists() {
+                    self.system(json!({"type": "control_response",
+                                       "response": {"subtype": "error", "request_id": id, "error": "refused"}}));
+                    return;
+                }
                 self.system(json!({"type": "control_response",
                                    "response": {"subtype": "success", "request_id": id, "response": {}}}));
             }
@@ -1171,6 +1176,7 @@ async fn a_restart_replays_a_written_prompt_exactly_once() {
                 .unwrap()
                 .unwrap();
         }
+        // what step 5 persists in one change: the record, the pending input and the person's turn
         let mut prior = first.persisted.read(Clone::clone);
         prior.delivered.insert(
             seq.to_string(),
@@ -1179,11 +1185,40 @@ async fn a_restart_replays_a_written_prompt_exactly_once() {
                 msg_id: Some(hex(&id)),
                 generation: Some(n),
                 pending_inputs_after: Some(1),
+                turn_id: Some(turn.to_string()),
             },
         );
         prior.cmd_after = seq;
+        prior.run.state = "running".into();
+        prior.run.turn_id = Some(turn.to_string());
+        prior.run.origin = Some("person".into());
+        prior.run.pending_inputs = 1;
         drop(first);
+        if keeper_had_it {
+            // Claude Code answers while no supervisor runs, and the new one's tail reads the answer before the
+            // command is replayed (the command poll is held back meanwhile)
+            until("answered", || w.fake_log().iter().any(|l| l == "stdin user")).await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+        let hold = w.magpie.faults().on(
+            "commands",
+            aviary_fakes::fault::FaultKind::Unavailable { retry_after_secs: 1 },
+        );
         let second = w.attach(Some(prior), crate::start::Reattach::Alive { n, pid }).await;
+        if keeper_had_it {
+            let end = w.ended(turn).await;
+            assert_eq!(
+                end["state"], "completed",
+                "credited to the person's turn before the replay"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        w.magpie.faults().remove(hold);
+        w.acked(seq).await;
+        assert!(
+            w.magpie.script().calls_to("agent_turn").is_empty(),
+            "no agent turn for the person's answer"
+        );
         let end = w.ended(turn).await;
         assert_eq!(end["state"], "completed", "keeper had it: {keeper_had_it}");
         let prompts = w.prompts();
@@ -1326,4 +1361,225 @@ async fn a_forced_release_during_a_turn_reports_sandbox_lost() {
     // Claude Code is gone and nothing new is admitted
     assert!(sup.driver.claude_pid().is_none());
     assert!(texts(&w).contains("eof") || texts(&w).contains("control interrupt"));
+}
+
+/// 7.5: Claude Code answers before the keeper's acknowledgement of the prompt reaches the driver (the tail reads
+/// the answer first): the answer is the person's turn, never a phantom agent turn.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_answer_read_before_the_prompt_write_returns_is_the_persons_turn() {
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    until("pre-spawn", || !w.spawns().is_empty()).await;
+    STDIN_ACK_DELAY_MS.store(800, std::sync::atomic::Ordering::SeqCst);
+    for i in 0..3 {
+        let (t, s) = w.turn_with(&format!("say:fast {i}"), Some(w.cid.to_string()), vec![], vec![]);
+        assert_eq!(w.ended(t).await["state"], "completed");
+        assert_eq!(w.acked(s).await.delivered, Some(true));
+        assert_eq!(w.state_names(t), ["running", "completed"]);
+        w.idle(&sup).await;
+    }
+    STDIN_ACK_DELAY_MS.store(0, std::sync::atomic::Ordering::SeqCst);
+    assert!(w.magpie.script().calls_to("agent_turn").is_empty(), "{}", texts(&w));
+}
+
+/// An interrupt (and a kill) for a person's turn queued behind an agent turn stops Claude Code: magpie already has
+/// that turn `running`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::many_single_char_names)]
+async fn a_queued_persons_turn_can_be_interrupted_and_killed() {
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    for kill in [false, true] {
+        let (t, _) = w.turn_with("say:x;slowwake:100", Some(w.cid.to_string()), vec![], vec![]);
+        w.ended(t).await;
+        let before = w.magpie.script().calls_to("agent_turn").len();
+        until("an agent turn", || {
+            w.magpie.script().calls_to("agent_turn").len() > before
+        })
+        .await;
+        let (p, _) = w.turn_with("deaf", Some(w.cid.to_string()), vec![], vec![]);
+        until("the person's turn running", || {
+            w.state_names(p).first().is_some_and(|s| s == "running")
+        })
+        .await;
+        assert!(
+            lock(&sup.driver.st).queued.as_ref().is_some_and(|q| q.id == p),
+            "queued"
+        );
+        let body = if kill {
+            CommandBody::Kill(KillCommand {
+                reason: KillReason::Stop,
+            })
+        } else {
+            CommandBody::Interrupt(magpie_api::Empty {})
+        };
+        let started = Instant::now();
+        let c = w.magpie.push_command(w.cid, Some(p), body);
+        let end = w.ended(p).await;
+        assert_eq!(end["state"], "canceled", "kill: {kill}");
+        w.acked(c).await;
+        if kill {
+            assert!(started.elapsed() < Duration::from_secs(8), "killed at once");
+        } else {
+            // the agent turn Claude Code was in, then the person's turn once it is the turn
+            let n = w.fake_log().iter().filter(|l| *l == "control interrupt").count();
+            assert_eq!(n, 2, "{}", texts(&w));
+        }
+        w.idle(&sup).await;
+    }
+}
+
+/// A blob read that fails while magpie (or the gateway) is unavailable is retried; an interrupt or a forced release
+/// that arrives while the turn is still being prepared stops it before its message is written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::many_single_char_names)]
+async fn a_turn_being_prepared_survives_an_outage_and_can_be_stopped() {
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    until("pre-spawn", || !w.spawns().is_empty()).await;
+    let pdf = b"%PDF-1.4 x".to_vec();
+    let sha = w.magpie.seed_blob(&pdf);
+    let file = |name: &str| StartFile {
+        upload_id: Uuid::new_v4(),
+        name: name.into(),
+        mime_type: "application/pdf".into(),
+        size: pdf.len() as u64,
+        workspace_path: format!("uploads/{name}"),
+        blob: sha.clone(),
+    };
+    // a transient outage: retried, then the turn runs
+    let fault = w.magpie.faults().on(
+        "sandbox_blob_get",
+        aviary_fakes::fault::FaultKind::Unavailable { retry_after_secs: 1 },
+    );
+    let (t, _) = w.turn_with("say:x", Some(w.cid.to_string()), vec![file("a.pdf")], vec![]);
+    until("retried", || w.magpie.faults().hits() >= 2).await;
+    w.magpie.faults().remove(fault);
+    assert_eq!(w.ended(t).await["state"], "completed");
+    assert_eq!(std::fs::read(w.ws.join("uploads/a.pdf")).unwrap(), pdf);
+    w.idle(&sup).await;
+
+    // an interrupt while preparing: canceled, nothing written to Claude Code
+    let prompts = w.prompts().len();
+    let fault = w.magpie.faults().on(
+        "sandbox_blob_get",
+        aviary_fakes::fault::FaultKind::Unavailable { retry_after_secs: 1 },
+    );
+    let (t, s) = w.turn_with("say:never", Some(w.cid.to_string()), vec![file("b.pdf")], vec![]);
+    let d = sup.driver.clone();
+    until("starting", || lock(&d.st).starting == Some(t)).await;
+    let i = w
+        .magpie
+        .push_command(w.cid, Some(t), CommandBody::Interrupt(magpie_api::Empty {}));
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    w.magpie.faults().remove(fault);
+    assert_eq!(w.ended(t).await["state"], "canceled");
+    assert_eq!(w.acked(s).await.delivered, Some(false));
+    w.acked(i).await;
+    assert_eq!(w.prompts().len(), prompts, "{}", texts(&w));
+    assert!(lock(&d.st).cancel_starting.is_none());
+    w.idle(&sup).await;
+
+    // a forced release while preparing: failed sandbox.lost, nothing written, nothing spawned after it
+    let spawns = w.spawns().len();
+    let fault = w.magpie.faults().on(
+        "sandbox_blob_get",
+        aviary_fakes::fault::FaultKind::Unavailable { retry_after_secs: 1 },
+    );
+    let (t, _) = w.turn_with("say:never", Some(w.cid.to_string()), vec![file("c.pdf")], vec![]);
+    until("starting", || lock(&d.st).starting == Some(t)).await;
+    let release = {
+        let l = sup.lifecycle.clone();
+        tokio::spawn(async move { l.release(crate::lifecycle::sigterm_release()).await })
+    };
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    w.magpie.faults().remove(fault);
+    let end = w.ended(t).await;
+    assert_eq!(end["state"], "failed");
+    assert_eq!(end["error"]["code"], "sandbox.lost");
+    assert_eq!(release.await.unwrap(), supervisor_api::control::Outcome::Done);
+    assert_eq!(w.prompts().len(), prompts);
+    assert_eq!(w.spawns().len(), spawns);
+    assert!(sup.driver.claude_pid().is_none());
+}
+
+/// 7.9: initialisations Claude Code refuses count as a crash loop: the next turn is refused without a spawn.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn refused_initialisations_are_a_crash_loop() {
+    let w = world().await;
+    std::fs::write(w.ws.join(".fake-initerror"), b"").unwrap();
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let mut refused = false;
+    for _ in 0..4 {
+        let (t, _) = w.turn_with("say:x", Some(w.cid.to_string()), vec![], vec![]);
+        let end = w.ended(t).await;
+        assert_eq!(end["state"], "failed");
+        w.idle(&sup).await;
+        if end["error"]["message"] == "Claude Code would not start" {
+            refused = true;
+            break;
+        }
+        assert!(
+            end["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("refused to initialise"),
+            "{end}"
+        );
+    }
+    assert!(refused, "{}", texts(&w));
+    // the pre-spawn and two turns: three refused initialisations
+    assert_eq!(w.spawns().len(), 3);
+}
+
+/// A transcript that holds a turn's end back (8.2) holds back nothing else: commands about other things are
+/// acked, and the end follows once the lines are stored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_turn_waiting_for_its_lines_holds_back_only_itself() {
+    #[derive(Default)]
+    struct Gate(tokio::sync::Notify, std::sync::atomic::AtomicBool);
+    impl Transcript for Gate {
+        fn set_turn(&self, _turn: Option<Uuid>) {}
+        fn wait_stored(&self, _uuids: Vec<String>) -> BoxFuture<'_, crate::cc::Stored> {
+            Box::pin(async move {
+                while !self.1.load(std::sync::atomic::Ordering::SeqCst) {
+                    let _ = tokio::time::timeout(Duration::from_millis(50), self.0.notified()).await;
+                }
+                crate::cc::Stored::All
+            })
+        }
+        fn facts(&self) -> magpie_api::sandbox::CcFacts {
+            crate::cc::Stored0.facts()
+        }
+    }
+    let w = world().await;
+    let gate = Arc::new(Gate::default());
+    let _sup = w.attach_with(None, crate::start::Reattach::Nothing, gate.clone()).await;
+    let (t, _) = w.turn("say:x");
+    until("answered", || w.prompts().len() == 1).await;
+    let title = w.magpie.push_command(
+        w.cid,
+        None,
+        CommandBody::Title(TitleCommand {
+            user_prompt: format!("{} 你好", mock_model::TITLE_PROMPT_PREFIX),
+            max_tokens: 100,
+        }),
+    );
+    assert!(w.acked(title).await.response.is_some());
+    assert_eq!(w.state_names(t), ["running"], "the end still waits");
+    gate.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    gate.0.notify_waiters();
+    assert_eq!(w.ended(t).await["state"], "completed");
+}
+
+#[test]
+fn ids_derived_from_a_line_are_the_same_when_it_is_read_again() {
+    let started = OffsetDateTime::now_utc();
+    let a = agent_turn_id("boot", 3, 4096, started);
+    assert_eq!(a, agent_turn_id("boot", 3, 4096, started));
+    assert_ne!(a, agent_turn_id("boot", 3, 4097, started));
+    assert_ne!(a, agent_turn_id("boot2", 3, 4096, started));
+    assert_eq!(a.get_version_num(), 7);
+    assert_eq!(ask_id("boot", 3, 10), ask_id("boot", 3, 10));
+    assert_ne!(ask_id("boot", 3, 10), ask_id("boot", 4, 10));
 }

@@ -1,16 +1,101 @@
 //! Uploads into `/workspace/uploads` (supervisor 12.1). The supervisor is the only writer of uploads: each file and
 //! each image original is streamed from magpie's blob into `.<name>.part-<rand>` (created `O_EXCL|O_NOFOLLOW` as the
 //! agent, so ownership and the workspace quota apply as if the agent wrote it), checked against its sha256, and
-//! renamed onto its name. A symlinked `/workspace` or `/workspace/uploads` is refused.
+//! renamed onto its name. A symlinked `/workspace` or `/workspace/uploads` is refused. A blob read that fails in a
+//! way a retry may cure (no answer, a reset mid-stream, 429 or 5xx: a magpie or gateway replica draining, spec 19)
+//! is retried with the reports' backoff until the start's deadline (inside magpie's 120 s `starting` watchdog),
+//! the `.part` file starting again from zero; a 404, a sha mismatch or a refused write fails the turn at once.
 
 use std::ffi::CString;
 use std::io::Write as _;
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
 use std::path::{Path, PathBuf};
 
+use std::io::Seek as _;
+use std::time::Duration;
+
 use futures_util::StreamExt as _;
+use magpie_api::client::ClientError;
 use magpie_api::uploads::{SandboxBlobAs, SandboxBlobQuery};
 use sha2::Digest as _;
+use tokio::time::Instant;
+
+use crate::limits::{REPORT_RETRY_FIRST, REPORT_RETRY_MAX};
+
+/// How long a start retries its blob reads (magpie's `starting` watchdog is 120 s).
+pub const BLOB_RETRY_FOR: Duration = Duration::from_secs(90);
+
+/// Whether a retry may cure a failed blob read.
+#[must_use]
+pub fn retryable(e: &ClientError) -> bool {
+    e.is_retryable() || e.api().is_some_and(|r| r.status >= 500 || r.status == 429)
+}
+
+/// How a blob read failed.
+enum Failure {
+    Retry(String),
+    Fatal(String),
+}
+
+/// Retries `f` on [`Failure::Retry`] until `deadline`.
+async fn retrying<T, F, Fut>(what: &str, deadline: Instant, mut f: F) -> Result<T, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, Failure>>,
+{
+    let mut delay = REPORT_RETRY_FIRST;
+    loop {
+        match f().await {
+            Ok(v) => return Ok(v),
+            Err(Failure::Fatal(e)) => return Err(e),
+            Err(Failure::Retry(e)) => {
+                if Instant::now() + delay > deadline {
+                    return Err(e);
+                }
+                tracing::info!(blob = what, error = %e, "blob read failed: retried");
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(REPORT_RETRY_MAX);
+            }
+        }
+    }
+}
+
+fn get_failure(sha: &str, e: &ClientError) -> Failure {
+    let m = format!("blob {sha}: {e}");
+    if retryable(e) {
+        Failure::Retry(m)
+    } else {
+        Failure::Fatal(m)
+    }
+}
+
+/// A blob's bytes (the model copy of an image), retried as above until `deadline`.
+///
+/// # Errors
+/// A read no retry cured, or one that cannot succeed.
+pub async fn blob(
+    magpie: &magpie_api::client::SandboxCalls<'_>,
+    sha: &str,
+    deadline: Instant,
+) -> Result<Vec<u8>, String> {
+    retrying(sha, deadline, || async {
+        let res = magpie
+            .sandbox_blob_get(
+                sha,
+                &SandboxBlobQuery {
+                    as_: Some(SandboxBlobAs::Raw),
+                },
+            )
+            .await
+            .map_err(|e| get_failure(sha, &e))?;
+        let b = res
+            .bytes()
+            .await
+            .map_err(|e| Failure::Retry(format!("blob {sha}: {e}")))?;
+        Ok(b.to_vec())
+    })
+    .await
+}
 
 /// The message a full workspace fails the turn with.
 pub const NO_SPACE: &str = "the attachment does not fit in the workspace";
@@ -191,15 +276,74 @@ impl Uploads {
         &self,
         magpie: &magpie_api::client::SandboxCalls<'_>,
         items: &[Item],
+        deadline: Instant,
     ) -> Result<Vec<String>, String> {
         let mut out = Vec::with_capacity(items.len());
         for it in items {
-            out.push(self.one(magpie, it).await?);
+            out.push(self.one(magpie, it, deadline).await?);
         }
         Ok(out)
     }
 
-    async fn one(&self, magpie: &magpie_api::client::SandboxCalls<'_>, it: &Item) -> Result<String, String> {
+    /// One attempt: the blob streamed into `file` (emptied first), checked against its sha.
+    async fn fill(
+        magpie: &magpie_api::client::SandboxCalls<'_>,
+        it: &Item,
+        file: &std::sync::Arc<std::sync::Mutex<std::fs::File>>,
+    ) -> Result<(), Failure> {
+        let f = file.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut f = f.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            f.set_len(0)?;
+            f.rewind()
+        })
+        .await
+        .map_err(|e| Failure::Fatal(e.to_string()))?
+        .map_err(|e| Failure::Fatal(reason(&e)))?;
+        let res = magpie
+            .sandbox_blob_get(
+                &it.sha,
+                &SandboxBlobQuery {
+                    as_: Some(SandboxBlobAs::Raw),
+                },
+            )
+            .await
+            .map_err(|e| get_failure(&it.sha, &e))?;
+        let mut hash = sha2::Sha256::new();
+        let mut stream = res.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| Failure::Retry(format!("blob {}: {e}", it.sha)))?;
+            hash.update(&chunk);
+            let f = file.clone();
+            tokio::task::spawn_blocking(move || {
+                #[cfg(test)]
+                {
+                    let e = FAIL_WRITES_WITH.load(std::sync::atomic::Ordering::SeqCst);
+                    if e != 0 {
+                        return Err(std::io::Error::from_raw_os_error(e));
+                    }
+                }
+                f.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .write_all(&chunk)
+            })
+            .await
+            .map_err(|e| Failure::Fatal(e.to_string()))?
+            .map_err(|e| Failure::Fatal(reason(&e)))?;
+        }
+        let got = crate::sent_files::hex(&hash.finalize());
+        if got != it.sha {
+            return Err(Failure::Fatal(format!("blob {} arrived as {got}", it.sha)));
+        }
+        Ok(())
+    }
+
+    async fn one(
+        &self,
+        magpie: &magpie_api::client::SandboxCalls<'_>,
+        it: &Item,
+        deadline: Instant,
+    ) -> Result<String, String> {
         let name = upload_name(&it.workspace_path)
             .ok_or_else(|| format!("bad workspace path {:?}", it.workspace_path))?
             .to_owned();
@@ -209,15 +353,6 @@ impl Uploads {
             .map_err(|e| e.to_string())??;
         let dir = std::sync::Arc::new(dir);
         let part = format!(".{name}.part-{}", uuid::Uuid::new_v4().simple());
-        let res = magpie
-            .sandbox_blob_get(
-                &it.sha,
-                &SandboxBlobQuery {
-                    as_: Some(SandboxBlobAs::Raw),
-                },
-            )
-            .await
-            .map_err(|e| format!("blob {}: {e}", it.sha))?;
         let me = self.clone();
         let (d, p) = (dir.clone(), part.clone());
         let file = tokio::task::spawn_blocking(move || me.create_part(&d, &p))
@@ -225,36 +360,7 @@ impl Uploads {
             .map_err(|e| e.to_string())?
             .map_err(|e| reason(&e))?;
         let file = std::sync::Arc::new(std::sync::Mutex::new(file));
-        let mut hash = sha2::Sha256::new();
-        let mut stream = res.bytes_stream();
-        let written: Result<(), String> = async {
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk.map_err(|e| format!("blob {}: {e}", it.sha))?;
-                hash.update(&chunk);
-                let f = file.clone();
-                tokio::task::spawn_blocking(move || {
-                    #[cfg(test)]
-                    {
-                        let e = FAIL_WRITES_WITH.load(std::sync::atomic::Ordering::SeqCst);
-                        if e != 0 {
-                            return Err(std::io::Error::from_raw_os_error(e));
-                        }
-                    }
-                    f.lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .write_all(&chunk)
-                })
-                .await
-                .map_err(|e| e.to_string())?
-                .map_err(|e| reason(&e))?;
-            }
-            let got = crate::sent_files::hex(&hash.finalize());
-            if got != it.sha {
-                return Err(format!("blob {} arrived as {got}", it.sha));
-            }
-            Ok(())
-        }
-        .await;
+        let written = retrying(&it.sha, deadline, || Self::fill(magpie, it, &file)).await;
         drop(file);
         let me = self.clone();
         let d = dir.clone();

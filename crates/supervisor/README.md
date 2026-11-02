@@ -241,9 +241,23 @@ heartbeat (the stuck rule's evidence that magpie answers other calls). The binar
 `cc::run::Driver` keeps one run state behind a lock never held across an `await`: stdout lines (tailed from the
 generation's file with inotify and a 250 ms poll), keeper exits, commands and a 1 s tick change it and return the
 effects (stdin lines through the generation's ordered writer, reports, signals). Every state change is put into
-`run.json` together with the stdout offset of the line that caused it. Reports go through `cc::report::Reporter`:
-one ordered queue (turn states, agent turns, asks, acks; an end report first waits for the turn's uuids through
-`Transcript::wait_stored`), task events in 250 ms batches, retried at 0.5 s doubling to 10 s until the lease is lost.
+`run.json` at once together with the stdout offset of the line that caused it (a line that changes nothing but the
+offset is persisted within 100 ms); an agent turn's id and an ask's `askId` are derived from (bootId, generation,
+stdout offset), so a line read again after a restart reports the same ids. `start_turn` installs the person's turn
+(and `pending_inputs`) in the same change as the `written` record, before the message goes to the keeper, so
+Claude Code's answer is never read without its turn; an interrupt arriving meanwhile is written right after the
+message. Reports go through `cc::report::Reporter` in lanes: one per turn (its agent-turn open, states, the asks
+opened during it and the acks of commands about it) and one for the rest, so an end report that waits for its
+uuids (`Transcript::wait_stored`, 8.2) or for the filesystem to settle (a generation that exited) holds back only
+its own turn. Task events go in 250 ms batches. Everything is retried at 0.5 s doubling to 10 s (or magpie's
+`retryAfterMs`) on 5xx, connection errors, 429, `transcript_pending` and `conversation_migrating` until the lease is
+lost; any other refusal is logged as `report_given_up` and counted.
+
+The FUSE layer records the uuids of every `cc/write` magpie answered to a `.jsonl` file (`fuse::seen`: each
+`"uuid":"…"`, a uuid split across two writes found through the previous write's tail); a wait that misses uuids
+first scans the last 1 MiB of the main transcript as magpie holds it (writes answered before a restart). The wait
+ends when every uuid is seen or the last one is (the transcript is appended in order), or with `Stored::Stuck` when
+the stuck rule of 9.5 item 4 fires.
 
 Tests (`src/cc/run/tests.rs`): a real keeper, fake hermit and magpie behind the reference gateway, the mock model,
 and a scripted fake `claude` (the lib test binary again, `cc::run::tests::fake_claude`, behind a wrapper script whose
@@ -254,13 +268,22 @@ ask relayed and answered (and `no_such_ask`), upload materialisation (replacing 
 `uploads` refused, a full workspace), the tags and image block of the prompt, titles through the model route, an
 unknown command type, a restart replaying a `written` prompt exactly once (the keeper had it, or not), a restart
 whose generation died, a magpie outage on the report route, the hook's descriptors over `agent.sock` (symlinks and
-paths outside `/workspace` refused) and a forced release during a turn (`sandbox.lost`). The reporter's retry is
-checked over a 20 min outage on paused time (`src/cc/report.rs`).
+paths outside `/workspace` refused) and a forced release during a turn (`sandbox.lost`); an answer read before the
+keeper's acknowledgement of the prompt reaches the driver (the person's turn, no agent turn); an interrupt and a kill
+of a person's turn queued behind an agent turn; a blob outage during a start (retried), an interrupt and a forced
+release while a turn is being prepared (nothing written or spawned); refused initialisations as a crash loop; a turn
+whose end waits for its lines while another command is acked; ids derived from a stdout line. The reporter's retry
+is checked over a 20 min outage on paused time (`src/cc/report.rs`); the uuid wait against fake magpie through the
+sentry stand-in (`fuse::tests::the_end_report_waits_for_the_uuids_magpie_acknowledged`); FIFOs, directories and a
+symlinked root refused by the hook (`sent_files::tests::only_regular_files_are_opened`).
 
 ### Deviations from the spec text (WP-23)
 
-1. **The stdin `msg_id`** is the first 16 bytes of SHA-256(`SUPERVISOR_OP_NS` ‖ `bootId` ‖ "stdin" ‖ `cmdSeq`),
-   not a UUIDv5: the same determinism without adding uuid's `v5` feature (and `sha1`) to the dependency graph.
+1. **Derived ids.** The stdin `msg_id` is UUIDv5(`SUPERVISOR_OP_NS`, `bootId` ‖ "stdin" ‖ `cmdSeq` as 8 big-endian
+   bytes). An agent turn's id is a UUIDv7 whose time is the generation's start and whose other bits come from
+   SHA-256(namespace ‖ bootId ‖ "agent-turn" ‖ generation ‖ stdout offset); an `askId` is a v4-shaped id from the same
+   hash with "ask" (11.2 says only "uuidv7" and `<uuid>`; a random id would open the turn or ask a second time when a
+   restarted supervisor re-reads the line, 4.5).
 2. **Initialisation** waits only for the `initialize` control response (30 s). `system`/`init` is taken whenever it
    comes (in stream-json input mode it may follow the first user message); a different `session_id` there replaces
    the expected one for the next state report, as 7.2 says.
@@ -269,8 +292,10 @@ checked over a 20 min outage on paused time (`src/cc/report.rs`).
    open one, so it can never leave a turn without a result.
 4. **Commands after a restart** are polled from the lowest unacked `delivered` entry (minus 1), not from `cmd_after`
    alone: `cmd_after` advances past a received command, and magpie only re-sends commands above `after`.
-5. **The crash loop** counts exits the supervisor did not cause (any three in 60 s), not only exits before a
-   completed initialisation: a generation that initialises and then dies on resume is the same budget loop.
+5. **The crash loop** counts exits the supervisor did not cause and exits after a failed initialisation (a refused
+   `initialize`, the 30 s timeout): any three in 60 s. 7.9 names only exits "without a completed initialisation";
+   the limits table (20) says "3 exits in 60 s". Both are counted because a generation that initialises and then
+   dies on resume is the same budget loop; DESIGN 12 does not settle it, so this is recorded for Deyao.
 6. **`ScheduleWakeup`'s fire time** is read from `delaySeconds`/`delay_seconds`/`seconds`/`delay`, `delayMs`/`delay_ms`
    or `at`/`fireAt`/`fire_at`/`time` (2.1.304's input shape is not in the inventory); an input with none of them
    gives the pseudo-task no `until`, so only the silence ceiling ends it.
@@ -278,14 +303,32 @@ checked over a 20 min outage on paused time (`src/cc/report.rs`).
    `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)`, which not every sandbox runtime implements; the guarantee is the same.
 8. **A refused hook** is answered 502 `upstream_failed` with the reason as `message` (13 names no status).
 9. **A turn ended by a generation exit** reports no `lastUuid` (the generation writes nothing more; naming a line it
-   never wrote would make magpie answer `transcript_pending` for ever).
+   never wrote would make magpie answer `transcript_pending` for ever); its end report waits instead until the
+   filesystem requests already in flight are answered (`Transcript::settle`).
 10. **The extension table** of 13 moved into `magpie_api::mime` (pigeon uses it too).
+11. **The `running` report** of 10.2 step 6 is queued in step 5, with the turn, before the message goes to the keeper
+    (it must precede an end that Claude Code's fast answer can produce before the keeper's acknowledgement returns);
+    a write that then fails reports the turn `failed` `run.exited`. A restart re-sends `running` (or the agent-turn
+    open) for each turn it restores; magpie answers a replay 200 or 409 `bad_transition`.
+12. **An interrupt of a person's turn queued behind an agent turn** interrupts Claude Code at once: the agent turn
+    ends `canceled`, and the person's turn is interrupted again when it becomes the turn (its 15 s grace runs from
+    the first interrupt). A kill of the queued turn kills the generation.
+13. **The uuid wait** (8.2) treats the last uuid seen as all seen, and scans every `.jsonl` write and the
+    main transcript's last 1 MiB for `"uuid":"…"` anywhere in a line (2.1.304 writes `uuid` after `message`, not
+    at the line's start).
+14. **Blob reads during a start** (uploads and the model copy of an image) are retried for 90 s, inside magpie's
+    120 s `starting` watchdog; 19 asks a rollout to change nothing staff see, 12.1 names no retry.
 
 ### Open items (WP-23)
 
 - Gate item 7 ran on 2026-11-02 with the real Claude Code 2.1.304 (`spikes/setting-sources/run.sh`: the argv of
-  6.1 in a container, a recorder in place of the model): with `--setting-sources=` the managed CLAUDE.md was in all 4
-  requests, `/workspace/CLAUDE.md` in none, and the `/workspace/.claude/settings.json` hook did not run; the control
-  (`SOURCES=project,user,local`) had `/workspace/CLAUDE.md` in all 4 (its hook did not run there either, so the hook
-  half has no positive control). Items 8 and 13 need the full image and the mock model (WP-24's smoke, WP-22's re-run).
+  6.1 in a container, a model stand-in that answers the first turn with a `SendUserFile` tool_use). With the
+  supervisor's managed settings (`allowManagedHooksOnly`, the managed PreToolUse `SendUserFile` hook) and
+  `--setting-sources=`: the managed CLAUDE.md in both requests, `/workspace/CLAUDE.md` in none, the workspace
+  SessionStart/UserPromptSubmit/PreToolUse hooks did not run, and the managed hook ran with `tool_name`,
+  `tool_use_id`, `tool_input.files`/`caption` and `cwd` as `sent_files::hook` reads them. Positive control
+  (`--setting-sources=project,user,local`, no `allowManagedHooksOnly`): `/workspace/CLAUDE.md` in both requests and
+  the workspace hooks ran. Control b (`--setting-sources=`, no `allowManagedHooksOnly`): the workspace stays out, so
+  `--setting-sources=` alone keeps it out. The request's `SendUserFile` schema has `files` (string array) and
+  `caption`. Items 8 and 13 need the full image and the mock model (WP-24's smoke, WP-22's re-run).
 - The soak's synthetic turns with 1 MiB lines (WP-21 deviation 6) and `nightly.yml` (WP-28).

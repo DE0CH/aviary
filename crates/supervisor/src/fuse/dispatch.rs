@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
@@ -34,6 +34,7 @@ use super::nodes::{self, Nodes, ROOT};
 use super::proto::{self, Attr, FileType, IN_HEADER, InHeader, cstr, fattr, op, u32_at, u64_at};
 use super::remote::{CallError, Lease, OpCtl, Remote};
 use super::scope::{self, Scope, Unclassified};
+use super::seen::{self, Seen};
 use super::{Config, Device, Hooks, Point, StuckOp, now_ns};
 
 /// A worker that "died" at a fault point (tests without the `fault-injection` feature): unwinds the worker.
@@ -114,6 +115,10 @@ pub struct Core {
     relocking: AtomicBool,
     /// A write answered EDQUOT (the heartbeat's `cc.quotaExceeded`, 9.10).
     quota_exceeded: AtomicBool,
+    /// The uuids of transcript lines magpie acknowledged (8.2), and its condition variable.
+    seen: (Mutex<Seen>, Condvar),
+    /// How often the one-stuck-operation rule fired (9.5 item 4).
+    stuck: AtomicU64,
     dead: AtomicBool,
     stopped: AtomicBool,
     started_ns: i64,
@@ -186,6 +191,8 @@ impl Core {
             hooks: RwLock::new(a.hooks),
             relocking: AtomicBool::new(false),
             quota_exceeded: AtomicBool::new(false),
+            seen: (Mutex::new(Seen::default()), Condvar::new()),
+            stuck: AtomicU64::new(0),
             dead: AtomicBool::new(false),
             stopped: AtomicBool::new(false),
             started_ns: now_ns(),
@@ -272,6 +279,66 @@ impl Core {
                 .0;
         }
         true
+    }
+
+    /// How often the one-stuck-operation rule fired.
+    #[must_use]
+    pub fn stuck_count(&self) -> u64 {
+        self.stuck.load(Ordering::SeqCst)
+    }
+
+    /// Waits until magpie holds the transcript lines of `uuids` (8.2), with no time cap; `false` once the stuck
+    /// rule fires after `stuck_before` (`true` when the server stops: nothing more will be stored). Uuids not seen in this server's writes are first
+    /// looked for in the last 1 MiB of the main transcript as magpie holds it (writes answered before a restart).
+    /// Blocking.
+    #[must_use]
+    pub fn wait_uuids(&self, uuids: &[String], stuck_before: u64) -> bool {
+        if !lock(&self.seen.0).holds(uuids) {
+            self.scan_main_tail();
+        }
+        let mut g = lock(&self.seen.0);
+        loop {
+            if g.holds(uuids) {
+                return true;
+            }
+            if self.stopped.load(Ordering::SeqCst) {
+                return true;
+            }
+            if self.stuck_count() > stuck_before {
+                return false;
+            }
+            g = self
+                .seen
+                .1
+                .wait_timeout(g, Duration::from_secs(1))
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+
+    /// The stuck rule fired (tests).
+    #[cfg(test)]
+    pub fn stuck_for_test(&self) {
+        self.stuck.fetch_add(1, Ordering::SeqCst);
+        self.seen.1.notify_all();
+    }
+
+    fn scan_main_tail(&self) {
+        let Some(m) = lock(&self.main).clone() else { return };
+        let Ok(e) = self.magpie_entry(&m) else { return };
+        if e.size == 0 {
+            return;
+        }
+        let from = e.size.saturating_sub(seen::TAIL_SCAN);
+        match self.fetch_range(&OpCtl::default(), &m, from, e.size - from) {
+            Ok(b) => {
+                let mut s = lock(&self.seen.0);
+                for u in seen::uuids_in(&b) {
+                    s.add(u);
+                }
+            }
+            Err(errno) => tracing::info!(errno, "the main transcript's tail could not be scanned"),
+        }
     }
 
     /// Stops the workers (after an unmount; tests: the device's close).
@@ -1076,6 +1143,8 @@ impl Core {
             }
             Err(CallError::LeaseLost) => self.on_lease_lost(),
             Err(CallError::Stuck(msg)) => {
+                self.stuck.fetch_add(1, Ordering::SeqCst);
+                self.seen.1.notify_all();
                 (self.hooks().write_stuck)(StuckOp {
                     what: what.to_owned(),
                     message: msg.clone(),
@@ -1497,6 +1566,10 @@ impl Core {
                 ne.ctime_ns = now;
                 lock(&self.st).tree.insert(&p, ne);
                 lock(&self.content).wrote(h.nodeid, (old.version, old.size), sv.version, off, data, sv.size);
+                if std::path::Path::new(&p).extension().is_some_and(|x| x == "jsonl") {
+                    lock(&self.seen.0).wrote(&p, off, data);
+                    self.seen.1.notify_all();
+                }
                 #[allow(clippy::cast_possible_truncation)] // at most 1 MiB
                 Ok(proto::write_out(size as u32))
             }
