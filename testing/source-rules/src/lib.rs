@@ -329,6 +329,7 @@ pub fn clippy_rejects(cargo: &str, root: &Path, scratch: &Path, source: &str) ->
         .current_dir(scratch)
         .env("CARGO_TARGET_DIR", scratch.join("target"))
         .env_remove("RUSTC_WRAPPER")
+        .env("CARGO_TERM_COLOR", "never") // plain text for the callers' message checks (CI sets `always`)
         .output()?;
     if out.status.success() {
         Ok(None)
