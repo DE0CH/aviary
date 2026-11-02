@@ -1,12 +1,12 @@
 //! The source rules of platform 4.5, as functions over a repository tree, so the tests can run them against the real
 //! repository (`tests/repo.rs`) and against seeded violations (`tests/seeded.rs`).
 //!
-//! - No `std::env::var*` outside `aviary-core::env`: enforced by the `disallowed-methods` entries in `clippy.toml`
+//! - No `std::env::var*` outside `aviary-core::env` (and sandboxd's own `env` module, [`ENV_FILES`]): enforced by the `disallowed-methods` entries in `clippy.toml`
 //!   (checked by `clippy_rejects`), backed by a text scan of non-test sources ([`env_var_violations`]).
 //! - No crate under `crates/` except `hermit` depends on `aws-sdk-ec2` or `kube` ([`dependency_violations`], over
 //!   `cargo metadata`; `deny.toml` bans the same with wrappers).
-//! - `crates/pigeon`, `crates/magpie`, `crates/supervisor` and `crates/*-api` never name `yyc`, `juicefs`,
-//!   `openrouter` or `gvisor`, and in `crates/pigeon` the literals `jarvis` and `yyc` appear only in
+//! - `crates/pigeon`, `crates/magpie`, `crates/supervisor` and `crates/*-api` (but `sandboxd-api`, see
+//!   [`NAMED_CONTRACT_CRATES`]) never name `yyc`, `juicefs`, `openrouter` or `gvisor`, and in `crates/pigeon` the literals `jarvis` and `yyc` appear only in
 //!   `src/paseo/compat.rs` ([`name_violations`]).
 
 use std::collections::{BTreeSet, HashMap};
@@ -46,14 +46,22 @@ pub const PIGEON_COMPAT_NAMES: &[&str] = &["jarvis", "yyc"];
 /// The one pigeon file allowed to hold [`PIGEON_COMPAT_NAMES`].
 pub const PIGEON_COMPAT_FILE: &str = "crates/pigeon/src/paseo/compat.rs";
 
-/// The one file allowed to read the process environment.
-pub const ENV_FILE: &str = "crates/aviary-core/src/env.rs";
+/// The files allowed to read the process environment: `aviary-core::env` for every service, and sandboxd's own
+/// `env` module. sandboxd is a host daemon with a fixed memory budget that cannot link `aviary-core` (no tokio, no
+/// heap after start, crates/sandboxd/docs/MEMORY.md); its configuration is host.json, and the variables it reads are
+/// host.json's path, `PATH` and two test stand-ins, all in that one module.
+pub const ENV_FILES: &[&str] = &["crates/aviary-core/src/env.rs", "crates/sandboxd/src/env.rs"];
+
+/// Contract crates exempt from the deployment-name rule: `sandboxd-api` is the wire contract of the gVisor host agent
+/// itself (its `GET /v1/host` answers `gvisorRelease`), used only by hermit, the YYC implementation the rule exempts,
+/// and by `fake-sandboxd`.
+pub const NAMED_CONTRACT_CRATES: &[&str] = &["sandboxd-api"];
 
 /// Crates no crate under `crates/` other than hermit may depend on, directly or not.
 pub const HERMIT_ONLY_CRATES: &[&str] = &["aws-sdk-ec2", "kube", "kube-client", "kube-runtime"];
 
 /// The crate directories the deployment-name rule covers: `crates/pigeon`, `crates/magpie`, `crates/supervisor`
-/// and every `crates/*-api`.
+/// and every `crates/*-api` but [`NAMED_CONTRACT_CRATES`].
 ///
 /// # Errors
 /// When `crates/` cannot be listed.
@@ -67,7 +75,8 @@ pub fn neutral_crate_dirs(root: &Path) -> io::Result<Vec<PathBuf>> {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
         if entry.file_type()?.is_dir()
-            && (matches!(name.as_str(), "pigeon" | "magpie" | "supervisor") || name.ends_with("-api"))
+            && (matches!(name.as_str(), "pigeon" | "magpie" | "supervisor")
+                || (name.ends_with("-api") && !NAMED_CONTRACT_CRATES.contains(&name.as_str())))
         {
             dirs.push(entry.path());
         }
@@ -157,7 +166,7 @@ fn is_test_source(rel: &str) -> bool {
             .any(|part| matches!(part, "tests" | "benches" | "examples"))
 }
 
-/// Every `env::var`, `env::var_os`, `env::vars` or `env::vars_os` in non-test Rust sources outside [`ENV_FILE`].
+/// Every `env::var`, `env::var_os`, `env::vars` or `env::vars_os` in non-test Rust sources outside [`ENV_FILES`].
 /// The clippy `disallowed-methods` entries are the full check (they also see `use std::env::var;` aliases); this scan
 /// keeps the rule visible even where clippy is told to allow it.
 ///
@@ -174,7 +183,7 @@ pub fn env_var_violations(root: &Path) -> io::Result<Vec<Violation>> {
     files.sort();
     for file in files {
         let rel = relative(root, &file);
-        if file.extension().is_none_or(|e| e != "rs") || rel == ENV_FILE || is_test_source(&rel) {
+        if file.extension().is_none_or(|e| e != "rs") || ENV_FILES.contains(&rel.as_str()) || is_test_source(&rel) {
             continue;
         }
         let text = String::from_utf8_lossy(&fs::read(&file)?).into_owned();

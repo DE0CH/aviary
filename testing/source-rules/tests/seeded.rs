@@ -47,6 +47,11 @@ fn names_rule_catches_each_seeded_name() {
         "crates/magpie-import/src/lib.rs",
         "// reads the jarvis database\n",
     );
+    write(
+        &root,
+        "crates/sandboxd-api/src/lib.rs",
+        "pub struct Host { pub gvisor_release: String } // the host agent's own contract\n",
+    );
     assert_eq!(name_violations(&root).unwrap(), vec![], "clean tree");
 
     write(&root, "crates/pigeon/src/routes.rs", "const A: &str = \"Jarvis\";\n");
@@ -100,6 +105,11 @@ fn env_rule_catches_seeded_read() {
         &root,
         "crates/aviary-core/src/env.rs",
         "pub fn required(n: &str) { let _ = std::env::var(n); }\n",
+    );
+    write(
+        &root,
+        "crates/sandboxd/src/env.rs",
+        "pub fn config() -> Option<String> { std::env::var(\"SBX_CONFIG\").ok() }\n",
     );
     write(
         &root,

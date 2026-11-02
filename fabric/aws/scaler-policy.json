@@ -1,0 +1,50 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "LaunchOnlyFromTheHostTemplate",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:REGION:ACCOUNT:instance/*",
+      "Condition": {
+        "ArnLike": {"ec2:LaunchTemplate": "arn:aws:ec2:REGION:ACCOUNT:launch-template/LT_ID"},
+        "Bool": {"ec2:IsLaunchTemplateResource": "true"},
+        "StringEquals": {"aws:RequestTag/app": "TAG_APP", "ec2:InstanceType": "m7i.xlarge"}
+      }
+    },
+    {
+      "Sid": "TheTemplatesOtherResources",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:REGION:ACCOUNT:volume/*",
+        "arn:aws:ec2:REGION:ACCOUNT:network-interface/*",
+        "arn:aws:ec2:REGION:ACCOUNT:subnet/*",
+        "arn:aws:ec2:REGION:ACCOUNT:security-group/*",
+        "arn:aws:ec2:REGION::image/*",
+        "arn:aws:ec2:REGION:ACCOUNT:launch-template/LT_ID"
+      ],
+      "Condition": {"ArnLike": {"ec2:LaunchTemplate": "arn:aws:ec2:REGION:ACCOUNT:launch-template/LT_ID"}}
+    },
+    {
+      "Sid": "TagOnlyAtLaunch",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": ["arn:aws:ec2:REGION:ACCOUNT:instance/*", "arn:aws:ec2:REGION:ACCOUNT:volume/*", "arn:aws:ec2:REGION:ACCOUNT:network-interface/*"],
+      "Condition": {"StringEquals": {"ec2:CreateAction": "RunInstances"}}
+    },
+    {
+      "Sid": "TerminateOnlySandboxHosts",
+      "Effect": "Allow",
+      "Action": "ec2:TerminateInstances",
+      "Resource": "arn:aws:ec2:REGION:ACCOUNT:instance/*",
+      "Condition": {"StringEquals": {"ec2:ResourceTag/app": "TAG_APP"}}
+    },
+    {
+      "Sid": "Read",
+      "Effect": "Allow",
+      "Action": "ec2:DescribeInstances",
+      "Resource": "*"
+    }
+  ]
+}

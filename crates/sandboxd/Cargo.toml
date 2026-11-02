@@ -1,10 +1,30 @@
 [package]
 name = "sandboxd"
-description = "sandboxd: the per-host sandbox daemon."
+version = "0.2.0"
+description = "sandboxd: the per-host sandbox daemon (fixed memory budget, docs/MEMORY.md)."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+
+# Few dependencies on purpose (docs/MEMORY.md): no tokio, no serde, no heap after start. Release builds use the
+# workspace profile `sandboxd` (`cargo build --profile sandboxd -p sandboxd`), which unwinds on panic.
+[dependencies]
+# TLS 1.3 with client certificates; ring for crypto. Only the features sandboxd needs (the workspace entry adds tls12
+# and logging for the services): same version as the workspace pin.
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
+libc.workspace = true
+linked_list_allocator.workspace = true
+ring.workspace = true
+
+[dev-dependencies]
+# the contract: sandboxd's answers parse as sandboxd-api types, and the golden fixtures parse in sandboxd
+sandboxd-api = { path = "../sandboxd-api" }
+serde_json.workspace = true
+
+[features]
+# test builds: an endpoint-free audit of allocations outside TLS (docs/MEMORY.md "Proof")
+audit = []
 
 [lints]
 workspace = true

@@ -1,0 +1,7 @@
+#!/bin/bash
+# wg stand-in for sandboxd's tests
+case "$*" in
+  "show wg0 public-key") echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaA=" ;;
+  "show wg0 dump") printf 'priv\tpub\t51820\toff\n'; printf 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbA=\t(none)\t1.2.3.4:51820\t10.201.0.1/32\t1761000000\t1\t2\t25\n' ;;
+  *) : ;;
+esac

@@ -1,0 +1,59 @@
+From eea9f1ca54abb50d22971302629adc92b79c43ec Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 21 Oct 2026 15:53:24 +0000
+Subject: [PATCH] gofer: report a remote file's flush error (EDQUOT, ENOSPC) on
+ close(2) with directfs
+
+With directfs, specialFileFD.OnClose flushed only through a lisafs FD, which
+directfs doesn't have, so a FUSE/NFS file's close never reached the host:
+the host FD is closed later in Release, where an error can't be returned.
+JuiceFS (FUSE) reports a directory quota overrun on close, so an
+application saw every write and its close succeed while the file was cut
+short. Close a duplicate of the host FD in OnClose so the flush happens
+there and its error is returned, as Linux does for close(2).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg/sentry/fsimpl/gofer/special_file.go | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/pkg/sentry/fsimpl/gofer/special_file.go b/pkg/sentry/fsimpl/gofer/special_file.go
+index 10a305d7..328bbee8 100644
+--- a/pkg/sentry/fsimpl/gofer/special_file.go
++++ b/pkg/sentry/fsimpl/gofer/special_file.go
+@@ -15,6 +15,7 @@
+ package gofer
+ 
+ import (
++	"golang.org/x/sys/unix"
+ 	"fmt"
+ 
+ 	"gvisor.dev/gvisor/pkg/abi/linux"
+@@ -153,7 +154,23 @@ func (fd *specialFileFD) OnClose(ctx context.Context) error {
+ 	if !fd.vfsfd.IsWritable() {
+ 		return nil
+ 	}
+-	return flush(ctx, fd.handle.fdLisa)
++	if fd.handle.fdLisa.Ok() {
++		return flush(ctx, fd.handle.fdLisa)
++	}
++	// directfs: the host FD is the sentry's own. Remote filesystems (NFS,
++	// FUSE: the reason file handle sharing is disabled for them) report
++	// write-back errors such as EDQUOT or ENOSPC when a file is closed, as a
++	// flush of that file. Close a duplicate of the host FD so that the flush
++	// happens now and its error reaches the application's close(2), as on
++	// Linux; closing the FD itself in Release can't return an error.
++	if fd.handle.fd >= 0 {
++		nfd, err := unix.Dup(int(fd.handle.fd))
++		if err != nil {
++			return err
++		}
++		return unix.Close(nfd)
++	}
++	return nil
+ }
+ 
+ // Readiness implements waiter.Waitable.Readiness.
+-- 
+2.43.0
+
