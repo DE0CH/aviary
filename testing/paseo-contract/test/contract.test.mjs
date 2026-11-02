@@ -225,7 +225,8 @@ describe("paseo contract harness", () => {
     const newer = "a57656af3076b3d8c69ceac8486777233fc83fe7"; // 2026-11-02, a web build
     const start = readFileSync(path.join(harnessRoot, "clients.txt"), "utf8").split("\n").filter((l) => ![older, legacy, newer].some((sha) => l.startsWith(sha)));
     writeFileSync(file, start.join("\n"));
-    const newest = readClientLines(file).at(-1).sha;
+    const newestEntry = readClientLines(file).at(-1);
+    const newest = newestEntry.sha;
     let result = node("append-client.mjs", [older, "ios", "--file", file]);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /^added/);
@@ -260,7 +261,14 @@ describe("paseo contract harness", () => {
     result = node("append-client.mjs", [newer, "web", older, "ios", "--file", file]);
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(result.stdout.trim().split("\n").map((l) => l.split(":")[0]), ["added", "unchanged"]);
-    assert.equal(readClientLines(file).at(-1).sha, newer);
+    // newer sits at its commit time: last, unless the list already holds a later build (clients.yml runs this suite
+    // after inserting the dispatched builds, which can be newer than this fixture commit)
+    listed = readClientLines(file);
+    const newerEntry = listed.find((c) => c.sha === newer);
+    assert.deepEqual(newerEntry.kinds, ["web"]);
+    const at = listed.indexOf(newerEntry);
+    assert.ok(listed[at - 1].time <= newerEntry.time && (at === listed.length - 1 || listed[at + 1].time >= newerEntry.time));
+    assert.equal(listed.at(-1).sha, newestEntry.time > newerEntry.time ? newest : newer);
     // a file out of order is refused
     const unsorted = path.join(dir, "unsorted.txt");
     writeFileSync(unsorted, `${newest} web 2026-11-02T08:29:13Z\n${older} ios 2026-10-28T03:49:44Z\n`);
