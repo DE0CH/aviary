@@ -69,4 +69,4 @@ grep -c '"fuse connection"' "$out/supervisor.log" > "$out/connections.txt"
 grep -E 'panicked|short read' "$out/supervisor.log" > "$out/supervisor-faults.txt" && fails=$((fails + 1))
 ./gate.sh rm "$name"
 echo "cases: $(wc -l < "$out/cases.jsonl"), failed: $fails, replays logged: $(cat "$out/replays.txt"), fuse connections: $(cat "$out/connections.txt")"
-[ "$fails" = 0 ] && echo PASS || { echo FAIL; exit 1; }
+if [ "$fails" = 0 ]; then echo PASS; else echo FAIL; exit 1; fi

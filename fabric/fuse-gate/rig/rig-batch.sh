@@ -14,4 +14,4 @@ for i in $(seq -w 1 "$n"); do
     done
   done
 done
-echo done >> "$log"
+echo "done" >> "$log"
