@@ -39,6 +39,9 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const WAIT_SLACK: Duration = Duration::from_secs(10);
 /// `DELETE /v1/workspaces/{wid}` waits up to 60 s for a live sandbox to go.
 pub const DELETE_WORKSPACE_TIMEOUT: Duration = Duration::from_secs(75);
+/// `POST /v1/workspaces/{wid}/clone` copies the whole tree's metadata: a workspace of hundreds of thousands of files
+/// (a `node_modules`) takes minutes, so the implementation may take up to 15 min (hermit's `juicefs clone`).
+pub const CLONE_TIMEOUT: Duration = Duration::from_mins(16);
 /// The admin exec route forwards a call of up to 65 s.
 pub const ADMIN_EXEC_TIMEOUT: Duration = Duration::from_secs(70);
 /// A file read: the time to the response headers. The body has no total limit (a 1 GiB file over a slow link takes
@@ -547,7 +550,7 @@ impl Client {
     /// As [`Client::deployment`]; 404 `no_workspace`, 409 `exists`.
     pub async fn clone_workspace(&self, wid: Uuid, body: &CloneRequest) -> R<Workspace> {
         let p = fill(r::WORKSPACE_CLONE, &[&wid.to_string()]);
-        let rb = Self::json(self.build(Method::POST, &p, CORE, DEFAULT_TIMEOUT), body);
+        let rb = Self::json(self.build(Method::POST, &p, CORE, CLONE_TIMEOUT), body);
         Ok(self.call(rb).await?.1)
     }
 

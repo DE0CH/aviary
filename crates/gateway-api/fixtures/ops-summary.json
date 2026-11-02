@@ -61,7 +61,19 @@
         "status": 403,
         "decision": "deny:not_allowed",
         "owner": "staff@example.org",
-        "conversationId": "0190f6c2-4a0d-7b2c-8e1f-0a1b2c3d4e5f"
+        "conversationId": "0190f6c2-4a0d-7b2c-8e1f-0a1b2c3d4e5f",
+        "quiet": false
+      },
+      {
+        "at": "2026-11-02T04:04:06.789Z",
+        "kind": "model",
+        "host": "model",
+        "path": "/v1/messages",
+        "status": 429,
+        "decision": "allow",
+        "owner": "staff@example.org",
+        "conversationId": "0190f6c2-4a0d-7b2c-8e1f-0a1b2c3d4e5f",
+        "quiet": true
       }
     ],
     "deniedHosts": [

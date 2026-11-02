@@ -114,6 +114,11 @@ pub struct RecentRequest {
     pub decision: String,
     pub owner: Option<String>,
     pub conversation_id: Option<Uuid>,
+    /// Expected noise or a provider glitch the agent retries (a 429, a 5xx, no answer, a `count_tokens` 404): kept
+    /// in the log, left out of `recent`'s counts, and skipped by the news-stream monitor's event feed. `false` when
+    /// an implementation does not send it.
+    #[serde(default)]
+    pub quiet: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

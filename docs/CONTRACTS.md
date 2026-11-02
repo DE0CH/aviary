@@ -184,7 +184,8 @@ counted in `<gw>_drain_cut_total{kind}`.
 
 **In-cluster API.** On the implementation's in-cluster port (YYC: egress 8082): the models route for pigeon's pair
 bearer, and `GET /v1/ops/summary?tz=&recentMinutes=` for hermit's (`ops::OpsSummary`, platform 15.3's shape:
-`budget`, `egress`, `recent`); without a known bearer 401.
+`budget`, `egress`, `recent`; each `egress.recent[]` row says whether it is `quiet`, expected noise or a provider glitch
+the agent retries); without a known bearer 401. hermit's snapshot passes `budget` and `egress` through as they come.
 
 ## The hermit contract
 
