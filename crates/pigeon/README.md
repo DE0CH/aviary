@@ -79,11 +79,16 @@ WP-50 plugs into `feeds`:
   0.5 s in, not 50 MiB at 2 Mbit/s (210 s).
 
 - **Socket message types** (spec 18.1): pigeon's frames are built as JSON in the app's schema shapes, not
-  hand-written serde types checked with the `jsonschema` crate. Instead the socket tests record every frame shape
-  pigeon sends (`tests/socket.rs`, the tour run in both locales) into `testing/paseo-contract/fixtures/pigeon-frames.ndjson`,
-  which the paseo-contract job validates against every client build in `clients.txt`; a frame shape missing from the
-  committed corpus fails the Rust test (the run's corpus is written to `target/tmp/pigeon-frames.ndjson` to copy over).
-  The app's real reducer is not driven (the Node harness drives frames, not the app's timeline code).
+  hand-written serde types checked with the `jsonschema` crate. The drift protection is the frame corpus instead:
+  every socket test (`tests/socket.rs`, `tests/transport.rs`) records every frame its sockets send and receive, and a
+  shape missing from `testing/paseo-contract/fixtures/pigeon-frames.ndjson` fails that test (`tests/common/corpus.rs`;
+  `cargo test -p pigeon --test socket merge_frame_corpus -- --ignored` adds the missing shapes). The paseo-contract
+  job validates the corpus against every client build in `clients.txt`: server frames against the outbound
+  validators, and the client messages pigeon reads (every type it handles is required to be in the corpus) against
+  the inbound schema, so a client build that changes a message pigeon handles fails there. Frames a test sends on
+  purpose as invalid go through `Ws::raw_invalid` / `session_invalid` / `rpc_invalid` and are not recorded.
+- **The app's reducer is not driven** (spec 18.1's "the app's real reducer" case): no harness feeds pigeon's frames
+  through `paseo/packages/app/src/timeline`. Not met; see the package report.
 - **MCP tool names**: `mcp__<server>__<tool>` is shown and mapped as `<tool>`, so old-server history and
   `mcp__tools__*` calls get the same label and detail (spec 18.1); the old bridge showed the full name with an
   `unknown` detail, so render parity (cutover 10.2 item 6) must compare MCP tool names by their tool part.
@@ -120,4 +125,6 @@ two CPUs (`taskset -c 0,1`) that also run the 5 000 client sockets and the in-me
   socket, 4403 on re-check, the inbound rate), the drain (rows keep streaming until each socket's 1012, the 1012
   after the reply, a large send arriving across the drain and one waiting for a large-message slot), the WP-50 seams,
   the list cache per viewer without kept failures, and spec 19's metric names.
-- `tests/parity.rs`: every tool call of the recorded CloudCLI bridge log rendered as the bridge rendered it.
+- `tests/parity.rs`: every tool call of the recorded CloudCLI bridge log, rebuilt from the transcript the recorder fed
+  the bridge (`testing/paseo-contract/record/cloudcli-bridge-488a7736.tools.json`, `node record/extract-tools.mjs`),
+  rendered as the bridge rendered it.

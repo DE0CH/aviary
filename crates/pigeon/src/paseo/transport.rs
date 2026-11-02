@@ -302,13 +302,17 @@ impl Conn {
         }
     }
 
-    /// The list subscription's id, made on first use.
-    pub(crate) fn subscribe_list(&self, kind: ListKind) -> String {
+    /// The list subscription's id: the one the client chose (`subscribe.subscriptionId`), else the socket's, made on
+    /// first use.
+    pub(crate) fn subscribe_list(&self, kind: ListKind, chosen: Option<String>) -> String {
         let mut st = self.st();
         let slot = match kind {
             ListKind::Agents => &mut st.agents_sub,
             ListKind::Workspaces => &mut st.workspaces_sub,
         };
+        if let Some(id) = chosen {
+            *slot = Some(id);
+        }
         slot.get_or_insert_with(|| Uuid::new_v4().to_string()).clone()
     }
 

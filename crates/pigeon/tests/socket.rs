@@ -199,14 +199,18 @@ async fn static_stubs_unknown_requests_and_malformed_frames() {
     assert_eq!(p["projects"][0]["projectId"], "prj_conversations");
     assert_eq!(p["sync"]["generation"], model::GENERATION);
     // unknown with a requestId: unsupported; without: nothing; malformed JSON: nothing
-    let (k, p) = ws.rpc("agent.rewind", json!({})).await;
+    let (k, p) = ws.rpc_invalid("agent.rewind", json!({})).await;
     assert_eq!(k, "rpc_error");
     assert_eq!(p["code"], "unsupported");
     assert_eq!(p["error"], "Not available here");
     assert_eq!(p["requestType"], "agent.rewind");
-    ws.session(json!({"type": "agent.rewind"})).await;
+    ws.session_invalid(json!({"type": "agent.rewind"})).await;
     ws.text("{not json").await;
-    ws.session(json!({"type": "client_heartbeat"})).await;
+    ws.session(
+        json!({"type": "client_heartbeat", "deviceType": "web", "focusedAgentId": null,
+                      "lastActivityAt": "2026-11-02T00:00:00.000Z", "appVisible": true}),
+    )
+    .await;
     assert_eq!(ws.drain_for(Duration::from_millis(300)).await, Vec::<Value>::new());
     // a release of the timeline subscription empties it
     let sub = watch(&mut ws, &[Uuid::new_v4()]).await;
@@ -221,7 +225,18 @@ async fn static_stubs_unknown_requests_and_malformed_frames() {
 async fn lists_page_and_empty_list_shows_the_project() {
     let e = env().await;
     let mut ws = e.ws(STAFF).await;
-    let (_, p) = ws.rpc("fetch_workspaces_request", json!({"subscribe": true})).await;
+    // the apps' subscribe is an object (`{}`, or with the id the client chose); `true` is the create requests'
+    let (_, p) = ws.rpc("fetch_workspaces_request", json!({"subscribe": {}})).await;
+    assert!(p["subscriptionId"].is_string(), "{p}");
+    let (_, chosen) = ws
+        .rpc(
+            "fetch_agents_request",
+            json!({"subscribe": {"subscriptionId": "sub-mine"}}),
+        )
+        .await;
+    assert_eq!(chosen["subscriptionId"], "sub-mine");
+    let (_, none) = ws.rpc("fetch_agents_request", json!({})).await;
+    assert!(none.get("subscriptionId").is_none_or(Value::is_null), "{none}");
     assert_eq!(p["entries"], json!([]));
     assert_eq!(p["emptyProjects"][0]["projectId"], "prj_conversations");
     assert_eq!(p["pageInfo"]["hasMore"], false);
@@ -253,10 +268,10 @@ async fn lists_page_and_empty_list_shows_the_project() {
     let mut fresh = e.ws(STAFF).await;
     let (r1, r2) = (fresh.rid(), fresh.rid());
     fresh
-        .session(json!({"type": "fetch_workspaces_request", "requestId": r1, "subscribe": true}))
+        .session(json!({"type": "fetch_workspaces_request", "requestId": r1, "subscribe": {}}))
         .await;
     fresh
-        .session(json!({"type": "fetch_agents_request", "requestId": r2, "subscribe": true}))
+        .session(json!({"type": "fetch_agents_request", "requestId": r2, "subscribe": {}}))
         .await;
     fresh.next_session("fetch_workspaces_response").await;
     fresh.next_session("fetch_agents_response").await;
@@ -459,7 +474,7 @@ async fn a_socket_joining_mid_turn_sees_the_next_rows_and_catches_up_by_its_own_
 async fn list_changes_join_without_loss_or_duplicate() {
     let e = env().await;
     let mut a = e.ws(STAFF).await;
-    let (_, snap) = a.rpc("fetch_agents_request", json!({"subscribe": true})).await;
+    let (_, snap) = a.rpc("fetch_agents_request", json!({"subscribe": {}})).await;
     let sub = snap["subscriptionId"].as_str().unwrap().to_owned();
     tokio::time::sleep(Duration::from_millis(200)).await;
     // three changes go by the poller (P > the cached snapshot's head)
@@ -476,7 +491,7 @@ async fn list_changes_join_without_loss_or_duplicate() {
     }
     // b gets the 2 s cached snapshot (head before the three): the poller fetches the three for it once
     let mut b = e.ws(STAFF).await;
-    let (_, bsnap) = b.rpc("fetch_agents_request", json!({"subscribe": true})).await;
+    let (_, bsnap) = b.rpc("fetch_agents_request", json!({"subscribe": {}})).await;
     assert_eq!(bsnap["sync"]["headSeq"], snap["sync"]["headSeq"], "the cached snapshot");
     let c4 = e.m.add(STAFF, Some("four"));
     let mut got = Vec::new();
@@ -503,7 +518,7 @@ async fn list_changes_join_without_loss_or_duplicate() {
             .all(|v| v["message"]["type"] != "agent_update")
     );
     // a soft delete is a remove on both lists; a restore an upsert; a purge a remove
-    let (_, _) = a.rpc("fetch_workspaces_request", json!({"subscribe": true})).await;
+    let (_, _) = a.rpc("fetch_workspaces_request", json!({"subscribe": {}})).await;
     let (_, r) = a.rpc("archive_agent_request", json!({"agentId": c1})).await;
     assert_eq!(r["agentId"], c1.to_string());
     a.wait_for("agent remove", |v| {
@@ -564,7 +579,7 @@ async fn sandbox_status_goes_to_every_socket_and_is_replayed_on_connect() {
     // a tab that connects now gets the chip after its list
     tokio::time::sleep(model_cache()).await;
     let mut b = e.ws(STAFF).await;
-    let (_, _) = b.rpc("fetch_agents_request", json!({"subscribe": true})).await;
+    let (_, _) = b.rpc("fetch_agents_request", json!({"subscribe": {}})).await;
     let v = b.next_session(pigeon::paseo::compat::SANDBOX_STATUS).await;
     assert_eq!(v["state"], "preparing");
     e.m.sandbox(c, SandboxPhase::Ready);
@@ -719,8 +734,8 @@ async fn sends_creates_and_cancels() {
     let (k, r) = ws
         .rpc(
             "workspace.create.request",
-            json!({"idempotencyKey": "key-1", "subscribe": true, "agent": {"initialPrompt": "start",
-                   "clientMessageId": "cm-1", "config": {}}}),
+            json!({"idempotencyKey": "key-1", "subscribe": true, "source": {"kind": "directory", "path": "/workspace", "projectId": "prj_conversations"},
+                   "agent": {"initialPrompt": "start", "clientMessageId": "cm-1", "config": {"provider": "claude", "cwd": "/workspace"}}}),
         )
         .await;
     assert_eq!(k, "workspace.create.response");
@@ -731,7 +746,7 @@ async fn sends_creates_and_cancels() {
     let (_, r2) = other
         .rpc(
             "workspace.create.request",
-            json!({"idempotencyKey": "key-1", "agent": {"initialPrompt": "start"}}),
+            json!({"idempotencyKey": "key-1", "source": {"kind": "directory", "path": "/workspace", "projectId": "prj_conversations"}, "agent": {"initialPrompt": "start", "config": {"provider": "claude", "cwd": "/workspace"}}}),
         )
         .await;
     assert_eq!(r2["agent"]["id"], id.as_str());
@@ -754,7 +769,7 @@ async fn sends_creates_and_cancels() {
     let (_, r) = other
         .rpc(
             "workspace.create.request",
-            json!({"idempotencyKey": "key-2", "subscribe": true}),
+            json!({"idempotencyKey": "key-2", "subscribe": true, "source": {"kind": "directory", "path": "/workspace", "projectId": "prj_conversations"}, "agent": {"config": {"provider": "claude", "cwd": "/workspace"}}}),
         )
         .await;
     assert_eq!(r["workspace"], Value::Null);
@@ -950,71 +965,6 @@ async fn an_unknown_row_kind_and_an_oversized_tool_input_are_handled() {
 
 // ------------------------------------------------------------------------------------------------ the frame corpus
 
-/// The committed corpus of pigeon's frames (spec 18.1), validated against every client build by
-/// `testing/paseo-contract` (its `npm test`).
-const CORPUS: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../testing/paseo-contract/fixtures/pigeon-frames.ndjson"
-);
-
-fn enum_like(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 40 && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'_' || b == b'.')
-}
-
-fn shape(v: &Value, path: &str, out: &mut std::collections::BTreeSet<String>) {
-    match v {
-        Value::Object(o) => {
-            out.insert(format!("{path}:object"));
-            for (k, x) in o {
-                shape(x, &format!("{path}.{k}"), out);
-            }
-        }
-        Value::Array(a) => {
-            out.insert(format!("{path}:array"));
-            for x in a {
-                shape(x, &format!("{path}[]"), out);
-            }
-        }
-        Value::String(s) if enum_like(s) => {
-            out.insert(format!("{path}={s}"));
-        }
-        Value::String(_) => {
-            out.insert(format!("{path}:string"));
-        }
-        Value::Number(_) => {
-            out.insert(format!("{path}:number"));
-        }
-        Value::Bool(_) => {
-            out.insert(format!("{path}:bool"));
-        }
-        Value::Null => {
-            out.insert(format!("{path}:null"));
-        }
-    }
-}
-
-/// A frame's shape: its keys, value types and enum-like values (not ids, times or text).
-fn signature(v: &Value) -> String {
-    let mut s = std::collections::BTreeSet::new();
-    shape(v, "", &mut s);
-    s.into_iter().collect::<Vec<_>>().join(" ")
-}
-
-/// Ids and times replaced by fixed values, so the committed corpus does not churn.
-fn normalise(v: &Value) -> Value {
-    match v {
-        Value::Object(o) => Value::Object(o.iter().map(|(k, x)| (k.clone(), normalise(x))).collect()),
-        Value::Array(a) => Value::Array(a.iter().map(normalise).collect()),
-        Value::String(s) if Uuid::parse_str(s).is_ok() => json!("00000000-0000-4000-8000-000000000000"),
-        Value::String(s) if s.starts_with("wks_") && Uuid::parse_str(&s[4..]).is_ok() => {
-            json!("wks_00000000-0000-4000-8000-000000000000")
-        }
-        Value::String(s) if magpie_api::Timestamp::parse(s).is_ok() => json!("2026-11-02T00:00:00.000Z"),
-        Value::String(s) if s.contains("/api/blobs/") => json!("/api/blobs/b?v=display&sig=s"),
-        other => other.clone(),
-    }
-}
-
 async fn tour(e: &Env, log: &std::sync::Arc<std::sync::Mutex<Vec<common::ws::Record>>>) {
     let token = e.h.token(STAFF);
     let mut raw = Ws::open(&e.h.url, &token, "").await.unwrap().record(log, "handshake");
@@ -1037,15 +987,24 @@ async fn tour(e: &Env, log: &std::sync::Arc<std::sync::Mutex<Vec<common::ws::Rec
     let mut ws = raw;
     ws.set_case("static and developer-machine requests");
     for (kind, msg) in [
-        ("session.events.set_subscription.request", json!({})),
-        ("workspace.label.list.request", json!({"subscribe": true})),
-        ("workspace.label.list.request", json!({"sync": {"generation": "g"}})),
+        (
+            "session.events.set_subscription.request",
+            json!({"events": ["agent_permission_request"]}),
+        ),
+        ("workspace.label.list.request", json!({"subscribe": {}})),
+        (
+            "workspace.label.list.request",
+            json!({"sync": {"generation": "g", "afterSeq": 0}}),
+        ),
         ("hosts.list.request", json!({})),
         ("usage.list_reports.request", json!({})),
         ("plugin.catalog.get.request", json!({})),
         ("project.icon.get.request", json!({"projectId": "prj_conversations"})),
         ("project_icon_request", json!({"cwd": "/workspace"})),
-        ("list_provider_features_request", json!({"provider": "claude"})),
+        (
+            "list_provider_features_request",
+            json!({"draftConfig": {"provider": "claude", "cwd": "/workspace"}}),
+        ),
         ("get_daemon_config_request", json!({})),
         ("checkout_status_request", json!({"cwd": "/workspace"})),
         ("checkout_pr_status_request", json!({"cwd": "/workspace"})),
@@ -1062,15 +1021,16 @@ async fn tour(e: &Env, log: &std::sync::Arc<std::sync::Mutex<Vec<common::ws::Rec
             "project.list.request",
             json!({"sync": {"generation": "g", "headSeq": 1}}),
         ),
-        ("agent.rewind", json!({})),
         ("subscription.release.request", json!({"subscriptionId": "s"})),
     ] {
         ws.rpc(kind, msg).await;
     }
+    // a request no client build knows (a newer client's): unsupported
+    ws.rpc_invalid("agent.rewind", json!({})).await;
 
     ws.set_case("lists");
-    ws.rpc("fetch_workspaces_request", json!({"subscribe": true})).await;
-    ws.rpc("fetch_agents_request", json!({"subscribe": true})).await;
+    ws.rpc("fetch_workspaces_request", json!({"subscribe": {}})).await;
+    ws.rpc("fetch_agents_request", json!({"subscribe": {}})).await;
     let c = e.m.add(STAFF, Some("A conversation"));
     let untitled = e.m.add(STAFF, None);
     ws.wait_for("upsert", |v| v["message"]["type"] == "workspace_update")
@@ -1081,10 +1041,10 @@ async fn tour(e: &Env, log: &std::sync::Arc<std::sync::Mutex<Vec<common::ws::Rec
     tokio::time::sleep(model_cache()).await;
     ws.rpc(
         "fetch_workspaces_request",
-        json!({"subscribe": true, "page": {"limit": 1}}),
+        json!({"subscribe": {}, "page": {"limit": 1}}),
     )
     .await;
-    ws.rpc("fetch_agents_request", json!({"subscribe": true})).await;
+    ws.rpc("fetch_agents_request", json!({"subscribe": {}})).await;
     ws.rpc("fetch_agent_request", json!({"agentId": c})).await;
     ws.rpc("fetch_agent_request", json!({"agentId": Uuid::new_v4()})).await;
 
@@ -1347,7 +1307,7 @@ async fn tour(e: &Env, log: &std::sync::Arc<std::sync::Mutex<Vec<common::ws::Rec
     ws.set_case("new conversation");
     ws.rpc(
         "workspace.create.request",
-        json!({"idempotencyKey": "k1", "subscribe": true, "agent": {"initialPrompt": "hi", "config": {}}}),
+        json!({"idempotencyKey": "k1", "subscribe": true, "source": {"kind": "directory", "path": "/workspace", "projectId": "prj_conversations"}, "agent": {"initialPrompt": "hi", "config": {"provider": "claude", "cwd": "/workspace"}}}),
     )
     .await;
     ws.rpc(
@@ -1363,7 +1323,7 @@ async fn tour(e: &Env, log: &std::sync::Arc<std::sync::Mutex<Vec<common::ws::Rec
     e.m.refuse_once("create_conversation", Refusal::new(ErrorCode::BadRequest, "no"));
     ws.rpc(
         "workspace.create.request",
-        json!({"idempotencyKey": "k2", "subscribe": true}),
+        json!({"idempotencyKey": "k2", "subscribe": true, "source": {"kind": "directory", "path": "/workspace", "projectId": "prj_conversations"}, "agent": {"config": {"provider": "claude", "cwd": "/workspace"}}}),
     )
     .await;
 
@@ -1415,44 +1375,80 @@ async fn tour(e: &Env, log: &std::sync::Arc<std::sync::Mutex<Vec<common::ws::Rec
 
 #[tokio::test]
 async fn every_frame_shape_is_in_the_validated_corpus() {
+    // every socket test checks its own frames (common/ws.rs); the tour sends every message type in both locales and
+    // writes the corpus of its run for a reviewer to compare with the committed one
     let e = env().await;
     let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     tour(&e, &log).await;
-    // and the English strings
     e.h.set_facts(|d| d.product.locale = "en-GB".into()).await;
     tour(&e, &log).await;
     let records = log.lock().unwrap().clone();
-    let mut seen = std::collections::BTreeMap::new();
-    for (case, dir, frame) in records.iter().filter(|r| r.1 == "out") {
-        let n = normalise(frame);
-        seen.entry(signature(&n))
-            .or_insert_with(|| json!({"case": case, "dir": dir, "frame": n}));
-    }
+    let seen = common::corpus::lines(&records);
     assert!(seen.len() > 60, "{}", seen.len());
-    // the corpus of this run, for a reviewer to copy over the committed one when a shape changes on purpose
+    assert!(
+        records.iter().any(|r| r.1 == "in"),
+        "client frames are in the corpus too"
+    );
     let mut out = String::new();
     for line in seen.values() {
         out.push_str(&line.to_string());
         out.push('\n');
     }
-    let generated = concat!(env!("CARGO_TARGET_TMPDIR"), "/pigeon-frames.ndjson");
-    std::fs::write(generated, out).unwrap();
-    let committed = std::fs::read_to_string(CORPUS).unwrap_or_default();
-    let known: std::collections::BTreeSet<String> = committed
+    std::fs::write(concat!(env!("CARGO_TARGET_TMPDIR"), "/pigeon-frames.ndjson"), out).unwrap();
+    common::corpus::check(&records);
+    // every client message pigeon reads is in the corpus, so testing/paseo-contract checks its shape against every
+    // client build's inbound schema
+    let committed = std::fs::read_to_string(common::corpus::CORPUS).unwrap();
+    let inbound: std::collections::BTreeSet<String> = committed
         .lines()
-        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-        .map(|v| signature(&v["frame"]))
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .filter(|v| v["dir"] == "in")
+        .map(|v| {
+            let f = &v["frame"];
+            let t = if f["type"] == "session" {
+                &f["message"]["type"]
+            } else {
+                &f["type"]
+            };
+            t.as_str().unwrap().to_owned()
+        })
         .collect();
-    let missing: Vec<&Value> = seen
-        .iter()
-        .filter(|(s, _)| !known.contains(*s))
-        .map(|(_, v)| v)
-        .collect();
-    assert!(
-        missing.is_empty(),
-        "frames whose shape the corpus lacks: copy {generated} to {CORPUS} and validate it with \
-         testing/paseo-contract: {missing:#?}"
-    );
+    for kind in [
+        "ping",
+        "hello",
+        "client_heartbeat",
+        "subscription.release.request",
+        "agent.timeline.set_subscription.request",
+        "fetch_workspaces_request",
+        "fetch_agents_request",
+        "fetch_agent_request",
+        "fetch_agent_history_request",
+        "fetch_agent_timeline_request",
+        "agent.timeline.list_prompts.request",
+        "send_agent_message_request",
+        "workspace.create.request",
+        "creation.subscribe.request",
+        "cancel_agent_request",
+        "update_agent_request",
+        "workspace.title.set.request",
+        "archive_workspace_request",
+        "archive_agent_request",
+        "delete_agent_request",
+        "refresh_agent_request",
+        "agent_permission_response",
+        "get_providers_snapshot_request",
+        "project.list.request",
+    ] {
+        assert!(inbound.contains(kind), "no {kind} client frame in the corpus");
+    }
+}
+
+/// Adds the frame shapes the other tests found missing (`target/tmp/pigeon-frames-missing/`) to the committed
+/// corpus: run the socket tests, then this, then validate the corpus in `testing/paseo-contract`.
+#[test]
+#[ignore = "edits the committed corpus"]
+fn merge_frame_corpus() {
+    println!("{} shapes added", common::corpus::merge_missing());
 }
 
 /// Spec 8.6's throughput target, recorded in the crate README: 5 000 open sockets on one replica (100 people, 50

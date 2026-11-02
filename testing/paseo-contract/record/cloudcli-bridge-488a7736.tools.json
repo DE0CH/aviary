@@ -1,0 +1,174 @@
+{
+ "source": "record/record-cloudcli-bridge.ts (node record/extract-tools.mjs)",
+ "calls": [
+  {
+   "callId": "t-bash",
+   "name": "Bash",
+   "input": {
+    "command": "ls uploads",
+    "description": "List uploads"
+   },
+   "result": {
+    "text": "q3.xlsx\n",
+    "isError": false
+   }
+  },
+  {
+   "callId": "t-read",
+   "name": "Read",
+   "input": {
+    "file_path": "/workspace/uploads/missing.txt"
+   },
+   "result": {
+    "text": "File does not exist.",
+    "isError": true
+   }
+  },
+  {
+   "callId": "t-edit",
+   "name": "Edit",
+   "input": {
+    "file_path": "/workspace/notes.md",
+    "old_string": "a",
+    "new_string": "b"
+   },
+   "result": {
+    "text": "The file has been updated.",
+    "isError": false
+   }
+  },
+  {
+   "callId": "t-search",
+   "name": "mcp__yyc__search",
+   "input": {
+    "query": "hang seng index"
+   },
+   "result": {
+    "text": "[{\"title\":\"HSI\"}]",
+    "isError": false
+   }
+  },
+  {
+   "callId": "t-search2",
+   "name": "mcp__tools__search",
+   "input": {
+    "query": "hang seng index"
+   },
+   "result": {
+    "text": "[{\"title\":\"HSI\"}]",
+    "isError": false
+   }
+  },
+  {
+   "callId": "t-web",
+   "name": "WebSearch",
+   "input": {
+    "query": "HKEX turnover October 2026"
+   },
+   "result": {
+    "text": "Results…",
+    "isError": false
+   }
+  },
+  {
+   "callId": "t-todo",
+   "name": "TodoWrite",
+   "input": {
+    "todos": [
+     {
+      "content": "Read the sheet",
+      "status": "completed",
+      "activeForm": "Reading the sheet"
+     },
+     {
+      "content": "Write the summary",
+      "status": "in_progress",
+      "activeForm": "Writing the summary"
+     }
+    ]
+   },
+   "result": {
+    "text": "Todos have been modified successfully.",
+    "isError": false
+   }
+  },
+  {
+   "callId": "t-write",
+   "name": "Write",
+   "input": {
+    "file_path": "/workspace/summary.md",
+    "content": "# Summary\n"
+   },
+   "result": {
+    "text": "File created successfully at: /workspace/summary.md",
+    "isError": false
+   }
+  },
+  {
+   "callId": "t-send",
+   "name": "SendUserFile",
+   "input": {
+    "path": "/workspace/summary.md"
+   },
+   "result": {
+    "text": "{\"path\":\"/workspace/summary.md\",\"name\":\"summary.md\",\"size\":10,\"mimeType\":\"text/markdown\"}",
+    "isError": false
+   }
+  },
+  {
+   "callId": "t-task",
+   "name": "Task",
+   "input": {
+    "description": "Check the totals",
+    "prompt": "Add up column C",
+    "subagent_type": "general-purpose"
+   },
+   "result": {
+    "text": "Totals match.",
+    "isError": false
+   }
+  },
+  {
+   "callId": "t-glob",
+   "name": "Glob",
+   "input": {
+    "pattern": "**/*.xlsx"
+   }
+  },
+  {
+   "callId": "t-grep",
+   "name": "Grep",
+   "input": {
+    "pattern": "total",
+    "path": "/workspace"
+   },
+   "result": {
+    "text": "summary.md:3: total",
+    "isError": false
+   }
+  },
+  {
+   "callId": "t-fetch",
+   "name": "WebFetch",
+   "input": {
+    "url": "https://www.example.com/report",
+    "prompt": "Find the turnover"
+   },
+   "result": {
+    "text": "Request failed with status 403",
+    "isError": true
+   }
+  },
+  {
+   "callId": "live-read",
+   "name": "Read",
+   "input": {
+    "file_path": "/workspace/uploads/q4.pdf"
+   },
+   "result": {
+    "text": "…",
+    "isError": false
+   }
+  }
+ ]
+}

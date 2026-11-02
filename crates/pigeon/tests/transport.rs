@@ -569,7 +569,7 @@ async fn the_socket_metrics_carry_spec_19s_names_and_labels() {
     let mut ws = e.ws(STAFF).await;
     watch(&mut ws, &[c]).await;
     ws.rpc("fetch_agents_request", json!({})).await;
-    let (k, _) = ws.rpc("no_such_request", json!({})).await;
+    let (k, _) = ws.rpc_invalid("no_such_request", json!({})).await;
     assert_eq!(k, "rpc_error");
     e.m.refuse_once(
         "get_conversation",

@@ -23,7 +23,7 @@ use super::ProjectCtx;
 use super::mapping::{
     View, WORKSPACE_PREFIX, agent_snapshot, project_descriptor, project_placement, workspace_descriptor,
 };
-use super::messages::{self, bool_field, has_sync, now_iso, rpc_error, session, str_field, sync_snapshot};
+use super::messages::{self, has_sync, now_iso, rpc_error, session, str_field, sync_snapshot};
 use super::pushes;
 use super::strings::{self, Locale};
 use super::transport::{Conn, ListKind, MAX_TIMELINE_AGENTS};
@@ -325,8 +325,7 @@ impl Handler {
         };
         let o = self.owned();
         let view = o.view();
-        let subscribe = bool_field(&self.m, "subscribe");
-        let sub = subscribe.then(|| self.conn.subscribe_list(kind));
+        let sub = messages::subscribe(&self.m).map(|id| self.conn.subscribe_list(kind, id));
         let page_info = json!({"nextCursor": list.next_cursor, "prevCursor": null,
                                "hasMore": list.next_cursor.is_some()});
         let sync = sync_snapshot(&list.list.generation, list.list.head_seq, has_sync(&self.m));
@@ -361,7 +360,7 @@ impl Handler {
                 );
             }
         }
-        if subscribe && first {
+        if sub.is_some() && first {
             self.hub.join_list(&self.conn, kind, list.list.head_seq);
         }
         if kind == ListKind::Agents {
@@ -675,7 +674,7 @@ impl Handler {
             .and_then(|a| str_field(a, "clientMessageId"))
             .map_or_else(|| format!("{key}:initial-message"), str::to_owned);
         let pick = |k: &str| agent.and_then(|a| a.get(k)).or_else(|| first.and_then(|f| f.get(k)));
-        let subscribe = bool_field(&self.m, "subscribe");
+        let subscribe = messages::subscribe(&self.m).is_some();
         let locale = self.locale();
         let failed = |error: String, code: Option<String>| {
             if subscribe {
@@ -757,7 +756,7 @@ impl Handler {
 
     async fn creation(&self) {
         let key = str_field(&self.m, "idempotencyKey").unwrap_or("").to_owned();
-        let subscribe = bool_field(&self.m, "subscribe");
+        let subscribe = messages::subscribe(&self.m).is_some();
         let mut payload = Map::new();
         payload.insert("requestId".into(), json!(self.rid));
         if subscribe {
@@ -992,7 +991,7 @@ impl Handler {
             Ok(l) => (l.list.generation, l.list.head_seq),
             Err(_) => (String::new(), 0),
         };
-        if bool_field(&self.m, "subscribe") {
+        if messages::subscribe(&self.m).is_some() {
             self.conn.subscribe_projects();
         }
         let o = self.owned();

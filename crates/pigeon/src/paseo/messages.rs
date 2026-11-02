@@ -108,6 +108,22 @@ pub fn bool_field(m: &Value, k: &str) -> bool {
     m.get(k).and_then(Value::as_bool).unwrap_or(false)
 }
 
+/// The `subscribe` of a request: `true` (the create and creation requests) or an object, `{}` or
+/// `{"subscriptionId": …}` (the list requests, as the apps send them); `Some` with the id the client chose, if any.
+#[must_use]
+pub fn subscribe(m: &Value) -> Option<Option<String>> {
+    match m.get("subscribe")? {
+        Value::Bool(true) => Some(None),
+        Value::Object(o) => Some(
+            o.get("subscriptionId")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+        ),
+        _ => None,
+    }
+}
+
 /// A non-empty `sync` object (the client holds a cursor).
 #[must_use]
 pub fn has_sync(m: &Value) -> bool {
@@ -147,8 +163,8 @@ pub fn static_reply(
         "workspace.label.list.request" => {
             let mut p = Map::new();
             p.insert("requestId".into(), json!(rid));
-            if bool_field(m, "subscribe") {
-                p.insert("subscriptionId".into(), json!(new_id()));
+            if let Some(id) = subscribe(m) {
+                p.insert("subscriptionId".into(), json!(id.unwrap_or_else(new_id)));
             }
             p.insert("labels".into(), json!([]));
             p.insert(

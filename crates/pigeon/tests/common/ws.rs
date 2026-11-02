@@ -1,5 +1,6 @@
 //! A Paseo socket client for the tests: connects to `/paseo-ws` with an Access token, says hello, sends session
-//! messages and waits for the frames it expects. Every frame both ways can be recorded for the frame corpus.
+//! messages and waits for the frames it expects. Every frame both ways is recorded, and on drop checked against the
+//! frame corpus (`corpus.rs`): a frame of a shape every client has not been checked to accept fails the test.
 #![allow(dead_code, clippy::unwrap_used, clippy::missing_panics_doc)] // tests
 
 use std::collections::VecDeque;
@@ -22,7 +23,17 @@ pub struct Ws {
     /// Set when the server closed: (code, reason).
     pub closed: Option<(u16, String)>,
     pub log: Option<(Arc<Mutex<Vec<Record>>>, String)>,
+    /// Everything this socket sent and received (frames sent with [`Ws::raw_invalid`] aside).
+    seen: Vec<Record>,
     next_id: u64,
+}
+
+impl Drop for Ws {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            super::corpus::check(&self.seen);
+        }
+    }
 }
 
 pub const WAIT: Duration = Duration::from_secs(10);
@@ -41,6 +52,7 @@ impl Ws {
                 pending: VecDeque::new(),
                 closed: None,
                 log: None,
+                seen: Vec::new(),
                 next_id: 0,
             }),
             Err(tokio_tungstenite::tungstenite::Error::Http(r)) => Err(r.status().as_u16()),
@@ -71,10 +83,33 @@ impl Ws {
         }
     }
 
-    fn keep(&self, dir: &'static str, v: &Value) {
-        if let Some((log, case)) = &self.log {
+    fn keep(&mut self, dir: &'static str, v: &Value) {
+        let case = self.log.as_ref().map_or_else(String::new, |(_, c)| c.clone());
+        if let Some((log, _)) = &self.log {
             log.lock().unwrap().push((case.clone(), dir, v.clone()));
         }
+        // a large frame's shape is kept without its text (the corpus cuts long texts anyway)
+        self.seen.push((case, dir, super::corpus::normalise(v)));
+    }
+
+    /// Sends a top-level frame that is deliberately not a valid client message (it is not recorded).
+    pub async fn raw_invalid(&mut self, v: Value) {
+        self.stream.send(Message::Text(v.to_string().into())).await.unwrap();
+    }
+
+    /// Sends a session message that is deliberately not valid for the clients' schema (an unknown type, a field
+    /// missing): not recorded.
+    pub async fn session_invalid(&mut self, message: Value) {
+        self.raw_invalid(json!({"type": "session", "message": message})).await;
+    }
+
+    /// [`Ws::rpc`] with a request no client sends (an unknown type): not recorded.
+    pub async fn rpc_invalid(&mut self, kind: &str, mut message: Value) -> (String, Value) {
+        let rid = self.rid();
+        message["type"] = json!(kind);
+        message["requestId"] = json!(rid);
+        self.session_invalid(message).await;
+        self.answer(kind, rid).await
     }
 
     /// Sends a top-level frame.
@@ -197,6 +232,10 @@ impl Ws {
         message["type"] = json!(kind);
         message["requestId"] = json!(rid);
         self.session(message).await;
+        self.answer(kind, rid).await
+    }
+
+    async fn answer(&mut self, kind: &str, rid: String) -> (String, Value) {
         let r = rid.clone();
         let v = self
             .wait_for(kind, move |v| {
@@ -236,5 +275,10 @@ impl Ws {
     /// Closes from the client side.
     pub async fn close(mut self) {
         let _ = self.stream.close(None).await;
+    }
+
+    /// The frames this socket recorded.
+    pub fn seen(&self) -> &[Record] {
+        &self.seen
     }
 }

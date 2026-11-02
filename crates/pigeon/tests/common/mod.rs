@@ -2,6 +2,7 @@
 //! fake-magpie, a model stub and two fake Access teams, with a small app bundle on disk.
 #![allow(dead_code, clippy::unwrap_used, clippy::missing_panics_doc, clippy::unused_self)] // tests
 
+pub mod corpus;
 pub mod model;
 pub mod ws;
 

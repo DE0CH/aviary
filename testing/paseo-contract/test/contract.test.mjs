@@ -110,12 +110,16 @@ describe("paseo contract harness", () => {
   });
 
   it("every frame pigeon's socket tests recorded is valid for every client", () => {
+    // server frames against the outbound validators; the client frames pigeon handles against the inbound schema, so
+    // a client build that changes a message pigeon reads fails here
     const records = readFrameLog(pigeonFrames);
     assert.ok(records.length >= 60, `pigeon frames: ${records.length}`);
+    const inbound = records.filter((r) => r.dir === "in").length;
+    assert.ok(inbound >= 30, `pigeon client frames: ${inbound}`);
     for (const protocol of protocols.values()) {
       const { checked, failures } = validateRecords(protocol, records);
-      assert.deepEqual(failures.map((f) => `${f.file}:${f.line} ${f.type}: ${f.problem}`), [], protocol.label);
-      assert.equal(checked.out, records.length);
+      assert.deepEqual(failures.map((f) => `${f.file}:${f.line} ${f.dir} ${f.type}: ${f.problem}`), [], protocol.label);
+      assert.equal(checked.out + checked.in, records.length);
     }
   });
 
