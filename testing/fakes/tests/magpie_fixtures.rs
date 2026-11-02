@@ -27,7 +27,6 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-const TOKEN: &str = "test-pair-token-0000000000000000000000000000";
 const PERSON: &str = "chan.tai.man@example.com";
 const ADMIN: &str = "admin@example.com";
 const LEASE: Uuid = Uuid::from_u128(0x7d2f_4e6a_8b9c_4d0e_a1f2_3b4c_5d6e_7f80);
@@ -400,16 +399,20 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
     }
 }
 
-async fn client() -> (Client, aviary_fakes::magpie::Running) {
+async fn serve() -> aviary_fakes::magpie::Running {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let running = FakeMagpie::new().serve().await.unwrap();
-    let http = reqwest::Client::builder().build().unwrap();
-    (Client::new(http, running.url(), TOKEN), running)
+    FakeMagpie::new().serve().await.unwrap()
+}
+
+/// A client speaking as the route's first listed caller.
+fn client_for(running: &aviary_fakes::magpie::Running, id: &str) -> Client {
+    let route = magpie_api::routes::by_id(id).unwrap();
+    running.client(reqwest::Client::new(), route.callers[0])
 }
 
 #[tokio::test]
 async fn every_response_of_every_route_fixture_reads_back_unchanged() {
-    let (c, running) = client().await;
+    let running = serve().await;
     let fake = &running.fake;
     let mut seen = BTreeSet::new();
     for r in magpie_api::routes::ROUTES {
@@ -417,7 +420,7 @@ async fn every_response_of_every_route_fixture_reads_back_unchanged() {
         for entry in f["responses"].as_array().unwrap() {
             fake.script().once(r.id, Reply::from_fixture(entry));
             let status = u16::try_from(entry["status"].as_u64().unwrap()).unwrap();
-            let got = call(&c, r.id).await;
+            let got = call(&client_for(&running, r.id), r.id).await;
             if r.ok.contains(&status) {
                 let got = got.unwrap_or_else(|e| panic!("{} {status}: {e}", r.id));
                 assert_eq!(got, expected(r.id, entry), "{} {status}", r.id);
@@ -438,12 +441,12 @@ async fn every_response_of_every_route_fixture_reads_back_unchanged() {
 
 #[tokio::test]
 async fn the_fake_records_what_the_fixture_sent() {
-    let (c, running) = client().await;
+    let running = serve().await;
     let fake = &running.fake;
     for r in magpie_api::routes::ROUTES {
         let f = route_fixture(r.id);
         fake.script().once(r.id, Reply::from_fixture(&f["responses"][0]));
-        let _ = call(&c, r.id).await;
+        let _ = call(&client_for(&running, r.id), r.id).await;
         let calls = fake.script().calls_to(r.id);
         let got = calls.last().unwrap_or_else(|| panic!("{}: not recorded", r.id));
         assert_eq!(&got.params, f.get("params").unwrap_or(&json!({})), "{}: params", r.id);
@@ -454,7 +457,7 @@ async fn the_fake_records_what_the_fixture_sent() {
         }
         assert_eq!(
             got.header("authorization"),
-            Some(format!("Bearer {TOKEN}").as_str()),
+            Some(format!("Bearer {}", fake.token(r.callers[0]).unwrap()).as_str()),
             "{}",
             r.id
         );
@@ -472,7 +475,8 @@ async fn the_fake_records_what_the_fixture_sent() {
 
 #[tokio::test]
 async fn an_unscripted_route_without_a_model_answers_not_supported() {
-    let (c, _running) = client().await;
+    let running = serve().await;
+    let c = client_for(&running, "list_conversations");
     let e = c
         .person(PERSON)
         .list_conversations(&ListQuery::default())
@@ -485,4 +489,60 @@ async fn an_unscripted_route_without_a_model_answers_not_supported() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+#[tokio::test]
+async fn the_fake_refuses_an_unknown_token_and_a_caller_the_route_does_not_list() {
+    use aviary_core::auth::Caller;
+    let running = serve().await;
+    let fake = &running.fake;
+    for r in magpie_api::routes::ROUTES {
+        let f = route_fixture(r.id);
+        // a scripted answer is served only to an admitted caller
+        fake.script().always(r.id, Reply::from_fixture(&f["responses"][0]));
+        let wrong = Client::new(reqwest::Client::new(), running.url(), "not-a-pair-token");
+        match call(&wrong, r.id).await {
+            Err(ClientError::Api(e)) => {
+                assert_eq!(e.status, 401, "{}", r.id);
+                assert_eq!(serde_json::to_value(&e).unwrap()["code"], "unauthenticated", "{}", r.id);
+            }
+            other => panic!("{}: a wrong token got {other:?}", r.id),
+        }
+        let other = Caller::ALL
+            .iter()
+            .find(|c| !r.callers.contains(c) && fake.token(**c).is_some())
+            .unwrap();
+        match call(&running.client(reqwest::Client::new(), *other), r.id).await {
+            Err(ClientError::Api(e)) => {
+                assert_eq!(e.status, 403, "{} as {other}", r.id);
+                assert_eq!(serde_json::to_value(&e).unwrap()["code"], "wrong_caller", "{}", r.id);
+            }
+            other_r => panic!("{} as {other}: got {other_r:?}", r.id),
+        }
+        assert!(
+            fake.script().calls_to(r.id).is_empty(),
+            "{}: a refused call is recorded",
+            r.id
+        );
+        for caller in r.callers {
+            // every listed caller is admitted and gets the scripted answer
+            if let Err(ClientError::Api(e)) = call(&running.client(reqwest::Client::new(), *caller), r.id).await {
+                assert!(e.status != 401 && e.status != 403, "{} as {caller}: {}", r.id, e.status);
+            }
+        }
+        assert_eq!(fake.script().calls_to(r.id).len(), r.callers.len(), "{}", r.id);
+    }
+}
+
+#[tokio::test]
+async fn the_unguarded_fake_accepts_any_token() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let running = FakeMagpie::unguarded().serve().await.unwrap();
+    let f = route_fixture("list_conversations");
+    running
+        .fake
+        .script()
+        .once("list_conversations", Reply::from_fixture(&f["responses"][0]));
+    let c = Client::new(reqwest::Client::new(), running.url(), "anything");
+    call(&c, "list_conversations").await.unwrap();
 }

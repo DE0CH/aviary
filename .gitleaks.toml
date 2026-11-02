@@ -8,4 +8,6 @@ paths = ['''^crates/hermit-api/vectors/token-v1\.json$''']
 
 [[allowlists]]
 description = "fake-access's PEM parser in this commit matched the PEM header literal and the code after it as a key; it holds no key (the parser now uses rustls-pki-types and has no such literal)"
+condition = "AND"
 commits = ["a07f6b403123f2acae4118a55ee849fef434f50a"]
+paths = ['''^testing/fake-access/src/lib\.rs$''']

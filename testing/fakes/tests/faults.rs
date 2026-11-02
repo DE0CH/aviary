@@ -28,7 +28,7 @@ fn sandbox_http() -> reqwest::Client {
 async fn magpie() -> (aviary_fakes::magpie::Running, Client) {
     setup();
     let running = FakeMagpie::new().serve().await.unwrap();
-    let client = Client::new(sandbox_http(), running.url(), "token");
+    let client = running.client(sandbox_http(), Caller::Gateway);
     (running, client)
 }
 
@@ -181,4 +181,38 @@ async fn faults_on_the_supervisor() {
     assert!(c.state().await.is_err());
     assert!(c.state().await.is_err());
     c.state().await.unwrap();
+}
+
+#[tokio::test]
+async fn drop_outside_the_fakes_accept_loop_answers_500_instead_of_hanging() {
+    setup();
+    let fake = FakeSupervisor::new("tok");
+    fake.faults().on("health", FaultKind::Drop);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = fake.router();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await });
+    let c = supervisor_api::client::ControlClient::new(reqwest::Client::new(), format!("http://{addr}"), "tok");
+    let e = tokio::time::timeout(Duration::from_secs(5), c.health())
+        .await
+        .unwrap_or_else(|_| panic!("a Drop fault without aviary_fakes::serve must not hang"))
+        .unwrap_err();
+    assert_eq!((e.status(), e.code()), (Some(500), Some("internal")));
+    server.abort();
+}
+
+#[tokio::test]
+async fn an_outage_everywhere_covers_unmatched_paths() {
+    setup();
+    let running = FakeHermit::new().serve().await.unwrap();
+    let id = running
+        .fake
+        .faults()
+        .everywhere(FaultKind::Unavailable { retry_after_secs: 2 });
+    let r = reqwest::get(format!("{}/no/such/path", running.url())).await.unwrap();
+    assert_eq!(r.status(), 503);
+    assert_eq!(r.headers()["retry-after"], "2");
+    running.fake.faults().remove(id);
+    let r = reqwest::get(format!("{}/no/such/path", running.url())).await.unwrap();
+    assert_eq!(r.status(), 404);
 }

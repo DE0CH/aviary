@@ -7,7 +7,10 @@ In-process fakes for the other crates' tests (`aviary-fakes`) and the standalone
 
 `FakeMagpie`, `FakeHermit` and `FakeSupervisor` implement the `Server` traits of `magpie-api`, `hermit-api` and
 `supervisor-api` (`ControlServer` and `LocalServer`) and are served by those crates' own routers, so paths,
-extractors, status codes and (for hermit) the caller-token guard are the contract's.
+extractors and status codes are the contract's. All three check the caller first, before any scripted answer:
+hermit through hermit-api's guarded router, magpie with a generated pair token per caller and the route table's
+`callers` (401 `unauthenticated`, 403 `wrong_caller`; `running.client(http, Caller::Gateway)` speaks as a caller,
+`FakeMagpie::unguarded()` checks nothing), the supervisor's control routes (`exec` included) with the control token.
 
 ```rust
 let magpie = FakeMagpie::new().serve().await?;          // a local port; magpie.url()
@@ -23,17 +26,22 @@ let calls = magpie.fake.script().wait_calls("heartbeat", 2, Duration::from_secs(
 - **Models**, used when nothing is scripted:
   - magpie: the sandbox surface (lease and epochs, `not_current_sandbox`, `lease_lost`; `~/.claude` files and
     directories with the `offset_beyond_eof`, missing-parent, `protected`, `exists`, `not_empty` and quota rules
-    and `opId` replays; the command queue with its long-poll and acks; blobs by sha256; reports accepted). The
-    person, hermit and ops routes have no model and answer 501 `not_supported` unless scripted.
+    and `opId` replays; renames as `rename(2)`; the command queue with its long-poll and acks; blobs by sha256;
+    reports accepted). The person, hermit and ops routes have no model and answer 501 `not_supported` unless
+    scripted. The module docs list the deliberate differences (the lease with no current sandbox named) and the
+    codes only a script produces (`conversation_migrating`, lease 503, the per-line 413, `offset_mismatch`).
   - hermit: deployment, the catalogue rules, one sandbox per conversation (idempotent `PUT`, the long-poll `GET`,
     release, the YYC 501 for pause/resume/snapshot), the feed (`latest`, order, `limit`, long-poll, 410), signed
     sandbox tokens and their keys, liveness, the descriptor with etag and 304, secrets by grant, activity reports,
     workspaces. Starting sandboxes become ready after `HermitConfig::ready_after` or on `make_ready`.
   - supervisor: the control token, health and state from a settable run state, release refused while busy unless
     forced, prepare, resumed; the local socket's `send-user-file` and `secret`.
-- **Faults** (`fault.rs`), per route name or path template, for N requests or until removed: `Latency`,
-  `Unavailable` (503 with `retry-after`), `Hold` (until released; `wait_held` to synchronise), `Drop` (the
-  connection closes with no answer; needs `serve`, whose accept loop can drop a connection).
+- **Faults** (`fault.rs`), per route name or path template, or everywhere (unmatched paths included), for N
+  requests or until removed: `Latency`, `Unavailable` (503 with `retry-after`), `Hold` (until released; `wait_held`
+  to synchronise), `Drop` (the connection closes with no answer; needs `serve`, whose accept loop can drop a
+  connection; elsewhere it answers 500 saying so).
+- **Fixtures** (`fixtures.rs`): the contract crates' golden fixtures, embedded at build time (`build.rs`), so the
+  helpers also work from a built binary or image.
 
 The fixture tests (`tests/*_fixtures.rs`) send every golden fixture of the three contract crates through the
 contract clients against the fakes; `tests/faults.rs` exercises each knob; `tests/models.rs` the models.
@@ -42,17 +50,24 @@ contract clients against the fakes; `tests/faults.rs` exercises each knob; `test
 
 The Messages API and the models route, scripted with `POST /__script` (platform 7.5). Its streams are written in
 the wire form of the upstream YYC's gateway relays to (OpenRouter's Messages API), field by field, and
-`tests/mock.rs` checks them byte for byte against the recordings in `testing/mock-model/recorded/`.
+`tests/mock.rs` checks them byte for byte against the recordings in `testing/mock-model/recorded/`. Anthropic's
+native framing (`ping`, `signature_delta`) is not recorded; a scripted thinking `signature` is streamed as a
+`signature_delta` (see `recorded/README.md`). An unscripted title request answers `測試標題`: one for the title model
+id, or, when the models file gives default, small and title one id (as YYC's `egress.json` does), one shaped like
+the supervisor's title call.
 `mock-model --listen 0.0.0.0:80 [--models models.json]`.
 
 ## fake-tools
 
-A Streamable-HTTP MCP server at `/mcp` with `echo` and `slow_echo` behind the tools pair token, recording calls
-with `Aviary-Sandbox-Person` (`GET /__calls`). `fake-tools --listen 0.0.0.0:80 --token-file <path>`.
+A Streamable-HTTP MCP server at `/mcp` with `echo` and `slow_echo` behind the tools pair tokens (one per line of
+the token file, for a rotation), with sessions (400 without one, 404 for an unknown or ended one; `DELETE` ends
+it), recording calls with `Aviary-Sandbox-Person` (`GET /__calls`). `fake-tools --listen 0.0.0.0:80 --token-file
+<path>`.
 
 ## fake-access
 
-Cloudflare Access's JWKS, `get-identity` (cookie `CF_Authorization`) and `POST /__mint`, RS256 with ring, TLS with
-the harness CA. RSA keys come from the harness (`openssl genpkey`, PKCS#8 PEM): ring cannot generate RSA keys and
+Cloudflare Access's JWKS, `get-identity` (cookie `CF_Authorization`), `POST /__mint` and `POST /__keys` (publish or
+retire a loaded kid at run time, for the rotation test), RS256 with ring, TLS with the harness CA. RSA keys come from the harness (`openssl genpkey`, PKCS#8 PEM): ring cannot generate RSA keys and
 the `rsa` crate has an unfixed advisory (RUSTSEC-2023-0071) that `cargo audit --deny warnings` refuses.
-`fake-access --team-domain <d> --key k1=<pem> [--key k2=<pem>] [--tls-cert <pem> --tls-key <pem>]`.
+`fake-access --team-domain <d> --key k1=<pem> [--key k2=<pem>] [--next-key k3=<pem>] [--tls-cert <pem> --tls-key
+<pem>]` (a `--next-key` is loaded but published only by `/__keys`).

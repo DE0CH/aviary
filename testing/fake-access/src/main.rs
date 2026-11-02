@@ -19,6 +19,10 @@ struct Args {
     /// default).
     #[arg(long = "key", required = true)]
     keys: Vec<String>,
+    /// A key loaded but not published, as `<kid>=<path>`: it appears in the JWKS only after `POST /__keys
+    /// {"kid", "published": true}` (the rotation test's new kid).
+    #[arg(long = "next-key")]
+    next_keys: Vec<String>,
     /// TLS certificate chain (PEM); without it the issuer speaks plain HTTP.
     #[arg(long, requires = "tls_key")]
     tls_cert: Option<PathBuf>,
@@ -35,9 +39,15 @@ fn read(p: &PathBuf) -> anyhow::Result<String> {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let mut keys = Vec::new();
-    for k in &args.keys {
-        let (kid, path) = k.split_once('=').context("--key <kid>=<path>")?;
-        keys.push(fake_access::Key::from_pem(kid, &read(&PathBuf::from(path))?)?);
+    for (k, published) in args
+        .keys
+        .iter()
+        .map(|k| (k, true))
+        .chain(args.next_keys.iter().map(|k| (k, false)))
+    {
+        let (kid, path) = k.split_once('=').context("--key/--next-key <kid>=<path>")?;
+        let key = fake_access::Key::from_pem(kid, &read(&PathBuf::from(path))?)?;
+        keys.push(if published { key } else { key.unpublished() });
     }
     let issuer = fake_access::Issuer::new(&args.team_domain, keys)?;
     let listener = tokio::net::TcpListener::bind(args.listen).await?;

@@ -12,7 +12,11 @@
 //!   their size, tool names);
 //! - `POST /__reset`: forget scripts, requests and counters.
 //!
-//! An unmatched request answers the text `ok`; one for the title model answers `測試標題`.
+//! An unmatched request answers the text `ok`; a title request answers `測試標題`. A title request is one for the
+//! title model id of the models route; when that id is also the default or small model's (YYC's `egress.json` sets
+//! all three to one id), only a request shaped like the supervisor's title call (supervisor 14: no tools, one user
+//! message starting with magpie's title prompt, [`TITLE_PROMPT_PREFIX`]) counts, so Claude Code's own turns on that
+//! model still answer `ok`.
 
 pub mod image;
 pub mod sse;
@@ -46,6 +50,19 @@ pub const UNMATCHED_TEXT: &str = "ok";
 
 /// The reply to an unscripted request for the title model.
 pub const TITLE_TEXT: &str = "測試標題";
+
+/// How magpie's title prompt starts (magpie 9.4), which the supervisor sends as the only user message.
+pub const TITLE_PROMPT_PREFIX: &str = "Here is the first message of the conversation:";
+
+/// Whether `seen` is a title request under `models` (see the crate docs).
+#[must_use]
+pub fn is_title_request(models: &Models, seen: &Seen) -> bool {
+    if seen.model != models.title {
+        return false;
+    }
+    let shared = models.title == models.default || models.title == models.small;
+    !shared || (seen.tools.is_empty() && seen.messages == 1 && seen.text.starts_with(TITLE_PROMPT_PREFIX))
+}
 
 /// Which requests a script entry answers.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -668,17 +685,11 @@ async fn messages(State(m): State<Arc<MockModel>>, headers: HeaderMap, body: Byt
     let seen = seen_of(&headers, &req);
     let model = seen.model.clone();
     let stream = seen.stream;
+    let title = is_title_request(&m.models, &seen);
     let entry = m.take(seen).unwrap_or_else(|| ScriptEntry {
         matcher: Match::default(),
         reply: vec![Item {
-            text: Some(
-                if model == m.models.title {
-                    TITLE_TEXT
-                } else {
-                    UNMATCHED_TEXT
-                }
-                .to_owned(),
-            ),
+            text: Some(if title { TITLE_TEXT } else { UNMATCHED_TEXT }.to_owned()),
             ..Item::default()
         }],
         times: 1,

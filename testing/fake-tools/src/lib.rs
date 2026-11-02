@@ -3,10 +3,17 @@
 //! `Aviary-Sandbox-Person` the gateway added.
 //!
 //! JSON-RPC over `POST /mcp`, answered as `application/json` (the Streamable-HTTP transport allows a JSON answer
-//! instead of an SSE stream): `initialize` (with an `Mcp-Session-Id`), `notifications/initialized` (202), `ping`,
-//! `tools/list`, `tools/call`. `GET /mcp` is 405 (no server-initiated stream), `DELETE /mcp` ends the session.
-//! Assertions read `GET /__calls`; `POST /__reset` clears them.
+//! instead of an SSE stream): `initialize` (with a fresh `Mcp-Session-Id`), `notifications/initialized` (202),
+//! `ping`, `tools/list`, `tools/call`. Every request after `initialize` must carry a session `initialize` handed
+//! out and that has not ended: none is 400, an unknown or ended one 404 (MCP's "session management").
+//! `GET /mcp` is 405 (no server-initiated stream), `DELETE /mcp` ends the session (204; then 404 for it).
+//!
+//! It accepts a list of bearers (each the gateway's tools pair token), so a rotation through the gateway (the
+//! current token and the `_NEXT` one both accepted, then the old one dropped) can be driven: [`FakeTools::with_tokens`],
+//! [`FakeTools::set_tokens`], or one token per line of `--token-file`.
+//! Assertions read `GET /__calls`; `POST /__reset` clears them and the sessions.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -44,8 +51,9 @@ pub struct ToolCall {
 /// The server.
 #[derive(Debug)]
 pub struct FakeTools {
-    token: String,
+    tokens: Mutex<Vec<String>>,
     calls: Mutex<Vec<ToolCall>>,
+    sessions: Mutex<HashSet<String>>,
 }
 
 fn tools() -> Value {
@@ -74,14 +82,42 @@ impl FakeTools {
     /// A server accepting `token` as the bearer.
     #[must_use]
     pub fn new(token: &str) -> Arc<Self> {
+        Self::with_tokens(&[token])
+    }
+
+    /// A server accepting any of `tokens` (a rotation's overlap).
+    #[must_use]
+    pub fn with_tokens(tokens: &[&str]) -> Arc<Self> {
         Arc::new(Self {
-            token: token.to_owned(),
+            tokens: Mutex::new(tokens.iter().map(|t| (*t).to_owned()).collect()),
             calls: Mutex::new(Vec::new()),
+            sessions: Mutex::new(HashSet::new()),
         })
     }
 
+    /// Replace the accepted bearers (the rotation's next step).
+    pub fn set_tokens(&self, tokens: &[&str]) {
+        *lock(&self.tokens) = tokens.iter().map(|t| (*t).to_owned()).collect();
+    }
+
     fn lock(&self) -> MutexGuard<'_, Vec<ToolCall>> {
-        self.calls.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        lock(&self.calls)
+    }
+
+    /// The sessions open now.
+    #[must_use]
+    pub fn sessions(&self) -> usize {
+        lock(&self.sessions).len()
+    }
+
+    /// `Ok` for a live session; the status otherwise (400 without one, 404 for an unknown or ended one).
+    fn session(&self, h: &HeaderMap) -> Result<String, StatusCode> {
+        let s = header_str(h, "mcp-session-id").ok_or(StatusCode::BAD_REQUEST)?;
+        if lock(&self.sessions).contains(&s) {
+            Ok(s)
+        } else {
+            Err(StatusCode::NOT_FOUND)
+        }
     }
 
     /// The tool calls so far.
@@ -100,7 +136,13 @@ impl FakeTools {
     }
 
     fn authorised(&self, h: &HeaderMap) -> bool {
-        aviary_core::auth::bearer(h).is_some_and(|t| bool::from(t.as_bytes().ct_eq(self.token.as_bytes())))
+        let Some(t) = aviary_core::auth::bearer(h) else {
+            return false;
+        };
+        // compare against every token, without stopping at a match
+        lock(&self.tokens)
+            .iter()
+            .fold(false, |found, ok| found | bool::from(t.as_bytes().ct_eq(ok.as_bytes())))
     }
 
     async fn call_tool(&self, headers: &HeaderMap, params: &Value) -> Result<Value, (i64, String)> {
@@ -129,6 +171,10 @@ impl FakeTools {
     }
 }
 
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn json_response(status: StatusCode, v: &Value, session: Option<&str>) -> Response {
     let mut res = aviary_core::http::json(status, v);
     if let Some(s) = session.and_then(|s| HeaderValue::from_str(s).ok()) {
@@ -153,6 +199,20 @@ async fn mcp(State(t): State<Arc<FakeTools>>, headers: HeaderMap, body: Bytes) -
     };
     let id = msg.get("id").cloned();
     let method = msg["method"].as_str().unwrap_or_default();
+    if method != "initialize"
+        && let Err(status) = t.session(&headers)
+    {
+        let message = if status == StatusCode::BAD_REQUEST {
+            "no Mcp-Session-Id"
+        } else {
+            "unknown or ended session"
+        };
+        return json_response(
+            status,
+            &rpc_error(id.as_ref().unwrap_or(&Value::Null), -32000, message),
+            None,
+        );
+    }
     let Some(id) = id else {
         // a notification (notifications/initialized, cancelled …)
         return StatusCode::ACCEPTED.into_response();
@@ -160,6 +220,7 @@ async fn mcp(State(t): State<Arc<FakeTools>>, headers: HeaderMap, body: Bytes) -
     match method {
         "initialize" => {
             let session = uuid::Uuid::new_v4().to_string();
+            lock(&t.sessions).insert(session.clone());
             let result = json!({
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {"tools": {"listChanged": false}},
@@ -186,10 +247,15 @@ async fn no_stream() -> Response {
 }
 
 async fn end_session(State(t): State<Arc<FakeTools>>, headers: HeaderMap) -> Response {
-    if t.authorised(&headers) {
-        StatusCode::OK.into_response()
-    } else {
-        StatusCode::UNAUTHORIZED.into_response()
+    if !t.authorised(&headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    match t.session(&headers) {
+        Ok(s) => {
+            lock(&t.sessions).remove(&s);
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(status) => status.into_response(),
     }
 }
 
@@ -199,5 +265,6 @@ async fn calls(State(t): State<Arc<FakeTools>>) -> Response {
 
 async fn reset(State(t): State<Arc<FakeTools>>) -> Response {
     t.lock().clear();
+    lock(&t.sessions).clear();
     StatusCode::NO_CONTENT.into_response()
 }

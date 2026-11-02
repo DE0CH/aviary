@@ -80,10 +80,17 @@ impl Block {
 
     fn deltas(&self) -> Vec<String> {
         match self {
-            Block::Thinking { chunks, .. } => chunks
-                .iter()
-                .map(|c| format!(r#"{{"type":"thinking_delta","thinking":{}}}"#, s(c)))
-                .collect(),
+            Block::Thinking { chunks, signature } => {
+                let mut out: Vec<String> = chunks
+                    .iter()
+                    .map(|c| format!(r#"{{"type":"thinking_delta","thinking":{}}}"#, s(c)))
+                    .collect();
+                // the signature closes the block, as Anthropic streams it (the recordings carry none)
+                if !signature.is_empty() {
+                    out.push(format!(r#"{{"type":"signature_delta","signature":{}}}"#, s(signature)));
+                }
+                out
+            }
             Block::Text { chunks } => chunks
                 .iter()
                 .map(|c| format!(r#"{{"type":"text_delta","text":{}}}"#, s(c)))

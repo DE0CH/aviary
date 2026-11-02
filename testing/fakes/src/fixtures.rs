@@ -1,21 +1,18 @@
-//! The contract crates' golden fixtures, read from the repository (the fakes are test code and run in-tree), so a
-//! test can script a fake straight from them.
-
-use std::path::PathBuf;
+//! The contract crates' golden fixtures, embedded at build time (`build.rs`), so a test can script a fake straight
+//! from them, in-tree or from a built binary or image outside the checkout.
 
 use serde_json::Value;
 
 use crate::script::Reply;
 
-fn crate_dir(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../crates")
-        .join(name)
-}
+include!(concat!(env!("OUT_DIR"), "/fixtures.rs"));
 
-fn read(path: &PathBuf) -> Value {
-    let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    serde_json::from_slice(&bytes).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+fn read(krate: &str, path: &str) -> Value {
+    let (_, _, text) = FIXTURES
+        .iter()
+        .find(|(k, p, _)| *k == krate && *p == path)
+        .unwrap_or_else(|| panic!("crates/{krate}/fixtures/{path}: no such fixture"));
+    serde_json::from_str(text).unwrap_or_else(|e| panic!("crates/{krate}/fixtures/{path}: {e}"))
 }
 
 /// `crates/magpie-api/fixtures/routes/<route>.json`.
@@ -24,11 +21,7 @@ fn read(path: &PathBuf) -> Value {
 /// When the fixture is missing or is not JSON.
 #[must_use]
 pub fn magpie_route(route: &str) -> Value {
-    read(
-        &crate_dir("magpie-api")
-            .join("fixtures/routes")
-            .join(format!("{route}.json")),
-    )
+    read("magpie-api", &format!("routes/{route}.json"))
 }
 
 /// The responses of a magpie route fixture as scripted answers, in fixture order.
@@ -51,12 +44,7 @@ pub fn magpie_replies(route: &str) -> Vec<Reply> {
 /// When the fixture is missing or is not JSON.
 #[must_use]
 pub fn magpie(dir: &str, name: &str) -> Value {
-    read(
-        &crate_dir("magpie-api")
-            .join("fixtures")
-            .join(dir)
-            .join(format!("{name}.json")),
-    )
+    read("magpie-api", &format!("{dir}/{name}.json"))
 }
 
 /// `crates/hermit-api/fixtures/<name>.json`.
@@ -65,7 +53,7 @@ pub fn magpie(dir: &str, name: &str) -> Value {
 /// When the fixture is missing or is not JSON.
 #[must_use]
 pub fn hermit(name: &str) -> Value {
-    read(&crate_dir("hermit-api").join("fixtures").join(format!("{name}.json")))
+    read("hermit-api", &format!("{name}.json"))
 }
 
 /// `crates/supervisor-api/fixtures/<name>.json`.
@@ -74,9 +62,14 @@ pub fn hermit(name: &str) -> Value {
 /// When the fixture is missing or is not JSON.
 #[must_use]
 pub fn supervisor(name: &str) -> Value {
-    read(
-        &crate_dir("supervisor-api")
-            .join("fixtures")
-            .join(format!("{name}.json")),
-    )
+    read("supervisor-api", &format!("{name}.json"))
+}
+
+/// Every embedded fixture of `krate` (`magpie-api`, `hermit-api`, `supervisor-api`) as (path under its fixtures
+/// directory, contents).
+pub fn all(krate: &str) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+    FIXTURES
+        .iter()
+        .filter(move |(k, _, _)| *k == krate)
+        .map(|(_, p, t)| (*p, *t))
 }

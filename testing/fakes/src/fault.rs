@@ -1,6 +1,7 @@
 //! Fault injection: latency, bursts of 503, holding requests until released, and dropping the connection without
-//! an answer. A fault applies to one route (by its name or its path template) or to every route, for a number of
-//! requests or until removed. Faults run before the route's handler, so a held or dropped request changed nothing.
+//! an answer. A fault applies to one route (by its name or its path template) or to every path (unmatched ones
+//! included), for a number of requests or until removed. Faults run before the route's handler, so a held or dropped
+//! request changed nothing.
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -29,6 +30,8 @@ pub enum FaultKind {
     /// Wait until the [`Hold`] is released, then serve the request normally.
     Hold(Hold),
     /// Close the connection without answering (the client sees a connection reset or an incomplete message).
+    /// Needs the router served by [`crate::serve`]; anywhere else (`axum::serve`, an in-process `oneshot`) the
+    /// request answers 500 `internal` saying so.
     Drop,
 }
 
@@ -178,10 +181,16 @@ impl Faults {
         self.hits.load(Ordering::SeqCst)
     }
 
-    fn pick(&self, method: &Method, name: Option<&str>, template: &str) -> Option<FaultKind> {
+    /// The first live rule for this request: with `routed` the rules naming a route (after routing), without it the
+    /// rules on every route (before routing, so unmatched paths are covered too).
+    fn pick(&self, method: &Method, routed: Option<(Option<&str>, &str)>) -> Option<FaultKind> {
         let mut rules = self.lock();
         let idx = rules.iter().position(|r| {
-            let route_ok = r.route.as_deref().is_none_or(|w| Some(w) == name || w == template);
+            let route_ok = match (&r.route, routed) {
+                (None, None) => true,
+                (Some(w), Some((name, template))) => Some(w.as_str()) == name || w == template,
+                _ => false,
+            };
             let method_ok = r.method.as_ref().is_none_or(|m| m == method);
             route_ok && method_ok && r.remaining != Some(0)
         })?;
@@ -208,14 +217,24 @@ struct Layer {
     names: Names,
 }
 
-async fn apply(State(l): State<Layer>, req: Request, next: Next) -> Response {
+async fn apply_routed(State(l): State<Layer>, req: Request, next: Next) -> Response {
     let template = req
         .extensions()
         .get::<MatchedPath>()
         .map(|m| m.as_str().to_owned())
         .unwrap_or_default();
     let name = (l.names)(req.method(), &template);
-    match l.faults.pick(req.method(), name, &template) {
+    let kind = l.faults.pick(req.method(), Some((name, &template)));
+    act(kind, req, next).await
+}
+
+async fn apply_everywhere(State(l): State<Layer>, req: Request, next: Next) -> Response {
+    let kind = l.faults.pick(req.method(), None);
+    act(kind, req, next).await
+}
+
+async fn act(kind: Option<FaultKind>, req: Request, next: Next) -> Response {
+    match kind {
         None => next.run(req).await,
         Some(FaultKind::Latency(d)) => {
             tokio::time::sleep(d).await;
@@ -229,16 +248,24 @@ async fn apply(State(l): State<Layer>, req: Request, next: Next) -> Response {
             next.run(req).await
         }
         Some(FaultKind::Drop) => {
-            if let Some(kill) = req.extensions().get::<ConnKill>() {
-                kill.kill();
-            }
+            let Some(kill) = req.extensions().get::<ConnKill>() else {
+                // served by axum::serve or called in-process: nothing can drop the connection, so fail loudly
+                // instead of hanging the test
+                return ApiError::internal("fake: the Drop fault needs the router served by aviary_fakes::serve")
+                    .into_response();
+            };
+            kill.kill();
             // never answer: the connection task drops the connection
             std::future::pending::<Response>().await
         }
     }
 }
 
-/// `router` with `faults` applied to every route it has (after routing, so the route's template is known).
+/// `router` with `faults` applied: the faults naming a route after routing (so the route's template is known), the
+/// faults on every route before routing (so they cover unmatched paths too). A request may meet one of each.
 pub fn layer(router: Router, faults: Arc<Faults>, names: Names) -> Router {
-    router.route_layer(axum::middleware::from_fn_with_state(Layer { faults, names }, apply))
+    let l = Layer { faults, names };
+    router
+        .route_layer(axum::middleware::from_fn_with_state(l.clone(), apply_routed))
+        .layer(axum::middleware::from_fn_with_state(l, apply_everywhere))
 }

@@ -78,8 +78,13 @@ async fn accept(listener: TcpListener, router: Router) {
     loop {
         tokio::select! {
             accepted = listener.accept() => {
-                let Ok((stream, _)) = accepted else { continue };
-                conns.spawn(connection(stream, router.clone()));
+                match accepted {
+                    Ok((stream, _)) => {
+                        conns.spawn(connection(stream, router.clone()));
+                    }
+                    // EMFILE and the like: back off instead of spinning, and keep serving
+                    Err(_) => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
+                }
             }
             Some(_) = conns.join_next(), if !conns.is_empty() => {}
         }

@@ -1,9 +1,13 @@
 //! fake-access (platform 7.4): a Cloudflare Access issuer for the harness.
 //!
-//! - `GET /cdn-cgi/access/certs`: the JWKS (RS256), every configured key (two for the rotation test);
-//! - `GET /cdn-cgi/access/get-identity`: the `CF_Authorization` cookie's token verified → `{"email", "name",
-//!   "given_name"}`, 401 for a missing, tampered, expired or unknown-key token;
-//! - `POST /__mint` `{"email", "name", "aud", "expSeconds", "kid"?}` → `{"token"}` for the driver.
+//! - `GET /cdn-cgi/access/certs`: the JWKS (RS256), every **published** key;
+//! - `GET /cdn-cgi/access/get-identity`: the `CF_Authorization` cookie's token verified against the published keys
+//!   → `{"email", "name", "given_name"}`, 401 for a missing, tampered, expired, unknown-key or retired-key token;
+//! - `POST /__mint` `{"email", "name", "aud", "expSeconds", "kid"?}` → `{"token"}` for the driver; any loaded key
+//!   signs, published or not (default: the first published key);
+//! - `POST /__keys` `{"kid", "published"}` → the new JWKS: publishes a loaded key or retires one, so the rotation
+//!   test can change the JWKS under a running verifier (a key loaded unpublished, `--next-key`, is how a new kid
+//!   appears; retiring the old kid ends it).
 //!
 //! Tokens carry Cloudflare Access's application-token claims (`aud` as a list, `email`, `exp`, `iat`, `nbf`,
 //! `iss` = `https://<team domain>`, `type: "app"`, `identity_nonce`, `sub`, `country`) plus `name`, which this fake
@@ -14,6 +18,7 @@
 //! generates the per-run key pairs (`openssl genpkey`) and passes PKCS#8 PEM files.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
@@ -35,6 +40,8 @@ pub const CERTS: &str = "/cdn-cgi/access/certs";
 pub const GET_IDENTITY: &str = "/cdn-cgi/access/get-identity";
 /// The driver's minting path.
 pub const MINT: &str = "/__mint";
+/// The driver's key publication path.
+pub const KEYS: &str = "/__keys";
 /// The cookie Cloudflare Access sets.
 pub const COOKIE: &str = "CF_Authorization";
 
@@ -60,6 +67,7 @@ pub struct Key {
     pair: RsaKeyPair,
     n: Vec<u8>,
     e: Vec<u8>,
+    published: AtomicBool,
 }
 
 impl std::fmt::Debug for Key {
@@ -81,7 +89,21 @@ impl Key {
             pair,
             n: c.n,
             e: c.e,
+            published: AtomicBool::new(true),
         })
+    }
+
+    /// The same key, loaded but not in the JWKS until published ([`Issuer::set_published`]).
+    #[must_use]
+    pub fn unpublished(self) -> Self {
+        self.published.store(false, Ordering::SeqCst);
+        self
+    }
+
+    /// Whether the key is in the JWKS now.
+    #[must_use]
+    pub fn is_published(&self) -> bool {
+        self.published.load(Ordering::SeqCst)
     }
 
     /// A key from a PKCS#8 PEM file's text.
@@ -119,7 +141,7 @@ pub struct MintRequest {
     pub aud: String,
     /// Lifetime from now; negative mints an expired token.
     pub exp_seconds: i64,
-    /// Which key signs (default: the first).
+    /// Which loaded key signs (default: the first published one).
     #[serde(default)]
     pub kid: Option<String>,
 }
@@ -159,10 +181,24 @@ impl Issuer {
         }))
     }
 
-    /// The JWKS.
+    /// The JWKS: the published keys.
     #[must_use]
     pub fn jwks(&self) -> Value {
-        json!({"keys": self.keys.iter().map(Key::jwk).collect::<Vec<_>>()})
+        json!({"keys": self.keys.iter().filter(|k| k.is_published()).map(Key::jwk).collect::<Vec<_>>()})
+    }
+
+    /// Publish (`true`) or retire (`false`) a loaded key.
+    ///
+    /// # Errors
+    /// An unknown kid.
+    pub fn set_published(&self, kid: &str, published: bool) -> Result<(), Refused> {
+        let key = self
+            .keys
+            .iter()
+            .find(|k| k.kid == kid)
+            .ok_or_else(|| refused(format!("no key {kid}")))?;
+        key.published.store(published, Ordering::SeqCst);
+        Ok(())
     }
 
     /// A signed application token.
@@ -176,7 +212,11 @@ impl Issuer {
                 .iter()
                 .find(|x| x.kid == *k)
                 .ok_or_else(|| refused(format!("no key {k}")))?,
-            None => &self.keys[0],
+            None => self
+                .keys
+                .iter()
+                .find(|k| k.is_published())
+                .ok_or_else(|| refused("no published key"))?,
         };
         let iat = now();
         let header = json!({"alg": "RS256", "kid": key.kid, "typ": "JWT"});
@@ -221,7 +261,7 @@ impl Issuer {
         let key = self
             .keys
             .iter()
-            .find(|k| k.kid == kid)
+            .find(|k| k.kid == kid && k.is_published())
             .ok_or_else(|| refused(format!("unknown kid {kid}")))?;
         let public = ring::rsa::PublicKeyComponents {
             n: &key.n[..],
@@ -250,6 +290,7 @@ impl Issuer {
             .route(CERTS, get(certs))
             .route(GET_IDENTITY, get(identity))
             .route(MINT, post(mint))
+            .route(KEYS, post(keys))
             .with_state(self.clone())
     }
 }
@@ -301,7 +342,29 @@ async fn mint(State(i): State<Arc<Issuer>>, body: Bytes) -> Response {
     }
 }
 
-/// Serve `router` with TLS from a PEM certificate chain and a PKCS#8 PEM key, until the listener fails.
+/// What `/__keys` takes.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct KeysRequest {
+    /// A loaded key.
+    pub kid: String,
+    /// In the JWKS (`true`) or retired (`false`).
+    pub published: bool,
+}
+
+async fn keys(State(i): State<Arc<Issuer>>, body: Bytes) -> Response {
+    let req: KeysRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_REQUEST, axum::Json(json!({"err": e.to_string()}))).into_response(),
+    };
+    match i.set_published(&req.kid, req.published) {
+        Ok(()) => aviary_core::http::json(StatusCode::OK, &i.jwks()),
+        Err(e) => (StatusCode::NOT_FOUND, axum::Json(json!({"err": e.0}))).into_response(),
+    }
+}
+
+/// Serve `router` with TLS from a PEM certificate chain and a PKCS#8 PEM key. An accept error (EMFILE and the like)
+/// is backed off and the issuer keeps serving.
 ///
 /// # Errors
 /// A certificate or key that does not load.
@@ -322,7 +385,14 @@ pub async fn serve_tls(
         .with_single_cert(certs, key)?;
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
     loop {
-        let (stream, _) = listener.accept().await?;
+        let stream = match listener.accept().await {
+            Ok((stream, _)) => stream,
+            Err(e) => {
+                eprintln!("fake-access: accept: {e}");
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                continue;
+            }
+        };
         let acceptor = acceptor.clone();
         let router = router.clone();
         tokio::spawn(async move {

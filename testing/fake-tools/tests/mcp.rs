@@ -153,3 +153,67 @@ async fn a_wrong_or_missing_bearer_is_refused() {
     assert_eq!(r.status(), 401);
     assert_eq!(tools.calls(), vec![], "nothing recorded");
 }
+
+async fn initialize(http: &reqwest::Client, url: &str, token: &str) -> String {
+    let init = rpc(
+        http,
+        url,
+        token,
+        None,
+        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}),
+    )
+    .await;
+    assert_eq!(init.status(), 200);
+    init.headers()["mcp-session-id"].to_str().unwrap().to_owned()
+}
+
+fn ping() -> Value {
+    json!({"jsonrpc": "2.0", "id": 9, "method": "ping"})
+}
+
+#[tokio::test]
+async fn sessions_a_missing_unknown_or_ended_session_is_refused() {
+    let (url, http, tools) = rig().await;
+    let session = initialize(&http, &url, TOKEN).await;
+    assert_eq!(tools.sessions(), 1);
+    assert_eq!(rpc(&http, &url, TOKEN, Some(&session), ping()).await.status(), 200);
+    assert_eq!(rpc(&http, &url, TOKEN, None, ping()).await.status(), 400);
+    assert_eq!(
+        rpc(&http, &url, TOKEN, Some("not-a-session"), ping()).await.status(),
+        404
+    );
+    let del = |s: Option<&str>| {
+        let mut rb = http.delete(&url).bearer_auth(TOKEN);
+        if let Some(s) = s {
+            rb = rb.header("mcp-session-id", s);
+        }
+        rb.send()
+    };
+    assert_eq!(del(Some(&session)).await.unwrap().status(), 204);
+    assert_eq!(tools.sessions(), 0);
+    assert_eq!(rpc(&http, &url, TOKEN, Some(&session), ping()).await.status(), 404);
+    assert_eq!(del(Some(&session)).await.unwrap().status(), 404);
+    assert_eq!(del(None).await.unwrap().status(), 400);
+}
+
+#[tokio::test]
+async fn a_token_rotation_accepts_both_tokens_then_only_the_new_one() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let tools = fake_tools::FakeTools::with_tokens(&["old-token", "next-token"]);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let router = tools.router();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let http = reqwest::Client::new();
+    let s_old = initialize(&http, &url, "old-token").await;
+    let s_next = initialize(&http, &url, "next-token").await;
+    tools.set_tokens(&["next-token"]);
+    assert_eq!(rpc(&http, &url, "old-token", Some(&s_old), ping()).await.status(), 401);
+    assert_eq!(
+        rpc(&http, &url, "next-token", Some(&s_next), ping()).await.status(),
+        200
+    );
+    // a session is not tied to the token that opened it (the gateway's bearer changes under a live session)
+    assert_eq!(rpc(&http, &url, "next-token", Some(&s_old), ping()).await.status(), 200);
+}

@@ -13,3 +13,12 @@ response headers, no credentials).
 `tests/mock.rs` scripts mock-model with each recording's content, ids and usage and asserts that its stream is
 byte-identical, so mock-model's framing, event order and JSON field order are the upstream's. To re-record (for a
 new upstream wire form), repeat the request, replace the file and update the script in the test.
+
+## What is not covered
+
+Only OpenRouter's wire form is recorded and byte-checked: `provider`, `cost` and `cost_details` fields, no `ping`
+events, and no `signature_delta` (DeepSeek's thinking blocks are unsigned). Anthropic's native Messages API frames a
+stream differently (`ping` after `message_start`, a `signature_delta` closing each thinking block, no OpenRouter
+fields), and Claude Code against that framing is not exercised here. mock-model does write a `signature_delta`
+before `content_block_stop` when a script gives a thinking block a `signature`, in Anthropic's form, but no
+recording checks it byte for byte.

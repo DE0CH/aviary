@@ -16,7 +16,7 @@ use hermit_api::sandbox_surface::{ActivityReplyState, ActivityState};
 use hermit_api::token::KeySet;
 use hermit_api::workspaces::{CloneRequest, EntriesQuery, FilesQuery};
 use hermit_api::{SandboxIdentity, SelfAnswer};
-use magpie_api::client::{Client, ClientError};
+use magpie_api::client::ClientError;
 use magpie_api::sandbox::{
     AckRequest, AckResult, CcFileQuery, CcKind, CcMkdir, CcPathOp, CcRename, CcSetattr, CcTruncate, CcWriteQuery,
     CommandBody, CommandsQuery,
@@ -66,7 +66,7 @@ async fn magpie_lease_and_cc_files() {
     setup();
     let running = FakeMagpie::new().serve().await.unwrap();
     let fake = &running.fake;
-    let c = Client::new(gateway_http("sbx-1", CONV), running.url(), "t");
+    let c = running.client(gateway_http("sbx-1", CONV), Caller::Gateway);
     let first = c.sandbox(None).lease().await.unwrap();
     let lease = c.sandbox(None).lease().await.unwrap();
     assert_eq!((first.epoch, lease.epoch), (1, 2));
@@ -208,12 +208,12 @@ async fn magpie_lease_only_for_hermits_current_sandbox() {
     setup();
     let running = FakeMagpie::new().serve().await.unwrap();
     running.fake.set_current_sandbox(CONV, Some("sbx-2"));
-    let other = Client::new(gateway_http("sbx-1", CONV), running.url(), "t");
+    let other = running.client(gateway_http("sbx-1", CONV), Caller::Gateway);
     assert_eq!(
         code(other.sandbox(None).lease().await),
         (409, "not_current_sandbox".into())
     );
-    let current = Client::new(gateway_http("sbx-2", CONV), running.url(), "t");
+    let current = running.client(gateway_http("sbx-2", CONV), Caller::Gateway);
     current.sandbox(None).lease().await.unwrap();
 }
 
@@ -222,7 +222,7 @@ async fn magpie_commands_long_poll_and_acks() {
     setup();
     let running = FakeMagpie::new().serve().await.unwrap();
     let fake = running.fake.clone();
-    let c = Client::new(gateway_http("sbx-1", CONV), running.url(), "t");
+    let c = running.client(gateway_http("sbx-1", CONV), Caller::Gateway);
     let lease = c.sandbox(None).lease().await.unwrap();
     let s = c.sandbox(Some(lease.lease_id));
 
@@ -609,4 +609,68 @@ async fn supervisor_control_token_release_refusal_and_force() {
             .status(),
         Some(503)
     );
+}
+
+#[tokio::test]
+async fn supervisor_checks_the_control_token_before_a_scripted_answer() {
+    setup();
+    let running = FakeSupervisor::new("hct_right").serve().await.unwrap();
+    let fake = &running.fake;
+    let wrong = ControlClient::new(reqwest::Client::new(), running.url(), "hct_wrong");
+    let right = ControlClient::new(reqwest::Client::new(), running.url(), "hct_right");
+    fake.script().once(
+        "release",
+        aviary_fakes::Reply::ok(serde_json::json!({"released": true})),
+    );
+    let soft = ReleaseRequest::new(ReleaseReason::Idle, false, 30_000).unwrap();
+    let e = wrong.release(&soft).await.unwrap_err();
+    assert_eq!((e.status(), e.code()), (Some(401), Some("unauthenticated")));
+    assert!(
+        fake.script().calls_to("release").is_empty(),
+        "a refused call is not recorded"
+    );
+    // the scripted answer is still there for the authorised caller
+    assert_eq!(right.release(&soft).await.unwrap(), Outcome::Done);
+    assert_eq!(fake.script().calls_to("release").len(), 1);
+    assert_eq!(
+        fake.run().state,
+        ActivityState::Idle,
+        "the scripted answer, not the model, served it"
+    );
+
+    // every control route, exec included, scripted or not
+    for route in ["health", "state", "prepare", "resumed", "exec"] {
+        fake.script()
+            .once(route, aviary_fakes::Reply::ok(serde_json::json!({})));
+    }
+    let exec = supervisor_api::ExecRequest {
+        argv: vec!["true".into()],
+        cwd: None,
+        stdin: None,
+        timeout_ms: None,
+        env: std::collections::BTreeMap::new(),
+    };
+    let codes = [
+        wrong.health().await.unwrap_err().status(),
+        wrong.state().await.unwrap_err().status(),
+        wrong
+            .prepare(&supervisor_api::control::PrepareRequest::flush())
+            .await
+            .unwrap_err()
+            .status(),
+        wrong
+            .resumed(&serde_json::from_value(aviary_fakes::fixtures::supervisor("resumed")).unwrap())
+            .await
+            .unwrap_err()
+            .status(),
+        wrong.exec(&exec).await.unwrap_err().status(),
+    ];
+    assert_eq!(codes, [Some(401); 5]);
+    let anonymous = reqwest::Client::new()
+        .post(format!("{}{}", running.url(), supervisor_api::routes::EXEC))
+        .json(&exec)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), 401);
 }

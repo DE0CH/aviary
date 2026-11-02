@@ -264,3 +264,91 @@ async fn the_request_log_has_images_tools_and_the_system_hash() {
         .unwrap();
     assert_eq!(all, json!([]));
 }
+
+#[tokio::test]
+async fn a_scripted_signature_is_streamed_as_a_signature_delta_before_the_block_stops() {
+    let rig = Rig::new().await;
+    rig.script(json!({
+        "match": {"textContains": "signed"},
+        "reply": [
+            {"thinking": "Let me think.", "signature": "sig-abc123"},
+            {"text": "done"}
+        ]
+    }))
+    .await;
+    let body = rig
+        .messages(request("signed thinking", true), None)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let delta =
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-abc123"}}"#;
+    let at = body.find(delta).unwrap_or_else(|| panic!("no signature_delta: {body}"));
+    let last_thinking = body.rfind(r#""type":"thinking_delta""#).unwrap();
+    let stop = body.find(r#"data: {"type":"content_block_stop","index":0}"#).unwrap();
+    assert!(last_thinking < at && at < stop, "{body}");
+    // the start still carries an empty signature, as Anthropic's does
+    assert!(body.contains(r#""content_block":{"type":"thinking","thinking":"","signature":""}"#));
+
+    // without a signature, no signature_delta (the recordings' form)
+    let plain = rig
+        .messages(request("anything", true), None)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(!plain.contains("signature_delta"));
+}
+
+#[tokio::test]
+async fn with_one_id_for_default_small_and_title_only_a_title_shaped_request_gets_the_title() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let id = "deepseek/deepseek-v4.1-flash-1017";
+    let models: gateway_api::models::Models = serde_json::from_value(json!({
+        "default": id, "small": id, "title": id, "contextTokens": 1_000_000,
+        "models": [{"id": id, "label": "Flash", "reasoning": null}]
+    }))
+    .unwrap();
+    let mock = MockModel::new(models);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, mock.router()).await.unwrap() });
+    let http = reqwest::Client::new();
+    let ask = |body: Value| {
+        let http = http.clone();
+        let url = url.clone();
+        async move {
+            let msg: Value = http
+                .post(format!("{url}/v1/messages"))
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            msg["content"][0]["text"].as_str().unwrap().to_owned()
+        }
+    };
+    // a Claude Code turn on that model (tools, the user's text): ok
+    let mut turn = request("Hello", false);
+    turn["model"] = json!(id);
+    turn["tools"] = json!([{"name": "Bash", "input_schema": {"type": "object"}}]);
+    assert_eq!(ask(turn).await, mock_model::UNMATCHED_TEXT);
+    // a small call without tools but not the title prompt: ok
+    let mut small = request("Is this a new topic?", false);
+    small["model"] = json!(id);
+    assert_eq!(ask(small).await, mock_model::UNMATCHED_TEXT);
+    // the supervisor's title call (supervisor 14 with magpie 9.4's prompt): the title
+    let mut title = request(
+        &format!(
+            "{}\n\n<message>\nhi\n</message>\n\nReply with only the title.",
+            mock_model::TITLE_PROMPT_PREFIX
+        ),
+        false,
+    );
+    title["model"] = json!(id);
+    title["system"] = json!("the deployment's title instructions");
+    assert_eq!(ask(title).await, mock_model::TITLE_TEXT);
+}

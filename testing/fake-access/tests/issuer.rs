@@ -1,6 +1,6 @@
 //! fake-access: minted tokens verify against the published JWKS (as pigeon's verifier will check them), the
-//! identity route answers for good tokens and 401s the rest, both keys work (rotation), and TLS serves with a
-//! harness-CA certificate. Keys and certificates are generated per run with `openssl`, as the harness does.
+//! identity route answers for good tokens and 401s the rest, both keys work, a key published or retired at run time
+//! changes what verifies (rotation), and TLS serves with a harness-CA certificate. Keys and certificates are generated per run with `openssl`, as the harness does.
 #![allow(clippy::unwrap_used)] // tests
 
 use std::path::{Path, PathBuf};
@@ -58,6 +58,11 @@ fn mint(email: &str, exp: i64, kid: Option<&str>) -> MintRequest {
 
 /// Verify a token with ring against a JWKS, the way any RS256 verifier does (independently of the issuer).
 fn verify_with_jwks(jwks: &Value, token: &str) -> Value {
+    try_verify_with_jwks(jwks, token).unwrap_or_else(|| panic!("the token's kid is not in the JWKS"))
+}
+
+/// As [`verify_with_jwks`], `None` when the token's kid is not in the JWKS.
+fn try_verify_with_jwks(jwks: &Value, token: &str) -> Option<Value> {
     let parts: Vec<&str> = token.split('.').collect();
     let header: Value = serde_json::from_slice(&B64.decode(parts[0]).unwrap()).unwrap();
     assert_eq!(header["alg"], "RS256");
@@ -65,8 +70,7 @@ fn verify_with_jwks(jwks: &Value, token: &str) -> Value {
         .as_array()
         .unwrap()
         .iter()
-        .find(|k| k["kid"] == header["kid"])
-        .unwrap();
+        .find(|k| k["kid"] == header["kid"])?;
     let n = B64.decode(jwk["n"].as_str().unwrap()).unwrap();
     let e = B64.decode(jwk["e"].as_str().unwrap()).unwrap();
     ring::rsa::PublicKeyComponents { n: &n[..], e: &e[..] }
@@ -76,7 +80,7 @@ fn verify_with_jwks(jwks: &Value, token: &str) -> Value {
             &B64.decode(parts[2]).unwrap(),
         )
         .unwrap();
-    serde_json::from_slice(&B64.decode(parts[1]).unwrap()).unwrap()
+    Some(serde_json::from_slice(&B64.decode(parts[1]).unwrap()).unwrap())
 }
 
 #[test]
@@ -208,5 +212,109 @@ async fn the_routes_over_tls() {
     assert_eq!(get_identity(&http, &base, None).await.0, 401);
     let expired = i.mint(&mint("staff@example.org", -1, None)).unwrap();
     assert_eq!(get_identity(&http, &base, Some(&expired)).await.0, 401);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A verifier that caches the JWKS and refetches it once on an unknown kid, as pigeon's will.
+struct CachingVerifier {
+    http: reqwest::Client,
+    url: String,
+    jwks: Value,
+    fetches: u32,
+}
+
+impl CachingVerifier {
+    async fn new(http: reqwest::Client, base: &str) -> Self {
+        let mut v = Self {
+            http,
+            url: format!("{base}{}", fake_access::CERTS),
+            jwks: json!({"keys": []}),
+            fetches: 0,
+        };
+        v.refetch().await;
+        v
+    }
+
+    async fn refetch(&mut self) {
+        self.jwks = self.http.get(&self.url).send().await.unwrap().json().await.unwrap();
+        self.fetches += 1;
+    }
+
+    async fn verify(&mut self, token: &str) -> Option<Value> {
+        if let Some(c) = try_verify_with_jwks(&self.jwks, token) {
+            return Some(c);
+        }
+        self.refetch().await;
+        try_verify_with_jwks(&self.jwks, token)
+    }
+}
+
+async fn set_published(http: &reqwest::Client, base: &str, kid: &str, published: bool) -> Value {
+    let r = http
+        .post(format!("{base}{}", fake_access::KEYS))
+        .json(&json!({"kid": kid, "published": published}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    r.json().await.unwrap()
+}
+
+fn kids(jwks: &Value) -> Vec<String> {
+    jwks["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|k| k["kid"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn rotation_a_new_kid_verifies_only_after_it_is_published_and_a_retired_kid_is_refused() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let dir = tmp();
+    let k1 = Key::from_pem("k1", &rsa_key(&dir, "k1.pem")).unwrap();
+    let k2 = Key::from_pem("k2", &rsa_key(&dir, "k2.pem")).unwrap().unpublished();
+    let i = Issuer::new("access.aviary-e2e.svc.cluster.local", vec![k1, k2]).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let router = i.router();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await });
+    let http = reqwest::Client::new();
+
+    let mut verifier = CachingVerifier::new(http.clone(), &base).await;
+    assert_eq!(kids(&verifier.jwks), ["k1"]);
+    let old = i.mint(&mint("staff@example.org", 600, None)).unwrap();
+    let new = i.mint(&mint("staff@example.org", 600, Some("k2"))).unwrap();
+    assert!(verifier.verify(&old).await.is_some());
+    assert_eq!(verifier.fetches, 1, "a known kid needs no refetch");
+
+    // k2 signs but is not published: the verifier refetches, still does not find it, refuses; so does get-identity
+    assert!(verifier.verify(&new).await.is_none());
+    assert_eq!(verifier.fetches, 2);
+    assert_eq!(get_identity(&http, &base, Some(&new)).await.0, 401);
+
+    // publish k2: the next unknown-kid refetch finds it
+    assert_eq!(kids(&set_published(&http, &base, "k2", true).await), ["k1", "k2"]);
+    assert_eq!(verifier.verify(&new).await.unwrap()["email"], "staff@example.org");
+    assert_eq!(verifier.fetches, 3);
+    assert_eq!(get_identity(&http, &base, Some(&new)).await.0, 200);
+
+    // retire k1: gone from the JWKS, and its tokens are refused
+    assert_eq!(kids(&set_published(&http, &base, "k1", false).await), ["k2"]);
+    assert_eq!(get_identity(&http, &base, Some(&old)).await.0, 401);
+    let mut fresh = CachingVerifier::new(http.clone(), &base).await;
+    assert!(fresh.verify(&old).await.is_none());
+    // the default signer is now the first published key
+    let next = i.mint(&mint("staff@example.org", 600, None)).unwrap();
+    assert!(fresh.verify(&next).await.is_some());
+    let r = http
+        .post(format!("{base}{}", fake_access::KEYS))
+        .json(&json!({"kid": "k9", "published": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+    server.abort();
     std::fs::remove_dir_all(dir).unwrap();
 }

@@ -12,18 +12,42 @@
 //!   result), the command queue with its long-poll and acks, blobs by sha256, and the reports (accepted and
 //!   recorded; `turn_state` `running` sets the main transcript). It keeps no events, rows or timeline.
 //!
+//! - **Callers** ([`FakeMagpie::new`]): a generated pair token per caller of magpie's route table; an unknown bearer
+//!   answers 401 `unauthenticated` and a caller the route does not list 403 `wrong_caller`, before any scripted
+//!   answer. [`FakeMagpie::unguarded`] checks nothing. Use [`Running::client`] to speak as a caller.
+//! - **Renames** follow `rename(2)`: onto an existing empty directory (from a directory) or a file (from a file)
+//!   it replaces the target; onto a non-empty directory 409 `not_empty`; a file onto a directory or the other way
+//!   409 `exists`; a directory into its own subtree 400 `bad_path`.
+//! - **opId**: a committed result is stored and a replay answers it; a refused operation is not stored (magpie
+//!   rolls the transaction back, magpie 6.5), so a retry after a refusal runs again.
+//!
+//! Deliberate differences from magpie, and codes the model never produces (script them with
+//! [`crate::script`] or [`crate::fault`] when a test needs them):
+//!
+//! - with no current sandbox named ([`FakeMagpie::set_current_sandbox`]) the lease is granted to any sandbox
+//!   ([`NoCurrentSandbox::Grant`], the default); magpie refuses `not_current_sandbox` when hermit names none, which
+//!   [`FakeMagpie::with_lease_mode`]`(`[`NoCurrentSandbox::Refuse`]`)` models;
+//! - 409 `conversation_migrating` (no migrations), 503 `unavailable` on the lease (hermit always answers; use the
+//!   `Unavailable` fault), 413 `too_large` for the per-line cap (only the 16 MiB body cap is modelled), 409
+//!   `offset_mismatch` (an append at a stale offset inside the file overwrites, as `pwrite` would; only
+//!   `offset_beyond_eof` is refused).
+//!
 //! Faults ([`crate::fault`]) apply by route id or path template.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use aviary_core::auth::{Caller, Callers};
 use aviary_core::http::ApiError;
 use axum::Router;
 use axum::body::{Body, Bytes};
+use axum::extract::{MatchedPath, Request, State};
 use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use magpie_api::changes::{ChangesQuery, ChangesResponse};
+use magpie_api::client::Client;
 use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse, ListQuery, ListResponse, RenameRequest};
 use magpie_api::errors::{ErrorCode, Refusal};
 use magpie_api::events::{EventsPage, EventsQuery};
@@ -160,21 +184,19 @@ pub struct FakeMagpie {
     faults: Arc<Faults>,
     model: Mutex<Model>,
     commands_changed: Notify,
+    tokens: Option<HashMap<Caller, String>>,
+    lease_open: bool,
 }
 
-impl Default for FakeMagpie {
-    fn default() -> Self {
-        Self {
-            script: Script::default(),
-            faults: Arc::new(Faults::default()),
-            model: Mutex::new(Model {
-                convs: HashMap::new(),
-                blobs: HashMap::new(),
-                quota: CC_QUOTA_BYTES,
-            }),
-            commands_changed: Notify::new(),
-        }
-    }
+/// How the fake grants a lease when the test named no current sandbox ([`FakeMagpie::set_current_sandbox`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NoCurrentSandbox {
+    /// Grant any sandbox (the default: a supervisor test need not set hermit's view first). Real magpie asks hermit
+    /// and refuses 409 `not_current_sandbox` when hermit names none.
+    #[default]
+    Grant,
+    /// Refuse 409 `not_current_sandbox`, as magpie does when hermit names no current sandbox.
+    Refuse,
 }
 
 /// A [`FakeMagpie`] served on a local port.
@@ -192,6 +214,13 @@ impl Running {
     pub fn url(&self) -> String {
         self.served.url()
     }
+
+    /// A magpie-api client speaking as `caller` (its pair token; any token when unguarded).
+    #[must_use]
+    pub fn client(&self, http: reqwest::Client, caller: Caller) -> Client {
+        let token = self.fake.token(caller).unwrap_or_else(|| "unguarded".to_owned());
+        Client::new(http, self.url(), token)
+    }
 }
 
 fn names() -> Names {
@@ -203,20 +232,99 @@ fn names() -> Names {
     })
 }
 
+/// magpie's caller check: the pair token names the caller (401 `unauthenticated` otherwise), and the matched route
+/// must list it (403 `wrong_caller` otherwise).
+async fn check_caller(State(callers): State<Callers>, mut req: Request, next: Next) -> Response {
+    let template = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|m| m.as_str().to_owned())
+        .unwrap_or_default();
+    let Some(route) = magpie_api::routes::ROUTES
+        .iter()
+        .find(|r| r.path == template && r.method.as_str() == req.method().as_str())
+    else {
+        // a method the route table does not have: magpie-api's router answers it (405)
+        return next.run(req).await;
+    };
+    let Some(caller) = callers.identify_headers(req.headers()) else {
+        return ApiError::unauthenticated().into_response();
+    };
+    if !route.callers.contains(&caller) {
+        return ApiError::wrong_caller(caller).into_response();
+    }
+    req.extensions_mut().insert(caller);
+    next.run(req).await
+}
+
 fn ser<T: Serialize>(v: &T) -> Option<Value> {
     serde_json::to_value(v).ok()
 }
 
 impl FakeMagpie {
-    /// A fake with nothing scripted and an empty model.
+    /// A fake with nothing scripted, an empty model and a generated pair token per caller of magpie's routes
+    /// ([`FakeMagpie::token`]): its router refuses an unknown bearer with 401 `unauthenticated` and a caller the
+    /// route table ([`magpie_api::routes::Route::callers`]) does not list with 403 `wrong_caller`, as magpie does.
     #[must_use]
     pub fn new() -> Arc<Self> {
-        Arc::new(Self::default())
+        Self::with(NoCurrentSandbox::Grant, true)
     }
 
-    /// The router (magpie-api's, with the faults applied).
+    /// A guarded fake whose lease follows `mode` when no current sandbox is named.
+    #[must_use]
+    pub fn with_lease_mode(mode: NoCurrentSandbox) -> Arc<Self> {
+        Self::with(mode, true)
+    }
+
+    /// A fake whose router checks no caller tokens (magpie-api's plain `router`).
+    #[must_use]
+    pub fn unguarded() -> Arc<Self> {
+        Self::with(NoCurrentSandbox::Grant, false)
+    }
+
+    fn with(mode: NoCurrentSandbox, guarded: bool) -> Arc<Self> {
+        let tokens = guarded.then(|| {
+            Caller::ALL
+                .iter()
+                .filter(|c| magpie_api::routes::ROUTES.iter().any(|r| r.callers.contains(c)))
+                .map(|c| (*c, format!("fake-magpie-{}-{}", c.as_str(), Uuid::new_v4().simple())))
+                .collect()
+        });
+        Arc::new(Self {
+            script: Script::default(),
+            faults: Arc::new(Faults::default()),
+            model: Mutex::new(Model {
+                convs: HashMap::new(),
+                blobs: HashMap::new(),
+                quota: CC_QUOTA_BYTES,
+            }),
+            commands_changed: Notify::new(),
+            tokens,
+            lease_open: mode == NoCurrentSandbox::Grant,
+        })
+    }
+
+    /// The pair token `caller` presents to this fake (`None` when unguarded or when no route admits `caller`).
+    #[must_use]
+    pub fn token(&self, caller: Caller) -> Option<String> {
+        self.tokens.as_ref().and_then(|t| t.get(&caller).cloned())
+    }
+
+    /// The router: magpie-api's, behind the caller check when guarded, with the faults applied.
+    ///
+    /// # Panics
+    /// Never: the generated tokens are distinct and non-empty.
     pub fn router(self: &Arc<Self>) -> Router {
-        fault::layer(magpie_api::server::router(self.clone()), self.faults.clone(), names())
+        let router = magpie_api::server::router(self.clone());
+        let router = match &self.tokens {
+            Some(t) => {
+                let callers = Callers::new(t.iter().map(|(c, tok)| (*c, vec![tok.clone()])))
+                    .unwrap_or_else(|e| panic!("fake-magpie tokens: {e}"));
+                router.route_layer(axum::middleware::from_fn_with_state(callers, check_caller))
+            }
+            None => router,
+        };
+        fault::layer(router, self.faults.clone(), names())
     }
 
     /// Serve on a fresh local port.
@@ -286,7 +394,8 @@ impl FakeMagpie {
     }
 
     /// Name hermit's current sandbox of `conversation`: a lease asked by any other sandbox answers 409
-    /// `not_current_sandbox`. `None` grants every caller (the default).
+    /// `not_current_sandbox`. `None` (the default) follows the fake's [`NoCurrentSandbox`] mode: by default every
+    /// sandbox is granted, which real magpie does not do.
     pub fn set_current_sandbox(&self, conversation: Uuid, sandbox: Option<&str>) {
         self.lock().convs.entry(conversation).or_default().current_sandbox = sandbox.map(str::to_owned);
     }
@@ -446,10 +555,13 @@ impl FakeMagpie {
 
     fn model_lease(&self, ctx: &Ctx) -> Result<LeaseResponse, ApiError> {
         let sandbox = ctx.sandbox.as_ref().map(|s| s.id.clone());
+        let open = self.lease_open;
         self.with_conv(ctx, false, |c, _| {
-            if let Some(current) = &c.current_sandbox
-                && sandbox.as_ref() != Some(current)
-            {
+            let refused = match &c.current_sandbox {
+                Some(current) => sandbox.as_ref() != Some(current),
+                None => !open,
+            };
+            if refused {
                 return Err(refuse(
                     ErrorCode::NotCurrentSandbox,
                     "hermit names another sandbox for this conversation",
@@ -534,6 +646,10 @@ impl FakeMagpie {
                 return Err(not_found("the parent directory does not exist"));
             }
             let used = c.cc_bytes();
+            if q.offset > 0 && !c.nodes.contains_key(&q.path) && q.create {
+                // refused before the file exists, so a refusal creates nothing
+                return Err(refuse(ErrorCode::OffsetBeyondEof, "the offset is past the end"));
+            }
             let node = match c.nodes.get_mut(&q.path) {
                 Some(n) if n.kind == CcKind::Dir => return Err(ApiError::bad_request("a directory")),
                 Some(n) => n,
@@ -610,7 +726,29 @@ impl FakeMagpie {
             if !c.dir_exists(parent(&b.to)) {
                 return Err(not_found("the parent directory does not exist"));
             }
-            if from.kind == CcKind::Dir {
+            if b.to == b.from {
+                return Ok(CcVersion { version: from.version });
+            }
+            let from_dir = from.kind == CcKind::Dir;
+            if from_dir && b.to.starts_with(&format!("{}/", b.from)) {
+                return Err(refuse(
+                    ErrorCode::BadPath,
+                    "a directory cannot move into its own subtree",
+                ));
+            }
+            if let Some(target) = c.nodes.get(&b.to) {
+                let target_dir = target.kind == CcKind::Dir;
+                if target_dir && c.children(&b.to).next().is_some() {
+                    return Err(refuse(ErrorCode::NotEmpty, "the target directory is not empty"));
+                }
+                if target_dir != from_dir {
+                    return Err(refuse(
+                        ErrorCode::Exists,
+                        "a file and a directory cannot replace each other",
+                    ));
+                }
+            }
+            if from_dir {
                 let moved: Vec<String> = c.children(&b.from).cloned().collect();
                 for old in moved {
                     if let Some(n) = c.nodes.remove(&old) {

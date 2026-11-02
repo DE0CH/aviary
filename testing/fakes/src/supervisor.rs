@@ -1,14 +1,16 @@
 //! fake-supervisor: `supervisor_api::server::ControlServer` (the :7070 surface hermit calls, hermit 3.10) with
 //! scripted answers on every route and a small model:
 //!
-//! - the control token: a call whose bearer does not hash to one of the accepted tokens answers 401
-//!   `unauthenticated` (supervisor 5: it compares `sha256(bearer)` with the descriptor's `control.tokenSha256`);
+//! - the control token, checked first on every control route (`exec` included) and before any scripted answer: a
+//!   call whose bearer does not hash to one of the accepted tokens answers 401 `unauthenticated` and is not
+//!   recorded (supervisor 5: it compares `sha256(bearer)` with the descriptor's `control.tokenSha256`);
 //! - `health` and `state` from the current run state ([`FakeSupervisor::set_run`]) and readiness
 //!   ([`FakeSupervisor::set_ready`]); before readiness, `prepare` and `release` answer 503 (not ready);
 //! - `release` refuses with 409 `sandbox_busy` and the run while a turn, task or ask is open unless `force`, and
 //!   otherwise answers `released: true` and moves to `released`; `prepare` answers `ready: true`; `resumed` 204;
 //! - `exec` has no model (501 unless scripted);
-//! - the local socket's routes ([`FakeSupervisor::local_router`], served over HTTP without descriptors):
+//! - the local socket's routes ([`FakeSupervisor::local_router`], served over HTTP without descriptors; the real
+//!   socket carries no bearer, its file mode is the gate):
 //!   `send-user-file` answers `sent` = the number of files and records how many descriptors came with it; `secret`
 //!   answers from [`FakeSupervisor::grant_secret`] and 404 `not_granted` otherwise.
 
@@ -235,10 +237,10 @@ impl FakeSupervisor {
 #[allow(clippy::unused_async_trait_impl)] // every method is async, as the trait
 impl ControlServer for FakeSupervisor {
     async fn health(&self, ctx: Ctx) -> Result<Health, ApiError> {
+        self.authorised(&ctx)?;
         if let Some(r) = self.record("health", &ctx, None) {
             return r.typed("health");
         }
-        self.authorised(&ctx)?;
         let m = self.lock();
         Ok(Health {
             ok: true,
@@ -252,18 +254,18 @@ impl ControlServer for FakeSupervisor {
     }
 
     async fn state(&self, ctx: Ctx) -> Result<StateReport, ApiError> {
+        self.authorised(&ctx)?;
         if let Some(r) = self.record("state", &ctx, None) {
             return r.typed("state");
         }
-        self.authorised(&ctx)?;
         Ok(self.lock().state.clone())
     }
 
     async fn prepare(&self, ctx: Ctx, body: PrepareRequest) -> Result<PrepareAnswer, ApiError> {
+        self.authorised(&ctx)?;
         if let Some(r) = self.record("prepare", &ctx, ser(&body)) {
             return r.typed("prepare");
         }
-        self.authorised(&ctx)?;
         let m = self.lock();
         if !m.ready {
             return Err(not_ready());
@@ -275,17 +277,18 @@ impl ControlServer for FakeSupervisor {
     }
 
     async fn resumed(&self, ctx: Ctx, body: Resumed) -> Result<(), ApiError> {
+        self.authorised(&ctx)?;
         if let Some(r) = self.record("resumed", &ctx, ser(&body)) {
             return r.unit();
         }
-        self.authorised(&ctx)
+        Ok(())
     }
 
     async fn release(&self, ctx: Ctx, body: ReleaseRequest) -> Result<ReleaseAnswer, ApiError> {
+        self.authorised(&ctx)?;
         if let Some(r) = self.record("release", &ctx, ser(&body)) {
             return r.typed("release");
         }
-        self.authorised(&ctx)?;
         let mut m = self.lock();
         if !m.ready {
             return Err(not_ready());
@@ -303,6 +306,7 @@ impl ControlServer for FakeSupervisor {
     }
 
     async fn exec(&self, ctx: Ctx, body: ExecRequest) -> Result<ExecResult, ApiError> {
+        self.authorised(&ctx)?;
         match self.record("exec", &ctx, ser(&body)) {
             Some(r) => r.typed("exec"),
             None => Err(not_supported("exec")),

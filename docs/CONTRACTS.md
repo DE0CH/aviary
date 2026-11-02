@@ -70,6 +70,14 @@ Outbound calls send `User-Agent: <svc>/<sha12>`. Only idempotent calls (`GET`, `
 a body carrying the caller's idempotency key) are retried, with jittered backoff, on connection errors, timeouts,
 429, 502, 503 and 504.
 
+### RS256 (Cloudflare Access tokens)
+
+RS256 signatures are verified with ring (`ring::rsa::PublicKeyComponents { n, e }.verify(&RSA_PKCS1_2048_8192_SHA256,
+…)` from the JWK's `n` and `e`), and claims are parsed with serde_json. `jsonwebtoken`'s `rust_crypto` backend pulls in the
+`rsa` crate, whose advisory RUSTSEC-2023-0071 has no fixed release, and `cargo audit --deny warnings` refuses it; so
+the workspace does not declare `jsonwebtoken`, and pigeon's Access verifier uses ring as above.
+`testing/fake-access` signs this way and its tests verify this way.
+
 ## Endpoint names
 
 A sandbox reaches four fixed names, always through the gateway's proxy (below), never by DNS:
