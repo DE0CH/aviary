@@ -442,10 +442,15 @@ pub async fn heartbeat(pool: &Pool, caller: &Sandbox, hb: Heartbeat) -> Result<(
             "supervisor reports blocked cc writes"
         );
     }
+    // what the admin reads show (magpie 13)
+    let facts = &serde_json::json!({"gen": hb.generation, "supervisor": hb.supervisor, "cc": hb.cc});
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let c = caller::lock(t, caller).await?;
-        t.execute("update conversations set heartbeat_at = now() where id = $1", &[&c.id])
-            .await?;
+        t.execute(
+            "update conversations set heartbeat_at = now(), last_heartbeat = $2 where id = $1",
+            &[&c.id, facts],
+        )
+        .await?;
         if let Some(turn) = active(t, c.id).await?.filter(|a| !a.state.is_ended()) {
             if !matches!(turn.state, State::Running | State::Stopping) {
                 return Ok(());

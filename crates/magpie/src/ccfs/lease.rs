@@ -118,7 +118,7 @@ pub async fn lease(app: &Magpie, caller: &Caller) -> Result<LeaseResponse> {
         let row = t
             .query_one(
                 "update conversations c set lease_id = $2, lease_sandbox = $3, lease_epoch = lease_epoch + 1,
-                        cc_resync = false
+                        cc_resync = false, lease_granted_at = now()
                    from (select cc_resync from conversations where id = $1) old
                   where c.id = $1
                   returning c.lease_epoch, c.provider_session_id, c.main_transcript, old.cc_resync",

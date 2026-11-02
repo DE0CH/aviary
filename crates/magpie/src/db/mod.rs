@@ -11,7 +11,7 @@ use aviary_pg::{Conn, LockKey, Migration, Row, ToSql, Tx};
 /// # Errors
 /// When the embedded list is malformed (a bad file name): a start failure.
 pub fn migrations() -> Result<Vec<Migration>, aviary_pg::Error> {
-    aviary_pg::migrations!(dir = "src/db/migrations"; "0001_init.sql", "0002_retention_indexes.sql", "0003_view_as_order.sql", "0004_ccfs.sql", "0005_timeline.sql", "0006_shares.sql")
+    aviary_pg::migrations!(dir = "src/db/migrations"; "0001_init.sql", "0002_retention_indexes.sql", "0003_view_as_order.sql", "0004_ccfs.sql", "0005_timeline.sql", "0006_shares.sql", "0007_admin.sql")
 }
 
 /// The migrations' advisory lock (magpie 4).

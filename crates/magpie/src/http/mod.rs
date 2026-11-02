@@ -3,6 +3,8 @@
 
 // a handler's error is its answer: the route tables (magpie 16) list them
 #[allow(clippy::missing_errors_doc)]
+pub mod admin;
+#[allow(clippy::missing_errors_doc)]
 pub mod blobs;
 #[allow(clippy::missing_errors_doc)]
 pub mod changes;
@@ -12,6 +14,8 @@ pub mod conversations;
 pub mod creations;
 #[allow(clippy::missing_errors_doc)]
 pub mod files;
+#[allow(clippy::missing_errors_doc)]
+pub mod hermit;
 #[allow(clippy::missing_errors_doc)]
 pub mod ops;
 #[allow(clippy::missing_errors_doc)]

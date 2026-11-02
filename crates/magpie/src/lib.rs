@@ -5,6 +5,7 @@
 //! [`changes::emit`] / [`changes::upserted`], [`fanout::notify`] and [`fanout::Fanout::hold`], the conversation row
 //! lock [`conversations::lock`], and [`jobs::outbox::enqueue`].
 
+pub mod admin;
 pub mod app;
 pub mod auth;
 pub mod blobs;

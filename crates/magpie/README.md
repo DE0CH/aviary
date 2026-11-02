@@ -9,6 +9,7 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 | Path | What |
 |---|---|
 | `src/main.rs` | start (env, ops port 9090, migrations, LISTEN, jobs, API on 8080) and drain |
+| `src/admin.rs` | hermit's routes (a leaver's purge, `workspaces/exists`) and the admin reads with their audit |
 | `src/app.rs` | `Service` (start and the drain's last steps), `Magpie` (shared state), the `Server` impl, the router |
 | `src/auth.rs` | callers from `MAGPIE_ACCEPT_*`, the route layer that checks them against `magpie_api::routes::ROUTES` |
 | `src/limits.rs` | every limit and timeout (magpie 17) |
@@ -85,7 +86,8 @@ the model copy's bounds, EXIF rotation, HEIC through libheif, the decode cap, vi
 sent-file snapshot, its validation and lease, the files panel, downloads of a send's snapshot with `Range`, live
 workspace files through fake-hermit. `tests/shares.rs`: the freeze leaves a running turn out, the view equals the
 timeline at the freeze, the frozen workspace is a clone, soft delete hides a link and restore brings it back,
-continue, revoke, purge, view-as, a failed clone. `tests/fixtures/` holds a small HEIC made with libheif's `heif-enc`.
+continue, revoke, purge, view-as, a failed clone. `tests/admin.rs`: a leaver's purge, `workspaces/exists`, the admin
+reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with libheif's `heif-enc`.
 
 ## Deviations from the spec text
 
@@ -225,3 +227,9 @@ continue, revoke, purge, view-as, a failed clone. `tests/fixtures/` holds a smal
   rows the projection can go on updating; a continue also copies `retracted` and `cc_retracted` within `upto_seq`.
   A continued conversation's `cc_bytes` is the sum of its copied files' sizes.
 - `ShareView.epoch` is `"1"`: a share's rows never change.
+- The admin reads show the lease's grant time and the last heartbeat's `gen`, `supervisor` and `cc` from two
+  columns migration `0007_admin.sql` adds (`lease_granted_at`, set by the lease grant; `last_heartbeat`, set by the
+  heartbeat route); magpie 4 keeps only `heartbeat_at`. `GET /v1/admin/conversations` lists at most 500, newest
+  activity first, and is not audited (it shows no content); the per-conversation reads are.
+- A person purge also deletes the leaver's unattached uploads, and answers 409 `conversation_migrating` (after
+  purging the rest) while the importer holds one of their conversations; a repeat finishes it.

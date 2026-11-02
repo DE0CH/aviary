@@ -17,9 +17,14 @@ use axum::body::Body;
 use axum::response::Response;
 use magpie_api::changes::{ChangesQuery, ChangesResponse};
 use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse, ListQuery, ListResponse, RenameRequest};
+use magpie_api::events::{EventsPage, EventsQuery};
 use magpie_api::files::{FilesPanel, RawFileQuery};
 use magpie_api::live::{LiveFramesRequest, LiveState};
-use magpie_api::ops::{OpsStats, PeopleQuery, PeopleResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest};
+use magpie_api::ops::{
+    AdminConversation, AdminConversationList, AdminListQuery, OpsStats, PeopleQuery, PeopleResponse,
+    PersonPurgeRequest, PersonPurgeResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest, WorkspacesExistsRequest,
+    WorkspacesExistsResponse,
+};
 use magpie_api::rows::{PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery};
 use magpie_api::sandbox::{
     AckRequest, AgentTurnRequest, AskReport, AskResolvedReport, CcFileQuery, CcMkdir, CcPathOp, CcRename, CcSetattr,
@@ -465,5 +470,29 @@ impl Server for Magpie {
 
     async fn continue_share(&self, ctx: Ctx, share_id: String) -> Answer<ContinueResponse> {
         http::shares::continue_share(self, ctx, share_id).await
+    }
+
+    async fn person_purge(&self, ctx: Ctx, person: String, body: PersonPurgeRequest) -> Answer<PersonPurgeResponse> {
+        http::hermit::person_purge(self, ctx, person, body).await
+    }
+
+    async fn workspaces_exists(&self, ctx: Ctx, body: WorkspacesExistsRequest) -> Answer<WorkspacesExistsResponse> {
+        http::hermit::workspaces_exists(self, ctx, body).await
+    }
+
+    async fn admin_conversations(&self, ctx: Ctx, query: AdminListQuery) -> Answer<AdminConversationList> {
+        http::admin::conversations(self, ctx, query).await
+    }
+
+    async fn admin_conversation(&self, ctx: Ctx, id: Uuid) -> Answer<AdminConversation> {
+        http::admin::conversation(self, ctx, id).await
+    }
+
+    async fn admin_events(&self, ctx: Ctx, id: Uuid, query: EventsQuery) -> Answer<EventsPage> {
+        http::admin::events(self, ctx, id, query).await
+    }
+
+    async fn admin_timeline(&self, ctx: Ctx, id: Uuid, query: TimelineQuery) -> Answer<TimelinePage> {
+        http::admin::timeline(self, ctx, id, query).await
     }
 }
