@@ -10,7 +10,7 @@
 //!    is read until it answers.
 //! 3. `:7070` (answering 503 until the descriptor is read, then `ready: false` until step 9), `agent.sock` and the
 //!    docker socket.
-//! 4. First start only: `/etc/hosts` gets `localhost` and `sandbox` where missing (DESIGN 12 D2), apt's proxy
+//! 4. Unless a `run.json` of this boot exists (both writes are idempotent): `/etc/hosts` gets `localhost` and `sandbox` where missing (DESIGN 12 D2), apt's proxy
 //!    configuration from the descriptor's `env`; the managed Claude Code files are the driver's ([`Agent::attach`]).
 //! 5. The lease from magpie (30 s on `not_current_sandbox`, backoff on 503, never an exit).
 //! 6. `~/.claude` mounted ([`Filesystem::mount`]; a fresh connection or the keeper's fd).
@@ -449,15 +449,24 @@ impl Start {
             let a = activity.clone();
             lifecycle.on_final_report(Arc::new(move |deadline| a.final_report(deadline)));
         }
-        let guard = Guard::new(
-            proc.clone(),
-            descriptor.resources.memory_bytes,
-            std::process::id().cast_signed(),
-        );
-        tokio::spawn(guard.run(Arc::new(GuardLink {
-            agent: agent.clone(),
-            activity,
-        })));
+        // the guard kills processes: only inside a sandbox, where the keeper is PID 1 (4.1), never on a host that
+        // runs a supervisor for a test
+        // SAFETY: getppid has no memory effects.
+        #[allow(unsafe_code)]
+        let under_keeper = unsafe { libc::getppid() } == 1;
+        if under_keeper {
+            let guard = Guard::new(
+                proc.clone(),
+                descriptor.resources.memory_bytes,
+                std::process::id().cast_signed(),
+            );
+            tokio::spawn(guard.run(Arc::new(GuardLink {
+                agent: agent.clone(),
+                activity,
+            })));
+        } else {
+            tracing::warn!("memory guard off: the parent is not the keeper as PID 1");
+        }
         let local = Arc::new(Local { hermit: hermit.clone() });
         if let Err(e) = serve_unix(&paths.agent_socket, 0o666, local_router(local)) {
             tracing::error!(error = %e, "agent socket");

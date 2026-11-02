@@ -275,6 +275,34 @@ fn sigterm_stops_the_supervisor_then_everything() {
 }
 
 #[test]
+fn while_stopping_the_keeper_still_answers_but_spawns_nothing() {
+    // a supervisor whose release takes 1.5 s after SIGTERM keeps the keeper in its grace period
+    let mut k = Running::start(Some(vec![
+        "/bin/sh".into(),
+        "-c".into(),
+        "trap 'sleep 1.5; exit 0' TERM; while :; do sleep 0.05; done".into(),
+    ]));
+    std::thread::sleep(Duration::from_millis(300));
+    let child = k.client.spawn(&k.spec("claude", &["/bin/sleep", "100"])).unwrap();
+    let late = k.spec("exec", &["/bin/true"]);
+    let client = k.client.clone();
+    let stopper = std::thread::spawn(move || k.stop());
+    std::thread::sleep(Duration::from_millis(300));
+    // a forced release signals Claude Code and polls the exits through the keeper during the grace
+    client.signal(-child, libc::SIGKILL).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !client.exits(0).unwrap().iter().any(|e| e.pid == child) {
+        assert!(Instant::now() < deadline, "no exit while stopping");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(client.spawn(&late).unwrap_err().errno(), Some(libc::ESHUTDOWN));
+    // the supervisor's exit ends the stop
+    let t = Instant::now();
+    assert_eq!(stopper.join().unwrap(), 0);
+    assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+}
+
+#[test]
 fn boot_id_survives_a_keeper_restart() {
     let k = Running::start(None);
     let id = k.client.status().unwrap().boot_id;

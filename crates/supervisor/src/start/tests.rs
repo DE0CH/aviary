@@ -120,7 +120,8 @@ impl World {
             etc_hosts: d.join("hosts"),
             apt_proxy: d.join("apt/80sandbox-proxy"),
             sys_cgroup: d.join("no-cgroup"),
-            proc: "/proc".into(),
+            // never the host's /proc: a test supervisor must not see (or kill) the host's processes
+            proc: d.join("proc"),
             oom_score_adj: d.join("oom_score_adj"),
             docker: DockerPaths::sandbox(),
             control: "127.0.0.1:0".parse().unwrap(),

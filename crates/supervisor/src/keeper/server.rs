@@ -498,9 +498,8 @@ impl Keeper {
             n += 1;
         };
         let (pf, sl) = (&mut *self.pollfds, &mut *self.slots);
-        if self.stopping_since.is_none() {
-            push(self.listener, libc::POLLIN, Slot::Listener, pf, sl);
-        }
+        // served while stopping too: the supervisor's forced release signals Claude Code and polls exits through it
+        push(self.listener, libc::POLLIN, Slot::Listener, pf, sl);
         push(self.sigfd, libc::POLLIN, Slot::Signals, pf, sl);
         for c in 0..MAX_CONNS {
             let events = match self.conn_state[c] {
@@ -983,6 +982,10 @@ impl Keeper {
     // SPAWN
 
     fn op_spawn(&mut self, c: usize, n: usize) -> Result<(), Malformed> {
+        if self.stopping_since.is_some() {
+            self.reply_err(c, libc::ESHUTDOWN, "stopping");
+            return Ok(());
+        }
         let Some(slot) = self.children.iter().position(|ch| ch.pid == 0) else {
             self.reply_err(c, libc::EAGAIN, "child table full");
             return Ok(());
