@@ -13,4 +13,5 @@ pub mod limits;
 pub mod local;
 pub mod magpie;
 pub mod memguard;
+pub mod start;
 pub mod state;

@@ -76,8 +76,37 @@ impl RunStatus {
     }
 }
 
+/// What the start sequence hands the driver once the lease is held and `~/.claude` is mounted (4.3 steps 8-9).
+#[derive(Clone)]
+pub struct AttachContext {
+    /// `run.json` of the previous supervisor (a restart), `None` on a first start.
+    pub prior: Option<crate::state::RunState>,
+    /// What [`crate::start::reattach`] found of the generation `prior` names.
+    pub generation: crate::start::Reattach,
+    pub lease: magpie_api::sandbox::LeaseResponse,
+    pub descriptor: Arc<hermit_api::sandbox_surface::SandboxSelf>,
+    pub persisted: Arc<crate::state::Persisted>,
+    pub keeper: crate::keeper::Client,
+    pub exits: Arc<crate::keeper::watch::Exits>,
+    pub boot: crate::boot::BootEnv,
+    /// The agent's cgroup, if the runtime offers one (5.2).
+    pub cgroup: Option<std::path::PathBuf>,
+}
+
+impl std::fmt::Debug for AttachContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AttachContext")
+            .field("generation", &self.generation)
+            .field("epoch", &self.lease.epoch)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The Claude Code driver (WP-23), as the lifecycle needs it.
 pub trait Agent: Send + Sync + 'static {
+    /// Writes the managed files on a first start, re-attaches to the live generation on a restart (or pre-spawns
+    /// one), and starts the command poll and the heartbeat (4.3 steps 4, 8, 9).
+    fn attach(&self, ctx: AttachContext) -> BoxFuture<'_, ()>;
     /// The run state, updated on every change.
     fn status(&self) -> watch::Receiver<RunStatus>;
     /// The live generation, for `GET /v1/state`.
@@ -110,6 +139,15 @@ pub struct FsStats {
 
 /// The `~/.claude` filesystem (WP-22), as the lifecycle needs it.
 pub trait Filesystem: Send + Sync + 'static {
+    /// Loads the tree and mounts `~/.claude` (4.3 steps 6-7): on a first start a fresh `/dev/fuse` connection
+    /// whose fd goes to the keeper (`PUT_FD fuse`), on a restart the keeper's fd (`GET_FD fuse`) and the journal
+    /// replay. `Err` (logged) is retried by the start sequence.
+    fn mount(
+        &self,
+        lease: &magpie_api::sandbox::LeaseResponse,
+        keeper: &crate::keeper::Client,
+        restart: bool,
+    ) -> BoxFuture<'_, Result<(), String>>;
     fn stats(&self) -> FsStats;
     /// Waits until every FUSE operation in flight is answered and every write stored, by `deadline`; `false` when
     /// one is still blocked on magpie then.
@@ -477,6 +515,9 @@ impl Default for IdleAgent {
 }
 
 impl Agent for IdleAgent {
+    fn attach(&self, _ctx: AttachContext) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
     fn status(&self) -> watch::Receiver<RunStatus> {
         self.status.subscribe()
     }
@@ -499,6 +540,34 @@ impl Agent for IdleAgent {
         Box::pin(async {})
     }
     fn oom_killed(&self) {}
+}
+
+/// The filesystem before WP-22: it refuses to mount, so the sandbox never claims `ready`.
+#[derive(Debug, Default)]
+pub struct UnbuiltFilesystem;
+
+impl Filesystem for UnbuiltFilesystem {
+    fn mount(
+        &self,
+        _lease: &magpie_api::sandbox::LeaseResponse,
+        _keeper: &crate::keeper::Client,
+        _restart: bool,
+    ) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async { Err("the ~/.claude filesystem is not part of this build".to_owned()) })
+    }
+    fn stats(&self) -> FsStats {
+        FsStats::default()
+    }
+    fn settle(&self, _deadline: Instant) -> BoxFuture<'_, bool> {
+        Box::pin(async { true })
+    }
+    fn close_connections(&self) {}
+    fn resumed(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
+    fn unmount(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
 }
 
 #[cfg(test)]
@@ -537,6 +606,9 @@ pub(crate) mod tests {
     }
 
     impl Agent for FakeAgent {
+        fn attach(&self, ctx: AttachContext) -> BoxFuture<'_, ()> {
+            Box::pin(async move { self.note(format!("attach {:?}", ctx.generation)) })
+        }
         fn status(&self) -> watch::Receiver<RunStatus> {
             self.status.subscribe()
         }
@@ -576,6 +648,14 @@ pub(crate) mod tests {
     }
 
     impl Filesystem for FakeFs {
+        fn mount(
+            &self,
+            _lease: &magpie_api::sandbox::LeaseResponse,
+            _keeper: &crate::keeper::Client,
+            _restart: bool,
+        ) -> BoxFuture<'_, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
         fn stats(&self) -> FsStats {
             FsStats {
                 lease_epoch: Some(7),

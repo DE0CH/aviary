@@ -42,6 +42,9 @@ uuid.workspace = true
 
 [dev-dependencies]
 aviary-fakes = { path = "../../testing/fakes" }
+gateway-api = { path = "../gateway-api" }
+prometheus-client.workspace = true
+test-gateway = { path = "../../testing/test-gateway" }
 
 [lints]
 workspace = true
