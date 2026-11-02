@@ -1,0 +1,6 @@
+{
+  "reason": "host_lost",
+  "code": "sandbox_lost",
+  "force": true,
+  "deadlineMs": 30000
+}

@@ -1,0 +1,36 @@
+{
+  "run": {
+    "state": "held",
+    "turnId": "0190f6c2-6c2f-7d4e-a05f-2b3c4d5e6f70",
+    "origin": "person",
+    "tasks": [
+      {
+        "id": "bash_1",
+        "command": "npm run dev"
+      }
+    ],
+    "asks": []
+  },
+  "gen": {
+    "n": 2,
+    "pid": 301,
+    "startedAt": "2026-11-02T04:05:20.000Z"
+  },
+  "leaseEpoch": 4,
+  "fuse": {
+    "inflight": 1,
+    "blocked": 0,
+    "oldestBlockedMs": null
+  },
+  "memory": {
+    "limitBytes": 1073741824,
+    "usedBytes": 612368384
+  },
+  "supervisor": {
+    "version": "supervisor-1a2b3c4d5e6f",
+    "bootId": "b7e0c1d2-0000-4000-8000-000000000001",
+    "restarts": 0,
+    "rssBytes": 31457280
+  },
+  "magpieReachable": true
+}

@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "ready": true,
+  "protocol": 1,
+  "version": "supervisor-1a2b3c4d5e6f",
+  "bootId": "b7e0c1d2-0000-4000-8000-000000000001",
+  "busy": true,
+  "state": "running"
+}

@@ -2318,6 +2318,18 @@ version = "0.0.0"
 [[package]]
 name = "supervisor-api"
 version = "0.0.0"
+dependencies = [
+ "aviary-core",
+ "axum",
+ "hermit-api",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "uuid",
+]
 
 [[package]]
 name = "syn"

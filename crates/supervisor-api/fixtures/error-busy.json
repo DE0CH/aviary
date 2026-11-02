@@ -1,0 +1,9 @@
+{
+  "code": "sandbox_busy",
+  "message": "a turn, task or ask is open",
+  "run": {
+    "state": "running",
+    "turnId": "0190f6c2-6c2f-7d4e-a05f-2b3c4d5e6f70",
+    "tasks": 0
+  }
+}

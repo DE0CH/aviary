@@ -1,0 +1,27 @@
+{
+  "run": {
+    "state": "idle",
+    "turnId": null,
+    "origin": null,
+    "tasks": [],
+    "asks": []
+  },
+  "gen": null,
+  "leaseEpoch": null,
+  "fuse": {
+    "inflight": 0,
+    "blocked": 0,
+    "oldestBlockedMs": null
+  },
+  "memory": {
+    "limitBytes": 1073741824,
+    "usedBytes": 20971520
+  },
+  "supervisor": {
+    "version": "supervisor-1a2b3c4d5e6f",
+    "bootId": "b7e0c1d2-0000-4000-8000-000000000001",
+    "restarts": 1,
+    "rssBytes": 20971520
+  },
+  "magpieReachable": false
+}

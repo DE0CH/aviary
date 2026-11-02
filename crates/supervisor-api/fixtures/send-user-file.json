@@ -1,0 +1,14 @@
+{
+  "toolUseId": "toolu_01ABCDEF",
+  "caption": "The chart",
+  "files": [
+    {
+      "path": "/workspace/out/chart.png",
+      "size": 48213
+    },
+    {
+      "path": "/workspace/out/data.csv",
+      "size": 1200
+    }
+  ]
+}
