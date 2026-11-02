@@ -24,6 +24,7 @@ the binary (`src/main.rs`) runs it as `hermit serve` and checks catalogues as `h
 | `admin` | 16: the admin routes, each audited in `admin_events` (in the change's transaction where there is one) |
 | `ops`, `ops_page.html` | 3.11, 18.1-18.2, 18.4-18.5: who may read `/ops/*`, the page (CSP, `no-referrer`), magpie's and egress's ops reads, the Kubernetes reader (`InCluster`, the Pod's ServiceAccount) |
 | `snapshot`, `health_verdict` | 18.3, 18.6: the snapshot's sections (8 s each, `null` + `errors[name]` on failure, cached 4 s per zone) and the verdict |
+| `scripts/hermit-admin.sh` | 16: the operator's and runbooks' client of the admin routes (token from `HERMIT_ADMIN_TOKEN`, passed to curl on stdin) |
 | `server`, `app` | the `hermit_api::Server` implementation; start, loops, drain (20.2), kill |
 
 ## Tests
@@ -47,6 +48,8 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   every `at` in the one format), and every admin route (caps, retire, the off switch seen by `PUT …/sandbox`,
   fresh-host, the trace, exec through the supervisor, the operator's release and its console tail, recycle, purge
   through magpie) audited in `admin_events` with an exec's argv and exit code but never its input or output.
+- `tests/ops.rs` also runs `scripts/hermit-admin.sh` against a replica (the off switch, the trace, a refused purge,
+  the audit log).
 - `tests/common_port.rs`: the hermit parts of jarvis3 `common.test.ts`: who is a user (`@domain` entries, no
   subdomains, a bare `@domain` or an empty address never), migrations applied twice change nothing, one janitor
   leader at a time with a takeover.

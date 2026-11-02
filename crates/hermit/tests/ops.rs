@@ -1098,3 +1098,53 @@ async fn every_admin_call_is_audited_and_does_what_it_says() {
     assert_eq!(listed[0]["action"], "events.read", "newest first");
     assert_eq!(listed.len(), ev.len());
 }
+
+#[tokio::test]
+async fn the_runbook_script_speaks_the_admin_routes() {
+    let h = Harness::new("ops_script").await;
+    let r = h.replica("hermit-a").await;
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/hermit-admin.sh");
+    let run = |args: &[&str]| {
+        let mut c = tokio::process::Command::new("bash");
+        c.arg(script)
+            .args(args)
+            .env("HERMIT_ADMIN_TOKEN", &h.tokens[&Caller::Admin])
+            .env("HERMIT_ADMIN", ADMIN)
+            .env("HERMIT_URL", &r.url);
+        c
+    };
+    let out = run(&["disable", "gateway", "work"]).output().await.unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        (v["sandboxesEnabled"].clone(), v["disabledReason"].clone()),
+        (json!(false), json!("gateway work"))
+    );
+    let out = run(&["enable"]).output().await.unwrap();
+    assert!(out.status.success());
+    let out = run(&["sandboxes", &format!("person={STAFF}")]).output().await.unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = run(&["purge", STAFF]).output().await.unwrap();
+    assert!(!out.status.success(), "409 still_allowed fails the script");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("still_allowed"));
+    let out = run(&["events", "10"]).output().await.unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let actions: Vec<&str> = v["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["action"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        actions,
+        [
+            "events.read",
+            "sandboxes.read",
+            "sandboxes.enabled",
+            "sandboxes.enabled"
+        ]
+    );
+    // the token never reaches curl's command line: it is read from stdin
+    let text = std::fs::read_to_string(script).unwrap();
+    assert!(text.contains("-K -"));
+}
