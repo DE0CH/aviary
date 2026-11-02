@@ -318,6 +318,10 @@ symlinked root refused by the hook (`sent_files::tests::only_regular_files_are_o
     at the line's start).
 14. **Blob reads during a start** (uploads and the model copy of an image) are retried for 90 s, inside magpie's
     120 s `starting` watchdog; 19 asks a rollout to change nothing staff see, 12.1 names no retry.
+15. **An agent turn magpie refuses** (409 `bad_transition`: a person's turn is active there, the race of 7.5) is
+    settled, not retried or given up: magpie credits the lines written under its id to its active turn (magpie
+    6.3), and that turn's own state reports answered 404 are settled too (11 says only that reports are never
+    dropped). A 404 for any other turn is still a report given up.
 
 ### Open items (WP-23)
 

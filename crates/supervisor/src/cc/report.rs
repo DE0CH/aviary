@@ -7,7 +7,7 @@
 //! `retryAfterMs`) for as long as the lease is valid; a refusal that no retry can cure is logged as an error and
 //! counted.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -150,6 +150,8 @@ pub struct Reporter {
     pending: watch::Sender<usize>,
     tasks: Mutex<Vec<TaskReportEvent>>,
     tasks_pending: watch::Sender<usize>,
+    /// Agent-started turns magpie refused (409 `bad_transition`: a person's turn was active, 7.5's race).
+    refused: Mutex<HashSet<Uuid>>,
 }
 
 impl std::fmt::Debug for Reporter {
@@ -173,6 +175,7 @@ impl Reporter {
             pending: watch::channel(0).0,
             tasks: Mutex::new(Vec::new()),
             tasks_pending: watch::channel(0).0,
+            refused: Mutex::new(HashSet::new()),
         })
     }
 
@@ -270,6 +273,18 @@ impl Reporter {
         }
     }
 
+    /// Whether magpie refused `turn` as an agent turn.
+    fn refused(&self, turn: Uuid) -> bool {
+        self.refused
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(&turn)
+    }
+
+    fn refuse(&self, turn: Uuid) {
+        self.refused.lock().unwrap_or_else(PoisonError::into_inner).insert(turn);
+    }
+
     async fn send(&self, item: Item) {
         let what = format!("{item:?}");
         match item {
@@ -295,6 +310,7 @@ impl Reporter {
                     });
                     report.last_uuid = None;
                 }
+                let refused = self.refused(turn);
                 let ok = self
                     .retry(&what, || async {
                         match self.calls().turn_state(turn, &report).await {
@@ -302,6 +318,12 @@ impl Reporter {
                             Err(e) if e.code() == Some(&ErrorCode::BadTransition) => {
                                 // a replay of what magpie has, or magpie ended the turn first: final either way
                                 tracing::info!(turn = %turn, error = %e, "turn state already settled");
+                                Attempt::Done
+                            }
+                            Err(e) if refused && e.code() == Some(&ErrorCode::NotFound) => {
+                                // an agent turn magpie refused and never opened: its lines went to magpie's active
+                                // turn (magpie 6.3), and there is nothing to end
+                                tracing::info!(turn = %turn, "a refused agent turn's report: nothing to settle");
                                 Attempt::Done
                             }
                             Err(e) => classify(&e),
@@ -316,6 +338,13 @@ impl Reporter {
                 self.retry(&what, || async {
                     match self.calls().agent_turn(&r).await {
                         Ok(_) => Attempt::Done,
+                        Err(e) if e.code() == Some(&ErrorCode::BadTransition) => {
+                            // a person's turn is active in magpie (7.5's race): magpie credits this turn's lines to
+                            // that one; the refusal is final, and this turn's own reports have nothing to settle
+                            tracing::info!(turn = %r.turn_id, error = %e, "agent turn refused: another turn is active");
+                            self.refuse(r.turn_id);
+                            Attempt::Done
+                        }
                         Err(e) => classify(&e),
                     }
                 })
@@ -470,6 +499,56 @@ mod tests {
             classify(&refusal(400, ErrorCode::BadRequest)),
             Attempt::GiveUp(_)
         ));
+    }
+
+    /// 7.5's race: magpie refuses an agent turn while a person's turn is active (409 `bad_transition`). The
+    /// refusal and that turn's end report (404, magpie never opened it) are settled, not given up; another turn's
+    /// 404 still is.
+    #[tokio::test]
+    async fn a_refused_agent_turn_is_settled_not_given_up() {
+        use aviary_fakes::script::Reply;
+        use magpie_api::sandbox::TurnStateReport;
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let fake = aviary_fakes::magpie::FakeMagpie::unguarded();
+        let served = fake.serve().await.unwrap();
+        fake.script().always(
+            "agent_turn",
+            Reply::error(409, "bad_transition", "a person turn is active"),
+        );
+        fake.script()
+            .always("turn_state", Reply::error(404, "not_found", "no such turn"));
+        let client = magpie_api::client::Client::new(reqwest::Client::new(), served.url(), "t");
+        let r = Reporter::new(client, Arc::new(crate::cc::Stored0));
+        r.set_lease(Uuid::new_v4());
+        tokio::spawn(r.clone().run());
+        let end = || TurnStateReport {
+            state: ReportedState::Completed,
+            at: magpie_api::Timestamp::now(),
+            provider_session_id: None,
+            transcript_path: None,
+            exit_code: None,
+            error: None,
+            held: None,
+            tasks: None,
+            last_uuid: None,
+            usage: None,
+            duration_ms: None,
+        };
+        let agent = Uuid::now_v7();
+        r.push(Item::AgentTurn(AgentTurnRequest {
+            turn_id: agent,
+            origin: magpie_api::turns::TurnOrigin::Agent,
+            at: magpie_api::Timestamp::now(),
+        }));
+        r.push(Item::state(agent, end()));
+        assert!(r.drain(Instant::now() + Duration::from_secs(10)).await);
+        assert_eq!(r.given_up(), 0, "the refusal and its turn's 404 are settled");
+        assert_eq!(fake.script().calls_to("agent_turn").len(), 1, "never retried");
+        assert_eq!(fake.script().calls_to("turn_state").len(), 1);
+        // a turn magpie did not refuse: its 404 is a report given up
+        r.push(Item::state(Uuid::now_v7(), end()));
+        assert!(r.drain(Instant::now() + Duration::from_secs(10)).await);
+        assert_eq!(r.given_up(), 1);
     }
 
     /// No report is dropped across a 20 min outage: the retry keeps going at the 10 s cap (paused time).
