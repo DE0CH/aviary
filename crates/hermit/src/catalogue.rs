@@ -184,7 +184,10 @@ fn allowed_by(users: &BTreeSet<String>, domains: &BTreeSet<String>, email: &str)
     if users.contains(email) {
         return true;
     }
-    email.rsplit_once('@').is_some_and(|(_, d)| domains.contains(d))
+    // `local@domain` with a non-empty local part and one `@` (callers normalise first; this holds without them)
+    email
+        .split_once('@')
+        .is_some_and(|(l, d)| !l.is_empty() && !d.contains('@') && domains.contains(d))
 }
 
 /// The live catalogue of one replica.

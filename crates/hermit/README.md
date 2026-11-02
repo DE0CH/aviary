@@ -47,6 +47,9 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   every `at` in the one format), and every admin route (caps, retire, the off switch seen by `PUT …/sandbox`,
   fresh-host, the trace, exec through the supervisor, the operator's release and its console tail, recycle, purge
   through magpie) audited in `admin_events` with an exec's argv and exit code but never its input or output.
+- `tests/common_port.rs`: the hermit parts of jarvis3 `common.test.ts`: who is a user (`@domain` entries, no
+  subdomains, a bare `@domain` or an empty address never), migrations applied twice change nothing, one janitor
+  leader at a time with a takeover.
 - `tests/lifecycle.rs`: hermit 24.2's ported tests for the core: one sandbox per conversation, the `PUT`
   reservation, the janitor's idle and lifetime rules (busy never idled, 9 h forced), release refusal restarting the
   idle clock, forced delete, a requested release carried in the activity reply and done at the idle report, a `PUT`
@@ -164,5 +167,7 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   person purge sends no `Aviary-Admin` to magpie (its caller is hermit) and records the operator in `admin_events`.
 - **Admin reads are audited too** (`hosts.read`, `sandboxes.read`, `sandbox.log`, `events.read`): 16 says each call
   writes a row; a read has no change, so its row is written before it answers.
+- **`Loaded::allowed`** matches a domain entry only for `local@domain` with a non-empty local part and one `@` (it
+  matched a bare `@domain` before; every caller normalises the address first, so no request could use that).
 - **The page's zone** is the browser's (`Intl`), falling back to `ops.timeZone`; times are shown in it (18.2: "polls
   `./snapshot?tz=<browser zone>`").
