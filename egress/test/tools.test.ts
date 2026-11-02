@@ -27,7 +27,7 @@ import { startFakes, type Fakes } from "./fakes/tools-upstreams.ts";
 const GW = "gateway-pair-token-current";
 const GW_NEXT = "gateway-pair-token-next";
 const HERMIT_BEARER = "tools-to-hermit";
-const owner = "staff@yyc.hk";
+const owner = "staff@example.com";
 
 /** A fresh, migrated `tools` database on the local Postgres (TEST_DATABASE_URL). */
 async function freshToolsDb(name: string): Promise<{ db: pg.Pool; url: string; drop(): Promise<void> }> {
@@ -175,13 +175,13 @@ before(async () => {
   hermit = new FakeHermit();
   await hermit.listen();
   dir = mkdtempSync(join(tmpdir(), "tools-test-"));
-  writeFileSync(catalogueFile(), JSON.stringify({ users: ["@yyc.hk", "guest@example.org"], admins: ["admin@yyc.hk"] }));
+  writeFileSync(catalogueFile(), JSON.stringify({ users: ["@example.com", "guest@example.org"], admins: ["admin@example.com"] }));
   const config = parseToolsConfig({
     exa: { keyEnv: "EXA_KEY", baseUrl: `${fakes.url}/exa` },
     tikhub: { keyEnv: "TIK_KEY", baseUrl: `${fakes.url}/tikhub` },
     anyapi: { keyEnv: "ANY_KEY", baseUrl: `${fakes.url}/anyapi`, denySkus: ["facebook.marketplace"] },
     capture: { url: `${fakes.url}/capture`, tokenEnv: "CAP", name: "YYC" },
-    upstreams: [{ prefix: "yyc", url: `${fakes.url}/mcp-up`, headers: { Authorization: "Bearer ${UP_TOKEN}", "X-YYC-User": "${USER_EMAIL}" }, tools: ["posts_search", "post_delete"], listAs: "Lister@yyc.hk" }],
+    upstreams: [{ prefix: "yyc", url: `${fakes.url}/mcp-up`, headers: { Authorization: "Bearer ${UP_TOKEN}", "X-YYC-User": "${USER_EMAIL}" }, tools: ["posts_search", "post_delete"], listAs: "Lister@example.com" }],
   });
   deps = {
     config,
@@ -229,7 +229,7 @@ test("caller: only the gateway's bearers (either during a rotation); the Aviary-
 test("owner: Aviary-Sandbox-Person (lowercased) fills tool_calls; the catalogue and hermit's state decide who is served", async () => {
   const s = sandbox({ person: owner });
   const request = "0190f6c2-0000-7000-8000-0000000000aa";
-  const r = await rpc("tools/call", { name: "web_fetch", arguments: { url: "http://127.0.0.1:1/" } }, s, { ...gw(s, GW, request), "aviary-sandbox-person": "Staff@YYC.hk" });
+  const r = await rpc("tools/call", { name: "web_fetch", arguments: { url: "http://127.0.0.1:1/" } }, s, { ...gw(s, GW, request), "aviary-sandbox-person": "Staff@EXAMPLE.com" });
   assert.equal(r.status, 200);
   await calls.flush();
   const { rows } = await q("select conversation_id, sandbox_id, user_email, request, turn_id from tool_calls order by id desc limit 1");
@@ -248,7 +248,7 @@ test("owner: Aviary-Sandbox-Person (lowercased) fills tool_calls; the catalogue 
   hermit.answers.set(unknown.id, "unknown");
   assert.equal((await rpc("tools/list", {}, unknown)).status, 403);
   const theirs = sandbox();
-  assert.equal((await rpc("tools/list", {}, { ...theirs, person: "staff2@yyc.hk" })).status, 403, "another person");
+  assert.equal((await rpc("tools/list", {}, { ...theirs, person: "staff2@example.com" })).status, 403, "another person");
   assert.equal((await rpc("tools/list", {}, { ...theirs, conversationId: randomUUID() })).status, 403, "another conversation");
   // a person the catalogue does not list
   const outsider = sandbox({ person: "someone@else.example" });
@@ -423,9 +423,9 @@ test("config, catalogue and migrations", async () => {
   assert.throws(() => checkConfigEnv(deps.config, { ...deps.env, UP_TOKEN: "" }), /UP_TOKEN/);
   checkConfigEnv(deps.config, deps.env);
 
-  assert.deepEqual(parseCatalogue('{"users": ["@yyc.hk", "A@x.org"], "admins": ["a@x.org"]}'), { users: ["@yyc.hk", "a@x.org"], admins: ["a@x.org"] });
+  assert.deepEqual(parseCatalogue('{"users": ["@example.com", "A@x.org"], "admins": ["a@x.org"]}'), { users: ["@example.com", "a@x.org"], admins: ["a@x.org"] });
   assert.ok("refused" in parseCatalogue('{"users": []}'));
-  assert.ok("refused" in parseCatalogue('{"users": ["@yyc.hk"], "admins": ["b@x.org"]}'), "an admin users does not match");
+  assert.ok("refused" in parseCatalogue('{"users": ["@example.com"], "admins": ["b@x.org"]}'), "an admin users does not match");
   assert.ok("refused" in parseCatalogue("not json"));
   // a refused file keeps the last good catalogue
   const c = new Catalogue(catalogueFile());
@@ -434,8 +434,8 @@ test("config, catalogue and migrations", async () => {
   assert.equal(await c.reload(), true);
   assert.equal(c.allowed(owner), true);
   assert.equal(c.refused, 1);
-  assert.equal(c.allowed("x@sub.yyc.hk"), false, "no subdomain matching");
-  writeFileSync(catalogueFile(), JSON.stringify({ users: ["@yyc.hk", "guest@example.org"], admins: ["admin@yyc.hk"] }));
+  assert.equal(c.allowed("x@sub.example.com"), false, "no subdomain matching");
+  writeFileSync(catalogueFile(), JSON.stringify({ users: ["@example.com", "guest@example.org"], admins: ["admin@example.com"] }));
   assert.equal(new Catalogue(join(dir, "missing.json")).loaded, false);
   assert.equal(await new Catalogue(join(dir, "missing.json")).reload(), false);
 
@@ -570,12 +570,12 @@ test("upstream MCP: listed read-only tools are proxied with the staff member's i
   assert.equal(up.headers.authorization, "Bearer up");
   assert.equal(up.headers["x-yyc-user"], owner);
   // another person's sandbox: their own email, never the listing identity or another caller's
-  const other = sandbox({ person: "other@yyc.hk" });
+  const other = sandbox({ person: "other@example.com" });
   const r2 = (await rpc("tools/call", { name: "yyc_posts_search", arguments: { query: "y" } }, other)).body.result;
-  assert.equal(textOf(r2), "called posts_search for other@yyc.hk");
+  assert.equal(textOf(r2), "called posts_search for other@example.com");
   // the tool list is read as the upstream's listAs
   const listing = fakes.seen.filter((s) => s.path === "/mcp-up" && s.body?.method === "tools/list").at(-1)!;
-  assert.equal(listing.headers["x-yyc-user"], "lister@yyc.hk");
+  assert.equal(listing.headers["x-yyc-user"], "lister@example.com");
 
   // not listed (Send-Mail, a new read-only tool) or listed but marked as writing (post_delete): never offered, never run
   const before = fakes.seen.filter((s) => s.body?.method === "tools/call").length;
