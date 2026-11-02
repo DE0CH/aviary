@@ -1316,6 +1316,27 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 [[package]]
 name = "hermit"
 version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "aviary-conformance",
+ "aviary-core",
+ "aviary-fakes",
+ "aviary-pg",
+ "axum",
+ "clap",
+ "hermit-api",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "supervisor-api",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "uuid",
+]
 
 [[package]]
 name = "hermit-api"
