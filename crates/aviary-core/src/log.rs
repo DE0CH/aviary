@@ -117,6 +117,7 @@ impl Sink for Capture {
 /// before or without the layer (the start failure line of [`crate::env`]).
 static SVC: OnceLock<String> = OnceLock::new();
 static POD: OnceLock<String> = OnceLock::new();
+static OUTPUT: OnceLock<Output> = OnceLock::new();
 
 /// The service name set by [`init`], if any.
 pub(crate) fn svc_name() -> Option<&'static str> {
@@ -128,10 +129,16 @@ pub(crate) fn pod_name() -> Option<&'static str> {
     POD.get().map(String::as_str)
 }
 
+/// Where [`init`] (or [`init_in_pod`]) sends log lines; stdout before either has run.
+pub(crate) fn output() -> Output {
+    OUTPUT.get().copied().unwrap_or(Output::Stdout)
+}
+
 /// Installs the JSON layer (level `info` and above) as the global subscriber for service `build`.
 /// A second call is ignored.
 pub fn init(build: &Build, pod: Option<String>, output: Output) {
     let _ = SVC.set(build.name().to_owned());
+    let _ = OUTPUT.set(output);
     if let Some(p) = &pod {
         let _ = POD.set(p.clone());
     }
@@ -144,6 +151,7 @@ pub fn init(build: &Build, pod: Option<String>, output: Output) {
 /// [`crate::env::field`], so a missing `POD_NAME` aborts with a line that already carries `svc` and `ver`.
 pub fn init_in_pod(build: &Build, output: Output) {
     let _ = SVC.set(build.name().to_owned());
+    let _ = OUTPUT.set(output);
     let pod = crate::env::field("POD_NAME");
     init(build, Some(pod), output);
 }
@@ -377,13 +385,20 @@ pub fn person_key(email: &str) -> String {
 /// 1. `Bearer <x>`, `Basic <x>` (any case) → `Bearer [redacted]`, `Basic [redacted]`, when `<x>` is token-shaped
 ///    (token68 characters, and a digit, a symbol, mixed case or 20+ characters: `Basic info` is prose and stays);
 /// 2. userinfo in a URL, `scheme://user:pass@host` or `scheme://token@host` → `scheme://[redacted]@host`, up to the
-///    last `@` before the host (a raw `@` in a password does not leak the rest);
+///    last `@` before the host (a raw `@` in a password does not leak the rest); a `user:` followed by something that
+///    is not a port and no `@` before the first `/`, `?` or `#` is a password holding those characters raw, and runs
+///    to the URL's last `@` (`postgresql://u:ab/cd@host/db` → `postgresql://[redacted]@host/db`);
 /// 3. an email, `local@domain.tld` or its percent-encoded form `local%40domain.tld` → its [`person_key`] (the log
 ///    identity of a person, so the line stays searchable);
 /// 4. a parameter, field or header whose name contains `token`, `key`, `secret`, `password`, `passwd`,
-///    `authorization`, `signature` or `sig` (any case), followed by `=` or `:` with optional quotes and whitespace
-///    (`api_key=…`, `{"password":"…"}`, `Config { token: "…" }`, `authorization: …`) → `<name><sep>[redacted]`;
-///    `person_key` is exempt (it is the log identity, not a credential);
+///    `authorization`, `signature`, `sig` or `cookie` (any case), followed by `=` or `:` with optional quotes and
+///    whitespace (`api_key=…`, `{"password":"…"}`, `Config { token: "…" }`, `authorization: …`), or a wrapper so
+///    named (`Secret("…")`, `ApiKey(…)`) → the value becomes `[redacted]`: a quoted value up to its closing quote
+///    (spaces and escaped quotes included), else one word; Debug wrappers before it are skipped
+///    (`password: Some("…")` → `password: Some("[redacted]")`; a bare `None` stays); after `Bearer `/`Basic ` the
+///    next word whatever its shape (`Authorization: Bearer abc` → `Authorization: Bearer [redacted]`); an unquoted
+///    `cookie`/`set-cookie` value up to the end of the line; `person_key` is exempt (it is the log identity, not a
+///    credential);
 /// 5. hermit's tokens, `hst1.…` and `hct_…` → `[redacted]` (whole, however short);
 /// 6. any other run of 24 or more characters from `[A-Za-z0-9_\-+/=.]` and `%XX` escapes → `[redacted]`, except
 ///    UUIDs, person keys and RFC 3339 times, which are kept (inside a longer run they are kept and the pieces around
@@ -478,30 +493,48 @@ fn userinfo(s: &str) -> String {
     while i + 3 <= b.len() {
         if &b[i..i + 3] == b"://" {
             let start = i + 3;
-            let mut j = start;
-            let mut last_at = None;
-            // the authority ends at the path, query or fragment; userinfo ends at its last `@`
-            while j < b.len()
-                && !b[j].is_ascii_whitespace()
-                && !matches!(b[j], b'/' | b'?' | b'#' | b'"' | b'\'' | b'<' | b'>' | b'[' | b']')
-            {
-                if b[j] == b'@' {
-                    last_at = Some(j);
-                }
-                j += 1;
+            // the URL ends at whitespace, a quote or an angle bracket
+            let mut end = start;
+            while end < b.len() && !b[end].is_ascii_whitespace() && !matches!(b[end], b'"' | b'\'' | b'<' | b'>') {
+                end += 1;
             }
-            if let Some(at) = last_at.filter(|at| *at > start && &s[start..*at] != REDACTED) {
+            // the authority, as a URL parser reads it, ends at the path, query or fragment
+            let auth_end = (start..end)
+                .find(|k| matches!(b[*k], b'/' | b'?' | b'#'))
+                .unwrap_or(end);
+            let last_at = |from: usize, to: usize| (from..to).rev().find(|k| b[*k] == b'@');
+            // userinfo ends at the authority's last `@`; with none there, a `user:` followed by something other than
+            // a port is a password holding a raw `/`, `?` or `#`, which then runs to the URL's last `@`
+            let at = last_at(start, auth_end).or_else(|| {
+                raw_reserved_password(&b[start..auth_end])
+                    .then(|| last_at(auth_end, end))
+                    .flatten()
+            });
+            if let Some(at) = at.filter(|at| *at > start && &s[start..*at] != REDACTED) {
                 out.push_str(&s[copied..start]);
                 out.push_str(REDACTED);
                 copied = at;
             }
-            i = j.max(i + 3);
+            i = end.max(i + 3);
             continue;
         }
         i += 1;
     }
     out.push_str(&s[copied..]);
     out
+}
+
+/// Whether an authority without `@` reads as `user:<start of a password>` rather than `host[:port]`: it has a `:`
+/// outside an IPv6 literal and what follows is not a port (digits only).
+fn raw_reserved_password(auth: &[u8]) -> bool {
+    if auth.first() == Some(&b'[') {
+        return false;
+    }
+    let Some(colon) = auth.iter().position(|c| *c == b':') else {
+        return false;
+    };
+    let rest = &auth[colon + 1..];
+    rest.is_empty() || !rest.iter().all(u8::is_ascii_digit)
 }
 
 fn is_local(b: u8) -> bool {
@@ -573,16 +606,41 @@ fn is_param_name(b: u8) -> bool {
     b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-')
 }
 
-/// jarvis3's names; `sig` also covers `signature`.
-const SECRET_NAMES: &[&str] = &["token", "key", "secret", "password", "passwd", "authorization", "sig"];
+/// jarvis3's names (`sig` also covers `signature`), and `cookie` (platform 15.1: cookies are never logged; it also
+/// covers `set-cookie`).
+const SECRET_NAMES: &[&str] = &[
+    "token",
+    "key",
+    "secret",
+    "password",
+    "passwd",
+    "authorization",
+    "sig",
+    "cookie",
+];
 
 /// Names that contain a secret word but are not secrets.
 const NOT_SECRET_NAMES: &[&str] = &["person_key"];
 
-/// The end of a parameter separator at `i`: `["']?\s*[=:]\s*["']?` (jarvis3's), if one is there.
-fn separator_end(b: &[u8], mut i: usize) -> Option<usize> {
-    if i < b.len() && matches!(b[i], b'"' | b'\'') {
-        i += 1;
+/// The quote a value opened with: `"` or `'`, or `\"` or `\'` inside a string that was itself escaped (the Debug
+/// of a Debug string).
+type Quote = &'static [u8];
+
+fn quote_at(b: &[u8], i: usize) -> Option<Quote> {
+    match (b.get(i), b.get(i + 1)) {
+        (Some(b'"'), _) => Some(b"\""),
+        (Some(b'\''), _) => Some(b"'"),
+        (Some(b'\\'), Some(b'"')) => Some(b"\\\""),
+        (Some(b'\\'), Some(b'\'')) => Some(b"\\'"),
+        _ => None,
+    }
+}
+
+/// The end of a parameter separator at `i`, `["']?\s*[=:]\s*["']?` (jarvis3's), and the quote it opened, if one is
+/// there.
+fn separator_end(b: &[u8], mut i: usize) -> Option<(usize, Option<Quote>)> {
+    if let Some(q) = quote_at(b, i) {
+        i += q.len();
     }
     while i < b.len() && b[i].is_ascii_whitespace() {
         i += 1;
@@ -594,10 +652,70 @@ fn separator_end(b: &[u8], mut i: usize) -> Option<usize> {
     while i < b.len() && b[i].is_ascii_whitespace() {
         i += 1;
     }
-    if i < b.len() && matches!(b[i], b'"' | b'\'') {
+    match quote_at(b, i) {
+        Some(q) => Some((i + q.len(), Some(q))),
+        None => Some((i, None)),
+    }
+}
+
+/// Skips Debug wrappers before a value, `Some(`, `Secret(`, `Some(Secret(` (any `Ident(`), and the quote after
+/// them; returns the value's start and its quote.
+fn skip_wrappers(b: &[u8], mut i: usize) -> (usize, Option<Quote>) {
+    loop {
+        let mut j = i;
+        if j < b.len() && (b[j].is_ascii_alphabetic() || b[j] == b'_') {
+            while j < b.len() && is_word(b[j]) {
+                j += 1;
+            }
+            if b.get(j) == Some(&b'(') {
+                i = j + 1;
+                continue;
+            }
+        }
+        break;
+    }
+    match quote_at(b, i) {
+        Some(q) => (i + q.len(), Some(q)),
+        None => (i, None),
+    }
+}
+
+/// The end of a quoted value starting at `i`: the closing `quote` (a backslash escapes the next character), or the
+/// end of the string.
+fn quoted_end(b: &[u8], mut i: usize, quote: Quote) -> usize {
+    while i < b.len() {
+        if b[i..].starts_with(quote) {
+            return i;
+        }
+        i += if b[i] == b'\\' { 2 } else { 1 };
+    }
+    b.len()
+}
+
+/// The end of an unquoted value starting at `i` (jarvis3's terminators, and `)` closing a wrapper).
+fn word_end(b: &[u8], mut i: usize) -> usize {
+    while i < b.len() && !b[i].is_ascii_whitespace() && !matches!(b[i], b'"' | b'\'' | b'&' | b',' | b';' | b'}' | b')')
+    {
         i += 1;
     }
-    Some(i)
+    i
+}
+
+/// The length of `Bearer`/`Basic` and the blanks after it, when the value at `i` starts with a scheme and a word
+/// follows it.
+fn scheme_len(b: &[u8], i: usize) -> Option<usize> {
+    let word = [b"bearer".as_slice(), b"basic".as_slice()]
+        .into_iter()
+        .find(|w| starts_with_ignore_case(&b[i..], w))?
+        .len();
+    let mut j = i + word;
+    if !b.get(j).is_some_and(|c| *c == b' ' || *c == b'\t') {
+        return None;
+    }
+    while j < b.len() && (b[j] == b' ' || b[j] == b'\t') {
+        j += 1;
+    }
+    Some(j - i)
 }
 
 /// Rule 4.
@@ -619,23 +737,36 @@ fn secret_params(s: &str) -> String {
         }
         let name = s[name_start..name_end].to_ascii_lowercase();
         let secret = SECRET_NAMES.iter().any(|w| name.contains(w)) && !NOT_SECRET_NAMES.contains(&name.as_str());
-        if let Some(value_start) = secret.then(|| separator_end(b, name_end)).flatten() {
-            let mut j = value_start;
-            while j < b.len()
-                && !b[j].is_ascii_whitespace()
-                && !matches!(b[j], b'"' | b'\'' | b'&' | b',' | b';' | b'}')
-            {
-                j += 1;
+        let value = if !secret {
+            None
+        } else if b.get(name_end) == Some(&b'(') {
+            // a wrapper named like a secret, `Secret("…")`, `ApiKey(…)`
+            Some(skip_wrappers(b, name_end + 1))
+        } else {
+            separator_end(b, name_end).map(|(at, quote)| match quote {
+                Some(q) => (at, Some(q)),
+                None => skip_wrappers(b, at),
+            })
+        };
+        if let Some((mut value_start, quote)) = value {
+            // after `Bearer `/`Basic ` the next word is the credential, whatever its shape
+            if let Some(n) = scheme_len(b, value_start) {
+                value_start += n;
             }
-            let value = &s[value_start..j];
-            // already redacted, or an auth scheme rule 1 has dealt with (`authorization: Bearer [redacted]`)
-            let scheme_follows = (value.eq_ignore_ascii_case("bearer") || value.eq_ignore_ascii_case("basic"))
-                && b.get(j).is_some_and(u8::is_ascii_whitespace);
-            if j > value_start && !value.starts_with(REDACTED) && !scheme_follows {
+            let end = match quote {
+                Some(q) => quoted_end(b, value_start, q),
+                // a cookie header's value is the rest of the line (`a=1; b=2`)
+                None if name.ends_with("cookie") => (value_start..b.len())
+                    .find(|k| matches!(b[*k], b'\r' | b'\n'))
+                    .unwrap_or(b.len()),
+                None => word_end(b, value_start),
+            };
+            let v = &s[value_start..end];
+            if end > value_start && !v.starts_with(REDACTED) && (quote.is_some() || v != "None") {
                 out.push_str(&s[copied..value_start]);
                 out.push_str(REDACTED);
-                copied = j;
-                i = j;
+                copied = end;
+                i = end;
                 continue;
             }
         }
@@ -815,6 +946,22 @@ mod tests {
             redact("postgresql://u:p@ss@[2001:db8::1]:5432/db"),
             "postgresql://[redacted]@[2001:db8::1]:5432/db"
         );
+        // a password holding a raw `/`, `?` or `#`: up to the URL's last `@`
+        assert_eq!(
+            redact("postgresql://u:ab/cd@host/db"),
+            "postgresql://[redacted]@host/db"
+        );
+        assert_eq!(
+            redact("postgresql://u:a?b/c#d@host:5432/db x"),
+            "postgresql://[redacted]@host:5432/db x"
+        );
+        assert_eq!(redact("postgresql://u:/cd@host/db"), "postgresql://[redacted]@host/db");
+        // a port is not a password: an `@` in the path stays
+        assert_eq!(redact("http://magpie:8080/v1/x@y"), "http://magpie:8080/v1/x@y");
+        assert_eq!(
+            redact("http://[2001:db8::1]:8080/v1/x@y"),
+            "http://[2001:db8::1]:8080/v1/x@y"
+        );
         // an `@` in the path is not userinfo
         assert_eq!(redact("http://magpie/v1/x@y"), "http://magpie/v1/x@y");
         // no userinfo: unchanged
@@ -887,12 +1034,75 @@ mod tests {
             redact("Authorization: Bearer abc.def"),
             "Authorization: Bearer [redacted]"
         );
+        // a lowercase word after the scheme, under rule 1's shape test: the name says it is a credential
+        assert_eq!(
+            redact("Authorization: Bearer abcdef"),
+            "Authorization: Bearer [redacted]"
+        );
+        assert_eq!(
+            redact(r#"{"authorization": "Bearer abc"}"#),
+            r#"{"authorization": "Bearer [redacted]"}"#
+        );
+        assert_eq!(redact("authorization: basic xyz"), "authorization: basic [redacted]");
         // person_key is the log identity, not a credential
         let pk = person_key("a@b.example");
         assert_eq!(redact(&format!("person_key={pk}")), format!("person_key={pk}"));
         assert_eq!(
             redact(&format!(r#"{{"person_key":"{pk}"}}"#)),
             format!(r#"{{"person_key":"{pk}"}}"#)
+        );
+    }
+
+    #[test]
+    fn redact_wrapped_secrets() {
+        // Option<String> secrets, the normal Rust config shape
+        assert_eq!(
+            redact(r#"Config { password: Some("hunter2"), token: Some("abc") }"#),
+            r#"Config { password: Some("[redacted]"), token: Some("[redacted]") }"#
+        );
+        assert_eq!(
+            redact(r#"Config { password: Some(Secret("hunter2")), port: Some(5432) }"#),
+            r#"Config { password: Some(Secret("[redacted]")), port: Some(5432) }"#
+        );
+        assert_eq!(
+            redact("Config { token: Some(12345) }"),
+            "Config { token: Some([redacted]) }"
+        );
+        // a newtype named like a secret, with no secret-named field
+        assert_eq!(
+            redact(r#"Config { db: Secret("hunter2xyz"), n: 1 }"#),
+            r#"Config { db: Secret("[redacted]"), n: 1 }"#
+        );
+        assert_eq!(redact(r#"ApiKey("k-1")"#), r#"ApiKey("[redacted]")"#);
+        // nothing to hide
+        assert_eq!(redact("Config { password: None }"), "Config { password: None }");
+        // the Debug of a Debug string: escaped quotes
+        assert_eq!(
+            redact(r#""Config { password: \"a b\" }""#),
+            r#""Config { password: \"[redacted]\" }""#
+        );
+    }
+
+    #[test]
+    fn redact_quoted_values_whole() {
+        assert_eq!(redact(r#"password="a b c" n=1"#), r#"password="[redacted]" n=1"#);
+        assert_eq!(redact("token = 'x y z' n=1"), "token = '[redacted]' n=1");
+        assert_eq!(
+            redact(r#"{"secret":"a \"q\" b","n":1}"#),
+            r#"{"secret":"[redacted]","n":1}"#
+        );
+        // an unclosed quote: the rest goes
+        assert_eq!(redact(r#"password="a b"#), r#"password="[redacted]"#);
+    }
+
+    #[test]
+    fn redact_cookies() {
+        assert_eq!(redact("cookie: session=abc123xyz"), "cookie: [redacted]");
+        assert_eq!(redact("Cookie: a=1; b=2\nnext: line"), "Cookie: [redacted]\nnext: line");
+        assert_eq!(redact("set-cookie: sid=s3cr3tvalue; Path=/"), "set-cookie: [redacted]");
+        assert_eq!(
+            redact(r#"{"set-cookie": "sid=s3cr3tvalue; Path=/", "n": "1"}"#),
+            r#"{"set-cookie": "[redacted]", "n": "1"}"#
         );
     }
 
@@ -938,9 +1148,14 @@ mod tests {
 
     #[test]
     fn redact_is_idempotent() {
-        let once =
-            redact("Bearer abc1 a@b.example postgresql://u:p@h/x?token=t hst1.x Zm9vYmFyYmF6cXV4cXV1eHh4eXl5enp6");
-        assert_eq!(redact(&once), once);
+        for s in [
+            "Bearer abc1 a@b.example postgresql://u:p@h/x?token=t hst1.x Zm9vYmFyYmF6cXV4cXV1eHh4eXl5enp6",
+            r#"Config { password: Some("a b"), k: Secret("x") } cookie: a=1; b=2"#,
+            "Authorization: Bearer abc postgresql://u:a/b@h/x",
+        ] {
+            let once = redact(s);
+            assert_eq!(redact(&once), once);
+        }
     }
 
     // ---- line shape ----

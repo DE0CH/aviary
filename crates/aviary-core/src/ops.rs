@@ -232,13 +232,13 @@ impl Ops {
         &self.inner.build
     }
 
-    /// The Prometheus text of every registered metric.
+    /// The Prometheus text (exposition format 0.0.4) of every registered metric.
     #[must_use]
     pub fn metrics_text(&self) -> String {
         let mut out = String::new();
         // writing into a String does not fail
         let _ = prometheus_client::encoding::text::encode_registry(&mut out, &self.inner.registry);
-        out
+        openmetrics_to_text(&out)
     }
 
     /// The ops routes, with the response defaults of [`crate::http::defaults`].
@@ -268,6 +268,65 @@ impl Ops {
         });
         Ok(local)
     }
+}
+
+/// Rewrites prometheus-client's `OpenMetrics` text as exposition format 0.0.4, which `/metrics` declares (platform
+/// 3.2). `OpenMetrics` names a counter family without its `_total` suffix (`# TYPE magpie_turns counter`, sample
+/// `magpie_turns_total`), and a 0.0.4 parser types only samples named exactly as their `# TYPE` line, so the counter
+/// would read as untyped: its `# HELP` and `# TYPE` lines take the sample's name. `# UNIT` lines, `# EOF`, `_created`
+/// samples of counters and exemplars (none of which 0.0.4 has) are dropped; an `info` family becomes a gauge named
+/// as its sample, `unknown` becomes `untyped`.
+fn openmetrics_to_text(om: &str) -> String {
+    use std::collections::HashMap;
+    use std::fmt::Write as _;
+    let mut kinds: HashMap<&str, &str> = HashMap::new();
+    for line in om.lines() {
+        if let Some(rest) = line.strip_prefix("# TYPE ")
+            && let Some((name, kind)) = rest.split_once(' ')
+        {
+            kinds.insert(name, kind.trim());
+        }
+    }
+    let renamed = |name: &str| -> String {
+        match kinds.get(name).copied() {
+            Some("counter") if !name.ends_with("_total") => format!("{name}_total"),
+            Some("info") if !name.ends_with("_info") => format!("{name}_info"),
+            _ => name.to_owned(),
+        }
+    };
+    let mut out = String::with_capacity(om.len());
+    for line in om.lines() {
+        if line == "# EOF" || line.starts_with("# UNIT ") {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("# HELP ") {
+            let (name, help) = rest.split_once(' ').unwrap_or((rest, ""));
+            let _ = writeln!(out, "# HELP {} {help}", renamed(name));
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("# TYPE ") {
+            let (name, kind) = rest.split_once(' ').unwrap_or((rest, "untyped"));
+            let kind = match kind.trim() {
+                "counter" => "counter",
+                "gauge" | "info" | "stateset" => "gauge",
+                "histogram" => "histogram",
+                "summary" => "summary",
+                _ => "untyped",
+            };
+            let _ = writeln!(out, "# TYPE {} {kind}", renamed(name));
+            continue;
+        }
+        let sample = line.split(" # ").next().unwrap_or(line);
+        let name_end = sample.find(['{', ' ']).unwrap_or(sample.len());
+        let created_of_counter = sample[..name_end]
+            .strip_suffix("_created")
+            .is_some_and(|family| kinds.get(family) == Some(&"counter"));
+        if !created_of_counter {
+            out.push_str(sample);
+            out.push('\n');
+        }
+    }
+    out
 }
 
 async fn healthz() -> Response {
@@ -384,6 +443,22 @@ mod tests {
         assert_eq!(v["accepts"], serde_json::json!({"magpie-sandbox": [1, 2]}));
     }
 
+    #[test]
+    fn openmetrics_is_rewritten_as_text_0_0_4() {
+        let om = "# HELP a_requests Requests.\n# TYPE a_requests counter\n# UNIT a_requests requests\n\
+                  a_requests_total{route=\"x\"} 3 # {trace=\"t\"} 1.0\na_requests_created 1.7e9\n\
+                  # HELP a_up Up.\n# TYPE a_up gauge\na_up 1\n\
+                  # HELP a_build Build.\n# TYPE a_build info\na_build_info{v=\"1\"} 1\n\
+                  # HELP a_odd Odd.\n# TYPE a_odd unknown\na_odd 2\n# EOF\n";
+        assert_eq!(
+            openmetrics_to_text(om),
+            "# HELP a_requests_total Requests.\n# TYPE a_requests_total counter\na_requests_total{route=\"x\"} 3\n\
+             # HELP a_up Up.\n# TYPE a_up gauge\na_up 1\n\
+             # HELP a_build_info Build.\n# TYPE a_build_info gauge\na_build_info{v=\"1\"} 1\n\
+             # HELP a_odd Odd.\n# TYPE a_odd untyped\na_odd 2\n"
+        );
+    }
+
     #[tokio::test]
     async fn metrics_has_build_info_and_draining() {
         let (ops, base, c) = start().await;
@@ -400,6 +475,11 @@ mod tests {
         assert!(text.contains("\nmagpie_draining 0\n"), "{text}");
         assert!(text.contains("magpie_turns_total 1"), "{text}");
         assert!(!text.contains("# EOF"), "0.0.4 text has no EOF marker: {text}");
+        // a 0.0.4 parser types a sample by the `# TYPE` line of exactly its name
+        assert!(text.contains("# TYPE magpie_turns_total counter\n"), "{text}");
+        assert!(text.contains("# HELP magpie_turns_total "), "{text}");
+        assert!(!text.contains("# TYPE magpie_turns counter"), "{text}");
+        assert!(!text.contains("# UNIT"), "{text}");
 
         ops.readiness().set_draining();
         let text = c

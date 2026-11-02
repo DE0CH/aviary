@@ -74,7 +74,8 @@ postgres-types = { version = "=0.2.14", features = ["derive", "with-uuid-1", "wi
 uuid = { version = "=1.29.0", features = ["v4", "v7", "serde"] }
 time = { version = "=0.3.55", features = ["serde", "formatting", "parsing", "macros"] }
 chrono-tz = "=0.10.4"
-tracing = "=0.1.44"
+# debug and trace calls are compiled out of release builds (platform 4.3: debug logs exist only in tests)
+tracing = { version = "=0.1.44", features = ["release_max_level_info"] }
 # env-filter off: levels are compiled-in defaults (platform 4.3)
 tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["std", "fmt", "json", "registry"] }
 prometheus-client = "=0.25.2"

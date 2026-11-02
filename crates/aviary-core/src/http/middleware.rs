@@ -97,20 +97,23 @@ pub async fn defaults(req: Request, next: Next) -> Response {
     r
 }
 
-/// The envelope code for an error status that was not answered with an envelope: platform 3.6's codes, plus
-/// `method_not_allowed` (405) and `internal` (500 and any status a handler should have answered with its own
-/// envelope), the two codes hermit's contract also uses, which 3.6's list does not name.
+/// The envelope code for an error status that was not answered with an envelope: platform 3.6's codes (403
+/// `wrong_caller`, 410 `cursor_expired`), plus `method_not_allowed` (405) and `internal` (500), the two codes
+/// hermit's contract also uses, which 3.6's list does not name. Any other 4xx is a client error, `bad_request`
+/// (409, 412, 416, 431…; the status itself is kept); any other 5xx is `internal`.
 fn code_for(status: StatusCode) -> &'static str {
     match status.as_u16() {
-        400 | 411 | 422 => "bad_request",
         401 => "unauthenticated",
+        403 => "wrong_caller",
         404 => "not_found",
         405 => "method_not_allowed",
+        410 => "cursor_expired",
         413 => "too_large",
         415 => "unsupported_type",
         429 => "rate_limited",
         408 | 502 | 503 | 504 => "unavailable",
         507 => "quota_exceeded",
+        400..=499 => "bad_request",
         _ => "internal",
     }
 }
@@ -426,6 +429,43 @@ mod tests {
             v,
             serde_json::json!({"code": "turn_active", "message": "a turn is running", "turnId": "t1"})
         );
+    }
+
+    #[test]
+    fn unenveloped_statuses_get_a_code_of_their_class() {
+        let code = |n: u16| code_for(StatusCode::from_u16(n).unwrap());
+        assert_eq!(code(403), "wrong_caller");
+        assert_eq!(code(410), "cursor_expired");
+        // client errors without a code of their own stay client errors
+        for n in [400, 409, 411, 412, 416, 418, 422, 431] {
+            assert_eq!(code(n), "bad_request", "{n}");
+        }
+        for n in [500, 501, 505] {
+            assert_eq!(code(n), "internal", "{n}");
+        }
+        assert_eq!(code(503), "unavailable");
+    }
+
+    #[tokio::test]
+    async fn bare_client_errors_are_not_server_faults() {
+        let base = bind(standard(
+            Router::new()
+                .route("/forbidden", get(|| async { StatusCode::FORBIDDEN }))
+                .route("/conflict", get(|| async { StatusCode::CONFLICT }))
+                .route("/range", get(|| async { StatusCode::RANGE_NOT_SATISFIABLE })),
+            1024,
+        ))
+        .await;
+        let c = client();
+        for (path, status, code) in [
+            ("forbidden", 403, "wrong_caller"),
+            ("conflict", 409, "bad_request"),
+            ("range", 416, "bad_request"),
+        ] {
+            let r = c.get(format!("{base}/{path}")).send().await.unwrap();
+            assert_eq!(r.status().as_u16(), status);
+            assert_eq!(r.json::<serde_json::Value>().await.unwrap()["code"], code, "{path}");
+        }
     }
 
     #[tokio::test]

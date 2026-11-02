@@ -17,6 +17,11 @@ const POOL_IDLE: Duration = Duration::from_secs(90);
 const POOL_PER_HOST: usize = 32;
 /// Connect timeout of every call (each call sets its own overall timeout where its spec names one).
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// The default bound on a stalled call: how long a read may wait for the next bytes of an answer (the head, or the
+/// next chunk of a body). It bounds a call whose site forgot its own `.timeout()`, and is long enough for every
+/// held-open answer of the platform (long-polls of 25-30 s, 3.11.5) and for streams that send nothing for a while.
+/// A client whose callee stays silent longer overrides it on the builder (`.read_timeout(…)`).
+pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(120);
 /// TCP keepalive.
 const TCP_KEEPALIVE: Duration = Duration::from_secs(60);
 
@@ -51,7 +56,10 @@ pub fn tls_config() -> rustls::ClientConfig {
 
 /// A `reqwest` builder for calls from service `build` to one surface: TLS of [`tls_config`], `User-Agent:
 /// <svc>/<sha12>`, `Aviary-Protocol: <surface>=<n>` on every request when `protocol` is given (one client per callee
-/// surface), HTTP/1.1 with a keep-alive pool, a 5 s connect timeout. Each call sets its own timeout.
+/// surface), HTTP/1.1 with a keep-alive pool, a 5 s connect timeout and a [`DEFAULT_READ_TIMEOUT`] read timeout.
+/// Each call sets its own overall timeout (`RequestBuilder::timeout`) where its spec names one; under
+/// [`crate::http::retry::send`] that timeout applies to each attempt, so the worst case is
+/// [`crate::http::retry::Backoff::worst_case`].
 pub fn client_builder(build: &Build, protocol: Option<Protocol>) -> reqwest::ClientBuilder {
     let mut headers = HeaderMap::new();
     if let Some(p) = protocol
@@ -67,6 +75,7 @@ pub fn client_builder(build: &Build, protocol: Option<Protocol>) -> reqwest::Cli
         .pool_idle_timeout(POOL_IDLE)
         .pool_max_idle_per_host(POOL_PER_HOST)
         .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(DEFAULT_READ_TIMEOUT)
         .tcp_keepalive(TCP_KEEPALIVE)
 }
 
@@ -131,6 +140,27 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(got, format!("pigeon/{}|", crate::version::sha12()));
+    }
+
+    #[tokio::test]
+    async fn a_stalled_callee_does_not_hang_a_call_forever() {
+        // a callee that accepts and never answers; the builder's read timeout ends the call
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                held.push(sock);
+            }
+        });
+        let c = client_builder(&Build::new("test"), None)
+            .read_timeout(Duration::from_millis(200))
+            .build()
+            .unwrap();
+        let started = std::time::Instant::now();
+        let e = c.get(format!("http://{addr}/x")).send().await.unwrap_err();
+        assert!(e.is_timeout(), "{e}");
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[test]

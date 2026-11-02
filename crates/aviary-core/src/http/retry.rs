@@ -53,6 +53,18 @@ impl Default for Backoff {
 }
 
 impl Backoff {
+    /// The longest [`send`] can take when each attempt is bounded by `per_attempt` (the call's own timeout): every
+    /// attempt, plus a wait of at most `max` before each retry (a jittered wait, or `retry-after` capped at `max`).
+    /// With the default schedule and a 10 s call timeout, 55 s. A caller with a total deadline picks `attempts` and
+    /// its timeout so this stays inside it.
+    #[must_use]
+    pub fn worst_case(&self, per_attempt: Duration) -> Duration {
+        let attempts = self.attempts.max(1);
+        per_attempt
+            .saturating_mul(attempts)
+            .saturating_add(self.max.saturating_mul(attempts - 1))
+    }
+
     /// The wait before retry `n` (1-based).
     #[must_use]
     pub fn delay(&self, n: u32) -> Duration {
@@ -261,6 +273,20 @@ mod tests {
             .unwrap_err();
         assert!(e.is_connect());
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn worst_case_counts_attempts_and_waits() {
+        // 4 attempts of 10 s, and 3 waits each raised up to 5 s by retry-after
+        assert_eq!(
+            Backoff::default().worst_case(Duration::from_secs(10)),
+            Duration::from_secs(55)
+        );
+        let once = Backoff {
+            attempts: 1,
+            ..Backoff::default()
+        };
+        assert_eq!(once.worst_case(Duration::from_secs(3)), Duration::from_secs(3));
     }
 
     #[test]

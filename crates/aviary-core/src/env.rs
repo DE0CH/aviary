@@ -3,12 +3,13 @@
 //!
 //! A service reads only declared secrets, bindings and downward-API facts, each required: a missing or empty value
 //! aborts start with one JSON line `{"msg":"missing env","name":…}` (the name, never a value) and exit code
-//! [`EXIT_CONFIG`]. There is no optional configuration: what differs between deployments is an answer from another
+//! [`EXIT_CONFIG`]; a value that is present but unusable (a token shared by two callers, [`crate::auth`]) aborts
+//! the same way with `{"msg":"invalid env",…}`. The line goes where [`crate::log::init`] sends logs (stdout, or
+//! stderr for the supervisor), stdout when the variable is read before that. There is no optional configuration: what differs between deployments is an answer from another
 //! service, not an environment switch.
 
 use std::ffi::OsString;
 use std::fmt;
-use std::io::Write;
 
 /// Exit code of a start aborted by a missing or empty variable (`EX_CONFIG` of sysexits.h).
 pub const EXIT_CONFIG: i32 = 78;
@@ -55,7 +56,8 @@ impl fmt::Display for EnvError {
 
 impl std::error::Error for EnvError {}
 
-/// A required value (a secret or a binding). Aborts start when it is unset, empty or not UTF-8.
+/// A required value (a secret or a binding), trimmed (a Secret written with a trailing newline gives the same value
+/// the callee side compares). Aborts start when it is unset, empty or not UTF-8.
 #[must_use]
 pub fn required(name: &str) -> String {
     try_required(name).unwrap_or_else(|e| abort(&e))
@@ -94,14 +96,20 @@ pub fn try_required_list(name: &str) -> Result<Vec<String>, EnvError> {
 /// The rule of [`required`] over any lookup (tests pass a map).
 ///
 /// # Errors
-/// When `get` has no value, an empty or whitespace-only value, or one that is not UTF-8.
+/// When `get` has no value, an empty or whitespace-only value, or one that is not UTF-8. The value is returned
+/// trimmed.
 pub fn required_from(name: &str, get: impl Fn(&str) -> Option<OsString>) -> Result<String, EnvError> {
     let value = get(name).ok_or_else(|| EnvError::Missing(name.to_owned()))?;
     let value = value.into_string().map_err(|_| EnvError::NotUnicode(name.to_owned()))?;
-    if value.trim().is_empty() {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
         return Err(EnvError::Empty(name.to_owned()));
     }
-    Ok(value)
+    Ok(if trimmed.len() == value.len() {
+        value
+    } else {
+        trimmed.to_owned()
+    })
 }
 
 /// The rule of [`required_list`] over any lookup.
@@ -145,32 +153,37 @@ fn process_env(name: &str) -> Option<OsString> {
     std::env::var_os(name)
 }
 
-/// Writes the start failure line and exits with [`EXIT_CONFIG`]. Logging may not be set up yet, so the line is
-/// written directly, in the log line's shape (15.1): the fixed fields `t`, `level`, `svc`, `ver`, `pod` (when
-/// known) and `msg` in that order, then the variable's name and why, never a value. `svc` is the service named by
-/// [`crate::log::init`] or [`crate::log::init_in_pod`], or the binary's name (each binary is named after its
-/// service) when the variable is read before that.
+/// Writes the start failure line for a missing or empty variable and exits with [`EXIT_CONFIG`].
 fn abort(e: &EnvError) -> ! {
-    let line = abort_line(e);
-    let mut out = std::io::stdout().lock();
-    let _ = writeln!(out, "{line}");
-    let _ = out.flush();
+    abort_start("missing env", e.name(), e.reason())
+}
+
+/// Ends start with one JSON line and exit code [`EXIT_CONFIG`]: `msg`, the variable's `name` and `why` it cannot
+/// be used, never a value. Logging may not be set up yet, so the line is written directly, in the log line's shape
+/// (15.1): the fixed fields `t`, `level`, `svc`, `ver`, `pod` (when known) and `msg` in that order. `svc` is the
+/// service named by [`crate::log::init`] or [`crate::log::init_in_pod`], or the binary's name (each binary is named
+/// after its service) when the variable is read before that; the line goes to that call's output, else stdout.
+pub(crate) fn abort_start(msg: &str, name: &str, why: &str) -> ! {
+    let mut line = abort_line(msg, name, why);
+    line.push('\n');
+    crate::log::Sink::write_line(&crate::log::output(), line.as_bytes());
     std::process::exit(EXIT_CONFIG)
 }
 
-fn abort_line(e: &EnvError) -> String {
+fn abort_line(msg: &str, name: &str, why: &str) -> String {
     let q = |v: &str| serde_json::to_string(v).unwrap_or_default();
     let svc = crate::log::svc_name().map_or_else(crate::version::program, str::to_owned);
     let pod = crate::log::pod_name()
         .map(|p| format!(r#","pod":{}"#, q(p)))
         .unwrap_or_default();
     format!(
-        r#"{{"t":{},"level":"error","svc":{},"ver":{}{pod},"msg":"missing env","name":{},"why":{}}}"#,
+        r#"{{"t":{},"level":"error","svc":{},"ver":{}{pod},"msg":{},"name":{},"why":{}}}"#,
         q(&crate::log::now()),
         q(&svc),
         q(crate::version::sha12()),
-        q(e.name()),
-        q(e.reason()),
+        q(msg),
+        q(name),
+        q(why),
     )
 }
 
@@ -188,6 +201,13 @@ mod tests {
     #[test]
     fn required_reads_a_value() {
         assert_eq!(required_from("A", lookup(&[("A", "x")])).unwrap(), "x");
+    }
+
+    #[test]
+    fn required_trims_the_value() {
+        // a Secret written with a trailing newline gives the token the callee side compares
+        assert_eq!(required_from("A", lookup(&[("A", "tok-1\n")])).unwrap(), "tok-1");
+        assert_eq!(required_from("A", lookup(&[("A", " tok-1 \r\n")])).unwrap(), "tok-1");
     }
 
     #[test]
@@ -260,6 +280,18 @@ mod tests {
                 crate::log::init(&build, Some("magpie-7c9".to_owned()), crate::log::Output::Stdout);
                 drop(required(PROBE));
             }
+            Some("named_stderr") => {
+                let build = crate::version::Build::new("supervisor");
+                crate::log::init(&build, None, crate::log::Output::Stderr);
+                drop(required(PROBE));
+            }
+            Some("shared_token") => {
+                // PROBE_ACCEPT_PIGEON and PROBE_ACCEPT_HERMIT hold the same token
+                drop(crate::auth::Callers::from_env(
+                    "AVIARY_CORE_ENV_ABORT_PROBE",
+                    &[crate::auth::Caller::Pigeon, crate::auth::Caller::Hermit],
+                ));
+            }
             _ => {}
         }
         // reached only when the value was usable
@@ -280,6 +312,13 @@ mod tests {
 
     /// [`run_child`], with the line as printed.
     fn run_child_raw(mode: &str, probe: Option<&str>) -> (Option<i32>, String) {
+        let (code, stdout, _) = run_child_env(mode, probe, &[]);
+        (code, stdout)
+    }
+
+    /// Runs [`abort_child`] with `PROBE` set to `probe` (or unset) and the variables of `extra`; returns its exit
+    /// code and the first JSON line it printed on stdout and on stderr.
+    fn run_child_env(mode: &str, probe: Option<&str>, extra: &[(&str, &str)]) -> (Option<i32>, String, String) {
         let mut cmd = Command::new(std::env::current_exe().unwrap());
         cmd.args(["--exact", "env::tests::abort_child", "--nocapture", "--test-threads=1"])
             .env(CHILD, mode);
@@ -287,14 +326,18 @@ mod tests {
             Some(v) => cmd.env(PROBE, v),
             None => cmd.env_remove(PROBE),
         };
+        for (k, v) in extra {
+            cmd.env(k, v);
+        }
         let out = cmd.output().unwrap();
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let line = stdout
-            .lines()
-            // libtest may have written "test … " on the same line before the child exited
-            .find_map(|l| l.find("{\"").map(|at| l[at..].to_owned()))
-            .unwrap_or_default();
-        (out.status.code(), line)
+        // libtest may have written "test … " on the same line before the child exited
+        let first_json = |bytes: &[u8]| {
+            String::from_utf8_lossy(bytes)
+                .lines()
+                .find_map(|l| l.find("{\"").map(|at| l[at..].to_owned()))
+                .unwrap_or_default()
+        };
+        (out.status.code(), first_json(&out.stdout), first_json(&out.stderr))
     }
 
     #[test]
@@ -346,7 +389,8 @@ mod tests {
 
     #[test]
     fn abort_line_has_the_fixed_fields_in_order() {
-        let line = abort_line(&EnvError::Missing("MAGPIE_DATABASE_URL".into()));
+        let e = EnvError::Missing("MAGPIE_DATABASE_URL".into());
+        let line = abort_line("missing env", e.name(), e.reason());
         assert_eq!(
             keys_in_order(&line),
             ["t", "level", "svc", "ver", "msg", "name", "why"],
@@ -372,6 +416,39 @@ mod tests {
             ["t", "level", "svc", "ver", "pod", "msg", "name", "why"],
             "{raw}"
         );
+    }
+
+    #[test]
+    fn abort_line_goes_to_the_log_output() {
+        let (code, stdout, stderr) = run_child_env("named_stderr", None, &[]);
+        assert_eq!(code, Some(EXIT_CONFIG));
+        assert_eq!(stdout, "", "the supervisor logs to stderr");
+        let line: serde_json::Value = serde_json::from_str(&stderr).unwrap();
+        assert_eq!(line["svc"], "supervisor");
+        assert_eq!(line["name"], PROBE);
+    }
+
+    #[test]
+    fn a_shared_token_aborts_like_a_missing_variable() {
+        let (code, stdout, stderr) = run_child_env(
+            "shared_token",
+            None,
+            &[
+                ("AVIARY_CORE_ENV_ABORT_PROBE_ACCEPT_PIGEON", "tok-same"),
+                ("AVIARY_CORE_ENV_ABORT_PROBE_ACCEPT_HERMIT", "tok-other, tok-same"),
+            ],
+        );
+        assert_eq!(code, Some(EXIT_CONFIG), "stderr: {stderr}");
+        let line: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(line["level"], "error");
+        assert_eq!(line["msg"], "invalid env");
+        assert_eq!(line["name"], "AVIARY_CORE_ENV_ABORT_PROBE_ACCEPT_HERMIT");
+        assert_eq!(
+            line["why"],
+            "shares a token with AVIARY_CORE_ENV_ABORT_PROBE_ACCEPT_PIGEON"
+        );
+        assert!(!stdout.contains("tok-same") && !stderr.contains("tok-same"));
+        assert!(!stderr.contains("panicked"), "{stderr}");
     }
 
     #[test]

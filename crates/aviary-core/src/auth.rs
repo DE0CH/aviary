@@ -144,18 +144,23 @@ impl fmt::Debug for Callers {
 
 impl Callers {
     /// The callers of service `callee` (`MAGPIE`, `HERMIT`, …), each from `<CALLEE>_ACCEPT_<CALLER>`. Aborts start
-    /// when any of them is missing or empty ([`env::required_list`]).
+    /// when any of them is missing or empty ([`env::required_list`]), or when two callers are given the same token (a
+    /// misconfigured Secret), with the same JSON line and exit code ([`env::EXIT_CONFIG`], `msg` `invalid env`).
     ///
     /// # Panics
-    /// When `callers` names a caller twice (a programming error), or two callers are given the same token.
+    /// When `callers` names a caller twice: a programming error, which each service's tests catch.
     #[must_use]
     pub fn from_env(callee: &str, callers: &[Caller]) -> Self {
-        let lists = callers
-            .iter()
-            .map(|c| (*c, env::required_list(&format!("{callee}_ACCEPT_{}", c.env_name()))));
-        // required_list already refused empty lists and items; a caller listed twice is a programming error the
-        // tests of each service catch; a token shared by two callers is a misconfigured Secret and fails start
-        Self::new(lists).unwrap_or_else(|e| panic!("{callee} callers: {e}"))
+        let var = |c: Caller| format!("{callee}_ACCEPT_{}", c.env_name());
+        let lists = callers.iter().map(|c| (*c, env::required_list(&var(*c))));
+        // required_list already refused empty lists and items
+        match Self::new(lists) {
+            Ok(callers) => callers,
+            Err(CallersError::SharedToken(a, b)) => {
+                env::abort_start("invalid env", &var(b), &format!("shares a token with {}", var(a)))
+            }
+            Err(e) => panic!("{callee} callers: {e}"),
+        }
     }
 
     /// Callers from explicit token lists.
@@ -278,8 +283,8 @@ impl Guard {
         }
     }
 
-    /// A router of exactly `routes` (path, method router), every one guarded. Merge or nest the result; never add a
-    /// route to it afterwards (see [`Guard`]).
+    /// A router of exactly `routes` (path, method router), every one guarded; an empty router when `routes` is
+    /// empty. Merge or nest the result; never add a route to it afterwards (see [`Guard`]).
     pub fn router<S, P>(self, routes: impl IntoIterator<Item = (P, MethodRouter<S>)>) -> Router<S>
     where
         S: Clone + Send + Sync + 'static,
@@ -293,7 +298,11 @@ impl Guard {
 
     /// The finished `router` with this guard on every route it has now. A route added to the result later is not
     /// guarded (see [`Guard`]); prefer [`Guard::router`].
+    /// A router with no routes comes back as it is (axum refuses a route layer on one; there is nothing to guard).
     pub fn apply<S: Clone + Send + Sync + 'static>(self, router: Router<S>) -> Router<S> {
+        if !router.has_routes() {
+            return router;
+        }
         router.route_layer(axum::middleware::from_fn_with_state(self, check))
     }
 
@@ -518,5 +527,15 @@ mod tests {
         assert_eq!(r.status(), 404);
         let body: serde_json::Value = r.json().await.unwrap();
         assert_eq!(body["code"], "not_found");
+    }
+
+    #[test]
+    fn a_guard_with_no_routes_gives_an_empty_router() {
+        // axum panics on a route layer over a router with no routes; a caller with no routes yet must not
+        let routes: Vec<(&str, MethodRouter)> = Vec::new();
+        let r: Router = callers().guard().allow(Caller::Pigeon, &[]).router(routes);
+        assert!(!r.has_routes());
+        let r: Router = callers().guard().apply(Router::new());
+        assert!(!r.has_routes());
     }
 }
