@@ -18,10 +18,16 @@
 #                                      the AMI with what it holds: image=<manifest digest>, sandboxd=<release>,
 #                                      runsc=<release>, plus the config's tags.
 #   infra.sh --config F current        the launch template's default AMI and its tags (image, sandboxd, runsc)
-#   infra.sh --config F check          exit 0 when that AMI holds exactly the three pins, else 1
+#   infra.sh --config F check          exit 0 when that AMI holds exactly the three pins, else 1 (and says why, also
+#                                      when fabric.sandboxd is not an aviary-<sha12> release or the AMI holds a local
+#                                      build: neither can ever match)
 #   infra.sh --config F sync           makes the template's AMI hold the pins: if `check` fails (or FORCE=1), bakes an
 #                                      AMI from the pins, then `template` and `prune-amis` (the deployment's AMI
-#                                      workflow runs it when a pin changes, hermit spec 14.3)
+#                                      workflow runs it when a pin changes, hermit spec 14.3). Refused (exit 3, nothing
+#                                      baked) with SANDBOXD_BINARY set or a fabric.sandboxd that is not an
+#                                      aviary-<sha12> release: such an AMI is tagged sandboxd=local or never matches
+#                                      the pin, so every run would bake again. A local build goes in with `ami` and
+#                                      `template` by hand.
 #   infra.sh --config F template <ami> launch template (new default version): fabric.aws.instanceType (default m7i.xlarge), that AMI, the SG, a public
 #                                      IPv4 and an IPv6 address, one subnet (one AZ: host-to-host traffic is free),
 #                                      IMDSv2 with hop limit 1, no instance profile, no key pair, gp3 40 GB deleted with
@@ -55,6 +61,8 @@ SCALER_USER=hermit-scaler
 CI_USER=hermit-ami-ci
 
 aws() { command aws --region "$REGION" "$@"; }
+# a pin of sandboxd that an AMI can hold: aviary's release tag (platform 5.4)
+release_pin() { [[ $1 =~ ^aviary-[0-9a-f]{12}$ ]]; }
 # the config's tags plus extra Key=Value pairs, as an EC2 TagSpecification for one resource type
 tagspec() {
   local type=$1; shift
@@ -248,6 +256,12 @@ current)
 check)
   want=$(digest_of "$PIN_IMAGE"); ami=$(cur_ami)
   have=$(ami_tag "$ami" image); have_rel=$(ami_tag "$ami" sandboxd); have_gv=$(ami_tag "$ami" runsc)
+  if ! release_pin "$PIN_SANDBOXD"; then
+    echo "stale: fabric.sandboxd '$PIN_SANDBOXD' is not an aviary-<sha12> release, so no AMI can hold it" >&2; exit 1
+  fi
+  if [ "$have_rel" = local ]; then
+    echo "stale: $ami holds a local sandboxd build (sandboxd=local), which never matches the pin $PIN_SANDBOXD" >&2
+  fi
   if [ -n "$want" ] && [ "$want" = "$have" ] && [ "$PIN_SANDBOXD" = "$have_rel" ] && [ "$PIN_RUNSC" = "$have_gv" ]; then
     echo "ok: $ami holds image $want, sandboxd $have_rel, runsc $have_gv"; exit 0
   fi
@@ -255,6 +269,14 @@ check)
   exit 1
   ;;
 sync)
+  if [ -n "${SANDBOXD_BINARY:-}" ]; then
+    echo "sync bakes only from the pinned release: unset SANDBOXD_BINARY (a local build's AMI is tagged sandboxd=local and never matches the pin, so every sync would bake again; use ami + template by hand)" >&2
+    exit 3
+  fi
+  if ! release_pin "$PIN_SANDBOXD"; then
+    echo "sync refused: fabric.sandboxd '$PIN_SANDBOXD' is not an aviary-<sha12> release (none is published before WP-28's publish job), so a baked AMI could never pass check" >&2
+    exit 3
+  fi
   if [ -z "${FORCE:-}" ] && bash "$here/infra.sh" --config "$CONFIG" check; then exit 0; fi
   new=$(bash "$here/infra.sh" --config "$CONFIG" ami | tail -1)
   [[ $new == ami-* ]] || { echo "bake failed" >&2; exit 1; }

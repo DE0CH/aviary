@@ -52,6 +52,19 @@ AMI_IMAGE=$d run check >/dev/null || fail "check with every pin in place"
 if AMI_IMAGE=${d/d/e} run check >/dev/null 2>&1; then fail "check passes with another image"; fi
 echo "ok  check compares the AMI with the three pins (the image digest from the pinned ref, offline)"
 
+# before a release exists: a local build or a pin that is not a release never loops bakes
+jq '.fabric.sandboxd = "local"' "$t/hermit.json" > "$t/local.json"
+: > "$AWS_LOG"
+if bash "$here/infra.sh" --config "$t/local.json" check 2> "$t/err"; then fail "check passes with fabric.sandboxd local"; fi
+grep -q "not an aviary-<sha12> release" "$t/err" || fail "check does not say why: $(cat "$t/err")"
+rc=0; bash "$here/infra.sh" --config "$t/local.json" sync > /dev/null 2>&1 || rc=$?
+[ "$rc" = 3 ] || fail "sync with fabric.sandboxd local exited $rc, not 3"
+! grep -qE "run-instances|create-image" "$AWS_LOG" || fail "sync baked with fabric.sandboxd local"
+rc=0; SANDBOXD_BINARY=/nonexistent run sync > /dev/null 2>&1 || rc=$?
+[ "$rc" = 3 ] || fail "sync with SANDBOXD_BINARY exited $rc, not 3"
+! grep -qE "run-instances|create-image|import-key-pair" "$AWS_LOG" || fail "sync baked with SANDBOXD_BINARY"
+echo "ok  sync refuses a local build and a pin that is not a release (nothing baked); check says why"
+
 run template ami-0new > /dev/null
 has "create-launch-template-version --launch-template-name test-host"
 grep -F "create-launch-template-version" "$AWS_LOG" | grep -q '"SubnetId":"subnet-0test"' || fail "template subnet"

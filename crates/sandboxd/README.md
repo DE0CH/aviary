@@ -63,8 +63,10 @@ the live contract check, `build` puts the binary in `dist` (checked static, `--v
 the gateway installer image `images/sandboxd` (not pushed).
 
 No `aviary-<sha12>` release is published yet: that is the `publish` job of WP-28 (main only, after every gate). Until
-it exists, `fabric/host/fetch-sandboxd.sh` (and so `setup.sh`, `gateway.sh` and `infra.sh ami`/`sync`) installs
-sandboxd only from a local build or the `dist` artifact, with `SANDBOXD_BINARY=<path>`.
+it exists, `fabric/host/fetch-sandboxd.sh` (and so `setup.sh`, `gateway.sh` and `infra.sh ami`) installs sandboxd
+only from a local build or the `dist` artifact, with `SANDBOXD_BINARY=<path>`. `infra.sh sync` refuses both a local
+build and a `fabric.sandboxd` pin that is not an `aviary-<sha12>` release (exit 3, nothing baked), and `check` says
+why it fails, so the AMI workflow (hermit spec 14.3) cannot bake an AMI on every run before a release exists.
 
 ## Commands
 
