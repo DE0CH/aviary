@@ -1,7 +1,12 @@
+// egress as YYC's sandbox gateway (aviary platform spec 3.11, 17.2): the credential and liveness, the fixed names,
+// self hosts (the package mirror, with real pip and npm), the internet rules, the upload cap, the model route's ZDR,
+// a database outage, the drain, and the in-cluster API. The gateway contract itself is also checked from outside by
+// aviary-conformance in chat.yml's conformance job.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { createServer, request, type IncomingMessage, type Server } from "node:http";
+import { execFile, execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { Agent, createServer, request, type IncomingMessage, type Server } from "node:http";
 import { connect as netConnect, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,19 +14,30 @@ import { after, before, test } from "node:test";
 import { createServer as createTlsServer, connect as tlsConnect } from "node:tls";
 import { randomUUID } from "node:crypto";
 import { gzipSync } from "node:zlib";
-import { sha256hex } from "../src/common/tokens.ts";
-import { Identities } from "../src/egress/identity.ts";
 import { createSocket } from "node:dgram";
 import { HostPolicy, HostRules } from "../src/egress/allowlist.ts";
+import { EgressApi, acceptLists } from "../src/egress/api.ts";
+import { BudgetGate } from "../src/egress/budget.ts";
+import { parseEgressConfig, type EgressConfig } from "../src/egress/config.ts";
+import { EgressLog } from "../src/egress/egresslog.ts";
+import { isRequestId, uuidv7 } from "../src/egress/ids.ts";
 import { AddressGuard } from "../src/egress/netguard.ts";
-import { CostSniffer, denyText, Egress } from "../src/egress/proxy.ts";
+import { CostSniffer, denyText, Egress, FIXED_BODY_MAX, parseTarget, routed, type EgressOptions } from "../src/egress/proxy.ts";
 import { DnsRefusal, ThreatResolver } from "../src/egress/threatdns.ts";
-import { freshDb } from "./pg.ts";
+import { credentialToken, hermitGetter, KeySet, SandboxTokens, signingKey } from "../src/egress/tokens.ts";
+import { freshEgressDb } from "./egress-db.ts";
+import { FakeHermit, FakeMagpie, masterKey } from "./fakes/hermit.ts";
 
-let t: Awaited<ReturnType<typeof freshDb>>;
+const HERMIT_BEARER = "pair-egress-hermit";
+const MAGPIE_BEARER = "pair-egress-magpie";
+const TOOLS_BEARER = "pair-egress-tools";
+
+let t: Awaited<ReturnType<typeof freshEgressDb>>;
 let egress: Egress;
+let tokens: SandboxTokens;
+let hermit: FakeHermit;
+let magpie: FakeMagpie;
 let port: number;
-let relayPort: number;
 let up: Server;
 let upPort: number;
 const upHits: Record<string, number> = {};
@@ -29,9 +45,9 @@ let upLastHeaders: IncomingMessage["headers"] = {};
 let tls: ReturnType<typeof createTlsServer>;
 let tlsPort: number;
 let tmp: string;
-const conv = randomUUID();
-const sbToken = "sandbox-token-1";
-let sandboxId = randomUUID();
+let wheel: Buffer;
+let sb: ReturnType<FakeHermit["token"]>;
+let cfg: EgressConfig;
 
 const RESOLVE: Record<string, string[]> = {
   "allowed.test": ["127.0.0.1"],
@@ -43,12 +59,73 @@ const RESOLVE: Record<string, string[]> = {
   "evil.test": ["10.0.0.5", "fd00::1"],
 };
 
+function config(upstream: string, extra: Record<string, unknown> = {}): EgressConfig {
+  return parseEgressConfig({
+    product: { name: "YYC AI", locale: "en" },
+    models: [{ id: "vendor/claude-x", label: "X", reasoning: "high" }],
+    defaultModel: "vendor/claude-x",
+    titleModel: "vendor/claude-x",
+    contextTokens: 1048576,
+    routes: [
+      { name: "model", upstream: `${upstream}/api`, model: true, inject: { Authorization: "Bearer ${REAL_KEY}" }, allowPaths: ["/v1/messages"] },
+      { name: "tools", upstream, inject: { Authorization: "Bearer ${EGRESS_TOKEN_TOOLS}" }, allowPaths: ["/mcp"], timeoutSeconds: 180 },
+    ],
+    selfHosts: ["vip.egress.test"],
+    maxUploadBytes: 256 * 1024,
+    ...extra,
+  });
+}
+
+function options(o: Partial<EgressOptions> & { db: typeof t.db; cacheDir: string }): EgressOptions {
+  const { db, ...rest } = o;
+  return {
+    config: cfg,
+    log: new EgressLog(db),
+    tokens,
+    policy: new HostPolicy({ allow: ["allowed.test", "evil.test", ".apt.test", ".ranked.test", "malware.test"], deny: [".paste.ranked.test"], configDeny: ["nope.ranked.test"] }),
+    pairTokens: { magpie: MAGPIE_BEARER, hermit: HERMIT_BEARER },
+    cacheBytes: 50 * 1024 * 1024,
+    guard: new AddressGuard([], ["127.0.0.1/32"]),
+    allowedPorts: [80, 443, tlsPort, upPort],
+    resolver: async (h) => {
+      if (h === "malware.test") throw new DnsRefusal("deny:threat", "malware.test is blocked as a security threat (malware or phishing)");
+      return RESOLVE[h] ?? [];
+    },
+    upstreams: { pypi: `http://127.0.0.1:${upPort}`, pypiFiles: `http://127.0.0.1:${upPort}/files`, npm: `http://127.0.0.1:${upPort}/npm` },
+    aptHosts: ["apt.test"],
+    env: { REAL_KEY: "sk-real", EGRESS_TOKEN_TOOLS: TOOLS_BEARER },
+    internal: { magpie: `http://127.0.0.1:${magpie.port}`, hermit: `http://127.0.0.1:${hermit.port}` },
+    ...rest,
+  };
+}
+
+/** A minimal valid wheel of package foo 1.0, built with Python's zipfile. */
+function buildWheel(dir: string): Buffer {
+  const py = `
+import zipfile, sys
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("foo/__init__.py", "")
+    z.writestr("foo-1.0.dist-info/METADATA", "Metadata-Version: 2.1\\nName: foo\\nVersion: 1.0\\n")
+    z.writestr("foo-1.0.dist-info/WHEEL", "Wheel-Version: 1.0\\nGenerator: test\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n")
+    z.writestr("foo-1.0.dist-info/RECORD", "")
+`;
+  const p = join(dir, "foo-1.0-py3-none-any.whl");
+  execFileSync("python3", ["-c", py, p]);
+  return readFileSync(p);
+}
+
 before(async () => {
-  t = await freshDb("egress");
-  await t.db.query(
-    "insert into sandboxes (id, conversation_id, pod, egress_token_hash, exec_token, status, expires_at) values ($1,$2,'sbx-1',$3,'x','ready', now() + interval '1 hour')",
-    [sandboxId, conv, sha256hex(sbToken)],
-  );
+  t = await freshEgressDb("egress");
+  tmp = mkdtempSync(join(tmpdir(), "egress-"));
+  wheel = buildWheel(tmp);
+  const wheelSha = createHash("sha256").update(wheel).digest("hex");
+  hermit = new FakeHermit(HERMIT_BEARER);
+  const hermitUrl = await hermit.listen();
+  magpie = new FakeMagpie();
+  await magpie.listen();
+  tokens = new SandboxTokens(hermitGetter(hermitUrl, HERMIT_BEARER));
+  assert.equal(await tokens.start(), true);
+  sb = hermit.token();
 
   up = createServer((req, res) => {
     const p = req.url || "/";
@@ -57,9 +134,9 @@ before(async () => {
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", () => {
-      if (p.startsWith("/simple/foo/")) {
+      if (p === "/simple/foo/") {
         res.writeHead(200, { "content-type": "text/html" });
-        return res.end(`<a href="http://127.0.0.1:${upPort}/files/packages/foo-1.0-py3-none-any.whl#sha256=ab">foo</a>`);
+        return res.end(`<!DOCTYPE html><html><body><a href="http://127.0.0.1:${upPort}/files/packages/foo-1.0-py3-none-any.whl#sha256=${wheelSha}">foo-1.0-py3-none-any.whl</a></body></html>`);
       }
       if (p.endsWith(".metadata")) {
         // like files.pythonhosted.org: gzipped when the client allows it
@@ -72,13 +149,17 @@ before(async () => {
         res.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(plain.length) });
         return res.end(plain);
       }
-      if (p.startsWith("/files/") || p.startsWith("/npm/left-pad/-/")) {
+      if (p === "/files/packages/foo-1.0-py3-none-any.whl") {
+        res.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(wheel.length) });
+        return res.end(wheel);
+      }
+      if (p.startsWith("/npm/left-pad/-/")) {
         res.writeHead(200, { "content-type": "application/octet-stream" });
-        return res.end("WHEELBYTES");
+        return res.end("TARBALL");
       }
       if (p === "/npm/left-pad") {
         res.writeHead(200, { "content-type": "application/json" });
-        return res.end(JSON.stringify({ versions: { "1.0.0": { dist: { tarball: `http://127.0.0.1:${upPort}/npm/left-pad/-/left-pad-1.0.0.tgz` } } } }));
+        return res.end(JSON.stringify({ name: "left-pad", "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": { name: "left-pad", version: "1.0.0", dist: { tarball: `http://127.0.0.1:${upPort}/npm/left-pad/-/left-pad-1.0.0.tgz` } } } }));
       }
       if (p.startsWith("/pool/") || p.startsWith("/plain")) {
         res.writeHead(200, { "content-type": "application/octet-stream" });
@@ -90,70 +171,49 @@ before(async () => {
         setTimeout(() => res.end('event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":2,"cost":0.0042}}\n\n'), 20);
         return;
       }
-      if (p === "/sent/snapshot") {
-        res.writeHead(200, { "content-type": "application/json" });
-        return res.end(JSON.stringify({ conversation: req.headers["x-jarvis-conversation"] ?? null, sandbox: req.headers["x-jarvis-sandbox"] ?? null, auth: req.headers.authorization ?? null }));
-      }
-      if (p === "/api/v1/messages") {
+      if (p === "/api/v1/messages" || p === "/api/v1/messages/count_tokens") {
         res.writeHead(200, { "content-type": "application/json" });
         return res.end(JSON.stringify({ echo: JSON.parse(body || "{}"), usage: { cost: 0.0123 } }));
+      }
+      if (p.startsWith("/mcp")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ headers: req.headers, url: p }));
       }
       res.writeHead(404).end();
     });
   });
   await new Promise<void>((r) => up.listen(0, "127.0.0.1", r));
   upPort = (up.address() as AddressInfo).port;
+  cfg = config(`http://127.0.0.1:${upPort}`);
 
-  tmp = mkdtempSync(join(tmpdir(), "egress-"));
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(tmp, "k.pem"), "-out", join(tmp, "c.pem"), "-days", "1", "-subj", "/CN=allowed.test"], { stdio: "ignore" });
-  tls = createTlsServer({ key: readFileSync(join(tmp, "k.pem")), cert: readFileSync(join(tmp, "c.pem")) }, (s) => s.on("data", (d) => s.write(`echo:${d}`)));
+  tls = createTlsServer({ key: readFileSync(join(tmp, "k.pem")), cert: readFileSync(join(tmp, "c.pem")) }, (s) => s.on("error", () => {}).on("data", (d) => s.write(`echo:${d}`)));
+  tls.on("tlsClientError", () => {});
   await new Promise<void>((r) => tls.listen(0, "127.0.0.1", r));
   tlsPort = (tls.address() as AddressInfo).port;
 
-  egress = new Egress({
-    db: t.db,
-    policy: new HostPolicy({
-      allow: ["allowed.test", "evil.test", ".apt.test", ".ranked.test", "malware.test"],
-      deny: [".paste.ranked.test"],
-      configDeny: ["nope.ranked.test"],
-    }),
-    maxUploadBytes: 256 * 1024,
-    routes: [
-      { name: "claude", upstream: `http://127.0.0.1:${upPort}/api`, model: true, relay: true, inject: { Authorization: "Bearer ${REAL_KEY}" } },
-      { name: "sent-files", upstream: `http://127.0.0.1:${upPort}/sent`, identity: true, inject: { Authorization: "Bearer ${REAL_KEY}" } },
-    ],
-    cacheDir: join(tmp, "cache"),
-    cacheBytes: 50 * 1024 * 1024,
-    selfHosts: ["egress.test"],
-    guard: new AddressGuard([], ["127.0.0.1/32"]),
-    allowedPorts: [80, 443, tlsPort, upPort],
-    resolver: async (h) => {
-      if (h === "malware.test") throw new DnsRefusal("deny:threat", "malware.test is blocked as a security threat (malware or phishing)");
-      return RESOLVE[h] ?? [];
-    },
-    upstreams: { pypi: `http://127.0.0.1:${upPort}`, pypiFiles: `http://127.0.0.1:${upPort}/files`, npm: `http://127.0.0.1:${upPort}/npm` },
-    aptHosts: ["apt.test"],
-    env: { REAL_KEY: "sk-real" },
-    identities: new Identities(t.db, 50),
-    isUser: (email) => email.endsWith("@yyc.test"),
-  });
+  egress = new Egress(options({ db: t.db, cacheDir: join(tmp, "cache") }));
   port = await egress.listen(0, "127.0.0.1");
-  relayPort = await egress.listenRelay(0, "127.0.0.1");
 });
 
 after(async () => {
-  await egress.drain(100);
+  await egress.drain();
+  await egress.log.close(1000);
+  tokens.stop();
   up.close();
   tls.close();
+  hermit.close();
+  magpie.close();
   await t.drop();
   rmSync(tmp, { recursive: true, force: true });
 });
 
 const basic = (tok: string) => "Basic " + Buffer.from(`sbx:${tok}`).toString("base64");
+const pa = () => ({ "proxy-authorization": basic(sb.token) });
 
-function connectVia(target: string, auth?: string): Promise<{ status: number; head: string; sock: Socket }> {
+function connectVia(target: string, auth?: string, p = port): Promise<{ status: number; head: string; sock: Socket }> {
   return new Promise((resolve, reject) => {
-    const s = netConnect(port, "127.0.0.1");
+    const s = netConnect(p, "127.0.0.1");
     let buf = "";
     s.on("error", reject);
     s.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n${auth ? `Proxy-Authorization: ${auth}\r\n` : ""}\r\n`);
@@ -174,22 +234,644 @@ function connectVia(target: string, auth?: string): Promise<{ status: number; he
   });
 }
 
-function http(path: string, o: { headers?: Record<string, string>; method?: string; body?: string; port?: number } = {}): Promise<{ status: number; headers: IncomingMessage["headers"]; body: string }> {
+type Res = { status: number; headers: IncomingMessage["headers"]; body: string; reused: boolean };
+function http(path: string, o: { headers?: Record<string, string>; method?: string; body?: string | Buffer; port?: number; agent?: Agent } = {}): Promise<Res> {
   return new Promise((resolve, reject) => {
-    const r = request({ host: "127.0.0.1", port: o.port ?? port, path, method: o.method ?? "GET", headers: o.headers }, (res) => {
+    const r = request({ host: "127.0.0.1", port: o.port ?? port, path, method: o.method ?? "GET", headers: o.headers, agent: o.agent }, (res) => {
       let body = "";
       res.on("data", (c) => (body += c));
-      res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body }));
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body, reused: r.reusedSocket }));
     });
     r.on("error", reject);
     r.end(o.body);
   });
 }
 
-const rows = async () => {
-  await egress.log.flush();
-  return (await t.db.query("select * from egress_log order by id")).rows;
+const rows = async (log = egress.log, db = t.db) => {
+  await log.flush();
+  return (await db.query("select * from egress_log order by id")).rows;
 };
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+
+// ---- configuration ---------------------------------------------------------------------------------------------
+
+test("egress.json: only the fixed names model and tools are routes; smallModel defaults; the allowed models", () => {
+  assert.equal(cfg.smallModel, "vendor/claude-x");
+  assert.equal(cfg.product.locale, "en");
+  const base = { product: { name: "P" }, models: [{ id: "a/m", label: "M" }], defaultModel: "a/m", contextTokens: 10, routes: cfg.routes };
+  assert.throws(() => parseEgressConfig({ ...base, routes: [...cfg.routes, { name: "sent-files", upstream: "http://x", inject: {} }] }), /only the fixed names/);
+  assert.throws(() => parseEgressConfig({ ...base, routes: [cfg.routes[1]] }), /no route model/);
+  assert.throws(() => parseEgressConfig({ ...base, routes: [{ ...cfg.routes[0], model: false }, cfg.routes[1]] }), /model: true/);
+  assert.throws(() => parseEgressConfig({ ...base, contextTokens: 0 }), /contextTokens/);
+  assert.throws(() => parseEgressConfig({ ...base, budget: { limitUsd: -1, since: "2026-10-21T00:00:00Z" } }), /limitUsd/);
+  const c = parseEgressConfig({ ...base, smallModel: "a/small", titleModel: "a/title", budget: { limitUsd: 30, since: "2026-10-21T10:00:00+08:00", ownerName: "Deyao" } });
+  assert.deepEqual(c.budget, { limitUsd: 30, since: "2026-10-21T02:00:00.000Z", ownerName: "Deyao" });
+  assert.equal(c.selfHosts.length, 0);
+  assert.equal(c.maxUploadBytes, 8 * 1024 * 1024);
+});
+
+test("targets and fixed names: exact host, no port or port 80; dot and encoded paths are never routed", () => {
+  assert.deepEqual(parseTarget("http://sbx:t@magpie/v1/sandbox/x?a=1"), { host: "magpie", authority: "magpie", port: 80, pathq: "/v1/sandbox/x?a=1" });
+  assert.deepEqual(parseTarget("http://[fd00::1]:3128"), { host: "fd00::1", authority: "[fd00::1]:3128", port: 3128, pathq: "/" });
+  assert.equal(parseTarget("/mirror/npm/x")!.host, null);
+  assert.ok(routed("magpie", "PUT", "/v1/sandbox/blobs/ab?x=1"));
+  assert.ok(!routed("magpie", "GET", "/v1/conversations"));
+  assert.ok(!routed("hermit", "GET", "/v1/sandbox/../people"));
+  assert.ok(!routed("hermit", "GET", "/v1/sandbox/%2e%2e/people"));
+  assert.ok(!routed("hermit", "GET", "/v1/sandbox//self"));
+  assert.ok(routed("model", "POST", "/v1/messages/count_tokens"));
+  assert.ok(routed("model", "GET", "/v1/aviary/models"));
+  assert.ok(!routed("model", "GET", "/v1/models"));
+  assert.ok(routed("tools", "POST", "/mcp") && !routed("tools", "POST", "/mcp/x"));
+  assert.ok(isRequestId(uuidv7()) && !isRequestId(uuidv7().toUpperCase()) && !isRequestId(randomUUID()));
+});
+
+// ---- the credential ---------------------------------------------------------------------------------------------
+
+test("tokens: hermit's hst1 codec, the source address, expiry, kid and signature", async () => {
+  assert.equal(credentialToken(undefined), "missing");
+  assert.equal(credentialToken("Bearer x"), "missing");
+  assert.equal(credentialToken(basic("abc")), "abc");
+  assert.equal(credentialToken("Basic " + Buffer.from("root:abc").toString("base64")), "malformed");
+  const key = signingKey(masterKey(7));
+  const keys = KeySet.from({ keys: [{ kid: 7, alg: "Ed25519", publicKey: key.publicKey }, { kid: 9, alg: "RSA", publicKey: "x" }] });
+  assert.equal(keys.size, 1);
+  const h = new FakeHermit("b", masterKey(7));
+  const now = Math.floor(Date.now() / 1000);
+  const { token, claims } = h.token({ key, person: "staff@example.org", source: "192.0.2.9" });
+  assert.deepEqual(keys.verify(token, now, "::ffff:192.0.2.9"), { claims });
+  assert.deepEqual(keys.verify(token, now, "192.0.2.8"), { error: "wrong_source" });
+  assert.deepEqual(keys.verify(h.token({ key, expiresAt: now }).token, now, "127.0.0.1"), { error: "expired" });
+  assert.equal("claims" in keys.verify(h.token({ key, source: "0.0.0.0" }).token, now, "192.0.2.1"), true, "0.0.0.0: any source");
+  const flipped = token.slice(0, -3) + (token.at(-3) === "A" ? "B" : "A") + token.slice(-2);
+  assert.deepEqual(keys.verify(flipped, now, "192.0.2.9"), { error: "bad_signature" });
+  assert.deepEqual(keys.verify(h.token({ key: signingKey(masterKey(8)) }).token, now, "127.0.0.1"), { error: "unknown_kid" });
+  for (const bad of ["", "hst1", "hst1.07.AA.AA", "hst2.7.AA.AA", token + ".x", token.replace("hst1.7.", "hst1.7.!")]) assert.deepEqual(keys.verify(bad, now, "192.0.2.9"), { error: "malformed" }, bad);
+});
+
+test("liveness: revoked within 30 s, a 404 refuses, a hermit outage never refuses a valid token, a new kid is learnt", async () => {
+  const h = new FakeHermit("lb");
+  const url = await h.listen();
+  let clock = Date.now();
+  const st = new SandboxTokens(hermitGetter(url, "lb"), () => clock);
+  try {
+    assert.equal(await st.refreshKeys(false), true);
+    const a = h.token();
+    assert.ok("claims" in (await st.verify(a.token, "127.0.0.1")), "admitted before any liveness answer");
+    await sleep(50);
+    assert.equal(h.lookups.get(a.claims.sandboxId), 1);
+    h.live.set(a.claims.sandboxId, false);
+    assert.ok("claims" in (await st.verify(a.token, "127.0.0.1")), "the cached answer holds for 30 s");
+    clock += 30_000;
+    await st.verify(a.token, "127.0.0.1");
+    await sleep(50);
+    assert.deepEqual(await st.verify(a.token, "127.0.0.1"), { error: "not_live" });
+
+    const u = h.token();
+    h.live.set(u.claims.sandboxId, "unknown");
+    await st.verify(u.token, "127.0.0.1");
+    await sleep(50);
+    assert.deepEqual(await st.verify(u.token, "127.0.0.1"), { error: "not_live" }, "hermit's 404 is definitive");
+
+    const seen = h.token();
+    await st.verify(seen.token, "127.0.0.1");
+    await sleep(50);
+    for (const o of ["reset", "hang", "unavailable"] as const) {
+      h.outage = o;
+      clock += 31_000;
+      const never = h.token();
+      for (let i = 0; i < 3; i++) {
+        assert.ok("claims" in (await st.verify(seen.token, "127.0.0.1")), `${o}: a token seen before`);
+        assert.ok("claims" in (await st.verify(never.token, "127.0.0.1")), `${o}: a token never seen`);
+        await sleep(400);
+      }
+    }
+    assert.deepEqual(await st.verify(a.token, "127.0.0.1"), { error: "not_live" }, "a refusal is kept while hermit fails");
+    h.outage = "up";
+
+    // a key published after the last fetch: the first token naming it refetches (at most every 10 s)
+    const k2 = signingKey(masterKey(2));
+    h.keys.push(k2);
+    clock += 11_000;
+    assert.ok("claims" in (await st.verify(h.token({ key: k2 }).token, "127.0.0.1")));
+    const k3 = signingKey(masterKey(3));
+    h.keys.push(k3);
+    assert.deepEqual(await st.verify(h.token({ key: k3 }).token, "127.0.0.1"), { error: "unknown_kid" }, "no second refetch within 10 s");
+  } finally {
+    st.stop();
+    h.close();
+  }
+});
+
+test("proxy credential: 407 without one (JSON with Proxy-Authenticate on a fixed name), 403 not_allowed for a bad one", async () => {
+  const none = await http("http://magpie/v1/sandbox/x");
+  assert.equal(none.status, 407);
+  assert.match(String(none.headers["proxy-authenticate"]), /^Basic realm="aviary-gateway"/);
+  assert.equal(JSON.parse(none.body).code, "proxy_auth_required");
+  for (const cred of [basic("hst1.1.AA.AA"), "Basic " + Buffer.from(`root:${sb.token}`).toString("base64"), basic(hermit.token({ key: signingKey(masterKey(5)) }).token)]) {
+    const r = await http("http://magpie/v1/sandbox/x", { headers: { "proxy-authorization": cred } });
+    assert.equal(r.status, 403, cred);
+    assert.equal(JSON.parse(r.body).code, "not_allowed");
+  }
+  assert.equal(magpie.seen.length, 0, "nothing forwarded");
+  // internet requests keep their plain-text refusals
+  const inet = await http(`http://allowed.test:${upPort}/plain`);
+  assert.equal(inet.status, 407);
+  assert.equal(inet.body, "egress: proxy authentication required\n");
+});
+
+// ---- the fixed names --------------------------------------------------------------------------------------------
+
+const FORGED = {
+  authorization: "Bearer sandbox-sent-authorization",
+  "x-api-key": "sandbox-sent-key",
+  "aviary-person": "forged@example.org",
+  "aviary-admin": "forged@example.org",
+  "aviary-sandbox-id": "00000000-0000-7000-8000-000000000000",
+  "aviary-sandbox-person": "forged@example.org",
+};
+
+test("magpie and hermit: /v1/sandbox/** only, the verified identity and the pair bearer added, the client's stripped, no log row", async () => {
+  const s = hermit.token({ person: "Staff.Mixed@Example.ORG" });
+  const rid = uuidv7();
+  magpie.seen.length = 0;
+  const r = await http("http://magpie/v1/sandbox/x?a=1", {
+    headers: { "proxy-authorization": basic(s.token), ...FORGED, "aviary-request": rid, "aviary-protocol": "magpie-sandbox=1", "aviary-lease": "0190f6c2-0000-4000-8000-00000000c0de", "x-other": "kept" },
+  });
+  assert.equal(r.status, 200);
+  const got = magpie.seen[0]!;
+  assert.equal(got.url, "/v1/sandbox/x?a=1");
+  assert.equal(got.headers.host, "magpie");
+  assert.equal(got.headers.authorization, `Bearer ${MAGPIE_BEARER}`);
+  assert.equal(got.headers["aviary-sandbox-id"], s.claims.sandboxId);
+  assert.equal(got.headers["aviary-sandbox-conversation"], s.claims.conversationId);
+  assert.equal(got.headers["aviary-sandbox-person"], "staff.mixed@example.org");
+  assert.equal(got.headers["aviary-request"], rid);
+  assert.equal(got.headers["aviary-protocol"], "magpie-sandbox=1");
+  assert.equal(got.headers["aviary-lease"], "0190f6c2-0000-4000-8000-00000000c0de");
+  assert.equal(got.headers["x-other"], "kept");
+  for (const h of ["x-api-key", "proxy-authorization", "aviary-person", "aviary-admin"]) assert.equal(got.headers[h], undefined, h);
+
+  await http("http://magpie/v1/sandbox/x", { headers: { ...pa(), "aviary-request": "not-a-v7-id" } });
+  assert.ok(isRequestId(String(magpie.seen.at(-1)!.headers["aviary-request"])), "an invalid request id is replaced");
+
+  for (const p of ["http://magpie/v1/conversations", "http://magpie/v1/sandbox/%2e%2e/conversations", "http://hermit/v1/people"]) {
+    const n = magpie.seen.length;
+    const x = await http(p, { headers: pa() });
+    assert.equal(x.status, 403, p);
+    assert.equal(JSON.parse(x.body).code, "not_allowed");
+    assert.equal(magpie.seen.length, n);
+  }
+  const hs = await http("http://hermit/v1/sandbox/self", { headers: { ...pa(), ...FORGED } });
+  assert.equal(hs.status, 200);
+  assert.equal(JSON.parse(hs.body).name, "hermit");
+  const hh = hermit.seen.at(-1)!;
+  assert.equal(hh.headers.authorization, `Bearer ${HERMIT_BEARER}`);
+  assert.equal(hh.headers["aviary-sandbox-person"], "staff@example.org");
+  assert.equal(hh.headers["aviary-person"], undefined);
+  const logged = (await rows()).filter((x) => x.host === "magpie" || x.host === "hermit" || String(x.path).startsWith("/v1/sandbox"));
+  assert.equal(logged.length, 0, "magpie and hermit calls write no egress_log row");
+  const m = egress.metrics().join("\n");
+  assert.match(m, /egress_fixed_requests_total\{route="magpie",status="200"\} [1-9]/);
+  assert.match(m, /egress_fixed_requests_total\{route="hermit",status="403"\} 1/);
+  assert.match(m, /egress_fixed_bytes_total\{route="magpie",dir="down"\} [1-9]/);
+});
+
+test("limits: 64 MiB to magpie delivered, 64 MiB + 1 refused 413 too_large", async () => {
+  const ok = await http("http://magpie/v1/sandbox/blob", { method: "PUT", headers: { ...pa(), "content-type": "application/octet-stream" }, body: Buffer.alloc(FIXED_BODY_MAX, 97) });
+  assert.equal(ok.status, 200);
+  assert.equal(JSON.parse(ok.body).bytes, FIXED_BODY_MAX);
+  const over = await http("http://magpie/v1/sandbox/blob", { method: "PUT", headers: { ...pa(), "content-type": "application/octet-stream" }, body: Buffer.alloc(FIXED_BODY_MAX + 1, 97) });
+  assert.equal(over.status, 413);
+  assert.equal(JSON.parse(over.body).code, "too_large");
+});
+
+test("upload cap: it counts a CONNECT tunnel, but not 40 MiB of PUTs to magpie on one kept-alive connection", async () => {
+  // the cap here is 256 KiB; 40 x 1 MiB through magpie on one connection all arrive
+  const agent = new Agent({ keepAlive: true, maxSockets: 1 });
+  const n = magpie.seen.length;
+  for (let i = 0; i < 40; i++) {
+    const r = await http("http://magpie/v1/sandbox/blob", { method: "PUT", headers: { ...pa(), "content-type": "application/octet-stream" }, body: Buffer.alloc(1024 * 1024, 98), agent });
+    assert.equal(r.status, 200, `PUT ${i + 1}`);
+    if (i > 0) assert.ok(r.reused, `PUT ${i + 1} on the same connection`);
+  }
+  agent.destroy();
+  const puts = magpie.seen.slice(n);
+  assert.equal(puts.length, 40);
+  assert.ok(puts.every((p) => p.bytes === 1024 * 1024));
+
+  // a tunnel past the cap is cut and logged deny:upload
+  const { status, sock } = await connectVia(`allowed.test:${tlsPort}`, basic(sb.token));
+  assert.equal(status, 200);
+  await new Promise<void>((resolve) => {
+    const c = tlsConnect({ socket: sock, servername: "allowed.test", rejectUnauthorized: false }, () => {
+      const chunk = Buffer.alloc(64 * 1024, 120);
+      for (let i = 0; i < 8; i++) if (!c.destroyed) c.write(chunk);
+    });
+    c.on("data", () => {});
+    c.on("error", () => resolve());
+    c.on("close", () => resolve());
+  });
+  await sleep(200);
+  const cut = (await rows()).filter((x) => x.decision === "deny:upload" && x.kind === "connect");
+  assert.equal(cut.length, 1);
+  assert.ok(Number(cut[0].bytes_up) > 256 * 1024);
+  assert.equal(cut[0].person, "staff@example.org");
+});
+
+test("model route: the real key injected, the sandbox's credentials and Aviary-* dropped, cost logged with person and request (JSON and SSE)", async () => {
+  const rid = uuidv7();
+  const r = await http("http://model/v1/messages", {
+    method: "POST",
+    headers: { ...pa(), ...FORGED, cookie: "c=1", "content-type": "application/json", "aviary-request": rid, "aviary-protocol": "gateway=1" },
+    body: JSON.stringify({ model: "vendor/claude-x" }),
+  });
+  assert.equal(r.status, 200);
+  assert.equal(JSON.parse(r.body).echo.model, "vendor/claude-x");
+  assert.equal(upLastHeaders.authorization, "Bearer sk-real");
+  for (const h of ["x-api-key", "cookie", "proxy-authorization", "aviary-sandbox-person", "aviary-sandbox-id", "aviary-person", "aviary-request", "aviary-protocol"]) assert.equal(upLastHeaders[h], undefined, h);
+  const s = await http("http://model/v1/messages", { method: "POST", headers: { ...pa(), accept: "text/event-stream" }, body: "{}" });
+  assert.match(s.body, /message_delta/);
+  const ct = await http("http://model/v1/messages/count_tokens", { method: "POST", headers: pa(), body: JSON.stringify({ model: "claude-x" }) });
+  assert.equal(ct.status, 200, "count_tokens is relayed; the id without its provider prefix is the model too");
+  await sleep(50);
+  const models = (await rows()).filter((x) => x.kind === "model" && x.decision === "allow");
+  assert.deepEqual(models.map((x) => Number(x.cost_usd)), [0.0123, 0.0042, 0.0123]);
+  assert.ok(models.every((x) => x.sandbox_id === sb.claims.sandboxId && x.conversation_id === sb.claims.conversationId && x.person === "staff@example.org"));
+  assert.equal(models[0].request, rid);
+  assert.deepEqual(models.map((x) => x.model), ["vendor/claude-x", null, "claude-x"]);
+  const other = await http("http://model/v1/models", { headers: pa() });
+  assert.equal(other.status, 403);
+  const refused = await http("http://model/v1/messages", { method: "POST", headers: pa(), body: JSON.stringify({ model: "vendor/other" }) });
+  assert.equal(refused.status, 400);
+  assert.match(JSON.parse(refused.body).error.message, /not offered/);
+});
+
+test("model route: zero data retention is forced into every request body, whatever the caller sends", async () => {
+  const send = (body: string) => http("http://model/v1/messages", { method: "POST", headers: { ...pa(), "content-type": "application/json" }, body });
+  const plain = await send(JSON.stringify({ model: "vendor/claude-x" }));
+  assert.equal(plain.status, 200);
+  assert.deepEqual(JSON.parse(plain.body).echo.provider, { zdr: true, data_collection: "deny" });
+  const loose = await send(JSON.stringify({ model: "vendor/claude-x", provider: { zdr: false, data_collection: "allow", order: ["a"] } }));
+  assert.deepEqual(JSON.parse(loose.body).echo.provider, { zdr: true, data_collection: "deny", order: ["a"] });
+  const odd = await send(JSON.stringify({ model: "vendor/claude-x", provider: "anything" }));
+  assert.deepEqual(JSON.parse(odd.body).echo.provider, { zdr: true, data_collection: "deny" });
+  // the configured thinking level for a chat turn (a request with tools)
+  const turn = await send(JSON.stringify({ model: "vendor/claude-x", tools: [{ name: "t" }] }));
+  assert.ok(JSON.stringify(JSON.parse(turn.body).echo).includes("high"));
+  for (const bad of ["not json", "[1]", "null", ""]) {
+    const r = await send(bad);
+    assert.equal(r.status, 400, `body ${JSON.stringify(bad)} must be refused`);
+  }
+  const refused = (await rows()).filter((x) => x.kind === "model" && x.decision === "deny:body");
+  assert.equal(refused.length, 4);
+});
+
+test("model route: a body of many MB passes rewritten, one too large is refused before it is read", async () => {
+  const image = "A".repeat(12 * 1024 * 1024);
+  const body = JSON.stringify({ model: "vendor/claude-x", messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: image } }] }], provider: { zdr: false } });
+  const rs = await Promise.all([1, 2, 3].map(() => http("http://model/v1/messages", { method: "POST", headers: { ...pa(), "content-type": "application/json" }, body })));
+  for (const r of rs) {
+    assert.equal(r.status, 200);
+    const echo = JSON.parse(r.body).echo;
+    assert.deepEqual(echo.provider, { zdr: true, data_collection: "deny" });
+    assert.equal(echo.messages[0].content[0].source.data.length, image.length);
+  }
+  const head = await new Promise<string>((resolve, reject) => {
+    const s = netConnect(port, "127.0.0.1");
+    let buf = "";
+    s.on("error", reject);
+    s.on("data", (d) => (buf += d.toString("latin1")));
+    s.on("close", () => resolve(buf));
+    s.write(`POST http://model/v1/messages HTTP/1.1\r\nHost: model\r\nProxy-Authorization: ${basic(sb.token)}\r\nContent-Type: application/json\r\nContent-Length: ${70 * 1024 * 1024}\r\n\r\n{"model":`);
+  });
+  assert.match(head, /^HTTP\/1\.1 413 /);
+  assert.match(head, /limited to 67108864 bytes/);
+});
+
+test("model route: GET http://model/v1/aviary/models answers the R18 shape from egress.json", async () => {
+  const r = await http("http://model/v1/aviary/models", { headers: pa() });
+  assert.equal(r.status, 200);
+  assert.deepEqual(JSON.parse(r.body), { default: "vendor/claude-x", small: "vendor/claude-x", title: "vendor/claude-x", contextTokens: 1048576, models: [{ id: "vendor/claude-x", label: "X", reasoning: "high" }] });
+});
+
+test("tools route: the tools pair bearer and the verified person, never the sandbox's credential; one log row", async () => {
+  const r = await http("http://tools/mcp", { method: "POST", headers: { ...pa(), ...FORGED, "content-type": "application/json" }, body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' });
+  assert.equal(r.status, 200);
+  const h = JSON.parse(r.body).headers;
+  assert.equal(h.authorization, `Bearer ${TOOLS_BEARER}`);
+  assert.equal(h["aviary-sandbox-person"], "staff@example.org");
+  assert.equal(h["aviary-sandbox-id"], sb.claims.sandboxId);
+  assert.equal(h["x-api-key"], undefined);
+  assert.equal(h["aviary-person"], undefined);
+  assert.equal((await http("http://tools/other", { method: "POST", headers: pa() })).status, 403);
+  const t2 = (await rows()).filter((x) => x.kind === "tools");
+  assert.deepEqual(t2.map((x) => [x.status, x.decision, x.person]), [[200, "allow", "staff@example.org"], [403, "deny:path", "staff@example.org"]]);
+});
+
+// ---- the internet -----------------------------------------------------------------------------------------------
+
+test("CONNECT: identity, allowlist, ports and addresses are enforced", async () => {
+  assert.equal((await connectVia(`allowed.test:${tlsPort}`)).status, 407);
+  assert.equal((await connectVia(`allowed.test:${tlsPort}`, basic("wrong"))).status, 403);
+  const denied = await connectVia(`other.test:${tlsPort}`, basic(sb.token));
+  assert.equal(denied.status, 403);
+  assert.ok(denied.head.includes(denyText("other.test").trim()), denied.head);
+  assert.match(denied.head, /cannot be enabled from the chat/);
+  assert.doesNotMatch(denied.head, /request_network_access|ask the user|permission/i);
+  assert.equal((await connectVia("allowed.test:22", basic(sb.token))).status, 403);
+  const evil = await connectVia(`evil.test:${tlsPort}`, basic(sb.token));
+  assert.equal(evil.status, 403);
+  assert.match(evil.head, /non-public/);
+  assert.equal((await connectVia(`10.0.0.1:${tlsPort}`, basic(sb.token))).status, 403);
+  // a fixed name is not an internet host: CONNECT to one is refused like any unlisted host
+  assert.equal((await connectVia("magpie:443", basic(sb.token))).status, 403);
+});
+
+test("CONNECT: an allowed host gets a TLS tunnel, and the call is logged with bytes", async () => {
+  const { status, sock } = await connectVia(`allowed.test:${tlsPort}`, basic(sb.token));
+  assert.equal(status, 200);
+  const reply = await new Promise<string>((resolve, reject) => {
+    const c = tlsConnect({ socket: sock, servername: "allowed.test", rejectUnauthorized: false }, () => c.write("hi"));
+    c.on("data", (d) => {
+      resolve(d.toString());
+      c.end();
+    });
+    c.on("error", reject);
+  });
+  assert.equal(reply, "echo:hi");
+  await sleep(100);
+  const r = (await rows()).filter((x) => x.kind === "connect" && x.decision === "allow");
+  assert.equal(r.at(-1).host, "allowed.test");
+  assert.equal(r.at(-1).conversation_id, sb.claims.conversationId);
+  assert.ok(Number(r.at(-1).bytes_up) > 0 && Number(r.at(-1).bytes_down) > 0);
+  const denials = (await rows()).filter((x) => x.kind === "connect" && x.decision.startsWith("deny:")).map((x) => x.decision);
+  for (const d of ["deny:auth", "deny:host", "deny:port", "deny:address"]) assert.ok(denials.includes(d), d);
+});
+
+test("the sandbox allowlist through the proxy: suffix allow, deny list, config deny, threat DNS, all logged", async () => {
+  const ok = await connectVia(`www.ranked.test:${tlsPort}`, basic(sb.token));
+  assert.equal(ok.status, 200);
+  ok.sock.destroy();
+  const paste = await connectVia(`paste.ranked.test:${tlsPort}`, basic(sb.token));
+  assert.equal(paste.status, 403);
+  assert.match(paste.head, /not on the sandbox's internet allowlist/);
+  assert.equal((await connectVia(`nope.ranked.test:${tlsPort}`, basic(sb.token))).status, 403);
+  const mal = await connectVia(`malware.test:${tlsPort}`, basic(sb.token));
+  assert.equal(mal.status, 403);
+  assert.match(mal.head, /security threat/);
+  const h = await http(`http://unknown.test:${upPort}/plain`, { headers: pa() });
+  assert.equal(h.status, 403);
+  assert.match(h.body, /cannot be enabled from the chat/);
+  const r = await rows();
+  const decision = (host: string) => r.filter((x) => x.host === host).map((x) => x.decision);
+  assert.deepEqual(decision("paste.ranked.test"), ["deny:denylist"]);
+  assert.deepEqual(decision("nope.ranked.test"), ["deny:config"]);
+  assert.deepEqual(decision("malware.test"), ["deny:threat"]);
+  assert.deepEqual(decision("unknown.test"), ["deny:host"]);
+});
+
+test("absolute-URI HTTP is forwarded; apt-style GETs are cached", async () => {
+  const a = await http(`http://allowed.test:${upPort}/plain`, { headers: pa() });
+  assert.equal(a.status, 200);
+  assert.equal(a.body, "DEB");
+  assert.equal(upLastHeaders["proxy-authorization"], undefined, "proxy credentials never go upstream");
+  const p = `http://apt.test:${upPort}/pool/main/x.deb`;
+  assert.equal((await http(p, { headers: pa() })).body, "DEB");
+  await sleep(50);
+  const second = await http(p, { headers: pa() });
+  assert.equal(second.body, "DEB");
+  assert.equal(second.headers["x-egress-cache"], "hit");
+  assert.equal(upHits["/pool/main/x.deb"], 1);
+  assert.equal((await http(`http://other.test:${upPort}/plain`, { headers: pa() })).status, 403);
+});
+
+// ---- self hosts: the package mirror -----------------------------------------------------------------------------
+
+test("self hosts: any port of a listed host, 127.0.0.1 and origin form are served locally, never refused as private", async () => {
+  for (const target of ["http://vip.egress.test:3128/conformance/probe", "http://vip.egress.test/conformance/probe", "http://127.0.0.1:3128/x", "/x"]) {
+    const r = await http(target, { headers: pa() });
+    assert.equal(r.status, 404, target);
+    assert.equal(r.body, "egress: not found\n");
+  }
+  assert.equal((await http("/mirror/pypi/simple/foo/")).status, 407);
+  // pip and npm send the index URL's userinfo as Authorization on self-host paths
+  assert.equal((await http("/mirror/pypi/simple/foo/", { headers: { authorization: basic(sb.token) } })).status, 200);
+});
+
+const run = (cmd: string, args: string[], env: Record<string, string>): Promise<{ code: number; out: string }> =>
+  new Promise((resolve) => {
+    execFile(cmd, args, { env: { PATH: process.env.PATH!, HOME: tmp, ...env }, timeout: 120_000 }, (e, stdout, stderr) => resolve({ code: e ? Number((e as { code?: number }).code ?? 1) : 0, out: `${stdout}${stderr}` }));
+  });
+
+test("pip download and npm view through http://sbx:<token>@<vip>:3128/mirror/… with the proxy environment set", async () => {
+  const proxy = `http://sbx:${sb.token}@127.0.0.1:${port}`;
+  const env = { http_proxy: proxy, https_proxy: proxy, HTTP_PROXY: proxy, HTTPS_PROXY: proxy, NO_PROXY: "localhost,127.0.0.1,::1", no_proxy: "localhost,127.0.0.1,::1" };
+  const vip = `sbx:${sb.token}@vip.egress.test:3128`;
+  const dest = mkdtempSync(join(tmp, "pip-"));
+  const pip = await run("python3", ["-m", "pip", "download", "--no-deps", "--no-cache-dir", "--disable-pip-version-check", "--trusted-host", "vip.egress.test", "--index-url", `http://${vip}/mirror/pypi/simple`, "-d", dest, "foo"], env);
+  assert.equal(pip.code, 0, pip.out);
+  assert.deepEqual(readdirSync(dest), ["foo-1.0-py3-none-any.whl"]);
+  assert.deepEqual(readFileSync(join(dest, "foo-1.0-py3-none-any.whl")), wheel);
+  const npm = await run("npm", ["view", "left-pad", "version", "--registry", `http://vip.egress.test:3128/mirror/npm/`, "--cache", join(tmp, "npm-cache"), "--no-update-notifier"], env);
+  assert.equal(npm.code, 0, npm.out);
+  assert.equal(npm.out.trim().split("\n").at(-1), "1.0.0");
+  const r = (await rows()).filter((x) => x.kind === "mirror" && x.decision.startsWith("allow"));
+  assert.ok(r.some((x) => x.path.startsWith("/mirror/pypi/simple/foo")), "the pypi index through the mirror");
+  assert.ok(r.some((x) => x.path.startsWith("/mirror/pypi/files/")), "the wheel through the mirror");
+  assert.ok(r.some((x) => x.path === "/mirror/npm/left-pad"), "the packument through the mirror");
+  assert.ok(r.every((x) => x.person === "staff@example.org"));
+});
+
+test("pypi mirror: index links rewritten, files cached; a gzipped .metadata arrives whole", async () => {
+  const idx = await http("http://vip.egress.test:3128/mirror/pypi/simple/foo/", { headers: pa() });
+  assert.equal(idx.status, 200);
+  assert.match(idx.body, /href="\/mirror\/pypi\/files\/packages\/foo-1\.0-py3-none-any\.whl#sha256=/);
+  const before = upHits["/files/packages/foo-1.0-py3-none-any.whl"] ?? 0;
+  for (let i = 0; i < 2; i++) {
+    const f = await http("http://vip.egress.test:3128/mirror/pypi/files/packages/foo-1.0-py3-none-any.whl", { headers: pa() });
+    assert.equal(f.status, 200);
+    await sleep(50);
+  }
+  assert.ok((upHits["/files/packages/foo-1.0-py3-none-any.whl"] ?? 0) <= Math.max(before, 1), "served from the cache");
+  const want = "Metadata-Version: 2.1\nName: foo\n".repeat(50);
+  const md = await http("http://vip.egress.test:3128/mirror/pypi/files/packages/foo-1.0-py3-none-any.whl.metadata", { headers: pa() });
+  assert.equal(md.body, want);
+  const m = await http("http://vip.egress.test:3128/mirror/npm/left-pad", { headers: { ...pa(), host: "vip.egress.test:3128" } });
+  assert.equal(JSON.parse(m.body).versions["1.0.0"].dist.tarball, "http://vip.egress.test:3128/mirror/npm/left-pad/-/left-pad-1.0.0.tgz");
+});
+
+test("CostSniffer reads the last cost in a stream split across chunks", () => {
+  const s = new CostSniffer();
+  s.contentType = "text/event-stream";
+  for (const c of ['data: {"type":"message_delta","us', 'age":{"cost":0.5}}\n', "\n", 'data: {"usage":{"cost":0.7}}\n']) s.push(Buffer.from(c));
+  assert.equal(s.cost(), 0.7);
+});
+
+// ---- a database outage ------------------------------------------------------------------------------------------
+
+test("database outage: model calls answer from the last budget status plus this replica's costs; log rows wait in memory, in order", async () => {
+  const d = await freshEgressDb("egress_outage", true);
+  let cost = 4;
+  const u = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, usage: { cost } }));
+    });
+  });
+  await new Promise<void>((r) => u.listen(0, "127.0.0.1", r));
+  const uPort = (u.address() as AddressInfo).port;
+  const c = config(`http://127.0.0.1:${uPort}`, { budget: { limitUsd: 10, since: new Date(Date.now() - 60_000).toISOString(), ownerName: "Deyao" } });
+  const gate = new BudgetGate(d.db, c.budget, 0);
+  const log = new EgressLog(d.db);
+  gate.attach(log);
+  const e = new Egress(options({ db: d.db, cacheDir: join(tmp, "cache-outage"), config: c, log, budget: gate }));
+  const p = await e.listen(0, "127.0.0.1");
+  const call = () => http("http://model/v1/messages", { method: "POST", port: p, headers: pa(), body: JSON.stringify({ model: "vendor/claude-x" }) });
+  try {
+    await d.db.query("insert into egress_log (kind, host, decision, cost_usd) values ('model', 'x', 'allow', 1)");
+    assert.equal((await call()).status, 200); // spend 1 + 4 = 5
+    await sleep(100);
+    d.relay!.cut();
+    const t0 = Date.now();
+    assert.equal((await call()).status, 200, "5 < 10: answered from the last status");
+    assert.equal((await call()).status, 200, "5 + 4 (this replica, unwritten) < 10");
+    const refused = await call();
+    assert.equal(refused.status, 402, "5 + 4 + 4 >= 10: the replica's own costs count");
+    assert.equal(JSON.parse(refused.body).error.type, "budget_exceeded");
+    assert.ok(Date.now() - t0 < 4000, `no waiting on the database (${Date.now() - t0} ms)`);
+    const tunnel = await connectVia(`allowed.test:${tlsPort}`, basic(sb.token), p);
+    assert.equal(tunnel.status, 200, "internet requests answer too");
+    tunnel.sock.destroy();
+    await sleep(100);
+    assert.ok(log.buffered >= 4, `rows wait in memory (${log.buffered})`);
+    assert.match(e.metrics().join("\n"), /egress_log_buffered [4-9]/);
+    d.relay!.restore();
+    for (let i = 0; i < 50 && log.buffered; i++) await sleep(200);
+    assert.equal(log.buffered, 0, "written once the database is back");
+    const got = (await d.db.query("select kind, decision, cost_usd from egress_log order by id")).rows;
+    assert.deepEqual(got.map((x) => [x.kind, x.decision]), [["model", "allow"], ["model", "allow"], ["model", "allow"], ["model", "allow"], ["model", "deny:budget"], ["connect", "allow"]]);
+    const s = (await gate.status())!;
+    assert.equal(s.spentUsd, 13);
+    assert.equal(s.exhausted, true);
+    cost = 0;
+  } finally {
+    await e.drain();
+    await log.close(1000);
+    u.close();
+    await d.drop();
+  }
+});
+
+test("the log buffer: bounded, the oldest non-model row dropped first, never a model row", async () => {
+  const d = await freshEgressDb("egress_buffer", true);
+  try {
+    d.relay!.cut();
+    const log = new EgressLog(d.db, 5);
+    log.add({ kind: "model", host: "m", decision: "allow", cost_usd: 1 });
+    for (let i = 0; i < 6; i++) log.add({ kind: "connect", host: `h${i}`, decision: "allow" });
+    log.add({ kind: "model", host: "m2", decision: "allow" });
+    await sleep(200);
+    assert.equal(log.buffered, 5);
+    assert.deepEqual(log.dropped, { connect: 3 });
+    d.relay!.restore();
+    await log.flush();
+    const got = (await d.db.query("select kind, host from egress_log order by id")).rows.map((x) => x.host);
+    assert.deepEqual(got, ["m", "h3", "h4", "h5", "m2"]);
+  } finally {
+    await d.drop();
+  }
+});
+
+// ---- the drain --------------------------------------------------------------------------------------------------
+
+test("drain: no new connections, idle ones closed, answers carry Connection: close, work past its bound is cut and counted", async () => {
+  const e = new Egress(options({ db: t.db, cacheDir: join(tmp, "cache-drain"), drainBounds: { fixed: 1500, model: 1500, tunnel: 1500, tools: 1500 } }));
+  const p = await e.listen(0, "127.0.0.1");
+  const idleAgent = new Agent({ keepAlive: true, maxSockets: 1 });
+  assert.equal((await http("http://magpie/v1/sandbox/x", { port: p, headers: pa(), agent: idleAgent })).status, 200);
+  const idleSock = [...Object.values(idleAgent.freeSockets).flat()][0]!;
+  const idleClosed = new Promise<void>((r) => idleSock.once("close", () => r()));
+  const short = http("http://magpie/v1/sandbox/poll?ms=700", { port: p, headers: pa() });
+  const long = http("http://magpie/v1/sandbox/poll?ms=5000", { port: p, headers: pa() }).then(
+    (r) => r.status,
+    () => "cut",
+  );
+  await sleep(200);
+  assert.deepEqual(e.inFlight(), { model: 0, tunnel: 0, fixed: 2, tools: 0 });
+  const t0 = Date.now();
+  const drained = e.drain();
+  await sleep(50);
+  await assert.rejects(new Promise((resolve, reject) => netConnect(p, "127.0.0.1").on("connect", resolve).on("error", reject)), "a new connection is refused");
+  await idleClosed;
+  const s = await short;
+  assert.equal(s.status, 200, "an answer within its bound arrives");
+  assert.equal(s.headers.connection, "close");
+  const cut = await drained;
+  assert.equal(await long, "cut");
+  assert.deepEqual(cut, { model: 0, tunnel: 0, fixed: 1, tools: 0 });
+  assert.ok(Date.now() - t0 >= 1400 && Date.now() - t0 < 4000, `${Date.now() - t0} ms`);
+  assert.match(e.metrics().join("\n"), /egress_drain_cut_total\{kind="fixed"\} 1/);
+  idleAgent.destroy();
+});
+
+// ---- the in-cluster API -----------------------------------------------------------------------------------------
+
+test("in-cluster API: models for pigeon, the ops summary for hermit, the egress log for admin; 401 and 403 wrong_caller", async () => {
+  const accept = acceptLists({ EGRESS_ACCEPT_PIGEON: "pig-next, pig", EGRESS_ACCEPT_HERMIT: "her", EGRESS_ACCEPT_ADMIN: "adm" });
+  assert.throws(() => acceptLists({ EGRESS_ACCEPT_PIGEON: "p", EGRESS_ACCEPT_HERMIT: "h" }), /EGRESS_ACCEPT_ADMIN/);
+  const cfgB = config(`http://127.0.0.1:${upPort}`, { budget: { limitUsd: 100, since: new Date(Date.now() - 86_400_000).toISOString(), ownerName: "Deyao" } });
+  const api = new EgressApi({ db: t.db, config: cfgB, budget: new BudgetGate(t.db, cfgB.budget), accept });
+  const p = await api.listen(0, "127.0.0.1");
+  const get = (path: string, bearer?: string) => http(path, { port: p, headers: bearer ? { authorization: `Bearer ${bearer}` } : {} });
+  try {
+    const m = await get("/v1/aviary/models", "pig");
+    assert.equal(m.status, 200);
+    assert.equal(JSON.parse(m.body).default, "vendor/claude-x");
+    assert.equal((await get("/v1/aviary/models", "pig-next")).status, 200, "both tokens of a rotation");
+    const no = await get("/v1/aviary/models");
+    assert.equal(no.status, 401);
+    assert.equal(no.headers["www-authenticate"], "Bearer");
+    assert.equal(JSON.parse(no.body).code, "unauthenticated");
+    const wrong = await get("/v1/aviary/models", "her");
+    assert.equal(wrong.status, 403);
+    assert.equal(JSON.parse(wrong.body).code, "wrong_caller");
+    assert.equal((await get("/v1/ops/summary", "pig")).status, 403);
+
+    await egress.log.flush();
+    await t.db.query("insert into egress_log (kind, host, decision, status, cost_usd, model, owner) values ('model', 'openrouter.ai', 'allow', 200, 0.5, 'vendor/claude-x', ' Old.Relay@Example.org ')");
+    await t.db.query("insert into egress_log (kind, host, decision, status, cost_usd) values ('model', 'openrouter.ai', 'allow', 200, 0.25)");
+    const sres = await get("/v1/ops/summary?tz=Asia%2FHong_Kong&recentMinutes=15", "her");
+    assert.equal(sres.status, 200);
+    const sum = JSON.parse(sres.body);
+    for (const k of ["status", "total", "byUser", "byModel", "byDay"]) assert.ok(k in sum.budget, k);
+    for (const k of ["byStatus", "recent", "deniedHosts"]) assert.ok(k in sum.egress, k);
+    for (const k of ["modelErrors", "blocked", "list"]) assert.ok(k in sum.recent, k);
+    assert.equal(sum.budget.status.limitUsd, 100);
+    assert.equal(typeof sum.budget.status.spentUsd, "number");
+    const owners = [...sum.budget.byUser.map((u: { owner: string }) => u.owner), ...sum.egress.recent.map((r: { owner: string | null }) => r.owner), ...sum.recent.list.map((r: { owner: string | null }) => r.owner)].filter(Boolean);
+    assert.ok(owners.length > 0);
+    for (const o of owners) assert.ok(o.includes("@") && o === o.trim().toLowerCase(), o);
+    assert.ok(sum.budget.byUser.some((u: { owner: string }) => u.owner === "old.relay@example.org"));
+    assert.ok(sum.egress.byStatus.every((x: { status: unknown }) => x.status === null || typeof x.status === "number"));
+    assert.ok(sum.budget.total.callsMonth >= 2);
+
+    const log = await get(`/v1/admin/egress-log?conversation=${sb.claims.conversationId}&limit=5`, "adm");
+    assert.equal(log.status, 200);
+    const lr = JSON.parse(log.body).rows;
+    assert.ok(lr.length > 0 && lr.length <= 5);
+    assert.ok(lr.every((r: { conversationId: string; owner: string }) => r.conversationId === sb.claims.conversationId && r.owner === "staff@example.org"));
+    for (const k of ["at", "kind", "method", "host", "path", "status", "decision", "bytesUp", "bytesDown", "ms", "costUsd", "owner", "conversationId", "sandboxId"]) assert.ok(k in lr[0], k);
+    assert.equal((await get("/v1/admin/egress-log", "her")).status, 403);
+    assert.equal((await get("/v1/admin/egress-log?conversation=x", "adm")).status, 400);
+  } finally {
+    await api.drain(100);
+  }
+});
+
+// ---- the allowlist and the address rules (unchanged) ------------------------------------------------------------
 
 test("allowlist: exact and suffix entries, most specific wins, an equal deny wins, config denyHosts wins", () => {
   const r = new HostRules(["pypi.org", ".example.com", "*.wild.test"]);
@@ -256,356 +938,6 @@ test("netguard: address classes", () => {
   for (const ip of ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111", "::ffff:1.1.1.1"]) assert.ok(!g.blocked(ip), ip);
 });
 
-test("CONNECT: identity, allowlist, ports and addresses are enforced", async () => {
-  assert.equal((await connectVia(`allowed.test:${tlsPort}`)).status, 407);
-  assert.equal((await connectVia(`allowed.test:${tlsPort}`, basic("wrong"))).status, 407);
-  const denied = await connectVia(`other.test:${tlsPort}`, basic(sbToken));
-  assert.equal(denied.status, 403);
-  assert.ok(denied.head.includes(denyText("other.test").trim()), denied.head);
-  assert.match(denied.head, /cannot be enabled from the chat/);
-  assert.doesNotMatch(denied.head, /request_network_access|ask the user|permission/i);
-  assert.equal((await connectVia("allowed.test:22", basic(sbToken))).status, 403);
-  const evil = await connectVia(`evil.test:${tlsPort}`, basic(sbToken));
-  assert.equal(evil.status, 403);
-  assert.match(evil.head, /non-public/);
-  assert.equal((await connectVia(`10.0.0.1:${tlsPort}`, basic(sbToken))).status, 403);
-});
-
-test("CONNECT: an allowed host gets a TLS tunnel, and the call is logged with bytes", async () => {
-  const { status, sock } = await connectVia(`allowed.test:${tlsPort}`, basic(sbToken));
-  assert.equal(status, 200);
-  const reply = await new Promise<string>((resolve, reject) => {
-    const c = tlsConnect({ socket: sock, servername: "allowed.test", rejectUnauthorized: false }, () => c.write("hi"));
-    c.on("data", (d) => {
-      resolve(d.toString());
-      c.end();
-    });
-    c.on("error", reject);
-  });
-  assert.equal(reply, "echo:hi");
-  await new Promise((r) => setTimeout(r, 100));
-  const r = (await rows()).filter((x) => x.kind === "connect" && x.decision === "allow");
-  assert.equal(r.length, 1);
-  assert.equal(r[0].host, "allowed.test");
-  assert.equal(r[0].conversation_id, conv);
-  assert.ok(Number(r[0].bytes_up) > 0 && Number(r[0].bytes_down) > 0);
-  const denials = (await rows()).filter((x) => x.decision.startsWith("deny:")).map((x) => x.decision);
-  assert.deepEqual(new Set(denials), new Set(["deny:auth", "deny:host", "deny:port", "deny:address"]));
-});
-
-test("the sandbox allowlist through the proxy: suffix allow, deny list, config deny, threat DNS, all logged", async () => {
-  const ok = await connectVia(`www.ranked.test:${tlsPort}`, basic(sbToken));
-  assert.equal(ok.status, 200);
-  ok.sock.destroy();
-  const paste = await connectVia(`paste.ranked.test:${tlsPort}`, basic(sbToken));
-  assert.equal(paste.status, 403);
-  assert.match(paste.head, /not on the sandbox's internet allowlist/);
-  assert.equal((await connectVia(`nope.ranked.test:${tlsPort}`, basic(sbToken))).status, 403);
-  const mal = await connectVia(`malware.test:${tlsPort}`, basic(sbToken));
-  assert.equal(mal.status, 403);
-  assert.match(mal.head, /security threat/);
-  const h = await http(`http://unknown.test:${upPort}/plain`, { headers: { "proxy-authorization": basic(sbToken) } });
-  assert.equal(h.status, 403);
-  assert.match(h.body, /cannot be enabled from the chat/);
-  const r = await rows();
-  const decision = (host: string) => r.filter((x) => x.host === host).map((x) => x.decision);
-  assert.deepEqual(decision("paste.ranked.test"), ["deny:denylist"]);
-  assert.deepEqual(decision("nope.ranked.test"), ["deny:config"]);
-  assert.deepEqual(decision("malware.test"), ["deny:threat"]);
-  assert.deepEqual(decision("unknown.test"), ["deny:host"]);
-  assert.ok(r.filter((x) => x.decision.startsWith("deny:")).every((x) => x.conversation_id === conv || x.decision === "deny:auth"));
-});
-
-test("upload cap: a tunnel that sends more than maxUploadBytes is cut and logged deny:upload", async () => {
-  const { status, sock } = await connectVia(`allowed.test:${tlsPort}`, basic(sbToken));
-  assert.equal(status, 200);
-  await new Promise<void>((resolve) => {
-    const c = tlsConnect({ socket: sock, servername: "allowed.test", rejectUnauthorized: false }, () => {
-      const chunk = Buffer.alloc(64 * 1024, 120);
-      const pump = () => {
-        for (let i = 0; i < 8; i++) if (!c.destroyed) c.write(chunk);
-      };
-      pump();
-    });
-    c.on("data", () => {});
-    c.on("error", () => resolve());
-    c.on("close", () => resolve());
-  });
-  await new Promise((r) => setTimeout(r, 200));
-  const cut = (await rows()).filter((x) => x.decision === "deny:upload");
-  assert.equal(cut.length, 1);
-  assert.ok(Number(cut[0].bytes_up) > 256 * 1024);
-});
-
-test("absolute-URI HTTP is forwarded; apt-style GETs are cached", async () => {
-  const h = { "proxy-authorization": basic(sbToken) };
-  const a = await http(`http://allowed.test:${upPort}/plain`, { headers: h });
-  assert.equal(a.status, 200);
-  assert.equal(a.body, "DEB");
-  assert.equal(upLastHeaders["proxy-authorization"], undefined, "proxy credentials never go upstream");
-  const p = `http://apt.test:${upPort}/pool/main/x.deb`;
-  assert.equal((await http(p, { headers: h })).body, "DEB");
-  await new Promise((r) => setTimeout(r, 50));
-  const second = await http(p, { headers: h });
-  assert.equal(second.body, "DEB");
-  assert.equal(second.headers["x-egress-cache"], "hit");
-  assert.equal(upHits["/pool/main/x.deb"], 1);
-  assert.equal((await http(`http://other.test:${upPort}/plain`, { headers: h })).status, 403);
-  assert.equal((await http(`http://allowed.test:${upPort}/plain`)).status, 407);
-});
-
-test("pypi mirror: index links rewritten, files cached, works through the proxy form too", async () => {
-  assert.equal((await http("/mirror/pypi/simple/foo/")).status, 401);
-  const idx = await http("/mirror/pypi/simple/foo/", { headers: { authorization: basic(sbToken) } });
-  assert.equal(idx.status, 200);
-  assert.match(idx.body, /href="\/mirror\/pypi\/files\/packages\/foo-1\.0-py3-none-any\.whl#sha256=ab"/);
-  for (let i = 0; i < 2; i++) {
-    const f = await http("/mirror/pypi/files/packages/foo-1.0-py3-none-any.whl", { headers: { authorization: basic(sbToken) } });
-    assert.equal(f.body, "WHEELBYTES");
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  assert.equal(upHits["/files/packages/foo-1.0-py3-none-any.whl"], 1);
-  // pip with HTTP_PROXY set sends the mirror request in proxy form to egress itself
-  const viaProxy = await http("http://egress.test:3128/mirror/pypi/simple/foo/", { headers: { "proxy-authorization": basic(sbToken), authorization: basic(sbToken) } });
-  assert.equal(viaProxy.status, 200);
-  assert.ok((await rows()).some((x) => x.kind === "mirror" && x.decision === "allow:cache"));
-});
-
-test("pypi mirror: a file upstream gzips (PEP 658 .metadata) arrives whole on the first, uncached request", async () => {
-  const want = "Metadata-Version: 2.1\nName: foo\n".repeat(50);
-  const r = await http("/mirror/pypi/files/packages/foo-1.0-py3-none-any.whl.metadata", { headers: { authorization: basic(sbToken) } });
-  assert.equal(r.status, 200);
-  assert.equal(r.body, want);
-});
-
-test("npm mirror: tarball URLs point back at the mirror", async () => {
-  const m = await http("/mirror/npm/left-pad", { headers: { authorization: basic(sbToken), host: "egress.test:3128" } });
-  assert.equal(m.status, 200);
-  assert.equal(JSON.parse(m.body).versions["1.0.0"].dist.tarball, "http://egress.test:3128/mirror/npm/left-pad/-/left-pad-1.0.0.tgz");
-  const tgz = await http("/mirror/npm/left-pad/-/left-pad-1.0.0.tgz", { headers: { authorization: basic(sbToken) } });
-  assert.equal(tgz.body, "WHEELBYTES");
-});
-
-test("model route: sandbox token in, real key injected, caller auth dropped, cost logged (JSON and SSE)", async () => {
-  const bad = await http("/x/claude/v1/messages", { method: "POST", headers: { authorization: "Bearer nope", "content-type": "application/json" }, body: "{}" });
-  assert.equal(bad.status, 401);
-  const r = await http("/x/claude/v1/messages", {
-    method: "POST",
-    headers: { authorization: `Bearer ${sbToken}`, "x-api-key": sbToken, cookie: "c=1", "content-type": "application/json" },
-    body: JSON.stringify({ model: "claude-x" }),
-  });
-  assert.equal(r.status, 200);
-  assert.equal(JSON.parse(r.body).echo.model, "claude-x");
-  assert.equal(upLastHeaders.authorization, "Bearer sk-real");
-  assert.equal(upLastHeaders["x-api-key"], undefined);
-  assert.equal(upLastHeaders.cookie, undefined);
-  const s = await http("/x/claude/v1/messages", { method: "POST", headers: { authorization: `Bearer ${sbToken}`, accept: "text/event-stream" }, body: "{}" });
-  assert.match(s.body, /message_delta/);
-  await new Promise((r2) => setTimeout(r2, 50));
-  const models = (await rows()).filter((x) => x.kind === "model" && x.decision === "allow");
-  assert.deepEqual(models.map((x) => Number(x.cost_usd)), [0.0123, 0.0042]);
-  assert.ok(models.every((x) => x.sandbox_id === sandboxId && x.conversation_id === conv));
-  // the model each call asked for (the operator page's spend per model); none in the body: null
-  assert.deepEqual(models.map((x) => x.model), ["claude-x", null]);
-  assert.equal((await http("/x/nope/v1")).status, 404);
-});
-
-test("model route: zero data retention is forced into every request body, whatever the caller sends", async () => {
-  const send = (body: string) =>
-    http("/x/claude/v1/messages", { method: "POST", headers: { authorization: `Bearer ${sbToken}`, "content-type": "application/json" }, body });
-  const plain = await send(JSON.stringify({ model: "claude-x" }));
-  assert.equal(plain.status, 200);
-  assert.deepEqual(JSON.parse(plain.body).echo.provider, { zdr: true, data_collection: "deny" });
-  const loose = await send(JSON.stringify({ model: "claude-x", provider: { zdr: false, data_collection: "allow", order: ["a"] } }));
-  assert.deepEqual(JSON.parse(loose.body).echo.provider, { zdr: true, data_collection: "deny", order: ["a"] });
-  const odd = await send(JSON.stringify({ model: "claude-x", provider: "anything" }));
-  assert.deepEqual(JSON.parse(odd.body).echo.provider, { zdr: true, data_collection: "deny" });
-  for (const bad of ["not json", "[1]", "null", ""]) {
-    const r = await send(bad);
-    assert.equal(r.status, 400, `body ${JSON.stringify(bad)} must be refused`);
-  }
-  const refused = (await rows()).filter((x) => x.kind === "model" && x.decision === "deny:body");
-  assert.equal(refused.length, 4);
-});
-
-test("identity route: the conversation and sandbox egress verified, never the caller's own copies", async () => {
-  const r = await http("/x/sent-files/snapshot", {
-    method: "POST",
-    headers: { authorization: `Bearer ${sbToken}`, "content-type": "application/json", "x-jarvis-conversation": "someone-elses", "x-jarvis-sandbox": "forged" },
-    body: "{}",
-  });
-  assert.equal(r.status, 200);
-  const got = JSON.parse(r.body);
-  assert.equal(got.conversation, conv);
-  assert.equal(got.sandbox, sandboxId);
-  assert.equal(got.auth, "Bearer sk-real", "the route's own credential, not the sandbox token");
-  // the model route gets no identity headers, and a caller's copies are dropped there too
-  const m = await http("/x/claude/v1/messages", { method: "POST", headers: { authorization: `Bearer ${sbToken}`, "x-jarvis-conversation": "forged" }, body: JSON.stringify({ model: "claude-x" }) });
-  assert.equal(m.status, 200);
-});
-
-test("model route: a body of many MB passes rewritten, one too large is refused before it is read", async () => {
-  // a Claude Code turn that has read page images: the conversation's base64 is resent on every call
-  const image = "A".repeat(12 * 1024 * 1024);
-  const body = JSON.stringify({ model: "claude-x", messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: image } }] }], provider: { zdr: false } });
-  const send = () => http("/x/claude/v1/messages", { method: "POST", headers: { authorization: `Bearer ${sbToken}`, "content-type": "application/json" }, body });
-  const rs = await Promise.all([send(), send(), send()]);
-  for (const r of rs) {
-    assert.equal(r.status, 200);
-    const echo = JSON.parse(r.body).echo;
-    assert.deepEqual(echo.provider, { zdr: true, data_collection: "deny" });
-    assert.equal(echo.messages[0].content[0].source.data.length, image.length);
-  }
-  // past the 64 MiB limit by its Content-Length: 413 at once, nothing read or sent upstream
-  const head = await new Promise<string>((resolve, reject) => {
-    const s = netConnect(port, "127.0.0.1");
-    let buf = "";
-    s.on("error", reject);
-    s.on("data", (d) => (buf += d.toString("latin1")));
-    s.on("close", () => resolve(buf));
-    s.write(`POST /x/claude/v1/messages HTTP/1.1\r\nHost: egress.test\r\nAuthorization: Bearer ${sbToken}\r\nContent-Type: application/json\r\nContent-Length: ${70 * 1024 * 1024}\r\n\r\n{"model":`);
-  });
-  assert.match(head, /^HTTP\/1\.1 413 /);
-  assert.match(head, /limited to 67108864 bytes/);
-  const big = (await rows()).filter((x) => x.kind === "model" && x.decision === "deny:upload");
-  assert.equal(big.length, 1);
-});
-
-test("the wire: a hosted sandbox's local proxy reaches egress over one WebSocket per connection", async () => {
-  // the real sandbox agent in JARVIS_INIT mode, as E2B's template starts it, then configured by POST /init
-  const { spawn } = await import("node:child_process");
-  const freePort = async () => {
-    const s = createServer();
-    await new Promise<void>((r) => s.listen(0, "127.0.0.1", r));
-    const p = (s.address() as AddressInfo).port;
-    await new Promise((r) => s.close(r));
-    return p;
-  };
-  const agentPort = await freePort();
-  const wirePort = await freePort();
-  const work = mkdtempSync(join(tmpdir(), "wire-work-"));
-  const agent = spawn(process.execPath, [join(import.meta.dirname, "../sandbox/agent.mjs")], {
-    env: { PATH: process.env.PATH!, JARVIS_INIT: "1", JARVIS_WORKSPACE: work, PORT: String(agentPort), JARVIS_WIRE_PORT: String(wirePort) },
-    stdio: ["ignore", "pipe", "inherit"],
-  });
-  try {
-    await new Promise<void>((resolve) => agent.stdout!.once("data", () => resolve()));
-    const a = `http://127.0.0.1:${agentPort}`;
-    assert.equal((await fetch(`${a}/livez`)).status, 200);
-    assert.equal((await fetch(`${a}/healthz`)).status, 503, "not ready before /init");
-    assert.equal((await fetch(`${a}/healthz`, { headers: { "x-jarvis-exec-token": "nope" } })).status, 503);
-    // a wrong token is refused at the upgrade
-    const bad = await new Promise<number>((resolve) => {
-      const ws = new WebSocket(`ws://127.0.0.1:${port}/wire`, { headers: { authorization: "Bearer nope" } } as any);
-      ws.onerror = () => resolve(401);
-      ws.onopen = () => resolve(101);
-    });
-    assert.equal(bad, 401);
-    const init = await fetch(`${a}/init`, {
-      method: "POST",
-      body: JSON.stringify({ token: "exec-token-wire-0001", env: { MARK: "set-by-init" }, wire: { url: `ws://127.0.0.1:${port}/wire`, headers: { authorization: `Bearer ${sbToken}` } } }),
-    });
-    assert.equal(init.status, 200);
-    assert.equal((await fetch(`${a}/init`, { method: "POST", body: JSON.stringify({ token: "x".repeat(20) }) })).status, 409, "only once");
-    assert.equal((await fetch(`${a}/healthz`)).status, 200);
-
-    // the mirror in proxy form (what pip sends with HTTP_PROXY=http://sbx:<token>@127.0.0.1:3128)
-    const mirror = await new Promise<{ status: number; body: string }>((resolve, reject) => {
-      const r = request({ host: "127.0.0.1", port: wirePort, path: "http://127.0.0.1:3128/mirror/pypi/simple/foo/", headers: { "proxy-authorization": basic(sbToken) } }, (res) => {
-        let body = "";
-        res.on("data", (c) => (body += c));
-        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
-      });
-      r.on("error", reject);
-      r.end();
-    });
-    assert.equal(mirror.status, 200);
-    assert.match(mirror.body, /\/mirror\/pypi\/files\//);
-    // CONNECT through the wire to an allowed host, TLS inside
-    const s = netConnect(wirePort, "127.0.0.1");
-    s.write(`CONNECT allowed.test:${tlsPort} HTTP/1.1\r\nHost: allowed.test\r\nProxy-Authorization: ${basic(sbToken)}\r\n\r\n`);
-    const head = await new Promise<string>((resolve) => {
-      let b = "";
-      const on = (d: Buffer) => {
-        b += d.toString("latin1");
-        if (b.includes("\r\n\r\n")) {
-          s.off("data", on);
-          resolve(b);
-        }
-      };
-      s.on("data", on);
-    });
-    assert.match(head, /^HTTP\/1\.1 200/);
-    const reply = await new Promise<string>((resolve, reject) => {
-      const c = tlsConnect({ socket: s, servername: "allowed.test", rejectUnauthorized: false }, () => c.write("wire"));
-      c.on("data", (d) => {
-        resolve(d.toString());
-        c.end();
-      });
-      c.on("error", reject);
-    });
-    assert.equal(reply, "echo:wire");
-    // and the allowlist still applies inside the wire
-    const s2 = netConnect(wirePort, "127.0.0.1");
-    s2.write(`CONNECT other.test:443 HTTP/1.1\r\nHost: other.test\r\nProxy-Authorization: ${basic(sbToken)}\r\n\r\n`);
-    const denied = await new Promise<string>((resolve) => {
-      let b = "";
-      s2.on("data", (d) => (b += d));
-      s2.on("close", () => resolve(b));
-    });
-    assert.match(denied, /^HTTP\/1\.1 403/);
-  } finally {
-    agent.kill("SIGKILL");
-    rmSync(work, { recursive: true, force: true });
-  }
-});
-
-test("a released sandbox's token stops working", async () => {
-  await t.db.query("update sandboxes set status = 'gone' where id = $1", [sandboxId]);
-  await new Promise((r) => setTimeout(r, 100));
-  assert.equal((await connectVia(`allowed.test:${tlsPort}`, basic(sbToken))).status, 407);
-  await t.db.query("update sandboxes set status = 'ready' where id = $1", [sandboxId]);
-  await new Promise((r) => setTimeout(r, 100));
-});
-
-test("CostSniffer reads the last cost in a stream split across chunks", () => {
-  const s = new CostSniffer();
-  s.contentType = "text/event-stream";
-  for (const c of ['data: {"type":"message_delta","us', 'age":{"cost":0.5}}\n', "\n", 'data: {"usage":{"cost":0.7}}\n']) s.push(Buffer.from(c));
-  assert.equal(s.cost(), 0.7);
-});
-
-test("drain: stops accepting, waits for an open tunnel, then exits", async () => {
-  const e2 = new Egress({
-    db: t.db,
-    policy: new HostPolicy({ allow: ["allowed.test"] }),
-    routes: [],
-    cacheDir: join(tmp, "cache2"),
-    cacheBytes: 1024 * 1024,
-    selfHosts: [],
-    guard: new AddressGuard([], ["127.0.0.1/32"]),
-    allowedPorts: [tlsPort],
-    resolver: async (h) => RESOLVE[h] ?? [],
-  });
-  const p2 = await e2.listen(0, "127.0.0.1");
-  const s = netConnect(p2, "127.0.0.1");
-  await new Promise<void>((r) => s.on("connect", () => r()));
-  s.write(`CONNECT allowed.test:${tlsPort} HTTP/1.1\r\nProxy-Authorization: ${basic(sbToken)}\r\n\r\n`);
-  await new Promise((r) => s.once("data", r));
-  const t0 = Date.now();
-  const d = e2.drain(400);
-  await new Promise((r) => setTimeout(r, 50));
-  await assert.rejects(
-    new Promise((resolve, reject) => {
-      const c = netConnect(p2, "127.0.0.1");
-      c.on("connect", resolve);
-      c.on("error", reject);
-    }),
-  );
-  await d;
-  assert.ok(Date.now() - t0 >= 350, "waited for the open tunnel up to the grace");
-});
-
 /** A UDP DNS server for A/AAAA questions: names in `a` answer that IPv4 address (AAAA: no data), others NXDOMAIN. */
 async function fakeDns(a: Record<string, string>): Promise<{ port: number; queries: number; close(): void }> {
   const sock = createSocket("udp4");
@@ -635,47 +967,3 @@ async function fakeDns(a: Record<string, string>): Promise<{ port: number; queri
   state.port = sock.address().port;
   return state;
 }
-
-test("relay listener: a person's relay token reaches the relay route with ZDR forced, logged under that person", async () => {
-  const add = (token: string, owner: string, revoked = false) =>
-    t.db.query("insert into relay_tokens (id, owner, token_hash, revoked_at) values ($1, $2, $3, $4)", [randomUUID(), owner, sha256hex(token), revoked ? new Date() : null]);
-  await add("relay-ok", "staff@yyc.test");
-  await add("relay-revoked", "staff@yyc.test", true);
-  await add("relay-not-user", "someone@else.test");
-  const send = (headers: Record<string, string>, path = "/x/claude/v1/messages", p = relayPort) =>
-    http(path, { port: p, method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ model: "claude-x", provider: { zdr: false } }) });
-
-  const before = (await rows()).length;
-  const ok = await send({ authorization: "Bearer relay-ok" });
-  assert.equal(ok.status, 200);
-  assert.deepEqual(JSON.parse(ok.body).echo.provider, { zdr: true, data_collection: "deny" });
-  assert.equal(upLastHeaders.authorization, "Bearer sk-real", "the route's own key upstream, never the relay token");
-  // Claude Code's ANTHROPIC_API_KEY arrives as x-api-key: accepted, and not passed upstream
-  assert.equal((await send({ "x-api-key": "relay-ok" })).status, 200);
-  assert.equal(upLastHeaders["x-api-key"], undefined);
-
-  for (const [what, h] of [["no token", {}], ["unknown", { authorization: "Bearer nope" }], ["revoked", { authorization: "Bearer relay-revoked" }],
-    ["not a user", { authorization: "Bearer relay-not-user" }], ["a sandbox token", { authorization: `Bearer ${sbToken}` }]] as const) {
-    const r = await send(h as Record<string, string>);
-    assert.equal(r.status, 401, what);
-    assert.equal(JSON.parse(r.body).error.type, "authentication_error", what);
-  }
-  // a relay token is no sandbox token on the proxy port
-  assert.equal((await send({ authorization: "Bearer relay-ok" }, "/x/claude/v1/messages", port)).status, 401);
-  // the relay listener serves relay routes only: no other route, no mirror, no forward proxying
-  assert.equal((await send({ authorization: "Bearer relay-ok" }, "/x/sent-files/snapshot")).status, 404);
-  assert.equal((await http("/mirror/pypi/simple/foo/", { port: relayPort, headers: { authorization: "Bearer relay-ok" } })).status, 404);
-  assert.equal((await http("http://allowed.test/", { port: relayPort, headers: { authorization: "Bearer relay-ok" } })).status, 404);
-
-  const mine = (await rows()).slice(before).filter((x) => x.kind === "model");
-  const allowed = mine.filter((x) => x.decision === "allow");
-  assert.equal(allowed.length, 2);
-  for (const x of allowed) {
-    assert.equal(x.owner, "staff@yyc.test");
-    assert.equal(x.sandbox_id, null);
-    assert.equal(x.model, "claude-x");
-  }
-  assert.equal(mine.filter((x) => x.decision === "deny:auth").length, 6);
-  const used = await t.db.query("select last_used_at from relay_tokens where owner = 'staff@yyc.test' and revoked_at is null");
-  assert.ok(used.rows[0].last_used_at, "last_used_at is set");
-});

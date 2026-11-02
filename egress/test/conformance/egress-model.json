@@ -1,0 +1,17 @@
+{
+  "product": {"name": "aviary conformance"},
+  "models": [{"id": "example/model-large-1017", "label": "Large"}, {"id": "example/model-small-0901", "label": "Small"}],
+  "defaultModel": "example/model-large-1017",
+  "titleModel": "example/model-small-0901",
+  "contextTokens": 200000,
+  "routes": [
+    {"name": "model", "upstream": "http://upstream-model:18090", "model": true,
+     "inject": {"Authorization": "Bearer ${OPENROUTER_API_KEY}"}, "allowPaths": ["/v1/messages"]},
+    {"name": "tools", "upstream": "http://tools", "allowPaths": ["/mcp"],
+     "inject": {"Authorization": "Bearer ${EGRESS_TOKEN_TOOLS}"}, "timeoutSeconds": 180}
+  ],
+  "selfHosts": ["192.0.2.10", "egress"],
+  "generatedAllowlist": false, "defaultAllowedHosts": [], "denyHosts": [],
+  "maxUploadBytes": 8388608, "cacheGiB": 1,
+  "budget": {"limitUsd": 1000, "since": "2026-01-01T00:00:00Z", "ownerName": "CI"}
+}

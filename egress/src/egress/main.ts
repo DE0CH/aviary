@@ -1,111 +1,146 @@
-// The egress role: the proxy on 3128, /healthz and /metrics on 9090. On SIGTERM it stops being ready, stops
-// accepting, lets open requests and tunnels finish (EGRESS_DRAIN_SECONDS, default 120), flushes the log and exits.
+// The egress role (`node src/main.ts egress`): YYC's sandbox gateway (aviary platform spec 3.11, 17.2; docs/CHAT.md
+// "egress"). Ports are fixed: the sandbox proxy on 3128 (the only port a sandbox reaches), the in-cluster API on 8082
+// (`model` for pigeon, the ops summary for hermit, admin reads), health on 9090.
 //
-// Env: DATABASE_URL, JARVIS_CONFIG, JARVIS_CACHE_DIR (default /var/cache/jarvis-egress), EGRESS_SELF_HOSTS (comma
-// list; default egress, egress.<POD_NAMESPACE>.svc, egress.<POD_NAMESPACE>.svc.cluster.local), EGRESS_BLOCK_CIDRS
-// (extra refused ranges, e.g. the node's own /64), EGRESS_RELAY_PORT (the relay listener, docs/CLAUDE-CODE.md
-// "Relay"), and every variable a route's inject names (OPENROUTER_API_KEY).
+// Configuration: /etc/egress/egress.json (config.ts). Environment, all required: EGRESS_DATABASE_URL; the pair tokens
+// EGRESS_TOKEN_MAGPIE and EGRESS_TOKEN_HERMIT (presented to magpie and hermit), EGRESS_ACCEPT_PIGEON,
+// EGRESS_ACCEPT_HERMIT and EGRESS_ACCEPT_ADMIN (accepted on 8082); every variable a route's inject names
+// (OPENROUTER_API_KEY, EGRESS_TOKEN_TOOLS).
+//
+// SIGTERM (after Kubernetes' 10 s preStop): /readyz 503, no new connections, Connection: close on kept-alive ones,
+// in-flight work finishes within its bound (model streams and tunnels 600 s, magpie/hermit 60 s, tools 180 s), what is
+// left is cut and counted in egress_drain_cut_total{kind}, the log is flushed, exit 0 with log `drained`. A second
+// SIGTERM exits at once.
 import { createServer } from "node:http";
-import { BudgetGate } from "../common/budget.ts";
-import { allowedModels, isUser, loadConfig, reasoningPlan } from "../common/config.ts";
-import { connect, migrate } from "../common/db.ts";
-import { log } from "../common/log.ts";
+import { log, logError } from "../common/log.ts";
+import { acceptLists, EgressApi } from "./api.ts";
 import { HostPolicy } from "./allowlist.ts";
+import { BudgetGate } from "./budget.ts";
+import { checkInjectEnv, loadEgressConfig } from "./config.ts";
+import { connect, migrate } from "./db.ts";
+import { EgressLog } from "./egresslog.ts";
 import { AddressGuard } from "./netguard.ts";
 import { Egress } from "./proxy.ts";
+import { hermitGetter, SandboxTokens } from "./tokens.ts";
+
+const PROXY_PORT = 3128;
+const API_PORT = 8082;
+const HEALTH_PORT = 9090;
+const CACHE_DIR = "/var/cache/jarvis-egress";
+const COMMIT = process.env.CHAT_COMMIT || "unknown";
+
+function need(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`environment variable ${name} is not set`);
+  return v;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function main(): Promise<void> {
-  const config = loadConfig();
-  const db = connect();
-  // the log's columns may be newer than web's last migration (egress and web roll out side by side)
-  await migrate(db);
-  const ns = process.env.POD_NAMESPACE || "jarvis";
-  const selfHosts = (process.env.EGRESS_SELF_HOSTS || `egress,egress.${ns},egress.${ns}.svc,egress.${ns}.svc.cluster.local`).split(",").map((s) => s.trim()).filter(Boolean);
-  // provider "vm": sandboxes reach this proxy (and its mirror) at the egress VIP, which the hub translates to a pod
-  const vip = config.sandbox.vm?.egressVip;
-  if (vip && !selfHosts.includes(vip)) selfHosts.push(vip);
-  const policy = HostPolicy.load({
-    defaultAllowedHosts: config.egress.defaultAllowedHosts,
-    denyHosts: config.egress.denyHosts,
-    generated: config.egress.generatedAllowlist,
-  });
-  log("egress allowlist", { version: policy.version, allow: policy.allow.size, deny: policy.deny.size, configDeny: policy.configDeny.size });
-  const egress = new Egress({
-    db,
-    policy,
-    maxUploadBytes: config.egress.maxUploadBytes,
-    routes: config.egress.routes,
-    cacheDir: process.env.JARVIS_CACHE_DIR || "/var/cache/jarvis-egress",
-    cacheBytes: Math.round(config.egress.cacheGiB * 1024 ** 3),
-    selfHosts,
-    guard: new AddressGuard((process.env.EGRESS_BLOCK_CIDRS || "").split(",").map((s) => s.trim())),
-    models: allowedModels(config),
-    reasoning: reasoningPlan(config),
-    // re-read at most every 0.5 s (both egress pods see each other's model costs that soon)
-    budget: ((g) => () => g.status())(new BudgetGate(db, config.budget, 500)),
-    locale: config.product.locale,
-    isUser: (email) => isUser(config, email),
-  });
-  const port = await egress.listen(Number(process.env.PORT || 3128));
-  // the relay listener (docs/CLAUDE-CODE.md, "Relay"): only when a route is flagged relay and EGRESS_RELAY_PORT is set
-  const relayOn = config.egress.routes.some((r) => r.relay) && !!process.env.EGRESS_RELAY_PORT;
-  const relayPort = relayOn ? await egress.listenRelay(Number(process.env.EGRESS_RELAY_PORT)) : null;
+  let config, dbUrl: string, pair: { magpie: string; hermit: string }, accept;
+  try {
+    config = loadEgressConfig();
+    dbUrl = need("EGRESS_DATABASE_URL");
+    pair = { magpie: need("EGRESS_TOKEN_MAGPIE"), hermit: need("EGRESS_TOKEN_HERMIT") };
+    accept = acceptLists(process.env);
+    checkInjectEnv(config);
+  } catch (e) {
+    logError("egress start", e);
+    process.exit(2);
+  }
 
+  // why /readyz is 503: emptied as each part of the start completes; "draining" from SIGTERM on
+  const notReady = new Set(["migrations", "allowlist", "token-keys"]);
+  let egress: Egress | null = null;
+  let api: EgressApi | null = null;
+  const db = connect(dbUrl);
+  const tokens = new SandboxTokens(hermitGetter("http://hermit", pair.hermit));
+  const budget = new BudgetGate(db, config.budget);
+  const egressLog = new EgressLog(db);
+  budget.attach(egressLog);
   const health = createServer((req, res) => {
-    if (req.url === "/healthz") {
-      res.writeHead(egress.draining ? 503 : 200, { "content-type": "application/json" });
-      return void res.end(JSON.stringify({ ok: !egress.draining }));
-    }
-    if (req.url === "/metrics") {
-      const c = egress.counters;
+    const path = (req.url ?? "").split("?")[0];
+    const json = (status: number, body: unknown) => {
+      const b = JSON.stringify(body);
+      res.writeHead(status, { "content-type": "application/json; charset=utf-8", "content-length": String(Buffer.byteLength(b)), "cache-control": "no-store" });
+      res.end(b);
+    };
+    if (path === "/healthz") return json(200, { ok: true });
+    if (path === "/readyz") return notReady.size ? json(503, { ok: false, why: [...notReady] }) : json(200, { ok: true });
+    if (path === "/version") return json(200, { name: "egress", version: COMMIT.slice(0, 12), revision: COMMIT, builtAt: null, provides: { gateway: 1 }, accepts: { gateway: [1] } });
+    if (path === "/metrics") {
+      const lines = egress ? egress.metrics() : [];
+      lines.push(`egress_ready ${notReady.size ? 0 : 1}`, `egress_liveness_lookup_failures_total ${tokens.lookupFailures}`, `egress_budget_read_failures_total ${budget.failures}`, "");
       res.writeHead(200, { "content-type": "text/plain; version=0.0.4" });
-      return void res.end(
-        [
-          `egress_requests_total ${c.requests}`,
-          `egress_denied_total ${c.denied}`,
-          `egress_tunnels_total ${c.tunnels}`,
-          `egress_bytes_up_total ${c.bytesUp}`,
-          `egress_bytes_down_total ${c.bytesDown}`,
-          `egress_open_sockets ${egress.openSockets}`,
-          `egress_cache_bytes ${egress.cache.totalBytes}`,
-          `egress_cache_hits_total ${egress.cache.hits}`,
-          `egress_cache_misses_total ${egress.cache.misses}`,
-          `egress_log_rows_total ${egress.log.written}`,
-          "",
-        ].join("\n"),
-      );
+      return void res.end(lines.join("\n"));
     }
     res.writeHead(404).end();
   });
-  health.listen(Number(process.env.HEALTH_PORT || 9090), "::");
-  log("egress listening", { port, relayPort, selfHosts });
-  // provider "vm": this pod's address, for the hub's translation of the egress VIP (sandbox-vm.ts reads kv egress_pod:*)
-  const podIp = process.env.POD_IP;
-  const podKey = `egress_pod:${(process.env.HOSTNAME || "egress").replace(/[^a-z0-9-]/gi, "")}`;
-  let announcing = true;
-  const announce = () =>
-    !announcing || !podIp
-      ? Promise.resolve()
-      : db
-          .query("insert into kv (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value", [podKey, JSON.stringify({ ip: podIp, at: new Date().toISOString() })])
-          .then(() => {}, () => {});
-  if (config.sandbox.vm && podIp) {
-    void announce();
-    setInterval(() => void announce(), 10_000).unref();
-  }
+  health.listen(HEALTH_PORT, "::");
 
   let stopping = false;
   process.on("SIGTERM", async () => {
-    if (stopping) return;
+    if (stopping) {
+      log("egress exit at once (second SIGTERM)");
+      process.exit(0);
+    }
     stopping = true;
-    log("egress draining", { open: egress.openSockets });
-    // new sandbox connections go to the other pods from the hub's next update on (open ones finish here)
-    announcing = false;
-    if (config.sandbox.vm) await db.query("delete from kv where key = $1", [podKey]).catch(() => {});
-    await egress.drain(Number(process.env.EGRESS_DRAIN_SECONDS || 120) * 1000);
+    notReady.add("draining");
+    log("egress draining", { open: egress?.openSockets ?? 0, inFlight: egress?.inFlight() ?? null });
+    const [cut] = await Promise.all([egress ? egress.drain() : Promise.resolve(null), api ? api.drain() : Promise.resolve()]);
+    tokens.stop();
+    await egressLog.close(10_000);
     health.close();
     await db.end().catch(() => {});
-    log("egress stopped");
+    log("drained", { cut });
     process.exit(0);
   });
+
+  // migrations: retried until the database answers (the pod stays unready meanwhile)
+  for (let i = 0; ; i++) {
+    try {
+      await migrate(db);
+      notReady.delete("migrations");
+      break;
+    } catch (e) {
+      if (/this build knows/.test(String((e as Error).message))) {
+        logError("egress start", e);
+        process.exit(2);
+      }
+      if (i % 10 === 0) logError("egress migrations", e);
+      await sleep(2000);
+    }
+  }
+  await budget.seed().catch((e) => logError("budget seed", e));
+
+  const policy = HostPolicy.load({ defaultAllowedHosts: config.defaultAllowedHosts, denyHosts: config.denyHosts, generated: config.generatedAllowlist });
+  log("egress allowlist", { version: policy.version, allow: policy.allow.size, deny: policy.deny.size, configDeny: policy.configDeny.size });
+  notReady.delete("allowlist");
+
+  egress = new Egress({
+    config,
+    log: egressLog,
+    tokens,
+    policy,
+    pairTokens: pair,
+    cacheDir: CACHE_DIR,
+    cacheBytes: Math.round(config.cacheGiB * 1024 ** 3),
+    guard: new AddressGuard(config.blockCidrs),
+    budget,
+  });
+  api = new EgressApi({ db, config, budget: config.budget ? budget : null, accept });
+  await egress.listen(PROXY_PORT);
+  await api.listen(API_PORT);
+  log("egress listening", { proxy: PROXY_PORT, api: API_PORT, selfHosts: config.selfHosts });
+
+  // hermit's key set: fetched until it has been once (then every 5 min and on an unknown kid)
+  void (async () => {
+    let ok = await tokens.start();
+    while (!ok && !stopping) {
+      await sleep(2000);
+      ok = await tokens.refreshKeys(false);
+    }
+    notReady.delete("token-keys");
+  })();
 }

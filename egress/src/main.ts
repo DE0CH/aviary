@@ -1,5 +1,6 @@
-// Entry point of the chat image: JARVIS_ROLE picks the component (docs/CHAT.md, "Components").
-const role = process.env.JARVIS_ROLE;
+// Entry point of the chat image: the first argument picks the component (`node src/main.ts egress`, Kubernetes
+// `args: [egress]`; docs/CHAT.md, "Components").
+const role = process.argv[2];
 switch (role) {
   case "web":
     await (await import("./web/main.ts")).main();
@@ -11,6 +12,6 @@ switch (role) {
     await (await import("./tools/main.ts")).main();
     break;
   default:
-    console.error(`JARVIS_ROLE must be web, egress or tools (got ${JSON.stringify(role)})`);
+    console.error(`the first argument must be web, egress or tools (got ${JSON.stringify(role ?? null)})`);
     process.exit(2);
 }

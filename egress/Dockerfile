@@ -1,5 +1,5 @@
-# The chat runtime image (docs/CLAUDE-CODE.md): roles web (sandbox manager for the CloudCLI UI, janitor, scaler),
-# egress and tools (JARVIS_ROLE). Build context: chat/.
+# The chat runtime image (docs/CHAT.md): roles web (sandbox manager for the CloudCLI UI, janitor, scaler), egress (the
+# sandbox gateway) and tools (MCP), picked by the first argument (Kubernetes `args: [egress]`). Build context: chat/.
 
 FROM node:22-trixie-slim
 RUN apt-get update \
@@ -19,8 +19,8 @@ LABEL org.opencontainers.image.source="https://github.com/DE0CH/jarvis3" \
       jarvis3.chat-commit="${CHAT_COMMIT}"
 ENV NODE_ENV=production \
     PORT=8080 \
-    JARVIS_CONFIG=/etc/jarvis/config.json
+    JARVIS_CONFIG=/etc/jarvis/config.json \
+    CHAT_COMMIT=${CHAT_COMMIT}
 USER 1000:1000
-EXPOSE 8080 3128
-ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["node", "--disable-warning=ExperimentalWarning", "src/main.ts"]
+EXPOSE 8080 3128 8082 9090
+ENTRYPOINT ["/usr/bin/tini", "--", "node", "--disable-warning=ExperimentalWarning", "src/main.ts"]

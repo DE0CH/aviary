@@ -1,0 +1,15 @@
+{
+  "product": {"name": "aviary conformance"},
+  "models": [{"id": "conformance", "label": "Conformance"}],
+  "defaultModel": "conformance",
+  "contextTokens": 200000,
+  "routes": [
+    {"name": "model", "upstream": "http://upstream-model", "model": true,
+     "inject": {"Authorization": "Bearer ${OPENROUTER_API_KEY}"}, "allowPaths": ["/v1/messages"]},
+    {"name": "tools", "upstream": "http://tools", "allowPaths": ["/mcp"],
+     "inject": {"Authorization": "Bearer ${EGRESS_TOKEN_TOOLS}"}, "timeoutSeconds": 180}
+  ],
+  "selfHosts": ["192.0.2.10", "egress"],
+  "generatedAllowlist": false, "defaultAllowedHosts": [], "denyHosts": [],
+  "maxUploadBytes": 8388608, "cacheGiB": 1
+}
