@@ -1,0 +1,17 @@
+# Platform 4.5: no crate except hermit (and the harness crates that drive Kubernetes) depends on the EC2 or Kubernetes
+# clients, directly or not. ci.yml's lint job runs
+#   cargo deny --locked --exclude hermit --exclude fake-sandboxd --exclude aviary-e2e check --config deny-hermit-only.toml bans
+# so the graph holds every other crate and these bans need no wrappers. testing/source-rules checks the same over
+# `cargo metadata` (dependency_violations). Licences, advisories and sources are deny.toml's.
+
+[graph]
+targets = ["x86_64-unknown-linux-musl", "x86_64-unknown-linux-gnu"]
+
+[bans]
+multiple-versions = "allow"
+deny = [
+  { crate = "aws-sdk-ec2", reason = "only hermit talks to EC2 (platform 4.5)" },
+  { crate = "kube", reason = "only hermit and the harness talk to Kubernetes (platform 4.5)" },
+  { crate = "kube-client", reason = "only hermit and the harness talk to Kubernetes (platform 4.5)" },
+  { crate = "kube-runtime", reason = "only hermit and the harness talk to Kubernetes (platform 4.5)" },
+]

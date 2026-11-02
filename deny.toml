@@ -10,10 +10,10 @@ yanked = "deny"
 ignore = []
 
 [licenses]
-# only licences compatible with AGPL-3.0-or-later (platform 4.6)
+# only licences compatible with AGPL-3.0-or-later (platform 4.6). No "-only" GPL family licence: a dependency under
+# AGPL-3.0-only or GPL-3.0-only would fix the combined work at version 3 and drop the "or later" option.
 allow = [
   "AGPL-3.0-or-later",
-  "AGPL-3.0-only",
   "GPL-3.0-or-later",
   "LGPL-2.1-or-later",
   "LGPL-3.0-or-later",
@@ -45,14 +45,16 @@ deny = [
   { crate = "tokio", deny-multiple-versions = true },
   { crate = "hyper", deny-multiple-versions = true },
   { crate = "rustls", deny-multiple-versions = true },
-  # platform 4.5: EC2 and Kubernetes clients only in hermit (and the test crates that drive Kubernetes)
-  { crate = "aws-sdk-ec2", wrappers = ["hermit"], reason = "only hermit talks to EC2 (platform 4.5)" },
-  { crate = "kube", wrappers = ["hermit", "fake-sandboxd", "aviary-e2e"], reason = "only hermit and the harness talk to Kubernetes (platform 4.5)" },
-  { crate = "kube-client", wrappers = ["kube", "kube-runtime"], reason = "use kube (platform 4.5)" },
-  { crate = "kube-runtime", wrappers = ["kube"], reason = "use kube (platform 4.5)" },
+  # platform 4.5's dependency ban (EC2 and Kubernetes clients only in hermit and the harness) is deny-hermit-only.toml,
+  # checked with those crates excluded: wrappers here would warn "unmatched wrapper" whenever a wrapper or the banned
+  # crate is absent from the graph, burying real warnings.
   # no OpenSSL anywhere: rustls only, and musl builds have no C TLS library
   { crate = "openssl-sys", reason = "rustls only" },
   { crate = "native-tls", reason = "rustls only" },
+  # ring is the one crypto provider (rustls, kube, the AWS SDK's HTTP client via aws-smithy-http-client rustls-ring)
+  { crate = "aws-lc-rs", reason = "ring only" },
+  { crate = "aws-lc-sys", reason = "ring only" },
+  { crate = "aws-lc-fips-sys", reason = "ring only" },
 ]
 
 [sources]

@@ -188,6 +188,18 @@ fn dependency_rule_catches_seeded_transitive_kube() {
 }
 
 #[test]
+fn scratch_crates_get_the_workspace_lint_levels() {
+    let lints = aviary_source_rules::workspace_lints_as_package_lints(&repo_root()).unwrap();
+    assert!(
+        lints.contains("[lints.clippy]\nall = { level = \"deny\", priority = -1 }"),
+        "{lints}"
+    );
+    assert!(!lints.contains("[workspace"), "{lints}");
+}
+
+/// The rule comes from the repository's configuration alone: `clippy.toml`'s `disallowed-methods` at the level
+/// `[workspace.lints.clippy] all = "deny"` gives it (no `-D` flag is passed).
+#[test]
 fn clippy_config_rejects_env_reads_and_allows_the_marked_one() {
     let root = repo_root();
     let cargo = env!("CARGO");
@@ -196,14 +208,17 @@ fn clippy_config_rejects_env_reads_and_allows_the_marked_one() {
         "//! seeded\n/// reads\n#[must_use]\npub fn port() -> Option<String> {\n    std::env::var(\"PORT\").ok()\n}\n";
     let stderr = clippy_rejects(cargo, &root, &dir.join("seeded"), seeded).unwrap();
     let stderr = stderr.expect("clippy accepted std::env::var");
-    assert!(stderr.contains("disallowed"), "unexpected clippy output: {stderr}");
+    assert!(
+        stderr.contains("error: use of a disallowed method `std::env::var`"),
+        "unexpected clippy output: {stderr}"
+    );
 
     let aliased = "//! seeded\nuse std::env::vars_os;\n/// counts\n#[must_use]\npub fn n() -> usize {\n    vars_os().count()\n}\n";
+    let stderr = clippy_rejects(cargo, &root, &dir.join("aliased"), aliased).unwrap();
+    let stderr = stderr.expect("clippy accepted the aliased std::env::vars_os");
     assert!(
-        clippy_rejects(cargo, &root, &dir.join("aliased"), aliased)
-            .unwrap()
-            .is_some(),
-        "alias accepted"
+        stderr.contains("error: use of a disallowed method `std::env::vars_os`"),
+        "unexpected clippy output: {stderr}"
     );
 
     let allowed = "//! the env module\n/// reads\n#[must_use]\n#[allow(clippy::disallowed_methods)]\npub fn port() -> Option<String> {\n    std::env::var(\"PORT\").ok()\n}\n";

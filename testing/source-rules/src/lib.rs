@@ -278,9 +278,37 @@ pub fn cargo_metadata(cargo: &str, root: &Path) -> Result<serde_json::Value, Str
     serde_json::from_slice(&out.stdout).map_err(|e| format!("cargo metadata output: {e}"))
 }
 
-/// Runs `cargo clippy` with the repository's `clippy.toml` and `rust-toolchain.toml` over a scratch crate whose
-/// `lib.rs` is `source`, in `scratch` (created). Returns `Ok(Some(stderr))` when clippy rejected the source,
-/// `Ok(None)` when it passed.
+/// The root manifest's `[workspace.lints.*]` tables rewritten as a package's `[lints.*]` tables.
+///
+/// # Errors
+/// When the root manifest cannot be read or has no `[workspace.lints.*]` table.
+pub fn workspace_lints_as_package_lints(root: &Path) -> io::Result<String> {
+    let manifest = fs::read_to_string(root.join("Cargo.toml"))?;
+    let mut out = String::new();
+    let mut inside = false;
+    for line in manifest.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[') {
+            inside = trimmed.starts_with("[workspace.lints.");
+        }
+        if inside {
+            out.push_str(&line.replacen("[workspace.lints.", "[lints.", 1));
+            out.push('\n');
+        }
+    }
+    if out.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Cargo.toml has no [workspace.lints.*] table",
+        ));
+    }
+    Ok(out)
+}
+
+/// Runs `cargo clippy` over a scratch crate whose `lib.rs` is `source`, in `scratch` (created), with the
+/// repository's `clippy.toml`, `rust-toolchain.toml` and lint levels (the root manifest's `[workspace.lints]`, copied
+/// as the crate's `[lints]`), so a rejection comes from the repository's own configuration. Returns
+/// `Ok(Some(stderr))` when clippy rejected the source, `Ok(None)` when it passed.
 ///
 /// # Errors
 /// When the scratch crate cannot be written or cargo cannot be started.
@@ -288,20 +316,16 @@ pub fn clippy_rejects(cargo: &str, root: &Path, scratch: &Path, source: &str) ->
     fs::create_dir_all(scratch.join("src"))?;
     fs::write(
         scratch.join("Cargo.toml"),
-        "[package]\nname = \"scratch\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n",
+        format!(
+            "[package]\nname = \"scratch\"\nedition = \"2024\"\npublish = false\n\n[workspace]\n\n{}",
+            workspace_lints_as_package_lints(root)?
+        ),
     )?;
     fs::copy(root.join("clippy.toml"), scratch.join("clippy.toml"))?;
     fs::copy(root.join("rust-toolchain.toml"), scratch.join("rust-toolchain.toml"))?;
     fs::write(scratch.join("src/lib.rs"), source)?;
     let out = Command::new(cargo)
-        .args([
-            "clippy",
-            "--quiet",
-            "--offline",
-            "--",
-            "-D",
-            "clippy::disallowed_methods",
-        ])
+        .args(["clippy", "--quiet", "--offline"])
         .current_dir(scratch)
         .env("CARGO_TARGET_DIR", scratch.join("target"))
         .env_remove("RUSTC_WRAPPER")

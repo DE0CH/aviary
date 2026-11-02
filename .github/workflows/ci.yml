@@ -40,6 +40,8 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo deny --locked check
+      - name: cargo deny, EC2 and Kubernetes clients only in hermit and the harness (platform 4.5)
+        run: cargo deny --locked --config deny-hermit-only.toml --exclude hermit --exclude fake-sandboxd --exclude aviary-e2e check bans
       - run: cargo audit --deny warnings
       - run: gitleaks git --redact --verbose .
       - name: source rules (platform 4.5)
@@ -62,10 +64,16 @@ jobs:
         with:
           tool: cargo-nextest@0.9.150
       - name: postgres (the production version, TLS on)
+        # the digest production's Cluster db/pg runs (the tag is rebuilt upstream)
         run: |
-          url=$(.github/ci/postgres.sh ghcr.io/cloudnative-pg/postgresql:17.11-standard-trixie 5432)
+          url=$(.github/ci/postgres.sh ghcr.io/cloudnative-pg/postgresql:17.11-standard-trixie@sha256:ed6923f9ba2399cf9070379a353c710c29ced8a294be73986a2c3dae7e599ce3 5432)
           echo "::add-mask::$url"
           echo "AVIARY_TEST_DATABASE_URL=$url" >> "$GITHUB_ENV"
+      - name: s3 (versitygw v1.9.0; MinIO publishes no images any more, see .github/ci/s3.sh)
+        run: |
+          lines=$(.github/ci/s3.sh versity/versitygw:v1.9.0@sha256:eb7f786fcd91e72194e48fcf1ac16302d686bf8e3a71434bdbc067a6efd3fdc7 9000)
+          echo "::add-mask::$(grep '^AVIARY_TEST_S3_SECRET_ACCESS_KEY=' <<< "$lines" | cut -d= -f2-)"
+          echo "$lines" >> "$GITHUB_ENV"
       - run: cargo nextest run --workspace --locked --no-tests=pass
 
   build:
@@ -78,19 +86,23 @@ jobs:
       - name: toolchain (rust-toolchain.toml, exactly)
         run: rustup toolchain install && rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: musl C compiler (cc-rs builds ring's C with it; .cargo/config.toml sets CC_x86_64_unknown_linux_musl)
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends musl-tools
+      - name: musl canary (rustls/ring, reqwest, tokio-postgres-rustls, AWS SDK client; linked static and run)
+        run: cargo test --locked --target x86_64-unknown-linux-musl -p aviary-tls-canary --lib
       - name: musl binaries (rust-lld, static)
         run: |
           export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
           cargo build --release --locked --target x86_64-unknown-linux-musl --workspace --exclude magpie --bins
           mkdir -p dist
           find target/x86_64-unknown-linux-musl/release -maxdepth 1 -type f -executable -exec cp {} dist/ \;
-      - name: magpie (glibc, debian bookworm)
+      - name: magpie (glibc, debian bookworm + libheif-dev)
+        # a docker run of the pinned bookworm image + libheif-dev rather than a job container, so it shares this job's
+        # dist/ and cargo cache and runs as the runner's uid (.github/ci/build-magpie.sh)
         run: |
-          docker run --rm -v "$PWD:/src" -w /src -e AVIARY_REVISION \
-            -e SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) -e CARGO_TARGET_DIR=/src/target/bookworm \
-            rust:1.99.1-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b \
-            cargo build --release --locked -p magpie --bin magpie
-          sudo cp target/bookworm/release/magpie dist/
+          export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          .github/ci/build-magpie.sh rust:1.99.1-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b
+          cp target/bookworm/release/magpie dist/
       - name: SHA256SUMS
         run: cd dist && sha256sum * | tee SHA256SUMS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
