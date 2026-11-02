@@ -1,0 +1,39 @@
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_I2mxpnF38OHoP7umfySc","type":"message","role":"assistant","container":null,"content":[],"model":"deepseek/deepseek-v4.1-flash-1017","stop_reason":null,"stop_details":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0,"output_tokens_details":null,"cache_creation_input_tokens":null,"cache_read_input_tokens":null,"cache_creation":null,"inference_geo":null,"server_tool_use":null,"service_tier":null,"speed":"standard"},"provider":"DigitalOcean"}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" user wants me to run a"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" simple command. Let me do"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" it and"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" verify."}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_221231a84c454661845ee0a0","caller":{"type":"direct"},"name":"Bash","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"echo hi > /workspace/a.txt\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"container":null,"stop_details":null,"stop_reason":"tool_use","stop_sequence":null},"usage":{"input_tokens":301,"output_tokens":63,"output_tokens_details":{"thinking_tokens":17},"cache_creation_input_tokens":null,"cache_read_input_tokens":0,"cache_creation":null,"server_tool_use":null,"service_tier":null,"speed":"standard","cost":0.00009954,"is_byok":false,"cost_details":{"upstream_inference_cost":0.00009954,"upstream_inference_prompt_cost":0.00005418,"upstream_inference_completions_cost":0.00004536}},"context_management":null}
+
+event: message_stop
+data: {"type":"message_stop"}
+

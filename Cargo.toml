@@ -59,6 +59,10 @@ debug = false
 tokio = { version = "=1.54.1", features = ["full"] }
 axum = "=0.8.9"
 hyper = "=1.12.0"
+# mock-model's scripted SSE bodies (stream::unfold); already in the graph through axum and hyper
+futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
+# fake-access's TLS listener (testing/; platform 7.4); already in the graph through reqwest
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12", "logging"] }
 # the fakes' own accept loop (testing/fakes: a fault can drop the connection); axum::serve already uses it
 hyper-util = { version = "=0.1.21", default-features = false, features = ["tokio"] }
 tower = "=0.5.3"
