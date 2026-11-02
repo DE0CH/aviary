@@ -39,6 +39,8 @@ jobs:
           tar xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: no reqwest call inside aviary_pg::tx! (platform 4.3; the macro denies the lint inside its closure)
+        run: CLIPPY_CONF_DIR=crates/aviary-pg/tx-rule cargo clippy --workspace --all-targets --locked -- -A clippy::disallowed_methods -D warnings
       - run: cargo deny --locked check
       - name: cargo deny, EC2 and Kubernetes clients only in hermit and the harness (platform 4.5)
         run: cargo deny --locked --config deny-hermit-only.toml --exclude hermit --exclude fake-sandboxd --exclude aviary-e2e check bans

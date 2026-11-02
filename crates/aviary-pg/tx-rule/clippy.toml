@@ -1,0 +1,36 @@
+# The tx rule's clippy configuration (platform 4.3): the repository's clippy.toml plus `reqwest`'s calls as
+# disallowed methods. CI's lint job runs a second clippy pass with it,
+#   CLIPPY_CONF_DIR=crates/aviary-pg/tx-rule cargo clippy --workspace --all-targets --locked -- \
+#     -A clippy::disallowed_methods -D warnings
+# so the lint is off everywhere except inside the closure of `aviary_pg::tx!`, which the macro marks
+# `#[deny(clippy::disallowed_methods)]`. `allow-invalid`: crates that do not depend on reqwest cannot resolve the
+# paths. Everything above the tx entries is clippy.toml verbatim (a test in crates/aviary-pg checks it).
+
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-print-in-tests = true
+allow-dbg-in-tests = false
+
+# platform 4.5: configuration comes only through aviary-core::env (which allows these per function)
+disallowed-methods = [
+  { path = "std::env::var", reason = "read configuration through aviary_core::env (platform 4.5)" },
+  { path = "std::env::var_os", reason = "read configuration through aviary_core::env (platform 4.5)" },
+  { path = "std::env::vars", reason = "read configuration through aviary_core::env (platform 4.5)" },
+  { path = "std::env::vars_os", reason = "read configuration through aviary_core::env (platform 4.5)" },
+  # the tx rule
+  { path = "reqwest::Client::get", reason = "no network call inside aviary_pg::tx!: commit first, then call out (platform 4.3)", allow-invalid = true },
+  { path = "reqwest::Client::post", reason = "no network call inside aviary_pg::tx!: commit first, then call out (platform 4.3)", allow-invalid = true },
+  { path = "reqwest::Client::put", reason = "no network call inside aviary_pg::tx!: commit first, then call out (platform 4.3)", allow-invalid = true },
+  { path = "reqwest::Client::patch", reason = "no network call inside aviary_pg::tx!: commit first, then call out (platform 4.3)", allow-invalid = true },
+  { path = "reqwest::Client::delete", reason = "no network call inside aviary_pg::tx!: commit first, then call out (platform 4.3)", allow-invalid = true },
+  { path = "reqwest::Client::head", reason = "no network call inside aviary_pg::tx!: commit first, then call out (platform 4.3)", allow-invalid = true },
+  { path = "reqwest::Client::request", reason = "no network call inside aviary_pg::tx!: commit first, then call out (platform 4.3)", allow-invalid = true },
+  { path = "reqwest::Client::execute", reason = "no network call inside aviary_pg::tx!: commit first, then call out (platform 4.3)", allow-invalid = true },
+  { path = "reqwest::RequestBuilder::send", reason = "no network call inside aviary_pg::tx!: commit first, then call out (platform 4.3)", allow-invalid = true },
+  { path = "reqwest::Response::bytes", reason = "no network call inside aviary_pg::tx!: commit first, then call out (platform 4.3)", allow-invalid = true },
+  { path = "reqwest::Response::text", reason = "no network call inside aviary_pg::tx!: commit first, then call out (platform 4.3)", allow-invalid = true },
+  { path = "reqwest::Response::json", reason = "no network call inside aviary_pg::tx!: commit first, then call out (platform 4.3)", allow-invalid = true },
+  { path = "reqwest::Response::chunk", reason = "no network call inside aviary_pg::tx!: commit first, then call out (platform 4.3)", allow-invalid = true },
+  { path = "reqwest::Response::bytes_stream", reason = "no network call inside aviary_pg::tx!: commit first, then call out (platform 4.3)", allow-invalid = true },
+  { path = "reqwest::get", reason = "no network call inside aviary_pg::tx!: commit first, then call out (platform 4.3)", allow-invalid = true },
+]

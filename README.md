@@ -34,6 +34,7 @@ bans them). The AWS SDK crates have their default features off, so they have no 
 ```
 cargo fmt --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
+CLIPPY_CONF_DIR=crates/aviary-pg/tx-rule cargo clippy --workspace --all-targets --locked -- -A clippy::disallowed_methods -D warnings
 cargo nextest run --workspace --locked
 cargo deny --locked check && cargo audit --deny warnings
 ```
@@ -55,6 +56,16 @@ addressing and create their own buckets. CI serves S3 with versitygw, pinned by 
   and the harness crates excluded, instead of wrappers in `deny.toml`. cargo-deny warns "unmatched wrapper" for every
   wrapper that is not in the graph.
 
+- `aviary-pg`'s transactions are a macro, `aviary_pg::tx!(&pool, |t| { … })`, not a function: a lint level can be
+  set only on code the caller wrote, and a clippy `disallowed-methods` list has no scope, so "no `reqwest` inside the
+  closure" takes the macro's `#[deny]` plus a second clippy pass with its own configuration (Source rules below).
+- `aviary_pg::migrate` waits for the migration lock by polling `pg_try_advisory_lock` every 200 ms, not by blocking
+  in `pg_advisory_lock`: a blocked statement holds a snapshot, and `create index concurrently` in the holder waits
+  for every older snapshot, so blocked starters would stall it. The lock, the one-transaction-per-migration rule and
+  the `_migrations` table are as platform 4.3 says (magpie and hermit spec's `schema_migrations` is platform's
+  `_migrations`). A migration whose first line is `-- aviary-pg: no-transaction` runs outside a transaction and holds
+  exactly one statement (for `create index concurrently … if not exists`).
+
 ## Source rules
 
 CI enforces these over the source tree (`testing/source-rules`, `clippy.toml`, `deny.toml`):
@@ -63,7 +74,12 @@ CI enforces these over the source tree (`testing/source-rules`, `clippy.toml`, `
 - no crate under `crates/` except `hermit` depends on `aws-sdk-ec2` or `kube`;
 - `crates/pigeon`, `crates/magpie`, `crates/supervisor` and `crates/*-api` name no particular deployment or provider,
   and pigeon's frozen app wire constants live only in `crates/pigeon/src/paseo/compat.rs`;
-- every dependency's licence is compatible with AGPL-3.0-or-later; advisories fail the build.
+- every dependency's licence is compatible with AGPL-3.0-or-later; advisories fail the build;
+- no transaction is held across a network call: a `reqwest` call inside the closure of `aviary_pg::tx!` is a clippy
+  error. The rule is a second clippy pass with `crates/aviary-pg/tx-rule/clippy.toml` (the repository's
+  `clippy.toml` plus `reqwest`'s calls as disallowed methods) and `-A clippy::disallowed_methods`; the macro marks its
+  closure `#[deny(clippy::disallowed_methods)]`, so the lint fires there only. A call made in a helper function that
+  the closure calls is not seen (the lint level belongs to the helper's own code).
 
 The repository is public: it holds no keys, tokens or deployment configuration. Test credentials are generated at run
 time.
