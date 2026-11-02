@@ -206,19 +206,14 @@ pub struct SyncStats {
     pub ms: u64,
 }
 
-/// Copies the sandbox's scratch filesystem to the destination's relay (`to` = its overlay host:port). `last`: the
-/// final delta while the sandbox is stopped (any error fails it); before that, files changing or vanishing under
-/// rsync (exit 23/24) are expected and the next round picks them up. overlayfs' work directory is not copied.
-pub fn sync_scratch(name: &str, to: &str, last: bool, out: &mut [u8]) -> Res<SyncStats> {
-    let t0 = crate::util::mono_ms();
-    let sd = scratch_dir(name);
-    let mut src: P = P::new();
-    let _ = src.push(sd.as_str()) && src.push("/");
-    let mut url: crate::fixed::Str<120> = crate::fixed::Str::new();
-    if !(url.push("rsync://") && url.push(to) && url.push("/scratch/")) {
-        return Err(Error::new(500, "rsync url too long"));
-    }
-    let argv = [
+/// The rsync argv of one scratch round. `last` (the final delta, while the sandbox is stopped) compares file
+/// contents (`--checksum`): a write through a `MAP_SHARED` mapping to a page that is already dirty does not change
+/// the file's mtime (the kernel updates it only when a clean page is first written), so the quick check (size and
+/// mtime) skips such a file and the destination keeps an older copy of it: the supervisor's FUSE journal slots,
+/// SQLite's `-shm` (crates/supervisor/GATE.md "WP-57", the short read). The live rounds keep the quick check (a
+/// file changed after them is in the final delta either way).
+pub fn scratch_argv<'a>(src: &'a str, url: &'a str, last: bool) -> ([&'a str; 12], usize) {
+    let mut argv = [
         "rsync",
         "-aHAX",
         "--numeric-ids",
@@ -228,13 +223,39 @@ pub fn sync_scratch(name: &str, to: &str, last: bool, out: &mut [u8]) -> Res<Syn
         "--stats",
         "--timeout=120",
         "--contimeout=10",
-        src.as_str(),
-        url.as_str(),
+        "",
+        "",
+        "",
     ];
-    let o = crate::proc::run(&argv, out, 15 * 60_000)?;
+    let mut n = 9;
+    if last {
+        argv[n] = "--checksum";
+        n += 1;
+    }
+    argv[n] = src;
+    argv[n + 1] = url;
+    (argv, n + 2)
+}
+
+/// Copies the sandbox's scratch filesystem to the destination's relay (`to` = its overlay host:port). `last`: the
+/// final delta while the sandbox is stopped (any error fails it; contents compared, `scratch_argv`); before that,
+/// files changing or vanishing under rsync (exit 23/24) are expected and the next round picks them up. overlayfs'
+/// work directory is not copied.
+pub fn sync_scratch(name: &str, to: &str, last: bool, out: &mut [u8]) -> Res<SyncStats> {
+    let t0 = crate::util::mono_ms();
+    let sd = scratch_dir(name);
+    let mut src: P = P::new();
+    let _ = src.push(sd.as_str()) && src.push("/");
+    let mut url: crate::fixed::Str<120> = crate::fixed::Str::new();
+    if !(url.push("rsync://") && url.push(to) && url.push("/scratch/")) {
+        return Err(Error::new(500, "rsync url too long"));
+    }
+    let (a, n) = scratch_argv(src.as_str(), url.as_str(), last);
+    let argv = &a[..n];
+    let o = crate::proc::run(argv, out, 15 * 60_000)?;
     let ok = o.code == 0 || (!last && (o.code == 23 || o.code == 24));
     if !ok {
-        return Err(o.failure(&argv));
+        return Err(o.failure(argv));
     }
     let mut st = parse_stats(o.out_str());
     st.ms = crate::util::mono_ms() - t0;
@@ -292,6 +313,16 @@ pub fn teardown(name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn final_delta_compares_contents() {
+        let (a, n) = scratch_argv("/s/", "rsync://10.0.0.2:7100/scratch/", true);
+        assert_eq!(&a[n - 3..n], &["--checksum", "/s/", "rsync://10.0.0.2:7100/scratch/"]);
+        assert!(a[..n].contains(&"--delete") && a[..n].contains(&"-aHAX"));
+        let (a, n) = scratch_argv("/s/", "rsync://10.0.0.2:7100/scratch/", false);
+        assert!(!a[..n].contains(&"--checksum"), "the live rounds keep the quick check");
+        assert_eq!(&a[n - 2..n], &["/s/", "rsync://10.0.0.2:7100/scratch/"]);
+    }
 
     #[test]
     fn rsync_stats() {

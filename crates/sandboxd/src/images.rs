@@ -68,9 +68,12 @@ fn config_lists(text: &[u8], mut f: impl FnMut(ConfigList, &str)) -> Res<()> {
             let Val::Arr(a) = v else { return Ok(()) };
             json::array::<Error>(a, |e| {
                 let mut tmp = [0u8; 8192];
-                if let Some(s) = e.str().and_then(|s| s.decode(&mut tmp)) {
-                    f(list, s);
-                }
+                // an item that does not decode is refused, never skipped: a skipped Entrypoint or Cmd item would
+                // start the sandbox with another argv, a skipped Env item without that variable
+                let Some(s) = e.str().and_then(|s| s.decode(&mut tmp)) else {
+                    return Err(Error::new(400, "image config item too large or not a string (Env, Entrypoint, Cmd)"));
+                };
+                f(list, s);
                 Ok(())
             })
         })
@@ -257,5 +260,17 @@ mod config_tests {
         );
         assert_eq!(lists(r#"{"config":{"Entrypoint":null,"Cmd":null}}"#), []);
         assert_eq!(lists(r#"{"rootfs":{}}"#), []);
+    }
+
+    #[test]
+    fn an_item_that_does_not_decode_is_refused() {
+        let long = "x".repeat(9000);
+        for list in ["Entrypoint", "Cmd", "Env"] {
+            let text = format!(r#"{{"config":{{"{list}":["/bin/a","{long}"]}}}}"#);
+            let e = config_lists(text.as_bytes(), |_, _| {}).err().unwrap();
+            assert_eq!(e.status, 400, "{list}");
+            let text = format!(r#"{{"config":{{"{list}":["/bin/a",7]}}}}"#);
+            assert_eq!(config_lists(text.as_bytes(), |_, _| {}).err().unwrap().status, 400, "{list}");
+        }
     }
 }

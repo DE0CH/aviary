@@ -50,11 +50,18 @@ install -d -m 700 /etc/sbx /etc/sbx/tls /var/lib/sbx /var/lib/sbx/images /var/lo
 [ -s /etc/sbx/wg.key ] || (umask 077; wg genkey > /etc/sbx/wg.key)
 for f in ca.crt host.crt host.key; do [ -s /etc/sbx/tls/$f ] || { echo "missing /etc/sbx/tls/$f" >&2; exit 1; }; done
 
-# host.json: the deployment's, as given; only checked to be a gateway's (top-level role hub and gateway true)
+# host.json: the deployment's, as given; checked to be a gateway's (top-level role hub and gateway true) with every
+# address sandboxd needs
 src=${SBX_HOST_JSON:?the gateway host.json (hermit spec 14.2: ConfigMap hermit-gateway)}
 [ -s "$src" ] || { echo "missing $src" >&2; exit 1; }
 "$jq" -e '.gateway == true and .role == "hub"' "$src" >/dev/null \
   || { echo "$src is not a gateway's host.json (\"role\": \"hub\", \"gateway\": true)" >&2; exit 1; }
+# the addresses sandboxd requires of a gateway (it compiles none in and refuses to start without them): checked
+# before anything is installed, so a ConfigMap missing one leaves the running sandboxd and its host.json as they are
+# shellcheck disable=SC2016 # $k is jq's
+missing=$("$jq" -r '[("name", "wgAddress", "hostCidr", "controlCidr", "sandboxCidr", "egressVip", "privateGateway",
+  "podCidr") as $k | select((.[$k] | type) != "string" or .[$k] == "") | $k] | join(", ")' "$src")
+[ -z "$missing" ] || { echo "$src lacks $missing (crates/sandboxd/docs/HOST.md \"host.json\"); nothing changed" >&2; exit 1; }
 # a change waits for a restart in a marker, so a later run restarts sandboxd even when an SBX_START=0 run installed it
 pending=/var/lib/sbx/restart-pending
 cmp -s "$src" /etc/sbx/host.json || touch "$pending"

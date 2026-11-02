@@ -50,6 +50,10 @@ pub fn logs() -> P {
 pub fn run_dir() -> P {
     p(format_args!("/run/sbx"))
 }
+/// the sandboxes' parent cgroup (fabric/host/setup.sh `sbx-cgroup`)
+pub fn sbx_cgroups() -> P {
+    p(format_args!("/sys/fs/cgroup/sbx"))
+}
 /// the sandboxes' cgroups (runsc's cgroupsPath /sbx/<name>)
 pub fn sbx_cgroup(name: &str, file: &str) -> P {
     p(format_args!("/sys/fs/cgroup/sbx/{name}/{file}"))

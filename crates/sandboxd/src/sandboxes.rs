@@ -44,6 +44,9 @@ pub struct Entry {
     /// its cgroup holds a process (`populated 1` in `cgroup.events`, read by the 10 s sampler; hermit spec 13.2
     /// item 6); true until the first sample
     alive: bool,
+    /// a send's checkpoint stopped it here (the final scratch delta and the hand-over follow): listed `alive:false`
+    /// from that moment, not after the next sample, so hermit never reads a stopped source as still running it
+    stopped: bool,
 }
 // SAFETY: Entry is only fixed strings, numbers and bools, for which all zeros is a valid value.
 unsafe impl Zeroed for Entry {}
@@ -282,6 +285,7 @@ impl Sandboxes {
             cpu_rate: 0.0,
             cpu_have: false,
             alive: true,
+            stopped: false,
         })
     }
 
@@ -372,17 +376,42 @@ impl Sandboxes {
 
     /// Every 10 s: CPU use per sandbox (cores, averaged over the interval) and whether it is alive: its cgroup's
     /// `cgroup.events` says `populated 1` (no runsc call). A sentry the host's memcg OOM-killed leaves the cgroup
-    /// empty (or gone): `alive:false` within 10 s, and hermit ends the sandbox (`vanished`). A receive is alive
-    /// (hermit judges a migration from both hosts, not from this).
+    /// empty (or gone while the sandboxes' parent cgroup is there): `alive:false` within 10 s, and hermit ends the
+    /// sandbox (`vanished`). An unreadable `cgroup.events` on a host without that parent changes nothing (logged
+    /// once): a cgroup layout sandboxd does not know must not read as every sandbox dead. A receive is alive
+    /// (hermit judges a migration from both hosts, not from this); a source its send stopped is not.
     pub fn sample_cpu(&self) {
         let now = mono_ms();
         let mut t = self.table();
         for sl in t.iter_mut().filter(|s| s.used) {
             let ev = paths::sbx_cgroup(sl.entry.spec.name.as_str(), "cgroup.events");
             let mut eb = [0u8; 256];
-            let populated = read_file(ev.as_str(), &mut eb)
-                .is_ok_and(|t| core::str::from_utf8(t).unwrap_or("").lines().any(|l| l.trim() == "populated 1"));
-            sl.entry.alive = populated || sl.entry.state != RUNNING;
+            let populated = match read_file(ev.as_str(), &mut eb) {
+                Ok(t) => Some(core::str::from_utf8(t).unwrap_or("").lines().any(|l| l.trim() == "populated 1")),
+                // its own cgroup gone under the sandboxes' parent: nothing of it runs any more
+                Err(x) if x.kind() == std::io::ErrorKind::NotFound && is_dir(paths::sbx_cgroups().as_str()) => {
+                    Some(false)
+                }
+                // no parent cgroup, or unreadable: this host's layout is not the one sandboxd knows; say nothing
+                // about liveness (hermit would end every sandbox as vanished) and log it
+                Err(x) => {
+                    if !CGROUP_WARNED.swap(true, core::sync::atomic::Ordering::Relaxed) {
+                        let mut m: Str<96> = Str::new();
+                        let _ = write!(m, "{x}");
+                        Log::error("cannot read a sandbox's cgroup.events: liveness not reported")
+                            .s("path", ev.as_str())
+                            .s("error", m.as_str())
+                            .emit();
+                    }
+                    None
+                }
+            };
+            if let Some(p) = populated {
+                sl.entry.alive = p || sl.entry.state != RUNNING;
+            }
+            if sl.entry.stopped {
+                sl.entry.alive = false;
+            }
             let p = paths::sbx_cgroup(sl.entry.spec.name.as_str(), "cpu.stat");
             let mut b = [0u8; 1024];
             let Ok(text) = read_file(p.as_str(), &mut b) else { continue };
@@ -417,7 +446,7 @@ impl Sandboxes {
             .kf64("cpuUsage", (e.cpu_rate * 1000.0).round() / 1000.0)
             .ku64("memoryCurrent", cur)
             .key("alive")
-            .bool(e.alive || e.state != RUNNING)
+            .bool(listed_alive(e))
             .end();
     }
 
@@ -568,6 +597,7 @@ impl Sandboxes {
                 cpu_rate: 0.0,
                 cpu_have: false,
                 alive: true,
+                stopped: false,
             };
             self.save(&lk, &e, sc.big)
         })();
@@ -711,6 +741,7 @@ impl Sandboxes {
                 cpu_rate: 0.0,
                 cpu_have: false,
                 alive: true,
+                stopped: false,
             };
             self.save(&lk, &e, sc.big)?;
             let out = log_file(name, true)?;
@@ -1002,6 +1033,7 @@ impl Sandboxes {
             self.cleanup(&lk, name, Some(e.spec.ip.as_str()));
             return Err(err!(502, "migration failed after the switch; the sandbox is lost: {tail}"));
         }
+        self.mark_stopped(&lk);
         // The sandbox is stopped, its file data written to the host, its stream complete but for End, which the
         // destination's relay holds back. Now the scratch's final delta, while runsc deletes the stopped container:
         // its gofer closes the sandbox's files, so JuiceFS commits what was written to /workspace and ~/.claude
@@ -1049,6 +1081,16 @@ impl Sandboxes {
             .j("stats", if jl == 0 { b"null" } else { &jb[..jl] })
             .emit();
         Ok(stats)
+    }
+
+    /// The send's checkpoint returned: the sandbox no longer runs here (listed `alive:false` until its entry goes).
+    fn mark_stopped(&self, lk: &OpLock) {
+        let mut t = self.table();
+        let sl = &mut t[lk.idx];
+        if sl.used {
+            sl.entry.stopped = true;
+            sl.entry.alive = false;
+        }
     }
 
     /// Removes runsc containers that have no state (left by a crash between run and save).
@@ -1234,9 +1276,38 @@ pub fn listening(port: u16) -> bool {
     false
 }
 
+/// The first unreadable `cgroup.events` is logged (once per run).
+static CGROUP_WARNED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+fn is_dir(p: &str) -> bool {
+    std::fs::metadata(p).is_ok_and(|m| m.is_dir())
+}
+
+/// What a list says of `alive`: a receive is alive (hermit judges a migration from both hosts); a running sandbox
+/// while its cgroup holds a process and no send has stopped it.
+fn listed_alive(e: &Entry) -> bool {
+    !e.stopped && (e.alive || e.state != RUNNING)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_source_stopped_by_its_send_is_not_alive() {
+        let st = br#"{"spec":{"name":"sbx-alive1","ip":"10.98.250.22","image":"a18f79b442fee2d4bae0fc5da3b2d892f015af58446c3c4363863991b8d76eb5","env":{},"cpu":1,"memory":536870912},"state":"running","createdAt":"2026-11-02T02:13:58.974Z"}"#;
+        let mut e = Sandboxes::parse_state(st, "10.98.0.0/16").ok().unwrap();
+        assert_eq!((e.state, e.alive, e.stopped), (RUNNING, true, false));
+        assert!(listed_alive(&e));
+        // the checkpoint returned: alive:false at once, whatever the last sample said
+        e.stopped = true;
+        assert!(!listed_alive(&e));
+        e.alive = false;
+        e.stopped = false;
+        assert!(!listed_alive(&e), "an empty cgroup");
+        e.state = RECEIVING;
+        assert!(listed_alive(&e), "a receive is alive");
+    }
 
     #[test]
     fn state_roundtrip_with_node_files() {
