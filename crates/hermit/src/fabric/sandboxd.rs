@@ -139,7 +139,7 @@ mod tests {
         };
         assert_eq!(create_error(&st(503, "full")), CreateError::Busy);
         assert_eq!(
-            create_error(&st(409, "ip 10.203.0.11 is used by sbx-0a1b")),
+            create_error(&st(409, "ip 10.98.0.11 is used by sbx-0a1b")),
             CreateError::IpInUse("sbx-0a1b".into())
         );
         assert!(matches!(

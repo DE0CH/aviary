@@ -226,28 +226,28 @@ mod tests {
     fn addresses() {
         let none = BTreeSet::new();
         assert_eq!(
-            free_address("10.203.0.0/16", &none, 10, None),
-            Some("10.203.0.10".parse().unwrap())
+            free_address("10.98.0.0/16", &none, 10, None),
+            Some("10.98.0.10".parse().unwrap())
         );
         assert_eq!(
-            free_address("10.203.0.0/16", &ips(&["10.203.0.10", "10.203.0.11"]), 10, None),
-            Some("10.203.0.12".parse().unwrap())
+            free_address("10.98.0.0/16", &ips(&["10.98.0.10", "10.98.0.11"]), 10, None),
+            Some("10.98.0.12".parse().unwrap())
         );
         assert_eq!(
-            free_address("10.202.0.0/24", &none, 10, Some(12)),
-            Some("10.202.0.10".parse().unwrap())
+            free_address("10.99.0.0/24", &none, 10, Some(12)),
+            Some("10.99.0.10".parse().unwrap())
         );
         assert_eq!(
-            free_address("10.202.0.0/24", &ips(&["10.202.0.10", "10.202.0.11"]), 10, Some(12)),
+            free_address("10.99.0.0/24", &ips(&["10.99.0.10", "10.99.0.11"]), 10, Some(12)),
             None
         );
         // .255 and .0 of every /24 are skipped
-        let mut full: Vec<String> = (10..255).map(|i| format!("10.203.0.{i}")).collect();
-        full.push("10.203.1.1".into());
+        let mut full: Vec<String> = (10..255).map(|i| format!("10.98.0.{i}")).collect();
+        full.push("10.98.1.1".into());
         let used: BTreeSet<IpAddr> = full.iter().map(|s| s.parse().unwrap()).collect();
         assert_eq!(
-            free_address("10.203.0.0/16", &used, 10, None),
-            Some("10.203.1.2".parse().unwrap())
+            free_address("10.98.0.0/16", &used, 10, None),
+            Some("10.98.1.2".parse().unwrap())
         );
         assert_eq!(free_address("bad", &none, 10, None), None);
     }

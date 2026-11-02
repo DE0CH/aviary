@@ -191,20 +191,38 @@ async fn resume(claim: &Claim, row: &SandboxRow, to: Option<&HostRow>, clients: 
     }
 }
 
-/// Whether `host` lists `name` running and alive: `None` when the host does not answer (a gone host lists nothing).
-async fn lists(clients: &Clients, host: Option<&HostRow>, name: &str) -> Option<bool> {
-    let Some(h) = host else {
-        return Some(false);
-    };
-    let l = clients.of(h).ok()?.list().await.ok()?;
-    Some(
-        l.sandboxes
-            .iter()
-            .any(|s| s.name == name && s.state == sandboxd_api::SandboxState::Running && s.alive != Some(false)),
-    )
+/// What a host lists of the sandbox in a settle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Seen {
+    /// Running and alive.
+    Alive,
+    /// A receive still in progress (it ends on its own: restored, failed, or the relay's timeout).
+    Receiving,
+    /// Not there, or there but not alive (a source its send's checkpoint stopped lists `alive: false`).
+    No,
 }
 
-/// Step 6: settle by asking both hosts; retried while one does not answer (and the claim holds).
+/// What `host` lists of `name`: `None` when the host does not answer (a gone host lists nothing).
+async fn lists(clients: &Clients, host: Option<&HostRow>, name: &str) -> Option<Seen> {
+    let Some(h) = host else {
+        return Some(Seen::No);
+    };
+    let l = clients.of(h).ok()?.list().await.ok()?;
+    Some(seen(&l.sandboxes, name))
+}
+
+fn seen(listed: &[sandboxd_api::Listed], name: &str) -> Seen {
+    match listed.iter().find(|s| s.name == name) {
+        Some(s) if s.state == sandboxd_api::SandboxState::Running && s.alive != Some(false) => Seen::Alive,
+        Some(s) if s.state == sandboxd_api::SandboxState::Receiving => Seen::Receiving,
+        _ => Seen::No,
+    }
+}
+
+/// Step 6: settle by asking both hosts; retried while one does not answer or the target's receive is still in
+/// progress (and the claim holds). The source decides "kept" only while it lists the sandbox alive: sandboxd lists
+/// a source `alive: false` from the moment its send's checkpoint stopped it, so a target that may hold the only
+/// copy is never deleted on a stale reading, and a receive in progress is waited for rather than read as lost.
 #[allow(clippy::too_many_arguments)]
 async fn settle(
     core: &Arc<Core>,
@@ -221,8 +239,11 @@ async fn settle(
         if !claim.held() {
             return Ok(());
         }
-        let source = lists(clients, from, &row.name).await;
-        if source == Some(true) {
+        // a source lists no receive of its own sandbox; if it did, that is not the sandbox running there
+        let source = lists(clients, from, &row.name)
+            .await
+            .map(|s| if s == Seen::Receiving { Seen::No } else { s });
+        if source == Some(Seen::Alive) {
             let Some(_effect) = claim.guard(core).await? else {
                 return Ok(());
             };
@@ -240,7 +261,7 @@ async fn settle(
             .await;
         }
         let target = lists(clients, to, &row.name).await;
-        if target == Some(true) {
+        if target == Some(Seen::Alive) {
             return commit(
                 core,
                 claim,
@@ -252,7 +273,7 @@ async fn settle(
             )
             .await;
         }
-        if source == Some(false) && target == Some(false) {
+        if source == Some(Seen::No) && target == Some(Seen::No) {
             tracing::error!(sandbox = %row.id, why, "migration lost the sandbox");
             hosts::event(
                 &core.pool,
@@ -275,7 +296,8 @@ async fn settle(
             .await?;
             return Ok(());
         }
-        // a host that does not answer decides nothing: ask again (the host-loss rule may end it meanwhile)
+        // a host that does not answer, or a receive still in progress, decides nothing: ask again (the host-loss
+        // rule may end it meanwhile)
         tokio::time::sleep(core.timings.release_retry).await;
     }
 }

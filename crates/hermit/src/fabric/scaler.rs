@@ -1369,8 +1369,8 @@ mod tests {
     #[test]
     fn helpers() {
         assert_eq!(
-            gateway_ip("https://10.202.0.1:7443"),
-            Some("10.202.0.1".parse().unwrap_or(IpAddr::from([0, 0, 0, 0])))
+            gateway_ip("https://10.99.0.1:7443"),
+            Some("10.99.0.1".parse().unwrap_or(IpAddr::from([0, 0, 0, 0])))
         );
         assert_eq!(gateway_ip("https://[fd00::1]:7443/x"), "fd00::1".parse().ok());
         assert_eq!(gateway_ip("https://sandboxd:7443"), None);
