@@ -3,6 +3,9 @@
 //!
 //! Each pass takes the due items (`next_at <= now()`), oldest first, makes each call through a [`Deliver`], and
 //! deletes the item when it is done (hermit's 404 counts as done) or pushes `next_at` out (5 s doubling to 1 h).
+//! A workspace's deletion waits until the same conversation's earlier sandbox release is done (hermit's spec does
+//! not promise that deleting a workspace under a live sandbox is safe). An item that does not parse is logged and
+//! looked at again only hourly, so it never holds up the queue.
 //! An item failing for 24 h logs `outbox failing` on every later attempt, which the backoff makes hourly.
 
 use std::future::Future;
@@ -127,7 +130,13 @@ pub async fn pass(pool: &Pool, deliver: &impl Deliver) -> Result<usize> {
         .get()
         .await?
         .query(
-            "select id, kind, payload, attempts, created_at from outbox where next_at <= now() order by id limit $1",
+            "select id, kind, payload, attempts, created_at from outbox o
+             where next_at <= now()
+               and not (kind = 'delete_workspace' and exists (
+                 select 1 from outbox r
+                 where r.kind = 'release_sandbox' and r.id < o.id
+                   and r.payload->>'conversationId' = o.payload->>'workspaceId'))
+             order by id limit $1",
             &[&limits::OUTBOX_BATCH],
         )
         .await?;
@@ -139,7 +148,17 @@ pub async fn pass(pool: &Pool, deliver: &impl Deliver) -> Result<usize> {
         let created: OffsetDateTime = r.get(4);
         let payload: Value = r.get(2);
         let Some(item) = Item::parse(&kind, &payload) else {
+            // out of the way of the items behind it: looked at again only hourly
             tracing::error!(id, kind = %kind, "outbox item that does not parse (left for an operator)");
+            let next = OffsetDateTime::now_utc()
+                + time::Duration::try_from(limits::OUTBOX_BACKOFF_MAX).unwrap_or(time::Duration::HOUR);
+            pool.get()
+                .await?
+                .execute(
+                    "update outbox set attempts = attempts + 1, next_at = $2, last_error = 'does not parse' where id = $1",
+                    &[&id, &next],
+                )
+                .await?;
             continue;
         };
         let outcome = tokio::time::timeout(limits::OUTBOX_CALL_TIMEOUT, deliver.deliver(&item))

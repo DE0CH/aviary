@@ -131,7 +131,7 @@ impl Service {
             }
         }
         migrations_gate.open();
-        let fanout = Fanout::start(&pool).map_err(|e| match e {
+        let fanout = Fanout::start(&pool, intervals.requery).map_err(|e| match e {
             crate::error::Error::Db(d) => StartError(d),
             other => StartError(aviary_pg::Error::Config(other.to_string())),
         })?;
@@ -167,7 +167,8 @@ impl Service {
     }
 
     /// The drain's last steps (magpie 18.3), after the listener stopped and in-flight requests finished: driver
-    /// claims handed back (another replica takes the turns at once), the leader lock released, the pool closed.
+    /// claims handed back (another replica takes the turns at once), the leader lock released, the LISTEN connection
+    /// closed, the pool closed.
     pub async fn shutdown(mut self) {
         let released = async {
             self.app
@@ -187,6 +188,8 @@ impl Service {
         if let Some(jobs) = self.jobs.take() {
             jobs.stop().await;
         }
+        // the LISTEN connection before the pool, so its task does not try to reconnect to a closed pool
+        self.app.fanout.stop().await;
         self.app.pool.close();
     }
 }

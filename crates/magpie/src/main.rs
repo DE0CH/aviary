@@ -66,7 +66,19 @@ async fn serve() -> ExitCode {
         }
     };
     let mut drain = drain::Drain::new(ops.readiness().clone());
-    let service = match Service::start(cfg, ops.readiness(), drain.draining()).await {
+    // the start retries while Postgres cannot be reached: a signal meanwhile ends the process (nothing to drain yet)
+    let start = Service::start(cfg, ops.readiness(), drain.draining());
+    let started = tokio::select! {
+        r = start => Some(r),
+        s = signals.recv() => {
+            tracing::info!(signal = ?s, "signal during start");
+            None
+        }
+    };
+    let Some(started) = started else {
+        drain::exit(drain.drain(&mut signals).await);
+    };
+    let service = match started {
         Ok(s) => s,
         Err(e) => {
             tracing::error!(error = %e, "start failed");

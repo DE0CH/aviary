@@ -195,12 +195,18 @@ async fn joining_from_the_list_loses_nothing() {
     }
 }
 
+/// The poller's replica re-queries a held poll only every minute, so every answer below came from a notification;
+/// each wake-up is timed from the commit, as the test's own LISTEN connection on the change channel sees it (the
+/// notification is sent at commit; the poller's replica gets it at the same moment and must still query and answer).
 #[tokio::test]
 async fn a_write_on_one_replica_wakes_a_long_poll_on_the_other_within_50_ms() {
     let db = common::fresh_db("fanout").await;
     let t = common::Tokens::new();
-    let a = common::replica(&db.url, &t).await;
+    let a = common::replica_with(&db.url, &t, "http://127.0.0.1:1", common::no_requery()).await;
     let b = common::replica(&db.url, &t).await;
+    let sql = common::sql(&db.url);
+    let commits = aviary_pg::Listener::start(&sql, &[magpie::fanout::CHANGES]).unwrap();
+    commits.ready().await;
     let poller = a.pigeon();
     let writer = b.pigeon();
     let head = poller
@@ -223,6 +229,13 @@ async fn a_write_on_one_replica_wakes_a_long_poll_on_the_other_within_50_ms() {
                 (Instant::now(), r)
             })
         };
+        let committed = {
+            let mut w = commits.channel_waiter(magpie::fanout::CHANGES);
+            tokio::spawn(async move {
+                w.changed().await;
+                Instant::now()
+            })
+        };
         // the poll is held before the write
         tokio::time::sleep(Duration::from_millis(150)).await;
         writer
@@ -230,19 +243,18 @@ async fn a_write_on_one_replica_wakes_a_long_poll_on_the_other_within_50_ms() {
             .create_conversation(&empty(&format!("f{i}")))
             .await
             .unwrap();
-        let committed = Instant::now();
+        let committed = committed.await.unwrap();
         let (woke, r) = poll.await.unwrap();
         assert_eq!(r.changes.len(), 1);
         after = r.head_seq;
-        lags.push(woke.saturating_duration_since(committed));
+        // a poll answered before the test's listener saw the commit woke within no time of it
+        lags.push(woke.checked_duration_since(committed).unwrap_or(Duration::ZERO));
     }
-    lags.sort();
-    let median = lags[lags.len() / 2];
+    commits.stop().await;
     assert!(
-        median < Duration::from_millis(50),
-        "median wake-up {median:?} ({lags:?})"
+        lags.iter().all(|l| *l < Duration::from_millis(50)),
+        "every wake-up within 50 ms of the commit: {lags:?}"
     );
-    assert!(lags.iter().all(|l| *l < Duration::from_millis(500)), "{lags:?}");
 }
 
 async fn kill_listeners(sql: &aviary_pg::Pool) -> usize {
@@ -263,7 +275,9 @@ async fn kill_listeners(sql: &aviary_pg::Pool) -> usize {
 async fn a_dropped_listen_connection_loses_nothing() {
     let db = common::fresh_db("relisten").await;
     let t = common::Tokens::new();
-    let a = common::replica(&db.url, &t).await;
+    // held polls re-query only every minute: the write made while LISTEN is down can reach the poll only through
+    // the wake-up of every waiter at the reconnect
+    let a = common::replica_with(&db.url, &t, "http://127.0.0.1:1", common::no_requery()).await;
     let b = common::replica(&db.url, &t).await;
     let sql = common::sql(&db.url);
     let poller = a.pigeon();
@@ -296,7 +310,9 @@ async fn a_dropped_listen_connection_loses_nothing() {
         .unwrap()
         .unwrap();
     assert_eq!(r.changes.len(), 1, "the write made while LISTEN was down is delivered");
+    // the reconnect backoff starts at 0.5 s; the re-query would come only after a minute
     assert!(started.elapsed() < Duration::from_secs(3));
+    assert!(a.app().fanout.reconnects() >= 1, "delivered by the reconnect");
     // after the reconnect, wake-ups work again
     assert!(
         common::eventually(Duration::from_secs(10), async || a.app().fanout.reconnects() >= 1).await,

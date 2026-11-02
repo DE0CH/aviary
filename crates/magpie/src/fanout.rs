@@ -43,17 +43,20 @@ pub async fn notify(tx: &Tx<'_>, channel: &str, key: &str, head: i64) -> Result<
 pub struct Fanout {
     listener: Listener,
     held: Arc<AtomicI64>,
+    requery: Duration,
 }
 
 impl Fanout {
-    /// Starts listening on [`CHANNELS`]; [`Fanout::ready`] resolves once the first connection listens.
+    /// Starts listening on [`CHANNELS`]; [`Fanout::ready`] resolves once the first connection listens. Held polls
+    /// re-query every `requery` ([`limits::REQUERY`] in service).
     ///
     /// # Errors
     /// Never for the fixed channel names.
-    pub fn start(pool: &Pool) -> Result<Self> {
+    pub fn start(pool: &Pool, requery: Duration) -> Result<Self> {
         Ok(Self {
             listener: Listener::start(pool, &CHANNELS)?,
             held: Arc::new(AtomicI64::new(0)),
+            requery,
         })
     }
 
@@ -80,15 +83,15 @@ impl Fanout {
         self.listener.reconnects()
     }
 
-    /// Closes the LISTEN connection (drain).
-    pub async fn stop(self) {
+    /// Closes the LISTEN connection and stops its reconnects (drain); waiters then wake only by their own timeouts.
+    pub async fn stop(&self) {
         self.listener.stop().await;
     }
 
     /// The long-poll loop: runs `query` until it answers `Some`, then returns it; when `wait` has passed, or the
     /// replica is draining, returns `query`'s last `None` turned into `empty()`. The waiter on `channel`/`key` is made
-    /// before the first query, and the loop re-queries at every notification, every [`limits::REQUERY`] and
-    /// after a LISTEN reconnect.
+    /// before the first query, and the loop re-queries at every notification, every `requery`
+    /// ([`limits::REQUERY`]) and after a LISTEN reconnect.
     ///
     /// # Errors
     /// `query`'s error.
@@ -118,7 +121,7 @@ impl Fanout {
             if now >= deadline || draining.is_draining() {
                 return Ok(empty());
             }
-            let pause = (deadline - now).min(limits::REQUERY);
+            let pause = (deadline - now).min(self.requery);
             tokio::select! {
                 () = waiter.changed() => {}
                 () = tokio::time::sleep(pause) => {}

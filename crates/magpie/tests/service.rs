@@ -69,12 +69,19 @@ async fn every_route_needs_its_caller() {
     let t = common::Tokens::new();
     let a = common::replica(&db.url, &t).await;
     let http = common::http();
+    // every method a route answers: its own, and HEAD for a GET (axum's get() serves HEAD with the GET handler)
+    let mut checks: Vec<(&magpie_api::routes::Route, reqwest::Method)> = Vec::new();
     for r in ROUTES {
+        checks.push((r, reqwest::Method::from_bytes(r.method.as_str().as_bytes()).unwrap()));
+        if r.method == magpie_api::routes::Method::Get {
+            checks.push((r, reqwest::Method::HEAD));
+        }
+    }
+    for (r, method) in checks {
         let url = format!("{}{}", a.url, path_of(r.path));
-        let method = reqwest::Method::from_bytes(r.method.as_str().as_bytes()).unwrap();
         // no token
         let res = http.request(method.clone(), &url).send().await.unwrap();
-        assert_eq!(res.status(), 401, "{} {} without a token", r.method.as_str(), r.path);
+        assert_eq!(res.status(), 401, "{method} {} without a token", r.path);
         // an unknown token
         let res = http
             .request(method.clone(), &url)
@@ -95,9 +102,51 @@ async fn every_route_needs_its_caller() {
                 .send()
                 .await
                 .unwrap();
-            assert_eq!(res.status(), 403, "{} as {c}", r.id);
-            let body: serde_json::Value = res.json().await.unwrap();
-            assert_eq!(body["code"], "wrong_caller");
+            assert_eq!(res.status(), 403, "{method} {} as {c}", r.id);
+            if method != reqwest::Method::HEAD {
+                let body: serde_json::Value = res.json().await.unwrap();
+                assert_eq!(body["code"], "wrong_caller");
+            }
+        }
+    }
+    // a HEAD with a forged person and no token reaches no handler: no persons row appears
+    let res = http
+        .head(format!("{}/v1/conversations", a.url))
+        .header("aviary-person", "mallory@example.com")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 401);
+    let n: i64 = common::sql(&db.url)
+        .get()
+        .await
+        .unwrap()
+        .query_one("select count(*) from persons", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(n, 0, "a HEAD without a token created a person");
+    // methods no route has: 401 without a token, 405 with one, on every path
+    for r in ROUTES {
+        let url = format!("{}{}", a.url, path_of(r.path));
+        for m in ["OPTIONS", "TRACE", "PROPFIND"] {
+            let m = reqwest::Method::from_bytes(m.as_bytes()).unwrap();
+            if ROUTES
+                .iter()
+                .any(|o| o.path == r.path && o.method.as_str() == m.as_str())
+            {
+                continue;
+            }
+            let res = http.request(m.clone(), &url).send().await.unwrap();
+            assert_eq!(res.status(), 401, "{m} {} without a token", r.path);
+            let res = http
+                .request(m.clone(), &url)
+                .bearer_auth(&t.pigeon)
+                .header("aviary-person", ALICE)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(res.status(), 405, "{m} {} with a token", r.path);
         }
     }
     // a person route without its person
@@ -113,23 +162,133 @@ async fn every_route_needs_its_caller() {
     assert_eq!(res.status(), 404);
 }
 
+/// Every `Aviary-*` header there is, with a value that passes as each.
+const EVERY_AVIARY: [(&str, &str); 12] = [
+    ("aviary-request", "req-1"),
+    ("aviary-protocol", "magpie-person/1"),
+    ("aviary-person", "mallory@example.com"),
+    ("aviary-viewer", "mallory@example.com"),
+    ("aviary-view-session", "vs-1"),
+    ("aviary-admin", "mallory@example.com"),
+    ("aviary-sandbox-id", "sbx-1"),
+    ("aviary-sandbox-conversation", "00000000-0000-0000-0000-000000000001"),
+    ("aviary-sandbox-person", "mallory@example.com"),
+    ("aviary-lease", "lease-1"),
+    ("aviary-upload-name", "a.txt"),
+    ("aviary-upload-kind", "file"),
+];
+
+/// The route layer in front of a handler that answers with the `Aviary-*` headers it was given, on every route of
+/// the table: what each caller's request carries past the layer, for every route it may call.
 #[tokio::test]
 async fn headers_a_caller_may_not_set_are_ignored() {
-    let db = common::fresh_db("strip").await;
+    use axum::routing::{MethodFilter, MethodRouter, on};
+    async fn echo(req: axum::extract::Request) -> axum::Json<Vec<String>> {
+        let mut seen: Vec<String> = req
+            .headers()
+            .keys()
+            .map(|n| n.as_str().to_owned())
+            .filter(|n| n.starts_with("aviary-"))
+            .collect();
+        seen.sort();
+        axum::Json(seen)
+    }
     let t = common::Tokens::new();
+    let mut by_path: Vec<(&str, MethodRouter)> = Vec::new();
+    for r in ROUTES {
+        let filter = match r.method {
+            routes::Method::Get => MethodFilter::GET,
+            routes::Method::Post => MethodFilter::POST,
+            routes::Method::Put => MethodFilter::PUT,
+            routes::Method::Patch => MethodFilter::PATCH,
+            routes::Method::Delete => MethodFilter::DELETE,
+        };
+        if let Some((_, m)) = by_path.iter_mut().find(|(p, _)| *p == r.path) {
+            *m = std::mem::take(m).on(filter, echo);
+        } else {
+            by_path.push((r.path, on(filter, echo)));
+        }
+    }
+    let mut router = axum::Router::new();
+    for (p, m) in by_path {
+        router = router.route(p, m);
+    }
+    let router = router.route_layer(axum::middleware::from_fn_with_state(t.callers(), magpie::auth::check));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let http = common::http();
+    let mut checked = 0;
+    for r in ROUTES {
+        for &c in r.callers {
+            let mut req = http
+                .request(
+                    reqwest::Method::from_bytes(r.method.as_str().as_bytes()).unwrap(),
+                    format!("{base}{}", path_of(r.path)),
+                )
+                .bearer_auth(token(&t, c));
+            for (n, v) in EVERY_AVIARY {
+                req = req.header(n, v);
+            }
+            let res = req.send().await.unwrap();
+            assert_eq!(res.status(), 200, "{} as {c}", r.id);
+            let seen: Vec<String> = res.json().await.unwrap();
+            let mut want: Vec<String> = aviary_core::http::headers::ALWAYS_ALLOWED
+                .iter()
+                .chain(magpie::auth::allowed_headers(c))
+                .map(|n| n.as_str().to_owned())
+                .collect();
+            want.sort();
+            assert_eq!(seen, want, "{} as {c}: what reached the handler", r.id);
+            checked += 1;
+        }
+    }
+    assert!(checked >= ROUTES.len());
+    // the lists themselves: pigeon names the person, viewer and upload; the gateway the sandbox and lease; admin
+    // itself; hermit nothing
+    let names = |c| -> Vec<&str> {
+        magpie::auth::allowed_headers(c)
+            .iter()
+            .map(axum::http::HeaderName::as_str)
+            .collect()
+    };
+    assert!(names(Caller::Hermit).is_empty());
+    assert!(!names(Caller::Gateway).contains(&"aviary-person") && !names(Caller::Gateway).contains(&"aviary-viewer"));
+    assert!(
+        !names(Caller::Pigeon)
+            .iter()
+            .any(|n| n.starts_with("aviary-sandbox") || *n == "aviary-admin")
+    );
+    server.abort();
+
+    // and through the real service: a forged Aviary-Viewer from a caller that may not set it leaves no trace
+    let db = common::fresh_db("strip").await;
     let a = common::replica(&db.url, &t).await;
-    // hermit may not name a person: its Aviary-Person is removed, the ops read still works
-    let res = common::http()
-        .get(format!("{}/v1/ops/stats", a.url))
-        .bearer_auth(&t.hermit)
-        .header("aviary-person", ALICE)
-        .send()
+    for c in [Caller::Gateway, Caller::Hermit, Caller::Admin] {
+        let res = http
+            .post(format!("{}/v1/conversations", a.url))
+            .bearer_auth(token(&t, c))
+            .header("aviary-person", ALICE)
+            .header("aviary-viewer", "mallory@example.com")
+            .header("aviary-view-session", "vs-1")
+            .json(&empty("forged"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 403, "create as {c}");
+    }
+    let n: i64 = common::sql(&db.url)
+        .get()
         .await
-        .unwrap();
-    assert_eq!(res.status(), 200);
-    // pigeon may not claim a sandbox identity: the person route sees only the person
-    let c = a.pigeon().person(ALICE).create_conversation(&empty("k")).await.unwrap();
-    assert!(c.is_new());
+        .unwrap()
+        .query_one(
+            "select (select count(*) from view_as_log) + (select count(*) from persons)",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(n, 0, "a forged viewer reached a handler");
 }
 
 #[tokio::test]
@@ -339,6 +498,103 @@ async fn the_outbox_retries_with_backoff_and_deletes_what_is_done() {
     assert_eq!(outbox::backoff(1), Duration::from_secs(5));
     assert_eq!(outbox::backoff(2), Duration::from_secs(10));
     assert_eq!(outbox::backoff(40), Duration::from_secs(3600));
+}
+
+/// A workspace's deletion waits for the same conversation's release; an item that does not parse is parked for an
+/// hour and holds nothing up.
+#[tokio::test]
+async fn the_outbox_deletes_a_workspace_only_after_its_release_and_parks_what_does_not_parse() {
+    let db = common::fresh_db("outbox_order").await;
+    let t = common::Tokens::new();
+    let a = common::replica(&db.url, &t).await;
+    let sql = common::sql(&db.url);
+    let (x, y) = (Uuid::new_v4(), Uuid::new_v4());
+    {
+        let c = sql.get().await.unwrap();
+        c.execute(
+            "insert into outbox (kind, payload) values ('release_sandbox', '{\"nonsense\": true}')",
+            &[],
+        )
+        .await
+        .unwrap();
+        for (kind, payload) in [
+            (
+                "release_sandbox",
+                serde_json::json!({"conversationId": x, "reason": "deleted"}),
+            ),
+            ("delete_workspace", serde_json::json!({"workspaceId": x})),
+            ("delete_workspace", serde_json::json!({"workspaceId": y})),
+        ] {
+            c.execute("insert into outbox (kind, payload) values ($1, $2)", &[&kind, &payload])
+                .await
+                .unwrap();
+        }
+    }
+    let rec = Recorder::default();
+    // the release fails: x's workspace is not touched, y's (no release queued) is deleted; the bad item is parked
+    *rec.fail.lock().unwrap() = 1;
+    assert_eq!(outbox::pass(a.pool(), &rec).await.unwrap(), 1);
+    assert_eq!(
+        rec.calls.lock().unwrap().clone(),
+        vec![
+            Item::ReleaseSandbox {
+                conversation_id: x,
+                reason: ConversationReleaseReason::Deleted
+            },
+            Item::DeleteWorkspace { workspace_id: y },
+        ]
+    );
+    let r = sql
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select attempts, last_error, next_at > now() + interval '59 minutes' from outbox
+             where payload ? 'nonsense'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            r.get::<_, i32>(0),
+            r.get::<_, Option<String>>(1).as_deref(),
+            r.get::<_, bool>(2)
+        ),
+        (1, Some("does not parse"), true)
+    );
+    // the release is done: the workspace deletion follows
+    sql.get()
+        .await
+        .unwrap()
+        .execute(
+            "update outbox set next_at = now() where payload ? 'conversationId'",
+            &[],
+        )
+        .await
+        .unwrap();
+    rec.calls.lock().unwrap().clear();
+    assert_eq!(outbox::pass(a.pool(), &rec).await.unwrap(), 1);
+    assert_eq!(outbox::pass(a.pool(), &rec).await.unwrap(), 1);
+    assert_eq!(
+        rec.calls.lock().unwrap().clone(),
+        vec![
+            Item::ReleaseSandbox {
+                conversation_id: x,
+                reason: ConversationReleaseReason::Deleted
+            },
+            Item::DeleteWorkspace { workspace_id: x },
+        ]
+    );
+    let left: i64 = sql
+        .get()
+        .await
+        .unwrap()
+        .query_one("select count(*) from outbox", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(left, 1, "only the parked item is left");
 }
 
 #[tokio::test]

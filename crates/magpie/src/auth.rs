@@ -2,7 +2,8 @@
 //! tokens come from `MAGPIE_ACCEPT_<CALLER>` (platform 3.7).
 //!
 //! The check is one route layer over magpie-api's router, so it covers every route the router has: an unknown or
-//! missing token answers 401 `unauthenticated`, a caller the route does not list 403 `wrong_caller`. Then every
+//! missing token answers 401 `unauthenticated` (whatever the method), a caller the route does not list 403
+//! `wrong_caller`, `HEAD` is checked as the route's `GET`, and any other method the table lacks answers 405 here. Then every
 //! `Aviary-*` header the caller may not set is removed (platform 3.5), so a handler can trust what is left:
 //! pigeon sets the person, viewer and upload headers, the gateway the sandbox identity and the lease, admin
 //! `Aviary-Admin`, hermit none. A person route without `Aviary-Person` answers 400 `bad_request`.
@@ -53,23 +54,35 @@ pub fn allowed_headers(caller: Caller) -> &'static [HeaderName] {
     }
 }
 
-/// The route of a request, by its matched path template and method.
+/// The route of a request, by its matched path template and method. `HEAD` is the route's `GET`: axum's `get()`
+/// answers `HEAD` with the `GET` handler, so it must pass the same checks.
 #[must_use]
 pub fn route_of(req: &Request) -> Option<&'static Route> {
     let template = req.extensions().get::<MatchedPath>()?.as_str();
+    let method = if req.method() == axum::http::Method::HEAD {
+        "GET"
+    } else {
+        req.method().as_str()
+    };
     ROUTES
         .iter()
-        .find(|r| r.path == template && r.method.as_str() == req.method().as_str())
+        .find(|r| r.path == template && r.method.as_str() == method)
 }
 
 /// The route layer: caller check, header stripping, the person header on person routes.
 pub async fn check(State(callers): State<Callers>, mut req: Request, next: Next) -> Response {
-    let Some(route) = route_of(&req) else {
-        // a method the route table does not have: magpie-api's router answers it (405)
-        return next.run(req).await;
-    };
     let Some(caller) = callers.identify_headers(req.headers()) else {
         return ApiError::unauthenticated().into_response();
+    };
+    let Some(route) = route_of(&req) else {
+        // a method the route table does not have (OPTIONS, TRACE, …): no handler serves it, the router answers 405.
+        // Nothing reaches a handler without a token and a route that lists its caller.
+        return ApiError::new(
+            axum::http::StatusCode::METHOD_NOT_ALLOWED,
+            "method_not_allowed",
+            "this method is not served on this path",
+        )
+        .into_response();
     };
     if !route.callers.contains(&caller) {
         return ApiError::wrong_caller(caller).into_response();

@@ -249,7 +249,8 @@ pub struct ListResponse {
 pub struct ListPosition {
     /// The person's change generation (never changes).
     pub generation: String,
-    /// The person's change seq.
+    /// The person's change seq, read in the same snapshot as the page: the change feed from it (M12 `after`) holds
+    /// exactly the changes the page does not show.
     pub head_seq: u64,
 }
 

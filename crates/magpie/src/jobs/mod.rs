@@ -114,7 +114,7 @@ impl Jobs {
     }
 }
 
-/// How often each leader job runs.
+/// How often each leader job runs, and how often a held poll re-queries.
 #[derive(Debug, Clone, Copy)]
 pub struct Intervals {
     /// The leader lock's retry.
@@ -125,6 +125,9 @@ pub struct Intervals {
     pub outbox: Duration,
     /// Retention.
     pub retention: Duration,
+    /// A held poll's re-query without a notification ([`limits::REQUERY`]; tests lengthen it to show a wake-up came
+    /// from a notification or a reconnect).
+    pub requery: Duration,
 }
 
 impl Default for Intervals {
@@ -134,6 +137,7 @@ impl Default for Intervals {
             purge: limits::PURGE_EVERY,
             outbox: limits::OUTBOX_EVERY,
             retention: limits::RETENTION_EVERY,
+            requery: limits::REQUERY,
         }
     }
 }

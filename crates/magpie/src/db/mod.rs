@@ -11,7 +11,7 @@ use aviary_pg::{Conn, LockKey, Migration, Row, ToSql, Tx};
 /// # Errors
 /// When the embedded list is malformed (a bad file name): a start failure.
 pub fn migrations() -> Result<Vec<Migration>, aviary_pg::Error> {
-    aviary_pg::migrations!(dir = "src/db/migrations"; "0001_init.sql")
+    aviary_pg::migrations!(dir = "src/db/migrations"; "0001_init.sql", "0002_retention_indexes.sql")
 }
 
 /// The migrations' advisory lock (magpie 4).
@@ -91,6 +91,15 @@ macro_rules! impl_db {
 
 impl_db!(Tx<'_>);
 impl_db!(Conn);
+
+/// Makes `t` one snapshot: repeatable read, read only. The first statement of the transaction.
+///
+/// # Errors
+/// When the statement fails.
+pub async fn snapshot(t: &Tx<'_>) -> Result<(), aviary_pg::Error> {
+    t.batch_execute("set transaction isolation level repeatable read, read only")
+        .await
+}
 
 /// A count column (`bigint`) as `u64`.
 #[must_use]

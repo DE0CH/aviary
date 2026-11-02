@@ -130,6 +130,7 @@ pub fn fast() -> Intervals {
         purge: Duration::from_millis(200),
         outbox: Duration::from_millis(200),
         retention: Duration::from_millis(200),
+        requery: magpie::limits::REQUERY,
     }
 }
 
@@ -140,6 +141,15 @@ pub fn idle() -> Intervals {
         purge: Duration::from_secs(3600),
         outbox: Duration::from_secs(3600),
         retention: Duration::from_secs(3600),
+        requery: magpie::limits::REQUERY,
+    }
+}
+
+/// [`idle`] with held polls that re-query only every minute (a test that a wake-up came from a notification).
+pub fn no_requery() -> Intervals {
+    Intervals {
+        requery: Duration::from_secs(60),
+        ..idle()
     }
 }
 

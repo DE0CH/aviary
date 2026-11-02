@@ -79,7 +79,9 @@ pub struct ChangesQuery {
 pub struct ChangesResponse {
     /// The person's change generation (never changes; Paseo's list generation).
     pub generation: String,
-    /// The person's last change seq.
+    /// The person's last change seq, read in the same snapshot as `changes` (so at least every seq in it). The next
+    /// request's `after` is the last change's seq, or `head_seq` when `changes` is empty: with exactly `limit`
+    /// changes, more may follow up to `head_seq`.
     pub head_seq: u64,
     /// Ascending by seq.
     pub changes: Vec<Change>,

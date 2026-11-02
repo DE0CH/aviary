@@ -96,6 +96,14 @@ pub async fn ensure_person(db: &impl Db, person: &str) -> Result<PersonRow> {
         &[&person, &aviary_core::log::person_key(person)],
     )
     .await?;
+    person_row(db, person).await
+}
+
+/// The person's row, which exists ([`ensure_person`] made it).
+///
+/// # Errors
+/// When a statement fails, or there is no row.
+pub async fn person_row(db: &impl Db, person: &str) -> Result<PersonRow> {
     let row = db
         .query_one(
             "select person_key, change_generation, change_seq from persons where person = $1",

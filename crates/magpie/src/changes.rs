@@ -7,6 +7,11 @@
 //!
 //! [`read`] answers `after=latest` at once, 410 `cursor_expired` for a position older than retention keeps, and
 //! otherwise long-polls on the person's watch.
+//!
+//! The cursor: a reader asks for the next page `after` the seq of the last change it got (`headSeq` when a page
+//! came back empty). `headSeq` and the page come from one snapshot, so `headSeq` is at least every returned seq, and
+//! a page with fewer than `limit` changes ends at `headSeq`; with exactly `limit`, more may follow. A held poll
+//! that times out answers `headSeq = after`: its last look found nothing past `after`, which is the head then.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -21,6 +26,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::conversations::{self, PersonRow};
+use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::fanout::{self, Fanout};
 use crate::limits;
@@ -190,9 +196,17 @@ async fn check_cursor(pool: &Pool, person: &str, p: &PersonRow, after: i64) -> R
 }
 
 /// The head and up to `limit` changes after `after`, upserts filled with the conversations' current state (a
-/// purged conversation's upsert reads as its removal).
+/// purged conversation's upsert reads as its removal). All in one snapshot, so the head is never older than a change
+/// of the page, and a page shorter than `limit` ends at the head.
 async fn page(pool: &Pool, person: &str, after: i64, limit: i64) -> Result<(i64, Vec<Change>)> {
-    let conn = pool.get().await?;
+    aviary_pg::tx!(pool, |t| -> Result<(i64, Vec<Change>)> {
+        crate::db::snapshot(t).await?;
+        page_in(t, person, after, limit).await
+    })
+    .await
+}
+
+async fn page_in(conn: &impl Db, person: &str, after: i64, limit: i64) -> Result<(i64, Vec<Change>)> {
     let head: i64 = conn
         .query_one("select change_seq from persons where person = $1", &[&person])
         .await?
@@ -214,7 +228,7 @@ async fn page(pool: &Pool, person: &str, after: i64, limit: i64) -> Result<(i64,
         ids.dedup();
         ids
     };
-    let mut convs: HashMap<Uuid, _> = conversations::load_many(&conn, &upserted)
+    let mut convs: HashMap<Uuid, _> = conversations::load_many(conn, &upserted)
         .await?
         .into_iter()
         .map(|c| (c.id, c))
