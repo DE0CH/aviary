@@ -380,7 +380,8 @@ impl Sandboxes {
         for sl in t.iter_mut().filter(|s| s.used) {
             let ev = paths::sbx_cgroup(sl.entry.spec.name.as_str(), "cgroup.events");
             let mut eb = [0u8; 256];
-            let populated = read_file(ev.as_str(), &mut eb).is_ok_and(|t| core::str::from_utf8(t).unwrap_or("").lines().any(|l| l.trim() == "populated 1"));
+            let populated = read_file(ev.as_str(), &mut eb)
+                .is_ok_and(|t| core::str::from_utf8(t).unwrap_or("").lines().any(|l| l.trim() == "populated 1"));
             sl.entry.alive = populated || sl.entry.state != RUNNING;
             let p = paths::sbx_cgroup(sl.entry.spec.name.as_str(), "cpu.stat");
             let mut b = [0u8; 1024];
@@ -483,9 +484,7 @@ impl Sandboxes {
             return Err(Error::new(500, "image config is too large (or has a NUL)"));
         }
         let text = core::str::from_utf8(&sc.small[..used]).map_err(|_| Error::new(500, "image config is not UTF-8"))?;
-        let items = || {
-            text.split('\0').filter(|s| !s.is_empty()).map(|s| (s.as_bytes()[0], &s[1..]))
-        };
+        let items = || text.split('\0').filter(|s| !s.is_empty()).map(|s| (s.as_bytes()[0], &s[1..]));
         let mut env: [&str; 256] = [""; 256];
         let mut n = 0;
         for (_, kv) in items().filter(|(t, kv)| *t == images::ConfigList::Env as u8 && !kv.is_empty()) {

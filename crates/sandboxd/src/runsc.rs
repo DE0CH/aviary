@@ -270,10 +270,7 @@ mod tests {
             ),
             "{s}"
         );
-        assert!(
-            s.contains(r#""devices":[{"allow":true,"type":"c","major":10,"minor":229,"access":"rwm"}]"#),
-            "{s}"
-        );
+        assert!(s.contains(r#""devices":[{"allow":true,"type":"c","major":10,"minor":229,"access":"rwm"}]"#), "{s}");
         assert!(!s.contains("tmpfs\",\"source\":\"tmpfs\",\"options\":[\"mode=711"));
         let Val::Obj(_) = json::parse(s.as_bytes()).unwrap() else { panic!() };
     }

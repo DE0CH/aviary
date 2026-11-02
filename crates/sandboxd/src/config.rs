@@ -448,7 +448,11 @@ impl Spec {
             } else if strict {
                 // an old controller's `user` (the `~/.claude` bind, gone with hermit spec 13.2 item 2) or any other
                 // field this version does not know is refused, never dropped
-                return Err(err!(400, "spec: unknown field {}", Str::<64>::lossy(core::str::from_utf8(k.0).unwrap_or("?"))));
+                return Err(err!(
+                    400,
+                    "spec: unknown field {}",
+                    Str::<64>::lossy(core::str::from_utf8(k.0).unwrap_or("?"))
+                ));
             }
             Ok(())
         })?;
