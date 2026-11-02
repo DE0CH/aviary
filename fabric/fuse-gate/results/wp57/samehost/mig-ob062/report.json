@@ -1,0 +1,63 @@
+{
+ "files": [
+  {
+   "path": ".last-cleanup",
+   "size": 24,
+   "equal_to_magpie": true,
+   "sha256": "16d23ef3cf8866b3"
+  },
+  {
+   "path": "blocked.jsonl",
+   "size": 3145734,
+   "equal_to_magpie": true,
+   "sha256": "e84a50615aec1f00",
+   "lines": 4,
+   "bad_lines": 4,
+   "ends_with_newline": true
+  },
+  {
+   "path": "keeper-probe.txt",
+   "size": 6,
+   "equal_to_magpie": true,
+   "sha256": "25be323556dad377"
+  },
+  {
+   "path": "backups/.claude.json.backup.1793653096897",
+   "size": 84,
+   "equal_to_magpie": true,
+   "sha256": "cefbfe10a0fe5a9c"
+  },
+  {
+   "path": "projects/-home-sandbox/8be4362b-a00b-45de-a288-1020d9aa2361.jsonl",
+   "size": 259967,
+   "equal_to_magpie": true,
+   "sha256": "c8f3b2ccca63c8ca",
+   "lines": 42,
+   "bad_lines": 0,
+   "ends_with_newline": true
+  }
+ ],
+ "opcodes": {
+  "INIT": 1,
+  "GETATTR": 81,
+  "LOOKUP": 253,
+  "CREATE": 9,
+  "SETATTR": 14,
+  "FLUSH": 69,
+  "WRITE": 36,
+  "RELEASE": 54,
+  "OPEN": 45,
+  "READ": 26,
+  "MKDIR": 8,
+  "OPENDIR": 42,
+  "READDIR": 84,
+  "RELEASEDIR": 42,
+  "RENAME": 1,
+  "RMDIR": 2,
+  "UNLINK": 4
+ },
+ "errors": {
+  "LOOKUP errno 2": 206,
+  "RMDIR errno 39": 2
+ }
+}

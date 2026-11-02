@@ -30,29 +30,35 @@ stood, two faults after a restore are unexplained (handed to WP-57), and the tom
    another directory waited 3.37-3.41 s, exactly until a held RMDIR was released.
 3. **Negative: INIT "reply 7.23"** (2.5, 9.3) would not get 1 MiB writes: `FUSE_MAX_PAGES` needs minor ≥ 28. The fork
    offers 7.31 and the spike replies 7.31 (item 1).
-4. **Unexplained failure: an in-sandbox process is killed by SIGSEGV after a restore** in 6 of 72 AWS migrations
-   with requests held in the supervisor (the fake magpie 5 times, Claude Code once) and in 1 of 6 of run 1 (the mock
-   model), and in 0 of 30 AWS control migrations without a hold. It is counted as a failure of item 3, not as a pass.
-   The sentry's debug log puts the fault in a thread whose blocking `recvfrom` was restarted at the restore; it is not
+4. **Failure, cause found by WP-57: an in-sandbox process is killed by SIGSEGV after a restore** in 6 of 72 AWS
+   migrations with requests held in the supervisor (the fake magpie 5 times, Claude Code once), in 1 of 6 of run 1
+   (the mock model) and in 0 of 30 AWS control migrations without a hold. It is counted as a failure of item 3. The
+   sentry's debug log puts the fault in a thread whose blocking `recvfrom` was restarted at the restore; it is not
    systrap's syscall patching (it recurred with patching off) and not stale pages written by the sentry (a copy-out
-   check found none). **What causes it is not established:** 6 of 72 against 0 of 30 is not significant (p about 0.07),
-   and those controls differed in more than the hold (no blocked-append process, no probe, a 2.3-3.5 MB pre-copy
-   stream instead of about 128 MB, half the pause). Details and the matched control in item 3. Owned by WP-57.
-5. **Unexplained failure: a journal read after a restore with no whole request in it** (item 3): in `mig-s06` and
-   `mig-s09` (scratch layout: the journal is a `MAP_SHARED` file on the host-backed scratch dir), 3 reads of
-   `/dev/fuse` returned while the slot's `len` field was still 0; the spike's worker thread panicked on the header and
-   the runs were counted as passes, because nothing then read the supervisor's log. Re-checked with the rules of round
-   3, `mig-s09` fails as well (7 of the 72 hold-on AWS migrations fail). Owned by WP-57; supervisor 9.9 records the
-   reader's check.
+   check found none). Cause and fix: section "WP-57" (the final pre-copy round left freed or zeroed pages with their
+   old bytes on the target; fixed in the fork release `precopy-20261102.1`, which on the same Hetzner hosts removed
+   the losses that `precopy-20261021.2` showed). That this bug caused these particular SIGSEGVs is probable, not
+   traced to a page (see there). Remaining: WP-40's must-pass batch on fabric-AMI hosts in the fabric's account.
+5. **Failure, cause found by WP-57: a journal read after a restore with no whole request in it** (item 3): in
+   `mig-s06` and `mig-s09` (scratch layout: the journal is a `MAP_SHARED` file on the host-backed scratch dir), 3
+   reads of `/dev/fuse` returned while the slot's `len` field was still 0; the spike's worker thread panicked on the
+   header and the runs were first counted as passes, because nothing then read the supervisor's log. Re-checked with
+   the rules of round 3, `mig-s09` fails as well (7 of the 72 hold-on AWS migrations fail). Cause: the scratch move's
+   final delta used rsync's quick check, which cannot see a write through a shared mapping (section "WP-57"; the
+   mechanism is reproduced, the end-to-end short read was not: 0 of 24 hold-on runs with the quick check). Fixed in
+   the gate's `send-scratch`; the same fix in sandboxd is WP-19's (split c); supervisor 9.9 keeps the reader's check.
 
 **WP-57 (2026-11-02): both faults are explained and fixed** (section "WP-57" below). Item 4 is the fork's: the final,
 stopped round of a pre-copy migration did not resend pages that had been sent earlier and were then freed or found
 zero, so the target kept their old bytes and handed them out as fresh memory; fixed in the fork release
 `precopy-20261102.1`. Item 5 is the scratch move's (the gate's copy of sandboxd's `send_locked`, and sandboxd
 itself): rsync's quick check cannot see a write made through a shared mapping, and the INTERRUPT read during the stop
-was such a write; the gate's final delta now compares contents. On `precopy-20261102.1` with the hold: 0 lost
-processes and 0 short reads in 100 tmpfs and 100 scratch migrations, with the matched control and the memory control
-alongside (0 failures in either).
+was such a write; the gate's final delta now compares contents. On the same two Hetzner hosts, `precopy-20261021.2`
+lost a process in 4 of 50 hold-on migrations and `precopy-20261102.1` in 0 of 150 (one-sided Fisher exact
+0.0036); on two other Hetzner hosts the new release had 0 lost processes and 0 short reads in 100 tmpfs and 100
+scratch hold-on migrations, and 0 short reads in 60 scratch runs with production's stopped-time path. The link from
+the fixed bug to the gate's own SIGSEGVs is probable, not traced to a page; the end-to-end short read was not
+reproduced, only its mechanism; the fabric's AMI on AWS is untested and is WP-40's must-pass check.
 
 **The corrections are handed back to the design of record** (text changed on 2026-11-02, marked "WP-07 gate"):
 supervisor spec 2.5, 8.2, 9.1 (the gate's path findings are provisional until WP-22's re-run under 6.1-6.4), 9.3
@@ -107,7 +113,27 @@ overwrote with zeroes and a page after `MADV_DONTNEED`; a second process rewrite
 | `precopy-20261021.2` (the gate's) | 20 | 4 (so02, so06, so12, so17) | 8 fresh mappings (4 KiB, 64 KiB, 2 MiB) not zero, first bytes 15, 16, 72, 82, 133 (old fill bytes and text); one page overwritten with zeroes read back with the old fill byte |
 | `precopy-20261102.1` | 40 | 0 | final round's zero ranges 48.1-121.3 MB |
 
-0 of 40 at the old rate (4 of 20) happens by chance with probability 0.8^40 = 0.00013.
+0 of 40 at the old rate (4 of 20) happens by chance with probability 0.8^40 = 0.00013. A confound of these two
+batches: during both (`so` and `sn`) two sandboxes left over from killed trial runs, each rewriting 300 MB in a loop,
+were still running on the source host (removed before every later batch); they were the same for both releases, but
+they loaded the host and so may have changed the race.
+
+**How far the attribution goes.** What is shown: the bug exists in `precopy-20261021.2` (the code above; the
+regression test fails on it, below), it hands stale bytes to a process as fresh memory after a restore
+(`stale-mig.sh`), and on the same two hosts the gate's own hold-on migrations lose a process on
+`precopy-20261021.2` and not on `precopy-20261102.1`, which differs from it by one commit: this fix, its test and
+the final round's counts in the receive report (section
+"Same hosts, both releases" below). What is not shown: no core, sentry log or fault address of a real failing run was
+traced to a page in the ranges the old release left unsent (the old release does not report them, and a general
+protection fault reports address 0, not the pointer it dereferenced). So the link from this bug to the gate's
+SIGSEGVs and SIGABRTs (`d07`, `d11`, `e02`, `e14`, `s06`, `p20` and the `ob` runs below) is probable, not proven.
+
+**Regression test against the old code.** `TestPrecopyContentsPresentAfterZeroing`, run with `make test
+TARGETS=//pkg/sentry/pgalloc:pgalloc_test` on `1635a240b` with `pkg/sentry/pgalloc/save_restore.go` taken from
+`b360d82cf` (the fix reverted, the test kept), fails: "zeroed page at 0x2000: destination holds first byte 3, want a
+zero page", the same for the decommitted page and the eight freed pages, and "fresh allocation [0x8000, 0x18000) on
+the destination: page at slice offset 0x0 is not zero (first byte 101)". With the fix the target passes
+(`results/wp57/regress/`, on a throwaway Hetzner ccx33).
 
 **Fix**: the runtime fork's commit `1635a240b` ("Pre-copy: the final save sends dirty pages that are no longer committed as
 zeroes"), released as `precopy-20261102.1` by the fork's release workflow (tag `precopy-*` on `main`, the same path as
@@ -135,7 +161,10 @@ pages read back an older counter on the target, e.g. 3920 where 4002 was written
 `./mc/counter`); with the checksummed final delta 0 of 6. In the gate's own hold-on runs with the quick check
 (`mig-q*`, `mig-r*`, 24 runs) the INTERRUPT race was not hit again: 0 short reads; `q04` stopped at the comparison
 (below): the comparison found a differing file and a `set -e` bug in it ended `send-scratch` before `SBXDONE`, so the
-target never restored (fixed; which file differed was not recorded).
+target never restored (fixed; which file differed was not recorded). **So the end-to-end short read was not
+reproduced in WP-57** (0 of 24 hold-on runs with the quick check, against 2 of 72 on AWS); what is reproduced is the
+mechanism (`mmap-rsync.sh`, `mapcount-mig.sh`), and the 0 short reads of the `x` batch below come from the gate's
+checksummed final delta plus its comparison, not from a production path.
 
 This is not the fork's and not the INTERRUPT's alone: every scratch file written through a shared mapping after the
 last live round is copied in an older state (a request read into a slot after it, an application's mapped file such
@@ -172,8 +201,50 @@ final deltas of `mig-q*` and `mig-r*` took 100-187 ms); without the comparison t
 scratch run's comparison found no differing file. The checksummed final delta transferred a file in 8 of the 100
 hold-on runs (`x019`, `x073`, `x117`, `x121`, `x127`, `x169`, `x171`, `x199`) and in none of the 100 controls.
 
-At the gate's rate (6 of 72 hold-on AWS runs lost a process; 7 of 72 failed), 0 in 100 happens by chance with
-probability (66/72)^100 = 0.00017 for each layout.
+**Scratch with production's stopped-time path** (batch `nc`, `results/wp57/samehost/`; the same-host pair below, on
+`precopy-20261102.1`): `COMPARE=0 HOLD=1 migrate-batch.sh … nc 60 scratch`, the checksummed final delta and no
+comparison, so the stopped time is the final delta alone, as in sandboxd. 60 hold-on runs, 0 failed, 0 lost
+processes, 0 short reads (the supervisor's log checked in every run). Final delta 107-241 ms (median 112.5);
+checkpoint end to `SBXDONE` 141-276 ms (median 153); pause 468.8-750.9 ms (median 515.9), against round 3's
+436.4-596.6 ms with the quick check. The checksummed delta moved one file (16,908,288 bytes) in 5 of the 60 runs
+(`nc02`, `nc24`, `nc33`, `nc44`, `nc57`). With no comparison these runs cannot tell whether a file still differed;
+they check only that nothing failed.
+
+These batches alone do not show that the fix cured anything: they ran on hosts where the old release was not
+measured, and every arm passed, so the controls (`HOLD=2`, `HOLD=3`) separate nothing here either (a control only
+says something against a hold-on arm that fails). The AWS rate (6 of 72) does not carry over to other hosts, so it
+gives no probability for these 0-in-100s. The same-host batches below supply the old-release rate.
+
+### Same hosts, both releases
+
+Two further throwaway Hetzner cx33, in nbg1 (`runsc cpu-features` identical to the fsn1 hosts above and to round
+3's), the same `migrate-batch.sh`, tmpfs layout, first on `precopy-20261021.2` and then, after `host-setup.sh` moved
+both hosts to `precopy-20261102.1`, on the new release (`results/wp57/samehost/`: `mig-ob*`, `mig-nb*`, `mig-nd*`,
+their `batch-*.log` and `run-*.txt`, `migrations.json`):
+
+| Release | Batch | Configuration | Runs | Lost a process |
+|---|---|---|---|---|
+| `precopy-20261021.2` | `ob` (`HOLDS="1 2 1 3"`) | hold on | 50 | 4 (ob005 the fake magpie SIGSEGV, `exits.log` "status 139"; ob015, ob023, ob051 the fake magpie SIGABRT, "status 134", Rust's "fatal runtime error: current thread handle already set during thread spawn") |
+| | | matched control `HOLD=2` | 25 | 0 |
+| | | memory control `HOLD=3` | 25 | 0 |
+| `precopy-20261102.1` | `nb` (`HOLDS="1 2 1 3"`) | hold on | 50 | 0 |
+| | | matched control `HOLD=2` | 25 | 0 |
+| | | memory control `HOLD=3` | 25 | 0 |
+| `precopy-20261102.1` | `nd` (`HOLD=1`) | hold on | 100 | 0 |
+
+The old release loses a process on these hosts in 4 of 50 hold-on runs and in none of the 50 controls; the new
+release in 0 of 150 hold-on runs on the same hosts (0 of 100 more on the fsn1 hosts above). 4 of 50 against 0
+of 150, with every run equally likely to fail, comes out this lopsided by chance with probability 0.0036
+(one-sided Fisher exact test: C(50,4)/C(200,4)). The gate's fail rule counts the SIGABRTs and the SIGSEGV
+alike as an in-sandbox process exit; that the SIGABRT is the same fault (the fake magpie's Rust runtime finding its
+thread-spawn bookkeeping in memory that should have been zero) is Claude's inference from the message. The controls' 0 of 50 on the old release is consistent with
+the AWS controls (0 of 30), but with only 4 failures among 50 hold-on runs it separates nothing: 4 of 50 against 0
+of 25 comes out this way by chance with probability C(50,4)/C(75,4) = 0.19 for each control, so whether the held
+requests themselves or the larger final round raise the rate is not measured.
+
+**Still untested: the fabric's AMI on AWS**, where the gate measured the fault first. WP-40 runs it as a must-pass
+check (WORK-PACKAGES WP-40): both layouts on two fabric-AMI hosts, the old release first (a non-zero hold-on rate),
+then `precopy-20261102.1` with 0 lost processes and 0 short reads in 100 hold-on runs each.
 
 ## Setup
 
@@ -502,7 +573,8 @@ uuid, not for Claude Code's result; it now says that the result is not that sign
    plain `fs::write`; supervisor 9.3 requires an atomic write and a refusal to start when a keeper fd is held but the
    stored id is unreadable (a fresh id there would give the replays new `opId`s, executed a second time by magpie).
 9. **A journal read can come back without a whole request after a restore** (verdict 5): the reader checks `len`
-   against the count read and never panics on a header (supervisor 9.9); the cause is WP-57's.
+   against the count read and never panics on a header (supervisor 9.9). The cause (section "WP-57") is the scratch
+   move's quick-check final delta; sandboxd's final delta compares contents once WP-19 (split c) changes it.
 5. **`link(2)` is not used by 2.1.304**; the subagent "link fallback" row of 9.4 stays only as a guard, and
    `claude-code-gate` watches for it. FICLONE is answered EOPNOTSUPP by the sentry, `copy_file_range` handled by the
    sentry; no mmap (9.4).

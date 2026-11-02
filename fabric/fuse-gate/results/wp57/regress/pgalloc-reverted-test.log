@@ -1,0 +1,79 @@
+exec ${PAGER:-/usr/bin/less} "$0" || exit 1
+Executing tests from //pkg/sentry/pgalloc:pgalloc_test
+-----------------------------------------------------------------------------
+I1102 20:47:01.633864      21 save_restore.go:518] MemoryFile(0x3f1fd19a0008): save scanning took 7.349µs for 65536 allocated bytes: 32768 bytes of zero pages (32768 bytes expected including 32768 bytes of host holes, decommitted in 0 syscalls, + 0 bytes new), 32768 bytes of non-zero pages (0 bytes expected + 32768 bytes new); ExcludeCommittedZeroPages=false
+I1102 20:47:01.634176      21 save_restore.go:547] MemoryFile(0x3f1fd19a0008): saved metadata in 238.626µs
+I1102 20:47:01.634248      21 save_restore.go:565] MemoryFile(0x3f1fd19a0008): sent 8192 bytes of pages and 0 bytes of zero ranges (of 32768 committed bytes) in 23.382µs
+I1102 20:47:01.634458      21 save_restore.go:1185] MemoryFile(0x3f1fd19a1008): loaded metadata in 14.129µs
+I1102 20:47:01.634481      21 save_restore.go:1357] MemoryFile(0x3f1fd19a1008): loaded page file offsets in 5.698µs; async loading 32768 bytes
+I1102 20:47:01.634570      21 save_restore.go:2092] Async page loading completed in 0s (32768 bytes, 416.874 MB/s); 0 waiters waited 0s~0s for 0 bytes
+I1102 20:47:01.635291      21 save_restore.go:518] MemoryFile(0x3f1fd1807008): save scanning took 36.918µs for 65536 allocated bytes: 32768 bytes of zero pages (32768 bytes expected including 0 bytes of host holes, decommitted in 3 syscalls, + 0 bytes new), 32768 bytes of non-zero pages (0 bytes expected + 32768 bytes new); ExcludeCommittedZeroPages=false
+I1102 20:47:01.635337      21 save_restore.go:547] MemoryFile(0x3f1fd1807008): saved metadata in 15.29µs
+I1102 20:47:01.635368      21 save_restore.go:565] MemoryFile(0x3f1fd1807008): sent 8192 bytes of pages and 0 bytes of zero ranges (of 32768 committed bytes) in 21.268µs
+I1102 20:47:01.635623      21 save_restore.go:1185] MemoryFile(0x3f1fd1874008): loaded metadata in 10.194µs
+I1102 20:47:01.635650      21 save_restore.go:1357] MemoryFile(0x3f1fd1874008): loaded page file offsets in 4.567µs; async loading 32768 bytes
+I1102 20:47:01.635764      21 save_restore.go:2092] Async page loading completed in 0s (32768 bytes, 338.691 MB/s); 0 waiters waited 0s~0s for 0 bytes
+I1102 20:47:01.637374      21 save_restore.go:518] MemoryFile(0x3f1fd18da008): save scanning took 5.687µs for 262144 allocated bytes: 0 bytes of zero pages (0 bytes expected including 0 bytes of host holes, decommitted in 0 syscalls, + 0 bytes new), 262144 bytes of non-zero pages (0 bytes expected + 262144 bytes new); ExcludeCommittedZeroPages=false
+I1102 20:47:01.637427      21 save_restore.go:547] MemoryFile(0x3f1fd18da008): saved metadata in 18.454µs
+I1102 20:47:01.637546      21 save_restore.go:565] MemoryFile(0x3f1fd18da008): sent 262144 bytes of pages and 0 bytes of zero ranges (of 262144 committed bytes) in 111.679µs
+I1102 20:47:01.637933      21 save_restore.go:1185] MemoryFile(0x3f1fd18db008): loaded metadata in 8.541µs
+I1102 20:47:01.637985      21 save_restore.go:1357] MemoryFile(0x3f1fd18db008): loaded page file offsets in 24.742µs; async loading 262144 bytes
+I1102 20:47:01.638481      21 save_restore.go:2092] Async page loading completed in 0s (262144 bytes, 551.079 MB/s); 1 waiters waited 0s~0s for 4096 bytes
+I1102 20:47:01.638873      21 save_restore.go:518] MemoryFile(0x3f1fd16ba008): save scanning took 4.395µs for 65536 allocated bytes: 4096 bytes of zero pages (4096 bytes expected including 4096 bytes of host holes, decommitted in 0 syscalls, + 0 bytes new), 61440 bytes of non-zero pages (0 bytes expected + 61440 bytes new); ExcludeCommittedZeroPages=false
+I1102 20:47:01.638903      21 save_restore.go:547] MemoryFile(0x3f1fd16ba008): saved metadata in 7.881µs
+I1102 20:47:01.638919      21 save_restore.go:565] MemoryFile(0x3f1fd16ba008): sent 4096 bytes of pages and 0 bytes of zero ranges (of 61440 committed bytes) in 8.371µs
+W1102 20:47:01.638944      21 hostmm.go:150] Failed to pre-map MemoryFile PROT_EXEC: operation not permitted
+I1102 20:47:01.638966      21 save_restore.go:1185] MemoryFile(0x3f1fd16bb008): loaded metadata in 5.247µs
+I1102 20:47:01.638979      21 save_restore.go:1355] MemoryFile(0x3f1fd16bb008): 61440 bytes of pages already present
+I1102 20:47:01.639277      21 save_restore.go:518] MemoryFile(0x3f1fd1812008): save scanning took 25.053µs for 32768 allocated bytes: 8192 bytes of zero pages (8192 bytes expected including 4096 bytes of host holes, decommitted in 1 syscalls, + 0 bytes new), 24576 bytes of non-zero pages (0 bytes expected + 24576 bytes new); ExcludeCommittedZeroPages=false
+I1102 20:47:01.639313      21 save_restore.go:547] MemoryFile(0x3f1fd1812008): saved metadata in 8.421µs
+I1102 20:47:01.639324      21 save_restore.go:565] MemoryFile(0x3f1fd1812008): sent 0 bytes of pages and 0 bytes of zero ranges (of 24576 committed bytes) in 4.166µs
+W1102 20:47:01.639389      21 hostmm.go:150] Failed to pre-map MemoryFile PROT_EXEC: operation not permitted
+I1102 20:47:01.639403      21 save_restore.go:1185] MemoryFile(0x3f1fd18c2008): loaded metadata in 5.647µs
+I1102 20:47:01.639420      21 save_restore.go:1355] MemoryFile(0x3f1fd18c2008): 24576 bytes of pages already present
+--- FAIL: TestPrecopyContentsPresentAfterZeroing (0.00s)
+    dirty_test.go:502: zeroed page at 0x2000: destination holds first byte 3, want a zero page
+    dirty_test.go:502: decommitted page at 0x5000: destination holds first byte 6, want a zero page
+    dirty_test.go:502: freed page at 0x8000: destination holds first byte 101, want a zero page
+    dirty_test.go:502: freed page at 0x9000: destination holds first byte 102, want a zero page
+    dirty_test.go:502: freed page at 0xa000: destination holds first byte 103, want a zero page
+    dirty_test.go:502: freed page at 0xb000: destination holds first byte 104, want a zero page
+    dirty_test.go:502: freed page at 0xc000: destination holds first byte 105, want a zero page
+    dirty_test.go:502: freed page at 0xd000: destination holds first byte 106, want a zero page
+    dirty_test.go:502: freed page at 0xe000: destination holds first byte 107, want a zero page
+    dirty_test.go:502: freed page at 0xf000: destination holds first byte 108, want a zero page
+    dirty_test.go:526: restored page 2: got first byte 3, want 0
+    dirty_test.go:526: restored page 5: got first byte 6, want 0
+    dirty_test.go:539: fresh allocation [0x8000, 0x18000) on the destination: page at slice offset 0x0 is not zero (first byte 101)
+    dirty_test.go:539: fresh allocation [0x8000, 0x18000) on the destination: page at slice offset 0x1000 is not zero (first byte 102)
+    dirty_test.go:539: fresh allocation [0x8000, 0x18000) on the destination: page at slice offset 0x2000 is not zero (first byte 103)
+    dirty_test.go:539: fresh allocation [0x8000, 0x18000) on the destination: page at slice offset 0x3000 is not zero (first byte 104)
+    dirty_test.go:539: fresh allocation [0x8000, 0x18000) on the destination: page at slice offset 0x4000 is not zero (first byte 105)
+    dirty_test.go:539: fresh allocation [0x8000, 0x18000) on the destination: page at slice offset 0x5000 is not zero (first byte 106)
+    dirty_test.go:539: fresh allocation [0x8000, 0x18000) on the destination: page at slice offset 0x6000 is not zero (first byte 107)
+    dirty_test.go:539: fresh allocation [0x8000, 0x18000) on the destination: page at slice offset 0x7000 is not zero (first byte 108)
+I1102 20:47:01.640317      21 save_restore.go:518] MemoryFile(0x3f1fd193c008): save scanning took 7.21µs for 65536 allocated bytes: 57344 bytes of zero pages (57344 bytes expected including 57344 bytes of host holes, decommitted in 0 syscalls, + 0 bytes new), 8192 bytes of non-zero pages (0 bytes expected + 8192 bytes new); ExcludeCommittedZeroPages=false
+I1102 20:47:01.640337      21 save_restore.go:547] MemoryFile(0x3f1fd193c008): saved metadata in 4.316µs
+I1102 20:47:01.640345      21 save_restore.go:594] MemoryFile(0x3f1fd193c008): saved pages in 1.452µs (8192 bytes, 5641.873 MB/s)
+I1102 20:47:01.640404      21 save_restore.go:518] MemoryFile(0x3f1fd193c008): save scanning took 13.117µs for 65536 allocated bytes: 57344 bytes of zero pages (57344 bytes expected including 53248 bytes of host holes, decommitted in 1 syscalls, + 0 bytes new), 8192 bytes of non-zero pages (8192 bytes expected + 0 bytes new); ExcludeCommittedZeroPages=false
+I1102 20:47:01.640420      21 save_restore.go:547] MemoryFile(0x3f1fd193c008): saved metadata in 8.401µs
+I1102 20:47:01.640440      21 save_restore.go:594] MemoryFile(0x3f1fd193c008): saved pages in 11.665µs (8192 bytes, 702.272 MB/s)
+I1102 20:47:01.640475      21 save_restore.go:1185] MemoryFile(0x3f1fd193d008): loaded metadata in 4.767µs
+I1102 20:47:01.640499      21 save_restore.go:1359] MemoryFile(0x3f1fd193d008): loaded pages in 10.365µs (8192 bytes, 790.352 MB/s)
+I1102 20:47:01.640665      21 save_restore.go:518] MemoryFile(0x3f1fd1956008): save scanning took 6.879µs for 65536 allocated bytes: 57344 bytes of zero pages (57344 bytes expected including 57344 bytes of host holes, decommitted in 0 syscalls, + 0 bytes new), 8192 bytes of non-zero pages (0 bytes expected + 8192 bytes new); ExcludeCommittedZeroPages=false
+I1102 20:47:01.640683      21 save_restore.go:547] MemoryFile(0x3f1fd1956008): saved metadata in 3.395µs
+I1102 20:47:01.640695      21 save_restore.go:594] MemoryFile(0x3f1fd1956008): saved pages in 331ns (8192 bytes, 24749.245 MB/s)
+I1102 20:47:01.640747      21 save_restore.go:518] MemoryFile(0x3f1fd1956008): save scanning took 12.207µs for 65536 allocated bytes: 61440 bytes of zero pages (57344 bytes expected including 53248 bytes of host holes, decommitted in 1 syscalls, + 4096 bytes new), 4096 bytes of non-zero pages (4096 bytes expected + 0 bytes new); ExcludeCommittedZeroPages=true
+I1102 20:47:01.640756      21 save_restore.go:547] MemoryFile(0x3f1fd1956008): saved metadata in 1.602µs
+I1102 20:47:01.640761      21 save_restore.go:594] MemoryFile(0x3f1fd1956008): saved pages in 861ns (4096 bytes, 4757.259 MB/s)
+I1102 20:47:01.640796      21 save_restore.go:1185] MemoryFile(0x3f1fd1957008): loaded metadata in 3.856µs
+I1102 20:47:01.640814      21 save_restore.go:1359] MemoryFile(0x3f1fd1957008): loaded pages in 5.067µs (4096 bytes, 808.368 MB/s)
+I1102 20:47:01.641151      21 save_restore.go:518] MemoryFile(0x3f1fd196a008): save scanning took 81.338µs for 65536 allocated bytes: 57344 bytes of zero pages (57344 bytes expected including 0 bytes of host holes, decommitted in 3 syscalls, + 0 bytes new), 8192 bytes of non-zero pages (0 bytes expected + 8192 bytes new); ExcludeCommittedZeroPages=false
+I1102 20:47:01.641169      21 save_restore.go:547] MemoryFile(0x3f1fd196a008): saved metadata in 3.886µs
+I1102 20:47:01.641175      21 save_restore.go:594] MemoryFile(0x3f1fd196a008): saved pages in 501ns (8192 bytes, 16351.297 MB/s)
+I1102 20:47:01.641267      21 save_restore.go:518] MemoryFile(0x3f1fd196a008): save scanning took 50.948µs for 65536 allocated bytes: 57344 bytes of zero pages (57344 bytes expected including 0 bytes of host holes, decommitted in 3 syscalls, + 0 bytes new), 8192 bytes of non-zero pages (8192 bytes expected + 0 bytes new); ExcludeCommittedZeroPages=false
+I1102 20:47:01.641285      21 save_restore.go:547] MemoryFile(0x3f1fd196a008): saved metadata in 9.271µs
+I1102 20:47:01.641299      21 save_restore.go:594] MemoryFile(0x3f1fd196a008): saved pages in 8.461µs (8192 bytes, 968.207 MB/s)
+I1102 20:47:01.641394      21 save_restore.go:1185] MemoryFile(0x3f1fd196b008): loaded metadata in 5.267µs
+I1102 20:47:01.641486      21 save_restore.go:1359] MemoryFile(0x3f1fd196b008): loaded pages in 56.054µs (8192 bytes, 146.145 MB/s)
+FAIL

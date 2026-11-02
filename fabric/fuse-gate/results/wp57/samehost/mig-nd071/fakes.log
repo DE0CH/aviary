@@ -1,0 +1,4 @@
+mock model on 127.0.0.1:7200
+fake magpie on 127.0.0.1:7100
+keeper on /run/keeper.sock
+keeper: holding fd 5

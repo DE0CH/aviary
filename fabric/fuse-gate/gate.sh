@@ -127,15 +127,16 @@ send-scratch)
   o=$(rs "${fx[@]}"); fin=$(echo "$o" | stat_of); t3=$(ms)
   wait $dp || true
   # Every scratch file, source against destination, while both are stopped (before SBXDONE starts the restore)
+  # COMPARE=0 skips it (the stopped time then matches sandboxd's path, which has no comparison)
   sh_of() { (cd "$1" && find . -type f ! -path './lost+found/*' -print0 | sort -z | xargs -0 -r sha256sum); }
-  diff_files=$( { diff <(sh_of "$sd") <(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i /root/.ssh/gate "root@$host" "$(declare -f sh_of); sh_of /var/lib/gate${TARGET_SIDE:+/$TARGET_SIDE}/scratch/$name") || true; } | awk '/^</{print $3}' | sort -u | paste -sd, -)
+  diff_files=""; [ "${COMPARE:-1}" = 0 ] || diff_files=$( { diff <(sh_of "$sd") <(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i /root/.ssh/gate "root@$host" "$(declare -f sh_of); sh_of /var/lib/gate${TARGET_SIDE:+/$TARGET_SIDE}/scratch/$name") || true; } | awk '/^</{print $3}' | sort -u | paste -sd, -)
   t3b=$(ms)
   ok=$(python3 -c "
 import socket,sys
 c=socket.create_connection(('$host',$port),10); c.settimeout(30); c.sendall(b'SBXDONE!')
 print(c.recv(2).decode())")
   t4=$(ms)
-  echo "{\"live_rounds\":$live,\"checkpoint_ms\":$((t2-t1)),\"final_rsync\":$fin,\"ms\":$((t3-t2)),\"checksum\":$([ ${#fx[@]} = 0 ] && echo false || echo true)},\"files_differing_after_final\":\"$diff_files\",\"compare_ms\":$((t3b-t3)),\"done_reply\":\"$ok\",\"stopped_until_done_ms\":$((t4-t2))}"
+  echo "{\"live_rounds\":$live,\"checkpoint_ms\":$((t2-t1)),\"final_rsync\":$fin,\"ms\":$((t3-t2)),\"checksum\":$([ ${#fx[@]} = 0 ] && echo false || echo true)},\"compared\":$([ "${COMPARE:-1}" = 0 ] && echo false || echo true),\"files_differing_after_final\":\"$diff_files\",\"compare_ms\":$((t3b-t3)),\"done_reply\":\"$ok\",\"stopped_until_done_ms\":$((t4-t2))}"
   ;;
 receive-relay)
   port=$3; dir=/run/gate/ckpt/in-$ln; rm -rf "$dir"; mkdir -p /var/log/gate

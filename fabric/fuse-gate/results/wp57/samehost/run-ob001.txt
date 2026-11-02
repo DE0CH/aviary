@@ -1,0 +1,11 @@
+./migrate.sh: line 31: /var/log/gate/ob001.log: No such file or directory
+{"layout":"tmpfs","runsc_extra":"","hold":1,"mode":"fuse","send_ms":287,"total_ms":445,"release_to_turn_done_ms":753,"migrate_start_us":1793651663953000}
+{"from":"[<host-ipv6>]:57644","bytes":129539249,"page_bytes":128565248,"zero_bytes":121524224,"file_bytes":929291,"rounds":1,"total_ms":236.224,"final_ms":78.989,"restore_ms":148.794}
+
+{"turns":["success","success"],"exit":0}
+{"exact":true,"writes":[{"i":0,"returned":1048576,"ms":13098.4},{"i":1,"returned":1048576,"ms":16.8},{"i":2,"returned":1048576,"ms":16.5}]}
+{"start": 1793651668.71, "stat_s": 3.505, "read_s": 0.012}
+INTERRUPT	target 752
+INTERRUPT	target 708
+{"uniques":669,"replayed_lines":0,"repeat_count":0,"boundaries":[{"boundary_us":1793651663953000,"requests_before":376,"max_unique_before":752,"requests_after":293,"min_unique_after":756,"increasing":true}]}
+PASS

@@ -1,0 +1,2 @@
+mounted /home/sandbox/.claude (fd=3,rootmode=40755,user_id=0,group_id=0,default_permissions,allow_other)
+supervisor up: fresh_mount=true boot=f0c148b5c88c487d replayed=0 cache_kept=0 start_ms=5

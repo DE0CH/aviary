@@ -1,0 +1,3 @@
+2
+1793652175143533 HOLDING /write blocked.jsonl
+1793652178281572 HOLDING /rmdir projects/-home-sandbox

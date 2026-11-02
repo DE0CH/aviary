@@ -10,6 +10,6 @@ read -r -a holds <<< "${HOLDS:-${HOLD:-1}}"
 for i in $(seq -w 1 "$n"); do
   h=${holds[$(( (10#$i - 1) % ${#holds[@]} ))]}
   HOLD=$h LAYOUT=$layout ./migrate.sh "$pre$i" "$dst" "$fc" "$fm" > "/root/out/run-$pre$i.txt" 2>&1
-  echo "$pre$i $layout fill=$fc/$fm hold=$h mode=${MODE:-fuse} debug=${RESTORE_DEBUG:-0} exit=$? $(tail -n 1 "/root/out/run-$pre$i.txt")" >> "$log"
+  echo "$pre$i $layout fill=$fc/$fm hold=$h mode=${MODE:-fuse} debug=${RESTORE_DEBUG:-0}${COMPARE:+ compare=$COMPARE}${FINAL_QUICK:+ final_quick=$FINAL_QUICK} exit=$? $(tail -n 1 "/root/out/run-$pre$i.txt")" >> "$log"
 done
 echo "done" >> "$log"

@@ -32,3 +32,15 @@ run. Host addresses are replaced by `<host-ipv6>`; files over 32 KiB are gzipped
   `run-x*.txt` (scratch layout): the acceptance batches on `precopy-20261102.1`, `migrate-batch.sh` with
   `HOLDS="1 2 1 3"` (hold-on, matched control, hold-on, memory control); `migrations.json` is `migsummary.py`'s table
   of every `mig-*` here (its `scratch hold=1` group also holds `t01`, `q*` and `r*`).
+- `regress/pgalloc-reverted-test.log`, `regress/pgalloc-fixed-test.log`: Bazel's test log of
+  `//pkg/sentry/pgalloc:pgalloc_test` (`make test`, on a throwaway Hetzner ccx33) on DE0CH/gvisor `1635a240b` with
+  `pkg/sentry/pgalloc/save_restore.go` taken from `b360d82cf` (the fix reverted, its test kept:
+  `TestPrecopyContentsPresentAfterZeroing` fails) and on `1635a240b` as released (passes).
+- `samehost/`: two further throwaway Hetzner cx33 in nbg1 (`runsc cpu-features` identical to the hosts above),
+  deleted after the run. `mig-ob001`…`mig-ob100`, `batch-ob.log`, `run-ob*.txt`: `HOLDS="1 2 1 3"
+  migrate-batch.sh … ob 200 tmpfs` on the old release `precopy-20261021.2`, stopped after 100 runs (run 101,
+  interrupted, is not kept). Then both hosts moved to `precopy-20261102.1` (`host-setup.sh`): `mig-nb*` (`HOLDS="1 2
+  1 3"`, 100 runs, tmpfs), `mig-nc*` (`COMPARE=0 HOLD=1`, 60 runs, scratch: the checksummed final delta without the
+  comparison, `"compared": false` in `send.json`), `mig-nd*` (`HOLD=1`, 100 runs, tmpfs). `migrations.json` is
+  `migsummary.py`'s table of every `mig-*` there. The old release's `receive.json` has no `final_page_bytes` or
+  `final_zero_bytes` (it does not report them).

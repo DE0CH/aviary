@@ -1,0 +1,10 @@
+{"layout":"tmpfs","runsc_extra":"","hold":1,"mode":"fuse","send_ms":266,"total_ms":383,"release_to_turn_done_ms":1775,"migrate_start_us":1793651994195000}
+{"from":"[<host-ipv6>]:48886","bytes":131334902,"page_bytes":130367488,"zero_bytes":113483776,"file_bytes":921684,"rounds":1,"total_ms":256.087,"final_ms":83.503,"restore_ms":107.346}
+
+{"turns":["success","success"],"exit":0}
+{"exact":true,"writes":[{"i":0,"returned":1048576,"ms":13526.7},{"i":1,"returned":1048576,"ms":214.7},{"i":2,"returned":1048576,"ms":5.9}]}
+{"start": 1793651998.956, "stat_s": 3.581, "read_s": 0.007}
+INTERRUPT	target 752
+INTERRUPT	target 708
+{"uniques":686,"replayed_lines":0,"repeat_count":0,"boundaries":[{"boundary_us":1793651994195000,"requests_before":376,"max_unique_before":752,"requests_after":310,"min_unique_after":756,"increasing":true}]}
+FAIL: an in-sandbox process exited: magpie exited status 134 at 1793651994.602135074;;
