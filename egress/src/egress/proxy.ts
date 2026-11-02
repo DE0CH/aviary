@@ -400,6 +400,9 @@ export class Egress {
       let up = 0;
       let down = 0;
       let over = false;
+      let cut = false;
+      // the client went away first: what follows on the upstream side is not its failure
+      let gone = false;
       let status: number | null = null;
       const out = httpRequest({ agent: this.#agent, protocol: base.protocol, hostname: base.hostname, port: base.port || 80, method: req.method, path: t.pathq, headers });
       out.setTimeout(FIXED_IDLE_MS, () => out.destroy(new Error("upstream idle")));
@@ -408,19 +411,33 @@ export class Egress {
         this.#head(res, status, stripHop(ures.headers));
         res.flushHeaders();
         ures.on("data", (c: Buffer) => (down += c.length));
-        ures.on("error", () => res.destroy());
+        ures.on("error", (e) => {
+          if (!cut && !gone && !res.writableFinished) {
+            cut = true;
+            this.#hotPathError(name, "cut", e, caller);
+          }
+          res.destroy();
+        });
         ures.pipe(res);
         res.on("close", () => {
-          if (!ures.complete) ures.destroy();
+          if (!ures.complete) {
+            gone ||= !res.writableFinished;
+            ures.destroy();
+          }
         });
       });
       out.on("error", (e) => {
-        if (over) return;
+        if (over || cut || gone) return;
         if (!res.headersSent) {
           status = /idle/.test(e.message) ? 504 : 502;
+          this.#hotPathError(name, status, e, caller);
           if (status === 504) this.#json(res, 504, "upstream_timeout", `${name} did not answer in ${FIXED_IDLE_MS / 1000} s`);
           else this.#json(res, 502, "upstream_unreachable", `${name} could not be reached`);
-        } else res.destroy();
+        } else {
+          cut = true;
+          this.#hotPathError(name, "cut", e, caller);
+          res.destroy();
+        }
       });
       req.on("data", (c: Buffer) => {
         up += c.length;
@@ -434,7 +451,10 @@ export class Egress {
       });
       req.pipe(out);
       res.on("close", () => {
-        if (!out.destroyed && !res.writableFinished) out.destroy();
+        if (!out.destroyed && !res.writableFinished) {
+          gone = true;
+          out.destroy();
+        }
         this.#countFixed(name, status ?? "none");
         this.#countBytes(name, "up", up);
         this.#countBytes(name, "down", down);
@@ -442,6 +462,24 @@ export class Egress {
       });
     });
   }
+
+  /** A gateway-side failure on magpie or hermit (502 unreachable, 504 idle, an answer cut): one log line with the
+   * request, conversation and person key (never the path or a body), at most one per route per second; the lines
+   * left out are counted in the next one. */
+  #hotPathError(name: "magpie" | "hermit", what: number | "cut", e: Error, caller: Caller): void {
+    const now = Date.now();
+    const r = (this.#hotLogAt[name] ??= { at: 0, skipped: 0 });
+    if (now - r.at < 1000) {
+      r.skipped++;
+      return;
+    }
+    const skipped = r.skipped;
+    r.at = now;
+    r.skipped = 0;
+    logError("egress fixed-name upstream", e, { route: name, status: what, request: caller.request, conversation: caller.claims.conversationId, person_key: personKey(caller.claims.person), ...(skipped ? { notLogged: skipped } : {}) });
+  }
+
+  readonly #hotLogAt: Partial<Record<"magpie" | "hermit", { at: number; skipped: number }>> = {};
 
   // ---- model and tools: the configured routes -------------------------------------------------------------------
 

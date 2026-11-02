@@ -229,9 +229,14 @@ export function hermitGetter(base: string, bearer: string): HermitGet {
     });
 }
 
-/** Key set refreshed every 5 min and at most every 10 s on an unknown kid; the last set is kept on a failed fetch. */
+/** Key set refreshed every 5 min and at most every 10 s on an unknown kid; the last set is kept on a failed fetch. A
+ * token naming a kid the set lacks gets up to KEYS_UNKNOWN_KID_TRIES refetches (the first at once unless one ran in
+ * the last 10 s, each later one 10 s after the previous) before its 403: during a hermit key rotation a refetch can
+ * land on a replica that does not publish the new kid yet. The unknown-kid clock is its own: the 5-minute refresh
+ * never delays a new kid's refetch. */
 const KEYS_REFRESH_MS = 300_000;
 const KEYS_UNKNOWN_KID_MIN_MS = 10_000;
+const KEYS_UNKNOWN_KID_TRIES = 2;
 const KEYS_TIMEOUT_MS = 2000;
 /** Liveness: 1 s timeout, answers cached 30 s; a failed lookup is retried after 2 s; an entry unused 10 min is dropped. */
 const LIVENESS_TIMEOUT_MS = 1000;
@@ -250,27 +255,76 @@ interface LiveEntry {
 
 export type Verified = { claims: Claims } | { error: VerifyError | "not_live" };
 
+/** Where the last key set hermit published is kept (egress's database, table token_keys), so a restart while hermit
+ * is away can still verify tokens and become ready. The keys are public; nothing secret is stored. */
+export interface KeyStore {
+  load(): Promise<string | null>;
+  save(body: string): Promise<void>;
+}
+
+export interface TokensOptions {
+  now?: () => number;
+  /** waits (tests pass one that moves their clock) */
+  sleep?: (ms: number) => Promise<void>;
+  store?: KeyStore;
+}
+
 /** The gateway's view of hermit: verification of tokens and the revocation view (3.11.2 steps 2-3). */
 export class SandboxTokens {
   readonly #get: HermitGet;
   #keys = new KeySet();
   #loaded = false;
-  #lastAttempt = 0;
+  /** the key set in use came from the store, not (yet) from hermit */
+  #fromStore = false;
+  #savedBody: string | null = null;
+  /** when the last unknown-kid refetch began (ms; its own clock, see KEYS_UNKNOWN_KID_MIN_MS) */
+  #lastUnknownKid = -Infinity;
+  /** the unknown-kid refetch that is waiting for its turn or running (shared by every request that needs one) */
+  #kidFetch: Promise<void> | null = null;
   #fetching: Promise<boolean> | null = null;
+  readonly #sleep: (ms: number) => Promise<void>;
+  readonly #store: KeyStore | undefined;
   readonly #live = new Map<string, LiveEntry>();
   #timers: NodeJS.Timeout[] = [];
   /** liveness lookups that got no answer (counted for /metrics) */
   lookupFailures = 0;
   #now: () => number;
 
-  constructor(get: HermitGet, now: () => number = Date.now) {
+  constructor(get: HermitGet, o: TokensOptions | (() => number) = {}) {
+    const opts = typeof o === "function" ? { now: o } : o;
     this.#get = get;
-    this.#now = now;
+    this.#now = opts.now ?? Date.now;
+    this.#sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.#store = opts.store;
   }
 
-  /** Whether a key set has been fetched once (readiness). */
+  /** Whether a key set has been fetched from hermit once. */
   get loaded(): boolean {
     return this.#loaded;
+  }
+
+  /** Whether tokens can be verified: a key set from hermit, or the stored one (readiness). */
+  get usable(): boolean {
+    return this.#loaded || this.#fromStore;
+  }
+
+  /** Before hermit has answered once: the key set from the store, if it has one. Never throws. */
+  async loadStored(): Promise<boolean> {
+    if (this.usable || !this.#store) return this.usable;
+    try {
+      const body = await this.#store.load();
+      if (!body || this.#loaded) return this.usable;
+      const keys = KeySet.from(JSON.parse(body));
+      if (!keys.size) return false;
+      this.#keys = keys;
+      this.#savedBody = body;
+      this.#fromStore = true;
+      log("token keys from the database (hermit not reached yet)", { keys: keys.size });
+      return true;
+    } catch (e) {
+      logError("token keys load", e);
+      return false;
+    }
   }
 
   /** Fetches the key set now and starts the 5-minute refresh and the liveness sweeper. */
@@ -286,11 +340,9 @@ export class SandboxTokens {
     this.#timers = [];
   }
 
-  /** Fetches the key set (single flight); an unknown-kid refetch at most every 10 s. Never throws. */
-  refreshKeys(unknownKid: boolean): Promise<boolean> {
+  /** Fetches the key set now (single flight). Never throws. Unknown kids go through #refetchForKid. */
+  refreshKeys(_unknownKid = false): Promise<boolean> {
     if (this.#fetching) return this.#fetching;
-    if (unknownKid && this.#now() - this.#lastAttempt < KEYS_UNKNOWN_KID_MIN_MS) return Promise.resolve(false);
-    this.#lastAttempt = this.#now();
     this.#fetching = (async () => {
       const r = await this.#get("/v1/sandbox-token-keys", KEYS_TIMEOUT_MS);
       if (!r || r[0] !== 200) {
@@ -301,6 +353,14 @@ export class SandboxTokens {
         this.#keys = KeySet.from(JSON.parse(r[1]));
         if (!this.#loaded) log("token keys loaded", { keys: this.#keys.size });
         this.#loaded = true;
+        this.#fromStore = false;
+        if (this.#store && r[1] !== this.#savedBody) {
+          const body = r[1];
+          void this.#store.save(body).then(
+            () => (this.#savedBody = body),
+            (e) => logError("token keys save", e),
+          );
+        }
         return true;
       } catch (e) {
         logError("token keys fetch", e);
@@ -314,12 +374,26 @@ export class SandboxTokens {
    * problem never refuses a valid token: with no answer yet it is admitted and the lookup runs in the background. */
   async verify(token: string, from: string | undefined): Promise<Verified> {
     let r = this.#keys.verify(token, Math.floor(this.#now() / 1000), from);
-    if ("error" in r && r.error === "unknown_kid") {
-      await this.refreshKeys(true);
-      r = this.#keys.verify(token, Math.floor(this.#now() / 1000), from);
-    }
+    const kid = "error" in r && r.error === "unknown_kid" ? peekKid(token) : null;
+    for (let i = 0; kid !== null && i < KEYS_UNKNOWN_KID_TRIES && !this.#keys.has(kid); i++) await this.#refetchForKid();
+    if (kid !== null) r = this.#keys.verify(token, Math.floor(this.#now() / 1000), from);
     if ("error" in r) return r;
     return this.admits(r.claims.sandboxId) ? r : { error: "not_live" };
+  }
+
+  /** One unknown-kid refetch: waits until 10 s after the previous one began, then fetches; every request that needs
+   * a refetch meanwhile shares it. */
+  #refetchForKid(): Promise<void> {
+    if (this.#kidFetch) return this.#kidFetch;
+    this.#kidFetch = (async () => {
+      const wait = this.#lastUnknownKid + KEYS_UNKNOWN_KID_MIN_MS - this.#now();
+      if (wait > 0) await this.#sleep(wait);
+      this.#lastUnknownKid = this.#now();
+      // a fetch already running began before this request needed one: wait for it, then fetch afresh
+      if (this.#fetching) await this.#fetching;
+      await this.refreshKeys(true);
+    })().finally(() => (this.#kidFetch = null));
+    return this.#kidFetch;
   }
 
   /** Whether the liveness view admits a sandbox whose token verified, starting a refresh when one is due. */

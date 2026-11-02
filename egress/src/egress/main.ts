@@ -17,7 +17,7 @@ import { acceptLists, EgressApi } from "./api.ts";
 import { HostPolicy } from "./allowlist.ts";
 import { BudgetGate } from "./budget.ts";
 import { checkInjectEnv, loadEgressConfig } from "./config.ts";
-import { connect, migrate } from "./db.ts";
+import { connect, keyStore, migrate } from "./db.ts";
 import { EgressLog } from "./egresslog.ts";
 import { AddressGuard } from "./netguard.ts";
 import { Egress } from "./proxy.ts";
@@ -28,6 +28,10 @@ const API_PORT = 8082;
 const HEALTH_PORT = 9090;
 const CACHE_DIR = "/var/cache/jarvis-egress";
 const COMMIT = process.env.CHAT_COMMIT || "unknown";
+/** RFC 3339 build time (image build arg CHAT_BUILT_AT), null when not built by the workflow. */
+const BUILT_AT = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$/.test(process.env.CHAT_BUILT_AT ?? "") ? process.env.CHAT_BUILT_AT! : null;
+/** SIGTERM comes after the 10 s preStop; the grace period is 625 s (platform 9.3), so the kill comes 615 s after it. */
+const KILL_AFTER_SIGTERM_MS = 615_000;
 
 function need(name: string): string {
   const v = process.env[name];
@@ -55,7 +59,7 @@ export async function main(): Promise<void> {
   let egress: Egress | null = null;
   let api: EgressApi | null = null;
   const db = connect(dbUrl);
-  const tokens = new SandboxTokens(hermitGetter("http://hermit", pair.hermit));
+  const tokens = new SandboxTokens(hermitGetter("http://hermit", pair.hermit), { store: keyStore(db) });
   const budget = new BudgetGate(db, config.budget);
   const egressLog = new EgressLog(db);
   budget.attach(egressLog);
@@ -68,10 +72,10 @@ export async function main(): Promise<void> {
     };
     if (path === "/healthz") return json(200, { ok: true });
     if (path === "/readyz") return notReady.size ? json(503, { ok: false, why: [...notReady] }) : json(200, { ok: true });
-    if (path === "/version") return json(200, { name: "egress", version: COMMIT.slice(0, 12), revision: COMMIT, builtAt: null, provides: { gateway: 1 }, accepts: { gateway: [1] } });
+    if (path === "/version") return json(200, { name: "egress", version: COMMIT.slice(0, 12), revision: COMMIT, builtAt: BUILT_AT, provides: { gateway: 1 }, accepts: { gateway: [1] } });
     if (path === "/metrics") {
       const lines = egress ? egress.metrics() : [];
-      lines.push(`egress_ready ${notReady.size ? 0 : 1}`, `egress_liveness_lookup_failures_total ${tokens.lookupFailures}`, `egress_budget_read_failures_total ${budget.failures}`, "");
+      lines.push(`egress_ready ${notReady.size ? 0 : 1}`, `egress_liveness_lookup_failures_total ${tokens.lookupFailures}`, `egress_token_keys_from_store ${tokens.usable && !tokens.loaded ? 1 : 0}`, `egress_budget_read_failures_total ${budget.failures}`, `egress_budget_unknown_served_total ${budget.unknownServed}`, "");
       res.writeHead(200, { "content-type": "text/plain; version=0.0.4" });
       return void res.end(lines.join("\n"));
     }
@@ -86,11 +90,14 @@ export async function main(): Promise<void> {
       process.exit(0);
     }
     stopping = true;
+    const termAt = Date.now();
     notReady.add("draining");
     log("egress draining", { open: egress?.openSockets ?? 0, inFlight: egress?.inFlight() ?? null });
     const [cut] = await Promise.all([egress ? egress.drain() : Promise.resolve(null), api ? api.drain() : Promise.resolve()]);
     tokens.stop();
-    await egressLog.close(10_000);
+    // the log gets what the grace period has left after the drain (at least 10 s): a database outage during a rollout
+    // loses only the rows still unwritten at the kill (logged with their model cost; docs/CHAT.md "Known gaps")
+    await egressLog.close(Math.max(10_000, KILL_AFTER_SIGTERM_MS - (Date.now() - termAt) - 5_000));
     health.close();
     await db.end().catch(() => {});
     log("drained", { cut });
@@ -134,10 +141,14 @@ export async function main(): Promise<void> {
   await api.listen(API_PORT);
   log("egress listening", { proxy: PROXY_PORT, api: API_PORT, selfHosts: config.selfHosts });
 
-  // hermit's key set: fetched until it has been once (then every 5 min and on an unknown kid)
+  // hermit's key set: fetched until it has been once (then every 5 min and on an unknown kid). Ready once tokens can
+  // be verified: hermit's set, or, while hermit is away at this start, the last set it published (token_keys), so a
+  // restart of both replicas during a hermit outage still serves. With neither (hermit away and a database that has
+  // no set, or is away too) the pod stays unready: the recorded consequence in docs/CHAT.md "Known gaps".
   void (async () => {
     let ok = await tokens.start();
     while (!ok && !stopping) {
+      if (await tokens.loadStored()) notReady.delete("token-keys");
       await sleep(2000);
       ok = await tokens.refreshKeys(false);
     }

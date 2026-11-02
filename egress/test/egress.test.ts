@@ -314,7 +314,8 @@ test("liveness: revoked within 30 s, a 404 refuses, a hermit outage never refuse
   const h = new FakeHermit("lb");
   const url = await h.listen();
   let clock = Date.now();
-  const st = new SandboxTokens(hermitGetter(url, "lb"), () => clock);
+  const slept: number[] = [];
+  const st = new SandboxTokens(hermitGetter(url, "lb"), { now: () => clock, sleep: async (ms) => void (slept.push(ms), (clock += ms)) });
   try {
     assert.equal(await st.refreshKeys(false), true);
     const a = h.token();
@@ -350,16 +351,78 @@ test("liveness: revoked within 30 s, a 404 refuses, a hermit outage never refuse
     assert.deepEqual(await st.verify(a.token, "127.0.0.1"), { error: "not_live" }, "a refusal is kept while hermit fails");
     h.outage = "up";
 
-    // a key published after the last fetch: the first token naming it refetches (at most every 10 s)
+    // a key published after the last fetch: the first token naming it refetches at once, even right after a routine
+    // refresh (the unknown-kid clock is its own)
+    assert.equal(await st.refreshKeys(false), true, "a routine refresh just now");
     const k2 = signingKey(masterKey(2));
     h.keys.push(k2);
-    clock += 11_000;
+    let fetches = h.keyFetches;
+    slept.length = 0;
     assert.ok("claims" in (await st.verify(h.token({ key: k2 }).token, "127.0.0.1")));
+    assert.equal(h.keyFetches, fetches + 1);
+    assert.deepEqual(slept, [], "no wait");
     const k3 = signingKey(masterKey(3));
     h.keys.push(k3);
-    assert.deepEqual(await st.verify(h.token({ key: k3 }).token, "127.0.0.1"), { error: "unknown_kid" }, "no second refetch within 10 s");
+    fetches = h.keyFetches;
+    assert.ok("claims" in (await st.verify(h.token({ key: k3 }).token, "127.0.0.1")), "a new kid within 10 s of the last unknown-kid refetch waits for its turn, then is learnt");
+    assert.equal(h.keyFetches, fetches + 1);
+    assert.deepEqual(slept, [10_000], "at most every 10 s");
+
+    // a hermit key rotation: the refetch lands on a replica that does not publish the new kid yet, the next one does
+    const k4 = signingKey(masterKey(4));
+    clock += 20_000;
+    fetches = h.keyFetches;
+    slept.length = 0;
+    const tok4 = h.token({ key: k4 }).token;
+    const orig = h.server.listeners("request")[0] as (...a: unknown[]) => void;
+    let calls = 0;
+    h.server.removeAllListeners("request");
+    h.server.on("request", (req, res) => {
+      if (req.url === "/v1/sandbox-token-keys" && ++calls === 2) h.keys.push(k4);
+      orig(req, res);
+    });
+    assert.ok("claims" in (await st.verify(tok4, "127.0.0.1")), "learnt on the second refetch");
+    assert.equal(h.keyFetches, fetches + 2);
+    assert.deepEqual(slept, [10_000], "the second refetch 10 s after the first");
+
+    // a kid hermit never publishes: two refetches, then the definitive 403
+    clock += 20_000;
+    fetches = h.keyFetches;
+    const bogus = h.token({ key: signingKey(masterKey(99)) }).token;
+    const [x, y] = await Promise.all([st.verify(bogus, "127.0.0.1"), st.verify(bogus, "127.0.0.1")]);
+    assert.deepEqual([x, y], [{ error: "unknown_kid" }, { error: "unknown_kid" }]);
+    assert.equal(h.keyFetches, fetches + 2, "concurrent requests share the refetches");
   } finally {
     st.stop();
+    h.close();
+  }
+});
+
+test("token keys: the last set hermit published is stored, and a start while hermit is away verifies with it", async () => {
+  const { keyStore } = await import("../src/egress/db.ts");
+  const h = new FakeHermit("ks");
+  const url = await h.listen();
+  const store = keyStore(t.db);
+  try {
+    await t.db.query("delete from token_keys");
+    const a = new SandboxTokens(hermitGetter(url, "ks"), { store });
+    assert.equal(await a.loadStored(), false, "nothing stored yet");
+    assert.equal(await a.refreshKeys(false), true);
+    for (let i = 0; i < 50 && !(await store.load()); i++) await sleep(20);
+    assert.ok(await store.load(), "saved after the fetch");
+    const tok = h.token();
+    h.outage = "reset";
+    const b = new SandboxTokens(hermitGetter(url, "ks"), { store });
+    assert.equal(await b.refreshKeys(false), false, "hermit away");
+    assert.equal(b.usable, false);
+    assert.equal(await b.loadStored(), true);
+    assert.equal(b.usable, true);
+    assert.equal(b.loaded, false);
+    assert.ok("claims" in (await b.verify(tok.token, "127.0.0.1")), "a valid token verifies with the stored set");
+    h.outage = "up";
+    assert.equal(await b.refreshKeys(false), true);
+    assert.equal(b.loaded, true);
+  } finally {
     h.close();
   }
 });
@@ -436,6 +499,44 @@ test("magpie and hermit: /v1/sandbox/** only, the verified identity and the pair
   assert.match(m, /egress_fixed_requests_total\{route="magpie",status="200"\} [1-9]/);
   assert.match(m, /egress_fixed_requests_total\{route="hermit",status="403"\} 1/);
   assert.match(m, /egress_fixed_bytes_total\{route="magpie",dir="down"\} [1-9]/);
+});
+
+test("magpie and hermit: a gateway-side failure is logged with request, conversation and person key, rate-limited, never the path", async () => {
+  const dead = createServer();
+  await new Promise<void>((r) => dead.listen(0, "127.0.0.1", r));
+  const deadPort = (dead.address() as AddressInfo).port;
+  await new Promise<void>((r) => dead.close(() => r()));
+  const e = new Egress(options({ db: t.db, cacheDir: join(tmp, "cache-hot"), internal: { magpie: `http://127.0.0.1:${deadPort}`, hermit: `http://127.0.0.1:${hermit.port}` } }));
+  const p = await e.listen(0, "127.0.0.1");
+  const lines: string[] = [];
+  const write = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((c: string | Uint8Array, ...a: unknown[]) => {
+    if (String(c).includes("egress fixed-name upstream")) lines.push(String(c));
+    return (write as (...x: unknown[]) => boolean)(c, ...a);
+  }) as typeof process.stderr.write;
+  try {
+    const s = hermit.token({ person: "Staff@Example.org" });
+    const rid = uuidv7();
+    const r = await http("http://magpie/v1/sandbox/secret-path?q=private", { port: p, headers: { "proxy-authorization": basic(s.token), "aviary-request": rid } });
+    assert.equal(r.status, 502);
+    for (let i = 0; i < 3; i++) assert.equal((await http("http://magpie/v1/sandbox/x", { port: p, headers: pa() })).status, 502);
+    assert.equal(lines.length, 1, "at most one line per route per second");
+    const l = JSON.parse(lines[0]!);
+    assert.equal(l.route, "magpie");
+    assert.equal(l.status, 502);
+    assert.equal(l.request, rid);
+    assert.equal(l.conversation, s.claims.conversationId);
+    assert.match(l.person_key, /^u[0-9a-f]{24}$/);
+    assert.doesNotMatch(lines[0]!, /secret-path|private|staff@example\.org/i, "never the path or the email");
+    await sleep(1100);
+    await http("http://magpie/v1/sandbox/x", { port: p, headers: pa() });
+    assert.equal(lines.length, 2);
+    assert.equal(JSON.parse(lines[1]!).notLogged, 3);
+  } finally {
+    process.stderr.write = write;
+    await e.drain();
+    await e.log.close(1000);
+  }
 });
 
 test("limits: 64 MiB to magpie delivered, 64 MiB + 1 refused 413 too_large", async () => {
@@ -765,6 +866,91 @@ test("database outage: model calls answer from the last budget status plus this 
   }
 });
 
+test("database outage that hangs (accepts, never answers): model calls answer at once from the last status", async () => {
+  const d = await freshEgressDb("egress_stall", true);
+  const u = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, usage: { cost: 4 } }));
+    });
+  });
+  await new Promise<void>((r) => u.listen(0, "127.0.0.1", r));
+  const c = config(`http://127.0.0.1:${(u.address() as AddressInfo).port}`, { budget: { limitUsd: 10, since: new Date(Date.now() - 60_000).toISOString() } });
+  const gate = new BudgetGate(d.db, c.budget, 0);
+  const log = new EgressLog(d.db);
+  gate.attach(log);
+  const e = new Egress(options({ db: d.db, cacheDir: join(tmp, "cache-stall"), config: c, log, budget: gate }));
+  const p = await e.listen(0, "127.0.0.1");
+  const call = async () => {
+    const t0 = Date.now();
+    const r = await http("http://model/v1/messages", { method: "POST", port: p, headers: pa(), body: JSON.stringify({ model: "vendor/claude-x" }) });
+    return [r.status, Date.now() - t0];
+  };
+  try {
+    assert.equal((await call())[0], 200); // spent 4
+    await sleep(100);
+    d.relay!.stall();
+    const times: number[] = [];
+    const statuses: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const [st, ms] = await call();
+      statuses.push(st!);
+      times.push(ms!);
+    }
+    assert.deepEqual(statuses, [200, 200, 402], "4 + 4 (this replica, unwritten) < 10, then 4 + 4 + 4 >= 10");
+    assert.ok(times[0]! < 600, `the first call waits at most the read wait (${times})`);
+    assert.ok(times.slice(1).every((ms) => ms < 150), `the others do not wait at all (${times})`);
+    assert.ok(log.buffered >= 3);
+    d.relay!.restore();
+    for (let i = 0; i < 100 && log.buffered; i++) await sleep(200);
+    assert.equal(log.buffered, 0, "written once the database answers again");
+  } finally {
+    await e.drain();
+    await log.close(1000);
+    u.close();
+    await d.drop();
+  }
+});
+
+test("budget: with no status ever known (database away since start) a replica counts its own costs from zero", async () => {
+  const d = await freshEgressDb("egress_unknown", true);
+  try {
+    d.relay!.cut();
+    const gate = new BudgetGate(d.db, { limitUsd: 5, since: new Date(Date.now() - 60_000).toISOString() }, 0);
+    await gate.seed().catch(() => {});
+    const s0 = (await gate.status())!;
+    assert.equal(s0.spentUsd, 0);
+    assert.equal(s0.exhausted, false);
+    gate.noteCost(3);
+    gate.noteCost(2.5);
+    const s1 = (await gate.status())!;
+    assert.equal(s1.spentUsd, 5.5);
+    assert.equal(s1.exhausted, true, "the limit still holds against this replica's own costs");
+    assert.ok(gate.unknownServed >= 2, "counted for /metrics");
+  } finally {
+    await d.drop();
+  }
+});
+
+test("the log at exit: the final flush keeps retrying while the database is away, within its time", async () => {
+  const d = await freshEgressDb("egress_close", true);
+  try {
+    d.relay!.cut();
+    const log = new EgressLog(d.db);
+    log.add({ kind: "model", host: "m", decision: "allow", cost_usd: 1 });
+    log.add({ kind: "connect", host: "h", decision: "allow" });
+    setTimeout(() => d.relay!.restore(), 1500);
+    const t0 = Date.now();
+    await log.close(10_000);
+    assert.equal(log.buffered, 0, "written once the database came back");
+    assert.ok(Date.now() - t0 < 8000);
+    assert.equal((await d.db.query("select count(*)::int as n from egress_log")).rows[0].n, 2);
+  } finally {
+    await d.drop();
+  }
+});
+
 test("the log buffer: bounded, the oldest non-model row dropped first, never a model row", async () => {
   const d = await freshEgressDb("egress_buffer", true);
   try {
@@ -967,3 +1153,27 @@ async function fakeDns(a: Record<string, string>): Promise<{ port: number; queri
   state.port = sock.address().port;
   return state;
 }
+
+test("entry point: the first argument picks the role; with none JARVIS_ROLE still picks web or tools, never egress", async () => {
+  const main = join(import.meta.dirname, "..", "src", "main.ts");
+  const runMain = (args: string[], env: Record<string, string>): Promise<{ code: number; err: string }> =>
+    new Promise((resolve) => {
+      const { JARVIS_ROLE: _r, ...base } = process.env;
+      execFile(process.execPath, ["--disable-warning=ExperimentalWarning", main, ...args], { env: { ...base, ...env }, timeout: 20_000 }, (e, _o, err) =>
+        resolve({ code: e ? ((e as { code?: number }).code ?? 1) : 0, err: String(err) }),
+      );
+    });
+  const none = await runMain([], {});
+  assert.equal(none.code, 2);
+  assert.match(none.err, /first argument must be web, egress or tools/);
+  const oldEgress = await runMain([], { JARVIS_ROLE: "egress" });
+  assert.equal(oldEgress.code, 2);
+  assert.match(oldEgress.err, /JARVIS_ROLE=egress: this image's egress is aviary's sandbox gateway/);
+  // tools from JARVIS_ROLE alone gets as far as its own config (missing here)
+  const tools = await runMain([], { JARVIS_ROLE: "tools", JARVIS_CONFIG: "/nonexistent/config.json" });
+  assert.notEqual(tools.code, 0);
+  assert.doesNotMatch(tools.err, /first argument must be/);
+  assert.match(tools.err, /nonexistent/);
+  const bad = await runMain(["nope"], { JARVIS_ROLE: "tools" });
+  assert.equal(bad.code, 2, "an argument wins over JARVIS_ROLE");
+});

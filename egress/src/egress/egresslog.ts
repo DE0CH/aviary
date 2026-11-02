@@ -139,13 +139,23 @@ export class EgressLog {
     }
   }
 
-  /** Flushes, giving up after `ms` (the drain's last step: the database may be down). */
+  /** Flushes, retrying every second while the database fails, giving up after `ms` (the drain's last step: the
+   * database may be down). What is still unwritten then is lost: logged with its count and the model cost it held. */
   async close(ms: number): Promise<void> {
-    let t: NodeJS.Timeout | undefined;
-    await Promise.race([this.flush(), new Promise<void>((r) => (t = setTimeout(r, ms)))]);
-    clearTimeout(t);
+    const deadline = Date.now() + ms;
+    const sleep = (n: number) => new Promise<void>((r) => setTimeout(r, Math.max(0, Math.min(n, deadline - Date.now()))));
+    while (this.buffered && Date.now() < deadline) {
+      let t: NodeJS.Timeout | undefined;
+      await Promise.race([this.flush(), new Promise<void>((r) => (t = setTimeout(r, Math.max(0, deadline - Date.now()))))]);
+      clearTimeout(t);
+      if (this.buffered) await sleep(1000);
+    }
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = null;
-    if (this.buffered) logError("egress log lost at exit", "database unavailable", { rows: this.buffered });
+    if (this.buffered) {
+      const rows = [...this.#inflight, ...this.#buf];
+      const model = rows.filter((r) => r.kind === "model");
+      logError("egress log lost at exit", "database unavailable", { rows: rows.length, modelRows: model.length, modelCostUsd: model.reduce((s, r) => s + (r.cost_usd ?? 0), 0) });
+    }
   }
 }

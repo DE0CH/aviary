@@ -4,11 +4,14 @@ import pg from "pg";
 import { createServer, connect as netConnect, type AddressInfo, type Server, type Socket } from "node:net";
 import { connect, migrate, type Db } from "../src/egress/db.ts";
 
-/** A TCP relay in front of Postgres: `cut()` drops every connection and refuses new ones until `restore()`. */
+/** A TCP relay in front of Postgres: `cut()` drops every connection and refuses new ones until `restore()`;
+ * `stall()` plays a database that hangs instead (a lost node, blackholed packets): open connections stop carrying
+ * bytes and new ones are accepted but never answered, until `restore()` (which then drops the stalled ones). */
 export class PgRelay {
   readonly #server: Server;
   readonly #socks = new Set<Socket>();
   #down = false;
+  #stalled = false;
   port = 0;
   readonly host: string;
   readonly target: number;
@@ -17,6 +20,12 @@ export class PgRelay {
     this.target = target;
     this.#server = createServer((c) => {
       if (this.#down) return void c.destroy();
+      if (this.#stalled) {
+        this.#socks.add(c);
+        c.on("error", () => {}).on("close", () => this.#socks.delete(c));
+        c.pause();
+        return;
+      }
       const u = netConnect(this.target, this.host);
       this.#socks.add(c).add(u);
       const end = () => {
@@ -39,8 +48,17 @@ export class PgRelay {
     this.#down = true;
     for (const s of this.#socks) s.destroy();
   }
+  stall(): void {
+    this.#stalled = true;
+    for (const s of this.#socks) {
+      s.unpipe();
+      s.pause();
+    }
+  }
   restore(): void {
+    if (this.#stalled) for (const s of this.#socks) s.destroy();
     this.#down = false;
+    this.#stalled = false;
   }
   close(): void {
     this.cut();

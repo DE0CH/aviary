@@ -25,6 +25,11 @@ create index egress_log_model_at on egress_log (at) where kind = 'model';
 create table budget_state (since timestamptz primary key, limit_usd numeric not null, spent_usd numeric not null,
   computed_at timestamptz not null);
 `,
+  // the last key set hermit published (GET /v1/sandbox-token-keys, public keys only): a replica that starts while
+  // hermit is away verifies tokens with it and becomes ready (tokens.ts KeyStore)
+  `
+create table token_keys (id int primary key default 1 check (id = 1), body text not null, fetched_at timestamptz not null);
+`,
 ];
 
 export function connect(url: string | undefined): Db {
@@ -67,4 +72,17 @@ export async function migrate(db: Db): Promise<void> {
     await c.query("select pg_advisory_unlock($1)", [MIGRATION_LOCK]).catch(() => {});
     c.release();
   }
+}
+
+/** The key-set store of tokens.ts in table token_keys (one row). */
+export function keyStore(db: Db): { load(): Promise<string | null>; save(body: string): Promise<void> } {
+  return {
+    async load() {
+      const { rows } = await db.query<{ body: string }>("select body from token_keys where id = 1");
+      return rows[0]?.body ?? null;
+    },
+    async save(body) {
+      await db.query("insert into token_keys (id, body, fetched_at) values (1, $1, now()) on conflict (id) do update set body = excluded.body, fetched_at = excluded.fetched_at", [body]);
+    },
+  };
 }

@@ -14,13 +14,16 @@ COPY egress-allowlist/allow.txt egress-allowlist/deny.txt ./egress-allowlist/
 RUN mkdir -p /var/cache/jarvis-egress && chown -R 1000:1000 /var/cache/jarvis-egress
 
 ARG CHAT_COMMIT=unknown
+# RFC 3339 build time (egress's /version builtAt); empty = null
+ARG CHAT_BUILT_AT=
 LABEL org.opencontainers.image.source="https://github.com/DE0CH/jarvis3" \
       org.opencontainers.image.description="Jarvis 3 chat runtime (web, egress, tools)" \
       jarvis3.chat-commit="${CHAT_COMMIT}"
 ENV NODE_ENV=production \
     PORT=8080 \
     JARVIS_CONFIG=/etc/jarvis/config.json \
-    CHAT_COMMIT=${CHAT_COMMIT}
+    CHAT_COMMIT=${CHAT_COMMIT} \
+    CHAT_BUILT_AT=${CHAT_BUILT_AT}
 USER 1000:1000
 EXPOSE 8080 3128 8082 9090
 ENTRYPOINT ["/usr/bin/tini", "--", "node", "--disable-warning=ExperimentalWarning", "src/main.ts"]

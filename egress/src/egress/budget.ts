@@ -2,9 +2,10 @@
 // egress_log.cost_usd (kind 'model') from config `budget.since`; the limit is `budget.limitUsd` (egress.json).
 //
 // Checked before every model call. The gate re-reads the database at most every 0.5 s (both replicas see each other's
-// model costs that soon); while the database is unreachable it serves its last known status plus the model costs this
-// replica has logged since that read (aviary platform spec 17.2 item 8), so a running turn never stops and a replica
-// does not overspend on stale data. A call already in flight when the limit is crossed completes, so the spend can end
+// model costs that soon); a call waits for that read at most 250 ms after it began, and not at all while reads fail,
+// so a database that refuses or hangs is answered from the last known status plus the model costs this replica has
+// logged since that read (aviary platform spec 17.2 item 8): a running turn never stops and a replica does not
+// overspend on stale data. A call already in flight when the limit is crossed completes, so the spend can end
 // a little above the limit (about one model call's cost per running conversation).
 import type { BudgetConfig } from "./config.ts";
 import type { Db } from "./db.ts";
@@ -36,8 +37,8 @@ function status(cfg: BudgetConfig, spentUsd: number): BudgetStatus {
   };
 }
 
-/** How long a read may take before the caller is answered from the last known status. */
-const READ_WAIT_MS = 1000;
+/** How long after a read began a caller may wait for it (a read takes milliseconds while the database is well). */
+const READ_WAIT_MS = 250;
 /** budget_state is written at most this often. */
 const STATE_EVERY_MS = 10_000;
 
@@ -53,7 +54,10 @@ export class BudgetGate {
   /** model costs this replica logged, with their time (ms), since the last read began */
   #local: Array<[number, number]> = [];
   failures = 0;
+  /** answers given with no status ever known (seed and every read failed) */
+  unknownServed = 0;
   #failing = false;
+  #readStartedAt = 0;
 
   constructor(db: Db, cfg: BudgetConfig | undefined, ttlMs = 500) {
     this.#db = db;
@@ -78,20 +82,28 @@ export class BudgetGate {
     if (rows[0] && !this.#last) this.#last = { spentUsd: Number(rows[0].spent_usd), readAt: rows[0].computed_at.getTime() };
   }
 
-  /** null: no budget configured. Never throws; with no status ever read and the database away, null (no limit known). */
+  /** null: no budget configured. Never throws. A status older than the TTL starts a read and waits for it, but only
+   * up to READ_WAIT_MS after that read began, and not at all while reads fail: a database that refuses or hangs
+   * (a lost node, a pooled connection to a vanished primary) costs at most one READ_WAIT_MS at its start, then every
+   * call is answered at once from the last known status plus this replica's costs since. With no status ever known
+   * (no budget_state row seeded, every read failed) it counts from zero: this replica's own costs against the limit,
+   * counted in `unknownServed` (/metrics) and logged. */
   async status(): Promise<BudgetStatus | null> {
     const cfg = this.#cfg;
     if (!cfg) return null;
     if (!this.#last || Date.now() - this.#last.readAt >= this.#ttlMs) {
       const r = this.#read();
-      // while reads fail, answer at once from the last known status (the read goes on in the background)
-      if (!this.#failing || !this.#last) {
+      const left = this.#readStartedAt + READ_WAIT_MS - Date.now();
+      if (!this.#failing && left > 0) {
         let t: NodeJS.Timeout | undefined;
-        await Promise.race([r, new Promise<void>((ok) => (t = setTimeout(ok, READ_WAIT_MS)))]);
+        await Promise.race([r, new Promise<void>((ok) => (t = setTimeout(ok, left)))]);
         clearTimeout(t);
       }
     }
-    if (!this.#last) return null;
+    if (!this.#last) {
+      if (this.unknownServed++ % 100 === 0) logError("budget status", "no status known (database away since start)", { serving: "this replica's own costs from zero" });
+      return status(cfg, this.#pending(0));
+    }
     return status(cfg, this.#last.spentUsd + this.#pending(this.#last.readAt));
   }
 
@@ -106,6 +118,7 @@ export class BudgetGate {
     if (this.#reading) return this.#reading;
     const cfg = this.#cfg!;
     const readAt = Date.now();
+    this.#readStartedAt = readAt;
     this.#reading = spentSince(this.#db, cfg.since)
       .then(
         (spentUsd) => {
