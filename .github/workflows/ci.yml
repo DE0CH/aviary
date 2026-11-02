@@ -1,5 +1,5 @@
-# platform spec 6.1. Jobs still to come with their packages: sandboxd-soak, images, sandbox-smoke, gvisor, e2e,
-# publish (main only, needs every gate). Actions are pinned by commit SHA (6.3).
+# platform spec 6.1. Jobs still to come with their packages: images, sandbox-smoke, gvisor, e2e, publish (main only,
+# needs every gate). Actions are pinned by commit SHA (6.3).
 name: ci
 
 on:
@@ -53,6 +53,8 @@ jobs:
           shopt -s globstar nullglob
           files=(.github/ci/*.sh fabric/**/*.sh images/sandbox/*.sh)
           shellcheck "${files[@]}"
+      - name: fabric/aws/infra.sh against a stand-in aws (every value from the config)
+        run: bash fabric/aws/test-infra.sh
 
   test:
     runs-on: ubuntu-24.04
@@ -78,6 +80,28 @@ jobs:
           echo "$lines" >> "$GITHUB_ENV"
       - run: cargo nextest run --workspace --locked --no-tests=pass
 
+  sandboxd-soak:
+    # hermit spec 14.6: two daemons with stand-ins for runsc/ip/nft/wg, every endpoint, a migration, hostile clients,
+    # RSS flat and under the budget; then every answer of the functional part parsed as sandboxd-api's types
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: toolchain (rust-toolchain.toml, exactly)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: musl C compiler
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends musl-tools
+      - name: sandboxd (static musl, profile sandboxd)
+        run: cargo build --profile sandboxd --locked --target x86_64-unknown-linux-musl -p sandboxd
+      - name: soak (45 s)
+        run: |
+          sudo -E env PATH="$PATH" python3 crates/sandboxd/tests/soak.py \
+            target/x86_64-unknown-linux-musl/sandboxd/sandboxd --seconds 45 --dump "$RUNNER_TEMP/sandboxd-dump"
+          sudo chown -R "$(id -u)" "$RUNNER_TEMP/sandboxd-dump"
+      - name: the daemon's answers against sandboxd-api
+        run: SANDBOXD_DUMP="$RUNNER_TEMP/sandboxd-dump" cargo test --locked -p sandboxd-api --test live -- --ignored
+
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -95,9 +119,20 @@ jobs:
       - name: musl binaries (rust-lld, static)
         run: |
           export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
-          cargo build --release --locked --target x86_64-unknown-linux-musl --workspace --exclude magpie --bins
+          cargo build --release --locked --target x86_64-unknown-linux-musl --workspace --exclude magpie --exclude sandboxd --bins
           mkdir -p dist
           find target/x86_64-unknown-linux-musl/release -maxdepth 1 -type f -executable -exec cp {} dist/ \;
+      - name: sandboxd (static musl, its own profile, crates/sandboxd/docs/MEMORY.md)
+        # profile `sandboxd` unwinds on panic (one request's bug closes that connection only); the workspace release
+        # profile aborts, so sandboxd is never built with it
+        run: |
+          export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          cargo build --profile sandboxd --locked --target x86_64-unknown-linux-musl -p sandboxd
+          b=target/x86_64-unknown-linux-musl/sandboxd/sandboxd
+          file "$b" | tee /dev/stderr | grep -q "static"
+          "$b" --version
+          "$b" budget
+          cp "$b" dist/
       - name: magpie (glibc, debian bookworm + libheif-dev)
         # a docker run of the pinned bookworm image + libheif-dev rather than a job container, so it shares this job's
         # dist/ and cargo cache and runs as the runner's uid (.github/ci/build-magpie.sh)
