@@ -5,9 +5,9 @@
 //!   (checked by `clippy_rejects`), backed by a text scan of non-test sources ([`env_var_violations`]).
 //! - No crate under `crates/` except `hermit` depends on `aws-sdk-ec2` or `kube` ([`dependency_violations`], over
 //!   `cargo metadata`; `deny.toml` bans the same with wrappers).
-//! - `crates/pigeon`, `crates/magpie`, `crates/supervisor` and `crates/*-api` (but `sandboxd-api`, see
-//!   [`NAMED_CONTRACT_CRATES`]) never name `yyc`, `juicefs`, `openrouter` or `gvisor`, and in `crates/pigeon` the literals `jarvis` and `yyc` appear only in
-//!   `src/paseo/compat.rs` ([`name_violations`]).
+//! - `crates/pigeon`, `crates/magpie`, `crates/supervisor` and `crates/*-api` never name `yyc`, `juicefs`,
+//!   `openrouter` or `gvisor` (but the wire field names of [`ALLOWED_WIRE_NAMES`]), and in `crates/pigeon` the literals
+//!   `jarvis` and `yyc` appear only in `src/paseo/compat.rs` ([`name_violations`]).
 //! - No crate under `crates/` turns on `aviary-core`'s `testing` feature (`env::test_only`, the one optional read)
 //!   outside `[dev-dependencies]` ([`testing_feature_violations`]), so no service gets optional configuration.
 //! - No network call inside `aviary_pg::tx!` (platform 4.3): [`tx_rule`] generates the configuration of the second
@@ -58,16 +58,17 @@ pub const PIGEON_COMPAT_FILE: &str = "crates/pigeon/src/paseo/compat.rs";
 /// host.json's path, `PATH` and two test stand-ins, all in that one module.
 pub const ENV_FILES: &[&str] = &["crates/aviary-core/src/env.rs", "crates/sandboxd/src/env.rs"];
 
-/// Contract crates exempt from the deployment-name rule: `sandboxd-api` is the wire contract of the gVisor host agent
-/// itself (its `GET /v1/host` answers `gvisorRelease`), used only by hermit, the YYC implementation the rule exempts,
-/// and by `fake-sandboxd`.
-pub const NAMED_CONTRACT_CRATES: &[&str] = &["sandboxd-api"];
+/// Wire field names a covered crate may hold although they contain a deployment name: (crate directory, the tokens,
+/// lowercase). sandboxd's `GET /v1/host` answers `gvisorRelease` (the installed runsc fork release), so `sandboxd-api`
+/// may write that field, in Rust (`gvisor_release`) and in its fixtures (`gvisorRelease`); every other name, and
+/// `gvisor` anywhere else in it, is still caught.
+pub const ALLOWED_WIRE_NAMES: &[(&str, &[&str])] = &[("sandboxd-api", &["gvisorrelease", "gvisor_release"])];
 
 /// Crates no crate under `crates/` other than hermit may depend on, directly or not.
 pub const HERMIT_ONLY_CRATES: &[&str] = &["aws-sdk-ec2", "kube", "kube-client", "kube-runtime"];
 
 /// The crate directories the deployment-name rule covers: `crates/pigeon`, `crates/magpie`, `crates/supervisor`
-/// and every `crates/*-api` but [`NAMED_CONTRACT_CRATES`].
+/// and every `crates/*-api`.
 ///
 /// # Errors
 /// When `crates/` cannot be listed.
@@ -81,8 +82,7 @@ pub fn neutral_crate_dirs(root: &Path) -> io::Result<Vec<PathBuf>> {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
         if entry.file_type()?.is_dir()
-            && (matches!(name.as_str(), "pigeon" | "magpie" | "supervisor")
-                || (name.ends_with("-api") && !NAMED_CONTRACT_CRATES.contains(&name.as_str())))
+            && (matches!(name.as_str(), "pigeon" | "magpie" | "supervisor") || name.ends_with("-api"))
         {
             dirs.push(entry.path());
         }
@@ -123,6 +123,15 @@ pub fn name_violations(root: &Path) -> io::Result<Vec<Violation>> {
     let mut found = Vec::new();
     for dir in neutral_crate_dirs(root)? {
         let in_pigeon = dir.file_name().is_some_and(|n| n == "pigeon");
+        let allowed: &[&str] = ALLOWED_WIRE_NAMES
+            .iter()
+            .find(|(c, _)| dir.file_name().is_some_and(|n| n == *c))
+            .map_or(&[], |(_, t)| t);
+        let unallowed = |text: String| {
+            allowed
+                .iter()
+                .fold(text, |t, token| t.replace(token, &" ".repeat(token.len())))
+        };
         let mut files = Vec::new();
         files_under(&dir, &mut files)?;
         files.sort();
@@ -137,7 +146,7 @@ pub fn name_violations(root: &Path) -> io::Result<Vec<Violation>> {
                     }
                 }
             }
-            let rel_in_crate = relative(&dir, &file).to_lowercase();
+            let rel_in_crate = unallowed(relative(&dir, &file).to_lowercase());
             for name in &names {
                 if rel_in_crate.contains(name) {
                     found.push(Violation {
@@ -147,7 +156,7 @@ pub fn name_violations(root: &Path) -> io::Result<Vec<Violation>> {
                     });
                 }
             }
-            let text = String::from_utf8_lossy(&fs::read(&file)?).to_lowercase();
+            let text = unallowed(String::from_utf8_lossy(&fs::read(&file)?).to_lowercase());
             for (i, line) in text.lines().enumerate() {
                 for name in &names {
                     if line.contains(name) {

@@ -54,6 +54,11 @@ fn names_rule_catches_each_seeded_name() {
         "crates/sandboxd-api/src/lib.rs",
         "pub struct Host { pub gvisor_release: String } // the host agent's own contract\n",
     );
+    write(
+        &root,
+        "crates/sandboxd-api/fixtures/host.json",
+        "{\"gvisorRelease\": \"r1\"}\n",
+    );
     assert_eq!(name_violations(&root).unwrap(), vec![], "clean tree");
 
     write(&root, "crates/pigeon/src/routes.rs", "const A: &str = \"Jarvis\";\n");
@@ -66,6 +71,13 @@ fn names_rule_catches_each_seeded_name() {
     );
     write(&root, "crates/hermit-api/fixtures/yyc.json", "{}\n");
     write(&root, "crates/magpie/Cargo.toml", "description = \"YYC's store\"\n");
+    // sandboxd-api may write its wire field `gvisorRelease`, nothing else
+    write(
+        &root,
+        "crates/sandboxd-api/src/client.rs",
+        "// the yyc host\n// runs gVisor, gvisorRelease ok\nconst M: &str = \"/mnt/juicefs\";\n",
+    );
+    write(&root, "crates/sandboxd-api/fixtures/openrouter.json", "{}\n");
     let found: Vec<String> = name_violations(&root)
         .unwrap()
         .iter()
@@ -79,6 +91,10 @@ fn names_rule_catches_each_seeded_name() {
             "crates/magpie/Cargo.toml:1: names `yyc`",
             "crates/magpie/src/store.rs:2: names `juicefs`",
             "crates/pigeon/src/routes.rs:1: names `jarvis`",
+            "crates/sandboxd-api/fixtures/openrouter.json: path names `openrouter`",
+            "crates/sandboxd-api/src/client.rs:1: names `yyc`",
+            "crates/sandboxd-api/src/client.rs:2: names `gvisor`",
+            "crates/sandboxd-api/src/client.rs:3: names `juicefs`",
             "crates/supervisor/src/fuse.rs:1: names `gvisor`",
         ]
     );
