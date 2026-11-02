@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use aviary_core::auth::Caller;
@@ -121,6 +121,10 @@ pub struct Team {
     pub aud: &'static str,
     pub pems: Vec<Pem>,
     pub jwks_hits: Arc<AtomicUsize>,
+    /// The certs endpoint answers (else 503).
+    pub certs_up: Arc<AtomicBool>,
+    /// The certs endpoint waits this long before answering, ms.
+    pub certs_delay_ms: Arc<AtomicU64>,
     pub served: aviary_fakes::Served,
 }
 
@@ -143,14 +147,23 @@ impl Team {
         ];
         let issuer = Issuer::with_audience(domain, keys, Some(aud)).unwrap();
         let hits = Arc::new(AtomicUsize::new(0));
-        let h = hits.clone();
+        let certs_up = Arc::new(AtomicBool::new(true));
+        let certs_delay_ms = Arc::new(AtomicU64::new(0));
+        let (h, up, delay) = (hits.clone(), certs_up.clone(), certs_delay_ms.clone());
         let router = issuer
             .router()
             .layer(axum::middleware::from_fn(move |req: Request, next: Next| {
-                let h = h.clone();
+                let (h, up, delay) = (h.clone(), up.clone(), delay.clone());
                 async move {
                     if req.uri().path() == fake_access::CERTS {
                         h.fetch_add(1, Ordering::SeqCst);
+                        let ms = delay.load(Ordering::SeqCst);
+                        if ms > 0 {
+                            tokio::time::sleep(Duration::from_millis(ms)).await;
+                        }
+                        if !up.load(Ordering::SeqCst) {
+                            return Response::builder().status(503).body(axum::body::Body::empty()).unwrap();
+                        }
                     }
                     next.run(req).await
                 }
@@ -162,6 +175,8 @@ impl Team {
             aud,
             pems,
             jwks_hits: hits,
+            certs_up,
+            certs_delay_ms,
             served,
         }
     }
@@ -207,7 +222,30 @@ pub struct Harness {
     pub models_hits: Arc<AtomicUsize>,
     pub models_up: Arc<std::sync::atomic::AtomicBool>,
     pub listener: Option<pigeon::server::Listener>,
+    pub readiness: aviary_core::ops::Readiness,
     pub dir: PathBuf,
+}
+
+/// How [`Harness::start_opts`] starts.
+pub struct Opts {
+    pub tuning: Tuning,
+    /// Teams (by index) whose certs endpoint fails from the start.
+    pub certs_down: Vec<usize>,
+    /// How many of the two teams the deployment facts name at first.
+    pub teams_in_facts: usize,
+    /// Wait until pigeon is ready (else return at once).
+    pub wait_ready: bool,
+}
+
+impl Default for Opts {
+    fn default() -> Self {
+        Self {
+            tuning: tuning(),
+            certs_down: Vec::new(),
+            teams_in_facts: 2,
+            wait_ready: true,
+        }
+    }
 }
 
 /// Short timings for tests (the specification's are in [`Tuning::default`]).
@@ -257,12 +295,29 @@ impl Harness {
     }
 
     pub async fn start_with(tuning: Tuning) -> Self {
+        Self::start_opts(Opts {
+            tuning,
+            ..Opts::default()
+        })
+        .await
+    }
+
+    pub async fn start_opts(opts: Opts) -> Self {
+        let Opts {
+            tuning,
+            certs_down,
+            teams_in_facts,
+            wait_ready,
+        } = opts;
         let _ = rustls::crypto::ring::default_provider().install_default();
         let dir = tmp("keys");
         let teams = vec![
             Team::start(&dir, TEAM1, AUD1, "t1").await,
             Team::start(&dir, TEAM2, AUD2, "t2").await,
         ];
+        for i in certs_down {
+            teams[i].certs_up.store(false, Ordering::SeqCst);
+        }
         let mut config = HermitConfig {
             users: vec!["@example.org".into(), ADMIN.into(), ADMIN2.into()],
             admins: vec![ADMIN.into(), ADMIN2.into()],
@@ -272,6 +327,7 @@ impl Harness {
         config.deployment.product.locale = "zh-HK".into();
         config.deployment.sign_in.access = teams
             .iter()
+            .take(teams_in_facts)
             .map(|t| AccessApp {
                 team_domain: t.domain.into(),
                 audience: t.aud.into(),
@@ -324,12 +380,14 @@ impl Harness {
         app.start(&readiness);
         readiness.started();
         for _ in 0..200 {
-            if app.identities().facts().is_some() && readiness.why().is_empty() {
+            if !wait_ready || app.identities().facts().is_some() && readiness.why().is_empty() {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        assert!(readiness.why().is_empty(), "not ready: {:?}", readiness.why());
+        if wait_ready {
+            assert!(readiness.why().is_empty(), "not ready: {:?}", readiness.why());
+        }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let served = pigeon::server::serve(listener, app.router());
@@ -347,6 +405,7 @@ impl Harness {
             models_hits,
             models_up,
             listener: Some(served),
+            readiness,
             dir,
         }
     }

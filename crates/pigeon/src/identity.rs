@@ -37,6 +37,8 @@ const GET_IDENTITY_PATH: &str = "/cdn-cgi/access/get-identity";
 const HERMIT_PEOPLE_TIMEOUT: Duration = Duration::from_secs(5);
 const HERMIT_FACTS_TIMEOUT: Duration = Duration::from_secs(5);
 const JWKS_TIMEOUT: Duration = Duration::from_secs(5);
+/// The longest a lookup waits for a fetch in flight (the request and the body each have [`JWKS_TIMEOUT`]).
+const FETCH_WAIT: Duration = Duration::from_secs(11);
 const GET_IDENTITY_TIMEOUT: Duration = Duration::from_millis(1500);
 const TOKEN_CACHE_ENTRIES: u64 = 10_000;
 const PEOPLE_ENTRIES: u64 = 10_000;
@@ -217,12 +219,41 @@ struct PublicKey {
     e: Vec<u8>,
 }
 
-#[derive(Clone)]
-struct TeamKeys {
+/// One team's keys and their fetch bookkeeping (spec 4.3). At most one fetch runs per team at a time; a lookup that
+/// needs the fetch in flight waits for it.
+struct Team {
+    st: Mutex<TeamState>,
+    /// Bumped when a fetch ends, whatever its outcome.
+    done: tokio::sync::watch::Sender<u64>,
+}
+
+#[derive(Default)]
+struct TeamState {
     keys: HashMap<String, PublicKey>,
-    fetched: Instant,
-    /// The last fetch started for an unknown kid.
+    /// When the keys were last fetched (`None`: never).
+    fetched: Option<Instant>,
+    /// When the last fetch started, whatever its outcome.
+    last_attempt: Option<Instant>,
+    /// When the last fetch for an unknown kid of a loaded set started.
     last_kid_fetch: Option<Instant>,
+    /// A fetch is running.
+    in_flight: bool,
+}
+
+impl TeamState {
+    /// Whether a refresh may start: none is running, and the last attempt succeeded or is a cooldown old (a failing
+    /// certs endpoint is asked at most once per cooldown).
+    fn may_retry(&self, cooldown: Duration) -> bool {
+        !self.in_flight
+            && self
+                .last_attempt
+                .is_none_or(|a| self.fetched.is_some_and(|f| f >= a) || a.elapsed() >= cooldown)
+    }
+
+    fn begin(&mut self) {
+        self.in_flight = true;
+        self.last_attempt = Some(Instant::now());
+    }
 }
 
 /// The person's answer from hermit (spec 4.4).
@@ -340,9 +371,8 @@ struct IdInner {
     view_as_keys: KeyList,
     metrics: Metrics,
     facts: RwLock<Option<Arc<Deployment>>>,
-    teams: Mutex<HashMap<String, TeamKeys>>,
-    /// Serialises JWKS fetches (rare: once an hour per team, or a cooled-down unknown kid).
-    fetching: tokio::sync::Mutex<()>,
+    /// Per team (only teams the facts name get an entry).
+    teams: Mutex<HashMap<String, Arc<Team>>>,
     tokens: moka::future::Cache<[u8; 32], (Verified, Instant)>,
     people: moka::future::Cache<String, PeopleEntry>,
     names: moka::future::Cache<String, NameEntry>,
@@ -388,7 +418,6 @@ impl Identities {
             metrics,
             facts: RwLock::new(None),
             teams: Mutex::new(HashMap::new()),
-            fetching: tokio::sync::Mutex::new(()),
             tokens,
             people,
             names,
@@ -454,8 +483,8 @@ impl Identities {
                     false
                 }
             };
+            // every refresh loads the keys of teams that have none yet (a team hermit adds later, spec 4.1)
             if ok
-                && jwks_gate.is_some()
                 && self.load_all_jwks().await
                 && let Some(g) = jwks_gate.take()
             {
@@ -471,37 +500,81 @@ impl Identities {
         }
     }
 
+    /// `domain`'s entry (created on first use).
+    fn team(&self, domain: &str) -> Option<Arc<Team>> {
+        let mut t = self.0.teams.lock().ok()?;
+        Some(
+            t.entry(domain.to_owned())
+                .or_insert_with(|| {
+                    Arc::new(Team {
+                        st: Mutex::new(TeamState::default()),
+                        done: tokio::sync::watch::channel(0).0,
+                    })
+                })
+                .clone(),
+        )
+    }
+
     /// Loads every team's JWKS that is not loaded yet; true when every team has keys.
     async fn load_all_jwks(&self) -> bool {
         let Some(facts) = self.facts() else { return false };
         let mut all = true;
         for app in &facts.sign_in.access {
-            let have = self.0.teams.lock().is_ok_and(|t| t.contains_key(&app.team_domain));
-            if !have && self.fetch_jwks(&app.team_domain, false).await.is_err() {
+            let Some(team) = self.team(&app.team_domain) else {
+                return false;
+            };
+            let start = match team.st.lock() {
+                Ok(mut s) if s.fetched.is_none() && !s.in_flight => {
+                    s.begin();
+                    true
+                }
+                Ok(s) => {
+                    all &= s.fetched.is_some();
+                    false
+                }
+                Err(_) => return false,
+            };
+            if start && self.fetch_jwks(&app.team_domain, &team).await.is_err() {
                 all = false;
             }
         }
         all
     }
 
-    /// Fetches `team`'s keys. `coalesce`: skip when the set is fresh again (background refreshes; an unknown kid
-    /// always asks, within its cooldown).
-    async fn fetch_jwks(&self, team: &str, coalesce: bool) -> Result<(), String> {
-        let _one = self.0.fetching.lock().await;
-        // a background refresh of a set another fetch has just made fresh again does nothing (a burst of requests
-        // on a stale set makes one request)
-        let just_fetched = coalesce
-            && self
-                .0
-                .teams
-                .lock()
-                .ok()
-                .and_then(|t| t.get(team).map(|k| k.fetched.elapsed() < self.0.tuning.jwks_ttl))
-                .unwrap_or(false);
-        if just_fetched {
-            return Ok(());
+    /// Runs a fetch [`TeamState::begin`] has marked, in its own task (a dropped request never leaves it marked).
+    fn spawn_fetch(&self, domain: &str, team: &Arc<Team>) {
+        let me = self.clone();
+        let domain = domain.to_owned();
+        let team = team.clone();
+        tokio::spawn(async move {
+            let _ = me.fetch_jwks(&domain, &team).await;
+        });
+    }
+
+    /// Fetches `domain`'s keys after [`TeamState::begin`]; publishes them on success (a failure keeps the cached
+    /// set), ends the in-flight mark and wakes the waiters whatever the outcome.
+    async fn fetch_jwks(&self, domain: &str, team: &Team) -> Result<(), String> {
+        let got = self.download_jwks(domain).await;
+        let outcome = match team.st.lock() {
+            Ok(mut s) => {
+                s.in_flight = false;
+                got.map(|keys| {
+                    s.keys = keys;
+                    s.fetched = Some(Instant::now());
+                })
+            }
+            Err(_) => Err("poisoned".into()),
+        };
+        team.done.send_modify(|g| *g = g.wrapping_add(1));
+        match &outcome {
+            Ok(()) => self.0.metrics.jwks_fetch(domain),
+            Err(e) => tracing::warn!(team = %domain, error = %e, "access keys not fetched"),
         }
-        let url = format!("{}{JWKS_PATH}", (self.0.access_origin)(team));
+        outcome
+    }
+
+    async fn download_jwks(&self, domain: &str) -> Result<HashMap<String, PublicKey>, String> {
+        let url = format!("{}{JWKS_PATH}", (self.0.access_origin)(domain));
         let res = tokio::time::timeout(JWKS_TIMEOUT, self.0.http.get(url).send())
             .await
             .map_err(|_| "timed out".to_owned())?
@@ -526,69 +599,58 @@ impl Identities {
             };
             keys.insert(kid, PublicKey { n, e });
         }
-        self.0.metrics.jwks_fetch(team);
-        if let Ok(mut t) = self.0.teams.lock() {
-            let last_kid_fetch = t.get(team).and_then(|k| k.last_kid_fetch);
-            t.insert(
-                team.to_owned(),
-                TeamKeys {
-                    keys,
-                    fetched: Instant::now(),
-                    last_kid_fetch,
-                },
-            );
-        }
-        Ok(())
+        Ok(keys)
     }
 
-    /// The key `kid` of `team`: from the cache; an unknown kid refetches at most once per cooldown; a stale set is
-    /// used while a refresh runs in the background (a failed fetch keeps the cached set).
-    async fn key(&self, team: &str, kid: &str) -> Option<PublicKey> {
+    /// The key `kid` of `team` (spec 4.3). A cached key is used at once; a stale set starts one background refresh
+    /// (none while one runs or a failed one is inside the cooldown). An unknown kid waits for the fetch in flight,
+    /// or starts one when the cooldown allows (for a team with no keys yet: since its last attempt), then looks
+    /// again; otherwise it is refused at once.
+    async fn key(&self, domain: &str, kid: &str) -> Option<PublicKey> {
         enum Next {
-            Have(PublicKey, bool),
-            Fetch,
+            Have(PublicKey),
+            Wait(tokio::sync::watch::Receiver<u64>),
             Refuse,
         }
+        let team = self.team(domain)?;
+        let cooldown = self.0.tuning.jwks_cooldown;
         let next = {
-            let mut t = self.0.teams.lock().ok()?;
-            match t.get_mut(team) {
-                Some(k) => {
-                    let stale = k.fetched.elapsed() >= self.0.tuning.jwks_ttl;
-                    if let Some(key) = k.keys.get(kid) {
-                        Next::Have(key.clone(), stale)
-                    } else if k
-                        .last_kid_fetch
-                        .is_some_and(|at| at.elapsed() < self.0.tuning.jwks_cooldown)
-                    {
-                        Next::Refuse
-                    } else {
-                        k.last_kid_fetch = Some(Instant::now());
-                        Next::Fetch
-                    }
+            let mut s = team.st.lock().ok()?;
+            if let Some(key) = s.keys.get(kid).cloned() {
+                let stale = s.fetched.is_none_or(|f| f.elapsed() >= self.0.tuning.jwks_ttl);
+                if stale && s.may_retry(cooldown) {
+                    s.begin();
+                    self.spawn_fetch(domain, &team);
                 }
-                None => Next::Fetch,
+                Next::Have(key)
+            } else if s.in_flight {
+                // subscribed under the lock: the fetch's end is seen even if it ends right now
+                Next::Wait(team.done.subscribe())
+            } else {
+                let allowed = if s.fetched.is_some() {
+                    s.last_kid_fetch.is_none_or(|a| a.elapsed() >= cooldown)
+                } else {
+                    s.may_retry(cooldown)
+                };
+                if allowed {
+                    s.begin();
+                    if s.fetched.is_some() {
+                        s.last_kid_fetch = s.last_attempt;
+                    }
+                    let rx = team.done.subscribe();
+                    self.spawn_fetch(domain, &team);
+                    Next::Wait(rx)
+                } else {
+                    Next::Refuse
+                }
             }
         };
         match next {
-            Next::Have(key, stale) => {
-                if stale {
-                    let me = self.clone();
-                    let team = team.to_owned();
-                    tokio::spawn(async move {
-                        if let Err(e) = me.fetch_jwks(&team, true).await {
-                            tracing::warn!(team = %team, error = %e, "access keys not refreshed");
-                        }
-                    });
-                }
-                Some(key)
-            }
+            Next::Have(key) => Some(key),
             Next::Refuse => None,
-            Next::Fetch => {
-                if let Err(e) = self.fetch_jwks(team, false).await {
-                    tracing::warn!(team = %team, error = %e, "access keys not fetched");
-                }
-                let t = self.0.teams.lock().ok()?;
-                t.get(team).and_then(|k| k.keys.get(kid).cloned())
+            Next::Wait(mut rx) => {
+                let _ = tokio::time::timeout(FETCH_WAIT, rx.changed()).await;
+                team.st.lock().ok()?.keys.get(kid).cloned()
             }
         }
     }
@@ -913,8 +975,8 @@ mod tests {
     #[test]
     fn first_names() {
         assert_eq!(
-            first_name_from(Some("Deyao"), Some("Chen Deyao")).as_deref(),
-            Some("Deyao")
+            first_name_from(Some("Tai Man"), Some("Chan Tai Man")).as_deref(),
+            Some("Tai Man")
         );
         assert_eq!(first_name_from(None, Some("Tai Man Chan")).as_deref(), Some("Tai"));
         assert_eq!(first_name_from(None, Some("陳 大文")).as_deref(), Some("陳 大文"));

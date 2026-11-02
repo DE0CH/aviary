@@ -58,7 +58,8 @@ fn fragment_encode(s: &str) -> String {
 #[must_use]
 pub fn app_signin(app: &App, req: &Parts, id: &Identity) -> Response {
     let Some(scheme) = app.0.identity.facts().and_then(|f| f.sign_in.app_scheme.clone()) else {
-        return not_found();
+        // the browser-facing 404 page of 5.2.3's kind: the route is opened in the system browser, not fetched
+        return page(app, Page::NotAvailable, None);
     };
     if req.method != Method::GET {
         return page(app, Page::ReadOnly, None);

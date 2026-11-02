@@ -54,6 +54,42 @@ async fn readiness_waits_for_facts_and_keys_only() {
 }
 
 #[tokio::test]
+async fn readiness_waits_for_every_teams_keys() {
+    // a fresh pigeon whose second team's certs fail: the facts load, the jwks gate stays closed
+    let h = Harness::start_opts(Opts {
+        certs_down: vec![1],
+        wait_ready: false,
+        ..Opts::default()
+    })
+    .await;
+    let started = Instant::now();
+    while h.app.identities().facts().is_none() && started.elapsed() < Duration::from_secs(5) {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let why = h.readiness.why();
+    assert!(!why.iter().any(|w| w == "deployment"), "{why:?}");
+    assert!(why.iter().any(|w| w == "jwks"), "one team has no keys: {why:?}");
+    assert!(
+        h.teams[1].jwks_hits.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+        "the failing team is retried"
+    );
+    // its certs answer: the gate opens
+    h.teams[1].certs_up.store(true, std::sync::atomic::Ordering::SeqCst);
+    let started = Instant::now();
+    while !h.readiness.why().is_empty() && started.elapsed() < Duration::from_secs(5) {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(h.readiness.why().is_empty(), "{:?}", h.readiness.why());
+    assert_eq!(h.get_as("/api/jarvis/me", STAFF).await.status(), 200);
+    let t2 = h.teams[1].token(STAFF);
+    assert_eq!(
+        h.as_token(h.get("/api/jarvis/me"), &t2).send().await.unwrap().status(),
+        200
+    );
+}
+
+#[tokio::test]
 async fn a_drain_closes_the_listener_and_finishes_what_is_in_flight() {
     let mut h = Harness::start().await;
     let cid = uuid::Uuid::new_v4();

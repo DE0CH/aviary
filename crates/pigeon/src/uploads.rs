@@ -78,6 +78,9 @@ pub fn sanitise_name(raw: &str) -> String {
 fn error(app: &App, status: StatusCode, name: &str) -> Response {
     let zh = app.0.identity.is_zh();
     let text = match (status, zh) {
+        // the declared-length guard answers before the name is read: a sentence without it
+        (StatusCode::PAYLOAD_TOO_LARGE, true) if name.is_empty() => "檔案太大（上限 50MB）。".into(),
+        (StatusCode::PAYLOAD_TOO_LARGE, false) if name.is_empty() => "The file is too large (max 50MB).".into(),
         (StatusCode::PAYLOAD_TOO_LARGE, true) => format!("「{name}」太大（上限 50MB）。"),
         (StatusCode::PAYLOAD_TOO_LARGE, false) => format!("\"{name}\" is too large (max 50MB)."),
         (StatusCode::UNSUPPORTED_MEDIA_TYPE, true) => "不支援這種檔案。".into(),
@@ -134,9 +137,11 @@ pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(1);
     let stream = futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|c| (c, rx)) });
     let upstream = calls_upload(calls, &name, &content_type, reqwest::Body::wrap_stream(stream));
-    let feed = async {
+    // the file part is fed to magpie; the upstream body ends only after the rest of the multipart body has been
+    // read, so a second `files` part breaks the upstream body and magpie stores nothing (spec 5.7 step 3)
+    let feed = async move {
         let mut total: u64 = 0;
-        let outcome = loop {
+        let mut outcome = loop {
             match tokio::time::timeout(idle, field.chunk()).await {
                 Ok(Ok(Some(chunk))) => {
                     total += chunk.len() as u64;
@@ -153,6 +158,17 @@ pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
                 Ok(Err(_)) | Err(_) => break Some(StatusCode::BAD_REQUEST),
             }
         };
+        // exactly one file part (multer hands out the next part once this one is dropped)
+        drop(field);
+        while outcome.is_none() {
+            match tokio::time::timeout(idle, parts.next_field()).await {
+                Ok(Ok(None)) => break,
+                Ok(Ok(Some(f))) if f.name() == Some("files") => outcome = Some(StatusCode::BAD_REQUEST),
+                Ok(Ok(Some(_))) => {}
+                Ok(Err(multer::Error::StreamSizeExceeded { .. })) => outcome = Some(StatusCode::PAYLOAD_TOO_LARGE),
+                Ok(Err(_)) | Err(_) => outcome = Some(StatusCode::BAD_REQUEST),
+            }
+        }
         if outcome.is_some() {
             // a broken upstream body: magpie stores nothing
             let _ = tx.send(Err(std::io::Error::other("upload aborted"))).await;
@@ -163,13 +179,6 @@ pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
     let (sent, (total, outcome)) = tokio::join!(upstream, feed);
     if let Some(status) = outcome {
         return error(app, status, &name);
-    }
-    // exactly one file part: a second one is refused (multer hands out the next part once this one is dropped)
-    drop(field);
-    if let Ok(Ok(Some(f))) = tokio::time::timeout(idle, parts.next_field()).await
-        && f.name() == Some("files")
-    {
-        return error(app, StatusCode::BAD_REQUEST, &name);
     }
     app.0.metrics.upload_bytes(total);
     match sent {

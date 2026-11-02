@@ -7,7 +7,7 @@ use axum::http::{HeaderMap, HeaderName, Method, StatusCode, header};
 use axum::response::Response;
 
 use crate::App;
-use crate::http::{Page, page, query_param, query_without, redirect};
+use crate::http::{Page, encode_path, page, query_param, query_without, redirect};
 use crate::identity::{Identity, Sources};
 use crate::paseo::compat;
 
@@ -50,6 +50,8 @@ pub async fn handle(app: &App, req: Request, path: &str) -> Response {
         return redirect(StatusCode::FOUND, "/ops/", false);
     }
     let query = query_without(query.as_deref(), compat::VIEW_AS_QUERY);
+    // the checked path, encoded again: nothing in it can become a dot segment, a query or a fragment upstream
+    let path = encode_path(path);
     let url = match &query {
         Some(q) => format!("{}{path}?{q}", app.0.upstreams.hermit),
         None => format!("{}{path}", app.0.upstreams.hermit),

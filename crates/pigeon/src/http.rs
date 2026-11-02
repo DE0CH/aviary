@@ -2,6 +2,7 @@
 //! itself (5.2.3), same-origin rules (5.13), the model list (5.5) and the warm hint (5.6).
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -24,6 +25,10 @@ pub const SMALL_BODY: usize = 4096;
 pub const WARM_KEYS: usize = 1000;
 const HERMIT_WARM_TIMEOUT: Duration = Duration::from_secs(10);
 const MODEL_TIMEOUT: Duration = Duration::from_secs(5);
+/// A body on a GET is read up to this much, then dropped (spec 5.13).
+const GET_BODY_DRAIN: usize = 64 * 1024;
+/// …for at most this long.
+const GET_BODY_WAIT: Duration = Duration::from_secs(5);
 
 /// The router of port 8080: one handler that applies the table of 5.1 in order, behind the stripping of every
 /// client-supplied `Aviary-*` header, a fresh request id and the `server` header.
@@ -95,6 +100,11 @@ pub fn normalise(raw: &str) -> Option<String> {
     let mut trailing = false;
     for seg in decoded.split('/').skip(1) {
         trailing = false;
+        // a dot segment encoded twice (`%252e%252e`) is one once decoded: whatever reads the path next could
+        // resolve it, so it is refused rather than passed on
+        if matches!(percent_decode(seg).as_str(), "." | "..") && !matches!(seg, "." | "..") {
+            return None;
+        }
         match seg {
             "" | "." => trailing = true,
             ".." => {
@@ -109,6 +119,22 @@ pub fn normalise(raw: &str) -> Option<String> {
         path.push('/');
     }
     (class(&decoded) == class(&path)).then_some(path)
+}
+
+/// A normalised path encoded again for a URL, segment by segment: every byte outside RFC 3986's `pchar` set (so
+/// `%`, `?`, `#` and spaces) is percent-encoded, so the path reaches the upstream exactly as pigeon checked it.
+#[must_use]
+pub fn encode_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for b in path.bytes() {
+        let keep = b.is_ascii_alphanumeric() || b"/-._~!$&'()*+,;=:@".contains(&b);
+        if keep {
+            out.push(char::from(b));
+        } else {
+            let _ = write!(out, "%{b:02X}");
+        }
+    }
+    out
 }
 
 /// A query parameter, percent-decoded (`+` as a space).
@@ -211,6 +237,8 @@ pub enum Page {
     NotAUser,
     /// 502 when the view-as start could not be recorded (spec 6.1).
     NotRecorded,
+    /// 404 for a feature this deployment has turned off (app sign-in without an `appScheme`, spec 5.3.3).
+    NotAvailable,
 }
 
 fn escape(s: &str) -> String {
@@ -289,6 +317,13 @@ pub fn page(app: &App, which: Page, email: Option<&str>) -> Response {
             "未能記錄這次代看，所以沒有開啟。請稍後再試。".into(),
             "Not opened",
             "The view could not be recorded, so it was not opened. Try again in a moment.".into(),
+        ),
+        Page::NotAvailable => (
+            StatusCode::NOT_FOUND,
+            "未能使用",
+            "這項功能在這裏未有開放。".into(),
+            "Not available",
+            "This feature is not available here.".into(),
         ),
     };
     let lang = if app.0.identity.is_zh() { "zh-HK" } else { "en" };
@@ -475,9 +510,42 @@ pub fn view_as_read_only() -> Response {
 }
 
 async fn dispatch(State(app): State<App>, req: Request) -> Response {
-    let (route, r) = route(&app, req).await;
+    let (req, had_body) = drain_get_body(req).await;
+    let (route, mut r) = route(&app, req).await;
+    if had_body {
+        r.headers_mut()
+            .insert(header::CONNECTION, HeaderValue::from_static("close"));
+    }
     app.0.metrics.http(route, r.status().as_u16());
     r
+}
+
+/// Spec 5.13: a body on a GET or HEAD (other than a socket upgrade) is ignored: up to 64 KiB of it is read and
+/// dropped, the request is routed without it, and the connection is closed after the answer.
+async fn drain_get_body(req: Request) -> (Request, bool) {
+    let get_head = req.method() == Method::GET || req.method() == Method::HEAD;
+    let has_body = req.headers().contains_key(header::TRANSFER_ENCODING)
+        || req
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.trim() != "0");
+    if !get_head || !has_body || is_upgrade(req.headers()) {
+        return (req, false);
+    }
+    let (parts, body) = req.into_parts();
+    let mut data = body.into_data_stream();
+    let mut read = 0usize;
+    let drain = async {
+        while read < GET_BODY_DRAIN {
+            match futures_util::StreamExt::next(&mut data).await {
+                Some(Ok(chunk)) => read += chunk.len(),
+                Some(Err(_)) | None => break,
+            }
+        }
+    };
+    let _ = tokio::time::timeout(GET_BODY_WAIT, drain).await;
+    (Request::from_parts(parts, Body::empty()), true)
 }
 
 async fn route(app: &App, req: Request) -> (&'static str, Response) {
@@ -654,16 +722,29 @@ impl Warm {
     }
 }
 
+/// The warm hint's conversation: `Ok(None)` for a new chat (no body, no `sessionId`, or `null`), `Ok(Some(id))` for
+/// a valid one, `Err` (no hint) for a `sessionId` that is not a conversation id or a body that is not a JSON object.
+fn warm_target(body: Option<&[u8]>) -> Result<Option<Uuid>, ()> {
+    let body = body.ok_or(())?;
+    if body.iter().all(u8::is_ascii_whitespace) {
+        return Ok(None);
+    }
+    let v: Value = serde_json::from_slice(body).map_err(|_| ())?;
+    match v.as_object().ok_or(())?.get("sessionId") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => Uuid::parse_str(s).map(Some).map_err(|_| ()),
+        Some(_) => Err(()),
+    }
+}
+
 async fn warm(app: &App, body: Body, id: &Identity) -> Response {
     let ok = json(StatusCode::ACCEPTED, &json!({"ok": true}));
     let Some(person) = id.subject().map(str::to_owned) else {
         return ok;
     };
-    let body = small_body(body, SMALL_BODY).await;
-    let conversation = body
-        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
-        .and_then(|v| v.get("sessionId").and_then(Value::as_str).map(str::to_owned))
-        .and_then(|s| Uuid::parse_str(&s).ok());
+    let Ok(conversation) = warm_target(small_body(body, SMALL_BODY).await.as_deref()) else {
+        return ok;
+    };
     if app.0.warm.take(&person, conversation) {
         let hermit = app.0.hermit.clone();
         tokio::spawn(async move {
@@ -744,7 +825,27 @@ mod tests {
         assert_eq!(normalise("/ops/../api/x"), None, "changes class");
         assert_eq!(normalise("/x/../api/me"), None, "changes class");
         assert_eq!(normalise("/%2e%2e/api"), None, "changes class");
+        assert_eq!(
+            normalise("/ops/%252e%252e/v1/deployment"),
+            None,
+            "a dot segment encoded twice"
+        );
+        assert_eq!(normalise("/ops/%252E/x"), None, "upper-case too");
+        assert_eq!(normalise("/ops/a%3Fb").as_deref(), Some("/ops/a?b"));
+        assert_eq!(encode_path("/ops/a?b#c d%2e"), "/ops/a%3Fb%23c%20d%252e");
+        assert_eq!(encode_path("/ops/people/a@b.c/~x"), "/ops/people/a@b.c/~x");
         assert_eq!(normalise("/a%00b"), None);
+        let id = Uuid::new_v4();
+        assert_eq!(warm_target(Some(b"")), Ok(None));
+        assert_eq!(warm_target(Some(b"{}")), Ok(None));
+        assert_eq!(warm_target(Some(br#"{"sessionId":null}"#)), Ok(None));
+        assert_eq!(
+            warm_target(Some(format!(r#"{{"sessionId":"{id}"}}"#).as_bytes())),
+            Ok(Some(id))
+        );
+        assert_eq!(warm_target(Some(br#"{"sessionId":"x"}"#)), Err(()));
+        assert_eq!(warm_target(Some(b"[1]")), Err(()));
+        assert_eq!(warm_target(None), Err(()), "over 4 KiB");
         assert_eq!(normalise("/a%5cb"), None);
         assert_eq!(normalise("/a\\b"), None);
         assert_eq!(normalise("/api//x").as_deref(), Some("/api/x"));

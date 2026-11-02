@@ -179,6 +179,145 @@ async fn a_stale_key_set_is_used_while_one_refresh_runs() {
     );
 }
 
+#[tokio::test]
+async fn a_failing_refresh_of_a_stale_set_is_tried_once_per_cooldown() {
+    let h = Harness::start_with(pigeon::Tuning {
+        jwks_ttl: Duration::from_millis(300),
+        token_cache: Duration::from_millis(1),
+        ..tuning()
+    })
+    .await;
+    let t1 = &h.teams[0];
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    t1.certs_up.store(false, Ordering::SeqCst);
+    let before = t1.jwks_hits.load(Ordering::SeqCst);
+    for round in 0..2 {
+        let mut all = Vec::new();
+        for i in 0..40 {
+            // valid tokens verify on the cached set; forged ones (known kid, garbage signature) are refused
+            let token = if i % 2 == 0 {
+                t1.token(&format!("p{round}-{i}@example.org"))
+            } else {
+                let mut t = t1.token(&format!("f{round}-{i}@example.org"));
+                t.truncate(t.len() - 8);
+                t.push_str("AAAAAAAA");
+                t
+            };
+            all.push(tokio::spawn(h.as_token(h.get(me()), &token).send()));
+        }
+        for (i, r) in all.into_iter().enumerate() {
+            let want = if i % 2 == 0 { 200 } else { 401 };
+            assert_eq!(r.await.unwrap().unwrap().status(), want);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        t1.jwks_hits.load(Ordering::SeqCst),
+        before + 1,
+        "one attempt inside the cooldown, however many requests miss the fresh set"
+    );
+    // after the cooldown one more attempt; once the certs answer the set is fresh again
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    t1.certs_up.store(true, Ordering::SeqCst);
+    assert_eq!(h.get_as(me(), STAFF).await.status(), 200);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(t1.jwks_hits.load(Ordering::SeqCst), before + 2);
+}
+
+#[tokio::test]
+async fn parallel_requests_with_a_new_kid_wait_for_one_fetch() {
+    let h = Harness::start().await;
+    let t1 = &h.teams[0];
+    // rotation: the new key is published, and the certs answer slowly
+    t1.issuer.set_published("t1-b", true).unwrap();
+    t1.certs_delay_ms.store(300, Ordering::SeqCst);
+    let before = t1.jwks_hits.load(Ordering::SeqCst);
+    let token = t1.mint(STAFF, 3600, None, Some("t1-b"));
+    let mut all = Vec::new();
+    for path in [me(), "/api/providers/claude/models", me(), me(), me(), me(), me(), me()] {
+        all.push(tokio::spawn(h.as_token(h.get(path), &token).send()));
+    }
+    for r in all {
+        assert_eq!(
+            r.await.unwrap().unwrap().status(),
+            200,
+            "every request sees the new key"
+        );
+    }
+    assert_eq!(t1.jwks_hits.load(Ordering::SeqCst), before + 1, "one fetch");
+}
+
+#[tokio::test]
+async fn a_team_without_keys_is_tried_once_per_cooldown_and_blocks_no_other_team() {
+    let h = Harness::start_opts(Opts {
+        teams_in_facts: 1,
+        ..Opts::default()
+    })
+    .await;
+    let (t1, t2) = (&h.teams[0], &h.teams[1]);
+    assert_eq!(t2.jwks_hits.load(Ordering::SeqCst), 0);
+    // hermit adds the second team, whose certs are down and slow: pigeon's facts refresh tries to load its keys
+    t2.certs_up.store(false, Ordering::SeqCst);
+    t2.certs_delay_ms.store(400, Ordering::SeqCst);
+    h.set_facts(|d| {
+        d.sign_in.access.push(hermit_api::deployment::AccessApp {
+            team_domain: TEAM2.into(),
+            audience: AUD2.into(),
+        });
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        t2.jwks_hits.load(Ordering::SeqCst) >= 1,
+        "loaded after the facts refresh"
+    );
+    // while its fetch hangs, the first team's new kid is fetched and verified at once
+    t1.issuer.set_published("t1-b", true).unwrap();
+    let started = std::time::Instant::now();
+    let r = h
+        .as_token(h.get(me()), &t1.mint(STAFF, 3600, None, Some("t1-b")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(
+        started.elapsed() < Duration::from_millis(300),
+        "{:?}",
+        started.elapsed()
+    );
+    // many tokens of the keyless team: refused, at most one attempt per cooldown
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let before = t2.jwks_hits.load(Ordering::SeqCst);
+    let mut all = Vec::new();
+    for i in 0..20 {
+        let token = t2.token(&format!("q{i}@example.org"));
+        all.push(tokio::spawn(h.as_token(h.get(me()), &token).send()));
+    }
+    for r in all {
+        assert_eq!(r.await.unwrap().unwrap().status(), 401);
+    }
+    assert!(
+        t2.jwks_hits.load(Ordering::SeqCst) <= before + 1,
+        "{} attempts for 20 requests",
+        t2.jwks_hits.load(Ordering::SeqCst) - before
+    );
+    // the certs come back: the next facts refresh loads the keys and the team signs in
+    t2.certs_delay_ms.store(0, Ordering::SeqCst);
+    t2.certs_up.store(true, Ordering::SeqCst);
+    let started = std::time::Instant::now();
+    loop {
+        let r = h.as_token(h.get(me()), &t2.token(STAFF)).send().await.unwrap();
+        if r.status() == 200 {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "the second team never loaded"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 // ---- People (spec 4.4) ----
 
 #[tokio::test]
@@ -506,6 +645,12 @@ async fn app_sign_in_hands_the_token_to_the_app_scheme() {
     h.set_facts(|d| d.sign_in.app_scheme = None).await;
     let r = h.get_as(&format!("{}?state={state}", compat::APP_SIGNIN), STAFF).await;
     assert_eq!(r.status(), 404);
+    assert!(r.headers()["content-type"].to_str().unwrap().starts_with("text/html"));
+    assert_eq!(r.headers()["cache-control"], "no-store");
+    assert!(
+        r.text().await.unwrap().contains("這項功能在這裏未有開放。"),
+        "the 404 page"
+    );
 }
 
 #[tokio::test]
@@ -595,6 +740,23 @@ async fn warm_hints_are_coalesced() {
         .unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(h.hermit.fake.hints().len(), 3, "a new hint after the window");
+    // a present but invalid sessionId is no hint at all (not a new-chat hint)
+    let other = h.token(STAFF2);
+    for body in [json!({"sessionId": "not-a-uuid"}), json!({"sessionId": 7})] {
+        let r = h
+            .as_token(h.post(compat::WARM), &other)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 202);
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        h.hermit.fake.hints().iter().all(|w| w.person != STAFF2),
+        "{:?}",
+        h.hermit.fake.hints()
+    );
 }
 
 // ---- Same origin (spec 5.13) ----
@@ -868,6 +1030,30 @@ async fn ops_is_admin_only_read_only_and_forwarded() {
     assert_eq!(call.header("aviary-person"), Some(ADMIN));
     assert!(call.header("authorization").unwrap().starts_with("Bearer "));
     assert_eq!(call.header("cookie"), None, "no cookie goes up");
+    // a dot segment encoded twice stays under /ops: refused before anything is forwarded
+    for path in [
+        "/ops/%252e%252e/v1/deployment",
+        "/ops/%252E%252E/v1/people/admin@example.com",
+    ] {
+        let r = h.get_as(path, ADMIN).await;
+        assert_eq!(r.status(), 404, "{path}");
+        assert_eq!(
+            r.text().await.unwrap(),
+            "Not found",
+            "{path}: pigeon's 404, not hermit's answer"
+        );
+    }
+    // `%3F` and `%23` stay in the path: `/ops/%3F` is not `/ops/` with a query
+    let before = h.hermit.fake.script().calls_to("ops_page").len();
+    for path in ["/ops/%3Fx=1", "/ops/%23", "/ops/a%3Fb"] {
+        let r = h.get_as(path, ADMIN).await;
+        assert_eq!(r.status(), 404, "{path}");
+    }
+    assert_eq!(
+        h.hermit.fake.script().calls_to("ops_page").len(),
+        before,
+        "none of them reached hermit's /ops/"
+    );
     // read-only
     let r = h.as_token(h.post("/ops/"), &h.token(ADMIN)).send().await.unwrap();
     assert_eq!(r.status(), 405);
@@ -934,7 +1120,8 @@ async fn uploads_stream_to_magpie_with_their_limits() {
         Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         "octet-stream parts take the type of their extension"
     );
-    // two files: refused
+    // two files: refused, and magpie stores neither (its body breaks before it ends)
+    let stored = h.magpie.fake.script().calls_to("upload").len();
     let (ct, body) = multipart(&[("files", "a.txt", b"a"), ("files", "b.txt", b"b")]);
     let r = h
         .as_token(h.post("/api/assets/files"), &t)
@@ -944,6 +1131,12 @@ async fn uploads_stream_to_magpie_with_their_limits() {
         .await
         .unwrap();
     assert_eq!(r.status(), 400);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        h.magpie.fake.script().calls_to("upload").len(),
+        stored,
+        "the first of two files is not stored"
+    );
     // none
     let (ct, body) = multipart(&[("other", "a.txt", b"a")]);
     let r = h
@@ -955,16 +1148,37 @@ async fn uploads_stream_to_magpie_with_their_limits() {
         .unwrap();
     assert_eq!(r.status(), 400);
     // the first guard: a declared length over 50 MiB + 1 MiB, answered before reading
-    let r = h
-        .as_token(h.post("/api/assets/files"), &t)
-        .header("content-type", "multipart/form-data; boundary=x")
-        .header("content-length", "53477377")
-        .body(vec![0u8; 16])
-        .send()
-        .await;
-    if let Ok(r) = r {
-        assert_eq!(r.status(), 413);
-    }
+    // (a raw client: it sends 16 bytes of a declared 53 477 377 and reads the answer)
+    let answer = {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut c = tokio::net::TcpStream::connect(h.url.trim_start_matches("http://"))
+            .await
+            .unwrap();
+        let head = format!(
+            "POST /api/assets/files HTTP/1.1\r\nhost: pigeon.test\r\ncf-access-jwt-assertion: {t}\r\n\
+             content-type: multipart/form-data; boundary=x\r\ncontent-length: 53477377\r\n\r\n"
+        );
+        c.write_all(head.as_bytes()).await.unwrap();
+        c.write_all(&[0u8; 16]).await.unwrap();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = tokio::time::timeout(Duration::from_secs(5), c.read(&mut chunk))
+                .await
+                .expect("pigeon answers before the body arrives")
+                .unwrap_or(0);
+            buf.extend_from_slice(&chunk[..n]);
+            let text = String::from_utf8_lossy(&buf).into_owned();
+            if n == 0 || text.contains('}') {
+                break text;
+            }
+        }
+    };
+    assert!(answer.starts_with("HTTP/1.1 413"), "{answer}");
+    assert!(
+        answer.contains("檔案太大（上限 50MB）。"),
+        "a sentence without the name, which is not known yet: {answer}"
+    );
     // the second guard: a chunked body whose file passes 50 MiB
     let big = vec![b'x'; 52_428_801];
     let (ct, body) = multipart(&[("files", "big.bin", &big)]);
@@ -1216,4 +1430,37 @@ async fn shares_keep_the_apps_shapes() {
     s.always("get_share", Reply::error(500, "internal", "boom"));
     let r = h.get_as(&format!("{}{share}", compat::SHARES), STAFF).await;
     assert_eq!(code(r).await, (502, "SHARE_FAILED".into()));
+}
+
+// ---- Limits (spec 5.13) ----
+
+/// Sends `raw` on a new connection and reads until the server closes it (or 5 s pass).
+async fn raw_exchange(h: &Harness, raw: &[u8]) -> (String, bool) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut c = tokio::net::TcpStream::connect(h.url.trim_start_matches("http://"))
+        .await
+        .unwrap();
+    c.write_all(raw).await.unwrap();
+    let mut buf = Vec::new();
+    let closed = tokio::time::timeout(Duration::from_secs(5), c.read_to_end(&mut buf))
+        .await
+        .is_ok();
+    (String::from_utf8_lossy(&buf).into_owned(), closed)
+}
+
+#[tokio::test]
+async fn a_body_on_a_get_is_drained_and_the_connection_closed() {
+    let h = Harness::start().await;
+    let (answer, closed) = raw_exchange(
+        &h,
+        b"GET / HTTP/1.1\r\nhost: pigeon.test\r\ncontent-length: 10\r\n\r\n0123456789",
+    )
+    .await;
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+    assert!(answer.to_ascii_lowercase().contains("connection: close"), "{answer}");
+    assert!(closed, "the connection is closed after the answer");
+    // without a body the connection stays open for the next request
+    let (answer, closed) = raw_exchange(&h, b"GET / HTTP/1.1\r\nhost: pigeon.test\r\n\r\n").await;
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+    assert!(!closed, "keep-alive without a body");
 }

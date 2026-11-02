@@ -12,7 +12,7 @@ Upstreams are the fixed names `http://magpie`, `http://hermit`, `http://model` a
 
 | Module | Spec | What |
 |---|---|---|
-| `identity` | 4 | deployment facts (H1, every 60 s), Access token sources and RS256 verification against every team's JWKS (1 h cache, unknown-kid refetch at most every 30 s), verified-token cache, hermit people answers (15 s, stale-on-error 300 s), first names, the request identity |
+| `identity` | 4 | deployment facts (H1, every 60 s), Access token sources and RS256 verification against every team's JWKS (1 h cache; one fetch in flight per team, which concurrent lookups of an unknown kid wait for; an unknown-kid refetch, or a retry of a failed refresh or a team with no keys yet, at most every 30 s; keys of a team hermit adds are loaded on the next facts refresh), verified-token cache, hermit people answers (15 s, stale-on-error 300 s), first names, the request identity |
 | `http` | 5.1, 5.2.3, 5.5, 5.6, 5.13 | the routing table in order, path normalisation, the apps' error shape, the pages pigeon writes, same-origin rules, the model list, warm hints |
 | `static_files`, `shell` | 5.2 | the bundle (in-memory file list, `.br`/`.gz` siblings, cache rules) and the rewritten `index.html` |
 | `signin`, `viewas`, `ops`, `uploads`, `blobs`, `shares` | 5.3-5.4, 6, 5.11, 5.7, 5.8-5.9, 5.10 | the REST routes beside the socket |
@@ -43,6 +43,14 @@ jitter) is a drain hook the socket package adds before the listener's.
   even when it carries a view-as token; 6.2's refusal (`VIEW_AS_REFUSED`) applies to a signed-in caller.
 - **Legacy view-as tokens** (`PIGEON_LEGACY_VIEW_AS_KEY`, spec 6.2, DESIGN 9.5) are WP-50's (`src/legacy/`); the
   7.10 migration retry is not built (DESIGN 12 D14, D24).
+- **The 404 page of 5.3.3** (`appScheme` null): 5.2.3 has no 404 row, so pigeon adds one in its style
+  (未能使用 / 這項功能在這裏未有開放。, Not available / This feature is not available here.), as HTML, since the route
+  is opened in the system browser rather than fetched.
+- **Warm bodies** (spec 5.6): an absent body, `{}` or `"sessionId": null` is the new-chat hint; a `sessionId` that
+  is not a conversation id, a body that is not a JSON object, or one over 4 KiB sends no hint.
+- **Dot segments encoded twice** (spec 5.1): a segment that is `.` or `..` after a second decode (`%252e%252e`) is a
+  404 on every path, and `/ops` forwards the checked path encoded again, so hermit sees exactly the path pigeon
+  checked (no dot segment, `?` or `#` appears on the way).
 - **Drain test at CI scale** (spec 18.3): the upload across a drain is 4 MiB at about 2 MiB/s with the drain
   0.5 s in, not 50 MiB at 2 Mbit/s (210 s).
 
