@@ -1,0 +1,25 @@
+h01 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+h02 scratch fill=0/0 hold=2 mode=fuse debug=0 exit=0 PASS
+h03 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+h04 scratch fill=0/0 hold=2 mode=fuse debug=0 exit=0 PASS
+h05 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+h06 scratch fill=0/0 hold=2 mode=fuse debug=0 exit=0 PASS
+h07 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+h08 scratch fill=0/0 hold=2 mode=fuse debug=0 exit=0 PASS
+h09 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+h10 scratch fill=0/0 hold=2 mode=fuse debug=0 exit=0 PASS
+h11 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+h12 scratch fill=0/0 hold=2 mode=fuse debug=0 exit=0 PASS
+h13 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+h14 scratch fill=0/0 hold=2 mode=fuse debug=0 exit=0 PASS
+h15 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+h16 scratch fill=0/0 hold=2 mode=fuse debug=0 exit=0 PASS
+h17 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+h18 scratch fill=0/0 hold=2 mode=fuse debug=0 exit=0 PASS
+h19 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+h20 scratch fill=0/0 hold=2 mode=fuse debug=0 exit=0 PASS
+h21 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+h22 scratch fill=0/0 hold=2 mode=fuse debug=0 exit=0 PASS
+h23 scratch fill=0/0 hold=1 mode=fuse debug=0 exit=0 PASS
+h24 scratch fill=0/0 hold=2 mode=fuse debug=0 exit=0 PASS
+done

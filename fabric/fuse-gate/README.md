@@ -9,18 +9,20 @@ build) at `/usr/local/bin/sandboxd` on the target for its `migrate-relay`, and `
 
 ```bash
 ./host-setup.sh ghcr.io/de0ch/jarvis3-sandbox:<tag>   # every host: runsc release, crane, the image, ckpt tmpfs
-./mount-check.sh m1                 # item 1
+./mount-check.sh m1                 # items 1 and 5 (locks.py)
 ./session.sh s1 fuse                # item 2 (and 9 with STRACE=1); ./session.sh s1 local = the tmpfs reference
 MOUNT=/tmp/lh/.claude python3 strace-inventory.py /var/log/gate/strace-s1/*boot* > inventory.json   # (local run)
-./tombstone-try.sh t1 thinkfail     # item 2: Claude Code's own tombstone triggers (also: refusal)
+./tombstone-try.sh t1 thinkfail     # item 2: Claude Code's own tombstone triggers (also: refusal, catchall, catalog, overload)
 ./killtest.sh k1 [/mnt/fuse-journal]   # item 4 and the keeper-only hold
 ./sigresend.sh g1                   # does a signal (not a checkpoint) resend a held request?
 ./migrate.sh m1 <target ip> [64 87] # item 3 (target reachable as root with /root/.ssh/gate), full cache with 64 87
 LAYOUT=scratch ./migrate.sh m2 <target ip>   # the same, cache/journal on scratch moved by rsync + sandboxd's relay
 ./migrate-batch.sh <target ip> e 20 [tmpfs|scratch [64 87]]   # N runs, every run's outputs kept
+HOLDS='1 2' ./migrate-batch.sh <target ip> h 24 scratch   # alternating with the matched control (HOLD=2)
 ./latency.sh l1                     # items 6 and 10
 ./resume87.sh r1                    # item 6: Claude Code resumes an 87 MiB transcript from a cold cache
 python3 uniques.py ops.tsv [boundary_us ...]   # item 4: unique never repeats (used by migrate.sh, killtest.sh)
 ```
 
-Results land in `/root/out/`. Delete the hosts afterwards.
+Results land in `/root/out/`. Delete the hosts afterwards. IPv6-only hosts work (the rsync URL is bracketed, the
+relay listens on `[::]`; `GATE_RELAY_LISTEN` overrides).

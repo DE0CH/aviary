@@ -1,0 +1,673 @@
+{
+ "groups": {
+  "scratch hold=1 mode=fuse empty": {
+   "runs": 13,
+   "failed": [],
+   "final_ms": {
+    "n": 13,
+    "min": 203.86,
+    "median": 219.8,
+    "max": 289.113
+   },
+   "pause_ms": {
+    "n": 13,
+    "min": 436.4,
+    "median": 457.5,
+    "max": 596.6
+   },
+   "restore_ms": {
+    "n": 13,
+    "min": 89.531,
+    "median": 101.6,
+    "max": 116.943
+   },
+   "bytes": {
+    "n": 13,
+    "min": 126593911,
+    "median": 127244577,
+    "max": 129470421
+   },
+   "final_bytes": {
+    "n": 13,
+    "min": 0,
+    "median": 0,
+    "max": 0
+   },
+   "live_rsync_bytes": {
+    "n": 13,
+    "min": 17446540,
+    "median": 17446658,
+    "max": 17447357
+   },
+   "stat_wait_s": {
+    "n": 13,
+    "min": 3.45,
+    "median": 3.5,
+    "max": 3.566
+   }
+  },
+  "scratch hold=2 mode=fuse empty": {
+   "runs": 12,
+   "failed": [],
+   "final_ms": {
+    "n": 12,
+    "min": 178.318,
+    "median": 187.0,
+    "max": 218.522
+   },
+   "pause_ms": {
+    "n": 12,
+    "min": 387.1,
+    "median": 397.1,
+    "max": 451.6
+   },
+   "restore_ms": {
+    "n": 12,
+    "min": 67.817,
+    "median": 72.6,
+    "max": 113.515
+   },
+   "bytes": {
+    "n": 12,
+    "min": 2220462,
+    "median": 2302898.0,
+    "max": 2379537
+   },
+   "final_bytes": {
+    "n": 12,
+    "min": 0,
+    "median": 0.0,
+    "max": 0
+   },
+   "live_rsync_bytes": {
+    "n": 12,
+    "min": 23778259,
+    "median": 23778414.5,
+    "max": 23779230
+   },
+   "stat_wait_s": {
+    "n": 12,
+    "min": 0.001,
+    "median": 0.0,
+    "max": 0.003
+   }
+  }
+ },
+ "runs": [
+  {
+   "run": "h01",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 1,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 127951220,
+   "final_ms": 219.803,
+   "restore_ms": 116.943,
+   "stopped_ms": 135,
+   "pause_ms": 471.7,
+   "live_rsync_bytes": 17446820,
+   "final_bytes": 0,
+   "stat_wait_s": 3.566,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h02",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 2,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 2273222,
+   "final_ms": 183.315,
+   "restore_ms": 70.484,
+   "stopped_ms": 134,
+   "pause_ms": 387.8,
+   "live_rsync_bytes": 23778409,
+   "final_bytes": 0,
+   "stat_wait_s": 0.001,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h03",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 1,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 127045803,
+   "final_ms": 219.301,
+   "restore_ms": 97.962,
+   "stopped_ms": 140,
+   "pause_ms": 457.3,
+   "live_rsync_bytes": 17446540,
+   "final_bytes": 0,
+   "stat_wait_s": 3.491,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h04",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 2,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 2220462,
+   "final_ms": 178.318,
+   "restore_ms": 72.798,
+   "stopped_ms": 136,
+   "pause_ms": 387.1,
+   "live_rsync_bytes": 23778455,
+   "final_bytes": 0,
+   "stat_wait_s": 0.001,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h05",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 1,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 127418388,
+   "final_ms": 211.797,
+   "restore_ms": 111.505,
+   "stopped_ms": 141,
+   "pause_ms": 464.3,
+   "live_rsync_bytes": 17447190,
+   "final_bytes": 0,
+   "stat_wait_s": 3.534,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h06",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 2,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 2315712,
+   "final_ms": 192.145,
+   "restore_ms": 67.817,
+   "stopped_ms": 138,
+   "pause_ms": 398.0,
+   "live_rsync_bytes": 23778393,
+   "final_bytes": 0,
+   "stat_wait_s": 0.002,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h07",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 1,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 127244577,
+   "final_ms": 222.138,
+   "restore_ms": 97.52,
+   "stopped_ms": 136,
+   "pause_ms": 455.7,
+   "live_rsync_bytes": 17447357,
+   "final_bytes": 0,
+   "stat_wait_s": 3.529,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h08",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 2,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 2298882,
+   "final_ms": 192.937,
+   "restore_ms": 83.407,
+   "stopped_ms": 145,
+   "pause_ms": 421.3,
+   "live_rsync_bytes": 23778259,
+   "final_bytes": 0,
+   "stat_wait_s": 0.002,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h09",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 1,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 126954620,
+   "final_ms": 289.113,
+   "restore_ms": 89.531,
+   "stopped_ms": 218,
+   "pause_ms": 596.6,
+   "live_rsync_bytes": 17446545,
+   "final_bytes": 0,
+   "stat_wait_s": 3.518,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h10",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 2,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 2302715,
+   "final_ms": 183.568,
+   "restore_ms": 71.091,
+   "stopped_ms": 135,
+   "pause_ms": 389.7,
+   "live_rsync_bytes": 23779230,
+   "final_bytes": 0,
+   "stat_wait_s": 0.001,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h11",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 1,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 127611735,
+   "final_ms": 214.468,
+   "restore_ms": 95.948,
+   "stopped_ms": 137,
+   "pause_ms": 447.4,
+   "live_rsync_bytes": 17446549,
+   "final_bytes": 0,
+   "stat_wait_s": 3.499,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h12",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 2,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 2379537,
+   "final_ms": 185.627,
+   "restore_ms": 113.515,
+   "stopped_ms": 139,
+   "pause_ms": 438.1,
+   "live_rsync_bytes": 23778391,
+   "final_bytes": 0,
+   "stat_wait_s": 0.001,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h13",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 1,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 127562534,
+   "final_ms": 215.087,
+   "restore_ms": 110.962,
+   "stopped_ms": 129,
+   "pause_ms": 455.0,
+   "live_rsync_bytes": 17446563,
+   "final_bytes": 0,
+   "stat_wait_s": 3.48,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h14",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 2,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 2303081,
+   "final_ms": 187.952,
+   "restore_ms": 70.509,
+   "stopped_ms": 140,
+   "pause_ms": 398.5,
+   "live_rsync_bytes": 23778382,
+   "final_bytes": 0,
+   "stat_wait_s": 0.003,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h15",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 1,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 129470421,
+   "final_ms": 203.86,
+   "restore_ms": 101.57,
+   "stopped_ms": 131,
+   "pause_ms": 436.4,
+   "live_rsync_bytes": 17446805,
+   "final_bytes": 0,
+   "stat_wait_s": 3.554,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h16",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 2,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 2268834,
+   "final_ms": 218.522,
+   "restore_ms": 79.11,
+   "stopped_ms": 154,
+   "pause_ms": 451.6,
+   "live_rsync_bytes": 23778393,
+   "final_bytes": 0,
+   "stat_wait_s": 0.002,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h17",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 1,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 126610216,
+   "final_ms": 217.124,
+   "restore_ms": 103.355,
+   "stopped_ms": 137,
+   "pause_ms": 457.5,
+   "live_rsync_bytes": 17446550,
+   "final_bytes": 0,
+   "stat_wait_s": 3.524,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h18",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 2,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 2264234,
+   "final_ms": 188.731,
+   "restore_ms": 72.333,
+   "stopped_ms": 135,
+   "pause_ms": 396.1,
+   "live_rsync_bytes": 23778581,
+   "final_bytes": 0,
+   "stat_wait_s": 0.001,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h19",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 1,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 126593911,
+   "final_ms": 238.529,
+   "restore_ms": 94.774,
+   "stopped_ms": 134,
+   "pause_ms": 467.3,
+   "live_rsync_bytes": 17446554,
+   "final_bytes": 0,
+   "stat_wait_s": 3.45,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h20",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 2,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 2320418,
+   "final_ms": 208.057,
+   "restore_ms": 83.01,
+   "stopped_ms": 149,
+   "pause_ms": 440.1,
+   "live_rsync_bytes": 23778420,
+   "final_bytes": 0,
+   "stat_wait_s": 0.002,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h21",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 1,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 127061841,
+   "final_ms": 230.047,
+   "restore_ms": 101.752,
+   "stopped_ms": 156,
+   "pause_ms": 487.8,
+   "live_rsync_bytes": 17447237,
+   "final_bytes": 0,
+   "stat_wait_s": 3.539,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h22",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 2,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 2355942,
+   "final_ms": 186.14,
+   "restore_ms": 70.775,
+   "stopped_ms": 134,
+   "pause_ms": 390.9,
+   "live_rsync_bytes": 23778678,
+   "final_bytes": 0,
+   "stat_wait_s": 0.001,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h23",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 1,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 127349605,
+   "final_ms": 225.454,
+   "restore_ms": 94.35,
+   "stopped_ms": 134,
+   "pause_ms": 453.8,
+   "live_rsync_bytes": 17446818,
+   "final_bytes": 0,
+   "stat_wait_s": 3.494,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "h24",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 2,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 2307587,
+   "final_ms": 185.835,
+   "restore_ms": 75.48,
+   "stopped_ms": 135,
+   "pause_ms": 396.3,
+   "live_rsync_bytes": 23779059,
+   "final_bytes": 0,
+   "stat_wait_s": 0.002,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  },
+  {
+   "run": "t09",
+   "layout": "scratch",
+   "runsc_extra": "",
+   "hold": 1,
+   "mode": "fuse",
+   "fill": "",
+   "rounds": 1,
+   "bytes": 127114802,
+   "final_ms": 241.022,
+   "restore_ms": 112.111,
+   "stopped_ms": 135,
+   "pause_ms": 488.1,
+   "live_rsync_bytes": 17446658,
+   "final_bytes": 0,
+   "stat_wait_s": 3.496,
+   "turns": [
+    "success",
+    "success"
+   ],
+   "claude_exit": 0,
+   "failures": []
+  }
+ ]
+}

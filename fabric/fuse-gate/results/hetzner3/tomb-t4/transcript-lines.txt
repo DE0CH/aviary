@@ -1,0 +1,41 @@
+queue-operation  
+queue-operation  
+user 6f1590f3 "First turn.\nGATE: text 3 0"
+attachment ba45c5e5 
+attachment d785c3e1 
+attachment 2d7116cc 
+attachment cccfac24 
+attachment f788d992 
+attachment 066c822c 
+atis-latch  
+attachment 616f06ee 
+attachment 741ec85d 
+attachment 043fa075 
+attachment f5aecc12 
+api-request-shape  
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n# Environment\nYou have been invoked in the following 
+api-request  
+assistant edc0df31 [{"text": "tk0x0 tk0x1 tk0x2 ", "type": "text"}]
+attachment 31a9b3ec 
+last-prompt  
+atis-latch  
+queue-operation  
+queue-operation  
+user b12c163b "Refused once.\nGATE: trunconce r1 refusal\nGATE: text 4 0"
+attachment 08991a48 
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</s
+api-request  
+assistant 983126b0 [{"text": "tk1x0 tk1x1 tk1x2 tk1x3 ", "type": "text"}]
+system 4cf304e1 informational
+user b7f0ef69 "Your response above was stopped by a safety classifier \u2014 this is not a tool or API error. The 
+api-request  
+assistant c2befb48 [{"text": "tk2x0 tk2x1 tk2x2 tk2x3 ", "type": "text"}]
+queue-operation  
+queue-operation  
+user 5498fdf9 "After.\nGATE: text 2 0"
+attachment 35973f45 
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</s
+api-request  
+assistant ec0dfd98 [{"text": "tk3x0 tk3x1 ", "type": "text"}]
+last-prompt  
+cost-state  

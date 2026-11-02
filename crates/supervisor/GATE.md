@@ -5,20 +5,26 @@ Gate before the supervisor is built beyond a spike (supervisor spec 2 and 22, it
 `fabric/fuse-gate` (runtime install, bundle, migration, syscall inventory; they live outside this crate because
 the source rules keep the runtime's name out of `crates/supervisor`). Every run's raw outputs, failed runs
 included: `fabric/fuse-gate/results/` (README there; `results/…` below means that directory, kept outside this
-crate for the same rule). This is the gate's second run; the first one (`results/run1-hetzner/`, Hetzner only) is
-superseded by it.
+crate for the same rule). This is the gate's second run, with a third round on Hetzner after its review
+(`results/hetzner3/`: the resend evidence, the matched control, the lock test, the tombstone triggers); the first run
+(`results/run1-hetzner/`, Hetzner only) is superseded.
 
 ## Verdict
 
-**Not a plain pass. Three measured facts are negative against the spec text as it stood, and one failure is
-unexplained:**
+**Not a plain pass, and the package is not done:** three measured facts are negative against the spec text as it
+stood, two faults after a restore are unexplained (handed to WP-57), and the tombstone rewrite was not reproduced
+(a question for Deyao, DESIGN 14):
 
 1. **Negative: a checkpoint resends every request in flight** (item 3). The spec said "the runtime's FUSE has no resend"
-   (9.9) and "every write is stored once ... across a migration" (22.4). Measured: the sentry queues
-   `FUSE_INTERRUPT`, forgets the request and sends it again after the restore under a new `unique` (so a new
-   `opId`), in every one of the 72 AWS migrations with a held write. Under magpie's append rule the resend of an
-   acknowledged append gets `offset_mismatch`, and a resent CREATE `O_EXCL`, MKDIR, RENAME or UNLINK would answer
-   EEXIST/ENOENT instead of its real result.
+   (9.9) and "every write is stored once ... across a migration" (22.4). Measured: the sentry forgets the request at
+   the stop and the restarted syscall sends it again after the restore under a new `unique` (so a new `opId`), from
+   the same thread: in all 72 AWS migrations with requests held (both held requests, every time) and in all 13
+   hold-on Hetzner runs of round 3, where the original's reply was refused with ENOENT every time. The sentry also
+   queues `FUSE_INTERRUPT`, but the supervisor read both INTERRUPTs in only 70 of the 72 AWS runs (one in `mig-s06`,
+   none in `mig-s09`: there, reads came back with no whole request in the journal slot, verdict 5). Under magpie's
+   append rule the resend of an acknowledged append gets `offset_mismatch`, and a resent CREATE `O_EXCL`, MKDIR,
+   RENAME or UNLINK would answer EEXIST/ENOENT instead of its real result. The corrected rule (supervisor 9.3) is keyed
+   on the calling thread and the original's refused reply, not on INTERRUPT receipt.
 2. **Negative: a namespace operation waiting on magpie blocks every path lookup on the mount** (item 3). The spec
    said "cached reads, stat and readdir keep working" while magpie is unreachable (9.10). Measured: `stat` of
    another directory waited 3.37-3.41 s, exactly until a held RMDIR was released.
@@ -26,28 +32,40 @@ unexplained:**
    offers 7.31 and the spike replies 7.31 (item 1).
 4. **Unexplained failure: an in-sandbox process is killed by SIGSEGV after a restore** in 6 of 72 AWS migrations
    with requests held in the supervisor (the fake magpie 5 times, Claude Code once) and in 1 of 6 of run 1 (the mock
-   model), and in 0 of 30 control migrations without a hold. It is counted as a failure of item 3, not as a pass. The
-   sentry's debug log puts the fault in a thread whose blocking `recvfrom` was restarted at the restore; it is not
+   model), and in 0 of 30 AWS control migrations without a hold. It is counted as a failure of item 3, not as a pass.
+   The sentry's debug log puts the fault in a thread whose blocking `recvfrom` was restarted at the restore; it is not
    systrap's syscall patching (it recurred with patching off) and not stale pages written by the sentry (a copy-out
-   check found none). Not explained; details in item 3.
+   check found none). **What causes it is not established:** 6 of 72 against 0 of 30 is not significant (p about 0.07),
+   and those controls differed in more than the hold (no blocked-append process, no probe, a 2.3-3.5 MB pre-copy
+   stream instead of about 128 MB, half the pause). Details and the matched control in item 3. Owned by WP-57.
+5. **Unexplained failure: a journal read after a restore with no whole request in it** (item 3): in `mig-s06` and
+   `mig-s09` (scratch layout: the journal is a `MAP_SHARED` file on the host-backed scratch dir), 3 reads of
+   `/dev/fuse` returned while the slot's `len` field was still 0; the spike's worker thread panicked on the header and
+   the runs were counted as passes, because nothing then read the supervisor's log. Re-checked with the rules of round
+   3, `mig-s09` fails as well (7 of the 72 hold-on AWS migrations fail). Owned by WP-57; supervisor 9.9 records the
+   reader's check.
 
 **The corrections are handed back to the design of record** (text changed on 2026-11-02, marked "WP-07 gate"):
-supervisor spec 2.5, 8.2, 9.1, 9.3 (INIT 7.31; the interrupted-results rule for resends; `bootId` per connection),
-9.4, 9.9, 9.10, 22.4; magpie spec 6.6 (rule 0: a write whose range already holds the written bytes is a success)
-and 6.10; DESIGN.md's FUSE row; WORK-PACKAGES WP-05, WP-12 and WP-22; `magpie-api`'s `OffsetMismatch` doc (doc
-only, no type or fixture change). **WP-22 starts only once these changes are agreed** (they are the inputs it builds
-against), and the SIGSEGV after restore needs an owner on the fork side (it concerns every migrated sandbox, not
-only this design).
+supervisor spec 2.5, 8.2, 9.1 (the gate's path findings are provisional until WP-22's re-run under 6.1-6.4), 9.3
+(INIT 7.31; the resend rule keyed on the calling thread and the refused reply; `bootId` per connection, stored
+atomically), 9.4, 9.9 (the short read), 9.10, 16.1, 22 (gate item 4 and "Open items"); magpie spec 6.6 (rule 0: a
+write whose range already holds the written bytes is a success) and 6.10; DESIGN.md's FUSE row and section 14 (the
+open items and the tombstone question); WORK-PACKAGES WP-05, WP-12, WP-19, WP-22, WP-40 and the new **WP-57** (the
+fork: the SIGSEGV and the short read after a restore, with this reproduction), which WP-19's live migration, WP-22's
+migration acceptance and WP-40 wait for; `magpie-api`'s `OffsetMismatch` doc (doc only, no type or fixture change).
+**WP-22 starts only once these changes are agreed** (they are the inputs it builds against).
 
 Items that pass as specified: 1, 4, 5, 6 (the mount's own share and the 87 MiB cold resume), 9, 10. Item 2 passes
-except the tombstone rewrite, which Claude Code 2.1.304 was not made to do (not reproduced; see item 2).
+except the tombstone rewrite, which Claude Code 2.1.304 was not made to do in seven triggers (not reproduced; see
+item 2). 9 and the path table it feeds are provisional (deviation 4).
 
 ## Setup
 
 | What | Value |
 |---|---|
-| Hosts, items 1, 3, 4 (and 2, 6 repeated) | two throwaway AWS `m7i.xlarge` (Intel Xeon Platinum 8488C, the fabric's instance type) in eu-central-1a (the fabric's region), Ubuntu 24.04 from Canonical's SSM parameter (the base `infra.sh ami` bakes from), kernel 7.0.0-1014-aws; identical `runsc cpu-features`. Launched in Deyao's own AWS account (deviation 1), deleted after the run |
+| Hosts, items 1, 3, 4 (and 2, 6 repeated) | two throwaway AWS `m7i.xlarge` (Intel Xeon Platinum 8488C, the fabric's instance type) in eu-central-1a (the fabric's region), Ubuntu 24.04 from Canonical's SSM parameter (the base `infra.sh ami` bakes from), kernel 7.0.0-1014-aws; identical `runsc cpu-features`. Not the fabric's AMI, and not in the fabric's account (deviation 1), deleted after the run |
 | Hosts, items 2, 9, 10 | two throwaway Hetzner Cloud runners (cx33 in fsn1, cpx32 in nbg1), deleted after the run |
+| Hosts, round 3 (items 2 tombstone, 3, 5) | two throwaway Hetzner Cloud cx33 in nbg1 (AMD EPYC-Rome, identical `runsc cpu-features`; IPv6 only), Ubuntu 24.04, deleted after the run |
 | Sandbox runtime | runsc from the fork release `precopy-20261021.2` (the tarball and SHA256SUMS check of `fabric/host/setup.sh`, the pin of `GV=`), flags exactly sandboxd's (`--platform=systrap --network=sandbox --overlay2=none --host-uds=none --host-fifo=none --net-raw --allow-packet-socket-write --allow-suid`) |
 | Bundle | sandboxd's shape: first process root with the Docker capability set (incl. `CAP_SYS_ADMIN`), `HOME=/home/sandbox`, image rootfs read-only, `/srv` tmpfs, `/mnt` a host-backed bind (scratch), the spike bound read-only at `/media`, a netns with only `lo` |
 | Image | `ghcr.io/de0ch/jarvis3-sandbox:2eb5bf396b5f` (the production pin), digest `sha256:7604ae30…fdc67` |
@@ -105,8 +123,19 @@ then two resumes after two kinds of torn tail. All 12 turns `success`.
   (0 truncates, 0 writes below the end); (c) a refusal with `stop_details.category: cyber` and its continuation
   refused too, `--fallback-model` and `switchModelsOnFlag: true`: `system/model_refusal_no_fallback` (no fallback
   route without the server's routing config), the refused message stays in the file; (d) a 20 s stall with
-  `CLAUDE_STREAM_IDLE_TIMEOUT_MS=3000` (run 1): no fallback. **So the tombstone's syscalls on the mount (`pwrite64` on
-  a non-append fd, `ftruncate` of the main transcript by Claude Code) are not in the inventory (item 9).** The removal
+  `CLAUDE_STREAM_IDLE_TIMEOUT_MS=3000` (run 1): no fallback. Round 3 (`results/hetzner3/tomb-t1`…`t5`): (e) `catchall`:
+  a refusal without a category, refused again on the continuation, `--fallback-model` and
+  `CLAUDE_CODE_REFUSAL_FALLBACK_CATCH_ALL=1`: `model_refusal_no_fallback` (2.1.304 arms the refusal fallback from its
+  model catalog, `refusalFallbackModel`, not from `--fallback-model`, read from the binary); (f) `catalog`: the same
+  with the catalog flag set the binary's way (`CLAUDE_CODE_MODEL_CAPABILITIES=claude-sonnet-4-5=refusal_fallback`, the
+  default Opus as target): **`system/model_refusal_fallback` happened**, the retry went to `claude-opus-4-8` and the
+  stream-json output retracted one message (`retracted_message_uuids`), but that message (the refused continuation)
+  had never been written to the transcript: only appends, 0 truncates; (g) `overload`: a Bash tool call, then HTTP 529
+  for every later request of the main model: after 3 attempts `system/model_fallback` to the fallback model, but
+  `chain_advance` abandoned only the failed attempt, which had written nothing; the written tool_use and tool_result
+  stayed. In all seven triggers 2.1.304 did not write a message it later abandoned. **So the tombstone's syscalls on
+  the mount (`pwrite64` on a non-append fd, `ftruncate` of the main transcript by Claude Code) are not in the
+  inventory (item 9), and this acceptance item is missing** (deviation 5). The removal
   algorithm (`performRemoveByUuid`, read from the binary) is replayed by `sandbox/tombstone.py` (a script, not Claude
   Code) on the live transcript, and the resume after it works: whole-file mode, 1,138 bytes removed in `st2`
   (`tombstone-replay.json`; 1,140 in `st-aws`). WP-22's re-run must trigger it for real (deviation 5).
@@ -114,7 +143,7 @@ then two resumes after two kinds of torn tail. All 12 turns `success`.
   `.meta.json` by tmp + rename; it never called `link(2)`. It does `symlink("<mount>/…/subagents/agent-<id>.jsonl",
   "/tmp/claude-1000/…/tasks/<id>.output")`: the link lives in `/tmp`, its target on the mount.
 
-### 3. Live migration with a write blocked in the server, Claude Code mid-turn — failed: resend, mount-wide lock, SIGSEGV after restore
+### 3. Live migration with a write blocked in the server, Claude Code mid-turn — failed: resend, mount-wide lock, SIGSEGV and short read after restore
 
 `fabric/fuse-gate/migrate.sh` (one run) and `migrate-batch.sh` (N runs, every run's outputs kept): Claude Code
 streams an 8 s answer; the fake magpie holds every mutating call (`hold`), so a direct 1 MiB append (3 × 1 MiB to an
@@ -122,7 +151,9 @@ existing file) and Claude Code's cleanup RMDIR are blocked inside the supervisor
 (pre-copy, `--migrate-downtime 100ms`) to `runsc restore --migrate-listen` on the other host; a probe on the target
 times a `stat` and a cached read while the hold is still on; the hold is released on the target. A run fails when
 the driver's summary does not appear within 120 s of the release, a turn is not `success`, the blocked append is not
-exact, a transcript differs from magpie's copy, a `unique` repeats, or any in-sandbox process exits
+exact, a transcript differs from magpie's copy, a `unique` repeats, or any in-sandbox process exits; since round 3
+also on a keeper, supervisor or non-zero job exit (all in `exits.log`), a supervisor fault (a panicked thread, a short
+read) and Claude Code's own non-zero exit (deviation 8)
 (`failures.txt` per run; `results/aws/migrations.json` is `fabric/fuse-gate/migsummary.py`'s table of all runs).
 
 Two layouts: **tmpfs** (supervisor state, cache, journal and the fake store on the sandbox's `/srv` tmpfs: they move
@@ -136,8 +167,13 @@ sandbox sees is `final_ms` (the last memory round) + the stopped scratch delta +
 |---|---|---|---|---|---|---|---|
 | tmpfs, empty cache (batch `e`) | 20 | 2 (e02 magpie SIGSEGV, e14 Claude Code SIGSEGV) | 128.4-131.4 MB | 50.4-56.6 (median 53.3) | — | 71.0-78.8 | 122.6-131.1 (median 127.5) |
 | tmpfs, full cache (343 MiB: 64 × 4 MiB tool results + an 87 MiB transcript-sized file) | 3 | 0 | 864.3-864.6 MB | 72.4-73.0 | — | 75.3-76.0 | 147.7-148.9 |
-| scratch, empty cache | 11 | 1 (s06 magpie SIGSEGV) | 126.7-127.4 MB | 182.4-188.7 (median 186.1) | 122-125 ms, 0 bytes | 71.1-77.8 | 378.5-387.7 (median 381.7) |
+| scratch, empty cache | 11 | 2 (s06 magpie SIGSEGV and a short read; s09 two short reads, failed on re-check, deviation 8) | 126.7-127.4 MB | 182.4-188.7 (median 186.1) | 122-125 ms, 0 bytes | 71.1-77.8 | 378.5-387.7 (median 381.7) |
 | scratch, full cache (same fill; cache, journal and the fake store on scratch) | 3 | 0 | 127.3-127.6 MB | 179.0-185.0 | 123-126 ms, 0 bytes | 73.6-75.7 | 376.4-386.8 |
+
+Round 3 on Hetzner cx33 (scratch layout, empty cache, `results/hetzner3/`): 13 hold-on runs, 0 failed, stream
+126.6-129.5 MB, `final_ms` 203.9-289.1 (median 219.8), pause 436.4-596.6 (median 457.5); 12 matched-control runs
+(`HOLD=2`), 0 failed, stream 2.2-2.4 MB, `final_ms` 178.3-218.5, pause 387.1-451.6 (median 397.1). These hosts are
+slower than the AWS ones; the 2× rule below uses the AWS runs.
 
 **The 2× rule (22.3), stated per basis.** Production path (scratch): every full-cache run against every empty-cache
 run (worst case: the slowest full run over the fastest empty run) is 1.01× for `final_ms` (185.0 / 182.4), 1.02× for
@@ -161,13 +197,25 @@ Measured facts the spec did not account for:
 - **A checkpoint resends in-flight requests** (verdict 1). When a task waiting on a FUSE reply must stop for the
   checkpoint, the sentry queues `FUSE_INTERRUPT` for the request, forgets it, and restarts the syscall after the
   restore, which sends a **new request with a new `unique`** (`fuse/connection.go waitForResponse`/
-  `abandonRequest`: "The restarted syscall should resend it"). Every run: the INTERRUPTs arrive right after the
-  restore (`ops.tsv`), then the same WRITE at offset 6 with the same 1 MiB again (`mig-e01`: unique 692 → 740, op ids
-  `…2b4` and `…2e4`, both stored by the fake magpie, which writes at an offset), and the held RMDIR again (736 → 756).
+  `abandonRequest`: "The restarted syscall should resend it"). In every hold-on run (72 on AWS, 13 on Hetzner in
+  round 3) both held requests were resent: the same WRITE at offset 6 with the same 1 MiB again (`mig-e01`: unique
+  692 → 740, op ids `…2b4` and `…2e4`, both stored by the fake magpie, which writes at an offset), and the held RMDIR
+  again (736 → 756); `uniques.py` now lists each resend (`resends` in `uniques.json`). **The INTERRUPT is not seen
+  every time:** the supervisor read both INTERRUPTs right after the restore in 70 of the 72 AWS runs, one in
+  `mig-s06` and none in `mig-s09`, which still had both resends (WRITE 692 → 740, RMDIR 736 → 756). In those two runs
+  (scratch layout) the spike's worker threads panicked on reads that left no whole request in the journal slot (3
+  such reads, `supervisor.log`: "slice index starts at 40 but ends at 0"), the missing INTERRUPTs' count; that the
+  short reads were those INTERRUPTs is Claude's inference from the counts (the spike then logged neither the count
+  read nor the bytes). Round 3 logs both (`SHORTREAD` in `ops.tsv`, with the journal file's own bytes at the slot),
+  the caller's thread id on mutating ops (` pid=` in `ops.tsv`'s detail) and every refused reply write (`REPLYERR`):
+  in all 13 hold-on runs (`results/hetzner3/mig-h*`, `mig-t09`, scratch layout) both INTERRUPTs were read, the
+  original's reply was refused with ENOENT for both resends, the resend came from the same thread id as the original,
+  and no short read occurred (so the short read was not reproduced in 13 runs; it is WP-57's).
   A signal does not do this: `sigresend.sh` (`results/*/sig-*`) interrupts a held 1 MiB append with SIGUSR1, with and
   without `SA_RESTART`: the sentry sends INTERRUPT and then waits for the original reply; one WRITE, no resend.
   A write split into several requests stops after a complete request and returns short, so only the request in
-  flight is resent. Correction: supervisor 9.3's interrupted-results rule and magpie 6.6 rule 0.
+  flight is resent. Correction: supervisor 9.3's resend rule (keyed on the thread and the refused reply, which every
+  run showed, not on the INTERRUPT) and magpie 6.6 rule 0.
 - **A namespace operation waiting on magpie blocks the whole mount** (verdict 2). The fork's FUSE filesystem is
   kernfs, which takes one filesystem-wide lock for writing in MkdirAt, RmdirAt, UnlinkAt, RenameAt, LinkAt,
   SymlinkAt, MknodAt and OpenAt with `O_CREAT` and holds it across the FUSE call; every path walk takes it for reading.
@@ -192,12 +240,21 @@ Measured facts the spec did not account for:
   | `l` | no hold, Claude Code's HOME on the sandbox's `/tmp` (no FUSE in its path) | 15 | 0 |
   | `co-c1`…`c6` | no FUSE traffic; `sandbox/copyout.py` reads a pipe into 8,192 pages with `readv` (only the sentry writes them) and checks every page against a note in its own memory every 0.25 s | 6 | 0; 0 stale pages before or after the restore (about 1 million reads per run) |
 
-  So it is not systrap's syscall patching and not pages the sentry wrote between pre-copy rounds; it was seen only
-  with requests held across the checkpoint (6 of 72 vs 0 of 30 without; 0 of 30 alone would happen by chance with
-  probability about 0.07 at the hold-on rate). Not explained. It concerns every live migration of a sandbox whose
-  processes sit in blocking syscalls, so it belongs to the fork's owner, with this reproduction: `migrate-batch.sh`
-  with the hold, about one run in twelve. Without a hold the pause is shorter as well (`n`: `final_ms` 33.5-37.8,
-  pause 88.0-98.3 ms; `l`: 26.3-29.7 and 72.5-81.6 ms).
+  So it is not systrap's syscall patching and not pages the sentry wrote between pre-copy rounds. **It is not
+  attributed to the held requests.** It was seen only in hold-on runs (6 of 72 against 0 of 30), but that difference is
+  not significant (0 of 30 would happen by chance with probability about 0.07 at the hold-on rate), and the AWS
+  controls differed in more than the hold: `n` and `l` had no blocked-append process and no probe, their pre-copy
+  stream was 2.3-3.5 MB instead of 126.7-131.4 MB, and their pause about half (`n`: `final_ms` 33.5-37.8, pause
+  88.0-98.3 ms; `l`: 26.3-29.7 and 72.5-81.6 ms; hold-on tmpfs 122.6-131.1 ms). Round 3 added the matched control
+  `migrate.sh HOLD=2` (the same append process and probe, the fake magpie not holding), alternating with hold-on runs
+  on the same two Hetzner hosts (`results/hetzner3/batch-h.log`, `migrations.json`): 0 of 13 hold-on and 0 of 12
+  matched-control runs lost a process (at 1 in 12, 0 of 13 happens with probability about 0.32: no information either
+  way). It also showed that the stream size follows the hold itself, not the append process: hold-on 126.6-129.5 MB
+  (`page_bytes` about 126 MB of non-zero pages), matched control 2.2-2.4 MB; pause 436-597 ms against 387-452 ms. So a
+  control that differs only in the hold cannot separate "requests held across the checkpoint" from "a final round
+  with about 125 MB more pages"; WP-57's acceptance adds a control that dirties that much memory without a hold.
+  It concerns every live migration on the fork, so it belongs to the fork's owner (WP-57), with this reproduction:
+  `migrate-batch.sh` with the hold, about one run in twelve on AWS.
 
 ### 4. SIGKILL of the supervisor at each journal point — pass (AWS)
 
@@ -224,11 +281,13 @@ keeper, replays the occupied slots in `unique` order and serves on.
 - The MAP_SHARED journal keeps the request bytes after the process dies, on tmpfs and on the host-backed bind.
 - Not covered: the 10.2 step 5 command-path points (the spike has no command loop; WP-23).
 
-### 5. flock and fcntl locks between two processes — pass (run 1)
+### 5. flock and fcntl locks between two processes — pass (round 3)
 
-`sandbox/locks.py` (run 1, Hetzner): a child holds `flock(LOCK_EX)` / `lockf(F_LOCK)` on a mount file; the parent's
+`sandbox/locks.py`, run by `fabric/fuse-gate/mount-check.sh` (`results/hetzner3/mount-m1/locks.txt`; first seen in
+run 1, whose output was not kept): a child holds `flock(LOCK_EX)` / `lockf(F_LOCK)` on a mount file; the parent's
 non-blocking attempt fails EAGAIN (11), `F_GETLK` names the child's pid; after the child exits the parent gets the
-lock. Identical on `/tmp`. No GETLK/SETLK/SETLKW request reached the server (the sentry keeps the locks).
+lock. Identical on `/tmp`. No GETLK/SETLK/SETLKW request reached the server (the sentry keeps the locks; the file
+lists every opcode the server received in that run).
 
 ### 6. Throughput — pass for the mount's own share and the cold resume; cluster path not measured
 
@@ -310,9 +369,11 @@ uuid, not for Claude Code's result; it now says that the result is not that sign
 
 1. **INIT replies minor ≥ 28 (7.31).** `FUSE_MAX_PAGES`, and with it 1 MiB writes, needs 7.28; the fork offers 7.31
    (supervisor 2.5, 9.3; DESIGN.md's FUSE row).
-2. **Resends after a checkpoint apply once.** The supervisor keeps the result of every request that got an INTERRUPT
-   and answers the next request with the same opcode, node id, caller pid and argument bytes (WRITE: offset and data)
-   with it, without a second magpie operation; magpie answers a write whose range already holds exactly the written
+2. **Resends after a checkpoint apply once.** Keyed on the calling thread (the header's `pid` is the thread id: Claude
+   Code's writes come from several ids of one process) and the original's refused reply, never on INTERRUPT receipt:
+   a request from a thread that still has one in flight with an equal key (opcode, node id, argument bytes; WRITE:
+   offset and data) waits for it and takes its result; the result of a request whose reply write returned ENOENT
+   answers the thread's next request if that one has an equal key; neither makes a second magpie operation; magpie answers a write whose range already holds exactly the written
    bytes with 200 and its current size and version, so a resend that races the original cannot fail
    `offset_mismatch` (supervisor 9.3, 9.9, 22.4; magpie 6.6 rule 0, 6.10; `magpie-api` `OffsetMismatch` doc;
    WP-12, WP-22 acceptance). The `opId`-from-`unique` rule alone does not cover it.
@@ -321,7 +382,11 @@ uuid, not for Claude Code's result; it now says that the result is not that sign
    every path lookup on the mount waits behind the first namespace operation that needs magpie (supervisor 9.10).
 4. **`bootId` is regenerated on every fresh mount** (a new `/dev/fuse` connection, whose `unique` counter starts
    again), never reused from disk; only a restart that took the fd from the keeper keeps it (supervisor 9.3). The
-   spike does this now; its first version read the stored id even on a fresh mount.
+   spike does this now; its first version read the stored id even on a fresh mount. The spike writes the id with a
+   plain `fs::write`; supervisor 9.3 requires an atomic write and a refusal to start when a keeper fd is held but the
+   stored id is unreadable (a fresh id there would give the replays new `opId`s, executed a second time by magpie).
+9. **A journal read can come back without a whole request after a restore** (verdict 5): the reader checks `len`
+   against the count read and never panics on a header (supervisor 9.9); the cause is WP-57's.
 5. **`link(2)` is not used by 2.1.304**; the subagent "link fallback" row of 9.4 stays only as a guard, and
    `claude-code-gate` watches for it. FICLONE is answered EOPNOTSUPP by the sentry, `copy_file_range` handled by the
    sentry; no mmap (9.4).
@@ -336,10 +401,18 @@ uuid, not for Claude Code's result; it now says that the result is not that sign
 
 1. **Hosts.** Items 1, 3 and 4 (and repeats of 2 and 6) ran on two throwaway `m7i.xlarge` in eu-central-1a, the
    fabric's instance type and region, from Canonical's Ubuntu 24.04 (the base of the fabric's AMI) with the same
-   runsc release, flags, bundle shape and image, not from the fabric's AMI itself: they were launched in Deyao's own
-   AWS account (the session holds no keys for the fabric's account, and two m7i.xlarge there would take 8 of
-   the 16-vCPU quota the scaler needs for staff sandboxes). Items 2, 9 and 10 ran on Hetzner cx33/cpx32 runners (the
-   items do not depend on the host; 2 and 6 were repeated on AWS with the same results).
+   runsc release, flags, bundle shape and image, not on the fabric's AMI in the fabric's account (where and why: the
+   task record). Round 3 ran on Hetzner. **What the fabric's AMI has that these hosts did not** (from
+   `fabric/host/setup.sh` and `fabric/aws/infra.sh ami`): the kernel of Canonical's image on the AMI's bake date
+   (these hosts: 7.0.0-1014-aws on 2026-11-02); sysctls `net.ipv4.ip_forward=1` and `rp_filter=0` (the gate sets only
+   `vm.max_map_count=262144`, as the AMI does); systemd-networkd leaving foreign routes alone; sandboxd's unit and the
+   `/sbx` cgroup hierarchy with its memory reservation and cap (the gate: `/gate/<name>`, a 4 GiB limit); JuiceFS on
+   `/var/lib/sbx/jfs` as `/workspace` (absent here); the scratch dir under `/var/lib/sbx` on the 40 GB gp3 root (here
+   `/var/lib/gate/scratch` on the instance's root disk, same filesystem type: Canonical's ext4); the WireGuard
+   interface and the sandbox network sandboxd builds (here a netns with only `lo`). Items 3 and 4 are to be repeated
+   (at least one batch) on a fabric-AMI host in the fabric's account by WP-57's acceptance runs and WP-40's fabric
+   acceptance. Items 2, 9 and 10 ran on Hetzner cx33/cpx32 runners (the items do not depend on the host; 2 and 6 were
+   repeated on AWS with the same results).
 2. magpie is a fake inside the sandbox on loopback; the round trip to magpie in the cluster (item 6) is not measured.
    It is added by WP-22/WP-28 against a real magpie.
 3. The full-cache migration's 343 MiB is a fill through the mount (`sandbox/fill.py`), not a real conversation's
@@ -347,12 +420,20 @@ uuid, not for Claude Code's result; it now says that the result is not that sign
    adds to the rsync rounds before the pause.
 4. **Argv.** The scripted sessions ran with `-p --dangerously-skip-permissions --model claude-sonnet-4-5` and default
    setting sources, not supervisor 6.1-6.4's argv, environment and managed files (`--permission-prompt-tool stdio`,
-   `--setting-sources=`, managed settings). The path and syscall inventory may differ under them; WP-22's re-run of
-   items 2 and 9 uses the spec 6 argv (recorded in its WORK-PACKAGES entry).
-5. **Tombstone.** Claude Code's own tombstone rewrite was not reproduced (item 2); the replay by `tombstone.py` stands
-   in for it and is labelled as such. WP-22's re-run must trigger it (a model fallback after a written message, or a
-   refusal fallback with a real route).
+   `--setting-sources=`, managed settings). The path and syscall inventory may differ under them, so **the path table
+   (item 9) and the 9.1/9.4 findings drawn from it are provisional** (supervisor 9.1 says so) until WP-22's re-run of
+   items 2 and 9 with the spec 6 argv (recorded in its WORK-PACKAGES entry).
+5. **Tombstone.** Claude Code's own tombstone rewrite was not reproduced (item 2, seven triggers); the replay by
+   `tombstone.py` stands in for it and is labelled as such. This is a missing acceptance item, so the package is
+   not done: either WP-22's re-run triggers it on the mount, or Deyao records the deferral as a decision (the question
+   is in DESIGN 14).
 6. The spike serves every path from magpie (no local-scope passthrough, no scope table), has no inotify tail
    (item 3's "the inotify tail continues" is not tested) and no command loop (item 4's 10.2 points).
-7. Items 5 and the strace of run 1 were not repeated on AWS (5: locks are kept by the sentry and never reach the
-   server, so the host does not matter).
+7. Item 5 and the strace of run 1 were not repeated on AWS (5: locks are kept by the sentry and never reach the
+   server, so the host does not matter); item 5 was re-run in round 3 by `mount-check.sh`, whose output is committed.
+8. **Fail conditions of the AWS runs.** The AWS batches failed a run on the fakes' exits only; a supervisor, keeper or
+   driver exit and a supervisor thread's panic were not checked, and Claude Code's exit only through the turn check.
+   Re-checked afterwards against the committed outputs (`supervisor.log`, `drive.json`): no supervisor, keeper or job
+   exit in any run; Claude Code exited non-zero only in `mig-e14` (-11, already failed); supervisor threads panicked
+   in `mig-s06` (already failed) and `mig-s09` (counted as passed then; failed now). Since round 3 `init.sh` logs every
+   exit to `exits.log` and `migrate.sh` fails a run on it, on a supervisor fault and on Claude Code's exit.

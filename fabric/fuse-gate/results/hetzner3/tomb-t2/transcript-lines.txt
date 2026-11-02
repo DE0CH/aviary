@@ -1,0 +1,45 @@
+queue-operation  
+queue-operation  
+user 9826ff99 "First turn.\nGATE: text 3 0"
+attachment eace1f93 
+attachment da1c4836 
+attachment 36ec78d6 
+attachment d31fdf75 
+attachment f717b3f0 
+attachment 149ad187 
+atis-latch  
+attachment d848b033 
+attachment 1e8c7ef1 
+attachment ea99cf86 
+attachment ed36a930 
+api-request-shape  
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n# Environment\nYou have been invoked in the following 
+api-request  
+last-prompt  
+atis-latch  
+assistant ee39d24a [{"text": "tk0x0 tk0x1 tk0x2 ", "type": "text"}]
+attachment fb8fc67c 
+last-prompt  
+atis-latch  
+queue-operation  
+queue-operation  
+user aea9a16a "Refused twice.\nGATE: trunconce r1 refusal\nGATE: trunconce r2 refusal\nGATE: text 4 0"
+attachment edcbc8c8 
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</s
+api-request  
+assistant 39041a5b [{"text": "tk1x0 tk1x1 tk1x2 tk1x3 ", "type": "text"}]
+system 9cd04462 informational
+user b8d89056 "Your response above was stopped by a safety classifier \u2014 this is not a tool or API error. The 
+api-request  
+assistant dc33d36c [{"text": "tk2x0 tk2x1 tk2x2 tk2x3 ", "type": "text"}]
+system c66e9074 model_refusal_no_fallback
+assistant 003a27fb [{"type": "text", "text": "API Error: Sonnet 4.5 can't help with this. Start a new session to contin
+queue-operation  
+queue-operation  
+user 7bfb83d8 "After.\nGATE: text 2 0"
+attachment a45b8265 
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</s
+api-request  
+assistant 852fb2c8 [{"text": "tk3x0 tk3x1 ", "type": "text"}]
+last-prompt  
+cost-state  

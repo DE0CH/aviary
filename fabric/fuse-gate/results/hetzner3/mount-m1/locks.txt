@@ -1,0 +1,4 @@
+mount: {"path": "/home/sandbox/.claude/lockfile", "result": {"flock": {"while_child_holds": "refused errno 11", "after_child_exit": "acquired"}, "fcntl": {"while_child_holds": "refused errno 11; F_GETLK type=1 pid=62 child=62", "after_child_exit": "acquired"}}}
+tmp:   {"path": "/tmp/lockfile", "result": {"flock": {"while_child_holds": "refused errno 11", "after_child_exit": "acquired"}, "fcntl": {"while_child_holds": "refused errno 11; F_GETLK type=1 pid=66 child=66", "after_child_exit": "acquired"}}}
+lock requests the server received: 0
+opcodes the server received:  2 CREATE, 6 FLUSH, 3 GETATTR, 1 INIT, 4 LISTXATTR, 2 LOOKUP, 2 MKDIR, 4 OPEN, 2 OPENDIR, 1 READ, 2 READDIR, 6 RELEASE, 2 RELEASEDIR, 1 SETATTR, 2 WRITE,

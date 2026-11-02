@@ -1,0 +1,27 @@
+1793630611575767 req=0 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793630611575803 req=0 recv msgs=1 model=claude-sonnet-4-5 stream=true plan=text:3x0ms
+1793630611576475 req=0 chunk=0 token=tk0x0
+1793630611576761 req=0 chunk=1 token=tk0x1
+1793630611576820 req=0 chunk=2 token=tk0x2
+1793630611577085 req=0 done stop=end_turn
+1793630611667261 req=1 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793630611667305 req=1 recv msgs=3 model=claude-sonnet-4-5 stream=true plan=tool:Bash
+1793630611667722 req=1 done stop=tool_use
+1793630611860264 req=2 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793630611860288 req=2 recv msgs=5 model=claude-sonnet-4-5 stream=true plan=overload529
+1793630612456332 req=3 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793630612456411 req=3 recv msgs=5 model=claude-sonnet-4-5 stream=true plan=overload529
+1793630613508967 req=4 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793630613508995 req=4 recv msgs=5 model=claude-sonnet-4-5 stream=true plan=overload529
+1793630613533255 req=5 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793630613533278 req=5 recv msgs=5 model=claude-haiku-4-5 stream=true plan=text:4x0ms
+1793630613533692 req=5 chunk=0 token=tk5x0
+1793630613533759 req=5 chunk=1 token=tk5x1
+1793630613533828 req=5 chunk=2 token=tk5x2
+1793630613533865 req=5 chunk=3 token=tk5x3
+1793630613533933 req=5 done stop=end_turn
+1793630613580597 req=6 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793630613580651 req=6 recv msgs=7 model=claude-sonnet-4-5 stream=true plan=text:2x0ms
+1793630613581556 req=6 chunk=0 token=tk6x0
+1793630613581849 req=6 chunk=1 token=tk6x1
+1793630613582185 req=6 done stop=end_turn

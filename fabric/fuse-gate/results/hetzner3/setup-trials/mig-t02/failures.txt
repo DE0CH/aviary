@@ -1,0 +1,3 @@
+no driver summary within 120 s of the release
+the blocked append never returned
+a transcript differs from magpie's copy

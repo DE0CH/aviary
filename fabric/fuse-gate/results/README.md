@@ -2,7 +2,8 @@
 
 Raw outputs of every run that `crates/supervisor/GATE.md` quotes (kept here, outside the crate, because the
 source rules keep deployment and runtime names out of `crates/`; the outputs contain them), failed runs included. Files over 32 KiB are
-gzipped; host addresses are replaced by `<host-ip>`, `<public-ip>` and `<host-ipv6>`.
+gzipped (`uniques.py` and `migsummary.py` read the unzipped files: `zcat` them first); host addresses are replaced by
+`<host-ip>`, `<public-ip>` and `<host-ipv6>`.
 
 - `aws/` — two throwaway `m7i.xlarge`, eu-central-1a (items 1, 3, 4; items 2 and 6 repeated):
   - `mount-m1/item1.txt` (item 1);
@@ -30,6 +31,19 @@ gzipped; host addresses are replaced by `<host-ip>`, `<public-ip>` and `<host-ip
   - `tomb-t-thinkfail/`, `tomb-t-refusal/` (item 2's tombstone triggers); `sig-a/`; `r87-a/`;
   - `lat-l2/` (items 6 and 10, including `order-hold*.json`: when each held transcript append landed against each
     turn's result).
+- `hetzner3/` — round 3 after the review, two throwaway Hetzner cx33 in nbg1 (AMD EPYC-Rome, IPv6 only):
+  - `mount-m1/` (items 1 and 5: `item1.txt`, `locks.txt` with every opcode the server received);
+  - `mig-h01`…`mig-h24/` (`batch-h.log`, `run-h*.txt`): scratch layout, alternating hold-on (odd) and the matched
+    control `HOLD=2` (even); `mig-t09/` one more hold-on run; `migrations.json` their table. `ops.tsv` here also has
+    ` pid=` (the calling thread) in the detail of mutating ops, `REPLYERR` lines (a refused reply write) and would
+    have `SHORTREAD` lines (none occurred); `uniques.json` lists each resend;
+  - `tomb-t1`…`tomb-t5/` (item 2's tombstone triggers: `catchall` once and refused twice, `overload`, `catalog` once
+    and refused twice);
+  - `setup-trials/` (`mig-t01`…`t08`): runs that failed on the scripts' own IPv6 bugs (the rsync URL, the relay's
+    IPv4-only listen address) and on a leftover relay from a killed run, before any migration happened; kept because
+    every run is kept.
+- `aws-recheck.txt` — every committed migration re-checked with round 3's fail rules (Claude Code's exit, supervisor
+  faults, `exits.log`): `mig-s09`, counted as passed, fails on two supervisor faults (GATE.md deviation 8).
 - `run1-hetzner/` — the gate's first run (Hetzner cx33, hel1 → fsn1). Superseded by the above; kept as it was. Its
   outputs are incomplete (the hosts were deleted before every run's files were saved): only the files present here
   exist.

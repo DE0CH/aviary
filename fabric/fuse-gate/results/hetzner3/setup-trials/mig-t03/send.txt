@@ -1,0 +1,2 @@
+rsync: [sender] failed to connect to <host-ipv6> (<host-ipv6>): Connection refused (111)
+rsync error: error in socket IO (code 10) at clientserver.c(141) [sender=3.2.7]

@@ -1,0 +1,48 @@
+queue-operation  
+queue-operation  
+user b135bfab "First turn.\nGATE: text 3 0"
+attachment c5e8ce26 
+attachment ada9d143 
+attachment cc51b6cb 
+attachment e3d3a6e2 
+attachment da37d507 
+attachment 9a3d3b51 
+atis-latch  
+attachment 69ac1b99 
+attachment 385ac4d4 
+attachment e264479a 
+attachment ccd7b136 
+api-request-shape  
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n# Environment\nYou have been invoked in the following 
+api-request  
+assistant 0a46b07c [{"text": "tk0x0 tk0x1 tk0x2 ", "type": "text"}]
+attachment 46198c88 
+last-prompt  
+atis-latch  
+queue-operation  
+queue-operation  
+user f7d9304b "Tool then overloaded.\nGATE: tool Bash {\"command\": \"echo tomb\"}\nGATE: overload529 claude-sonne
+attachment a11f995c 
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</s
+api-request  
+assistant 49d526eb [{"id": "toolu_00000001", "input": {"command": "echo tomb"}, "name": "Bash", "type": "tool_use"}]
+user 5864bc21 [{"tool_use_id": "toolu_00000001", "type": "tool_result", "content": "tomb", "is_error": false}]
+attachment cb7c593d 
+api-request-blob  [{"tool_use_id": "toolu_00000001", "type": "tool_result", "content": "tomb\n\n<system-reminder>\n<to
+api-request  
+system 278b135c api_error
+api-request  
+system a63656dc api_error
+api-request  
+api-request  
+system 95d8d690 model_fallback
+assistant 3b910544 [{"text": "tk5x0 tk5x1 tk5x2 tk5x3 ", "type": "text"}]
+queue-operation  
+queue-operation  
+user 794d02f3 "After.\nGATE: text 2 0"
+attachment 8ffd2374 
+api-request-blob  [{"type": "text", "text": "<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</s
+api-request  
+assistant 383c5cc4 [{"text": "tk6x0 tk6x1 ", "type": "text"}]
+last-prompt  
+cost-state  
