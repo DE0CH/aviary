@@ -76,8 +76,8 @@ impl Shared {
 pub struct Listener {
     shared: Arc<Shared>,
     connected: watch::Receiver<bool>,
-    stop: Option<oneshot::Sender<()>>,
-    task: JoinHandle<()>,
+    stop: Mutex<Option<oneshot::Sender<()>>>,
+    task: Mutex<Option<JoinHandle<()>>>,
 }
 
 /// Wakes when a notification for its slot arrives or the listener reconnects.
@@ -119,8 +119,8 @@ impl Listener {
         Ok(Self {
             shared,
             connected,
-            stop: Some(stop_tx),
-            task,
+            stop: Mutex::new(Some(stop_tx)),
+            task: Mutex::new(Some(task)),
         })
     }
 
@@ -187,18 +187,24 @@ impl Listener {
         self.shared.notifications.load(Ordering::Relaxed)
     }
 
-    /// Closes the connection and stops reconnecting (drain).
-    pub async fn stop(mut self) {
-        if let Some(stop) = self.stop.take() {
+    /// Closes the connection and stops reconnecting (drain). Takes `&self`, so a listener shared behind an `Arc`
+    /// can be stopped; a second call returns at once.
+    pub async fn stop(&self) {
+        if let Some(stop) = self.stop.lock().unwrap_or_else(PoisonError::into_inner).take() {
             let _ = stop.send(());
         }
-        let _ = (&mut self.task).await;
+        let task = self.task.lock().unwrap_or_else(PoisonError::into_inner).take();
+        if let Some(task) = task {
+            let _ = task.await;
+        }
     }
 }
 
 impl Drop for Listener {
     fn drop(&mut self) {
-        self.task.abort();
+        if let Some(task) = self.task.get_mut().unwrap_or_else(PoisonError::into_inner).take() {
+            task.abort();
+        }
     }
 }
 
