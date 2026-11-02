@@ -128,7 +128,14 @@ impl JfsCli for Cli {
     fn clone_tree<'a>(&'a self, from: &'a Path, to: &'a Path) -> Fut<'a, Result<(), CliError>> {
         Box::pin(async move {
             self.note("clone");
-            copy_tree(from, to).map_err(|e| CliError::Failed(e.to_string()))
+            // juicefs answers "file exists" for a target that is there
+            copy_tree(from, to).map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    CliError::Exists(e.to_string())
+                } else {
+                    CliError::Failed(e.to_string())
+                }
+            })
         })
     }
 
@@ -536,4 +543,145 @@ async fn a_start_on_a_replica_with_a_broken_mount_is_handed_to_one_whose_mount_w
         .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get::<_, String>(0), "hermit-broken");
+}
+
+#[tokio::test]
+async fn a_clone_that_loses_the_race_to_its_target_answers_exists() {
+    let s = store();
+    let (from, wid) = (Uuid::new_v4(), Uuid::new_v4());
+    s.jfs.ensure(from).await.unwrap();
+    // another clone makes the target between this one's check and its `juicefs clone`
+    let target = s.ws(wid);
+    *s.cli.hook.lock().unwrap() = Some(Box::new(move |_| {
+        std::fs::create_dir(&target).unwrap();
+        String::new()
+    }));
+    let e = s.jfs.clone_workspace(wid, from).await.unwrap_err();
+    assert_eq!(code(e), (409, "exists".to_owned()));
+}
+
+/// A store whose mount check never answers (a hung FUSE mount); everything else is the store's.
+struct HungProbe(Arc<JuiceFs>);
+
+impl Workspaces for HungProbe {
+    fn ensure(&self, wid: Uuid) -> Fut<'_, Result<(hermit_api::workspaces::Workspace, bool), WorkspaceError>> {
+        self.0.ensure(wid)
+    }
+    fn get(&self, wid: Uuid) -> Fut<'_, Result<Option<hermit_api::workspaces::Workspace>, WorkspaceError>> {
+        self.0.get(wid)
+    }
+    fn entries<'a>(
+        &'a self,
+        wid: Uuid,
+        path: &'a str,
+        cursor: Option<&'a str>,
+    ) -> Fut<'a, Result<hermit_api::workspaces::Entries, WorkspaceError>> {
+        self.0.entries(wid, path, cursor)
+    }
+    fn file<'a>(
+        &'a self,
+        wid: Uuid,
+        path: &'a str,
+        range: Option<ByteRange>,
+    ) -> Fut<'a, Result<hermit_api::workspaces::FileContent, WorkspaceError>> {
+        self.0.file(wid, path, range)
+    }
+    fn clone_workspace(
+        &self,
+        wid: Uuid,
+        from: Uuid,
+    ) -> Fut<'_, Result<hermit_api::workspaces::Workspace, WorkspaceError>> {
+        self.0.clone_workspace(wid, from)
+    }
+    fn delete(&self, wid: Uuid) -> Fut<'_, Result<(), WorkspaceError>> {
+        self.0.delete(wid)
+    }
+    fn probe(&self) -> Fut<'_, hermit::fabric::StoreHealth> {
+        Box::pin(std::future::pending())
+    }
+}
+
+#[tokio::test]
+async fn a_replica_whose_mount_check_hangs_still_reports_and_says_so() {
+    let h = Harness::new("ws_hung_probe").await;
+    let s = store();
+    let r = h.replica_with("hermit-hung", Arc::new(HungProbe(s.jfs.clone()))).await;
+    let t = tokio::time::Instant::now();
+    hermit::app::report_replica(r.core()).await.unwrap();
+    assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+    let row = h
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select store_error from replicas where pod = 'hermit-hung'", &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        row.get::<_, Option<String>>(0).as_deref(),
+        Some("the mount check gave no answer in 3 s")
+    );
+}
+
+#[tokio::test]
+async fn a_workspace_keeps_its_creation_time_and_loses_it_with_the_workspace() {
+    let h = Harness::new("ws_created").await;
+    let s = store();
+    let r = h.replica_with("hermit-a", s.jfs.clone()).await;
+    let magpie = h.client(Caller::Magpie);
+    let wid = Uuid::new_v4();
+    let a = magpie
+        .call(&r.url, "PUT", &format!("/v1/workspaces/{wid}"), None, &[])
+        .await;
+    assert_eq!(a.status, 201, "{:?}", a.body);
+    let made = a.body["createdAt"].clone();
+    let stored = || async {
+        h.pool()
+            .get()
+            .await
+            .unwrap()
+            .query_opt(
+                "select to_char(created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') from workspaces
+                  where id = $1",
+                &[&wid],
+            )
+            .await
+            .unwrap()
+            .map(|r| r.get::<_, String>(0))
+    };
+    assert_eq!(stored().await.map(serde_json::Value::from), Some(made.clone()));
+    // the folder changes (JuiceFS's only time for it would move); createdAt does not
+    std::fs::write(s.ws(wid).join("new.txt"), b"x").unwrap();
+    let a = magpie
+        .call(&r.url, "GET", &format!("/v1/workspaces/{wid}"), None, &[])
+        .await;
+    assert_eq!(a.body["createdAt"], made);
+    // the row is the source
+    h.sql(&format!(
+        "update workspaces set created_at = '2026-01-02T03:04:05.678Z' where id = '{wid}'"
+    ))
+    .await;
+    let a = magpie
+        .call(&r.url, "GET", &format!("/v1/workspaces/{wid}"), None, &[])
+        .await;
+    assert_eq!(a.body["createdAt"], "2026-01-02T03:04:05.678Z");
+    // a workspace made before hermit kept the time gets its row on first read, and keeps it
+    let old = Uuid::new_v4();
+    std::fs::create_dir(s.ws(old)).unwrap();
+    let a = magpie
+        .call(&r.url, "GET", &format!("/v1/workspaces/{old}"), None, &[])
+        .await;
+    assert_eq!(a.status, 200, "{:?}", a.body);
+    let first = a.body["createdAt"].clone();
+    std::fs::write(s.ws(old).join("later.txt"), b"x").unwrap();
+    let a = magpie
+        .call(&r.url, "GET", &format!("/v1/workspaces/{old}"), None, &[])
+        .await;
+    assert_eq!(a.body["createdAt"], first);
+    // delete removes the row
+    let a = magpie
+        .call(&r.url, "DELETE", &format!("/v1/workspaces/{wid}"), None, &[])
+        .await;
+    assert!(a.status < 300, "{:?}", a.body);
+    assert_eq!(stored().await, None);
 }

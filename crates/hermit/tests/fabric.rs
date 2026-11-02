@@ -1155,6 +1155,20 @@ async fn host_loss_ends_its_sandboxes_within_ten_seconds() {
     assert_eq!(rig.ec2.terminated(), vec!["i-0001".to_owned()]);
     let lost = rig.events("host-lost").await;
     assert_eq!(lost.last().unwrap()["sandboxes"], json!(1));
+    // platform 15.4: nothing could be fetched from the lost host, and the row says so
+    let (bytes, reason): (Option<Vec<u8>>, String) = {
+        let r = rig
+            .h
+            .pool()
+            .get()
+            .await
+            .unwrap()
+            .query_one("select bytes, reason from sandbox_logs where sandbox_id = $1", &[&s])
+            .await
+            .unwrap();
+        (r.get(0), r.get(1))
+    };
+    assert_eq!((bytes, reason.as_str()), (None, "host_lost"));
 
     // a host that dies with the gateway answering: within 10 s of its death
     demand(&rig, "b@example.org").await;
@@ -1439,7 +1453,7 @@ async fn egress_targets_follow_the_ready_endpoints() {
     );
     // the ops page's part (18.3, 18.6): the plan, the last pass, the gateway's egress targets, slots per host
     let a = one_host(&rig, &g, &r).await;
-    let ops = g.ops().await;
+    let ops = g.ops().await.unwrap();
     let plan = ops.plan.unwrap();
     assert_eq!((plan.per_host, plan.available, plan.need), (7, 7, 0));
     assert!(ops.last_pass_at.is_some());

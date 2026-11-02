@@ -2,9 +2,10 @@
 # hermit-admin.sh <verb> [args]: hermit's admin routes (hermit spec 16) for the operator and runbooks.
 #
 # Reach hermit first, e.g. `kubectl -n <namespace> port-forward svc/hermit 18080:80`. The admin pair token is read
-# from HERMIT_ADMIN_TOKEN (never an argument, so it stays out of the shell history and the process list), the
-# operator's email from HERMIT_ADMIN (recorded in admin_events), the base URL from HERMIT_URL
-# (default http://127.0.0.1:18080).
+# from HERMIT_ADMIN_TOKEN (never an argument, so it stays out of the shell history and the process list): the
+# runbook puts the deployment's token there from wherever it keeps it (this public script names no store). The
+# operator's email comes from HERMIT_ADMIN (recorded in admin_events), the base URL from HERMIT_URL
+# (default http://127.0.0.1:18080). Needs curl and jq; every body is built by jq, so any text is valid JSON.
 #
 # Verbs:
 #   hosts                                   live hosts with slots, sandboxes, retire_by, cap
@@ -34,34 +35,24 @@ call() { # method path [json body]
   echo
 }
 
-json() { # a JSON string of $1
-  local s=${1//\\/\\\\}
-  s=${s//\"/\\\"}
-  printf '"%s"' "$s"
+json() { # a JSON string of $1 (newlines, tabs, quotes and any Unicode escaped by jq)
+  jq -cn --arg s "$1" '$s'
 }
 
-enc() { # percent-encode $1 for a path segment or a query value
-  local s=$1 out="" c i
-  for ((i = 0; i < ${#s}; i++)); do
-    c=${s:i:1}
-    case "$c" in
-      [a-zA-Z0-9.~_-]) out+=$c ;;
-      *) out+=$(printf '%%%02X' "'$c") ;;
-    esac
-  done
-  printf '%s' "$out"
+enc() { # percent-encode $1's UTF-8 bytes for a path segment or a query value
+  jq -rn --arg s "$1" '$s | @uri'
 }
 
 verb=${1:-}
 shift || true
 case "$verb" in
   hosts) call GET /v1/admin/hosts ;;
-  cap) call PATCH "/v1/admin/hosts/$(enc "$1")" "{\"maxSandboxes\": $2}" ;;
+  cap) call PATCH "/v1/admin/hosts/$(enc "$1")" "$(jq -cn --argjson n "$2" '{maxSandboxes: $n}')" ;;
   retire) call PATCH "/v1/admin/hosts/$(enc "$1")" '{"retire": true}' ;;
   reactivate) call PATCH "/v1/admin/hosts/$(enc "$1")" '{"reactivate": true}' ;;
   disable) call PUT /v1/admin/sandboxes-enabled "{\"enabled\": false, \"reason\": $(json "$*")}" ;;
   enable) call PUT /v1/admin/sandboxes-enabled '{"enabled": true}' ;;
-  fresh-host) call POST /v1/admin/fresh-host "{\"ttlMinutes\": $1}" ;;
+  fresh-host) call POST /v1/admin/fresh-host "$(jq -cn --argjson n "$1" '{ttlMinutes: $n}')" ;;
   sandboxes)
     q=""
     for kv in "$@"; do q+="${q:+&}${kv%%=*}=$(enc "${kv#*=}")"; done
@@ -71,9 +62,7 @@ case "$verb" in
   release) id=$1; shift; call POST "/v1/admin/sandboxes/$id/release" "{\"note\": $(json "$*")}" ;;
   exec)
     id=$1; shift
-    argv=""
-    for a in "$@"; do argv+="${argv:+, }$(json "$a")"; done
-    call POST "/v1/admin/sandboxes/$id/exec" "{\"argv\": [$argv]}"
+    call POST "/v1/admin/sandboxes/$id/exec" "$(jq -cn '{argv: $ARGS.positional}' --args "$@")"
     ;;
   recycle)
     idle=true
@@ -81,6 +70,6 @@ case "$verb" in
     call POST /v1/admin/recycle "{\"exceptImage\": $(json "$1"), \"onlyIdle\": $idle}"
     ;;
   purge) call POST "/v1/admin/people/$(enc "$1")/purge" "{\"confirm\": $(json "$1")}" ;;
-  events) call GET "/v1/admin/events?limit=${1:-100}" ;;
+  events) call GET "/v1/admin/events?limit=$(enc "${1:-100}")" ;;
   *) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 2 ;;
 esac

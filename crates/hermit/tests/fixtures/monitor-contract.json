@@ -98,6 +98,7 @@
     "egress.recent[].status": "number?",
     "egress.recent[].decision": "string",
     "egress.recent[].owner": "string?",
+    "egress.recent[].quiet": "boolean",
     "budget.byUser[].owner": "string",
     "budget.byUser[].callsToday": "number",
     "budget.byUser[].today": "number",

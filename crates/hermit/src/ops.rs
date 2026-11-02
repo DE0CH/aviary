@@ -25,11 +25,11 @@ pub const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(5);
 /// The snapshot is cached this long per zone per replica (18.3).
 pub const CACHE: Duration = Duration::from_secs(4);
 
-/// The namespace's Deployments and the matching pods, as raw API objects; `None` outside a cluster.
+/// The namespace's Deployments and the matching pods, as raw API objects; `None` from [`NoCluster`].
 pub type ServiceObjects = Option<(Vec<Value>, Vec<Value>)>;
 
 /// The Kubernetes reads of the `service` section (18.5): raw API objects, so the snapshot reads the fields the
-/// API defines. `Ok(None)` outside a cluster.
+/// API defines. `Ok(None)` only from [`NoCluster`] (tests); [`InCluster`] always reads or fails.
 pub trait Cluster: Send + Sync + 'static {
     /// The namespace's Deployments (`apps/v1`, `items`) and the pods labelled `app in (apps)` (`v1`, `items`).
     fn service<'a>(&'a self, apps: &'a [String]) -> Fut<'a, Result<ServiceObjects, String>>;
@@ -55,12 +55,13 @@ impl InCluster {
         }
     }
 
-    fn client(&self) -> Result<Option<(reqwest::Client, String)>, String> {
+    /// The client and the current token. hermit serves only inside the cluster, so a token it cannot read
+    /// (automount off, a wrong mount) is an error of the `service` section, never "outside a cluster".
+    fn client(&self) -> Result<(reqwest::Client, String), String> {
         use rustls::pki_types::CertificateDer;
         use rustls::pki_types::pem::PemObject as _;
-        let Ok(token) = std::fs::read_to_string(self.dir.join("token")) else {
-            return Ok(None);
-        };
+        let token = std::fs::read_to_string(self.dir.join("token"))
+            .map_err(|e| format!("the ServiceAccount token is not readable: {e}"))?;
         let mut roots = rustls::RootCertStore::empty();
         let certs = CertificateDer::pem_file_iter(self.dir.join("ca.crt")).map_err(|e| format!("ca.crt: {e}"))?;
         for c in certs {
@@ -79,7 +80,7 @@ impl InCluster {
             .timeout(UPSTREAM_TIMEOUT)
             .build()
             .map_err(|e| e.to_string())?;
-        Ok(Some((http, token.trim().to_owned())))
+        Ok((http, token.trim().to_owned()))
     }
 
     async fn list(http: &reqwest::Client, token: &str, url: &str) -> Result<Vec<Value>, String> {
@@ -101,9 +102,7 @@ impl InCluster {
 impl Cluster for InCluster {
     fn service<'a>(&'a self, apps: &'a [String]) -> Fut<'a, Result<ServiceObjects, String>> {
         Box::pin(async move {
-            let Some((http, token)) = self.client()? else {
-                return Ok(None);
-            };
+            let (http, token) = self.client()?;
             let ns = hermit_api::routes::encode_component(&self.namespace);
             let selector = hermit_api::routes::encode_component(&format!("app in ({})", apps.join(",")));
             let deps = format!("{API}/apis/apps/v1/namespaces/{ns}/deployments");
@@ -171,11 +170,13 @@ impl Upstreams {
         }
     }
 
-    /// egress's `GET /v1/ops/summary?tz=&recentMinutes=` (platform 15.3).
+    /// egress's `GET /v1/ops/summary?tz=&recentMinutes=` (platform 15.3), as egress sends it: `budget` and `egress`
+    /// reach the snapshot unchanged, so a field hermit's types do not name (such as `egress.recent[].quiet`) is
+    /// kept. `recent` must parse as [`gateway_api::ops::Recent`] and `budget` and `egress` must be objects.
     ///
     /// # Errors
     /// A message for `errors[...]`.
-    pub async fn egress_summary(&self, tz: &str, recent_minutes: u32) -> Result<gateway_api::ops::OpsSummary, String> {
+    pub async fn egress_summary(&self, tz: &str, recent_minutes: u32) -> Result<EgressSummary, String> {
         let url = format!(
             "{}{}?tz={}&recentMinutes={recent_minutes}",
             self.egress,
@@ -193,8 +194,28 @@ impl Upstreams {
         if !status.is_success() {
             return Err(format!("egress: HTTP {status}"));
         }
-        res.json().await.map_err(|e| format!("egress: bad body: {e}"))
+        let mut v: Value = res.json().await.map_err(|e| format!("egress: bad body: {e}"))?;
+        let recent: gateway_api::ops::Recent =
+            serde_json::from_value(v["recent"].take()).map_err(|e| format!("egress: bad body: recent: {e}"))?;
+        for k in ["budget", "egress"] {
+            if !v[k].is_object() {
+                return Err(format!("egress: bad body: {k} is not an object"));
+            }
+        }
+        Ok(EgressSummary {
+            budget: v["budget"].take(),
+            egress: v["egress"].take(),
+            recent,
+        })
     }
+}
+
+/// egress's ops summary: `budget` and `egress` as egress sent them, `recent` read by hermit.
+#[derive(Clone, Debug)]
+pub struct EgressSummary {
+    pub budget: Value,
+    pub egress: Value,
+    pub recent: gateway_api::ops::Recent,
 }
 
 /// One replica's ops state: the upstreams and the snapshot cache (one entry per zone).
@@ -322,5 +343,15 @@ mod tests {
         assert_eq!(safe_zone(Some(""), hk), hk);
         assert_eq!(safe_zone(Some("Mars/Olympus"), hk), hk);
         assert_eq!(safe_zone(None, hk), hk);
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_service_account_token_is_an_error_not_no_cluster() {
+        let c = InCluster {
+            namespace: "ns".into(),
+            dir: "/nonexistent/serviceaccount".into(),
+        };
+        let e = c.service(&["hermit".to_owned()]).await.unwrap_err();
+        assert!(e.starts_with("the ServiceAccount token is not readable"), "{e}");
     }
 }

@@ -596,6 +596,9 @@ pub async fn host_lost(g: &Gvisor, core: &Arc<Core>, h: &HostRow, reason: &str) 
         .filter_map(|r| r.try_get(0).ok())
         .collect();
     for id in &ids {
+        // nothing can be fetched from a lost host (platform 15.4): the row says so, and the release's destroy
+        // does not spend 5 s asking
+        crate::console::record_lost(core, *id).await;
         sandboxes::request(core, *id, ReleaseReason::HostLost, true, Some(reason.to_owned())).await?;
     }
     tracing::error!(host = %name, reason, sandboxes = ids.len(), "host lost");

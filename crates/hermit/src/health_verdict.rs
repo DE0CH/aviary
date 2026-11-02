@@ -234,20 +234,40 @@ pub fn health_of(d: &Value, budget_watch: f64, recent_minutes: u32) -> Health {
             format!("The staff catalogue is refused (the last good one is used): {why}"),
         );
     }
-    if d["fabricOps"]["egressTargets"] == 0 {
+    // a fabricOps that could not be read is an `errors` finding above; with a gateway answering, nothing known of
+    // its egress targets or of the scaler's last pass is a problem too (the leader never ran a pass, or the
+    // gateway reports nothing)
+    let fo = &d["fabricOps"];
+    let gateway_live = list(d, &["hosts", "list"])
+        .iter()
+        .any(|h| h["gateway"] == true && h["reachable"] == true);
+    if fo["egressTargets"] == 0 {
         add(Level::Problem, "egress", "The gateway has no egress targets".into());
+    } else if fo.is_object() && gateway_live && fo["egressTargets"].is_null() {
+        add(Level::Problem, "egress", "The gateway reports no egress targets".into());
     }
-    if let Some(a) = age(&d["fabricOps"]["lastPassAt"])
-        && a > SCALER_STALE_S
-    {
-        add(
-            Level::Problem,
-            "scaler",
-            format!("The scaler's last pass was {} ago", secs(a)),
-        );
+    if let Some(a) = age(&fo["lastPassAt"]) {
+        if a > SCALER_STALE_S {
+            add(
+                Level::Problem,
+                "scaler",
+                format!("The scaler's last pass was {} ago", secs(a)),
+            );
+        }
+    } else if fo.is_object() && gateway_live {
+        add(Level::Problem, "scaler", "The scaler has not reported a pass".into());
     }
     for rep in list(d, &["replicas"]) {
         let pod = rep["pod"].as_str().unwrap_or("?");
+        if rep["reporting"] == false {
+            let seen = age(&rep["seenAt"]).map_or_else(|| "never".to_owned(), |s| format!("{} ago", secs(s)));
+            add(
+                Level::Problem,
+                "workspaces",
+                format!("hermit {pod} stopped reporting (last seen {seen}): its workspace mount may hang"),
+            );
+            continue;
+        }
         if let Some(e) = rep["storeError"].as_str() {
             add(
                 Level::Problem,
@@ -415,6 +435,30 @@ mod tests {
             state(&json!({"at": at(), "fabricOps": {"lastPassAt": ago(5), "egressTargets": 2}})),
             Level::Ok
         );
+        // nothing known with a gateway answering: no pass yet, no targets reported
+        let live = json!({"list": [gw]});
+        let f = health_of(
+            &json!({"at": at(), "hosts": live, "fabricOps": {"lastPassAt": null, "egressTargets": null}}),
+            0.8,
+            15,
+        );
+        let texts: Vec<&str> = f.findings.iter().map(|x| x.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                "The gateway reports no egress targets",
+                "The scaler has not reported a pass"
+            ]
+        );
+        assert_eq!(
+            state(&json!({"at": at(), "fabricOps": {"lastPassAt": null, "egressTargets": null}})),
+            Level::Ok,
+            "no gateway answering: the gateway finding says it"
+        );
+        assert_eq!(
+            state(&json!({"at": at(), "hosts": live, "fabricOps": null, "errors": {"fabricOps": "timeout"}})),
+            Level::Problem
+        );
         assert_eq!(
             state(&json!({"at": at(), "replicas": [{"pod": "hermit-a", "storeError": "ENOTCONN"}]})),
             Level::Problem
@@ -424,6 +468,16 @@ mod tests {
                 &json!({"at": at(), "replicas": [{"pod": "hermit-a", "deleteRefusedAt": ago(60), "deleteRefusedPath": "ws/x"}]})
             ),
             Level::Problem
+        );
+        assert_eq!(
+            health_of(
+                &json!({"at": at(), "replicas": [{"pod": "hermit-a", "reporting": false, "seenAt": ago(120)}]}),
+                0.8,
+                15
+            )
+            .findings[0]
+                .text,
+            "hermit hermit-a stopped reporting (last seen 2 min ago): its workspace mount may hang"
         );
         assert_eq!(
             state(&json!({"at": at(), "replicas": [{"pod": "hermit-a", "deleteRefusedAt": ago(3600)}]})),

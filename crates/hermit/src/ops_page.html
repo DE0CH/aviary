@@ -213,7 +213,7 @@ function renderNow(d){
     ob += '<div class="row"><span class="main">New sandboxes</span>' + (c.sandboxesEnabled ? chip("ok", "enabled") : chip("watch", "disabled by the operator") + (c.disabledReason ? f("why", esc(c.disabledReason)) : "")) + "</div>";
     if (c.freshHostUntil && Date.parse(c.freshHostUntil) > Date.now()) ob += '<div class="row"><span class="main">Fresh-host test</span>' + chip("watch", "running") + f("until", when(c.freshHostUntil)) + "</div>";
   }
-  ob += rows(d.replicas, function(x){ return '<div class="row"><span class="main">hermit ' + esc(x.pod) + "</span>" + (x.storeError ? chip("problem", "workspace store not mounted") + f("", esc(x.storeError)) : chip("ok", "workspace store mounted")) + (x.deleteRefusedAt ? f("delete refused", when(x.deleteRefusedAt) + " · " + esc(x.deleteRefusedPath || "")) : "") + "</div>"; }, "No hermit replica has reported.");
+  ob += rows(d.replicas, function(x){ return '<div class="row"><span class="main">hermit ' + esc(x.pod) + "</span>" + (x.reporting === false ? chip("problem", "stopped reporting") + f("last seen", when(x.seenAt)) : x.storeError ? chip("problem", "workspace store not mounted") + f("", esc(x.storeError)) : chip("ok", "workspace store mounted")) + (x.deleteRefusedAt ? f("delete refused", when(x.deleteRefusedAt) + " · " + esc(x.deleteRefusedPath || "")) : "") + "</div>"; }, "No hermit replica has reported.");
   if (d.catalogue && d.catalogue.refused) ob += '<div class="row"><span class="main bad">Staff catalogue refused</span>' + f("", esc(d.catalogue.refused)) + "</div>";
   out.push(card("Operator switches", "sandboxes, the fresh-host test, workspace stores", ob, E.controls || E.replicas));
 

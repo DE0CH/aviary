@@ -118,7 +118,9 @@ impl Server for Hermit {
     }
 
     async fn put_workspace(&self, _ctx: Ctx, wid: Uuid) -> Result<PutWorkspace, ApiError> {
-        let (w, made) = self.core().providers.workspaces.ensure(wid).await?;
+        let core = self.core();
+        let (mut w, made) = core.providers.workspaces.ensure(wid).await?;
+        w.created_at = db::workspace_created(&core.pool, wid, w.created_at, made).await;
         Ok(if made {
             PutWorkspace::Created(w)
         } else {
@@ -127,12 +129,15 @@ impl Server for Hermit {
     }
 
     async fn get_workspace(&self, _ctx: Ctx, wid: Uuid) -> Result<Workspace, ApiError> {
-        self.core()
+        let core = self.core();
+        let mut w = core
             .providers
             .workspaces
             .get(wid)
             .await?
-            .ok_or_else(|| error::not_found(codes::NO_WORKSPACE, "no such workspace"))
+            .ok_or_else(|| error::not_found(codes::NO_WORKSPACE, "no such workspace"))?;
+        w.created_at = db::workspace_created(&core.pool, wid, w.created_at, false).await;
+        Ok(w)
     }
 
     async fn delete_workspace(&self, _ctx: Ctx, wid: Uuid) -> Result<(), ApiError> {
@@ -146,7 +151,10 @@ impl Server for Hermit {
             )
             .retry_after(5));
         }
-        Ok(self.core().providers.workspaces.delete(wid).await?)
+        let core = self.core();
+        core.providers.workspaces.delete(wid).await?;
+        db::forget_workspace(&core.pool, wid).await;
+        Ok(())
     }
 
     async fn workspace_entries(&self, _ctx: Ctx, wid: Uuid, q: EntriesQuery) -> Result<Entries, ApiError> {
@@ -190,7 +198,9 @@ impl Server for Hermit {
         {
             tracing::warn!(sandbox = %row.id, workspace = %body.from, "flush before clone failed (cloning anyway)");
         }
-        Ok(core.providers.workspaces.clone_workspace(wid, body.from).await?)
+        let mut w = core.providers.workspaces.clone_workspace(wid, body.from).await?;
+        w.created_at = db::workspace_created(&core.pool, wid, w.created_at, true).await;
+        Ok(w)
     }
 
     async fn token_keys(&self, _ctx: Ctx) -> Result<TokenKeys, ApiError> {

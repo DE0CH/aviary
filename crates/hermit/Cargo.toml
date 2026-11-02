@@ -21,6 +21,7 @@ aws-sdk-ec2.workspace = true
 aws-smithy-http-client.workspace = true
 axum.workspace = true
 base64.workspace = true
+chrono.workspace = true
 chrono-tz.workspace = true
 clap.workspace = true
 futures-util.workspace = true

@@ -375,6 +375,9 @@ async fn sweep_loop(core: Arc<Core>) {
 
 /// Writes this replica's own state every `replica_report` (hermit 15.6, 18.6): its workspace mount and the last
 /// workspace delete it was refused.
+/// A replica's mount check within its report (the store's own stat limit is 2 s).
+const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
 async fn replica_loop(core: Arc<Core>) {
     loop {
         if let Err(e) = report_replica(&core).await {
@@ -389,7 +392,16 @@ async fn replica_loop(core: Arc<Core>) {
 /// # Errors
 /// A database error.
 pub async fn report_replica(core: &Core) -> Result<(), aviary_pg::Error> {
-    let h = core.providers.workspaces.probe().await;
+    // the row is written whatever the mount does: a probe that hangs is itself the report
+    let h = tokio::time::timeout(PROBE_TIMEOUT, core.providers.workspaces.probe())
+        .await
+        .unwrap_or_else(|_| crate::fabric::StoreHealth {
+            unmounted: Some(format!(
+                "the mount check gave no answer in {} s",
+                PROBE_TIMEOUT.as_secs()
+            )),
+            ..core.providers.workspaces.health()
+        });
     let (refused_at, refused_path) = h
         .delete_refused
         .map(|(at, p)| (Some(at.datetime()), Some(p)))

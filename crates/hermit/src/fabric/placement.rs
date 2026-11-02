@@ -49,8 +49,8 @@ pub struct Rules {
     pub sizing: Sizing,
     /// `hostDeadSeconds`.
     pub dead: std::time::Duration,
-    /// `controls.fresh_host_until` while in the future, with the time it was set (`controls.updated_at`): only
-    /// hosts that became active after that are placeable (16).
+    /// `controls.fresh_host_until` while in the future, with the time it was set (`controls.fresh_host_set_at`,
+    /// written only by `POST /v1/admin/fresh-host`): only hosts that became active after that are placeable (16).
     pub fresh_since: Option<OffsetDateTime>,
 }
 
@@ -112,7 +112,7 @@ pub async fn units_in(t: &Tx<'_>, sizing: &Sizing) -> Result<HashMap<String, u32
 pub async fn rules_in(t: &Tx<'_>, sizing: Sizing, dead: std::time::Duration) -> Result<Rules, aviary_pg::Error> {
     let r = t
         .query_opt(
-            "select updated_at from controls where id = 1 and fresh_host_until > now()",
+            "select coalesce(fresh_host_set_at, updated_at) from controls where id = 1 and fresh_host_until > now()",
             &[],
         )
         .await?;

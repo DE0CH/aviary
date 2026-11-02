@@ -76,9 +76,11 @@ struct Egress {
 }
 
 async fn egress() -> Egress {
-    let summary: Arc<Mutex<Value>> = Arc::new(Mutex::new(
-        serde_json::from_str(include_str!("../../gateway-api/fixtures/ops-summary.json")).unwrap(),
-    ));
+    let mut fixture: Value = serde_json::from_str(include_str!("../../gateway-api/fixtures/ops-summary.json")).unwrap();
+    // fields gateway-api's types do not name reach the snapshot too (18.3: "as egress returns it")
+    fixture["egress"]["recent"][0]["laterField"] = json!("kept");
+    fixture["budget"]["status"]["remainingUsd"] = json!(288.0);
+    let summary: Arc<Mutex<Value>> = Arc::new(Mutex::new(fixture));
     let seen: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
     let (s2, seen2) = (summary.clone(), seen.clone());
     let router = axum::Router::new().route(
@@ -127,7 +129,7 @@ async fn world(test: &str) -> World {
         "egress-pair-token".into(),
         Arc::new(FakeCluster),
     );
-    *h.fabric.ops.lock().unwrap() = FabricOps {
+    *h.fabric.ops.lock().unwrap() = Ok(FabricOps {
         plan: Some(ScalerPlan {
             need: 1,
             demand: 1,
@@ -142,7 +144,7 @@ async fn world(test: &str) -> World {
         slots: [("aws-1".to_owned(), 12), ("aws-2".to_owned(), 12)]
             .into_iter()
             .collect(),
-    };
+    });
     let conv1 = Uuid::new_v4();
     let view_conv = Uuid::new_v4();
     magpie.fake.script().always(
@@ -410,6 +412,15 @@ async fn the_snapshot_now_and_history_from_every_source() {
     let fixture = w.egress.summary.lock().unwrap().clone();
     assert_eq!(d["budget"], fixture["budget"]);
     assert_eq!(d["egress"], fixture["egress"]);
+    assert_eq!(d["egress"]["recent"][0]["laterField"], "kept");
+    assert_eq!(d["budget"]["status"]["remainingUsd"], 288.0);
+    let quiet: Vec<bool> = d["egress"]["recent"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x["quiet"].as_bool().unwrap())
+        .collect();
+    assert_eq!(quiet, [false, true], "the monitor skips the quiet rows");
     // people: every explicit catalogue user, then the rest; live is hermit's sandbox count; former users flagged
     let p = |e: &str| {
         d["people"]
@@ -480,6 +491,15 @@ async fn the_snapshot_now_and_history_from_every_source() {
     assert!(d["errors"]["budget"].is_string());
     assert_eq!(d["health"]["findings"][0]["about"], "page");
     assert!(d["sandboxes"]["list"].is_array());
+    // the fabric's part is a section like the others: its failure is named, never a quiet default
+    *h.fabric.ops.lock().unwrap() = Err("the pool timed out".into());
+    let d = snapshot(h, &r.url, "Asia/Tokyo").await;
+    assert_eq!(d["errors"]["fabricOps"], "the pool timed out");
+    assert_eq!(
+        (d["fabricOps"].clone(), d["scaler"]["plan"].clone()),
+        (Value::Null, Value::Null)
+    );
+    assert!(d["scaler"]["hints"].is_array());
     drop(w.magpie);
 }
 
@@ -848,6 +868,31 @@ async fn every_admin_call_is_audited_and_does_what_it_says() {
         .await;
     assert_eq!(a.status, 200);
     assert!(a.body["freshHostUntil"].as_str().unwrap() > hermit_api::Timestamp::now().to_string().as_str());
+    // the off switch during a fresh-host test leaves its baseline (placement's "became active after") alone
+    let set_at = || async {
+        h.pool()
+            .get()
+            .await
+            .unwrap()
+            .query_one("select fresh_host_set_at from controls where id = 1", &[])
+            .await
+            .unwrap()
+            .get::<_, Option<time::OffsetDateTime>>(0)
+            .unwrap()
+    };
+    let before = set_at().await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let a = admin
+        .call(
+            &r.url,
+            "PUT",
+            "/v1/admin/sandboxes-enabled",
+            Some(json!({"enabled": true})),
+            &as_admin,
+        )
+        .await;
+    assert_eq!(a.status, 200);
+    assert_eq!(set_at().await, before);
 
     // the trace tool
     let a = admin
@@ -1087,6 +1132,12 @@ async fn every_admin_call_is_audited_and_does_what_it_says() {
     let exec = ev.iter().find(|e| e.1 == "sandbox.exec").unwrap();
     assert_eq!(exec.3["argv"], json!(["id", "-u"]));
     assert_eq!(exec.3["exitCode"], 0);
+    assert_eq!(exec.3["outcome"], "done", "the intent row, completed");
+    let purge = ev.iter().find(|e| e.1 == "person.purge").unwrap();
+    assert_eq!(
+        (purge.3["outcome"].clone(), purge.3["conversations"].clone()),
+        (json!("done"), json!(3))
+    );
     let raw = exec.3.to_string();
     assert!(
         !raw.contains("c2VjcmV0") && !raw.contains("aGk="),
@@ -1120,10 +1171,21 @@ async fn the_runbook_script_speaks_the_admin_routes() {
         (v["sandboxesEnabled"].clone(), v["disabledReason"].clone()),
         (json!(false), json!("gateway work"))
     );
+    // any text is valid JSON (jq builds the bodies): a newline, a tab, quotes, non-ASCII
+    let reason = "gateway\twork \"now\"\n網絡 é";
+    let out = run(&["disable", reason]).output().await.unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["disabledReason"], reason);
     let out = run(&["enable"]).output().await.unwrap();
     assert!(out.status.success());
     let out = run(&["sandboxes", &format!("person={STAFF}")]).output().await.unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(v["sandboxes"].is_array());
+    // a non-ASCII value is percent-encoded as its UTF-8 bytes (the server reads the address back intact)
+    let out = run(&["sandboxes", "person=zoë@example.com"]).output().await.unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
     let out = run(&["purge", STAFF]).output().await.unwrap();
     assert!(!out.status.success(), "409 still_allowed fails the script");
     assert!(String::from_utf8_lossy(&out.stdout).contains("still_allowed"));
@@ -1140,10 +1202,13 @@ async fn the_runbook_script_speaks_the_admin_routes() {
         [
             "events.read",
             "sandboxes.read",
+            "sandboxes.read",
+            "sandboxes.enabled",
             "sandboxes.enabled",
             "sandboxes.enabled"
         ]
     );
+    assert_eq!(v["events"][1]["data"]["person"], "zoë@example.com");
     // the token never reaches curl's command line: it is read from stdin
     let text = std::fs::read_to_string(script).unwrap();
     assert!(text.contains("-K -"));

@@ -21,11 +21,18 @@ pub const HOST_LOST: &str = "host_lost";
 pub const UNAVAILABLE: &str = "tail_unavailable";
 
 /// Fetches the console tail of `row` from its host (best effort, 5 s in the fabric) and stores it; when the host
-/// does not answer the row records that instead. Errors are logged: a tail never holds up a destroy.
+/// does not answer the row records that instead. Once per sandbox: a destroy the stuck rule retries, or one of a
+/// sandbox whose host was lost (its row written by [`record_lost`]), fetches nothing. Errors are logged: a tail
+/// never holds up a destroy.
 pub async fn capture(core: &Core, row: &SandboxRow) {
     let Some(host) = row.host.as_deref() else {
         return;
     };
+    match stored(core, row.id).await {
+        Ok(false) => {}
+        Ok(true) => return,
+        Err(e) => tracing::info!(sandbox = %row.id, error = %e, "console tail: no row read (fetching)"),
+    }
     let tail = core.providers.fabric.console_tail(host, &row.name).await;
     let reason = if tail.is_some() { RELEASE } else { UNAVAILABLE };
     store(core, row.id, tail, reason).await;
@@ -34,6 +41,16 @@ pub async fn capture(core: &Core, row: &SandboxRow) {
 /// Records that sandbox `id`'s console could not be fetched because its host is gone (13.7).
 pub async fn record_lost(core: &Core, id: Uuid) {
     store(core, id, None, HOST_LOST).await;
+}
+
+async fn stored(core: &Core, id: Uuid) -> Result<bool, aviary_pg::Error> {
+    Ok(core
+        .pool
+        .get()
+        .await?
+        .query_opt("select 1 from sandbox_logs where sandbox_id = $1", &[&id])
+        .await?
+        .is_some())
 }
 
 async fn store(core: &Core, id: Uuid, bytes: Option<Vec<u8>>, reason: &str) {

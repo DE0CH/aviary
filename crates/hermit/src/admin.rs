@@ -1,6 +1,9 @@
 //! The admin routes (hermit 3.12, 16): the operator's, never a service's. Every call needs the admin token and
 //! `Aviary-Admin`, and writes an `admin_events` row (the audit log, kept for good): in the same transaction as the
-//! change where there is one, otherwise once the call's outcome is known (exec, purge, the reads).
+//! change of hermit's own rows where there is one (hosts, switches, release, recycle). A call that acts outside
+//! hermit's database (exec in a sandbox, magpie's purge) writes its row as an intent first, in a transaction of its
+//! own before anything happens (no row, no action), and records the outcome in that row afterwards; a failure to
+//! record the outcome is logged and never turns an action that happened into an error. Reads are audited first.
 
 use std::sync::Arc;
 
@@ -54,10 +57,50 @@ pub async fn audit_in(
     Ok(())
 }
 
-/// Writes one audit row on its own (a call with no change of hermit's own rows).
+/// Writes an intent row (`data.outcome` = `pending`) before an action outside hermit's database; its id for
+/// [`outcome`].
 ///
 /// # Errors
-/// 503 `unavailable`: a call that cannot be audited does not happen (reads) or is reported as unaudited.
+/// 503 `unavailable`: the action does not happen.
+async fn intent(core: &Core, actor: &str, action: &str, target: Option<&str>, data: &Value) -> Result<i64, ApiError> {
+    let mut data = data.clone();
+    data["outcome"] = json!("pending");
+    let r = core
+        .pool
+        .get()
+        .await
+        .or_503()?
+        .query_one(
+            "insert into admin_events (actor, action, target, data) values ($1, $2, $3, $4) returning id",
+            &[&actor, &action, &target, &data],
+        )
+        .await
+        .or_503()?;
+    r.try_get(0).or_503()
+}
+
+/// Records what came of an intent row's action (merged into its `data`, `outcome` = `done` or `failed`). Logged
+/// when it cannot be written: the action has happened either way.
+async fn outcome(core: &Core, id: i64, ok: bool, data: &Value) {
+    let mut data = data.clone();
+    data["outcome"] = json!(if ok { "done" } else { "failed" });
+    let res = async {
+        core.pool
+            .get()
+            .await?
+            .execute("update admin_events set data = data || $2 where id = $1", &[&id, &data])
+            .await
+    }
+    .await;
+    if let Err(e) = res {
+        tracing::error!(admin_event = id, error = %e, "admin action done, its outcome not recorded");
+    }
+}
+
+/// Writes one audit row on its own (a read).
+///
+/// # Errors
+/// 503 `unavailable`: a read that cannot be audited does not happen.
 pub async fn audit(core: &Core, actor: &str, action: &str, target: Option<&str>, data: &Value) -> Result<(), ApiError> {
     core.pool
         .get()
@@ -201,8 +244,8 @@ pub async fn fresh_host(core: &Arc<Core>, ctx: &Ctx, body: FreshHost) -> Result<
     let who_s = who.clone();
     aviary_pg::tx!(&core.pool, |t| -> Result<(), aviary_pg::Error> {
         t.execute(
-            "update controls set fresh_host_until = now() + $1::bigint * interval '1 minute', updated_at = now(),
-               updated_by = $2 where id = 1",
+            "update controls set fresh_host_until = now() + $1::bigint * interval '1 minute', fresh_host_set_at = now(),
+               updated_at = now(), updated_by = $2 where id = 1",
             &[&ttl, &who_s],
         )
         .await?;
@@ -311,17 +354,24 @@ pub async fn release(core: &Arc<Core>, ctx: &Ctx, id: Uuid, body: &AdminRelease)
     if !live {
         return Err(not_found("live sandbox"));
     }
-    audit(
-        core,
-        &who,
-        "sandbox.release",
-        Some(&id.to_string()),
-        &json!({ "note": body.note }),
-    )
-    .await?;
-    sandboxes::request(core, id, ReleaseReason::Operator, true, body.note.clone())
-        .await
-        .or_503()?;
+    let (c, note) = (core.clone(), body.note.clone());
+    // the audit row and the pending release commit together
+    let took = aviary_pg::tx!(&core.pool, |t| -> Result<bool, aviary_pg::Error> {
+        audit_in(
+            t,
+            &who,
+            "sandbox.release",
+            Some(&id.to_string()),
+            &json!({ "note": note }),
+        )
+        .await?;
+        sandboxes::request_in(t, &c, id, ReleaseReason::Operator, true, note.clone()).await
+    })
+    .await
+    .or_503()?;
+    if took {
+        sandboxes::run_requested(core, id);
+    }
     Ok(json!({ "released": true }))
 }
 
@@ -342,12 +392,21 @@ pub async fn exec(core: &Arc<Core>, ctx: &Ctx, id: Uuid, body: &ExecRequest) -> 
         .ok_or_else(|| not_found("live sandbox"))?;
     let client = crate::supervisor_client::client(core, &row)
         .ok_or_else(|| error::api(503, codes::SANDBOX_UNREACHABLE, "the sandbox has no address yet"))?;
+    // no audit row, no exec: the intent is written before the call
+    let ev = intent(
+        core,
+        &who,
+        "sandbox.exec",
+        Some(&id.to_string()),
+        &json!({ "argv": body.argv, "cwd": body.cwd }),
+    )
+    .await?;
     let res = client.exec(body).await;
-    let outcome = match &res {
-        Ok(r) => json!({ "argv": body.argv, "cwd": body.cwd, "exitCode": r.exit_code, "signal": r.signal }),
-        Err(e) => json!({ "argv": body.argv, "cwd": body.cwd, "error": crate::db::clip(&e.to_string(), 300) }),
+    let (ok, done) = match &res {
+        Ok(r) => (true, json!({ "exitCode": r.exit_code, "signal": r.signal })),
+        Err(e) => (false, json!({ "error": crate::db::clip(&e.to_string(), 300) })),
     };
-    audit(core, &who, "sandbox.exec", Some(&id.to_string()), &outcome).await?;
+    outcome(core, ev, ok, &done).await;
     res.map_err(|e| match e {
         hermit_api::ClientError::Api(r) => {
             let mut a = error::api(r.status, &r.body.code, r.body.message.clone());
@@ -370,34 +429,41 @@ pub async fn recycle(core: &Arc<Core>, ctx: &Ctx, body: &Recycle) -> Result<Valu
     if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(error::api(400, codes::BAD_REQUEST, "exceptImage is sha256:<64 hex>"));
     }
-    let ids: Vec<Uuid> = core
-        .pool
-        .get()
-        .await
-        .or_503()?
-        .query(
-            "select id from sandboxes where status in ('starting', 'ready') and image is distinct from $1",
-            &[&body.except_image],
+    let (c, image, force) = (core.clone(), body.except_image.clone(), !body.only_idle);
+    // the audit row and every pending release commit together
+    let (ids, took) = aviary_pg::tx!(&core.pool, |t| -> Result<(Vec<Uuid>, Vec<Uuid>), aviary_pg::Error> {
+        let ids: Vec<Uuid> = t
+            .query(
+                "select id from sandboxes where status in ('starting', 'ready') and image is distinct from $1
+                  order by id",
+                &[&image],
+            )
+            .await?
+            .iter()
+            .filter_map(|r| r.try_get(0).ok())
+            .collect();
+        audit_in(
+            t,
+            &who,
+            "recycle",
+            None,
+            &json!({ "exceptImage": image, "onlyIdle": !force, "sandboxes": ids.len() }),
         )
-        .await
-        .or_503()?
-        .iter()
-        .filter_map(|r| r.try_get(0).ok())
-        .collect();
-    audit(
-        core,
-        &who,
-        "recycle",
-        None,
-        &json!({ "exceptImage": body.except_image, "onlyIdle": body.only_idle, "sandboxes": ids.len() }),
-    )
-    .await?;
-    for id in &ids {
-        sandboxes::request(core, *id, ReleaseReason::Recycle, !body.only_idle, None)
-            .await
-            .or_503()?;
+        .await?;
+        let mut took = Vec::new();
+        for id in &ids {
+            if sandboxes::request_in(t, &c, *id, ReleaseReason::Recycle, force, None).await? {
+                took.push(*id);
+            }
+        }
+        Ok((ids, took))
+    })
+    .await
+    .or_503()?;
+    for id in took {
+        sandboxes::run_requested(core, id);
     }
-    Ok(json!({ "released": ids.len(), "force": !body.only_idle }))
+    Ok(json!({ "released": ids.len(), "force": force }))
 }
 
 /// `POST /v1/admin/people/{email}/purge`: the only deletion of a person's data. 409 `still_allowed` while the
@@ -419,24 +485,41 @@ pub async fn purge(core: &Arc<Core>, ctx: &Ctx, email: &str, body: &PurgeRequest
             "the catalogue still allows this person",
         ));
     }
-    let live: Vec<Uuid> = core
-        .pool
-        .get()
-        .await
-        .or_503()?
-        .query(
-            "select id from sandboxes where person = $1 and status <> 'gone'",
-            &[&person],
-        )
-        .await
-        .or_503()?
-        .iter()
-        .filter_map(|r| r.try_get(0).ok())
-        .collect();
-    for id in &live {
-        sandboxes::request(core, *id, ReleaseReason::Offboarded, true, Some("purge".into()))
-            .await
-            .or_503()?;
+    let person_key = aviary_core::log::person_key(&person);
+    // the intent row and the person's forced releases commit together, before magpie is asked
+    let (c, who_s, person_s) = (core.clone(), who.clone(), person.clone());
+    let (ev, took) = aviary_pg::tx!(&core.pool, |t| -> Result<(i64, Vec<Uuid>), aviary_pg::Error> {
+        let live: Vec<Uuid> = t
+            .query(
+                "select id from sandboxes where person = $1 and status <> 'gone' order by id",
+                &[&person_s],
+            )
+            .await?
+            .iter()
+            .filter_map(|r| r.try_get(0).ok())
+            .collect();
+        let data = json!({ "personKey": aviary_core::log::person_key(&person_s), "sandboxes": live.len(),
+                           "outcome": "pending" });
+        let ev: i64 = t
+            .query_one(
+                "insert into admin_events (actor, action, target, data) values ($1, 'person.purge', $2, $3)
+                 returning id",
+                &[&who_s, &person_s, &data],
+            )
+            .await?
+            .try_get(0)?;
+        let mut took = Vec::new();
+        for id in &live {
+            if sandboxes::request_in(t, &c, *id, ReleaseReason::Offboarded, true, Some("purge".into())).await? {
+                took.push(*id);
+            }
+        }
+        Ok((ev, took))
+    })
+    .await
+    .or_503()?;
+    for id in took {
+        sandboxes::run_requested(core, id);
     }
     let res = core
         .ops
@@ -450,14 +533,11 @@ pub async fn purge(core: &Arc<Core>, ctx: &Ctx, email: &str, body: &PurgeRequest
             },
         )
         .await;
-    let person_key = aviary_core::log::person_key(&person);
-    let outcome = match &res {
-        Ok(r) => json!({ "personKey": person_key, "sandboxes": live.len(), "conversations": r.conversations }),
-        Err(e) => {
-            json!({ "personKey": person_key, "sandboxes": live.len(), "error": crate::db::clip(&e.to_string(), 300) })
-        }
+    let (ok, done) = match &res {
+        Ok(r) => (true, json!({ "conversations": r.conversations })),
+        Err(e) => (false, json!({ "error": crate::db::clip(&e.to_string(), 300) })),
     };
-    audit(core, &who, "person.purge", Some(&person), &outcome).await?;
+    outcome(core, ev, ok, &done).await;
     match res {
         Ok(r) => {
             tracing::info!(person_key = %person_key, conversations = r.conversations, "person purged by the operator");

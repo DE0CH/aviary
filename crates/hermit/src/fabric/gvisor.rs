@@ -355,15 +355,10 @@ impl Fabric for Gvisor {
         })
     }
 
-    fn ops(&self) -> Fut<'_, crate::fabric::FabricOps> {
+    fn ops(&self) -> Fut<'_, Result<crate::fabric::FabricOps, String>> {
         Box::pin(async move {
-            let Ok(core) = self.core() else {
-                return crate::fabric::FabricOps::default();
-            };
-            scaler::ops(&core).await.unwrap_or_else(|e| {
-                tracing::warn!(error = %e, "fabric ops not read");
-                crate::fabric::FabricOps::default()
-            })
+            let core = self.core().map_err(|e| e.to_string())?;
+            scaler::ops(&core).await.map_err(|e| e.to_string())
         })
     }
 

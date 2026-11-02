@@ -166,9 +166,9 @@ pub trait Fabric: Send + Sync + 'static {
         })
     }
     /// What the operator page shows of the fabric (hermit 18.3, 18.6): the scaler's plan, the egress targets, the
-    /// slots per host. Nothing known by default.
-    fn ops(&self) -> Fut<'_, FabricOps> {
-        Box::pin(async { FabricOps::default() })
+    /// slots per host. Nothing known by default. An error is the snapshot's `errors.fabricOps`.
+    fn ops(&self) -> Fut<'_, Result<FabricOps, String>> {
+        Box::pin(async { Ok(FabricOps::default()) })
     }
 }
 

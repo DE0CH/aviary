@@ -84,6 +84,8 @@ struct Start {
     place_failing_since: Option<tokio::time::Instant>,
 }
 
+/// A start is handed to another replica at its workspace step at most this many times (15.6).
+pub const MAX_HANDOVERS: i32 = 3;
 /// Tries of a create that finds sandboxd unreachable before the start fails (11.2 step 5).
 const CREATE_TRIES: u32 = 3;
 
@@ -304,7 +306,10 @@ impl Start {
                 }
             }
             match ws.ensure(row.conversation_id).await {
-                Ok(_) => return self.next(SandboxPhase::Placing, "", vec![]).await,
+                Ok((w, made)) => {
+                    crate::db::workspace_created(&self.core.pool, row.conversation_id, w.created_at, made).await;
+                    return self.next(SandboxPhase::Placing, "", vec![]).await;
+                }
                 Err(e) => {
                     unmounted &= matches!(e, crate::fabric::WorkspaceError::NotMounted(_));
                     last = e.to_string();
@@ -323,7 +328,9 @@ impl Start {
         Step::Fail(f)
     }
 
-    /// Hands this start's claim back when another replica reported a working workspace mount in the last 30 s.
+    /// Hands this start's claim back when another replica reported a working workspace mount in the last 30 s,
+    /// at most [`MAX_HANDOVERS`] times per start: two replicas whose mounts flap never pass a start back and forth
+    /// for ever; after that the start fails `workspace_unavailable`.
     async fn hand_over(&self, id: Uuid) -> bool {
         let res = async {
             self.core
@@ -331,11 +338,11 @@ impl Start {
                 .get()
                 .await?
                 .execute(
-                    "update sandboxes set task_owner = null, task_until = now()
-                     where id = $1 and task = 'start' and task_owner = $2
+                    "update sandboxes set task_owner = null, task_until = now(), handovers = handovers + 1
+                     where id = $1 and task = 'start' and task_owner = $2 and handovers < $3
                        and exists (select 1 from replicas where pod <> $2 and store_error is null
                                      and seen_at > now() - interval '30 seconds')",
-                    &[&id, &self.core.pod],
+                    &[&id, &self.core.pod, &MAX_HANDOVERS],
                 )
                 .await
         }

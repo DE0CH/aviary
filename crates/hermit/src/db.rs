@@ -37,8 +37,62 @@ pub fn connect(url: &str, pod: &str, pool_size: usize) -> Result<Pool, aviary_pg
 /// # Errors
 /// A migration failure or an edited shipped migration.
 pub async fn migrate(pool: &Pool) -> Result<Vec<i32>, aviary_pg::Error> {
-    let list = aviary_pg::migrations!["0001_init.sql", "0002_replicas.sql"]?;
+    let list = aviary_pg::migrations![
+        "0001_init.sql",
+        "0002_replicas.sql",
+        "0003_created_handovers_fresh_host.sql"
+    ]?;
     aviary_pg::migrate(pool, &LOCK_MIGRATIONS, &list).await
+}
+
+/// A workspace's stable creation time (`workspaces`, migration 0003): `made` (ensure made the folder, a clone made
+/// the copy) writes `seen`; otherwise the stored time, and a workspace with no row yet (made before hermit kept
+/// one) gets `seen`, the store's stand-in. When the database does not answer the store's time is used.
+pub async fn workspace_created(pool: &Pool, wid: Uuid, seen: Timestamp, made: bool) -> Timestamp {
+    let at = seen.datetime();
+    let res = async {
+        let c = pool.get().await?;
+        let r = if made {
+            c.query_one(
+                "insert into workspaces (id, created_at) values ($1, $2)
+                 on conflict (id) do update set created_at = excluded.created_at returning created_at",
+                &[&wid, &at],
+            )
+            .await?
+        } else {
+            // the CTE's insert is not visible to the second select: exactly one of the two yields the row
+            c.query_one(
+                "with i as (insert into workspaces (id, created_at) values ($1, $2) on conflict (id) do nothing
+                            returning created_at)
+                 select created_at from i union all select created_at from workspaces where id = $1 limit 1",
+                &[&wid, &at],
+            )
+            .await?
+        };
+        r.try_get::<_, OffsetDateTime>(0).map_err(aviary_pg::Error::from)
+    }
+    .await;
+    match res {
+        Ok(t) => Timestamp::from(t),
+        Err(e) => {
+            tracing::warn!(workspace = %wid, error = %e, "workspace creation time not read (the store's is used)");
+            seen
+        }
+    }
+}
+
+/// Removes a deleted workspace's creation time (best effort: a leftover row is overwritten by the next make).
+pub async fn forget_workspace(pool: &Pool, wid: Uuid) {
+    let res = async {
+        pool.get()
+            .await?
+            .execute("delete from workspaces where id = $1", &[&wid])
+            .await
+    }
+    .await;
+    if let Err(e) = res {
+        tracing::warn!(workspace = %wid, error = %e, "workspace creation time not removed");
+    }
 }
 
 /// A pending release (`release_pending`, hermit 13.12).

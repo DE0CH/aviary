@@ -203,7 +203,7 @@ pub struct FakeFabric {
     /// Every supervisor ever made, by sandbox id (their call logs outlive the destroy).
     pub all: Mutex<Vec<(Uuid, Arc<FakeSupervisor>)>>,
     /// What the operator page is told of the fabric.
-    pub ops: Mutex<hermit::fabric::FabricOps>,
+    pub ops: Mutex<Result<hermit::fabric::FabricOps, String>>,
 }
 
 impl FakeFabric {
@@ -228,7 +228,7 @@ impl FakeFabric {
             place_gate: Gate::default(),
             place_error: AtomicBool::new(false),
             all: Mutex::new(Vec::new()),
-            ops: Mutex::new(hermit::fabric::FabricOps::default()),
+            ops: Mutex::new(Ok(hermit::fabric::FabricOps::default())),
         })
     }
 
@@ -387,7 +387,7 @@ impl Fabric for FakeFabric {
         self.settled.load(Ordering::SeqCst)
     }
 
-    fn ops(&self) -> Fut<'_, hermit::fabric::FabricOps> {
+    fn ops(&self) -> Fut<'_, Result<hermit::fabric::FabricOps, String>> {
         let ops = self.ops.lock().unwrap().clone();
         Box::pin(async move { ops })
     }

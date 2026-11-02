@@ -230,6 +230,7 @@ pub async fn retention(core: &Core) -> Result<u64, aviary_pg::Error> {
         "delete from hosts where status = 'gone' and gone_at < now() - interval '400 days'",
         "delete from sandbox_logs where captured_at < now() - interval '14 days'",
         "delete from demand_hints where at < now() - interval '1 hour'",
+        "delete from replicas where seen_at < now() - interval '1 day'",
     ] {
         n += c.execute(sql, &[]).await?;
     }

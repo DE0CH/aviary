@@ -368,6 +368,30 @@ pub async fn request(
     force: bool,
     note: Option<String>,
 ) -> Result<(), aviary_pg::Error> {
+    let c = core.clone();
+    let took = aviary_pg::tx!(&core.pool, |t| -> Result<bool, aviary_pg::Error> {
+        request_in(t, &c, id, reason, force, note.clone()).await
+    })
+    .await?;
+    if took {
+        run_requested(core, id);
+    }
+    Ok(())
+}
+
+/// [`request`]'s change inside the caller's transaction `t` (an admin route writes its audit row in the same one).
+/// `true` when it took the `release` claim: once `t` commits, the caller runs the release with [`run_requested`].
+///
+/// # Errors
+/// A database error.
+pub async fn request_in(
+    t: &aviary_pg::Tx<'_>,
+    core: &Arc<Core>,
+    id: Uuid,
+    reason: ReleaseReason,
+    force: bool,
+    note: Option<String>,
+) -> Result<bool, aviary_pg::Error> {
     // provisional: a forced release's deadline is written again when the row enters `releasing` (set_releasing)
     let deadline = Timestamp::from_unix_millis(Timestamp::now().unix_millis() + ms(core.timings.release_deadline))
         .unwrap_or_else(Timestamp::now);
@@ -381,43 +405,40 @@ pub async fn request(
         sent: false,
         cancelled: false,
     };
-    let c = core.clone();
-    let took = aviary_pg::tx!(&core.pool, |t| -> Result<bool, aviary_pg::Error> {
-        let Some(r) = t
-            .query_opt(
-                "select * from sandboxes where id = $1 and status <> 'gone' for update",
-                &[&id],
-            )
-            .await?
-        else {
-            return Ok(false);
-        };
-        let row = SandboxRow::from_row(&r)?;
-        let keep_old = row.release_pending.as_ref().is_some_and(|old| keeps(old, &pending));
-        if !keep_old {
-            let mut pending = pending.clone();
-            // a soft release that replaces a soft one already sent keeps that fact: the supervisor may have agreed
-            if let Some(old) = &row.release_pending
-                && ReleaseKind::of(old) == ReleaseKind::Soft
-                && ReleaseKind::of(&pending) == ReleaseKind::Soft
-            {
-                pending.sent = old.sent;
-            }
-            let v = serde_json::to_value(&pending).unwrap_or_default();
-            t.execute("update sandboxes set release_pending = $2 where id = $1", &[&id, &v])
-                .await?;
+    let Some(r) = t
+        .query_opt(
+            "select * from sandboxes where id = $1 and status <> 'gone' for update",
+            &[&id],
+        )
+        .await?
+    else {
+        return Ok(false);
+    };
+    let row = SandboxRow::from_row(&r)?;
+    let keep_old = row.release_pending.as_ref().is_some_and(|old| keeps(old, &pending));
+    if !keep_old {
+        let mut pending = pending.clone();
+        // a soft release that replaces a soft one already sent keeps that fact: the supervisor may have agreed
+        if let Some(old) = &row.release_pending
+            && ReleaseKind::of(old) == ReleaseKind::Soft
+            && ReleaseKind::of(&pending) == ReleaseKind::Soft
+        {
+            pending.sent = old.sent;
         }
-        // a starting row's start task honours the pending release (11.2); it is never cut over to a release claim
-        if row.status == SandboxState::Starting {
-            return Ok(false);
-        }
-        tasks::take_in(t, &c, id, Kind::Release).await
-    })
-    .await?;
-    if took {
-        tasks::run(core, Claim::adopt(core, id, Kind::Release));
+        let v = serde_json::to_value(&pending).unwrap_or_default();
+        t.execute("update sandboxes set release_pending = $2 where id = $1", &[&id, &v])
+            .await?;
     }
-    Ok(())
+    // a starting row's start task honours the pending release (11.2); it is never cut over to a release claim
+    if row.status == SandboxState::Starting {
+        return Ok(false);
+    }
+    tasks::take_in(t, core, id, Kind::Release).await
+}
+
+/// Runs the release whose claim [`request_in`] took, once its transaction committed.
+pub fn run_requested(core: &Arc<Core>, id: Uuid) {
+    tasks::run(core, Claim::adopt(core, id, Kind::Release));
 }
 
 /// The release task (13.12), run under the row's `release` claim; a replica that takes over resumes it from

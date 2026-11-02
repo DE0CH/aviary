@@ -71,6 +71,10 @@ where
     }
 }
 
+fn list_of(v: &Value) -> &[Value] {
+    v.as_array().map_or(&[], Vec::as_slice)
+}
+
 fn s<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
@@ -89,38 +93,40 @@ pub async fn get(core: &Arc<Core>, tz: Option<&str>) -> Result<Arc<Value>, ApiEr
     Ok(v)
 }
 
-/// Day and month starts in `tz` (Postgres knows every zone `chrono-tz` does); UTC when the database does not answer.
-async fn day_and_month(core: &Core, tz: &str) -> (String, OffsetDateTime, OffsetDateTime) {
-    let res = async {
-        core.pool
-            .get()
-            .await
-            .map_err(s)?
-            .query_one(
-                "select (date_trunc('day', now() at time zone $1) at time zone $1),
-                        (date_trunc('month', now() at time zone $1) at time zone $1)",
-                &[&tz],
-            )
-            .await
-            .map_err(s)
-    }
-    .await;
-    if let Ok(r) = res
-        && let (Ok(d), Ok(m)) = (r.try_get(0), r.try_get(1))
-    {
-        return (tz.to_owned(), d, m);
-    }
-    let now = OffsetDateTime::now_utc();
-    let day = now.replace_time(time::Time::MIDNIGHT);
-    let month = day.replace_day(1).unwrap_or(day);
-    ("UTC".to_owned(), day, month)
+/// Day and month starts in `tz` (an IANA zone [`crate::ops::safe_zone`] accepted), computed here with the zone
+/// database compiled in: no source to fail, so the page and the monitor always agree on "today".
+#[must_use]
+pub fn day_and_month(tz: &str, now: OffsetDateTime) -> (String, OffsetDateTime, OffsetDateTime) {
+    use chrono::{Datelike as _, TimeZone as _};
+    let Ok(zone) = tz.parse::<chrono_tz::Tz>() else {
+        let day = now.to_offset(time::UtcOffset::UTC).replace_time(time::Time::MIDNIGHT);
+        return ("UTC".to_owned(), day, day.replace_day(1).unwrap_or(day));
+    };
+    let Some(utc) = chrono::DateTime::from_timestamp(now.unix_timestamp(), 0) else {
+        let day = now.replace_time(time::Time::MIDNIGHT);
+        return (tz.to_owned(), day, day);
+    };
+    let local = utc.with_timezone(&zone).date_naive();
+    // the first instant of a local date: midnight, or the end of a gap when a clock change skips midnight
+    let start = |d: chrono::NaiveDate| -> OffsetDateTime {
+        let mut t = d.and_time(chrono::NaiveTime::MIN);
+        for _ in 0..(26 * 4) {
+            if let Some(x) = zone.from_local_datetime(&t).earliest() {
+                return OffsetDateTime::from_unix_timestamp(x.timestamp()).unwrap_or(now);
+            }
+            t += chrono::Duration::minutes(15);
+        }
+        now
+    };
+    let month = local.with_day(1).unwrap_or(local);
+    (tz.to_owned(), start(local), start(month))
 }
 
 /// Builds the snapshot (no cache).
 #[allow(clippy::too_many_lines)] // the sections in the page's order
 pub async fn build(core: &Arc<Core>, tz: &str) -> Value {
     let errors = std::sync::Mutex::new(Map::new());
-    let (tz, day, month) = day_and_month(core, tz).await;
+    let (tz, day, month) = day_and_month(tz, OffsetDateTime::now_utc());
     let cfg = &core.cfg.file;
     let up = &core.ops.up;
     let (
@@ -169,16 +175,13 @@ pub async fn build(core: &Arc<Core>, tz: &str) -> Value {
         }),
         section(&errors, "controls", controls_section(core)),
         section(&errors, "replicas", replicas_section(core)),
-        async { core.providers.fabric.ops().await },
+        section(&errors, "fabricOps", core.providers.fabric.ops()),
     );
     let mut errors = errors.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
 
-    // budget and egress are egress's, unchanged; a failed summary leaves both null (and its error under both)
+    // budget and egress are egress's, passed through as egress sent them (18.3); a failed summary leaves both null (and its error under both)
     let (budget, egress) = if let Some(sm) = &summary {
-        (
-            serde_json::to_value(&sm.budget).unwrap_or(Value::Null),
-            serde_json::to_value(&sm.egress).unwrap_or(Value::Null),
-        )
+        (sm.budget.clone(), sm.egress.clone())
     } else {
         if let Some(e) = errors.get("egress").cloned() {
             errors.insert("budget".into(), e);
@@ -250,17 +253,51 @@ pub async fn build(core: &Arc<Core>, tz: &str) -> Value {
             if let Some(name) = x["name"].as_str()
                 && x["gateway"] != true
             {
-                x["slots"] = fabric_ops.slots.get(name).map_or(Value::Null, |n| json!(n));
+                x["slots"] = fabric_ops
+                    .as_ref()
+                    .and_then(|f| f.slots.get(name))
+                    .map_or(Value::Null, |n| json!(n));
             }
         }
         h
     });
     let scaler = scaler.map(|mut sc| {
         sc["plan"] = fabric_ops
-            .plan
             .as_ref()
+            .and_then(|f| f.plan.as_ref())
             .map_or(Value::Null, |p| serde_json::to_value(p).unwrap_or(Value::Null));
         sc
+    });
+    // a silent replica whose pod still runs is a hung one; the silent rows of pods a rollout replaced are history.
+    // Without the pod list, a replica silent for under 2 minutes is still shown.
+    let running: Option<Vec<String>> = service.as_ref().filter(|s| s["available"] == true).map(|s| {
+        list_of(&s["deployments"])
+            .iter()
+            .flat_map(|d| list_of(&d["pods"]).iter())
+            .filter(|p| p["phase"] != "Terminating")
+            .filter_map(|p| p["name"].as_str().map(str::to_owned))
+            .collect()
+    });
+    let now = OffsetDateTime::now_utc();
+    let replicas = replicas.map(|r| {
+        Value::Array(
+            list_of(&r)
+                .iter()
+                .filter(|x| {
+                    x["reporting"] == true
+                        || running.as_ref().map_or_else(
+                            || {
+                                x["seenAt"]
+                                    .as_str()
+                                    .and_then(|t| Timestamp::parse(t).ok())
+                                    .is_some_and(|t| secs_between(t.datetime(), now) < 120)
+                            },
+                            |pods| x["pod"].as_str().is_some_and(|p| pods.iter().any(|q| q == p)),
+                        )
+                })
+                .cloned()
+                .collect(),
+        )
     });
     let catalogue = core.catalogue.get();
     let mut d = json!({
@@ -278,10 +315,10 @@ pub async fn build(core: &Arc<Core>, tz: &str) -> Value {
             "loadedAt": catalogue.as_ref().map(|c| c.loaded_at),
             "refused": core.catalogue.refused(),
         },
-        "fabricOps": {
-            "lastPassAt": fabric_ops.last_pass_at,
-            "egressTargets": fabric_ops.egress_targets,
-        },
+        "fabricOps": fabric_ops.as_ref().map(|f| json!({
+            "lastPassAt": f.last_pass_at,
+            "egressTargets": f.egress_targets,
+        })),
         "replicas": replicas,
         // now
         "service": service,
@@ -368,7 +405,10 @@ pub fn service_of(names: &[String], deps: &[Value], pods: &[Value], node_prefix:
             let rolling = updated < desired
                 || total > desired
                 || int(&st["observedGeneration"]) < int(&d["metadata"]["generation"]);
-            let state = if ready >= desired && desired > 0 {
+            // a Deployment deliberately scaled to 0 (and settled there) is not an outage
+            let state = if desired == 0 && ready == 0 && !rolling {
+                "ok"
+            } else if ready >= desired && desired > 0 {
                 if rolling { "warming" } else { "ok" }
             } else if rolling && ready > 0 {
                 "warming"
@@ -702,13 +742,18 @@ async fn controls_section(core: &Core) -> Result<Value, String> {
     }))
 }
 
-/// Each hermit replica's own report of the last 30 s (its workspace mount, a refused workspace delete).
+/// A replica reports every 10 s; one silent for longer than this has stopped reporting.
+pub const REPLICA_SILENT_S: i64 = 30;
+
+/// Each hermit replica's own report (its workspace mount, a refused workspace delete), with `reporting` false for a
+/// replica silent for more than 30 s. [`build`] keeps a silent one only while its pod still runs.
 async fn replicas_section(core: &Core) -> Result<Value, String> {
     let list = rows(
         core,
-        "select pod, seen_at, store_error, delete_refused_at, delete_refused_path from replicas
-          where seen_at > now() - interval '30 seconds' order by pod",
-        &[],
+        "select pod, seen_at, store_error, delete_refused_at, delete_refused_path,
+                seen_at > now() - $1::bigint * interval '1 second'
+           from replicas where seen_at > now() - interval '1 day' order by pod",
+        &[&REPLICA_SILENT_S],
     )
     .await?;
     let mut out = Vec::new();
@@ -719,6 +764,7 @@ async fn replicas_section(core: &Core) -> Result<Value, String> {
             "storeError": col!(r, 2, Option<String>),
             "deleteRefusedAt": opt_iso(col!(r, 3, Option<OffsetDateTime>)),
             "deleteRefusedPath": col!(r, 4, Option<String>),
+            "reporting": col!(r, 5, bool),
         }));
     }
     Ok(Value::Array(out))
@@ -764,4 +810,65 @@ fn people_section(core: &Core, mp: &magpie_api::ops::PeopleResponse, live_by: &H
             .cmp(a["lastActiveAt"].as_str().unwrap_or(""))
     });
     Value::Array(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use time::macros::datetime;
+
+    use super::*;
+
+    #[test]
+    fn day_and_month_in_the_zone() {
+        let now = datetime!(2026-11-02 17:00 UTC);
+        let (tz, d, m) = day_and_month("Asia/Hong_Kong", now);
+        assert_eq!(
+            (tz.as_str(), d, m),
+            (
+                "Asia/Hong_Kong",
+                datetime!(2026-11-02 16:00 UTC),
+                datetime!(2026-10-31 16:00 UTC)
+            )
+        );
+        let (_, d, m) = day_and_month("UTC", now);
+        assert_eq!(
+            (d, m),
+            (datetime!(2026-11-02 00:00 UTC), datetime!(2026-11-01 00:00 UTC))
+        );
+        // London's month began in summer time (BST), the day in winter time
+        let (_, d, m) = day_and_month("Europe/London", datetime!(2026-10-01 12:00 UTC));
+        assert_eq!(
+            (d, m),
+            (datetime!(2026-09-30 23:00 UTC), datetime!(2026-09-30 23:00 UTC))
+        );
+        // Chile skips midnight when summer time starts: the day begins at 01:00 local (-03)
+        let (_, d, _) = day_and_month("America/Santiago", datetime!(2026-09-06 12:00 UTC));
+        assert_eq!(d, datetime!(2026-09-06 04:00 UTC));
+        // a zone the caller did not validate falls back to UTC, and says so
+        assert_eq!(day_and_month("Mars/Olympus", now).0, "UTC");
+    }
+
+    #[test]
+    fn a_deployment_scaled_to_zero_is_ok() {
+        let dep = |name: &str, desired: i64, ready: i64| {
+            json!({"metadata": {"name": name, "generation": 2}, "spec": {"replicas": desired},
+                   "status": {"observedGeneration": 2, "replicas": ready, "readyReplicas": ready,
+                              "updatedReplicas": ready}})
+        };
+        let names = ["off".to_owned(), "down".to_owned()];
+        let v = service_of(
+            &names,
+            &[dep("off", 0, 0), dep("down", 2, 0)],
+            &[],
+            "",
+            datetime!(2026-11-02 00:00 UTC),
+        );
+        let states: Vec<&str> = v["deployments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d["state"].as_str().unwrap())
+            .collect();
+        assert_eq!(states, ["ok", "problem"]);
+    }
 }
