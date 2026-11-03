@@ -83,6 +83,8 @@ before(async () => {
       };
       if (m.method === "tools/list") return answer({ tools: [{ name: "wait", description: "waits", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }] });
       if (m.method === "tools/call") {
+        const ms = Number(m.params?.arguments?.ms ?? 0);
+        for (const w of upstreamCallWaiters.get(ms)?.splice(0) ?? []) w();
         // unref'd: a call the test leaves hanging never holds this test process open
         await new Promise((r) => setTimeout(r, Number(m.params?.arguments?.ms ?? 0)).unref());
         return answer({ content: [{ type: "text", text: "waited" }] });
@@ -115,6 +117,16 @@ interface Child {
   logged(at: string, ms?: number): Promise<Record<string, any>>;
 }
 const children: Child[] = [];
+
+/** waiters for the upstream to receive a tools/call with this `ms`: then the call is in flight in tools */
+const upstreamCallWaiters = new Map<number, Array<() => void>>();
+function upstreamReceives(ms: number): Promise<void> {
+  return new Promise((r) => {
+    const list = upstreamCallWaiters.get(ms) ?? [];
+    list.push(r);
+    upstreamCallWaiters.set(ms, list);
+  });
+}
 
 function start(env: Record<string, string> = { TOOLS_DATABASE_URL: "", TOOLS_ACCEPT_GATEWAY: GW, TOOLS_TOKEN_HERMIT: HERMIT_BEARER }): Child {
   const site: Site = { configPath: join(dir, "tools.json"), cataloguePath: join(dir, "catalogue.json"), apiPort: 0, healthPort: 0, hermitUrl };
@@ -203,8 +215,9 @@ test("main: SIGTERM drains (readyz 503, no new connections, the in-flight call f
   const agent = new Agent({ keepAlive: true, maxSockets: 1 });
   try {
     const request = `drain-${randomUUID()}`;
+    const received = upstreamReceives(1500);
     const inflight = call(api, 1500, request, agent);
-    await sleep(200);
+    await received; // the call is in flight, not still connecting, when SIGTERM arrives
     c.proc.kill("SIGTERM");
     await c.logged("tools draining");
     const r = await fetch(`${health}/readyz`);
@@ -230,8 +243,9 @@ test("main: SIGTERM drains (readyz 503, no new connections, the in-flight call f
 test("main: a second SIGTERM exits at once, even with a call in flight", { timeout: 60_000 }, async () => {
   const c = start();
   const { api } = await ready(c);
+  const received = upstreamReceives(60_000);
   const inflight = call(api, 60_000, "long").catch((e) => e);
-  await sleep(200);
+  await received;
   c.proc.kill("SIGTERM");
   await c.logged("tools draining");
   const t0 = Date.now();
