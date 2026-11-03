@@ -71,7 +71,7 @@ test('servedImages reads the pigeon-app pins the same way', () => {
   ]);
   const now = new Date('2026-11-04T00:00:00Z');
   assert.deepEqual(servedImages({ repo, image: 'pigeon-app', now }).map((image) => image.tag), ['bbbbbbbbbbb1', 'bbbbbbbbbbb2']);
-  assert.deepEqual(servedImages({ repo, image: 'pigeon-app', now, hours: 12 }).map((image) => image.tag), ['bbbbbbbbbbb2']);
+  assert.deepEqual(servedImages({ repo, image: 'pigeon-app', now, hours: 12, marginHours: 0 }).map((image) => image.tag), ['bbbbbbbbbbb2']);
   assert.deepEqual(servedImages({ repo, now }).map((image) => image.tag), ['aaaaaaaaaaa1']);
   rmSync(repo, { recursive: true, force: true });
 });
@@ -117,6 +117,50 @@ test('servedImages: every image whose pin overlaps the window, including the one
 test('servedImages refuses a tag that is not a commit hash', () => {
   const repo = deployRepo([{ date: '2026-11-01T00:00:00Z', files: { 'yyc-ai/deploy/kustomization.yaml': kustomization('latest') } }]);
   assert.throws(() => servedImages({ repo, now: new Date('2026-11-02T00:00:00Z') }), /not a commit hash/);
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test('servedImages: a 24 h margin for push and rollout delays, and dates out of order along first-parent', () => {
+  const now = new Date('2026-12-31T00:00:00Z');
+  // window start without the margin: 2026-12-01T00:00Z; with it: 2026-11-30T00:00Z
+  const repo = deployRepo([
+    { date: '2026-11-01T00:00:00Z', files: { 'yyc-ai/deploy/kustomization.yaml': kustomization('aaaaaaaaaaa1') } },
+    // replaces aaaaaaaaaaa1 12 h before the window start: aaaaaaaaaaa1 is inside the margin only
+    { date: '2026-11-30T12:00:00Z', files: { 'yyc-ai/deploy/kustomization.yaml': kustomization('aaaaaaaaaaa2') } },
+    // committed with a clock 40 days behind, after aaaaaaaaaaa2: aaaaaaaaaaa2's pin ends no earlier than its own commit
+    // (inside the margin only), and the walk does not stop at this old date
+    { date: '2026-10-25T00:00:00Z', files: { 'yyc-ai/deploy/kustomization.yaml': kustomization('aaaaaaaaaaa3') } },
+    { date: '2026-12-20T00:00:00Z', files: { 'yyc-ai/deploy/kustomization.yaml': kustomization('aaaaaaaaaaa4') } },
+  ]);
+  const tags = (opts) => servedImages({ repo, now, ...opts }).map((image) => image.tag);
+  assert.deepEqual(tags({}), ['aaaaaaaaaaa3', 'aaaaaaaaaaa1', 'aaaaaaaaaaa2', 'aaaaaaaaaaa4']);
+  assert.deepEqual(tags({ marginHours: 0 }), ['aaaaaaaaaaa3', 'aaaaaaaaaaa4']);
+  const two = servedImages({ repo, now }).find((image) => image.tag === 'aaaaaaaaaaa2');
+  assert.equal(new Date(two.until).toISOString(), '2026-11-30T12:00:00.000Z');
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test('pins.mjs --require-while-pinned: an empty list fails only while the ref still pins the image', () => {
+  const repo = deployRepo([
+    { date: '2026-10-01T00:00:00Z', files: { 'yyc-ai/deploy/kustomization.yaml': kustomization('aaaaaaaaaaa1') } },
+    // the switch's cleanup removes the ui pin
+    { date: '2026-11-01T00:00:00Z', files: { 'yyc-ai/deploy/kustomization.yaml': 'resources: [pigeon.yaml]\n' } },
+  ]);
+  const run = (now, extra = []) =>
+    spawnSync(process.execPath, [path.join(here, '..', 'pins.mjs'), '--repo', repo, '--now', now, '--require-while-pinned', ...extra], { encoding: 'utf8' });
+  // within 744 h of the removal the last ui image is still listed
+  let result = run('2026-11-20T00:00:00Z');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^aaaaaaaaaaa1 2026-10-01T00:00:00\.000Z 2026-11-01T00:00:00\.000Z$/m);
+  // more than 744 h after it: nothing to list, and that is right
+  result = run('2026-12-15T00:00:00Z');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /not pinned at HEAD/);
+  // as the repository stood before the removal: pinned now
+  result = run('2026-12-15T00:00:00Z', ['--ref', 'HEAD~1']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^aaaaaaaaaaa1 \S+ now$/m);
   rmSync(repo, { recursive: true, force: true });
 });
 
@@ -244,7 +288,28 @@ test('assemble: earlier builds stay for the last 5 builds, 30 days, or while ser
   // a served build the previous image no longer holds cannot be restored: an error, not a silent gap
   assert.throws(
     () => assemble({ dist, sw, previous: out, servedBuilds: [sha(3)], commit: sha(10), now: new Date(start + 49 * DAY), out: path.join(root, 'out10') }),
-    /served within the Access session lifetime but not in the previous image's builds\.json: a+3/,
+    /served within the Access session lifetime but neither in the previous image's builds\.json nor restored \(--restore\): a+3/,
+  );
+  // restored from build 3's own image: its files come back (with siblings), and it is listed again
+  const restored = assemble({
+    dist,
+    sw,
+    previous: out,
+    servedBuilds: [sha(3)],
+    restore: [{ commit: sha(3), dir: path.join(root, 'out3') }],
+    commit: sha(10),
+    now: new Date(start + 49 * DAY),
+    out: path.join(root, 'out10'),
+  });
+  files = walk(path.join(root, 'out10', 'app'));
+  assert.ok(files.includes('_expo/static/js/web/entry-3.js') && files.includes('_expo/static/js/web/entry-3.js.br'));
+  assert.equal(readFileSync(path.join(root, 'out10', 'app', '_expo/static/js/web/entry-3.js'), 'utf8'), 'entry 3');
+  const after = JSON.parse(readFileSync(path.join(root, 'out10', 'meta', 'builds.json'), 'utf8'));
+  assert.ok(after.some((build) => build.commit === sha(3)));
+  assert.equal(restored.pruned.length, 0);
+  assert.throws(
+    () => assemble({ dist, sw, previous: out, restore: [{ commit: sha(4), dir: path.join(root, 'out3') }], commit: sha(10), out: path.join(root, 'out11') }),
+    /does not list that build/,
   );
   rmSync(root, { recursive: true, force: true });
 });
@@ -321,12 +386,15 @@ test('assemble: over the budget it fails and names what takes the space', () => 
   rmSync(root, { recursive: true, force: true });
 });
 
-// The first image as pushed (sizes of every file of pigeon-app:0b3a5c6f5028, its build and its 39 seeds), then a
-// second build in which every file of the build changed (the worst case: a new entry chunk, new lazy chunks). Seeds get
-// incompressible filler (they are only copied); the builds' files get text that brotli and gzip shrink about as much as
-// the real chunks (0.19 and 0.22 of their size, against 0.19 and 0.23 for the real build).
-test('assemble at the real sizes: the second build fits the budget, and so would three more like it', { timeout: 600000 }, () => {
+// The first image as pushed (sizes of every file of pigeon-app:0b3a5c6f5028, its build and its 39 seeds), then 7
+// more builds a day apart, all within 30 days, each with every file changed (what two real builds, 0b3a5c6f and
+// 140ed041, come close to: 58 of 82 files differ). Seeds get incompressible filler (they are only copied); the builds'
+// files get text that brotli and gzip shrink about as much as the real chunks (0.19 and 0.22 of their size, against
+// 0.19 and 0.23 for the real build). YYC serves build 2 from build 3 on. Every image must fit the budget, by pruning
+// the builds YYC has not served, oldest first.
+test('assemble at the real sizes: 8 builds within 30 days, every file changed each time, all fit the budget', { timeout: 1200000 }, () => {
   const BUDGET = 480 * 1048576;
+  const N = 8;
   const inventory = JSON.parse(readFileSync(path.join(here, 'sizes-0b3a5c6f5028.json'), 'utf8'));
   const root = tmp();
   const sw = path.join(root, 'sw.js');
@@ -359,25 +427,61 @@ test('assemble at the real sizes: the second build fits the budget, and so would
     write(path.join(seedsDir, tag, '.digest'), `sha256:${createHash('sha256').update(tag).digest('hex')}\n`);
     seeds.push({ tag, commit: seed.commit });
   }
-  const dist1 = path.join(root, 'dist1');
-  for (const i of inventory.build.files) write(path.join(dist1, names[i]), text(sizes[i], names[i]));
-  write(path.join(dist1, 'index.html'), '<html></html>');
-  const first = assemble({ dist: dist1, sw, seedsDir, seeds, commit: inventory.build.commit, budgetBytes: BUDGET, now: new Date('2026-11-02T15:50:00Z'), out: path.join(root, 'out1') });
-  // the real image took 429.7 MiB with the seeds' siblings; without them about 110 MiB less
-  assert.ok(first.bytes < 330 * 1048576, `first build ${(first.bytes / 1048576).toFixed(1)} MiB`);
-  const dist2 = path.join(root, 'dist2');
-  for (const i of inventory.build.files) {
-    const renamed = names[i].replace(/[0-9a-f]{32}/, (hash) => createHash('md5').update(hash).digest('hex'));
-    write(path.join(dist2, renamed), text(sizes[i], renamed));
+  const commits = [inventory.build.commit, ...Array.from({ length: N - 1 }, (_, i) => sha(100 + i))];
+  const start = new Date('2026-11-02T15:50:00Z').getTime();
+  const rename = (name, n) => (n === 0 ? name : name.replace(/[0-9a-f]{32}/, (hash) => createHash('md5').update(`${hash}:${n}`).digest('hex')));
+  let previous = null;
+  const results = [];
+  for (let n = 0; n < N; n++) {
+    const dist = path.join(root, `dist${n}`);
+    for (const i of inventory.build.files) write(path.join(dist, rename(names[i], n)), text(sizes[i], rename(names[i], n)));
+    write(path.join(dist, 'index.html'), `<html>${n}</html>`);
+    const out = path.join(root, `out${n}`);
+    const result = assemble({
+      dist,
+      sw,
+      previous,
+      seedsDir,
+      seeds,
+      servedBuilds: n >= 2 ? [commits[1]] : [],
+      commit: commits[n],
+      budgetBytes: BUDGET,
+      now: new Date(start + n * DAY),
+      out,
+    });
+    results.push(result);
+    console.log(`build ${n + 1}: ${(result.bytes / 1048576).toFixed(1)} MiB, ${result.builds} builds kept, pruned ${result.pruned.map((c) => c.slice(0, 12)).join(' ') || 'none'}`);
+    assert.ok(result.bytes <= BUDGET, `build ${n + 1}: ${(result.bytes / 1048576).toFixed(1)} MiB`);
+    assert.equal(result.bytes, diskUsage(path.join(out, 'app')));
+    const kept = JSON.parse(readFileSync(path.join(out, 'meta', 'builds.json'), 'utf8')).map((build) => build.commit);
+    // this build, the one before it, and the served one always stay
+    assert.equal(kept[0], commits[n]);
+    if (n >= 1) assert.equal(kept[1], commits[n - 1]);
+    if (n >= 2) assert.ok(kept.includes(commits[1]), `build ${n + 1} keeps the served build 2`);
+    // every kept build's files are there, with siblings; every seed's files too
+    const files = new Set(walk(path.join(out, 'app')));
+    for (const i of inventory.build.files) {
+      for (const k of kept.map((c) => commits.indexOf(c))) {
+        const rel = rename(names[i], k);
+        assert.ok(files.has(rel) && (!/\.(js|css|json|svg|wasm)$/.test(rel) || files.has(`${rel}.br`)), `build ${n + 1}: build ${k + 1}'s ${rel}`);
+      }
+    }
+    const verify = spawnSync(process.execPath, [path.join(here, '..', 'verify-seeds.mjs'), path.join(out, 'app'), seedsDir, ...seeds.map((seed) => seed.tag)], { encoding: 'utf8' });
+    assert.equal(verify.status, 0, verify.stdout);
+    if (previous) rmSync(previous, { recursive: true, force: true });
+    rmSync(dist, { recursive: true, force: true });
+    previous = out;
   }
-  write(path.join(dist2, 'index.html'), '<html>2</html>');
-  const second = assemble({ dist: dist2, sw, previous: path.join(root, 'out1'), seedsDir, seeds, commit: sha(7), budgetBytes: BUDGET, now: new Date('2026-11-03T15:50:00Z'), out: path.join(root, 'out2') });
-  const perBuild = second.bytes - first.bytes;
-  console.log(`first ${(first.bytes / 1048576).toFixed(1)} MiB, second ${(second.bytes / 1048576).toFixed(1)} MiB (+${(perBuild / 1048576).toFixed(1)} MiB), budget ${BUDGET / 1048576} MiB`);
-  assert.ok(second.bytes <= BUDGET);
-  assert.equal(second.builds, 2);
-  // the last 5 builds, all within 30 days, all with every file changed, and all 39 seeds still listed
-  assert.ok(first.bytes + 4 * perBuild <= BUDGET, `five such builds: ${((first.bytes + 4 * perBuild) / 1048576).toFixed(1)} MiB`);
+  // a build whose every file changed adds about 36 MiB, so the budget holds 5 such builds with all 39 seeds; past
+  // that, the builds YYC has not served are pruned oldest first (build 1's files stay as a seed's, so pruning it
+  // frees only their siblings), and every later image still keeps at least 4 builds
+  const perBuild = results[1].bytes - results[0].bytes;
+  assert.ok(perBuild > 30 * 1048576 && perBuild < 42 * 1048576, `per build ${(perBuild / 1048576).toFixed(1)} MiB`);
+  assert.deepEqual(results.slice(0, 5).map((result) => result.builds), [1, 2, 3, 4, 5]);
+  for (const result of results.slice(5)) assert.ok(result.builds >= 4, `${result.builds} builds kept`);
+  const prunedInOrder = results.flatMap((result) => result.pruned);
+  assert.ok(prunedInOrder.length > 0);
+  assert.deepEqual(prunedInOrder, commits.filter((c) => c !== commits[1]).slice(0, prunedInOrder.length), 'oldest unserved first');
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -481,4 +585,45 @@ test('clients-missing: the dispatched commits clients.txt does not list yet', ()
   const listed = `# header ${sha(1)}\n${sha(2)} web-legacy 2026-10-21T14:19:07Z\n${sha(3)} web,ios    2026-10-27T01:06:40Z\n`;
   assert.deepEqual(missingClients(listed, [sha(2), sha(3)]), []);
   assert.deepEqual(missingClients(listed, [sha(1), sha(3), sha(4)]), [sha(1), sha(4)]);
+});
+
+test('a1-ready: the A1 image exists, was built from the A1 commit and seeds that commit\'s own ui image', () => {
+  const root = tmp();
+  // a fake crane: `crane export --platform P IMAGE -` streams a tar of $FAKE_IMAGES/<tag>, or fails like a missing tag
+  const bin = path.join(root, 'bin');
+  write(
+    path.join(bin, 'crane'),
+    '#!/usr/bin/env bash\n[ "$1" = export ] || exit 3\ndir="$FAKE_IMAGES/${4##*:}"\n' +
+      '[ -d "$dir" ] || { echo "MANIFEST_UNKNOWN: $4" >&2; exit 1; }\ntar -c -C "$dir" meta\n',
+  );
+  execFileSync('chmod', ['+x', path.join(bin, 'crane')]);
+  const images = path.join(root, 'images');
+  const image = (commit, builtFrom, seeds) => {
+    write(path.join(images, commit.slice(0, 12), 'meta', 'builds.json'), JSON.stringify([{ commit: builtFrom, files: [] }]));
+    write(path.join(images, commit.slice(0, 12), 'meta', 'seeds.json'), JSON.stringify(seeds));
+  };
+  const a1 = '1'.repeat(40);
+  const other = '2'.repeat(40);
+  const run = (commit) =>
+    spawnSync('bash', [path.join(here, '..', 'a1-ready.sh'), commit], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_IMAGES: images },
+    });
+  assert.equal(run('abc').status, 2);
+  let result = run(a1);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /no ghcr\.io\/de0ch\/pigeon-app:111111111111/);
+  image(a1, other, { [a1.slice(0, 12)]: { commit: a1, files: {} } });
+  result = run(a1);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /was built from 2{40}, not 1{40}/);
+  image(a1, a1, { [other.slice(0, 12)]: { commit: other, files: {} } });
+  result = run(a1);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /does not seed yyc-ai-ui:111111111111/);
+  image(a1, a1, { [other.slice(0, 12)]: { commit: other, files: {} }, [a1.slice(0, 12)]: { commit: a1, files: {} } });
+  result = run(a1);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /seeds yyc-ai-ui:111111111111 and 1 other ui images/);
+  rmSync(root, { recursive: true, force: true });
 });

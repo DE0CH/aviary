@@ -9,7 +9,7 @@
 # The corpus and the harness come from the newest aviary-* release of DE0CH/aviary (assets pigeon-frames.ndjson and
 # paseo-contract.tgz); a release without them is an error. Until aviary has published its first release there is no
 # pigeon corpus yet: the harness then comes from aviary main and the check runs on the frame fixtures alone, with a
-# warning. Either way the harness's fixtures of frames the old CloudCLI bridge sends (fixtures/cloudcli-bridge-*.ndjson,
+# warning (a recorded deviation from spec 17.1 step 5 that ends with WP-28's first release; README "Design gaps"). Either way the harness's fixtures of frames the old CloudCLI bridge sends (fixtures/cloudcli-bridge-*.ndjson,
 # which LU carries into pigeon-served pages until A5, DESIGN 9.6) and of pigeon-only frames
 # (fixtures/pigeon-spec-frames.ndjson) are checked too. Extra frame logs (a seeded incompatible frame, in the
 # workflow's self-test) are added to the corpus. Exit status: validate-frames.mjs's (0 valid, 1 a frame invalid,
