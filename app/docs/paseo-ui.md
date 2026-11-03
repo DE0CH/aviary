@@ -152,6 +152,9 @@ measuring; test on a throttled connection. So:
   `ComposerSlot` (`components/loading-frame.tsx`, `data-yyc-box`) that the box follows on a resize. The conversation
   page's own loading frame (`WorkspaceLoadingFrame`) draws the box at the composer's place, so a send or a drawer tap
   before its chunk arrives never leaves the page without one; if the chunk cannot be fetched it shows a Reload button.
+- **Inside the Android app** (claudecodeui `android/`, a WebView whose user agent has `YYCAI-Android/`; Deyao,
+  2026-11-03: the app is installed ahead) neither the page frame nor the early message box is drawn: `index.html` drops
+  `#boot` and sets no `__yycBootFrame`, so the startup screen is the app's own splash.
 - **The early message box** (`#yyc-early` in `public/index.html`, outside `#root`): a plain textarea and a disabled
   send button over the frame's message box, typable before any script (font, line height and padding from
   `composer/input/input.tsx`, 16 px on touch screens; theme and placeholder language from the saved settings). Its
