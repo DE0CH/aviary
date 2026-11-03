@@ -7,6 +7,14 @@
 filter = 'package(magpie) & (test(/within_50_?ms/))'
 threads-required = 'num-cpus'
 
-# every test runs even after a failure, so one flaky test cannot hide the result of the rest (CI's evidence)
+# every test runs even after a failure, so one flaky test cannot hide the result of the rest (CI's evidence); a test
+# that hangs is terminated (its whole process group) after 10 minutes instead of holding the job to its timeout
 [profile.default]
 fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 10, grace-period = "10s" }
+
+# the supervisor's tests take at most about 20 s in CI (the soak, the SIGTERM release): one that runs past 2 minutes
+# is hung (a FUSE read, a held fake, a runtime waiting on a blocking task) and is ended, so the rest still report
+[[profile.default.overrides]]
+filter = 'package(supervisor)'
+slow-timeout = { period = "30s", terminate-after = 4, grace-period = "5s" }
