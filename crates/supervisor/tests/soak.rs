@@ -164,6 +164,7 @@ async fn rss_stays_under_the_budget() {
 /// restart (with hermit and magpie away) every 10 minutes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "an hour or more; nightly"]
+#[allow(clippy::disallowed_methods)] // test-only configuration (platform 6.1)
 async fn soak_long() {
     let secs = std::env::var("SOAK_SECONDS")
         .ok()
