@@ -61,7 +61,9 @@ fake-access's and EC2's certificates, the Access RSA keys, `hermit.json` with th
 `src/scenarios.rs`, in the order of `ALL`: E1 (sign-in, the second JWKS key), E2 (a text turn of 40 chunks: whole
 rows, dense row seqs, the end after the last row, the generated title), E3 (a Bash tool turn writes
 `/workspace/a.txt`: it downloads byte-equal and is on the JuiceFS mount), E4 (`SendUserFile` of 5 MiB: the sent-file
-snapshot downloads byte-equal after the workspace file is gone), E19 (from a sandbox, magpie by name, by
+snapshot downloads byte-equal after the workspace file is gone), E5 (a 6000×4000 EXIF-rotated JPEG: the model gets
+one image, rotated, long edge at most 2000 px and at most 3,932,160 bytes; the thumbnail loads signed and 404s with a
+bad signature), E19 (from a sandbox, magpie by name, by
 Service and by Pod, hermit's 8080 and the internet all fail without the proxy; the proxy answers), E16 (the ops page
 admin-only through pigeon, hermit's snapshot for the monitor), E14 (delete, restore, delete for good: the other
 socket's list push, magpie 404, the sandbox released and `ws/<id>` gone), and `cc`: magpie 20's Claude Code

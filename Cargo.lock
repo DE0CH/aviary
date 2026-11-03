@@ -241,8 +241,10 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "aviary-core",
+ "base64 0.23.1",
  "clap",
  "futures-util",
+ "image",
  "k8s-openapi",
  "kube",
  "reqwest",

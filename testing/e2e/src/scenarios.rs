@@ -11,7 +11,7 @@ use crate::{ADMIN, ALICE, Harness, JFS, PIGEON, STRANGER, TURN_MODEL, eventually
 
 /// The scenarios in the order `aviary-e2e` runs them when none is named.
 pub const ALL: &[&str] = &[
-    "e1", "e2", "e3", "e4", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e9", "e13", "e15",
+    "e1", "e2", "e3", "e4", "e5", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e9", "e13", "e15",
     "e24", "e12", "e17", "stale",
 ];
 
@@ -40,6 +40,7 @@ pub async fn run(h: &Harness, name: &str) -> anyhow::Result<()> {
         "e9" => e9(h).await,
         "e13" => e13(h).await,
         "e4" => e4(h).await,
+        "e5" => e5(h).await,
         "e15" => e15(h).await,
         "e7" => e7(h).await,
         other => bail!("no scenario {other}"),
@@ -1557,6 +1558,90 @@ async fn e4(h: &Harness) -> anyhow::Result<()> {
                 "the snapshot differs ({} bytes)",
                 body.len()
             );
+            Ok(())
+        }
+        .await;
+        (ws, r)
+    })
+    .await
+}
+
+/// A 6000×4000 JPEG whose EXIF orientation says "rotate 90°" (6).
+fn rotated_jpeg() -> anyhow::Result<Vec<u8>> {
+    #[allow(clippy::cast_possible_truncation)] // the low byte of a coordinate, a gradient
+    let img = image::RgbImage::from_fn(6000, 4000, |x, y| image::Rgb([(x / 24) as u8, (y / 16) as u8, 128]));
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 85).encode_image(&img)?;
+    // APP1 Exif after SOI: a big-endian TIFF header and one IFD entry, Orientation (0x0112) SHORT 6
+    let tiff: [u8; 26] = [
+        b'M', b'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0,
+    ];
+    let mut app1 = vec![0xff, 0xe1, 0, 34];
+    app1.extend_from_slice(b"Exif\0\0");
+    app1.extend_from_slice(&tiff);
+    let mut out = jpeg[..2].to_vec();
+    out.extend_from_slice(&app1);
+    out.extend_from_slice(&jpeg[2..]);
+    Ok(out)
+}
+
+/// E5: an image attachment (6000×4000, EXIF-rotated): the model gets one image with its long edge at most 2000 px
+/// and at most 3,932,160 bytes; the timeline's thumbnail loads with its signature and 404s with a bad one.
+async fn e5(h: &Harness) -> anyhow::Result<()> {
+    use base64::Engine as _;
+    let token = h.mint(ALICE, 3600, None).await?;
+    let jpeg = rotated_jpeg()?;
+    let data = base64::engine::general_purpose::STANDARD.encode(&jpeg);
+    as_alice(h, |mut ws| async move {
+        let r = async {
+            let id = create(&mut ws, &format!("A first message ({})", marker("E5"))).await?;
+            turn_end_kind(&mut ws, &id, TURN_WAIT).await?;
+            let (_, p) = ws
+                .rpc(
+                    "send_agent_message_request",
+                    json!({"agentId": id, "text": "What is in this picture?",
+                           "messageId": uuid::Uuid::new_v4().to_string(),
+                           "images": [{"data": data, "mimeType": "image/jpeg"}]}),
+                )
+                .await?;
+            ensure!(p["accepted"] == true, "the send with an image: {p}");
+            let end = turn_end_kind(&mut ws, &id, TURN_WAIT).await?;
+            ensure!(end["type"] == "turn_completed", "the turn ended {end}");
+            let reqs = h.model_requests(&id).await?;
+            let images: Vec<&Value> = reqs
+                .iter()
+                .filter(|r| r["model"] == TURN_MODEL)
+                .flat_map(|r| r["images"].as_array().into_iter().flatten())
+                .collect();
+            let last = images.last().context("the model got no image")?;
+            let (w, hgt, bytes) = (
+                last["width"].as_u64().unwrap_or(0),
+                last["height"].as_u64().unwrap_or(0),
+                last["bytes"].as_u64().unwrap_or(u64::MAX),
+            );
+            ensure!(
+                w.max(hgt) <= 2000 && bytes <= 3_932_160,
+                "the model's image: {w}×{hgt}, {bytes} bytes"
+            );
+            ensure!(hgt > w, "the EXIF rotation was not applied: {w}×{hgt}");
+            let rows = timeline(&mut ws, &id).await?;
+            let thumb = rows
+                .iter()
+                .filter(|r| r["item"]["type"] == "user_message")
+                .find_map(|r| r["item"]["images"][0]["thumbnailUrl"].as_str().map(str::to_owned))
+                .context("no thumbnail on the user row")?;
+            let ok = h.pigeon(Method::GET, &thumb, &token).send().await?.status().as_u16();
+            ensure!(ok == 200, "the thumbnail: {ok}");
+            let bad = match thumb.split_once("sig=") {
+                Some((head, sig)) => format!(
+                    "{head}sig={}{}",
+                    if sig.starts_with('A') { "B" } else { "A" },
+                    &sig[1..]
+                ),
+                None => bail!("no sig in {thumb}"),
+            };
+            let code = h.pigeon(Method::GET, &bad, &token).send().await?.status().as_u16();
+            ensure!(code == 404, "the thumbnail with a bad signature: {code}");
             Ok(())
         }
         .await;
