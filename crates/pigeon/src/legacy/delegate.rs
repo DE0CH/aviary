@@ -396,17 +396,16 @@ impl Legacy {
         let tail = json!({"type": "fetch_agent_timeline_request", "agentId": c, "direction": "tail",
                           "limit": 200, "projection": "projected"});
         let (_, page) = lu.call(tail, READ_TIMEOUT).await.ok()?;
+        let held = holds_send(&page, cmid);
+        if !strict && !held {
+            return Some(OldSend::Absent);
+        }
         let agent = json!({"type": "fetch_agent_request", "agentId": c});
         let (_, a) = lu.call(agent, READ_TIMEOUT).await.ok()?;
-        let status = a["agent"]["status"].as_str().unwrap_or("");
-        let mut running = status == "running";
-        let held = holds_send(&page, cmid);
+        // the old bridge's agent snapshot says `running` or `idle` (`paseo-connection.ts`)
+        let mut running = a["agent"]["status"] == "running";
         if !strict {
-            return Some(if held {
-                OldSend::Present { running }
-            } else {
-                OldSend::Absent
-            });
+            return Some(OldSend::Present { running });
         }
         let busy = self.old_busy(conn).await?;
         let id = c.to_string();
@@ -415,13 +414,9 @@ impl Legacy {
                 .and_then(Value::as_array)
                 .is_some_and(|l| l.iter().any(|x| x.as_str() == Some(id.as_str())))
         };
-        running = running || listed("running");
-        let busy_here =
-            running || !matches!(status, "" | "idle" | "closed") || listed("preparing") || listed("pending");
-        Some(if held || busy_here {
-            OldSend::Present {
-                running: running || listed("preparing") || listed("pending"),
-            }
+        running = running || listed("running") || listed("preparing") || listed("pending");
+        Some(if held || running {
+            OldSend::Present { running }
         } else {
             OldSend::Absent
         })
