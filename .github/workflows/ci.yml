@@ -98,6 +98,19 @@ jobs:
           sudo timeout -k 10 300 "$bin" --exact fuse::tests::a_kernel_mount_serves_real_syscalls --nocapture 2>&1 | tee "$RUNNER_TEMP/fuse.log"
           grep -q 'kernel fuse mount served real syscalls' "$RUNNER_TEMP/fuse.log"
           grep -q '1 passed' "$RUNNER_TEMP/fuse.log"
+      - name: hermit's switch commands on a real JuiceFS volume (juicefs 1.4.1 as in images/hermit; a squashed and a plain FUSE mount; as root)
+        run: |
+          # the CLI hermit's image carries, sha256-checked as images/hermit/Dockerfile does
+          curl -fsSL -o "$RUNNER_TEMP/juicefs.tgz" https://github.com/juicedata/juicefs/releases/download/v1.4.1/juicefs-1.4.1-linux-amd64.tar.gz
+          echo "01ee09a21a9351a465e09906f113845e1c6a19bea70f530e5e2b2125b2dd3b82  $RUNNER_TEMP/juicefs.tgz" | sha256sum -c -
+          sudo tar -xzf "$RUNNER_TEMP/juicefs.tgz" -C /usr/local/bin juicefs
+          bin=$(cargo test --locked -p hermit --test legacy_juicefs --no-run --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .profile.test) | .executable')
+          # the test bounds its waits and unmounts on the way out; timeout(1) is the backstop
+          sudo env AVIARY_TEST_DATABASE_URL="$AVIARY_TEST_DATABASE_URL" AVIARY_TEST_JUICEFS=1 \
+            timeout -k 10 300 "$bin" --nocapture 2>&1 | tee "$RUNNER_TEMP/jfs.log"
+          grep -q '1 passed' "$RUNNER_TEMP/jfs.log"
+          if grep -q '^skipped' "$RUNNER_TEMP/jfs.log"; then exit 1; fi
 
   magpie-perf:
     # magpie 6.10 / WP-12: cc write latency with synchronous replication (a primary and a synchronous standby, fsync

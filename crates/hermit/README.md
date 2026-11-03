@@ -117,6 +117,14 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   folders and folders with content, removing an orphan share clone, and every re-check between the plan and the
   removal (magpie naming a folder late, a sandbox started late, a delete of hermit's own in flight, a failed
   removal).
+- `tests/legacy_juicefs.rs`: the same commands on a real `JuiceFS` volume (the `juicefs` 1.4.1 CLI, SQLite
+  metadata, two FUSE mounts: one `--all-squash 1000:1000` as hermit's own, one plain as `hermit-jfs-owner`'s): a
+  committed share cloned through the squashed mount (`juicefs clone`, `RENAME_NOREPLACE`, the quota) from a 0700 share
+  folder owned 1000:1000 as the live volume's are, a share with no row and a revoked one not cloned, the next pass
+  finding the target and setting a deleted quota again, `jfs-owner` `lchown`ing over FUSE (a symlink's target
+  untouched), `legacy-cleanup` blocked by a share folder with no row and then removing `users/` and `sent/` with
+  `juicefs rmr` and an old empty folder, keeping the clone magpie names. It runs only as root with
+  `AVIARY_TEST_JUICEFS=1` (ci.yml's test job, under sudo); elsewhere it prints `skipped`.
 - `tests/workspaces.rs`: hermit 24.2 "Workspaces" on the real `JuiceFs` store over a plain directory (the CLI
   replaced by a copy/remove fake with an in-memory quota table): the quota on every ensure, path escapes refused
   (an absolute symlink, `..` through a symlink into a neighbour), symlinks inside followed, a FIFO never blocking a
