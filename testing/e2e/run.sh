@@ -64,7 +64,7 @@ node_import() { # node_import <image…>: into the node's containerd (k3d image 
 
 infra() {
   mkdir -p "$work"
-  docker network inspect "$net" >/dev/null 2>&1 || docker network create --subnet "$subnet" "$net" >/dev/null
+  docker network inspect "$net" >/dev/null 2>&1 || docker network create --subnet "$subnet" --gateway 172.30.0.1 "$net" >/dev/null
   local pg_password s3_access s3_secret jfs_password
   pg_password=$(openssl rand -hex 16); s3_access=$(openssl rand -hex 10); s3_secret=$(openssl rand -hex 20)
   jfs_password=$pg_password

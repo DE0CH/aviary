@@ -34,6 +34,8 @@ pub async fn run(h: &Harness, name: &str) -> anyhow::Result<()> {
         "e17" => e17(h).await,
         "e18" => e18(h).await,
         "e24" => e24(h).await,
+        "e6" => e6(h).await,
+        "e7" => e7(h).await,
         other => bail!("no scenario {other}"),
     }
 }
@@ -974,4 +976,146 @@ async fn e24(h: &Harness) -> anyhow::Result<()> {
     // after an outage longer than hostDeadSeconds): the next scenario waits for that
     tokio::time::sleep(Duration::from_secs(20)).await;
     Ok(())
+}
+
+/// One page of `fetch_agent_timeline_request`.
+async fn page(ws: &mut Ws, id: &str, direction: &str, cursor: Option<&Value>, limit: u32) -> anyhow::Result<Value> {
+    let mut m = json!({"agentId": id, "direction": direction, "limit": limit});
+    if let Some(c) = cursor {
+        m["cursor"] = c.clone();
+    }
+    let (_, p) = ws.rpc("fetch_agent_timeline_request", m).await?;
+    ensure!(p["error"].is_null(), "timeline: {}", p["error"]);
+    Ok(p)
+}
+
+/// E6: 120 turns of history, then `tail` and `before` pages of 40: no gap, no duplicate, each page's time within
+/// twice the first's.
+async fn e6(h: &Harness) -> anyhow::Result<()> {
+    as_alice(h, |mut ws| async move {
+        let r = async {
+            let id = create(&mut ws, &format!("History 0 ({})", marker("E6"))).await?;
+            let end = turn_end_kind(&mut ws, &id, TURN_WAIT).await?;
+            ensure!(end["type"] == "turn_completed", "turn 0 ended {end}");
+            for i in 1..120 {
+                send(&mut ws, &id, &format!("History {i}")).await?;
+                let end = turn_end_kind(&mut ws, &id, TURN_WAIT).await?;
+                ensure!(end["type"] == "turn_completed", "turn {i} ended {end}");
+            }
+            let mut rows: Vec<Value> = Vec::new();
+            let started = Instant::now();
+            let mut pg = page(&mut ws, &id, "tail", None, 40).await?;
+            let first = started.elapsed();
+            let mut times = Vec::new();
+            loop {
+                let entries = pg["entries"].as_array().cloned().unwrap_or_default();
+                ensure!(entries.len() <= 40, "a page of {}", entries.len());
+                let mut chunk = entries;
+                chunk.extend(rows);
+                rows = chunk;
+                if pg["hasOlder"] != true {
+                    break;
+                }
+                let cursor = pg["startCursor"].clone();
+                let started = Instant::now();
+                pg = page(&mut ws, &id, "before", Some(&cursor), 40).await?;
+                times.push(started.elapsed());
+            }
+            // rows in order, each starting after the previous ended: no duplicate, no overlap
+            for w in rows.windows(2) {
+                let (end, next) = (w[0]["seqEnd"].as_u64().unwrap_or(0), w[1]["seqStart"].as_u64().unwrap_or(0));
+                ensure!(next > end, "rows out of order or repeated: {end} then {next}");
+            }
+            let users = rows.iter().filter(|r| r["item"]["type"] == "user_message").count();
+            let replies = rows.iter().filter(|r| r["item"]["type"] == "assistant_message").count();
+            ensure!(users == 120 && replies >= 120, "{users} user rows and {replies} replies in the pages");
+            let all = timeline(&mut ws, &id).await?;
+            ensure!(all.len() == rows.len(), "pages hold {} rows, the whole timeline {}", rows.len(), all.len());
+            let slow = times.iter().filter(|d| **d > first * 2 + Duration::from_millis(50)).count();
+            ensure!(slow == 0, "{slow} pages slower than twice the first ({first:?}): {times:?}");
+            eprintln!("e6: {} rows in {} pages, first {first:?}, others {times:?}", rows.len(), times.len() + 1);
+            Ok(())
+        }
+        .await;
+        (ws, r)
+    })
+    .await
+}
+
+/// A row's identity in pushes and pages: its message id, else its tool call id.
+fn row_key(item: &Value) -> String {
+    item["messageId"]
+        .as_str()
+        .or_else(|| item["callId"].as_str())
+        .map_or_else(|| item.to_string(), str::to_owned)
+}
+
+/// E7: the socket closed at a frame mid-turn and reopened: the rows after the resume equal the uninterrupted run's.
+async fn e7(h: &Harness) -> anyhow::Result<()> {
+    let token = h.mint(ALICE, 3600, None).await?;
+    let m = marker("E7");
+    h.script(json!({"match": {"textContains": m, "model": TURN_MODEL},
+                    "reply": [{"text": "The first part."}, {"sleepMs": 3000},
+                              {"toolUse": {"name": "Bash", "input": {"command": "sleep 3; echo between",
+                                                                      "description": "between"}}}],
+                    "times": 1}))
+        .await?;
+    let (mut ws, _) = Ws::open(PIGEON, &token).await?;
+    let id = create(&mut ws, &format!("Reconnect in the middle ({m})")).await?;
+    let mut seen: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    let note = |seen: &mut std::collections::BTreeMap<String, u64>, v: &Value| {
+        let p = &v["message"]["payload"];
+        if v["message"]["type"] == "agent_stream" && p["agentId"] == id.as_str() && p["event"]["type"] == "timeline" {
+            let seq = p["seq"].as_u64().unwrap_or(0);
+            let e = seen.entry(row_key(&p["event"]["item"])).or_insert(0);
+            *e = (*e).max(seq);
+        }
+    };
+    // close at the first row
+    let id2 = id.clone();
+    let first = ws
+        .wait_for("the first row", TURN_WAIT, move |v| {
+            v["message"]["type"] == "agent_stream"
+                && v["message"]["payload"]["agentId"] == id2.as_str()
+                && v["message"]["payload"]["event"]["type"] == "timeline"
+        })
+        .await?;
+    note(&mut seen, &first);
+    let cursor = json!({"epoch": first["message"]["payload"]["epoch"], "seq": first["message"]["payload"]["seq"]});
+    ws.close().await;
+    let (mut ws, _) = Ws::open(PIGEON, &token).await?;
+    let r = async {
+        let (_, _) = ws
+            .rpc("agent.timeline.set_subscription.request", json!({"agentIds": [id]}))
+            .await?;
+        let catch_up = page(&mut ws, &id, "after", Some(&cursor), 500).await?;
+        ensure!(catch_up["reset"] != true, "the resume reset the timeline: {catch_up}");
+        for r in catch_up["entries"].as_array().into_iter().flatten() {
+            let e = seen.entry(row_key(&r["item"])).or_insert(0);
+            *e = (*e).max(r["seqEnd"].as_u64().unwrap_or(0));
+        }
+        let end = turn_end_kind(&mut ws, &id, TURN_WAIT).await?;
+        ensure!(end["type"] == "turn_completed", "the turn ended {end}");
+        for (_, v) in ws.log.clone() {
+            note(&mut seen, &v);
+        }
+        let all = timeline(&mut ws, &id).await?;
+        for r in &all {
+            let k = row_key(&r["item"]);
+            let got = seen.get(&k).copied();
+            ensure!(
+                got == r["seqEnd"].as_u64(),
+                "row {k} ended at seq {} but the resumed socket last saw {got:?}",
+                r["seqEnd"]
+            );
+        }
+        ensure!(seen.len() == all.len(), "{} rows seen, the timeline has {}", seen.len(), all.len());
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    if r.is_err() {
+        eprintln!("{}", ws.tail(40));
+    }
+    ws.close().await;
+    r
 }
