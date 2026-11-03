@@ -23,6 +23,9 @@ use crate::error::{Error, Result};
 use crate::fanout;
 use crate::limits;
 
+/// How often a draining replica re-reads a fenced conversation's owner ([`await_unfenced`]).
+const DRAIN_POLL: Duration = Duration::from_millis(50);
+
 fn lease_secs() -> f64 {
     limits::FENCE_LEASE.as_secs_f64()
 }
@@ -49,7 +52,7 @@ pub async fn owner_of(db: &impl Db, id: Uuid) -> Result<Option<(String, String, 
     let Some(r) = db
         .query_opt(
             "select c.person, p.person_key, c.migrating,
-                    extract(epoch from c.legacy_fence_at + make_interval(secs => $2) - now())::float8
+                    extract(epoch from c.legacy_fence_at + make_interval(secs => $2) - clock_timestamp())::float8
              from conversations c join persons p on p.person = c.person where c.id = $1",
             &[&id, &lease_secs()],
         )
@@ -67,6 +70,18 @@ pub async fn owner_of(db: &impl Db, id: Uuid) -> Result<Option<(String, String, 
         (true, _) => Owner::Legacy,
     };
     Ok(Some((r.get(0), r.get(1), owner)))
+}
+
+/// Whether a native write of `person` to `id` can be admitted now or once a fence ends: the person's conversation,
+/// native or fenced. `false` for an unfenced legacy conversation (its write answers 409 `route: "legacy"` at once),
+/// and for one that is missing or another person's (the write's own 404).
+///
+/// # Errors
+/// When the statement fails.
+pub async fn may_go_native(db: &impl Db, person: &str, id: Uuid) -> Result<bool> {
+    Ok(owner_of(db, id)
+        .await?
+        .is_some_and(|(p, _, o)| p == person && o != Owner::Legacy))
 }
 
 /// What [`fence`] did.
@@ -91,7 +106,7 @@ pub async fn fence(pool: &Pool, id: Uuid) -> Result<Fence> {
     aviary_pg::tx!(pool, |t| -> Result<Fence> {
         let Some(r) = t
             .query_opt(
-                "select person, migrating, legacy_fence_at > now() - make_interval(secs => $2)
+                "select person, migrating, legacy_fence_at > clock_timestamp() - make_interval(secs => $2)
                  from conversations where id = $1 for update",
                 &[&id, &lease_secs()],
             )
@@ -111,7 +126,7 @@ pub async fn fence(pool: &Pool, id: Uuid) -> Result<Fence> {
         }
         let at: OffsetDateTime = t
             .query_one(
-                "update conversations set legacy_fence_at = now() where id = $1 returning legacy_fence_at",
+                "update conversations set legacy_fence_at = clock_timestamp() where id = $1 returning legacy_fence_at",
                 &[&id],
             )
             .await?
@@ -157,13 +172,18 @@ pub enum NotReleased {
 /// ticket, then makes it native (`migrating = false`, the fence cleared, `run_state = 'idle'`, the release-time model
 /// and `name_source`) with change `conversation_upserted`. Answers how long the fence was held (seconds).
 ///
+/// The lease and the held time are judged by the clock when this runs (`clock_timestamp()`), not the transaction's
+/// start, so work done earlier in the caller's transaction counts against the 3 s. The importer calls this **last**
+/// in its release transaction, after the upload-ingestion pass has written its rows (they need no lock on the
+/// conversation): the row lock, which writers queued in the fence wait on, is then held only for the release itself.
+///
 /// # Errors
 /// When a statement fails.
 pub async fn release_in(t: &Tx<'_>, id: Uuid, r: &Release) -> Result<Result<f64, NotReleased>> {
     let Some(row) = t
         .query_opt(
-            "select person, migrating, legacy_fence_at > now() - make_interval(secs => $2),
-                    extract(epoch from now() - legacy_fence_at)::float8
+            "select person, migrating, legacy_fence_at > clock_timestamp() - make_interval(secs => $2),
+                    extract(epoch from clock_timestamp() - legacy_fence_at)::float8
              from conversations where id = $1 for update",
             &[&id, &lease_secs()],
         )
@@ -266,7 +286,7 @@ pub async fn lapse_in(t: &Tx<'_>, id: Uuid) -> Result<bool> {
     let Some(r) = t
         .query_opt(
             "update conversations set legacy_fence_at = null
-             where id = $1 and migrating and legacy_fence_at <= now() - make_interval(secs => $2)
+             where id = $1 and migrating and legacy_fence_at <= clock_timestamp() - make_interval(secs => $2)
              returning person",
             &[&id, &lease_secs()],
         )
@@ -280,7 +300,7 @@ pub async fn lapse_in(t: &Tx<'_>, id: Uuid) -> Result<bool> {
 }
 
 /// Waits while `id` is fenced, at most what is left of the fence's lease (so never more than 3 s), woken by the
-/// person's change feed (the release, an unfence and a lapse each write a change). The owner then; a fence that
+/// person's change feed (the release, an unfence and a lapse each write a change; a draining replica polls instead). The owner then; a fence that
 /// lapsed meanwhile is cleared and answers [`Owner::Legacy`]. `None` when the conversation does not exist.
 ///
 /// # Errors
@@ -294,7 +314,8 @@ pub async fn await_unfenced(app: &Magpie, id: Uuid) -> Result<Option<Owner>> {
     let Owner::Fenced { remaining } = first else {
         return Ok(Some(first));
     };
-    let last = app
+    let deadline = tokio::time::Instant::now() + remaining + Duration::from_millis(20);
+    let mut last = app
         .fanout
         .hold_until(
             &[(fanout::CHANGES, key.as_str())],
@@ -306,6 +327,16 @@ pub async fn await_unfenced(app: &Magpie, id: Uuid) -> Result<Option<Owner>> {
             },
         )
         .await?;
+    // a draining replica's hold answers at once: wait out the rest of the lease anyway (at most 3 s, well inside the
+    // drain grace), so a fenced write still becomes native at the release instead of 409 `route: "legacy"`
+    while matches!(last, Some(Owner::Fenced { .. })) {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            break;
+        }
+        tokio::time::sleep((deadline - now).min(DRAIN_POLL)).await;
+        last = read().await?;
+    }
     match last {
         Some(Owner::Native) | None => Ok(last),
         // lapsed while waiting (or about to): cleared, so the conversation is plainly legacy again

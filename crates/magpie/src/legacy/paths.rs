@@ -6,6 +6,8 @@
 //! the path of a **fresh copy** of that upload (a new unattached upload with its own blob refs to the same blobs),
 //! since the old stack reuses one asset path any number of times. Only when all three miss: 400 `unknown_upload`.
 
+use std::collections::HashMap;
+
 use aviary_pg::{Pool, Tx};
 use magpie_api::errors::ErrorCode;
 use magpie_api::legacy::legacy_asset_name;
@@ -16,8 +18,12 @@ use crate::app::Magpie;
 use crate::conversations::Person;
 use crate::db::Db;
 use crate::error::{Error, Result};
+use crate::limits;
 
-/// `PUT /v1/uploads/{uploadId}/legacy-path`: records the old path pigeon's tee got back for the person's upload.
+/// `PUT /v1/uploads/{uploadId}/legacy-path`: records the old path pigeon's tee got back for the person's upload. The
+/// record is a copy of the upload of its own (same bytes and facts, its own blob refs, never attached), so attaching
+/// the upload itself by its magpie id (DESIGN 9.5's gate-time path) and later purging that conversation leave the
+/// old path resolvable. A repeat for the same bytes and path adds nothing.
 ///
 /// # Errors
 /// 400 `bad_path` for a path that is not an old asset path of the person, 404 for an upload that is not theirs; a
@@ -26,17 +32,27 @@ pub async fn record(pool: &Pool, person: &Person, upload: Uuid, legacy_path: &st
     let key = aviary_core::log::person_key(&person.email);
     let name = legacy_asset_name(legacy_path, &key)
         .ok_or_else(|| Error::code(ErrorCode::BadPath, "not an old asset path of the person"))?;
-    let n = pool
+    let known = pool
         .get()
         .await?
-        .execute(
-            "update uploads set legacy_path = $3 where id = $1 and person = $2",
+        .query_opt(
+            "select exists (select 1 from uploads r where r.person = u.person and r.legacy_path = $3
+                              and r.blob = u.blob and r.conversation_id is null)
+             from uploads u where u.id = $1 and u.person = $2",
             &[&upload, &person.email, &name],
         )
-        .await?;
-    if n == 0 {
-        return Err(Error::not_found());
+        .await?
+        .ok_or_else(Error::not_found)?;
+    if known.get::<_, bool>(0) {
+        return Ok(());
     }
+    copy_as(pool, &person.email, upload, Some(name)).await.map_err(|e| {
+        if e.is(&ErrorCode::UnknownUpload) {
+            Error::not_found()
+        } else {
+            e
+        }
+    })?;
     Ok(())
 }
 
@@ -58,7 +74,7 @@ pub async fn import_upload(t: &Tx<'_>, person: &str, legacy_path: &str, upload: 
     Ok(())
 }
 
-/// The upload an old asset name resolves to: the newest teed upload with that path, else the imported one.
+/// The upload an old asset name resolves to: the newest tee record with that path, else the imported one.
 ///
 /// # Errors
 /// When a statement fails.
@@ -86,14 +102,19 @@ pub async fn lookup(db: &impl Db, person: &str, name: &str) -> Result<Option<Uui
 /// # Errors
 /// 400 `unknown_upload` when `src` is gone; a statement error.
 pub async fn copy(pool: &Pool, person: &str, src: Uuid) -> Result<Uuid> {
+    copy_as(pool, person, src, None).await
+}
+
+/// [`copy`], the copy carrying `legacy_path` (the tee's record) or none.
+async fn copy_as(pool: &Pool, person: &str, src: Uuid, legacy_path: Option<&str>) -> Result<Uuid> {
     let id = Uuid::now_v7();
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let n = t
             .execute(
-                "insert into uploads (id, person, role, name, mime, size, blob, model_blob, width, height)
-                 select $1, person, role, name, mime, size, blob, model_blob, width, height
+                "insert into uploads (id, person, role, name, mime, size, blob, model_blob, width, height, legacy_path)
+                 select $1, person, role, name, mime, size, blob, model_blob, width, height, $4
                  from uploads where id = $2 and person = $3",
-                &[&id, &src, &person],
+                &[&id, &src, &person, &legacy_path],
             )
             .await?;
         if n == 0 {
@@ -126,35 +147,84 @@ fn unknown() -> Error {
 }
 
 /// Resolves every old asset path of `m.files` (see the module), rewriting it to the fresh copy's
-/// `uploads/<id>/<name>` path. Paths that are not old asset paths are left to the admission.
+/// `uploads/<id>/<name>` path. Paths that are not old asset paths are left to the admission. The same old path twice
+/// in one send becomes one copy, so it is one attachment, as the same upload id twice is (the admission de-duplicates
+/// by upload id). The misses are ingested concurrently
+/// under one deadline ([`limits::INGEST_TIMEOUT`], magpie 8.2's 5 s for the whole send); once every conversation is
+/// owned (`import_control.all_owned_at`) nothing is left to ingest and a miss is `unknown_upload` at once.
 ///
 /// # Errors
-/// 400 `unknown_upload` when an old path resolves nowhere, 503 when the synchronous ingest cannot be reached; a
-/// statement error.
+/// 400 `unknown_upload` when an old path resolves nowhere, 503 when the synchronous ingest cannot be reached or does
+/// not answer in time; a statement error.
 pub async fn resolve(app: &Magpie, person: &Person, m: &mut SendRequest) -> Result<()> {
     let key = aviary_core::log::person_key(&person.email);
-    for f in &mut m.files {
+    let mut names: Vec<String> = Vec::new();
+    for f in &m.files {
         if f.path.starts_with("uploads/") {
             continue;
         }
-        let Some(name) = legacy_asset_name(&f.path, &key).map(str::to_owned) else {
-            continue;
-        };
-        app.legacy.legacy_path();
-        let mut src = lookup(&app.pool.get().await?, &person.email, &name).await?;
-        if src.is_none() && app.ingest.ingest(&person.email, &name).await? {
-            src = lookup(&app.pool.get().await?, &person.email, &name).await?;
+        if let Some(name) = legacy_asset_name(&f.path, &key)
+            && !names.iter().any(|n| n == name)
+        {
+            names.push(name.to_owned());
         }
-        let Some(src) = src else {
+    }
+    if names.is_empty() {
+        return Ok(());
+    }
+    let mut found: HashMap<String, Uuid> = HashMap::new();
+    {
+        let conn = app.pool.get().await?;
+        for name in &names {
+            app.legacy.legacy_path();
+            if let Some(src) = lookup(&conn, &person.email, name).await? {
+                found.insert(name.clone(), src);
+            }
+        }
+    }
+    let misses: Vec<&String> = names.iter().filter(|n| !found.contains_key(*n)).collect();
+    if !misses.is_empty() && !all_owned(&app.pool.get().await?).await? {
+        let calls = futures_util::future::join_all(misses.iter().map(|n| app.ingest.ingest(&person.email, n)));
+        let answers = tokio::time::timeout(limits::INGEST_TIMEOUT, calls).await.map_err(|_| {
+            tracing::warn!(person = %key, "the synchronous ingest did not answer in time");
+            super::ingest::unavailable()
+        })?;
+        let conn = app.pool.get().await?;
+        for (name, ingested) in misses.iter().zip(answers) {
+            if ingested? && let Some(src) = lookup(&conn, &person.email, name).await? {
+                found.insert((*name).clone(), src);
+            }
+        }
+    }
+    let mut fresh: HashMap<String, String> = HashMap::new();
+    for name in &names {
+        let Some(src) = found.get(name).copied() else {
             app.legacy.unknown_upload(true);
             tracing::warn!(person = %key, "an old asset path resolved nowhere");
             return Err(unknown());
         };
-        let fresh = copy(&app.pool, &person.email, src).await?;
-        let file = name.rsplit('/').next().unwrap_or(&name).to_owned();
-        f.path = format!("uploads/{fresh}/{file}");
+        let copy = copy(&app.pool, &person.email, src).await?;
+        let file = name.rsplit('/').next().unwrap_or(name);
+        fresh.insert(name.clone(), format!("uploads/{copy}/{file}"));
+    }
+    for f in &mut m.files {
+        if f.path.starts_with("uploads/") {
+            continue;
+        }
+        if let Some(path) = legacy_asset_name(&f.path, &key).and_then(|n| fresh.get(n)) {
+            f.path.clone_from(path);
+        }
     }
     Ok(())
+}
+
+/// Whether the importer has recorded every conversation owned (`import_control.all_owned_at`): from then on no old
+/// asset is left to ingest.
+async fn all_owned(db: &impl Db) -> Result<bool> {
+    Ok(db
+        .query_opt("select all_owned_at is not null from import_control", &[])
+        .await?
+        .is_some_and(|r| r.get::<_, bool>(0)))
 }
 
 /// Whether `m` names an old asset path of `person` (a send without one skips [`resolve`] entirely).

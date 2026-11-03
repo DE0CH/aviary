@@ -19,8 +19,10 @@ pub async fn send(app: &Magpie, ctx: Ctx, id: Uuid, mut body: SendRequest) -> An
             let person = Person::from_ctx(&ctx)?;
             admission::validate(&body)?;
             // the switch window's old asset paths (until A7): resolved to fresh copies before the transaction, but
-            // not for a repeat, which admits nothing
+            // not for a repeat, which admits nothing, nor for a conversation the old stack still owns unfenced (its
+            // 409 `route: "legacy"` comes back at once, with no ingest and no copies)
             if legacy::paths::has_legacy_path(&person, &body)
+                && legacy::fence::may_go_native(&app.pool.get().await?, &person.email, id).await?
                 && !admission::is_repeat(&app.pool, id, &body.client_message_id).await?
             {
                 legacy::paths::resolve(app, &person, &mut body).await?;

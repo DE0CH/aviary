@@ -1,8 +1,17 @@
 //! Tickets (switch-final 4.3 and 23 C5.1, cutover 6.4): pigeon takes one before every write it sends to a legacy
 //! conversation through its legacy upstream, and reports the old stack's outcome. The importer fences only a
 //! conversation without an open ticket, so a write the old stack is about to make is never cut off by a release.
+//!
+//! A ticket whose outcome never arrives (pigeon died or rolled out between the ticket and the report, or a ticket call
+//! that timed out after it committed was not retried with its `clientMessageId`) would keep its conversation legacy
+//! for ever. A ticket call repeated with the same `(kind, clientMessageId)` returns the open ticket instead of a
+//! second one; anything still stranded is closed by the importer with [`expire`] once the old child shows that no
+//! write under it can still be in flight (switch-final 8.1's "done or expired"; the design gap is recorded in
+//! `crates/magpie/README.md`).
 
+use aviary_pg::Pool;
 use magpie_api::legacy::{TicketDone, TicketKind, TicketOutcome, TicketRequest, TicketResponse, TicketRoute};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 use super::fence::{self, Owner};
@@ -26,7 +35,9 @@ enum Take {
 }
 
 /// `POST /v1/conversations/{id}/legacy/tickets`: `native` once magpie owns the conversation; a ticket while it is
-/// legacy (a lapsed fence is cleared first); while it is fenced, waits for the release or the fence's end.
+/// legacy (a lapsed fence is cleared first); while it is fenced, waits for the release or the fence's end. With a
+/// `clientMessageId`, a repeat of an open ticket's `(kind, clientMessageId)` returns that ticket (pigeon's retry of a
+/// call that timed out after it committed opens no second one).
 ///
 /// # Errors
 /// 400 `bad_request` (a `clientMessageId` over 200 bytes), 404, 503 when fences never end; a statement error.
@@ -44,7 +55,7 @@ pub async fn take(app: &Magpie, person: &Person, id: Uuid, req: &TicketRequest) 
         let taken = aviary_pg::tx!(&app.pool, |t| -> Result<Take> {
             let r = t
                 .query_opt(
-                    "select person, migrating, legacy_fence_at > now() - make_interval(secs => $2)
+                    "select person, migrating, legacy_fence_at > clock_timestamp() - make_interval(secs => $2)
                      from conversations where id = $1 for update",
                     &[&id, &limits::FENCE_LEASE.as_secs_f64()],
                 )
@@ -60,6 +71,17 @@ pub async fn take(app: &Magpie, person: &Person, id: Uuid, req: &TicketRequest) 
                 return Ok(Take::Wait);
             }
             fence::lapse_in(t, id).await?;
+            if let Some(cmid) = cmid
+                && let Some(r) = t
+                    .query_opt(
+                        "select ticket from legacy_tickets
+                         where conversation_id = $1 and kind = $2 and client_message_id = $3 and done_at is null",
+                        &[&id, &kind, &cmid],
+                    )
+                    .await?
+            {
+                return Ok(Take::Legacy(r.get(0)));
+            }
             let ticket = Uuid::now_v7();
             t.execute(
                 "insert into legacy_tickets (ticket, conversation_id, kind, client_message_id) values ($1, $2, $3, $4)",
@@ -149,6 +171,36 @@ pub async fn done(app: &Magpie, person: &Person, ticket: Uuid, req: &TicketDone)
         .await?;
         t.notify(CHANNEL, &format!("{conversation}:0")).await?;
         Ok(())
+    })
+    .await
+}
+
+/// Closes the stranded tickets of `id`: every open one issued before `issued_before` (database time), with outcome
+/// `expired`, and wakes the importer as an outcome would. Answers how many were closed.
+///
+/// Only the importer (or `magpie import release <id> --force`, after inspection) calls this, and only with evidence
+/// that no write under those tickets can still reach the old child or be in flight in it: pigeon never starts a
+/// legacy write under a ticket older than [`magpie_api::legacy::TICKET_HOLD_MAX`], so with `issued_before` at most
+/// the start of an old-child read (running list, and `pendingUserMessages`/`preparing` for the conversation) that
+/// showed nothing for it, minus that bound, every such write has either not happened or settled. The quiet period
+/// and the two running-set reads of the release rule still follow (switch-final 8.1, C5.2).
+///
+/// # Errors
+/// When a statement fails.
+pub async fn expire(pool: &Pool, id: Uuid, issued_before: OffsetDateTime) -> Result<u64> {
+    aviary_pg::tx!(pool, |t| -> Result<u64> {
+        let n = t
+            .execute(
+                "update legacy_tickets set done_at = clock_timestamp(), outcome = 'expired'
+                 where conversation_id = $1 and done_at is null and issued_at < $2",
+                &[&id, &issued_before],
+            )
+            .await?;
+        if n > 0 {
+            tracing::warn!(conversation = %id, tickets = n, "stranded tickets expired");
+            t.notify(CHANNEL, &format!("{id}:0")).await?;
+        }
+        Ok(n)
     })
     .await
 }

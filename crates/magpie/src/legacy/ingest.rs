@@ -28,6 +28,14 @@ pub struct IngestRequest {
     pub legacy_path: String,
 }
 
+/// 503 `unavailable`: the import cannot be reached or did not answer (the send can be retried; the file may exist).
+pub(crate) fn unavailable() -> Error {
+    Error::code(
+        magpie_api::errors::ErrorCode::Unavailable,
+        "the import cannot be reached",
+    )
+}
+
 /// magpie's client of the import Deployment.
 #[derive(Debug, Clone)]
 pub struct Ingest {
@@ -49,12 +57,6 @@ impl Ingest {
     /// 503 `unavailable` when the import Deployment cannot be reached or answers anything else (the send can be
     /// retried; the file may well exist).
     pub async fn ingest(&self, person: &str, name: &str) -> Result<bool> {
-        let unavailable = || {
-            Error::code(
-                magpie_api::errors::ErrorCode::Unavailable,
-                "the import cannot be reached",
-            )
-        };
         let resp = self
             .http
             .post(format!("{}{ROUTE}", self.url))

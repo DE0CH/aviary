@@ -413,8 +413,27 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
 - A ticket's outcome is one of `started`, `completed`, `failed` (a send), `applied` (anything else) or `refused`;
   `delivered` is recorded (`legacy_tickets.delivered_at`) and closes nothing (switch-final C5.1). A closed ticket
   notifies `magpie_legacy` (`<conversation>:0`) for the importer's wake on dirty.
+- Design gap (recorded): nothing in the specs closes a ticket whose outcome never arrives. pigeon can die or roll
+  out between the ticket and its report, or retry a ticket call that timed out after it committed; the open ticket
+  then refuses every fence and release, `release --force` included (cutover 7.7, 7.9), for ever, against
+  switch-final 8.1 ("after its last ticket was done or expired") and DESIGN 9.2 (fail-closed inputs only delay a
+  release). The closest correct thing: (1) a ticket call with a `clientMessageId` is idempotent per
+  `(conversation, kind, clientMessageId)` while the ticket is open (`legacy_tickets_open_cmid`), so a retry gets the
+  first ticket; (2) pigeon starts no legacy write under a ticket older than `magpie_api::legacy::TICKET_HOLD_MAX`
+  (60 s; a contract for WP-50); (3) `legacy::tickets::expire(pool, id, issued_before)` closes the open tickets issued
+  before a bound with outcome `expired` and wakes the importer. The importer (WP-52) calls it with `issued_before` =
+  the start of an old-child read (running list and `pendingUserMessages`/`preparing`) that showed nothing for the
+  conversation, minus `TICKET_HOLD_MAX`: any write under those tickets has then either not happened or settled, and
+  the quiet period and two running-set reads still follow. `release <id> --force` (WP-29) calls it with the current
+  time after the operator's inspection, then fences and releases. A late outcome on an expired ticket keeps
+  `expired`. Tested in `tests/legacy.rs` (`a_stranded_ticket_expires_and_a_retried_ticket_call_reuses_the_open_one`).
 - A fence is a lease: `conversations.legacy_fence_at` older than 3 s holds nothing, cannot be released, and is
-  cleared by the next writer that finds it (a ticket call, a waiting mutation). The release refuses a lapsed fence
+  cleared by the next writer that finds it (a ticket call, a waiting mutation). The lease and the fence's held time
+  (`magpie_fence_seconds`) are judged by `clock_timestamp()`, not the transaction's start, so the importer's work
+  earlier in its release transaction counts; it calls `release_in` last, after the upload-ingestion pass, so writers
+  queued in the fence wait on the row lock only for the release itself. A draining replica, whose held polls answer
+  at once, still waits out a fence's remaining lease (polling every 50 ms), so a fenced write becomes native at the
+  release rather than 409 `route: "legacy"`. The release refuses a lapsed fence
   and an open ticket, and stores the old child's model and the mapped `name_source` (`coalesce`: `None` keeps the
   imported value).
 - Old asset paths are held in canonical form, the file name inside the person's old asset folder
@@ -422,9 +441,20 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   `.claude`, when there is one, must be the person's key), so `import_uploads` is keyed by `(person, legacy_path)`
   rather than by the absolute path (whose prefix is the old pods' home root).
 - The synchronous ingest calls `POST http://magpie-import/v1/ingest-upload` (`{person, legacyPath}` → 200 ingested,
-  404 no such file) with `MAGPIE_TOKEN_IMPORT`; an unreachable import answers the send 503 `unavailable` (retryable)
-  rather than 400 `unknown_upload`, which is kept for a path that resolves nowhere.
+  404 no such file) with `MAGPIE_TOKEN_IMPORT` (required at start like every token: platform 3.7's pair table and
+  the magpie Deployment carry it, and the import side accepts it as `MAGPIE_IMPORT_ACCEPT_MAGPIE`). A send's misses
+  are ingested concurrently under one 5 s deadline for the whole send (magpie 8.2). An unreachable or late import
+  answers the send 503 `unavailable` (retryable) rather than 400 `unknown_upload`, which is kept for a path that
+  resolves nowhere; once `import_control.all_owned_at` is set nothing is left to ingest, so a miss is
+  `unknown_upload` (counted `legacy="true"`) at once. Before the import Deployment exists (P2 runs the importer as
+  Jobs) a miss is 503; no composer holds an untracked old path then, since the tee records every upload.
+- A native send (M7) to an unfenced legacy conversation skips the resolution, so its 409 `route: "legacy"` comes
+  back at once with no ingest and no copies. The same old path twice in one send is one copy, so one attachment.
+- The tee's record (`PUT …/legacy-path`) is an unattached copy of the upload carrying `legacy_path`, not the upload
+  itself: pigeon may still attach the upload by its magpie id (DESIGN 9.5), and purging that conversation then
+  deletes the upload row but not the record.
 - Retention keeps unattached uploads that carry `legacy_path` or are in `import_uploads` until A7; every send
-  attaches a fresh copy, which retention treats as any other upload.
+  attaches a fresh copy, which retention treats as any other upload. `uploads_legacy_path` is built concurrently by
+  its own no-transaction migration (0014), since `uploads` is populated and written by every upload.
 - A share revoke of a migrating conversation answers 409 `conversation_migrating` (cutover 6.4's table lists it;
   the revoke route checked nothing before).

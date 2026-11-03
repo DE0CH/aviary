@@ -554,6 +554,29 @@ async fn legacy_paths_resolve_through_both_tables_any_number_of_times() {
         .unwrap()
         .into_inner();
     assert!(created.turn.is_some());
+    // the tee's record is an unattached copy of its own; a repeated PUT adds none
+    let teed_record = paths::lookup(&conn, ALICE, "1762054010120-teed.pdf")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(teed_record, teed.upload_id);
+    a.upload_legacy_path(
+        teed.upload_id,
+        &LegacyPathRequest {
+            legacy_path: teed_path.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    let records: i64 = conn
+        .query_one(
+            "select count(*) from uploads where legacy_path = '1762054010120-teed.pdf'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(records, 1);
     // retention keeps the legacy-path set past the unattached-upload age; a plain unattached upload goes
     let plain = upload(&r, ALICE, "plain.pdf", b"plain").await;
     conn.execute(
@@ -570,28 +593,46 @@ async fn legacy_paths_resolve_through_both_tables_any_number_of_times() {
         .iter()
         .map(|row| row.get(0))
         .collect();
-    assert!(left.contains(&teed.upload_id) && left.contains(&imported.upload_id));
+    assert!(left.contains(&teed_record) && left.contains(&imported.upload_id));
     assert!(!left.contains(&plain.upload_id));
     // and they still resolve
-    a.send_turn(c2, &send("p:late", vec![file(&imp_path, &imported)]))
-        .await
-        .unwrap();
+    a.send_turn(
+        c2,
+        &send("p:late", vec![file(&imp_path, &imported), file(&teed_path, &teed)]),
+    )
+    .await
+    .unwrap();
 }
 
 /// A stand-in for the import Deployment's `POST /v1/ingest-upload`: the names it knows are ingested (their upload
 /// recorded in `import_uploads`), anything else is 404.
 async fn fake_import(pool: aviary_pg::Pool, known: Arc<Mutex<HashMap<String, Uuid>>>) -> (String, Arc<Mutex<u32>>) {
+    fake_import_slow(pool, known, Duration::ZERO).await
+}
+
+/// [`fake_import`] answering each call only after `delay`.
+async fn fake_import_slow(
+    pool: aviary_pg::Pool,
+    known: Arc<Mutex<HashMap<String, Uuid>>>,
+    delay: Duration,
+) -> (String, Arc<Mutex<u32>>) {
     use axum::Json;
     use axum::extract::State;
     use axum::http::StatusCode;
     let calls = Arc::new(Mutex::new(0u32));
-    let state = (pool, known, calls.clone());
-    type St = (aviary_pg::Pool, Arc<Mutex<HashMap<String, Uuid>>>, Arc<Mutex<u32>>);
+    let state = (pool, known, calls.clone(), delay);
+    type St = (
+        aviary_pg::Pool,
+        Arc<Mutex<HashMap<String, Uuid>>>,
+        Arc<Mutex<u32>>,
+        Duration,
+    );
     async fn ingest(
-        State((pool, known, calls)): State<St>,
+        State((pool, known, calls, delay)): State<St>,
         Json(req): Json<magpie::legacy::ingest::IngestRequest>,
     ) -> StatusCode {
         *calls.lock().unwrap() += 1;
+        tokio::time::sleep(delay).await;
         let Some(up) = known.lock().unwrap().get(&req.legacy_path).copied() else {
             return StatusCode::NOT_FOUND;
         };
@@ -687,6 +728,10 @@ async fn the_legacy_path_set_outlives_the_a6_contraction() {
     })
     .await
     .unwrap();
+    let teed_record = paths::lookup(&r.pool().get().await.unwrap(), ALICE, "t.pdf")
+        .await
+        .unwrap()
+        .unwrap();
     let c = migrating(&r, ALICE, "a6").await;
     let tk = ticket(&r, c, TicketKind::Send).await;
     assert!(tk.ticket.is_some());
@@ -704,10 +749,7 @@ async fn the_legacy_path_set_outlives_the_a6_contraction() {
         .get(0);
     assert_eq!(gone, 0);
     // the legacy-path set is still there and still resolves, with fresh copies
-    assert_eq!(
-        paths::lookup(&conn, ALICE, "t.pdf").await.unwrap(),
-        Some(teed.upload_id)
-    );
+    assert_eq!(paths::lookup(&conn, ALICE, "t.pdf").await.unwrap(), Some(teed_record));
     assert_eq!(
         paths::lookup(&conn, ALICE, "i.pdf").await.unwrap(),
         Some(imported.upload_id)
@@ -726,8 +768,483 @@ async fn the_legacy_path_set_outlives_the_a6_contraction() {
         paths::lookup(&conn, ALICE, "i.pdf").await.unwrap(),
         Some(imported.upload_id)
     );
-    assert_eq!(
-        paths::lookup(&conn, ALICE, "t.pdf").await.unwrap(),
-        Some(teed.upload_id)
+    assert_eq!(paths::lookup(&conn, ALICE, "t.pdf").await.unwrap(), Some(teed_record));
+}
+
+async fn set_migrating(r: &common::Replica, c: Uuid) {
+    r.pool()
+        .get()
+        .await
+        .unwrap()
+        .execute("update conversations set migrating = true where id = $1", &[&c])
+        .await
+        .unwrap();
+}
+
+/// Marks `c` migrating and fences it, runs `call` while it is fenced, checks that it waits, releases the fence and
+/// answers what `call` got: the write then ran natively.
+async fn fenced_then_released<T, F, Fut>(r: &Arc<common::Replica>, c: Uuid, call: F) -> Result<T, ClientError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<common::Replica>) -> Fut,
+    Fut: std::future::Future<Output = Result<T, ClientError>> + Send + 'static,
+{
+    set_migrating(r, c).await;
+    assert!(matches!(fence::fence(r.pool(), c).await.unwrap(), Fence::Fenced(_)));
+    let started = Instant::now();
+    let h = tokio::spawn(call(r.clone()));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!h.is_finished(), "the write waits while fenced");
+    fence::release(r.pool(), c, &Release::default(), "idle", &r.app().legacy)
+        .await
+        .unwrap()
+        .unwrap();
+    let out = h.await.unwrap();
+    assert!(started.elapsed() < Duration::from_secs(3));
+    if let Err(e) = &out {
+        assert_ne!(e.code(), Some(&ErrorCode::ConversationMigrating), "{e:?}");
+    }
+    out
+}
+
+#[tokio::test]
+async fn every_wrapped_route_waits_in_a_fence_then_runs_natively() {
+    use aviary_fakes::hermit::{FakeHermit, HermitConfig};
+    use common::ev::{self, assistant, text, turn_ended, turn_started, user_sent};
+    const STAFF: &str = "staff@example.org";
+    let hermit = FakeHermit::unguarded(HermitConfig::default());
+    let running = hermit.serve().await.unwrap();
+    let db = common::fresh_db("lg_routes").await;
+    let t = common::Tokens::new();
+    let r = Arc::new(common::replica_with(&db.url, &t, &running.url(), common::idle()).await);
+    let c = ev::conversation(&r.pigeon(), STAFF).await;
+    let tid = Uuid::new_v4();
+    ev::append(
+        r.pool(),
+        STAFF,
+        c,
+        vec![
+            user_sent("m1", "q"),
+            ev::in_turn(turn_started(tid), tid),
+            ev::in_turn(assistant("msg_1", serde_json::json!([text("a")])), tid),
+            ev::in_turn(turn_ended(tid, "completed"), tid),
+        ],
+    )
+    .await;
+    hermit.write_file(c, "x.txt", b"x");
+    // a share made while native, revoked below while legacy
+    let early = r.pigeon().person(STAFF).create_share(c).await.unwrap();
+    // M5
+    let renamed = fenced_then_released(&r, c, move |r| async move {
+        r.pigeon()
+            .person(STAFF)
+            .rename_conversation(c, &RenameRequest { title: "新名".into() })
+            .await
+    })
+    .await
+    .unwrap();
+    assert_eq!(renamed.title.as_deref(), Some("新名"));
+    // M6 delete and restore
+    fenced_then_released(&r, c, move |r| async move {
+        r.pigeon().person(STAFF).delete_conversation(c).await
+    })
+    .await
+    .unwrap();
+    fenced_then_released(&r, c, move |r| async move {
+        r.pigeon().person(STAFF).restore_conversation(c).await
+    })
+    .await
+    .unwrap();
+    // M8 and M11 (nothing running and no such ask: their own answers, natively)
+    let _ = fenced_then_released(
+        &r,
+        c,
+        move |r| async move { r.pigeon().person(STAFF).cancel_turn(c).await },
+    )
+    .await;
+    let _ = fenced_then_released(&r, c, move |r| async move {
+        let answer: magpie_api::turns::AgentPermissionResponse =
+            serde_json::from_value(serde_json::json!({"behavior": "allow"})).unwrap();
+        r.pigeon().person(STAFF).answer_ask(c, "ask_1", &answer).await
+    })
+    .await;
+    // M16 create
+    fenced_then_released(
+        &r,
+        c,
+        move |r| async move { r.pigeon().person(STAFF).create_share(c).await },
+    )
+    .await
+    .unwrap();
+    // share revoke: 409 route legacy at once while unfenced legacy, waits in a fence
+    set_migrating(&r, c).await;
+    let started = Instant::now();
+    let e = r.pigeon().person(STAFF).revoke_share(&early.id).await.unwrap_err();
+    assert!(legacy_409(&e), "{e:?}");
+    assert!(started.elapsed() < Duration::from_secs(1));
+    let sid = early.id.clone();
+    fenced_then_released(&r, c, move |r| async move {
+        r.pigeon().person(STAFF).revoke_share(&sid).await
+    })
+    .await
+    .unwrap();
+    // M7 is a_send_during_a_fence_waits_and_becomes_the_first_native_turn; M6 purge last
+    r.pigeon().person(STAFF).delete_conversation(c).await.unwrap();
+    fenced_then_released(&r, c, move |r| async move {
+        r.pigeon().person(STAFF).purge_conversation(c).await
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_stranded_ticket_expires_and_a_retried_ticket_call_reuses_the_open_one() {
+    let db = common::fresh_db("lg_strand").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let c = migrating(&r, ALICE, "s").await;
+    let take = |kind: TicketKind, cmid: Option<&str>| {
+        let req = TicketRequest {
+            kind,
+            client_message_id: cmid.map(str::to_owned),
+        };
+        let p = r.pigeon();
+        async move { p.person(ALICE).legacy_ticket(c, &req).await.unwrap().ticket.unwrap() }
+    };
+    // a retried call (the first timed out after it committed) gets the open ticket; another kind or no id: a new one
+    let first = take(TicketKind::Send, Some("s:1")).await;
+    assert_eq!(take(TicketKind::Send, Some("s:1")).await, first);
+    let stop = take(TicketKind::Stop, Some("s:1")).await;
+    assert_ne!(stop, first);
+    let plain = take(TicketKind::Rename, None).await;
+    assert_ne!(take(TicketKind::Rename, None).await, plain);
+    let open: i64 = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select count(*) from legacy_tickets where conversation_id = $1 and done_at is null",
+            &[&c],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(open, 4);
+    // pigeon never reports (it died): the conversation cannot be fenced, so it stays legacy
+    assert_eq!(fence::fence(r.pool(), c).await.unwrap(), Fence::OpenTicket);
+    // the importer expires only tickets issued before its bound
+    let before: time::OffsetDateTime = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select min(issued_at) from legacy_tickets where conversation_id = $1",
+            &[&c],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(magpie::legacy::tickets::expire(r.pool(), c, before).await.unwrap(), 0);
+    assert_eq!(fence::fence(r.pool(), c).await.unwrap(), Fence::OpenTicket);
+    let now: time::OffsetDateTime = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select clock_timestamp()", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(magpie::legacy::tickets::expire(r.pool(), c, now).await.unwrap(), 4);
+    // a late report keeps the expiry; the same clientMessageId now opens a new ticket
+    done(&r, first, TicketOutcome::Started).await.unwrap();
+    let outcome: String = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select outcome from legacy_tickets where ticket = $1", &[&first])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(outcome, "expired");
+    let again = take(TicketKind::Send, Some("s:1")).await;
+    assert_ne!(again, first);
+    done(&r, again, TicketOutcome::Refused).await.unwrap();
+    // with nothing open, the fence and the release go through (as `release --force` does after an expiry)
+    assert!(matches!(fence::fence(r.pool(), c).await.unwrap(), Fence::Fenced(_)));
+    fence::release(r.pool(), c, &Release::default(), "forced", &r.app().legacy)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!r.pigeon().person(ALICE).get_conversation(c).await.unwrap().migrating);
+}
+
+#[tokio::test]
+async fn the_release_judges_the_lease_by_the_clock() {
+    let db = common::fresh_db("lg_clock").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let pool = r.pool().clone();
+    let in_tx = |c: Uuid, sleep: f64| {
+        let pool = pool.clone();
+        async move {
+            aviary_pg::tx!(&pool, |tx| -> magpie::error::Result<Result<f64, NotReleased>> {
+                // the importer's own work earlier in the release transaction
+                tx.execute("select pg_sleep($1)", &[&sleep]).await?;
+                fence::release_in(tx, c, &Release::default()).await
+            })
+            .await
+            .unwrap()
+        }
+    };
+    // a release 1.2 s into its transaction measures the fence from the clock, not the transaction's start
+    let a = migrating(&r, ALICE, "c1").await;
+    assert!(matches!(fence::fence(r.pool(), a).await.unwrap(), Fence::Fenced(_)));
+    let held = in_tx(a, 1.2).await.unwrap();
+    assert!(held >= 1.2, "{held}");
+    // a fence that lapsed by the clock during the transaction is not released
+    let b = migrating(&r, ALICE, "c2").await;
+    assert!(matches!(fence::fence(r.pool(), b).await.unwrap(), Fence::Fenced(_)));
+    assert_eq!(in_tx(b, 3.2).await, Err(NotReleased::NotFenced));
+    assert!(r.pigeon().person(ALICE).get_conversation(b).await.unwrap().migrating);
+}
+
+#[tokio::test]
+async fn a_draining_replica_still_waits_out_a_fence() {
+    use magpie::conversations::Person;
+    let db = common::fresh_db("lg_drain").await;
+    let t = common::Tokens::new();
+    let r = Arc::new(common::replica(&db.url, &t).await);
+    let c = migrating(&r, ALICE, "d").await;
+    let d = migrating(&r, ALICE, "d2").await;
+    let alice = Person {
+        email: ALICE.to_owned(),
+        viewer: None,
+    };
+    r.start_drain();
+    // released during the wait: native, as without a drain
+    assert!(matches!(fence::fence(r.pool(), c).await.unwrap(), Fence::Fenced(_)));
+    let r2 = r.clone();
+    let person = alice.clone();
+    let waiting = tokio::spawn(async move {
+        let req = TicketRequest {
+            kind: TicketKind::Send,
+            client_message_id: None,
+        };
+        magpie::legacy::tickets::take(r2.app(), &person, c, &req).await
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!waiting.is_finished(), "a draining replica still waits in the fence");
+    fence::release(r.pool(), c, &Release::default(), "idle", &r.app().legacy)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(waiting.await.unwrap().unwrap().route, TicketRoute::Native);
+    // never released: the lease runs out, then the conversation is plainly legacy (a ticket, not a 503)
+    assert!(matches!(fence::fence(r.pool(), d).await.unwrap(), Fence::Fenced(_)));
+    let started = Instant::now();
+    let req = TicketRequest {
+        kind: TicketKind::Send,
+        client_message_id: None,
+    };
+    let tk = magpie::legacy::tickets::take(r.app(), &alice, d, &req).await.unwrap();
+    assert!(
+        started.elapsed() >= Duration::from_millis(2_500),
+        "{:?}",
+        started.elapsed()
     );
+    assert_eq!(tk.route, TicketRoute::Legacy);
+    assert_eq!(
+        fence::await_unfenced(r.app(), d).await.unwrap(),
+        Some(fence::Owner::Legacy)
+    );
+}
+
+#[tokio::test]
+async fn misses_are_ingested_together_under_one_deadline() {
+    let db = common::fresh_db("lg_deadline").await;
+    let t = common::Tokens::new();
+    let pool = aviary_pg::connect(&db.url, "test", 4, Duration::from_secs(10)).unwrap();
+    let known = Arc::new(Mutex::new(HashMap::new()));
+    let (url, calls) = fake_import_slow(pool, known.clone(), Duration::from_secs(2)).await;
+    let bucket = common::test_bucket(&db.url).await;
+    let r = common::replica_import(&db.url, &t, "http://127.0.0.1:1", common::idle(), bucket, &url).await;
+    let a = r.pigeon();
+    let a = a.person(ALICE);
+    let mut files = Vec::new();
+    for i in 0..4 {
+        let up = upload(&r, ALICE, &format!("f{i}.pdf"), format!("%PDF-1.4 {i}").as_bytes()).await;
+        let name = format!("17620541000{i}0-f{i}.pdf");
+        known.lock().unwrap().insert(name.clone(), up.upload_id);
+        files.push(file(&old_path(ALICE, &name), &up));
+    }
+    // the same old path twice is one attachment
+    files.push(files[0].clone());
+    let c = common::files::conversation(&r, ALICE, "dl").await;
+    let started = Instant::now();
+    a.send_turn(c, &send("dl:1", files)).await.unwrap();
+    let took = started.elapsed();
+    assert!(
+        took < Duration::from_millis(4_500),
+        "four 2 s ingests run together: {took:?}"
+    );
+    assert_eq!(*calls.lock().unwrap(), 4);
+    let n: i64 = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select count(*) from uploads where conversation_id = $1", &[&c])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(n, 4);
+    // the index the lookup uses is built (concurrently, by its own migration) and valid
+    let valid: bool = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select i.indisvalid from pg_index i join pg_class c on c.oid = i.indexrelid
+             where c.relname = 'uploads_legacy_path'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(valid);
+}
+
+#[tokio::test]
+async fn an_ingest_past_the_deadline_is_503_and_after_import_done_a_miss_is_unknown_at_once() {
+    let db = common::fresh_db("lg_slow").await;
+    let t = common::Tokens::new();
+    let pool = aviary_pg::connect(&db.url, "test", 2, Duration::from_secs(10)).unwrap();
+    let known = Arc::new(Mutex::new(HashMap::new()));
+    let (url, calls) = fake_import_slow(pool, known.clone(), Duration::from_secs(20)).await;
+    let bucket = common::test_bucket(&db.url).await;
+    let r = common::replica_import(&db.url, &t, "http://127.0.0.1:1", common::idle(), bucket, &url).await;
+    let a = r.pigeon();
+    let a = a.person(ALICE);
+    let up = upload(&r, ALICE, "s.pdf", b"%PDF-1.4 s").await;
+    let c = common::files::conversation(&r, ALICE, "sl").await;
+    let files = vec![
+        file(&old_path(ALICE, "1-a.pdf"), &up),
+        file(&old_path(ALICE, "2-b.pdf"), &up),
+        file(&old_path(ALICE, "3-c.pdf"), &up),
+    ];
+    let started = Instant::now();
+    let e = a.send_turn(c, &send("sl:1", files.clone())).await.unwrap_err();
+    let took = started.elapsed();
+    assert_eq!(e.code(), Some(&ErrorCode::Unavailable));
+    assert!(
+        took >= Duration::from_millis(4_500) && took < Duration::from_millis(6_500),
+        "one deadline for the whole send: {took:?}"
+    );
+    assert_eq!(*calls.lock().unwrap(), 3);
+    // a native send to an unfenced legacy conversation: 409 route legacy at once, no ingest and no copy
+    let legacy = migrating(&r, ALICE, "lg").await;
+    let uploads_before: i64 = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select count(*) from uploads", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let started = Instant::now();
+    let e = a.send_turn(legacy, &send("lg:1", files.clone())).await.unwrap_err();
+    assert!(legacy_409(&e), "{e:?}");
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(*calls.lock().unwrap(), 3);
+    let uploads_after: i64 = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select count(*) from uploads", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(uploads_before, uploads_after);
+    // once every conversation is owned, nothing is left to ingest: unknown_upload at once
+    r.pool()
+        .get()
+        .await
+        .unwrap()
+        .execute("update import_control set all_owned_at = now()", &[])
+        .await
+        .unwrap();
+    let started = Instant::now();
+    let e = a.send_turn(c, &send("sl:2", files)).await.unwrap_err();
+    assert_eq!(e.code(), Some(&ErrorCode::UnknownUpload));
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(*calls.lock().unwrap(), 3);
+}
+
+#[tokio::test]
+async fn a_teed_upload_attached_by_its_id_and_purged_keeps_its_old_path() {
+    let db = common::fresh_db("lg_teepurge").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let a = r.pigeon();
+    let a = a.person(ALICE);
+    let teed = upload(&r, ALICE, "g.pdf", b"%PDF-1.4 gate").await;
+    let path = old_path(ALICE, "1762054020000-g.pdf");
+    a.upload_legacy_path(
+        teed.upload_id,
+        &LegacyPathRequest {
+            legacy_path: path.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    // pigeon attaches the upload itself by its magpie id (the gate-time path), then the conversation is purged
+    let c = common::files::conversation(&r, ALICE, "g").await;
+    a.send_turn(
+        c,
+        &send("g:1", vec![file(&format!("uploads/{}/g.pdf", teed.upload_id), &teed)]),
+    )
+    .await
+    .unwrap();
+    r.pool()
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            "update conversations set run_state = 'idle', active_turn = null where id = $1",
+            &[&c],
+        )
+        .await
+        .unwrap();
+    a.delete_conversation(c).await.unwrap();
+    a.purge_conversation(c).await.unwrap();
+    let gone: i64 = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select count(*) from uploads where id = $1", &[&teed.upload_id])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(gone, 0);
+    // a composer still holding the old path sends it elsewhere: it resolves through the record
+    let c2 = common::files::conversation(&r, ALICE, "g2").await;
+    a.send_turn(c2, &send("g2:1", vec![file(&path, &teed)])).await.unwrap();
+    let n: i64 = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select count(*) from uploads where conversation_id = $1", &[&c2])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(n, 1);
 }
