@@ -97,7 +97,8 @@ arrives.
 - **YYC features** (`src/yyc/`): sent-file cards (`sent-files.tsx`; kept visible when a turn folds,
   `agent-stream/turn-collapse/model.ts`), paths in replies download through CloudCLI, uploads through
   `/api/assets/files` (`composer/actions.ts`), the "preparing the workspace" chip (`sandbox-status.ts`,
-  `sandbox-chip.tsx`), typing warms a host (`warm.ts`), the greeting with the person's first name (`greeting.ts`,
+  `sandbox-chip.tsx`; only while a sent message waits on the sandbox, the hub never shows it for a turn nobody sent:
+  Deyao, 2026-11-03), typing warms a host (`warm.ts`), the greeting with the person's first name (`greeting.ts`,
   `me.ts`), sharing (`share.tsx`, and the read-only page `app/s/[id].tsx`: the server sends the snapshot as timeline
   rows built by the same `SessionTimeline`, the page hydrates them like a conversation's history and renders the chat's
   own `AgentStreamView` read only, its files read through the share via `ConversationFilesContext`), the conversation menu
