@@ -76,7 +76,9 @@ supervisor mid-turn: the turn completes, every transcript line once in magpie), 
 mid-turn: `sandbox.lost` within 40 s, the next turn on a new sandbox sees the history), E18 (the same requests through
 each pigeon Pod answer alike), E9 (rollouts of pigeon, magpie, hermit and the gateway one after the other during a
 90 s turn: the turn completes, the socket, reopened when pigeon's rollout closes it and resumed after its last row,
-sees every row once), E24 (hermit at 0 replicas for 3 minutes during a turn with a tool call: the turn
+sees every row once), E13 (a share seen by another person stops at the share point; continuing it
+makes the viewer's conversation with the shared `/workspace`), E15 (view as: an admin's view of Alice lists her
+conversations and refuses a rename and a delete; staff cannot start one; the link is refused to anyone else), E24 (hermit at 0 replicas for 3 minutes during a turn with a tool call: the turn
 completes), E12 (the idle release, then a new sandbox that resumes the history) and E17 (seven starts with six slots:
 never more than six sandboxes, the seventh waits and completes once a pool victim frees a slot; the harness's
 `reserveSeconds` and `poolVictimIdleSeconds` are 20 so that happens inside `capacityWaitSeconds`). Last, `stale`: magpie 6.10's stale append end to end (WP-12's carried item),

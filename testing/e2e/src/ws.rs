@@ -37,7 +37,12 @@ impl std::fmt::Debug for Ws {
 impl Ws {
     /// Opens `<base>/paseo-ws` and says hello; the socket and the `server_info` payload.
     pub async fn open(base: &str, token: &str) -> anyhow::Result<(Self, Value)> {
-        let url = format!("{}/paseo-ws", base.replacen("http://", "ws://", 1));
+        Self::open_query(base, token, "").await
+    }
+
+    /// [`Ws::open`] with a query on the socket's URL (a view-as token: `?jarvis_view_as=…`).
+    pub async fn open_query(base: &str, token: &str, query: &str) -> anyhow::Result<(Self, Value)> {
+        let url = format!("{}/paseo-ws{query}", base.replacen("http://", "ws://", 1));
         let mut req = url.into_client_request()?;
         req.headers_mut().insert("cf-access-token", token.parse()?);
         let (stream, _) = tokio_tungstenite::connect_async(req).await.context("socket upgrade")?;

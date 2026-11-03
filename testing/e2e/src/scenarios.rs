@@ -11,8 +11,8 @@ use crate::{ADMIN, ALICE, Harness, JFS, PIGEON, STRANGER, TURN_MODEL, eventually
 
 /// The scenarios in the order `aviary-e2e` runs them when none is named.
 pub const ALL: &[&str] = &[
-    "e1", "e2", "e3", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e9", "e24", "e12", "e17",
-    "stale",
+    "e1", "e2", "e3", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e9", "e13", "e15", "e24",
+    "e12", "e17", "stale",
 ];
 
 /// How long a turn may take, sandbox start included (the image is local; the first start makes the host).
@@ -38,6 +38,8 @@ pub async fn run(h: &Harness, name: &str) -> anyhow::Result<()> {
         "e6" => e6(h).await,
         "stale" => stale(h).await,
         "e9" => e9(h).await,
+        "e13" => e13(h).await,
+        "e15" => e15(h).await,
         "e7" => e7(h).await,
         other => bail!("no scenario {other}"),
     }
@@ -1348,4 +1350,156 @@ async fn e9(h: &Harness) -> anyhow::Result<()> {
     eprintln!("e9: four rollouts during the turn, the socket reopened {reopened} times");
     ws.close().await;
     Ok(())
+}
+
+/// Another allowed person (the catalogue allows `@example.org`).
+const BOB: &str = "bob@example.org";
+
+/// E13: a share viewed by another person shows the rows up to the share point; continuing it makes a conversation
+/// of the viewer's with the shared `/workspace` as it was.
+async fn e13(h: &Harness) -> anyhow::Result<()> {
+    let alice = h.mint(ALICE, 3600, None).await?;
+    let bob = h.mint(BOB, 3600, None).await?;
+    let m = marker("E13");
+    h.script(json!({"match": {"textContains": m, "model": TURN_MODEL},
+                    "reply": [{"toolUse": {"name": "Bash", "input": {"command": "echo shared > /workspace/s.txt",
+                                                                      "description": "the shared file"}}}],
+                    "times": 1}))
+        .await?;
+    as_alice(h, |mut ws| async move {
+        let r = async {
+            let id = create(&mut ws, &format!("Something to share ({m})")).await?;
+            let end = turn_end_kind(&mut ws, &id, TURN_WAIT).await?;
+            ensure!(end["type"] == "turn_completed", "the turn ended {end}");
+            let resp = h
+                .pigeon(Method::POST, &format!("/api/jarvis/sessions/{id}/shares"), &alice)
+                .send()
+                .await?;
+            let status = resp.status().as_u16();
+            let share: Value = resp.json().await.unwrap_or_default();
+            ensure!(status == 201, "share: {status} {share}");
+            let share_id = share["id"].as_str().context("no share id")?.to_owned();
+            let shared_rows = timeline(&mut ws, &id).await?.len();
+            // after the share point: more rows the viewer must not see
+            send(&mut ws, &id, "After the share").await?;
+            let end = turn_end_kind(&mut ws, &id, TURN_WAIT).await?;
+            ensure!(end["type"] == "turn_completed", "the later turn ended {end}");
+            let resp = h
+                .pigeon(Method::GET, &format!("/api/jarvis/shares/{share_id}"), &bob)
+                .send()
+                .await?;
+            let status = resp.status().as_u16();
+            let view: Value = resp.json().await.unwrap_or_default();
+            ensure!(
+                status == 200 && view["isOwner"] == false,
+                "the share as {BOB}: {status} {view}"
+            );
+            let n = view["timeline"].as_array().map_or(0, Vec::len);
+            ensure!(
+                n == shared_rows,
+                "the share shows {n} rows, {shared_rows} at the share point"
+            );
+            let resp = h
+                .pigeon(Method::POST, &format!("/api/jarvis/shares/{share_id}/continue"), &bob)
+                .send()
+                .await?;
+            let status = resp.status().as_u16();
+            let cont: Value = resp.json().await.unwrap_or_default();
+            ensure!(status == 201, "continue: {status} {cont}");
+            let new_id = cont["sessionId"].as_str().context("no sessionId")?.to_owned();
+            let (mut bws, _) = Ws::open(PIGEON, &bob).await?;
+            let a = agent(&mut bws, &new_id).await?;
+            bws.close().await;
+            ensure!(
+                a["id"] == new_id.as_str(),
+                "{BOB} cannot open the continued conversation: {a}"
+            );
+            let copy = std::fs::read(format!("{JFS}/ws/{new_id}/s.txt")).context("the frozen /workspace")?;
+            ensure!(copy == b"shared\n", "the continued /workspace: {copy:?}");
+            Ok(())
+        }
+        .await;
+        (ws, r)
+    })
+    .await
+}
+
+/// E15: view as (pigeon 6): an admin starts a view of Alice, sees her conversations read-only; the link is refused
+/// to anyone else.
+async fn e15(h: &Harness) -> anyhow::Result<()> {
+    let admin = h.mint(ADMIN, 3600, None).await?;
+    let alice = h.mint(ALICE, 3600, None).await?;
+    // a conversation of Alice's to look at
+    let (mut aws, _) = Ws::open(PIGEON, &alice).await?;
+    let id = create(&mut aws, &format!("Alice's own ({})", marker("E15"))).await?;
+    turn_end_kind(&mut aws, &id, TURN_WAIT).await?;
+    aws.close().await;
+    let no_redirect = aviary_core::http::client_builder(&aviary_core::version::Build::new("aviary-e2e"), None)
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    let start = |token: &str| {
+        no_redirect
+            .post(format!("{PIGEON}/api/jarvis/view-as"))
+            .header("cf-access-token", token)
+            .header("sec-fetch-site", "same-origin")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(format!("user={ALICE}"))
+    };
+    let code = start(&alice).send().await?.status().as_u16();
+    ensure!(code == 403, "a view started by staff: {code}");
+    let resp = start(&admin).send().await?;
+    let code = resp.status().as_u16();
+    let location = resp
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    ensure!(code == 303, "the view's start: {code}");
+    let token = location
+        .split_once("#jarvis-view-as=")
+        .map(|(_, t)| t.to_owned())
+        .context("no token")?;
+    let query = format!("?jarvis_view_as={token}");
+    let resp = h
+        .pigeon(Method::GET, &format!("/api/jarvis/me{query}"), &admin)
+        .send()
+        .await?;
+    let me: Value = resp.json().await.unwrap_or_default();
+    ensure!(me["viewAs"]["user"] == ALICE, "me in the view: {me}");
+    let s = h
+        .pigeon(Method::GET, &format!("/api/jarvis/me{query}"), &alice)
+        .send()
+        .await?
+        .status()
+        .as_u16();
+    ensure!(s == 403, "the link used by someone else: {s}");
+    let (mut vws, _) = Ws::open_query(PIGEON, &admin, &query).await?;
+    let r = async {
+        let (_, list) = vws.rpc("fetch_agents_request", json!({"page": {"limit": 200}})).await?;
+        ensure!(
+            list.to_string().contains(&id),
+            "Alice's conversation is not in the view's list"
+        );
+        let (kind, p) = vws
+            .rpc("update_agent_request", json!({"agentId": id, "title": "renamed"}))
+            .await?;
+        ensure!(
+            kind == "rpc_error" && p["code"] == "view_as_read_only",
+            "a rename in the view: {kind} {p}"
+        );
+        let (kind, p) = vws.rpc("archive_agent_request", json!({"agentId": id})).await?;
+        ensure!(
+            kind == "rpc_error" && p["code"] == "view_as_read_only",
+            "a delete in the view: {kind} {p}"
+        );
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    if r.is_err() {
+        eprintln!("{}", vws.tail(20));
+    }
+    vws.close().await;
+    r
 }
