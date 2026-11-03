@@ -380,6 +380,32 @@ function GeneralSection({ settings, handleLanguageChange }: GeneralSectionProps)
   );
 }
 
+// YYC AI's Android app (DE0CH/claudecodeui android/README.md): the router serves the newest signed APK to signed-in
+// staff. Shown in browsers only, not inside the Android app itself (its WebView names itself YYCAI-Android).
+const ANDROID_APK_PATH = "/api/jarvis/android.apk";
+
+function AndroidAppSection() {
+  const { t } = useTranslation();
+  const handleDownload = useCallback(() => {
+    if (typeof window !== "undefined") window.location.assign(ANDROID_APK_PATH);
+  }, []);
+  if (!isWeb || (typeof navigator !== "undefined" && navigator.userAgent.includes("YYCAI-Android"))) return null;
+  return (
+    <SettingsSection title={t("settings.general.androidApp.title")}>
+      <SettingsCard>
+        <SettingsRow
+          label={t("settings.general.androidApp.label")}
+          hint={t("settings.general.androidApp.description")}
+        >
+          <Button variant="secondary" size="sm" onPress={handleDownload} testID="android-app-download">
+            {t("settings.general.androidApp.download")}
+          </Button>
+        </SettingsRow>
+      </SettingsCard>
+    </SettingsSection>
+  );
+}
+
 interface DiagnosticsSectionProps {
   voiceAudioEngine: ReturnType<typeof useVoiceAudioEngineOptional>;
   isPlaybackTestRunning: boolean;
@@ -1292,6 +1318,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
           return (
             <>
               <GeneralSection settings={settings} handleLanguageChange={handleLanguageChange} />
+              <AndroidAppSection />
               {isDesktopApp ? <OpenLocationSection /> : null}
             </>
           );
