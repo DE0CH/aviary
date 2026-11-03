@@ -17,6 +17,8 @@ pub mod files;
 #[allow(clippy::missing_errors_doc)]
 pub mod hermit;
 #[allow(clippy::missing_errors_doc)]
+pub mod legacy;
+#[allow(clippy::missing_errors_doc)]
 pub mod ops;
 #[allow(clippy::missing_errors_doc)]
 pub mod sandbox_cc;

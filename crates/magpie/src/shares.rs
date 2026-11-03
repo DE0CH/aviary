@@ -376,13 +376,26 @@ pub async fn list(db: &impl Db, person: &Person, conversation: Uuid) -> Result<S
 /// M16 `DELETE /v1/shares/{shareId}`: the owner revokes a live link.
 ///
 /// # Errors
-/// 403 `view_as_read_only`; 404 for anyone else's, an unknown or a revoked link; a statement error.
+/// 403 `view_as_read_only`; 404 for anyone else's, an unknown or a revoked link; 409 `conversation_migrating`; a
+/// statement error.
 pub async fn revoke(app: &Magpie, person: &Person, share_id: &str) -> Result<()> {
     person.refuse_view_as()?;
     if !valid_id(share_id) {
         return Err(Error::not_found());
     }
     aviary_pg::tx!(&app.pool, |t| -> Result<()> {
+        // a migrating conversation's shares are the old stack's (revoked through pigeon's legacy upstream)
+        if let Some(c) = t
+            .query_opt(
+                "select s.conversation_id from shares s where s.id = $1 and s.owner = $2",
+                &[&share_id, &person.email],
+            )
+            .await?
+        {
+            crate::conversations::lock(t, &person.email, c.get(0))
+                .await?
+                .refuse_migrating()?;
+        }
         let row = t
             .query_opt(
                 "update shares set revoked_at = now(), revoke_reason = 'owner'
@@ -398,6 +411,25 @@ pub async fn revoke(app: &Magpie, person: &Person, share_id: &str) -> Result<()>
     .await?;
     tracing::info!("share revoked");
     Ok(())
+}
+
+/// The conversation of the person's share `share_id` (for the fenced wait of a revoke, cutover 6.4).
+///
+/// # Errors
+/// When the statement fails.
+pub async fn conversation_of(pool: &aviary_pg::Pool, person: &Person, share_id: &str) -> Result<Option<Uuid>> {
+    if !valid_id(share_id) {
+        return Ok(None);
+    }
+    Ok(pool
+        .get()
+        .await?
+        .query_opt(
+            "select conversation_id from shares where id = $1 and owner = $2",
+            &[&share_id, &person.email],
+        )
+        .await?
+        .map(|r| r.get(0)))
 }
 
 /// A live share as a reader sees it: 404 for a revoked share, one whose source is in Recently deleted or was purged.

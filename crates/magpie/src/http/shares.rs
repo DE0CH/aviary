@@ -18,12 +18,27 @@ pub async fn list(app: &Magpie, ctx: Ctx, id: Uuid) -> Answer<SharesList> {
 
 /// `POST /v1/conversations/{id}/shares`.
 pub async fn create(app: &Magpie, ctx: Ctx, id: Uuid) -> Answer<ShareRef> {
-    answer(async { shares::create(app, &Person::from_ctx(&ctx)?, id).await }.await)
+    answer(
+        async {
+            let person = Person::from_ctx(&ctx)?;
+            crate::legacy::fence::native(app, id, || shares::create(app, &person, id)).await
+        }
+        .await,
+    )
 }
 
 /// `DELETE /v1/shares/{shareId}`.
 pub async fn revoke(app: &Magpie, ctx: Ctx, share_id: String) -> Answer<()> {
-    answer(async { shares::revoke(app, &Person::from_ctx(&ctx)?, &share_id).await }.await)
+    answer(
+        async {
+            let person = Person::from_ctx(&ctx)?;
+            match shares::conversation_of(&app.pool, &person, &share_id).await? {
+                Some(id) => crate::legacy::fence::native(app, id, || shares::revoke(app, &person, &share_id)).await,
+                None => shares::revoke(app, &person, &share_id).await,
+            }
+        }
+        .await,
+    )
 }
 
 /// `GET /v1/shares/{shareId}`.

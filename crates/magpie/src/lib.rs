@@ -20,6 +20,7 @@ pub mod files;
 pub mod hermit;
 pub mod http;
 pub mod jobs;
+pub mod legacy;
 pub mod limits;
 pub mod live;
 pub mod rows;

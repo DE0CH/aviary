@@ -33,6 +33,7 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 | `src/http/` | the handlers, one module per route group (no SQL) |
 | `src/turns/` | turns (magpie 8): admission (M7, M3's first message), the driver (hermit's get-or-start and long-poll), the command queue and acks, the supervisor's reports and heartbeat reconciliation, cancel (M8) and ask answers (M11), titles, the sweeper (deadlines, watchdog, lapsed claims, availability tick), and `end::end`, the one way a turn ends |
 | `src/hermit/` | the hermit sandbox-events feed follower (magpie 8.7, R8), run by the job leader |
+| `src/legacy/` | the switch window (WP-51; DESIGN 9.2-9.5, cutover 6.4 and 7.8): `tickets` (taken before every legacy write, closed only on an outcome), `fence` (the importer's fence, release and unfence, the 3 s lease, the fenced wait of native mutations), `mirror` (the running mirror's `run_state`), `paths` (old asset paths resolved through `uploads.legacy_path`, `import_uploads` and `ingest`'s synchronous ingest, a fresh upload copy per send), `metrics`; `a6_contraction.sql` (the A6 schema change, tested). Deleted in A6 except `paths`, which goes in A7 |
 
 ## The internal seam
 
@@ -100,7 +101,8 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
 - `POST /v1/conversations/{id}/delete` answers the Conversation, as `magpie-api` (the contract) has it, not
   `{deletedAt}` (magpie 9.6).
 - A migrating conversation's mutations answer 409 `conversation_migrating` with `route: "legacy"` and
-  `retryAfterMs` (DESIGN 12 D14, cutover 6.4); the fence's wait is the window routes' (WP-51).
+  `retryAfterMs` (DESIGN 12 D14, cutover 6.4); while it is fenced they wait for the release first (`legacy::fence::
+  native`, at most what is left of the fence's 3 s lease) and then run natively.
 - The applied migrations are recorded in aviary-pg's `_migrations`, not `schema_migrations` (platform 4.3).
 - `0001_init.sql` adds the index `events_asks` (the open ask of `Conversation.asks` is read from the ask events).
 - The replica name comes from the downward API's `POD_NAME` (aviary-core's `log::init_in_pod` reads it), not a
@@ -242,8 +244,8 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
     also keeps the person's whole answer, which `ask.resolved` carries; the supervisor receives the typed command.
   - `title` is queued only while no `title` command is pending.
   - The heartbeat's extra fields (`gen`, `supervisor`, `cc`) are logged; the admin reads that show them are WP-15's.
-  - Old asset paths in `files[].path` (the switch window's legacy uploads) answer `unknown_upload` until WP-51's
-    window routes resolve them.
+  - Old asset paths in `files[].path` (the switch window's legacy uploads) are resolved by `legacy::paths` before
+    the admission (WP-51).
   - The end report's `transcript_pending` check reads the conversation's `cc.*` events and the last 2,000 lines of
     its main transcript (`cc_lines` stubs, which keep each line's `uuid`).
   - The sandbox routes check the lease as the cc routes do: the current `lease_id`, held by the calling sandbox.
@@ -401,3 +403,28 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   (hermit answers 200 for every well-formed address), is 503 and purges nothing.
 - A person purge also deletes the leaver's unattached uploads, and answers 409 `conversation_migrating` (after
   purging the rest) while the importer holds one of their conversations; a repeat finishes it.
+
+### The switch window (WP-51)
+
+- Tickets, the fence and the legacy-path record are three pigeon routes in `magpie-api` (`legacy_ticket`,
+  `legacy_ticket_done`, `upload_legacy_path`); the fence, release, unfence, running mirror and `import_uploads`
+  writes are library functions the importer (`crates/magpie-import`, linked into `magpie import …`) calls on the
+  same database, so they need no route.
+- A ticket's outcome is one of `started`, `completed`, `failed` (a send), `applied` (anything else) or `refused`;
+  `delivered` is recorded (`legacy_tickets.delivered_at`) and closes nothing (switch-final C5.1). A closed ticket
+  notifies `magpie_legacy` (`<conversation>:0`) for the importer's wake on dirty.
+- A fence is a lease: `conversations.legacy_fence_at` older than 3 s holds nothing, cannot be released, and is
+  cleared by the next writer that finds it (a ticket call, a waiting mutation). The release refuses a lapsed fence
+  and an open ticket, and stores the old child's model and the mapped `name_source` (`coalesce`: `None` keeps the
+  imported value).
+- Old asset paths are held in canonical form, the file name inside the person's old asset folder
+  (`magpie_api::legacy::legacy_asset_name`: the path ends in `.claude/cloudcli-assets/<name>`, and the folder above
+  `.claude`, when there is one, must be the person's key), so `import_uploads` is keyed by `(person, legacy_path)`
+  rather than by the absolute path (whose prefix is the old pods' home root).
+- The synchronous ingest calls `POST http://magpie-import/v1/ingest-upload` (`{person, legacyPath}` → 200 ingested,
+  404 no such file) with `MAGPIE_TOKEN_IMPORT`; an unreachable import answers the send 503 `unavailable` (retryable)
+  rather than 400 `unknown_upload`, which is kept for a path that resolves nowhere.
+- Retention keeps unattached uploads that carry `legacy_path` or are in `import_uploads` until A7; every send
+  attaches a fresh copy, which retention treats as any other upload.
+- A share revoke of a migrating conversation answers 409 `conversation_migrating` (cutover 6.4's table lists it;
+  the revoke route checked nothing before).

@@ -24,6 +24,8 @@ kamadak-exif.workspace = true
 libheif-rs = { workspace = true, default-features = false, features = ["v1_17"] }
 magpie-api = { path = "../magpie-api" }
 moka.workspace = true
+prometheus-client.workspace = true
+reqwest.workspace = true
 ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true

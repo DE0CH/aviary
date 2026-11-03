@@ -8,7 +8,7 @@
 //!
 //! Attachments name the person's unattached uploads: `images[].uploadId`, and the upload id inside each
 //! `files[].path` (`uploads/<uploadId>/<name>`, as M13 returned it). Old asset paths (the switch window's legacy
-//! paths, magpie 8.2) are the window routes' (WP-51) and answer `unknown_upload` here.
+//! paths, magpie 8.2) are resolved to fresh uploads before the transaction (`crate::legacy::paths`).
 
 use std::collections::HashSet;
 
@@ -113,6 +113,22 @@ pub async fn send(pool: &Pool, person: &Person, id: Uuid, req: SendRequest) -> R
     })
     .await?;
     Ok(Sent { answer })
+}
+
+/// Whether the conversation already has the turn of `client_message_id` (a repeat admits nothing).
+///
+/// # Errors
+/// When the statement fails.
+pub async fn is_repeat(pool: &Pool, id: Uuid, client_message_id: &str) -> Result<bool> {
+    Ok(pool
+        .get()
+        .await?
+        .query_opt(
+            "select 1 from turns where conversation_id = $1 and client_message_id = $2",
+            &[&id, &client_message_id],
+        )
+        .await?
+        .is_some())
 }
 
 /// An upload being attached.

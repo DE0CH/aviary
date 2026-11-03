@@ -25,6 +25,7 @@ fn a_signal_while_postgres_cannot_be_reached_ends_the_start() {
         .env("MAGPIE_ACCEPT_HERMIT", "test-hermit")
         .env("MAGPIE_ACCEPT_ADMIN", "test-admin")
         .env("MAGPIE_TOKEN_HERMIT", "test-magpie-hermit")
+        .env("MAGPIE_TOKEN_IMPORT", "test-magpie-import")
         .env("POD_NAME", "magpie-binary-test")
         .env("MAGPIE_S3_ENDPOINT", "http://127.0.0.1:1")
         .env("MAGPIE_S3_REGION", "us-east-1")

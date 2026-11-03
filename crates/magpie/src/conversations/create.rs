@@ -38,7 +38,11 @@ pub fn provisional_title(text: &str) -> Option<String> {
     }
 }
 
-fn validate(req: &CreateRequest) -> Result<()> {
+/// M3's checks that need no database.
+///
+/// # Errors
+/// 400 `bad_request` / `too_many_attachments`, 413 `too_large`.
+pub fn validate(req: &CreateRequest) -> Result<()> {
     let key = req.idempotency_key.as_str();
     if key.trim().is_empty() || key.len() > limits::IDEMPOTENCY_KEY_MAX {
         return Err(Error::bad_request("idempotencyKey must be 1-200 bytes"));
@@ -146,6 +150,22 @@ async fn create_tx(t: &Tx<'_>, person: &Person, req: &CreateRequest) -> Result<(
     }
     changes::upserted(t, &person.email, id).await?;
     Ok((true, id))
+}
+
+/// Whether the person already made the create with `key` (a repeat admits nothing).
+///
+/// # Errors
+/// When the statement fails.
+pub async fn exists(pool: &Pool, person: &Person, key: &str) -> Result<bool> {
+    Ok(pool
+        .get()
+        .await?
+        .query_opt(
+            "select 1 from conversations where person = $1 and create_key = $2",
+            &[&person.email, &key],
+        )
+        .await?
+        .is_some())
 }
 
 /// M4: the person's create with `key`.

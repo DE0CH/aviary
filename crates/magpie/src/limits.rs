@@ -107,6 +107,10 @@ pub const STATEMENT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const UNAVAILABLE_RETRY_AFTER_S: u64 = 1;
 /// 409 `conversation_migrating`: `retryAfterMs` (cutover 6.4).
 pub const MIGRATING_RETRY_AFTER_MS: u64 = 2_000;
+/// A fence's lease (cutover 7.8): fence to release is at most this; an older fence holds nothing.
+pub const FENCE_LEASE: Duration = Duration::from_secs(3);
+/// The synchronous ingest of one old asset (magpie 8.2 step 4).
+pub const INGEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Request bodies, every route: the largest any route takes (an upload, 50 MiB, with headroom). Routes with a
 /// smaller limit (a cc write: 16 MiB) check their own.

@@ -75,6 +75,8 @@ fn check_image(path: Option<&str>) -> ExitCode {
 async fn serve() -> ExitCode {
     let build = build();
     log::init_in_pod(&build, log::Output::Stdout);
+    let mut registry = ops::registry(&build);
+    let legacy_metrics = magpie::legacy::Metrics::register(&mut registry);
     let cfg = Config {
         database_url: env::required("MAGPIE_DATABASE_URL"),
         callers: auth::callers_from_env(),
@@ -88,8 +90,10 @@ async fn serve() -> ExitCode {
             access_key_id: env::required("MAGPIE_S3_ACCESS_KEY_ID"),
             secret_access_key: env::required("MAGPIE_S3_SECRET_ACCESS_KEY"),
         },
+        import_url: magpie::legacy::ingest::URL.to_owned(),
+        import_token: aviary_core::auth::outbound_token("MAGPIE", "IMPORT"),
+        legacy_metrics,
     };
-    let registry = ops::registry(&build);
     let ops = ops::Ops::new(build, registry);
     if let Err(e) = ops.spawn(ops::ADDR).await {
         tracing::error!(error = %e, "cannot listen on the ops port");

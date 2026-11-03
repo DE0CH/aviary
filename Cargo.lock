@@ -2636,6 +2636,7 @@ dependencies = [
  "libheif-rs",
  "magpie-api",
  "moka",
+ "prometheus-client",
  "proptest",
  "reqwest",
  "ring",

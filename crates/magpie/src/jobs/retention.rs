@@ -30,17 +30,20 @@ async fn delete_due(pool: &Pool, table: &str, due: &str, age: std::time::Duratio
 }
 
 /// The tables, what is due in each, and after how long. Unattached uploads' blob refs go before the uploads (the
-/// blob GC frees the bytes).
+/// blob GC frees the bytes). The legacy-path set (an upload with `legacy_path` or in `import_uploads`) is kept until
+/// A7 (DESIGN 9.5: drafts keep old asset paths for weeks); each send attaches a fresh copy of it.
 const DUE: &[(&str, &str, std::time::Duration)] = &[
     (
         "blob_refs",
-        "owner_kind = 'upload' and owner in (select id from uploads where conversation_id is null
-           and created_at < now() - make_interval(secs => $1))",
+        "owner_kind = 'upload' and owner in (select id from uploads u where conversation_id is null
+           and created_at < now() - make_interval(secs => $1) and legacy_path is null
+           and not exists (select 1 from import_uploads i where i.upload_id = u.id))",
         limits::UNATTACHED_UPLOAD,
     ),
     (
         "uploads",
-        "conversation_id is null and created_at < now() - make_interval(secs => $1)",
+        "conversation_id is null and created_at < now() - make_interval(secs => $1) and legacy_path is null
+           and not exists (select 1 from import_uploads i where i.upload_id = uploads.id)",
         limits::UNATTACHED_UPLOAD,
     ),
     (

@@ -19,6 +19,7 @@ use magpie_api::changes::{ChangesQuery, ChangesResponse};
 use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse, ListQuery, ListResponse, RenameRequest};
 use magpie_api::events::{EventsPage, EventsQuery};
 use magpie_api::files::{FilesPanel, RawFileQuery};
+use magpie_api::legacy::{LegacyPathRequest, TicketDone, TicketRequest, TicketResponse};
 use magpie_api::live::{LiveFramesRequest, LiveState};
 use magpie_api::ops::{
     AdminConversation, AdminConversationList, AdminListQuery, OpsStats, PeopleQuery, PeopleResponse,
@@ -63,6 +64,13 @@ pub struct Config {
     pub pod: String,
     /// The bucket (`MAGPIE_S3_*`).
     pub bucket: BucketConfig,
+    /// The import Deployment's base URL for the switch window's synchronous ingest: the fixed endpoint name
+    /// `http://magpie-import` ([`crate::legacy::ingest::URL`]), another address only in tests.
+    pub import_url: String,
+    /// `MAGPIE_TOKEN_IMPORT`.
+    pub import_token: String,
+    /// The switch window's metrics (registered on the ops registry by the binary).
+    pub legacy_metrics: crate::legacy::Metrics,
 }
 
 /// The shared state of one replica.
@@ -82,6 +90,10 @@ pub struct Magpie {
     this: std::sync::Weak<Magpie>,
     /// The blob store (bucket, read cache, decode permits).
     pub blobs: Arc<Blobs>,
+    /// The switch window's metrics.
+    pub legacy: crate::legacy::Metrics,
+    /// The import Deployment, for the synchronous ingest of an old asset.
+    pub ingest: crate::legacy::ingest::Ingest,
 }
 
 impl Magpie {
@@ -188,6 +200,7 @@ impl Service {
         let http = aviary_core::http::client_builder(&aviary_core::version::Build::new("magpie"), None)
             .build()
             .map_err(|e| StartError(aviary_pg::Error::Config(format!("http client: {e}"))))?;
+        let ingest = crate::legacy::ingest::Ingest::new(http.clone(), cfg.import_url.clone(), cfg.import_token.clone());
         let hermit = hermit_api::client::Client::new(http, cfg.hermit_url.clone()).bearer(cfg.hermit_token.clone());
         let blobs = Arc::new(Blobs::new(&cfg.bucket, &cfg.database_url).map_err(|e| match e {
             crate::error::Error::Db(d) => StartError(d),
@@ -211,6 +224,8 @@ impl Service {
                 hermit,
                 this: this.clone(),
                 blobs,
+                legacy: cfg.legacy_metrics,
+                ingest,
             }),
             callers: cfg.callers,
             jobs: Some(jobs),
@@ -497,5 +512,17 @@ impl Server for Magpie {
 
     async fn admin_timeline(&self, ctx: Ctx, id: Uuid, query: TimelineQuery) -> Answer<TimelinePage> {
         http::admin::timeline(self, ctx, id, query).await
+    }
+
+    async fn legacy_ticket(&self, ctx: Ctx, id: Uuid, body: TicketRequest) -> Answer<TicketResponse> {
+        http::legacy::ticket(self, ctx, id, body).await
+    }
+
+    async fn legacy_ticket_done(&self, ctx: Ctx, ticket: Uuid, body: TicketDone) -> Answer<()> {
+        http::legacy::ticket_done(self, ctx, ticket, body).await
+    }
+
+    async fn upload_legacy_path(&self, ctx: Ctx, upload_id: Uuid, body: LegacyPathRequest) -> Answer<()> {
+        http::legacy::upload_legacy_path(self, ctx, upload_id, body).await
     }
 }
