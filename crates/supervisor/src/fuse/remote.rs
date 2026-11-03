@@ -248,25 +248,44 @@ impl Remote {
         self.reachable.store(true, Ordering::SeqCst);
     }
 
-    /// Until the guard drops, asks magpie for the tree every half of `healthy_within` and records each answer: the
+    /// Until the guard drops, asks magpie for the tree every third of `healthy_within` and records each answer: the
     /// stuck rule's evidence while nothing else talks to magpie. A start's journal replay runs before the heartbeat
     /// (4.3 step 6, the heartbeat at step 7), so without this a replayed op that magpie holds or keeps refusing while
     /// it answers everything else would block the start for ever instead of ending in EIO and `cc.write_stuck`.
+    ///
+    /// Each probe runs on its own task, so one that hangs until its attempt bound does not delay the next: one
+    /// failed probe leaves at most two periods (two thirds of `healthy_within`) between answers, inside the window
+    /// [`Remote::ok_since`] accepts. The probe is a read (`cc/tree`): it shows that magpie answers, not that it can
+    /// store (a magpie that reads but cannot write counts as healthy, as any successful call does in steady state).
     #[must_use]
     pub fn health_probe(self: &Arc<Self>, rt: &tokio::runtime::Handle) -> HealthProbe {
         let me = self.clone();
-        let every = (self.timing.healthy_within / 2).max(Duration::from_millis(10));
+        let every = Self::probe_every(&self.timing);
         HealthProbe(rt.spawn(async move {
+            let mut probes = tokio::task::JoinSet::new();
+            let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
-                tokio::time::sleep(every).await;
-                let r = tokio::time::timeout(me.timing.attempt, me.client.sandbox(None).cc_tree()).await;
-                match r {
-                    Ok(Ok(_)) => me.record_ok(),
-                    Ok(Err(e)) => tracing::debug!(error = %e, "the start's health probe failed"),
-                    Err(_) => tracing::debug!("the start's health probe timed out"),
+                tokio::select! {
+                    _ = tick.tick() => {}
+                    Some(_) = probes.join_next() => continue,
                 }
+                let me = me.clone();
+                probes.spawn(async move {
+                    let r = tokio::time::timeout(me.timing.attempt, me.client.sandbox(None).cc_tree()).await;
+                    match r {
+                        Ok(Ok(_)) => me.record_ok(),
+                        Ok(Err(e)) => tracing::debug!(error = %e, "the start's health probe failed"),
+                        Err(_) => tracing::debug!("the start's health probe timed out"),
+                    }
+                });
             }
         }))
+    }
+
+    /// The health probe's period: a third of `healthy_within`, at least 10 ms.
+    fn probe_every(t: &Timing) -> Duration {
+        (t.healthy_within / 3).max(Duration::from_millis(10))
     }
 
     fn ok_since(&self, t: Instant) -> bool {
@@ -605,5 +624,46 @@ mod tests {
         )
         .await;
         assert_eq!(w.unwrap(), Ok(7), "a write finds a permit");
+    }
+
+    /// The health probe asks every third of `healthy_within` (10 s with the real constants), and a probe that hangs
+    /// until its attempt bound does not hold back the next one: against a magpie that accepts and never answers,
+    /// a new probe connects every period.
+    #[tokio::test]
+    async fn a_hung_health_probe_does_not_delay_the_next() {
+        assert_eq!(Remote::probe_every(&Timing::default()), Duration::from_secs(10));
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        let accepted = Arc::new(AtomicU32::new(0));
+        let a = accepted.clone();
+        let server = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((c, _)) = l.accept().await {
+                a.fetch_add(1, Ordering::SeqCst);
+                held.push(c);
+            }
+        });
+        let client = magpie_api::client::Client::new(reqwest::Client::new(), &url, "unused");
+        let r = Arc::new(Remote::new(
+            client,
+            Timing {
+                attempt: Duration::from_secs(5),
+                retry_first: Duration::from_millis(10),
+                retry_max: Duration::from_millis(20),
+                stuck_op: Duration::from_secs(600),
+                healthy_within: Duration::from_millis(300),
+            },
+        ));
+        let probe = r.health_probe(&tokio::runtime::Handle::current());
+        tokio::time::sleep(Duration::from_millis(450)).await;
+        let n = accepted.load(Ordering::SeqCst);
+        drop(probe);
+        server.abort();
+        assert!(
+            n >= 3,
+            "{n} probes in 4.5 periods, each still waiting on its own attempt"
+        );
+        assert!(!r.ok_since(r.base), "nothing answered");
     }
 }

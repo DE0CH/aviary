@@ -849,12 +849,23 @@ re-run on current main; the `unique`-across-a-migration half of item 4 (`rig-uni
 ## WP-22 close-out (2026-11-03)
 
 **Changed** (each with a test; CI's `test` job runs them):
-- **The stuck rule at a start** (review 3's open item). `Remote::health_probe` asks magpie for the tree every half of
-  `healthy_within` (7.5 s) while `Core::start` runs, which covers the tree load's repairs and the journal replay
-  (both before the heartbeat of 4.3 step 7), and records each answer. A replayed op that magpie holds while it
-  answers the rest now ends in EIO and `cc.write_stuck` after `STUCK_OP`, and the start goes on (test
+- **The stuck rule at a start** (review 3's open item). `Remote::health_probe` asks magpie for the tree every third
+  of `healthy_within` while `Core::start` runs (`healthy_within` = 2 x `HEARTBEAT_EVERY` = 30 s, so every 10 s),
+  which covers the tree load's repairs and the journal replay (both before the heartbeat of 4.3 step 7), and records
+  each answer. Each probe runs on its own task, so one that hangs until its 30 s attempt bound does not delay the
+  next: after one failed probe the next answer comes at most two periods (20 s) after the last, inside the 30 s
+  window `ok_since` accepts (test `a_hung_health_probe_does_not_delay_the_next`; review 4 found that a sequential
+  probe every 15 s could leave a gap past 30 s). A replayed op that magpie holds while it answers the rest now ends
+  in EIO and `cc.write_stuck` after `STUCK_OP`, and the start goes on (test
   `a_replayed_write_magpie_holds_is_stuck_without_the_heartbeat`; without the probe it fails at its 30 s start
   bound).
+- **Limit of the probe (not changed):** it is a read (`cc/tree`, a `SELECT` on magpie's pool). It shows that magpie
+  answers, not that magpie can store. If magpie can read but not write (for example a Postgres that has turned
+  read-only), the probe counts magpie as healthy, so a write replayed at a start ends in EIO and `cc.write_stuck`
+  after `STUCK_OP`, where spec 9.5 says a general write outage blocks without EIO. The steady state has the same
+  limit, since `record_ok` follows any successful call, reads included; the probe makes it the only signal during a
+  start. A lease-free call that writes does not exist in magpie's sandbox API, and the heartbeat (which does write)
+  starts at step 7.
 - **Every FUSE test is bounded and cleans up after itself.** In `fuse::tests` every start has a 30 s bound. The
   runtime shuts down with a 5 s bound after the sentry's handles close, also after a failed assertion; before, a
   plain drop waited for a start that retried through an outage. The outage test lets magpie back in before it
@@ -893,9 +904,36 @@ Seen in `rlat-l6` and left to WP-23's driver (`cc/report.rs`): after the cold re
 `cc/file` range reads per turn), because some of the waited-for uuids never appear in the tail. Inference: this is
 a cost, not a wrong answer (the turns completed in 2.1-2.4 s).
 
+**Does `rtomb-t5`/`rtomb-t6` answer DESIGN 14 question 2's other branch** ("show the version never rewrites a
+written line")? The evidence (`fabric/fuse-gate/results/wp22/rtomb-t5`, `rtomb-t6`; line numbers are those of
+`transcript-lines.txt`, one per transcript line in order, and of the decompressed `cc-stdout.jsonl.gz`):
+- t5: the first refused answer (`assistant 3323eceb`, `tk1x*`, line 29) is written; Claude Code then writes its own
+  "Your response above was stopped by a safety classifier" prompt (line 31). The refused continuation
+  (`msg_00000002`, `tk2x*`, uuid `f16d6243-…`) appears only on stdout (stdout line 12); stdout line 13 is
+  `model_refusal_fallback` with `retracted_message_uuids: ["f16d6243-…"]`, and no transcript line carries that uuid.
+  The fallback's answer (`6797709f`, `tk3x*`, line 38) follows `system 5dd3e8bf model_refusal_fallback` (line 37).
+- t6: the same after a written tool call: `tool_use` (line 29) and `tool_result` (line 30) stay, the refused answer
+  `ae1a3ff1` (line 34) stays, the retracted `ddfdb877-…` (stdout line 15) is in no transcript line.
+- `report.json` of both runs: `transcript_rewrites: []`, `truncates: []`, `cc_truncate: 0`, `cc_setattr: 0`.
+
+Claude's inference: on the path that 2.1.304 takes (the refusal fallback, the only trigger of `abandonAttempt` that
+fired in the gate's and WP-22's runs), a retraction leaves the file as written, because the retracted message was never written.
+That supports "never rewrites a written line" for this path. It does not show it for the version: the binary
+holds `performRemoveByUuid`, and the other triggers read from it (`streaming_fallback`, `refusal_decline`) did not
+fire here, so a path that removes a written line may exist. Counting this as the "never rewrites" branch is
+Deyao's call.
+
+**Decision request for Deyao** (one bundle; the workflow sends it):
+1. DESIGN 14 question 2: accept the evidence above as "2.1.304 never rewrites a written line" (and record it in
+   DECISIONS.md), or record the tombstone as deferred to a later Claude Code version, or keep WP-22 open until it is
+   triggered on the mount.
+   This also settles the gate's deviation 5 (the tombstone's syscalls stood in for by `sandbox/tombstone.py`).
+2. Accept or reject deviations 4 and 5 of "WP-22 review 3": (4) a supervisor restart during a magpie outage serves
+   nothing until magpie answers; (5) a kept interrupted result is not dropped by the thread's non-mutating requests.
+
 **Still open** (WP-22 is not done until these close):
-- (a) the tombstone rewrite (DESIGN 14, question 2): not reproduced on current main; Deyao's deferral is not in
-  DECISIONS.md.
+- (a) the tombstone rewrite (DESIGN 14, question 2): not reproduced on current main; Deyao's decision (above) is not
+  in DECISIONS.md.
 - (b) item 6's in-cluster 1 MiB p99 and (c) item 3's full-cache 2x rule: both need a magpie outside the sandbox
   (WP-40's fabric).
 - Deviations 4 and 5 (review 3) await Deyao's acceptance.
