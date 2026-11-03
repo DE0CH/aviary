@@ -30,6 +30,11 @@ async fn verify_all(w: &World) {
         let v = verify::verify(&w.imp, id).await.unwrap();
         assert!(v.ok(), "{id} did not verify: {v:?}");
         assert!(v.reingested.is_empty(), "{id} needed a re-ingest: {v:?}");
+        assert!(
+            v.notes.iter().all(|n| n.starts_with("no workspace")),
+            "{id}: the event counts are not the classifier's: {:?}",
+            v.notes
+        );
     }
 }
 
@@ -321,6 +326,10 @@ async fn imported_prompts_get_the_display_fixes() {
     );
     pass::pass(&w.imp, None).await.unwrap();
     verify_all(&w).await;
+    assert!(
+        verify::verify(&w.imp, u).await.unwrap().notes.is_empty(),
+        "the workspace exists"
+    );
     let r = w
         .magpie()
         .get()

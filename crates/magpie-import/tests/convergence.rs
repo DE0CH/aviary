@@ -110,6 +110,7 @@ async fn check(w: &World, m: &Model) {
     assert!(r.errors.is_empty(), "{:?}", r.errors);
     let v = verify::verify(&w.imp, m.id).await.unwrap();
     assert!(v.ok() && v.reingested.is_empty(), "{v:?}");
+    assert!(v.notes.iter().all(|n| n.starts_with("no workspace")), "{v:?}");
     assert_eq!(
         visible(w, m.id).await,
         i64::try_from(m.lines.len()).unwrap(),

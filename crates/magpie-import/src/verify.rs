@@ -45,6 +45,9 @@ pub struct Verdict {
     pub reingested: Vec<String>,
     /// What is still different.
     pub mismatches: Vec<Mismatch>,
+    /// Sanity notes, not a gate (cutover 7.7): event and prompt counts against the classifier's count of the
+    /// source's lines, a workspace not on disk yet.
+    pub notes: Vec<String>,
 }
 
 impl Verdict {
@@ -187,6 +190,7 @@ pub async fn verify(imp: &Importer, id: Uuid) -> Result<Verdict> {
             files: r.files.len(),
             reingested: Vec::new(),
             mismatches,
+            notes: Vec::new(),
         });
     }
     let sources = tree::sources(&imp.jfs, &r.key, &r.psid)?;
@@ -236,13 +240,70 @@ pub async fn verify(imp: &Importer, id: Uuid) -> Result<Verdict> {
             )
             .await?;
     }
+    let notes = sanity(imp, id, &sources, &tree::main_path(&r.psid)).await?;
+    for n in &notes {
+        tracing::warn!(conversation = %id, note = %n, "import sanity");
+    }
     Ok(Verdict {
         conversation: id,
         released: false,
         files: sources.len(),
         reingested,
         mismatches,
+        notes,
     })
+}
+
+/// The classifier's count of the source transcript's complete lines (events, prompts).
+fn classified(abs: &std::path::Path, size: u64) -> Result<(i64, i64)> {
+    use magpie::ccfs::classify::{self, Class, Context};
+    use std::io::{BufRead as _, Read as _};
+    let mut r = std::io::BufReader::new(std::fs::File::open(abs)?.take(size));
+    let (mut events, mut prompts) = (0, 0);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if r.read_until(b'\n', &mut line)? == 0 || !line.ends_with(b"\n") {
+            break;
+        }
+        let v = serde_json::from_slice::<serde_json::Value>(&line).ok();
+        if let Class::Event(e) = classify::classify(v.as_ref(), Context::default()) {
+            events += 1;
+            prompts += i64::from(e.is_prompt);
+        }
+    }
+    Ok((events, prompts))
+}
+
+/// Cutover 7.7's sanity checks (logged, never a gate).
+async fn sanity(imp: &Importer, id: Uuid, sources: &BTreeMap<String, Source>, main: &str) -> Result<Vec<String>> {
+    let mut notes = Vec::new();
+    if let Some(m) = sources.get(main) {
+        let (want_events, want_prompts) = classified(&m.abs, m.stat.size)?;
+        let r = imp
+            .magpie
+            .pool
+            .get()
+            .await?
+            .query_one(
+                "select count(*), count(*) filter (where e.is_prompt) from events e
+                 where e.conversation_id = $1 and e.kind in ('cc.user', 'cc.assistant')
+                   and not exists (select 1 from events x where x.conversation_id = $1 and x.kind = 'retract'
+                                   and x.data->'seqs' @> to_jsonb(e.seq))",
+                &[&id],
+            )
+            .await?;
+        let (events, prompts): (i64, i64) = (r.get(0), r.get(1));
+        if (events, prompts) != (want_events, want_prompts) {
+            notes.push(format!(
+                "{events} events and {prompts} prompts; the source's lines classify as {want_events} and {want_prompts}"
+            ));
+        }
+    }
+    if !imp.jfs.join("ws").join(id.to_string()).is_dir() {
+        notes.push("no workspace on disk (hermit creates it at the first start)".to_owned());
+    }
+    Ok(notes)
 }
 
 /// Every imported conversation, or `ids`.
