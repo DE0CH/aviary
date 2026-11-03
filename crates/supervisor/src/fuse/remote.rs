@@ -493,6 +493,7 @@ mod tests {
     use super::*;
 
     fn remote(stuck_op: Duration) -> Arc<Remote> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let client = magpie_api::client::Client::new(reqwest::Client::new(), "http://127.0.0.1:9", "unused");
         Arc::new(Remote::new(
             client,
