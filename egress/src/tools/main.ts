@@ -13,18 +13,27 @@
 // count as dropped), the pool closes within 2 s, exit 0 with log `drained`: 10 + 150 + 8 + 2 = 170 s, inside the
 // 180 s grace period even with the database blackholed (server.ts DRAIN_MS). A second SIGTERM exits at once.
 import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { log, logError } from "../common/log.ts";
 import { hermitGetter } from "../egress/tokens.ts";
-import { Catalogue } from "./catalogue.ts";
-import { checkConfigEnv, loadToolsConfig } from "./config.ts";
+import { Catalogue, CATALOGUE_PATH } from "./catalogue.ts";
+import { checkConfigEnv, loadToolsConfig, TOOLS_CONFIG_PATH } from "./config.ts";
 import { CallLog, connect, migrate } from "./db.ts";
 import { Liveness } from "./liveness.ts";
 import { acceptList, createToolsServer, DRAIN_MS, FLUSH_MS, POOL_END_MS, type ToolsServer } from "./server.ts";
 import type { Deps } from "./types.ts";
 import { startRefresh, Upstream } from "./upstream.ts";
 
-const API_PORT = 8080;
-const HEALTH_PORT = 9090;
+/** Where tools runs: the pod's fixed paths, ports and hermit address. main() always runs with SITE; only the
+ * end-to-end test of the signal path (test/tools-main.test.ts) runs `run` elsewhere, in a child process of its own. */
+export interface Site {
+  configPath: string;
+  cataloguePath: string;
+  apiPort: number;
+  healthPort: number;
+  hermitUrl: string;
+}
+export const SITE: Site = { configPath: TOOLS_CONFIG_PATH, cataloguePath: CATALOGUE_PATH, apiPort: 8080, healthPort: 9090, hermitUrl: "http://hermit" };
 const COMMIT = process.env.CHAT_COMMIT || "unknown";
 const BUILT_AT = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$/.test(process.env.CHAT_BUILT_AT ?? "") ? process.env.CHAT_BUILT_AT! : null;
 
@@ -36,10 +45,14 @@ function need(name: string): string {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export async function main(): Promise<void> {
+export function main(): Promise<void> {
+  return run(SITE);
+}
+
+export async function run(site: Site): Promise<void> {
   let config, dbUrl: string, hermitToken: string, accept: Buffer[];
   try {
-    config = loadToolsConfig();
+    config = loadToolsConfig(site.configPath);
     dbUrl = need("TOOLS_DATABASE_URL");
     hermitToken = need("TOOLS_TOKEN_HERMIT");
     accept = acceptList(process.env);
@@ -53,8 +66,8 @@ export async function main(): Promise<void> {
   const notReady = new Set(["migrations", "catalogue", "upstreams"]);
   const db = connect(dbUrl);
   const calls = new CallLog(db);
-  const catalogue = new Catalogue();
-  const liveness = new Liveness(hermitGetter("http://hermit", hermitToken));
+  const catalogue = new Catalogue(site.cataloguePath);
+  const liveness = new Liveness(hermitGetter(site.hermitUrl, hermitToken));
   const deps: Deps = { config, env: process.env, fetch: globalThis.fetch };
   const upstreams = config.upstreams.map((u) => new Upstream(u, deps));
   let api: ToolsServer | null = null;
@@ -86,7 +99,7 @@ export async function main(): Promise<void> {
     }
     res.writeHead(404).end();
   });
-  health.listen(HEALTH_PORT, "::");
+  health.listen(site.healthPort, "::", () => log("tools health listening", { port: (health.address() as AddressInfo).port }));
 
   let stopping = false;
   let refresh: { stop(): void } | null = null;
@@ -145,5 +158,6 @@ export async function main(): Promise<void> {
   void r.ready.then(() => notReady.delete("upstreams"));
 
   api = createToolsServer(deps, upstreams, { accept, liveness, catalogue, calls });
-  api.server.listen(API_PORT, "::", () => log("tools listening", { port: API_PORT, upstreams: upstreams.map((u) => u.cfg.prefix) }));
+  const srv = api.server;
+  srv.listen(site.apiPort, "::", () => log("tools listening", { port: (srv.address() as AddressInfo).port, upstreams: upstreams.map((u) => u.cfg.prefix) }));
 }
