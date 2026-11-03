@@ -672,6 +672,7 @@ impl Server for Model {
 
     async fn changes(&self, ctx: Ctx, query: ChangesQuery) -> Result<ChangesResponse, ApiError> {
         self.record("changes", &ctx)?;
+        self.held("changes").await;
         let person = ctx.person.clone().unwrap_or_default();
         let wait = Duration::from_millis(query.wait_ms.unwrap_or(0).min(25_000));
         let deadline = tokio::time::Instant::now() + wait;

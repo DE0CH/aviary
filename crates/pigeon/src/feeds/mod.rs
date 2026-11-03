@@ -589,3 +589,60 @@ impl Backoff {
         self.next = self.min;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)] // tests
+
+    use super::*;
+
+    /// A socket whose upgrade was in flight when the drain took its list registers after it: it is closed 1012 at
+    /// once (after anything queued), so it neither holds the drain to its deadline nor is cut by the exit.
+    #[tokio::test]
+    async fn a_socket_registering_after_the_drain_began_is_closed_1012() {
+        let hub = Hub::default();
+        hub.drain(Duration::ZERO, Duration::from_millis(10), Duration::from_secs(1))
+            .await;
+        let (conn, (mut out, _close)) = Conn::detached("staff@example.com");
+        hub.register(&conn);
+        assert!(conn.is_closing());
+        let queued = out.try_recv().unwrap();
+        assert!(queued.ends_with("close:1012:service restart"), "{queued:?}");
+        // and before the drain, a socket registers open
+        let hub = Hub::default();
+        let (conn, (mut out, _close)) = Conn::detached("staff@example.com");
+        hub.register(&conn);
+        assert!(!conn.is_closing());
+        assert!(out.try_recv().is_err());
+    }
+
+    /// The linger check and the removal read the watchers under one lock: a poller whose linger has run out keeps
+    /// running when a socket watches the conversation by then, and goes only when nobody does.
+    #[test]
+    fn a_timeline_poller_past_its_linger_stays_while_watched() {
+        let hub = Hub::default();
+        let person = "staff@example.com";
+        let conversation = Uuid::new_v4();
+        let key = (person.to_owned(), conversation);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let linger = Duration::from_millis(100);
+        let past = Instant::now().checked_sub(Duration::from_secs(10)).unwrap();
+        {
+            let mut st = hub.st();
+            st.timeline_pollers.insert(key.clone(), tx);
+            st.timeline.entry(key.clone()).or_default().insert(Uuid::new_v4());
+        }
+        let mut idle = Some(past);
+        assert!(!hub.timeline_poller_done(person, conversation, &mut idle, linger));
+        assert_eq!(idle, None, "a watched poller is not idle");
+        assert!(hub.st().timeline_pollers.contains_key(&key));
+        // nobody watches: idle from now, done once the linger has passed
+        hub.st().timeline.remove(&key);
+        assert!(!hub.timeline_poller_done(person, conversation, &mut idle, linger));
+        assert!(idle.is_some());
+        assert!(hub.st().timeline_pollers.contains_key(&key));
+        let mut idle = Some(past);
+        assert!(hub.timeline_poller_done(person, conversation, &mut idle, linger));
+        assert!(!hub.st().timeline_pollers.contains_key(&key));
+    }
+}

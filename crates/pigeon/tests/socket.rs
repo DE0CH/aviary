@@ -533,6 +533,57 @@ async fn list_changes_join_without_loss_or_duplicate() {
     assert_eq!(w["message"]["payload"]["id"], format!("wks_{c1}"));
 }
 
+/// 8.3 on a subscription made again: changes the poller has not yet delivered when the new snapshot is taken are in
+/// that snapshot, so none of them follows it (an older title never lands over the newer snapshot).
+#[tokio::test]
+async fn a_list_subscribed_again_gets_no_change_older_than_its_new_snapshot() {
+    let e = env().await;
+    let mut a = e.ws(STAFF).await;
+    let (_, _) = a.rpc("fetch_agents_request", json!({"subscribe": {}})).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    // the poller's next call after c's upsert waits: the two renames below are not delivered yet
+    let feed = e.m.hold("changes");
+    let c = e.m.add(STAFF, Some("one"));
+    a.wait_for("upsert", |v| {
+        v["message"]["type"] == "agent_update" && v["message"]["payload"]["agent"]["id"] == c.to_string()
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    e.m.edit(c, |conv| conv.title = Some("two".into()));
+    e.m.edit(c, |conv| conv.title = Some("three".into()));
+    // subscribed again once the list cache has expired: from the request on, until the new snapshot's join, the
+    // socket has no floor, so no change goes out (with the old floor kept, a poll answered between the snapshot and
+    // the join would send "two" after a snapshot that has "three")
+    tokio::time::sleep(pigeon::feeds::LIST_CACHE).await;
+    let list = e.m.hold("list_conversations");
+    let rid = a.rid();
+    a.session(json!({"type": "fetch_agents_request", "requestId": rid, "subscribe": {}}))
+        .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let hub = e.h.app.socket().hub().unwrap();
+    let conns = hub.conns_of(STAFF);
+    assert_eq!(conns.len(), 1);
+    assert_eq!(conns[0].floor(pigeon::paseo::transport::ListKind::Agents), None);
+    list.notify_one();
+    let snap = a.next_session("fetch_agents_response").await;
+    let head = snap["sync"]["headSeq"].as_u64().unwrap();
+    assert_eq!(snap["entries"][0]["agent"]["title"], "three", "{snap}");
+    feed.notify_one();
+    let late = a.drain_for(Duration::from_millis(600)).await;
+    let updates: Vec<&Value> = late.iter().filter(|v| v["message"]["type"] == "agent_update").collect();
+    assert!(
+        updates.is_empty(),
+        "changes up to the snapshot's head {head} followed it: {updates:?}"
+    );
+    // the feed goes on past the snapshot
+    e.m.edit(c, |conv| conv.title = Some("four".into()));
+    let v = a
+        .wait_for("the next upsert", |v| v["message"]["type"] == "agent_update")
+        .await;
+    assert_eq!(v["message"]["payload"]["agent"]["title"], "four");
+    assert!(v["message"]["payload"]["seq"].as_u64().unwrap() > head);
+}
+
 #[tokio::test]
 async fn a_history_rewrite_sends_one_replacement() {
     let e = env().await;

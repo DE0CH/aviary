@@ -825,3 +825,49 @@ fn too_big(e: axum::Error) -> bool {
         .downcast::<Error>()
         .is_ok_and(|e| matches!(*e, Error::Capacity(_)))
 }
+
+/// A detached socket's outbound queue and close signal.
+#[cfg(test)]
+pub(crate) type DetachedEnds = (mpsc::Receiver<String>, watch::Receiver<Option<(u16, String)>>);
+
+#[cfg(test)]
+impl Conn {
+    /// A socket with no connection behind it, for the hub's unit tests, with its outbound queue and close signal.
+    pub(crate) fn detached(person: &str) -> (Arc<Self>, DetachedEnds) {
+        let (out, rx) = mpsc::channel(QUEUE_FRAMES);
+        let (close_tx, close_rx) = watch::channel(None);
+        let conn = Arc::new(Self {
+            id: Uuid::new_v4(),
+            person: person.to_owned(),
+            viewer: None,
+            out,
+            out_bytes: AtomicUsize::new(0),
+            close_tx,
+            closing: AtomicBool::new(false),
+            st: Mutex::new(ConnState {
+                hello: false,
+                protocol: 0,
+                client_type: String::new(),
+                app_version: String::new(),
+                agents_sub: None,
+                workspaces_sub: None,
+                projects_sub: None,
+                timeline_sub: Uuid::new_v4().to_string(),
+                timeline_agents: HashSet::new(),
+                agents_floor: None,
+                workspaces_floor: None,
+                last_request: Instant::now(),
+            }),
+            inflight: AtomicUsize::new(0),
+            idle: tokio::sync::Notify::new(),
+            pong: AtomicBool::new(true),
+            quiet: Duration::from_millis(300),
+            metrics: crate::metrics::Metrics::register(&mut prometheus_client::registry::Registry::default()),
+            delivered: AtomicU64::new(0),
+            frames: None,
+            transfers: AtomicUsize::new(0),
+            parked: AtomicBool::new(false),
+        });
+        (conn, (rx, close_rx))
+    }
+}
