@@ -231,10 +231,11 @@ impl Legacy {
             return None;
         }
         let who = self.who(id)?;
-        let path_q = req
-            .uri
-            .path_and_query()
-            .map_or_else(|| req.uri.path().to_owned(), |p| p.as_str().to_owned());
+        // the view travels in the old key's header: pigeon's own token in the query would be refused there
+        let path_q = match crate::http::query_without(req.uri.query(), crate::paseo::compat::VIEW_AS_QUERY) {
+            Some(q) if !q.is_empty() => format!("{}?{q}", req.uri.path()),
+            _ => req.uri.path().to_owned(),
+        };
         let mut b = self.request(Method::GET, &path_q, &who);
         for name in [
             header::RANGE,

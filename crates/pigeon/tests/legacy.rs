@@ -693,6 +693,15 @@ async fn rollback_creates_and_shares_go_to_the_old_child() {
     assert_eq!(e.old.agent(id).sends.len(), 1);
     assert_eq!(e.m.calls_to("create_conversation"), 0);
     assert_eq!(e.h.app.legacy().is_legacy(STAFF, &id), Some(true));
+    // a legacy conversation's files are the old child's
+    let r =
+        e.h.get_as(
+            &format!("{}{c}/files/raw?path=a.txt", pigeon::paseo::compat::SESSIONS),
+            STAFF,
+        )
+        .await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.text().await.unwrap(), "old file bytes");
     // shares of a legacy conversation
     let path = format!("{}{c}/shares", pigeon::paseo::compat::SESSIONS);
     let r =
