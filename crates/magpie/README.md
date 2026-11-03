@@ -334,10 +334,11 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   p50 9.4 ms and p99 47-53 ms; with 500 samples of the 1 MiB line (the p99 is the 5th slowest), p99 53.1 ms. The
   link to production is WP-32's: its acceptance includes a manifest check that `magpie-pg`'s
   `postgresql.parameters` carry both values.
-- An echo of a person's prompt is remembered by its sha256 for the conversation's life (`cc_echoes`, migration
-  `0011_cc_echoes.sql`; copied with a share's state, removed with the conversation): once a truncate's limbo is
-  flushed (its turn ended, or 10 s of quiet) the table is what keeps a rewritten echo internal, so it neither takes a
-  later person turn's echo nor becomes a `cc.user` prompt. A line with the uuid of a retracted line is never taken as
+- An echo of a person's prompt is remembered by its sha256 and its uuid for the conversation's life (`cc_echoes`,
+  migration `0011_cc_echoes.sql`, and `cc_echo_uuids`, `0016_cc_echo_uuids.sql`; copied with a share's state, removed
+  with the conversation): once a truncate's limbo is flushed (its turn ended, or 10 s of quiet) the tables are what
+  keep a rewritten echo internal, so it neither takes a later person turn's echo nor becomes a `cc.user` prompt; the
+  uuid covers the same message written again with other bytes (another `sessionId`, another field order). A line with the uuid of a retracted line is never taken as
   the running turn's echo (it is that line again, with `meta.replaces`).
 - `set_main_transcript` checks the path is `projects/-workspace/<providerSessionId>.jsonl` (6.2 "checked to equal
   that form"; 400 `bad_request` otherwise, so a subagent's transcript can never become the main one). When the main
@@ -349,10 +350,15 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   promotion, so the old transcript's dropped lines are retracted at once (6.6).
 - Bucket down (6.13): rule 0 compares a line the range covers whole by its sha256 and length, so the sentry's resend
   after a checkpoint answers without the bucket; appends and truncates at a line start or inside a line without
-  blobs need no bucket either. The uploader puts the bytes it stores into its replica's read cache, so on that
-  replica (and on any replica that has read the blob) a write, truncate or overwrite that cuts the line also answers.
-  A gap is left, which 5.2's design implies (staged bytes leave Postgres once uploaded, so the bucket then holds the
-  only copy): on a replica without the blob in its cache, a cut of a line whose blob has left staging, and a kind
+  blobs need no bucket either. The uploader keeps the bytes it stores (blobs of at most 4 MiB) in its replica's
+  recent-uploads cache (`limits::RECENT_UPLOADS_BYTES`, 32 MiB, LRU so it always admits, apart from the read cache so
+  the blobs Claude Code wrote never push out the copies timeline reads keep there; the read cache is 224 MiB). So a
+  write, truncate or overwrite that cuts the line usually also answers on that replica, and on any replica whose read
+  cache holds the blob. This is best effort: the uploader is whichever replica claimed the blob, not necessarily
+  the one serving the sandbox's later writes, a blob over 4 MiB is not kept, and the oldest of the last 32 MiB of
+  uploads is dropped first (`blobs::tests::an_uploaded_blob_is_kept_with_the_read_cache_full`). A gap is left, which
+  5.2's design implies (staged bytes leave Postgres once uploaded, so the bucket then holds the only copy): on a
+  replica without the blob in either cache, a cut of a line whose blob has left staging, and a kind
   change on rename, reconstruct that line from the bucket and answer 503 while it is unreachable (the supervisor
   retries; `tests/blobs.rs` `a_resend_and_a_truncate_at_a_plain_line_need_no_bucket` pins every side).
 - An upload's or a sent file's body (at most 50 MiB and 64 MiB) is read whole, hashed, then put in the bucket under
@@ -363,7 +369,7 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   is read. A blob read the read cache cannot answer takes the blob's size of the same budget before it fetches, and
   its bytes keep it until the response has been sent (what the cache then keeps counts in the cache's budget; a
   base64 blob's decoded copy and a cached entry evicted while its response is in flight are not counted). With the
-  decode budget (384 MiB) and the read cache (256 MiB) that keeps a replica inside magpie 18.2's 1 GiB
+  decode budget (384 MiB), the read cache (224 MiB) and the recent uploads (32 MiB) that keeps a replica inside magpie 18.2's 1 GiB
   (`tests/uploads_perf.rs` and `tests/bodies_perf.rs` measure it with the cache full). A decode whose estimate is over the whole decode
   budget answers 415, like one over 40 MP: in practice a 16-bit image above about 35 MP (an 8-bit one never is).
 - A blob lock is given back when its holder is dropped (a request whose client went away mid-`PUT`), not only by an

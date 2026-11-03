@@ -95,7 +95,7 @@ fn held_bytes(bytes: Bytes, held: super::BodyMemory) -> Bytes {
 }
 
 impl Blobs {
-    /// The stored bytes of `row`: the read cache, staging, the bucket (cached afterwards).
+    /// The stored bytes of `row`: the read cache or the recent uploads, staging, the bucket (cached afterwards).
     ///
     /// A read the cache cannot answer takes `row`'s size of the buffered-body budget ([`Blobs::hold_body`]) before
     /// it fetches, and the bytes it answers keep that share until the last handle outside the cache is dropped (a
@@ -107,7 +107,7 @@ impl Blobs {
     /// 404 when the bucket has no object (a database restored past a purge, magpie 18.6); 503 when it cannot be
     /// reached; a statement error.
     pub async fn stored_bytes(&self, pool: &Pool, row: &BlobRow) -> Result<Bytes> {
-        if let Some(b) = self.cache.get(&row.sha).await {
+        if let Some(b) = self.cached(&row.sha).await {
             return Ok(b);
         }
         let held = self.hold_body(u64::try_from(row.size).unwrap_or(0)).await?;

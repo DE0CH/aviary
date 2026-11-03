@@ -197,6 +197,7 @@ pub struct Blobs {
     /// The bucket.
     pub bucket: Bucket,
     cache: moka::future::Cache<Sha, axum::body::Bytes>,
+    recent: moka::future::Cache<Sha, axum::body::Bytes>,
     decodes: Arc<Semaphore>,
     decode_memory: Arc<Semaphore>,
     body_memory: Arc<Semaphore>,
@@ -242,12 +243,36 @@ impl Blobs {
                 .max_capacity(limits::BLOB_CACHE_BYTES)
                 .weigher(|_, v: &axum::body::Bytes| u32::try_from(v.len()).unwrap_or(u32::MAX))
                 .build(),
+            recent: moka::future::Cache::builder()
+                .max_capacity(limits::RECENT_UPLOADS_BYTES)
+                .eviction_policy(moka::policy::EvictionPolicy::lru())
+                .weigher(|_, v: &axum::body::Bytes| u32::try_from(v.len()).unwrap_or(u32::MAX))
+                .build(),
             decodes: Arc::new(Semaphore::new(limits::DECODES)),
             decode_memory: budget(limits::DECODE_MEMORY_BYTES),
             body_memory: budget(limits::BODY_MEMORY_BYTES),
             writer_locks: Arc::new(locks::LockSession::new(database_url, "magpie-blob-locks")?),
             gc_locks: Arc::new(locks::LockSession::new(database_url, "magpie-gc-locks")?),
         })
+    }
+
+    /// Keeps the bytes of a blob the uploader just stored (a blob a cc write introduced; staging no longer has it) in
+    /// the recent-uploads cache, unless it is over [`limits::RECENT_UPLOAD_MAX`]. That cache is LRU (it always admits
+    /// and drops the least recently used), apart from the read cache, so cuts of recently written lines answer on
+    /// this replica while the bucket is unreachable, however full the read cache is, and blobs Claude Code wrote do
+    /// not compete with the copies timeline reads keep there (6.13).
+    pub async fn keep_uploaded(&self, sha: Sha, bytes: axum::body::Bytes) {
+        if bytes.len() <= limits::RECENT_UPLOAD_MAX {
+            self.recent.insert(sha, bytes).await;
+        }
+    }
+
+    /// The bytes of `sha` this replica holds: its read cache, else its recent uploads.
+    pub(crate) async fn cached(&self, sha: &Sha) -> Option<axum::body::Bytes> {
+        match self.cache.get(sha).await {
+            Some(b) => Some(b),
+            None => self.recent.get(sha).await,
+        }
     }
 
     /// Takes `bytes` of the buffered-body budget ([`limits::BODY_MEMORY_BYTES`]): a request body read whole (an
@@ -282,7 +307,8 @@ impl Blobs {
     }
 
     /// Puts `bytes` (whose sha is `sha`) into the bucket under the blob's key, with `lock` held by the caller. The
-    /// bytes are not kept in the read cache (an upload or a sent file is rarely read back at once; reads fill it).
+    /// bytes are not kept in the read cache (an upload or a sent file is rarely read back at once; reads fill it); the
+    /// uploader keeps what it stored in the recent-uploads cache itself ([`Blobs::keep_uploaded`]).
     ///
     /// # Errors
     /// 503 `unavailable` when the bucket cannot be reached.
@@ -533,5 +559,55 @@ mod tests {
         assert_eq!(from_hex(&h.to_uppercase()), Some(s));
         assert_eq!(from_hex("zz"), None);
         assert_eq!(from_hex(&format!("{}g", &h[..63])), None);
+    }
+
+    static MIB: [u8; 1 << 20] = [0; 1 << 20];
+
+    #[tokio::test]
+    async fn an_uploaded_blob_is_kept_with_the_read_cache_full() {
+        let cfg = BucketConfig {
+            endpoint: "http://127.0.0.1:1".into(),
+            region: "r".into(),
+            bucket: "b".into(),
+            access_key_id: "k".into(),
+            secret_access_key: "s".into(),
+        };
+        let blobs = Blobs::new(&cfg, "postgres://u@127.0.0.1:1/d").unwrap();
+        // the read cache full of blobs read often (TinyLFU keeps them over a blob never read)
+        let full = limits::BLOB_CACHE_BYTES >> 20;
+        let read_often: Vec<Sha> = (0..full).map(|i| sha256(&i.to_le_bytes())).collect();
+        for sha in &read_often {
+            blobs.cache.insert(*sha, axum::body::Bytes::from_static(&MIB)).await;
+        }
+        for _ in 0..4 {
+            for sha in &read_often {
+                assert!(blobs.cache.get(sha).await.is_some());
+            }
+            blobs.cache.run_pending_tasks().await;
+        }
+        // more uploads than the recent cache holds: the newest are kept, the oldest dropped, the read cache untouched
+        let uploads = (limits::RECENT_UPLOADS_BYTES >> 20) + 8;
+        let uploaded: Vec<Sha> = (0..uploads).map(|i| sha256(format!("upload {i}").as_bytes())).collect();
+        for sha in &uploaded {
+            blobs.keep_uploaded(*sha, axum::body::Bytes::from_static(&MIB)).await;
+            blobs.recent.run_pending_tasks().await;
+        }
+        blobs.cache.run_pending_tasks().await;
+        let kept = |n: usize| &uploaded[uploaded.len() - n..];
+        for sha in kept(16) {
+            assert!(blobs.cached(sha).await.is_some(), "a recent upload is kept");
+        }
+        assert!(
+            blobs.cached(&uploaded[0]).await.is_none(),
+            "the oldest upload is dropped"
+        );
+        assert!(blobs.recent.weighted_size() <= limits::RECENT_UPLOADS_BYTES);
+        let still = futures_util::future::join_all(read_often.iter().map(|s| blobs.cache.get(s))).await;
+        assert!(still.iter().all(Option::is_some), "the read cache keeps its blobs");
+        // one over the size bound is left to the bucket
+        let big = vec![1u8; limits::RECENT_UPLOAD_MAX + 1];
+        let sha = sha256(&big);
+        blobs.keep_uploaded(sha, big.into()).await;
+        assert!(blobs.cached(&sha).await.is_none());
     }
 }

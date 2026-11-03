@@ -122,14 +122,20 @@ pub const DRAIN_IN_FLIGHT: Duration = Duration::from_secs(30);
 
 /// The bucket: overall timeout of one call.
 pub const BUCKET_CALL_TIMEOUT: Duration = Duration::from_secs(60);
-/// The blob read cache per replica, bytes.
-pub const BLOB_CACHE_BYTES: u64 = 256 << 20;
+/// The blob read cache per replica, bytes (the blobs reads fetched; admission by frequency, `TinyLFU`, so often-read blobs stay).
+pub const BLOB_CACHE_BYTES: u64 = 224 << 20;
+/// The cache of blobs this replica's uploader stored lately, bytes (LRU: always admits), so a cc write that cuts a
+/// line of a blob just out of staging answers while the bucket is unreachable (6.13). With [`BLOB_CACHE_BYTES`] it
+/// is the 256 MiB the read cache had alone.
+pub const RECENT_UPLOADS_BYTES: u64 = 32 << 20;
+/// The largest blob kept in the recent-uploads cache ([`RECENT_UPLOADS_BYTES`]); a larger one is left to the bucket.
+pub const RECENT_UPLOAD_MAX: usize = 4 << 20;
 /// Image decodes at once per replica.
 pub const DECODES: usize = 4;
 /// The memory image decodes may hold at once per replica (each takes its estimate, `images::decode_memory`; one over
-/// the whole budget answers 415). With the read cache ([`BLOB_CACHE_BYTES`]) and the buffered bodies
-/// ([`BODY_MEMORY_BYTES`]) it keeps a replica inside its 1 GiB (magpie 18.2): 384 + 256 + 256 MiB, and 128 MiB for
-/// the rest.
+/// the whole budget answers 415). With the read cache ([`BLOB_CACHE_BYTES`]), the recent uploads
+/// ([`RECENT_UPLOADS_BYTES`]) and the buffered bodies ([`BODY_MEMORY_BYTES`]) it keeps a replica inside its 1 GiB
+/// (magpie 18.2): 384 + 224 + 32 + 256 MiB, and 128 MiB for the rest.
 pub const DECODE_MEMORY_BYTES: u64 = 384 << 20;
 /// The memory request bodies read whole (uploads, the sandbox's blob `PUT`s), the uploader's staged blobs and blob
 /// reads the read cache cannot answer may hold at once per replica; a body waits for its share (its
