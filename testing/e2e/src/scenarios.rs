@@ -1758,14 +1758,14 @@ async fn e21(h: &Harness) -> anyhow::Result<()> {
             .await?;
         let caught = page(&mut ws, &id, "after", Some(&json!({"epoch": epoch, "seq": last})), 500).await?;
         ensure!(
-            c["reset"] != true && c["staleCursor"] != true,
-            "the catch-up reset: {c}"
+            caught["reset"] != true && caught["staleCursor"] != true,
+            "the catch-up reset: {caught}"
         );
         ensure!(
-            c["epoch"] == epoch,
+            caught["epoch"] == epoch,
             "the epoch changed across the compaction: {} -> {}",
             epoch,
-            c["epoch"]
+            caught["epoch"]
         );
         for r in caught["entries"].as_array().into_iter().flatten() {
             seen.insert(row_key(&r["item"]), r["seqEnd"].as_u64().unwrap_or(0));
