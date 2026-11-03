@@ -5,7 +5,8 @@ usage: rig-uniques.py SUPERVISOR_LOG [ROUTE=CALLS_JSON ...]
 SUPERVISOR_LOG is the keeper's and supervisor's console of a fault-injection build (which logs every request it
 reads as "fuse request"). Per connection (`boot`) the requests' uniques never repeat; a supervisor instance (from
 one "fuse connection" line to the next) only reads uniques above every unique an earlier instance read; a
-"journal replay" names a unique an earlier instance read and never reads again. CALLS_JSON files are fuse-rig's
+"journal replay" names a unique an earlier instance read (or one the killed instance read without logging it, between the
+fault and the SIGKILL: then no instance ever logs reading it) and never reads again. CALLS_JSON files are fuse-rig's
 /calls/ROUTE answers: every opId's calls name the same route and the same operation (path, offset, names), so a
 retry or a replay is the same call and no unique was reused for another one.
 Prints a JSON summary; exits 1 on any violation."""
@@ -32,6 +33,7 @@ for e in lines(sys.argv[1]):
         instances[-1]["replayed"].append(e["unique"])
 
 by_boot = {}
+unlogged = []  # replayed uniques whose read the killed instance never logged
 for i, inst in enumerate(instances):
     seen = by_boot.setdefault(inst["boot"], {"read": set(), "max": 0})
     dup = [u for u in inst["read"] if u in seen["read"]]
@@ -42,9 +44,18 @@ for i, inst in enumerate(instances):
     low = [u for u in inst["read"] if u <= seen["max"]]
     if low:
         bad.append({"instance": i, "read_at_or_below_an_earlier_instance": sorted(low)[:20], "earlier_max": seen["max"]})
+    # A replayed unique no earlier instance logged: the killed instance read it (into its journal slot) in the
+    # instant between the fault and the SIGKILL, before its "fuse request" line was written. That is no repeat as
+    # long as no instance of the connection ever read it (the sentry delivered it once); read by any is a violation.
     unknown = [u for u in inst["replayed"] if u not in seen["read"]]
-    if unknown:
-        bad.append({"instance": i, "replayed_a_unique_never_read": unknown})
+    later = set()
+    for other in instances[i:]:
+        if other["boot"] == inst["boot"]:
+            later.update(other["read"])
+    twice = [u for u in unknown if u in later]
+    if twice:
+        bad.append({"instance": i, "replayed_a_unique_read_again": twice})
+    unlogged.extend(u for u in unknown if u not in later)
     seen["read"].update(inst["read"])
     if inst["read"]:
         seen["max"] = max(seen["max"], max(inst["read"]))
@@ -72,6 +83,7 @@ summary = {
     "boots": len(by_boot),
     "requests_read": sum(len(i["read"]) for i in instances),
     "replays": sum(len(i["replayed"]) for i in instances),
+    "replayed_unlogged": unlogged,
     "opids": len(ops),
     "violations": bad,
 }

@@ -1,0 +1,48 @@
+{"t":"2026-11-03T06:04:50.328Z","level":"info","svc":"supervisor-keeper","msg":"keeper started","pid":1}
+{"t":"2026-11-03T06:04:50.329Z","level":"info","svc":"supervisor-keeper","msg":"supervisor started","pid":18,"restarts":0}
+{"t":"2026-11-03T06:04:50.373Z","level":"info","svc":"supervisor","ver":"dev","msg":"supervisor started","version":"supervisor-dev","boot_id":"9bbf3a2253cb0427","restart":false}
+{"t":"2026-11-03T06:04:50.377Z","level":"warn","svc":"supervisor","ver":"dev","msg":"/etc/hosts not written","error":"Read-only file system (os error 30)"}
+{"t":"2026-11-03T06:04:50.377Z","level":"warn","svc":"supervisor","ver":"dev","msg":"apt proxy not written","error":"Read-only file system (os error 30)"}
+{"t":"2026-11-03T06:04:50.381Z","level":"info","svc":"supervisor","ver":"dev","msg":"lease taken","epoch":1}
+{"t":"2026-11-03T06:04:50.381Z","level":"info","svc":"supervisor","ver":"dev","msg":"mounted ~/.claude","mount":"/home/sandbox/.claude"}
+{"t":"2026-11-03T06:04:50.384Z","level":"info","svc":"supervisor","ver":"dev","msg":"fuse connection","restart":false,"boot":"f26ef088-6c83-4857-a4cf-f07f8e7538f0"}
+{"t":"2026-11-03T06:04:50.392Z","level":"info","svc":"supervisor","ver":"dev","msg":"fuse first request","unique":2,"op":"INIT"}
+{"t":"2026-11-03T06:04:50.403Z","level":"info","svc":"supervisor","ver":"dev","msg":"fuse mounted"}
+{"t":"2026-11-03T06:04:50.405Z","level":"info","svc":"supervisor","ver":"dev","msg":"agent cgroup not created","error":"no cgroup hierarchy"}
+{"t":"2026-11-03T06:04:50.417Z","level":"info","svc":"supervisor","ver":"dev","msg":"claude started","gen":1,"pid":90,"session":"01a1a002-a486-724c-9472-c708c532e62a","resume":false}
+{"t":"2026-11-03T06:04:50.683Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":".config.json"}
+{"t":"2026-11-03T06:04:50.713Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":".credentials.json"}
+{"t":"2026-11-03T06:04:50.770Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"state"}
+{"t":"2026-11-03T06:04:50.923Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"themes"}
+{"t":"2026-11-03T06:04:51.178Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"[redacted]"}
+{"t":"2026-11-03T06:04:51.192Z","level":"info","svc":"supervisor","ver":"dev","msg":"turn started","turn":"01a1a002-a65f-75c6-8451-cf5d8e917fac","origin":"person"}
+{"t":"2026-11-03T06:04:51.313Z","level":"info","svc":"supervisor","ver":"dev","msg":"claude initialised","gen":1,"model":"Some(\"claude-sonnet-4-5\")"}
+{"t":"2026-11-03T06:04:51.696Z","level":"info","svc":"supervisor","ver":"dev","msg":"turn ended","turn":"01a1a002-a65f-75c6-8451-cf5d8e917fac","origin":"person","outcome":"Completed","ms":503,"held":false}
+{"t":"2026-11-03T06:04:52.013Z","level":"info","svc":"supervisor","ver":"dev","msg":"turn started","turn":"01a1a002-aba8-7174-9a7c-b3be1941be3e","origin":"person"}
+{"t":"2026-11-03T06:04:52.038Z","level":"info","svc":"supervisor","ver":"dev","msg":"claude initialised","gen":1,"model":"Some(\"claude-sonnet-4-5\")"}
+{"t":"2026-11-03T06:04:56.755Z","level":"info","svc":"supervisor","ver":"dev","msg":"resend of a request still in flight: waiting for its result","unique":696,"pid":199,"op":"WRITE"}
+{"t":"2026-11-03T06:04:56.813Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"image-cache"}
+{"t":"2026-11-03T06:04:56.815Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"seed-admin"}
+{"t":"2026-11-03T06:04:59.065Z","level":"info","svc":"supervisor","ver":"dev","msg":"reply refused (ENOENT): result kept for the thread's resend","unique":694,"pid":199,"op":"WRITE"}
+{"t":"2026-11-03T06:04:59.072Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"dev-mods"}
+{"t":"2026-11-03T06:04:59.072Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"bridge-spawn"}
+{"t":"2026-11-03T06:04:59.073Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"file-transfers"}
+{"t":"2026-11-03T06:04:59.073Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"usage-data"}
+{"t":"2026-11-03T06:04:59.079Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"mcp-skill-archives"}
+{"t":"2026-11-03T06:04:59.081Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"shares"}
+{"t":"2026-11-03T06:04:59.082Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"feedback-bundles"}
+{"t":"2026-11-03T06:04:59.082Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"feedback"}
+{"t":"2026-11-03T06:04:59.083Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"remote-control"}
+{"t":"2026-11-03T06:04:59.083Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"traces"}
+{"t":"2026-11-03T06:04:59.083Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"startup-perf"}
+{"t":"2026-11-03T06:04:59.087Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"dump-prompts"}
+{"t":"2026-11-03T06:04:59.089Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"teams"}
+{"t":"2026-11-03T06:04:59.090Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"jobs"}
+{"t":"2026-11-03T06:04:59.090Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"daemon"}
+{"t":"2026-11-03T06:04:59.092Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"daemon.log"}
+{"t":"2026-11-03T06:04:59.092Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"daemon.log.1"}
+{"t":"2026-11-03T06:04:59.095Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"hfi-auth.json"}
+{"t":"2026-11-03T06:04:59.100Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"logs"}
+{"t":"2026-11-03T06:04:59.101Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"access-audit"}
+{"t":"2026-11-03T06:04:59.103Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"paste-cache"}
+{"t":"2026-11-03T06:05:00.903Z","level":"info","svc":"supervisor","ver":"dev","msg":"turn ended","turn":"01a1a002-aba8-7174-9a7c-b3be1941be3e","origin":"person","outcome":"Completed","ms":8889,"held":false}

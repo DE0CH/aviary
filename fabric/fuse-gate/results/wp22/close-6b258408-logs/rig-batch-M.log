@@ -1,0 +1,17 @@
+M1-t-write layout=tmpfs op=write loopback=1 exit=0 resend=2 PASS
+M1-t-create layout=tmpfs op=create loopback=1 exit=0 resend=2 PASS
+M1-t-mkdir layout=tmpfs op=mkdir loopback=1 exit=0 resend=2 PASS
+M1-t-rename layout=tmpfs op=rename loopback=1 exit=0 resend=2 PASS
+M1-s-write layout=scratch op=write loopback=1 exit=0 resend=2 PASS
+M1-s-create layout=scratch op=create loopback=1 exit=0 resend=2 PASS
+M1-s-mkdir layout=scratch op=mkdir loopback=1 exit=0 resend=2 PASS
+M1-s-rename layout=scratch op=rename loopback=1 exit=0 resend=2 PASS
+M2-t-write layout=tmpfs op=write loopback=1 exit=0 resend=2 PASS
+M2-t-create layout=tmpfs op=create loopback=1 exit=0 resend=2 PASS
+M2-t-mkdir layout=tmpfs op=mkdir loopback=1 exit=0 resend=2 PASS
+M2-t-rename layout=tmpfs op=rename loopback=1 exit=0 resend=2 PASS
+M2-s-write layout=scratch op=write loopback=1 exit=0 resend=2 PASS
+M2-s-create layout=scratch op=create loopback=1 exit=0 resend=2 PASS
+M2-s-mkdir layout=scratch op=mkdir loopback=1 exit=0 resend=2 PASS
+M2-s-rename layout=scratch op=rename loopback=1 exit=0 resend=2 PASS
+done

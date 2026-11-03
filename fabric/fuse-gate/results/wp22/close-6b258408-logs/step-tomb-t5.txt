@@ -1,0 +1,4 @@
+{"rewrites":[],"truncates":[]}
+[["completed",null],["completed",null],["completed",null]]
+      1 model_refusal_fallback
+      1 retracted_message_uuids

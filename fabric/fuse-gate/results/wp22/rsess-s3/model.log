@@ -1,0 +1,212 @@
+1793685631891540 req=0 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685631891676 req=0 recv msgs=1 model=claude-sonnet-4-5 stream=true plan=tool:Bash
+1793685631892256 req=0 done stop=tool_use
+1793685632252657 req=1 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685632252751 req=1 recv msgs=3 model=claude-sonnet-4-5 stream=true plan=tool:Write
+1793685632253283 req=1 done stop=tool_use
+1793685632312866 req=2 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685632312972 req=2 recv msgs=5 model=claude-sonnet-4-5 stream=true plan=tool:Read
+1793685632313344 req=2 done stop=tool_use
+1793685632388345 req=3 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685632388448 req=3 recv msgs=7 model=claude-sonnet-4-5 stream=true plan=tool:Edit
+1793685632388828 req=3 done stop=tool_use
+1793685632442150 req=4 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685632442246 req=4 recv msgs=9 model=claude-sonnet-4-5 stream=true plan=tool:ToolSearch
+1793685632442620 req=4 done stop=tool_use
+1793685632483970 req=5 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685632484173 req=5 recv msgs=11 model=claude-sonnet-4-5 stream=true plan=tool:TodoWrite
+1793685632484634 req=5 done stop=tool_use
+1793685632515849 req=6 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685632515970 req=6 recv msgs=13 model=claude-sonnet-4-5 stream=true plan=tool:Glob
+1793685632516361 req=6 done stop=tool_use
+1793685632548150 req=7 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685632548296 req=7 recv msgs=15 model=claude-sonnet-4-5 stream=true plan=tool:Grep
+1793685632548815 req=7 done stop=tool_use
+1793685632577422 req=8 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685632577571 req=8 recv msgs=17 model=claude-sonnet-4-5 stream=true plan=tool:Agent
+1793685632578054 req=8 done stop=tool_use
+1793685632634852 req=9 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,SendUserFile,Skill,ToolSearch,DeferredToolPlaceholder,Write
+1793685632634930 req=9 recv msgs=1 model=claude-sonnet-4-5 stream=true plan=tool:Bash
+1793685632635222 req=9 done stop=tool_use
+1793685632687798 req=10 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,SendUserFile,Skill,ToolSearch,DeferredToolPlaceholder,Write
+1793685632687822 req=10 recv msgs=3 model=claude-sonnet-4-5 stream=true plan=text:3x0ms
+1793685632688072 req=10 chunk=0 token=tk10x0
+1793685632688192 req=10 chunk=1 token=tk10x1
+1793685632688309 req=10 chunk=2 token=tk10x2
+1793685632688442 req=10 done stop=end_turn
+1793685632807220 req=11 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685632807381 req=11 recv msgs=19 model=claude-sonnet-4-5 stream=true plan=tool:mcp__tools__echo
+1793685632807872 req=11 done stop=tool_use
+1793685632848074 req=12 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685632848169 req=12 recv msgs=21 model=claude-sonnet-4-5 stream=true plan=text:20x0ms
+1793685632848533 req=12 chunk=0 token=tk12x0
+1793685632848610 req=12 chunk=1 token=tk12x1
+1793685632848721 req=12 chunk=2 token=tk12x2
+1793685632848788 req=12 chunk=3 token=tk12x3
+1793685632848830 req=12 chunk=4 token=tk12x4
+1793685632848925 req=12 chunk=5 token=tk12x5
+1793685632848980 req=12 chunk=6 token=tk12x6
+1793685632849011 req=12 chunk=7 token=tk12x7
+1793685632849045 req=12 chunk=8 token=tk12x8
+1793685632849137 req=12 chunk=9 token=tk12x9
+1793685632849225 req=12 chunk=10 token=tk12x10
+1793685632849278 req=12 chunk=11 token=tk12x11
+1793685632849320 req=12 chunk=12 token=tk12x12
+1793685632849362 req=12 chunk=13 token=tk12x13
+1793685632849398 req=12 chunk=14 token=tk12x14
+1793685632849463 req=12 chunk=15 token=tk12x15
+1793685632849500 req=12 chunk=16 token=tk12x16
+1793685632849531 req=12 chunk=17 token=tk12x17
+1793685632849567 req=12 chunk=18 token=tk12x18
+1793685632849600 req=12 chunk=19 token=tk12x19
+1793685632849742 req=12 done stop=end_turn
+1793685632961846 req=13 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685632961935 req=13 recv msgs=23 model=claude-sonnet-4-5 stream=true plan=failonce
+1793685632962096 req=13 chunk=0 token=tk13x0
+1793685632962144 req=13 chunk=1 token=tk13x1
+1793685632962199 req=13 chunk=2 token=tk13x2
+1793685632962226 req=13 chunk=3 token=tk13x3
+1793685632962289 req=13 chunk=4 token=tk13x4
+1793685632962315 req=13 chunk=5 token=tk13x5
+1793685632962358 req=13 chunk=6 token=tk13x6
+1793685632962459 req=13 chunk=7 token=tk13x7
+1793685633263632 req=13 failed mid-stream
+1793685633291250 req=14 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685633291288 req=14 recv msgs=25 model=claude-sonnet-4-5 stream=true plan=text:8x0ms
+1793685633291415 req=14 chunk=0 token=tk14x0
+1793685633291432 req=14 chunk=1 token=tk14x1
+1793685633291447 req=14 chunk=2 token=tk14x2
+1793685633291464 req=14 chunk=3 token=tk14x3
+1793685633291538 req=14 chunk=4 token=tk14x4
+1793685633291635 req=14 chunk=5 token=tk14x5
+1793685633291732 req=14 chunk=6 token=tk14x6
+1793685633291769 req=14 chunk=7 token=tk14x7
+1793685633291818 req=14 done stop=end_turn
+1793685633422624 req=15 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685633422648 req=15 recv msgs=27 model=claude-sonnet-4-5 stream=true plan=trunconce
+1793685633423225 req=15 chunk=0 token=tk15x0
+1793685633423426 req=15 chunk=1 token=tk15x1
+1793685633423628 req=15 chunk=2 token=tk15x2
+1793685633423774 req=15 chunk=3 token=tk15x3
+1793685633423988 req=15 chunk=4 token=tk15x4
+1793685633424145 req=15 chunk=5 token=tk15x5
+1793685633724409 req=15 truncated (reset, no message_stop)
+1793685633752623 req=16 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685633752724 req=16 recv msgs=29 model=claude-sonnet-4-5 stream=true plan=text:6x0ms
+1793685633753048 req=16 chunk=0 token=tk16x0
+1793685633753109 req=16 chunk=1 token=tk16x1
+1793685633753167 req=16 chunk=2 token=tk16x2
+1793685633753224 req=16 chunk=3 token=tk16x3
+1793685633753259 req=16 chunk=4 token=tk16x4
+1793685633753280 req=16 chunk=5 token=tk16x5
+1793685633753416 req=16 done stop=end_turn
+1793685633885040 req=17 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685633885133 req=17 recv msgs=31 model=claude-sonnet-4-5 stream=true plan=trunconce
+1793685633885313 req=17 chunk=0 token=tk17x0
+1793685633885422 req=17 chunk=1 token=tk17x1
+1793685633885443 req=17 chunk=2 token=tk17x2
+1793685633885462 req=17 chunk=3 token=tk17x3
+1793685633885481 req=17 chunk=4 token=tk17x4
+1793685633885516 req=17 chunk=5 token=tk17x5
+1793685634186311 req=17 truncated (garbage, no message_stop)
+1793685634212374 req=18 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685634212475 req=18 recv msgs=33 model=claude-sonnet-4-5 stream=true plan=text:6x0ms
+1793685634212622 req=18 chunk=0 token=tk18x0
+1793685634212652 req=18 chunk=1 token=tk18x1
+1793685634212722 req=18 chunk=2 token=tk18x2
+1793685634212773 req=18 chunk=3 token=tk18x3
+1793685634212802 req=18 chunk=4 token=tk18x4
+1793685634212824 req=18 chunk=5 token=tk18x5
+1793685634212897 req=18 done stop=end_turn
+1793685634327333 req=19 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685634327380 req=19 recv msgs=35 model=claude-sonnet-4-5 stream=true plan=trunconce
+1793685634327619 req=19 chunk=0 token=tk19x0
+1793685634327748 req=19 chunk=1 token=tk19x1
+1793685634327813 req=19 chunk=2 token=tk19x2
+1793685634327928 req=19 chunk=3 token=tk19x3
+1793685634328053 req=19 chunk=4 token=tk19x4
+1793685634328107 req=19 chunk=5 token=tk19x5
+1793685634629294 req=19 truncated (refusal, no message_stop)
+1793685634656705 req=20 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685634656740 req=20 recv msgs=37 model=claude-sonnet-4-5 stream=true plan=text:6x0ms
+1793685634657001 req=20 chunk=0 token=tk20x0
+1793685634657111 req=20 chunk=1 token=tk20x1
+1793685634657178 req=20 chunk=2 token=tk20x2
+1793685634657300 req=20 chunk=3 token=tk20x3
+1793685634657392 req=20 chunk=4 token=tk20x4
+1793685634657420 req=20 chunk=5 token=tk20x5
+1793685634657496 req=20 done stop=end_turn
+1793685634780906 req=21 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685634780942 req=21 recv msgs=39 model=claude-sonnet-4-5 stream=true plan=thinkfail:api_error
+1793685635083183 req=21 thinkfail (api_error) after a thinking block
+1793685635624769 req=22 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685635624794 req=22 recv msgs=39 model=claude-sonnet-4-5 stream=true plan=text:4x0ms
+1793685635625410 req=22 chunk=0 token=tk22x0
+1793685635625617 req=22 chunk=1 token=tk22x1
+1793685635625715 req=22 chunk=2 token=tk22x2
+1793685635625853 req=22 chunk=3 token=tk22x3
+1793685635626401 req=22 done stop=end_turn
+1793685635714990 req=23 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685635715022 req=23 recv msgs=41 model=claude-sonnet-4-5 stream=true plan=tool:Write
+1793685635725255 req=23 done stop=tool_use
+1793685635919290 req=24 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685635919328 req=24 recv msgs=43 model=claude-sonnet-4-5 stream=true plan=tool:Write
+1793685635928544 req=24 done stop=tool_use
+1793685636117051 req=25 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685636117100 req=25 recv msgs=45 model=claude-sonnet-4-5 stream=true plan=tool:Write
+1793685636126305 req=25 done stop=tool_use
+1793685636346871 req=26 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685636346903 req=26 recv msgs=47 model=claude-sonnet-4-5 stream=true plan=tool:Write
+1793685636357263 req=26 done stop=tool_use
+1793685636531027 req=27 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685636531080 req=27 recv msgs=49 model=claude-sonnet-4-5 stream=true plan=tool:Write
+1793685636542249 req=27 done stop=tool_use
+1793685636808864 req=28 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685636808996 req=28 recv msgs=51 model=claude-sonnet-4-5 stream=true plan=tool:Write
+1793685636820450 req=28 done stop=tool_use
+1793685637078596 req=29 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685637078624 req=29 recv msgs=53 model=claude-sonnet-4-5 stream=true plan=tool:Write
+1793685637087633 req=29 done stop=tool_use
+1793685637316226 req=30 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685637316255 req=30 recv msgs=55 model=claude-sonnet-4-5 stream=true plan=text:5x0ms
+1793685637316456 req=30 chunk=0 token=tk30x0
+1793685637316603 req=30 chunk=1 token=tk30x1
+1793685637316684 req=30 chunk=2 token=tk30x2
+1793685637316712 req=30 chunk=3 token=tk30x3
+1793685637316759 req=30 chunk=4 token=tk30x4
+1793685637316931 req=30 done stop=end_turn
+1793685637780668 req=31 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685637780705 req=31 recv msgs=55 model=claude-sonnet-4-5 stream=true plan=text:5x0ms
+1793685637781095 req=31 chunk=0 token=tk31x0
+1793685637781149 req=31 chunk=1 token=tk31x1
+1793685637781192 req=31 chunk=2 token=tk31x2
+1793685637781234 req=31 chunk=3 token=tk31x3
+1793685637781338 req=31 chunk=4 token=tk31x4
+1793685637781472 req=31 done stop=end_turn
+1793685638668846 req=32 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685638668872 req=32 recv msgs=3 model=claude-sonnet-4-5 stream=true plan=text:5x0ms
+1793685638669014 req=32 chunk=0 token=tk32x0
+1793685638669038 req=32 chunk=1 token=tk32x1
+1793685638669188 req=32 chunk=2 token=tk32x2
+1793685638669242 req=32 chunk=3 token=tk32x3
+1793685638669282 req=32 chunk=4 token=tk32x4
+1793685638669533 req=32 done stop=end_turn
+1793685640930204 req=33 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685640930229 req=33 recv msgs=5 model=claude-sonnet-4-5 stream=true plan=tool:Bash
+1793685640930524 req=33 done stop=tool_use
+1793685641116480 req=34 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685641116509 req=34 recv msgs=7 model=claude-sonnet-4-5 stream=true plan=text:5x0ms
+1793685641116989 req=34 chunk=0 token=tk34x0
+1793685641117126 req=34 chunk=1 token=tk34x1
+1793685641117257 req=34 chunk=2 token=tk34x2
+1793685641117389 req=34 chunk=3 token=tk34x3
+1793685641117518 req=34 chunk=4 token=tk34x4
+1793685641117891 req=34 done stop=end_turn
+1793685643299324 req=35 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793685643299351 req=35 recv msgs=5 model=claude-sonnet-4-5 stream=true plan=text:5x0ms
+1793685643299694 req=35 chunk=0 token=tk35x0
+1793685643299776 req=35 chunk=1 token=tk35x1
+1793685643299888 req=35 chunk=2 token=tk35x2
+1793685643299920 req=35 chunk=3 token=tk35x3
+1793685643299938 req=35 chunk=4 token=tk35x4
+1793685643300187 req=35 done stop=end_turn

@@ -11,11 +11,17 @@ BASE = "http://127.0.0.1:7300"
 MOUNT, LOCAL = "/home/sandbox/.claude", "/var/lib/supervisor/local"
 
 def get(path):
-    try:
-        with urllib.request.urlopen(BASE + path, timeout=30) as r:
-            return r.read()
-    except urllib.error.HTTPError:
-        return None
+    # a 404 is "not in magpie"; a timeout (the world busy right after a restore holding a filled cache) is retried,
+    # and after the last attempt it raises, so the caller's report is empty and its check fails
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(BASE + path, timeout=60) as r:
+                return r.read()
+        except urllib.error.HTTPError:
+            return None
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == 4:
+                raise
 
 files = []
 for root, dirs, names in os.walk(MOUNT):

@@ -1,0 +1,53 @@
+{
+ "files": [
+  {
+   "path": "backups/.claude.json.backup.1793686135737",
+   "size": 84,
+   "sha256": "c3ad9991b57ffe78",
+   "scope": "local",
+   "equal_to_local": true
+  },
+  {
+   "path": "projects/-workspace/01a1a006-61a2-707c-8f1e-c565a90beb3b.jsonl",
+   "size": 400927,
+   "sha256": "511af3c018ba232d",
+   "scope": "magpie",
+   "equal_to_magpie": true,
+   "lines": 57,
+   "bad_lines": 0,
+   "ends_with_newline": true
+  },
+  {
+   "path": "sessions/130.1cdfe7e239bb08b973c4cb2895b62d5e625b2a823b311c2248653c125a495194.key",
+   "size": 95,
+   "sha256": "10780d2fdec50637",
+   "scope": "local",
+   "equal_to_local": true
+  },
+  {
+   "path": "sessions/130.json",
+   "size": 503,
+   "sha256": "d68dec499506f24b",
+   "scope": "local",
+   "equal_to_local": true
+  },
+  {
+   "path": "shell-snapshots/snapshot-bash-1793686137109-9ww68e.sh",
+   "size": 3570,
+   "sha256": "f6bfc2e3ac4ec0da",
+   "scope": "local",
+   "equal_to_local": true
+  }
+ ],
+ "calls": {
+  "cc_write": 9,
+  "cc_truncate": 0,
+  "cc_setattr": 0,
+  "cc_rename": 0,
+  "cc_unlink": 0
+ },
+ "transcript_rewrites": [],
+ "truncates": [],
+ "setattrs": [],
+ "renames": []
+}

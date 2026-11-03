@@ -52,3 +52,18 @@ release builds of `106166f3`), deleted after the run.
   in this run, see `kill-k4`). `cases.jsonl`, `calls-N.json`, `calls-final-<route>.json`, `supervisor.log` (every
   request the test build read, as `fuse request`), `uniques.json` (`rig/rig-uniques.py`), `run.log`.
 - `kill-k4/`: `OPS=plain rig-kill.sh`: the plain SIGKILL case alone with the script's release order as committed.
+
+## WP-22 close-out (2026-11-03): the re-run on `6b258408`
+
+One throwaway Hetzner Cloud cpx42 in fsn1 (Ubuntu 24.04, runsc `precopy-20261102.1`, image
+`ghcr.io/de0ch/jarvis3-sandbox:2eb5bf396b5f`; musl release builds of `6b258408`), every migration `LOOPBACK=1`,
+deleted after the run. `close-6b258408-logs/`: the queue's log and each step's console.
+
+- `rmount-m2/`: `rig-mount.sh` (items 1, 5).
+- `kill-k5/`: `rig-kill.sh` (item 4), `uniques.json` from the corrected `rig-uniques.py`.
+- `rig-M{1,2}-{t,s}-{write,create,mkdir,rename}/`: `RIG_FI=1 LOOPBACK=1 rig-batch.sh M 2` (item 3's resend rule), each
+  with `uniques.json` (`rig-uniques.py supervisor.log ROUTE=calls.json`: item 4 across a migration).
+- `rmig-e6/`, `rmig-m6/` (empty cache), `rmig-f4/` (no file report: `rigreport.py` timed out), `rmig-f5/` (`FILL=1`):
+  `rig-migcc.sh` (item 3 with Claude Code mid-turn).
+- `rsess-s3/` (item 2), `rsess-s4/` (`STRACE=1`, item 9: `inventory-mount.json`), `rtomb-t5/`, `rtomb-t6/`.
+- `rlat-l6/`: `rig-latency.sh` (items 6, 10).

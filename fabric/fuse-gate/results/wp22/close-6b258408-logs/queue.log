@@ -1,0 +1,17 @@
+== kill start 05:57:16
+== kill exit 1 06:00:29: cases: 19, failed: 1, replays logged: 22, fuse connections: 38, uniques: {"instances": 38, "boots": 1, "requests_read": 920, "replays": 22, "opids": 157, "violations": [{"instance": 8, "replayed_a_unique_never_read": [896]}, {"instance": 24, "replayed_a_unique_never_read": [1370]}]} FAIL 
+== sess start 06:00:29
+== sess exit 0 06:00:44: [["completed",null]] done: /root/out/rsess-s3 
+== strace start 06:00:44
+== strace exit 0 06:01:02: [["completed",null]] done: /root/out/rsess-s4 
+== lat start 06:01:02
+== lat exit 0 06:02:48: {"pairs": 87, "size": 91993640} cc_file calls: [{"path":"projects/-workspace/01a19fff-2a39-770c-93f6-d4cfee1c040d.jsonl","offset":0,"length":472395},{"path":"projects/-workspace/01a19fff-2a39-770c-93f6-d4cfee1c040d.jsonl","offset":null,"length":null},{"path":"projects/-workspace/01a19fff-2a39-770c-93f6-d4cfee1c040d.jsonl","offset":90945064,"length":1048576},{"path":"projects/-workspace/01a19fff-2a39-770c-93f6-d4cfee1c040d.jsonl","offset":90945064,"length":1048576},{"path":"projects/-workspace/01a19fff-2a39-770c-93f6-d4cfee1c040d.jsonl","offset":90945064,"length":1048576},{"path":"projects/-workspace/01a19fff-2a39-770c-93f6-d4cfee1c040d.jso 
+== batch start 06:02:48
+== batch exit 0 06:04:50: 
+== migcc1 start 06:04:50
+== migcc1 exit 0 06:05:02: resend lines: 2 PASS 
+== migcc2 start 06:05:02
+== migcc2 exit 0 06:05:14: resend lines: 2 PASS 
+== migccf start 06:05:14
+== migccf exit 0 06:06:05:     raise URLError(err) urllib.error.URLError: <urlopen error timed out> 
+== all done 06:06:05

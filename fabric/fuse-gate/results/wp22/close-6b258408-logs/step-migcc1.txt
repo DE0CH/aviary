@@ -1,0 +1,6 @@
+{"fill":"","loopback":"1","send_ms":1348,"total_ms":1485,"release_to_done_ms":4234,"move_at_us":1793685895274000}
+{"live_rounds":[{"files":12,"bytes":68189496,"ms":267},{"files":1,"bytes":1009,"ms":130}],"checkpoint_ms":311,"final_rsync":{"files":1,"bytes":67895808,"ms":265,"checksum":true},"stopped_until_done_ms":628}
+{"from":"127.0.0.1:35856","bytes":175043309,"page_bytes":172322816,"zero_bytes":152154112,"file_bytes":2644916,"rounds":1,"final_page_bytes":4087808,"final_zero_bytes":897024,"total_ms":879.582,"final_ms":755.9,"restore_ms":133.234}
+{"state":"completed","ms":8921}
+resend lines: 2
+PASS

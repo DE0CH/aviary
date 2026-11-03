@@ -1,0 +1,17 @@
+{"t":"2026-11-03T05:57:06.022Z","level":"info","svc":"supervisor-keeper","msg":"keeper started","pid":1}
+{"t":"2026-11-03T05:57:06.023Z","level":"info","svc":"supervisor-keeper","msg":"supervisor started","pid":18,"restarts":0}
+{"t":"2026-11-03T05:57:06.052Z","level":"info","svc":"supervisor","ver":"dev","msg":"supervisor started","version":"supervisor-dev","boot_id":"7cf607673fe427d3","restart":false}
+{"t":"2026-11-03T05:57:06.057Z","level":"warn","svc":"supervisor","ver":"dev","msg":"/etc/hosts not written","error":"Read-only file system (os error 30)"}
+{"t":"2026-11-03T05:57:06.057Z","level":"warn","svc":"supervisor","ver":"dev","msg":"apt proxy not written","error":"Read-only file system (os error 30)"}
+{"t":"2026-11-03T05:57:06.059Z","level":"info","svc":"supervisor","ver":"dev","msg":"lease taken","epoch":1}
+{"t":"2026-11-03T05:57:06.060Z","level":"info","svc":"supervisor","ver":"dev","msg":"mounted ~/.claude","mount":"/home/sandbox/.claude"}
+{"t":"2026-11-03T05:57:06.062Z","level":"info","svc":"supervisor","ver":"dev","msg":"fuse connection","restart":false,"boot":"1c78ab13-1b39-4d78-8150-2a06c2918e21"}
+{"t":"2026-11-03T05:57:06.072Z","level":"info","svc":"supervisor","ver":"dev","msg":"fuse first request","unique":2,"op":"INIT"}
+{"t":"2026-11-03T05:57:06.081Z","level":"info","svc":"supervisor","ver":"dev","msg":"fuse mounted"}
+{"t":"2026-11-03T05:57:06.083Z","level":"info","svc":"supervisor","ver":"dev","msg":"agent cgroup not created","error":"no cgroup hierarchy"}
+{"t":"2026-11-03T05:57:06.092Z","level":"info","svc":"supervisor","ver":"dev","msg":"claude started","gen":1,"pid":89,"session":"01a19ffb-8eed-72e8-adfc-2a10bfa1c7b9","resume":false}
+{"t":"2026-11-03T05:57:06.322Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":".config.json"}
+{"t":"2026-11-03T05:57:06.349Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":".credentials.json"}
+{"t":"2026-11-03T05:57:06.392Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"state"}
+{"t":"2026-11-03T05:57:06.498Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"themes"}
+{"t":"2026-11-03T05:57:06.713Z","level":"warn","svc":"supervisor","ver":"dev","msg":"unclassified path","path":"[redacted]"}

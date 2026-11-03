@@ -1,0 +1,2 @@
+{"t":"2026-11-03T06:04:14.906Z","level":"info","svc":"supervisor","ver":"dev","msg":"resend of a request still in flight: waiting for its result","unique":252,"pid":113,"op":"RENAME"}
+{"t":"2026-11-03T06:04:17.190Z","level":"info","svc":"supervisor","ver":"dev","msg":"reply refused (ENOENT): result kept for the thread's resend","unique":208,"pid":113,"op":"RENAME"}

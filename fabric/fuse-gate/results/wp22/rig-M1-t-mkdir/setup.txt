@@ -1,0 +1,5 @@
+total 0
+drwxr-xr-x 2 node node 0 Nov  3 06:03 .
+drwxr-xr-x 2 node node 0 Nov  3 06:03 ..
+-rw-r--r-- 1 node node 4 Nov  3 06:03 r-src.json
+-rw-r--r-- 1 node node 6 Nov  3 06:03 w.jsonl

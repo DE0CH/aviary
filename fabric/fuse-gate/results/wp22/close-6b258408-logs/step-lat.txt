@@ -1,0 +1,14 @@
+bench-1m-0.json {"n":50,"size":1048576,"MBps":68.36,"p50_ms":15.113,"p99_ms":18.941,"max_ms":18.941}
+bench-1m-20.json {"n":50,"size":1048576,"MBps":28.58,"p50_ms":36.771,"p99_ms":39.978,"max_ms":39.978}
+bench-1m-5.json {"n":50,"size":1048576,"MBps":49.78,"p50_ms":20.689,"p99_ms":26.079,"max_ms":26.079}
+bench-4k-0.json {"n":1000,"size":4096,"MBps":2.91,"p50_ms":1.262,"p99_ms":3.539,"max_ms":6.029}
+bench-4k-20.json {"n":1000,"size":4096,"MBps":0.17,"p50_ms":23.997,"p99_ms":25.652,"max_ms":27.154}
+bench-4k-5.json {"n":1000,"size":4096,"MBps":0.48,"p50_ms":8.542,"p99_ms":9.941,"max_ms":10.596}
+c-0 [["completed",1078],["completed",936],["completed",964],["completed",1017],["completed",975]] {"messages": 5, "missing": 0, "message_latency_ms": {"p50": 3.9, "p99": 4.2, "max": 4.2}, "chunk_spread_ms": {"p50": 810.2, "max": 822.4}, "tool_roundtrip_ms": {"n": 10, "p50": 45.0, "p99": 104.8, "max": 104.8}}
+c-50 [["completed",1036],["completed",1017],["completed",1008],["completed",988],["completed",998]] {"messages": 5, "missing": 0, "message_latency_ms": {"p50": 3.6, "p99": 4.6, "max": 4.6}, "chunk_spread_ms": {"p50": 808.8, "max": 810.5}, "tool_roundtrip_ms": {"n": 10, "p50": 38.5, "p99": 53.3, "max": 53.3}}
+c-500 [["completed",1663],["completed",1657],["completed",1636],["completed",1639],["completed",1655]] {"messages": 5, "missing": 0, "message_latency_ms": {"p50": 3.3, "p99": 3.6, "max": 3.6}, "chunk_spread_ms": {"p50": 807.3, "max": 818.7}, "tool_roundtrip_ms": {"n": 10, "p50": 44.0, "p99": 60.5, "max": 60.5}}
+c-hold [["completed",31215],["completed",997],["completed",1036],["completed",1012],["completed",996]] {"messages": 5, "missing": 0, "message_latency_ms": {"p50": 3.7, "p99": 17.2, "max": 17.2}, "chunk_spread_ms": {"p50": 810.2, "max": 816.0}, "tool_roundtrip_ms": {"n": 10, "p50": 51.5, "p99": 64.2, "max": 64.2}}
+r87-cold [["completed",2191]]
+r87-warm [["completed",2420]]
+{"pairs": 87, "size": 91993640}
+cc_file calls: [{"path":"projects/-workspace/01a19fff-2a39-770c-93f6-d4cfee1c040d.jsonl","offset":0,"length":472395},{"path":"projects/-workspace/01a19fff-2a39-770c-93f6-d4cfee1c040d.jsonl","offset":null,"length":null},{"path":"projects/-workspace/01a19fff-2a39-770c-93f6-d4cfee1c040d.jsonl","offset":90945064,"length":1048576},{"path":"projects/-workspace/01a19fff-2a39-770c-93f6-d4cfee1c040d.jsonl","offset":90945064,"length":1048576},{"path":"projects/-workspace/01a19fff-2a39-770c-93f6-d4cfee1c040d.jsonl","offset":90945064,"length":1048576},{"path":"projects/-workspace/01a19fff-2a39-770c-93f6-d4cfee1c040d.jso

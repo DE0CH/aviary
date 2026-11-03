@@ -845,3 +845,58 @@ that one case, with the corrected release order.
 **Still open** (unchanged by review 3; WP-22 stays not done): (a)-(c) above; items 2, 3, 6, 9 and 10 have not been
 re-run on current main; the `unique`-across-a-migration half of item 4 (`rig-uniques.py` on `rig-mig.sh` with
 `RIG_FI=1`) is not run; the stuck rule during a start's replay (above); the migration acceptance waits for WP-57.
+
+## WP-22 close-out (2026-11-03)
+
+**Changed** (each with a test; CI's `test` job runs them):
+- **The stuck rule at a start** (review 3's open item). `Remote::health_probe` asks magpie for the tree every half of
+  `healthy_within` (7.5 s) while `Core::start` runs, which covers the tree load's repairs and the journal replay
+  (both before the heartbeat of 4.3 step 7), and records each answer. A replayed op that magpie holds while it
+  answers the rest now ends in EIO and `cc.write_stuck` after `STUCK_OP`, and the start goes on (test
+  `a_replayed_write_magpie_holds_is_stuck_without_the_heartbeat`; without the probe it fails at its 30 s start
+  bound).
+- **Every FUSE test is bounded and cleans up after itself.** In `fuse::tests` every start has a 30 s bound. The
+  runtime shuts down with a 5 s bound after the sentry's handles close, also after a failed assertion; before, a
+  plain drop waited for a start that retried through an outage. The outage test lets magpie back in before it
+  asserts. The kernel mount test gives its syscalls 60 s, then aborts the connection, and a guard force-unmounts the
+  mount (FUSE's `umount_begin` aborts the connection) and detaches it on any exit. That this works was checked with
+  a server that answers nothing: the test failed in 8 s and left no mount. nextest ends a supervisor test after
+  2 min and any other after 10 min; ci.yml's root steps run under `timeout 300`.
+- **The CI hang** (run 41566212411, `start::tests::a_sigterm_release_ends_in_time_while_hermit_holds_every_report`;
+  not a FUSE test). A test keeper runs on a thread and left its listener and connections open when it stopped. A
+  supervisor `EXITS` call that connected after the keeper's last poll then waited in `recv` for ever, and the test
+  runtime's shutdown waited on that blocking task. The gdb backtrace of a reproduction shows it in
+  `keeper::Client::exits`; the hang came 1 in 40 under load. A stopped keeper now closes its socket and every
+  connection (`impl Drop for Keeper`): 0 hangs in 120 runs under the same load.
+
+**The re-run on current main** (`6b258408`, which has every WP-22 change and WP-23's `797df2ce` and `31056c96`).
+One throwaway Hetzner Cloud **cpx42** (8 shared vCPUs, AMD EPYC-Genoa, 16 GB; the project's dedicated-core limit
+ruled out a ccx host), Ubuntu 24.04, kernel 6.8, runsc `precopy-20261102.1`, image
+`ghcr.io/de0ch/jarvis3-sandbox:2eb5bf396b5f`, Claude Code 2.1.304 launched by the real supervisor under 6.1-6.4's argv,
+environment and managed files. Every migration is `LOOPBACK=1` (the target is a second runsc root on the same host).
+The host was deleted after the run. Raw outputs: `fabric/fuse-gate/results/wp22/{rmount-m2, kill-k5, rig-M*,
+rmig-e6, rmig-m6, rmig-f4, rmig-f5, rsess-s3, rsess-s4, rtomb-t5, rtomb-t6, rlat-l6, close-6b258408-logs}`.
+
+| Item | Result on `6b258408` |
+|---|---|
+| 1, 5 | pass (`rmount-m2`): uid 1000 I/O on both scopes, `settings.json` refused (EACCES); flock and fcntl between two processes behave as on `/tmp` |
+| 2 | pass except the tombstone (`rsess-s3`): 11 of 11 turns `completed` (session a, then the two torn tails, each with a resume in a new process); the 3 magpie-scope files equal magpie's copies and the other 10 are local; compaction is a truncate and a rename, as before. **Tombstone: still not reproduced** (`rtomb-t5` `catalog`, `rtomb-t6` `catalog2`): Claude Code fell back (`model_refusal_fallback`, one `retracted_message_uuids`) with 0 writes below a transcript's end and 0 truncates |
+| 3, resend rule | pass, **16 of 16 migrations** (`rig-batch-M.log`, `RIG_FI=1`, both layouts, WRITE, CREATE `O_EXCL`, MKDIR and RENAME held in magpie across the checkpoint): each caller got the original's success once, magpie saw one `opId` and holds the expected state, one supervisor connection, no fault |
+| 3, Claude Code mid-turn | pass, **3 of 3** (`rmig-e6`, `rmig-m6` empty cache: target `final_ms` 755.9 and 592.7, `restore_ms` 133.2 and 132.0; `rmig-f5` full cache, 335,578,591 bytes in the cache: `final_ms` 992.9, `restore_ms` 153.2, all 67 magpie-scope files equal magpie's copies): the turn completed on the target (9.1-9.4 s), the blocked 1 MiB write returned its full count once and is stored once. `rmig-f4` (same as f5) also printed PASS, but its `rigreport.py` timed out on fuse-rig's admin port, so its file comparison never ran. `rig-migcc.sh` passed it anyway; it now fails a run without a file report, and `rigreport.py` retries a timeout. The 2x rule is still not shown by this rig (fake magpie rides the pre-copy stream, open item (c)) |
+| 4 | pass (`kill-k5`, scratch layout): **19 of 19 cases** (the four journal points of WRITE, MKDIR, CREATE and RENAME, read-returned and reply-written of a READ) plus the plain SIGKILL during a held 1 MiB write (6.4 s, the hold released by the script). `rig-uniques.py`: 38 instances on one connection read 920 requests, no `unique` twice, 157 `opId`s, none naming two operations. **The `unique`-across-a-migration half**: `rig-uniques.py` over each of the 16 `RIG_FI=1` migrations (`rig-M*/uniques.json`): no `unique` read twice across the checkpoint, no `opId` naming two operations. The checker's first pass over `kill-k5` reported two replays of a `unique` no instance had logged reading (a FLUSH and a RELEASE). Another worker had read each into its journal slot between the fault and the SIGKILL, before writing its log line, and no instance read either again. `rig-uniques.py` now counts these as `replayed_unlogged` and reports only a replayed `unique` that some instance reads again |
+| 6 | pass for the mount's own share and the cold resume (`rlat-l6`; the cluster path is open item (b)): 4 KiB p50 / p99 1.26 / 3.54 ms at 0 ms injected, 8.54 / 9.94 at 5 ms, 24.0 / 25.7 at 20 ms; 1 MiB 15.1 / 18.9 ms (68 MB/s) at 0 ms, 20.7 / 26.1 at 5 ms, 36.8 / 40.0 at 20 ms (slower than `rlat-l5`'s 6.5 / 16.4 ms on AWS: shared vCPUs). The 87 MiB resume from a cold cache took 2,191 ms (warm 2,420 ms; target 6 s) |
+| 9 | pass, without the tombstone's own syscalls (`rsess-s4`, `inventory-mount.json`): Claude Code's syscalls on mount paths are the gate's 25 exactly; answers other than success are ENOENT, EEXIST, ENOTEMPTY and `ioctl` EOPNOTSUPP on `backups/`; no ENOSYS |
+| 10 | pass at 50 ms (`rlat-l6`): message latency p99 4.2 ms at 0 ms injected, 4.6 ms at 50 ms (1.10x), 3.6 ms at 500 ms, 17.2 ms with every cc write held 30 s. Turn times are 0.94-1.08 s at 0 and 50 ms and 1.64-1.66 s at 500 ms. Under the 30 s hold, the held turn took 31.2 s (earlier 11.0 s): since `31056c96` its end waits for magpie to store the turn's lines (8.2), not for Claude Code's 10 s drain cap |
+
+Seen in `rlat-l6` and left to WP-23's driver (`cc/report.rs`): after the cold restart, each resumed turn called
+`wait_stored` 21 times. Each call scanned the main transcript's last 1 MiB from magpie (`scan_main_tail`, 21
+`cc/file` range reads per turn), because some of the waited-for uuids never appear in the tail. Inference: this is
+a cost, not a wrong answer (the turns completed in 2.1-2.4 s).
+
+**Still open** (WP-22 is not done until these close):
+- (a) the tombstone rewrite (DESIGN 14, question 2): not reproduced on current main; Deyao's deferral is not in
+  DECISIONS.md.
+- (b) item 6's in-cluster 1 MiB p99 and (c) item 3's full-cache 2x rule: both need a magpie outside the sandbox
+  (WP-40's fabric).
+- Deviations 4 and 5 (review 3) await Deyao's acceptance.
+- The migration acceptance through sandboxd waits for WP-57; these runs used the gate's `send-scratch` on one host.

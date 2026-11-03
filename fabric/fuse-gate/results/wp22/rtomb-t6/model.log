@@ -1,0 +1,35 @@
+1793686136958148 req=0 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793686136958404 req=0 recv msgs=1 model=claude-sonnet-4-5 stream=true plan=text:3x0ms
+1793686136958593 req=0 chunk=0 token=tk0x0
+1793686136958709 req=0 chunk=1 token=tk0x1
+1793686136958788 req=0 chunk=2 token=tk0x2
+1793686136958986 req=0 done stop=end_turn
+1793686137064611 req=1 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793686137064718 req=1 recv msgs=3 model=claude-sonnet-4-5 stream=true plan=tool:Bash
+1793686137065227 req=1 done stop=tool_use
+1793686137210932 req=2 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793686137211004 req=2 recv msgs=5 model=claude-sonnet-4-5 stream=true plan=trunconce
+1793686137211204 req=2 chunk=0 token=tk2x0
+1793686137211230 req=2 chunk=1 token=tk2x1
+1793686137211257 req=2 chunk=2 token=tk2x2
+1793686137211347 req=2 chunk=3 token=tk2x3
+1793686137512555 req=2 truncated (refusal, no message_stop)
+1793686137551547 req=3 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793686137551698 req=3 recv msgs=7 model=claude-sonnet-4-5 stream=true plan=trunconce
+1793686137551844 req=3 chunk=0 token=tk3x0
+1793686137551944 req=3 chunk=1 token=tk3x1
+1793686137551998 req=3 chunk=2 token=tk3x2
+1793686137552034 req=3 chunk=3 token=tk3x3
+1793686137852783 req=3 truncated (refusal, no message_stop)
+1793686137880361 req=4 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793686137880386 req=4 recv msgs=10 model=claude-opus-4-8 stream=true plan=text:4x0ms
+1793686137880735 req=4 chunk=0 token=tk4x0
+1793686137880777 req=4 chunk=1 token=tk4x1
+1793686137880855 req=4 chunk=2 token=tk4x2
+1793686137880898 req=4 chunk=3 token=tk4x3
+1793686137880979 req=4 done stop=end_turn
+1793686138010330 req=5 tools=Agent,Bash,Edit,ListAgents,Read,ReportFindings,ScheduleWakeup,SendUserFile,Skill,ToolSearch,Workflow,DeferredToolPlaceholder,Write
+1793686138010364 req=5 recv msgs=13 model=claude-opus-4-8 stream=true plan=text:2x0ms
+1793686138010559 req=5 chunk=0 token=tk5x0
+1793686138010581 req=5 chunk=1 token=tk5x1
+1793686138010631 req=5 done stop=end_turn

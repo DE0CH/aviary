@@ -86,6 +86,7 @@ jq -e '.ok == true and .ret == 1048576' "$out/op.json" >/dev/null 2>&1 || fail+=
 jq -e '.turns[0].state == "completed"' "$out/turn.summary.json" >/dev/null 2>&1 || fail+=("the turn did not complete: $(jq -c '.turns[0] | {state, error}' "$out/turn.summary.json" 2>/dev/null)")
 want=$(python3 -c "import hashlib; n=1048576; l=b'x'*127+b'\\n'; print(hashlib.sha256(b'start\\n'+(l*(n//len(l)+1))[:n-1]+b'\\n').hexdigest())")
 jq -e --arg w "$want" '.sha256 == $w and .size == 1048582' "$out/w.node.json" >/dev/null || fail+=("magpie's copy is not start + the 1 MiB once: $(cat "$out/w.node.json")")
+jq -e '.files | length > 0' "$out/report.json" >/dev/null 2>&1 || fail+=("no file report (rigreport.py failed): magpie's copies were not compared")
 bad=$(jq -r '[.files[] | select(.scope == "magpie" and .equal_to_magpie != true) | .path] | join(",")' "$out/report.json")
 [ -z "$bad" ] || fail+=("files differ from magpie's copy: $bad")
 after=$(jq -r --argjson t "$((t0 * 1000))" '[.[] | select(.t > $t)] | length' <(jq -s . "$out/cc-stdout.jsonl"))
