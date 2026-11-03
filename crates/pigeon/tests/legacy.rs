@@ -1318,3 +1318,23 @@ async fn an_unreadable_owner_is_a_retryable_error_and_an_unreadable_release_reco
     assert_eq!(e.metric("pigeon_legacy_release_unread_total"), 1.0);
     e.m.st().refuse.clear();
 }
+
+/// A send whose ticket's hold has run out when its write would start closes that ticket `refused` (before it asks
+/// again, so the repeat cannot get the same ticket back) and writes under a new one: one old turn, two tickets.
+#[tokio::test]
+async fn a_write_past_its_tickets_hold_takes_another_ticket() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    let mut ws = e.ws(STAFF).await;
+    list(&mut ws).await;
+    e.m.st().hold_ms_next = Some(0);
+    let r = send(&mut ws, c, "m-hold", json!({})).await;
+    assert_eq!(r["accepted"], true, "{r}");
+    assert_eq!(e.old.agent(c).sends.len(), 1);
+    e.m.wait_tickets(|t| t.len() == 2 && t.iter().all(|t| t.outcome.is_some()))
+        .await;
+    let t = e.m.tickets_of(c);
+    assert_eq!(t[0].outcome, Some(TicketOutcome::Refused), "nothing written under it");
+    assert_eq!(t[1].outcome, Some(TicketOutcome::Started));
+    assert_eq!(e.metric("pigeon_switch_write_refused_total"), 0.0);
+}

@@ -216,27 +216,31 @@ impl Legacy {
     /// Reports a ticket's outcome (retried in the background: until it lands the importer keeps the conversation
     /// legacy, which only delays its release).
     fn report(&self, conn: &Arc<Conn>, ticket: Uuid, outcome: TicketOutcome) {
-        let Some(app) = self.app().cloned() else { return };
-        let conn = conn.clone();
-        tokio::spawn(async move {
-            let mut wait = Duration::from_millis(250);
-            for _ in 0..8 {
-                match conn
-                    .calls(&app.0.magpie)
-                    .legacy_ticket_done(ticket, &TicketDone { outcome })
-                    .await
-                {
-                    Ok(()) => return,
-                    Err(e) if e.api().is_some_and(|r| r.status < 500 && r.status != 429) => {
-                        tracing::warn!(error = %e, "ticket outcome refused");
-                        return;
-                    }
-                    Err(e) => tracing::warn!(error = %e, "ticket outcome not reported; retrying"),
+        let (me, conn) = (self.clone(), conn.clone());
+        tokio::spawn(async move { me.report_now(&conn, ticket, outcome).await });
+    }
+
+    /// [`Self::report`], waited for; `false` when it did not land.
+    async fn report_now(&self, conn: &Conn, ticket: Uuid, outcome: TicketOutcome) -> bool {
+        let Some(app) = self.app().cloned() else { return false };
+        let mut wait = Duration::from_millis(250);
+        for _ in 0..8 {
+            match conn
+                .calls(&app.0.magpie)
+                .legacy_ticket_done(ticket, &TicketDone { outcome })
+                .await
+            {
+                Ok(()) => return true,
+                Err(e) if e.api().is_some_and(|r| r.status < 500 && r.status != 429) => {
+                    tracing::warn!(error = %e, "ticket outcome refused");
+                    return false;
                 }
-                tokio::time::sleep(wait).await;
-                wait = (wait * 2).min(Duration::from_secs(5));
+                Err(e) => tracing::warn!(error = %e, "ticket outcome not reported; retrying"),
             }
-        });
+            tokio::time::sleep(wait).await;
+            wait = (wait * 2).min(Duration::from_secs(5));
+        }
+        false
     }
 
     /// A write the switch could not make: counted, and the tab's error (the signed-out answer for a 401).
@@ -344,10 +348,15 @@ impl Legacy {
             }
             if Instant::now() >= hold || conn.is_closing() {
                 // no write starts past the hold (nor for a tab that has gone: its resend may already be on its way):
-                // this ticket closes with nothing written
-                self.report(conn, ticket, TicketOutcome::Refused);
+                // this ticket closes with nothing written, before another is taken (a send's next ticket call would
+                // otherwise get this one back, open, and write under a ticket about to close `refused`)
                 if conn.is_closing() {
+                    self.report(conn, ticket, TicketOutcome::Refused);
                     return;
+                }
+                if !self.report_now(conn, ticket, TicketOutcome::Refused).await {
+                    self.0.metrics.write_refused.inc();
+                    return self.write_failed(conn, kind, rid, false);
                 }
                 continue;
             }
