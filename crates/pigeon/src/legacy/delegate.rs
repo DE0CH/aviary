@@ -4,41 +4,48 @@
 //! - every write takes a ticket first; `native` (magpie owns the conversation now, the fence won) sends it natively,
 //!   `legacy` sends it through the LU, and the old child's answer is the ticket's outcome (a send: `started` when it
 //!   accepted, since the old hub starts the turn before it answers; `refused` otherwise; anything else `applied` or
-//!   `refused`);
-//! - a send's ticket call carries its `clientMessageId` (a retry gets the open ticket); no write starts later than
-//!   the answer's `holdMs` after pigeon SENT the ticket call (its monotonic clock): past that, a new ticket; every
-//!   write is given up after `TICKET_WRITE_TIMEOUT` (20 s) without the old child's answer, and the ticket is left for
-//!   the importer to expire;
-//! - an answer with `supersedes` or `reused` means a first send may have reached the old child, which does not
-//!   de-duplicate by `clientMessageId` (a tab's resend after its socket dropped, the drain or a dead replica):
-//!   pigeon waits `settleMs` (a reuse: [`REUSE_SETTLE`]) from when it sent that call, reads the old child, and sends
-//!   only when the first send is absent: no user row of it in the timeline, and the conversation not running,
-//!   preparing or holding a pending message (an old child that restarted rebuilds its timeline without the row's
-//!   id). When present, the ticket is reported from what the old child shows and the send is answered as accepted;
-//!   when the old child cannot be read, nothing is sent. Every other send is not sent again either when the
-//!   timeline already holds its user row (a resend whose answer the tab never got);
-//! - a send of magpie-only files copies each into the old child first, each under an upload ticket of its own, then
-//!   sends with the old paths under the send's ticket; a copy whose ticket answers `native` sends natively with the
-//!   tab's own message (every path magpie's);
-//! - an outcome is `refused` only when the old route itself answered no (a 4xx, the old child's own refusal); a
-//!   5xx, a gateway error or no answer may come after the write was applied, so the ticket is left for the importer
-//!   to expire after its settle read;
+//!   `refused`), reported with the answer's `take`;
+//! - a send's ticket call carries its `clientMessageId` (a retry gets the open ticket, possibly while another request
+//!   still holds it); no write starts later than the answer's `holdMs` after pigeon SENT the ticket call (its
+//!   monotonic clock): past that, a new ticket; every write is given up after `TICKET_WRITE_TIMEOUT` (20 s) without
+//!   the old child's answer (and an LU frame not on the wire by then is dropped, [`Lu::call`]), and the ticket is
+//!   left for the importer to expire;
+//! - a send's write is claimed under its take right before it starts, so of two requests holding one ticket only one
+//!   writes; a request that gives up without writing reports `refused` under its own take, which closes nothing once
+//!   another request holds the ticket;
+//! - the old child does not de-duplicate a send by `clientMessageId` (a second send is a second turn), so a send
+//!   whose answer names an earlier hand-out (`reused`), an open earlier ticket (`supersedes`) or an earlier ticket
+//!   (`prior`) is checked first: a `prior` the old child accepted is answered `accepted` with nothing sent; otherwise
+//!   pigeon reads the old child's timeline (an early read, then once every earlier write has settled, `settleMs` from
+//!   when it sent the call) and sends only when the send's user row is not there. When it is, the ticket is
+//!   reported from what the old child shows and the send is answered as accepted; when the old child cannot be read,
+//!   nothing is sent. A row that is not there is sent: the old hub refuses it itself while a turn runs;
+//! - a send whose LU drops (or times out) with its write in flight, under a tab that stays, is settled the same way
+//!   through the reopened LU: accepted when the old child has it, written again within the hold when it does not;
+//! - a send of magpie-only files copies each into the old child first, each under an upload ticket of its own (a
+//!   new one when its hold ran out), once for the whole send, then sends with the old paths under the send's ticket;
+//!   a copy whose ticket answers `native` sends natively with the tab's own message (every path magpie's);
+//! - an outcome is `refused` only when the old route itself answered no (a 4xx, the old child's own refusal) or
+//!   nothing was written; a 5xx, a gateway error or no answer may come after the write was applied, so the ticket is
+//!   left for the importer to expire after its settle read;
 //! - a socket with a ticketed write in flight counts as a transfer for the drain (its 1012 waits for the write, up
 //!   to the transfer bound), and every write the switch fails counts in `pigeon_switch_write_refused_total`.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use magpie_api::client::ClientError;
 use magpie_api::legacy::{
-    TICKET_WRITE_TIMEOUT, TicketDone, TicketKind, TicketOutcome, TicketRequest, TicketResponse, TicketRoute,
+    TICKET_CLAIM_SETTLE, TICKET_WRITE_TIMEOUT, TicketClaim, TicketDone, TicketKind, TicketOutcome, TicketRequest,
+    TicketResponse, TicketRoute,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::lu::{Lu, LuError};
 use super::upstream::CallError;
-use super::{Legacy, OLD_BUSY, OLD_USER_ROW_PREFIX, READ_TIMEOUT};
+use super::{Legacy, OLD_USER_ROW_PREFIX, READ_TIMEOUT};
 use crate::feeds::{BoxFuture, Delegate};
 use crate::paseo::dispatch;
 use crate::paseo::messages::{rpc_error, str_field};
@@ -48,9 +55,22 @@ use crate::paseo::transport::Conn;
 /// Tickets taken for one write at most (each past its hold is closed `refused` and another taken).
 const MAX_TICKETS: usize = 4;
 
-/// How long after a reused ticket's call pigeon reads the old child: a first write under it was either sent on a
-/// socket that has closed since (its bytes have landed by then) or is still being answered.
-pub const REUSE_SETTLE: Duration = Duration::from_secs(2);
+/// Writes under one ticket at most (a send whose LU dropped mid-write, found absent, is written again).
+const MAX_WRITES: usize = 3;
+
+/// The old timeline's tail a repeat's read covers (the old hub's page limit).
+const OLD_TAIL: u64 = 500;
+
+/// The longest a copy-at-send reads one upload's bytes from magpie.
+const COPY_READ_TIMEOUT: Duration = Duration::from_secs(60);
+
+const _: () = assert!(
+    TICKET_CLAIM_SETTLE.as_secs() - TICKET_WRITE_TIMEOUT.as_secs() == 10,
+    "Tuning::legacy_transit's default is the claim's transit bound"
+);
+
+/// How long after an LU drop pigeon waits before it asks for the reopened LU (past a blip, as `lu_ended` does).
+const LU_REOPEN_WAIT: Duration = Duration::from_millis(400);
 
 /// The legacy delegate installed for every legacy conversation.
 pub(crate) struct LegacyDelegate(pub(crate) Legacy);
@@ -118,6 +138,22 @@ fn holds_send(v: &Value, cmid: &str) -> bool {
     }
 }
 
+/// The `messageId` of a send the tab sent without one: stable for the same request (a resend of it on another
+/// socket carries the same request id and text), so its ticket's reuse and the timeline check still match it; a
+/// random one when there is no request id to tie it to (the tab cannot match an answer then either). The paseo
+/// client always sets one (`daemon-client.ts` `sendAgentMessage`).
+fn stable_message_id(c: Uuid, rid: &str, m: &Value) -> String {
+    if rid.is_empty() {
+        return Uuid::new_v4().to_string();
+    }
+    let text = str_field(m, "text").unwrap_or("");
+    Uuid::new_v5(
+        &Uuid::NAMESPACE_OID,
+        format!("pigeon-send\n{c}\n{rid}\n{text}").as_bytes(),
+    )
+    .to_string()
+}
+
 /// How a copy-at-send ended other than with every file in the old child.
 enum Copy {
     /// An upload ticket answered `native`: send natively with the magpie paths.
@@ -133,6 +169,27 @@ enum OldSend {
     Present { running: bool },
     /// It does not.
     Absent,
+}
+
+/// One hand-out of a ticket: what a write under it is reported and claimed with.
+#[derive(Debug, Clone, Copy)]
+struct Held {
+    ticket: Uuid,
+    take: Option<Uuid>,
+    /// No write starts past this (pigeon's clock: when it sent the ticket call, plus `holdMs`).
+    hold: Instant,
+}
+
+/// A claim's answer.
+enum Claim {
+    /// The write may start now.
+    Claimed,
+    /// Another request holds the ticket now and writes.
+    Elsewhere,
+    /// The ticket is closed or past its hold, or the send was accepted under another ticket: a new ticket.
+    Closed,
+    /// magpie did not answer.
+    Unknown,
 }
 
 /// Whether an old HTTP refusal is the old route's own answer (a 4xx): anything else may follow an applied write.
@@ -156,7 +213,7 @@ impl Legacy {
             Some(tk) => {
                 if tk == TicketKind::Send && str_field(&m, "messageId").is_none_or(str::is_empty) {
                     // the old child keys the user row by it, and the ticket's retry by it
-                    m["messageId"] = json!(Uuid::new_v4().to_string());
+                    m["messageId"] = json!(stable_message_id(c, &rid, &m));
                 }
                 self.ticketed(&conn, &kind, c, m, &rid, tk).await;
             }
@@ -213,21 +270,21 @@ impl Legacy {
         Ok((t, sent))
     }
 
-    /// Reports a ticket's outcome (retried in the background: until it lands the importer keeps the conversation
-    /// legacy, which only delays its release).
-    fn report(&self, conn: &Arc<Conn>, ticket: Uuid, outcome: TicketOutcome) {
+    /// Reports a ticket's outcome under its take (retried in the background: until it lands the importer keeps the
+    /// conversation legacy, which only delays its release).
+    fn report(&self, conn: &Arc<Conn>, h: Held, outcome: TicketOutcome) {
         let (me, conn) = (self.clone(), conn.clone());
-        tokio::spawn(async move { me.report_now(&conn, ticket, outcome).await });
+        tokio::spawn(async move { me.report_now(&conn, h, outcome).await });
     }
 
     /// [`Self::report`], waited for; `false` when it did not land.
-    async fn report_now(&self, conn: &Conn, ticket: Uuid, outcome: TicketOutcome) -> bool {
+    async fn report_now(&self, conn: &Conn, h: Held, outcome: TicketOutcome) -> bool {
         let Some(app) = self.app().cloned() else { return false };
         let mut wait = Duration::from_millis(250);
         for _ in 0..8 {
             match conn
                 .calls(&app.0.magpie)
-                .legacy_ticket_done(ticket, &TicketDone { outcome })
+                .legacy_ticket_done(h.ticket, &TicketDone { outcome, take: h.take })
                 .await
             {
                 Ok(()) => return true,
@@ -243,6 +300,26 @@ impl Legacy {
         false
     }
 
+    /// Claims a send's write under `h` (the write starts at once after [`Claim::Claimed`]).
+    async fn claim(&self, conn: &Conn, h: Held) -> Claim {
+        let (Some(app), Some(take)) = (self.app().cloned(), h.take) else {
+            return Claim::Unknown;
+        };
+        match conn
+            .calls(&app.0.magpie_turns)
+            .legacy_ticket_claim(h.ticket, &TicketClaim { take })
+            .await
+        {
+            Ok(a) if a.claimed => Claim::Claimed,
+            Ok(a) if a.held_elsewhere => Claim::Elsewhere,
+            Ok(_) => Claim::Closed,
+            Err(e) => {
+                tracing::warn!(error = %e, "write not claimed");
+                Claim::Unknown
+            }
+        }
+    }
+
     /// A write the switch could not make: counted, and the tab's error (the signed-out answer for a 401).
     fn write_lost(&self, conn: &Arc<Conn>, kind: &str, rid: &str, e: LuError) {
         if e != LuError::SignedOut {
@@ -251,20 +328,38 @@ impl Legacy {
         self.lu_failed(conn, kind, rid, e);
     }
 
-    /// A write: ticket, then (a send) the copies of its magpie-only files, then the write through the LU.
-    #[allow(clippy::many_single_char_names)] // c, m, t, o, p: the conversation, message, ticket, outcome, payload
-    #[allow(clippy::too_many_lines)] // one write's steps in order: ticket, repeat check, copies, hold, write
+    /// A send the old child already has: its ticket reported from what it shows, the tab answered as accepted.
+    fn already_sent(&self, conn: &Arc<Conn>, h: Held, c: Uuid, rid: &str, running: bool) {
+        let o = if running {
+            TicketOutcome::Started
+        } else {
+            TicketOutcome::Completed
+        };
+        self.report(conn, h, o);
+        tracing::info!(conversation = %c, "a repeated send had reached the old child: not sent again");
+        let p = json!({"agentId": c, "accepted": true, "error": null});
+        answer(conn, "send_agent_message_response", p, rid);
+    }
+
+    /// A write: ticket, then (a send) its repeat check and the copies of its magpie-only files, then the claim and
+    /// the write through the LU.
+    #[allow(clippy::many_single_char_names)] // c, m, t, o, p, h: the conversation, message, ticket, outcome, payload
+    #[allow(clippy::too_many_lines)] // one write's steps in order: ticket, repeat check, copies, hold, claim, write
     async fn ticketed(&self, conn: &Arc<Conn>, kind: &str, c: Uuid, m: Value, rid: &str, tk: TicketKind) {
         let Some(app) = self.app().cloned() else { return };
         // the drain's 1012 waits for this write (its ticket stays open otherwise and the tab's resend meets it)
         let _transfer = conn.transfer();
         let cmid = (tk == TicketKind::Send).then(|| str_field(&m, "messageId").unwrap_or("").to_owned());
-        let lu = self.lu_for(conn);
+        let mut lu = self.lu_for(conn);
         // the LU is open before any ticket, so its upgrade does not eat into a hold
         if let Err(e) = lu.ready().await {
             return self.write_lost(conn, kind, rid, e);
         }
-        for _ in 0..MAX_TICKETS {
+        // the tab's message stays as it is (every native fallback sends it); the LU send carries the old paths, copied
+        // once for the whole send
+        let mut out = m.clone();
+        let mut copies = Copies::default();
+        'tickets: for _ in 0..MAX_TICKETS {
             let (t, sent) = match self.take(conn, c, tk, cmid.clone()).await {
                 Ok(t) => t,
                 Err(e) => {
@@ -276,111 +371,158 @@ impl Legacy {
                     return self.write_failed(conn, kind, rid, not_found);
                 }
             };
-            let ticket = match (t.route, t.ticket) {
+            let h = match (t.route, t.ticket) {
                 (TicketRoute::Native, _) => {
                     // magpie owns it now: a native write (the release's replacement comes with the owner change)
                     self.mark(&conn.person, c, false);
                     let hub = app.hub().unwrap_or_default();
                     return dispatch::native(&app, &hub, conn, kind.to_owned(), m).await;
                 }
-                (TicketRoute::Legacy, Some(ticket)) => ticket,
+                (TicketRoute::Legacy, Some(ticket)) => Held {
+                    ticket,
+                    take: t.take,
+                    hold: sent + Duration::from_millis(t.hold_ms.unwrap_or(0)),
+                },
                 (TicketRoute::Legacy, None) => {
                     self.0.metrics.write_refused.inc();
                     return self.write_failed(conn, kind, rid, false);
                 }
             };
-            let hold = sent + Duration::from_millis(t.hold_ms.unwrap_or(0));
             if let Some(cmid) = &cmid {
-                // a first send may have reached the old child (a repeat under a reused or superseded ticket):
-                // read it once its writes have settled, and take the safe side
-                let settle = match (&t.supersedes, t.reused) {
-                    (Some(sup), _) => Some(Duration::from_millis(sup.settle_ms)),
-                    (None, true) => Some(REUSE_SETTLE),
-                    (None, false) => None,
-                };
-                let found = match settle {
-                    Some(settle) => {
-                        tokio::time::sleep_until((sent + settle).into()).await;
-                        match self.old_has_send(conn, &lu, c, cmid, true).await {
-                            Some(f) => f,
-                            None => {
-                                // the old child cannot be read: nothing is sent (a send twice is a second turn)
-                                return self.write_lost(conn, kind, rid, LuError::NotSent);
-                            }
-                        }
-                    }
-                    // a resend whose first answer never reached the tab: its user row is in the timeline
-                    None => self
-                        .old_has_send(conn, &lu, c, cmid, false)
-                        .await
-                        .unwrap_or(OldSend::Absent),
-                };
-                if let OldSend::Present { running } = found {
-                    let o = if running {
-                        TicketOutcome::Started
-                    } else {
-                        TicketOutcome::Completed
-                    };
-                    self.report(conn, ticket, o);
-                    tracing::info!(conversation = %c, "a repeated send had reached the old child: not sent again");
+                if t.prior.as_ref().is_some_and(|p| p.accepted) {
+                    // the old child took this send under an earlier ticket: never sent twice, nothing written here
+                    self.report(conn, h, TicketOutcome::Refused);
+                    tracing::info!(conversation = %c, "a send the old child already accepted: not sent again");
                     let p = json!({"agentId": c, "accepted": true, "error": null});
                     return answer(conn, "send_agent_message_response", p, rid);
                 }
+                if t.reused || t.supersedes.is_some() || t.prior.is_some() {
+                    // an earlier write of this send may have reached the old child: read it once they have settled
+                    let settle = t
+                        .settle_ms
+                        .unwrap_or(0)
+                        .max(t.supersedes.as_ref().map_or(0, |s| s.settle_ms));
+                    match self
+                        .settled_read(&lu, c, cmid, sent + Duration::from_millis(settle))
+                        .await
+                    {
+                        Some(OldSend::Present { running }) => return self.already_sent(conn, h, c, rid, running),
+                        Some(OldSend::Absent) => {}
+                        // the old child cannot be read: nothing is sent (a send twice is a second turn), and the
+                        // ticket stays open (an earlier write may still land)
+                        None => return self.write_lost(conn, kind, rid, LuError::NotSent),
+                    }
+                }
             }
-            // the tab's message stays as it is (every native fallback sends it); the LU send carries the old paths
-            let mut out = m.clone();
             if tk == TicketKind::Send {
-                match self.copy_files(conn, c, &mut out).await {
+                match self.copy_files(conn, c, &mut out, &mut copies).await {
                     Ok(()) => {}
                     Err(Copy::Native) => {
-                        self.report(conn, ticket, TicketOutcome::Refused);
+                        self.report(conn, h, TicketOutcome::Refused);
                         self.mark(&conn.person, c, false);
                         let hub = app.hub().unwrap_or_default();
                         return dispatch::native(&app, &hub, conn, kind.to_owned(), m).await;
                     }
                     Err(Copy::Failed(sentence)) => {
-                        self.report(conn, ticket, TicketOutcome::Refused);
+                        self.report(conn, h, TicketOutcome::Refused);
                         self.0.metrics.write_refused.inc();
                         let p = json!({"agentId": c, "accepted": false, "error": sentence});
                         return answer(conn, "send_agent_message_response", p, rid);
                     }
                 }
             }
-            if Instant::now() >= hold || conn.is_closing() {
-                // no write starts past the hold (nor for a tab that has gone: its resend may already be on its way):
-                // this ticket closes with nothing written, before another is taken (a send's next ticket call would
-                // otherwise get this one back, open, and write under a ticket about to close `refused`)
+            for _ in 0..MAX_WRITES {
                 if conn.is_closing() {
-                    self.report(conn, ticket, TicketOutcome::Refused);
+                    // no write for a tab that has gone (its resend may already be on its way): this hand-out closes
+                    // with nothing written (a refused that changes nothing once the resend holds the ticket)
+                    self.report(conn, h, TicketOutcome::Refused);
                     return;
                 }
-                if !self.report_now(conn, ticket, TicketOutcome::Refused).await {
-                    self.0.metrics.write_refused.inc();
-                    return self.write_failed(conn, kind, rid, false);
+                if Instant::now() >= h.hold {
+                    // no write starts past the hold: this hand-out closes with nothing written, before another is
+                    // taken (a send's next ticket call would otherwise get this one back, open)
+                    if !self.report_now(conn, h, TicketOutcome::Refused).await {
+                        self.0.metrics.write_refused.inc();
+                        return self.write_failed(conn, kind, rid, false);
+                    }
+                    continue 'tickets;
                 }
-                continue;
-            }
-            match lu.call(out, TICKET_WRITE_TIMEOUT).await {
-                Ok((typ, p)) => {
-                    let o = outcome(tk, &typ, &p);
-                    self.report(conn, ticket, o);
-                    if o == TicketOutcome::Applied {
-                        match tk {
-                            TicketKind::Delete => self.set_deleted(&c, true),
-                            TicketKind::Restore => self.set_deleted(&c, false),
-                            TicketKind::Purge => self.forget(&c),
-                            _ => {}
+                if tk == TicketKind::Send {
+                    match self.claim(conn, h).await {
+                        Claim::Claimed => {}
+                        Claim::Elsewhere => {
+                            // the tab's resend holds the ticket now and writes it; this request has nothing to do
+                            tracing::info!(conversation = %c, "a send's ticket was handed to its resend");
+                            return self.write_failed(conn, kind, rid, false);
+                        }
+                        Claim::Closed => continue 'tickets,
+                        Claim::Unknown => {
+                            // nothing was written under it
+                            if !self.report_now(conn, h, TicketOutcome::Refused).await {
+                                self.0.metrics.write_refused.inc();
+                                return self.write_failed(conn, kind, rid, false);
+                            }
+                            continue 'tickets;
                         }
                     }
-                    return answer(conn, &typ, p, rid);
                 }
-                Err(e) => {
-                    if !e.maybe_sent() {
-                        self.report(conn, ticket, TicketOutcome::Refused);
+                let started = Instant::now();
+                match lu.call(out.clone(), TICKET_WRITE_TIMEOUT).await {
+                    Ok((typ, p)) => {
+                        let o = outcome(tk, &typ, &p);
+                        self.report(conn, h, o);
+                        if o == TicketOutcome::Applied {
+                            match tk {
+                                TicketKind::Delete => self.set_deleted(&c, true),
+                                TicketKind::Restore => self.set_deleted(&c, false),
+                                TicketKind::Purge => self.forget(&c),
+                                _ => {}
+                            }
+                        }
+                        return answer(conn, &typ, p, rid);
                     }
-                    return self.write_lost(conn, kind, rid, e);
+                    Err(e) if !e.maybe_sent() => {
+                        // nothing went out
+                        self.report(conn, h, TicketOutcome::Refused);
+                        return self.write_lost(conn, kind, rid, e);
+                    }
+                    Err(e) => {
+                        let Some(cmid) = cmid.as_deref().filter(|_| !conn.is_closing()) else {
+                            // it may have been applied: the importer expires the ticket after its settle read
+                            return self.write_lost(conn, kind, rid, e);
+                        };
+                        // the LU dropped or timed out with the send in flight, under a tab that stays: the reopened
+                        // LU reads the old child once the write has settled, and the answer comes from what it shows
+                        tracing::info!(error = ?e, conversation = %c, "a send's LU write has no answer: settling it");
+                        tokio::time::sleep(LU_REOPEN_WAIT).await;
+                        lu = self.lu_for(conn);
+                        if let Err(e) = lu.ready().await {
+                            return self.write_lost(conn, kind, rid, e);
+                        }
+                        // bytes already sent land within the transit bound; a write still queued was dropped at its bound
+                        let until = (started + TICKET_CLAIM_SETTLE).min(Instant::now() + self.0.transit);
+                        match self.settled_read(&lu, c, cmid, until).await {
+                            Some(OldSend::Present { running }) => {
+                                self.report(
+                                    conn,
+                                    h,
+                                    if running {
+                                        TicketOutcome::Started
+                                    } else {
+                                        TicketOutcome::Completed
+                                    },
+                                );
+                                let p = json!({"agentId": c, "accepted": true, "error": null});
+                                return answer(conn, "send_agent_message_response", p, rid);
+                            }
+                            // it never arrived: written again (claimed again) within the hold, else under a new ticket
+                            Some(OldSend::Absent) => {}
+                            None => return self.write_lost(conn, kind, rid, e),
+                        }
+                    }
                 }
             }
+            break;
         }
         tracing::warn!(kind, "no ticket held long enough for the write");
         self.0.metrics.write_refused.inc();
@@ -396,121 +538,154 @@ impl Legacy {
         }
     }
 
-    /// What the old child shows of the send of `cmid` (`None`: it cannot be read). Its timeline lives in the old
-    /// hub's memory and is rebuilt from history without the row's id after a restart, and a long turn can push the
-    /// row out of the tail, so with `strict` (a repeat whose first write may have landed) a conversation that runs,
-    /// is preparing, or holds a pending message (the agent's status, and the old child's busy state) counts as
-    /// having it, and an unreadable busy state is `None`.
-    async fn old_has_send(&self, conn: &Conn, lu: &Lu, c: Uuid, cmid: &str, strict: bool) -> Option<OldSend> {
-        let tail = json!({"type": "fetch_agent_timeline_request", "agentId": c, "direction": "tail",
-                          "limit": 200, "projection": "projected"});
-        let (_, page) = lu.call(tail, READ_TIMEOUT).await.ok()?;
-        let held = holds_send(&page, cmid);
-        if !strict && !held {
-            return Some(OldSend::Absent);
+    /// What the old child shows of the send of `cmid` once every earlier write of it has settled (`until`): a read
+    /// at once (a send that is there is answered without waiting), then one at `until` (`None`: it cannot be read).
+    async fn settled_read(&self, lu: &Lu, c: Uuid, cmid: &str, until: Instant) -> Option<OldSend> {
+        if Instant::now() < until {
+            if let Some(found @ OldSend::Present { .. }) = self.old_has_send(lu, c, cmid).await {
+                return Some(found);
+            }
+            tokio::time::sleep_until(until.into()).await;
         }
-        let agent = json!({"type": "fetch_agent_request", "agentId": c});
-        let (_, a) = lu.call(agent, READ_TIMEOUT).await.ok()?;
-        // the old bridge's agent snapshot says `running` or `idle` (`paseo-connection.ts`)
-        let mut running = a["agent"]["status"] == "running";
-        if !strict {
-            return Some(OldSend::Present { running });
-        }
-        let busy = self.old_busy(conn).await?;
-        let id = c.to_string();
-        let listed = |k: &str| {
-            busy.get(k)
-                .and_then(Value::as_array)
-                .is_some_and(|l| l.iter().any(|x| x.as_str() == Some(id.as_str())))
-        };
-        running = running || listed("running") || listed("preparing") || listed("pending");
-        Some(if held || running {
-            OldSend::Present { running }
-        } else {
-            OldSend::Absent
-        })
+        self.old_has_send(lu, c, cmid).await
     }
 
-    /// The old child's busy state (`running`, `processes`, `preparing`, `pending`: session ids), through LU HTTP.
-    async fn old_busy(&self, conn: &Conn) -> Option<Value> {
-        let who = self.who_of_conn(conn)?;
-        let (_, body) = self
-            .send(self.request(reqwest::Method::GET, OLD_BUSY, &who), READ_TIMEOUT)
-            .await
-            .ok()?;
-        serde_json::from_slice(&body).ok()
+    /// What the old child shows of the send of `cmid` (`None`: it cannot be read). The old hub puts a send's user row
+    /// (keyed by its `clientMessageId`) into the timeline before it answers, so the row is the evidence: the busy
+    /// state is per conversation, not per message (`running` lists background work too), so a conversation that is
+    /// busy with something else does not mean the send arrived. A row that is not there is sent, and the old hub
+    /// itself refuses it while a turn runs. The read covers the old hub's longest tail page; a row the old child lost
+    /// in a restart is not found (its turn died with that restart).
+    async fn old_has_send(&self, lu: &Lu, c: Uuid, cmid: &str) -> Option<OldSend> {
+        let tail = json!({"type": "fetch_agent_timeline_request", "agentId": c, "direction": "tail",
+                          "limit": OLD_TAIL, "projection": "projected"});
+        let (typ, page) = lu.call(tail, READ_TIMEOUT).await.ok()?;
+        if typ == "rpc_error" || page.get("error").is_some_and(|e| !e.is_null()) {
+            return None;
+        }
+        if !holds_send(&page, cmid) {
+            return Some(OldSend::Absent);
+        }
+        // the old bridge's agent snapshot says `running` or `idle` (`paseo-connection.ts`); only for the outcome
+        // reported, so an unreadable one is `completed` (either closes the ticket)
+        let agent = json!({"type": "fetch_agent_request", "agentId": c});
+        let running = match lu.call(agent, READ_TIMEOUT).await {
+            Ok((_, a)) => a["agent"]["status"] == "running" || page["agent"]["status"] == "running",
+            Err(_) => page["agent"]["status"] == "running",
+        };
+        Some(OldSend::Present { running })
     }
 
     /// The copy-at-send (DESIGN 9.5): each attachment that is a magpie upload (`uploads/<id>/…`) is written into the
-    /// old child under an upload ticket of its own, and `m` (the LU send's own copy of the tab's message) carries its
-    /// old path instead.
+    /// old child under an upload ticket of its own (a new one when its hold ran out before the write), and `m` (the
+    /// LU send's own copy of the tab's message) carries its old path instead. Each file is copied once per send:
+    /// `copies` keeps the old paths across the send's tickets.
     #[allow(clippy::many_single_char_names)] // c, m, t, r, b: the conversation, message, ticket, answer, bytes
-    async fn copy_files(&self, conn: &Arc<Conn>, c: Uuid, m: &mut Value) -> Result<(), Copy> {
+    async fn copy_files(&self, conn: &Arc<Conn>, c: Uuid, m: &mut Value, copies: &mut Copies) -> Result<(), Copy> {
         let Some(app) = self.app().cloned() else {
             return Ok(());
         };
         let Some(list) = m.get_mut("attachments").and_then(Value::as_array_mut) else {
             return Ok(());
         };
+        let failed = || Copy::Failed(self.locale().upload_failed().to_owned());
         for a in list.iter_mut() {
             let path = str_field(a, "path").unwrap_or("").to_owned();
             let Some(upload) = magpie_upload_id(&path) else {
                 continue;
             };
-            let failed = || Copy::Failed(self.locale().upload_failed().to_owned());
+            let old = if let Some(old) = copies.0.get(&upload) {
+                old.clone()
+            } else {
+                let read = tokio::time::timeout(COPY_READ_TIMEOUT, async {
+                    let r = conn
+                        .calls(&app.0.magpie_transfer)
+                        .upload_raw(upload)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    r.bytes().await.map_err(|e| e.to_string())
+                })
+                .await
+                .unwrap_or_else(|_| Err("not read in time".into()));
+                let bytes = match read {
+                    Ok(b) => b,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "copy-at-send: the upload's bytes not read");
+                        return Err(failed());
+                    }
+                };
+                let name = str_field(a, "fileName")
+                    .map_or_else(|| path.rsplit('/').next().unwrap_or("file").to_owned(), str::to_owned);
+                let mime = str_field(a, "mimeType")
+                    .unwrap_or("application/octet-stream")
+                    .to_owned();
+                let old = self.copy_one(conn, c, &name, &mime, bytes).await?;
+                copies.0.insert(upload, old.clone());
+                old
+            };
+            if let Some(o) = a.as_object_mut() {
+                o.insert("path".into(), old);
+            }
+        }
+        Ok(())
+    }
+
+    /// One file written into the old child under an upload ticket (a new ticket when one's hold ran out before the
+    /// write); its old path.
+    async fn copy_one(
+        &self,
+        conn: &Arc<Conn>,
+        c: Uuid,
+        name: &str,
+        mime: &str,
+        bytes: axum::body::Bytes,
+    ) -> Result<Value, Copy> {
+        let failed = || Copy::Failed(self.locale().upload_failed().to_owned());
+        for _ in 0..MAX_TICKETS {
             let (t, sent) = self
                 .take(conn, c, TicketKind::Upload, None)
                 .await
                 .map_err(|_| failed())?;
-            let ticket = match (t.route, t.ticket) {
+            let h = match (t.route, t.ticket) {
                 (TicketRoute::Native, _) => return Err(Copy::Native),
-                (TicketRoute::Legacy, Some(t)) => t,
+                (TicketRoute::Legacy, Some(ticket)) => Held {
+                    ticket,
+                    take: t.take,
+                    hold: sent + Duration::from_millis(t.hold_ms.unwrap_or(0)),
+                },
                 (TicketRoute::Legacy, None) => return Err(failed()),
             };
-            let hold = sent + Duration::from_millis(t.hold_ms.unwrap_or(0));
-            let read = match conn.calls(&app.0.magpie_transfer).upload_raw(upload).await {
-                Ok(r) => r.bytes().await.map_err(|e| e.to_string()),
-                Err(e) => Err(e.to_string()),
-            };
-            let bytes = match read {
-                Ok(b) => b,
-                Err(e) => {
-                    tracing::warn!(error = %e, "copy-at-send: the upload's bytes not read");
-                    self.report(conn, ticket, TicketOutcome::Refused);
-                    return Err(failed());
-                }
-            };
             let Some(who) = self.who_of_conn(conn) else {
-                self.report(conn, ticket, TicketOutcome::Refused);
+                self.report(conn, h, TicketOutcome::Refused);
                 return Err(failed());
             };
-            if Instant::now() >= hold {
-                self.report(conn, ticket, TicketOutcome::Refused);
-                return Err(failed());
+            if Instant::now() >= h.hold {
+                // nothing written under it: closed, and the copy goes under a new one
+                self.report(conn, h, TicketOutcome::Refused);
+                continue;
             }
-            let name = str_field(a, "fileName")
-                .map_or_else(|| path.rsplit('/').next().unwrap_or("file").to_owned(), str::to_owned);
-            let mime = str_field(a, "mimeType")
-                .unwrap_or("application/octet-stream")
-                .to_owned();
-            match self.old_upload(&who, &name, &mime, bytes, TICKET_WRITE_TIMEOUT).await {
+            return match self
+                .old_upload(&who, name, mime, bytes.clone(), TICKET_WRITE_TIMEOUT)
+                .await
+            {
                 Ok(rec) => {
-                    self.report(conn, ticket, TicketOutcome::Applied);
-                    if let (Some(old), Some(o)) = (rec.get("path").cloned(), a.as_object_mut()) {
-                        o.insert("path".into(), old);
-                    }
+                    self.report(conn, h, TicketOutcome::Applied);
+                    rec.get("path").cloned().ok_or_else(failed)
                 }
                 Err(e) => {
                     tracing::warn!(error = ?e, "copy-at-send: the old child did not take the file");
                     if refused_by_old(&e) {
-                        self.report(conn, ticket, TicketOutcome::Refused);
+                        self.report(conn, h, TicketOutcome::Refused);
+                    } else if let CallError::AppliedUnread(_) = e {
+                        // written, its record unread: the ticket closes, the send fails (the tab sends again)
+                        self.report(conn, h, TicketOutcome::Applied);
                     }
                     // otherwise it may have been written: the importer expires the ticket after its settle read
-                    return Err(failed());
+                    Err(failed())
                 }
-            }
+            };
         }
-        Ok(())
+        Err(failed())
     }
 
     /// A create while a rollback is under way (DESIGN 9.10 step 1): through the LU, born legacy.
@@ -556,6 +731,10 @@ impl Legacy {
         }
     }
 }
+
+/// The old paths a send's files were copied to, by upload id (kept across the send's tickets).
+#[derive(Default)]
+struct Copies(HashMap<Uuid, Value>);
 
 /// The upload id of a magpie upload path (`uploads/<uploadId>/<name>`).
 fn magpie_upload_id(path: &str) -> Option<Uuid> {
@@ -630,6 +809,19 @@ mod tests {
         assert!(holds_send(&page, "m1"));
         assert!(holds_send(&page, "m2"));
         assert!(!holds_send(&page, "m3"));
+    }
+
+    #[test]
+    fn a_send_without_a_message_id_keeps_one_across_its_resend() {
+        let c = Uuid::new_v4();
+        let m = json!({"text": "繼續"});
+        assert_eq!(stable_message_id(c, "r1", &m), stable_message_id(c, "r1", &m));
+        assert_ne!(stable_message_id(c, "r1", &m), stable_message_id(c, "r2", &m));
+        assert_ne!(
+            stable_message_id(c, "", &m),
+            stable_message_id(c, "", &m),
+            "no request id: never matched"
+        );
     }
 
     #[test]

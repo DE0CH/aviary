@@ -62,11 +62,18 @@ pub struct St {
     /// Conversations the old hub reports preparing or holding a pending message (its busy state).
     pub preparing: HashSet<Uuid>,
     pub pending: HashSet<Uuid>,
-    /// A send is dropped with the socket (the connection closes before the child sees it).
+    /// The next send is dropped with the socket (the connection closes before the child sees it); once.
     pub drop_on_send: bool,
     /// Busy-state reads answered 500.
     pub busy_down: bool,
     pub busy_reads: usize,
+    /// Conversations with tracked background work (a turn ended, its background shell runs): listed `running` in
+    /// the busy state as the old route lists them, though the old hub takes a send (it refuses only a turn).
+    pub background: HashSet<Uuid>,
+    /// Timeline reads answered with an error.
+    pub timeline_down: bool,
+    /// A conversation's share-list reads answered 500.
+    pub share_lists_down: bool,
 }
 
 /// The fake. Cheap to clone.
@@ -268,6 +275,12 @@ impl Old {
                 ))
             }
             "fetch_agent_timeline_request" => {
+                if self.st().timeline_down {
+                    return Some(session(
+                        "rpc_error",
+                        &json!({"requestId": rid, "requestType": kind, "error": "unavailable", "code": "failed"}),
+                    ));
+                }
                 let st = self.st();
                 let a = agent.and_then(|id| st.agents.get(&id).filter(|a| a.person == person));
                 let Some(a) = a else {
@@ -300,7 +313,7 @@ impl Old {
             }
             "send_agent_message_request" => {
                 let id = agent?;
-                if self.st().drop_on_send {
+                if std::mem::take(&mut self.st().drop_on_send) {
                     let _ = self.kill.send(());
                     return None;
                 }
@@ -557,6 +570,9 @@ async fn handle(State(old): State<Old>, req: Request) -> Response {
             )
                 .into_response();
         }
+        if old.st().share_lists_down {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
         let list: Vec<Value> = old
             .st()
             .shares
@@ -584,7 +600,7 @@ async fn handle(State(old): State<Old>, req: Request) -> Response {
         let running: Vec<String> = st
             .agents
             .iter()
-            .filter(|(_, a)| a.person == person && a.running)
+            .filter(|(id, a)| a.person == person && (a.running || st.background.contains(id)))
             .map(|(id, _)| id.to_string())
             .collect();
         let ids = |s: &HashSet<Uuid>| s.iter().map(Uuid::to_string).collect::<Vec<_>>();

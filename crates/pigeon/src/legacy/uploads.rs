@@ -100,7 +100,7 @@ pub async fn tee(app: &App, req: Request, id: &Identity) -> Response {
             return match e {
                 CallError::SignedOut => api_error(StatusCode::UNAUTHORIZED, "NOT_SIGNED_IN", "Not signed in."),
                 CallError::Status(s, body) => old_answer(s, body),
-                CallError::Unreachable => error(app, StatusCode::BAD_GATEWAY, &name),
+                CallError::Unreachable | CallError::AppliedUnread(_) => error(app, StatusCode::BAD_GATEWAY, &name),
             };
         }
     };

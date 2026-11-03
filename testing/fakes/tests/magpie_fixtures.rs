@@ -247,6 +247,11 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .legacy_ticket_done(param_uuid(&f, "ticket"), &request::<TicketDone>(&f))
             .await
             .map(|()| Value::Null),
+        "legacy_ticket_claim" => c
+            .person(PERSON)
+            .legacy_ticket_claim(param_uuid(&f, "ticket"), &request::<TicketClaim>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
         "upload_legacy_path" => c
             .person(PERSON)
             .upload_legacy_path(param_uuid(&f, "uploadId"), &request::<LegacyPathRequest>(&f))

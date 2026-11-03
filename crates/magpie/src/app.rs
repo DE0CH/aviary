@@ -19,7 +19,9 @@ use magpie_api::changes::{ChangesQuery, ChangesResponse};
 use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse, ListQuery, ListResponse, RenameRequest};
 use magpie_api::events::{EventsPage, EventsQuery};
 use magpie_api::files::{FilesPanel, RawFileQuery};
-use magpie_api::legacy::{LegacyPathRequest, TicketDone, TicketRequest, TicketResponse, WindowState};
+use magpie_api::legacy::{
+    LegacyPathRequest, TicketClaim, TicketClaimed, TicketDone, TicketRequest, TicketResponse, WindowState,
+};
 use magpie_api::live::{LiveFramesRequest, LiveState};
 use magpie_api::ops::{
     AdminConversation, AdminConversationList, AdminListQuery, OpsStats, PeopleQuery, PeopleResponse,
@@ -543,6 +545,10 @@ impl Server for Magpie {
 
     async fn legacy_ticket_done(&self, ctx: Ctx, ticket: Uuid, body: TicketDone) -> Answer<()> {
         http::legacy::ticket_done(self, ctx, ticket, body).await
+    }
+
+    async fn legacy_ticket_claim(&self, ctx: Ctx, ticket: Uuid, body: TicketClaim) -> Answer<TicketClaimed> {
+        http::legacy::ticket_claim(self, ctx, ticket, body).await
     }
 
     async fn upload_legacy_path(&self, ctx: Ctx, upload_id: Uuid, body: LegacyPathRequest) -> Answer<()> {

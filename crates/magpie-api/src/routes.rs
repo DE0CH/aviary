@@ -120,6 +120,8 @@ pub const VIEW_AS: &str = "/v1/view-as";
 pub const LEGACY_TICKETS: &str = "/v1/conversations/{id}/legacy/tickets";
 /// `POST` a ticket's outcome (the switch window).
 pub const LEGACY_TICKET_DONE: &str = "/v1/legacy/tickets/{ticket}/done";
+/// `POST` claim a send's write under a ticket (the switch window).
+pub const LEGACY_TICKET_CLAIM: &str = "/v1/legacy/tickets/{ticket}/claim";
 /// `PUT` a teed upload's old asset path (until A7).
 pub const UPLOAD_LEGACY_PATH: &str = "/v1/uploads/{uploadId}/legacy-path";
 /// `GET` the switch window's state for pigeon ([`crate::legacy::WindowState`]).
@@ -323,6 +325,7 @@ pub const ROUTES: &[Route] = &[
     // the switch window (DESIGN 9; cutover 6.4): tickets until A6, the legacy-path record until A7
     pigeon_extra("legacy_ticket", Post, LEGACY_TICKETS, &[200]),
     pigeon_extra("legacy_ticket_done", Post, LEGACY_TICKET_DONE, &[204]),
+    pigeon_extra("legacy_ticket_claim", Post, LEGACY_TICKET_CLAIM, &[200]),
     pigeon_extra("upload_legacy_path", Put, UPLOAD_LEGACY_PATH, &[204]),
     pigeon_extra("legacy_window", Get, LEGACY_WINDOW, &[200]),
     pigeon_extra("upload_raw", Get, UPLOAD_RAW, &[200]),
@@ -499,7 +502,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 64);
+        assert_eq!(ROUTES.len(), 65);
     }
 
     #[test]

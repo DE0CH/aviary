@@ -1,0 +1,39 @@
+{
+  "route": "legacy_ticket_claim",
+  "params": {
+    "ticket": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e2a"
+  },
+  "request": {
+    "take": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0f01"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "claimed": true,
+        "heldElsewhere": false
+      }
+    },
+    {
+      "status": 200,
+      "body": {
+        "claimed": false,
+        "heldElsewhere": true
+      }
+    },
+    {
+      "status": 200,
+      "body": {
+        "claimed": false,
+        "heldElsewhere": false
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

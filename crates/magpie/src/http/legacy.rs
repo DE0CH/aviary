@@ -1,7 +1,9 @@
 //! The switch window's routes ([`crate::legacy`]): tickets until A6, the legacy-path record until A7.
 
 use axum::response::Response;
-use magpie_api::legacy::{LegacyPathRequest, TicketDone, TicketRequest, TicketResponse, WindowState};
+use magpie_api::legacy::{
+    LegacyPathRequest, TicketClaim, TicketClaimed, TicketDone, TicketRequest, TicketResponse, WindowState,
+};
 use magpie_api::server::Ctx;
 use uuid::Uuid;
 
@@ -18,6 +20,11 @@ pub async fn ticket(app: &Magpie, ctx: Ctx, id: Uuid, body: TicketRequest) -> An
 /// `POST /v1/legacy/tickets/{ticket}/done`.
 pub async fn ticket_done(app: &Magpie, ctx: Ctx, ticket: Uuid, body: TicketDone) -> Answer<()> {
     answer(async { tickets::done(app, &Person::from_ctx(&ctx)?, ticket, &body).await }.await)
+}
+
+/// `POST /v1/legacy/tickets/{ticket}/claim`.
+pub async fn ticket_claim(app: &Magpie, ctx: Ctx, ticket: Uuid, body: TicketClaim) -> Answer<TicketClaimed> {
+    answer(async { tickets::claim(app, &Person::from_ctx(&ctx)?, ticket, &body).await }.await)
 }
 
 /// `PUT /v1/uploads/{uploadId}/legacy-path`.

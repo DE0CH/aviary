@@ -24,6 +24,17 @@
 //! The importer relies on those two bounds (with [`TICKET_SETTLE_MAX`]) to expire a ticket whose outcome never
 //! arrives. Other kinds carry no `clientMessageId` (400): a send's upload tickets, one per attached file, must each
 //! be a ticket of their own, or the first file's `applied` would close a ticket the other copies still write under.
+//!
+//! A ticket can be handed to more than one request (`reused`): a tab's resend after its socket dropped, on another
+//! replica, while the first request still holds it. So that only one of them writes, and only the old stack's real
+//! outcome closes it, every hand-out carries a `take` of its own: a send's write is claimed first
+//! (`POST /v1/legacy/tickets/{ticket}/claim` with the take, answered `claimed` only for the ticket's latest take
+//! while it is open and within its hold), pigeon starts the write at once after a claim, and a `refused` reported
+//! with a take that is no longer the latest changes nothing (that holder gave up while another holds the ticket). A
+//! reuse answer's `settleMs` says how long until a claimed write under the ticket has settled
+//! ([`TICKET_CLAIM_SETTLE`] after its claim). A send's ticket answer also names `prior`, an earlier ticket of the same
+//! `(conversation, clientMessageId)` that closed on the old child's acceptance (the send is there: nothing is sent
+//! again) or that may still have written (expired, or superseded and open: pigeon reads the old child first).
 
 use std::time::Duration;
 
@@ -53,9 +64,15 @@ pub const TICKET_WRITE_TIMEOUT: Duration = Duration::from_secs(20);
 /// the conversation (`magpie::legacy::tickets::expire_settled`).
 pub const TICKET_SETTLE_MAX: Duration = Duration::from_secs(90);
 
+/// How long after a claim every write it covers has either reached the old child or never will: pigeon starts the
+/// write at once after the claim's answer and drops it unsent past [`TICKET_WRITE_TIMEOUT`], with 10 s for bytes sent
+/// just before that and the claim answer's own transit (as in [`TICKET_SETTLE_MAX`]).
+pub const TICKET_CLAIM_SETTLE: Duration = Duration::from_secs(30);
+
 const _: () = assert!(
     TICKET_SETTLE_MAX.as_secs() >= TICKET_HOLD_MAX.as_secs() + TICKET_WRITE_TIMEOUT.as_secs() + 10
         && TICKET_REUSE_MAX.as_secs() < TICKET_HOLD_MAX.as_secs()
+        && TICKET_CLAIM_SETTLE.as_secs() >= TICKET_WRITE_TIMEOUT.as_secs() + 10
 );
 
 /// What the ticketed write is (switch-final 4.3; DESIGN 9.1's list of LU writes).
@@ -166,6 +183,55 @@ pub struct TicketResponse {
     /// as for `supersedes`. pigeon never compares `issuedAt` with its own clock to tell.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reused: bool,
+    /// With `route: "legacy"` only: this hand-out of the ticket (a reuse gets a new one). A send's write is claimed
+    /// with it ([`TicketClaim`]), and a `refused` reported with an older take changes nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub take: Option<Uuid>,
+    /// With `reused` or `prior`: how long from the moment pigeon sent this call until every write that may have been
+    /// made for the send (a claimed write under the reused ticket, [`TICKET_CLAIM_SETTLE`] after its claim; a
+    /// superseded ticket still open, [`TICKET_SETTLE_MAX`] after its issue) has settled (database clock). An old-child
+    /// read after that which shows no user message of the send proves none arrived.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settle_ms: Option<u64>,
+    /// With `route: "legacy"` only, on a send: an earlier ticket of the same `(conversation, clientMessageId)`
+    /// (other than the one answered or the one `supersedes` names) that the old child accepted, or that may have
+    /// written (expired, or superseded and still open). A ticket closed `refused` is not one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prior: Option<PriorSend>,
+}
+
+/// An earlier ticket of a send ([`TicketResponse::prior`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PriorSend {
+    /// The ticket (the one that closed on the old child's acceptance when there is one).
+    pub ticket: Uuid,
+    /// It closed `started`, `completed` or `failed`: the old child took the send, which must not be sent again.
+    /// `false`: it expired or is still open, so the send may or may not have arrived (pigeon reads the old child).
+    pub accepted: bool,
+}
+
+/// `POST /v1/legacy/tickets/{ticket}/claim` → 200 [`TicketClaimed`]: a send's write under the ticket is about to
+/// start (pigeon starts it at once after a `claimed` answer, and only then). 404 for an unknown ticket or one of
+/// another person.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TicketClaim {
+    /// The hand-out the write is made under ([`TicketResponse::take`]).
+    pub take: Uuid,
+}
+
+/// The answer to a claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TicketClaimed {
+    /// The write may start: `take` is the ticket's latest, the ticket is open and within its hold, and no other ticket
+    /// of the send closed on the old child's acceptance.
+    pub claimed: bool,
+    /// The ticket is open and within its hold, but another request holds it now (`claimed: false`): that request
+    /// writes. `false` with `claimed: false`: the ticket is closed or past its hold (a write needs a new ticket), or
+    /// the send was already accepted under another ticket.
+    pub held_elsewhere: bool,
 }
 
 /// The ticket a send's repeated ticket call superseded.
@@ -222,6 +288,11 @@ impl TicketOutcome {
 pub struct TicketDone {
     /// What happened.
     pub outcome: TicketOutcome,
+    /// The hand-out this outcome comes from ([`TicketResponse::take`]). A `refused` with a take that is no longer the
+    /// ticket's latest is a 204 that changes nothing: that holder gave up without writing while another request holds
+    /// the ticket, whose outcome closes it. Every other outcome closes the ticket whatever the take.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub take: Option<Uuid>,
 }
 
 /// `PUT /v1/uploads/{uploadId}/legacy-path` → 204: the old asset path pigeon's T0→gate upload tee got back from the

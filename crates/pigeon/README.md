@@ -86,23 +86,33 @@ person every 2 s at most (`GET /v1/legacy/window`).
   otherwise the tab is closed 1012 once request-free and reconnects through the edge. An LU 401 closes the tab 4401
   (HTTP: 401 `NOT_SIGNED_IN`), the signed-out answer, never a write error.
 - **Writes under tickets** (WP-51's contract, `magpie_api::legacy`): ticket first (a send's carries its
-  `clientMessageId`, generated when the app sent none), `native` → the native write (the fence won), `legacy` → the
-  write through LU within `holdMs` of sending the ticket call (past it the ticket is closed `refused` and another
-  taken), at most `TICKET_WRITE_TIMEOUT` for the old child's answer, then the outcome: a send `started` when the old
-  child accepted it (the old hub starts the turn and holds it in `pendingUserMessages` before it answers), otherwise
-  `refused`; other writes `applied` / `refused` (`refused` only for the old route's own 4xx). A write that never
-  reached the old child (the LU did not open) is closed `refused`; one that may have (no answer, a 5xx, a gateway
-  error) is left open for the importer's expiry. A repeat whose answer `supersedes` an open send, or is `reused` (the
-  open ticket handed back, e.g. a tab's resend after its socket dropped), reads the old child after `settleMs` (a
-  reuse: 2 s) and sends only when the first send is absent: no user row of it (`clientMessageId` or
-  `paseo-user-<id>`) in the timeline's tail, and the conversation not running, preparing or holding a pending
-  message (the agent's status and the old child's busy state, `legacy::OLD_BUSY`, since a restarted old child rebuilds its timeline
-  without the row's id); when present it reports `started`/`completed` and answers accepted, and when the old child
-  cannot be read nothing is sent. Every other send is not sent again either when the timeline already holds its user
-  row. Outcomes are reported in the background with retries; Delete, Restore and Purge outcomes set pigeon's view of
-  Recently deleted, and a refresh always goes under a Restore ticket. A socket with a ticketed write in flight is a
-  transfer for the drain (its 1012 waits for the write, up to the transfer bound). Every write the switch fails
-  counts in `pigeon_switch_write_refused_total`.
+  `clientMessageId`; one the app did not send is derived from the conversation, the tab's request id and the text,
+  so a resend of the same request keeps it), `native` → the native write (the fence won), `legacy` → the write
+  through LU within `holdMs` of sending the ticket call (past it the ticket is closed `refused` and another taken),
+  at most `TICKET_WRITE_TIMEOUT` for the old child's answer (an LU frame not on the wire by then is dropped, and a
+  socket whose write stalls past it ends), then the outcome under the answer's `take`: a send `started` when the old
+  child accepted it (the old hub puts the user row in its timeline and starts the turn before it answers),
+  otherwise `refused`; other writes `applied` / `refused` (`refused` only for the old route's own 4xx or when
+  nothing was written; a 2xx whose body was lost is `applied`). A write that may have reached the old child (no
+  answer, a 5xx, a gateway error) is left open for the importer's expiry. A ticket can be handed to two requests (a
+  tab's resend on another replica within the reuse age): a send's write is claimed under its take right before it
+  starts (`legacy_ticket_claim`; only the latest take may claim, so only one request writes), and a request that
+  gives up without writing reports `refused` under its own take, which closes nothing once another request holds
+  the ticket. A send whose answer names an earlier ticket the old child accepted (`prior.accepted`) is answered
+  accepted with nothing sent; one whose answer is `reused`, `supersedes` an open ticket or names another `prior`
+  reads the old child's timeline (500 entries, the old hub's page limit) at once and again once every earlier write
+  has settled (`settleMs`, the reuse's from its claim), and sends only when the send's user row (`clientMessageId`
+  or `paseo-user-<id>`) is not there: the busy state is per conversation (its `running` lists background work too),
+  so it never stands in for the row, and a send that is not there goes out and the old hub refuses it itself while
+  a turn runs. When the old child cannot be read nothing is sent and the ticket stays open. A send whose LU drops
+  or times out with the write in flight, under a tab that stays, is settled through the reopened LU the same way
+  (10 s after, the transit bound): accepted when the old child has it, written again (claimed again) within the
+  hold when it does not. A send's magpie-only files are copied once for the whole send (each under an upload ticket
+  of its own, a new one when its hold ran out before the write; magpie's bytes read within 60 s), so a send ticket
+  whose hold the copies outlast is followed by one that reuses them. Outcomes are reported in the background with
+  retries; Delete, Restore and Purge outcomes set pigeon's view of Recently deleted, and a refresh always goes under
+  a Restore ticket. A socket with a ticketed write in flight is a transfer for the drain (its 1012 waits for the
+  write, up to the transfer bound). Every write the switch fails counts in `pigeon_switch_write_refused_total`.
 - **Owner changes**: at a release (the change feed's `migrating: false`, or a ticket's `native`) every socket watching
   the conversation gets one `agent.timeline.replacement` in magpie's epoch and the native feed (`Hub::owner_changed`),
   and the LU feeds drop it after that; when magpie's epoch cannot be read within `legacy_release_wait` (60 s) the
@@ -139,13 +149,17 @@ person every 2 s at most (`GET /v1/legacy/window`).
   the 409 re-route, a reverse hand-over's one replacement in the old epoch; a send whose replica is killed (its own
   runtime shut down) between the LU write and the report, resent through another replica (one old turn,
   `accepted: true`), a resend after the socket dropped mid-write, a repeat past the reuse age after the old child lost
-  the row's id while still running, and one whose first send never arrived; the tee until the gate (its old path sent
+  the row's id while still running (sent, and refused by the old hub itself), a send whose LU dropped with it (sent
+  again), a resend of an accepted send (nothing sent), and an unreadable timeline (nothing sent); the tee until the gate (its old path sent
   by an unmoved old-path socket straight to the old router, and a pre-move old path sent to a native conversation),
   the copy-at-send after it, and two files where the fence wins at the second; an LU 401 (socket and HTTP); a replica
   killed with LU sockets; an LU dropped under a live tab (reopened with a replacement, the turn keeps streaming; a
   second drop at once closes the tab 1012); the drain's request-free-first rule with an LU write held past the rpc
   wait; an old view-as token; warm and activity; creates during a rollback and shares; a share create on a stale
-  owner and its revoke on another replica; a ticketed restore and a 5xx left open; an unreadable owner and an
+  owner and its revoke on another replica (a revoke whose share's conversation cannot be looked up is a retryable
+  503, never a 404); a send's holder stalled at its claim while the tab's resend on another replica writes (one
+  write, the resend's outcome stands, background work listed `running` does not stop it); an LU dropped with a send
+  in flight (settled from the old child); copies that outlast the send ticket's hold (copied once); a ticketed restore and a 5xx left open; an unreadable owner and an
   unreadable release; and the fence-race fuzz (1 000 sends from two replicas, two tabs per conversation at seeded
   random instants, each conversation released, handed back and released again; every send once, as lists, files read
   by whichever stack runs the turn). Frames a test socket gets through LU are the fake old child's and are not

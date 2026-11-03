@@ -26,7 +26,9 @@ use crate::headers::{
     AVIARY_ADMIN, AVIARY_LEASE, AVIARY_PERSON, AVIARY_PROTOCOL, AVIARY_REQUEST, AVIARY_UPLOAD_KIND, AVIARY_UPLOAD_NAME,
     AVIARY_VIEW_SESSION, AVIARY_VIEWER,
 };
-use crate::legacy::{LegacyPathRequest, TicketDone, TicketRequest, TicketResponse, WindowState};
+use crate::legacy::{
+    LegacyPathRequest, TicketClaim, TicketClaimed, TicketDone, TicketRequest, TicketResponse, WindowState,
+};
 use crate::live::{LiveFramesRequest, LiveState};
 use crate::ops::{
     AdminConversation, AdminConversationList, AdminListQuery, OpsStats, PeopleQuery, PeopleResponse,
@@ -696,6 +698,12 @@ impl PersonCalls<'_> {
     /// The switch window: a ticket's outcome.
     pub async fn legacy_ticket_done(&self, ticket: Uuid, done: &TicketDone) -> Result<(), ClientError> {
         self.empty("legacy_ticket_done", &[&ticket.to_string()], json(done)?)
+            .await
+    }
+
+    /// The switch window: claims a send's write under a ticket (the write starts at once after `claimed`).
+    pub async fn legacy_ticket_claim(&self, ticket: Uuid, claim: &TicketClaim) -> Result<TicketClaimed, ClientError> {
+        self.send_json("legacy_ticket_claim", &[&ticket.to_string()], claim)
             .await
     }
 

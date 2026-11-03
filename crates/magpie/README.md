@@ -435,8 +435,8 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
 
 ### The switch window (WP-51)
 
-- Tickets, the fence and the legacy-path record are three pigeon routes in `magpie-api` (`legacy_ticket`,
-  `legacy_ticket_done`, `upload_legacy_path`), with two more for pigeon's legacy upstream (WP-50): `legacy_window`
+- Tickets, the fence and the legacy-path record are four pigeon routes in `magpie-api` (`legacy_ticket`,
+  `legacy_ticket_done`, `legacy_ticket_claim`, `upload_legacy_path`), with two more for pigeon's legacy upstream (WP-50): `legacy_window`
   (`GET /v1/legacy/window`: the gate `import_control.handover_allowed_at`, the rollback mark
   `import_control.rollback_at` of DESIGN 9.10 step 1, added by migration 0018, whether anything is legacy and how
   much is the person's) and `upload_raw` (`GET /v1/uploads/{uploadId}/raw`: the person's upload bytes, for the
@@ -472,6 +472,15 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   calls `expire` with `tickets::now` after the operator's inspection, then fences and releases. A late outcome on an
   expired ticket keeps `expired`. Tested in `tests/legacy.rs`
   (`a_stranded_ticket_expires_and_a_retried_ticket_call_reuses_the_open_one`).
+- A reused ticket has two holders (a tab's resend on another replica while the first request still holds it).
+  Migration 0020 gives each hand-out a take of its own (`legacy_tickets.take`, the latest) and records a send's
+  claimed write (`claimed_at`): `legacy_ticket_claim` answers `claimed` only for the latest take of an open ticket
+  within its hold whose send no other ticket closed accepted (pigeon starts the write at once after it), a `refused`
+  from an older take changes nothing (that holder wrote nothing), and the reuse answer's `settleMs` is what is left
+  of `TICKET_CLAIM_SETTLE` (30 s) after the claim. A send's ticket answer names `prior`: an earlier ticket of the
+  same `(conversation, clientMessageId)` that closed `started`/`completed`/`failed` (`accepted`: pigeon sends
+  nothing) or that expired or is open and superseded (pigeon reads the old child after `settleMs`). Tested in
+  `tests/legacy.rs` (`a_reused_ticket_has_one_writer_and_a_send_names_its_prior`).
 - The old stack does not de-duplicate a send by `clientMessageId`: CloudCLI's paseo hub (DE0CH/claudecodeui
   `server/modules/paseo/paseo-hub.ts` `send`, called from `paseo-connection.ts` `send_agent_message_request`)
   refuses a send only while a turn runs and otherwise delivers a second `chat.send`, a second turn. So a send whose

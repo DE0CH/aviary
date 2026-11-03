@@ -653,6 +653,17 @@ impl Server for FixtureServer {
         self.answer_empty("legacy_ticket_done")
     }
 
+    async fn legacy_ticket_claim(&self, ctx: Ctx, ticket: Uuid, body: TicketClaim) -> Result<TicketClaimed, ApiError> {
+        self.received(
+            "legacy_ticket_claim",
+            &ctx,
+            &json!({"ticket": ticket.to_string()}),
+            None,
+            Some(serde_json::to_value(&body).unwrap()),
+        );
+        self.answer_json("legacy_ticket_claim")
+    }
+
     async fn upload_legacy_path(&self, ctx: Ctx, upload_id: Uuid, body: LegacyPathRequest) -> Result<(), ApiError> {
         self.received(
             "upload_legacy_path",
@@ -837,6 +848,11 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .legacy_ticket_done(param_uuid(&f, "ticket"), &request::<TicketDone>(&f))
             .await
             .map(|()| Value::Null),
+        "legacy_ticket_claim" => c
+            .person(PERSON)
+            .legacy_ticket_claim(param_uuid(&f, "ticket"), &request::<TicketClaim>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
         "upload_legacy_path" => c
             .person(PERSON)
             .upload_legacy_path(param_uuid(&f, "uploadId"), &request::<LegacyPathRequest>(&f))

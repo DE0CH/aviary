@@ -27,7 +27,10 @@ use magpie_api::client::ClientError;
 use magpie_api::conversations::{ListQuery, RenameRequest, RunState};
 use magpie_api::errors::{ErrorCode, RouteHint};
 use magpie_api::events::NameSource;
-use magpie_api::legacy::{LegacyPathRequest, TicketDone, TicketKind, TicketOutcome, TicketRequest, TicketRoute};
+use magpie_api::legacy::{
+    LegacyPathRequest, PriorSend, TicketClaim, TicketClaimed, TicketDone, TicketKind, TicketOutcome, TicketRequest,
+    TicketRoute,
+};
 use magpie_api::turns::{FileRef, SendRequest};
 use magpie_api::uploads::{UploadKind, UploadResponse};
 use uuid::Uuid;
@@ -104,7 +107,7 @@ async fn ticket(r: &common::Replica, c: Uuid, kind: TicketKind) -> magpie_api::l
 async fn done(r: &common::Replica, t: Uuid, outcome: TicketOutcome) -> Result<(), ClientError> {
     r.pigeon()
         .person(ALICE)
-        .legacy_ticket_done(t, &TicketDone { outcome })
+        .legacy_ticket_done(t, &TicketDone { outcome, take: None })
         .await
 }
 
@@ -180,7 +183,8 @@ async fn every_route_of_the_migrating_table() {
             .legacy_ticket_done(
                 tid,
                 &TicketDone {
-                    outcome: TicketOutcome::Started
+                    outcome: TicketOutcome::Started,
+                    take: None,
                 }
             )
             .await
@@ -1279,6 +1283,166 @@ async fn a_stranded_ticket_expires_and_a_retried_ticket_call_reuses_the_open_one
         .unwrap()
         .unwrap();
     assert!(!r.pigeon().person(ALICE).get_conversation(c).await.unwrap().migrating);
+}
+
+/// A send's ticket handed to a second request (a reuse) gets a take of its own: only the latest take may claim the
+/// write, a `refused` from the earlier take changes nothing, and the reuse says how long a claimed write needs to
+/// settle. A later ticket of the same send names the one the old child accepted (`prior`), and no write can be
+/// claimed under it; a ticket closed `refused` is no prior.
+#[tokio::test]
+async fn a_reused_ticket_has_one_writer_and_a_send_names_its_prior() {
+    let db = common::fresh_db("lg_take").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let c = migrating(&r, ALICE, "t").await;
+    let a = r.pigeon();
+    let a = a.person(ALICE);
+    let send = |cmid: &str| TicketRequest {
+        kind: TicketKind::Send,
+        client_message_id: Some(cmid.to_owned()),
+    };
+    let claim = |ticket: Uuid, take: Uuid| {
+        let p = r.pigeon();
+        async move {
+            p.person(ALICE)
+                .legacy_ticket_claim(ticket, &TicketClaim { take })
+                .await
+                .unwrap()
+        }
+    };
+    let report = |ticket: Uuid, outcome: TicketOutcome, take: Uuid| {
+        let p = r.pigeon();
+        async move {
+            p.person(ALICE)
+                .legacy_ticket_done(
+                    ticket,
+                    &TicketDone {
+                        outcome,
+                        take: Some(take),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+    };
+    let outcome = |ticket: Uuid| {
+        let pool = r.pool().clone();
+        async move {
+            pool.get()
+                .await
+                .unwrap()
+                .query_one("select outcome from legacy_tickets where ticket = $1", &[&ticket])
+                .await
+                .unwrap()
+                .get::<_, Option<String>>(0)
+        }
+    };
+    // the first request claims its write
+    let first = a.legacy_ticket(c, &send("r:1")).await.unwrap();
+    let (tk, take_a) = (first.ticket.unwrap(), first.take.unwrap());
+    assert!(
+        !first.reused && first.prior.is_none() && first.settle_ms.is_none(),
+        "{first:?}"
+    );
+    assert_eq!(
+        claim(tk, take_a).await,
+        TicketClaimed {
+            claimed: true,
+            held_elsewhere: false
+        }
+    );
+    // the tab's resend on another request: the same ticket under a new take, with the claimed write's settle time
+    let second = a.legacy_ticket(c, &send("r:1")).await.unwrap();
+    assert_eq!(second.ticket, Some(tk));
+    assert!(second.reused);
+    let take_b = second.take.unwrap();
+    assert_ne!(take_b, take_a);
+    let settle = second.settle_ms.unwrap();
+    assert!(settle <= 30_000 && settle > 25_000, "{settle}");
+    // the first holder can no longer write, and its giving up does not close the ticket under the second
+    assert_eq!(
+        claim(tk, take_a).await,
+        TicketClaimed {
+            claimed: false,
+            held_elsewhere: true
+        }
+    );
+    report(tk, TicketOutcome::Refused, take_a).await;
+    assert_eq!(
+        outcome(tk).await,
+        None,
+        "a refused from an earlier take changes nothing"
+    );
+    assert!(claim(tk, take_b).await.claimed);
+    // a real outcome closes it whichever holder reports it
+    report(tk, TicketOutcome::Started, take_a).await;
+    assert_eq!(outcome(tk).await.as_deref(), Some("started"));
+    // a later resend of the same message: a new ticket that names the accepted one, under which nothing is claimed
+    let third = a.legacy_ticket(c, &send("r:1")).await.unwrap();
+    let t3 = third.ticket.unwrap();
+    assert_ne!(t3, tk);
+    assert!(!third.reused);
+    assert_eq!(
+        third.prior,
+        Some(PriorSend {
+            ticket: tk,
+            accepted: true
+        })
+    );
+    assert_eq!(third.settle_ms, Some(0));
+    assert_eq!(
+        claim(t3, third.take.unwrap()).await,
+        TicketClaimed {
+            claimed: false,
+            held_elsewhere: false
+        }
+    );
+    report(t3, TicketOutcome::Refused, third.take.unwrap()).await;
+    assert_eq!(outcome(t3).await.as_deref(), Some("refused"));
+    // a reuse of a ticket nobody claimed has nothing to wait for; the latest take's refused closes it
+    let d = a.legacy_ticket(c, &send("r:2")).await.unwrap();
+    let e = a.legacy_ticket(c, &send("r:2")).await.unwrap();
+    assert_eq!(e.ticket, d.ticket);
+    assert_eq!(e.settle_ms, Some(0));
+    assert!(e.prior.is_none());
+    report(d.ticket.unwrap(), TicketOutcome::Refused, d.take.unwrap()).await;
+    assert_eq!(outcome(d.ticket.unwrap()).await, None);
+    report(e.ticket.unwrap(), TicketOutcome::Refused, e.take.unwrap()).await;
+    assert_eq!(outcome(d.ticket.unwrap()).await.as_deref(), Some("refused"));
+    // a ticket closed `refused` wrote nothing: no prior
+    let f = a.legacy_ticket(c, &send("r:2")).await.unwrap();
+    assert_ne!(f.ticket, d.ticket);
+    assert!(f.prior.is_none() && f.settle_ms.is_none(), "{f:?}");
+    // past the hold, a claim is refused (a write needs a new ticket)
+    let hold = magpie_api::legacy::TICKET_HOLD_MAX.as_secs_f64() + 1.0;
+    r.pool()
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            "update legacy_tickets set issued_at = issued_at - make_interval(secs => $2) where ticket = $1",
+            &[&f.ticket.unwrap(), &hold],
+        )
+        .await
+        .unwrap();
+    assert!(!claim(f.ticket.unwrap(), f.take.unwrap()).await.claimed);
+    // an expired ticket of the send is a prior that may have written
+    magpie::legacy::tickets::expire(
+        r.pool(),
+        c,
+        time::OffsetDateTime::now_utc() + time::Duration::seconds(5),
+    )
+    .await
+    .unwrap();
+    let g = a.legacy_ticket(c, &send("r:2")).await.unwrap();
+    assert_eq!(
+        g.prior,
+        Some(PriorSend {
+            ticket: f.ticket.unwrap(),
+            accepted: false
+        })
+    );
+    assert_eq!(g.settle_ms, Some(0), "an expired ticket has settled");
 }
 
 #[tokio::test]

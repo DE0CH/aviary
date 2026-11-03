@@ -14,7 +14,8 @@
         "route": "legacy",
         "ticket": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e2a",
         "issuedAt": "2026-11-02T09:14:03.120Z",
-        "holdMs": 60000
+        "holdMs": 60000,
+        "take": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0f01"
       }
     },
     {
@@ -24,7 +25,9 @@
         "ticket": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e2a",
         "issuedAt": "2026-11-02T09:14:03.120Z",
         "holdMs": 51230,
-        "reused": true
+        "reused": true,
+        "take": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0f02",
+        "settleMs": 21400
       }
     },
     {
@@ -37,6 +40,23 @@
         "supersedes": {
           "ticket": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e2a",
           "settleMs": 27710
+        },
+        "take": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0f03",
+        "settleMs": 27710
+      }
+    },
+    {
+      "status": 200,
+      "body": {
+        "route": "legacy",
+        "ticket": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e4d",
+        "issuedAt": "2026-11-02T09:16:40.020Z",
+        "holdMs": 60000,
+        "take": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0f04",
+        "settleMs": 0,
+        "prior": {
+          "ticket": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e3b",
+          "accepted": true
         }
       }
     },

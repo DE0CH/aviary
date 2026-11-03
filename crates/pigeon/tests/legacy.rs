@@ -41,6 +41,7 @@ fn fast() -> Tuning {
         socket_quiet: Duration::from_millis(300),
         legacy_window: Duration::from_millis(50),
         legacy_heartbeat: Duration::from_millis(300),
+        legacy_transit: Duration::from_secs(2),
         ..common::tuning()
     }
 }
@@ -406,12 +407,14 @@ async fn a_resend_after_the_socket_dropped_mid_write_is_not_a_second_turn() {
     assert_eq!(e.m.tickets_of(c).len(), 1, "one ticket, reused");
 }
 
-/// A repeat past the reuse age (magpie supersedes the open ticket) after the old child restarted: its timeline has
-/// lost the row's id, but the conversation still runs, so the send is not written again. When the first send never
-/// reached the old child (and it runs nothing), the repeat is sent; when the old child's state cannot be read,
-/// nothing is sent.
+/// A repeat is sent only when the old timeline lacks its user row; the busy state (per conversation, not per
+/// message) never stands in for it. After an old child restart the row lost its id while the turn runs: the repeat
+/// is sent and the old hub itself refuses it ("still running"), so there is no second turn and no message answered
+/// as sent that was not. A send whose LU dropped with the write is settled from the old child and sent again; a
+/// later resend of a send the old child accepted is answered without a send; a timeline that cannot be read sends
+/// nothing.
 #[tokio::test]
-async fn a_repeat_past_the_reuse_age_reads_the_running_state_not_only_the_timeline() {
+async fn a_repeat_is_sent_only_when_the_old_timeline_lacks_its_row() {
     let e = env().await;
     let c = e.legacy(STAFF);
     let mut a = Remote::start(&e.served, &e.old).await;
@@ -424,7 +427,10 @@ async fn a_repeat_past_the_reuse_age_reads_the_running_state_not_only_the_timeli
                       "messageId": "m-old"}),
     )
     .await;
-    until("the write is at the old child", || e.m.st().tickets.len() == 1).await;
+    until("the write is claimed", || {
+        e.m.st().tickets.first().is_some_and(|t| t.claims == 1)
+    })
+    .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     a.kill();
     drop(ws);
@@ -441,35 +447,202 @@ async fn a_repeat_past_the_reuse_age_reads_the_running_state_not_only_the_timeli
     let mut ws = Ws::hello(&e.h.url, &token, "").await.0.relayed();
     list(&mut ws).await;
     let r = send(&mut ws, c, "m-old", json!({})).await;
-    assert_eq!(r["accepted"], true, "{r}");
-    assert_eq!(e.old.agent(c).sends.len(), 1, "not a second send");
-    e.m.wait_tickets(|t| t.len() == 2 && t[1].outcome == Some(TicketOutcome::Started))
+    assert_eq!(
+        r["accepted"], false,
+        "the old hub's own refusal, not a message answered as sent: {r}"
+    );
+    assert_eq!(r["error"], "對話仍在進行中，請稍候。");
+    assert_eq!(e.old.agent(c).sends.len(), 1, "not a second turn");
+    e.m.wait_tickets(|t| t.len() == 2 && t[1].outcome == Some(TicketOutcome::Refused))
         .await;
-    // a first send that never reached the old child (its socket closed with it), the old child idle: sent again
+    // a send whose LU drops with it (the old side closes before its child sees it), the tab staying: settled from
+    // the old child once the write can no longer land, found absent, and sent again under the same ticket
     e.old.end_turn(c);
     e.old.st().drop_on_send = true;
-    let r = send(&mut ws, c, "m-lost", json!({})).await;
-    assert_eq!(r["accepted"], Value::Null, "the tab hears the failure: {r}");
-    e.old.st().drop_on_send = false;
-    assert_eq!(e.old.agent(c).sends.len(), 1);
-    let lost = e.m.tickets_of(c).last().unwrap().id;
-    e.m.age_ticket(lost, Duration::from_secs(85));
-    // the old child's busy state unreadable: nothing is sent
-    e.old.st().busy_down = true;
-    let r = send(&mut ws, c, "m-lost", json!({})).await;
-    assert_ne!(r["accepted"], true, "{r}");
-    assert_eq!(e.old.agent(c).sends.len(), 1, "nothing sent on an unsure read");
-    assert!(
-        e.old.st().busy_reads > 0,
-        "the busy state was asked for, and unreadable"
-    );
-    e.old.st().busy_down = false;
-    let open = e.m.tickets_of(c).last().unwrap().id;
-    e.m.age_ticket(open, Duration::from_secs(85));
     let r = send(&mut ws, c, "m-lost", json!({})).await;
     assert_eq!(r["accepted"], true, "{r}");
     assert_eq!(e.old.agent(c).sends.len(), 2);
     assert_eq!(e.old.agent(c).sends[1].0, "m-lost");
+    let lost = e.m.tickets_of(c).last().unwrap().clone();
+    assert_eq!(lost.claims, 2, "claimed again for the second write");
+    e.m.wait_tickets(|t| t.last().unwrap().outcome == Some(TicketOutcome::Started))
+        .await;
+    // the tab never got that answer and resends: the old child accepted it, so it is answered with nothing sent
+    let r = send(&mut ws, c, "m-lost", json!({})).await;
+    assert_eq!(r["accepted"], true, "{r}");
+    assert_eq!(e.old.agent(c).sends.len(), 2, "not sent again");
+    e.m.wait_tickets(|t| t.len() == 4 && t[3].outcome == Some(TicketOutcome::Refused))
+        .await;
+    // an open ticket whose write may still land, and a timeline that cannot be read: nothing is sent
+    e.old.end_turn(c);
+    e.old.st().hold_sends = true;
+    let mut held = Ws::hello(&e.h.url, &token, "").await.0.relayed();
+    list(&mut held).await;
+    let rid = held.rid();
+    held.session(
+        json!({"type": "send_agent_message_request", "requestId": rid, "agentId": c, "text": "繼續",
+                      "messageId": "m-x"}),
+    )
+    .await;
+    until("its write is claimed", || {
+        e.m.st()
+            .tickets
+            .last()
+            .is_some_and(|t| t.cmid.as_deref() == Some("m-x") && t.claims == 1)
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    drop(held);
+    until("the dropped tab's LU closed", || e.h.app.legacy().lu_open() == 1).await;
+    let x = e.m.tickets_of(c).last().unwrap().id;
+    e.m.age_claim(x, Duration::from_secs(40));
+    e.old.st().timeline_down = true;
+    let r = send(&mut ws, c, "m-x", json!({})).await;
+    assert_ne!(r["accepted"], true, "{r}");
+    e.old.st().timeline_down = false;
+    e.old.release_sends();
+    until("the old child took the first write", || e.old.agent(c).sends.len() == 3).await;
+    // the resend after it landed: found, not sent again
+    let r = send(&mut ws, c, "m-x", json!({})).await;
+    assert_eq!(r["accepted"], true, "{r}");
+    assert_eq!(e.old.agent(c).sends.len(), 3);
+    assert_eq!(
+        e.m.tickets_of(c)
+            .iter()
+            .filter(|t| t.cmid.as_deref() == Some("m-x"))
+            .count(),
+        1,
+        "{:?}",
+        e.m.tickets_of(c)
+    );
+}
+
+/// A holder of a send's ticket stalls before its write (its claim held), the tab resends through another replica
+/// (the open ticket handed back under a new take) and then closes: the first holder neither writes nor closes the
+/// ticket; the resend writes once and its outcome closes the ticket. The conversation's background work (listed
+/// `running` in the busy state) does not stop the send the old child never got.
+#[tokio::test]
+async fn a_holder_that_gives_up_does_not_close_the_ticket_its_resend_writes_under() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    e.old.st().background.insert(c);
+    let claims = e.m.hold("legacy_ticket_claim");
+    let mut first = e.ws(STAFF).await;
+    list(&mut first).await;
+    let rid = first.rid();
+    first
+        .session(
+            json!({"type": "send_agent_message_request", "requestId": rid, "agentId": c, "text": "繼續",
+                          "messageId": "m-stall"}),
+        )
+        .await;
+    until("the first holder is at its claim", || {
+        e.m.st().calls.iter().any(|x| x.0 == "legacy_ticket_claim")
+    })
+    .await;
+    let other = replica(&e.served, &e.old).await;
+    let mut second = Ws::hello(&other.url, &other.token(STAFF), "").await.0.relayed();
+    list(&mut second).await;
+    let rid2 = second.rid();
+    second
+        .session(
+            json!({"type": "send_agent_message_request", "requestId": rid2, "agentId": c, "text": "繼續",
+                          "messageId": "m-stall"}),
+        )
+        .await;
+    until("the resend is at its claim", || {
+        e.m.st().calls.iter().filter(|x| x.0 == "legacy_ticket_claim").count() == 2
+    })
+    .await;
+    drop(first);
+    until("the first tab is gone", || e.h.app.legacy().lu_open() == 0).await;
+    claims.notify_waiters();
+    let r = second.next_session("send_agent_message_response").await;
+    assert_eq!(r["accepted"], true, "{r}");
+    assert_eq!(e.old.agent(c).sends.len(), 1, "one write");
+    let t = e.m.tickets_of(c);
+    assert_eq!(t.len(), 1, "one ticket, handed back: {t:?}");
+    assert_eq!(t[0].claims, 1, "only the latest take claimed");
+    e.m.wait_tickets(|t| t[0].outcome == Some(TicketOutcome::Started)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        e.m.tickets_of(c)[0].outcome,
+        Some(TicketOutcome::Started),
+        "the resend's outcome stands"
+    );
+    assert_eq!(e.metric("pigeon_switch_write_refused_total"), 0.0);
+}
+
+/// The old side drops its LU sockets while a send is in flight and the tab stays: pigeon reopens the LU, reads the
+/// old child once the write has settled, and answers from what it shows (no LU error for the tab, one old turn).
+#[tokio::test]
+async fn an_lu_dropped_with_a_send_in_flight_settles_it_from_the_old_child() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    let token = e.h.teams[0].mint(STAFF, 7200, None, None);
+    let mut ws = Ws::hello(&e.h.url, &token, "").await.0.relayed();
+    list(&mut ws).await;
+    e.old.st().hold_sends = true;
+    let rid = ws.rid();
+    ws.session(
+        json!({"type": "send_agent_message_request", "requestId": rid, "agentId": c, "text": "繼續",
+                      "messageId": "m-flight"}),
+    )
+    .await;
+    until("the write is claimed", || {
+        e.m.st().tickets.first().is_some_and(|t| t.claims == 1)
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    e.old.drop_sockets();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    e.old.release_sends();
+    let r = ws.next_session("send_agent_message_response").await;
+    assert_eq!(r["accepted"], true, "{r}");
+    assert_eq!(e.old.agent(c).sends.len(), 1);
+    e.m.wait_tickets(|t| t[0].outcome.is_some()).await;
+    assert_eq!(e.m.tickets_of(c).len(), 1);
+    assert_eq!(e.metric("pigeon_switch_write_refused_total"), 0.0);
+    assert_eq!(e.metric("pigeon_lu_errors_total"), 0.0);
+}
+
+/// A send whose file copies outlast its ticket's hold: the ticket closes `refused` with nothing written, the next one
+/// carries the same copies (each file copied once), and the send goes once.
+#[tokio::test]
+async fn copies_that_outlast_the_hold_are_made_once() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    e.m.st().gate = Some(magpie_api::Timestamp::now());
+    let mut ws = e.ws(STAFF).await;
+    list(&mut ws).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let r = upload(&e, "slow.pdf", b"%PDF-1.4 slow").await;
+    assert_eq!(r.status(), 201);
+    let mpath = common::body_json(r).await["attachments"][0]["path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(e.old.st().files.is_empty(), "no tee from the gate");
+    e.m.st().hold_ms_next = Some(150);
+    let read = e.m.hold("upload_raw");
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        read.notify_waiters();
+    });
+    let att = json!({"attachments": [{"type": "uploaded_file", "path": mpath, "fileName": "slow.pdf",
+                                      "mimeType": "application/pdf", "size": 13}]});
+    let r = send(&mut ws, c, "m-slow", att).await;
+    assert_eq!(r["accepted"], true, "{r}");
+    assert_eq!(e.old.st().files.len(), 1, "one copy");
+    assert_eq!(e.old.agent(c).sends.len(), 1);
+    e.m.wait_tickets(|t| t.iter().all(|t| t.outcome.is_some())).await;
+    let t = e.m.tickets_of(c);
+    let sends: Vec<_> = t.iter().filter(|t| t.kind == TicketKind::Send).collect();
+    assert_eq!(sends.len(), 2, "{t:?}");
+    assert_eq!(sends[0].outcome, Some(TicketOutcome::Refused));
+    assert_eq!(sends[1].outcome, Some(TicketOutcome::Started));
+    assert_eq!(t.iter().filter(|t| t.kind == TicketKind::Upload).count(), 1);
+    assert_eq!(e.metric("pigeon_switch_write_refused_total"), 0.0);
 }
 
 fn multipart(name: &str, bytes: &[u8]) -> (String, Vec<u8>) {
@@ -1197,7 +1370,32 @@ async fn share_writes_reach_the_old_child_whatever_replica_and_cache() {
     let share = common::body_json(r).await["id"].as_str().unwrap().to_owned();
     assert!(share.starts_with("sh"), "the old child's link: {share}");
     assert_eq!(e.old.st().shares.len(), 1);
+    // a replica that has to look for the link's conversation and cannot read a list: a retryable 503, not a 404
     let other = replica(&e.served, &e.old).await;
+    let revoke = || async {
+        other
+            .as_token(
+                other
+                    .http
+                    .delete(format!("{}{}{share}", other.url, pigeon::paseo::compat::SHARES)),
+                &other.token(STAFF),
+            )
+            .header("origin", &other.url)
+            .send()
+            .await
+            .unwrap()
+    };
+    e.old.st().share_lists_down = true;
+    let r = revoke().await;
+    assert_eq!(r.status(), 503, "never a 404 for a link that may be live");
+    assert!(e.old.st().shares[0].2, "still live");
+    assert_eq!(
+        e.metric("pigeon_switch_write_refused_total"),
+        0.0,
+        "another replica's count"
+    );
+    assert_eq!(other.metric("pigeon_switch_write_refused_total"), 1.0);
+    e.old.st().share_lists_down = false;
     let r = other
         .as_token(
             other

@@ -47,6 +47,9 @@ impl LuError {
 /// An answer: the session message type and its payload.
 pub type Answer = Result<(String, Value), LuError>;
 
+/// A frame for the socket and the moment past which it must not go out (`None`: whenever).
+type Frame = (String, Option<tokio::time::Instant>);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
     Connecting,
@@ -64,7 +67,8 @@ pub struct Lu {
     conn: Weak<Conn>,
     conn_id: Uuid,
     person: String,
-    out: mpsc::UnboundedSender<String>,
+    /// Frames for the socket, each with the moment past which it is dropped unsent (a call's bound).
+    out: mpsc::UnboundedSender<Frame>,
     st: Mutex<St>,
     phase: watch::Sender<Phase>,
     next: AtomicU64,
@@ -165,7 +169,9 @@ impl Lu {
 
     /// Sends a session message (its `requestId` replaced by the LU's own) and waits up to `bound` for the answer:
     /// the message whose payload names that request id (the response or `rpc_error`; the old child's
-    /// `agent_refreshed` status too).
+    /// `agent_refreshed` status too). The frame never goes out past `bound`: one still queued then is dropped, and
+    /// one whose write to the socket has not finished by then ends the socket (a ticket's settle time counts on a
+    /// write that has not reached the old child by its bound never reaching it).
     ///
     /// # Errors
     /// Why there is no answer ([`LuError`]).
@@ -178,11 +184,12 @@ impl Lu {
         let (tx, rx) = oneshot::channel();
         self.st().pending.insert(rid.clone(), tx);
         let frame = json!({"type": "session", "message": message}).to_string();
-        if self.out.send(frame).is_err() {
+        let deadline = tokio::time::Instant::now() + bound;
+        if self.out.send((frame, Some(deadline))).is_err() {
             self.st().pending.remove(&rid);
             return Err(LuError::NotSent);
         }
-        match tokio::time::timeout(bound, rx).await {
+        match tokio::time::timeout_at(deadline, rx).await {
             Ok(Ok(a)) => a,
             Ok(Err(_)) => Err(LuError::Lost),
             Err(_) => {
@@ -220,7 +227,7 @@ impl Lu {
         let ids: Vec<String> = self.st().agents.iter().map(Uuid::to_string).collect();
         let frame = json!({"type": "session", "message": {"type": "agent.timeline.set_subscription.request",
                                                           "agentIds": ids, "requestId": self.rid()}});
-        let _ = self.out.send(frame.to_string());
+        let _ = self.out.send((frame.to_string(), None));
     }
 
     fn deliver(&self, rid: &str, answer: Answer) -> bool {
@@ -337,7 +344,7 @@ async fn hello(stream: &mut Stream, conn: &Conn) -> Result<(), LuError> {
         .unwrap_or(Err(LuError::NotSent))
 }
 
-async fn run(legacy: Legacy, lu: Arc<Lu>, conn: Arc<Conn>, mut rx: mpsc::UnboundedReceiver<String>) {
+async fn run(legacy: Legacy, lu: Arc<Lu>, conn: Arc<Conn>, mut rx: mpsc::UnboundedReceiver<Frame>) {
     let stream = match connect(&legacy, &conn).await {
         Ok(mut s) => match hello(&mut s, &conn).await {
             Ok(()) => s,
@@ -368,9 +375,26 @@ async fn run(legacy: Legacy, lu: Arc<Lu>, conn: Arc<Conn>, mut rx: mpsc::Unbound
     let gone = loop {
         tokio::select! {
             f = rx.recv() => {
-                let Some(f) = f else { break false };
-                if sink.send(Message::Text(f.into())).await.is_err() {
-                    break false;
+                let Some((f, deadline)) = f else { break false };
+                match deadline {
+                    // its caller has given up: it must not reach the old child later
+                    Some(d) if tokio::time::Instant::now() >= d => {
+                        tracing::warn!(conn = %lu.conn_id, "an LU frame past its bound dropped unsent");
+                    }
+                    Some(d) => match tokio::time::timeout_at(d, sink.send(Message::Text(f.into()))).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(_)) => break false,
+                        Err(_) => {
+                            // a stalled socket: ended, so the frame's bytes never go out after its bound
+                            tracing::warn!(conn = %lu.conn_id, "an LU write stalled past its bound: the socket ends");
+                            break false;
+                        }
+                    },
+                    None => {
+                        if sink.send(Message::Text(f.into())).await.is_err() {
+                            break false;
+                        }
+                    }
                 }
             }
             m = stream.next() => match m {

@@ -2,8 +2,10 @@
 //! the gate a warm is a hermit hint only, so typing does not keep resetting its quiet period), its share links
 //! (listed, created and revoked through the old child, the writes under tickets) and its files (the old child's).
 //! A share magpie does not know yet (made in the old child, not copied by the importer) is found by asking the old
-//! child for each of the person's legacy conversations' links, never from one replica's memory alone. An outcome is
-//! `refused` only for the old route's own 4xx; a 5xx or no answer leaves the ticket for the importer's expiry.
+//! child for each of the person's legacy conversations' links, never from one replica's memory alone; a revoke whose
+//! share could not be looked for everywhere is a retryable 503, never magpie's 404. An outcome is `refused` only for
+//! the old route's own 4xx; a 5xx or no answer leaves the ticket for the importer's expiry, and a 2xx whose body was
+//! lost is `applied` (a create's link is then found in the old child's list, so a retry does not make a second).
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -45,6 +47,12 @@ impl LuShares {
             .copied()
     }
 }
+
+/// How many conversations' old-child links a revoke's owner lookup reads at a time.
+const SHARE_LOOKUPS: usize = 8;
+
+/// The longest a revoke's owner lookup takes (the tab's request is answered 503 past it).
+const SHARE_OWNER_BOUND: Duration = Duration::from_secs(20);
 
 /// The outcome of a ticketed REST write.
 enum Ticketed {
@@ -134,11 +142,16 @@ impl Legacy {
                     return Ticketed::Done(Err(CallError::Unreachable));
                 }
             };
+            let take = t.take;
             let report = |outcome: TicketOutcome| {
                 let calls = calls.clone();
                 async move {
                     for _ in 0..4 {
-                        if calls.legacy_ticket_done(ticket, &TicketDone { outcome }).await.is_ok() {
+                        if calls
+                            .legacy_ticket_done(ticket, &TicketDone { outcome, take })
+                            .await
+                            .is_ok()
+                        {
                             return;
                         }
                         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -152,7 +165,7 @@ impl Legacy {
             }
             let r = self.send(call(), TICKET_WRITE_TIMEOUT).await;
             match &r {
-                Ok(_) => report(TicketOutcome::Applied).await,
+                Ok(_) | Err(CallError::AppliedUnread(_)) => report(TicketOutcome::Applied).await,
                 // the old route's own no: nothing was written
                 Err(e) if super::delegate::refused_by_old(e) => report(TicketOutcome::Refused).await,
                 // a 5xx or a gateway's error, or no answer: it may have been applied after all; the importer expires
@@ -208,12 +221,17 @@ impl Legacy {
         let who = self.who(id)?;
         let path = req.uri.path().to_owned();
         if req.method == Method::POST {
+            // the links before the create: a create whose answer is lost is found by what is new in the list
+            let before = self.share_ids(&path, &who).await;
             let call = || self.request(Method::POST, &path, &who);
             return match self
                 .ticketed_rest(app, id, conversation, TicketKind::ShareCreate, call)
                 .await
             {
                 Ticketed::Native => None,
+                Ticketed::Done(Err(CallError::AppliedUnread(_))) => {
+                    Some(self.created_unread(&path, &who, before).await)
+                }
                 Ticketed::Done(r) => {
                     if let Ok((_, body)) = &r
                         && let Ok(v) = serde_json::from_slice::<serde_json::Value>(body)
@@ -231,6 +249,51 @@ impl Legacy {
         ))
     }
 
+    /// A conversation's old-child links (`path` its shares route): `None` when they cannot be read.
+    async fn share_list(&self, path: &str, who: &super::upstream::Who) -> Option<Vec<serde_json::Value>> {
+        let (_, body) = self
+            .send(self.request(Method::GET, path, who), Duration::from_secs(30))
+            .await
+            .ok()?;
+        let v: serde_json::Value = serde_json::from_slice(&body).ok()?;
+        v["shares"].as_array().cloned()
+    }
+
+    async fn share_ids(&self, path: &str, who: &super::upstream::Who) -> Option<Vec<String>> {
+        Some(
+            self.share_list(path, who)
+                .await?
+                .iter()
+                .filter_map(|s| s["id"].as_str().map(str::to_owned))
+                .collect(),
+        )
+    }
+
+    /// A create the old route applied whose answer was lost: the one link the list has now and did not before, as
+    /// the create's answer; otherwise a retryable 503 (a retry may then make a second link, which the person can
+    /// revoke; nothing is lost).
+    async fn created_unread(&self, path: &str, who: &super::upstream::Who, before: Option<Vec<String>>) -> Response {
+        if let (Some(before), Some(now)) = (before, self.share_list(path, who).await) {
+            let new: Vec<&serde_json::Value> = now
+                .iter()
+                .filter(|s| s["id"].as_str().is_some_and(|id| !before.iter().any(|b| b == id)))
+                .collect();
+            if let [one] = new.as_slice() {
+                let mut resp = Response::new(axum::body::Body::from(one.to_string()));
+                *resp.status_mut() = StatusCode::CREATED;
+                let h = resp.headers_mut();
+                h.insert(
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/json; charset=utf-8"),
+                );
+                h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+                return resp;
+            }
+        }
+        tracing::warn!("a share create was applied, its link not found");
+        retry_later()
+    }
+
     /// A share create magpie refused with 409 `conversation_migrating` `route: "legacy"` (pigeon's view of the owner
     /// was stale, or the owner could not be read): the conversation is legacy, and the create goes to the old child
     /// under a ticket.
@@ -243,7 +306,8 @@ impl Legacy {
     /// A revoke of a share whose conversation is legacy: magpie answered 409 `route: "legacy"` with the conversation,
     /// or 404 while the person has legacy conversations (a link made in the old child that magpie has not copied
     /// yet). In that case the share's conversation is the one whose old-child links list it (the links pigeon made
-    /// here are tried first). `None`: not one of those.
+    /// here are tried first). `None`: not one of those (magpie's 404 stands). A share whose owner could not be looked
+    /// for in every legacy conversation is a retryable 503, never a 404 for a link that may still be live.
     pub async fn revoke(
         &self,
         app: &App,
@@ -252,9 +316,15 @@ impl Legacy {
         share: &str,
         conversation: Option<Uuid>,
     ) -> Option<Response> {
-        let conversation = match conversation.or_else(|| self.0.lu_shares.get(share)) {
-            Some(c) => c,
-            None => self.share_owner(app, id, share).await?,
+        let known = conversation.or_else(|| self.0.lu_shares.get(share));
+        let conversation = if let Some(c) = known {
+            c
+        } else {
+            let Ok(c) = self.share_owner(app, id, share).await else {
+                self.0.metrics.write_refused.inc();
+                return Some(retry_later());
+            };
+            c?
         };
         let who = self.who(id)?;
         let path = req.uri.path().to_owned();
@@ -264,56 +334,74 @@ impl Legacy {
             .await
         {
             Ticketed::Native => None,
+            // revoked; its answer (a 204) was lost on the way
+            Ticketed::Done(Err(CallError::AppliedUnread(s))) => Some(rest_answer(Ok((s, Bytes::new())))),
             Ticketed::Done(r) => Some(rest_answer(r)),
         }
     }
 
-    /// The legacy conversation of the person whose old-child links list `share` (`None`: none does, or the person
-    /// has no legacy conversation).
-    async fn share_owner(&self, app: &App, id: &Identity, share: &str) -> Option<Uuid> {
-        let person = id.subject()?;
-        if !self.window(person).await.is_ok_and(|w| w.person_legacy > 0) {
-            return None;
+    /// The legacy conversation of the person whose old-child links list `share` (`Ok(None)`: none does, or the person
+    /// has no legacy conversation; `Err`: a list could not be read, so it cannot be told). The conversations' links
+    /// are read [`SHARE_LOOKUPS`] at a time, all within [`SHARE_OWNER_BOUND`].
+    async fn share_owner(&self, app: &App, id: &Identity, share: &str) -> Result<Option<Uuid>, Unknown> {
+        use futures_util::StreamExt as _;
+        let Some(person) = id.subject() else { return Ok(None) };
+        match self.window(person).await {
+            Ok(w) if w.person_legacy > 0 => {}
+            Ok(_) => return Ok(None),
+            Err(_) => return Err(Unknown),
         }
-        let calls = person_calls(&app.0.magpie, id)?;
-        let who = self.who(id)?;
-        let mut legacy = Vec::new();
-        for state in [ListState::Active, ListState::Deleted] {
-            let mut cursor = None;
-            for _ in 0..50 {
-                let q = ListQuery {
-                    state: Some(state),
-                    limit: Some(200),
-                    cursor: cursor.take(),
-                    search: None,
-                };
-                let page = calls.list_conversations(&q).await.ok()?;
-                legacy.extend(page.conversations.iter().filter(|c| c.migrating).map(|c| c.id));
-                match page.next_cursor {
-                    Some(n) => cursor = Some(n),
-                    None => break,
+        let calls = person_calls(&app.0.magpie, id).ok_or(Unknown)?;
+        let who = self.who(id).ok_or(Unknown)?;
+        let walk = async {
+            let mut legacy = Vec::new();
+            for state in [ListState::Active, ListState::Deleted] {
+                let mut cursor = None;
+                let mut done = false;
+                for _ in 0..50 {
+                    let q = ListQuery {
+                        state: Some(state),
+                        limit: Some(200),
+                        cursor: cursor.take(),
+                        search: None,
+                    };
+                    let page = calls.list_conversations(&q).await.map_err(|_| Unknown)?;
+                    legacy.extend(page.conversations.iter().filter(|c| c.migrating).map(|c| c.id));
+                    if let Some(n) = page.next_cursor {
+                        cursor = Some(n);
+                    } else {
+                        done = true;
+                        break;
+                    }
+                }
+                if !done {
+                    return Err(Unknown);
                 }
             }
-        }
-        for c in legacy {
-            let path = format!("{}{c}/shares", crate::paseo::compat::SESSIONS);
-            let Ok((_, body)) = self
-                .send(self.request(Method::GET, &path, &who), Duration::from_secs(30))
-                .await
-            else {
-                continue;
-            };
-            let listed = serde_json::from_slice::<serde_json::Value>(&body).is_ok_and(|v| {
-                v["shares"]
-                    .as_array()
-                    .is_some_and(|l| l.iter().any(|s| s["id"].as_str() == Some(share)))
-            });
-            if listed {
-                self.0.lu_shares.put(share, c);
-                return Some(c);
+            let who = &who;
+            let mut lists = futures_util::stream::iter(legacy)
+                .map(|c| async move {
+                    let path = format!("{}{c}/shares", crate::paseo::compat::SESSIONS);
+                    (c, self.share_ids(&path, who).await)
+                })
+                .buffer_unordered(SHARE_LOOKUPS);
+            let mut unread = false;
+            while let Some((c, ids)) = lists.next().await {
+                match ids {
+                    Some(ids) if ids.iter().any(|s| s == share) => return Ok(Some(c)),
+                    Some(_) => {}
+                    None => unread = true,
+                }
             }
+            if unread { Err(Unknown) } else { Ok(None) }
+        };
+        let found = tokio::time::timeout(SHARE_OWNER_BOUND, walk)
+            .await
+            .unwrap_or(Err(Unknown));
+        if let Ok(Some(c)) = found {
+            self.0.lu_shares.put(share, c);
         }
-        None
+        found
     }
 
     /// A legacy conversation's file (`files/raw`): the old child's answer, streamed, with the range headers passed.
@@ -382,7 +470,7 @@ fn rest_answer(r: Result<(u16, Bytes), CallError>) -> Response {
         Ok(ok) => ok,
         Err(CallError::Status(s, b)) => (s, b),
         Err(CallError::SignedOut) => return signed_out(),
-        Err(CallError::Unreachable) => {
+        Err(CallError::Unreachable | CallError::AppliedUnread(_)) => {
             return api_error(
                 StatusCode::BAD_GATEWAY,
                 "SHARE_FAILED",

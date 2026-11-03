@@ -23,8 +23,8 @@ use magpie_api::conversations::{
 };
 use magpie_api::errors::{ErrorCode, ErrorInfo, Refusal};
 use magpie_api::legacy::{
-    LegacyPathRequest, Superseded, TicketDone, TicketKind, TicketOutcome, TicketRequest, TicketResponse, TicketRoute,
-    WindowState,
+    LegacyPathRequest, PriorSend, Superseded, TicketClaim, TicketClaimed, TicketDone, TicketKind, TicketOutcome,
+    TicketRequest, TicketResponse, TicketRoute, WindowState,
 };
 use magpie_api::rows::{Prompt, PromptsResponse, Row, RowItem, TimelinePage, TimelineQuery, UserItem};
 use magpie_api::server::{Ctx, Server};
@@ -94,6 +94,11 @@ pub struct Ticket {
     pub issued: std::time::Instant,
     /// A repeat past the reuse age superseded it (it stays open until its outcome).
     pub superseded: bool,
+    /// Its latest hand-out, and when a write was last claimed under it.
+    pub take: Uuid,
+    pub claimed: Option<std::time::Instant>,
+    /// Every claim answered `claimed`.
+    pub claims: usize,
 }
 
 #[derive(Clone, Default)]
@@ -887,10 +892,51 @@ impl Server for Model {
         let Some(t) = st.tickets.iter_mut().find(|t| t.id == ticket) else {
             return Err(refusal(ErrorCode::NotFound, "not found"));
         };
-        if t.outcome.is_none() && t.kind.closes_on(body.outcome) {
+        // magpie's rule (`magpie::legacy::tickets::done`): a `refused` from an earlier take changes nothing
+        let stale = body.outcome == TicketOutcome::Refused && body.take.is_some_and(|k| k != t.take);
+        if t.outcome.is_none() && t.kind.closes_on(body.outcome) && !stale {
             t.outcome = Some(body.outcome);
         }
         Ok(())
+    }
+
+    async fn legacy_ticket_claim(&self, ctx: Ctx, ticket: Uuid, body: TicketClaim) -> Result<TicketClaimed, ApiError> {
+        self.record("legacy_ticket_claim", &ctx)?;
+        self.held("legacy_ticket_claim").await;
+        let mut st = self.st();
+        let Some(t) = st.tickets.iter().find(|t| t.id == ticket).cloned() else {
+            return Err(refusal(ErrorCode::NotFound, "not found"));
+        };
+        // magpie's rule (`magpie::legacy::tickets::claim`)
+        let accepted = t.cmid.is_some()
+            && st.tickets.iter().any(|o| {
+                o.id != t.id
+                    && o.conversation == t.conversation
+                    && o.cmid == t.cmid
+                    && matches!(
+                        o.outcome,
+                        Some(TicketOutcome::Started | TicketOutcome::Completed | TicketOutcome::Failed)
+                    )
+            });
+        if t.outcome.is_some() || t.issued.elapsed() >= magpie_api::legacy::TICKET_HOLD_MAX || accepted {
+            return Ok(TicketClaimed {
+                claimed: false,
+                held_elsewhere: false,
+            });
+        }
+        if t.take != body.take {
+            return Ok(TicketClaimed {
+                claimed: false,
+                held_elsewhere: true,
+            });
+        }
+        let t = st.tickets.iter_mut().find(|t| t.id == ticket).unwrap();
+        t.claimed = Some(std::time::Instant::now());
+        t.claims += 1;
+        Ok(TicketClaimed {
+            claimed: true,
+            held_elsewhere: false,
+        })
     }
 
     async fn upload_legacy_path(&self, ctx: Ctx, upload_id: Uuid, body: LegacyPathRequest) -> Result<(), ApiError> {
@@ -901,6 +947,7 @@ impl Server for Model {
 
     async fn upload_raw(&self, ctx: Ctx, upload_id: Uuid) -> Result<axum::response::Response, ApiError> {
         self.record("upload_raw", &ctx)?;
+        self.held("upload_raw").await;
         let Some((mime, bytes)) = self.st().upload_bytes.get(&upload_id).cloned() else {
             return Err(refusal(ErrorCode::NotFound, "not found"));
         };
@@ -962,13 +1009,19 @@ impl Model {
                 hold_ms: None,
                 supersedes: None,
                 reused: false,
+                take: None,
+                settle_ms: None,
+                prior: None,
             });
         }
-        // magpie's rules (`magpie::legacy::tickets::issue_in`): a send's repeat gets its open ticket back while that
-        // is younger than the reuse age, with what is left of the hold; past it the open one is superseded (left
-        // open) and a new ticket names it with what is left of the settle time
+        // magpie's rules (`magpie::legacy::tickets::issue_in`): a send's repeat gets its open ticket back under a new
+        // take while that is younger than the reuse age, with what is left of the hold and of a claimed write's
+        // settle time; past it the open one is superseded (left open) and a new ticket names it with what is left of
+        // the settle time; a send's answer names its prior ticket
         let hold_max = magpie_api::legacy::TICKET_HOLD_MAX;
+        let take = Uuid::new_v4();
         let mut supersedes = None;
+        let mut reuse = None;
         if let Some(cmid) = &body.client_message_id
             && let Some(open) =
                 st.tickets.iter_mut().rev().find(|t| {
@@ -977,45 +1030,89 @@ impl Model {
         {
             let age = open.issued.elapsed();
             if age < magpie_api::legacy::TICKET_REUSE_MAX {
-                let ticket = open.id;
-                let hold_ms = st
-                    .hold_ms_next
-                    .take()
-                    .unwrap_or_else(|| ms(hold_max.saturating_sub(age)));
-                return Ok(TicketResponse {
-                    route: TicketRoute::Legacy,
-                    ticket: Some(ticket),
-                    issued_at: Some(now()),
-                    hold_ms: Some(hold_ms),
-                    supersedes: None,
-                    reused: true,
+                open.take = take;
+                let claim_settle = open.claimed.map_or(0, |at| {
+                    ms(magpie_api::legacy::TICKET_CLAIM_SETTLE.saturating_sub(at.elapsed()))
+                });
+                reuse = Some((open.id, ms(hold_max.saturating_sub(age)), claim_settle));
+            } else {
+                open.superseded = true;
+                supersedes = Some(Superseded {
+                    ticket: open.id,
+                    settle_ms: ms(magpie_api::legacy::TICKET_SETTLE_MAX.saturating_sub(age)),
                 });
             }
-            open.superseded = true;
-            supersedes = Some(Superseded {
-                ticket: open.id,
-                settle_ms: ms(magpie_api::legacy::TICKET_SETTLE_MAX.saturating_sub(age)),
-            });
         }
-        let t = Ticket {
-            id: Uuid::new_v4(),
-            conversation: id,
-            kind: body.kind,
-            cmid: body.client_message_id.clone(),
-            outcome: None,
-            issued: std::time::Instant::now(),
-            superseded: false,
+        let (ticket, hold_ms, claim_settle) = if let Some((ticket, hold_ms, claim_settle)) = reuse {
+            (ticket, st.hold_ms_next.take().unwrap_or(hold_ms), claim_settle)
+        } else {
+            let t = Ticket {
+                id: Uuid::new_v4(),
+                conversation: id,
+                kind: body.kind,
+                cmid: body.client_message_id.clone(),
+                outcome: None,
+                issued: std::time::Instant::now(),
+                superseded: false,
+                take,
+                claimed: None,
+                claims: 0,
+            };
+            let ticket = t.id;
+            st.tickets.push(t);
+            (ticket, st.hold_ms_next.take().unwrap_or_else(|| ms(hold_max)), 0)
         };
-        let ticket = t.id;
-        st.tickets.push(t);
-        let hold_ms = st.hold_ms_next.take().unwrap_or_else(|| ms(hold_max));
+        let (prior, prior_settle) = match &body.client_message_id {
+            None => (None, 0),
+            Some(cmid) => {
+                let others: Vec<&Ticket> = st
+                    .tickets
+                    .iter()
+                    .filter(|t| {
+                        t.conversation == id
+                            && t.cmid.as_ref() == Some(cmid)
+                            && t.id != ticket
+                            && Some(t.id) != supersedes.as_ref().map(|s: &Superseded| s.ticket)
+                    })
+                    .collect();
+                let accepted = others.iter().rev().find(|t| {
+                    matches!(
+                        t.outcome,
+                        Some(TicketOutcome::Started | TicketOutcome::Completed | TicketOutcome::Failed)
+                    )
+                });
+                let open = others.iter().rev().find(|t| t.outcome.is_none());
+                let settle = others
+                    .iter()
+                    .filter(|t| t.outcome.is_none())
+                    .map(|t| ms(magpie_api::legacy::TICKET_SETTLE_MAX.saturating_sub(t.issued.elapsed())))
+                    .max()
+                    .unwrap_or(0);
+                let prior = match (accepted, open) {
+                    (Some(t), _) => Some(PriorSend {
+                        ticket: t.id,
+                        accepted: true,
+                    }),
+                    (None, Some(t)) => Some(PriorSend {
+                        ticket: t.id,
+                        accepted: false,
+                    }),
+                    (None, None) => None,
+                };
+                (prior, settle)
+            }
+        };
+        let reused = reuse.is_some();
         Ok(TicketResponse {
             route: TicketRoute::Legacy,
             ticket: Some(ticket),
             issued_at: Some(now()),
             hold_ms: Some(hold_ms),
             supersedes,
-            reused: false,
+            reused,
+            take: Some(take),
+            settle_ms: (reused || prior.is_some()).then_some(claim_settle.max(prior_settle)),
+            prior,
         })
     }
 }
@@ -1030,6 +1127,13 @@ impl Model {
         let mut st = self.st();
         let t = st.tickets.iter_mut().find(|t| t.id == ticket).unwrap();
         t.issued = t.issued.checked_sub(by).unwrap();
+    }
+
+    /// Moves a ticket's last claim back by `by` (a write claimed that long ago).
+    pub fn age_claim(&self, ticket: Uuid, by: Duration) {
+        let mut st = self.st();
+        let t = st.tickets.iter_mut().find(|t| t.id == ticket).unwrap();
+        t.claimed = t.claimed.map(|at| at.checked_sub(by).unwrap());
     }
 
     /// Waits until the ticket list satisfies `pred` (outcomes are reported in the background).

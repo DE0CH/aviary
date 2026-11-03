@@ -10,12 +10,17 @@
 //! send is never stuck behind a ticket pigeon may no longer write under. Anything still stranded is closed by the
 //! importer with [`expire_settled`] once the old child shows that no write under it can still be in flight
 //! (switch-final 8.1's "done or expired"; the design gap is recorded in `crates/magpie/README.md`).
+//!
+//! A reused ticket has two holders. Each hand-out gets a take of its own (the latest is kept), a send's write is
+//! claimed with it right before it starts ([`claim`]: only the latest take may), and a `refused` from an older take
+//! changes nothing ([`done`]), so a holder that gave up without writing never closes the ticket under the one that
+//! writes. The reuse answer's `settleMs` covers a write claimed before it; a send's answer names its `prior` ticket.
 
 use aviary_pg::{Pool, Tx};
 use magpie_api::Timestamp;
 use magpie_api::legacy::{
-    Superseded, TICKET_HOLD_MAX, TICKET_REUSE_MAX, TICKET_SETTLE_MAX, TicketDone, TicketKind, TicketOutcome,
-    TicketRequest, TicketResponse, TicketRoute,
+    PriorSend, Superseded, TICKET_CLAIM_SETTLE, TICKET_HOLD_MAX, TICKET_REUSE_MAX, TICKET_SETTLE_MAX, TicketClaim,
+    TicketClaimed, TicketDone, TicketKind, TicketOutcome, TicketRequest, TicketResponse, TicketRoute,
 };
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -46,6 +51,24 @@ struct Issued {
     hold_ms: u64,
     supersedes: Option<Superseded>,
     reused: bool,
+    take: Uuid,
+    settle_ms: Option<u64>,
+    prior: Option<PriorSend>,
+}
+
+/// A `native` answer.
+fn native() -> TicketResponse {
+    TicketResponse {
+        route: TicketRoute::Native,
+        ticket: None,
+        issued_at: None,
+        hold_ms: None,
+        supersedes: None,
+        reused: false,
+        take: None,
+        settle_ms: None,
+        prior: None,
+    }
 }
 
 /// Milliseconds left of `bound` since `issued_at`, on the database clock (0 once it has passed).
@@ -108,16 +131,7 @@ pub async fn take(app: &Magpie, person: &Person, id: Uuid, req: &TicketRequest) 
         })
         .await?;
         match taken {
-            Take::Native => {
-                return Ok(TicketResponse {
-                    route: TicketRoute::Native,
-                    ticket: None,
-                    issued_at: None,
-                    hold_ms: None,
-                    supersedes: None,
-                    reused: false,
-                });
-            }
+            Take::Native => return Ok(native()),
             Take::Legacy(issued) => {
                 return Ok(TicketResponse {
                     route: TicketRoute::Legacy,
@@ -126,20 +140,14 @@ pub async fn take(app: &Magpie, person: &Person, id: Uuid, req: &TicketRequest) 
                     hold_ms: Some(issued.hold_ms),
                     supersedes: issued.supersedes,
                     reused: issued.reused,
+                    take: Some(issued.take),
+                    settle_ms: issued.settle_ms,
+                    prior: issued.prior,
                 });
             }
             Take::Wait => match fence::await_unfenced(app, id).await? {
                 None => return Err(Error::not_found()),
-                Some(Owner::Native) => {
-                    return Ok(TicketResponse {
-                        route: TicketRoute::Native,
-                        ticket: None,
-                        issued_at: None,
-                        hold_ms: None,
-                        supersedes: None,
-                        reused: false,
-                    });
-                }
+                Some(Owner::Native) => return Ok(native()),
                 Some(_) => {}
             },
         }
@@ -148,20 +156,25 @@ pub async fn take(app: &Magpie, person: &Person, id: Uuid, req: &TicketRequest) 
 }
 
 /// Issues a ticket in `t` (the conversation row is locked, legacy and unfenced), or hands back a send's open ticket
-/// for `cmid` while it is younger than [`TICKET_REUSE_MAX`]; an older one is superseded and named in the answer.
+/// for `cmid` while it is younger than [`TICKET_REUSE_MAX`] (under a new take, with how long until a write claimed
+/// under it has settled); an older one is superseded and named in the answer. A send's answer also names its prior
+/// ticket ([`prior_in`]).
 async fn issue_in(t: &Tx<'_>, id: Uuid, kind: &str, cmid: Option<&str>) -> Result<Issued> {
+    let take = Uuid::now_v7();
     let mut supersedes = None;
+    let mut reuse = None;
     if let Some(cmid) = cmid
         && let Some(r) = t
             .query_opt(
                 &format!(
                     "select ticket, issued_at, clock_timestamp() - issued_at < make_interval(secs => $3),
-                            {hold}, {settle}
+                            {hold}, {settle}, case when claimed_at is null then 0::int8 else {claim} end
                      from legacy_tickets
                      where conversation_id = $1 and client_message_id = $2 and done_at is null
                        and superseded_at is null",
                     hold = left_sql("issued_at", "$4"),
                     settle = left_sql("issued_at", "$5"),
+                    claim = left_sql("claimed_at", "$6"),
                 ),
                 &[
                     &id,
@@ -169,51 +182,104 @@ async fn issue_in(t: &Tx<'_>, id: Uuid, kind: &str, cmid: Option<&str>) -> Resul
                     &TICKET_REUSE_MAX.as_secs_f64(),
                     &TICKET_HOLD_MAX.as_secs_f64(),
                     &TICKET_SETTLE_MAX.as_secs_f64(),
+                    &TICKET_CLAIM_SETTLE.as_secs_f64(),
                 ],
             )
             .await?
     {
         let ticket: Uuid = r.get(0);
         if r.get::<_, bool>(2) {
-            return Ok(Issued {
+            // handed to this request under a take of its own: an older holder's `refused` no longer closes it, and
+            // an older holder's claim no longer succeeds
+            t.execute(
+                "update legacy_tickets set take = $2 where ticket = $1",
+                &[&ticket, &take],
+            )
+            .await?;
+            reuse = Some((ticket, r.get::<_, OffsetDateTime>(1), ms(r.get(3)), ms(r.get(5))));
+        } else {
+            // too old to hand back (too little hold left): it stays open (a write may be in flight under it)
+            // and the repeat gets a new ticket that names it, since the old child does not de-duplicate sends
+            t.execute(
+                "update legacy_tickets set superseded_at = clock_timestamp() where ticket = $1",
+                &[&ticket],
+            )
+            .await?;
+            tracing::info!(conversation = %id, %ticket, "a repeated send's ticket was past its reuse age: superseded");
+            supersedes = Some(Superseded {
                 ticket,
-                at: r.get(1),
-                hold_ms: ms(r.get(3)),
-                supersedes: None,
-                reused: true,
+                settle_ms: ms(r.get(4)),
             });
         }
-        // too old to hand back (too little hold left): it stays open (a write may be in flight under it)
-        // and the repeat gets a new ticket that names it, since the old child does not de-duplicate sends
-        t.execute(
-            "update legacy_tickets set superseded_at = clock_timestamp() where ticket = $1",
-            &[&ticket],
-        )
-        .await?;
-        tracing::info!(conversation = %id, %ticket, "a repeated send's ticket was past its reuse age: superseded");
-        supersedes = Some(Superseded {
-            ticket,
-            settle_ms: ms(r.get(4)),
-        });
     }
-    let ticket = Uuid::now_v7();
+    let (ticket, at, hold_ms, claim_settle) = if let Some(r) = reuse {
+        r
+    } else {
+        let ticket = Uuid::now_v7();
+        let r = t
+            .query_one(
+                &format!(
+                    "insert into legacy_tickets (ticket, conversation_id, kind, client_message_id, issued_at, take)
+                     values ($1, $2, $3, $4, clock_timestamp(), $6) returning issued_at, {hold}",
+                    hold = left_sql("issued_at", "$5"),
+                ),
+                &[&ticket, &id, &kind, &cmid, &TICKET_HOLD_MAX.as_secs_f64(), &take],
+            )
+            .await?;
+        (ticket, r.get(0), ms(r.get(1)), 0)
+    };
+    let (prior, prior_settle) = match cmid {
+        Some(cmid) => prior_in(t, id, cmid, ticket, supersedes.as_ref().map(|s| s.ticket)).await?,
+        None => (None, 0),
+    };
+    let reused = reuse.is_some();
+    Ok(Issued {
+        ticket,
+        at,
+        hold_ms,
+        supersedes,
+        reused,
+        take,
+        settle_ms: (reused || prior.is_some()).then_some(claim_settle.max(prior_settle)),
+        prior,
+    })
+}
+
+/// The send's earlier ticket other than `ticket` and the one it supersedes: the newest that closed on the old
+/// child's acceptance (`started`, `completed`, `failed`), else the newest that may have written (expired, or
+/// superseded and still open), with what is left of the settle time of the open ones.
+async fn prior_in(
+    t: &Tx<'_>,
+    id: Uuid,
+    cmid: &str,
+    ticket: Uuid,
+    superseded: Option<Uuid>,
+) -> Result<(Option<PriorSend>, u64)> {
     let r = t
         .query_one(
             &format!(
-                "insert into legacy_tickets (ticket, conversation_id, kind, client_message_id, issued_at)
-                 values ($1, $2, $3, $4, clock_timestamp()) returning issued_at, {hold}",
-                hold = left_sql("issued_at", "$5"),
+                "select (array_agg(ticket order by issued_at desc)
+                           filter (where outcome in ('started', 'completed', 'failed')))[1],
+                        (array_agg(ticket order by issued_at desc)
+                           filter (where outcome = 'expired' or done_at is null))[1],
+                        coalesce(max({settle}) filter (where done_at is null), 0)::int8
+                 from legacy_tickets
+                 where conversation_id = $1 and client_message_id = $2 and ticket <> $3
+                   and ticket is distinct from $4",
+                settle = left_sql("issued_at", "$5"),
             ),
-            &[&ticket, &id, &kind, &cmid, &TICKET_HOLD_MAX.as_secs_f64()],
+            &[&id, &cmid, &ticket, &superseded, &TICKET_SETTLE_MAX.as_secs_f64()],
         )
         .await?;
-    Ok(Issued {
-        ticket,
-        at: r.get(0),
-        hold_ms: ms(r.get(1)),
-        supersedes,
-        reused: false,
-    })
+    let prior = match (r.get::<_, Option<Uuid>>(0), r.get::<_, Option<Uuid>>(1)) {
+        (Some(ticket), _) => Some(PriorSend { ticket, accepted: true }),
+        (None, Some(ticket)) => Some(PriorSend {
+            ticket,
+            accepted: false,
+        }),
+        (None, None) => None,
+    };
+    Ok((prior, ms(r.get(2))))
 }
 
 fn kind_of(s: &str) -> Option<TicketKind> {
@@ -221,7 +287,9 @@ fn kind_of(s: &str) -> Option<TicketKind> {
 }
 
 /// `POST /v1/legacy/tickets/{ticket}/done`: `delivered` is recorded and closes nothing; an outcome that fits the
-/// ticket's kind closes it (and wakes the importer). A ticket already closed keeps its first outcome.
+/// ticket's kind closes it (and wakes the importer). A ticket already closed keeps its first outcome, and a `refused`
+/// from a take that is no longer the ticket's latest changes nothing (that holder wrote nothing; the request that
+/// holds the ticket now reports, or the importer expires it).
 ///
 /// # Errors
 /// 400 `bad_request` for an outcome that does not close this kind; 404 for an unknown ticket or another person's; a
@@ -231,7 +299,7 @@ pub async fn done(app: &Magpie, person: &Person, ticket: Uuid, req: &TicketDone)
     aviary_pg::tx!(&app.pool, |t| -> Result<()> {
         let r = t
             .query_opt(
-                "select t.kind, t.done_at is not null, c.person, t.conversation_id
+                "select t.kind, t.done_at is not null, c.person, t.conversation_id, t.take
                  from legacy_tickets t join conversations c on c.id = t.conversation_id
                  where t.ticket = $1 for update of t",
                 &[&ticket],
@@ -246,6 +314,11 @@ pub async fn done(app: &Magpie, person: &Person, ticket: Uuid, req: &TicketDone)
         }
         let kind = kind_of(&r.get::<_, String>(0)).ok_or_else(|| Error::Internal("a ticket of unknown kind".into()))?;
         let conversation: Uuid = r.get(3);
+        let latest: Option<Uuid> = r.get(4);
+        if outcome == TicketOutcome::Refused && req.take.is_some() && latest.is_some() && req.take != latest {
+            tracing::info!(%conversation, %ticket, "a refused from an earlier take: the ticket stays with its holder");
+            return Ok(());
+        }
         if outcome == TicketOutcome::Delivered {
             t.execute(
                 "update legacy_tickets set delivered_at = coalesce(delivered_at, now()) where ticket = $1",
@@ -268,6 +341,57 @@ pub async fn done(app: &Magpie, person: &Person, ticket: Uuid, req: &TicketDone)
         .await?;
         t.notify(CHANNEL, &format!("{conversation}:0")).await?;
         Ok(())
+    })
+    .await
+}
+
+/// `POST /v1/legacy/tickets/{ticket}/claim`: a send's write under the ticket is about to start. `claimed` only for the
+/// ticket's latest take while it is open, within [`TICKET_HOLD_MAX`] of its issue (database clock), and while no other
+/// ticket of the same send closed on the old child's acceptance; the claim's time bounds the write for a later reuse
+/// ([`TICKET_CLAIM_SETTLE`]).
+///
+/// # Errors
+/// 404 for an unknown ticket or another person's; a statement error.
+pub async fn claim(app: &Magpie, person: &Person, ticket: Uuid, req: &TicketClaim) -> Result<TicketClaimed> {
+    aviary_pg::tx!(&app.pool, |t| -> Result<TicketClaimed> {
+        let r = t
+            .query_opt(
+                "select c.person, t.done_at is not null or clock_timestamp() - t.issued_at >= make_interval(secs => $2),
+                        t.take,
+                        t.client_message_id is not null and exists (
+                          select 1 from legacy_tickets o
+                          where o.conversation_id = t.conversation_id and o.client_message_id = t.client_message_id
+                            and o.ticket <> t.ticket and o.outcome in ('started', 'completed', 'failed'))
+                 from legacy_tickets t join conversations c on c.id = t.conversation_id
+                 where t.ticket = $1 for update of t",
+                &[&ticket, &TICKET_HOLD_MAX.as_secs_f64()],
+            )
+            .await?
+            .ok_or_else(Error::not_found)?;
+        if r.get::<_, String>(0) != person.email {
+            return Err(Error::not_found());
+        }
+        if r.get::<_, bool>(1) || r.get::<_, bool>(3) {
+            return Ok(TicketClaimed {
+                claimed: false,
+                held_elsewhere: false,
+            });
+        }
+        if r.get::<_, Option<Uuid>>(2).is_some_and(|latest| latest != req.take) {
+            return Ok(TicketClaimed {
+                claimed: false,
+                held_elsewhere: true,
+            });
+        }
+        t.execute(
+            "update legacy_tickets set claimed_at = clock_timestamp() where ticket = $1",
+            &[&ticket],
+        )
+        .await?;
+        Ok(TicketClaimed {
+            claimed: true,
+            held_elsewhere: false,
+        })
     })
     .await
 }

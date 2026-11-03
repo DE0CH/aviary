@@ -35,6 +35,8 @@ pub enum CallError {
     Status(u16, Bytes),
     /// No answer.
     Unreachable,
+    /// A 2xx whose body could not be read in time: the old route applied the write, its answer is lost.
+    AppliedUnread(u16),
 }
 
 impl Legacy {
@@ -110,12 +112,14 @@ impl Legacy {
         b
     }
 
-    /// Sends `b` and reads the whole answer (bounded by `bound`); 2xx is the body, anything else a [`CallError`].
+    /// Sends `b` and reads the whole answer, both within `bound`; 2xx is the body, anything else a [`CallError`] (a
+    /// 2xx whose body was not read in time is [`CallError::AppliedUnread`]: the write was applied).
     ///
     /// # Errors
     /// The old router's refusal or no answer.
     pub async fn send(&self, b: reqwest::RequestBuilder, bound: Duration) -> Result<(u16, Bytes), CallError> {
-        let r = match tokio::time::timeout(bound, b.send()).await {
+        let deadline = tokio::time::Instant::now() + bound;
+        let r = match tokio::time::timeout_at(deadline, b.send()).await {
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
                 tracing::warn!(error = %e, "LU HTTP failed");
@@ -128,8 +132,11 @@ impl Legacy {
             }
         };
         let status = r.status().as_u16();
-        let Ok(Ok(body)) = tokio::time::timeout(bound, r.bytes()).await else {
+        let Ok(Ok(body)) = tokio::time::timeout_at(deadline, r.bytes()).await else {
             self.0.metrics.lu_errors.inc();
+            if (200..300).contains(&status) {
+                return Err(CallError::AppliedUnread(status));
+            }
             return Err(CallError::Unreachable);
         };
         match status {
@@ -176,13 +183,14 @@ impl Legacy {
             .request(Method::POST, OLD_UPLOAD, who)
             .header("content-type", format!("multipart/form-data; boundary={boundary}"))
             .body(body);
-        let (_, answer) = self.send(b, bound).await?;
-        let v: Value = serde_json::from_slice(&answer).map_err(|_| CallError::Unreachable)?;
+        let (status, answer) = self.send(b, bound).await?;
+        // a 2xx is a written file whatever its body says
+        let v: Value = serde_json::from_slice(&answer).map_err(|_| CallError::AppliedUnread(status))?;
         v.get("attachments")
             .and_then(Value::as_array)
             .and_then(|a| a.first())
             .filter(|a| a.get("path").and_then(Value::as_str).is_some())
             .cloned()
-            .ok_or(CallError::Unreachable)
+            .ok_or(CallError::AppliedUnread(status))
     }
 }
