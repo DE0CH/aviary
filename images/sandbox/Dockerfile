@@ -113,9 +113,10 @@ RUN mkdir -p /home/sandbox/.claude /work /workspace \
  && install -d -m 0700 -o root -g root /var/lib/supervisor
 COPY --chmod=644 --chown=1000:1000 npmrc /home/sandbox/.npmrc
 
-ENV HOME=/home/sandbox \
-    NPM_CONFIG_PREFIX=/home/sandbox/.npm-global \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+# No HOME and no NPM_CONFIG_PREFIX here: a process's HOME is its user's unless its starter sets one (hermit 5.1 and the
+# supervisor give /home/sandbox; Docker takes /etc/passwd's, /root for root), and npm's prefix follows that HOME
+# (uid 1000's ~/.npmrc, above), so root's npm, with or without sudo, keeps node's /usr/local.
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
     MPLCONFIGDIR=/home/sandbox/.config/matplotlib \

@@ -35,8 +35,10 @@ check() { # check <what> <command…>: the command's success is the check
   local what=$1; shift
   if "$@"; then ok "$what"; else fail "$what"; fi
 }
-# a command in a throwaway container without the keeper: as root, or `-u 1000`, with no network unless asked
-img_run() { docker run --rm --network none --entrypoint /bin/bash "$@"; }
+# a command in a throwaway container without the keeper: as root, or `-u 1000`, with no network unless asked; the
+# sandbox's hostname and the /etc/hosts line the supervisor writes for it (DESIGN 12 D2), so sudo resolves it
+sbx_host=(--hostname sandbox --add-host sandbox:127.0.1.1)
+img_run() { docker run --rm --network none "${sbx_host[@]}" --entrypoint /bin/bash "$@"; }
 
 echo "== the image"
 size=$(docker image inspect -f '{{.Size}}' "$img")
@@ -101,11 +103,23 @@ check "without the supervisor's socket \`docker ps\` says Docker is not availabl
 check "apt-get and apt are the wrapper, also under sudo" img_run -u 1000 "$img" -c '
   test "$(command -v apt-get)" = /usr/local/bin/apt-get && test "$(command -v apt)" = /usr/local/bin/apt &&
   test "$(sudo -n sh -c "command -v apt-get")" = /usr/local/bin/apt-get'
+check "sudo prints nothing on stderr (the hostname resolves)" img_run -u 1000 "$img" -c '
+  err=$(sudo -n true 2>&1 >/dev/null) && test -z "$err" || { echo "  sudo said: $err"; exit 1; }'
 check "sudo keeps HTTPS_PROXY" img_run -u 1000 -e HTTPS_PROXY=http://proxy.invalid:3128 "$img" \
   -c 'test "$(sudo -n printenv HTTPS_PROXY)" = http://proxy.invalid:3128'
 check "the image's npm prefix and pip config hold with only PATH, LANG and HOME (supervisor 6.2)" img_run -u 1000 "$img" -c '
   test "$(env -i PATH="$PATH" HOME=/home/sandbox LANG=C.UTF-8 npm config get prefix)" = /home/sandbox/.npm-global &&
   env -i PATH="$PATH" HOME=/home/sandbox pip config list | grep -q "disable-pip-version-check"'
+# the image's Env sets neither HOME nor NPM_CONFIG_PREFIX: root, as Docker starts it, has /root and node's prefix
+check "the image's Env has no HOME and no NPM_CONFIG_PREFIX" \
+  sh -c "! docker image inspect -f '{{json .Config.Env}}' '$img' | grep -qE '\"(HOME|NPM_CONFIG_PREFIX)='"
+out=$(docker run --rm --network none --entrypoint npm "$img" config get prefix 2>&1)
+check "root's npm (docker run --entrypoint npm, the image's environment) has prefix /usr/local ($out)" \
+  test "$out" = /usr/local
+homes=$(docker run --rm --network none --entrypoint /bin/sh -u 1000 "$img" -c 'echo "$HOME"')
+homes="$homes $(docker run --rm --network none --entrypoint /bin/sh "$img" -c 'echo "$HOME"')"
+check "uid 1000's HOME is /home/sandbox, root's /root, as Docker starts them ($homes)" \
+  test "$homes" = "/home/sandbox /root"
 # root's npm keeps node's prefix (/usr/local): `sudo npm install -g` puts nothing root-owned into uid 1000's prefix,
 # and uid 1000's own `npm install -g` (of the same package too) works after it; local tarballs, so offline
 check "sudo npm -g installs into /usr/local, then uid 1000's npm -g into ~/.npm-global" img_run -u 1000 "$img" -c '
@@ -134,7 +148,7 @@ check "/opt/image-setup has the Dockerfile and the files it installs" img_run "$
 check "uid 1000 can apt-get install sl (through sudo, fetching the lists first)" \
   docker run --rm --network "${SMOKE_INTERNET_NETWORK:-bridge}" --entrypoint /bin/bash -u 1000 "$img" -c 'apt-get install -qq sl >/dev/null 2>&1 && test -x /usr/games/sl'
 code=0
-docker run --rm --network none --security-opt no-new-privileges --entrypoint /bin/bash -u 1000 "$img" \
+docker run --rm --network none "${sbx_host[@]}" --security-opt no-new-privileges --entrypoint /bin/bash -u 1000 "$img" \
   -c 'apt-get install sl' > "$work/nnp.log" 2>&1 || code=$?
 check "without root (no-new-privileges) apt-get install exits 100 ($code)" test "$code" = 100
 
@@ -161,7 +175,8 @@ cid=$(cat "$work/rig/cid")
 # --privileged: /dev/fuse and the capabilities the keeper (its tmpfs, oom_score_adj) and dockerd need, as a
 # sandbox's root has them inside gVisor; /var/lib/docker on a volume (the host's filesystem), since dockerd's overlay
 # snapshots cannot sit on the container's own overlay root under runc (in a sandbox they sit on its scratch disk)
-docker run -d --name "$name" --network host --privileged -v /var/lib/docker -e HTTP_PROXY="$proxy" "$img" >/dev/null
+docker run -d --name "$name" --network host --privileged -v /var/lib/docker -e HTTP_PROXY="$proxy" -e HOME=/home/sandbox \
+  "$img" >/dev/null
 x() { docker exec "$name" "$@"; }
 mounted=
 for _ in $(seq 120); do
@@ -174,7 +189,24 @@ check "the keeper is PID 1 (RSS $(x awk '/VmRSS/ {print $2 " " $3}' /proc/1/stat
 check "the container has no address for model or tools: only the proxy reaches them" \
   x sh -c '! getent hosts model && ! getent hosts tools'
 
-turn=$(curl -sf -X POST -H 'content-type: application/json' --data '{"text":"Say hello."}' http://127.0.0.1:7300/turn)
+# the turn's model replies: load the deferred MCP tool (Claude Code 2.1.304 defers MCP tools behind ToolSearch), call
+# it, then (unscripted) "ok"; matched to Claude Code's model, not the title model the supervisor's title call uses
+default_model=$(curl -sf http://127.0.0.1:7200/v1/aviary/models | jq -r .default)
+# shellcheck disable=SC2317 # run by check
+script_turn() {
+  local entry
+  for entry in \
+    '{match: {conversation: $c, model: $m, textContains: "smoke-echo"},
+      reply: [{toolUse: {name: "ToolSearch", input: {query: "select:mcp__tools__echo", max_results: 1}}}]}' \
+    '{match: {conversation: $c, model: $m}, reply: [{toolUse: {name: "mcp__tools__echo", input: {text: "smoke-echo"}}}]}'
+  do
+    jq -nc --arg c "$cid" --arg m "$default_model" "$entry" |
+      curl -sf -X POST -H 'content-type: application/json' --data @- http://127.0.0.1:7200/__script -o /dev/null || return 1
+  done
+}
+check "mock-model took the turn's script (Claude Code's model: $default_model)" script_turn
+turn=$(curl -sf -X POST -H 'content-type: application/json' --data '{"text":"Call the echo tool with smoke-echo."}' \
+  http://127.0.0.1:7300/turn)
 tid=$(jq -r .turnId <<< "$turn")
 end=
 for _ in $(seq 240); do
@@ -199,6 +231,8 @@ curl -sf http://127.0.0.1:7300/gateway > "$work/gateway.json"
 curl -sf http://127.0.0.1:7300/tools > "$work/tools.json"
 echo "  the gateway saw (method, target, User-Agent, status):"
 jq -r '.[] | "    \(.method) \(.target) \(.userAgent // "-") \(.status)"' "$work/gateway.json" | sort | uniq -c
+echo "  fake-tools answered, in order (method, JSON-RPC method, Mcp-Session-Id sent, status, User-Agent):"
+jq -r '.[] | "    \(.method) \(.rpc // "-") session=\(.session) \(.status) \(.userAgent // "-")"' "$work/tools.json"
 # Claude Code's own calls, told apart from the supervisor's (`User-Agent: supervisor/<sha12>`, its title and model
 # calls take the same proxy) by their User-Agent: absolute-form requests to the fixed names, answered 200
 cc='(.userAgent // "") as $ua | ($ua != "") and ($ua | startswith("supervisor/") | not)'
@@ -208,6 +242,18 @@ check "the gateway proxied Claude Code's POST http://tools/mcp (absolute form)" 
   jq -e "[.[] | select(.method == \"POST\" and .target == \"http://tools/mcp\" and (.status | . >= 200 and . < 300) and ($cc))] | length >= 2" "$work/gateway.json"
 check "fake-tools got Claude Code's initialize and tools/list on /mcp through the gateway" \
   jq -e "[.[] | select(.path == \"/mcp\" and ($cc)) | .rpc] | index(\"initialize\") != null and index(\"tools/list\") != null" "$work/tools.json"
+# Claude Code 2.1.304 first probes `server/discover` without a session (400, as from the MCP SDK's Streamable-HTTP
+# server, which needs `initialize` first), then initializes; a GET for a server stream is 405 (fake-tools offers none)
+check "fake-tools' only non-2xx answers are the session-less server/discover probe (400) and the stream GET (405)" \
+  jq -e "[.[] | select(.path == \"/mcp\" and ($cc) and (.status | . < 200 or . >= 300)) | \"\\(.method) \\(.rpc) \\(.status)\"]
+    - [\"POST server/discover 400\", \"GET null 405\"] == []" "$work/tools.json"
+check "Claude Code's tools/call reached fake-tools through the gateway with its session and was answered 200" \
+  jq -e "any(.[]; .path == \"/mcp\" and .rpc == \"tools/call\" and .session and .status == 200 and ($cc))" "$work/tools.json"
+check "the transcript has mcp__tools__echo's result, smoke-echo, not an error" \
+  jq -se '([.[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use" and .name == "mcp__tools__echo") | .id]) as $ids
+    | ($ids | length) > 0 and any(.[] | select(.type == "user") | .message.content[]? | select(.type == "tool_result");
+        (.tool_use_id as $t | $ids | index($t) != null) and (.is_error != true) and (tostring | contains("smoke-echo")))' \
+  "$work/stdout.ndjson"
 check "mock-model filed Claude Code's Messages calls under the conversation the gateway adds ($(jq length "$work/requests.json"))" \
   jq -e 'length > 0' "$work/requests.json"
 check "Claude Code reported the MCP server tools connected, with fake-tools' tools as mcp__tools__*" \

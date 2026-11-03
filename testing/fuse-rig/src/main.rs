@@ -14,7 +14,8 @@
 //!   supervisor applies it at the next spawn);
 //! - `GET /gateway`: every request the gateway's proxy received (`method`, `target` as received, so absolute-form
 //!   `http://model/…`, `userAgent`, `status`); `GET /tools`: every request fake-tools answered (`method`, `path`,
-//!   `userAgent`, and the JSON-RPC `rpc` method of a POST, e.g. `initialize`, `tools/list`);
+//!   `userAgent`, the JSON-RPC `rpc` method of a POST, e.g. `initialize`, `tools/list`, whether it carried an
+//!   `Mcp-Session-Id` (`session`), and fake-tools' `status`);
 //! - `POST /turn`: queue a `start_turn` command (`{"text", "resume"}`: `resume` the provider session id or null),
 //!   answered with `{"turnId", "cmdSeq"}`; the turn's reports are `GET /calls/turn_state` (the `turnId` in `params`).
 //!
@@ -227,18 +228,26 @@ async fn record_tools(seen: &ToolsSeen, req: axum::extract::Request, next: axum:
     let rpc = serde_json::from_slice::<Value>(&bytes)
         .ok()
         .and_then(|v| v.get("method").and_then(Value::as_str).map(str::to_owned));
-    let ua = parts
-        .headers
-        .get(axum::http::header::USER_AGENT)
-        .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned());
+    let header = |name: &str| {
+        parts
+            .headers
+            .get(name)
+            .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
+    };
+    let (ua, session) = (header("user-agent"), header("mcp-session-id"));
+    let (method, path) = (parts.method.to_string(), parts.uri.path().to_owned());
+    let res = next
+        .run(axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes)))
+        .await;
     seen.lock().unwrap_or_else(PoisonError::into_inner).push(json!({
-        "method": parts.method.as_str(),
-        "path": parts.uri.path(),
+        "method": method,
+        "path": path,
         "userAgent": ua,
         "rpc": rpc,
+        "session": session.is_some(),
+        "status": res.status().as_u16(),
     }));
-    next.run(axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes)))
-        .await
+    res
 }
 
 async fn gateway_seen(State(w): State<Arc<World>>) -> Json<Value> {

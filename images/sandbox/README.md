@@ -40,7 +40,7 @@ images/sandbox/smoke.sh hermit-sandbox:dev target/x86_64-unknown-linux-musl/rele
 `smoke.sh` checks the image as built (entrypoint, users and folders, Claude Code's path and owner, the tools, the
 wrappers, sudo, apt as uid 1000 and without root, the keeper without a credential), then runs the image's own keeper
 and supervisor (`--network host --privileged`) against `fuse-rig`'s world (fake hermit and fake magpie behind the
-reference test gateway) and `mock-model`: a magpie `start_turn` runs Claude Code, whose Messages API and MCP calls
+reference test gateway) and `mock-model`: a magpie `start_turn` runs Claude Code through an MCP `tools/call`, whose Messages API and MCP calls
 reach mock-model and fake-tools only through the gateway's proxy as `http://model/…` and `http://tools/mcp`; then
 Docker on demand as uid 1000 and a runtime stop (exit 0). On a host whose Docker bridge has no route out (an
 IPv6-only host), build with `SANDBOX_BUILD_FLAGS=--network=host` and smoke with `SMOKE_INTERNET_NETWORK=host`.
@@ -55,9 +55,12 @@ driver on the containerd image store refuses it ("conflicts with unpack"). Elsew
   the image's `PATH`, `LANG`, `LC_ALL` and `HOME` and nothing else of the image's environment, so the old image's
   `NPM_CONFIG_PREFIX`, `PIP_DISABLE_PIP_VERSION_CHECK` and `DEBIAN_FRONTEND` (hermit 17's "env defaults", A5.F5)
   would be lost to Claude Code's tools. They are set where each tool reads them whatever the environment: uid
-  1000's `~/.npmrc` (root's npm, `sudo npm install -g`, reads `/root/.npmrc` and keeps node's `/usr/local`, as the
-  old image's `sudo`, which drops `NPM_CONFIG_PREFIX`, did), `/etc/pip.conf`, and the apt wrapper's own
-  `DEBIAN_FRONTEND=noninteractive`. `PYTHONUNBUFFERED`'s effect for output to a pipe comes from a `.pth` in the venv
+  1000's `~/.npmrc`, `/etc/pip.conf`, and the apt wrapper's own `DEBIAN_FRONTEND=noninteractive`. The image's `Env`
+  has neither `NPM_CONFIG_PREFIX` nor `HOME`: hermit 5.1 and the supervisor set `HOME=/home/sandbox` themselves,
+  Docker gives each user its `/etc/passwd` home, and npm's prefix follows `HOME`, so root's npm (`sudo npm install
+  -g`, `docker exec` or `docker run` as root) reads `/root/.npmrc` and keeps node's `/usr/local`, as the old
+  image's `sudo`, which dropped `NPM_CONFIG_PREFIX`, did. A root process started with `HOME=/home/sandbox` (hermit
+  5.1's boot environment) reads uid 1000's dotfiles, `~/.npmrc` among them, as it was told to. `PYTHONUNBUFFERED`'s effect for output to a pipe comes from a `.pth` in the venv
   that makes `sys.stdout` and `sys.stderr` line-buffered when they are not a terminal (line, not byte, buffering:
   a `print` without a newline waits for one). `MPLCONFIGDIR` was matplotlib's default for `HOME=/home/sandbox`
   already; `VIRTUAL_ENV` is in the login profile (`/opt/py/bin` leads `PATH` either way).
@@ -68,9 +71,14 @@ driver on the containerd image store refuses it ("conflicts with unpack"). Elsew
   absolute-form `POST http://model/v1/messages` and `POST http://tools/mcp` from a client that is not
   `supervisor/<sha12>`, and fake-tools' record (`GET /tools`) of `initialize` and `tools/list` from that client.
   Claude Code 2.1.304 defers MCP tools behind ToolSearch, so the Messages API calls do not list `mcp__tools__*`;
-  its init message (server `tools` `connected`, `mcp__tools__echo`) is checked as well.
+  its init message (server `tools` `connected`, `mcp__tools__echo`) is checked as well. mock-model's script for
+  the turn loads `mcp__tools__echo` with ToolSearch and calls it: the `tools/call` must reach fake-tools with its
+  `Mcp-Session-Id` (200) and its result must be in the transcript. fake-tools' only other answers that are not 2xx
+  are the 400 to Claude Code's session-less `server/discover` probe before `initialize` (as the MCP SDK's
+  Streamable-HTTP server answers) and the 405 to its GET for a server stream.
 - **Docker on demand under runc** needs `/var/lib/docker` on a volume (overlay snapshots cannot sit on the
   container's overlay root); in a sandbox it is on the scratch disk.
 - **Built in the smoke job.** Platform 6.1 has an `images` job exporting OCI tars for `sandbox-smoke`; until that
   job exists, `sandbox-smoke` builds this image itself from `build`'s `dist` (layers cached in the GHA cache), and
-  nothing is pushed.
+  nothing is pushed. WP-28 (the release pipeline) adds the `images` job that builds it as `<sha12>` and exports the
+  tar `sandbox-smoke` then consumes, the `gvisor` job that runs it under runsc, and the push after `e2e`.

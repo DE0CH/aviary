@@ -5,7 +5,9 @@
 //! JSON-RPC over `POST /mcp`, answered as `application/json` (the Streamable-HTTP transport allows a JSON answer
 //! instead of an SSE stream): `initialize` (with a fresh `Mcp-Session-Id`), `notifications/initialized` (202),
 //! `ping`, `tools/list`, `tools/call`. Every request after `initialize` must carry a session `initialize` handed
-//! out and that has not ended: none is 400, an unknown or ended one 404 (MCP's "session management").
+//! out and that has not ended: none is 400, an unknown or ended one 404 (MCP's "session management"; the MCP SDK's
+//! Streamable-HTTP server answers a session-less request the same way). Claude Code 2.1.304 probes
+//! `server/discover` before `initialize` and takes that 400 as "initialize first".
 //! `GET /mcp` is 405 (no server-initiated stream), `DELETE /mcp` ends the session (204; then 404 for it).
 //!
 //! It accepts a list of bearers (each the gateway's tools pair token), so a rotation through the gateway (the
