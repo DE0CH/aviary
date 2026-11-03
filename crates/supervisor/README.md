@@ -8,8 +8,8 @@ hermit's side), WP-22 (the `~/.claude` filesystem), WP-23 (the Claude Code drive
 
 | Binary | What |
 |---|---|
-| `supervisor-keeper` (`src/bin/keeper.rs`) | PID 1 (the image's entrypoint, no arguments, no environment read). Starts `supervisor run` with its own environment and restarts it (0.1, 0.2, 0.5, 1, 2, 5 s; reset after 60 s up); is the parent of everything the supervisor starts; owns their stdin pipes; keeps the `/dev/fuse` fd; reaps; remembers the last 64 exits; on SIGTERM waits 20 s for the supervisor, then SIGKILLs everything. One thread, `poll(2)`, every buffer allocated before the loop. |
-| `supervisor` (`src/bin/supervisor.rs`) | `supervisor run` (the start sequence of 4.3), `supervisor hook send-user-file` (Claude Code's `SendUserFile` hook, 13), `supervisor --version`, and `sandbox-secret <KEY>` when called by that name (a symlink). |
+| `supervisor-keeper` (`src/bin/keeper.rs`) | PID 1 (the image's entrypoint, no arguments). Reads only whether `HTTP_PROXY` carries the sandbox's proxy credential: without one it exits 78 at once, logging `no sandbox proxy credential` (hermit 17), instead of a supervisor crash loop. Starts `supervisor run` with its own environment and restarts it (0.1, 0.2, 0.5, 1, 2, 5 s; reset after 60 s up); is the parent of everything the supervisor starts; owns their stdin pipes; keeps the `/dev/fuse` fd; reaps; remembers the last 64 exits; on SIGTERM waits 20 s for the supervisor, then SIGKILLs everything. One thread, `poll(2)`, every buffer allocated before the loop. |
+| `supervisor` (`src/bin/supervisor.rs`) | `supervisor run` (the start sequence of 4.3), `supervisor hook send-user-file` (Claude Code's `SendUserFile` hook, 13), `supervisor --version`, `supervisor --speaks` (the surface numbers, for the image label), and `sandbox-secret <KEY>` when called by that name (a symlink). |
 
 ## Modules
 

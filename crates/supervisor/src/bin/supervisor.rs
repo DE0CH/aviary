@@ -3,7 +3,10 @@
 //! - `supervisor run`: the supervisor, started by the keeper (exit 0 after a release, 70 on an internal error);
 //! - `sandbox-secret <KEY>` (a symlink to this binary): a secret from hermit, through the supervisor;
 //! - `supervisor hook send-user-file`: Claude Code's `SendUserFile` hook (supervisor 13);
-//! - `supervisor --version`.
+//! - `supervisor --version`;
+//! - `supervisor --speaks`: the surface numbers this build speaks, as JSON (`hermit-sandbox` and `magpie-sandbox` as a
+//!   client, `supervisor-control` as the server), for the sandbox image's `dev.de0ch.aviary.speaks` label (platform
+//!   5.3).
 
 use std::sync::Arc;
 
@@ -31,6 +34,16 @@ fn main() {
     let code = match args.get(1).map(String::as_str) {
         Some("run") => run(),
         Some("hook") if args.get(2).map(String::as_str) == Some("send-user-file") => supervisor::sent_files::hook_cli(),
+        Some("--speaks") => {
+            use std::io::Write as _;
+            let speaks = serde_json::json!({
+                supervisor_api::HERMIT_SANDBOX.0: supervisor_api::HERMIT_SANDBOX.1,
+                magpie_api::SURFACE_SANDBOX: magpie_api::PROTOCOL_SANDBOX,
+                supervisor_api::CONTROL.0: supervisor_api::CONTROL.1,
+            });
+            let _ = writeln!(std::io::stdout(), "{speaks}");
+            0
+        }
         Some("--version") => {
             use std::io::Write as _;
             let _ = writeln!(std::io::stdout(), "{}", build().version_line());
@@ -40,7 +53,7 @@ fn main() {
             use std::io::Write as _;
             let _ = writeln!(
                 std::io::stderr(),
-                "usage: supervisor run | supervisor hook send-user-file | supervisor --version"
+                "usage: supervisor run | supervisor hook send-user-file | supervisor --version | supervisor --speaks"
             );
             2
         }
