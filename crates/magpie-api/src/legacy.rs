@@ -228,6 +228,54 @@ pub struct LegacyPathRequest {
     pub legacy_path: String,
 }
 
+/// `GET /v1/legacy/window` → 200: what pigeon needs to know about the switch window, read on the database clock
+/// (`import_control` and the person's conversations). pigeon reads it at most every 2 s per replica and person; it
+/// decides the upload path (the T0→gate tee, DESIGN 9.5), whether an old-router view-as token is honoured, and
+/// whether creates go through the legacy upstream (a rollback before the gate, DESIGN 9.10 step 1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowState {
+    /// `import_control.handover_allowed_at`: the gate (DESIGN 9.2). Null before it (an old-path socket may still
+    /// exist, so uploads are teed) and after a rollback cleared it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handover_allowed_at: Option<Timestamp>,
+    /// `import_control.rollback_at`: set by `cutover rollback flip` (DESIGN 9.10 step 1): creates go through the
+    /// legacy upstream (born legacy) and uploads are teed again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollback_at: Option<Timestamp>,
+    /// Whether any conversation of anyone is still legacy (`migrating`): while one is, uploads keep the old route's
+    /// limits and old-router view-as tokens are honoured.
+    pub any_legacy: bool,
+    /// How many of this person's conversations are legacy.
+    pub person_legacy: u64,
+}
+
+impl WindowState {
+    /// Outside the window: nothing legacy, no gate, no rollback.
+    #[must_use]
+    pub fn closed() -> Self {
+        Self {
+            handover_allowed_at: None,
+            rollback_at: None,
+            any_legacy: false,
+            person_legacy: 0,
+        }
+    }
+
+    /// Whether an upload is teed into the old child (DESIGN 9.5): while any conversation is legacy and either the
+    /// gate is not set yet (T0→gate: an old-path socket may still send the old path) or a rollback is under way.
+    #[must_use]
+    pub fn tees_uploads(&self) -> bool {
+        self.any_legacy && (self.handover_allowed_at.is_none() || self.rollback_at.is_some())
+    }
+
+    /// Whether a create goes through the legacy upstream (DESIGN 9.10 step 1).
+    #[must_use]
+    pub fn creates_legacy(&self) -> bool {
+        self.rollback_at.is_some()
+    }
+}
+
 /// The old asset folder of a person's home on the old stack, as it appears in a composer's file path.
 pub const LEGACY_ASSET_DIR: &str = ".claude/cloudcli-assets";
 

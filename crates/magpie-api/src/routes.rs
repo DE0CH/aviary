@@ -122,6 +122,12 @@ pub const LEGACY_TICKETS: &str = "/v1/conversations/{id}/legacy/tickets";
 pub const LEGACY_TICKET_DONE: &str = "/v1/legacy/tickets/{ticket}/done";
 /// `PUT` a teed upload's old asset path (until A7).
 pub const UPLOAD_LEGACY_PATH: &str = "/v1/uploads/{uploadId}/legacy-path";
+/// `GET` the switch window's state for pigeon ([`crate::legacy::WindowState`]).
+pub const LEGACY_WINDOW: &str = "/v1/legacy/window";
+/// `GET` an upload's stored bytes (200, `Content-Type` its type; 404 for an upload that is not the person's): what
+/// pigeon copies into the old child for a send of magpie-only files to a legacy conversation (DESIGN 9.5,
+/// copy-at-send). Deleted with the tickets in A6.
+pub const UPLOAD_RAW: &str = "/v1/uploads/{uploadId}/raw";
 
 /// `POST` lease.
 pub const SANDBOX_LEASE: &str = "/v1/sandbox/lease";
@@ -318,6 +324,8 @@ pub const ROUTES: &[Route] = &[
     pigeon_extra("legacy_ticket", Post, LEGACY_TICKETS, &[200]),
     pigeon_extra("legacy_ticket_done", Post, LEGACY_TICKET_DONE, &[204]),
     pigeon_extra("upload_legacy_path", Put, UPLOAD_LEGACY_PATH, &[204]),
+    pigeon_extra("legacy_window", Get, LEGACY_WINDOW, &[200]),
+    pigeon_extra("upload_raw", Get, UPLOAD_RAW, &[200]),
     // 16.2 the supervisor through the gateway
     sandbox("lease", Post, SANDBOX_LEASE, &[200], false),
     sandbox("cc_tree", Get, SANDBOX_CC_TREE, &[200], false),

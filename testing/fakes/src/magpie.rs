@@ -65,7 +65,7 @@ use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse, Lis
 use magpie_api::errors::{ErrorCode, Refusal};
 use magpie_api::events::{EventsPage, EventsQuery};
 use magpie_api::files::{FilesPanel, RawFileQuery};
-use magpie_api::legacy::{LegacyPathRequest, TicketDone, TicketRequest, TicketResponse};
+use magpie_api::legacy::{LegacyPathRequest, TicketDone, TicketRequest, TicketResponse, WindowState};
 use magpie_api::live::{LiveFramesRequest, LiveState};
 use magpie_api::ops::{
     AdminConversation, AdminConversationList, AdminListQuery, OpsStats, PeopleQuery, PeopleResponse,
@@ -1556,6 +1556,22 @@ impl Server for FakeMagpie {
             None,
             ser(&body),
             unit
+        )
+    }
+
+    async fn legacy_window(&self, ctx: Ctx) -> Result<WindowState, ApiError> {
+        scripted!(self, "legacy_window", ctx, json!({}), None, None, typed)
+    }
+
+    async fn upload_raw(&self, ctx: Ctx, upload_id: Uuid) -> Result<Response, ApiError> {
+        scripted!(
+            self,
+            "upload_raw",
+            ctx,
+            json!({"uploadId": upload_id.to_string()}),
+            None,
+            None,
+            raw
         )
     }
 }

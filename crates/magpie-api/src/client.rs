@@ -26,7 +26,7 @@ use crate::headers::{
     AVIARY_ADMIN, AVIARY_LEASE, AVIARY_PERSON, AVIARY_PROTOCOL, AVIARY_REQUEST, AVIARY_UPLOAD_KIND, AVIARY_UPLOAD_NAME,
     AVIARY_VIEW_SESSION, AVIARY_VIEWER,
 };
-use crate::legacy::{LegacyPathRequest, TicketDone, TicketRequest, TicketResponse};
+use crate::legacy::{LegacyPathRequest, TicketDone, TicketRequest, TicketResponse, WindowState};
 use crate::live::{LiveFramesRequest, LiveState};
 use crate::ops::{
     AdminConversation, AdminConversationList, AdminListQuery, OpsStats, PeopleQuery, PeopleResponse,
@@ -702,6 +702,25 @@ impl PersonCalls<'_> {
     /// Until A7: the old asset path a teed upload got from the old child.
     pub async fn upload_legacy_path(&self, upload_id: Uuid, req: &LegacyPathRequest) -> Result<(), ClientError> {
         self.empty("upload_legacy_path", &[&upload_id.to_string()], json(req)?)
+            .await
+    }
+
+    /// The switch window: its state for this person ([`WindowState`]).
+    pub async fn legacy_window(&self) -> Result<WindowState, ClientError> {
+        self.get("legacy_window", &[], NO_QUERY).await
+    }
+
+    /// The switch window: an upload's stored bytes (copy-at-send, DESIGN 9.5). The response streams.
+    pub async fn upload_raw(&self, upload_id: Uuid) -> Result<reqwest::Response, ClientError> {
+        self.client
+            .exec(
+                &self.scope,
+                route("upload_raw"),
+                &[&upload_id.to_string()],
+                NO_QUERY,
+                Body::None,
+                None,
+            )
             .await
     }
 }

@@ -62,6 +62,8 @@ fn check_route(id: &str, f: &serde_json::Value) {
         "legacy_ticket" => check::<NoQuery, Json<TicketRequest>, Json<TicketResponse>>(id, f),
         "legacy_ticket_done" => check::<NoQuery, Json<TicketDone>, NoContent>(id, f),
         "upload_legacy_path" => check::<NoQuery, Json<LegacyPathRequest>, NoContent>(id, f),
+        "legacy_window" => check::<NoQuery, NoBody, Json<WindowState>>(id, f),
+        "upload_raw" => check::<NoQuery, NoBody, RawBytes>(id, f),
         "lease" => check::<NoQuery, Json<Empty>, Json<LeaseResponse>>(id, f),
         "cc_tree" => check::<NoQuery, NoBody, Json<CcTree>>(id, f),
         "cc_file" => check::<Json<CcFileQuery>, NoBody, RawBytes>(id, f),

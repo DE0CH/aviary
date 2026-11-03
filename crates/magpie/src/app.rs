@@ -19,7 +19,7 @@ use magpie_api::changes::{ChangesQuery, ChangesResponse};
 use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse, ListQuery, ListResponse, RenameRequest};
 use magpie_api::events::{EventsPage, EventsQuery};
 use magpie_api::files::{FilesPanel, RawFileQuery};
-use magpie_api::legacy::{LegacyPathRequest, TicketDone, TicketRequest, TicketResponse};
+use magpie_api::legacy::{LegacyPathRequest, TicketDone, TicketRequest, TicketResponse, WindowState};
 use magpie_api::live::{LiveFramesRequest, LiveState};
 use magpie_api::ops::{
     AdminConversation, AdminConversationList, AdminListQuery, OpsStats, PeopleQuery, PeopleResponse,
@@ -524,5 +524,13 @@ impl Server for Magpie {
 
     async fn upload_legacy_path(&self, ctx: Ctx, upload_id: Uuid, body: LegacyPathRequest) -> Answer<()> {
         http::legacy::upload_legacy_path(self, ctx, upload_id, body).await
+    }
+
+    async fn legacy_window(&self, ctx: Ctx) -> Answer<WindowState> {
+        http::legacy::window(self, ctx).await
+    }
+
+    async fn upload_raw(&self, ctx: Ctx, upload_id: Uuid) -> Answer<Response> {
+        http::legacy::upload_raw(self, ctx, upload_id).await
     }
 }

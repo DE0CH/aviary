@@ -33,7 +33,7 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 | `src/http/` | the handlers, one module per route group (no SQL) |
 | `src/turns/` | turns (magpie 8): admission (M7, M3's first message), the driver (hermit's get-or-start and long-poll), the command queue and acks, the supervisor's reports and heartbeat reconciliation, cancel (M8) and ask answers (M11), titles, the sweeper (deadlines, watchdog, lapsed claims, availability tick), and `end::end`, the one way a turn ends |
 | `src/hermit/` | the hermit sandbox-events feed follower (magpie 8.7, R8), run by the job leader |
-| `src/legacy/` | the switch window (WP-51; DESIGN 9.2-9.5, cutover 6.4 and 7.8): `tickets` (taken before every legacy write, closed only on an outcome), `fence` (the importer's fence, release and unfence, the 3 s lease, the fenced wait of native mutations), `mirror` (the running mirror's `run_state`), `paths` (old asset paths resolved through `uploads.legacy_path`, `import_uploads` and `ingest`'s synchronous ingest, a fresh upload copy per send), `metrics`; `a6_contraction.sql` (the A6 schema change, tested). Deleted in A6 except `paths`, which goes in A7 |
+| `src/legacy/` | the switch window (WP-51; DESIGN 9.2-9.5, cutover 6.4 and 7.8): `window` (pigeon's view of the window and an upload's bytes), `tickets` (taken before every legacy write, closed only on an outcome), `fence` (the importer's fence, release and unfence, the 3 s lease, the fenced wait of native mutations), `mirror` (the running mirror's `run_state`), `paths` (old asset paths resolved through `uploads.legacy_path`, `import_uploads` and `ingest`'s synchronous ingest, a fresh upload copy per send), `metrics`; `a6_contraction.sql` (the A6 schema change, tested). Deleted in A6 except `paths`, which goes in A7 |
 
 ## The internal seam
 
@@ -435,7 +435,11 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
 ### The switch window (WP-51)
 
 - Tickets, the fence and the legacy-path record are three pigeon routes in `magpie-api` (`legacy_ticket`,
-  `legacy_ticket_done`, `upload_legacy_path`); the fence, release, unfence, running mirror and `import_uploads`
+  `legacy_ticket_done`, `upload_legacy_path`), with two more for pigeon's legacy upstream (WP-50): `legacy_window`
+  (`GET /v1/legacy/window`: the gate `import_control.handover_allowed_at`, the rollback mark
+  `import_control.rollback_at` of DESIGN 9.10 step 1, added by migration 0018, whether anything is legacy and how
+  much is the person's) and `upload_raw` (`GET /v1/uploads/{uploadId}/raw`: the person's upload bytes, for the
+  copy-at-send of DESIGN 9.5); the fence, release, unfence, running mirror and `import_uploads`
   writes are library functions the importer (`crates/magpie-import`, linked into `magpie import …`) calls on the
   same database, so they need no route.
 - A ticket's outcome is one of `started`, `completed`, `failed` (a send), `applied` (anything else) or `refused`;

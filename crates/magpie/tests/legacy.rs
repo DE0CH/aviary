@@ -1678,3 +1678,52 @@ async fn a_send_fenced_between_its_owner_read_and_admission_resolves_its_old_pat
     assert_eq!(row.get::<_, i64>(0), 1);
     assert_eq!(row.get::<_, Option<bool>>(1), Some(true));
 }
+
+/// `GET /v1/legacy/window` reads the gate, the rollback mark and what is legacy on the database; `upload_raw` hands
+/// pigeon the person's own upload bytes for the copy-at-send and nobody else's.
+#[tokio::test]
+async fn the_window_state_and_an_uploads_raw_bytes() {
+    let db = common::fresh_db("lg_window").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let alice = r.pigeon();
+    let alice = alice.person(ALICE);
+    let w = alice.legacy_window().await.unwrap();
+    assert_eq!(w, magpie_api::legacy::WindowState::closed());
+    assert!(!w.tees_uploads() && !w.creates_legacy());
+    let c = migrating(&r, ALICE, "w").await;
+    let w = alice.legacy_window().await.unwrap();
+    assert!(w.any_legacy && w.handover_allowed_at.is_none() && w.rollback_at.is_none());
+    assert_eq!(w.person_legacy, 1);
+    assert!(w.tees_uploads(), "T0 to the gate: uploads are teed");
+    let bob = r.pigeon();
+    let b = bob.person(BOB).legacy_window().await.unwrap();
+    assert!(b.any_legacy);
+    assert_eq!(b.person_legacy, 0);
+    let db_ = r.pool().get().await.unwrap();
+    db_.execute("update import_control set handover_allowed_at = now()", &[])
+        .await
+        .unwrap();
+    let w = alice.legacy_window().await.unwrap();
+    assert!(w.handover_allowed_at.is_some() && !w.tees_uploads() && !w.creates_legacy());
+    db_.execute("update import_control set rollback_at = now()", &[])
+        .await
+        .unwrap();
+    let w = alice.legacy_window().await.unwrap();
+    assert!(w.tees_uploads() && w.creates_legacy());
+    db_.execute("update conversations set migrating = false where id = $1", &[&c])
+        .await
+        .unwrap();
+    let w = alice.legacy_window().await.unwrap();
+    assert!(!w.any_legacy && !w.tees_uploads());
+
+    let up = upload(&r, ALICE, "r.pdf", b"%PDF-1.4 raw bytes").await;
+    let got = alice.upload_raw(up.upload_id).await.unwrap();
+    assert_eq!(
+        got.headers().get("content-type").unwrap().to_str().unwrap(),
+        up.mime_type
+    );
+    assert_eq!(got.bytes().await.unwrap().as_ref(), b"%PDF-1.4 raw bytes");
+    let theirs = bob.person(BOB).upload_raw(up.upload_id).await.unwrap_err();
+    assert_eq!(theirs.api().unwrap().status, 404);
+}

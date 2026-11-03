@@ -10,6 +10,8 @@
 //! - [`paths`]: an old asset path in a send's `files[]` resolves through `uploads.legacy_path`, then
 //!   `import_uploads`, then a synchronous ingest by the import Deployment ([`ingest`]), and each send attaches a fresh
 //!   copy of the upload.
+//! - [`window`]: the window's state for pigeon (the gate, the rollback mark, what is legacy) and an upload's bytes
+//!   for pigeon's copy-at-send.
 //! - [`metrics`]: the window's counters of DESIGN 9.9.
 
 pub mod fence;
@@ -18,6 +20,7 @@ pub mod metrics;
 pub mod mirror;
 pub mod paths;
 pub mod tickets;
+pub mod window;
 
 pub use metrics::Metrics;
 

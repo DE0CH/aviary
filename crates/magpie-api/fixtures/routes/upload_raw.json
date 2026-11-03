@@ -1,0 +1,19 @@
+{
+  "route": "upload_raw",
+  "params": {
+    "uploadId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e4c"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "bytes": "%PDF-1.7 report bytes"
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}
