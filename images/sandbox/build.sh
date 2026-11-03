@@ -25,7 +25,7 @@ sum=$(sha256sum "$bin/supervisor" | cut -d' ' -f1)
 # the image config's timestamps from the commit (platform 5.2)
 epoch=${SOURCE_DATE_EPOCH:-$(git -C "$here" log -1 --format=%ct 2>/dev/null || echo 0)}
 # shellcheck disable=SC2086 # SANDBOX_BUILD_FLAGS is a list of flags
-docker build ${SANDBOX_BUILD_FLAGS:-} -f "$ctx/Dockerfile" \
+docker buildx build ${SANDBOX_BUILD_FLAGS:-} -f "$ctx/Dockerfile" \
   --build-arg REVISION="$rev" --build-arg VERSION="${rev:0:12}" \
   --build-arg SOURCE_DATE_EPOCH="$epoch" \
   --build-arg SPEAKS="$speaks" --build-arg SUPERVISOR_SHA256="$sum" \
