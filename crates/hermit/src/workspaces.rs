@@ -298,6 +298,15 @@ fn parse_size(s: &str) -> Option<u64> {
 }
 
 /// The `JuiceFS` workspace store of one replica.
+/// What [`JuiceFs::import_clone`] did.
+#[derive(Debug)]
+pub enum Imported {
+    /// The tree was cloned into place.
+    Cloned(Workspace),
+    /// The target was there already (its stand-in creation time); its quota is ensured.
+    Present(Timestamp),
+}
+
 pub struct JuiceFs {
     /// The mount (`/jfs`); workspaces are `ws/<id>` under it.
     root: PathBuf,
@@ -314,6 +323,26 @@ pub struct JuiceFs {
     flights: AtomicU64,
     last_sweep: Mutex<Option<Instant>>,
     sweeping: Arc<AtomicBool>,
+    /// Work spawned past its request (an unfinished clone's removal, a late rename, the sweep): a one-shot command
+    /// waits for it before it exits ([`JuiceFs::settle`]).
+    background: Arc<Background>,
+}
+
+/// Tasks a [`JuiceFs`] spawned that outlive the call that started them.
+#[derive(Default)]
+struct Background(Mutex<Vec<tokio::task::JoinHandle<()>>>);
+
+impl Background {
+    fn spawn_on(&self, rt: &tokio::runtime::Handle, f: impl std::future::Future<Output = ()> + Send + 'static) {
+        let h = rt.spawn(f);
+        let mut all = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        all.retain(|h| !h.is_finished());
+        all.push(h);
+    }
+
+    fn spawn(&self, f: impl std::future::Future<Output = ()> + Send + 'static) {
+        self.spawn_on(&tokio::runtime::Handle::current(), f);
+    }
 }
 
 /// `stat /jfs/ws`'s answer: whether it is a directory, or the error's text; `Err` outside when the thread panicked.
@@ -392,6 +421,28 @@ impl JuiceFs {
             flights: AtomicU64::new(0),
             last_sweep: Mutex::new(None),
             sweeping: Arc::new(AtomicBool::new(false)),
+            background: Arc::new(Background::default()),
+        }
+    }
+
+    /// Waits up to `wait` for the work this store spawned in the background (an unfinished clone's removal, a late
+    /// rename's quota, the sweep), as a one-shot command must before it exits: the runtime drops what still runs.
+    /// Returns how many tasks were still running at the end.
+    pub async fn settle(&self, wait: Duration) -> usize {
+        let deadline = tokio::time::Instant::now() + wait;
+        loop {
+            let next = {
+                let mut all = self.background.0.lock().unwrap_or_else(PoisonError::into_inner);
+                all.retain(|h| !h.is_finished());
+                all.pop()
+            };
+            let Some(mut h) = next else { return 0 };
+            if tokio::time::timeout_at(deadline, &mut h).await.is_err() {
+                let mut all = self.background.0.lock().unwrap_or_else(PoisonError::into_inner);
+                all.push(h);
+                all.retain(|h| !h.is_finished());
+                return all.len();
+            }
         }
     }
 
@@ -559,7 +610,7 @@ impl JuiceFs {
             *last = Some(Instant::now());
         }
         let (root, cli, sweeping) = (self.ws_root(), self.cli.clone(), self.sweeping.clone());
-        tokio::spawn(async move {
+        self.background.spawn(async move {
             sweep_clones(root, cli).await;
             sweeping.store(false, Ordering::SeqCst);
         });
@@ -644,6 +695,7 @@ impl JuiceFs {
         let guard = TempTree {
             cli: self.cli.clone(),
             path: Some(tmp.clone()),
+            bg: self.background.clone(),
         };
         self.cli
             .clone_tree(&src, &tmp)
@@ -658,9 +710,10 @@ impl JuiceFs {
             Err(_) => {
                 // the blocked rename may still land: its tree is not removed under it
                 guard.keep();
-                tokio::spawn(settle_late_rename(
+                self.background.spawn(settle_late_rename(
                     rename,
                     self.cli.clone(),
+                    self.background.clone(),
                     tmp,
                     wid,
                     self.quota_gib,
@@ -686,15 +739,17 @@ impl JuiceFs {
     }
 
     /// The import's clone of an old share's frozen folder (hermit 22.3 step 3, cutover 8.1): `from` (a path under the
-    /// mount, such as `users/<key>/shares/<id>/ws`) to `ws/<wid>`, then the quota. `Ok(None)` when `ws/<wid>` is
-    /// already there (made by an earlier pass or by magpie): the import is idempotent and never replaces a workspace.
+    /// mount, such as `users/<key>/shares/<id>/ws`) to `ws/<wid>`, then the quota. [`Imported::Present`] when
+    /// `ws/<wid>` is already there (made by an earlier pass): the import is idempotent and never replaces a workspace,
+    /// and still ensures the quota (a pass cut short between the rename and the quota left none).
     ///
     /// # Errors
-    /// The store is unavailable, `from` is not a directory, or the clone failed.
-    pub async fn import_clone(&self, wid: Uuid, from: &Path) -> Result<Option<Workspace>, WorkspaceError> {
+    /// The store is unavailable, `from` is not a directory, the clone failed, or the quota was not set.
+    pub async fn import_clone(&self, wid: Uuid, from: &Path) -> Result<Imported, WorkspaceError> {
         self.check().await?;
-        if self.created_at(wid).await?.is_some() {
-            return Ok(None);
+        if let Some(at) = self.created_at(wid).await? {
+            self.set_quota(wid).await?;
+            return Ok(Imported::Present(at));
         }
         let src = self.root.join(from);
         let s = src.clone();
@@ -708,8 +763,14 @@ impl JuiceFs {
             return Err(unavailable(format!("{} is not a directory", from.display())));
         }
         match self.clone_dir(wid, src).await {
-            Ok(w) => Ok(Some(w)),
-            Err(WorkspaceError::Api(e)) if e.code() == codes::EXISTS => Ok(None),
+            Ok(w) => Ok(Imported::Cloned(w)),
+            Err(WorkspaceError::Api(e)) if e.code() == codes::EXISTS => match self.created_at(wid).await? {
+                Some(at) => {
+                    self.set_quota(wid).await?;
+                    Ok(Imported::Present(at))
+                }
+                None => Err(unavailable(format!("ws/{wid} existed and is gone"))),
+            },
             Err(e) => Err(e),
         }
     }
@@ -892,6 +953,7 @@ fn rename_noreplace(from: &Path, to: &Path) -> Result<(), Errno> {
 struct TempTree {
     cli: Arc<dyn JfsCli>,
     path: Option<PathBuf>,
+    bg: Arc<Background>,
 }
 
 impl TempTree {
@@ -907,7 +969,7 @@ impl Drop for TempTree {
         };
         let cli = self.cli.clone();
         if let Ok(rt) = tokio::runtime::Handle::try_current() {
-            rt.spawn(async move {
+            self.bg.spawn_on(&rt, async move {
                 match cli.rmr(&path).await {
                     Ok(()) => tracing::info!(path = %path.display(), "unfinished clone removed"),
                     Err(e) => tracing::info!(path = %path.display(), error = %e, "unfinished clone not removed (the sweep retries)"),
@@ -937,6 +999,7 @@ fn clone_started(rest: &str) -> Option<u64> {
 async fn settle_late_rename(
     rename: tokio::task::JoinHandle<Result<(), Errno>>,
     cli: Arc<dyn JfsCli>,
+    bg: Arc<Background>,
     tmp: PathBuf,
     wid: Uuid,
     gib: u32,
@@ -951,7 +1014,11 @@ async fn settle_late_rename(
         },
         Ok(Err(e)) => {
             tracing::info!(%wid, error = %e, "a late clone rename failed");
-            drop(TempTree { cli, path: Some(tmp) });
+            drop(TempTree {
+                cli,
+                path: Some(tmp),
+                bg,
+            });
         }
         Err(e) => tracing::info!(%wid, error = %e, "a late clone rename's thread failed (the sweep removes its tree)"),
     }
@@ -1393,7 +1460,15 @@ mod tests {
             let _ = wait.recv();
             Ok(())
         });
-        let settle = tokio::spawn(settle_late_rename(rename, rec.clone(), "/jfs/ws/t".into(), wid, 1, 10));
+        let settle = tokio::spawn(settle_late_rename(
+            rename,
+            rec.clone(),
+            Arc::default(),
+            "/jfs/ws/t".into(),
+            wid,
+            1,
+            10,
+        ));
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(
             rec.0.lock().unwrap().is_empty(),
@@ -1405,7 +1480,7 @@ mod tests {
 
         let rec = Arc::new(Rec::default());
         let rename = tokio::task::spawn_blocking(|| Err(Errno::IO));
-        settle_late_rename(rename, rec.clone(), "/jfs/ws/t".into(), wid, 1, 10).await;
+        settle_late_rename(rename, rec.clone(), Arc::default(), "/jfs/ws/t".into(), wid, 1, 10).await;
         assert!(
             crate_eventually(|| rec.0.lock().unwrap().clone() == vec!["rmr /jfs/ws/t".to_owned()]).await,
             "{:?}",

@@ -1,6 +1,7 @@
 //! `hermit`: `serve` (the replica), `catalogue-check <file>` (the catalogue rules alone, for YYC's CI),
 //! `--version` (the build and its protocol numbers, which the image's labels are made from, platform 5.3), and the
-//! switch's one-shot commands `import-jarvis [--delta]`, `jfs-owner`, `legacy-cleanup [--confirm]` (`hermit::legacy`).
+//! switch's one-shot commands `import-jarvis [--delta | --final]`, `jfs-owner`, `legacy-cleanup [--confirm]`
+//! (`hermit::legacy`).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -43,19 +44,25 @@ enum Command {
     /// Check a catalogue file against the rules hermit applies (hermit 3.4.1).
     CatalogueCheck { file: PathBuf },
     /// The switch's copy of the old stack's sandbox history and share workspaces (hermit 22.3 step 3, cutover 8.1;
-    /// `CronJob` `hermit-import`). Env: `HERMIT_DATABASE_URL`, `HERMIT_IMPORT_JARVIS_URL` (read-only), the `JuiceFS` pair.
+    /// `CronJob` `hermit-import`). Env: `HERMIT_DATABASE_URL`, `HERMIT_IMPORT_JARVIS_URL` and
+    /// `HERMIT_IMPORT_CLOUDCLI_URL` (read-only), the `JuiceFS` pair.
     ImportJarvis {
         /// Only what can be new since the last run.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "final_pass")]
         delta: bool,
+        /// A6's last run, after the old stack is gone: a full pass that also imports what the old fabric left
+        /// unfinished.
+        #[arg(long = "final")]
+        final_pass: bool,
     },
     /// Everything under `/jfs/ws` to uid/gid 1000 (hermit 15.4; Job `hermit-jfs-owner`, as root, unsquashed mount).
     JfsOwner {
         #[arg(long, default_value = MOUNT)]
         root: PathBuf,
     },
-    /// Removes `users/`, `sent/` and the empty `ws/` folders magpie no longer references (hermit 22.3 step 6). Without
-    /// `--confirm` it prints the plan and removes nothing. Env: `HERMIT_DATABASE_URL`, `HERMIT_TOKEN_MAGPIE`, the
+    /// Removes `users/`, `sent/`, the empty `ws/` folders and the old shares' clones magpie no longer references
+    /// (hermit 22.3 step 6), once every old share folder is carried over. Without `--confirm` it prints the plan and
+    /// removes nothing. Env: `HERMIT_DATABASE_URL`, `HERMIT_TOKEN_MAGPIE`, the
     /// `JuiceFS` pair.
     LegacyCleanup {
         #[arg(long)]
@@ -75,7 +82,7 @@ fn main() -> ExitCode {
     let Some(command) = args.command else {
         let _ = std::io::Write::write_all(
             &mut std::io::stderr(),
-            b"usage: hermit serve | catalogue-check <file> | import-jarvis [--delta] | jfs-owner | legacy-cleanup [--confirm] | --version\n",
+            b"usage: hermit serve | catalogue-check <file> | import-jarvis [--delta | --final] | jfs-owner | legacy-cleanup [--confirm] | --version\n",
         );
         return ExitCode::from(2);
     };
@@ -107,7 +114,7 @@ fn main() -> ExitCode {
             };
             rt.block_on(serve())
         }
-        Command::ImportJarvis { delta } => one_shot("import-jarvis", import_jarvis(delta)),
+        Command::ImportJarvis { delta, final_pass } => one_shot("import-jarvis", import_jarvis(delta, final_pass)),
         Command::JfsOwner { root } => one_shot("jfs-owner", jfs_owner(root)),
         Command::LegacyCleanup { confirm } => one_shot("legacy-cleanup", legacy_cleanup(confirm)),
     }
@@ -143,23 +150,48 @@ fn pool(var: &str, name: &str) -> Result<aviary_pg::Pool, ExitCode> {
     })
 }
 
-async fn import_jarvis(delta: bool) -> ExitCode {
-    let (hermit, source) = match (
+/// How long a one-shot command waits for its store's background work (an unfinished clone's removal, a late
+/// rename's quota) before it exits.
+const SETTLE: Duration = Duration::from_secs(60);
+
+async fn import_jarvis(delta: bool, final_pass: bool) -> ExitCode {
+    let (hermit, source, cloudcli) = match (
         pool("HERMIT_DATABASE_URL", "hermit:import-jarvis"),
         pool("HERMIT_IMPORT_JARVIS_URL", "hermit:import-jarvis"),
+        pool("HERMIT_IMPORT_CLOUDCLI_URL", "hermit:import-jarvis"),
     ) {
-        (Ok(h), Ok(s)) => (h, s),
-        (Err(e), _) | (_, Err(e)) => return e,
+        (Ok(h), Ok(s), Ok(c)) => (h, s, c),
+        (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return e,
     };
     let fs = match store() {
         Ok(s) => s,
         Err(e) => return e,
     };
-    match hermit::legacy::import_jarvis(&hermit, &source, Some(&fs), std::path::Path::new(MOUNT), delta).await {
+    let opts = hermit::legacy::ImportOptions {
+        delta,
+        final_pass,
+        ..hermit::legacy::ImportOptions::default()
+    };
+    let shares = hermit::legacy::ShareSource {
+        cloudcli: &cloudcli,
+        store: &fs,
+    };
+    let res = hermit::legacy::import_jarvis(&hermit, &source, Some(shares), std::path::Path::new(MOUNT), opts).await;
+    let left = fs.settle(SETTLE).await;
+    if left > 0 {
+        tracing::warn!(
+            tasks = left,
+            "import-jarvis exits with clean-ups still running (hermit's sweep finishes them)"
+        );
+    }
+    match res {
         Ok(r) => {
-            let failed = r.shares.as_ref().is_some_and(|s| !s.failed.is_empty());
             tracing::info!(report = %serde_json::to_string(&r).unwrap_or_default(), "import-jarvis done");
-            if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS }
+            if r.complete() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
         }
         Err(e) => {
             tracing::error!(error = %e, "import-jarvis failed (the next run retries)");
@@ -213,13 +245,18 @@ async fn legacy_cleanup(confirm: bool) -> ExitCode {
             tracing::warn!(plan = %shown, "legacy-cleanup refused without --confirm: nothing removed");
             ExitCode::from(2)
         }
+        Ok(hermit::legacy::Cleanup::Blocked { plan }) => {
+            let shown = serde_json::to_string(&plan).unwrap_or_default();
+            tracing::error!(plan = %shown, "legacy-cleanup refused: old share folders are not carried over (shares_not_carried); nothing removed");
+            ExitCode::FAILURE
+        }
         Ok(hermit::legacy::Cleanup::Done { plan, done }) => {
             let (p, d) = (
                 serde_json::to_string(&plan).unwrap_or_default(),
                 serde_json::to_string(&done).unwrap_or_default(),
             );
             tracing::info!(plan = %p, done = %d, "legacy-cleanup done");
-            if done.trees_removed.len() == plan.trees.len() {
+            if done.complete(&plan) {
                 ExitCode::SUCCESS
             } else {
                 ExitCode::FAILURE

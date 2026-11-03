@@ -41,7 +41,8 @@ pub async fn migrate(pool: &Pool) -> Result<Vec<i32>, aviary_pg::Error> {
         "0001_init.sql",
         "0002_replicas.sql",
         "0003_created_handovers_fresh_host.sql",
-        "0004_image_ref_workspace_deletes.sql"
+        "0004_image_ref_workspace_deletes.sql",
+        "0005_legacy_shares.sql"
     ]?;
     aviary_pg::migrate(pool, &LOCK_MIGRATIONS, &list).await
 }

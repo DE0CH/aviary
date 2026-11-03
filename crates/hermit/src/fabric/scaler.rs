@@ -34,6 +34,8 @@ pub const DEMAND_WINDOW: Duration = Duration::from_secs(120);
 pub const MISSING_INSTANCE: Duration = Duration::from_secs(120);
 /// A name a host lists with no row is an orphan once it is this old (12 step 8).
 pub const ORPHAN_AGE: Duration = Duration::from_secs(60);
+/// Random names drawn for a new host before the launch pass gives up (one in 16.7 million is taken per held name).
+pub const HOST_NAME_TRIES: usize = 8;
 
 /// What one pass did (tests and the log read it).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -917,7 +919,10 @@ pub async fn launch(g: &Gvisor, core: &Core, reason: &str, transient: bool) -> R
     let max_hosts = f.aws.max_hosts;
     let host_cidr = f.host_cidr.clone();
     let gateway = f.gateway.name.clone();
-    let decided = aviary_pg::tx!(&core.pool, |t| -> Result<(Launch, Vec<Planned>, Plan, String), FabricError> {
+    let decided = aviary_pg::tx!(&core.pool, |t| -> Result<
+        (Launch, Vec<Planned>, Plan, String),
+        FabricError,
+    > {
         t.execute(
             "select pg_advisory_xact_lock($1::int4, $2::int4)",
             &[&LOCK_CLASS, &LOCK_LAUNCH],
@@ -931,7 +936,11 @@ pub async fn launch(g: &Gvisor, core: &Core, reason: &str, transient: bool) -> R
         let hosts = hosts::live_in(t).await?;
         let aws: Vec<&HostRow> = hosts.iter().filter(|h| h.kind == HostKind::Aws).collect();
         let retiring = aws.iter().filter(|h| h.status == HostStatus::Retiring).count();
-        let cap = if transient && retiring > 0 { max_hosts + 1 } else { max_hosts };
+        let cap = if transient && retiring > 0 {
+            max_hosts + 1
+        } else {
+            max_hosts
+        };
         let count = if transient { aws.len() } else { aws.len() - retiring };
         let room = i64::from(cap) - i64::try_from(count).unwrap_or(i64::MAX);
         let n = (plan.want + i64::from(plan.per_host) - 1) / i64::from(plan.per_host);
@@ -955,12 +964,10 @@ pub async fn launch(g: &Gvisor, core: &Core, reason: &str, transient: bool) -> R
             let ip = IpAddr::V4(ip);
             used.insert(ip);
             let keys = ec2::wg_keys().map_err(|_| FabricError("no random source".into()))?;
-            let name = ec2::host_name().map_err(|_| FabricError("no random source".into()))?;
             let url = format!("https://{ip}:{}", sandboxd_api::PORT);
-            t.execute(
-                "insert into hosts (name, kind, url, wg_ip, wg_public_key, status) values ($1, 'aws', $2, $3, $4, 'booting')",
-                &[&name, &url, &ip, &keys.public_key],
-            )
+            let name = insert_host(t, &url, ip, &keys.public_key, &|| {
+                ec2::host_name().map_err(|_| FabricError("no random source".into()))
+            })
             .await?;
             planned.push(Planned { name, keys, wg_ip: ip });
         }
@@ -985,6 +992,35 @@ pub async fn launch(g: &Gvisor, core: &Core, reason: &str, transient: bool) -> R
         run_instance(g, core, &p, &gw_key, &why, transient).await?;
     }
     Ok(Launch::Launched)
+}
+
+/// Inserts a new host's `booting` row under a name from `names` (the launch pass: [`ec2::host_name`], random), drawn
+/// again while the name is one `hosts` holds already (an imported old host, hermit 22.3, or an earlier one of
+/// hermit's own); returns the name.
+///
+/// # Errors
+/// The database, `names`, or [`HOST_NAME_TRIES`] names all taken.
+pub async fn insert_host(
+    t: &aviary_pg::Tx<'_>,
+    url: &str,
+    ip: IpAddr,
+    public_key: &str,
+    names: &(dyn Fn() -> Result<String, FabricError> + Sync),
+) -> Result<String, FabricError> {
+    for _ in 0..HOST_NAME_TRIES {
+        let name = names()?;
+        let made = t
+            .execute(
+                "insert into hosts (name, kind, url, wg_ip, wg_public_key, status)
+                 values ($1, 'aws', $2, $3, $4, 'booting') on conflict (name) do nothing",
+                &[&name, &url, &ip, &public_key],
+            )
+            .await?;
+        if made == 1 {
+            return Ok(name);
+        }
+    }
+    Err(FabricError("no free host name".into()))
 }
 
 /// The user data of a new host (13.5); at most 16 KiB.

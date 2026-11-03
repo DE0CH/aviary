@@ -33,7 +33,7 @@ async fn migrations_are_idempotent_and_one_replica_leads_at_a_time() {
     let db = common::fresh_db("common_port").await;
     let pool = aviary_pg::connect(&db.url, "hermit-test", 4, Duration::from_secs(15)).unwrap();
     let first = hermit::db::migrate(&pool).await.unwrap();
-    assert_eq!(first.len(), 4, "every migration");
+    assert_eq!(first.len(), 5, "every migration");
     assert!(
         hermit::db::migrate(&pool).await.unwrap().is_empty(),
         "nothing applied twice"
