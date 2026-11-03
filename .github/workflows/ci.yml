@@ -58,7 +58,7 @@ jobs:
           shellcheck "${files[@]}"
       - name: fabric/aws/infra.sh against a stand-in aws (every value from the config)
         run: bash fabric/aws/test-infra.sh
-      - name: fabric/aws/legacy-down.sh against stand-ins (dry run reads only; never a path with a mount under it)
+      - name: fabric/aws/legacy-down.sh against stand-ins (dry run reads only; failed queries stop it; no shared AMI; the right host; never a path with a mount under it)
         run: bash fabric/aws/test-legacy-down.sh
 
   test:

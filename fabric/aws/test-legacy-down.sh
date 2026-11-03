@@ -1,26 +1,39 @@
 #!/usr/bin/env bash
 # Offline test of legacy-down.sh: stand-ins for aws, systemctl, ip, nft and curl record every call and answer from
 # canned values. Checks that every name comes from the --config file, that a dry run changes nothing, that --confirm
-# makes exactly the teardown calls, that empty tag sets are refused, and that a path with a mount under it is never
-# removed. Needs bash and jq. Usage: test-legacy-down.sh
+# makes exactly the teardown calls, that empty tag sets are refused, that a failing AWS query is never read as "already
+# gone", that an AMI the new fabric uses is never deregistered, that the host step runs only on the named server with
+# no hermit gateway, that ip rules go by their full selector, and that a path with a mount under it is never removed.
+# Needs bash and jq. Usage: test-legacy-down.sh
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 mkdir "$t/bin"
-for tool in aws systemctl ip nft curl; do
+for tool in aws systemctl ip nft curl hostname; do
   cat > "$t/bin/$tool" <<EOF
 #!/usr/bin/env bash
 printf '%s %s\n' "$tool" "\$*" >> "\$CALLS"
 args=" \$* "
 case "$tool" in
   aws)
+    if [ -n "\${AWS_FAIL:-}" ] && [[ \$args == *" \$AWS_FAIL "* ]]; then
+      echo "An error occurred (ExpiredToken) when calling the operation: The security token included in the request is expired" >&2
+      exit 254
+    fi
     case \$args in
+      *" describe-instances "*"--output json"*)
+        echo '[{"id": "i-01", "image": "ami-0old", "tags": [{"Key": "app", "Value": "old-host"}, {"Key": "deployment", "Value": "example"}]},
+               {"id": "i-09", "image": "'"\${OUTSIDE_IMAGE:-ami-0new}"'", "tags": [{"Key": "app", "Value": "old-host"}]}]' ;;
       *" describe-instances "*) echo "i-01 i-02" ;;
-      *" describe-launch-templates "*) exit 0 ;;
+      *" describe-launch-templates "*"--launch-template-names"*)
+        [ -z "\${NO_TEMPLATE:-}" ] || { echo "An error occurred (InvalidLaunchTemplateName.NotFoundException)" >&2; exit 254; } ;;
+      *" describe-launch-templates "*) printf 'lt-0old\told-template\nlt-0new\tnew-template\n' ;;
+      *" describe-launch-template-versions "*"lt-0new"*) echo "ami-0new \${NEW_ALSO:-}" ;;
+      *" describe-launch-template-versions "*) echo "ami-0old" ;;
       *" describe-images "*"--owners self"*) echo ami-0old ;;
       *" describe-images "*"--image-ids ami-0old"*) echo snap-01 ;;
       *" iam get-user "*"--user-name old-scaler"*) exit 0 ;;
-      *" iam get-user "*) exit 254 ;;
+      *" iam get-user "*) echo "An error occurred (NoSuchEntity) when calling the GetUser operation" >&2; exit 254 ;;
       *" list-access-keys "*) echo AKIA0TEST ;;
       *" list-user-policies "*) echo inline-policy ;;
       *" list-attached-user-policies "*) echo None ;;
@@ -30,10 +43,11 @@ case "$tool" in
   ip)
     case \$args in
       *" link show wg9 "*) exit 0 ;;
-      *" rule show "*) printf '0:\tfrom all lookup local\n32765:\tfrom all iif wg9 lookup 51899\n32766:\tfrom all lookup main\n' ;;
+      *" rule show "*) printf '0:\tfrom all lookup local\n99:\tfrom all iif wg9 lookup main suppress_prefixlength 16 [detached]\n99:\tfrom all iif other0 lookup main\n32765:\tfrom all iif wg9 lookup 51899\n32766:\tfrom all lookup main\n' ;;
       *" route show table 51899 "*) echo "10.244.0.0/16 via 10.0.0.1 dev enp7s0" ;;
     esac ;;
   nft) exit 0 ;;
+  hostname) echo "\${HOST_NAME:-old-gw}" ;;
   curl)
     case \$args in
       *"/networks?name=test-net"*) echo '{"networks":[{"id":7,"routes":[{"destination":"10.200.0.0/15","gateway":"10.0.0.6"},{"destination":"10.9.0.0/16","gateway":"10.0.0.2"}]}]}' ;;
@@ -49,12 +63,13 @@ touch "$t/lib-old/jfs/workspace-file"
 cat > "$t/legacy.json" <<EOF
 {"aws": {"region": "xx-test-1", "instanceTags": {"app": "old-host", "deployment": "example"}, "launchTemplate": "old-template",
          "amiTags": {"app": "old-host"}, "securityGroup": "old-sg", "iamUsers": ["old-scaler", "old-ami-ci"]},
- "host": {"units": ["old-sandboxd", "old-jfs"], "wgInterface": "wg9", "nftTable": "ip oldtable", "routeTable": 51899,
-          "paths": ["$t/etc-old", "$t/lib-old"]},
+ "host": {"hostname": "old-gw", "units": ["old-sandboxd", "old-jfs"], "wgInterface": "wg9", "nftTable": "ip oldtable",
+          "routeTable": 51899, "rules": ["iif wg9 lookup main suppress_prefixlength 16"], "paths": ["$t/etc-old", "$t/lib-old"]},
  "hetzner": {"network": "test-net", "routes": ["10.200.0.0/15", "10.250.0.0/16"], "firewall": "test-fw"}}
 EOF
 : > "$t/mountinfo"
-export CALLS=$t/calls PATH=$t/bin:$PATH HCLOUD_TOKEN=test-token HCLOUD_API=https://hc.test/v1 MOUNTINFO=$t/mountinfo
+export CALLS=$t/calls PATH=$t/bin:$PATH HCLOUD_TOKEN=test-token HCLOUD_API=https://hc.test/v1 MOUNTINFO=$t/mountinfo \
+  HERMIT_GATEWAY_STATE=$t/no-hermit-gateway
 fail() { echo "FAIL: $*" >&2; cat "$CALLS" >&2 2>/dev/null || true; exit 1; }
 run() { : > "$CALLS"; bash "$here/legacy-down.sh" --config "$t/legacy.json" "$@" > "$t/out" 2>&1; }
 has() { grep -qF -- "$1" "$CALLS" || fail "no call with: $1"; }
@@ -101,6 +116,67 @@ grep -q "refusing to match every instance" "$t/out" || fail "empty tags: $(cat "
 hasnt terminate-instances
 echo "ok  aws: empty tag sets are refused"
 
+# a failing query (expired credentials) stops the step: never "ok: no …", never a skipped AMI
+for q in describe-images describe-launch-templates describe-launch-template-versions describe-security-groups \
+    get-user list-access-keys describe-instances; do
+  : > "$CALLS"
+  if AWS_FAIL=$q bash "$here/legacy-down.sh" --config "$t/legacy.json" aws --confirm > "$t/out" 2>&1; then
+    fail "aws passes when $q fails: $(cat "$t/out")"
+  fi
+  grep -q "ExpiredToken" "$t/out" || fail "$q: the error is not shown: $(cat "$t/out")"
+  # nothing after the failure, and the failed thing never reported as gone
+  [ "$(tail -1 "$t/out" | grep -c ExpiredToken)" = 1 ] || fail "$q: the step went on after the failure: $(cat "$t/out")"
+  case $q in
+    describe-launch-templates) ! grep -q "ok: no launch template" "$t/out" || fail "$q read as gone" ;;
+    describe-security-groups) ! grep -q "ok: no security group" "$t/out" || fail "$q read as gone" ;;
+    get-user) ! grep -q "ok: no IAM user" "$t/out" || fail "$q read as gone" ;;
+    describe-images) hasnt deregister-image; hasnt terminate-instances ;;
+  esac
+done
+# AWS's own not found is already gone
+: > "$CALLS"
+NO_TEMPLATE=1 bash "$here/legacy-down.sh" --config "$t/legacy.json" aws --confirm > "$t/out" 2>&1 || fail "not found: $(cat "$t/out")"
+grep -q "ok: no launch template old-template" "$t/out" || fail "not found not skipped: $(cat "$t/out")"
+grep -q "ok: no IAM user old-ami-ci" "$t/out" || fail "NoSuchEntity not skipped: $(cat "$t/out")"
+echo "ok  aws: a failing query stops the step; only AWS's not found is already gone"
+
+# the new fabric's template (and an instance outside instanceTags) uses ami-0new; amiTags matching it is refused
+: > "$CALLS"
+jq '.aws.amiTags = {"app": "shared-app"}' "$t/legacy.json" > "$t/shared.json"
+if NEW_ALSO=ami-0old bash "$here/legacy-down.sh" --config "$t/shared.json" aws --confirm > "$t/out" 2>&1; then
+  fail "deregisters an AMI the new fabric's template uses"
+fi
+grep -q "refused: images aws.amiTags matches are in use outside the old fabric: ami-0old(new-template)" "$t/out" \
+  || fail "no refusal: $(cat "$t/out")"
+for verb in terminate-instances delete-launch-template deregister-image delete-snapshot delete-user delete-security-group; do
+  hasnt "$verb"
+done
+: > "$CALLS"
+if OUTSIDE_IMAGE=ami-0old bash "$here/legacy-down.sh" --config "$t/legacy.json" aws --confirm > "$t/out" 2>&1; then
+  fail "deregisters an AMI an instance outside instanceTags runs"
+fi
+grep -q "in use outside the old fabric: ami-0old(i-09)" "$t/out" || fail "no refusal: $(cat "$t/out")"
+hasnt terminate-instances
+echo "ok  aws: an AMI used by another launch template or an instance outside instanceTags is refused before any change"
+
+# the wrong server, or one running a hermit gateway: refused, nothing changed
+: > "$CALLS"
+if HOST_NAME=new-gw bash "$here/legacy-down.sh" --config "$t/legacy.json" host --confirm > "$t/out" 2>&1; then
+  fail "host runs on another server"
+fi
+grep -q "refused: this is new-gw, not the old gateway old-gw" "$t/out" || fail "no refusal: $(cat "$t/out")"
+for verb in "disable --now" "link del" "delete table" "rule del" "route flush"; do hasnt "$verb"; done
+mkdir "$t/no-hermit-gateway"
+: > "$CALLS"
+if bash "$here/legacy-down.sh" --config "$t/legacy.json" host --confirm > "$t/out" 2>&1; then
+  fail "host runs beside a hermit gateway"
+fi
+grep -q "refused: a hermit gateway runs on old-gw" "$t/out" || fail "no refusal: $(cat "$t/out")"
+for verb in "disable --now" "link del" "delete table" "rule del" "route flush"; do hasnt "$verb"; done
+rmdir "$t/no-hermit-gateway"
+[ -e "$t/etc-old" ] || fail "a refused host step removed a path"
+echo "ok  host: refused on another server and beside a hermit gateway"
+
 # a workspace mount under a path: that path is refused and kept, the others still go
 printf '36 25 0:52 / %s/jfs rw - fuse.juicefs JuiceFS:x rw\n' "$t/lib-old" > "$t/mountinfo"
 if run host --confirm; then fail "host passes with a mount under a path"; fi
@@ -111,8 +187,11 @@ has "systemctl disable --now old-sandboxd"
 hasnt "disable --now old-jfs"
 has "ip link del wg9"
 has "nft delete table ip oldtable"
-has "ip rule del priority 32765"
+has "ip rule del priority 32765 from all iif wg9 lookup 51899"
+has "ip rule del priority 99 from all iif wg9 lookup main suppress_prefixlength 16"
+hasnt "rule del priority 99 from all iif other0"
 hasnt "rule del priority 32766"
+hasnt "rule del priority 0"
 has "ip route flush table 51899"
 : > "$t/mountinfo"
 run host --confirm || fail "host: $(cat "$t/out")"
