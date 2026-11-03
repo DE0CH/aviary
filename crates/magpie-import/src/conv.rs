@@ -25,6 +25,9 @@ pub enum Created {
     Imported,
     /// A conversation with this id exists and was not imported: an id conflict (a `plan` blocker).
     Conflict,
+    /// The conversation was deleted for good on the new side (its `import_purged` tombstone): it is not created
+    /// again from the old side's row, which the reverse export deletes.
+    Purged,
 }
 
 /// The old title's `name_source` in magpie's terms (`title`, `user`; anything else is provisional).
@@ -95,6 +98,15 @@ pub async fn create(
             } else {
                 Created::Conflict
             });
+        }
+        // a purge on the new side cascades to `import_sources`, so only its tombstone tells the importer that this
+        // sessions row was imported, released and then deleted for good there (checked in the create's transaction:
+        // the purge writes the tombstone in its own)
+        if t.query_opt("select 1 from import_purged where conversation_id = $1", &[&id])
+            .await?
+            .is_some()
+        {
+            return Ok(Created::Purged);
         }
         ensure_person(t, person).await?;
         let origin = Origin {
@@ -182,6 +194,20 @@ pub async fn apply_row(imp: &Importer, person: &str, s: &SessionRow) -> Result<b
             let body = EventBody::TitleChanged(TitleChanged {
                 title: title.clone(),
                 name_source: ns,
+            });
+            events::append(t, id, NewEvent::of(&body)?).await?;
+            changed = true;
+        } else if title.is_none()
+            && old_ns.is_some()
+            && let Some(old) = &old_title
+        {
+            // the title was cleared on the old side: the conversation keeps its words, as a provisional title the
+            // title model may replace (magpie has no untitled-again action)
+            t.execute("update conversations set name_source = null where id = $1", &[&id])
+                .await?;
+            let body = EventBody::TitleChanged(TitleChanged {
+                title: old.clone(),
+                name_source: None,
             });
             events::append(t, id, NewEvent::of(&body)?).await?;
             changed = true;

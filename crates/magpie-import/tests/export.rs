@@ -137,13 +137,25 @@ async fn an_owned_conversation_exports_back_to_the_old_side() {
         u1,
     )
     .await;
-    // the old side has none of it
+    // the old side has none of it, and has a sub-agent file the new side no longer has
     w.cloudcli(&format!("delete from cc_{ka}.jarvis_failed_turns")).await;
+    let stale = format!("projects/-workspace/{p1}/subagents/agent-old.jsonl");
+    w.put(&ka, &stale, b"{}\n");
 
-    let x = export::export(&w.imp, Some(since), &[]).await.unwrap();
+    // not reverse-fenced: nothing is written (a native turn could be writing it)
+    let x = export::export(&w.imp, Some(since), &[], false).await.unwrap();
+    assert!(x.conversations.is_empty(), "{x:?}");
+    assert_eq!(x.errors.len(), 1, "{x:?}");
+    assert!(x.errors[0].1.contains("not reverse-fenced"), "{x:?}");
+    assert!(w.claude(&ka).join(&stale).exists());
+    set(&w, "update conversations set legacy_fence_at = now() where id = $1", u1).await;
+
+    let x = export::export(&w.imp, Some(since), &[], false).await.unwrap();
     assert!(x.errors.is_empty(), "{:?}", x.errors);
     assert_eq!(x.conversations.len(), 1, "{x:?}");
     let c = &x.conversations[0];
+    assert_eq!(c.removed, 1, "{c:?}");
+    assert!(!w.claude(&ka).join(&stale).exists());
     assert_eq!(c.conversation, u1);
     assert!(c.row);
     assert_eq!(c.memory, 1);
@@ -191,8 +203,9 @@ async fn an_owned_conversation_exports_back_to_the_old_side() {
     let row = c
         .query_one(
             &format!(
-                "select custom_name, name_source, provider_session_id, jsonl_path, \"isArchived\", deleted_at
-                 from cc_{ka}.sessions where session_id = $1"
+                "select custom_name, name_source, provider_session_id, jsonl_path, \"isArchived\", deleted_at,
+                        project_path, (select count(*) from cc_{ka}.projects p where p.project_path = s.project_path)
+                 from cc_{ka}.sessions s where session_id = $1"
             ),
             &[&u1.to_string()],
         )
@@ -207,6 +220,8 @@ async fn an_owned_conversation_exports_back_to_the_old_side() {
     );
     assert_eq!(row.get::<_, Option<i32>>(4), Some(0));
     assert_eq!(row.get::<_, Option<String>>(5), None);
+    assert_eq!(row.get::<_, Option<String>>(6).as_deref(), Some("/workspace"));
+    assert_eq!(row.get::<_, i64>(7), 1, "the row's project exists");
     let f = c
         .query(
             &format!("select user_text, error from cc_{ka}.jarvis_failed_turns where session_id = $1"),
@@ -227,7 +242,7 @@ async fn an_owned_conversation_exports_back_to_the_old_side() {
     std::fs::write(ws.join("uploads/photo.png"), b"PNG").unwrap();
     std::fs::write(ws.join("out/report.pdf"), b"%PDF-1.4 live").unwrap();
     std::os::unix::fs::symlink("/etc/passwd", ws.join("uploads/link")).unwrap();
-    let x = export::export(&w.imp, Some(since), &[]).await.unwrap();
+    let x = export::export(&w.imp, Some(since), &[], false).await.unwrap();
     assert!(x.errors.is_empty(), "{:?}", x.errors);
     assert_eq!(x.conversations[0].shares.written, vec![sid.clone()]);
     let dir = w.jfs.0.join("users").join(&ka).join("shares").join(&sid);
@@ -267,7 +282,7 @@ async fn an_owned_conversation_exports_back_to_the_old_side() {
         vec!["out/report.pdf".to_owned(), "uploads/photo.png".to_owned()]
     );
     assert!(row.get::<_, bool>(6));
-    let again = export::export(&w.imp, Some(since), &[]).await.unwrap();
+    let again = export::export(&w.imp, Some(since), &[], false).await.unwrap();
     assert!(again.conversations[0].shares.written.is_empty(), "{again:?}");
     w.magpie()
         .get()
@@ -279,7 +294,7 @@ async fn an_owned_conversation_exports_back_to_the_old_side() {
         )
         .await
         .unwrap();
-    let x = export::export(&w.imp, Some(since), &[]).await.unwrap();
+    let x = export::export(&w.imp, Some(since), &[], false).await.unwrap();
     assert_eq!(x.conversations[0].shares.revoked, vec![sid.clone()]);
     assert!(!dir.exists());
     let live: bool = c
@@ -290,9 +305,14 @@ async fn an_owned_conversation_exports_back_to_the_old_side() {
     assert!(!live);
 
     // the importer reads the exported files as the old system's: a fresh import of them is byte-exact
-    let x2 = export::export(&w.imp, Some(since), &[]).await.unwrap();
+    let x2 = export::export(&w.imp, Some(since), &[], false).await.unwrap();
     assert_eq!(x2.conversations[0].failed_turns, 0, "a failed turn is written once");
-    set(&w, "update conversations set migrating = true where id = $1", u1).await;
+    set(
+        &w,
+        "update conversations set migrating = true, legacy_fence_at = null where id = $1",
+        u1,
+    )
+    .await;
     set(
         &w,
         "update import_sources set released_at = null where conversation_id = $1",
@@ -407,7 +427,26 @@ async fn a_conversation_deleted_for_good_on_the_new_side_is_deleted_on_the_old_s
         .await
         .unwrap();
 
-    let x = export::export(&w.imp, Some(since), &[]).await.unwrap();
+    // the importer runs before the export (the old row is still there): the conversation is not created again
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(r.created, 0, "{r:?}");
+    let back: i64 = w
+        .magpie()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select count(*) from conversations where id = $1", &[&u1])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        back, 0,
+        "a conversation deleted for good on the new side is not imported again"
+    );
+
+    // u2 is owned and not reverse-fenced: exported with --unfenced, as the deletion's export does not need a fence
+    let x = export::export(&w.imp, Some(since), &[], true).await.unwrap();
     assert!(x.errors.is_empty(), "{:?}", x.errors);
     assert_eq!(x.purged.len(), 1, "{x:?}");
     assert_eq!(x.purged[0].conversation, u1);

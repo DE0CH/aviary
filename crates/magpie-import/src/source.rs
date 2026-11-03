@@ -173,6 +173,20 @@ pub fn is_person_schema(name: &str) -> bool {
 /// # Errors
 /// A statement error.
 pub async fn read(pool: &Pool) -> Result<Snapshot> {
+    read_schemas(pool, None).await
+}
+
+/// Reads one person's schema (`cc_u…`) the same way, without the shares: the snapshot a single conversation's final
+/// sync or verification needs, quickly (a release's fence is a 3 s lease).
+///
+/// # Errors
+/// A statement error.
+pub async fn read_schema(pool: &Pool, schema: &str) -> Result<Snapshot> {
+    read_schemas(pool, Some(schema)).await
+}
+
+async fn read_schemas(pool: &Pool, only: Option<&str>) -> Result<Snapshot> {
+    let only = only.map(str::to_owned);
     aviary_pg::tx!(pool, |t| -> Result<Snapshot> {
         t.batch_execute("set transaction isolation level repeatable read, read only")
             .await?;
@@ -184,86 +198,98 @@ pub async fn read(pool: &Pool) -> Result<Snapshot> {
             .await?
             .iter()
             .map(|r| r.get(0))
-            .filter(|s: &String| is_person_schema(s))
+            .filter(|s: &String| is_person_schema(s) && only.as_ref().is_none_or(|o| o == s))
             .collect();
         let mut snap = Snapshot::default();
         for schema in schemas {
-            let key = schema["cc_".len()..].to_owned();
-            let users = t
-                .query(&format!("select username::text from {schema}.users"), &[])
-                .await?;
-            let [user] = users.as_slice() else {
-                snap.problems
-                    .push((schema.clone(), format!("{} users rows, not one", users.len())));
-                continue;
-            };
-            let person = aviary_core::log::normalise_email(&user.get::<_, String>(0));
-            if aviary_core::log::person_key(&person) != key {
-                snap.problems
-                    .push((schema.clone(), "the schema's key is not its user's".to_owned()));
-                continue;
+            if let Some(p) = person(t, &schema, &mut snap.problems).await? {
+                snap.persons.push(p);
             }
-            let rows = t
-                .query(
-                    &format!(
-                        "select session_id::text, provider::text, provider_session_id::text, custom_name::text,
-                                name_source::text, coalesce(\"isArchived\", 0)::int4, deleted_at::text,
-                                jsonl_path::text, created_at::text, updated_at::text, model::text
-                         from {schema}.sessions where provider = 'claude' order by session_id"
-                    ),
-                    &[],
-                )
-                .await?;
-            let sessions = rows
-                .iter()
-                .map(|r| SessionRow {
-                    session_id: r.get(0),
-                    provider: r.get(1),
-                    provider_session_id: r.get(2),
-                    custom_name: r.get(3),
-                    name_source: r.get(4),
-                    is_archived: r.get(5),
-                    deleted_at: r.get(6),
-                    jsonl_path: r.get(7),
-                    created_at: r.get(8),
-                    updated_at: r.get(9),
-                    model: r.get(10),
-                })
-                .collect();
-            let mut failed: BTreeMap<String, Vec<FailedTurn>> = BTreeMap::new();
-            for r in t
-                .query(
-                    &format!(
-                        "select id::int4, session_id::text, user_text::text, user_at::text, error::text,
-                                error_at::text
-                         from {schema}.jarvis_failed_turns order by id"
-                    ),
-                    &[],
-                )
-                .await?
-            {
-                let f = FailedTurn {
-                    id: r.get(0),
-                    session_id: r.get(1),
-                    user_text: r.get(2),
-                    user_at: r.get(3),
-                    error: r.get(4),
-                    error_at: r.get(5),
-                };
-                failed.entry(f.session_id.clone()).or_default().push(f);
-            }
-            snap.persons.push(PersonSource {
-                schema,
-                key,
-                person,
-                sessions,
-                failed,
-            });
         }
-        snap.shares = shares(t).await?;
+        if only.is_none() {
+            snap.shares = shares(t).await?;
+        }
         Ok(snap)
     })
     .await
+}
+
+/// One person's schema in the snapshot's transaction; `None` (with the reason in `problems`) when it cannot be
+/// mapped.
+async fn person(
+    t: &aviary_pg::Tx<'_>,
+    schema: &str,
+    problems: &mut Vec<(String, String)>,
+) -> Result<Option<PersonSource>> {
+    let key = schema["cc_".len()..].to_owned();
+    let users = t
+        .query(&format!("select username::text from {schema}.users"), &[])
+        .await?;
+    let [user] = users.as_slice() else {
+        problems.push((schema.to_owned(), format!("{} users rows, not one", users.len())));
+        return Ok(None);
+    };
+    let person = aviary_core::log::normalise_email(&user.get::<_, String>(0));
+    if aviary_core::log::person_key(&person) != key {
+        problems.push((schema.to_owned(), "the schema's key is not its user's".to_owned()));
+        return Ok(None);
+    }
+    let rows = t
+        .query(
+            &format!(
+                "select session_id::text, provider::text, provider_session_id::text, custom_name::text,
+                        name_source::text, coalesce(\"isArchived\", 0)::int4, deleted_at::text,
+                        jsonl_path::text, created_at::text, updated_at::text, model::text
+                 from {schema}.sessions where provider = 'claude' order by session_id"
+            ),
+            &[],
+        )
+        .await?;
+    let sessions = rows
+        .iter()
+        .map(|r| SessionRow {
+            session_id: r.get(0),
+            provider: r.get(1),
+            provider_session_id: r.get(2),
+            custom_name: r.get(3),
+            name_source: r.get(4),
+            is_archived: r.get(5),
+            deleted_at: r.get(6),
+            jsonl_path: r.get(7),
+            created_at: r.get(8),
+            updated_at: r.get(9),
+            model: r.get(10),
+        })
+        .collect();
+    let mut failed: BTreeMap<String, Vec<FailedTurn>> = BTreeMap::new();
+    for r in t
+        .query(
+            &format!(
+                "select id::int4, session_id::text, user_text::text, user_at::text, error::text,
+                        error_at::text
+                 from {schema}.jarvis_failed_turns order by id"
+            ),
+            &[],
+        )
+        .await?
+    {
+        let f = FailedTurn {
+            id: r.get(0),
+            session_id: r.get(1),
+            user_text: r.get(2),
+            user_at: r.get(3),
+            error: r.get(4),
+            error_at: r.get(5),
+        };
+        failed.entry(f.session_id.clone()).or_default().push(f);
+    }
+    Ok(Some(PersonSource {
+        schema: schema.to_owned(),
+        key,
+        person,
+        sessions,
+        failed,
+    }))
 }
 
 /// `cc_shared.shares` (none when the schema does not exist), in the snapshot's transaction.

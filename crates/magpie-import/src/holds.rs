@@ -29,11 +29,19 @@ pub struct Child {
 /// Parses `holds.js`'s output.
 ///
 /// # Errors
-/// [`Error::Source`] for a line that is not a child's answer.
+/// [`Error::Source`] for a line that is not a child's answer, and for the script's `{"incomplete": …}` (a process
+/// whose environment it could not read): the pod's read is then unusable.
 pub fn parse(out: &str) -> Result<Vec<Child>> {
     out.lines()
         .filter(|l| !l.trim().is_empty())
-        .map(|l| serde_json::from_str(l).map_err(|e| Error::Source(format!("holds.js printed {l:?}: {e}"))))
+        .map(|l| {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(l)
+                && let Some(why) = v.get("incomplete")
+            {
+                return Err(Error::Source(format!("holds.js could not read every process: {why}")));
+            }
+            serde_json::from_str(l).map_err(|e| Error::Source(format!("holds.js printed {l:?}: {e}")))
+        })
         .collect()
 }
 
@@ -128,5 +136,6 @@ mod tests {
         let out = "{\"schema\":\"cc_a\",\"port\":3001,\"ok\":true,\"sessions\":[\"x\"]}\n\n";
         assert_eq!(parse(out).unwrap(), vec![child("cc_a", true, &["x"])]);
         assert!(parse("oops\n").is_err());
+        assert!(parse("{\"incomplete\":\"pid 7: EACCES\"}\n").is_err());
     }
 }

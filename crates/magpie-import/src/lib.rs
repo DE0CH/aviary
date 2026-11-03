@@ -76,6 +76,9 @@ pub enum Error {
     /// leaves it (cutover 6.2 item 2).
     #[error("the conversation is no longer migrating")]
     Released,
+    /// The one-shot command's leader lock went with its connection: it stops before another writer starts.
+    #[error("the importer's lock was lost (its connection ended)")]
+    LockLost,
 }
 
 impl From<serde_json::Error> for Error {
@@ -117,6 +120,28 @@ pub struct Importer {
     /// The `JuiceFS` client the export clones a share's workspace with (`juicefs clone`, metadata only, through the
     /// mount's `.control` file: no credentials); `None` copies the tree instead (tests, which have no mount).
     pub juicefs: Option<PathBuf>,
+    /// The one-shot command's leader lock, checked before each conversation's write ([`Importer::check_lock`]);
+    /// `None` when nothing holds it (tests, the read-only commands).
+    pub lock: Option<Arc<lock::OneShot>>,
+    /// How long a `sent/<conversation>/<toolUseId>/` folder must be unchanged before it is imported (the old hook may
+    /// still be writing it): [`sent::QUIET`] in the importer, zero in tests.
+    pub sent_quiet: std::time::Duration,
+    /// The uid and gid the export gives the files it writes (Claude Code's in the old sandboxes, [`export::OWNER_ID`]);
+    /// a file that cannot be given to it fails the export. `None` leaves them as written (tests, run unprivileged).
+    pub owner: Option<u32>,
+}
+
+impl Importer {
+    /// Fails with [`Error::LockLost`] when this process held the leader lock and no longer does.
+    ///
+    /// # Errors
+    /// [`Error::LockLost`].
+    pub async fn check_lock(&self) -> Result<()> {
+        match &self.lock {
+            Some(l) if !l.held().await => Err(Error::LockLost),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// Lowercase hex.

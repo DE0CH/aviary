@@ -27,6 +27,24 @@ pub struct Snapshot {
     pub files: BTreeMap<String, PathBuf>,
     /// The folder's modification time (when the hook wrote it).
     pub at: OffsetDateTime,
+    /// The newest modification time of the folder and its files.
+    pub latest: std::time::SystemTime,
+}
+
+/// How long a snapshot folder must be unchanged before it is imported: the old hook writes a send's files one after
+/// another, and a folder is imported once (a pass every 5 s would otherwise catch it half written).
+pub const QUIET: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// What a recorded `sent_fp` starts with while a folder waits for its quiet period: never equal to a read's
+/// fingerprint, so the next pass looks again and verification does not pass meanwhile.
+pub const WAITING: &str = "waiting:";
+
+impl Snapshot {
+    /// Whether nothing in the folder changed for `quiet`.
+    #[must_use]
+    pub fn settled(&self, quiet: std::time::Duration) -> bool {
+        self.latest.elapsed().is_ok_and(|age| age >= quiet) || quiet.is_zero()
+    }
 }
 
 fn tool_use_id_ok(id: &str) -> bool {
@@ -60,8 +78,10 @@ pub fn read(jfs: &Path, conversation: Uuid) -> Result<(Vec<Snapshot>, String)> {
     for (id, m) in dirs {
         let mut files = BTreeMap::new();
         walk(&base.join(&id), "", &mut files)?;
+        let mut latest = m.modified()?;
         for (rel, abs) in &files {
             let fm = std::fs::metadata(abs)?;
+            latest = latest.max(fm.modified()?);
             fp.push((
                 format!("{id}/{rel}"),
                 fm.len(),
@@ -77,6 +97,7 @@ pub fn read(jfs: &Path, conversation: Uuid) -> Result<(Vec<Snapshot>, String)> {
             tool_use_id: id,
             files,
             at,
+            latest,
         });
     }
     Ok((out, crate::sha_hex(serde_json::to_string(&fp)?.as_bytes())))
@@ -85,9 +106,7 @@ pub fn read(jfs: &Path, conversation: Uuid) -> Result<(Vec<Snapshot>, String)> {
 fn walk(dir: &Path, rel: &str, out: &mut BTreeMap<String, PathBuf>) -> Result<()> {
     for e in std::fs::read_dir(dir)? {
         let e = e?;
-        let Some(name) = e.file_name().to_str().map(str::to_owned) else {
-            continue;
-        };
+        let name = crate::tree::utf8_name(&e, rel)?;
         let child = if rel.is_empty() { name } else { format!("{rel}/{name}") };
         let m = e.metadata()?;
         if m.is_dir() {

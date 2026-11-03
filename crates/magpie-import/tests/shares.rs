@@ -1,6 +1,8 @@
 //! Shares (cutover 7.4.4, 7.12 item 1's share fixtures): a frozen transcript that is a byte prefix of the live one,
-//! one that is not, a share revoked before the import, one revoked after it, one of a conversation that is gone,
-//! and `reset` taking them with their conversations.
+//! one that is not (a blocker and an error, never cut), a share revoked before the import, one revoked after it, one
+//! of a conversation that is gone, `reset` taking them with their conversations; a share whose conversation is only
+//! missing for now (its owner's schema unreadable) waits, and one stored revoked for a missing sessions row is
+//! imported live when the row appears.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
@@ -121,17 +123,24 @@ async fn prefix_non_prefix_revoked_and_orphaned_shares() {
     // of a conversation that has no sessions row
     w.share(&orphan, ALICE, gone, &first, false).await;
 
+    // a share that is not a prefix is a plan blocker and the share's error, never a share cut to the common lines
     let p = plan::plan(&w.imp).await.unwrap();
-    assert!(p.blockers.is_empty(), "{:?}", p.blockers);
+    assert_eq!(p.blockers.len(), 1, "{:?}", p.blockers);
+    assert!(p.blockers[0].contains(&other), "{:?}", p.blockers);
     assert_eq!(p.shares.live, 4);
     assert_eq!(p.shares.revoked, 1);
     assert_eq!(p.shares.orphaned, 1);
 
     let r = pass::pass(&w.imp, None).await.unwrap();
-    assert!(r.errors.is_empty(), "{:?}", r.errors);
-    assert_eq!(r.shares.frozen, 3, "{:?}", r.shares);
-    assert_eq!(r.shares.not_prefix, vec![other.clone()]);
+    assert_eq!(r.errors.len(), 1, "{:?}", r.errors);
+    assert_eq!(r.errors[0].0, format!("share {other}"));
+    assert!(r.errors[0].1.contains("not a prefix"), "{:?}", r.errors);
+    assert_eq!(r.shares.frozen, 2, "{:?}", r.shares);
     assert_eq!(r.shares.revoked, 2);
+    assert_eq!(share(&w, &other).await, serde_json::Value::Null);
+    // the operator deals with it on the old side (here: the row goes); the rest of the test has no blocker
+    w.cloudcli(&format!("delete from cc_shared.shares where id = '{other}'"))
+        .await;
 
     // parity: magpie's rows through pigeon's projection, normalised
     let render = magpie_import::parity::parity(&w.imp, &[u1]).await.unwrap();
@@ -194,14 +203,6 @@ async fn prefix_non_prefix_revoked_and_orphaned_shares() {
     assert_eq!(size, i64::try_from(first.len()).unwrap());
     assert_eq!(lines, lines_of(&first));
 
-    // the non-prefix share keeps the common lines
-    let s = share(&w, &other).await;
-    assert_eq!(s["revoked"], false);
-    assert_eq!(s["upto"], second_seq - 1);
-    let (size, lines) = snapshot_main(&w, &other).await;
-    assert_eq!(size, i64::try_from(first.len()).unwrap());
-    assert_eq!(lines, lines_of(&first));
-
     // the whole transcript: every event
     let s = share(&w, &late).await;
     assert_eq!(s["upto"], head);
@@ -258,6 +259,75 @@ async fn prefix_non_prefix_revoked_and_orphaned_shares() {
     assert_eq!(share(&w, &pre).await, serde_json::Value::Null);
     let r = pass::pass(&w.imp, None).await.unwrap();
     assert!(r.errors.is_empty(), "{:?}", r.errors);
-    assert_eq!(r.shares.frozen, 2);
+    assert_eq!(r.shares.frozen, 1);
     assert_eq!(share(&w, &pre).await["upto"], second_seq - 1);
+}
+
+#[tokio::test]
+async fn a_share_waits_while_its_conversation_is_only_missing_for_now() {
+    let w = World::new("shares_wait").await;
+    let ka = w.person(ALICE).await;
+    let (u1, p1) = (Uuid::new_v4(), Uuid::new_v4());
+    w.cloudcli(&format!(
+        "insert into cc_{ka}.sessions (session_id, provider_session_id, custom_name, name_source, created_at,
+                                       updated_at)
+           values ('{u1}', '{p1}', 'Report', 'user', '2026-10-28 02:55:00', '2026-10-28 03:10:00');
+         insert into cc_{ka}.users (username) values ('someone-else@example.com');"
+    ))
+    .await;
+    let live = [
+        user("a1", "2026-10-28T02:55:28.000Z", "find the news"),
+        assistant("a3", "2026-10-28T02:57:00.000Z", "here are the clippings"),
+    ]
+    .concat();
+    w.put(&ka, &format!("projects/-workspace/{p1}.jsonl"), &live);
+    let id = share_id('W');
+    w.share(&id, ALICE, u1, &live, false).await;
+
+    // the owner's schema cannot be read (two users rows): the conversation is not imported, and its share waits
+    // instead of being stored revoked for good
+    for _ in 0..2 {
+        let r = pass::pass(&w.imp, None).await.unwrap();
+        assert!(r.errors.iter().any(|(k, _)| *k == format!("cc_{ka}")), "{:?}", r.errors);
+        assert!(
+            r.errors
+                .iter()
+                .any(|(k, e)| *k == format!("share {id}") && e.contains("cannot be read")),
+            "{:?}",
+            r.errors
+        );
+        assert_eq!(share(&w, &id).await, serde_json::Value::Null);
+    }
+
+    // fixed: the conversation is imported and the share is live
+    w.cloudcli(&format!(
+        "delete from cc_{ka}.users where username = 'someone-else@example.com'"
+    ))
+    .await;
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(r.shares.frozen, 1, "{:?}", r.shares);
+    let s = share(&w, &id).await;
+    assert_eq!(s["revoked"], false);
+    assert_eq!(s["conversation"], u1.to_string());
+
+    // a share stored revoked because its conversation had no sessions row is imported live once the row appears
+    // (CloudCLI's disk discovery adding it late)
+    let (u2, p2) = (Uuid::new_v4(), Uuid::new_v4());
+    w.put(&ka, &format!("projects/-workspace/{p2}.jsonl"), &live);
+    let late = share_id('Z');
+    w.share(&late, ALICE, u2, &live, false).await;
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(share(&w, &late).await["reason"], "deleted");
+    w.cloudcli(&format!(
+        "insert into cc_{ka}.sessions (session_id, provider_session_id, created_at, updated_at)
+           values ('{u2}', '{p2}', '2026-10-28 02:55:00', '2026-10-28 03:10:00');"
+    ))
+    .await;
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    let s = share(&w, &late).await;
+    assert_eq!(s["revoked"], false, "{s}");
+    assert_eq!(s["conversation"], u2.to_string());
 }

@@ -72,6 +72,29 @@ impl OneShot {
         }
     }
 
+    /// Whether the lock is still held: its connection answers and `pg_locks` shows this backend granted it. A
+    /// connection that broke (a server restart, the network, an idle kill) took the lock with it, and the hand-over
+    /// leader may hold it now: the command must stop writing ([`crate::Importer::check_lock`]).
+    pub async fn held(&self) -> bool {
+        let Some(c) = &self.conn else { return false };
+        match c
+            .query_one(
+                "select exists (select 1 from pg_locks l
+                                 where l.locktype = 'advisory' and l.granted and l.pid = pg_backend_pid()
+                                   and l.objsubid = 1
+                                   and ((l.classid::bigint << 32) | l.objid::bigint) = hashtext($1)::bigint)",
+                &[&NAME],
+            )
+            .await
+        {
+            Ok(r) => r.get(0),
+            Err(e) => {
+                tracing::error!(error = %e, "the importer's lock connection failed");
+                false
+            }
+        }
+    }
+
     /// Releases the lock.
     pub async fn release(mut self) {
         if let Some(c) = self.conn.take()

@@ -15,7 +15,7 @@ use serde::Serialize;
 use sha2::Digest as _;
 use uuid::Uuid;
 
-use crate::sync::{Files, Writer};
+use crate::sync::{Files, Recorded, Writer};
 use crate::tree::{self, Source};
 use crate::{Error, Importer, Result};
 
@@ -45,6 +45,9 @@ pub struct Verdict {
     pub reingested: Vec<String>,
     /// What is still different.
     pub mismatches: Vec<Mismatch>,
+    /// What the sources have that the last pass did not sync yet (a sessions row change, a failed turn, a send):
+    /// verification waits for the next pass.
+    pub pending: Vec<String>,
     /// Sanity notes, not a gate (cutover 7.7): event and prompt counts against the classifier's count of the
     /// source's lines, a workspace not on disk yet.
     pub notes: Vec<String>,
@@ -54,7 +57,7 @@ impl Verdict {
     /// Every file equal.
     #[must_use]
     pub fn ok(&self) -> bool {
-        self.mismatches.is_empty()
+        self.mismatches.is_empty() && self.pending.is_empty()
     }
 }
 
@@ -108,49 +111,207 @@ pub async fn magpie_files(imp: &Importer, id: Uuid) -> Result<BTreeMap<String, u
         .collect())
 }
 
-struct Row {
-    person: String,
-    key: String,
-    psid: String,
-    files: Files,
-    released: bool,
+/// What the importer has of a conversation (`import_sources`).
+#[derive(Debug, Clone)]
+pub struct Row {
+    /// The person.
+    pub person: String,
+    /// Their key.
+    pub key: String,
+    /// Their schema (`cc_u…`).
+    pub schema: String,
+    /// Claude Code's session id.
+    pub psid: String,
+    /// What the last sync recorded of each file.
+    pub files: Files,
+    /// The fingerprints the last sync recorded.
+    pub synced: Fingerprints,
+    /// Released.
+    pub released: bool,
+    /// What verification recorded (`verified_stats`), when it passed.
+    pub verified: Option<Fingerprints>,
 }
 
-async fn row(imp: &Importer, id: Uuid) -> Result<Option<Row>> {
+/// A conversation's sources as fingerprints (cutover 7.3 `verified_stats`: every source file's stat and every
+/// fingerprint): what a release re-stats against.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Fingerprints {
+    /// Every source file's (size, mtime, inode), by cc path.
+    pub files: BTreeMap<String, (u64, i64, u64)>,
+    /// The sessions row's fingerprint (empty: the row is gone).
+    pub row_fp: String,
+    /// The failed-turn ids.
+    pub failed_turns: std::collections::BTreeSet<i32>,
+    /// The sent folders' fingerprint.
+    pub sent_fp: String,
+}
+
+impl Fingerprints {
+    /// What `now` has that differs from `self` (empty: nothing changed). A failed turn removed on the old side is
+    /// no change (an imported failure stays); one added is.
+    #[must_use]
+    pub fn changes(&self, now: &Fingerprints) -> Vec<String> {
+        let mut out = Vec::new();
+        for (p, s) in &now.files {
+            match self.files.get(p) {
+                None => out.push(format!("{p} is new")),
+                Some(was) if was != s => out.push(format!("{p} changed")),
+                Some(_) => {}
+            }
+        }
+        for p in self.files.keys().filter(|p| !now.files.contains_key(*p)) {
+            out.push(format!("{p} is gone"));
+        }
+        if now.row_fp.is_empty() {
+            out.push("the sessions row is gone".to_owned());
+        } else if now.row_fp != self.row_fp {
+            out.push("the sessions row changed".to_owned());
+        }
+        if !now.failed_turns.is_subset(&self.failed_turns) {
+            out.push("a failed turn was added".to_owned());
+        }
+        if now.sent_fp != self.sent_fp {
+            out.push("the sent files changed".to_owned());
+        }
+        out
+    }
+
+    /// Without the files.
+    #[must_use]
+    pub fn rows_only(mut self) -> Self {
+        self.files.clear();
+        self
+    }
+}
+
+fn stat_of(s: &tree::Stat) -> (u64, i64, u64) {
+    (s.size, s.mtime_ns, s.ino)
+}
+
+/// One conversation's `import_sources` row.
+///
+/// # Errors
+/// A statement error, a record that does not parse.
+pub async fn row(imp: &Importer, id: Uuid) -> Result<Option<Row>> {
     let r = imp
         .magpie
         .pool
         .get()
         .await?
         .query_opt(
-            "select person, user_key, provider_session, files, released_at is not null from import_sources
-             where conversation_id = $1",
+            "select person, user_key, provider_session, files, released_at is not null, source_schema, row_fp,
+                    failed_turns_fp, sent_fp, verified_stats
+             from import_sources where conversation_id = $1",
             &[&id],
         )
         .await?;
     let Some(r) = r else { return Ok(None) };
+    let files: Files = serde_json::from_value(r.get(3))?;
+    let synced = Fingerprints {
+        files: files
+            .iter()
+            .map(|(p, f)| (p.clone(), (f.size, f.mtime_ns, f.ino)))
+            .collect(),
+        row_fp: r.get(6),
+        failed_turns: crate::failed::ids_of(&r.get::<_, String>(7)),
+        sent_fp: r.get(8),
+    };
+    let verified = r
+        .get::<_, Option<serde_json::Value>>(9)
+        .map(serde_json::from_value::<Fingerprints>)
+        .transpose()
+        .ok()
+        .flatten();
     Ok(Some(Row {
         person: r.get(0),
         key: r.get(1),
         psid: r.get::<_, Option<String>>(2).unwrap_or_default(),
-        files: serde_json::from_value(r.get(3))?,
+        files,
         released: r.get(4),
+        schema: r.get(5),
+        synced,
+        verified,
     }))
 }
 
-async fn compare(imp: &Importer, id: Uuid, person: &str, sources: &BTreeMap<String, Source>) -> Result<Vec<Mismatch>> {
+/// The conversation's sources now: a stat of every source file, and the fingerprints of its sessions row, failed
+/// turns and sent folders from one read of its person's schema.
+///
+/// # Errors
+/// The read; a schema the importer cannot map.
+pub async fn current(imp: &Importer, id: Uuid, r: &Row) -> Result<(BTreeMap<String, Source>, Fingerprints)> {
+    let snap = crate::source::read_schema(&imp.cloudcli, &r.schema).await?;
+    if let Some((_, why)) = snap.problems.first() {
+        return Err(Error::Source(format!("schema {}: {why}", r.schema)));
+    }
+    let found = crate::pass::find(&snap, id);
+    let row_fp = found.map(|(_, s)| s.fingerprint()).unwrap_or_default();
+    let failed_turns = found
+        .and_then(|(p, s)| p.failed.get(&s.session_id))
+        .map(|f| f.iter().map(|f| f.id).collect())
+        .unwrap_or_default();
+    let (_, sent_fp) = crate::sent::read(&imp.jfs, id)?;
+    let sources = tree::sources(&imp.jfs, &r.key, &r.psid)?;
+    let fp = Fingerprints {
+        files: sources.iter().map(|(p, s)| (p.clone(), stat_of(&s.stat))).collect(),
+        row_fp,
+        failed_turns,
+        sent_fp,
+    };
+    Ok((sources, fp))
+}
+
+/// What changed in the conversation's sources since its last sync recorded them (the release's re-stat inside the
+/// fence, cutover 7.8, after the final sync). Empty: nothing.
+///
+/// # Errors
+/// As [`current`]; [`Error::Source`] for a conversation that was not imported.
+pub async fn changed_since_sync(imp: &Importer, id: Uuid) -> Result<Vec<String>> {
+    let Some(r) = row(imp, id).await? else {
+        return Err(Error::Source(format!("{id} was not imported")));
+    };
+    let (_, now) = current(imp, id, &r).await?;
+    Ok(r.synced.changes(&now))
+}
+
+/// What changed in the conversation's sources since verification passed (`verified_stats`, cutover 7.8's re-stat
+/// for a release that does not sync again). Not verified: one change saying so.
+///
+/// # Errors
+/// As [`changed_since_sync`].
+pub async fn changed_since_verify(imp: &Importer, id: Uuid) -> Result<Vec<String>> {
+    let Some(r) = row(imp, id).await? else {
+        return Err(Error::Source(format!("{id} was not imported")));
+    };
+    let Some(v) = &r.verified else {
+        return Ok(vec!["not verified".to_owned()]);
+    };
+    let (_, now) = current(imp, id, &r).await?;
+    Ok(v.changes(&now))
+}
+
+/// The source's sha256 and size per path, and the files that differ from magpie's reconstruction.
+async fn compare(
+    imp: &Importer,
+    id: Uuid,
+    person: &str,
+    sources: &BTreeMap<String, Source>,
+) -> Result<(Vec<Mismatch>, BTreeMap<String, (String, u64)>)> {
     let mut out = Vec::new();
+    let mut hashes = BTreeMap::new();
     let mine = magpie_files(imp, id).await?;
     for (path, src) in sources {
         let (sha, n) = tree::hash_prefix(&src.abs, src.stat.size)?;
         let got = reconstruct(imp, id, person, path).await?;
-        if got.as_ref() != Some(&(sha, n)) {
+        if got.as_ref() != Some(&(sha.clone(), n)) {
             out.push(Mismatch {
                 path: path.clone(),
                 source_size: Some(n),
                 magpie_size: got.map(|g| g.1),
             });
         }
+        hashes.insert(path.clone(), (sha, n));
     }
     for (path, size) in &mine {
         if !sources.contains_key(path) {
@@ -161,43 +322,76 @@ async fn compare(imp: &Importer, id: Uuid, person: &str, sources: &BTreeMap<Stri
             });
         }
     }
-    Ok(out)
+    Ok((out, hashes))
 }
 
-/// Verifies one conversation (cutover 7.7) and records the outcome.
+fn is_memory(path: &str) -> bool {
+    path == tree::MEMORY || path.starts_with(&format!("{}/", tree::MEMORY))
+}
+
+/// A released conversation: the old side wrote nothing of its own after the hand-over. Every recorded file still
+/// has its size and sha256, and no new file appeared in its session folder or as its transcript. The person's
+/// shared auto-memory is left out: their other conversations, still the old stack's, rightly change it.
+fn released(id: Uuid, imp: &Importer, r: &Row) -> Result<Verdict> {
+    let mut mismatches = Vec::new();
+    for (path, rec) in r.files.iter().filter(|(p, _)| !is_memory(p)) {
+        let (sha, n) = tree::hash_prefix(std::path::Path::new(&rec.src), u64::MAX).unwrap_or_default();
+        if sha != rec.sha256 || n != rec.size {
+            mismatches.push(Mismatch {
+                path: path.clone(),
+                source_size: Some(n),
+                magpie_size: None,
+            });
+        }
+    }
+    for (path, src) in tree::sources(&imp.jfs, &r.key, &r.psid)? {
+        if !is_memory(&path) && !r.files.contains_key(&path) {
+            mismatches.push(Mismatch {
+                path,
+                source_size: Some(src.stat.size),
+                magpie_size: None,
+            });
+        }
+    }
+    Ok(Verdict {
+        conversation: id,
+        released: true,
+        files: r.files.len(),
+        reingested: Vec::new(),
+        mismatches,
+        pending: Vec::new(),
+        notes: Vec::new(),
+    })
+}
+
+/// Verifies one conversation (cutover 7.7) and records the outcome. An open one passes only when its files equal
+/// magpie's reconstruction and its sessions row, failed turns and sent folders are what the last pass synced; then
+/// `verified_stats` holds every source's stat and every fingerprint from that same read.
 ///
 /// # Errors
 /// [`Error::Source`] for a conversation that was not imported; a read error.
+#[allow(clippy::too_many_lines)] // compare, re-ingest, compare again, then one update of the record
 pub async fn verify(imp: &Importer, id: Uuid) -> Result<Verdict> {
     let Some(r) = row(imp, id).await? else {
         return Err(Error::Source(format!("{id} was not imported")));
     };
     if r.released {
-        let mut mismatches = Vec::new();
-        for (path, rec) in &r.files {
-            let (sha, n) = tree::hash_prefix(std::path::Path::new(&rec.src), u64::MAX).unwrap_or_default();
-            if sha != rec.sha256 || n != rec.size {
-                mismatches.push(Mismatch {
-                    path: path.clone(),
-                    source_size: Some(n),
-                    magpie_size: None,
-                });
-            }
-        }
-        return Ok(Verdict {
-            conversation: id,
-            released: true,
-            files: r.files.len(),
-            reingested: Vec::new(),
-            mismatches,
-            notes: Vec::new(),
-        });
+        return released(id, imp, &r);
     }
-    let sources = tree::sources(&imp.jfs, &r.key, &r.psid)?;
-    let first = compare(imp, id, &r.person, &sources).await?;
+    let (sources, now) = current(imp, id, &r).await?;
+    let pending: Vec<String> = r
+        .synced
+        .clone()
+        .rows_only()
+        .changes(&now.clone().rows_only())
+        .into_iter()
+        .map(|c| format!("{c} since the last pass"))
+        .collect();
+    let (first, hashes) = compare(imp, id, &r.person, &sources).await?;
     let mut reingested = Vec::new();
-    let mismatches = if first.is_empty() {
-        first
+    let mut files = r.files.clone();
+    let (mismatches, hashes) = if first.is_empty() {
+        (first, hashes)
     } else {
         let workspace = tree::workspace_uploads(&imp.jfs, id)?;
         let mut w = Writer::new(imp, id, &r.person, workspace);
@@ -206,39 +400,63 @@ pub async fn verify(imp: &Importer, id: Uuid) -> Result<Verdict> {
                 conversation = %id, path = %m.path, source = ?m.source_size, magpie = ?m.magpie_size,
                 "reconstruct mismatch"
             );
-            match sources.get(&m.path) {
-                Some(src) => {
-                    w.replace(&m.path, src).await?;
-                }
-                None => w.unlink(&m.path).await?,
+            if let Some(src) = sources.get(&m.path) {
+                let rec = w.replace(&m.path, src).await?;
+                files.insert(m.path.clone(), rec);
+            } else {
+                w.unlink(&m.path).await?;
+                files.remove(&m.path);
             }
             reingested.push(m.path.clone());
         }
+        // the lines a rewrite took out become one retract now, as after a pass's writes
+        crate::conv::flush_limbo(imp, id).await?;
         compare(imp, id, &r.person, &sources).await?
     };
+    let ok = mismatches.is_empty() && pending.is_empty();
+    if ok {
+        // the record is what verification read: every source with its hash
+        files = sources
+            .iter()
+            .filter_map(|(p, s)| {
+                hashes.get(p).map(|(sha, n)| {
+                    (
+                        p.clone(),
+                        Recorded {
+                            src: s.abs.to_string_lossy().into_owned(),
+                            size: *n,
+                            mtime_ns: s.stat.mtime_ns,
+                            ino: s.stat.ino,
+                            sha256: sha.clone(),
+                        },
+                    )
+                })
+            })
+            .collect();
+    }
+    let msg = (!ok).then(|| {
+        let mut what: Vec<String> = mismatches.iter().map(|m| m.path.clone()).collect();
+        what.extend(pending.iter().cloned());
+        format!("could not be verified: {}", what.join(", "))
+    });
+    let stats = if ok { Some(serde_json::to_value(&now)?) } else { None };
+    let files_json = serde_json::to_value(&files)?;
+    let write_files = ok || !reingested.is_empty();
     let pool = &imp.magpie.pool;
-    if mismatches.is_empty() {
-        let stats: BTreeMap<&String, &tree::Stat> = sources.iter().map(|(p, s)| (p, &s.stat)).collect();
-        let stats = serde_json::to_value(stats)?;
-        pool.get()
-            .await?
-            .execute(
-                "update import_sources set verified_at = now(), verified_stats = $2, last_error = null
-                 where conversation_id = $1",
-                &[&id, &stats],
-            )
-            .await?;
-    } else {
-        let paths: Vec<&str> = mismatches.iter().map(|m| m.path.as_str()).collect();
-        let msg = format!("could not be verified: {}", paths.join(", "));
-        pool.get()
-            .await?
-            .execute(
-                "update import_sources set verified_at = null, verified_stats = null, last_error = $2
-                 where conversation_id = $1",
-                &[&id, &msg],
-            )
-            .await?;
+    let n = pool
+        .get()
+        .await?
+        .execute(
+            "update import_sources s set files = case when $5 then $2 else s.files end,
+                    verified_at = case when $3::jsonb is null then null else now() end, verified_stats = $3,
+                    last_error = $4
+             from conversations c
+             where s.conversation_id = $1 and c.id = s.conversation_id and c.migrating",
+            &[&id, &files_json, &stats, &msg, &write_files],
+        )
+        .await?;
+    if n == 0 {
+        return Err(Error::Released);
     }
     let notes = sanity(imp, id, &sources, &tree::main_path(&r.psid)).await?;
     for n in &notes {
@@ -250,6 +468,7 @@ pub async fn verify(imp: &Importer, id: Uuid) -> Result<Verdict> {
         files: sources.len(),
         reingested,
         mismatches,
+        pending,
         notes,
     })
 }

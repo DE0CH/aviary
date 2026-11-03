@@ -6,12 +6,15 @@
 //!   from offset 0), `share_rows` are the conversation's rows within it, and the snapshot scope is the conversation's
 //!   cc scope with the main transcript cut where the frozen transcript ends. When the frozen transcript is a byte
 //!   prefix of the live one (every live share today) the snapshot's transcript is the frozen file byte for byte.
-//!   When it is not (a line differs), the share keeps the common lines (`prefix: false` in the report and the
-//!   share's log line).
+//!   When it is not (a line differs), the share is not imported: it is the share's error in every pass's report and
+//!   a `plan` blocker, never a share cut to the common lines (which would drop what the old page shows after them).
 //! - A revoked share becomes revoked (its frozen data removed, its workspace's deletion queued); one revoked
 //!   before it was ever imported is stored revoked, with no data.
-//! - A share of a conversation that is not in magpie (its sessions row is gone) is stored revoked (`deleted`), as
-//!   the old stack answers 404 for it.
+//! - A share of a conversation that is not in magpie because its sessions row is gone (missing from a read with no
+//!   problem for its owner's schema) is stored revoked (`deleted`), as the old stack answers 404 for it. One whose
+//!   conversation is only missing for now (its row in the read but not imported, its owner's schema unreadable, an
+//!   id that is not a uuid) is the share's error and waits; one stored `deleted` whose conversation is imported later
+//!   while the old row is live is imported again as a live share.
 //!
 //! The frozen workspace is `ws/<uuidv5(NS, "share:" + id)>`, the clone hermit's share pass makes; magpie answers 404
 //! for its file downloads until the clone exists. Every write locks the conversation and requires `migrating`
@@ -34,8 +37,6 @@ use crate::{Error, Importer, Result};
 pub struct Copied {
     /// Shares frozen (new and live).
     pub frozen: usize,
-    /// Of those, the ones whose frozen transcript was not a byte prefix of the live one.
-    pub not_prefix: Vec<String>,
     /// Shares stored or made revoked.
     pub revoked: usize,
     /// Shares whose row changed in place (title, owner name).
@@ -68,9 +69,8 @@ fn listing(dir: &Path, rel: &str, out: &mut Vec<String>) -> Result<()> {
     let mut names = Vec::new();
     for e in entries {
         let e = e?;
-        if let Some(n) = e.file_name().to_str() {
-            names.push((n.to_owned(), e.metadata()?));
-        }
+        let n = crate::tree::utf8_name(&e, rel)?;
+        names.push((n, e.metadata()?));
     }
     names.sort_by(|a, b| a.0.cmp(&b.0));
     for (name, m) in names {
@@ -93,15 +93,16 @@ fn listing(dir: &Path, rel: &str, out: &mut Vec<String>) -> Result<()> {
     Ok(())
 }
 
-/// The fingerprint of a share (cutover 7.3 `src_fp`): its row and its folder's listing (the workspace copy left
-/// out).
+/// The fingerprint of a share (cutover 7.3 `src_fp`): its row, its folder's listing (the workspace copy left out)
+/// and whether its conversation's sessions row is in the read (`present`), so that a share stored revoked while its
+/// conversation was missing is looked at again when the conversation appears.
 ///
 /// # Errors
-/// An I/O error other than "not found".
-pub fn fingerprint(jfs: &Path, s: &ShareRow) -> Result<String> {
+/// An I/O error other than "not found"; a name that is not UTF-8.
+pub fn fingerprint(jfs: &Path, s: &ShareRow, present: bool) -> Result<String> {
     let mut files = Vec::new();
     listing(&folder(jfs, s), "", &mut files)?;
-    let v = serde_json::json!({"row": s, "files": files});
+    let v = serde_json::json!({"row": s, "files": files, "present": present});
     Ok(crate::sha_hex(v.to_string().as_bytes()))
 }
 
@@ -165,15 +166,55 @@ async fn known(imp: &Importer) -> Result<std::collections::HashMap<String, Strin
         .collect())
 }
 
-/// One share pass over `shares`; `skip`: conversations whose sync failed in this pass (their shares wait).
+/// What the pass's read of `cloudcli` says about the shares' conversations.
+#[derive(Debug, Clone, Default)]
+pub struct Presence {
+    /// Conversations whose sync failed in this pass (their shares wait).
+    pub skip: BTreeSet<Uuid>,
+    /// Every sessions row id in the read.
+    pub in_snapshot: BTreeSet<Uuid>,
+    /// Schemas the read could not map (`snap.problems`): their conversations' presence is unknown.
+    pub unreadable: BTreeSet<String>,
+    /// Conversations deleted for good on the new side whose old row is still there (until the reverse export): gone.
+    pub purged: BTreeSet<Uuid>,
+}
+
+impl Presence {
+    /// Why a share whose conversation is not in magpie must wait instead of being stored revoked (`deleted`):
+    /// `None` only when the conversation is truly gone (its sessions row missing from a read with no problem for its
+    /// owner's schema).
+    fn wait_reason(&self, s: &ShareRow, conversation: Option<Uuid>) -> Option<String> {
+        let Some(c) = conversation else {
+            return Some(format!("its conversation id {} is not a uuid", s.session_id));
+        };
+        if self.purged.contains(&c) {
+            return None;
+        }
+        if self.in_snapshot.contains(&c) {
+            return Some("its conversation is not imported yet (retried next pass)".to_owned());
+        }
+        let owner = aviary_core::log::normalise_email(&s.owner);
+        let schema = format!("cc_{}", aviary_core::log::person_key(&owner));
+        if self.unreadable.contains(&schema) {
+            return Some(format!(
+                "its owner's schema {schema} cannot be read (retried next pass)"
+            ));
+        }
+        None
+    }
+}
+
+/// One share pass over `shares`.
 ///
 /// # Errors
 /// The read of `import_shares`; per-share errors are in the result.
-pub async fn pass(imp: &Importer, shares: &[ShareRow], skip: &BTreeSet<Uuid>) -> Result<Copied> {
+pub async fn pass(imp: &Importer, shares: &[ShareRow], presence: &Presence) -> Result<Copied> {
     let known = known(imp).await?;
     let mut out = Copied::default();
     for s in shares {
-        let fp = match fingerprint(&imp.jfs, s) {
+        let conversation = crate::conv::id_of(&s.session_id);
+        let present = conversation.is_some_and(|c| presence.in_snapshot.contains(&c));
+        let fp = match fingerprint(&imp.jfs, s, present) {
             Ok(f) => f,
             Err(e) => {
                 out.errors.push((s.id.clone(), e.to_string()));
@@ -183,17 +224,12 @@ pub async fn pass(imp: &Importer, shares: &[ShareRow], skip: &BTreeSet<Uuid>) ->
         if known.get(&s.id) == Some(&fp) {
             continue;
         }
-        let conversation = crate::conv::id_of(&s.session_id);
-        if conversation.is_some_and(|c| skip.contains(&c)) {
+        if conversation.is_some_and(|c| presence.skip.contains(&c)) {
             continue;
         }
-        match one(imp, s, conversation, &fp).await {
-            Ok(Done::Frozen(c)) => {
-                out.frozen += 1;
-                if !c.prefix {
-                    out.not_prefix.push(s.id.clone());
-                }
-            }
+        imp.check_lock().await?;
+        match one(imp, s, conversation, &fp, presence).await {
+            Ok(Done::Frozen) => out.frozen += 1,
             Ok(Done::Revoked) => out.revoked += 1,
             Ok(Done::Updated) => out.updated += 1,
             Ok(Done::Unchanged) => {}
@@ -207,7 +243,7 @@ pub async fn pass(imp: &Importer, shares: &[ShareRow], skip: &BTreeSet<Uuid>) ->
 }
 
 enum Done {
-    Frozen(Cut),
+    Frozen,
     Revoked,
     Updated,
     Unchanged,
@@ -240,7 +276,7 @@ async fn main_lines(db: &impl magpie::db::Db, conversation: Uuid) -> Result<Vec<
 }
 
 #[allow(clippy::too_many_lines)] // one transaction per outcome, in the order 7.4.4 lists them
-async fn one(imp: &Importer, s: &ShareRow, conversation: Option<Uuid>, fp: &str) -> Result<Done> {
+async fn one(imp: &Importer, s: &ShareRow, conversation: Option<Uuid>, fp: &str, presence: &Presence) -> Result<Done> {
     let created = time_of(&s.created_at)?;
     let revoked = s.revoked_at.as_deref().map(time_of).transpose()?;
     let owner = aviary_core::log::normalise_email(&s.owner);
@@ -271,14 +307,25 @@ async fn one(imp: &Importer, s: &ShareRow, conversation: Option<Uuid>, fp: &str)
         if conv.is_some_and(|(_, migrating, _)| !migrating) {
             return Ok(Done::Unchanged);
         }
-        let existing = t
+        let mut existing = t
             .query_opt(
-                "select snapshot, revoked_at is not null from shares where id = $1 for update",
+                "select snapshot, revoked_at is not null, revoke_reason from shares where id = $1 for update",
                 &[&s.id],
             )
             .await?
-            .map(|r| (r.get::<_, Uuid>(0), r.get::<_, bool>(1)));
-        if let Some((snapshot, was_revoked)) = existing {
+            .map(|r| (r.get::<_, Uuid>(0), r.get::<_, bool>(1), r.get::<_, Option<String>>(2)));
+        // stored revoked because its conversation was not in magpie, and live on the old side with its conversation
+        // here now (a pass imported it late): imported again as a live share (it was stored with no data)
+        if let Some((_, true, Some(reason))) = &existing
+            && reason == "deleted"
+            && revoked.is_none()
+            && conv.is_some()
+            && frozen.is_some()
+        {
+            t.execute("delete from shares where id = $1", &[&s.id]).await?;
+            existing = None;
+        }
+        if let Some((snapshot, was_revoked, _)) = existing {
             let done = match (revoked, was_revoked) {
                 (Some(at), false) => {
                     t.execute(
@@ -309,7 +356,15 @@ async fn one(imp: &Importer, s: &ShareRow, conversation: Option<Uuid>, fp: &str)
             _ => None,
         };
         let Some((c, head, frozen)) = live else {
-            // revoked before it was imported, or of a conversation that is gone: stored revoked, with no data
+            // revoked before it was imported, or of a conversation that is gone: stored revoked, with no data. A
+            // conversation only missing for now (its sessions row in the read but not imported, its owner's schema
+            // unreadable) is no reason: the share waits for a later pass.
+            if revoked.is_none()
+                && conv.is_none()
+                && let Some(why) = presence.wait_reason(s, conversation)
+            {
+                return Err(Error::Source(why));
+            }
             let reason = if revoked.is_some() { "owner" } else { "deleted" };
             t.execute(
                 "insert into shares (id, conversation_id, owner, owner_name, title, upto_seq, snapshot, workspace_id,
@@ -338,6 +393,13 @@ async fn one(imp: &Importer, s: &ShareRow, conversation: Option<Uuid>, fp: &str)
                 "the conversation's copy is behind the share's frozen transcript (retried next pass)".into(),
             ));
         };
+        if !k.prefix {
+            // keeping only the common lines would drop what the old share page shows after the first difference
+            return Err(Error::Source(format!(
+                "the frozen transcript is not a prefix of the conversation's transcript (they differ after byte {})",
+                k.bytes
+            )));
+        }
         t.execute(
             "insert into shares (id, conversation_id, owner, owner_name, title, upto_seq, snapshot,
                                  provider_session_id, workspace_id, model, created_at)
@@ -383,7 +445,7 @@ async fn one(imp: &Importer, s: &ShareRow, conversation: Option<Uuid>, fp: &str)
         magpie::shares::copy_refs(t, c, snapshot, "share").await?;
         record(t, &s.id, fp).await?;
         tracing::info!(conversation = %c, prefix = k.prefix, upto = k.upto, "share imported");
-        Ok(Done::Frozen(k))
+        Ok(Done::Frozen)
     })
     .await
 }

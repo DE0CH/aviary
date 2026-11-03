@@ -238,31 +238,36 @@ impl<'a> Writer<'a> {
         let mut out = Files::new();
         let mut changed = false;
         let mut gone: Vec<(&String, &Recorded)> = recorded.iter().filter(|(p, _)| !sources.contains_key(*p)).collect();
-        // rule 6: a gone file and a new one with the same bytes in this pass is a rename
+        // rule 6: a gone file and a new one with the same bytes in this pass is a rename. A gone file leaves `gone`
+        // only when it was renamed: one that is not (both paths already in magpie, after an earlier pass created
+        // the new one and stopped before recording) is unlinked below.
         let mut renamed_to: BTreeMap<String, Recorded> = BTreeMap::new();
         for (path, src) in sources {
-            if recorded.contains_key(path) {
+            if recorded.contains_key(path) || !gone.iter().any(|(_, r)| r.size == src.stat.size) {
                 continue;
             }
-            let Some(pos) = gone.iter().position(|(_, r)| r.size == src.stat.size) else {
-                continue;
-            };
             let (sha, n) = crate::tree::hash_prefix(&src.abs, src.stat.size)?;
-            if n != src.stat.size || sha != gone[pos].1.sha256 {
+            if n != src.stat.size || self.file(path).await?.is_some() {
                 continue;
             }
-            let (from, r) = gone.remove(pos);
-            if self.file(from).await?.is_some() && self.file(path).await?.is_none() {
-                self.rename(from, path).await?;
-                changed = true;
-                renamed_to.insert(
-                    path.clone(),
-                    Recorded {
-                        src: src.abs.to_string_lossy().into_owned(),
-                        ..r.clone()
-                    },
-                );
+            let mut found = None;
+            for (i, (from, r)) in gone.iter().enumerate() {
+                if r.size == src.stat.size && r.sha256 == sha && self.file(from).await?.is_some() {
+                    found = Some(i);
+                    break;
+                }
             }
+            let Some(i) = found else { continue };
+            let (from, r) = gone.remove(i);
+            self.rename(from, path).await?;
+            changed = true;
+            renamed_to.insert(
+                path.clone(),
+                Recorded {
+                    src: src.abs.to_string_lossy().into_owned(),
+                    ..r.clone()
+                },
+            );
         }
         for (path, src) in sources {
             let rec = recorded.get(path).or_else(|| renamed_to.get(path));
@@ -301,14 +306,8 @@ impl<'a> Writer<'a> {
         let mut rd = Hashed::open(&src.abs, src.stat.size)?;
         match m {
             None => {
-                let mut version = 0;
                 let mut first = true;
-                if let Some(b) = breaks {
-                    for (off, at) in b.offsets(&src.abs, src.stat.size)? {
-                        version = self.copy(path, &mut rd, off, &src.stat, &mut first, version).await?;
-                        b.at(self.imp, at).await?;
-                    }
-                }
+                let version = self.placed(path, &mut rd, src, breaks, &mut first, 0).await?;
                 self.copy(path, &mut rd, src.stat.size, &src.stat, &mut first, version)
                     .await?;
             }
@@ -336,6 +335,9 @@ impl<'a> Writer<'a> {
                     }
                     let mut first = false;
                     let mut version = u64::try_from(f.version).unwrap_or(0);
+                    // a first import that stopped part way: the failed turns not placed yet go where they belong in
+                    // the rest (those before what magpie has were placed then, and are not inserted twice)
+                    version = self.placed(path, &mut rd2, src, breaks, &mut first, version).await?;
                     version = self
                         .copy(path, &mut rd2, src.stat.size, &src.stat, &mut first, version)
                         .await?;
@@ -361,6 +363,27 @@ impl<'a> Writer<'a> {
             },
             true,
         ))
+    }
+
+    /// Copies the source up to each of `breaks`' offsets past the reader's position and writes what belongs there;
+    /// a break at or before the position (already in magpie) only writes its own part. The file's version after.
+    async fn placed(
+        &self,
+        path: &str,
+        rd: &mut Hashed,
+        src: &Source,
+        breaks: Option<&mut dyn Breaks>,
+        first: &mut bool,
+        mut version: u64,
+    ) -> Result<u64> {
+        let Some(b) = breaks else { return Ok(version) };
+        for (off, at) in b.offsets(&src.abs, src.stat.size)? {
+            if off > rd.pos {
+                version = self.copy(path, rd, off, &src.stat, first, version).await?;
+            }
+            b.at(self.imp, at).await?;
+        }
+        Ok(version)
     }
 
     /// Writes the whole source again from offset 0 and truncates to its size (verification's re-ingest, cutover 7.7

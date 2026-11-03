@@ -97,6 +97,28 @@ pub fn connect(url: &str, app_name: &str, pool_size: usize, statement_timeout: D
     )
 }
 
+/// [`connect`] for a database this process only reads: every connection also starts with
+/// `default_transaction_read_only = on`, so Postgres itself refuses a write (`25006 read_only_sql_transaction`),
+/// whichever statement sends it.
+///
+/// # Errors
+/// As [`connect`].
+pub fn connect_read_only(
+    url: &str,
+    app_name: &str,
+    pool_size: usize,
+    statement_timeout: Duration,
+) -> Result<Pool, Error> {
+    build(
+        url,
+        app_name,
+        pool_size,
+        statement_timeout,
+        RecyclingMethod::Custom(RECYCLE_SQL.to_owned()),
+        true,
+    )
+}
+
 /// [`connect`] with another recycling method (the tests: `Fast`, to see `tx!`'s own cancellation handling without
 /// the recycle backstop).
 pub(crate) fn connect_recycling(
@@ -105,6 +127,17 @@ pub(crate) fn connect_recycling(
     pool_size: usize,
     statement_timeout: Duration,
     recycling_method: RecyclingMethod,
+) -> Result<Pool, Error> {
+    build(url, app_name, pool_size, statement_timeout, recycling_method, false)
+}
+
+fn build(
+    url: &str,
+    app_name: &str,
+    pool_size: usize,
+    statement_timeout: Duration,
+    recycling_method: RecyclingMethod,
+    read_only: bool,
 ) -> Result<Pool, Error> {
     if pool_size == 0 {
         return Err(Error::Config("pool size 0".into()));
@@ -120,9 +153,14 @@ pub(crate) fn connect_recycling(
         .keepalives_interval(KEEPALIVE_INTERVAL)
         .keepalives_retries(KEEPALIVE_RETRIES)
         .options(format!(
-            "-c statement_timeout={} -c idle_in_transaction_session_timeout={}",
+            "-c statement_timeout={} -c idle_in_transaction_session_timeout={}{}",
             statement_timeout.as_millis(),
-            IDLE_IN_TRANSACTION_TIMEOUT.as_millis()
+            IDLE_IN_TRANSACTION_TIMEOUT.as_millis(),
+            if read_only {
+                " -c default_transaction_read_only=on"
+            } else {
+                ""
+            }
         ));
     let tls = tls()?;
     let manager = Manager::from_config(config.clone(), tls.clone(), ManagerConfig { recycling_method });

@@ -3,8 +3,11 @@
 // jarvis/router.mjs) is asked for its running list, the call the router itself makes (runningChats()):
 // GET http://127.0.0.1:<SERVER_PORT>/api/providers/sessions/running with x-jarvis-user: <JARVIS_CC_OWNER>. One JSON
 // line per child: {"schema", "port", "ok", "sessions": [<app session id>…]}. A child that does not answer 200 with a
-// session list within 5 s is ok: false (the importer then treats every conversation of that schema as running).
-// Processes the child started inherit its environment; each (schema, port) is asked once.
+// session list within 5 s is ok: false (the importer then treats every conversation of that schema as running), and
+// so is one whose list has an entry without a string sessionId (a changed route shape must not read as "idle").
+// A process whose environment cannot be read for another reason than having exited (EACCES, hidepid) may be a child:
+// the script prints {"incomplete": <why>}, which makes the pod's read unusable. Processes the child started inherit
+// its environment; each (schema, port) is asked once.
 'use strict';
 const fs = require('fs');
 const http = require('http');
@@ -13,7 +16,14 @@ const seen = new Map();
 for (const pid of fs.readdirSync('/proc')) {
   if (!/^[0-9]+$/.test(pid)) continue;
   let raw;
-  try { raw = fs.readFileSync('/proc/' + pid + '/environ'); } catch (e) { continue; }
+  try {
+    raw = fs.readFileSync('/proc/' + pid + '/environ');
+  } catch (e) {
+    // gone since the listing (ENOENT, ESRCH): not a child any more; anything else: this read cannot be trusted
+    if (e && (e.code === 'ENOENT' || e.code === 'ESRCH')) continue;
+    process.stdout.write(JSON.stringify({ incomplete: 'pid ' + pid + ': ' + ((e && e.code) || String(e)) }) + '\n');
+    continue;
+  }
   const env = {};
   for (const kv of raw.toString('utf8').split('\0')) {
     const i = kv.indexOf('=');
@@ -45,7 +55,8 @@ function ask(c) {
           const j = JSON.parse(body);
           const s = (j && j.data && j.data.sessions) || (j && j.sessions);
           if (!Array.isArray(s)) return finish(false, []);
-          finish(true, s.map((e) => (e && typeof e.sessionId === 'string' ? e.sessionId : null)).filter(Boolean));
+          if (!s.every((e) => e && typeof e.sessionId === 'string' && e.sessionId)) return finish(false, []);
+          finish(true, s.map((e) => e.sessionId));
         } catch (e) { finish(false, []); }
       });
       res.on('error', () => finish(false, []));

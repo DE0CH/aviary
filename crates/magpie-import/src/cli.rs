@@ -3,7 +3,8 @@
 //!
 //! Bindings (platform 12.2): magpie's own (`MAGPIE_DATABASE_URL`, `MAGPIE_S3_*`) from Secret `magpie`, the old
 //! databases from Secret `magpie-import` (`MAGPIE_IMPORT_CLOUDCLI_URL`, `MAGPIE_IMPORT_JARVIS_URL`; every read is a
-//! read-only transaction), the `JuiceFS` mount at [`JFS`], `POD_NAME`.
+//! read-only transaction, and every command but `export` connects with `default_transaction_read_only = on`, cutover
+//! 7.2), the `JuiceFS` mount at [`JFS`], `POD_NAME`.
 //! `holds` reads the running sets through the old cluster's API ([`crate::kube`]'s bindings). The hand-over loop
 //! and the commands that drive it (`handover`, `allow-handover`, `reverse`) are not built yet. `export` is
 //! the only command that writes the old side (`JuiceFS` and `cloudcli`): it runs in the writer sidecar, whose mount
@@ -26,8 +27,8 @@ pub const JFS: &str = "/jfs";
 pub const JUICEFS: &str = "/usr/local/bin/juicefs";
 
 const USAGE: &str = "usage: magpie import plan | run | catch-up | verify [--all | <id>…] | status | holds | hold on|off \
-                     | reset --yes | unfence <id> | release <id> --force | export [--since <time>] [<id>…] \
-                     | parity <id>…\n";
+                     | reset --yes | unfence <id> | release <id> --force \
+                     | export [--unfenced] [--since <time>] [<id>…] | parity <id>…\n";
 
 fn out(v: &impl Serialize) {
     let mut s = serde_json::to_string_pretty(v).unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}"));
@@ -44,11 +45,12 @@ fn ids(args: &[String]) -> Option<Vec<Uuid>> {
     args.iter().map(|a| Uuid::parse_str(a).ok()).collect()
 }
 
-/// Connects to magpie (its library, no jobs) and the old database.
+/// Connects to magpie (its library, no jobs) and the old databases: read-only sessions unless `writes_old_side` (the
+/// export, the only command that writes `cloudcli`; `jarvis` is always read-only).
 ///
 /// # Errors
 /// A database URL that does not parse, a magpie start that cannot go on.
-pub async fn connect(build: &version::Build) -> Result<Importer, String> {
+pub async fn connect(build: &version::Build, writes_old_side: bool) -> Result<Importer, String> {
     let mut registry = ops::registry(build);
     let legacy_metrics = magpie::legacy::Metrics::register(&mut registry);
     let cfg = magpie::app::Config {
@@ -74,14 +76,23 @@ pub async fn connect(build: &version::Build) -> Result<Importer, String> {
     let service = magpie::app::Service::start_library(cfg, &readiness, drain.draining())
         .await
         .map_err(|e| e.to_string())?;
-    let cloudcli = aviary_pg::connect(
-        &env::required("MAGPIE_IMPORT_CLOUDCLI_URL"),
-        "magpie-import",
-        4,
-        Duration::from_secs(120),
-    )
+    let cloudcli = if writes_old_side {
+        aviary_pg::connect(
+            &env::required("MAGPIE_IMPORT_CLOUDCLI_URL"),
+            "magpie-import",
+            4,
+            Duration::from_secs(120),
+        )
+    } else {
+        aviary_pg::connect_read_only(
+            &env::required("MAGPIE_IMPORT_CLOUDCLI_URL"),
+            "magpie-import",
+            4,
+            Duration::from_secs(120),
+        )
+    }
     .map_err(|e| e.to_string())?;
-    let jarvis = aviary_pg::connect(
+    let jarvis = aviary_pg::connect_read_only(
         &env::required("MAGPIE_IMPORT_JARVIS_URL"),
         "magpie-import",
         2,
@@ -94,6 +105,9 @@ pub async fn connect(build: &version::Build) -> Result<Importer, String> {
         jarvis,
         jfs: PathBuf::from(JFS),
         juicefs: Some(PathBuf::from(JUICEFS)),
+        lock: None,
+        sent_quiet: crate::sent::QUIET,
+        owner: Some(crate::export::OWNER_ID),
     })
 }
 
@@ -119,7 +133,7 @@ pub fn main(build: &version::Build, args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     };
     rt.block_on(async {
-        let imp = match connect(build).await {
+        let mut imp = match connect(build, cmd == "export").await {
             Ok(i) => i,
             Err(e) => {
                 tracing::error!(error = %e, "cannot connect");
@@ -127,19 +141,17 @@ pub fn main(build: &version::Build, args: &[String]) -> ExitCode {
             }
         };
         // every command that writes the importer's state holds the leader lock while it runs (cutover 7.1)
-        let lock = if matches!(cmd, "plan" | "status" | "holds" | "parity") {
-            None
-        } else {
+        if !matches!(cmd, "plan" | "status" | "holds" | "parity") {
             match crate::lock::OneShot::take(&imp.magpie.pool).await {
-                Ok(l) => Some(l),
+                Ok(l) => imp.lock = Some(std::sync::Arc::new(l)),
                 Err(e) => {
                     tracing::error!(error = %e, "cannot take the importer's lock");
                     return ExitCode::FAILURE;
                 }
             }
-        };
+        }
         let code = run(&imp, cmd, rest).await;
-        if let Some(l) = lock {
+        if let Some(l) = imp.lock.take().and_then(|l| std::sync::Arc::try_unwrap(l).ok()) {
             l.release().await;
         }
         code
@@ -194,6 +206,9 @@ async fn run(imp: &Importer, cmd: &str, rest: &[String]) -> ExitCode {
             let mut verdicts = Vec::new();
             let mut ok = true;
             for id in targets {
+                if let Err(e) = imp.check_lock().await {
+                    return fail(e);
+                }
                 match crate::verify::verify(imp, id).await {
                     Ok(v) => {
                         ok &= v.ok();
@@ -287,6 +302,10 @@ async fn run(imp: &Importer, cmd: &str, rest: &[String]) -> ExitCode {
             }
         }
         "export" => {
+            let (unfenced, rest) = match rest {
+                [flag, more @ ..] if flag == "--unfenced" => (true, more),
+                _ => (false, rest),
+            };
             let (since, rest) = match rest {
                 [flag, t, more @ ..] if flag == "--since" => {
                     match time::OffsetDateTime::parse(t, &time::format_description::well_known::Rfc3339) {
@@ -297,7 +316,7 @@ async fn run(imp: &Importer, cmd: &str, rest: &[String]) -> ExitCode {
                 _ => (None, rest),
             };
             let Some(given) = ids(rest) else { return usage() };
-            match crate::export::export(imp, since, &given).await {
+            match crate::export::export(imp, since, &given, unfenced).await {
                 Ok(x) => {
                     out(&x);
                     if x.errors.is_empty() {

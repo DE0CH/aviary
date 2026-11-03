@@ -42,6 +42,10 @@ pub struct Known {
 /// # Errors
 /// A statement error.
 pub async fn known(imp: &Importer) -> Result<HashMap<Uuid, Known>> {
+    known_where(imp, None).await
+}
+
+async fn known_where(imp: &Importer, id: Option<Uuid>) -> Result<HashMap<Uuid, Known>> {
     let rows = imp
         .magpie
         .pool
@@ -49,8 +53,8 @@ pub async fn known(imp: &Importer) -> Result<HashMap<Uuid, Known>> {
         .await?
         .query(
             "select conversation_id, row_fp, files, failed_turns_fp, released_at is not null, sent_fp
-             from import_sources",
-            &[],
+             from import_sources where $1::uuid is null or conversation_id = $1",
+            &[&id],
         )
         .await?;
     let mut out = HashMap::new();
@@ -69,6 +73,14 @@ pub async fn known(imp: &Importer) -> Result<HashMap<Uuid, Known>> {
     Ok(out)
 }
 
+/// The `import_sources` row of one conversation, as [`known`] has it.
+///
+/// # Errors
+/// A statement error.
+pub async fn known_of(imp: &Importer, id: Uuid) -> Result<Option<Known>> {
+    Ok(known_where(imp, Some(id)).await?.remove(&id))
+}
+
 /// What one conversation's sync did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,6 +95,9 @@ pub enum Outcome {
     Released,
     /// The id is a native conversation's.
     Conflict,
+    /// Deleted for good on the new side (an `import_purged` tombstone): never imported again, so the deletion
+    /// stays and reaches the old side with the reverse export.
+    Purged,
 }
 
 /// A pass's summary.
@@ -110,8 +125,12 @@ pub struct Report {
 /// One pass over every person's conversations (`only`: just these).
 ///
 /// # Errors
-/// The `cloudcli` read or the magpie read of `import_sources` failing; per-conversation errors are in the report.
+/// The mount not there ([`crate::tree::check_mount`]), the `cloudcli` read or the magpie read of `import_sources`
+/// failing, the leader lock lost; per-conversation errors are in the report.
+#[allow(clippy::too_many_lines)] // the conversations, then the purge, then the shares, in 7.4's order
 pub async fn pass(imp: &Importer, only: Option<&BTreeSet<Uuid>>) -> Result<Report> {
+    tree::check_mount(&imp.jfs)?;
+    imp.check_lock().await?;
     let snap = source::read(&imp.cloudcli).await?;
     let known = Arc::new(known(imp).await?);
     let mut report = Report::default();
@@ -122,6 +141,7 @@ pub async fn pass(imp: &Importer, only: Option<&BTreeSet<Uuid>>) -> Result<Repor
     let mut set = tokio::task::JoinSet::new();
     let mut seen: BTreeSet<Uuid> = BTreeSet::new();
     let mut failed_ids: BTreeSet<Uuid> = BTreeSet::new();
+    let mut purged_ids: BTreeSet<Uuid> = BTreeSet::new();
     for p in &snap.persons {
         for s in &p.sessions {
             let Ok(id) = s.id() else {
@@ -139,11 +159,15 @@ pub async fn pass(imp: &Importer, only: Option<&BTreeSet<Uuid>>) -> Result<Repor
             let (person, schema, key, s) = (p.person.clone(), p.schema.clone(), p.key.clone(), s.clone());
             set.spawn(async move {
                 let _permit = gate.acquire_owned().await;
-                let r = sync_conversation(&imp, &person, &schema, &key, &s, &failed, known.get(&id)).await;
+                let r = match imp.check_lock().await {
+                    Ok(()) => sync_conversation(&imp, &person, &schema, &key, &s, &failed, known.get(&id)).await,
+                    Err(e) => Err(e),
+                };
                 (id, r)
             });
         }
     }
+    let mut lost = false;
     while let Some(j) = set.join_next().await {
         let Ok((id, r)) = j else {
             report
@@ -156,7 +180,15 @@ pub async fn pass(imp: &Importer, only: Option<&BTreeSet<Uuid>>) -> Result<Repor
             Ok(Outcome::Created) => report.created += 1,
             Ok(Outcome::Changed) => report.changed += 1,
             Ok(Outcome::Conflict) => report.conflicts.push(id),
+            Ok(Outcome::Purged) => {
+                purged_ids.insert(id);
+            }
             Ok(Outcome::Unchanged | Outcome::Released) | Err(Error::Released) => {}
+            Err(Error::LockLost) => {
+                // stop at once: another writer may hold the lock now
+                lost = true;
+                set.abort_all();
+            }
             Err(e) => {
                 let msg = e.to_string();
                 tracing::warn!(conversation = %id, error = %msg, "conversation not synced");
@@ -166,6 +198,9 @@ pub async fn pass(imp: &Importer, only: Option<&BTreeSet<Uuid>>) -> Result<Repor
             }
         }
     }
+    if lost {
+        return Err(Error::LockLost);
+    }
     if only.is_none() {
         match crate::viewas::pass(imp, &imp.jarvis).await {
             Ok(c) => report.view_as = c,
@@ -174,14 +209,30 @@ pub async fn pass(imp: &Importer, only: Option<&BTreeSet<Uuid>>) -> Result<Repor
     }
     if only.is_none() && snap.problems.is_empty() {
         for (id, k) in known.iter() {
-            if !k.released && !seen.contains(id) && conv::purge(imp, *id).await? {
-                report.purged += 1;
+            if k.released || seen.contains(id) {
+                continue;
+            }
+            imp.check_lock().await?;
+            match conv::purge(imp, *id).await {
+                Ok(true) => report.purged += 1,
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::warn!(conversation = %id, error = %e, "conversation not purged");
+                    report.errors.push((id.to_string(), format!("purge: {e}")));
+                }
             }
         }
     }
     // shares after the conversations (and the purge of vanished rows, so a share of a purged one is revoked)
     if only.is_none() {
-        match crate::share::pass(imp, &snap.shares, &failed_ids).await {
+        imp.check_lock().await?;
+        let presence = crate::share::Presence {
+            skip: failed_ids,
+            in_snapshot: seen,
+            unreadable: snap.problems.iter().map(|(s, _)| s.clone()).collect(),
+            purged: purged_ids,
+        };
+        match crate::share::pass(imp, &snap.shares, &presence).await {
             Ok(c) => {
                 for (id, e) in &c.errors {
                     report.errors.push((format!("share {id}"), e.clone()));
@@ -242,15 +293,23 @@ pub async fn sync_conversation(
         };
         match conv::create(imp, person, schema, s, first).await? {
             Created::Conflict => return Ok(Outcome::Conflict),
+            Created::Purged => return Ok(Outcome::Purged),
             Created::New => outcome = Outcome::Created,
             Created::Imported => {}
         }
         empty
     };
+    // the main transcript of a sessions row that still exists does not just vanish: a mount that is not there, or a
+    // folder gone for a moment, must not unlink the conversation's transcript (and retract its events)
+    if k.files.contains_key(&main) && !sources.contains_key(&main) {
+        return Err(Error::Source(format!(
+            "{main} was synced before and is not on the mount now (its sessions row is still there)"
+        )));
+    }
     let imported = failed::ids_of(&k.failed_fp);
     let new_failed: Vec<FailedTurn> = failed.iter().filter(|f| !imported.contains(&f.id)).cloned().collect();
     let row_changed = k.row_fp != s.fingerprint();
-    let (snapshots, sent_fp) = sent::read(&imp.jfs, id)?;
+    let (snapshots, mut sent_fp) = sent::read(&imp.jfs, id)?;
     let sent_changed = sent_fp != k.sent_fp;
     if !stats_changed(&sources, &k.files) && !row_changed && new_failed.is_empty() && !sent_changed {
         return Ok(outcome);
@@ -258,7 +317,9 @@ pub async fn sync_conversation(
     let workspace = tree::workspace_uploads(&imp.jfs, id)?;
     let mut w = Writer::new(imp, id, person, workspace);
     let mut placement = Placement::new(person, id, new_failed.clone());
-    let place = !new_failed.is_empty() && sources.contains_key(&main) && w.file(&main).await?.is_none();
+    // failed turns are placed by time while the main transcript's first import has not been recorded (also when an
+    // earlier pass wrote part of it and stopped: the placement resumes where it ended)
+    let place = !new_failed.is_empty() && sources.contains_key(&main) && !k.files.contains_key(&main);
     let (files, wrote) = if place {
         w.sync_all(&sources, &k.files, Some(main.as_str()), Some(&mut placement))
             .await?
@@ -278,9 +339,19 @@ pub async fn sync_conversation(
     let mut changed = wrote || !new_failed.is_empty();
     if sent_changed {
         let done = sent::imported(imp, id).await?;
+        let mut waiting = false;
         for snap in snapshots.iter().filter(|s| !done.contains(&s.tool_use_id)) {
+            // a folder the old hook may still be writing waits for a later pass (all of its files at once)
+            if !snap.settled(imp.sent_quiet) {
+                waiting = true;
+                continue;
+            }
             sent::import(imp, person, id, snap).await?;
             changed = true;
+        }
+        if waiting {
+            // never equal to a read's fingerprint: the next pass looks again, and verification waits
+            sent_fp = format!("{}{sent_fp}", sent::WAITING);
         }
     }
     if row_changed {

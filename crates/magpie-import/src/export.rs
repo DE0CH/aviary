@@ -1,17 +1,25 @@
 //! The reverse export (cutover 14.3, `magpie import export [--since <time>] [<id>…]`): magpie's copy of each owned
 //! conversation with events after `since` (or created after it) written back to the old stack, so that a fresh old
-//! child reads what magpie holds. The caller has fenced the conversation (the reverse hand-over, 14.2, is WP-52's);
-//! the export writes nothing to magpie.
+//! child reads what magpie holds. It runs in the fenced state (14.3): a conversation without the reverse fence
+//! (`legacy_fence_at` set on the owned conversation by the reverse hand-over, 14.2, WP-52's) is the export's error and
+//! is not written, unless `--unfenced` says the operator has stopped writes some other way. The export writes nothing
+//! to magpie. It checks the mount first and stops when the leader lock is lost.
 //!
 //! - Transcript files: every cc file reconstructed through magpie's read path and written to
 //!   `users/<key>/claude/<cc path>` (a temporary file in the same folder, then a rename; mode 0600, uid and gid 1000
-//!   as Claude Code writes them, when the export runs as root).
+//!   as Claude Code writes them: a file that cannot be given to that uid fails the export, since the old sandbox could
+//!   not read it). A file the old side has that magpie's scope no longer has (removed or relocated on the new side)
+//!   is deleted: any file under the conversation's session folder `projects/-workspace/<psid>/` or its
+//!   `aviary-memory/<conversation>/` folder, and any path the importer recorded for it (`import_sources.files`); the
+//!   person's shared memory folder is never touched.
 //! - Auto-memory (decision 6): the conversation's `projects/-workspace/memory/**` goes to
 //!   `users/<key>/claude/aviary-memory/<conversation>/`, which the old stack does not read.
 //! - The sessions row (`cc_u<key>.sessions`): upserted with the conversation's id, Claude Code session id, title,
-//!   `name_source`, Recently deleted, `updated_at` and `jsonl_path`. A person with no schema yet gets no row.
+//!   `name_source`, Recently deleted, `updated_at`, `jsonl_path` and `project_path` (`/workspace`, with the
+//!   schema's `projects` row when it lacks one, as the old rows have). A person with no schema yet gets no row.
 //! - Failed turns after `since` that never reached Claude Code (no Claude Code event in the turn) become
-//!   `jarvis_failed_turns` rows with the old sentence of their error.
+//!   `jarvis_failed_turns` rows with the old sentence of their error (once each, by their end time; a turn with no
+//!   end time is not exported).
 //! - Sent files after `since`: `sent/<conversation>/<toolUseId>/<path>` from their blobs.
 //! - Shares made on the new side, shares revoked there, and conversations deleted for good there: [`crate::export_more`].
 //! - Not exported: view-as rows (they stay in magpie's audit); uploads (already in the shared workspace).
@@ -31,6 +39,9 @@ use crate::{Error, Importer, Result};
 
 /// Claude Code's uid and gid in the old sandboxes.
 pub const OWNER_ID: u32 = 1000;
+
+/// The project every old conversation ran in (`sessions.project_path`, `projects.project_path`).
+pub const PROJECT_PATH: &str = "/workspace";
 
 /// What the export did.
 #[derive(Debug, Default, Clone, Serialize)]
@@ -64,6 +75,8 @@ pub struct Conversation {
     pub failed_turns: usize,
     /// Sent files written.
     pub sent_files: usize,
+    /// Old-side files deleted because magpie's scope no longer has them.
+    pub removed: usize,
     /// Its shares written to the old side, and old share links revoked.
     pub shares: crate::export_more::Shares,
 }
@@ -98,13 +111,38 @@ pub async fn targets(imp: &Importer, since: Option<OffsetDateTime>, ids: &[Uuid]
     Ok(rows.iter().map(|r| r.get(0)).collect())
 }
 
-/// Runs the export.
+/// Whether the owned conversation `id` is reverse-fenced (`legacy_fence_at` set while not migrating).
+async fn fenced(imp: &Importer, id: Uuid) -> Result<bool> {
+    Ok(imp
+        .magpie
+        .pool
+        .get()
+        .await?
+        .query_one(
+            "select exists (select 1 from conversations where id = $1 and not migrating
+                            and legacy_fence_at is not null)",
+            &[&id],
+        )
+        .await?
+        .get(0))
+}
+
+/// Runs the export; `unfenced` exports conversations that are not reverse-fenced too.
 ///
 /// # Errors
-/// The read of the targets; per-conversation errors are in the result.
-pub async fn export(imp: &Importer, since: Option<OffsetDateTime>, ids: &[Uuid]) -> Result<Exported> {
+/// The mount not there, the read of the targets, the leader lock lost; per-conversation errors are in the result.
+pub async fn export(imp: &Importer, since: Option<OffsetDateTime>, ids: &[Uuid], unfenced: bool) -> Result<Exported> {
+    crate::tree::check_mount(&imp.jfs)?;
     let mut out = Exported::default();
     for id in targets(imp, since, ids).await? {
+        imp.check_lock().await?;
+        if !unfenced && !fenced(imp, id).await? {
+            out.errors.push((
+                id.to_string(),
+                "not reverse-fenced: not exported (a native turn may be writing it; --unfenced overrides)".to_owned(),
+            ));
+            continue;
+        }
         match conversation(imp, id, since).await {
             Ok(c) => out.conversations.push(c),
             Err(e) => {
@@ -134,17 +172,31 @@ fn destination(claude: &Path, id: Uuid, path: &str) -> Result<PathBuf> {
     }
 }
 
-pub(crate) fn own(p: &Path) {
-    // only root can give the file to Claude Code's uid (the export's writer sidecar runs as root)
-    match std::os::unix::fs::chown(p, Some(OWNER_ID), Some(OWNER_ID)) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
-        Err(e) => tracing::warn!(error = %e, "chown failed"),
+/// Gives `p` to `owner` (uid and gid; the writer sidecar runs as root). A file Claude Code's uid cannot own is one
+/// the old sandbox cannot read (0600): an error, never a quiet success.
+pub(crate) fn own(owner: Option<u32>, p: &Path) -> Result<()> {
+    let Some(id) = owner else { return Ok(()) };
+    std::os::unix::fs::lchown(p, Some(id), Some(id))
+        .map_err(|e| Error::Source(format!("{} cannot be given to uid {id}: {e}", p.display())))
+}
+
+/// Makes `dir` and its missing parents, each given to `owner`.
+pub(crate) fn make_dirs(owner: Option<u32>, dir: &Path) -> Result<()> {
+    if dir.is_dir() {
+        return Ok(());
+    }
+    if let Some(parent) = dir.parent() {
+        make_dirs(owner, parent)?;
+    }
+    match std::fs::create_dir(dir) {
+        Ok(()) => own(owner, dir),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(e.into()),
     }
 }
 
 /// A temporary file beside `dest`, written by `fill`, then renamed over `dest` (folders made and owned).
-async fn replace<F, Fut>(dest: &Path, write: F) -> Result<u64>
+async fn replace<F, Fut>(owner: Option<u32>, dest: &Path, write: F) -> Result<u64>
 where
     F: FnOnce(std::fs::File) -> Fut,
     Fut: std::future::Future<Output = Result<(std::fs::File, u64)>>,
@@ -152,10 +204,7 @@ where
     let dir = dest
         .parent()
         .ok_or_else(|| Error::Source(format!("no folder for {}", dest.display())))?;
-    if !dir.exists() {
-        std::fs::create_dir_all(dir)?;
-        own(dir);
-    }
+    make_dirs(owner, dir)?;
     let name = dest.file_name().and_then(|n| n.to_str()).unwrap_or("file");
     let tmp = dir.join(format!(".{name}.aviary-export-{}", Uuid::new_v4().simple()));
     let opened = {
@@ -176,7 +225,10 @@ where
     };
     done.sync_all()?;
     drop(done);
-    own(&tmp);
+    if let Err(e) = own(owner, &tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
     std::fs::rename(&tmp, dest)?;
     Ok(n)
 }
@@ -189,7 +241,7 @@ pub(crate) async fn write_scope(imp: &Importer, scope: Uuid, path: &str, dest: &
         length: None,
     };
     let res = reconstruct::scope_file(imp.magpie.clone(), scope, &q).await?;
-    replace(dest, |mut f| async move {
+    replace(imp.owner, dest, |mut f| async move {
         let mut body = res.into_body();
         let mut n = 0u64;
         while let Some(frame) = body.frame().await {
@@ -249,14 +301,16 @@ async fn conversation(imp: &Importer, id: Uuid, since: Option<OffsetDateTime>) -
         person_key: key.clone(),
         ..Conversation::default()
     };
-    for (path, _) in crate::verify::magpie_files(imp, id).await? {
-        let dest = destination(&claude, id, &path)?;
-        out.bytes += write_scope(imp, id, &path, &dest).await?;
+    let scope = crate::verify::magpie_files(imp, id).await?;
+    for path in scope.keys() {
+        let dest = destination(&claude, id, path)?;
+        out.bytes += write_scope(imp, id, path, &dest).await?;
         out.files += 1;
         if path.starts_with(crate::tree::MEMORY) {
             out.memory += 1;
         }
     }
+    out.removed = remove_stale(imp, id, &claude, &m.psid, &scope).await?;
     let base = imp.jfs.join("sent").join(id.to_string());
     out.sent_files = write_sent(imp, id, since, None, &base).await?.len();
     let schema = format!("cc_{key}");
@@ -276,13 +330,15 @@ async fn conversation(imp: &Importer, id: Uuid, since: Option<OffsetDateTime>) -
         conn.execute(
             &format!(
                 "insert into {schema}.sessions (session_id, provider, provider_session_id, custom_name, name_source,
-                                               \"isArchived\", deleted_at, created_at, updated_at, jsonl_path, model)
-                 values ($1, 'claude', $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                                               \"isArchived\", deleted_at, created_at, updated_at, jsonl_path, model,
+                                               project_path)
+                 values ($1, 'claude', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                  on conflict (session_id) do update set provider_session_id = excluded.provider_session_id,
                      custom_name = excluded.custom_name, name_source = excluded.name_source,
                      \"isArchived\" = excluded.\"isArchived\", deleted_at = excluded.deleted_at,
                      updated_at = excluded.updated_at, jsonl_path = excluded.jsonl_path,
-                     model = coalesce(excluded.model, {schema}.sessions.model)"
+                     model = coalesce(excluded.model, {schema}.sessions.model),
+                     project_path = coalesce({schema}.sessions.project_path, excluded.project_path)"
             ),
             &[
                 &id.to_string(),
@@ -295,9 +351,29 @@ async fn conversation(imp: &Importer, id: Uuid, since: Option<OffsetDateTime>) -
                 &ts(m.activity),
                 &jsonl,
                 &m.model,
+                &PROJECT_PATH,
             ],
         )
         .await?;
+        // the project the row belongs to (CloudCLI groups and searches by it), when the schema has none yet
+        let projects: bool = conn
+            .query_one(
+                "select to_regclass(format('%I.projects', $1::text)) is not null",
+                &[&schema],
+            )
+            .await?
+            .get(0);
+        if projects {
+            let project_id = Uuid::new_v5(&crate::NS, format!("project:{key}:{PROJECT_PATH}").as_bytes()).to_string();
+            conn.execute(
+                &format!(
+                    "insert into {schema}.projects (project_id, project_path) values ($1, $2)
+                     on conflict do nothing"
+                ),
+                &[&project_id, &PROJECT_PATH],
+            )
+            .await?;
+        }
         out.row = true;
         out.failed_turns = failed(imp, &conn, &schema, id, since).await?;
     }
@@ -335,10 +411,13 @@ async fn failed(
     for r in rows {
         let code: Option<String> = r.get(0);
         let detail: Option<String> = r.get(1);
-        let ended: Option<OffsetDateTime> = r.get(2);
+        let Some(ended) = r.get::<_, Option<OffsetDateTime>>(2) else {
+            // no end time to key it on: each export would add it again
+            continue;
+        };
         let text: Option<String> = r.get(3);
         let user_at: Option<OffsetDateTime> = r.get(4);
-        let error_at = ts(ended.unwrap_or_else(OffsetDateTime::now_utc));
+        let error_at = ts(ended);
         let sentence = crate::failed::sentence_of(code.as_deref().unwrap_or(""), detail.as_deref());
         let wrote = conn
             .execute(
@@ -353,6 +432,85 @@ async fn failed(
         n += usize::try_from(wrote).unwrap_or(0);
     }
     Ok(n)
+}
+
+/// Deletes the old side's files of conversation `id` that magpie's scope `scope` no longer has: everything under its
+/// session folder `projects/-workspace/<psid>/` and its `aviary-memory/<id>/` folder, and every path the importer
+/// recorded for it (a main transcript before a relocation, an earlier session folder's files); never the person's
+/// shared memory folder. How many.
+async fn remove_stale(
+    imp: &Importer,
+    id: Uuid,
+    claude: &Path,
+    psid: &str,
+    scope: &std::collections::BTreeMap<String, u64>,
+) -> Result<usize> {
+    let memory = format!("{}/", crate::tree::MEMORY);
+    let mut candidates: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    if let Some(r) = crate::verify::row(imp, id).await? {
+        candidates.extend(r.files.into_keys().filter(|p| !p.starts_with(&memory)));
+    }
+    let mut session = Vec::new();
+    let folder = format!("{}/{psid}", crate::tree::PROJECT);
+    under(claude, &folder)?;
+    files_under(claude, &folder, &mut session)?;
+    candidates.extend(session);
+    let mut n = 0;
+    for p in &candidates {
+        if scope.contains_key(p) {
+            continue;
+        }
+        let f = under(claude, p)?;
+        if std::fs::symlink_metadata(&f).is_ok_and(|m| !m.is_dir()) {
+            std::fs::remove_file(&f)?;
+            n += 1;
+        }
+    }
+    let mem = claude.join("aviary-memory").join(id.to_string());
+    let mut exported = Vec::new();
+    files_under(&mem, "", &mut exported)?;
+    for rel in exported {
+        let cc = format!("{memory}{rel}");
+        if !scope.contains_key(&cc) {
+            std::fs::remove_file(under(&mem, &rel)?)?;
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+/// The files under `base/rel` as `rel/…` paths (`rel` empty: relative to `base`); nothing for a folder that is not
+/// there. A name that is not UTF-8 is an error.
+fn files_under(base: &Path, rel: &str, out: &mut Vec<String>) -> Result<()> {
+    let dir = if rel.is_empty() {
+        base.to_path_buf()
+    } else {
+        base.join(rel)
+    };
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
+    };
+    for e in entries {
+        let e = e?;
+        let name = crate::tree::utf8_name(&e, rel)?;
+        let child = if rel.is_empty() { name } else { format!("{rel}/{name}") };
+        let t = e.file_type()?;
+        if t.is_dir() {
+            files_under(base, &child, out)?;
+        } else {
+            out.push(child);
+        }
+    }
+    Ok(())
 }
 
 /// The sends of `id` after `since` and up to event `upto` written under `base` as `<toolUseId>/<path>` from their
@@ -388,7 +546,7 @@ pub(crate) async fn write_sent(
             .remove(&sha)
             .ok_or_else(|| Error::Source(format!("sent file {path}: its blob is missing")))?;
         let dest = under(&under(base, &tool)?, &path)?;
-        replace(&dest, |mut f| async move {
+        replace(imp.owner, &dest, |mut f| async move {
             f.write_all(&bytes)?;
             Ok((f, bytes.len() as u64))
         })

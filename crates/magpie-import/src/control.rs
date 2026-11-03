@@ -197,6 +197,7 @@ pub async fn reset(imp: &Importer) -> Result<u64> {
         .collect();
     let mut n = 0;
     for id in ids {
+        imp.check_lock().await?;
         if crate::conv::purge(imp, id).await? {
             n += 1;
         }
@@ -227,44 +228,116 @@ pub async fn unfence(imp: &Importer, id: Uuid) -> Result<bool> {
 pub struct Forced {
     /// The conversation.
     pub conversation: Uuid,
-    /// Tickets expired first.
+    /// Tickets expired first (an old turn still running under one is cut off: the operator forces the release
+    /// knowing that).
     pub tickets_expired: u64,
+    /// Verification before the fence passed.
+    pub verified: bool,
+    /// What verification found different (released anyway, as forced).
+    pub mismatches: Vec<crate::verify::Mismatch>,
+    /// What verification found not synced yet (the final sync inside the fence syncs it).
+    pub pending: Vec<String>,
+    /// Verification's own error, when it could not run.
+    pub verify_error: Option<String>,
     /// Fence to release, seconds.
     pub fence_seconds: f64,
 }
 
+/// The final sync of one conversation inside its fence: one read of its person's schema, then the same sync a pass
+/// makes (files, sessions row, failed turns, sent files).
+async fn final_sync(imp: &Importer, id: Uuid) -> Result<()> {
+    crate::tree::check_mount(&imp.jfs)?;
+    let Some(row) = crate::verify::row(imp, id).await? else {
+        return Err(Error::Source(format!("{id} was not imported")));
+    };
+    let snap = crate::source::read_schema(&imp.cloudcli, &row.schema).await?;
+    if let Some((_, why)) = snap.problems.first() {
+        return Err(Error::Source(format!("schema {}: {why}", row.schema)));
+    }
+    let Some((p, s)) = crate::pass::find(&snap, id) else {
+        return Err(Error::Source(format!("{id}: its sessions row is gone")));
+    };
+    let known = crate::pass::known_of(imp, id).await?;
+    let failed = p.failed.get(&s.session_id).cloned().unwrap_or_default();
+    crate::pass::sync_conversation(imp, &p.person, &p.schema, &p.key, s, &failed, known.as_ref()).await?;
+    Ok(())
+}
+
 /// `release <id> --force` (cutover 7.7 step 3, A2 rehearsal 7): closes the conversation's open tickets (an open
-/// ticket otherwise refuses the fence and the release for ever), fences it, releases it with `release_reason =
-/// forced`; the fence time goes on `magpie_fence_seconds` of this process's registry. The old title's `name_source`
-/// is kept as imported.
+/// ticket otherwise refuses the fence and the release for ever; an old turn still running is cut off, which the
+/// operator accepts by forcing), verifies it (a mismatch is reported, not a refusal), fences it, syncs it once more
+/// inside the fence and re-stats every source and fingerprint against what that sync recorded (cutover 7.8): anything
+/// that changed meanwhile lifts the fence and fails the release. Then it releases with `release_reason = forced`;
+/// the fence time goes on `magpie_fence_seconds` of this process's registry. The old title's `name_source` is kept as
+/// imported.
 ///
 /// # Errors
-/// [`Error::Source`] when it cannot be fenced or released (not migrating, a ticket taken meanwhile); a statement
-/// error.
+/// [`Error::Source`] when it cannot be fenced or released (not migrating, a ticket taken meanwhile, a source that
+/// changed inside the fence, the fence's lease over before the release); the lock lost; a statement error.
 pub async fn release_forced(imp: &Importer, id: Uuid) -> Result<Forced> {
+    imp.check_lock().await?;
     let pool = &imp.magpie.pool;
     let at = tickets::now(pool).await?;
     let expired = tickets::expire(pool, id, at).await?;
     // verified before the fence: the fence is a 3 s lease
     let verdict = crate::verify::verify(imp, id).await;
-    match &verdict {
-        Ok(v) if !v.ok() => {
-            tracing::warn!(conversation = %id, mismatches = ?v.mismatches, "released by force with a mismatch");
+    let mut out = Forced {
+        conversation: id,
+        tickets_expired: expired,
+        verified: false,
+        mismatches: Vec::new(),
+        pending: Vec::new(),
+        verify_error: None,
+        fence_seconds: 0.0,
+    };
+    match verdict {
+        Ok(v) => {
+            if !v.ok() {
+                tracing::warn!(
+                    conversation = %id, mismatches = ?v.mismatches, pending = ?v.pending,
+                    "released by force without a clean verification"
+                );
+            }
+            out.verified = v.ok();
+            out.mismatches = v.mismatches;
+            out.pending = v.pending;
         }
-        Ok(_) => {}
-        Err(e) => tracing::warn!(conversation = %id, error = %e, "released by force without a verification"),
+        Err(e) => {
+            tracing::warn!(conversation = %id, error = %e, "released by force without a verification");
+            out.verify_error = Some(e.to_string());
+        }
     }
+    imp.check_lock().await?;
     match fence::fence(pool, id).await? {
         fence::Fence::Fenced(_) | fence::Fence::AlreadyFenced => {}
         other => return Err(Error::Source(format!("{id} cannot be fenced: {other:?}"))),
     }
+    // inside the fence: whatever the old stack wrote since the verification is synced now, then nothing may move
+    let changes = match final_sync(imp, id).await {
+        Ok(()) => crate::verify::changed_since_sync(imp, id).await,
+        Err(e) => Err(e),
+    };
+    let changes = match changes {
+        Ok(c) => c,
+        Err(e) => vec![format!("the final sync failed: {e}")],
+    };
+    if !changes.is_empty() {
+        let _ = fence::unfence(pool, id).await;
+        return Err(Error::Source(format!(
+            "{id} changed inside the fence and was not released: {}",
+            changes.join(", ")
+        )));
+    }
+    if let Err(e) = imp.check_lock().await {
+        let _ = fence::unfence(pool, id).await;
+        return Err(e);
+    }
     let held = fence::release(pool, id, &fence::Release::default(), "forced", &imp.magpie.legacy).await?;
     match held {
-        Ok(s) => Ok(Forced {
-            conversation: id,
-            tickets_expired: expired,
-            fence_seconds: s,
-        }),
+        Ok(s) => {
+            out.fence_seconds = s;
+            Ok(out)
+        }
         Err(why) => {
             let _ = fence::unfence(pool, id).await;
             Err(Error::Source(format!("{id} was not released: {why:?}")))

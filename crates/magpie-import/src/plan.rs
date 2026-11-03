@@ -120,6 +120,7 @@ fn longest_line(abs: &std::path::Path, size: u64) -> Result<u64> {
 ///
 /// # Errors
 /// A source read error.
+#[allow(clippy::too_many_lines)] // the schemas, then the shares, in the order the plan reports them
 pub async fn plan(imp: &Importer) -> Result<Plan> {
     let snap = source::read(&imp.cloudcli).await?;
     let known = crate::pass::known(imp).await?;
@@ -190,10 +191,14 @@ pub async fn plan(imp: &Importer) -> Result<Plan> {
         plan.bytes += sp.bytes;
         plan.schemas.push(sp);
     }
-    let ids: std::collections::BTreeSet<&str> = snap
+    let rows: std::collections::BTreeMap<&str, (&str, &str)> = snap
         .persons
         .iter()
-        .flat_map(|p| p.sessions.iter().map(|s| s.session_id.as_str()))
+        .flat_map(|p| {
+            p.sessions
+                .iter()
+                .map(|s| (s.session_id.as_str(), (p.key.as_str(), s.psid())))
+        })
         .collect();
     for s in &snap.shares {
         if s.revoked_at.is_some() {
@@ -201,11 +206,26 @@ pub async fn plan(imp: &Importer) -> Result<Plan> {
             continue;
         }
         plan.shares.live += 1;
-        if !ids.contains(s.session_id.as_str()) {
+        let Some((key, psid)) = rows.get(s.session_id.as_str()) else {
             plan.shares.orphaned += 1;
-        }
-        if !crate::share::folder(&imp.jfs, s).join("transcript.jsonl").is_file() {
+            continue;
+        };
+        let frozen = crate::share::folder(&imp.jfs, s).join("transcript.jsonl");
+        if !frozen.is_file() {
             plan.shares.no_transcript += 1;
+            continue;
+        }
+        // the share's frozen transcript must be a byte prefix of the live one (cutover 7.4.4): the import does not
+        // cut a share to the lines the two have in common
+        let live = tree::claude_dir(&imp.jfs, key).join(tree::main_path(psid));
+        let size = std::fs::metadata(&frozen)?.len();
+        let (want, n) = tree::hash_prefix(&frozen, size)?;
+        let prefix = live.is_file() && tree::hash_prefix(&live, size)? == (want, n);
+        if !prefix {
+            plan.blockers.push(format!(
+                "share {}: its frozen transcript is not a prefix of its conversation's transcript",
+                s.id
+            ));
         }
     }
     lines.sort_by_key(|l| std::cmp::Reverse(l.bytes));

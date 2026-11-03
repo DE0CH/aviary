@@ -31,12 +31,13 @@ own library, so an imported conversation is what live writes would have made: cc
 | `src/kube.rs` | the old cluster's API with `reqwest` and `tungstenite` (the Kubernetes crates are hermit's): ui pods in every phase, `pods/exec` over `v4.channel.k8s.io`; bindings `MAGPIE_IMPORT_LEGACY_KUBE_URL`, `MAGPIE_IMPORT_LEGACY_KUBE_TOKEN`, the CA at `/etc/legacy-kube-ca/ca.crt` |
 | `src/lock.rs` | the leader lock (`hashtext('magpie-import.leader')`): the hand-over replicas' bid, a one-shot command's wait (seen in `pg_locks`), the waiter check the loop yields to |
 | `src/control.rs` | `status`, `hold`, `reset --yes`, `unfence`, `release <id> --force` |
-| `src/export.rs` | the reverse export (14.3): an owned conversation's cc files (memory to `aviary-memory/<id>/`), its sessions row, its failed turns and sent files written back to the old side (temporary file, then rename; 0600, uid 1000 when root) |
+| `src/export.rs` | the reverse export (14.3): a reverse-fenced owned conversation's cc files (memory to `aviary-memory/<id>/`; old-side files its scope no longer has deleted), its sessions row (with `project_path`), its failed turns and sent files written back to the old side (temporary file, then rename; 0600, uid 1000, or an error) |
 | `src/parity.rs` | `parity <id>…` (10.2 rehearsal 6): magpie's rows through pigeon's own `PaseoProjector` (zh), each normalised to `[kind, role, text sha256, tool name, tool status, attachment names]` |
 | `src/cli.rs` | `magpie import <command>`: one JSON document on stdout, logs on stderr; every command but `plan` and `status` holds the leader lock |
 | `tests/import.rs` | the end-to-end tests against the CI Postgres and S3 with fixtures made in the test |
 | `tests/shares.rs` | prefix and non-prefix frozen transcripts, revoked before and after the import, a share of a gone conversation, `reset` |
-| `tests/export.rs` | 7.12 item 7: import, release, grow the conversation on the new side, export, the old side's files equal magpie's reconstruction, the sessions row and the failed turn match, memory in `aviary-memory/<id>/`, a re-import verifies |
+| `tests/export.rs` | 7.12 item 7: import, release, grow the conversation on the new side, export (refused unfenced), the old side's files equal magpie's reconstruction, a stale old-side file deleted, the sessions row and the failed turn match, memory in `aviary-memory/<id>/`, a re-import verifies; a purge on the new side is not re-imported by a pass before the export |
+| `tests/handover.rs` | `release --force`'s final sync inside the fence, `verified_stats`' fingerprints, the re-ingest's record and limbo, a rename onto an existing path, a released conversation's check (shared memory left out, new files seen), the mount check, the sent folders' quiet period, the lost lock, read-only sources, a cleared title, non-UTF-8 names |
 | `tests/holds_js.rs`, `tests/kube.rs` | `holds.js` against fake CloudCLI children (node), the transport against a fake Kubernetes API |
 | `tests/convergence.rs` | the property test of cutover 7.12 item 3 (random source changes, a pass at random points: byte-exact, visible events = the source's lines) |
 
@@ -62,24 +63,48 @@ own library, so an imported conversation is what live writes would have made: cc
   (magpie 19.1): its `upto_seq` covers the events of the main-transcript lines the frozen `transcript.jsonl` holds
   (matched line by line by sha256 from offset 0, up to the next line that has an event), and its snapshot scope is
   the conversation's scope with the main transcript cut there. For a frozen transcript that is a byte prefix of the
-  live one (all five live shares on 2026-11-03) that is exactly the frozen file. For one that is not, the share keeps
-  the common lines (`shares.notPrefix` in the pass report), because a hidden copy would have to be a conversation
-  that is neither listed nor in Recently deleted, which magpie's model has no state for (a deleted source answers
-  404, magpie 12.3). The snapshot's `tool-results/` and `subagents/` are the conversation's at import time (a
-  superset of the frozen `session/`).
-- A share whose conversation has no sessions row is stored revoked (`deleted`), as the old stack answers 404 for it.
-  `reset --yes` removes the imported shares with their conversations.
+  live one (all five live shares on 2026-11-03) that is exactly the frozen file. One that is not is a `plan` blocker
+  and the share's error in every pass (never cut to the common lines, which would drop what the old page shows
+  after them); a hidden copy of the frozen files would have to be a conversation that is neither listed nor in
+  Recently deleted, which magpie's model has no state for (a deleted source answers 404, magpie 12.3). The
+  snapshot's `tool-results/` and `subagents/` are the conversation's at import time (a superset of the frozen
+  `session/`).
+- A share whose conversation's sessions row is gone (missing from a read with no problem for its owner's schema) is
+  stored revoked (`deleted`), as the old stack answers 404 for it; one whose conversation is only missing for now
+  waits, and one stored `deleted` is imported live when its row appears. `reset --yes` removes the imported shares
+  with their conversations.
+- `verified_stats` is `{files: {<cc path>: [size, mtime_ns, ino]}, rowFp, failedTurns, sentFp}` from verification's
+  own read; verification passes only when the row, failed turns and sent folders are what the last pass synced.
+  `verify::changed_since_verify` and `verify::changed_since_sync` are the release's re-stat (7.8).
+- `release <id> --force` expires the open tickets first, so an old turn still running is cut off: forcing is the
+  operator's call (Deyao, 2026-11-03: forcing may disrupt what is running). It then verifies (reported in its JSON,
+  not a refusal), fences, syncs once more inside the fence and re-stats; a change inside the fence lifts it and
+  fails.
+- A `sent/<conversation>/<toolUseId>/` folder is imported once nothing in it changed for 15 s (`sent::QUIET`); until
+  then the recorded `sent_fp` carries `waiting:` so the next pass looks again and verification waits.
+- Every pass, `final sync` and export first checks that `/jfs/users` holds something (an empty mount point would read
+  as "everything deleted"), and a main transcript that vanished while its sessions row is there is the conversation's
+  error, not an unlink. A name that is not UTF-8 is an error, never a skipped file.
+- One-shot commands hold the leader lock on one connection and check it (`pg_locks`, this backend) before each
+  conversation's write; a lost lock stops the command (`Error::LockLost`). The old databases are opened with
+  `default_transaction_read_only = on` (`aviary_pg::connect_read_only`) for every command but `export`.
 
-- `export` does not fence: the reverse hand-over (14.2, WP-52) fences, calls it and unfences. Without `--since` it
-  exports every owned conversation. A failed turn is exported when it never reached Claude Code (no Claude Code
-  event in the turn: those are the ones the old stack kept in `jarvis_failed_turns`), with the Traditional Chinese
-  sentence of its code, once per `error_at`.
+- `export` does not fence: the reverse hand-over (14.2, WP-52) fences (`legacy_fence_at` on the owned conversation),
+  calls it and unfences. A target without that fence is the export's error and is not written, unless `--unfenced`.
+  Without `--since` it exports every owned conversation. A failed turn is exported when it never reached Claude Code
+  (no Claude Code event in the turn: those are the ones the old stack kept in `jarvis_failed_turns`), with the
+  Traditional Chinese sentence of its code, once per `error_at` (a turn with no end time is not exported). Old-side
+  files the conversation's scope no longer has (under its session folder, its `aviary-memory/<id>/`, or recorded by
+  the importer) are deleted. The sessions row gets `project_path = '/workspace'`, as every old row has, and the
+  schema a `projects` row for it when it has none.
 - Shares made on the new side go back in the old layout (`users/<key>/shares/<id>/`: `transcript.jsonl` and
   `session/` from the share's snapshot scope, `sent/` from the blobs of the sends within it, `ws/` cloned from the
   share's workspace with `juicefs clone`) and a `cc_shared.shares` row with the same id. No `messages.json` is
   written: magpie does not hold `CloudCLI`'s message format, and the old share page builds a snapshot's history
-  from its transcript and session folder when that file is absent (DE0CH/claudecodeui `frozenHistory`, shipped by
-  the A1 ui rollout). A share revoked on the new side is revoked on the old side (row marked, folder removed).
+  from its transcript and session folder when that file is absent (DE0CH/claudecodeui 71b65cf `frozenHistory`).
+  Until the old ui runs that commit such an exported share answers 404 on the old stack: the A1 ui rollout's pin
+  must include it, and the runner's preflight checks that before any reverse export (WP-56/WP-40's, not this
+  crate's). A share revoked on the new side is revoked on the old side (row marked, folder removed).
 - Deletions for good on the new side: magpie's purge (not the importer's forget) writes a tombstone to
   `import_purged` (conversation, person, Claude Code session id, cc paths) while that table exists (dropped in
   A6). `export` deletes the old sessions row, its failed turns, its transcript and session folder, its

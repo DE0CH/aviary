@@ -3,7 +3,8 @@
 //!
 //! - [`connect`] builds a [`Pool`]: TLS required without certificate verification (`sslmode=require`), TCP
 //!   keepalives 60/10/6, the service's `application_name`, and per-connection `statement_timeout` and
-//!   `idle_in_transaction_session_timeout`.
+//!   `idle_in_transaction_session_timeout`; [`connect_read_only`] the same with `default_transaction_read_only = on`
+//!   (a database the process must only read).
 //! - [`migrate`] applies [`Migration`]s (embedded with [`migrations!`]) in order, once, under a session advisory
 //!   lock, recorded in `_migrations` with their sha256; a recorded migration whose sha256 differs is a start failure.
 //!   Each waits at most 5 s for a table lock and is retried with backoff, so an `alter table` never stalls the
@@ -38,7 +39,7 @@ pub use leader::Leader;
 pub use listen::{Listener, Waiter};
 pub use lock::LockKey;
 pub use migrate::{MIGRATIONS_TABLE, Migration, migrate};
-pub use pool::{Conn, Pool, connect};
+pub use pool::{Conn, Pool, connect, connect_read_only};
 pub use tokio_postgres::types::ToSql;
 pub use tokio_postgres::{Row, Statement};
 #[doc(hidden)]

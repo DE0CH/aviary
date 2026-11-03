@@ -184,10 +184,7 @@ async fn write_share(imp: &Importer, conn: &aviary_pg::Conn, conversation: Uuid,
     let parent = dir
         .parent()
         .ok_or_else(|| Error::Source(format!("no folder for {}", dir.display())))?;
-    if !parent.exists() {
-        std::fs::create_dir_all(parent)?;
-        own(parent);
-    }
+    crate::export::make_dirs(imp.owner, parent)?;
     // built under a temporary name beside it, then renamed into place (a folder left by a failed attempt goes first)
     let tmp = parent.join(format!(".{}.aviary-export-{}", s.id, Uuid::new_v4().simple()));
     let r = fill(imp, conversation, s, &tmp).await;
@@ -232,7 +229,7 @@ async fn fill(imp: &Importer, conversation: Uuid, s: &Share, dir: &Path) -> Resu
         use std::os::unix::fs::DirBuilderExt as _;
         std::fs::DirBuilder::new().mode(0o700).create(dir)?;
     }
-    own(dir);
+    own(imp.owner, dir)?;
     let main = crate::tree::main_path(&s.psid);
     let session = format!("{}/{}/", crate::tree::PROJECT, s.psid);
     let files = imp
@@ -271,7 +268,7 @@ async fn fill(imp: &Importer, conversation: Uuid, s: &Share, dir: &Path) -> Resu
         clone_tree(imp.juicefs.as_deref(), &src, &ws).await?;
     } else {
         std::fs::create_dir_all(&ws)?;
-        own(&ws);
+        own(imp.owner, &ws)?;
     }
     let mut out: Vec<String> = Vec::new();
     for p in sent {
@@ -397,6 +394,7 @@ pub async fn purged(
             psid: r.get(2),
             paths: r.get(3),
         };
+        imp.check_lock().await?;
         match purge_one(imp, &t).await {
             Ok(p) => out.push(p),
             Err(e) => {

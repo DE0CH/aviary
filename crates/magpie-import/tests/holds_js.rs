@@ -1,7 +1,8 @@
 //! `holds.js` against fake `CloudCLI` children (cutover 7.12 item 5's script half; the exec through the Kubernetes API
 //! and the gate are the hand-over's): every child of the old router is asked with its owner, a child that answers
 //! 500 or not at all within 5 s is `ok: false`, a process without the router's child environment is not asked, and
-//! a child's own processes (which inherit its environment) do not ask it twice.
+//! a child's own processes (which inherit its environment) do not ask it twice, and a list entry without a string
+//! `sessionId` (a changed route shape) is `ok: false`, never "runs nothing".
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -17,6 +18,10 @@ const mode = process.env.FAKE_MODE, owner = process.env.JARVIS_CC_OWNER;
 http.createServer((req, res) => {
   if (mode === 'hang') return;
   if (mode === '500') { res.statusCode = 500; return res.end('no'); }
+  if (mode === 'noid') {
+    res.setHeader('content-type', 'application/json');
+    return res.end(JSON.stringify({ success: true, data: { sessions: [{ id: 'x' }] } }));
+  }
   if (req.url !== '/api/providers/sessions/running' || req.headers['x-jarvis-user'] !== owner) {
     res.statusCode = 404; return res.end();
   }
@@ -66,7 +71,7 @@ fn spawn(env: &[(&str, String)]) -> Child {
 
 #[test]
 fn holds_js_asks_every_child_once_and_fails_closed() {
-    let (pa, pb, pc, pd) = (port(), port(), port(), port());
+    let (pa, pb, pc, pd, pe) = (port(), port(), port(), port(), port());
     let mut kids = Kids(Vec::new());
     kids.0.push(spawn(&[
         ("DATABASE_SCHEMA", "cc_ua".into()),
@@ -86,6 +91,12 @@ fn holds_js_asks_every_child_once_and_fails_closed() {
         ("SERVER_PORT", pc.to_string()),
         ("JARVIS_CC_OWNER", "c@example.com".into()),
         ("FAKE_MODE", "hang".into()),
+    ]));
+    kids.0.push(spawn(&[
+        ("DATABASE_SCHEMA", "cc_ue".into()),
+        ("SERVER_PORT", pe.to_string()),
+        ("JARVIS_CC_OWNER", "e@example.com".into()),
+        ("FAKE_MODE", "noid".into()),
     ]));
     // not a router child: no owner
     kids.0.push(spawn(&[
@@ -108,9 +119,18 @@ fn holds_js_asks_every_child_once_and_fails_closed() {
         started.elapsed() < Duration::from_secs(12),
         "a silent child holds the read for 5 s only"
     );
-    let mut children = holds::parse(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    let ours: Vec<String> = kids.0.iter().map(|k| format!("pid {}:", k.id())).collect();
+    // other users' processes on this machine (an unprivileged runner) cannot be read: the script reports them, and
+    // in a ui pod (one user) that makes the read incomplete; here only ours count
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|l| !l.contains("\"incomplete\"") || ours.iter().any(|o| l.contains(o.as_str())))
+        .collect();
+    let lines = lines.join("\n");
+    let mut children = holds::parse(&lines).unwrap();
     // other tests' processes on this machine are not ours
-    children.retain(|c| [pa, pb, pc, pd].contains(&c.port));
+    children.retain(|c| [pa, pb, pc, pd, pe].contains(&c.port));
     children.sort_by_key(|c| c.schema.clone());
     let got: Vec<(String, bool, Vec<String>)> = children.into_iter().map(|c| (c.schema, c.ok, c.sessions)).collect();
     assert_eq!(
@@ -123,6 +143,7 @@ fn holds_js_asks_every_child_once_and_fails_closed() {
             ),
             ("cc_ub".to_owned(), false, vec![]),
             ("cc_uc".to_owned(), false, vec![]),
+            ("cc_ue".to_owned(), false, vec![]),
         ]
     );
 }

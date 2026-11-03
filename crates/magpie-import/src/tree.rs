@@ -129,9 +129,7 @@ fn walk(base: &Path, rel: &str, out: &mut BTreeMap<String, Source>) -> Result<()
     let mut names: Vec<(String, std::fs::Metadata)> = Vec::new();
     for e in entries {
         let e = e?;
-        let Some(name) = e.file_name().to_str().map(str::to_owned) else {
-            continue;
-        };
+        let name = utf8_name(&e, rel)?;
         names.push((name, e.metadata()?));
     }
     names.sort_by(|a, b| a.0.cmp(&b.0));
@@ -148,6 +146,43 @@ fn walk(base: &Path, rel: &str, out: &mut BTreeMap<String, Source>) -> Result<()
                 },
             );
         }
+    }
+    Ok(())
+}
+
+/// A folder entry's name, which must be UTF-8 (a cc path is text): another name is the conversation's error, never
+/// a file skipped without a word.
+///
+/// # Errors
+/// [`crate::Error::Source`] naming the file.
+pub fn utf8_name(e: &std::fs::DirEntry, rel: &str) -> Result<String> {
+    e.file_name().to_str().map(str::to_owned).ok_or_else(|| {
+        crate::Error::Source(format!(
+            "{rel}/{} has a name that is not UTF-8",
+            e.file_name().to_string_lossy()
+        ))
+    })
+}
+
+/// Checks that the `JuiceFS` volume is mounted at `jfs` before anything reads it as the truth: `users/` is there and
+/// holds at least one entry. Without the check an empty mount point (a failed or late mount) reads as "every
+/// conversation's files deleted", and a pass would unlink them in magpie, or the export would write into it.
+///
+/// # Errors
+/// [`crate::Error::Source`] when it does not look mounted.
+pub fn check_mount(jfs: &Path) -> Result<()> {
+    let users = jfs.join("users");
+    let mut entries = std::fs::read_dir(&users).map_err(|e| {
+        crate::Error::Source(format!(
+            "the JuiceFS volume does not look mounted ({}: {e})",
+            users.display()
+        ))
+    })?;
+    if entries.next().is_none() {
+        return Err(crate::Error::Source(format!(
+            "the JuiceFS volume does not look mounted ({} is empty)",
+            users.display()
+        )));
     }
     Ok(())
 }
