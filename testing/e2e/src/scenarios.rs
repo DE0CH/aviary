@@ -10,7 +10,9 @@ use crate::ws::Ws;
 use crate::{ADMIN, ALICE, Harness, JFS, PIGEON, STRANGER, TURN_MODEL, eventually};
 
 /// The scenarios in the order `aviary-e2e` runs them when none is named.
-pub const ALL: &[&str] = &["e1", "e2", "e3", "e19", "e16", "e14", "cc"];
+pub const ALL: &[&str] = &[
+    "e1", "e2", "e3", "e19", "e16", "e14", "cc", "e8", "e10", "e11", "e18", "e24", "e12", "e17",
+];
 
 /// How long a turn may take, sandbox start included (the image is local; the first start makes the host).
 const TURN_WAIT: Duration = Duration::from_secs(420);
@@ -772,13 +774,12 @@ async fn e12(h: &Harness) -> anyhow::Result<()> {
             ensure!(end["type"] == "turn_completed", "the first turn ended {end}");
             let pod = sandbox_of(h, &id).await?;
             let waited = Instant::now();
-            eventually(
-                "the idle release",
-                Duration::from_secs(300),
-                Duration::from_secs(3),
-                || async { Ok(h.sandbox_pod(&id).await?.is_none().then_some(())) },
-            )
-            .await?;
+            // the socket keeps reading meanwhile: pigeon's pings want their pongs (pigeon 7.1.3)
+            let until = Instant::now() + Duration::from_secs(300);
+            while h.sandbox_pod(&id).await?.is_some() {
+                ensure!(Instant::now() < until, "{pod} not released within 300 s");
+                let _ = ws.drain(Duration::from_secs(3)).await;
+            }
             eprintln!("e12: {pod} released {:?} after the turn", waited.elapsed());
             send(&mut ws, &id, "After the release").await?;
             let end = turn_end_kind(&mut ws, &id, TURN_WAIT).await?;
@@ -968,5 +969,9 @@ async fn e24(h: &Harness) -> anyhow::Result<()> {
             Ok((d.status.and_then(|s| s.ready_replicas).unwrap_or(0) >= 2).then_some(()))
         },
     )
-    .await
+    .await?;
+    // a start right after hermit's return fails `hosts_full` until the hosts' next heartbeat (every host looks dead
+    // after an outage longer than hostDeadSeconds): the next scenario waits for that
+    tokio::time::sleep(Duration::from_secs(20)).await;
+    Ok(())
 }

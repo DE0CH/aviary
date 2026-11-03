@@ -69,4 +69,15 @@ call, `/compact` with `CLAUDE_CODE_TRANSCRIPT_LOCAL_GC=1` (in hermit.json's `san
 every turn completes, the compaction and the subagent's transcript and meta file are in magpie, no line has two
 events, every user or assistant line that is not a prompt's echo (a slash command's `<command-name>` form included)
 has its event, and the subagent's lines made none. The tombstone stays unreproduced by 2.1.304 (supervisor GATE.md
-open item 3). The other scenarios of 7.8 are still to come (WP-28's remaining list).
+open item 3). Then E8 (Stop during a 60 s stream: canceled at once, the next turn works), E10 (`kill -9` of the
+supervisor mid-turn: the turn completes, every transcript line once in magpie), E11 (the sandbox Pod deleted
+mid-turn: `sandbox.lost` within 40 s, the next turn on a new sandbox sees the history), E18 (the same requests through
+each pigeon Pod answer alike), E24 (hermit at 0 replicas for 3 minutes during a turn with a tool call: the turn
+completes), E12 (the idle release, then a new sandbox that resumes the history) and E17 (seven starts with six slots:
+never more than six sandboxes, the seventh waits and completes once a pool victim frees a slot; the harness's
+`reserveSeconds` and `poolVictimIdleSeconds` are 20 so that happens inside `capacityWaitSeconds`). The other scenarios
+of 7.8 are still to come (WP-28's remaining list).
+
+Found by the harness, for other packages: right after hermit returns from an outage longer than `hostDeadSeconds`, a
+start fails `hosts_full` until the hosts' next heartbeat (every host looks dead); E24 waits 20 s before the next
+scenario.
