@@ -77,6 +77,8 @@ const MODELS_WAIT: Duration = Duration::from_secs(110);
 const DELIVERED_KEPT: usize = 64;
 /// The poll's pause after a failed long-poll.
 const POLL_RETRY: Duration = Duration::from_secs(1);
+/// How long removing a kept message waits for `run.json` to be on disk before it keeps the file and goes on.
+const MESSAGE_DROP_FLUSH_MAX: Duration = Duration::from_secs(30);
 
 /// Where the driver's files are and who Claude Code runs as (the sandbox's in production; a test directory in tests).
 #[derive(Clone, Debug)]
@@ -1849,8 +1851,12 @@ impl Driver {
         let bytes = line.to_vec();
         tokio::task::spawn_blocking(move || {
             let tmp = path.with_extension("tmp");
-            std::fs::write(&tmp, &bytes)?;
-            std::fs::rename(&tmp, &path)
+            let r = std::fs::write(&tmp, &bytes).and_then(|()| std::fs::rename(&tmp, &path));
+            if r.is_err() {
+                // a part-written file is not left until its generation directory is pruned
+                let _ = std::fs::remove_file(&tmp);
+            }
+            r
         })
         .await
         .map_err(std::io::Error::other)
@@ -1859,12 +1865,34 @@ impl Driver {
     }
 
     /// Removes the kept message once `run.json` no longer needs it: the state that makes a replay unnecessary
-    /// (`running`, or the turn's end) is on disk first, so a restart in between still finds the bytes.
+    /// (`running`, `failed`, or the turn's end) is on disk first, so a restart in between still finds the bytes.
+    /// The wait is bounded: a `run.json` that cannot be written keeps the file (its generation directory is pruned
+    /// at a later idle point) and the command is still acked, so the turn lane is never held for ever.
     async fn drop_message(&self, n: u32, seq: u64) {
-        if let Some(ctx) = self.ctx() {
-            ctx.persisted.flush().await;
+        if let Some(ctx) = self.ctx()
+            && tokio::time::timeout(MESSAGE_DROP_FLUSH_MAX, ctx.persisted.flush())
+                .await
+                .is_err()
+        {
+            tracing::warn!(seq, "run.json not written in time: the kept message stays");
+            return;
         }
         let _ = tokio::fs::remove_file(self.message_path(n, seq)).await;
+    }
+
+    /// Records that `seq`'s message was never handed over (its end is reported): a replay before magpie answers
+    /// the ack sends the same negative ack again rather than taking the message as answered.
+    fn mark_failed(&self, seq: u64, err: Option<&str>) {
+        self.with(Change::State, |st, _| {
+            st.delivered.insert(
+                seq,
+                Delivered {
+                    state: "failed".into(),
+                    error: err.map(str::to_owned),
+                    ..st.delivered.get(&seq).cloned().unwrap_or_default()
+                },
+            );
+        });
     }
 
     /// Ends the preparation of `turn_id` that was interrupted, killed, or overtaken by a release or pause: nothing
@@ -1982,6 +2010,13 @@ impl Driver {
         };
         if delivered.state == "running" {
             return delivered_ack(self, true);
+        }
+        if delivered.state == "failed" {
+            // the message was never handed over: the same negative ack again
+            return match delivered.error.as_deref() {
+                Some(e) => self.ack_in(Some(turn_id), seq, err_ack(e)),
+                None => delivered_ack(self, false),
+            };
         }
         // a restart between the record and the report (10.2): the restored turn runs on that generation already
         let replay = delivered.state == "written";
@@ -2154,6 +2189,7 @@ impl Driver {
                     generation: Some(n),
                     pending_inputs_after: Some(after),
                     turn_id: Some(turn_id.to_string()),
+                    error: None,
                 },
             );
             if !current {
@@ -2235,6 +2271,7 @@ impl Driver {
         });
         let Some(rx) = rx else {
             // killed or exited before the message was handed over: its end is reported already
+            self.mark_failed(seq, None);
             self.drop_message(n, seq).await;
             return delivered_ack(self, false);
         };
@@ -2258,6 +2295,7 @@ impl Driver {
                     )));
                 }
             });
+            self.mark_failed(seq, Some(&e));
             self.drop_message(n, seq).await;
             return self.ack_in(Some(turn_id), seq, err_ack(&e));
         }

@@ -161,7 +161,8 @@ pub struct EndingState {
 }
 
 /// How far a command's delivery got: `received` (before any effect), `written` (with the `msg_id` and the
-/// `pending_inputs` it implies, before the user message goes to the keeper), `running` (reported) or `acked`.
+/// `pending_inputs` it implies, before the user message goes to the keeper), `running` (reported), `failed` (the
+/// message was never handed over and the turn's end is reported; its negative ack is not answered yet) or `acked`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Delivered {
@@ -172,6 +173,9 @@ pub struct Delivered {
     pub pending_inputs_after: Option<u32>,
     /// The turn a `start_turn` command started (its person's turn is installed with the `written` record).
     pub turn_id: Option<String>,
+    /// A `failed` record's ack error; none: the ack is `delivered: false`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// The file `run.json` in a state directory.

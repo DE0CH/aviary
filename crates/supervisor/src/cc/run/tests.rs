@@ -1201,6 +1201,7 @@ async fn a_restart_replays_a_written_prompt_exactly_once() {
                 generation: Some(n),
                 pending_inputs_after: Some(1),
                 turn_id: Some(turn.to_string()),
+                error: None,
             },
         );
         prior.cmd_after = seq;
@@ -1831,6 +1832,7 @@ async fn a_replay_with_a_file_rewrites_nothing() {
             generation: Some(n),
             pending_inputs_after: Some(1),
             turn_id: Some(turn.to_string()),
+            error: None,
         },
     );
     prior.cmd_after = seq;
@@ -1888,19 +1890,125 @@ async fn a_message_that_cannot_be_kept_fails_its_turn_unwritten() {
     );
     assert!(w.acked(seq).await.error.is_some());
     assert!(w.prompts().is_empty(), "nothing written");
-    assert!(
-        lock(&sup.driver.st)
-            .delivered
-            .get(&seq)
-            .is_none_or(|d| d.state == "acked"),
-        "no written record"
-    );
+    // the record becomes `acked` once magpie answered the ack; it was never `written` (or `failed`) meanwhile
+    let d = sup.driver.clone();
+    until("no written record, acked", || {
+        lock(&d.st).delivered.get(&seq).is_none_or(|d| d.state == "acked")
+    })
+    .await;
+    for i in 1..=64 {
+        let kept = w.dir.join(format!("gens/{n}/stdin-{i}.ndjson"));
+        assert!(!kept.exists(), "{kept:?}");
+    }
     for b in &blocked {
         std::fs::remove_dir(b).unwrap();
     }
     w.idle(&sup).await;
     let (t, _) = w.turn("say:kept");
     assert_eq!(w.ended(t).await["state"], "completed");
+}
+
+/// A kept message whose rename fails leaves no temporary file behind (only its generation's pruning would remove it).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_message_that_cannot_be_renamed_leaves_no_temporary_file() {
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let d = sup.driver.clone();
+    until("initialised", || {
+        lock(&d.st).live.as_ref().is_some_and(|g| g.initialized)
+    })
+    .await;
+    let n = lock(&sup.driver.st).live.as_ref().unwrap().n;
+    // the kept file's own name is taken by a directory: the write succeeds, the rename fails
+    let blocked: Vec<PathBuf> = (1..=64)
+        .map(|s| w.dir.join(format!("gens/{n}/stdin-{s}.ndjson/x")))
+        .collect();
+    for b in &blocked {
+        std::fs::create_dir_all(b).unwrap();
+    }
+    let (t, seq) = w.turn("say:never");
+    let end = w.ended(t).await;
+    assert_eq!(end["state"], "failed");
+    assert!(
+        end["error"]["message"].as_str().unwrap().contains("could not be kept"),
+        "{end}"
+    );
+    assert!(w.acked(seq).await.error.is_some());
+    assert!(w.prompts().is_empty(), "nothing written");
+    let tmps: Vec<_> = std::fs::read_dir(w.dir.join(format!("gens/{n}")))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|f| f.extension().is_some_and(|x| x == "tmp"))
+        .collect();
+    assert!(tmps.is_empty(), "{tmps:?}");
+    for b in &blocked {
+        std::fs::remove_dir(b).unwrap();
+        std::fs::remove_dir(b.parent().unwrap()).unwrap();
+    }
+    w.idle(&sup).await;
+}
+
+/// A restart after a message that was never handed over (the writer refused it, or the turn was killed before the
+/// hand-over) but before magpie answered its negative ack: the replay sends that ack again, on the same live
+/// generation, and writes nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_restart_after_a_failed_hand_over_acks_it_failed_again() {
+    for failure in [Some("writer gone"), None] {
+        let w = world().await;
+        let first = w.attach(None, crate::start::Reattach::Nothing).await;
+        let d = first.driver.clone();
+        until("initialised", || {
+            lock(&d.st).live.as_ref().is_some_and(|g| g.initialized)
+        })
+        .await;
+        let (n, pid) = {
+            let st = lock(&first.driver.st);
+            let g = st.live.as_ref().unwrap();
+            (g.n, g.pid)
+        };
+        first.driver.abort_all();
+        first.persisted.flush().await;
+        let (turn, seq) = w.turn("say:never");
+        let id = msg_id("b00700000000000a", seq);
+        // what the first supervisor left: the turn ended (its end reported), the record `failed`, the ack unanswered
+        let mut prior = first.persisted.read(Clone::clone);
+        prior.delivered.insert(
+            seq.to_string(),
+            Delivered {
+                state: "failed".into(),
+                msg_id: Some(hex(&id)),
+                generation: Some(n),
+                pending_inputs_after: Some(1),
+                turn_id: Some(turn.to_string()),
+                error: failure.map(str::to_owned),
+            },
+        );
+        prior.cmd_after = seq;
+        drop(first);
+        let second = w.attach(Some(prior), crate::start::Reattach::Alive { n, pid }).await;
+        let ack = w.acked(seq).await;
+        if let Some(e) = failure {
+            assert_eq!(ack.error.as_deref(), Some(e));
+        } else {
+            assert_eq!(ack.delivered, Some(false));
+            assert!(ack.error.is_none());
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(w.prompts().is_empty(), "nothing written: {}", texts(&w));
+        assert!(
+            w.state_names(turn).is_empty(),
+            "no turn started: {:?}",
+            w.state_names(turn)
+        );
+        let d = second.driver.clone();
+        until("acked", || {
+            lock(&d.st).delivered.get(&seq).is_some_and(|r| r.state == "acked")
+        })
+        .await;
+        w.idle(&second).await;
+        assert_eq!(w.spawns().len(), 1, "re-attached, not respawned");
+    }
 }
 
 /// A replayed turn whose interrupt was already sent gets no second one; a turn interrupted before its message was
@@ -1955,6 +2063,7 @@ async fn a_replayed_interrupted_turn_is_interrupted_exactly_once() {
                 generation: Some(n),
                 pending_inputs_after: Some(1),
                 turn_id: Some(turn.to_string()),
+                error: None,
             },
         );
         prior.cmd_after = seq;

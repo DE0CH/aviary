@@ -282,7 +282,8 @@ fd 3 is the generation's stdout): a turn and the generation reused across turns,
 turns and a `start_turn` during one, the hold, supersede, `stop_tasks` and a task that ends and wakes the agent, an
 ask relayed and answered (and `no_such_ask`), upload materialisation (replacing a model's file, a symlinked
 `uploads` refused, a full workspace), the tags and image block of the prompt, titles through the model route, an
-unknown command type, a restart replaying a `written` prompt exactly once (the keeper had it, or not), a replayed
+unknown command type, a restart replaying a `written` prompt exactly once (the keeper had it, or not), a restart
+after a failed hand-over acking it failed again, a kept message whose rename fails leaving no temporary file, a replayed
 interrupted turn interrupted exactly once (its interrupt written before the restart, or not yet), a restart
 whose generation died, a magpie outage on the report route, the hook's descriptors over `agent.sock` (symlinks and
 paths outside `/workspace` refused) and a forced release during a turn (`sandbox.lost`); an answer read before the
@@ -352,7 +353,12 @@ symlinked root refused by the hook (`sent_files::tests::only_regular_files_are_o
     `written` record until `run.json` holds its delivery (or the turn's end); a replay after a restart sends those
     bytes again and fetches no blob and renames nothing onto `/workspace/uploads` (the agent may have changed the
     files since). A message that cannot be kept fails its turn (`run.error`) before anything is written, so a
-    `written` record always has its file; only a file removed by hand makes a replay build the message again.
+    `written` record always has its file (a part-written temporary file is removed at once); only a file removed by
+    hand makes a replay build the message again. Removing the file waits at most 30 s for `run.json`: a `run.json`
+    that cannot be written keeps the file (pruned with its generation) and the command is still acked. A message
+    that was never handed over (the writer refused it, or the turn was killed or its generation exited before the
+    hand-over) moves its record to `failed`, with the ack's error, before that negative ack, so a restart before
+    magpie answers the ack sends the same ack again rather than `delivered: true`.
     A replayed turn whose interrupt was written with its message gets no second interrupt, and a queued person's
     turn is interrupted once it is the turn, not again at its hand-over.
 19. **Preparation is cancellable** (7.8): an interrupt, kill, release or pause ends a start's blob retries, its
