@@ -56,6 +56,8 @@ pub struct St {
     pub hold_sends: bool,
     /// A send's turn ends at once (the fuzz).
     pub auto_end: bool,
+    /// Requests and upgrades without the pair token (old-path tabs).
+    pub old_path_requests: usize,
 }
 
 /// The fake. Cheap to clone.
@@ -452,9 +454,12 @@ async fn handle(State(old): State<Old>, req: Request) -> Response {
     if refuse != 0 {
         return StatusCode::from_u16(refuse).unwrap().into_response();
     }
-    if pair.as_deref() != Some(old.pair.as_str()) || token.is_empty() {
-        // not the legacy upstream: the fake serves nothing else
+    if token.is_empty() || pair.as_deref().is_some_and(|p| p != old.pair) {
         return StatusCode::FORBIDDEN.into_response();
+    }
+    // a socket without the pair token is an old-path tab's (counted apart from the LU's)
+    if pair.is_none() {
+        old.st().old_path_requests += 1;
     }
     // a view's calls reach the viewed person's child, as the old router routes them
     let viewed = old.st().seen.last().and_then(|s| s.2.clone()).and_then(|v| {

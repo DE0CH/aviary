@@ -112,10 +112,13 @@ person every 2 s at most (`GET /v1/legacy/window`).
 - **Tests**: `tests/legacy.rs` against the LU contract rig (`tests/common/old.rs`, a fake old router speaking the
   bridge's protocol for what pigeon relays, and the window's routes in `tests/common/model.rs`): a running old turn
   streams and Stop ends it, every write once under a ticket closed on the outcome, one replacement per subscribed
-  socket at release and none before, the fence winning a send and the 409 re-route, a superseded repeat that gives the
-  old child exactly one turn, the tee until the gate and the copy-at-send after it (and one that loses to the fence),
+  socket at release and none before, the fence winning a send and the 409 re-route, a reverse hand-over's one replacement in the old epoch, a superseded
+  repeat that gives the old child exactly one turn, the tee until the gate (its old path sent by an unmoved old-path
+  socket straight to the old router, and a pre-move old path sent to a native conversation) and the copy-at-send after
+  it (and one that loses to the fence),
   an LU 401, a replica gone with LU sockets, the drain's request-free-first rule with an LU write outstanding, an old
-  view-as token, warm and activity, creates during a rollback and shares, and the 1 000-send fence-race fuzz. Frames a
+  view-as token, warm and activity, creates during a rollback and shares, and the 1 000-send fence-race fuzz (every fifth send with a magpie-only file, read by whichever stack runs
+  the turn). Frames a
   test socket gets through LU are the fake old child's and are not checked against the frame corpus
   (`Ws::relayed`).
 - **Recorded deviations**: the activity route is on the ops port, not 8080 (DESIGN 15.5 reads it through a

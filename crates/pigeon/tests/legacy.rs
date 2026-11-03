@@ -367,6 +367,28 @@ async fn uploads_are_teed_until_the_gate_and_copied_at_send_after_it() {
     assert_eq!(e.m.st().uploads.len(), 1);
     assert_eq!(e.m.st().legacy_paths.len(), 1);
     assert_eq!(e.m.st().legacy_paths[0].1, path);
+    // an unmoved old-path tab sends the old path on its own socket to the old router: the old child has the file
+    let mut direct = Ws::open(&e.old.url, &e.h.token(STAFF), "").await.unwrap().relayed();
+    direct
+        .raw(
+            json!({"type": "hello", "clientId": "old-tab", "clientType": "browser", "protocolVersion": 1,
+                    "capabilities": {}, "appVersion": "0.13.2"}),
+        )
+        .await;
+    direct.next_session("status").await;
+    let r = send(
+        &mut direct,
+        c,
+        "old-path",
+        json!({"attachments": [{"type": "uploaded_file", "path": path, "fileName": "q3.pdf",
+                                "mimeType": "application/pdf", "size": 13}]}),
+    )
+    .await;
+    assert_eq!(r["accepted"], true, "{r}");
+    assert_eq!(e.old.agent(c).sends[0].2, vec![path.clone()]);
+    assert!(e.old.st().old_path_requests > 0);
+    drop(direct);
+    e.old.end_turn(c);
     let mut ws = e.ws(STAFF).await;
     list(&mut ws).await;
     let r = send(
@@ -378,7 +400,20 @@ async fn uploads_are_teed_until_the_gate_and_copied_at_send_after_it() {
     )
     .await;
     assert_eq!(r["accepted"], true, "{r}");
-    assert_eq!(e.old.agent(c).sends[0].2, vec![path.clone()]);
+    assert_eq!(e.old.agent(c).sends[1].2, vec![path.clone()]);
+    // a pre-move old path sent to a native conversation goes to magpie as it is (magpie resolves it)
+    let n = e.m.add(STAFF, None);
+    list(&mut ws).await;
+    let r = send(
+        &mut ws,
+        n,
+        "native-old-path",
+        json!({"attachments": [{"type": "uploaded_file", "path": path, "fileName": "q3.pdf",
+                                "mimeType": "application/pdf", "size": 13}]}),
+    )
+    .await;
+    assert_eq!(r["accepted"], true, "{r}");
+    assert_eq!(e.m.st().sent.last().unwrap().1.files[0].path, path);
     // the gate: magpie only, then copied at send
     e.m.st().gate = Some(magpie_api::Timestamp::now());
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -402,14 +437,14 @@ async fn uploads_are_teed_until_the_gate_and_copied_at_send_after_it() {
     assert_eq!(files.len(), 2);
     assert_eq!(files[1].1.as_ref(), b"%PDF-1.4 gate");
     assert_eq!(
-        e.old.agent(c).sends[1].2,
+        e.old.agent(c).sends[2].2,
         vec![files[1].0.clone()],
         "sent with the old path"
     );
     e.m.wait_tickets(|t| t.iter().all(|t| t.outcome.is_some())).await;
     let kinds: Vec<_> = e.m.tickets_of(c).iter().map(|t| (t.kind, t.outcome)).collect();
     assert_eq!(
-        kinds[1..],
+        kinds[kinds.len() - 2..],
         [
             (TicketKind::Send, Some(TicketOutcome::Started)),
             (TicketKind::Upload, Some(TicketOutcome::Applied)),
@@ -697,11 +732,20 @@ async fn rollback_creates_and_shares_go_to_the_old_child() {
 async fn fence_race_fuzz_a_thousand_sends_each_accepted_once() {
     let e = env().await;
     e.old.st().auto_end = true;
+    // after the gate: an upload is magpie's only, so a send of it to a legacy conversation copies it under tickets
+    e.m.st().gate = Some(magpie_api::Timestamp::now());
     let convs: Vec<Uuid> = (0..20).map(|_| e.legacy(STAFF)).collect();
+    let r = upload(&e, "fuzz.pdf", b"%PDF-1.4 fuzz").await;
+    let file = common::body_json(r).await["attachments"][0]["path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(file.starts_with("uploads/"));
     let mut tasks = tokio::task::JoinSet::new();
     for (i, c) in convs.iter().copied().enumerate() {
         let mut ws = e.ws(STAFF).await;
         let m = e.m.clone();
+        let file = file.clone();
         let release_at = (i * 7) % 50;
         tasks.spawn(async move {
             list(&mut ws).await;
@@ -718,7 +762,13 @@ async fn fence_race_fuzz_a_thousand_sends_each_accepted_once() {
                     });
                 }
                 let cmid = format!("{c}-{n}");
-                let r = send(&mut ws, c, &cmid, json!({})).await;
+                let extra = if n.is_multiple_of(5) {
+                    json!({"attachments": [{"type": "uploaded_file", "path": file, "fileName": "fuzz.pdf",
+                                            "mimeType": "application/pdf", "size": 13}]})
+                } else {
+                    json!({})
+                };
+                let r = send(&mut ws, c, &cmid, extra).await;
                 if r["accepted"] != true {
                     refused.push(r);
                 }
@@ -743,6 +793,52 @@ async fn fence_race_fuzz_a_thousand_sends_each_accepted_once() {
         all.dedup();
         assert_eq!(all.len(), n, "a send went to both stacks or twice");
         assert_eq!(n, 50, "every send accepted once");
+        // the attachment reached whichever stack ran the turn: an old path in the old child, magpie's in magpie
+        for (cmid, _, paths) in &e.old.agent(*c).sends {
+            let n: usize = cmid.rsplit('-').next().unwrap().parse().unwrap();
+            if n.is_multiple_of(5) {
+                assert_eq!(paths.len(), 1, "{cmid}");
+                assert!(paths[0].contains(magpie_api::legacy::LEGACY_ASSET_DIR), "{paths:?}");
+            }
+        }
+        for (_, req) in e.m.st().sent.iter().filter(|(x, _)| x == c) {
+            let n: usize = req.client_message_id.rsplit('-').next().unwrap().parse().unwrap();
+            if n.is_multiple_of(5) {
+                assert_eq!(req.files[0].path, file);
+            }
+        }
     }
+    let copies = e.old.st().files.len();
+    assert!(copies > 0, "some sends copied their file into the old child");
     assert_eq!(e.metric("pigeon_switch_write_refused_total"), 0.0);
+}
+
+/// A reverse hand-over (a rollback): every socket watching the conversation gets one replacement in the old child's
+/// epoch, and the old child's frames from then.
+#[tokio::test]
+async fn a_reverse_hand_over_sends_one_replacement_in_the_old_epoch() {
+    let e = env().await;
+    let c = e.m.add(STAFF, Some("新"));
+    e.old.add(c, STAFF);
+    let mut a = e.ws(STAFF).await;
+    let mut idle = e.ws(STAFF).await;
+    list(&mut a).await;
+    list(&mut idle).await;
+    watch(&mut a, &[c]).await;
+    e.m.set_migrating(c, true);
+    let r = a.next_session("agent.timeline.replacement").await;
+    assert_eq!(r["epoch"], e.old.agent(c).epoch, "{r}");
+    until("LU subscribed", || e.old.st().seen.iter().any(|s| s.1.is_some())).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    e.old
+        .stream_row(c, json!({"type": "assistant_message", "text": "回到舊的"}));
+    a.wait_for("the old child's row", |v| is_stream(v, c)).await;
+    let none: Vec<Value> = idle
+        .drain_for(Duration::from_millis(300))
+        .await
+        .into_iter()
+        .filter(|v| v["message"]["type"] == "agent.timeline.replacement")
+        .collect();
+    assert!(none.is_empty(), "{none:?}");
+    assert_eq!(e.metric("pigeon_legacy_replacements_total"), 1.0);
 }
