@@ -414,3 +414,105 @@ jobs:
           restore-keys: paseo-contract-
       - run: npm ci --no-audit --no-fund
       - run: npm test
+
+  e2e:
+    # platform 7 (WP-28): the harness, testing/e2e/run.sh, on the images of this commit; the driver's scenarios
+    # (testing/e2e/src/scenarios.rs ALL). Artifacts on failure: every Pod's logs, events, Postgres/S3/JuiceFS logs
+    needs: [build, images]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-services
+          path: ${{ runner.temp }}/images
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-sandbox
+          path: ${{ runner.temp }}/images
+      - name: k3d 5.8.3 and juicefs 1.4.1 (sha256-checked)
+        run: |
+          curl -sSfL -o /tmp/k3d https://github.com/k3d-io/k3d/releases/download/v5.8.3/k3d-linux-amd64
+          echo "dbaa79a76ace7f4ca230a1ff41dc7d8a5036a8ad0309e9c54f9bf3836dbe853e  /tmp/k3d" | sha256sum -c -
+          sudo install -m 755 /tmp/k3d /usr/local/bin/k3d
+          curl -sSfL -o /tmp/juicefs.tgz https://github.com/juicedata/juicefs/releases/download/v1.4.1/juicefs-1.4.1-linux-amd64.tar.gz
+          echo "01ee09a21a9351a465e09906f113845e1c6a19bea70f530e5e2b2125b2dd3b82  /tmp/juicefs.tgz" | sha256sum -c -
+          sudo tar -xzf /tmp/juicefs.tgz -C /usr/local/bin juicefs
+          k3d version && juicefs version && kubectl version --client
+      - name: load the images (the tars go: the runner's disk holds the images three times otherwise)
+        run: for t in "$RUNNER_TEMP"/images/*.tar; do docker load -i "$t" && rm -f "$t"; done; df -h / | tail -1
+      - name: up
+        run: |
+          s=${GITHUB_SHA::12}
+          timeout 1500 testing/e2e/run.sh up "pigeon:$s" "magpie:$s" "hermit:$s" "aviary-testing:$s" "hermit-sandbox:$s"
+      - name: scenarios
+        run: timeout 2500 testing/e2e/run.sh test
+      - name: artifacts
+        if: failure()
+        run: timeout 300 testing/e2e/run.sh artifacts "$RUNNER_TEMP/e2e"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: e2e
+          path: ${{ runner.temp }}/e2e/
+          if-no-files-found: warn
+      - name: down
+        if: always()
+        run: timeout 300 testing/e2e/run.sh down
+
+  publish:
+    # platform 6.1 `publish` and 5.4 (WP-28): main only, after every gate. Pushes each image as <name>:<sha12> (never
+    # `latest`) with a build-provenance attestation, then the release aviary-<sha12>. Every tag that exists passed the
+    # harness, so YYC can pin any of them.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint, test, magpie-perf, sandboxd-soak, build, images, conformance, sandbox-smoke, paseo-contract, e2e]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-services
+          path: ${{ runner.temp }}/images
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-sandbox
+          path: ${{ runner.temp }}/images
+      - name: push the images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          .github/ci/publish-images.sh "$RUNNER_TEMP/images" "${GITHUB_SHA::12}" "$RUNNER_TEMP/digests.json"
+      - name: digests for the attestations
+        id: digests
+        run: |
+          for i in pigeon magpie hermit sandboxd hermit-sandbox aviary-testing; do
+            echo "${i//-/_}=$(jq -r --arg i "$i" '.[$i]' "$RUNNER_TEMP/digests.json")" >> "$GITHUB_OUTPUT"
+          done
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with: {subject-name: ghcr.io/de0ch/pigeon, subject-digest: "${{ steps.digests.outputs.pigeon }}", push-to-registry: true}
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with: {subject-name: ghcr.io/de0ch/magpie, subject-digest: "${{ steps.digests.outputs.magpie }}", push-to-registry: true}
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with: {subject-name: ghcr.io/de0ch/hermit, subject-digest: "${{ steps.digests.outputs.hermit }}", push-to-registry: true}
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with: {subject-name: ghcr.io/de0ch/sandboxd, subject-digest: "${{ steps.digests.outputs.sandboxd }}", push-to-registry: true}
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with: {subject-name: ghcr.io/de0ch/hermit-sandbox, subject-digest: "${{ steps.digests.outputs.hermit_sandbox }}", push-to-registry: true}
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with: {subject-name: ghcr.io/de0ch/aviary-testing, subject-digest: "${{ steps.digests.outputs.aviary_testing }}", push-to-registry: true}
+      - name: the release aviary-<sha12>
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/ci/release.sh dist "${GITHUB_SHA}" "$RUNNER_TEMP/digests.json" "$RUNNER_TEMP/release"
