@@ -16,6 +16,7 @@
 //! - [`sent`]: the old hook's sent-file snapshots as `sent_files` and `files.sent`.
 //! - [`share`]: `cc_shared.shares` as magpie shares with the same ids (cutover 7.4.4).
 //! - [`viewas`]: `jarvis.ops_events` view-as rows as magpie's `view_as_log`.
+//! - [`parity`]: magpie's rows through pigeon's projection, normalised for the render-parity rehearsal.
 //! - [`pass`]: one pass (`run`, `catch-up`): every conversation whose fingerprints changed, 8 at a time.
 //! - [`verify`]: byte-exact verification through magpie's read path (cutover 7.7).
 //! - [`plan`]: the dry run that reports blockers (cutover 7.9).
@@ -33,6 +34,7 @@ pub mod failed;
 pub mod holds;
 pub mod kube;
 pub mod lock;
+pub mod parity;
 pub mod pass;
 pub mod plan;
 pub mod sent;

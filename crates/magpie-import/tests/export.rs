@@ -53,6 +53,8 @@ async fn an_owned_conversation_exports_back_to_the_old_side() {
     assert!(r.errors.is_empty(), "{:?}", r.errors);
     control::release_forced(&w.imp, u1).await.unwrap();
     let since = OffsetDateTime::now_utc();
+    // file times come from a coarser clock than `now`: what the new side writes is after `since` on it too
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // the new side grows the conversation: a second turn with a tool result and a sent file, a failed turn
     let newside = magpie_import::Importer {

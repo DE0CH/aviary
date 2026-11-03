@@ -21,6 +21,8 @@ futures-util.workspace = true
 http-body-util.workspace = true
 magpie = { path = "../magpie" }
 magpie-api = { path = "../magpie-api" }
+# `parity` renders magpie's rows through pigeon's own projection (cutover 10.2 rehearsal 6)
+pigeon = { path = "../pigeon" }
 reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true

@@ -5,7 +5,7 @@
 //! databases from Secret `magpie-import` (`MAGPIE_IMPORT_CLOUDCLI_URL`, `MAGPIE_IMPORT_JARVIS_URL`; every read is a
 //! read-only transaction), the `JuiceFS` mount at [`JFS`], `POD_NAME`.
 //! `holds` reads the running sets through the old cluster's API ([`crate::kube`]'s bindings). The hand-over loop
-//! and the commands that drive it (`handover`, `allow-handover`, `reverse`, `parity`) are not built yet. `export` is
+//! and the commands that drive it (`handover`, `allow-handover`, `reverse`) are not built yet. `export` is
 //! the only command that writes the old side (`JuiceFS` and `cloudcli`): it runs in the writer sidecar, whose mount
 //! and `cloudcli` connection are read-write (cutover 14.3).
 
@@ -23,7 +23,8 @@ use crate::Importer;
 pub const JFS: &str = "/jfs";
 
 const USAGE: &str = "usage: magpie import plan | run | catch-up | verify [--all | <id>…] | status | holds | hold on|off \
-                     | reset --yes | unfence <id> | release <id> --force | export [--since <time>] [<id>…]\n";
+                     | reset --yes | unfence <id> | release <id> --force | export [--since <time>] [<id>…] \
+                     | parity <id>…\n";
 
 fn out(v: &impl Serialize) {
     let mut s = serde_json::to_string_pretty(v).unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}"));
@@ -102,6 +103,7 @@ pub fn main(build: &version::Build, args: &[String]) -> ExitCode {
     let known = matches!(
         (cmd, rest.len()),
         ("plan" | "run" | "catch-up" | "status" | "holds", 0)
+            | ("parity", 1..)
             | ("verify" | "hold" | "reset" | "unfence" | "export", _)
             | ("release", 2)
     );
@@ -121,7 +123,7 @@ pub fn main(build: &version::Build, args: &[String]) -> ExitCode {
             }
         };
         // every command that writes the importer's state holds the leader lock while it runs (cutover 7.1)
-        let lock = if matches!(cmd, "plan" | "status" | "holds") {
+        let lock = if matches!(cmd, "plan" | "status" | "holds" | "parity") {
             None
         } else {
             match crate::lock::OneShot::take(&imp.magpie.pool).await {
@@ -265,6 +267,16 @@ async fn run(imp: &Importer, cmd: &str, rest: &[String]) -> ExitCode {
             match crate::control::release_forced(imp, id).await {
                 Ok(f) => {
                     out(&f);
+                    ExitCode::SUCCESS
+                }
+                Err(e) => fail(e),
+            }
+        }
+        "parity" => {
+            let Some(given) = ids(rest) else { return usage() };
+            match crate::parity::parity(imp, &given).await {
+                Ok(r) => {
+                    out(&r);
                     ExitCode::SUCCESS
                 }
                 Err(e) => fail(e),

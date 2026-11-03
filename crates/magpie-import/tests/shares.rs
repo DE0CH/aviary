@@ -133,6 +133,29 @@ async fn prefix_non_prefix_revoked_and_orphaned_shares() {
     assert_eq!(r.shares.not_prefix, vec![other.clone()]);
     assert_eq!(r.shares.revoked, 2);
 
+    // parity: magpie's rows through pigeon's projection, normalised
+    let render = magpie_import::parity::parity(&w.imp, &[u1]).await.unwrap();
+    let rows = &render[0].rows;
+    let sha = |t: &str| magpie_import::sha_hex(t.as_bytes());
+    let none: Vec<String> = Vec::new();
+    assert_eq!(
+        rows[0],
+        serde_json::json!(["user_message", "user", sha("find the news"), null, null, none])
+    );
+    // the image prompt (its image is a row attachment only when magpie extracts it)
+    assert_eq!(
+        rows[1].as_array().unwrap()[..3],
+        [
+            serde_json::json!("user_message"),
+            serde_json::json!("user"),
+            serde_json::json!(sha("what is this"))
+        ]
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r[0] == "assistant_message" && r[2] == serde_json::json!(sha("done"))),
+        "{rows:?}"
+    );
     let kinds = w.kinds(u1).await;
     // the events of the first exchange end where the second prompt's begin
     let second_prompt = 1 + kinds

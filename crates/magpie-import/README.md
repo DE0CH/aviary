@@ -3,7 +3,8 @@
 The one-off importer into magpie (cutover spec 6-7, magpie 19), linked into the `magpie` binary as
 `magpie import …` and deleted after the switch (cutover 10.5 step 8). While it exists, the `magpie` binary itself is
 built from this crate (`src/main.rs`; `.github/ci/build-magpie.sh` builds `-p magpie-import --bin magpie`), because
-it links magpie's library and a package cannot depend on one that depends on it.
+it links magpie's library and a package cannot depend on one that depends on it. It also links pigeon's library,
+for `parity` only (the projection pigeon serves).
 
 It reads the old stack read-only (database `cloudcli`: every `cc_u*` schema's `users`, `sessions` and
 `jarvis_failed_turns`; the person's Claude Code files under `/jfs/users/<key>/claude/`) and writes through magpie's
@@ -31,6 +32,7 @@ own library, so an imported conversation is what live writes would have made: cc
 | `src/lock.rs` | the leader lock (`hashtext('magpie-import.leader')`): the hand-over replicas' bid, a one-shot command's wait (seen in `pg_locks`), the waiter check the loop yields to |
 | `src/control.rs` | `status`, `hold`, `reset --yes`, `unfence`, `release <id> --force` |
 | `src/export.rs` | the reverse export (14.3): an owned conversation's cc files (memory to `aviary-memory/<id>/`), its sessions row, its failed turns and sent files written back to the old side (temporary file, then rename; 0600, uid 1000 when root) |
+| `src/parity.rs` | `parity <id>…` (10.2 rehearsal 6): magpie's rows through pigeon's own `PaseoProjector` (zh), each normalised to `[kind, role, text sha256, tool name, tool status, attachment names]` |
 | `src/cli.rs` | `magpie import <command>`: one JSON document on stdout, logs on stderr; every command but `plan` and `status` holds the leader lock |
 | `tests/import.rs` | the end-to-end tests against the CI Postgres and S3 with fixtures made in the test |
 | `tests/shares.rs` | prefix and non-prefix frozen transcripts, revoked before and after the import, a share of a gone conversation, `reset` |
@@ -78,6 +80,6 @@ own library, so an imported conversation is what live writes would have made: cc
 
 ## Not built yet (WP-29 continues)
 
-`parity` (10.2 item 6), `allow-handover` and `reverse` (14.2, with WP-52's loop), the export of new-side shares and
+`allow-handover` and `reverse` (14.2, with WP-52's loop), the export of new-side shares and
 of permanent deletions, and tests 4 (the routes of 6.4 beyond the write guard), 5-6 of 7.12 and item 8's
 process-level half (the loop's yield between passes). The hand-over loop itself is WP-52.

@@ -2716,6 +2716,7 @@ dependencies = [
  "http-body-util",
  "magpie",
  "magpie-api",
+ "pigeon",
  "proptest",
  "reqwest",
  "rustls",
