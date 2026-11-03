@@ -275,6 +275,25 @@ pub struct Keeper {
 // the same struct owns and never shares; moving the struct to another thread moves both together.
 unsafe impl Send for Keeper {}
 
+/// A keeper that stopped closes its socket and every connection. As PID 1 its exit closes them anyway; a keeper on a
+/// test's thread would otherwise leave them open in the test process, and a client that connected after the loop's
+/// last poll (queued on the listener) or whose request was never read would wait in `recv` for ever, holding the
+/// test's runtime at its shutdown.
+impl Drop for Keeper {
+    fn drop(&mut self) {
+        for c in 0..MAX_CONNS {
+            if self.conns[c] >= 0 {
+                sys::close(self.conns[c]);
+                self.conns[c] = -1;
+            }
+        }
+        if self.listener >= 0 {
+            sys::close(self.listener);
+            self.listener = -1;
+        }
+    }
+}
+
 impl std::fmt::Debug for Keeper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Keeper")
