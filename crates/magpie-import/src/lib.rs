@@ -17,6 +17,8 @@
 //! - [`pass`]: one pass (`run`, `catch-up`): every conversation whose fingerprints changed, 8 at a time.
 //! - [`verify`]: byte-exact verification through magpie's read path (cutover 7.7).
 //! - [`plan`]: the dry run that reports blockers (cutover 7.9).
+//! - [`holds`]: the running sets, `holds.js` run in the old ui pods.
+//! - [`kube`]: the old cluster's API: the ui pods and `pods/exec` (the running sets' transport).
 //! - [`lock`]: the leader lock the hand-over replicas bid for and every one-shot command waits for.
 //! - [`control`]: `status`, `hold`, `reset`, `unfence`, `release --force`.
 //! - [`cli`]: `magpie import <command>`.
@@ -25,6 +27,8 @@ pub mod cli;
 pub mod control;
 pub mod conv;
 pub mod failed;
+pub mod holds;
+pub mod kube;
 pub mod lock;
 pub mod pass;
 pub mod plan;

@@ -17,19 +17,25 @@ path = "src/main.rs"
 aviary-core = { path = "../aviary-core" }
 aviary-pg = { path = "../aviary-pg" }
 axum.workspace = true
+futures-util.workspace = true
 http-body-util.workspace = true
 magpie = { path = "../magpie" }
 magpie-api = { path = "../magpie-api" }
+reqwest.workspace = true
+rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
+tokio-rustls.workspace = true
+tokio-tungstenite.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+axum = { workspace = true, features = ["ws"] }
 aviary-core = { path = "../aviary-core", features = ["testing"] }
 base64.workspace = true
 proptest.workspace = true

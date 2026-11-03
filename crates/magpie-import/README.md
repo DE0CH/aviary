@@ -25,10 +25,13 @@ own library, so an imported conversation is what live writes would have made: cc
 | `src/pass.rs` | one pass (`run`, `catch-up`), 8 conversations at a time |
 | `src/verify.rs` | byte-exact verification through magpie's read path, the re-ingest, the released-source check |
 | `src/plan.rs` | `plan`: counts, sizes, the largest lines, memory files, blockers |
+| `src/holds.js`, `src/holds.rs` | the running sets (cutover 6.3): the script run in every old ui pod (each CloudCLI child asked for its running list, `ok: false` when it does not answer in 5 s), its output, the fail-closed merge |
+| `src/kube.rs` | the old cluster's API with `reqwest` and `tungstenite` (the Kubernetes crates are hermit's): ui pods in every phase, `pods/exec` over `v4.channel.k8s.io`; bindings `MAGPIE_IMPORT_LEGACY_KUBE_URL`, `MAGPIE_IMPORT_LEGACY_KUBE_TOKEN`, the CA at `/etc/legacy-kube-ca/ca.crt` |
 | `src/lock.rs` | the leader lock (`hashtext('magpie-import.leader')`): the hand-over replicas' bid, a one-shot command's wait (seen in `pg_locks`), the waiter check the loop yields to |
 | `src/control.rs` | `status`, `hold`, `reset --yes`, `unfence`, `release <id> --force` |
 | `src/cli.rs` | `magpie import <command>`: one JSON document on stdout, logs on stderr; every command but `plan` and `status` holds the leader lock |
 | `tests/import.rs` | the end-to-end tests against the CI Postgres and S3 with fixtures made in the test |
+| `tests/holds_js.rs`, `tests/kube.rs` | `holds.js` against fake CloudCLI children (node), the transport against a fake Kubernetes API |
 | `tests/convergence.rs` | the property test of cutover 7.12 item 3 (random source changes, a pass at random points: byte-exact, visible events = the source's lines) |
 
 ## Where this differs from the spec
@@ -51,6 +54,6 @@ own library, so an imported conversation is what live writes would have made: cc
 
 ## Not built yet (WP-29 continues)
 
-Shares (7.4.4), `holds.js` and `holds`, `allow-handover`, `parity`, `reverse` and `export` (14.2-14.3), and
+Shares (7.4.4), `allow-handover`, `parity`, `reverse` and `export` (14.2-14.3), and
 tests 4 (the routes of 6.4 beyond the write guard), 5-7 of 7.12 and item 8's process-level half (the loop's
 yield between passes). The hand-over loop itself is WP-52.

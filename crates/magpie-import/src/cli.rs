@@ -4,8 +4,8 @@
 //! Bindings (platform 12.2): magpie's own (`MAGPIE_DATABASE_URL`, `MAGPIE_S3_*`) from Secret `magpie`, the old
 //! databases from Secret `magpie-import` (`MAGPIE_IMPORT_CLOUDCLI_URL`, `MAGPIE_IMPORT_JARVIS_URL`; every read is a
 //! read-only transaction), the `JuiceFS` mount at [`JFS`], `POD_NAME`.
-//! The hand-over loop and the commands that drive it (`handover`, `holds`, `allow-handover`, `reverse`, `parity`,
-//! `export`) are not built yet.
+//! `holds` reads the running sets through the old cluster's API ([`crate::kube`]'s bindings). The hand-over loop
+//! and the commands that drive it (`handover`, `allow-handover`, `reverse`, `parity`, `export`) are not built yet.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -20,7 +20,7 @@ use crate::Importer;
 /// Where the `JuiceFS` volume is mounted (read-only) in the import Job and Deployment (cutover 7.2).
 pub const JFS: &str = "/jfs";
 
-const USAGE: &str = "usage: magpie import plan | run | catch-up | verify [--all | <id>…] | status | hold on|off \
+const USAGE: &str = "usage: magpie import plan | run | catch-up | verify [--all | <id>…] | status | holds | hold on|off \
                      | reset --yes | unfence <id> | release <id> --force\n";
 
 fn out(v: &impl Serialize) {
@@ -99,7 +99,9 @@ pub fn main(build: &version::Build, args: &[String]) -> ExitCode {
     let rest = &args[1..];
     let known = matches!(
         (cmd, rest.len()),
-        ("plan" | "run" | "catch-up" | "status", 0) | ("verify" | "hold" | "reset" | "unfence", _) | ("release", 2)
+        ("plan" | "run" | "catch-up" | "status" | "holds", 0)
+            | ("verify" | "hold" | "reset" | "unfence", _)
+            | ("release", 2)
     );
     if !known {
         return usage();
@@ -117,7 +119,7 @@ pub fn main(build: &version::Build, args: &[String]) -> ExitCode {
             }
         };
         // every command that writes the importer's state holds the leader lock while it runs (cutover 7.1)
-        let lock = if matches!(cmd, "plan" | "status") {
+        let lock = if matches!(cmd, "plan" | "status" | "holds") {
             None
         } else {
             match crate::lock::OneShot::take(&imp.magpie.pool).await {
@@ -198,6 +200,18 @@ async fn run(imp: &Importer, cmd: &str, rest: &[String]) -> ExitCode {
             out(&verdicts);
             if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE }
         }
+        "holds" => match crate::kube::Kube::from_env() {
+            Ok(k) => {
+                let set = crate::kube::running_set(&k).await;
+                out(&set);
+                if set.complete {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                }
+            }
+            Err(e) => fail(e),
+        },
         "status" => match crate::control::status(imp).await {
             Ok(s) => {
                 out(&s);
