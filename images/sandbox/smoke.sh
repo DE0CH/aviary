@@ -11,6 +11,8 @@
 #    no address for either name, and only the gateway adds the verified `Aviary-Sandbox-Conversation` mock-model
 #    files them under). Then Docker on demand through /run/supervisor/docker.sock, and a runtime stop.
 # Usage: smoke.sh <image> <dir with the static mock-model and fuse-rig of the same commit>
+# SMOKE_RUNTIME names a Docker runtime for part 2's sandbox container (ci.yml's `gvisor` job: runsc, the fork's
+# release, so the supervisor's FUSE mount and Claude Code run in gVisor as on a host); SMOKE_PARTS=2 skips part 1.
 # Uses 127.0.0.1 ports 7070 (the supervisor's), 7200 (mock-model) and 7300 (fuse-rig's admin port). The apt check's
 # container uses Docker's default network unless SMOKE_INTERNET_NETWORK names another (`host` on an IPv6-only host).
 # the checks' commands run in the container: their $ expand there, not here
@@ -40,6 +42,7 @@ check() { # check <what> <command…>: the command's success is the check
 sbx_host=(--hostname sandbox --add-host sandbox:127.0.1.1)
 img_run() { docker run --rm --network none "${sbx_host[@]}" --entrypoint /bin/bash "$@"; }
 
+if [ "${SMOKE_PARTS:-1 2}" != 2 ]; then
 echo "== the image"
 size=$(docker image inspect -f '{{.Size}}' "$img")
 echo "size: $((size / 1024 / 1024)) MiB"
@@ -163,7 +166,9 @@ for proxy in "" "http://proxy.invalid:3128"; do
     sh -c "test '$code' = 78 && grep -q '\"level\":\"error\",\"svc\":\"supervisor-keeper\",\"msg\":\"no sandbox proxy credential\"' '$work/nocred.log'"
 done
 
-echo "== the keeper and the supervisor against the test gateway"
+fi
+
+echo "== the keeper and the supervisor against the test gateway${SMOKE_RUNTIME:+ (runtime $SMOKE_RUNTIME)}"
 "$bin/mock-model" --listen 127.0.0.1:7200 > "$work/mock-model.log" 2>&1 &
 # the descriptor's memoryBytes: 16 GiB, since under runc the guard (supervisor 5) measures an unsized container on
 # a shared host, not a sandbox of hermit's size
@@ -175,8 +180,8 @@ cid=$(cat "$work/rig/cid")
 # --privileged: /dev/fuse and the capabilities the keeper (its tmpfs, oom_score_adj) and dockerd need, as a
 # sandbox's root has them inside gVisor; /var/lib/docker on a volume (the host's filesystem), since dockerd's overlay
 # snapshots cannot sit on the container's own overlay root under runc (in a sandbox they sit on its scratch disk)
-docker run -d --name "$name" --network host --privileged -v /var/lib/docker -e HTTP_PROXY="$proxy" -e HOME=/home/sandbox \
-  "$img" >/dev/null
+docker run -d --name "$name" ${SMOKE_RUNTIME:+--runtime "$SMOKE_RUNTIME"} --network host --privileged -v /var/lib/docker \
+  -e HTTP_PROXY="$proxy" -e HOME=/home/sandbox "$img" >/dev/null
 x() { docker exec "$name" "$@"; }
 mounted=
 for _ in $(seq 120); do
