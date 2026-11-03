@@ -50,6 +50,11 @@ commits a week, so spec 17.1's "every build of the last 30 days, or the last 5" 
 - Only if the mandatory part alone is over the budget does the assembly fail, printing what takes the space. It ages
   out by itself (seeds and served builds 744 h after their last serving), so a later run fits again without a change;
   to ship sooner, the lever is the emptyDir `sizeLimit` (with the pod's ephemeral-storage limit, gap 2) and this budget.
+- Every run reports the mandatory part's headroom (a `::notice::`) and projects it over the next 744 h from the pin
+  history (`--pins`): each seed-only file leaves 744 h after the last serving of the last seed holding it, and new
+  seeds grow at what the ui pins of the last 7 days added, per day. When the projection goes over the budget the run
+  warns (a `::warning::` with when it goes over and when it fits again). It is information only; the build fails on the
+  real tree alone. Seeds are never pruned, so this is the limit of the design (gap 1).
 - `.br`/`.gz` siblings are written for the pigeon-app builds' files and the unhashed files only. Files kept only for
   seeds are served as they are (pigeon serves the file itself when no sibling exists, pigeon spec 5.2.1). Those are the
   old ui builds' chunks, mostly 21.5 MB entry bundles from before the chunk split, which a running tab never fetches
@@ -64,6 +69,16 @@ commits a week, so spec 17.1's "every build of the last 30 days, or the last 5" 
    36 MiB a build and dozens of app commits a week, that is far over the 512 MiB emptyDir, and a pigeon-app build
    would fail on the budget within a few commits and stay failed for up to 30 days. Deviation: the 30 days and the
    last 5 are kept only while they fit; the builds YYC served within 720 h, this build and the previous one always.
+   **The seeds' growth is the limit.** Seeds are mandatory and never pruned, and each new ui pin adds the files its
+   image does not share with the older seeds. Measured on 2026-11-03 from `pigeon-app:main`'s meta (built from
+   0079b2fc): the seeds take 314.2 MiB; the six ui pins since the chunk split (2026-10-29) added 25.2, 24.8, 0, 5.9, 0
+   and 0 MiB, 55.9 MiB in 5 days; the roughly 260 MiB of pre-split seeds stay until 2026-11-29 11:44 (the last
+   pre-split pin ended 2026-10-29 11:44, plus 744 h). At that rate the mandatory part passes 480 MiB in mid-November
+   and the builds fail on the budget until the pre-split seeds leave (the test "projectMandatory at the measured seed
+   growth": over from 2026-11-14, peak 651 MiB, fits again 2026-11-29 12:00, Claude's projection). After that the
+   seeds settle at 744 h of pins at the rate of the time (at 11 MiB a day about 340 MiB of seeds, 410 MiB with two
+   builds; less if pins slow down). So, for A1 (WP-31 and WP-35): either the emptyDir and this budget are sized above the projected
+   peak (with gap 2's ephemeral-storage limit to match), or A1 waits until the run's projection stays under the budget.
 2. **The pod's ephemeral-storage limit (for the pigeon manifests, WP-31).** Platform 9.4's pigeon Deployment gives the
    pigeon container `ephemeral-storage` limit 128Mi and the initContainer none. kubelet counts a disk-backed emptyDir
    against the pod's ephemeral-storage limit (the sum of the containers' limits, the largest init container's for the
@@ -93,7 +108,7 @@ commits a week, so spec 17.1's "every build of the last 30 days, or the last 5" 
 | `fetch-seeds.mjs` | `/app/dist/_expo/static/**` and `/app/dist/assets/**` of each ui image, via `crane export`. The CI cache is a download cache only: a cached tag is used only at the tag's current digest and with exactly the files and sha256 that the previous image's `meta/seeds.json` records (any job of the branch can write a cache entry, the build job included) |
 | `assemble.mjs` | the new export + `sw.js` + kept, restored and seeded files, pruning (by age and under the budget), `.br` (q11) and `.gz` (9) siblings (reused when the bytes are unchanged), the size budget; writes `meta/assets-history.json` (`{file: firstSeenISO}`), `meta/builds.json` and `meta/seeds.json` |
 | `verify-seeds.mjs` | every seeded file present byte for byte |
-| `a1-ready.sh` | for the cutover runner before A1: `pigeon-app:<A1 sha12>` exists, was built from the A1 commit and seeds `yyc-ai-ui:<A1 sha12>` |
+| `a1-ready.sh` | for the cutover runner before A1 (`a1-ready.sh <A1 commit> <DE0CH/YYC clone>`): `pigeon-app:<A1 sha12>` exists, was built from the A1 commit, seeds `yyc-ai-ui:<A1 sha12>` and every `yyc-ai-ui` tag YYC served within 744 h as of the check |
 | `check-frames.sh` | the contract check against pigeon: pigeon's frame corpus (`pigeon-frames.ndjson` of the newest `aviary-*` release), plus the harness's bridge and pigeon-only fixtures, validated against this checkout's `paseo/packages/protocol` with aviary's `testing/paseo-contract` harness. Until aviary publishes a release, it checks the fixtures of aviary main and prints a warning |
 | `unpack-harness.sh` | the release's `paseo-contract.tgz`, with the harness at its root or in one top directory (npm pack's `package/`) |
 | `self-test-verdict.sh` | the frame check's self-test passes only when the validator ran and rejected the seeded frame and nothing else |
@@ -124,6 +139,17 @@ pins, so by A1 every ui commit a pigeon-served tab can run is in `clients.txt`.
 The package is public (platform 5.5). After its first push, someone with the account's web login sets the visibility
 once (claude-env `github-web` skill, `package-public pigeon-app`).
 
+## Rollback
+
+A rollback of `pigeon-app` is a new build, never a re-pin of an old tag. Image X's `/app` was assembled before a newer
+build Y existed, so pinning X again while tabs loaded from Y are open drops Y's lazy chunks for them (the restore step
+covers only the other direction: a served build that `:main` lost). Two ways, both of which merge `:main` (which holds
+Y) into the image YYC then pins:
+
+- a revert commit (on main; during the A1-A5 freeze on a `pigeon-app-fix/*` branch, below), pinned at its own tag;
+- re-running X's own pigeon-app run (Actions, Re-run all jobs; GitHub allows it within 30 days of the run): it builds
+  at X again and re-pushes `pigeon-app:X` with Y's files merged in. Pin X only after that run is green.
+
 ## The A1-A5 freeze
 
 From A1 to A5, YYC keeps `pigeon-app` at the A1 commit. Only a fix that changes nothing but pigeon-app may ship in
@@ -132,11 +158,22 @@ that window (DESIGN 9.6).
 - **The A1 build exists.** The A1 commit (WP-56's switch module in `jarvis/router.mjs`) touches no app path, so the
   paths filter includes the ui image's own inputs while `jarvis-image.yml` exists: the A1 commit gets its pigeon-app
   build, which waits for that commit's ui image and seeds it. A `workflow_dispatch` builds the head of main at that
-  moment, which need not be the A1 commit, so it is not the way to build A1. Before A1's pins are pushed, the cutover
-  runner checks `scripts/pigeon-app/a1-ready.sh <A1 commit>`: the image exists, was built from that commit and seeds
-  its own ui image.
+  moment, which need not be the A1 commit, so it is not the way to build A1. If the A1 commit's image job was cancelled
+  (the middle of three quick pushes, "The workflow" above), re-run the A1 commit's pigeon-app run (Actions, that run,
+  Re-run all jobs): a re-run builds at that commit. Before A1's pins are pushed, the cutover runner checks
+  `scripts/pigeon-app/a1-ready.sh <A1 commit> <DE0CH/YYC clone>`: the image exists, was built from that commit, seeds
+  its own ui image, and seeds every ui image YYC served within 744 h as of the check (a ui pin made after the A1 build
+  read the pin history, such as a rollback, fails it; re-running the A1 run then reads the pins again).
 - **Nothing else ships.** Pushes to `paseo/**` between A1 and A5 still build images and move `:main` (harmless:
   `:main` is only the next build's merge base), but YYC must not pin them. The check for that belongs to cutover's
   `freeze-check` in DE0CH/YYC (WP-35, an acceptance item there; until it lands nothing enforces it): a change of the `pigeon-app` `newTag` in `yyc-ai/deploy/` between
   A1 and A5 is allowed only to a claudecodeui commit whose diff from the A1 commit touches nothing outside
   `scripts/pigeon-app/` and `.github/workflows/pigeon-app.yml`.
+- **A fix ships from a branch cut from A1.** Main moves on during the window, and a build of main carries every app
+  commit since A1, which the freeze refuses. So a pigeon-app-only fix goes on a branch `pigeon-app-fix/<name>` cut from
+  the A1 commit: `pigeon-app.yml` builds pushes to `pigeon-app-fix/**` like main (image `pigeon-app:<fix commit 12>`,
+  merged with `:main`, dispatched to aviary's `clients.txt`), and its image job refuses the build if the branch changes
+  anything outside `scripts/pigeon-app/` and `.github/workflows/pigeon-app.yml` since its merge base with main. The
+  ui image is not rebuilt (jarvis-image builds main only; the A1 ui image is in the pin history by then). Keep the
+  branch until A5 plus 744 h: later runs resolve the pinned tag to its commit in this repository. Merge the fix into
+  main too, so the next main build carries it.

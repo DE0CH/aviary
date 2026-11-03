@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { brotliDecompressSync, gunzipSync } from 'node:zlib';
 
-import { assemble, diskUsage, walk } from '../assemble.mjs';
+import { assemble, diskUsage, projectMandatory, readPins, SEED_HOURS, walk } from '../assemble.mjs';
 import { missingClients } from '../clients-missing.mjs';
 import { cachedCopyValid, takeHashedTrees } from '../fetch-seeds.mjs';
 import { pinsInKustomization, servedImages } from '../pins.mjs';
@@ -485,6 +485,121 @@ test('assemble at the real sizes: 8 builds within 30 days, every file changed ea
   rmSync(root, { recursive: true, force: true });
 });
 
+const MIB = 1048576;
+const HOUR = 3600 * 1000;
+
+test('projectMandatory: seeds leave 744 h after their last serving while new pins add their growth', () => {
+  const now = new Date('2026-11-03T00:00:00Z');
+  const t0 = now.getTime();
+  const result = projectMandatory({
+    fixedBytes: 100 * MIB,
+    seedFiles: [
+      { bytes: 260 * MIB, expires: t0 + 26 * DAY },
+      // beyond the horizon: stays throughout
+      { bytes: 50 * MIB, expires: t0 + 40 * DAY },
+    ],
+    growthBytesPerDay: 11 * MIB,
+    budgetBytes: 480 * MIB,
+    now,
+  });
+  assert.equal(result.now, 410 * MIB);
+  // 410 + 11 MiB a day passes 480 after 6.36 days: the first hourly sample over it is hour 153
+  assert.equal(result.overAt, t0 + 153 * HOUR);
+  // the old seeds leave at day 26: 100 + 50 + 286 fits again
+  assert.equal(result.fitsAgainAt, t0 + 26 * DAY);
+  assert.equal(result.peak.at, t0 + (26 * 24 - 1) * HOUR);
+  assert.equal(result.end.at, t0 + SEED_HOURS * HOUR);
+  // no growth and room to spare: never over
+  const calm = projectMandatory({ fixedBytes: 100 * MIB, seedFiles: [{ bytes: 260 * MIB, expires: t0 + DAY }], growthBytesPerDay: 0, budgetBytes: 480 * MIB, now });
+  assert.equal(calm.overAt, null);
+  assert.equal(calm.fitsAgainAt, null);
+  assert.equal(calm.end.bytes, 100 * MIB);
+});
+
+// The seed growth Claude measured on 2026-11-03 from pigeon-app:main's meta (built from 0079b2fc): the ui pins since
+// the chunk split (2026-10-29) added 25.2, 24.8, 0, 5.9, 0 and 0 MiB of new files, 55.9 MiB in 5 days, and the
+// pre-split seeds stay until 2026-11-29 11:44 (the last pre-split pin ended 2026-10-29 11:44, plus 744 h). With the
+// first image's real seed sizes as the pre-split part and two builds (36 MiB each with siblings) as the fixed part,
+// the mandatory part goes over 480 MiB in mid-November and fits again only once the pre-split seeds leave.
+test('projectMandatory at the measured seed growth: over the 480 MiB budget from mid-November until the pre-split seeds leave', () => {
+  const inventory = JSON.parse(readFileSync(path.join(here, 'sizes-0b3a5c6f5028.json'), 'utf8'));
+  const blocks = (bytes) => Math.max(1, Math.ceil(bytes / 4096)) * 4096;
+  const build = new Set(inventory.build.files);
+  const seedOnly = new Set(Object.values(inventory.seeds).flatMap((seed) => seed.files).filter((i) => !build.has(i)));
+  const expires = new Date('2026-10-29T11:44:00Z').getTime() + SEED_HOURS * HOUR;
+  const now = new Date('2026-11-03T00:00:00Z');
+  const result = projectMandatory({
+    fixedBytes: 2 * 36 * MIB,
+    seedFiles: [...seedOnly].map((i) => ({ bytes: blocks(inventory.files[i][1]), expires })),
+    growthBytesPerDay: (55.9 * MIB) / 5,
+    budgetBytes: 480 * MIB,
+    now,
+  });
+  console.log(
+    `now ${(result.now / MIB).toFixed(1)} MiB, over from ${new Date(result.overAt).toISOString()}, peak ${(result.peak.bytes / MIB).toFixed(1)} MiB at ` +
+      `${new Date(result.peak.at).toISOString()}, fits again ${new Date(result.fitsAgainAt).toISOString()}`,
+  );
+  assert.ok(result.overAt > new Date('2026-11-10T00:00:00Z').getTime() && result.overAt < new Date('2026-11-20T00:00:00Z').getTime());
+  assert.equal(result.fitsAgainAt, new Date('2026-11-29T12:00:00Z').getTime());
+  assert.ok(result.peak.bytes > 600 * MIB && result.peak.bytes < 700 * MIB, `peak ${(result.peak.bytes / MIB).toFixed(1)} MiB`);
+});
+
+test('assemble reports the mandatory part and, with the pins, projects it: a shared file leaves with its newest seed', () => {
+  const root = tmp();
+  const sw = path.join(root, 'sw.js');
+  write(sw, 'sw');
+  const kib = (n, c) => c.repeat(n * 1024);
+  // pinned 20 to 10 days ago, then the recent one from 2 days ago until now
+  seedDir(root, 'aaaaaaaaaaa1', { '_expo/static/js/web/old-1.js': kib(400, 'o'), '_expo/static/js/web/shared-1.js': kib(40, 's') });
+  const seeds = seedDir(root, 'aaaaaaaaaaa2', { '_expo/static/js/web/new-2.js': kib(140, 'n'), '_expo/static/js/web/shared-1.js': kib(40, 's') });
+  const dist = exportDir(root, 'dist', { '_expo/static/js/web/entry-11.js': 'entry' });
+  const now = new Date('2026-11-03T00:00:00Z');
+  const iso = (days) => new Date(now.getTime() - days * DAY).toISOString();
+  const pins = readPins(`aaaaaaaaaaa1 ${iso(20)} ${iso(10)}\naaaaaaaaaaa2 ${iso(2)} now\n`);
+  const result = assemble({
+    dist,
+    sw,
+    seedsDir: seeds,
+    seeds: [
+      { tag: 'aaaaaaaaaaa1', commit: sha(1) },
+      { tag: 'aaaaaaaaaaa2', commit: sha(2) },
+    ],
+    commit: sha(3),
+    out: path.join(root, 'out'),
+    budgetBytes: 2 * MIB,
+    now,
+    pins,
+  });
+  // one build only: everything is mandatory
+  assert.equal(result.mandatory.bytes, result.bytes);
+  assert.equal(result.mandatory.seedBytes, (400 + 40 + 140) * 1024);
+  assert.equal(result.mandatory.headroom, 2 * MIB - result.bytes);
+  // growth: the recent pin's own files (new-2.js; shared-1.js the older pin holds already), over 7 days
+  assert.equal(result.projection.recentPins, 1);
+  assert.equal(result.projection.growthBytesPerDay, (140 * 1024) / 7);
+  // old-1.js leaves 744 h after its pin ended (10 days ago): 21 days from now; shared-1.js stays with the recent pin
+  const fixed = result.mandatory.bytes - result.mandatory.seedBytes;
+  const atDay = (day) => fixed + (40 + 140) * 1024 + (day >= 21 ? 0 : 400 * 1024) + (result.projection.growthBytesPerDay * day);
+  assert.equal(result.projection.end.bytes, atDay(31));
+  assert.equal(result.projection.peak.at, now.getTime() + (21 * 24 - 1) * HOUR);
+  assert.equal(result.projection.overAt, null);
+  // the CLI prints both, and warns when the projection goes over
+  const cli = spawnSync(
+    process.execPath,
+    [
+      path.join(here, '..', 'assemble.mjs'),
+      '--dist', dist, '--sw', sw, '--commit', sha(3), '--out', path.join(root, 'out2'), '--seeds', seeds,
+      '--seed', `aaaaaaaaaaa1=${sha(1)}`, '--seed', `aaaaaaaaaaa2=${sha(2)}`, '--budget-mib', '1', '--now', now.toISOString(),
+      '--pins', (write(path.join(root, 'pins.txt'), `aaaaaaaaaaa1 ${iso(20)} ${iso(10)}\naaaaaaaaaaa2 ${iso(2)} now\n`), path.join(root, 'pins.txt')),
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(cli.status, 0, cli.stderr);
+  assert.match(cli.stdout, /mandatory part \(this build, the one before it, the served builds, the seeds\): 0\.6 MiB, of it seeds' own files 0\.6 MiB; headroom 0\.4 MiB/);
+  assert.match(cli.stdout, /new seeds add 0\.0 MiB a day, what the 1 ui pins of the last 7 days added\): peak/);
+  rmSync(root, { recursive: true, force: true });
+});
+
 // ---------- fetch-seeds
 
 test('fetch-seeds trusts a cached seed only at the current digest and with the files the previous image recorded', () => {
@@ -587,7 +702,7 @@ test('clients-missing: the dispatched commits clients.txt does not list yet', ()
   assert.deepEqual(missingClients(listed, [sha(1), sha(3), sha(4)]), [sha(1), sha(4)]);
 });
 
-test('a1-ready: the A1 image exists, was built from the A1 commit and seeds that commit\'s own ui image', () => {
+test('a1-ready: the A1 image exists, was built from the A1 commit, seeds its own ui image and every ui image served within 744 h', () => {
   const root = tmp();
   // a fake crane: `crane export --platform P IMAGE -` streams a tar of $FAKE_IMAGES/<tag>, or fails like a missing tag
   const bin = path.join(root, 'bin');
@@ -604,26 +719,42 @@ test('a1-ready: the A1 image exists, was built from the A1 commit and seeds that
   };
   const a1 = '1'.repeat(40);
   const other = '2'.repeat(40);
-  const run = (commit) =>
-    spawnSync('bash', [path.join(here, '..', 'a1-ready.sh'), commit], {
+  const late = '3'.repeat(40);
+  const ago = (days) => new Date(Date.now() - days * DAY).toISOString();
+  // DE0CH/YYC: `other` pinned 40 to 3 days ago (served within 744 h), an older pin long gone
+  const yyc = deployRepo([
+    { date: ago(90), files: { 'yyc-ai/deploy/kustomization.yaml': kustomization('999999999999') } },
+    { date: ago(40), files: { 'yyc-ai/deploy/kustomization.yaml': kustomization(other.slice(0, 12)) } },
+    { date: ago(3), files: { 'yyc-ai/deploy/kustomization.yaml': kustomization(a1.slice(0, 12)) } },
+  ]);
+  const run = (...args) =>
+    spawnSync('bash', [path.join(here, '..', 'a1-ready.sh'), ...args], {
       encoding: 'utf8',
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_IMAGES: images },
     });
-  assert.equal(run('abc').status, 2);
-  let result = run(a1);
+  assert.equal(run('abc', yyc).status, 2);
+  assert.equal(run(a1).status, 2);
+  let result = run(a1, yyc);
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /no ghcr\.io\/de0ch\/pigeon-app:111111111111/);
+  assert.match(result.stderr, /no ghcr\.io\/de0ch\/pigeon-app:111111111111\. .*re-run that commit's pigeon-app run/);
   image(a1, other, { [a1.slice(0, 12)]: { commit: a1, files: {} } });
-  result = run(a1);
+  result = run(a1, yyc);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /was built from 2{40}, not 1{40}/);
   image(a1, a1, { [other.slice(0, 12)]: { commit: other, files: {} } });
-  result = run(a1);
+  result = run(a1, yyc);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /does not seed yyc-ai-ui:111111111111/);
   image(a1, a1, { [other.slice(0, 12)]: { commit: other, files: {} }, [a1.slice(0, 12)]: { commit: a1, files: {} } });
-  result = run(a1);
+  result = run(a1, yyc);
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /seeds yyc-ai-ui:111111111111 and 1 other ui images/);
+  assert.match(result.stdout, /seeds yyc-ai-ui:111111111111 and 1 other ui images, every one served within 744 h \(2 pins\)/);
+  // a ui pin that landed after the A1 build read the pins (a rollback to `late`): the A1 image lacks its chunks
+  write(path.join(yyc, 'yyc-ai/deploy/kustomization.yaml'), kustomization(late.slice(0, 12)));
+  execFileSync('git', ['-C', yyc, '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-am', 'rollback'], { env: { ...process.env, GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' } });
+  result = run(a1, yyc);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /does not seed yyc-ai-ui 333333333333, served within 744 h/);
+  rmSync(yyc, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
 });
