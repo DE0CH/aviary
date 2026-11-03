@@ -1,6 +1,9 @@
 //! A legacy conversation's REST calls (DESIGN 9.1, 9.4-9.5): its warm calls before the gate (a ticketed write; from
 //! the gate a warm is a hermit hint only, so typing does not keep resetting its quiet period), its share links
 //! (listed, created and revoked through the old child, the writes under tickets) and its files (the old child's).
+//! A share magpie does not know yet (made in the old child, not copied by the importer) is found by asking the old
+//! child for each of the person's legacy conversations' links, never from one replica's memory alone. An outcome is
+//! `refused` only for the old route's own 4xx; a 5xx or no answer leaves the ticket for the importer's expiry.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -14,10 +17,11 @@ use magpie_api::legacy::{TICKET_WRITE_TIMEOUT, TicketDone, TicketKind, TicketOut
 use uuid::Uuid;
 
 use super::upstream::CallError;
-use super::{Legacy, OLD_WARM};
+use super::{Legacy, OLD_WARM, Seen, Unknown};
 use crate::App;
 use crate::http::{api_error, person_calls};
 use crate::identity::Identity;
+use magpie_api::conversations::{ListQuery, ListState};
 
 /// Shares created through the legacy upstream on this replica, by share id: the conversation a revoke's ticket names
 /// before the importer has copied the share into magpie.
@@ -52,25 +56,38 @@ enum Ticketed {
 
 impl Legacy {
     /// Whether the conversation (of the request's person) is legacy, looked up when pigeon has not read it while the
-    /// person has legacy conversations.
-    pub async fn rest_is_legacy(&self, app: &App, id: &Identity, conversation: Uuid) -> bool {
-        let Some(person) = id.subject() else { return false };
+    /// person has legacy conversations. `Err` when that cannot be told (the window or the conversation not read).
+    ///
+    /// # Errors
+    /// The owner could not be read.
+    pub async fn rest_owner(&self, app: &App, id: &Identity, conversation: Uuid) -> Result<bool, Unknown> {
+        let Some(person) = id.subject() else { return Ok(false) };
         if let Some(l) = self.is_legacy(person, &conversation) {
-            return l;
+            return Ok(l);
         }
-        if !self.window(person).await.is_ok_and(|w| w.person_legacy > 0) {
-            return false;
+        match self.window(person).await {
+            Ok(w) if w.person_legacy > 0 => {}
+            Ok(_) => return Ok(false),
+            Err(_) => return Err(Unknown),
         }
-        match person_calls(&app.0.magpie, id).map(|c| async move { c.get_conversation(conversation).await }) {
-            Some(f) => match f.await {
-                Ok(c) => {
-                    self.observe(person, &c);
-                    c.migrating
-                }
-                Err(_) => false,
-            },
-            None => false,
+        let Some(calls) = person_calls(&app.0.magpie, id) else {
+            return Ok(false);
+        };
+        let sent = std::time::Instant::now();
+        match calls.get_conversation(conversation).await {
+            Ok(c) => {
+                self.observe(person, &c, Seen::Read(sent));
+                Ok(c.migrating)
+            }
+            // not the person's: magpie's own answer is the right one
+            Err(e) if e.api().is_some_and(|r| r.status < 500 && r.status != 429) => Ok(false),
+            Err(_) => Err(Unknown),
         }
+    }
+
+    /// [`Legacy::rest_owner`], an unknown owner taken as native (for writes: magpie's 409 re-routes them).
+    pub async fn rest_is_legacy(&self, app: &App, id: &Identity, conversation: Uuid) -> bool {
+        self.rest_owner(app, id, conversation).await.unwrap_or(false)
     }
 
     /// A ticketed write to the old router: the ticket, the call within the hold, the outcome reported.
@@ -100,6 +117,7 @@ impl Legacy {
                 Ok(t) => t,
                 Err(e) => {
                     tracing::warn!(error = %e, "ticket not taken");
+                    self.0.metrics.write_refused.inc();
                     return Ticketed::Done(Err(CallError::Unreachable));
                 }
             };
@@ -111,7 +129,10 @@ impl Legacy {
                     return Ticketed::Native;
                 }
                 (TicketRoute::Legacy, Some(t)) => t,
-                (TicketRoute::Legacy, None) => return Ticketed::Done(Err(CallError::Unreachable)),
+                (TicketRoute::Legacy, None) => {
+                    self.0.metrics.write_refused.inc();
+                    return Ticketed::Done(Err(CallError::Unreachable));
+                }
             };
             let report = |outcome: TicketOutcome| {
                 let calls = calls.clone();
@@ -132,9 +153,13 @@ impl Legacy {
             let r = self.send(call(), TICKET_WRITE_TIMEOUT).await;
             match &r {
                 Ok(_) => report(TicketOutcome::Applied).await,
-                Err(CallError::Status(..) | CallError::SignedOut) => report(TicketOutcome::Refused).await,
-                // no answer: it may have been applied; the importer expires the ticket after its settle time
-                Err(CallError::Unreachable) => {}
+                // the old route's own no: nothing was written
+                Err(e) if super::delegate::refused_by_old(e) => report(TicketOutcome::Refused).await,
+                // a 5xx or a gateway's error, or no answer: it may have been applied after all; the importer expires
+                // the ticket after its settle read
+                Err(_) => {
+                    self.0.metrics.write_refused.inc();
+                }
             }
             return Ticketed::Done(r);
         }
@@ -173,8 +198,12 @@ impl Legacy {
     /// A legacy conversation's share links (`GET` the list, `POST` a new one) through the old child. `None` when
     /// magpie owns the conversation (the caller serves it).
     pub async fn shares(&self, app: &App, req: &Parts, id: &Identity, conversation: Uuid) -> Option<Response> {
-        if !self.rest_is_legacy(app, id, conversation).await {
-            return None;
+        match self.rest_owner(app, id, conversation).await {
+            Ok(true) => {}
+            Ok(false) => return None,
+            // a create goes to magpie, which re-routes it with its 409; a list is not answered from magpie's copy
+            Err(Unknown) if req.method == Method::POST => return None,
+            Err(Unknown) => return Some(retry_later()),
         }
         let who = self.who(id)?;
         let path = req.uri.path().to_owned();
@@ -202,8 +231,19 @@ impl Legacy {
         ))
     }
 
-    /// A revoke of a share whose conversation is legacy (magpie answered 409 `route: "legacy"` with the
-    /// conversation, or the share was made through the legacy upstream here). `None`: not one of those.
+    /// A share create magpie refused with 409 `conversation_migrating` `route: "legacy"` (pigeon's view of the owner
+    /// was stale, or the owner could not be read): the conversation is legacy, and the create goes to the old child
+    /// under a ticket.
+    pub async fn share_rerouted(&self, app: &App, req: &Parts, id: &Identity, conversation: Uuid) -> Option<Response> {
+        let person = id.subject()?;
+        self.mark(person, conversation, true);
+        self.shares(app, req, id, conversation).await
+    }
+
+    /// A revoke of a share whose conversation is legacy: magpie answered 409 `route: "legacy"` with the conversation,
+    /// or 404 while the person has legacy conversations (a link made in the old child that magpie has not copied
+    /// yet). In that case the share's conversation is the one whose old-child links list it (the links pigeon made
+    /// here are tried first). `None`: not one of those.
     pub async fn revoke(
         &self,
         app: &App,
@@ -212,7 +252,10 @@ impl Legacy {
         share: &str,
         conversation: Option<Uuid>,
     ) -> Option<Response> {
-        let conversation = conversation.or_else(|| self.0.lu_shares.get(share))?;
+        let conversation = match conversation.or_else(|| self.0.lu_shares.get(share)) {
+            Some(c) => c,
+            None => self.share_owner(app, id, share).await?,
+        };
         let who = self.who(id)?;
         let path = req.uri.path().to_owned();
         let call = || self.request(Method::DELETE, &path, &who);
@@ -225,10 +268,61 @@ impl Legacy {
         }
     }
 
-    /// A legacy conversation's file (`files/raw`): the old child's answer, streamed, with the range headers passed.
-    pub async fn files_raw(&self, app: &App, req: &Parts, id: &Identity, conversation: Uuid) -> Option<Response> {
-        if !self.rest_is_legacy(app, id, conversation).await {
+    /// The legacy conversation of the person whose old-child links list `share` (`None`: none does, or the person
+    /// has no legacy conversation).
+    async fn share_owner(&self, app: &App, id: &Identity, share: &str) -> Option<Uuid> {
+        let person = id.subject()?;
+        if !self.window(person).await.is_ok_and(|w| w.person_legacy > 0) {
             return None;
+        }
+        let calls = person_calls(&app.0.magpie, id)?;
+        let who = self.who(id)?;
+        let mut legacy = Vec::new();
+        for state in [ListState::Active, ListState::Deleted] {
+            let mut cursor = None;
+            for _ in 0..50 {
+                let q = ListQuery {
+                    state: Some(state),
+                    limit: Some(200),
+                    cursor: cursor.take(),
+                    search: None,
+                };
+                let page = calls.list_conversations(&q).await.ok()?;
+                legacy.extend(page.conversations.iter().filter(|c| c.migrating).map(|c| c.id));
+                match page.next_cursor {
+                    Some(n) => cursor = Some(n),
+                    None => break,
+                }
+            }
+        }
+        for c in legacy {
+            let path = format!("{}{c}/shares", crate::paseo::compat::SESSIONS);
+            let Ok((_, body)) = self
+                .send(self.request(Method::GET, &path, &who), Duration::from_secs(30))
+                .await
+            else {
+                continue;
+            };
+            let listed = serde_json::from_slice::<serde_json::Value>(&body).is_ok_and(|v| {
+                v["shares"]
+                    .as_array()
+                    .is_some_and(|l| l.iter().any(|s| s["id"].as_str() == Some(share)))
+            });
+            if listed {
+                self.0.lu_shares.put(share, c);
+                return Some(c);
+            }
+        }
+        None
+    }
+
+    /// A legacy conversation's file (`files/raw`): the old child's answer, streamed, with the range headers passed.
+    /// An owner that cannot be read answers 503 (retryable), not magpie's copy.
+    pub async fn files_raw(&self, app: &App, req: &Parts, id: &Identity, conversation: Uuid) -> Option<Response> {
+        match self.rest_owner(app, id, conversation).await {
+            Ok(true) => {}
+            Ok(false) => return None,
+            Err(Unknown) => return Some(retry_later()),
         }
         let who = self.who(id)?;
         // the view travels in the old key's header: pigeon's own token in the query would be refused there
@@ -264,6 +358,18 @@ impl Legacy {
             }
         }
     }
+}
+
+/// An answer that depends on an owner pigeon could not read: retry shortly.
+fn retry_later() -> Response {
+    let mut r = api_error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "UPSTREAM_UNAVAILABLE",
+        "Please try again in a moment.",
+    );
+    r.headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from_static("2"));
+    r
 }
 
 fn signed_out() -> Response {

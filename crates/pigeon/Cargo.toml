@@ -34,6 +34,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+aviary-core = { path = "../aviary-core", features = ["testing"] }
 aviary-fakes = { path = "../../testing/fakes" }
 fake-access = { path = "../../testing/fake-access" }
 

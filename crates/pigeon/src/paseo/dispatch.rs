@@ -311,8 +311,12 @@ impl Handler {
 
     async fn run(self) {
         if let Some(c) = conversation_of(&self.kind, &self.m) {
-            // the switch window: a conversation pigeon has not read is looked up while the person has legacy ones
-            self.app.legacy().resolve(&self.conn, c).await;
+            // the switch window: a conversation pigeon has not read is looked up while the person has legacy ones; a
+            // read whose owner cannot be told answers a retryable error rather than magpie's copy of what may be a
+            // legacy conversation (a write goes natively: magpie's 409 re-routes it)
+            if self.app.legacy().resolve(&self.conn, c).await.is_err() && !crate::legacy::is_write(&self.kind) {
+                return self.rpc_failed(self.locale().unreachable());
+            }
             if let Some(d) = self.hub.delegate(&self.conn.person, &c) {
                 d.request(self.conn.clone(), self.kind.clone(), self.m.clone()).await;
                 return;
@@ -427,8 +431,11 @@ impl Handler {
     }
 
     async fn conversation(&self, id: Uuid) -> Result<Conversation, Fail> {
+        let sent = std::time::Instant::now();
         let c = self.calls().get_conversation(id).await.map_err(fail)?;
-        self.app.legacy().observe(&self.conn.person, &c);
+        self.app
+            .legacy()
+            .observe(&self.conn.person, &c, crate::legacy::Seen::Read(sent));
         Ok(c)
     }
 

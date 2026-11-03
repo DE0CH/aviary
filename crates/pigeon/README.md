@@ -66,61 +66,90 @@ pigeon fronts the conversations the old stack still owns (DESIGN 9.2-9.5). `App:
 `feeds::Owners`; outside the window (nothing `migrating`) it hands nothing over and costs one cached magpie read per
 person every 2 s at most (`GET /v1/legacy/window`).
 - **Ownership** is what magpie last said per conversation (`migrating`), learnt from every list answer, conversation
-  read and person change, and looked up for a conversation pigeon has not read while the person has legacy ones. A
-  native write answered 409 `conversation_migrating` with `route: "legacy"` is sent again through the legacy
-  upstream (the re-route), never shown.
+  read and person change, and looked up for a conversation pigeon has not read while the person has legacy ones.
+  Each entry keeps the instant it holds as of (a read's send time; a change's or ticket answer's arrival): an older
+  observation changes nothing, and one that says the owner changed is acted on only once a fresh conversation read
+  confirms it (a list answered late, or a change that lags a ticket's answer, never flips the owner back). A ticket's
+  `native`, the 409 re-route and a create through LU set it directly. A native write (a socket send, a share create)
+  answered 409 `conversation_migrating` with `route: "legacy"` is sent again through the legacy upstream (the
+  re-route), never shown. A read of a conversation whose owner cannot be read while the person has legacy ones
+  answers a retryable error (socket `rpc_error`, HTTP 503 `Retry-After`), never magpie's copy.
 - **The legacy upstream (LU)**: one WebSocket per native socket to the old router's `/paseo-ws` through
   `http://ui-legacy:8080`, opened the first time the socket touches a legacy conversation, with the newest Access
   token pigeon verified for the person (any request refreshes it), pigeon's pair token in `x-aviary-lu`, and for a
   view the same claims signed with the old key. It carries the conversation's timeline (the old child's epoch, so a
   moved tab's cursors stay valid), its live stream (`agent_stream` and the sandbox chip, with the tab's own
   subscription id, only while the conversation is legacy) and its writes; a `client_heartbeat` every 15 s. It closes
-  with its tab. An LU that drops while its tab stays is reopened only with a token that lives an hour more; otherwise
-  the tab is closed 1012 once request-free and reconnects through the edge. An LU 401 closes the tab 4401 (HTTP: 401
-  `NOT_SIGNED_IN`), the signed-out answer, never a write error.
+  with its tab. An LU that drops while its tab stays (an old ui pod restart, a bridge blip) and streamed legacy
+  conversations is reopened at once when it had been up 5 s and the token lives an hour more, and the tab gets one
+  `agent.timeline.replacement` in the old child's epoch per watched conversation (`pigeon_lu_reopened_total`);
+  otherwise the tab is closed 1012 once request-free and reconnects through the edge. An LU 401 closes the tab 4401
+  (HTTP: 401 `NOT_SIGNED_IN`), the signed-out answer, never a write error.
 - **Writes under tickets** (WP-51's contract, `magpie_api::legacy`): ticket first (a send's carries its
   `clientMessageId`, generated when the app sent none), `native` → the native write (the fence won), `legacy` → the
   write through LU within `holdMs` of sending the ticket call (past it the ticket is closed `refused` and another
   taken), at most `TICKET_WRITE_TIMEOUT` for the old child's answer, then the outcome: a send `started` when the old
   child accepted it (the old hub starts the turn and holds it in `pendingUserMessages` before it answers), otherwise
-  `refused`; other writes `applied` / `refused`. A write that never reached the old child (the LU did not open) is
-  closed `refused`; one that may have (no answer) is left open for the importer's expiry. A repeat whose answer
-  `supersedes` an open send reads the old child after `settleMs` (its timeline for the `clientMessageId` or the row
-  `paseo-user-<id>`, and whether a turn runs) and sends only when the first send is absent; when present it reports
-  `started`/`completed` and answers accepted. Outcomes are reported in the background with retries.
+  `refused`; other writes `applied` / `refused` (`refused` only for the old route's own 4xx). A write that never
+  reached the old child (the LU did not open) is closed `refused`; one that may have (no answer, a 5xx, a gateway
+  error) is left open for the importer's expiry. A repeat whose answer `supersedes` an open send, or is `reused` (the
+  open ticket handed back, e.g. a tab's resend after its socket dropped), reads the old child after `settleMs` (a
+  reuse: 2 s) and sends only when the first send is absent: no user row of it (`clientMessageId` or
+  `paseo-user-<id>`) in the timeline's tail, and the conversation not running, preparing or holding a pending
+  message (the agent's status and `GET /api/jarvis/switch/busy`, since a restarted old child rebuilds its timeline
+  without the row's id); when present it reports `started`/`completed` and answers accepted, and when the old child
+  cannot be read nothing is sent. Every other send is not sent again either when the timeline already holds its user
+  row. Outcomes are reported in the background with retries; Delete, Restore and Purge outcomes set pigeon's view of
+  Recently deleted, and a refresh always goes under a Restore ticket. A socket with a ticketed write in flight is a
+  transfer for the drain (its 1012 waits for the write, up to the transfer bound). Every write the switch fails
+  counts in `pigeon_switch_write_refused_total`.
 - **Owner changes**: at a release (the change feed's `migrating: false`, or a ticket's `native`) every socket watching
-  the conversation gets one `agent.timeline.replacement` in magpie's epoch and the native feed (`Hub::owner_changed`);
-  at a reverse hand-over one replacement in the old child's epoch and the LU feed. None before
+  the conversation gets one `agent.timeline.replacement` in magpie's epoch and the native feed (`Hub::owner_changed`),
+  and the LU feeds drop it after that; when magpie's epoch cannot be read within `legacy_release_wait` (60 s) the
+  watching sockets are closed 1012 once request-free instead (`pigeon_legacy_release_unread_total`). At a reverse
+  hand-over one replacement in the old child's epoch and the LU feed. None before
   (`pigeon_legacy_replacements_total` counts them).
 - **Uploads**: while any conversation is legacy, the old route's 30 MB cap; from T0 to the gate (and while
   `rollback_at` is set) the file is written into the old child first (its refusal is the answer,
   `pigeon_upload_tee_failed_total`), then into magpie with the old path recorded, and the answer carries the old path.
   From the gate magpie only; a send of `uploads/<id>/…` paths to a legacy conversation takes the send's ticket, then
   per file an upload ticket of its own, the bytes from magpie (`GET /v1/uploads/{id}/raw`) into the old child, and
-  sends with the old paths; an upload ticket answered `native` sends natively with the magpie paths.
+  sends with the old paths (a copy of the message for the LU send); an upload ticket answered `native` sends the tab's
+  own message natively, every path magpie's.
 - **REST**: a legacy conversation's warm before the gate is the old warm under a ticket (from the gate a hermit hint
   only); its share links are listed, created and revoked through the old child (writes under tickets; magpie's 409
-  names the conversation of a revoke, and a share made through LU on this replica is remembered until the importer
-  copies it); its `files/raw` is the old child's.
+  names the conversation of a revoke; a revoke magpie answers 404 while the person has legacy conversations finds
+  the conversation among those whose old-child links list the share, whichever replica made it); its `files/raw`
+  is the old child's.
 - **Creates** go through LU, born legacy, while `rollback_at` is set (DESIGN 9.10 step 1).
 - **View-as**: a token the old router signed is honoured while any conversation is legacy (spec 6.2).
-- **The move's input**: `GET /internal/switch/activity` on the ops port: `{generatedAt, persons: {email: {lastWarm,
-  lastUpload}}}` of this replica (the runner reads every replica).
+- **The move's input**: `GET /internal/switch/activity` on the ops port: `{generatedAt, startedAt, uptimeSeconds,
+  complete, persons: {email: {lastWarm, lastUpload}}}` of this replica (the runner reads every replica). `complete`
+  is `false` while the replica has been up less than 60 s: its memory cannot say who typed in the runner's
+  look-back, so the runner treats that as "activity unknown" and moves nobody.
 - **Counters** (DESIGN 9.9; registry prefix `pigeon`): `pigeon_switch_write_refused_total`, `pigeon_lu_errors_total`,
   `pigeon_lu_503_total`, `pigeon_lu_401_total` (DESIGN's `lu_401_total`), `pigeon_upload_tee_failed_total`,
-  `pigeon_legacy_replacements_total`, the gauge `pigeon_lu_sockets`.
+  `pigeon_legacy_replacements_total`, `pigeon_legacy_release_unread_total`, `pigeon_lu_reopened_total`, the gauge
+  `pigeon_lu_sockets`.
 - **Tests**: `tests/legacy.rs` against the LU contract rig (`tests/common/old.rs`, a fake old router speaking the
-  bridge's protocol for what pigeon relays, and the window's routes in `tests/common/model.rs`): a running old turn
-  streams and Stop ends it, every write once under a ticket closed on the outcome, one replacement per subscribed
-  socket at release and none before, the fence winning a send and the 409 re-route, a reverse hand-over's one replacement in the old epoch, a superseded
-  repeat that gives the old child exactly one turn, the tee until the gate (its old path sent by an unmoved old-path
-  socket straight to the old router, and a pre-move old path sent to a native conversation) and the copy-at-send after
-  it (and one that loses to the fence),
-  an LU 401, a replica gone with LU sockets, the drain's request-free-first rule with an LU write outstanding, an old
-  view-as token, warm and activity, creates during a rollback and shares, and the 1 000-send fence-race fuzz (every fifth send with a magpie-only file, read by whichever stack runs
-  the turn). Frames a
-  test socket gets through LU are the fake old child's and are not checked against the frame corpus
-  (`Ws::relayed`).
+  bridge's protocol for what pigeon relays, with the old child's busy state, and the window's routes in
+  `tests/common/model.rs`, whose tickets follow magpie's reuse, supersede and hold rules): a running old turn streams
+  and Stop ends it, every write once under a ticket closed on the outcome, one replacement per subscribed socket at
+  release and none before (also with two replicas, a stale list and a lagging change), the fence winning a send and
+  the 409 re-route, a reverse hand-over's one replacement in the old epoch; a send whose replica is killed (its own
+  runtime shut down) between the LU write and the report, resent through another replica (one old turn,
+  `accepted: true`), a resend after the socket dropped mid-write, a repeat past the reuse age after the old child lost
+  the row's id while still running, and one whose first send never arrived; the tee until the gate (its old path sent
+  by an unmoved old-path socket straight to the old router, and a pre-move old path sent to a native conversation),
+  the copy-at-send after it, and two files where the fence wins at the second; an LU 401 (socket and HTTP); a replica
+  killed with LU sockets; an LU dropped under a live tab (reopened with a replacement, the turn keeps streaming; a
+  second drop at once closes the tab 1012); the drain's request-free-first rule with an LU write held past the rpc
+  wait; an old view-as token; warm and activity; creates during a rollback and shares; a share create on a stale
+  owner and its revoke on another replica; a ticketed restore and a 5xx left open; an unreadable owner and an
+  unreadable release; and the fence-race fuzz (1 000 sends from two replicas, two tabs per conversation at seeded
+  random instants, each conversation released, handed back and released again; every send once, as lists, files read
+  by whichever stack runs the turn). Frames a test socket gets through LU are the fake old child's and are not
+  checked against the frame corpus (`Ws::relayed`).
 - **Recorded deviations**: the activity route is on the ops port, not 8080 (DESIGN 15.5 reads it through a
   port-forward, and 8080 faces the edge); the old router recognises the LU by the pair token alone in `x-aviary-lu`
   (WP-56's module compares the whole value), so switch-final 4.1's `<pod>/<socket id>` suffix is not sent; LU frames

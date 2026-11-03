@@ -316,7 +316,7 @@ impl Conn {
         self.frames.as_ref().map_or(0, crate::server::InboundBytes::bytes)
     }
 
-    fn transfer(self: &Arc<Self>) -> Transfer {
+    pub(crate) fn transfer(self: &Arc<Self>) -> Transfer {
         self.transfers.fetch_add(1, Ordering::SeqCst);
         Transfer(self.clone())
     }

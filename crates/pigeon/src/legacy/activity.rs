@@ -1,6 +1,9 @@
 //! The move's input (DESIGN 9.3): per person, the last warm call and the last upload this replica received. After T0
 //! every HTTP call of an old tab reaches pigeon, so the runner moves a person's old sockets only when no replica saw
 //! either in the last 60 s (the composer sends a warm call on the first keystroke and then at most every 30 s).
+//! The record is this replica's memory since it started: the report carries `startedAt` and `complete` (`false`
+//! while the replica has been up less than [`LOOKBACK`]), and a runner treats an incomplete report as "activity
+//! unknown" and moves nobody on it.
 //! `GET /internal/switch/activity` on the ops port, which the edge never reaches (the runner reads each replica
 //! through a port-forward).
 
@@ -22,6 +25,8 @@ use crate::App;
 pub const PATH: &str = "/internal/switch/activity";
 /// Entries older than this are dropped (the runner looks back 60 s).
 const KEEP: Duration = Duration::from_hours(1);
+/// How far back the runner looks: a replica up for less than this cannot say who is typing.
+pub const LOOKBACK: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, Default)]
 struct Seen {
@@ -30,8 +35,22 @@ struct Seen {
 }
 
 /// The per-person record. Cheap to clone.
-#[derive(Debug, Clone, Default)]
-pub struct Activity(Arc<Mutex<HashMap<String, Seen>>>);
+#[derive(Debug, Clone)]
+pub struct Activity(
+    Arc<Mutex<HashMap<String, Seen>>>,
+    time::OffsetDateTime,
+    std::time::Instant,
+);
+
+impl Default for Activity {
+    fn default() -> Self {
+        Self(
+            Arc::default(),
+            time::OffsetDateTime::now_utc(),
+            std::time::Instant::now(),
+        )
+    }
+}
 
 impl Activity {
     fn with(&self, person: &str, f: impl FnOnce(&mut Seen)) {
@@ -56,7 +75,8 @@ impl Activity {
         self.with(person, |s| s.upload = Some(time::OffsetDateTime::now_utc()));
     }
 
-    /// `{"generatedAt", "persons": {email: {"lastWarm", "lastUpload"}}}`, entries of the last hour.
+    /// `{"generatedAt", "startedAt", "uptimeSeconds", "complete", "persons": {email: {"lastWarm", "lastUpload"}}}`,
+    /// entries of the last hour; `complete` is `false` while this replica has been up less than [`LOOKBACK`].
     #[must_use]
     pub fn report(&self) -> Value {
         let now = time::OffsetDateTime::now_utc();
@@ -72,7 +92,9 @@ impl Activity {
                 json!({"lastWarm": s.warm.map(Timestamp), "lastUpload": s.upload.map(Timestamp)}),
             );
         }
-        json!({"generatedAt": Timestamp(now), "persons": persons})
+        let up = self.2.elapsed();
+        json!({"generatedAt": Timestamp(now), "startedAt": Timestamp(self.1), "uptimeSeconds": up.as_secs(),
+               "complete": up >= LOOKBACK, "persons": persons})
     }
 }
 

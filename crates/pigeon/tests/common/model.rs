@@ -68,13 +68,15 @@ pub struct State {
     pub tickets: Vec<Ticket>,
     /// Conversations whose next ticket call finds them released (the fence won): `native`, and owned from then.
     pub release_at_ticket: std::collections::HashSet<Uuid>,
-    /// The next send ticket call answers with `supersedes` (settle ms).
-    pub supersede_next: Option<u64>,
-    /// The next ticket answer's `holdMs` (else 60 000).
+    /// The next ticket answer's `holdMs` (else what is left of the hold).
     pub hold_ms_next: Option<u64>,
     /// A ticket of this kind for this conversation finds it released (the fence won between a send's ticket and its
-    /// copies).
-    pub release_on_kind: Option<(Uuid, TicketKind)>,
+    /// copies), after this many tickets of that kind went through.
+    pub release_on_kind: Option<(Uuid, TicketKind, usize)>,
+    /// A native turn ends as soon as it starts (the fuzz).
+    pub auto_end: bool,
+    /// List answers say this about these conversations' owner (a snapshot read before a release).
+    pub stale_list: HashMap<Uuid, bool>,
     /// Upload bytes by id (`upload_raw`), and the recorded old paths.
     pub upload_bytes: HashMap<Uuid, (String, axum::body::Bytes)>,
     pub legacy_paths: Vec<(Uuid, String)>,
@@ -88,6 +90,10 @@ pub struct Ticket {
     pub kind: TicketKind,
     pub cmid: Option<String>,
     pub outcome: Option<TicketOutcome>,
+    /// When it was issued (a test ages a ticket by moving this back, as magpie's own tests move `issued_at`).
+    pub issued: std::time::Instant,
+    /// A repeat past the reuse age superseded it (it stays open until its outcome).
+    pub superseded: bool,
 }
 
 #[derive(Clone, Default)]
@@ -251,6 +257,20 @@ impl Model {
         let id = self.add(person, title);
         self.set_migrating(id, true);
         id
+    }
+
+    /// A reverse hand-over (a rollback): only with no native turn running (else `false`, nothing changes).
+    pub fn try_reverse(&self, id: Uuid) -> bool {
+        let mut st = self.st();
+        let c = st.convs.get_mut(&id).unwrap();
+        if c.conv.migrating || c.conv.turn.is_some() {
+            return false;
+        }
+        c.conv.migrating = true;
+        Self::upsert(&mut st, id);
+        drop(st);
+        self.bump();
+        true
     }
 
     /// The importer's release: only with no open ticket (else `false`, nothing changes).
@@ -517,7 +537,18 @@ impl Server for Model {
         });
         let start: usize = query.cursor.as_deref().map_or(0, |c| c.parse().unwrap());
         let limit = query.limit.unwrap_or(200) as usize;
-        let page: Vec<Conversation> = all.iter().skip(start).take(limit).map(|c| c.conv.clone()).collect();
+        let page: Vec<Conversation> = all
+            .iter()
+            .skip(start)
+            .take(limit)
+            .map(|c| {
+                let mut conv = c.conv.clone();
+                if let Some(m) = st.stale_list.get(&conv.id) {
+                    conv.migrating = *m;
+                }
+                conv
+            })
+            .collect();
         let next = (start + limit < all.len()).then(|| (start + limit).to_string());
         Ok(ListResponse {
             conversations: page,
@@ -679,8 +710,12 @@ impl Server for Model {
         };
         c.sends.insert(body.client_message_id.clone(), r.clone());
         Self::start_turn_in(&mut st, id, turn, TurnOrigin::Person);
+        let auto_end = st.auto_end;
         drop(st);
         self.bump();
+        if auto_end {
+            self.end_turn(id, TurnPhase::Completed, None);
+        }
         Ok(Admitted::New(r))
     }
 
@@ -820,6 +855,16 @@ impl Server for Model {
         })
     }
 
+    async fn create_share(&self, ctx: Ctx, id: Uuid) -> Result<magpie_api::shares::ShareRef, ApiError> {
+        self.record("create_share", &ctx)?;
+        self.mine(&ctx, id)?;
+        self.not_legacy(id)?;
+        Ok(magpie_api::shares::ShareRef {
+            id: format!("native{}", Uuid::new_v4().simple()),
+            created_at: now(),
+        })
+    }
+
     async fn revoke_share(&self, ctx: Ctx, _share_id: String) -> Result<(), ApiError> {
         self.record("revoke_share", &ctx)?;
         Err(refusal(ErrorCode::NotFound, "not found"))
@@ -891,9 +936,17 @@ impl Model {
         if body.client_message_id.is_some() && body.kind != TicketKind::Send {
             return Err(refusal(ErrorCode::BadRequest, "only a send carries a clientMessageId"));
         }
-        let on_kind = st.release_on_kind.is_some_and(|(c, k)| c == id && k == body.kind);
-        if on_kind {
-            st.release_on_kind = None;
+        let mut on_kind = false;
+        if let Some((c, k, after)) = st.release_on_kind
+            && c == id
+            && k == body.kind
+        {
+            if after == 0 {
+                st.release_on_kind = None;
+                on_kind = true;
+            } else {
+                st.release_on_kind = Some((c, k, after - 1));
+            }
         }
         if st.release_at_ticket.remove(&id) || on_kind {
             st.convs.get_mut(&id).unwrap().conv.migrating = false;
@@ -911,31 +964,51 @@ impl Model {
                 reused: false,
             });
         }
-        let supersedes = if body.kind == TicketKind::Send {
-            st.supersede_next.take().and_then(|settle_ms| {
-                let open = st
-                    .tickets
-                    .iter()
-                    .rev()
-                    .find(|t| t.conversation == id && t.cmid == body.client_message_id && t.outcome.is_none())?;
-                Some(Superseded {
-                    ticket: open.id,
-                    settle_ms,
+        // magpie's rules (`magpie::legacy::tickets::issue_in`): a send's repeat gets its open ticket back while that
+        // is younger than the reuse age, with what is left of the hold; past it the open one is superseded (left
+        // open) and a new ticket names it with what is left of the settle time
+        let hold_max = magpie_api::legacy::TICKET_HOLD_MAX;
+        let mut supersedes = None;
+        if let Some(cmid) = &body.client_message_id
+            && let Some(open) =
+                st.tickets.iter_mut().rev().find(|t| {
+                    t.conversation == id && t.cmid.as_ref() == Some(cmid) && t.outcome.is_none() && !t.superseded
                 })
-            })
-        } else {
-            None
-        };
+        {
+            let age = open.issued.elapsed();
+            if age < magpie_api::legacy::TICKET_REUSE_MAX {
+                let ticket = open.id;
+                let hold_ms = st
+                    .hold_ms_next
+                    .take()
+                    .unwrap_or_else(|| ms(hold_max.saturating_sub(age)));
+                return Ok(TicketResponse {
+                    route: TicketRoute::Legacy,
+                    ticket: Some(ticket),
+                    issued_at: Some(now()),
+                    hold_ms: Some(hold_ms),
+                    supersedes: None,
+                    reused: true,
+                });
+            }
+            open.superseded = true;
+            supersedes = Some(Superseded {
+                ticket: open.id,
+                settle_ms: ms(magpie_api::legacy::TICKET_SETTLE_MAX.saturating_sub(age)),
+            });
+        }
         let t = Ticket {
             id: Uuid::new_v4(),
             conversation: id,
             kind: body.kind,
             cmid: body.client_message_id.clone(),
             outcome: None,
+            issued: std::time::Instant::now(),
+            superseded: false,
         };
         let ticket = t.id;
         st.tickets.push(t);
-        let hold_ms = st.hold_ms_next.take().unwrap_or(60_000);
+        let hold_ms = st.hold_ms_next.take().unwrap_or_else(|| ms(hold_max));
         Ok(TicketResponse {
             route: TicketRoute::Legacy,
             ticket: Some(ticket),
@@ -947,7 +1020,18 @@ impl Model {
     }
 }
 
+fn ms(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
+
 impl Model {
+    /// Moves a ticket's issue time back by `by` (a ticket that has been open that long).
+    pub fn age_ticket(&self, ticket: Uuid, by: Duration) {
+        let mut st = self.st();
+        let t = st.tickets.iter_mut().find(|t| t.id == ticket).unwrap();
+        t.issued = t.issued.checked_sub(by).unwrap();
+    }
+
     /// Waits until the ticket list satisfies `pred` (outcomes are reported in the background).
     pub async fn wait_tickets(&self, pred: impl Fn(&[Ticket]) -> bool) {
         for _ in 0..500 {

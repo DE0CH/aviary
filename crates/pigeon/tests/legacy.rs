@@ -63,6 +63,63 @@ async fn env() -> Env {
     Env { h, m, old, served }
 }
 
+/// A replica in a runtime of its own, so a test can kill it like a process: every task, socket and timer it has
+/// stops at once (its TCP connections close), with nothing run on the way out.
+struct Remote {
+    h: Option<Harness>,
+    rt: Option<tokio::runtime::Runtime>,
+}
+
+impl Remote {
+    async fn start(served: &aviary_fakes::Served, old: &Old) -> Self {
+        let (magpie, legacy) = (served.url(), old.url.clone());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .unwrap();
+            let h = rt.block_on(Harness::start_opts(Opts {
+                tuning: fast(),
+                magpie: Some(magpie),
+                legacy: Some(legacy),
+                ..Opts::default()
+            }));
+            let _ = tx.send((h, rt));
+        });
+        let (h, rt) = rx.await.unwrap();
+        Self {
+            h: Some(h),
+            rt: Some(rt),
+        }
+    }
+
+    fn h(&self) -> &Harness {
+        self.h.as_ref().unwrap()
+    }
+
+    async fn ws(&self, email: &str) -> Ws {
+        let h = self.h();
+        Ws::hello(&h.url, &h.token(email), "").await.0.relayed()
+    }
+
+    /// The process dies.
+    fn kill(&mut self) {
+        if let Some(rt) = self.rt.take() {
+            rt.shutdown_background();
+        }
+        // its parts belonged to the runtime that is gone
+        std::mem::forget(self.h.take());
+    }
+}
+
+impl Drop for Remote {
+    fn drop(&mut self) {
+        self.kill();
+    }
+}
+
 impl Env {
     async fn ws(&self, email: &str) -> Ws {
         Ws::hello(&self.h.url, &self.h.token(email), "").await.0.relayed()
@@ -281,46 +338,134 @@ async fn the_fence_winning_sends_natively_and_a_409_reroutes_to_lu() {
     assert_eq!(e.metric("pigeon_switch_write_refused_total"), 0.0);
 }
 
-/// The old stack does not de-duplicate a send: a repeat whose ticket supersedes an open one (pigeon died before
-/// its report) reads the old child first, and the old child gets exactly one turn; when the first send never
-/// arrived, the repeat sends.
+/// The tab's send is in the old child and the replica that wrote it dies before its report; the tab resends the
+/// same `messageId` through another replica within the reuse age (magpie hands back the open ticket): the old child
+/// is read first and gets exactly one turn, and the tab hears `accepted: true`.
 #[tokio::test]
-async fn a_repeated_send_past_the_reuse_age_reaches_the_old_child_once() {
+async fn a_send_repeated_after_its_replica_died_reaches_the_old_child_once() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    let mut a = Remote::start(&e.served, &e.old).await;
+    let mut ws = a.ws(STAFF).await;
+    list(&mut ws).await;
+    e.old.st().hold_sends = true;
+    let rid = ws.rid();
+    ws.session(
+        json!({"type": "send_agent_message_request", "requestId": rid, "agentId": c, "text": "繼續",
+                      "messageId": "m-dup"}),
+    )
+    .await;
+    until("the write is at the old child", || e.m.st().tickets.len() == 1).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // the replica dies after the LU write and before its report; the old child then takes the send
+    a.kill();
+    drop(ws);
+    until("the LU gone", || e.old.sockets() == 0).await;
+    e.old.release_sends();
+    until("the old child took it", || e.old.agent(c).sends.len() == 1).await;
+    assert!(e.m.st().tickets[0].outcome.is_none(), "no report from a dead replica");
+    // the tab resends through another replica, within the reuse age
+    let mut ws = e.ws(STAFF).await;
+    list(&mut ws).await;
+    let r = send(&mut ws, c, "m-dup", json!({})).await;
+    assert_eq!(r["accepted"], true, "{r}");
+    assert_eq!(e.old.agent(c).sends.len(), 1, "exactly one old turn");
+    let t = e.m.tickets_of(c);
+    assert_eq!(t.len(), 1, "the open ticket was handed back: {t:?}");
+    e.m.wait_tickets(|t| t[0].outcome == Some(TicketOutcome::Started)).await;
+    assert_eq!(e.metric("pigeon_switch_write_refused_total"), 0.0);
+}
+
+/// A tab's socket drops while its send is being written; it resends the same `messageId` on a second replica within
+/// 30 s (the open ticket handed back): the old child gets one send and the tab `accepted: true`.
+#[tokio::test]
+async fn a_resend_after_the_socket_dropped_mid_write_is_not_a_second_turn() {
     let e = env().await;
     let c = e.legacy(STAFF);
     let mut ws = e.ws(STAFF).await;
     list(&mut ws).await;
-    // the first send reached the old child and its ticket stayed open (the reporting replica was killed)
-    e.old.st().hold_sends = false;
-    {
-        let mut st = e.old.st();
-        let a = st.agents.get_mut(&c).unwrap();
-        a.sends.push(("m-dup".into(), "繼續".into(), vec![]));
-        a.rows
-            .push(json!({"type": "user_message", "id": "paseo-user-m-dup", "clientMessageId": "m-dup"}));
-    }
-    e.m.st().tickets.push(common::model::Ticket {
-        id: Uuid::new_v4(),
-        conversation: c,
-        kind: TicketKind::Send,
-        cmid: Some("m-dup".into()),
-        outcome: None,
-    });
-    e.m.st().supersede_next = Some(150);
-    let r = send(&mut ws, c, "m-dup", json!({})).await;
+    e.old.st().hold_sends = true;
+    let rid = ws.rid();
+    ws.session(
+        json!({"type": "send_agent_message_request", "requestId": rid, "agentId": c, "text": "繼續",
+                      "messageId": "m-drop"}),
+    )
+    .await;
+    until("the write is at the old child", || e.m.st().tickets.len() == 1).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    drop(ws);
+    until("the LU closed with its tab", || e.h.app.legacy().lu_open() == 0).await;
+    e.old.release_sends();
+    until("the old child took it", || e.old.agent(c).sends.len() == 1).await;
+    let other = replica(&e.served, &e.old).await;
+    let mut ws = Ws::hello(&other.url, &other.token(STAFF), "").await.0.relayed();
+    list(&mut ws).await;
+    let r = send(&mut ws, c, "m-drop", json!({})).await;
     assert_eq!(r["accepted"], true, "{r}");
-    assert_eq!(e.old.agent(c).sends.len(), 1, "exactly one old turn");
-    e.m.wait_tickets(|t| t.last().is_some_and(|t| t.outcome == Some(TicketOutcome::Completed)))
+    assert_eq!(e.old.agent(c).sends.len(), 1);
+    assert_eq!(e.m.tickets_of(c).len(), 1, "one ticket, reused");
+}
+
+/// A repeat past the reuse age (magpie supersedes the open ticket) after the old child restarted: its timeline has
+/// lost the row's id, but the conversation still runs, so the send is not written again. When the first send never
+/// reached the old child (and it runs nothing), the repeat is sent; when the old child's state cannot be read,
+/// nothing is sent.
+#[tokio::test]
+async fn a_repeat_past_the_reuse_age_reads_the_running_state_not_only_the_timeline() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    let mut a = Remote::start(&e.served, &e.old).await;
+    let mut ws = a.ws(STAFF).await;
+    list(&mut ws).await;
+    e.old.st().hold_sends = true;
+    let rid = ws.rid();
+    ws.session(
+        json!({"type": "send_agent_message_request", "requestId": rid, "agentId": c, "text": "繼續",
+                      "messageId": "m-old"}),
+    )
+    .await;
+    until("the write is at the old child", || e.m.st().tickets.len() == 1).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    a.kill();
+    drop(ws);
+    e.old.release_sends();
+    until("the old child took it", || e.old.agent(c).sends.len() == 1).await;
+    // the old child restarted: the row is there without its id, and the turn still runs
+    e.old.forget_row_ids(c);
+    assert!(e.old.agent(c).running);
+    // past the reuse age (and 85 s of the settle time gone, so the test waits only the rest)
+    let first = e.m.st().tickets[0].id;
+    e.m.age_ticket(first, Duration::from_secs(85));
+    // a token that lives past the reopen rule's hour (the LU is reopened below after the old side drops it)
+    let token = e.h.teams[0].mint(STAFF, 7200, None, None);
+    let mut ws = Ws::hello(&e.h.url, &token, "").await.0.relayed();
+    list(&mut ws).await;
+    let r = send(&mut ws, c, "m-old", json!({})).await;
+    assert_eq!(r["accepted"], true, "{r}");
+    assert_eq!(e.old.agent(c).sends.len(), 1, "not a second send");
+    e.m.wait_tickets(|t| t.len() == 2 && t[1].outcome == Some(TicketOutcome::Started))
         .await;
-    // a repeat whose first send never arrived is sent
-    e.m.st().tickets.push(common::model::Ticket {
-        id: Uuid::new_v4(),
-        conversation: c,
-        kind: TicketKind::Send,
-        cmid: Some("m-lost".into()),
-        outcome: None,
-    });
-    e.m.st().supersede_next = Some(100);
+    // a first send that never reached the old child (its socket closed with it), the old child idle: sent again
+    e.old.end_turn(c);
+    e.old.st().drop_on_send = true;
+    let r = send(&mut ws, c, "m-lost", json!({})).await;
+    assert_eq!(r["accepted"], Value::Null, "the tab hears the failure: {r}");
+    e.old.st().drop_on_send = false;
+    assert_eq!(e.old.agent(c).sends.len(), 1);
+    let lost = e.m.tickets_of(c).last().unwrap().id;
+    e.m.age_ticket(lost, Duration::from_secs(85));
+    // the old child's busy state unreadable: nothing is sent
+    e.old.st().busy_down = true;
+    let r = send(&mut ws, c, "m-lost", json!({})).await;
+    assert_ne!(r["accepted"], true, "{r}");
+    assert_eq!(e.old.agent(c).sends.len(), 1, "nothing sent on an unsure read");
+    assert!(
+        e.old.st().busy_reads > 0,
+        "the busy state was asked for, and unreadable"
+    );
+    e.old.st().busy_down = false;
+    let open = e.m.tickets_of(c).last().unwrap().id;
+    e.m.age_ticket(open, Duration::from_secs(85));
     let r = send(&mut ws, c, "m-lost", json!({})).await;
     assert_eq!(r["accepted"], true, "{r}");
     assert_eq!(e.old.agent(c).sends.len(), 2);
@@ -467,32 +612,41 @@ async fn uploads_are_teed_until_the_gate_and_copied_at_send_after_it() {
     assert_eq!(r.status(), 413);
 }
 
-/// A copy-at-send whose upload ticket finds the conversation released sends natively with the magpie ids.
+/// A copy-at-send whose upload ticket finds the conversation released sends natively with the magpie ids: with two
+/// files and the fence winning at the second file's ticket, every path of the native send is still magpie's.
 #[tokio::test]
 async fn a_copy_at_send_that_loses_to_the_fence_sends_natively() {
     let e = env().await;
     e.m.st().gate = Some(magpie_api::Timestamp::now());
     let c = e.legacy(STAFF);
-    let r = upload(&e, "g.pdf", b"%PDF-1.4 g").await;
-    let v = common::body_json(r).await;
-    let mpath = v["attachments"][0]["path"].as_str().unwrap().to_owned();
+    let mut paths = Vec::new();
+    for name in ["g1.pdf", "g2.pdf"] {
+        let r = upload(&e, name, b"%PDF-1.4 g").await;
+        let v = common::body_json(r).await;
+        paths.push(v["attachments"][0]["path"].as_str().unwrap().to_owned());
+    }
     let mut ws = e.ws(STAFF).await;
     list(&mut ws).await;
-    e.m.st().release_on_kind = Some((c, TicketKind::Upload));
-    let r = send(
-        &mut ws,
-        c,
-        "fenced",
-        json!({"attachments": [{"type": "uploaded_file", "path": mpath, "fileName": "g.pdf",
-                                "mimeType": "application/pdf", "size": 10}]}),
-    )
-    .await;
+    e.m.st().release_on_kind = Some((c, TicketKind::Upload, 1));
+    let attachments: Vec<Value> = paths
+        .iter()
+        .map(|p| {
+            json!({"type": "uploaded_file", "path": p, "fileName": "g.pdf", "mimeType": "application/pdf",
+                         "size": 10})
+        })
+        .collect();
+    let r = send(&mut ws, c, "fenced", json!({"attachments": attachments})).await;
     assert_eq!(r["accepted"], true, "{r}");
     assert!(e.old.agent(c).sends.is_empty());
     let sent = e.m.st().sent.clone();
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0].1.files[0].path, mpath, "the magpie path");
-    assert!(e.old.st().files.is_empty());
+    let native: Vec<String> = sent[0].1.files.iter().map(|f| f.path.clone()).collect();
+    assert_eq!(native, paths, "the magpie paths, none of the old child's");
+    assert_eq!(
+        e.old.st().files.len(),
+        1,
+        "the first file was copied before the fence won"
+    );
 }
 
 /// An LU 401 gives the tab pigeon's signed-out answer (4401), not a write error.
@@ -513,24 +667,46 @@ async fn an_lu_401_is_the_signed_out_answer() {
     assert!(e.metric("pigeon_lu_401_total") >= 1.0);
     assert_eq!(e.metric("pigeon_lu_errors_total"), 0.0);
     assert!(e.m.tickets_of(c).is_empty(), "no ticket before the LU is open");
+    // over HTTP: 401 NOT_SIGNED_IN for the old child's files, shares and the upload tee
+    let files =
+        e.h.get_as(
+            &format!("{}{c}/files/raw?path=a.txt", pigeon::paseo::compat::SESSIONS),
+            STAFF,
+        )
+        .await;
+    let shares =
+        e.h.get_as(&format!("{}{c}/shares", pigeon::paseo::compat::SESSIONS), STAFF)
+            .await;
+    let tee = upload(&e, "a.pdf", b"%PDF").await;
+    for (what, r) in [("files", files), ("shares", shares), ("tee", tee)] {
+        let (status, code) = common::code(r).await;
+        assert_eq!((status, code.as_str()), (401, "NOT_SIGNED_IN"), "{what}");
+    }
 }
 
-/// A pigeon replica with LU sockets goes away: its tabs reconnect to another replica, which opens LU again, and the
-/// conversation keeps streaming; an LU ends with its tab.
+/// A pigeon replica with LU sockets dies (its process killed): the old router sees its LU sockets close, its tabs
+/// reconnect to another replica, which opens LU again, and the conversation keeps streaming; an LU ends with its tab.
 #[tokio::test]
-async fn a_replica_with_lu_sockets_gone_tabs_resume_and_lu_reopens() {
+async fn a_replica_with_lu_sockets_killed_tabs_resume_and_lu_reopens() {
     let e = env().await;
     let c = e.legacy(STAFF);
     let mut ws = e.ws(STAFF).await;
     list(&mut ws).await;
     watch(&mut ws, &[c]).await;
-    until("LU open", || {
-        e.old.upgrades.load(std::sync::atomic::Ordering::SeqCst) == 1
-    })
-    .await;
-    assert_eq!(e.h.app.legacy().lu_open(), 1);
+    until("LU open", || e.h.app.legacy().lu_open() == 1).await;
     drop(ws);
     until("LU closed with its tab", || e.h.app.legacy().lu_open() == 0).await;
+    let mut a = Remote::start(&e.served, &e.old).await;
+    let mut ws = a.ws(STAFF).await;
+    list(&mut ws).await;
+    watch(&mut ws, &[c]).await;
+    until("LU open on the doomed replica", || e.old.sockets() == 1).await;
+    a.kill();
+    until("the old router saw it close", || e.old.sockets() == 0).await;
+    assert!(
+        ws.closed_code(Duration::from_secs(5)).await.is_some(),
+        "the tab lost its socket"
+    );
     let other = replica(&e.served, &e.old).await;
     let mut ws = Ws::hello(&other.url, &other.token(STAFF), "").await.0.relayed();
     list(&mut ws).await;
@@ -540,11 +716,46 @@ async fn a_replica_with_lu_sockets_gone_tabs_resume_and_lu_reopens() {
     e.old
         .stream_row(c, json!({"type": "assistant_message", "text": "接住"}));
     ws.wait_for("the row on the new replica", |v| is_stream(v, c)).await;
-    assert_eq!(e.old.upgrades.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(e.old.upgrades.load(std::sync::atomic::Ordering::SeqCst), 3);
 }
 
-/// The drain closes request-free sockets first: a socket whose LU send is outstanding is closed only after its
-/// answer.
+/// An LU that drops while its tab stays (an old ui pod restart, a bridge blip) is reopened at once: the tab gets one
+/// replacement in the old child's epoch for each legacy conversation it watches and the running turn's later rows. An
+/// LU that drops again before it has been up [`pigeon::legacy::REOPEN_MIN_UP`] is not reopened: the tab is closed
+/// 1012 once request-free and resumes.
+#[tokio::test]
+async fn an_lu_dropped_under_a_live_tab_is_reopened_and_the_turn_keeps_streaming() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    e.old.st().agents.get_mut(&c).unwrap().running = true;
+    // a token that lives past the reopen rule's hour
+    let token = e.h.teams[0].mint(STAFF, 7200, None, None);
+    let mut ws = Ws::hello(&e.h.url, &token, "").await.0.relayed();
+    list(&mut ws).await;
+    watch(&mut ws, &[c]).await;
+    until("LU open", || e.old.sockets() == 1).await;
+    tokio::time::sleep(pigeon::legacy::REOPEN_MIN_UP + Duration::from_millis(200)).await;
+    e.old.drop_sockets();
+    let r = ws.next_session("agent.timeline.replacement").await;
+    assert_eq!(r["agentId"], c.to_string());
+    assert_eq!(r["epoch"], e.old.agent(c).epoch, "the old child's epoch");
+    until("LU reopened and subscribed", || e.old.sockets() == 1).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let seq = e
+        .old
+        .stream_row(c, json!({"type": "assistant_message", "text": "斷線之後"}));
+    let v = ws.wait_for("the turn's later row", |v| is_stream(v, c)).await;
+    assert_eq!(v["message"]["payload"]["seq"], seq);
+    assert_eq!(e.metric("pigeon_lu_reopened_total"), 1.0);
+    assert_eq!(e.old.upgrades.load(std::sync::atomic::Ordering::SeqCst), 2);
+    // dropped again at once: the tab resumes instead
+    e.old.drop_sockets();
+    assert_eq!(ws.closed_code(Duration::from_secs(5)).await, Some(1012));
+    assert_eq!(e.metric("pigeon_lu_reopened_total"), 1.0);
+}
+
+/// The drain closes request-free sockets first: a socket whose LU send is outstanding, longer than the drain's rpc
+/// wait, is closed only after its answer.
 #[tokio::test]
 async fn the_drain_waits_for_an_lu_write_while_closing_request_free_sockets_first() {
     let e = env().await;
@@ -575,7 +786,10 @@ async fn the_drain_waits_for_an_lu_write_while_closing_request_free_sockets_firs
             .await;
     });
     assert_eq!(idle.closed_code(Duration::from_secs(3)).await, Some(1012));
-    assert!(busy.closed.is_none());
+    // held past the drain's rpc wait (3 s here): a ticketed LU write is waited for up to the transfer bound
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let early: Vec<Value> = busy.drain_for(Duration::from_millis(100)).await;
+    assert!(busy.closed.is_none(), "closed while its LU write was open: {early:?}");
     e.old.release_sends();
     let r = busy.next_session("send_agent_message_response").await;
     assert_eq!(r["accepted"], true);
@@ -668,6 +882,10 @@ async fn activity_and_warm_calls() {
     assert_eq!(r.status(), 200);
     let v: Value = serde_json::from_slice(&axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap()).unwrap();
     assert!(v["persons"][STAFF]["lastWarm"].is_string(), "{v}");
+    // a replica up for less than the runner's 60 s look-back says its view is incomplete
+    assert!(v["startedAt"].is_string(), "{v}");
+    assert!(v["uptimeSeconds"].as_u64().unwrap() < 60);
+    assert_eq!(v["complete"], false, "{v}");
     assert!(v["persons"][STAFF]["lastUpload"].is_null());
     assert!(v["persons"][STAFF2].is_null());
 }
@@ -735,12 +953,37 @@ async fn rollback_creates_and_shares_go_to_the_old_child() {
     .await;
 }
 
-/// The fence-race fuzz through pigeon: sends at random instants around each conversation's release, every one
-/// accepted exactly once (on the old child or in magpie), never refused.
+/// A small seeded generator (xorshift64*): the fuzz prints its seed, and `AVIARY_TEST_FUZZ_SEED` replays a run.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+    }
+
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n.max(1)
+    }
+}
+
+/// The fence-race fuzz through pigeon: two replicas, two tabs per conversation (one on each) sending at once at
+/// seeded random instants, while each conversation is released, handed back (a rollback) and released again at
+/// random instants (a release only with no open ticket, a reverse only with no native turn). Every send is accepted
+/// exactly once on one stack, never refused, counted as lists (a duplicate is seen), with files copied for the old
+/// child and magpie's for a native turn.
 #[tokio::test]
 async fn fence_race_fuzz_a_thousand_sends_each_accepted_once() {
+    let seed: u64 = aviary_core::env::test_only("AVIARY_TEST_FUZZ_SEED")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| (u64::from(std::process::id()) * 0x9e37_79b9) | 1);
+    println!("AVIARY_TEST_FUZZ_SEED={seed}");
     let e = env().await;
+    let other = replica(&e.served, &e.old).await;
     e.old.st().auto_end = true;
+    e.m.st().auto_end = true;
     // after the gate: an upload is magpie's only, so a send of it to a legacy conversation copies it under tickets
     e.m.st().gate = Some(magpie_api::Timestamp::now());
     let convs: Vec<Uuid> = (0..20).map(|_| e.legacy(STAFF)).collect();
@@ -750,76 +993,95 @@ async fn fence_race_fuzz_a_thousand_sends_each_accepted_once() {
         .unwrap()
         .to_owned();
     assert!(file.starts_with("uploads/"));
+    let mut rng = Rng(seed);
     let mut tasks = tokio::task::JoinSet::new();
+    let mut flips = tokio::task::JoinSet::new();
     for (i, c) in convs.iter().copied().enumerate() {
-        let mut ws = e.ws(STAFF).await;
+        for (tab, url, token) in [
+            (0, e.h.url.clone(), e.h.token(STAFF)),
+            (1, other.url.clone(), other.token(STAFF)),
+        ] {
+            let mut ws = Ws::hello(&url, &token, "").await.0.relayed();
+            let file = file.clone();
+            let mut r = Rng(rng.next() | 1);
+            tasks.spawn(async move {
+                list(&mut ws).await;
+                let mut refused = Vec::new();
+                for n in 0..25 {
+                    tokio::time::sleep(Duration::from_millis(r.below(15))).await;
+                    let cmid = format!("{c}-{tab}-{n}");
+                    let extra = if r.below(5) == 0 {
+                        json!({"attachments": [{"type": "uploaded_file", "path": file, "fileName": "fuzz.pdf",
+                                                "mimeType": "application/pdf", "size": 13}]})
+                    } else {
+                        json!({})
+                    };
+                    let a = send(&mut ws, c, &cmid, extra).await;
+                    if a["accepted"] != true {
+                        refused.push(a);
+                    }
+                }
+                refused
+            });
+        }
+        // release, hand back, release: each at a random instant, each only when the model's rule allows it
         let m = e.m.clone();
-        let file = file.clone();
-        let release_at = (i * 7) % 50;
-        tasks.spawn(async move {
-            list(&mut ws).await;
-            let mut refused = Vec::new();
-            for n in 0..50 {
-                if n == release_at {
-                    let m2 = m.clone();
-                    // the importer's release at a random instant, only with no open ticket (the fence's rule)
-                    tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis((n as u64 * 13) % 20)).await;
-                        while !m2.try_release(c) {
-                            tokio::time::sleep(Duration::from_millis(2)).await;
-                        }
-                    });
-                }
-                let cmid = format!("{c}-{n}");
-                let extra = if n.is_multiple_of(5) {
-                    json!({"attachments": [{"type": "uploaded_file", "path": file, "fileName": "fuzz.pdf",
-                                            "mimeType": "application/pdf", "size": 13}]})
+        let at: Vec<u64> = (0..3).map(|_| 20 + rng.below(250)).collect();
+        flips.spawn(async move {
+            for (k, wait) in at.into_iter().enumerate() {
+                tokio::time::sleep(Duration::from_millis(wait)).await;
+                if k % 2 == 0 {
+                    while !(m.st().convs[&c].conv.migrating && m.try_release(c)) {
+                        tokio::time::sleep(Duration::from_millis(2)).await;
+                    }
                 } else {
-                    json!({})
-                };
-                let r = send(&mut ws, c, &cmid, extra).await;
-                if r["accepted"] != true {
-                    refused.push(r);
-                }
-                // the native turn ends before the next send (the old child's ends on its own)
-                if m.st().convs[&c].conv.turn.is_some() {
-                    m.end_turn(c, magpie_api::turns::TurnPhase::Completed, None);
+                    while !m.try_reverse(c) {
+                        tokio::time::sleep(Duration::from_millis(2)).await;
+                    }
                 }
             }
-            refused
+            i
         });
     }
     while let Some(r) = tasks.join_next().await {
         let refused = r.unwrap();
-        assert!(refused.is_empty(), "refused: {refused:?}");
+        assert!(refused.is_empty(), "refused (seed {seed}): {refused:?}");
     }
+    while flips.join_next().await.is_some() {}
     for c in &convs {
         let old: Vec<String> = e.old.agent(*c).sends.iter().map(|s| s.0.clone()).collect();
-        let native: Vec<String> = e.m.st().convs[c].sends.keys().cloned().collect();
+        let native: Vec<String> = e.m.st().convs[c]
+            .rows
+            .iter()
+            .filter_map(|r| match &r.item {
+                magpie_api::rows::RowItem::User(u) => u.client_message_id.clone(),
+                _ => None,
+            })
+            .collect();
         let mut all: Vec<String> = old.iter().chain(native.iter()).cloned().collect();
         all.sort();
         let n = all.len();
         all.dedup();
-        assert_eq!(all.len(), n, "a send went to both stacks or twice");
-        assert_eq!(n, 50, "every send accepted once");
+        assert_eq!(all.len(), n, "a send went to both stacks or twice (seed {seed})");
+        assert_eq!(n, 50, "every send accepted once (seed {seed})");
         // the attachment reached whichever stack ran the turn: an old path in the old child, magpie's in magpie
         for (cmid, _, paths) in &e.old.agent(*c).sends {
-            let n: usize = cmid.rsplit('-').next().unwrap().parse().unwrap();
-            if n.is_multiple_of(5) {
-                assert_eq!(paths.len(), 1, "{cmid}");
-                assert!(paths[0].contains(magpie_api::legacy::LEGACY_ASSET_DIR), "{paths:?}");
+            for p in paths {
+                assert!(p.contains(magpie_api::legacy::LEGACY_ASSET_DIR), "{cmid}: {paths:?}");
             }
         }
         for (_, req) in e.m.st().sent.iter().filter(|(x, _)| x == c) {
-            let n: usize = req.client_message_id.rsplit('-').next().unwrap().parse().unwrap();
-            if n.is_multiple_of(5) {
-                assert_eq!(req.files[0].path, file);
+            for f in &req.files {
+                assert_eq!(f.path, file);
             }
         }
     }
-    let copies = e.old.st().files.len();
-    assert!(copies > 0, "some sends copied their file into the old child");
+    assert!(
+        !e.old.st().files.is_empty(),
+        "some sends copied their file into the old child"
+    );
     assert_eq!(e.metric("pigeon_switch_write_refused_total"), 0.0);
+    assert_eq!(other.metric("pigeon_switch_write_refused_total"), 0.0);
 }
 
 /// A reverse hand-over (a rollback): every socket watching the conversation gets one replacement in the old child's
@@ -850,4 +1112,209 @@ async fn a_reverse_hand_over_sends_one_replacement_in_the_old_epoch() {
         .collect();
     assert!(none.is_empty(), "{none:?}");
     assert_eq!(e.metric("pigeon_legacy_replacements_total"), 1.0);
+}
+
+/// Each replica keeps its own owner map and learns a release from its own change feed: a tab on each gets exactly
+/// one replacement. A list that was asked before the release and answered after it, and a change that lags (an
+/// upsert from before the release delivered late), say the conversation is legacy again: neither flips it back.
+#[tokio::test]
+async fn owner_changes_are_ordered_and_each_replica_sends_one_replacement() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    let other = replica(&e.served, &e.old).await;
+    let mut a = e.ws(STAFF).await;
+    let mut b = Ws::hello(&other.url, &other.token(STAFF), "").await.0.relayed();
+    for ws in [&mut a, &mut b] {
+        list(ws).await;
+        watch(ws, &[c]).await;
+    }
+    // past the list micro-cache, a list held in magpie, answering what it read before the release
+    tokio::time::sleep(Duration::from_millis(2100)).await;
+    let lists = e.m.calls_to("list_conversations");
+    let hold = e.m.hold("list_conversations");
+    e.m.st().stale_list.insert(c, true);
+    let rid = a.rid();
+    a.session(json!({"type": "fetch_agents_request", "requestId": rid}))
+        .await;
+    until("the list is held", || e.m.calls_to("list_conversations") > lists).await;
+    e.m.set_migrating(c, false);
+    let epoch = e.m.epoch(c);
+    for ws in [&mut a, &mut b] {
+        let r = ws.next_session("agent.timeline.replacement").await;
+        assert_eq!(r["epoch"], epoch, "{r}");
+    }
+    hold.notify_one();
+    a.next_session("fetch_agents_response").await;
+    e.m.st().stale_list.clear();
+    // an upsert from before the release, delivered now
+    let mut stale = e.m.st().convs[&c].conv.clone();
+    stale.migrating = true;
+    e.m.change(
+        c,
+        magpie_api::changes::ChangeBody::ConversationUpserted {
+            conversation: Box::new(stale),
+        },
+    );
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    for ws in [&mut a, &mut b] {
+        let more: Vec<Value> = ws
+            .drain_for(Duration::from_millis(200))
+            .await
+            .into_iter()
+            .filter(|v| v["message"]["type"] == "agent.timeline.replacement")
+            .collect();
+        assert!(more.is_empty(), "one replacement per socket: {more:?}");
+    }
+    assert_eq!(e.h.app.legacy().is_legacy(STAFF, &c), Some(false));
+    assert_eq!(other.app.legacy().is_legacy(STAFF, &c), Some(false));
+    assert_eq!(e.metric("pigeon_legacy_replacements_total"), 1.0);
+    assert_eq!(other.metric("pigeon_legacy_replacements_total"), 1.0);
+    let r = send(&mut b, c, "native", json!({})).await;
+    assert_eq!(r["accepted"], true);
+    assert!(e.old.agent(c).sends.is_empty());
+}
+
+/// A share create whose owner pigeon read wrongly (owned; magpie answers 409 `route: "legacy"`) is re-routed to the
+/// old child under a ticket; a revoke of that link on another replica, before the importer copied it into magpie
+/// (magpie: 404), finds it among the old child's links and revokes it there.
+#[tokio::test]
+async fn share_writes_reach_the_old_child_whatever_replica_and_cache() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    e.m.st().stale_list.insert(c, false);
+    let mut ws = e.ws(STAFF).await;
+    list(&mut ws).await;
+    e.m.st().stale_list.clear();
+    assert_eq!(e.h.app.legacy().is_legacy(STAFF, &c), Some(false), "a stale owned read");
+    let path = format!("{}{c}/shares", pigeon::paseo::compat::SESSIONS);
+    let r =
+        e.h.as_token(e.h.post(&path), &e.h.token(STAFF))
+            .header("origin", &e.h.url)
+            .send()
+            .await
+            .unwrap();
+    assert_eq!(r.status(), 201);
+    let share = common::body_json(r).await["id"].as_str().unwrap().to_owned();
+    assert!(share.starts_with("sh"), "the old child's link: {share}");
+    assert_eq!(e.old.st().shares.len(), 1);
+    let other = replica(&e.served, &e.old).await;
+    let r = other
+        .as_token(
+            other
+                .http
+                .delete(format!("{}{}{share}", other.url, pigeon::paseo::compat::SHARES)),
+            &other.token(STAFF),
+        )
+        .header("origin", &other.url)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    assert!(!e.old.st().shares[0].2, "revoked in the old child");
+    e.m.wait_tickets(|t| {
+        t.iter()
+            .any(|t| t.kind == TicketKind::ShareCreate && t.outcome == Some(TicketOutcome::Applied))
+            && t.iter()
+                .any(|t| t.kind == TicketKind::ShareRevoke && t.outcome == Some(TicketOutcome::Applied))
+    })
+    .await;
+    assert_eq!(e.metric("pigeon_switch_write_refused_total"), 0.0);
+}
+
+/// A delete through LU then a restore: the restore goes under a Restore ticket (pigeon's view of Recently deleted
+/// follows its own tickets, not magpie's lagging copy). A rename the old route answers 502 for leaves its ticket open
+/// (it may have been applied) and counts as a write the switch failed.
+#[tokio::test]
+async fn restores_are_ticketed_and_a_5xx_is_not_a_refusal() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    let mut ws = e.ws(STAFF).await;
+    list(&mut ws).await;
+    let (kind, _) = ws.rpc("archive_agent_request", json!({"agentId": c})).await;
+    assert_eq!(kind, "agent_archived");
+    assert!(e.old.agent(c).deleted);
+    let _ = ws.rpc("refresh_agent_request", json!({"agentId": c})).await;
+    assert!(!e.old.agent(c).deleted, "restored in the old child");
+    e.m.wait_tickets(|t| {
+        t.iter()
+            .any(|t| t.kind == TicketKind::Restore && t.outcome == Some(TicketOutcome::Applied))
+    })
+    .await;
+    // the shares route answers 502 (a gateway's error after the old router may have applied it)
+    e.old.refuse.store(502, std::sync::atomic::Ordering::SeqCst);
+    let path = format!("{}{c}/shares", pigeon::paseo::compat::SESSIONS);
+    let r =
+        e.h.as_token(e.h.post(&path), &e.h.token(STAFF))
+            .header("origin", &e.h.url)
+            .send()
+            .await
+            .unwrap();
+    assert_eq!(r.status(), 502);
+    e.old.refuse.store(0, std::sync::atomic::Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let create =
+        e.m.tickets_of(c)
+            .into_iter()
+            .find(|t| t.kind == TicketKind::ShareCreate)
+            .unwrap();
+    assert_eq!(create.outcome, None, "left for the importer's expiry");
+    assert_eq!(e.metric("pigeon_switch_write_refused_total"), 1.0);
+}
+
+/// While the person has legacy conversations, a read of a conversation whose owner pigeon cannot read answers a
+/// retryable error (socket and HTTP), never magpie's copy; a release whose new epoch cannot be read closes the
+/// watching tab 1012 (it resubscribes) rather than leaving it with no feed.
+#[tokio::test]
+async fn an_unreadable_owner_is_a_retryable_error_and_an_unreadable_release_reconnects() {
+    let m = Model::default();
+    let served = model::serve(&m).await;
+    let old = Old::start(LU_PAIR).await;
+    let h = Harness::start_opts(Opts {
+        tuning: Tuning {
+            legacy_release_wait: Duration::from_secs(1),
+            ..fast()
+        },
+        magpie: Some(served.url()),
+        legacy: Some(old.url.clone()),
+        ..Opts::default()
+    })
+    .await;
+    let e = Env { h, m, old, served };
+    let c = e.legacy(STAFF);
+    let unread = e.legacy(STAFF);
+    let mut ws = e.ws(STAFF).await;
+    // pigeon has read neither; magpie's conversation read fails
+    for _ in 0..4 {
+        e.m.refuse_once(
+            "get_conversation",
+            magpie_api::errors::Refusal::new(magpie_api::errors::ErrorCode::Unavailable, "down"),
+        );
+    }
+    let (kind, r) = ws
+        .rpc(
+            "fetch_agent_timeline_request",
+            json!({"agentId": unread, "direction": "tail", "limit": 5}),
+        )
+        .await;
+    assert_eq!(kind, "rpc_error", "{r}");
+    let r =
+        e.h.get_as(
+            &format!("{}{unread}/files/raw?path=a.txt", pigeon::paseo::compat::SESSIONS),
+            STAFF,
+        )
+        .await;
+    assert_eq!(r.status(), 503);
+    e.m.st().refuse.clear();
+    list(&mut ws).await;
+    watch(&mut ws, &[c]).await;
+    for _ in 0..50 {
+        e.m.refuse_once(
+            "timeline",
+            magpie_api::errors::Refusal::new(magpie_api::errors::ErrorCode::Unavailable, "down"),
+        );
+    }
+    e.m.set_migrating(c, false);
+    assert_eq!(ws.closed_code(Duration::from_secs(8)).await, Some(1012));
+    assert_eq!(e.metric("pigeon_legacy_release_unread_total"), 1.0);
+    e.m.st().refuse.clear();
 }

@@ -40,6 +40,7 @@ pub struct Agent {
 }
 
 #[derive(Default)]
+#[allow(clippy::struct_excessive_bools)] // a fake's knobs
 pub struct St {
     pub agents: HashMap<Uuid, Agent>,
     /// Open sockets: (id, person, sender, watched agents).
@@ -58,6 +59,14 @@ pub struct St {
     pub auto_end: bool,
     /// Requests and upgrades without the pair token (old-path tabs).
     pub old_path_requests: usize,
+    /// Conversations the old hub reports preparing or holding a pending message (its busy state).
+    pub preparing: HashSet<Uuid>,
+    pub pending: HashSet<Uuid>,
+    /// A send is dropped with the socket (the connection closes before the child sees it).
+    pub drop_on_send: bool,
+    /// Busy-state reads answered 500.
+    pub busy_down: bool,
+    pub busy_reads: usize,
 }
 
 /// The fake. Cheap to clone.
@@ -69,6 +78,8 @@ pub struct Old {
     pub refuse: Arc<AtomicU16>,
     pub upgrades: Arc<AtomicUsize>,
     released: Arc<tokio::sync::Notify>,
+    /// Closes every open socket (an old ui pod restart, a bridge blip).
+    kill: tokio::sync::broadcast::Sender<()>,
     pub url: String,
 }
 
@@ -106,6 +117,7 @@ impl Old {
             refuse: Arc::new(AtomicU16::new(0)),
             upgrades: Arc::new(AtomicUsize::new(0)),
             released: Arc::new(tokio::sync::Notify::new()),
+            kill: tokio::sync::broadcast::channel(4).0,
             url,
         };
         let router = Router::new().fallback(handle).with_state(old.clone());
@@ -135,6 +147,27 @@ impl Old {
 
     pub fn agent(&self, id: Uuid) -> Agent {
         self.st().agents[&id].clone()
+    }
+
+    /// Closes every open socket from the old side (the old ui pod restarted, or the bridge blipped).
+    pub fn drop_sockets(&self) {
+        let _ = self.kill.send(());
+    }
+
+    /// Sockets open now.
+    pub fn sockets(&self) -> usize {
+        self.st().sockets.len()
+    }
+
+    /// The old child restarted: its timeline is rebuilt from history, without the user rows' ids.
+    pub fn forget_row_ids(&self, id: Uuid) {
+        let mut st = self.st();
+        for r in &mut st.agents.get_mut(&id).unwrap().rows {
+            if let Some(o) = r.as_object_mut() {
+                o.remove("id");
+                o.remove("clientMessageId");
+            }
+        }
     }
 
     /// Lets held sends answer.
@@ -267,6 +300,10 @@ impl Old {
             }
             "send_agent_message_request" => {
                 let id = agent?;
+                if self.st().drop_on_send {
+                    let _ = self.kill.send(());
+                    return None;
+                }
                 loop {
                     let held = self.st().hold_sends;
                     if !held {
@@ -408,7 +445,13 @@ async fn socket(old: Old, ws: WebSocket, person: String) {
         }
     });
     let mut hello = false;
-    while let Some(Ok(m)) = stream.next().await {
+    let mut kill = old.kill.subscribe();
+    loop {
+        let m = tokio::select! {
+            m = stream.next() => m,
+            _ = kill.recv() => break,
+        };
+        let Some(Ok(m)) = m else { break };
         let Message::Text(t) = m else {
             if matches!(m, Message::Close(_)) {
                 break;
@@ -531,6 +574,25 @@ async fn handle(State(old): State<Old>, req: Request) -> Response {
             return StatusCode::NO_CONTENT.into_response();
         }
         return StatusCode::NOT_FOUND.into_response();
+    }
+    if path == pigeon::legacy::OLD_BUSY {
+        let mut st = old.st();
+        st.busy_reads += 1;
+        if st.busy_down {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        let running: Vec<String> = st
+            .agents
+            .iter()
+            .filter(|(_, a)| a.person == person && a.running)
+            .map(|(id, _)| id.to_string())
+            .collect();
+        let ids = |s: &HashSet<Uuid>| s.iter().map(Uuid::to_string).collect::<Vec<_>>();
+        return axum::Json(
+            json!({"running": running, "processes": [], "preparing": ids(&st.preparing),
+                                 "pending": ids(&st.pending)}),
+        )
+        .into_response();
     }
     if path.contains("/files/raw") {
         return (StatusCode::OK, "old file bytes").into_response();

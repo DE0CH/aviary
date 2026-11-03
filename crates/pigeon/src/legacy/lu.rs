@@ -2,12 +2,13 @@
 //! for one native socket, as its person. Requests go out with a request id of their own and their answer comes
 //! back to the caller; the old child's live frames of the legacy conversations the tab watches (`agent_stream`, the
 //! sandbox chip) go to the tab with the tab's own subscription id. A `client_heartbeat` every 15 s also keeps the old
-//! child from its idle stop. The socket ends with its tab.
+//! child from its idle stop. The socket ends with its tab; one that ends while its tab stays is handled by
+//! [`Legacy::lu_ended`] (reopened with a replacement per watched conversation, or the tab resumes).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde_json::{Value, json};
@@ -67,6 +68,8 @@ pub struct Lu {
     st: Mutex<St>,
     phase: watch::Sender<Phase>,
     next: AtomicU64,
+    /// When it opened, and when it ended.
+    up: Mutex<(Option<Instant>, Option<Instant>)>,
 }
 
 impl std::fmt::Debug for Lu {
@@ -92,6 +95,7 @@ impl Lu {
             }),
             phase: watch::channel(Phase::Connecting).0,
             next: AtomicU64::new(0),
+            up: Mutex::new((None, None)),
         });
         let me = lu.clone();
         let conn = conn.clone();
@@ -107,6 +111,38 @@ impl Lu {
     #[must_use]
     pub fn is_dead(&self) -> bool {
         matches!(*self.phase.borrow(), Phase::Dead(_))
+    }
+
+    /// Why it ended (`None` while it has not).
+    #[must_use]
+    pub fn ended_with(&self) -> Option<LuError> {
+        match *self.phase.borrow() {
+            Phase::Dead(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// How long it was open before it ended (`None`: it never opened).
+    #[must_use]
+    pub fn up_for(&self) -> Option<Duration> {
+        let up = *self.up.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        match up {
+            (Some(open), Some(end)) => Some(end.saturating_duration_since(open)),
+            (Some(open), None) => Some(open.elapsed()),
+            _ => None,
+        }
+    }
+
+    /// The native socket it serves.
+    #[must_use]
+    pub fn conn_id(&self) -> Uuid {
+        self.conn_id
+    }
+
+    /// Whether its native socket is still there.
+    #[must_use]
+    pub fn conn_alive(&self) -> bool {
+        self.conn.upgrade().is_some_and(|c| !c.is_closing())
     }
 
     fn rid(&self) -> String {
@@ -199,6 +235,7 @@ impl Lu {
     }
 
     fn end(&self, why: LuError) {
+        self.up.lock().unwrap_or_else(std::sync::PoisonError::into_inner).1 = Some(Instant::now());
         self.phase.send_replace(Phase::Dead(why));
         let pending: Vec<_> = self.st().pending.drain().collect();
         for (_, tx) in pending {
@@ -306,19 +343,20 @@ async fn run(legacy: Legacy, lu: Arc<Lu>, conn: Arc<Conn>, mut rx: mpsc::Unbound
             Ok(()) => s,
             Err(e) => {
                 lu.end(e);
-                legacy.lu_ended(lu.conn_id, &lu, conn.is_closing());
+                legacy.lu_ended(Some(conn), &lu);
                 return;
             }
         },
         Err(e) => {
             lu.end(e);
-            legacy.lu_ended(lu.conn_id, &lu, conn.is_closing());
+            legacy.lu_ended(Some(conn), &lu);
             return;
         }
     };
     drop(conn);
     legacy.0.metrics.lu_sockets.inc();
     tracing::info!(conn = %lu.conn_id, "LU open");
+    lu.up.lock().unwrap_or_else(std::sync::PoisonError::into_inner).0 = Some(Instant::now());
     lu.phase.send_replace(Phase::Open);
     if !lu.st().agents.is_empty() {
         lu.send_agents();
@@ -359,8 +397,7 @@ async fn run(legacy: Legacy, lu: Arc<Lu>, conn: Arc<Conn>, mut rx: mpsc::Unbound
     legacy.0.metrics.lu_sockets.dec();
     tracing::info!(conn = %lu.conn_id, tab_gone = gone, "LU closed");
     lu.end(LuError::Lost);
-    let conn_gone = lu.conn.upgrade().is_none_or(|c| c.is_closing());
-    legacy.lu_ended(lu.conn_id, &lu, conn_gone);
+    legacy.lu_ended(lu.conn.upgrade(), &lu);
 }
 
 /// A frame from the old child: an answer to a call, or a live frame for the tab.

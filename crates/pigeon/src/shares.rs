@@ -64,6 +64,17 @@ pub async fn conversation_shares(app: &App, req: &Parts, id: &Identity, conversa
     if req.method == Method::POST {
         return match calls.create_share(cid).await {
             Ok(s) => json(StatusCode::CREATED, &link(&s.id, s.created_at)),
+            // the switch window: magpie says the old stack owns it (pigeon's view was stale, or unread): the create
+            // goes to the old child under a ticket (the re-route, never shown to the tab)
+            Err(e)
+                if e.code() == Some(&ErrorCode::ConversationMigrating)
+                    && e.api().and_then(|r| r.route) == Some(magpie_api::errors::RouteHint::Legacy) =>
+            {
+                match app.legacy().share_rerouted(app, req, id, cid).await {
+                    Some(r) => r,
+                    None => failed(&e),
+                }
+            }
             Err(e) => failed(&e),
         };
     }

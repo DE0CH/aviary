@@ -280,7 +280,9 @@ impl Poller {
             ChangeBody::ConversationUpserted { conversation } => {
                 self.list_change(conns, ch, view, None);
                 // the switch window: a change of owner is a release or a reverse hand-over
-                self.app.legacy().observe(&self.person, conversation);
+                self.app
+                    .legacy()
+                    .observe(&self.person, conversation, crate::legacy::Seen::Change);
             }
             ChangeBody::ConversationRemoved { .. } => {
                 self.list_change(conns, ch, view, None);

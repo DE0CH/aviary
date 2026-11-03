@@ -228,6 +228,9 @@ pub struct Tuning {
     pub legacy_window: Duration,
     /// The legacy upstream's `client_heartbeat` period (15 s: it also keeps the old child from its idle stop).
     pub legacy_heartbeat: Duration,
+    /// How long a release keeps reading magpie's new epoch before it closes the watching sockets 1012 to resubscribe
+    /// instead (60 s, WP-50).
+    pub legacy_release_wait: Duration,
 }
 
 impl Default for Tuning {
@@ -258,6 +261,7 @@ impl Default for Tuning {
             socket_quiet: Duration::from_secs(5),
             legacy_window: Duration::from_secs(2),
             legacy_heartbeat: Duration::from_secs(15),
+            legacy_release_wait: Duration::from_secs(60),
         }
     }
 }
