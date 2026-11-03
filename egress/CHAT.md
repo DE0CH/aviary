@@ -371,7 +371,10 @@ logged). Log rows wait in memory (at most 50,000, the oldest non-model row dropp
 model row) and are written in order once the database is back. A row is cleaned before it is buffered (port 1-65535
 or null, no NUL in text, text capped, a bad uuid null), and a row Postgres still refuses as data (SQLSTATE class 22 or
 23) is a bad row, not an outage: its batch is written row by row, that row dropped (logged, counted in
-`egress_log_dropped_total{kind}`) and the rest written in order. **Migrations** are expand-only: a database at a newer
+`egress_log_dropped_total{kind}`) and the rest written in order. Writes are idempotent: each row gets a `row_id`
+(uuid, unique index) once when it is buffered, and the insert is `on conflict (row_id) do nothing`, so a batch retried
+after an insert whose outcome was unknown (the client's 15 s `query_timeout`, a connection lost after COMMIT) is
+written once and its model cost counts once. **Migrations** are expand-only: a database at a newer
 migration than the build knows is served (a rollback, or an old pod restarting mid-rollout); each migration's sha256 is
 recorded, and a recorded migration whose SQL this build has differently is the one start failure (exit 2).
 
@@ -397,6 +400,12 @@ magpie/hermit requests up to 60 s, tools calls up to 180 s; what is left at its 
   `ghcr.io/de0ch/aviary-testing` image (aviary WP-28).
 - The old relay listener (staff's own Claude Code on the model route, `EGRESS_RELAY_PORT`, table `relay_tokens`) is
   not in this egress: awaiting Deyao's decision (aviary refactor DESIGN 10, "Open: the relay").
+- Route MCP servers (an old-stack route with `mcp: true`, docs/CLAUDE-CODE.md "Route MCP servers"; YYC's label
+  store `labels`, served at `/x/labels/mcp` with the Access service token `yyc-labels-ai` injected and
+  `X-Jarvis-Conversation` added) are not in this egress: `egress.json` routes are exactly `model` and `tools`, and
+  the gateway contract has no `/x/<name>` paths. Until aviary refactor WP-61 (a fixed name for the label store with
+  credential injection and the identity header, and its entry in the new stack's managed MCP file) lands before A3,
+  YYC AI on the new stack has no label store (aviary refactor DESIGN 10, "Route MCP servers").
 
 **Configuration** `/etc/egress/egress.json` (`chat/src/egress/config.ts`): `product` (`name`, `locale` for the budget
 message), `models`, `defaultModel`, `smallModel`, `titleModel`, `titleReasoning`, `contextTokens`, `routes` (exactly
