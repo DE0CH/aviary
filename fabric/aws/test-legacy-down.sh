@@ -2,14 +2,16 @@
 # Offline test of legacy-down.sh: stand-ins for aws, systemctl, ip, nft and curl record every call and answer from
 # canned values. Checks that every name comes from the --config file, that a dry run changes nothing, that --confirm
 # makes exactly the teardown calls, that empty tag sets are refused, that a failing AWS query is never read as "already
-# gone", that an AMI the new fabric uses is never deregistered, that the host step runs only on the named server with
-# no hermit gateway, that ip rules go by their full selector, and that a path with a mount under it is never removed.
+# gone", that an AMI the new fabric uses or tags is never deregistered, that a snapshot whose delete failed is found
+# again, that an IAM user's every attachment goes before it, that the host step runs only on the named server with no
+# hermit gateway (its state directory, a running container, or a crictl that cannot tell), that ip rules go by their
+# full selector, and that a path with a mount under it is never removed.
 # Needs bash and jq. Usage: test-legacy-down.sh
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 mkdir "$t/bin"
-for tool in aws systemctl ip nft curl hostname; do
+for tool in aws systemctl ip nft curl hostname crictl; do
   cat > "$t/bin/$tool" <<EOF
 #!/usr/bin/env bash
 printf '%s %s\n' "$tool" "\$*" >> "\$CALLS"
@@ -30,9 +32,21 @@ case "$tool" in
       *" describe-launch-templates "*) printf 'lt-0old\told-template\nlt-0new\tnew-template\n' ;;
       *" describe-launch-template-versions "*"lt-0new"*) echo "ami-0new \${NEW_ALSO:-}" ;;
       *" describe-launch-template-versions "*) echo "ami-0old" ;;
-      *" describe-images "*"--owners self"*) echo ami-0old ;;
+      *" describe-images "*"--owners self"*)
+        if [ -n "\${NO_AMIS:-}" ]; then echo '[]'
+        elif [ -n "\${FRESH:-}" ]; then
+          echo '[{"id": "ami-0old", "tags": [{"Key": "app", "Value": "old-host"}]},
+                 {"id": "ami-0fresh", "tags": [{"Key": "app", "Value": "old-host"}, {"Key": "fabric", "Value": "hermit"}]}]'
+        else echo '[{"id": "ami-0old", "tags": [{"Key": "app", "Value": "old-host"}]}]'; fi ;;
+      *" describe-snapshots "*) echo "\${TAGGED_SNAPS:-}" ;;
       *" describe-images "*"--image-ids ami-0old"*) echo snap-01 ;;
       *" iam get-user "*"--user-name old-scaler"*) exit 0 ;;
+      *" get-login-profile "*) exit 0 ;;
+      *" list-mfa-devices "*) echo "arn:aws:iam::000000000000:mfa/old-scaler" ;;
+      *" list-signing-certificates "*) echo None ;;
+      *" list-ssh-public-keys "*) echo APKA0TEST ;;
+      *" list-service-specific-credentials "*) echo None ;;
+      *" list-groups-for-user "*) echo old-group ;;
       *" iam get-user "*) echo "An error occurred (NoSuchEntity) when calling the GetUser operation" >&2; exit 254 ;;
       *" list-access-keys "*) echo AKIA0TEST ;;
       *" list-user-policies "*) echo inline-policy ;;
@@ -48,6 +62,12 @@ case "$tool" in
     esac ;;
   nft) exit 0 ;;
   hostname) echo "\${HOST_NAME:-old-gw}" ;;
+  crictl)
+    case \${CRICTL:-} in
+      running) echo "0123abcd" ;;
+      fail) echo "validate service connection: no such file or directory" >&2; exit 1 ;;
+      *) echo "WARN[0000] runtime connect using default endpoints" >&2 ;;
+    esac ;;
   curl)
     case \$args in
       *"/networks?name=test-net"*) echo '{"networks":[{"id":7,"routes":[{"destination":"10.200.0.0/15","gateway":"10.0.0.6"},{"destination":"10.9.0.0/16","gateway":"10.0.0.2"}]}]}' ;;
@@ -62,7 +82,8 @@ mkdir -p "$t/etc-old" "$t/lib-old/jfs" "$t/lib-old/images"
 touch "$t/lib-old/jfs/workspace-file"
 cat > "$t/legacy.json" <<EOF
 {"aws": {"region": "xx-test-1", "instanceTags": {"app": "old-host", "deployment": "example"}, "launchTemplate": "old-template",
-         "amiTags": {"app": "old-host"}, "securityGroup": "old-sg", "iamUsers": ["old-scaler", "old-ami-ci"]},
+         "amiTags": {"app": "old-host"}, "keepTags": {"fabric": "hermit"}, "securityGroup": "old-sg",
+         "iamUsers": ["old-scaler", "old-ami-ci"]},
  "host": {"hostname": "old-gw", "units": ["old-sandboxd", "old-jfs"], "wgInterface": "wg9", "nftTable": "ip oldtable",
           "routeTable": 51899, "rules": ["iif wg9 lookup main suppress_prefixlength 16"], "paths": ["$t/etc-old", "$t/lib-old"]},
  "hetzner": {"network": "test-net", "routes": ["10.200.0.0/15", "10.250.0.0/16"], "firewall": "test-fw"}}
@@ -82,8 +103,9 @@ if bash "$here/legacy-down.sh" --config "$t/legacy.json" >/dev/null 2>&1; then f
 for s in aws host hetzner; do
   run "$s" || fail "dry run $s: $(cat "$t/out")"
   grep -q "^dry run" "$t/out" || fail "dry run $s does not say so"
-  for verb in terminate-instances delete-launch-template deregister-image delete-snapshot delete-access-key \
-      delete-user-policy delete-user delete-security-group "disable --now" "link del" "delete table" "rule del" \
+  for verb in terminate-instances delete-launch-template deregister-image delete-snapshot create-tags delete-access-key \
+      delete-user-policy delete-login-profile deactivate-mfa-device delete-ssh-public-key remove-user-from-group \
+      delete-user delete-security-group "disable --now" "link del" "delete table" "rule del" \
       "route flush" delete_route remove_from_resources "-X DELETE"; do
     hasnt "$verb"
   done
@@ -97,17 +119,40 @@ has "ec2 terminate-instances --instance-ids i-01 i-02"
 has "ec2 wait instance-terminated --instance-ids i-01 i-02"
 has "ec2 delete-launch-template --launch-template-name old-template"
 has "ec2 describe-images --owners self --filters Name=tag:app,Values=old-host"
+has "describe-launch-template-versions --launch-template-id lt-0new --resolve-alias"
+has "ec2 create-tags --resources snap-01 --tags Key=legacy-down-of,Value=ami-0old"
 has "ec2 deregister-image --image-id ami-0old"
 has "ec2 delete-snapshot --snapshot-id snap-01"
+line() { grep -nF -- "$1" "$CALLS" | head -1 | cut -d: -f1; }
+if [ "$(line create-tags)" -gt "$(line deregister-image)" ] || [ "$(line deregister-image)" -gt "$(line delete-snapshot)" ]; then
+  fail "snapshots not tagged before the AMI goes, or deleted before it"
+fi
 has "iam delete-access-key --user-name old-scaler --access-key-id AKIA0TEST"
 has "iam delete-user-policy --user-name old-scaler --policy-name inline-policy"
+has "iam delete-login-profile --user-name old-scaler"
+has "iam deactivate-mfa-device --user-name old-scaler --serial-number arn:aws:iam::000000000000:mfa/old-scaler"
+has "iam delete-virtual-mfa-device --serial-number arn:aws:iam::000000000000:mfa/old-scaler"
+has "iam delete-ssh-public-key --user-name old-scaler --ssh-public-key-id APKA0TEST"
+has "iam remove-user-from-group --user-name old-scaler --group-name old-group"
+hasnt "delete-signing-certificate"
+hasnt "delete-service-specific-credential"
 has "iam delete-user --user-name old-scaler"
+[ "$(line remove-user-from-group)" -lt "$(line "delete-user --user-name old-scaler")" ] || fail "user deleted before its groups"
 hasnt "delete-user --user-name old-ami-ci"
 has "ec2 delete-security-group --group-id sg-0old"
 # the security group goes after the instances are gone
 [ "$(grep -n 'wait instance-terminated' "$CALLS" | cut -d: -f1)" -lt "$(grep -n 'delete-security-group' "$CALLS" | cut -d: -f1)" ] \
   || fail "security group deleted before the instances are terminated"
 echo "ok  aws: tagged instances (every tag), template, tagged AMIs and snapshots, IAM users, security group"
+
+# a re-run after a failed snapshot delete: the AMI is gone, its tagged snapshot is still found and deleted
+: > "$CALLS"
+NO_AMIS=1 TAGGED_SNAPS="snap-07	snap-08" bash "$here/legacy-down.sh" --config "$t/legacy.json" aws --confirm > "$t/out" 2>&1 \
+  || fail "re-run: $(cat "$t/out")"
+has "ec2 delete-snapshot --snapshot-id snap-07"
+has "ec2 delete-snapshot --snapshot-id snap-08"
+hasnt deregister-image
+echo "ok  aws: a snapshot left by a failed delete is found by its tag and deleted on the next run"
 
 jq '.aws.instanceTags = {}' "$t/legacy.json" > "$t/empty.json"
 : > "$CALLS"
@@ -118,7 +163,8 @@ echo "ok  aws: empty tag sets are refused"
 
 # a failing query (expired credentials) stops the step: never "ok: no …", never a skipped AMI
 for q in describe-images describe-launch-templates describe-launch-template-versions describe-security-groups \
-    get-user list-access-keys describe-instances; do
+    get-user list-access-keys describe-instances describe-snapshots get-login-profile list-mfa-devices \
+    list-groups-for-user; do
   : > "$CALLS"
   if AWS_FAIL=$q bash "$here/legacy-down.sh" --config "$t/legacy.json" aws --confirm > "$t/out" 2>&1; then
     fail "aws passes when $q fails: $(cat "$t/out")"
@@ -157,7 +203,19 @@ if OUTSIDE_IMAGE=ami-0old bash "$here/legacy-down.sh" --config "$t/legacy.json" 
 fi
 grep -q "in use outside the old fabric: ami-0old(i-09)" "$t/out" || fail "no refusal: $(cat "$t/out")"
 hasnt terminate-instances
-echo "ok  aws: an AMI used by another launch template or an instance outside instanceTags is refused before any change"
+# an image amiTags matches that carries the new fabric's tags (a fresh or rollback image no template uses yet)
+: > "$CALLS"
+if FRESH=1 bash "$here/legacy-down.sh" --config "$t/legacy.json" aws --confirm > "$t/out" 2>&1; then
+  fail "deregisters an image with the new fabric's tags"
+fi
+grep -q "in use outside the old fabric: ami-0fresh(keepTags)" "$t/out" || fail "no refusal: $(cat "$t/out")"
+hasnt terminate-instances
+jq 'del(.aws.keepTags)' "$t/legacy.json" > "$t/nokeep.json"
+: > "$CALLS"
+if bash "$here/legacy-down.sh" --config "$t/nokeep.json" aws --confirm > "$t/out" 2>&1; then fail "runs without keepTags"; fi
+grep -q "aws.keepTags (the new fabric's tags) is empty" "$t/out" || fail "no refusal: $(cat "$t/out")"
+hasnt terminate-instances
+echo "ok  aws: an AMI used by another launch template, an instance outside instanceTags or carrying keepTags is refused before any change"
 
 # the wrong server, or one running a hermit gateway: refused, nothing changed
 : > "$CALLS"
@@ -174,8 +232,20 @@ fi
 grep -q "refused: a hermit gateway runs on old-gw" "$t/out" || fail "no refusal: $(cat "$t/out")"
 for verb in "disable --now" "link del" "delete table" "rule del" "route flush"; do hasnt "$verb"; done
 rmdir "$t/no-hermit-gateway"
+for c in running fail; do
+  : > "$CALLS"
+  if CRICTL=$c bash "$here/legacy-down.sh" --config "$t/legacy.json" host --confirm > "$t/out" 2>&1; then
+    fail "host runs when crictl is $c"
+  fi
+  case $c in
+    running) grep -q "refused: a hermit gateway runs on old-gw" "$t/out" || fail "no refusal: $(cat "$t/out")" ;;
+    fail) grep -q "refused: crictl cannot list the containers on old-gw (validate service connection" "$t/out" \
+      || fail "no refusal: $(cat "$t/out")" ;;
+  esac
+  for verb in "disable --now" "link del" "delete table" "rule del" "route flush"; do hasnt "$verb"; done
+done
 [ -e "$t/etc-old" ] || fail "a refused host step removed a path"
-echo "ok  host: refused on another server and beside a hermit gateway"
+echo "ok  host: refused on another server and beside a hermit gateway (its state, its running container, a crictl that cannot tell)"
 
 # a workspace mount under a path: that path is refused and kept, the others still go
 printf '36 25 0:52 / %s/jfs rw - fuse.juicefs JuiceFS:x rw\n' "$t/lib-old" > "$t/mountinfo"

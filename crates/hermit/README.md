@@ -98,11 +98,14 @@ hermit spec sections 3-12, 19, 20, 23 and 24.1-24.2 (WP-18, the core) and 13 (WP
   orphan clone, its `deleted_at` and `juicefs rmr`; its quota, its `workspaces` row and its mark. Exit 1 when a
   removal failed.
 - **`fabric/aws/legacy-down.sh --config <legacy.json> aws|host|hetzner [--confirm]`** (A6, once): terminates the old
-  fabric's tagged instances, deletes its launch template, tagged AMIs and their snapshots, IAM users and security
-  group, after checking that no AMI it would deregister is used by another launch template or by an instance outside
-  the old tags (the new fabric shares the account; refused before any change); every AWS query that fails stops it,
-  and only AWS's own "not found" counts as already gone. On the old gateway server (refused unless `hostname` is the
-  file's `host.hostname` and no hermit gateway runs there, since it uses the same `wg0`, table and nft names) it
+  fabric's tagged instances, deletes its launch template, tagged AMIs and their snapshots (tagged `legacy-down-of`
+  before the AMI goes, so a re-run deletes one whose delete failed), IAM users (every attachment first: keys, login
+  profile, MFA devices, certificates, SSH keys, service credentials, groups, policies) and security group, after
+  checking that no AMI it would deregister carries the file's `keepTags` (the new fabric's tags, required) or is used
+  by another launch template (SSM aliases resolved) or by an instance outside the old tags (the new fabric shares the
+  account; refused before any change); every AWS query that fails stops it, and only AWS's own "not found" counts as
+  already gone. On the old gateway server (refused unless `hostname` is the file's `host.hostname` and no hermit
+  gateway runs there, nor a crictl that cannot list containers, since it uses the same `wg0`, table and nft names) it
   stops its units and removes, each by its full selector, the ip rules that look up its table or are listed in
   `host.rules` (the `suppress_prefixlength` rule), the table's routes, its interface, nft table and paths (never a
   path with a mount at or under it: the old hosts mount `JuiceFS` under their state directory); deletes the Hetzner

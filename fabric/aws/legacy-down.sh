@@ -3,7 +3,7 @@
 # switch's A6). Every name comes from the deployment's legacy file (--config, JSON; nothing here names a deployment):
 #
 #   {"aws":     {"region": "…", "instanceTags": {"k": "v", …}, "launchTemplate": "…", "amiTags": {"k": "v", …},
-#                "securityGroup": "…", "iamUsers": ["…", …]},
+#                "keepTags": {"k": "v", …}, "securityGroup": "…", "iamUsers": ["…", …]},
 #    "host":    {"hostname": "…", "units": ["…", …], "wgInterface": "wg0", "nftTable": "ip <name>",
 #                "routeTable": 51822, "rules": ["iif wg0 lookup main suppress_prefixlength 16", …],
 #                "paths": ["/etc/…", "/var/lib/…"]},
@@ -14,17 +14,23 @@
 #   legacy-down.sh --config F aws [--confirm]      terminates every instance with ALL of instanceTags (pending,
 #                                                  running, stopping, stopped) and waits for them; deletes the launch
 #                                                  template; deregisters every AMI of this account with ALL of amiTags
-#                                                  and deletes its snapshots; deletes each IAM user (its access keys,
-#                                                  inline and attached policies first); deletes the security group.
-#                                                  Refused before any change (exit 1) when an AMI amiTags matches is
-#                                                  used by another launch template or by an instance without ALL of
-#                                                  instanceTags (the new fabric shares the account). Every AWS query
-#                                                  that fails stops the step (exit 1); only AWS's own "not found" means
-#                                                  already gone. AWS credentials: the standard AWS_* environment.
+#                                                  and deletes its snapshots (each tagged legacy-down-of=<ami> before
+#                                                  the AMI goes, so a re-run finds a snapshot whose delete failed);
+#                                                  deletes each IAM user (its access keys, login profile, MFA devices,
+#                                                  signing certificates, SSH keys, service credentials, groups, inline
+#                                                  and attached policies first); deletes the security group. Refused
+#                                                  before any change (exit 1) when an AMI amiTags matches carries ALL
+#                                                  of keepTags (the new fabric's tags, required), or is used by
+#                                                  another launch template (any version, an SSM alias resolved) or by
+#                                                  an instance without ALL of instanceTags (the new fabric shares the
+#                                                  account). Every AWS query that fails stops the step (exit 1); only
+#                                                  AWS's own "not found" means already gone. AWS credentials: the
+#                                                  standard AWS_* environment.
 #   legacy-down.sh --config F host [--confirm]     on the old gateway server, as root: refused (exit 1, nothing
 #                                                  changed) unless `hostname` is host.hostname and no hermit gateway
 #                                                  runs there (its state directory /var/lib/hermit-gateway, or a
-#                                                  container of that name). Then stops and disables the units, deletes
+#                                                  container of that name; a crictl on PATH that fails refuses too).
+#                                                  Then stops and disables the units, deletes
 #                                                  every ip rule that looks up routeTable or is one of host.rules (each
 #                                                  by its full selector) and the table's routes, the WireGuard
 #                                                  interface, the nft table, then the paths. A path with anything
@@ -82,14 +88,20 @@ step_aws() {
   while IFS=$'\t' read -r k v; do amif+=("Name=tag:$k,Values=$v"); done < <(cfg '.aws.amiTags | to_entries[] | [.key, (.value | tostring)] | @tsv')
   [ ${#amif[@]} -gt 0 ] || { echo "aws.amiTags is empty: refusing to match every image" >&2; exit 1; }
   local lt; lt=$(cfg .aws.launchTemplate)
+  local keep; keep=$(jq -c '.aws.keepTags // {}' "$CONFIG")
+  [ "$keep" != '{}' ] || { echo "aws.keepTags (the new fabric's tags) is empty: refusing to tell its images apart" >&2; exit 1; }
 
   # before any change: the AMIs to deregister must be the old fabric's alone
-  local amis lts used=' ' ltid ltname vers ami others
-  amis=$(aq ec2 describe-images --owners self --filters "${amif[@]}" --query 'Images[].ImageId' --output text)
+  local images amis lts used=' ' ltid ltname vers ami others
+  images=$(aq ec2 describe-images --owners self --filters "${amif[@]}" --query 'Images[].{id: ImageId, tags: Tags}' --output json)
+  amis=$(jq -r '.[]?.id' <<< "$images")
+  local kept
+  kept=$(jq -r --argjson keep "$keep" '.[]? | ((.tags // []) | map({key: .Key, value: .Value}) | from_entries) as $t
+      | select([$keep | to_entries[] | $t[.key] == (.value | tostring)] | all) | "\(.id)(keepTags)"' <<< "$images")
   lts=$(aq ec2 describe-launch-templates --query 'LaunchTemplates[].[LaunchTemplateId,LaunchTemplateName]' --output text)
   while read -r ltid ltname; do
     if [ -z "$ltid" ] || [ "$ltid" = None ] || [ "$ltname" = "$lt" ]; then continue; fi
-    vers=$(aq ec2 describe-launch-template-versions --launch-template-id "$ltid" \
+    vers=$(aq ec2 describe-launch-template-versions --launch-template-id "$ltid" --resolve-alias \
       --query 'LaunchTemplateVersions[].LaunchTemplateData.ImageId' --output text)
     for ami in $vers; do used="$used$ami($ltname) "; done
   done <<< "$lts"
@@ -98,7 +110,7 @@ step_aws() {
   others=$(jq -r --argjson want "$(jq -c '.aws.instanceTags' "$CONFIG")" '.[]? |
       ((.tags // []) | map({key: .Key, value: .Value}) | from_entries) as $t
       | select([$want | to_entries[] | $t[.key] == (.value | tostring)] | all | not) | "\(.image)(\(.id))"' <<< "$others")
-  used="$used$(tr '\n' ' ' <<< "$others")"
+  used="$used$(tr '\n' ' ' <<< "$others")$(tr '\n' ' ' <<< "$kept")"
   local clash=''
   for ami in $amis; do
     [ "$ami" = None ] && continue
@@ -127,12 +139,24 @@ step_aws() {
     echo "ok: no launch template $lt"
   fi
 
-  local snaps s
+  # each AMI's snapshots are tagged before it goes, then every tagged snapshot is deleted: a snapshot whose delete
+  # failed is found again by the next run, although its AMI is gone by then
+  local snaps s pending=''
   for ami in $amis; do
     [ "$ami" = None ] && continue
     snaps=$(aq ec2 describe-images --image-ids "$ami" --query 'Images[0].BlockDeviceMappings[].Ebs.SnapshotId' --output text)
+    for s in $snaps; do
+      [ "$s" = None ] && continue
+      do_ aws ec2 create-tags --resources "$s" --tags "Key=legacy-down-of,Value=$ami"
+      pending="$pending $s"
+    done
     do_ aws ec2 deregister-image --image-id "$ami"
-    for s in $snaps; do [ "$s" = None ] || do_ aws ec2 delete-snapshot --snapshot-id "$s"; done
+  done
+  snaps=$(aq ec2 describe-snapshots --owner-ids self --filters Name=tag-key,Values=legacy-down-of \
+    --query 'Snapshots[].SnapshotId' --output text)
+  # shellcheck disable=SC2086 # one id per word
+  for s in $(printf '%s\n' $pending $snaps | grep -v -e '^$' -e '^None$' | sort -u); do
+    do_ aws ec2 delete-snapshot --snapshot-id "$s"
   done
 
   local u x list
@@ -144,6 +168,25 @@ step_aws() {
     for x in $list; do [ "$x" = None ] || do_ aws iam delete-user-policy --user-name "$u" --policy-name "$x"; done
     list=$(aq iam list-attached-user-policies --user-name "$u" --query 'AttachedPolicies[].PolicyArn' --output text)
     for x in $list; do [ "$x" = None ] || do_ aws iam detach-user-policy --user-name "$u" --policy-arn "$x"; done
+    # everything else delete-user refuses with DeleteConflict while it is there
+    if afound NoSuchEntity iam get-login-profile --user-name "$u"; then do_ aws iam delete-login-profile --user-name "$u"; fi
+    list=$(aq iam list-mfa-devices --user-name "$u" --query 'MFADevices[].SerialNumber' --output text)
+    for x in $list; do
+      [ "$x" = None ] && continue
+      do_ aws iam deactivate-mfa-device --user-name "$u" --serial-number "$x"
+      case $x in arn:*:mfa/*) do_ aws iam delete-virtual-mfa-device --serial-number "$x" ;; esac
+    done
+    list=$(aq iam list-signing-certificates --user-name "$u" --query 'Certificates[].CertificateId' --output text)
+    for x in $list; do [ "$x" = None ] || do_ aws iam delete-signing-certificate --user-name "$u" --certificate-id "$x"; done
+    list=$(aq iam list-ssh-public-keys --user-name "$u" --query 'SSHPublicKeys[].SSHPublicKeyId' --output text)
+    for x in $list; do [ "$x" = None ] || do_ aws iam delete-ssh-public-key --user-name "$u" --ssh-public-key-id "$x"; done
+    list=$(aq iam list-service-specific-credentials --user-name "$u" \
+      --query 'ServiceSpecificCredentials[].ServiceSpecificCredentialId' --output text)
+    for x in $list; do
+      [ "$x" = None ] || do_ aws iam delete-service-specific-credential --user-name "$u" --service-specific-credential-id "$x"
+    done
+    list=$(aq iam list-groups-for-user --user-name "$u" --query 'Groups[].GroupName' --output text)
+    for x in $list; do [ "$x" = None ] || do_ aws iam remove-user-from-group --user-name "$u" --group-name "$x"; done
     do_ aws iam delete-user --user-name "$u"
   done < <(cfg '.aws.iamUsers[]')
 
@@ -171,8 +214,17 @@ step_host() {
   if [ "$have" != "$want" ]; then
     echo "refused: this is $have, not the old gateway $want (nothing changed)" >&2; exit 1
   fi
-  local hg=${HERMIT_GATEWAY_STATE:-/var/lib/hermit-gateway}
-  if [ -e "$hg" ] || { command -v crictl >/dev/null 2>&1 && [ -n "$(crictl ps -q --name hermit-gateway 2>/dev/null)" ]; }; then
+  local hg=${HERMIT_GATEWAY_STATE:-/var/lib/hermit-gateway} running=''
+  if command -v crictl >/dev/null 2>&1; then
+    # a crictl that cannot answer (no runtime endpoint, no permission) cannot show there is no gateway
+    local cerr; cerr=$(mktemp)
+    if ! running=$(crictl ps -q --name hermit-gateway 2>"$cerr"); then
+      echo "refused: crictl cannot list the containers on $have ($(cat "$cerr")), so a hermit gateway cannot be ruled out (nothing changed)" >&2
+      rm -f "$cerr"; exit 1
+    fi
+    rm -f "$cerr"
+  fi
+  if [ -e "$hg" ] || [ -n "$running" ]; then
     echo "refused: a hermit gateway runs on $have ($hg or its container): its wg0, table and nft table would go (nothing changed)" >&2
     exit 1
   fi
