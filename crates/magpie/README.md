@@ -360,8 +360,11 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   No object magpie writes is over 64 MiB, so magpie 5.2's multipart path has nothing to carry and is not built.
   Buffered bodies are admitted under a memory budget of their own (`limits::BODY_MEMORY_BYTES`, 256 MiB per replica,
   shared with the uploader's staged blobs): a body takes its `Content-Length` (else its route's limit) before a byte
-  is read. With the decode budget (384 MiB) and the read cache (256 MiB) that keeps a replica inside magpie 18.2's
-  1 GiB (`tests/uploads_perf.rs` measures it with the cache full). A decode whose estimate is over the whole decode
+  is read. A blob read the read cache cannot answer takes the blob's size of the same budget before it fetches, and
+  its bytes keep it until the response has been sent (what the cache then keeps counts in the cache's budget; a
+  base64 blob's decoded copy and a cached entry evicted while its response is in flight are not counted). With the
+  decode budget (384 MiB) and the read cache (256 MiB) that keeps a replica inside magpie 18.2's 1 GiB
+  (`tests/uploads_perf.rs` and `tests/bodies_perf.rs` measure it with the cache full). A decode whose estimate is over the whole decode
   budget answers 415, like one over 40 MP: in practice a 16-bit image above about 35 MP (an 8-bit one never is).
 - A blob lock is given back when its holder is dropped (a request whose client went away mid-`PUT`), not only by an
   explicit release, and taking one runs in a task of its own, so cancellation never leaves a lock on the lock

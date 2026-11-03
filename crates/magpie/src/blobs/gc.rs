@@ -15,7 +15,8 @@
 //! `blob object lost`.
 //!
 //! The reconcile lists the bucket and deletes objects older than 24 h whose blob has no row (a `PUT` whose
-//! transaction then failed, a derived copy made after its blob was freed), each re-checked under the same lock.
+//! transaction then failed, a derived copy made after its blob was freed), each re-checked under the same lock; a lock
+//! lost while such a delete was in flight is followed by the same re-verification.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -253,13 +254,19 @@ pub async fn reconcile_before(pool: &Pool, blobs: &Arc<Blobs>, cutoff: time::Off
                     .query_opt("select 1 from blobs where sha256 = $1", &[&sha.as_slice()])
                     .await?
                     .is_some();
+                let mut lost = false;
                 if !exists && lock.held().await {
                     match blobs.bucket.delete(&key).await {
                         Ok(()) => n += 1,
                         Err(e) => tracing::warn!(error = %e, key = %key, "orphan object not deleted"),
                     }
+                    // lost while the delete was in flight: a writer may have put the key and recorded it meanwhile
+                    lost = !lock.held().await;
                 }
                 lock.release().await;
+                if lost {
+                    reverify(pool, blobs, &sha).await?;
+                }
             }
             match next {
                 Some(t) => token = Some(t),

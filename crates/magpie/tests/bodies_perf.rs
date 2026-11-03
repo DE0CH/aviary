@@ -1,6 +1,7 @@
 //! Memory under many large buffered bodies at once (magpie 18.2's 1 GiB pod limit, the buffered-body budget
 //! `limits::BODY_MEMORY_BYTES`): with the read cache full, 12 x 50 MiB file uploads, 8 x 64 MiB sandbox blob `PUT`s
-//! and two 40 MP image uploads at once keep the process's peak RSS under 1 GiB. Its own test binary (the peak,
+//! and two 40 MP image uploads at once, then 12 reads of 50 MiB blobs the cache does not hold, keep the process's peak
+//! RSS under 1 GiB. Its own test binary (the peak,
 //! `VmHWM`, is the process's), ignored in the ordinary suite; ci.yml's `magpie-perf` job runs it with a release build.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::format_collect)]
@@ -78,6 +79,20 @@ fn sha_of(seed: u32, mib: usize) -> String {
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Reads [`streamed`]'s blob `seed` back through M15 and checks its length.
+async fn read_back(p: &magpie_api::client::Client, seed: u32, mib: usize) {
+    let mut resp = p
+        .blob(&sha_of(seed, mib), &BlobQuery { variant: None }, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let mut len = 0;
+    while let Some(c) = resp.chunk().await.unwrap() {
+        len += c.len();
+    }
+    assert_eq!(len, mib << 20);
+}
+
 #[tokio::test]
 #[ignore = "release build only: ci.yml magpie-perf"]
 async fn many_large_bodies_at_once_with_the_cache_full_stay_under_1_gib() {
@@ -99,17 +114,7 @@ async fn many_large_bodies_at_once_with_the_cache_full_stay_under_1_gib() {
             .await
             .unwrap();
         assert_eq!(up.size, 50 << 20);
-        let mut resp = r
-            .pigeon()
-            .blob(&sha_of(seed, 50), &BlobQuery { variant: None }, None)
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), 200);
-        let mut n = 0;
-        while let Some(c) = resp.chunk().await.unwrap() {
-            n += c.len();
-        }
-        assert_eq!(n, 50 << 20);
+        read_back(&r.pigeon(), seed, 50).await;
     }
     let c = common::files::conversation(&r, ALICE, "k").await;
     let lease = common::files::grant_lease(r.pool(), c).await;
@@ -165,6 +170,23 @@ async fn many_large_bodies_at_once_with_the_cache_full_stay_under_1_gib() {
         start.elapsed(),
         peak >> 20,
         before >> 20
+    );
+    assert!(peak < LIMIT, "peak RSS {} MiB", peak >> 20);
+    // then the 12 uploads (none of them cached) read back at once, while the cache stays full
+    let start = Instant::now();
+    let mut reads = Vec::new();
+    for seed in 100..112u32 {
+        let p = r.pigeon();
+        reads.push(tokio::spawn(async move { read_back(&p, seed, 50).await }));
+    }
+    for task in reads {
+        task.await.unwrap();
+    }
+    let peak = peak_rss();
+    println!(
+        "12 x 50 MiB uncached reads at once, cache full: {:?}; peak RSS {} MiB",
+        start.elapsed(),
+        peak >> 20
     );
     assert!(peak < LIMIT, "peak RSS {} MiB", peak >> 20);
 }

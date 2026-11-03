@@ -77,8 +77,31 @@ pub fn is_image(row: &BlobRow) -> bool {
     row.kind != "text" && row.mime.as_deref().is_some_and(images::is_image)
 }
 
+/// Bytes read from staging or the bucket, holding their share of the buffered-body budget until dropped.
+struct HeldBytes {
+    bytes: Bytes,
+    _held: super::BodyMemory,
+}
+
+impl AsRef<[u8]> for HeldBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+/// `bytes` as a handle that gives `held` back when it (and every slice of it) is dropped.
+fn held_bytes(bytes: Bytes, held: super::BodyMemory) -> Bytes {
+    Bytes::from_owner(HeldBytes { bytes, _held: held })
+}
+
 impl Blobs {
     /// The stored bytes of `row`: the read cache, staging, the bucket (cached afterwards).
+    ///
+    /// A read the cache cannot answer takes `row`'s size of the buffered-body budget ([`Blobs::hold_body`]) before
+    /// it fetches, and the bytes it answers keep that share until the last handle outside the cache is dropped (a
+    /// response sent, a copy made): the bytes of reads in flight are counted like the bodies of uploads, so many
+    /// concurrent reads of large blobs wait for each other instead of taking a replica past its 1 GiB (magpie 18.2).
+    /// What the cache keeps is counted in the cache's own budget once the reads are done.
     ///
     /// # Errors
     /// 404 when the bucket has no object (a database restored past a purge, magpie 18.6); 503 when it cannot be
@@ -87,6 +110,7 @@ impl Blobs {
         if let Some(b) = self.cache.get(&row.sha).await {
             return Ok(b);
         }
+        let held = self.hold_body(u64::try_from(row.size).unwrap_or(0)).await?;
         if !row.stored {
             let staged = pool
                 .get()
@@ -99,7 +123,7 @@ impl Blobs {
             if let Some(r) = staged {
                 let b = Bytes::from(r.get::<_, Vec<u8>>(0));
                 self.cache.insert(row.sha, b.clone()).await;
-                return Ok(b);
+                return Ok(held_bytes(b, held));
             }
             // the uploader stored it meanwhile: the bucket has it now
         }
@@ -112,7 +136,7 @@ impl Blobs {
             Err(e) => return Err(unavailable(&e)),
         };
         self.cache.insert(row.sha, b.clone()).await;
-        Ok(b)
+        Ok(held_bytes(b, held))
     }
 
     /// The original bytes of `row` (decoded).

@@ -166,12 +166,19 @@ impl Bucket {
                     failed(&e)
                 }
             })?;
-        let body = out
-            .body
-            .collect()
+        // one buffer of the object's length, filled chunk by chunk: collecting the chunks and joining them would hold
+        // the object twice while it is read
+        let len = out.content_length().and_then(|n| usize::try_from(n).ok()).unwrap_or(0);
+        let mut buf = Vec::with_capacity(len);
+        let mut body = out.body;
+        while let Some(chunk) = body
+            .try_next()
             .await
-            .map_err(|e| StoreError::Failed(format!("reading the body: {e}")))?;
-        Ok(body.into_bytes())
+            .map_err(|e| StoreError::Failed(format!("reading the body: {e}")))?
+        {
+            buf.extend_from_slice(&chunk);
+        }
+        Ok(Bytes::from(buf))
     }
 
     /// Whether an object is at `key` (`HEAD`).

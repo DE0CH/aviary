@@ -131,8 +131,9 @@ pub const DECODES: usize = 4;
 /// ([`BODY_MEMORY_BYTES`]) it keeps a replica inside its 1 GiB (magpie 18.2): 384 + 256 + 256 MiB, and 128 MiB for
 /// the rest.
 pub const DECODE_MEMORY_BYTES: u64 = 384 << 20;
-/// The memory request bodies read whole (uploads, the sandbox's blob `PUT`s) and the uploader's staged blobs may hold
-/// at once per replica; a body waits for its share (its `Content-Length`, else its route's limit) before it is read.
+/// The memory request bodies read whole (uploads, the sandbox's blob `PUT`s), the uploader's staged blobs and blob
+/// reads the read cache cannot answer may hold at once per replica; a body waits for its share (its
+/// `Content-Length`, else its route's limit) before it is read, a read for its blob's size before it fetches.
 pub const BODY_MEMORY_BYTES: u64 = 256 << 20;
 /// An image decode over this many pixels answers 415 (40 megapixels).
 pub const DECODE_MAX_PIXELS: u64 = 40_000_000;

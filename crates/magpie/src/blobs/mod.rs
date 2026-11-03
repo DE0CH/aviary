@@ -251,7 +251,8 @@ impl Blobs {
     }
 
     /// Takes `bytes` of the buffered-body budget ([`limits::BODY_MEMORY_BYTES`]): a request body read whole (an
-    /// upload, a sandbox blob `PUT`) or a staged blob the uploader holds, waiting until that much is free. Taken
+    /// upload, a sandbox blob `PUT`), a staged blob the uploader holds or a blob read the read cache cannot answer
+    /// ([`Blobs::stored_bytes`]), waiting until that much is free. Taken
     /// before the bytes are read and held until they are dropped. A holder may then take decode memory
     /// ([`Blobs::decode`]), never the other way round, so the two budgets cannot deadlock.
     ///
