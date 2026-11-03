@@ -14,10 +14,14 @@ switch (role) {
     await (await import("./web/main.ts")).main();
     break;
   case "egress":
-    await (await import("./egress/main.ts")).main();
+    // `egress import-jarvis [--delta]`: the one-off copy of the old stack's egress_log (CronJob egress-import, A2-A6)
+    if (process.argv[3] === "import-jarvis") await (await import("./egress/importjarvis.ts")).importJarvis(process.argv.slice(4));
+    else await (await import("./egress/main.ts")).main();
     break;
   case "tools":
-    await (await import("./tools/main.ts")).main();
+    // `tools import-jarvis [--delta]`: the one-off copy of the old stack's tool_calls (CronJob tools-import, A2 and A6)
+    if (process.argv[3] === "import-jarvis") await (await import("./tools/importjarvis.ts")).importJarvis(process.argv.slice(4));
+    else await (await import("./tools/main.ts")).main();
     break;
   default:
     if (legacy === "egress")

@@ -40,6 +40,12 @@ create table token_keys (id int primary key default 1 check (id = 1), body text 
 alter table egress_log add column row_id uuid;
 create unique index egress_log_row_id on egress_log (row_id);
 `,
+  // the old stack's id of a row `egress import-jarvis` copied (aviary cutover spec 8.2): the copy's idempotency key,
+  // so a pass that runs again, is cut short or overlaps another writes each old row once. Null on egress's own rows.
+  `
+alter table egress_log add column source_id bigint;
+create unique index egress_log_source_id on egress_log (source_id);
+`,
 ];
 
 export function connect(url: string | undefined): Db {

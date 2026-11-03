@@ -22,6 +22,12 @@ create table tool_calls (id bigserial primary key, at timestamptz not null defau
 create index tool_calls_at on tool_calls (at);
 create index tool_calls_conv on tool_calls (conversation_id, at);
 `,
+  // the old stack's id of a row `tools import-jarvis` copied (aviary cutover spec 8.2): the copy's idempotency key.
+  // Null on tools' own rows.
+  `
+alter table tool_calls add column source_id bigint;
+create unique index tool_calls_source_id on tool_calls (source_id);
+`,
 ];
 
 export function connect(url: string): Db {
