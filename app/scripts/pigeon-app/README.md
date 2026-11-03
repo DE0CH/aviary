@@ -54,8 +54,9 @@ commits a week, so spec 17.1's "every build of the last 30 days, or the last 5" 
   seeds are served as they are (pigeon serves the file itself when no sibling exists, pigeon spec 5.2.1). Those are the
   old ui builds' chunks, mostly 21.5 MB entry bundles from before the chunk split, which a running tab never fetches
   again. This saves 110 MiB on the first image.
-- The image job checks that `/cp` copies the whole tree as uid 65532 under a memory limit (`docker run --memory`),
-  trying 32, 64 and 128 MiB: under cgroup v2 the page cache the copy dirties is charged to the initContainer (gap 4).
+- The image job checks that `/cp` copies the whole tree as uid 65532 within `CP_MEMORY_MIB` (512 MiB, `docker run
+  --memory`) and logs the lowest of 32 to 512 MiB that worked: under cgroup v2 the page cache the copy dirties is
+  charged to the initContainer (gap 4).
 
 ## Design gaps and deviations
 
@@ -76,11 +77,13 @@ commits a week, so spec 17.1's "every build of the last 30 days, or the last 5" 
    step 5). From the first release on, the release branch is taken, and a release without `pigeon-frames.ndjson` or
    `paseo-contract.tgz` is an error. WP-28's acceptance carries the check that this switch happened.
 4. **The initContainer's memory limit (for the pigeon manifests, WP-31).** Platform 9.4 gives pigeon's initContainer
-   a 32Mi memory limit. Copying the real tree (pigeon-app:41b828204a51, 328 MiB) under `docker run --memory 32m`
-   passed on a Hetzner host (cgroup v2) but was OOM-killed (exit 137) on GitHub's `ubuntu-24.04` runner: the page cache
-   the copy dirties is charged to the container, and whether reclaim keeps up depends on the host's disk and kernel.
-   The image job passes at the lowest of 32, 64 and 128 MiB that copies the tree, and warns when that is above 32 MiB;
-   the manifest needs the initContainer's memory limit at `CP_MEMORY_MIB` in `pigeon-app.yml` (128 MiB), not 32Mi.
+   a 32Mi memory limit. Under cgroup v2 the page cache the copy dirties is charged to that container, and whether the
+   kernel writes it back and reclaims it in time depends on the host. Copying the real tree (pigeon-app:41b828204a51,
+   328 MiB) under `docker run --memory`: on a Hetzner host (Ubuntu kernel 6.8, ext4) it copies within 32 MiB; on
+   GitHub's `ubuntu-24.04` runner (kernel 7.0 azure, ext4) it is OOM-killed (exit 137) at 32, 64 and 128 MiB, after
+   152, 183 and 314 MiB, and copies at 256 MiB. So the manifest needs the initContainer's memory limit at the emptyDir's
+   size, 512Mi (`CP_MEMORY_MIB` in `pigeon-app.yml`; a limit reserves nothing, the request can stay small). The image
+   job checks the copy within that limit and logs the lowest limit that worked on its host.
 
 ## Files
 
