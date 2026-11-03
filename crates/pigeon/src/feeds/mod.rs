@@ -494,7 +494,8 @@ impl Hub {
     /// within `jitter`, request-free sockets first (no request in flight, no message arriving, nothing but
     /// heartbeats for 5 s) in the first half, the rest in the second half once their in-flight requests have
     /// answered and their arriving messages have been handled (or `rpc_wait` passed). The 1012 follows every frame
-    /// already queued for the socket (the reply it waited for, rows). A socket with a transfer (a large send arriving,
+    /// already queued for the socket (the reply it waited for, rows), and waits again for a request or a send that
+    /// began while those were written ([`Conn::close_for_drain`]). A socket with a transfer (a large send arriving,
     /// or read and not yet handled) is waited for up to `transfer_bound` from the start of the drain instead (spec
     /// 11.2 step 3, 13). Until the sockets are gone the pollers keep feeding them; then the pollers stop (step 5).
     /// Returns when every socket is gone, or at `transfer_bound`; a socket that registers after the drain began is
@@ -525,7 +526,7 @@ impl Hub {
                 if !c.request_free() {
                     c.wait_requests(rpc_wait, transfer_deadline).await;
                 }
-                c.close_after_queued(1012, "service restart");
+                c.close_for_drain(rpc_wait, transfer_deadline);
             });
         }
         for c in later {
@@ -533,15 +534,18 @@ impl Hub {
             tasks.spawn(async move {
                 tokio::time::sleep(at).await;
                 c.wait_requests(rpc_wait, transfer_deadline).await;
-                c.close_after_queued(1012, "service restart");
+                c.close_for_drain(rpc_wait, transfer_deadline);
             });
         }
         while tasks.join_next().await.is_some() {}
-        // every socket has been asked to close: give the last ones a moment to answer, never past the bound
-        let deadline = (started + jitter + rpc_wait)
-            .max(Instant::now() + Duration::from_secs(3))
-            .min(started + transfer_bound);
-        while self.sockets() > 0 && Instant::now() < deadline {
+        // every socket has been asked to close: give the last ones a moment to answer, longer while one is still busy
+        // (its 1012 waits for a send that began while its queue was being written), never past the bound
+        let deadline = (started + jitter + rpc_wait).max(Instant::now() + Duration::from_secs(3));
+        let bound = started + transfer_bound;
+        while self.sockets() > 0
+            && Instant::now() < bound
+            && (Instant::now() < deadline || self.st().conns.values().any(|c| c.busy()))
+        {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         // step 5: the pollers stop (their control channels close)
@@ -644,5 +648,51 @@ mod tests {
         let mut idle = Some(past);
         assert!(hub.timeline_poller_done(person, conversation, &mut idle, linger));
         assert!(!hub.st().timeline_pollers.contains_key(&key));
+    }
+
+    /// The race itself: a poller past its linger checks whether it is done while a socket subscribes on another
+    /// thread, the subscription doing what [`Hub::set_timeline`] and [`Hub::ensure_timeline_poller`] do (the watcher
+    /// added under one lock, then a poller started under another if none runs). Whatever the interleaving, a watched
+    /// conversation is left with a poller: either the check saw the watcher and kept its poller, or it removed the
+    /// poller first and the subscription started a new one. A check that reads the watchers under one lock and
+    /// removes under another loses the poller when the subscription lands in between.
+    #[test]
+    fn a_subscription_racing_the_linger_check_always_ends_with_a_poller() {
+        let hub = Hub::default();
+        let person = "staff@example.com";
+        let linger = Duration::from_millis(1);
+        let past = Instant::now().checked_sub(Duration::from_secs(10)).unwrap();
+        let rounds = 60_000;
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let mut lost = 0;
+        for _ in 0..rounds {
+            let conversation = Uuid::new_v4();
+            let key = (person.to_owned(), conversation);
+            let (tx, _rx) = mpsc::unbounded_channel();
+            hub.st().timeline_pollers.insert(key.clone(), tx);
+            let subscriber = {
+                let (hub, barrier, key) = (hub.clone(), barrier.clone(), key.clone());
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    hub.st().timeline.entry(key.clone()).or_default().insert(Uuid::new_v4());
+                    let mut st = hub.st();
+                    st.timeline_pollers
+                        .entry(key)
+                        .or_insert_with(|| mpsc::unbounded_channel().0);
+                })
+            };
+            barrier.wait();
+            let mut idle = Some(past);
+            let _ = hub.timeline_poller_done(person, conversation, &mut idle, linger);
+            subscriber.join().unwrap();
+            let st = hub.st();
+            if st.timeline.contains_key(&key) && !st.timeline_pollers.contains_key(&key) {
+                lost += 1;
+            }
+        }
+        assert_eq!(
+            lost, 0,
+            "{lost} of {rounds} watched conversations were left without a poller"
+        );
     }
 }

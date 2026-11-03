@@ -50,7 +50,9 @@ WP-50 plugs into `feeds`:
   heartbeats for 5 s (`Tuning::socket_quiet`) in the first half of the 15 s jitter; the rest in the second half once
   their requests have answered (at most 10 s) and their transfers have ended (a large send arriving, or read and not
   yet handled: up to the 300 s transfer bound from SIGTERM, spec 11.2 step 3 and 13). Each 1012 follows the frames
-  already queued (the reply it waited for). The pollers keep feeding open sockets until the drain ends, and the drain
+  already queued (the reply it waited for, rows); when the writer reaches it while a request is in flight or a message
+  is arriving (a send that began while that queue was being written), it waits for them in the same way and follows
+  their replies (`Conn::close_for_drain`). The pollers keep feeding open sockets until the drain ends, and the drain
   (so the process) ends only when the sockets are gone or at the transfer bound. A socket whose upgrade was in
   flight at SIGTERM is closed 1012 as it registers. `Conn::request_free` is the same test for the move.
 
@@ -126,9 +128,12 @@ WP-50 plugs into `feeds`:
   `server::WsFrames`: opcode, FIN and payload length, payloads skipped): a message is arriving from its first header
   byte until the reader has it whole. A socket with a message arriving, or with a large send (256 KiB or more) read
   and not yet handled (waiting for a large-message slot included), has a transfer: the drain waits for it up to the
-  transfer bound, not the 10 s request bound. While a client sends one long frame it cannot send a pong, and a reader
-  parked on a large-message slot reads none, so inbound bytes and the parked wait count as alive at the ping check;
-  a close asked for while parked ends the wait.
+  transfer bound, not the 10 s request bound. While a client sends one long frame it cannot send a pong, so inbound
+  bytes count as alive at the ping check. A reader waiting for a large-message slot keeps reading pongs and pings;
+  the client's next data message (or close) is kept for after the waiting one, and from then the reader reads
+  nothing more, so the socket counts as alive without pongs for at most the transfer bound from that moment (a dead
+  client is dropped at its missed ping, and does not hold the drain to its bound). A close asked for while waiting
+  ends the wait.
 
 ## Throughput (spec 8.6)
 
@@ -154,7 +159,8 @@ timeline pollers running) reach 1 000 sockets in 10.0 s: latency p50 16.6 / 19.4
   ignored benchmark.
 - `tests/transport.rs`: the transport limits (a missed ping drops and unregisters the socket, 1009, 1008 at the 65th
   socket, 4403 on re-check, the inbound rate), the drain (rows keep streaming until each socket's 1012, the 1012
-  after the reply, a large send arriving across the drain and one waiting for a large-message slot), the WP-50 seams,
+  after the reply, a large send arriving across the drain, one that begins while the queue ahead of its 1012 is
+  written, and one waiting for a large-message slot; a dead client on a slot dropped), the WP-50 seams,
   the list cache per viewer without kept failures, and spec 19's metric names.
 - `tests/contract_server.rs`: the pigeon `testing/paseo-contract/test/pigeon.test.mjs` drives (ignored; it serves until
   its stdin closes), with its control endpoint for magpie's side.

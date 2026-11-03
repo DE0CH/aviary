@@ -1522,12 +1522,13 @@ fn pin_thread(cpus: &str) {
 /// [`env`] with pigeon alone on one CPU (spec 8.6 and 13: a replica has a CPU limit of 1): its whole runtime (one
 /// worker, its blocking threads, the listener, every socket and poller) runs on threads pinned to `cpu`, while the
 /// in-memory magpie and the clients run on the test's own runtime, which the caller keeps off that CPU.
-async fn env_pinned(cpu: &'static str) -> Env {
+async fn env_pinned(cpu: &'static str) -> (Env, Pinned) {
     let m = Model::default();
     let served = model::serve(&m).await;
     let url = served.url();
     let (tx, rx) = tokio::sync::oneshot::channel();
-    std::thread::spawn(move || {
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let thread = std::thread::spawn(move || {
         pin_thread(cpu);
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
@@ -1543,11 +1544,36 @@ async fn env_pinned(cpu: &'static str) -> Env {
             })
             .await;
             let _ = tx.send(h);
-            std::future::pending::<()>().await;
+            let _ = stopped.await;
         });
+        // pigeon's listener, sockets and pollers end with their runtime
+        rt.shutdown_timeout(Duration::from_secs(5));
     });
     let h = rx.await.unwrap();
-    Env { h, m, _served: served }
+    (
+        Env { h, m, _served: served },
+        Pinned {
+            stop: Some(stop),
+            thread: Some(thread),
+        },
+    )
+}
+
+/// The pinned runtime of [`env_pinned`]: dropping it stops the runtime and joins its thread.
+struct Pinned {
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for Pinned {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
 }
 
 /// Spec 8.6's throughput target, recorded in the crate README: 5 000 open sockets on one replica (100 people, 50
@@ -1559,7 +1585,7 @@ async fn env_pinned(cpu: &'static str) -> Env {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "benchmark"]
 async fn bench_fanout() {
-    let e = env_pinned("0").await;
+    let (e, pinned) = env_pinned("0").await;
     let started = std::time::Instant::now();
     let mut idle = Vec::new();
     let mut readers = Vec::new();
@@ -1642,6 +1668,9 @@ async fn bench_fanout() {
     let (change, timeline) = e.h.app.hub().unwrap().pollers();
     eprintln!("pollers: {change} change, {timeline} timeline");
     drop(idle);
+    drop(e);
+    // pigeon's runtime stops and its thread is joined
+    drop(pinned);
 }
 
 /// A small guard on the fan-out path in CI: 200 sockets, 50 of them watching 5 conversations, 10 rows each, a row

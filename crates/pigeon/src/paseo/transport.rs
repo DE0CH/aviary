@@ -42,6 +42,9 @@ pub const BURST: f64 = 400.0;
 pub const MAX_TIMELINE_AGENTS: usize = 64;
 /// A queue entry that is not a frame but a close (`close_after_queued`): it cannot be a JSON text.
 const CLOSE_MARKER: &str = "\u{0}close:";
+/// A queue entry for the drain's 1012 ([`Conn::close_for_drain`]): when the writer reaches it and the socket is busy
+/// (a send whose first bytes came while the queue was being written), the 1012 waits for that send's reply.
+const DRAIN_MARKER: &str = "\u{0}drain";
 /// The longest one frame write may take before the socket is dropped.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 /// An inbound message at least this big is a transfer (spec 13: "a large inbound send"): while it arrives and until
@@ -106,8 +109,14 @@ pub struct Conn {
     delivered: AtomicU64,
     /// Large sends ([`LARGE_SEND`]) read and not yet handled.
     transfers: AtomicUsize,
-    /// The reader waits for a large-message slot (it reads nothing meanwhile, pongs included).
-    parked: AtomicBool,
+    /// Since when the reader, waiting for a large-message slot, has a further data message from the client in hand
+    /// and reads nothing more (pongs included) until the slot is free.
+    parked: Mutex<Option<Instant>>,
+    /// How long a parked reader counts as alive without a pong ([`crate::Tuning::transfer_bound`]).
+    park_bound: Duration,
+    /// The drain's waits for its 1012 ([`Conn::close_for_drain`]): the in-flight request wait and the transfer
+    /// deadline.
+    drain_close: Mutex<Option<(Duration, tokio::time::Instant)>>,
 }
 
 impl std::fmt::Debug for Conn {
@@ -220,6 +229,43 @@ impl Conn {
             return;
         }
         self.closing.store(true, Ordering::SeqCst);
+    }
+
+    /// The drain's 1012 (spec 11.2 step 3) after the frames already queued, like [`Self::close_after_queued`], except
+    /// that frames queued meanwhile are still written and, when the writer reaches it while a request is in flight
+    /// or a message is arriving (a send that began while the queue was being written), the 1012 waits for them as
+    /// [`Self::wait_requests`] does (`rpc_wait` from then, a transfer until `transfer_deadline`) and follows their
+    /// replies.
+    pub fn close_for_drain(&self, rpc_wait: Duration, transfer_deadline: tokio::time::Instant) {
+        if self.closing.load(Ordering::SeqCst) {
+            return;
+        }
+        *self
+            .drain_close
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((rpc_wait, transfer_deadline));
+        if self.out.try_send(DRAIN_MARKER.to_owned()).is_err() {
+            self.close(1012, "service restart");
+        }
+    }
+
+    /// Frames queued and not yet written, in bytes.
+    #[must_use]
+    pub fn queued_bytes(&self) -> usize {
+        self.out_bytes.load(Ordering::SeqCst)
+    }
+
+    /// Whether a reader parked on a large-message slot counts as alive without a pong: for at most the transfer
+    /// bound from when it stopped reading (a dead client does not hold its socket and the drain past that).
+    fn parked_alive(&self) -> bool {
+        self.parked
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some_and(|at| at.elapsed() < self.park_bound)
+    }
+
+    fn set_parked(&self, on: bool) {
+        *self.parked.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = on.then(Instant::now);
     }
 
     /// Whether the socket is closing or closed.
@@ -548,10 +594,13 @@ async fn run(app: App, hub: Hub, socket: WebSocket, id: Identity, frames: Option
         pong: AtomicBool::new(true),
         quiet: app.0.tuning.socket_quiet,
         metrics: app.0.metrics.clone(),
-        delivered: AtomicU64::new(frames.as_ref().map_or(0, crate::server::InboundBytes::complete)),
+        // the listener counts from `start()`, called in this upgrade: no message has been read before
+        delivered: AtomicU64::new(0),
         frames,
         transfers: AtomicUsize::new(0),
-        parked: AtomicBool::new(false),
+        parked: Mutex::new(None),
+        park_bound: app.0.tuning.transfer_bound,
+        drain_close: Mutex::new(None),
     });
     hub.register(&conn);
     app.0.metrics.socket_opened(conn.viewer.is_some());
@@ -619,6 +668,9 @@ async fn write_loop(
     let mut ping = tokio::time::interval(ping_every);
     ping.tick().await;
     let mut inbound = conn.inbound_bytes();
+    // the drain's 1012 reached while the socket was busy: (in-flight request deadline, transfer deadline)
+    let mut drain_wait: Option<(tokio::time::Instant, tokio::time::Instant)> = None;
+    let mut recheck = tokio::time::interval(Duration::from_millis(50));
     loop {
         tokio::select! {
             biased;
@@ -638,6 +690,17 @@ async fn write_loop(
             }
             frame = rx.recv() => {
                 let Some(frame) = frame else { return GONE };
+                if frame == DRAIN_MARKER {
+                    let waits = conn.drain_close.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+                    let now = tokio::time::Instant::now();
+                    match waits {
+                        Some((rpc_wait, transfer_deadline)) if conn.busy() && now < transfer_deadline => {
+                            drain_wait = Some(((now + rpc_wait).min(transfer_deadline), transfer_deadline));
+                        }
+                        _ => conn.close_after_queued(1012, "service restart"),
+                    }
+                    continue;
+                }
                 if let Some(close) = frame.strip_prefix(CLOSE_MARKER) {
                     let (code, reason) = close.split_once(':').unwrap_or((close, ""));
                     let code: u16 = code.parse().unwrap_or(1000);
@@ -653,14 +716,23 @@ async fn write_loop(
                     return GONE;
                 }
             }
+            _ = recheck.tick(), if drain_wait.is_some() => {
+                let Some((rpc_deadline, transfer_deadline)) = drain_wait else { continue };
+                let now = tokio::time::Instant::now();
+                if !conn.busy() || now >= transfer_deadline || (now >= rpc_deadline && !conn.transferring()) {
+                    // behind the replies already queued
+                    drain_wait = None;
+                    conn.close_after_queued(1012, "service restart");
+                }
+            }
             _ = ping.tick() => {
                 // a client part-way through sending one large frame cannot send a pong until the frame ends (a 40 MiB
-                // image at 2 Mbit/s takes 160 s), and a reader parked on a large-message slot reads none: bytes
-                // arriving and the parked wait count as alive
+                // image at 2 Mbit/s takes 160 s), and a reader parked on a large-message slot with a further message in
+                // hand reads none: bytes arriving count as alive, and the parked wait does up to the transfer bound
                 let now = conn.inbound_bytes();
                 let moving = now > inbound;
                 inbound = now;
-                let alive = conn.pong.swap(false, Ordering::SeqCst) || moving || conn.parked.load(Ordering::SeqCst);
+                let alive = conn.pong.swap(false, Ordering::SeqCst) || moving || conn.parked_alive();
                 if !alive {
                     tracing::info!(conn = %conn.id, "socket missed a ping");
                     return GONE;
@@ -738,17 +810,23 @@ async fn read_loop(
         at: Instant::now(),
         warned: None,
     };
+    // a message the reader took while it waited for a large-message slot, handled next
+    let mut next: Option<Option<Result<Message, axum::Error>>> = None;
     loop {
-        let msg = tokio::select! {
-            m = stream.next() => m,
-            _ = close_rx.changed() => {
-                // a close was asked for: give the client a moment to answer it
-                let _ = tokio::time::timeout(Duration::from_secs(2), async {
-                    while let Some(Ok(m)) = stream.next().await {
-                        if matches!(m, Message::Close(_)) { break; }
-                    }
-                }).await;
-                return;
+        let msg = if let Some(m) = next.take() {
+            m
+        } else {
+            tokio::select! {
+                m = stream.next() => m,
+                _ = close_rx.changed() => {
+                    // a close was asked for: give the client a moment to answer it
+                    let _ = tokio::time::timeout(Duration::from_secs(2), async {
+                        while let Some(Ok(m)) = stream.next().await {
+                            if matches!(m, Message::Close(_)) { break; }
+                        }
+                    }).await;
+                    return;
+                }
             }
         };
         let Some(msg) = msg else { return };
@@ -786,15 +864,28 @@ async fn read_loop(
         }
         let transfer = (text.len() >= LARGE_SEND).then(|| conn.transfer());
         let permit = if text.len() > LARGE_MESSAGE {
-            // pauses reading this socket until one of the large-message slots is free (the socket stays busy, and
-            // is not dropped for the pongs it does not read meanwhile); a close asked for meanwhile ends the wait
-            conn.parked.store(true, Ordering::SeqCst);
-            let permit = tokio::select! {
-                p = hub.large().acquire_owned() => p.ok(),
-                _ = close_rx.changed() => None,
+            // waits until one of the large-message slots is free (the socket stays busy); a close asked for
+            // meanwhile ends the wait. The reader keeps reading pongs and pings meanwhile; the client's next data
+            // message (or its close) is kept for after this one, and from then the reader reads nothing more, so
+            // the socket counts as alive without pongs for at most the transfer bound
+            let acquire = hub.large().acquire_owned();
+            tokio::pin!(acquire);
+            let permit = loop {
+                tokio::select! {
+                    p = &mut acquire => break p.ok(),
+                    _ = close_rx.changed() => break None,
+                    m = stream.next(), if next.is_none() => match m {
+                        Some(Ok(Message::Pong(_))) => conn.pong.store(true, Ordering::SeqCst),
+                        Some(Ok(Message::Ping(_))) => {}
+                        other => {
+                            next = Some(other);
+                            conn.set_parked(true);
+                        }
+                    },
+                }
             };
             conn.pong.store(true, Ordering::SeqCst);
-            conn.parked.store(false, Ordering::SeqCst);
+            conn.set_parked(false);
             if permit.is_none() {
                 return;
             }
@@ -866,7 +957,9 @@ impl Conn {
             delivered: AtomicU64::new(0),
             frames: None,
             transfers: AtomicUsize::new(0),
-            parked: AtomicBool::new(false),
+            parked: Mutex::new(None),
+            park_bound: Duration::from_secs(300),
+            drain_close: Mutex::new(None),
         });
         (conn, (rx, close_rx))
     }

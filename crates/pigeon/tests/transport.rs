@@ -528,6 +528,95 @@ async fn a_send_whose_first_bytes_arrived_just_before_its_1012_is_not_cut() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_send_that_begins_while_the_queue_ahead_of_its_1012_is_written_is_not_cut() {
+    // the drain decides to close a request-free socket whose client is not reading: its 1012 is queued behind
+    // several MiB of rows. The client then begins a send and only then reads the rows. The 1012 waits for that
+    // send's reply instead of cutting the message half-read
+    let e = env_with(Tuning {
+        // no pings: the client's own pongs would land inside its hand-written frame
+        socket_ping: Duration::from_mins(10),
+        ..fast()
+    })
+    .await;
+    let watched = e.m.add(STAFF, None);
+    let c = e.m.add(STAFF, None);
+    let mut ws = e.ws(STAFF).await;
+    watch(&mut ws, &[watched]).await;
+    // the poller has read its starting point: every row from here on is live
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let conn = e.hub().conns_of(STAFF).pop().unwrap();
+    // the client reads nothing: rows pile up in the socket's queue once the TCP buffers are full
+    let big = "x".repeat(60_000);
+    let mut n = 0;
+    let started = Instant::now();
+    while conn.queued_bytes() < 2 << 20 {
+        assert!(started.elapsed() < Duration::from_secs(20), "the rows never queued up");
+        for _ in 0..10 {
+            n += 1;
+            e.m.row(watched, None, assistant(&format!("{n}-{big}")));
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    // every row is in the queue (or written) once the queue stops growing
+    let mut last = 0;
+    while conn.queued_bytes() != last {
+        assert!(started.elapsed() < Duration::from_secs(30), "the queue never settled");
+        last = conn.queued_bytes();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    assert!(conn.queued_bytes() > 0);
+    // request-free (nothing but rows for the quiet time), no jitter: the 1012 is queued behind the rows at once
+    assert!(conn.request_free());
+    let drain = e.drain(Duration::ZERO, Duration::from_secs(1));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!conn.busy());
+    // now the send begins; the client reads the rows between its chunks
+    let rid = ws.rid();
+    let frame = image_send(&rid, c, "m-late", 1 << 20);
+    let mut bytes = Ws::text_header(frame.len() as u64);
+    bytes.extend_from_slice(frame.as_bytes());
+    let mut got = Vec::new();
+    for piece in bytes.chunks(16 << 10) {
+        ws.raw_bytes(piece).await;
+        while let Some(v) = ws.next_raw(Duration::from_millis(5)).await {
+            got.push(v);
+        }
+    }
+    let reply = loop {
+        if let Some(v) = got
+            .iter()
+            .find(|v| v["type"] == "session" && v["message"]["type"] == "send_agent_message_response")
+        {
+            break v["message"]["payload"].clone();
+        }
+        let Some(v) = ws.next_raw(Duration::from_secs(10)).await else {
+            panic!("no reply: closed {:?} after {} frames", ws.closed, got.len());
+        };
+        got.push(v);
+    };
+    assert_eq!(reply["requestId"], rid.as_str());
+    assert_eq!(reply["accepted"], true);
+    // every row is written, and the 1012 comes after them and the reply
+    while let Some(v) = ws.next_raw(Duration::from_secs(5)).await {
+        got.push(v);
+    }
+    assert_eq!(ws.closed.as_ref().map(|c| c.0), Some(1012));
+    let rows = got
+        .iter()
+        .filter(|v| is_stream(v, watched) && v["message"]["payload"]["event"]["type"] == "timeline")
+        .count();
+    let before = got
+        .iter()
+        .take_while(|v| v["message"]["type"] != "send_agent_message_response")
+        .filter(|v| is_stream(v, watched))
+        .count();
+    eprintln!("rows {rows} of {n}, {before} before the reply");
+    assert_eq!(rows, n);
+    drain.await.unwrap();
+    assert_eq!(e.m.st().uploads.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_socket_sending_one_long_frame_is_not_dropped_for_the_pongs_it_cannot_send() {
     // a client part-way through one frame cannot send a pong until the frame ends
     let e = env_with(Tuning {
@@ -601,6 +690,78 @@ async fn a_large_send_waiting_for_a_large_message_slot_is_not_cut() {
         assert_eq!(h.closed_code(Duration::from_secs(5)).await, Some(1012));
     }
     drain.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_dead_client_parked_on_a_large_message_slot_is_dropped() {
+    // pings every 200 ms, the transfer bound 1.5 s: while its reader waits for a slot a socket still has to answer
+    // pings, and one whose reader has stopped reading (a further message in hand) counts as alive only up to the
+    // transfer bound
+    let e = env_with(Tuning {
+        socket_ping: Duration::from_millis(200),
+        transfer_bound: Duration::from_millis(1500),
+        ..fast()
+    })
+    .await;
+    let held = e.m.hold("send_turn");
+    let convs: Vec<Uuid> = (0..pigeon::feeds::LARGE_AT_ONCE + 2)
+        .map(|_| e.m.add(STAFF, None))
+        .collect();
+    let frames: Vec<String> = convs
+        .iter()
+        .enumerate()
+        .map(|(i, c)| image_send(&format!("req-{}", 1), *c, &format!("d{i}"), 9 << 20))
+        .collect();
+    // three large sends hold the slots; their clients keep reading (answering pings) until their replies
+    let mut holders = Vec::new();
+    for frame in &frames[..pigeon::feeds::LARGE_AT_ONCE] {
+        let mut ws = e.ws(STAFF).await;
+        let _ = ws.rid();
+        ws.text(frame).await;
+        holders.push(tokio::spawn(async move {
+            let started = Instant::now();
+            while started.elapsed() < Duration::from_secs(20) {
+                if let Some(v) = ws.next_raw(Duration::from_millis(100)).await
+                    && v["message"]["type"] == "send_agent_message_response"
+                {
+                    return v["message"]["payload"]["accepted"] == true;
+                }
+            }
+            false
+        }));
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let open = e.hub().sockets();
+    // a client that sends a large message and then reads nothing more (gone): it answers no ping, and is dropped
+    // although its reader waits for a slot
+    let mut gone = e.ws(STAFF).await;
+    gone.text(&frames[pigeon::feeds::LARGE_AT_ONCE]).await;
+    let started = Instant::now();
+    assert!(e.sockets_become(open + 1, Duration::from_secs(1)).await);
+    assert!(
+        e.sockets_become(open, Duration::from_secs(3)).await,
+        "a parked socket that answers no ping stays"
+    );
+    assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+    // a client whose next message the parked reader already holds (it reads nothing more, pongs included) counts as
+    // alive up to the transfer bound, and is then dropped too
+    let mut stopped = e.ws(STAFF).await;
+    stopped.text(&frames[pigeon::feeds::LARGE_AT_ONCE + 1]).await;
+    stopped.raw(json!({"type": "ping"})).await;
+    let started = Instant::now();
+    assert!(e.sockets_become(open + 1, Duration::from_secs(1)).await);
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    assert_eq!(e.hub().sockets(), open + 1, "dropped before the transfer bound");
+    assert!(
+        e.sockets_become(open, Duration::from_secs(3)).await,
+        "a parked socket stays past the transfer bound"
+    );
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+    held.notify_waiters();
+    for h in holders {
+        assert!(h.await.unwrap(), "a slot holder's send was not answered");
+    }
+    drop((gone, stopped));
 }
 
 // ------------------------------------------------------------------------------------------------ WP-50's seams

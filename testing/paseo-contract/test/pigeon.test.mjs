@@ -30,23 +30,47 @@ const repoRoot = path.resolve(harnessRoot, "..", "..");
 let server;
 let pigeon; // { url, control, token }
 
+/** Kills the contract server's process group (cargo, the test binary it runs, a wrapping shell). */
+function killGroup(child) {
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    child.kill("SIGKILL");
+  }
+}
+
+/** How long the contract server may take to print its PIGEON_CONTRACT line. */
+const READY_WITHIN_MS = 20 * 60 * 1000;
+
 function startServer() {
   const command = process.env.PIGEON_CONTRACT_SERVER;
   const child = command
-    ? spawn("sh", ["-c", command], { cwd: repoRoot, stdio: ["pipe", "pipe", "inherit"] })
+    ? spawn("sh", ["-c", command], { cwd: repoRoot, stdio: ["pipe", "pipe", "inherit"], detached: true })
     : spawn(
         "cargo",
         ["test", "--locked", "-q", "-p", "pigeon", "--test", "contract_server", "--", "--ignored", "--exact", "--nocapture", "serve"],
-        { cwd: repoRoot, stdio: ["pipe", "pipe", "inherit"] },
+        { cwd: repoRoot, stdio: ["pipe", "pipe", "inherit"], detached: true },
       );
   return new Promise((resolve, reject) => {
     let buffered = "";
+    // a cold build of the contract server included; a server that never gets ready is killed rather than left to
+    // the job's timeout
+    const timer = setTimeout(() => {
+      killGroup(child);
+      reject(new Error(`the contract server was not ready within ${READY_WITHIN_MS / 60000} minutes`));
+    }, READY_WITHIN_MS);
     child.stdout.on("data", (data) => {
       buffered += data;
       const line = buffered.split("\n").find((l) => l.startsWith("PIGEON_CONTRACT "));
-      if (line) resolve({ child, info: JSON.parse(line.slice("PIGEON_CONTRACT ".length)) });
+      if (line) {
+        clearTimeout(timer);
+        resolve({ child, info: JSON.parse(line.slice("PIGEON_CONTRACT ".length)) });
+      }
     });
-    child.on("exit", (code) => reject(new Error(`the contract server exited (${code}) before it was ready`)));
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`the contract server exited (${code}) before it was ready`));
+    });
   });
 }
 
@@ -129,7 +153,7 @@ describe("pigeon driven by the apps' own code", { skip }, () => {
 
   after(() => {
     server?.stdin.end();
-    server?.kill();
+    if (server) killGroup(server);
   });
 
   it("each newest web and iOS client package drives pigeon; every frame both ways, as sent, is valid for every listed client", async () => {
