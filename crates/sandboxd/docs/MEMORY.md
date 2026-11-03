@@ -146,7 +146,7 @@ Dependencies (all permissive): rustls 0.23 (Apache-2.0/ISC/MIT) with ring 0.17 (
   above; migration A→B 1.4 s (final copy 51 ms, restore 83 ms), back 0.9 s (85 / 41 ms), the 300 MiB writer kept its
   PID and counted on; sandboxd restarted under 6 running sandboxes (same sentry PIDs); gateway mode on one of them
   (egress targets read back from the live nft table after deleting the file); image server 449 MB streamed.
-- Gateway (a k3s node): `gateway.sh` with the release; a probe of a live AWS sandbox's agent through
+- Gateway (a k3s node): jarvis3's `gateway.sh` with the release; a probe of a live AWS sandbox's agent through
   the gateway every 0.2 s during the swap: 45/45 answered; nft table byte-identical before/after; the controller's
   next calls (peers) went to the Rust daemon.
 - AWS: launch template version 4 = the new AMI. The live sandbox on the last Node host was moved by retiring that

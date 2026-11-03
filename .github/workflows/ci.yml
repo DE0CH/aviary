@@ -138,9 +138,11 @@ jobs:
 
   sandboxd-soak:
     # hermit spec 14.6: two daemons with stand-ins for runsc/ip/nft/wg, every endpoint, a migration, hostile clients,
-    # RSS flat and under the budget; then every answer of the functional part parsed as sandboxd-api's types
+    # RSS flat and under the budget; then every answer of the functional part parsed as sandboxd-api's types. Then
+    # hermit spec 14.2: the gateway's data plane across its process, with the real ip, wg and nft in network
+    # namespaces (kill -9 under traffic, a refused host.json, wg0 made again from the saved state)
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: toolchain (rust-toolchain.toml, exactly)
@@ -157,6 +159,10 @@ jobs:
           sudo chown -R "$(id -u)" "$RUNNER_TEMP/sandboxd-dump"
       - name: the daemon's answers against sandboxd-api
         run: SANDBOXD_DUMP="$RUNNER_TEMP/sandboxd-dump" cargo test --locked -p sandboxd-api --test live -- --ignored
+      - name: the gateway keeps its data plane across its process (crates/sandboxd/tests/gateway/adopt.sh)
+        run: |
+          sudo apt-get install -y -q --no-install-recommends wireguard-tools nftables
+          sudo timeout -k 10 300 bash crates/sandboxd/tests/gateway/adopt.sh target/x86_64-unknown-linux-musl/sandboxd/sandboxd
 
   build:
     runs-on: ubuntu-24.04
@@ -188,24 +194,29 @@ jobs:
           file "$b" | tee /dev/stderr | grep -q "static"
           "$b" --version
           "$b" budget
-          # check-config (gateway.sh's check before it installs): a gateway's host.json passes, one whose wgAddress is
-          # outside hostCidr is refused (placeholder ranges)
+          # check-config (the checks sandboxd starts with, before it touches anything): a gateway's host.json passes,
+          # one whose wgAddress is outside hostCidr is refused (placeholder ranges)
           g='{"name":"gw","role":"hub","gateway":true,"wgAddress":"10.99.0.1","hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","privateGateway":"10.97.0.1","podCidr":"10.96.0.0/16","reserveMemory":0}'
           printf '%s' "$g" > "$RUNNER_TEMP/gw.json"
           "$b" check-config "$RUNNER_TEMP/gw.json"
           printf '%s' "$g" | sed 's/"wgAddress":"10.99.0.1"/"wgAddress":"10.95.0.1"/' > "$RUNNER_TEMP/gw-bad.json"
           if "$b" check-config "$RUNNER_TEMP/gw-bad.json"; then echo "a wgAddress outside hostCidr passed" >&2; exit 1; fi
           cp "$b" dist/
-      - name: images/sandboxd (the gateway installer; built and run here, pushing is the images job's)
-        # a context of just the two files the Dockerfile copies (the checkout's target/ would make it gigabytes)
+      - name: images/sandboxd (the gateway pod's image; built and run here, pushing is the images job's)
+        # a context of just the file the Dockerfile copies (the checkout's target/ would make it gigabytes)
         run: |
           ctx=$RUNNER_TEMP/sandboxd-image
-          mkdir -p "$ctx/dist" "$ctx/fabric/host"
+          mkdir -p "$ctx/dist"
           cp dist/sandboxd "$ctx/dist/"
-          cp fabric/host/gateway.sh "$ctx/fabric/host/"
-          docker build -f images/sandboxd/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t sandboxd-installer:ci "$ctx"
-          docker run --rm sandboxd-installer:ci /opt/hermit-gateway/sandboxd --version
-          docker run --rm sandboxd-installer:ci sh -c '/opt/hermit-gateway/crane version && /opt/hermit-gateway/jq --version && test -x /opt/hermit-gateway/gateway.sh'
+          docker build -f images/sandboxd/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t sandboxd-gateway:ci "$ctx"
+          docker run --rm sandboxd-gateway:ci --version
+          # the commands sandboxd runs on a gateway, and its refusal of a host.json it cannot run with
+          docker run --rm --entrypoint sh sandboxd-gateway:ci -c 'ip -V && wg --version && nft -v && sysctl --version && crane version && tar --version | head -1 && zstd --version'
+          if docker run --rm -v "$RUNNER_TEMP/gw-bad.json:/etc/sbx/host.json:ro" sandboxd-gateway:ci; then echo "the image started on a bad host.json" >&2; exit 1; fi
+      - name: the gateway image keeps its data plane across its main process (crates/sandboxd/tests/gateway/adopt.sh)
+        run: |
+          sudo apt-get install -y -q --no-install-recommends wireguard-tools nftables
+          sudo SBX_GATEWAY_IMAGE=sandboxd-gateway:ci timeout -k 10 300 bash crates/sandboxd/tests/gateway/adopt.sh
       - name: images/aviary-testing (the testing binaries; built and run here, pushing is the images job's)
         run: |
           ctx=$RUNNER_TEMP/aviary-testing-image

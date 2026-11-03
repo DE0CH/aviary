@@ -9,7 +9,7 @@ those of 2026-10-21. The memory bound of sandboxd itself is [MEMORY.md](MEMORY.m
 ## Addresses and paths
 
 Every address is the deployment's: sandboxd reads them from host.json (below), which the deployment writes (the
-gateway's from hermit's ConfigMap through `fabric/host/gateway.sh`, a burst host's from the user data hermit's scaler
+gateway's from hermit's ConfigMap, mounted into its pod, a burst host's from the user data hermit's scaler
 gives it, a test hub's through `setup.sh hub`). aviary's scripts carry none. The table shows the layout with
 placeholder ranges (the sandboxd-api fixtures use the same); a deployment's own ranges live in its config (YYC's: hermit
 spec 13.1, in DE0CH/YYC):
@@ -34,7 +34,9 @@ or the spec's `imageRef`): there is no default image.
 `gateway` (hub only: no sandboxes), `wgAddress`, `hostCidr`, `wgPort`, `wgKeyFile`, `apiPort` (7443), `imagePort`
 (7444), `tls` {`ca`, `cert`, `key`}, `controlCidr`, `sandboxCidr`, `egressVip`, `podCidr`, `privateGateway`, `hub`
 (burst: the hub peer {`publicKey`, `endpoint`, `allowedIps`}), `reserveMemory` (bytes), `registryConfigDir`,
-`imageSource`, `mtu`, `limits`. Unknown keys are ignored, so a host.json may already carry fields of a later sandboxd
+`imageSource`, `mtu`, `gatewayMss` (gateway: the MSS of SYNs forwarded from wg0 is clamped to it; 1280, 536-9000),
+`limits`. A gateway pod's host.json sets `limits.cgroups: false` (the pod's memory limit is its bound; there is no
+systemd `Delegate=yes`). Unknown keys are ignored, so a host.json may already carry fields of a later sandboxd
 (hermit spec 14.2 lists `egressPorts`; this sandboxd does not read it: the egress port is 3128, hermit spec 13.2
 item 5).
 
@@ -50,26 +52,46 @@ item 5).
 
 ## Gateway
 
-sandboxd as the hub with `gateway: true` (`fabric/host/gateway.sh`, a systemd unit on a cluster node, installed by
-hermit's gateway DaemonSet, hermit spec 14.2) runs no sandboxes and no runsc (it reports all memory reserved: 0
-slots). Its jobs: the WireGuard hub for the burst hosts on its `wgPort` (not 51820, flannel's own WireGuard), reached over
-the node's IPv6; the egress VIP translation; the image source for burst hosts (:7444).
+sandboxd as the hub with `gateway: true` runs no sandboxes and no runsc (it reports all memory reserved: 0 slots). It
+runs as the main process of hermit's gateway DaemonSet (hermit spec 14.2), a host-network privileged pod on one
+cluster node, from the image `images/sandboxd` (sandboxd, ip, wg, nft, sysctl, crane, tar, zstd); there is no
+installer, no `nsenter` and no host systemd unit. The pod mounts the deployment's host.json (`SBX_CONFIG`), the TLS
+files and `wgKeyFile`, and the node's state directory (hostPath, e.g. `/var/lib/hermit-gateway`) at `/var/lib/sbx`.
+Its jobs: the WireGuard hub for the burst hosts on its `wgPort` (not 51820, which a cluster's own WireGuard may use),
+reached over the node's IPv6; the egress VIP translation; the image source for burst hosts (:7444, filled by hermit's
+`POST /v1/images`, crane pulling from the registry).
 
+- **The data plane is the host's, not the process's.** sandboxd leaves wg0, its nft table `ip sbxhost`, its ip rules
+  and routes in the host's network namespace when it exits (SIGTERM or a crash; nothing is undone at exit), and at
+  start adopts what is there: wg0 is reused (same private key and port: the kernel keeps its sessions), addresses,
+  routes and rules are replaced or added only if missing, the nft table is replaced in one transaction (established
+  connections keep their conntrack NAT), and the peer set and egress targets hermit last pushed, saved under
+  `/var/lib/sbx` (`peers.json`, `egress-targets`), are applied (an equal set changes nothing). A wg0 that is gone (a
+  node reboot) is made again with them before hermit's next push. A pod restart or a DaemonSet update therefore stops
+  only :7443 and :7444 for the seconds it takes; running sandboxes do not notice. host.json is checked in full before
+  anything is touched, so a start with a bad host.json exits and leaves the running data plane as it is.
+  `tests/gateway/adopt.sh` checks all of it with the real ip, wg and nft in network namespaces (ci.yml): kill -9 of
+  the gateway process under traffic loses no packet and keeps the one TCP connection through the VIP, wg0's ifindex
+  and its handshake with the host unchanged; a host.json without `podCidr` leaves everything unchanged; a deleted
+  wg0 comes back with the saved peers. With `SBX_GATEWAY_IMAGE` it runs sandboxd from the image (ci.yml `build`).
 - Host rules touch only wg0's traffic: nothing from wg0 to the public interface or back, wg0 may reach only
-  sandboxd's API and image ports on the node itself, the egress VIP only translated. The node's pods, kube-proxy and
-  flannel keep their own rules; no packages, sysctls (beyond ip_forward) or nftables.service are touched.
-- **Sandbox sources through a k3s node** (fixed 2026-10-21): flannel masquerades every non-pod source going to a pod,
-  so egress would see the node's flannel address. The gateway therefore sends what arrives on wg0 to pods over the
-  private network (`ip rule iif wg0 lookup 51822`) and pins the source with an identity SNAT in its own table
-  (`keep_source`, priority srcnat - 10: a connection's NAT is bound there, so the masquerade never runs).
+  sandboxd's API and image ports on the node itself, the egress VIP only translated, and SYNs forwarded from wg0 have
+  their MSS clamped to `gatewayMss` (1280: the hops behind the gateway, e.g. a 1320-byte pod MTU, may be smaller than
+  wg0's 1420). The node's pods, kube-proxy and its CNI keep their own rules and tables (table 51822 and rule priorities
+  99/100 are sandboxd's; no fwmark). Sysctls set: `ip_forward`, and `rp_filter` loose (2) on wg0 and on the private
+  interface, where egress pods' replies arrive from pod addresses the node itself routes elsewhere; nothing else.
+- **Sandbox sources through a cluster node** (fixed 2026-10-21): a CNI may masquerade every non-pod source going to a
+  pod (flannel's FLANNEL-POSTRTG did), so egress would see the node's address. The gateway therefore sends what
+  arrives on wg0 to pods over the private network (`ip rule iif wg0 lookup 51822`) and pins the source with an
+  identity SNAT in its own table (`keep_source`, priority srcnat - 10: a connection's NAT is bound there, so the
+  masquerade never runs).
 - **The node's own pods** (fixed 2026-10-21): a pod on the gateway node reaching a sandbox leaves through wg0, where
-  flannel's masquerade would give it wg0's address, which the sandboxes' lock drops. `keep_source` SNATs `oifname wg0,
-  pod range → sandbox range` to the node's private address.
-- **Routes survive systemd-networkd** (2026-10-21): networkd restarted on a node and dropped the routes it had not
-  made, cutting every sandbox off. gateway.sh and setup.sh set `ManageForeignRoutes=no` /
-  `ManageForeignRoutingPolicyRules=no`, and sandboxd checks its routes (and each sandbox's /32) every 10 s and re-makes
-  missing ones (logged "host routes were removed").
-- wg0 and the nft table survive a sandboxd restart; sandboxes do not notice one.
+  a masquerade would give it wg0's address, which the sandboxes' lock drops. `keep_source` SNATs `oifname wg0, pod
+  range → sandbox range` to the node's private address.
+- **Routes that something else removes** (2026-10-21): systemd-networkd restarted on a node and dropped the routes it
+  had not made, cutting every sandbox off. sandboxd checks its routes (and each sandbox's /32) every 10 s and re-makes
+  missing ones (logged "host routes were removed"); setup.sh sets networkd's `ManageForeignRoutes=no` /
+  `ManageForeignRoutingPolicyRules=no` on the hosts it sets up.
 
 ## sandboxd
 

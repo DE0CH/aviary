@@ -11,8 +11,9 @@ filesystem by rsync). hermit is its only client.
   fixtures and the running daemon.
 - Memory bound and how it is enforced and tested: [docs/MEMORY.md](docs/MEMORY.md).
 - Network, storage, migration, security on a host: [docs/HOST.md](docs/HOST.md).
-- Host scripts: `fabric/host` (setup.sh, gateway.sh, make-certs.sh, fetch-sandboxd.sh), `fabric/aws` (infra.sh and the
-  IAM policies), `fabric/gvisor-patches`; the gateway installer image `images/sandboxd`.
+- Host scripts: `fabric/host` (setup.sh, make-certs.sh, fetch-sandboxd.sh), `fabric/aws` (infra.sh and the IAM
+  policies), `fabric/gvisor-patches`; the gateway pod's image `images/sandboxd` (sandboxd as its main process,
+  docs/HOST.md "Gateway").
 
 Moved from DE0CH/jarvis3 `chat/sandboxd/daemon` on 2026-11-02 (jarvis3 commit 52c9b8c, platform spec 4.1); jarvis3
 keeps its own copy for the old fabric until the switch's P5.
@@ -58,10 +59,11 @@ SANDBOXD_DUMP=/tmp/sbx-dump cargo test -p sandboxd-api --test live -- --ignored
 The release build must use profile `sandboxd` (`panic = "unwind"`: each connection runs in `catch_unwind`); the
 workspace release profile aborts on panic. CI (`ci.yml`): `test` runs the unit tests, `sandboxd-soak` the soak and
 the live contract check, `build` puts the binary in `dist` (checked static, `--version`, `budget`) and builds and runs
-the gateway installer image `images/sandboxd` (not pushed).
+the gateway pod's image `images/sandboxd` (not pushed), then runs `tests/gateway/adopt.sh` with that image;
+`sandboxd-soak` also runs `tests/gateway/adopt.sh` with the binary.
 
 No `aviary-<sha12>` release is published yet: that is the `publish` job of WP-28 (main only, after every gate). Until
-it exists, `fabric/host/fetch-sandboxd.sh` (and so `setup.sh`, `gateway.sh` and `infra.sh ami`) installs sandboxd
+it exists, `fabric/host/fetch-sandboxd.sh` (and so `setup.sh` and `infra.sh ami`) installs sandboxd
 only from a local build or the `dist` artifact, with `SANDBOXD_BINARY=<path>`. `infra.sh sync` refuses both a local
 build and a `fabric.sandboxd` pin that is not an `aviary-<sha12>` release (exit 3, nothing baked), and `check` says
 why it fails, so the AMI workflow (hermit spec 14.3) cannot bake an AMI on every run before a release exists.
@@ -71,6 +73,6 @@ why it fails, so the AMI workflow (hermit spec 14.3) cannot bake an AMI on every
 - `sandboxd` serves, configured by `/etc/sbx/host.json` (`SBX_CONFIG` to point elsewhere).
 - `sandboxd budget [host.json]` prints the memory budget for a configuration.
 - `sandboxd check-config <host.json>` checks a host.json with the parser sandboxd starts with (exit 1 and the reason
-  when it would refuse to start); `fabric/host/gateway.sh` runs it before installing anything.
+  when it would refuse to start: the same checks run at start, before anything on the host is touched).
 - `sandboxd migrate-relay …` is the target's end of a migration's scratch copy (started by sandboxd itself).
 - `sandboxd --version`.

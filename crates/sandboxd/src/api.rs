@@ -264,29 +264,12 @@ fn route(app: &App, req: &Req, w: &mut W, sc: &mut Scratch) -> Res<u16> {
     if m == "PUT" && path == "/v1/peers" {
         let o = body_obj(req)?;
         let mut peers = [Peer::default(); MAX_PEERS];
-        let mut n = 0;
-        let mut is_list = false;
-        json::object::<Error>(o, |k, v| {
-            if let (true, Val::Arr(a)) = (k.is("peers"), v) {
-                {
-                    is_list = true;
-                    json::array::<Error>(a, |e| {
-                        let Val::Obj(po) = e else { return Err(Error::new(400, "peers must be a list of objects")) };
-                        if n == MAX_PEERS {
-                            return Err(Error::new(400, "too many peers"));
-                        }
-                        peers[n] = parse_peer(po)?;
-                        n += 1;
-                        Ok(())
-                    })?;
-                }
-            }
-            Ok(())
-        })?;
-        if !is_list {
-            return Err(Error::new(400, "peers must be a list"));
-        }
+        let n = parse_peers(o, &mut peers)?;
         net::set_peers(app.cfg, &peers[..n], sc.big)?;
+        // the hub's peer set survives its process (a gateway pod's restart, a node reboot): restored at start
+        if app.cfg.hub {
+            net::save_peers(req.body);
+        }
         w.obj().key("peers");
         write_peers(w, sc)?;
         w.end();
@@ -413,6 +396,31 @@ fn route(app: &App, req: &Req, w: &mut W, sc: &mut Scratch) -> Res<u16> {
         }
     }
     Err(Error::new(404, "not found"))
+}
+
+/// `{"peers": [...]}` (PUT /v1/peers, and the hub's saved set) into `peers`; how many.
+pub fn parse_peers(o: &[u8], peers: &mut [Peer; MAX_PEERS]) -> Res<usize> {
+    let mut n = 0;
+    let mut is_list = false;
+    json::object::<Error>(o, |k, v| {
+        if let (true, Val::Arr(a)) = (k.is("peers"), v) {
+            is_list = true;
+            json::array::<Error>(a, |e| {
+                let Val::Obj(po) = e else { return Err(Error::new(400, "peers must be a list of objects")) };
+                if n == MAX_PEERS {
+                    return Err(Error::new(400, "too many peers"));
+                }
+                peers[n] = parse_peer(po)?;
+                n += 1;
+                Ok(())
+            })?;
+        }
+        Ok(())
+    })?;
+    if !is_list {
+        return Err(Error::new(400, "peers must be a list"));
+    }
+    Ok(n)
 }
 
 fn write_peers(w: &mut W, sc: &mut Scratch) -> Res<()> {

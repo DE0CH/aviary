@@ -6,7 +6,7 @@
 # Usage (as root, from a copy of aviary's fabric/: host/ and bin/sandboxd side by side; host/fetch-sandboxd.sh puts the
 # released binary into bin/):
 #   setup.sh hub   [image ref]   a hub that also runs sandboxes: installs the host.json it is given (SBX_HOST_JSON),
-#                                starts sandboxd (the deployed fabric uses a gateway instead: gateway.sh)
+#                                starts sandboxd (the deployed fabric uses a gateway pod instead: images/sandboxd)
 #   setup.sh burst [image ref]   an AWS image (AMI) bake: everything but host.json, which each instance gets from its
 #                                user data at first boot (sbx-userdata.service)
 # Environment:
@@ -268,7 +268,7 @@ fi
 if [ "$ROLE" = hub ]; then
   for f in ca.crt host.crt host.key; do [ -s /etc/sbx/tls/$f ] || { echo "missing /etc/sbx/tls/$f" >&2; exit 1; }; done
   jq -e '.role == "hub" and (.gateway | not)' "$SBX_HOST_JSON" >/dev/null \
-    || { echo "$SBX_HOST_JSON: role must be hub, without gateway (a gateway is gateway.sh's)" >&2; exit 1; }
+    || { echo "$SBX_HOST_JSON: role must be hub, without gateway (a gateway runs as a pod: images/sandboxd)" >&2; exit 1; }
   jq '{registryConfigDir: "/etc/sbx/docker",
        tls: {ca: "/etc/sbx/tls/ca.crt", cert: "/etc/sbx/tls/host.crt", key: "/etc/sbx/tls/host.key"}} + .' \
     "$SBX_HOST_JSON" > /etc/sbx/host.json.new

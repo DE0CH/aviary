@@ -78,6 +78,9 @@ pub struct HostConfig {
     pub registry_config_dir: Str<256>,
     pub image_source: Str<256>,
     pub mtu: u32,
+    /// gateway: the MSS of TCP SYNs forwarded from wg0 is clamped to this (`gatewayMss`, default 1280: a 1320-byte
+    /// pod MTU minus 40), so a sandbox's full-size segment never meets a smaller hop behind the gateway
+    pub gateway_mss: u32,
     pub limits: Limits,
 }
 
@@ -150,6 +153,7 @@ impl HostConfig {
             registry_config_dir: Str::new(),
             image_source: Str::new(),
             mtu: 1420,
+            gateway_mss: 1280,
             limits: Limits::default(),
         };
         let mut role: Str<16> = Str::new();
@@ -209,6 +213,8 @@ impl HostConfig {
                 c.image_source = s(v, "imageSource")?;
             } else if key("mtu") {
                 c.mtu = n(v, "mtu")? as u32;
+            } else if key("gatewayMss") {
+                c.gateway_mss = n(v, "gatewayMss")? as u32;
             } else if key("limits") {
                 let Val::Obj(l) = v else { return Err(Error::new(400, "host.json: limits must be an object")) };
                 let lim = &mut c.limits;
@@ -267,6 +273,9 @@ impl HostConfig {
         }
         if !in_cidr(c.wg_address.as_str(), c.host_cidr.as_str()) {
             return Err(Error::new(400, "host.json: wgAddress must be in hostCidr"));
+        }
+        if !(536..=9000).contains(&c.gateway_mss) {
+            return Err(Error::new(400, "host.json: gatewayMss must be 536-9000"));
         }
         let l = &c.limits;
         if l.max_connections == 0

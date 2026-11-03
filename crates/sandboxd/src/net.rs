@@ -164,7 +164,7 @@ pub fn host_rules(
         b.s("\n  }");
     }
     if cfg.gateway {
-        let (vip, api, img) = (cfg.egress_vip.as_str(), cfg.api_port, cfg.image_port);
+        let (vip, api, img, mss) = (cfg.egress_vip.as_str(), cfg.api_port, cfg.image_port, cfg.gateway_mss);
         // a k3s node masquerades every non-pod source going to a pod (flannel's FLANNEL-POSTRTG): what comes in on wg0
         // keeps the sandbox's own address (egress admits a sandbox's token only from it; its NetworkPolicy only
         // sandboxCidr). An identity SNAT, earlier than iptables' nat (priority srcnat), binds the connection's NAT
@@ -185,7 +185,7 @@ pub fn host_rules(
         b.s("\n  }");
         let _ = write!(
             b,
-            "\n  chain forward {{\n    type filter hook forward priority 0; policy accept;\n    iifname \"wg0\" ip daddr {vip} drop\n    iifname \"wg0\" oifname \"{public_if}\" drop\n    iifname \"{public_if}\" oifname \"wg0\" drop\n  }}\n  chain input {{\n    type filter hook input priority 0; policy accept;\n    iifname \"wg0\" tcp dport {{ {api}, {img} }} accept\n    iifname \"wg0\" icmp type echo-request accept\n    iifname \"wg0\" ct state established,related accept\n    iifname \"wg0\" drop\n    tcp dport {{ {api}, {img} }} iifname \"{public_if}\" drop\n  }}\n}}\n"
+            "\n  chain forward {{\n    type filter hook forward priority 0; policy accept;\n    iifname \"wg0\" ip daddr {vip} drop\n    iifname \"wg0\" tcp flags & (syn | rst) == syn tcp option maxseg size > {mss} tcp option maxseg size set {mss}\n    iifname \"wg0\" oifname \"{public_if}\" drop\n    iifname \"{public_if}\" oifname \"wg0\" drop\n  }}\n  chain input {{\n    type filter hook input priority 0; policy accept;\n    iifname \"wg0\" tcp dport {{ {api}, {img} }} accept\n    iifname \"wg0\" icmp type echo-request accept\n    iifname \"wg0\" ct state established,related accept\n    iifname \"wg0\" drop\n    tcp dport {{ {api}, {img} }} iifname \"{public_if}\" drop\n  }}\n}}\n"
         );
         return;
     }
@@ -231,6 +231,17 @@ fn egress_file() -> crate::paths::P {
     path!("/var/lib/sbx/egress-targets")
 }
 
+/// The hub's last `PUT /v1/peers` body (already parsed once), restored by [`HostNet::restore_peers`] at start.
+fn peers_file() -> crate::paths::P {
+    path!("/var/lib/sbx/peers.json")
+}
+
+pub fn save_peers(body: &[u8]) {
+    if let Err(e) = crate::util::write_file_atomic(peers_file().as_str(), body, 0o600) {
+        crate::util::Log::error("peer set not saved").s("error", e.msg.as_str()).emit();
+    }
+}
+
 impl HostNet {
     pub fn new() -> HostNet {
         HostNet {
@@ -249,8 +260,29 @@ impl HostNet {
         self.st.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// hub: the peer set last pushed (saved under /var/lib/sbx, the gateway pod's hostPath), applied at start, so a
+    /// wg0 that is there keeps its peers and handshakes (an equal set changes nothing) and one made anew (a node
+    /// reboot) has them before hermit's next push. A missing or unreadable file changes nothing.
+    pub fn restore_peers(cfg: &HostConfig, big: &mut [u8], small: &mut [u8]) {
+        let Ok(text) = crate::util::read_file(peers_file().as_str(), big) else { return };
+        let mut peers = [Peer::default(); MAX_PEERS];
+        let r = match crate::json::parse(text) {
+            Ok(crate::json::Val::Obj(o)) => crate::api::parse_peers(o, &mut peers),
+            _ => Err(Error::new(500, "not a JSON object")),
+        };
+        match r.and_then(|n| set_peers(cfg, &peers[..n], small).map(|()| n)) {
+            Ok(n) => crate::util::Log::info("saved peer set applied").n("peers", n as u64).emit(),
+            Err(e) => crate::util::Log::error("saved peer set not applied").s("error", e.msg.as_str()).emit(),
+        }
+    }
+
     pub fn init(&self, cfg: &HostConfig) -> Res<()> {
-        // a gateway shares its machine (a k3s node): forwarding only, the node's own rp_filter and limits stay
+        // a gateway shares its machine (a cluster node): forwarding and its own interfaces' rp_filter only; the
+        // node's other settings stay. Nothing here is undone at exit: wg0, its addresses, the nft table, the rules
+        // and routes stay in the host's network namespace when sandboxd stops (SIGTERM or a crash), and the next
+        // start adopts them (every step below leaves an equal state as it is).
+        // the saved egress targets and peer set live here (a gateway pod's hostPath)
+        crate::util::mkdir(path!("/var/lib/sbx").as_str(), 0o700)?;
         if cfg.gateway {
             sh(&["sysctl", "-qw", "net.ipv4.ip_forward=1"])?;
         } else {
@@ -334,6 +366,11 @@ impl HostNet {
                     "99",
                 ])?;
             }
+            // loose reverse-path checks on its own interfaces: replies from egress pods arrive on the private
+            // interface from pod addresses the node itself routes elsewhere (a CNI's own devices)
+            let mut a: Str<64> = Str::new();
+            let _ = write!(a, "net.ipv4.conf.{}.rp_filter=2", pif.as_str());
+            sh(&["sysctl", "-qw", "net.ipv4.conf.wg0.rp_filter=2", a.as_str()])?;
             st.private_if = Some(pif);
             load_targets(&mut st);
         } else if cfg.hub {
@@ -734,6 +771,13 @@ mod tests {
             g.contains("iifname \"wg0\" oifname \"eth0\" drop") && g.contains("iifname \"eth0\" oifname \"wg0\" drop")
         );
         assert!(g.contains("    iifname \"wg0\" drop\n"));
+        // SYNs forwarded from wg0 have their MSS clamped to gatewayMss (1280 by default)
+        assert!(g.contains(
+            "iifname \"wg0\" tcp flags & (syn | rst) == syn tcp option maxseg size > 1280 tcp option maxseg size set 1280"
+        ));
+        let c = HostConfig::parse(br#"{"hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","privateGateway":"10.97.0.1","podCidr":"10.96.0.0/16","name":"g","role":"hub","gateway":true,"wgAddress":"10.99.0.1","gatewayMss":1200}"#).ok().unwrap();
+        assert_eq!(c.gateway_mss, 1200);
+        assert!(HostConfig::parse(br#"{"hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","privateGateway":"10.97.0.1","podCidr":"10.96.0.0/16","name":"g","role":"hub","gateway":true,"wgAddress":"10.99.0.1","gatewayMss":100}"#).is_err());
         assert!(!g.contains("    iifname \"eth0\" drop\n") && !g.contains("    oifname \"eth0\" drop\n"));
         // the sandbox's own address survives the k3s node's masquerade (identity SNAT before iptables' nat)
         assert!(g.contains("type nat hook postrouting priority srcnat - 10"));

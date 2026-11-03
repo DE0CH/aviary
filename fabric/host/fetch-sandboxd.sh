@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Puts the sandboxd binary (static musl, from DE0CH/aviary's release aviary-<sha12>, platform 5.4) into DIR/bin/sandboxd,
-# checked against the release's SHA256SUMS. setup.sh and gateway.sh install it from there; DIR/bin/RELEASE records
+# checked against the release's SHA256SUMS. setup.sh installs it from there; DIR/bin/RELEASE records
 # which release it is.
 # Usage: fetch-sandboxd.sh DIR [aviary-<sha12>]   (default: SANDBOXD_RELEASE, else the newest aviary-* release;
 #        SANDBOXD_BINARY=<path> to use a local build instead, e.g. target/x86_64-unknown-linux-musl/sandboxd/sandboxd)

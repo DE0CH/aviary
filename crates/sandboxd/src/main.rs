@@ -5,7 +5,9 @@
 //! Start-up: config → budget → one region mapped (worker arenas, buffers, tables) → cgroups (sandboxd's own leaf with
 //! memory.max/min = the budget; commands in a "helpers" leaf) → TLS config → host network, sandboxes from their state
 //! files → all threads spawned → mlockall. After that nothing maps memory and sandboxd's own code doesn't allocate.
-//! Stopping sandboxd never touches sandboxes (KillMode=process; state is in files and runsc).
+//! Stopping sandboxd never touches sandboxes (KillMode=process; state is in files and runsc) nor the host's network
+//! (wg0, the nft tables, rules and routes stay; the next start adopts them): a gateway pod's restart stops only its
+//! API and image ports for the seconds it takes.
 // Errors carry their message inline (no heap), so they are a few hundred bytes by design.
 #![allow(clippy::result_large_err)]
 // This file's own unsafe: the signal handler, signal(2), mlockall(2) and the arena hand-over; each has a SAFETY
@@ -235,6 +237,9 @@ fn start() {
         fatal("host network", e.msg.as_str());
     }
     let mut sc = Scratch { big: &mut *bg_big, small: &mut *bg_small };
+    if cfg.hub {
+        net::HostNet::restore_peers(cfg, sc.big, sc.small);
+    }
     if !cfg.gateway {
         if let Err(e) = app.sbx.init(&mut sc) {
             fatal("sandboxes", e.msg.as_str());
@@ -349,7 +354,7 @@ fn main() {
         std::process::exit(relay::main(&args[2..]));
     }
     if args.get(1).map(String::as_str) == Some("check-config") {
-        // a host.json checked by the parser sandboxd starts with (fabric/host/gateway.sh runs it before installing)
+        // a host.json checked by the parser sandboxd starts with (the same checks run before start touches anything)
         let Some(p) = args.get(2) else {
             cli_out("usage: sandboxd check-config <host.json>\n");
             std::process::exit(2);
