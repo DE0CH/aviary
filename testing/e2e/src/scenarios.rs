@@ -11,7 +11,8 @@ use crate::{ADMIN, ALICE, Harness, JFS, PIGEON, STRANGER, TURN_MODEL, eventually
 
 /// The scenarios in the order `aviary-e2e` runs them when none is named.
 pub const ALL: &[&str] = &[
-    "e1", "e2", "e3", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e24", "e12", "e17", "stale",
+    "e1", "e2", "e3", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e9", "e24", "e12", "e17",
+    "stale",
 ];
 
 /// How long a turn may take, sandbox start included (the image is local; the first start makes the host).
@@ -36,6 +37,7 @@ pub async fn run(h: &Harness, name: &str) -> anyhow::Result<()> {
         "e24" => e24(h).await,
         "e6" => e6(h).await,
         "stale" => stale(h).await,
+        "e9" => e9(h).await,
         "e7" => e7(h).await,
         other => bail!("no scenario {other}"),
     }
@@ -1211,4 +1213,139 @@ echo "read $(curl -sS -m 10 -x "$HTTP_PROXY" $H -H "aviary-lease: $lease" "$m/cc
         (ws, r)
     })
     .await
+}
+
+/// Restarts a Deployment the way `kubectl rollout restart` does and waits until the rollout is done.
+async fn rollout(h: &Harness, name: &str) -> anyhow::Result<()> {
+    let api = kube::Api::<k8s_openapi::api::apps::v1::Deployment>::namespaced(h.kube.clone(), crate::NS);
+    let patch = json!({"spec": {"template": {"metadata": {"annotations": {
+        "aviary-e2e/restarted-at": uuid::Uuid::now_v7().to_string()}}}}});
+    let d = api
+        .patch(
+            name,
+            &kube::api::PatchParams::default(),
+            &kube::api::Patch::Merge(&patch),
+        )
+        .await?;
+    let generation = d.metadata.generation.unwrap_or(0);
+    eventually(
+        &format!("the rollout of {name}"),
+        Duration::from_secs(300),
+        Duration::from_secs(1),
+        || async {
+            let d = api.get(name).await?;
+            let want = d.spec.as_ref().and_then(|s| s.replicas).unwrap_or(1);
+            let st = d.status.unwrap_or_default();
+            let done = st.observed_generation.unwrap_or(0) >= generation
+                && st.updated_replicas.unwrap_or(0) == want
+                && st.available_replicas.unwrap_or(0) == want
+                && st.replicas.unwrap_or(0) == want;
+            Ok(done.then_some(()))
+        },
+    )
+    .await
+}
+
+/// E9: rollouts of pigeon, magpie, hermit and the gateway, one after the other, during a 90 s turn: the turn
+/// completes, the socket (reopened when pigeon's rollout closes it, resuming after the last row it saw) gets every
+/// row once, and every request the driver made answered.
+async fn e9(h: &Harness) -> anyhow::Result<()> {
+    let token = h.mint(ALICE, 3600, None).await?;
+    let m = marker("E9");
+    h.script(json!({"match": {"textContains": m, "model": TURN_MODEL},
+                    "reply": [{"text": "Before the rollouts."}, {"sleepMs": 90_000}, {"text": "After the rollouts."}],
+                    "times": 1}))
+        .await?;
+    let (mut ws, _) = Ws::open(PIGEON, &token).await?;
+    let id = create(&mut ws, &format!("Ride out the rollouts ({m})")).await?;
+    let mut pushes: Vec<(String, u64)> = Vec::new();
+    let mut last = json!(null);
+    let loaded = page(&mut ws, &id, "tail", None, 40).await?;
+    let mut epoch = loaded["epoch"].clone();
+    for r in loaded["entries"].as_array().into_iter().flatten() {
+        pushes.push((row_key(&r["item"]), r["seqEnd"].as_u64().unwrap_or(0)));
+        last = json!(r["seqEnd"]);
+    }
+    let mut ended: Option<Value> = None;
+    let mut reopened = 0;
+    let deployments = ["pigeon", "magpie", "hermit", "test-gateway"];
+    let rollouts = {
+        let h2 = h;
+        async move {
+            for d in deployments {
+                rollout(h2, d).await?;
+            }
+            Ok::<_, anyhow::Error>(())
+        }
+    };
+    tokio::pin!(rollouts);
+    let mut rolled = false;
+    let until = Instant::now() + Duration::from_secs(600);
+    while ended.is_none() || !rolled {
+        ensure!(
+            Instant::now() < until,
+            "not done in 600 s (rolled {rolled}, ended {ended:?})"
+        );
+        tokio::select! {
+            r = &mut rollouts, if !rolled => { r?; rolled = true; }
+            frames = ws.drain(Duration::from_millis(500)) => {
+                for v in frames {
+                    let p = &v["message"]["payload"];
+                    if v["message"]["type"] != "agent_stream" || p["agentId"] != id.as_str() { continue; }
+                    match p["event"]["type"].as_str() {
+                        Some("timeline") => {
+                            let seq = p["seq"].as_u64().unwrap_or(0);
+                            pushes.push((row_key(&p["event"]["item"]), seq));
+                            last = json!(seq);
+                            epoch = p["epoch"].clone();
+                        }
+                        Some("turn_completed" | "turn_failed" | "turn_canceled") => ended = Some(p["event"].clone()),
+                        _ => {}
+                    }
+                }
+                if ws.closed.is_some() {
+                    // pigeon's drain closed the socket: reopen on another replica and resume after the last row
+                    reopened += 1;
+                    let (w, _) = Ws::open(PIGEON, &token).await?;
+                    ws = w;
+                    let (_, _) = ws.rpc("agent.timeline.set_subscription.request", json!({"agentIds": [id]})).await?;
+                    if !last.is_null() {
+                        let c = page(&mut ws, &id, "after", Some(&json!({"epoch": epoch, "seq": last})), 500).await?;
+                        ensure!(c["reset"] != true, "the resume reset the timeline");
+                        for r in c["entries"].as_array().into_iter().flatten() {
+                            let seq = r["seqEnd"].as_u64().unwrap_or(0);
+                            pushes.push((row_key(&r["item"]), seq));
+                            last = json!(seq);
+                        }
+                    }
+                    let a = agent(&mut ws, &id).await?;
+                    if a["status"] == "idle" && ended.is_none() {
+                        ended = Some(json!({"type": "turn_completed", "seen": "after a reopen"}));
+                    }
+                }
+            }
+        }
+    }
+    let end = ended.unwrap_or_default();
+    ensure!(end["type"] == "turn_completed", "the turn ended {end}");
+    let all = timeline(&mut ws, &id).await?;
+    let mut counts = std::collections::BTreeMap::<(String, u64), u32>::new();
+    for p in &pushes {
+        *counts.entry(p.clone()).or_default() += 1;
+    }
+    let twice: Vec<_> = counts.iter().filter(|(_, n)| **n > 1).collect();
+    ensure!(twice.is_empty(), "rows seen twice: {twice:?}");
+    for r in &all {
+        let k = (row_key(&r["item"]), r["seqEnd"].as_u64().unwrap_or(0));
+        ensure!(counts.contains_key(&k), "row {k:?} never seen");
+    }
+    ensure!(
+        texts_of(&all, "assistant_message")
+            .iter()
+            .any(|t| t == "After the rollouts."),
+        "the reply's end is not in the timeline"
+    );
+    eprintln!("e9: four rollouts during the turn, the socket reopened {reopened} times");
+    ws.close().await;
+    Ok(())
 }

@@ -74,7 +74,9 @@ twice the first), E7 (the socket closed at the first live row and reopened: the 
 the live rows end every row where the timeline ends it), E8 (Stop during a 60 s stream: canceled at once, the next turn works), E10 (`kill -9` of the
 supervisor mid-turn: the turn completes, every transcript line once in magpie), E11 (the sandbox Pod deleted
 mid-turn: `sandbox.lost` within 40 s, the next turn on a new sandbox sees the history), E18 (the same requests through
-each pigeon Pod answer alike), E24 (hermit at 0 replicas for 3 minutes during a turn with a tool call: the turn
+each pigeon Pod answer alike), E9 (rollouts of pigeon, magpie, hermit and the gateway one after the other during a
+90 s turn: the turn completes, the socket, reopened when pigeon's rollout closes it and resumed after its last row,
+sees every row once), E24 (hermit at 0 replicas for 3 minutes during a turn with a tool call: the turn
 completes), E12 (the idle release, then a new sandbox that resumes the history) and E17 (seven starts with six slots:
 never more than six sandboxes, the seventh waits and completes once a pool victim frees a slot; the harness's
 `reserveSeconds` and `poolVictimIdleSeconds` are 20 so that happens inside `capacityWaitSeconds`). Last, `stale`: magpie 6.10's stale append end to end (WP-12's carried item),
