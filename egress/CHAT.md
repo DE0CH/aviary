@@ -38,7 +38,7 @@ browser ─Access─▶ UI pod (router → one CloudCLI server per person; DE0CH
                             ├─ self hosts (selfHosts, 127.0.0.1, localhost) /mirror/… ─▶ PyPI / npm mirror
                             └─ anything else ── sandbox allowlist → threat DNS → public internet
 State: Postgres (sandboxes, vm hosts and events, tool_calls, kv); egress's own database `egress` (egress_log,
-budget_state, token_keys); /workspace and ~/.claude on JuiceFS.
+budget_state, token_keys); tools' own database `tools` (tool_calls); /workspace and ~/.claude on JuiceFS.
 ```
 
 ## Control plane (`web`, `/internal/cc/*`)
@@ -577,6 +577,32 @@ aviary platform spec 17.2 tools. The MCP server Claude Code in a sandbox sees is
   2 s, exit 0 with log `drained`. `terminationGracePeriodSeconds` 180: 10 + 150 + 8 + 2 = 170 s even with the database
   blackholed. The bounds are code, not configuration. `test/tools-main.test.ts` runs this whole path in a child
   process (`run(site)` with temp paths and OS-picked ports; `main()` always runs the pod's fixed `SITE`).
+
+### `import-jarvis`: the one-off copies of the old stack's history (`egress import-jarvis`, `tools import-jarvis`)
+
+Two subcommands of the same image, for the switch to aviary's stack only (aviary cutover spec 8.2; deleted in A6 with
+the old stack): `node src/main.ts egress import-jarvis [--delta]` copies the old `jarvis.egress_log` into egress's
+`egress_log`, and `node src/main.ts tools import-jarvis [--delta]` copies `jarvis.tool_calls` into tools'
+`tool_calls` (`chat/src/common/importjarvis.ts`, `chat/src/egress/importjarvis.ts`, `chat/src/tools/importjarvis.ts`).
+The deployment runs them as CronJobs (`args: [egress, import-jarvis, --delta]`): `egress-import` every minute from A2
+to A6, so the new egress's budget counts the old stack's spend within a minute; `tools-import` in A2 and once more in
+A6.
+
+- **Env:** `EGRESS_IMPORT_JARVIS_URL` / `TOOLS_IMPORT_JARVIS_URL` (a read-only role on the old database) and the
+  service's own `EGRESS_DATABASE_URL` / `TOOLS_DATABASE_URL` (the pass applies the service's migrations first, as the
+  service does). Exit 0 after a pass, 1 when it failed (the next run retries), 2 on a missing variable or an argument
+  other than `--delta`. One log line per table: `{"at":"import-jarvis","table","delta","read","copied","after","last"}`.
+- **Every column, exactly:** the pass reads in id order inside one repeatable-read, read-only transaction and passes
+  every value as Postgres text both ways (timestamps keep their microseconds, numerics their digits). `source_id` is
+  the old id; egress's own rows have none. Copied rows have no `row_id` and no `request`; tools rows no `sandbox_id`.
+- **`person` on egress rows** (aviary hermit spec 22.4): the old row's sandbox owner (`jarvis.sandboxes.owner` by
+  `sandbox_id`), else its conversation's owner (`jarvis.conversations.owner` by `conversation_id`, the legacy UI's
+  calls), else null; a source without one of those tables skips that step. `owner` (the old relay's caller) is copied
+  as it is.
+- **Idempotent by `source_id`** (unique in both targets): every insert is `on conflict (source_id) do nothing`, so a
+  pass run again, cut short or overlapping another writes each old row once. `--delta` starts 1 000 ids below the
+  highest `source_id` copied, so a row whose id was handed out before a neighbour's but committed after it is still
+  read; without `--delta` the pass reads everything.
 
 ## Deploying an instance
 
