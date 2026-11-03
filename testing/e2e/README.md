@@ -77,8 +77,11 @@ mid-turn: `sandbox.lost` within 40 s, the next turn on a new sandbox sees the hi
 each pigeon Pod answer alike), E24 (hermit at 0 replicas for 3 minutes during a turn with a tool call: the turn
 completes), E12 (the idle release, then a new sandbox that resumes the history) and E17 (seven starts with six slots:
 never more than six sandboxes, the seventh waits and completes once a pool victim frees a slot; the harness's
-`reserveSeconds` and `poolVictimIdleSeconds` are 20 so that happens inside `capacityWaitSeconds`). The other scenarios
-of 7.8 are still to come (WP-28's remaining list).
+`reserveSeconds` and `poolVictimIdleSeconds` are 20 so that happens inside `capacityWaitSeconds`). Last, `stale`: magpie 6.10's stale append end to end (WP-12's carried item),
+from inside a sandbox through the gateway: an append, its retry under a new `opId` at the same offset (rule 0: 200,
+nothing written twice), a different append at that stale offset (409 `offset_mismatch`), the append at the size, and
+magpie's bytes read back. It takes the conversation's lease, so it runs last. The other scenarios of 7.8 are still
+to come (WP-28's remaining list).
 
 Found by the harness, for other packages: right after hermit returns from an outage longer than `hostDeadSeconds`, a
 start fails `hosts_full` until the hosts' next heartbeat (every host looks dead); E24 waits 20 s before the next

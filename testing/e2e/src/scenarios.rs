@@ -11,7 +11,7 @@ use crate::{ADMIN, ALICE, Harness, JFS, PIGEON, STRANGER, TURN_MODEL, eventually
 
 /// The scenarios in the order `aviary-e2e` runs them when none is named.
 pub const ALL: &[&str] = &[
-    "e1", "e2", "e3", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e24", "e12", "e17",
+    "e1", "e2", "e3", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e24", "e12", "e17", "stale",
 ];
 
 /// How long a turn may take, sandbox start included (the image is local; the first start makes the host).
@@ -35,6 +35,7 @@ pub async fn run(h: &Harness, name: &str) -> anyhow::Result<()> {
         "e18" => e18(h).await,
         "e24" => e24(h).await,
         "e6" => e6(h).await,
+        "stale" => stale(h).await,
         "e7" => e7(h).await,
         other => bail!("no scenario {other}"),
     }
@@ -1150,4 +1151,64 @@ async fn e7(h: &Harness) -> anyhow::Result<()> {
     }
     ws.close().await;
     r
+}
+
+/// The stale append of magpie 6.10 end to end (WP-12's carried item), through the real gateway from inside a
+/// sandbox: an append, its retry under a new `opId` at the same offset (rule 0: the range already holds those bytes,
+/// so it succeeds and writes nothing twice), a different append at that now stale offset (409 `offset_mismatch`, not
+/// an overwrite), and the append at the file's size. It takes the conversation's lease from the supervisor, so it
+/// runs last on a conversation of its own.
+async fn stale(h: &Harness) -> anyhow::Result<()> {
+    as_alice(h, |mut ws| async move {
+        let r = async {
+            let id = create(&mut ws, &format!("A sandbox to write in ({})", marker("STALE"))).await?;
+            let end = turn_end_kind(&mut ws, &id, TURN_WAIT).await?;
+            ensure!(end["type"] == "turn_completed", "the turn ended {end}");
+            let pod = sandbox_of(h, &id).await?;
+            let script = r#"
+set -u
+m=http://magpie/v1/sandbox
+H="-H aviary-protocol:magpie-sandbox=1"
+lease=$(curl -sS -m 10 -x "$HTTP_PROXY" $H -X POST -d '{}' -H content-type:application/json "$m/lease" | sed -n 's/.*"leaseId":"\([^"]*\)".*/\1/p')
+[ -n "$lease" ] || { echo "no lease"; exit 1; }
+w() { # w <offset> <opId> <create> <bytes>: the status and the answer
+  printf '%s' "$4" | curl -sS -m 10 -x "$HTTP_PROXY" $H -H "aviary-lease: $lease" -H content-type:application/octet-stream \
+    --data-binary @- -w ' %{http_code}' \
+    "$m/cc/write?path=projects/-workspace/e2e-stale.txt&offset=$1&mtimeNs=1&opId=$2&create=$3&mode=420&append=1"
+  echo
+}
+u() { cat /proc/sys/kernel/random/uuid; }
+echo "first $(w 0 "$(u)" 1 'one
+')"
+echo "retry $(w 0 "$(u)" 0 'one
+')"
+echo "stale $(w 0 "$(u)" 0 'two
+')"
+echo "next $(w 4 "$(u)" 0 'two
+')"
+echo "read $(curl -sS -m 10 -x "$HTTP_PROXY" $H -H "aviary-lease: $lease" "$m/cc/file?path=projects/-workspace/e2e-stale.txt" | base64 -w0)"
+"#;
+            let (ok, out) = h.exec(&pod, &["sh", "-c", script]).await?;
+            eprintln!("stale:\n{out}");
+            ensure!(ok, "the script failed: {out}");
+            let line = |k: &str| out.lines().find(|l| l.starts_with(k)).unwrap_or_default().to_owned();
+            ensure!(line("first").ends_with(" 200") && line("first").contains("\"size\":4"), "the append: {}", line("first"));
+            ensure!(
+                line("retry").ends_with(" 200") && line("retry").contains("\"size\":4"),
+                "the retry under a new opId wrote again: {}",
+                line("retry")
+            );
+            ensure!(
+                line("stale").ends_with(" 409") && line("stale").contains("offset_mismatch"),
+                "a stale append was not refused: {}",
+                line("stale")
+            );
+            ensure!(line("next").ends_with(" 200") && line("next").contains("\"size\":8"), "the next append: {}", line("next"));
+            ensure!(line("read") == "read b25lCnR3bwo=", "magpie's file: {}", line("read"));
+            Ok(())
+        }
+        .await;
+        (ws, r)
+    })
+    .await
 }
