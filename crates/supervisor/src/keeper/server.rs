@@ -4,7 +4,8 @@
 //! the `/dev/fuse` descriptor across supervisor restarts, reaps, and remembers the last exits of its own children
 //! (reparented orphans are reaped and only counted, so a burst of them never pushes a tracked exit out of the ring).
 //! A supervisor that exits 0 after it told the keeper `RELEASED` is not started again; a SIGTERM that arrives while
-//! no supervisor runs (a restart backoff) starts one at once, so the runtime stop is always a forced release.
+//! no supervisor runs (a restart backoff), or a supervisor that dies during the stop without having finished the
+//! release, starts one at once, so the runtime stop is always a forced release that ends cleanly within the grace.
 //!
 //! One thread, `poll(2)` over a fixed set of descriptors, every table and buffer allocated by [`Keeper::new`]
 //! before the loop; the loop itself does not allocate. A stdin message is staged whole before its first byte
@@ -38,6 +39,8 @@ pub const STDIN_BUFFER: usize = 64 * 1024;
 /// Descriptors kept by name (`PUT_FD`).
 pub const HELD_FDS: usize = 4;
 const POLL_MS: i32 = 100;
+/// During a stop, a supervisor that dies is started again no sooner than this after the last start.
+const STOP_RESTART_GAP_MS: u64 = 100;
 /// The listener, the signal source, every connection, every stdin message being written, and the error pipe of
 /// every spawn not yet answered.
 const POLL_SLOTS: usize = 2 + MAX_CONNS + STDIN_BUFFERS + MAX_CHILDREN;
@@ -57,6 +60,9 @@ pub struct Config {
     pub protect_self: bool,
     /// Where the stop requests come from.
     pub signals: Signals,
+    /// How long a stop waits for the supervisor to finish its release before it sends SIGKILL to everything
+    /// ([`KEEPER_STOP_GRACE`]; tests whose stand-in never finishes one use less).
+    pub stop_grace: std::time::Duration,
 }
 
 /// How the keeper learns it must stop.
@@ -79,6 +85,7 @@ impl Config {
             supervisor: Some(vec![super::SUPERVISOR_BIN.into(), "run".into()]),
             protect_self: true,
             signals: Signals::Process,
+            stop_grace: KEEPER_STOP_GRACE,
         }
     }
 }
@@ -244,7 +251,7 @@ pub struct Keeper {
     backoff: usize,
     next_start_mono: Option<u64>,
     stopping_since: Option<u64>,
-    /// The stop's SIGTERM has reached a supervisor: its exit (any) ends the stop.
+    /// The stop's SIGTERM has reached the running supervisor (cleared when it exits: a successor gets it again).
     stop_delivered: bool,
     /// The supervisor said `RELEASED`: once it has exited 0 it is not started again. Kept in memory, which a
     /// checkpoint keeps, so a restored released sandbox stays released and no file write can lose it.
@@ -643,10 +650,10 @@ impl Keeper {
     /// `Some(exit code)` once a stop has finished.
     fn check_stop(&mut self, now: u64) -> Option<i32> {
         let since = self.stopping_since?;
-        let grace = KEEPER_STOP_GRACE.as_millis() as u64;
-        // over when the supervisor that got the SIGTERM has exited (or a released one is gone), or at the grace
-        let finished =
-            self.supervisor_pid.is_none() && (self.stop_delivered || self.supervisor_done || !self.has_supervisor());
+        let grace = self.cfg.stop_grace.as_millis() as u64;
+        // over when a supervisor has finished the release (exit 0 after RELEASED), or with no supervisor to run, or
+        // at the grace; one that died before finishing is started again at once (maybe_start_supervisor)
+        let finished = self.supervisor_pid.is_none() && (self.supervisor_done || !self.has_supervisor());
         if !finished && now.saturating_sub(since) < grace {
             return None;
         }
@@ -678,8 +685,10 @@ impl Keeper {
         }
         let stopping = self.stopping_since.is_some();
         if stopping {
-            // a SIGTERM no supervisor got: start one now, skipping the backoff, so the stop is a forced release
-            if self.stop_delivered {
+            // a SIGTERM no running supervisor has (a backoff, or one that died mid-release): start one now, skipping
+            // the backoff, so the stop is a forced release; a supervisor that keeps dying is started at most every
+            // STOP_RESTART_GAP
+            if self.stop_delivered || now < self.supervisor_started_mono.saturating_add(STOP_RESTART_GAP_MS) {
                 return;
             }
         } else {
@@ -781,6 +790,11 @@ impl Keeper {
                 log("supervisor released, not restarted", &[]);
             } else if self.stopping_since.is_none() {
                 self.schedule_restart(now);
+            } else {
+                // died during the stop without finishing the release: the next one is started at once and gets the
+                // SIGTERM (its run.json and the keeper's state let it finish the forced release)
+                self.stop_delivered = false;
+                log("supervisor exited during the stop, starting another", &[]);
             }
             Name::new(b"supervisor")
         } else if let Some(i) = self.children.iter().position(|c| c.pid == r.pid) {
@@ -1721,6 +1735,7 @@ mod tests {
             supervisor: None,
             protect_self: false,
             signals: Signals::Pipe(r),
+            stop_grace: KEEPER_STOP_GRACE,
         })
         .unwrap();
         k.children[0] = Child {

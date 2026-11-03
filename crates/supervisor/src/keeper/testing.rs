@@ -24,6 +24,15 @@ impl Running {
 
     /// A keeper whose supervisor argv is made from the test directory.
     pub fn start_with(supervisor: impl FnOnce(&std::path::Path) -> Option<Vec<String>>) -> Self {
+        Self::start_with_grace(crate::limits::KEEPER_STOP_GRACE, supervisor)
+    }
+
+    /// With a stop grace of its own (a test whose stand-in supervisor never finishes a release need not wait 20 s
+    /// when it is dropped).
+    pub fn start_with_grace(
+        stop_grace: Duration,
+        supervisor: impl FnOnce(&std::path::Path) -> Option<Vec<String>>,
+    ) -> Self {
         let dir = std::env::temp_dir().join(format!("keeper-test-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let supervisor = supervisor(&dir);
@@ -35,6 +44,7 @@ impl Running {
             supervisor,
             protect_self: false,
             signals: Signals::Pipe(stop_r),
+            stop_grace,
         };
         let mut k = Keeper::new(cfg).unwrap();
         let thread = std::thread::spawn(move || k.run());

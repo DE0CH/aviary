@@ -7,6 +7,10 @@
 //! code (a [`LOST`] record), so no waiter waits for ever. Until that `STATUS` has answered, the watcher does not move
 //! past the gap: it reads the same exits again on the next poll.
 //!
+//! A wait registered after the watcher moved past the exit it needs, when that exit may be gone from what the
+//! watcher keeps (a gap it resolved before the wait, or more than 256 exits since), asks the keeper once: a pid the
+//! keeper no longer runs and whose exit its ring does not have is reported with a [`LOST`] record at once.
+//!
 //! A wait names the pid and the keeper's exit counter when the process was forked (`SPAWN`'s `since`, or the counter
 //! the watcher started from for a process found alive at start): only an exit recorded after that counter matches,
 //! so a pid the kernel reused never picks up an older process's exit.
@@ -31,13 +35,19 @@ struct Seen {
     list: VecDeque<ExitRecord>,
     /// (pid, since) -> how many wait for it.
     waiting: HashMap<(i32, u64), usize>,
+    /// The highest counter at or before which a resolved gap may have hidden exits.
+    lost_upto: u64,
+    /// The counter of the newest exit dropped from `list` (it keeps [`KEPT`]).
+    dropped_upto: u64,
 }
 
 impl Seen {
     fn push(&mut self, e: ExitRecord) {
         self.list.push_back(e);
-        if self.list.len() > KEPT {
-            self.list.pop_front();
+        if self.list.len() > KEPT
+            && let Some(old) = self.list.pop_front()
+        {
+            self.dropped_upto = self.dropped_upto.max(old.n);
         }
     }
     /// The first exit of `pid` recorded after counter `since`.
@@ -169,6 +179,7 @@ impl Exits {
             g.push(e);
         }
         if let Some(st) = status {
+            g.lost_upto = g.lost_upto.max(lost_n);
             let gone: Vec<i32> = g
                 .waiting
                 .keys()
@@ -194,6 +205,35 @@ impl Exits {
         self.changed.send_replace(last);
     }
 
+    /// A late wait's one look at the keeper: `STATUS` first (still running: wait as usual, `None`), then its exits
+    /// (an exit after `since`), else a [`LOST`] record.
+    async fn ask_keeper(&self, pid: i32, since: u64) -> Option<ExitRecord> {
+        let k = self.keeper.clone();
+        let st = tokio::task::spawn_blocking(move || k.status()).await.ok()?.ok()?;
+        if st.children.iter().any(|(p, _)| *p == pid) {
+            return None;
+        }
+        if let Some(e) = self.exits_after(since).await.and_then(|l| {
+            l.into_iter()
+                .filter(|e| e.pid == pid && e.n > since)
+                .min_by_key(|e| e.n)
+        }) {
+            return Some(e);
+        }
+        if let Some(e) = self.find(pid, since) {
+            return Some(e);
+        }
+        tracing::warn!(pid, since, "keeper exits: a late wait's exit fell out of the ring");
+        Some(ExitRecord {
+            n: since + 1,
+            pid,
+            name: LOST.into(),
+            code: None,
+            signal: None,
+            at_ms: 0,
+        })
+    }
+
     /// The polling task.
     pub async fn run(self: Arc<Self>) {
         loop {
@@ -214,8 +254,16 @@ impl Exits {
     pub async fn wait(&self, pid: i32, since: u64) -> ExitRecord {
         let mut rx = self.changed.subscribe();
         let key = (pid, since);
-        *self.lock().waiting.entry(key).or_default() += 1;
+        let late = {
+            let mut g = self.lock();
+            *g.waiting.entry(key).or_default() += 1;
+            // the exit, if it came after `since`, may be one the watcher no longer has
+            g.find(pid, since).is_none() && since < g.lost_upto.max(g.dropped_upto)
+        };
         let _registered = Waiting { exits: self, key };
+        if late && let Some(e) = self.ask_keeper(pid, since).await {
+            return e;
+        }
         loop {
             if let Some(e) = self.find(pid, since) {
                 return e;
@@ -301,5 +349,47 @@ mod tests {
         let e = tokio::time::timeout(Duration::from_secs(2), w).await.unwrap().unwrap();
         // the first exit after its fork, not the latest with that pid
         assert_eq!((e.n, e.code), (7, Some(0)));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_wait_registered_after_its_exit_was_lost_ends() {
+        let k = Running::start(None);
+        let dead = k.client.spawn(&k.spec("exec", &["/bin/true"])).unwrap();
+        k.wait_exit(dead);
+        let alive = k.client.spawn(&k.spec("claude", &["/bin/sleep", "100"])).unwrap();
+        let exits = Exits::new(k.client.clone(), 0);
+        // the watcher resolved a gap up to counter 500 before anyone waited (the keeper's ring no longer has
+        // `dead`'s exit in the real case; here it still does, and that record is the answer)
+        {
+            let mut g = exits.lock();
+            g.after = 500;
+            g.lost_upto = 500;
+        }
+        let e = tokio::time::timeout(Duration::from_secs(2), exits.wait(dead, 0))
+            .await
+            .unwrap();
+        assert_eq!((e.pid, e.name.as_str(), e.code), (dead, "exec", Some(0)));
+        // a pid the keeper does not run and has no exit for: LOST at once
+        let e = tokio::time::timeout(Duration::from_secs(2), exits.wait(i32::MAX - 7, 0))
+            .await
+            .unwrap();
+        assert_eq!((e.name.as_str(), e.code), (LOST, None));
+        // one still running: waited for as usual
+        let w = {
+            let e = exits.clone();
+            tokio::spawn(async move { e.wait(alive, 0).await })
+        };
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!w.is_finished());
+        w.abort();
+        // nothing late: no keeper call needed and no LOST (dropped_upto and lost_upto below `since`)
+        let fresh = Exits::new(k.client.clone(), 0);
+        let w = {
+            let e = fresh.clone();
+            tokio::spawn(async move { e.wait(i32::MAX - 9, 0).await })
+        };
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!w.is_finished());
+        w.abort();
     }
 }

@@ -471,6 +471,7 @@ impl KeeperThread {
             supervisor: Some(argv),
             protect_self: false,
             signals: Signals::Pipe(stop_r),
+            stop_grace: supervisor::limits::KEEPER_STOP_GRACE,
         })
         .unwrap();
         let thread = std::thread::spawn(move || k.run());

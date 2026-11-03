@@ -235,7 +235,10 @@ fn signals_reach_children_and_their_groups_only() {
 
 #[test]
 fn the_supervisor_is_restarted_with_backoff() {
-    let k = Running::start(Some(vec!["/bin/sh".into(), "-c".into(), "exit 3".into()]));
+    // a stand-in that never finishes a release: its stop ends at a short grace
+    let k = Running::start_with_grace(Duration::from_secs(1), |_| {
+        Some(vec!["/bin/sh".into(), "-c".into(), "exit 3".into()])
+    });
     std::thread::sleep(Duration::from_millis(1500));
     let exits: Vec<_> = k
         .client
@@ -264,6 +267,8 @@ fn sigterm_stops_the_supervisor_then_everything() {
     let st = k.client.status().unwrap();
     let sup = st.children.iter().find(|(_, n)| n == "supervisor").unwrap().0;
     let child = k.client.spawn(&k.spec("claude", &["/bin/sleep", "100"])).unwrap();
+    // the stand-in's release is final (a real supervisor tells RELEASED before its exit 0)
+    k.client.released().unwrap();
     let t = Instant::now();
     assert_eq!(k.stop(), 0);
     // sleep ends on the forwarded SIGTERM at once; the child is killed after it
@@ -291,6 +296,7 @@ fn while_stopping_the_keeper_still_answers_but_spawns_nothing() {
     let child = k.client.spawn(&k.spec("claude", &["/bin/sleep", "100"])).unwrap();
     let late = k.spec("exec", &["/bin/true"]);
     let client = k.client.clone();
+    client.released().unwrap();
     let stopper = std::thread::spawn(move || k.stop());
     std::thread::sleep(Duration::from_millis(300));
     // a forced release signals Claude Code and polls the exits through the keeper during the grace
@@ -319,6 +325,7 @@ fn boot_id_survives_a_keeper_restart() {
         supervisor: None,
         protect_self: false,
         signals: Signals::Pipe(stop_r),
+        stop_grace: crate::limits::KEEPER_STOP_GRACE,
     };
     let again = Keeper::new(cfg).unwrap();
     assert_eq!(again.boot_id(), id.as_bytes());
@@ -362,7 +369,9 @@ fn a_supervisor_that_exits_0_after_a_release_is_not_restarted() {
             .any(|(_, n)| n == "supervisor")
     );
     // exit 0 without RELEASED is not a release: restarted
-    let k2 = Running::start(Some(vec!["/bin/sh".into(), "-c".into(), "exit 0".into()]));
+    let k2 = Running::start_with_grace(Duration::from_secs(1), |_| {
+        Some(vec!["/bin/sh".into(), "-c".into(), "exit 0".into()])
+    });
     std::thread::sleep(Duration::from_millis(800));
     assert!(sup(&k2).len() >= 3, "{:?}", sup(&k2));
     // a crash after RELEASED (exit 70) is restarted too: the new supervisor sees `released` and only reports
@@ -412,6 +421,7 @@ fn a_sigterm_while_no_supervisor_runs_starts_one_at_once_and_hands_it_the_stop()
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(5));
     }
+    k.client.released().unwrap();
     let t = Instant::now();
     assert_eq!(k.stop(), 0);
     // no backoff (1 s) waited out, and no grace (20 s)
@@ -420,6 +430,68 @@ fn a_sigterm_while_no_supervisor_runs_starts_one_at_once_and_hands_it_the_stop()
         k.dir.join("got-term").exists(),
         "the started supervisor never got the SIGTERM"
     );
+}
+
+#[test]
+fn a_supervisor_that_dies_during_the_stop_is_started_again_and_finishes_it() {
+    // the first supervisor dies on the SIGTERM (a crash mid-release); the second finishes the release (RELEASED,
+    // then exit 0) and records that it got the SIGTERM (outside the keeper's directory, which goes with it)
+    let got = std::env::temp_dir().join(format!("got-term-{}", uuid::Uuid::new_v4().simple()));
+    let mut k = Running::start_with(|d| {
+        let count = d.join("count");
+        Some(vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            format!(
+                "echo x >> '{0}'; if [ $(wc -l < '{0}') -le 1 ]; then trap 'exit 70' TERM; \
+                 else trap 'touch {1}; exit 0' TERM; fi; while :; do sleep 0.02; done",
+                count.display(),
+                got.display()
+            ),
+        ])
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    let child = k.client.spawn(&k.spec("claude", &["/bin/sleep", "100"])).unwrap();
+    let client = k.client.clone();
+    let t = Instant::now();
+    let stopper = std::thread::spawn(move || k.stop());
+    // the crash is followed by a new supervisor while the stop goes on; Claude Code is not killed meanwhile
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while client
+        .exits(0)
+        .unwrap()
+        .iter()
+        .filter(|e| e.name == "supervisor")
+        .count()
+        < 1
+    {
+        assert!(Instant::now() < deadline, "the first supervisor did not exit");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let st = client.status().unwrap();
+        if st.children.iter().any(|(_, n)| n == "supervisor") {
+            assert!(
+                st.children.iter().any(|(p, _)| *p == child),
+                "claude killed before the release finished"
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline, "no supervisor started during the stop");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let first = client.exits(0).unwrap();
+    assert_eq!(
+        first.iter().find(|e| e.name == "supervisor").map(|e| e.code),
+        Some(Some(70))
+    );
+    // the successor finishes: RELEASED, exit 0
+    client.released().unwrap();
+    assert_eq!(stopper.join().unwrap(), 0);
+    assert!(t.elapsed() < Duration::from_secs(5), "not the grace: {:?}", t.elapsed());
+    assert!(got.exists(), "the successor never got the SIGTERM");
+    let _ = std::fs::remove_file(&got);
 }
 
 #[test]
