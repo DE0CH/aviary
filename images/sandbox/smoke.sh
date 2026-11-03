@@ -189,8 +189,15 @@ for _ in $(seq 120); do
   sleep 0.5
 done
 check "the supervisor mounted ~/.claude (FUSE) under the keeper" test -n "$mounted"
-check "the keeper is PID 1 (RSS $(x awk '/VmRSS/ {print $2 " " $3}' /proc/1/status), at most 4 MiB)" \
-  x sh -c 'test "$(cat /proc/1/comm)" = supervisor-keep && test "$(awk "/VmRSS/ {print \$2}" /proc/1/status)" -le 4096'
+if [ -z "${SMOKE_RUNTIME:-}" ]; then
+  check "the keeper is PID 1 (RSS $(x awk '/VmRSS/ {print $2 " " $3}' /proc/1/status), at most 4 MiB)" \
+    x sh -c 'test "$(cat /proc/1/comm)" = supervisor-keep && test "$(awk "/VmRSS/ {print \$2}" /proc/1/status)" -le 4096'
+else
+  # gVisor's sentry accounts VmRSS its own way (the same keeper reads 9 MiB under runsc, under 4 MiB under runc):
+  # the budget is checked under runc (sandbox-smoke); here PID 1's identity, and its RSS for the record
+  check "the keeper is PID 1 (RSS under $SMOKE_RUNTIME $(x awk '/VmRSS/ {print $2 " " $3}' /proc/1/status))" \
+    x sh -c 'test "$(cat /proc/1/comm)" = supervisor-keep'
+fi
 check "the container has no address for model or tools: only the proxy reaches them" \
   x sh -c '! getent hosts model && ! getent hosts tools'
 

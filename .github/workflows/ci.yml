@@ -520,7 +520,7 @@ jobs:
     # `latest`) with a build-provenance attestation, then the release aviary-<sha12>. Every tag that exists passed the
     # harness, so YYC can pin any of them.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [lint, test, magpie-perf, sandboxd-soak, build, images, conformance, sandbox-smoke, paseo-contract, e2e]
+    needs: [lint, test, magpie-perf, sandboxd-soak, build, images, conformance, sandbox-smoke, gvisor, paseo-contract, e2e]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
