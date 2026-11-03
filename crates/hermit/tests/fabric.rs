@@ -191,7 +191,7 @@ impl Server for HostSim {
                 state: HostState::Running,
                 alive: Some(true),
                 sending: false,
-                scratch_used: None,
+                scratch_used: Some(0),
                 created_at: iso_now(),
             },
         );
@@ -706,7 +706,7 @@ impl Rig {
                 state: HostState::Running,
                 alive: Some(true),
                 sending: false,
-                scratch_used: None,
+                scratch_used: Some(0),
                 created_at: iso_now(),
             },
         );
@@ -743,6 +743,7 @@ impl Rig {
         s.state = HostState::Running;
         s.alive = Some(true);
         s.sending = false;
+        s.scratch_used = Some(0);
         self.fleet.sim(to).sandboxes.lock().unwrap().insert(name.into(), s);
     }
 
@@ -1443,7 +1444,7 @@ async fn ec2_reconcile_and_orphans() {
             state: HostState::Running,
             alive: Some(true),
             sending: false,
-            scratch_used: None,
+            scratch_used: Some(0),
             created_at: "2026-01-01T00:00:00.000Z".into(),
         },
     );
@@ -1802,8 +1803,59 @@ async fn a_receive_whose_delete_fails_is_deleted_again() {
     );
 }
 
-/// hermit 13.10 `movable`: a sandbox with more than `maxScratchMib` in use on its scratch is not moved (its
-/// checksummed final delta would stop it for seconds); under the bound it is.
+/// WP-19 review: past the migration limit with the source still sending (alive), a target whose delete of the
+/// receive does not land keeps the migration open: the receive is deleted again until the target lists none, and only
+/// then is the sandbox kept on its source (the send can then no longer switch to a receive).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn past_the_limit_a_sending_source_is_kept_only_once_the_receive_is_gone() {
+    let rig = Rig::new(
+        "fabric_sending_overdue",
+        |_| {},
+        Timings {
+            migration_limit: Duration::from_secs(4),
+            ..manual()
+        },
+    )
+    .await;
+    let (r1, g1) = packing_pair(&rig, |h| h.lose_answer_keep_sending.store(true, Ordering::SeqCst)).await;
+    let p = pass(&g1, &r1).await;
+    let (id, from, to) = p.migration.expect("a packing move");
+    let name = db::load(&rig.h.pool(), id).await.unwrap().unwrap().name;
+    let dst = rig.fleet.sim(&to);
+    // two deletes fail: the one at the limit and the first of the kept branch
+    dst.fail_deletes.store(2, Ordering::SeqCst);
+    assert!(
+        eventually(|| async {
+            db::load(&rig.h.pool(), id)
+                .await
+                .unwrap()
+                .unwrap()
+                .migrating_to
+                .is_none()
+        })
+        .await
+    );
+    let row = db::load(&rig.h.pool(), id).await.unwrap().unwrap();
+    assert_eq!(
+        (row.status, row.host.as_deref()),
+        (SandboxState::Ready, Some(from.as_str()))
+    );
+    let deletes = dst.calls().iter().filter(|c| *c == &format!("delete {name}")).count();
+    assert!(deletes >= 3, "{:?}", dst.calls());
+    assert!(
+        !dst.sandboxes.lock().unwrap().contains_key(&name),
+        "no receive left on the target when the sandbox is kept"
+    );
+    let failed = rig.events("migration-failed").await;
+    assert_eq!(failed.len(), 1);
+    assert_eq!(
+        (&failed[0]["kept"], &failed[0]["overdue"]),
+        (&json!(true), &json!(true))
+    );
+}
+
+/// hermit 13.10 `movable`: a sandbox with more than `maxScratchMib` in use on its scratch, or whose figure its source
+/// does not report, is not moved (its checksummed final delta would stop it for seconds); under the bound it is.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_full_scratch_is_not_moved() {
     let rig = Rig::new("fabric_full_scratch", |_| {}, manual()).await;
@@ -1816,6 +1868,14 @@ async fn a_full_scratch_is_not_moved() {
         }
     };
     set(600);
+    let p = pass(&g1, &r1).await;
+    assert!(p.migration.is_none(), "{p:?}");
+    // a figure the source does not report (an older sandboxd, a scratch not mounted) is not under the bound
+    for h in [rig.aws(0), rig.aws(1)] {
+        for s in rig.fleet.sim(&h).sandboxes.lock().unwrap().values_mut() {
+            s.scratch_used = None;
+        }
+    }
     let p = pass(&g1, &r1).await;
     assert!(p.migration.is_none(), "{p:?}");
     set(100);

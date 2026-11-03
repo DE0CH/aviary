@@ -1171,14 +1171,19 @@ fn movable(cfg: &Config, s: &Movable, from: &HostRow, to: &HostRow) -> bool {
     if !image_ok {
         return false;
     }
-    // the stop of a full scratch's checksummed final delta (13.10; unknown: not reported, no bound)
-    let scratch = from
-        .info
-        .as_ref()
-        .and_then(|i| i.sandbox(&s.name))
-        .and_then(|x| x.scratch_used);
-    if m.max_scratch_mib > 0 && scratch.is_some_and(|b| b > u64::from(m.max_scratch_mib) << 20) {
-        return false;
+    // the stop of a full scratch's checksummed final delta (13.10). Unknown (a sandboxd that does not report it,
+    // which also predates the checksummed delta, or a scratch that is not mounted, whose size nobody knows) is not
+    // movable while the bound is on. The figure is the source's last listing (sandboxd reads it at each listing);
+    // what the scratch grows during the send's live rounds is not bounded here.
+    if m.max_scratch_mib > 0 {
+        let scratch = from
+            .info
+            .as_ref()
+            .and_then(|i| i.sandbox(&s.name))
+            .and_then(|x| x.scratch_used);
+        if scratch.is_none_or(|b| b > u64::from(m.max_scratch_mib) << 20) {
+            return false;
+        }
     }
     if from.kind != to.kind {
         let usage = from

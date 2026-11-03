@@ -233,7 +233,7 @@ fn seen(listed: &[sandboxd_api::Listed], name: &str) -> Seen {
 /// receive in progress is waited for rather than read as kept or lost. Both end on their own (sandboxd's limits); a
 /// migration older than [`crate::Timings::migration_limit`] (from `migration_started_at`) is ended all the same: the
 /// target's receive is deleted, then the source decides (alive: kept, even while its send still runs, which can no
-/// longer switch to a deleted receive; else lost).
+/// longer switch to a deleted receive, once the target lists no receive; else lost).
 #[allow(clippy::too_many_arguments)]
 async fn settle(
     core: &Arc<Core>,
@@ -264,18 +264,29 @@ async fn settle(
             continue;
         }
         // a source lists no receive of its own sandbox; if it did, that is not the sandbox running there
-        let source = lists(clients, from, &row.name).await.map(|s| match s {
+        let listed = lists(clients, from, &row.name).await;
+        // past the limit with its send still running: kept only once the receive it could switch to is gone
+        let still_sending = ended && listed == Some(Seen::Sending { alive: true });
+        let source = listed.map(|s| match s {
             Seen::Receiving => Seen::No,
             Seen::Sending { alive: true } if ended => Seen::Alive,
             Seen::Sending { alive: false } if ended => Seen::No,
             s => s,
         });
         if source == Some(Seen::Alive) {
-            let Some(_effect) = claim.guard(core).await? else {
+            let Some(effect) = claim.guard(core).await? else {
                 return Ok(());
             };
             if let Some(t) = to {
                 delete(clients, t, &row.name).await;
+                // a delete that did not land (or a target that does not answer) leaves a receive the running send
+                // could still switch to, and the orphan sweep would then end the only copy: delete again, ask again
+                if still_sending && lists(clients, Some(t), &row.name).await != Some(Seen::No) {
+                    drop(effect);
+                    tracing::warn!(sandbox = %row.id, "the target still lists the receive past the limit: deleted again");
+                    tokio::time::sleep(core.timings.release_retry).await;
+                    continue;
+                }
             }
             tracing::warn!(sandbox = %row.id, why, "migration failed, the sandbox stays on its source");
             return clear_intent(

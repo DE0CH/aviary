@@ -55,11 +55,13 @@ pub struct Entry {
     stopped: bool,
     /// a send of it runs here (from its first scratch round until the entry goes, or the send leaves it running):
     /// listed `sending: true`, so hermit's settle decides nothing on the source while a send may still switch it
-    /// (hermit spec 13.10 step 6)
+    /// (hermit spec 13.10 step 6). Kept on disk too (`<name>.sending`, `sending_file`) for the length of the send.
     sending: bool,
-    /// bytes in use on its scratch filesystem (statvfs, read by the 10 s sampler), when `scratch_have`
-    scratch_used: u64,
-    scratch_have: bool,
+    /// `sending` is an earlier sandboxd's: it stopped mid-send (a crash or a restart; KillMode=process leaves the
+    /// checkpoint running), and that send's checkpoint may still stop the source. Listed `sending` until no
+    /// checkpoint of it runs (`checkpoint_running`, checked by the 10 s sampler); the send itself can never finish
+    /// (its final delta and SBXDONE ran in the sandboxd that is gone), so then the source is kept or, stopped, lost.
+    orphan: bool,
 }
 // SAFETY: Entry is only fixed strings, numbers and bools, for which all zeros is a valid value.
 unsafe impl Zeroed for Entry {}
@@ -211,6 +213,11 @@ impl Sandboxes {
         path!("/var/lib/sbx/sandboxes/{name}.json")
     }
 
+    /// Present while a send of `name` runs (the listing `init` reads takes only `*.json`).
+    fn sending_file(name: &str) -> paths::P {
+        path!("/var/lib/sbx/sandboxes/{name}.sending")
+    }
+
     /// Stores the entry (in the table, under the op lock's slot) and its state file.
     fn save(&self, lk: &OpLock, e: &Entry, buf: &mut [u8]) -> Res<()> {
         {
@@ -252,6 +259,7 @@ impl Sandboxes {
             t[lk.idx].used = false;
         }
         crate::util::remove_file(Self::state_file(name).as_str());
+        crate::util::remove_file(Self::sending_file(name).as_str());
     }
 
     fn parse_state(text: &[u8], sandbox_cidr: &str) -> Res<Entry> {
@@ -300,8 +308,7 @@ impl Sandboxes {
             alive: true,
             stopped: false,
             sending: false,
-            scratch_used: 0,
-            scratch_have: false,
+            orphan: false,
         })
     }
 
@@ -350,6 +357,20 @@ impl Sandboxes {
             let st = self.status(name, sc.small);
             if st.as_str() == "running" {
                 let mut e = e;
+                // a send the previous sandboxd did not finish: its checkpoint may still stop the source
+                if crate::util::exists(Self::sending_file(name).as_str()) {
+                    if checkpoint_running(name) {
+                        Log::error("a send was cut short by a sandboxd restart; its checkpoint still runs (listed sending until it ends)")
+                            .s("sandbox", name)
+                            .emit();
+                        (e.sending, e.orphan) = (true, true);
+                    } else {
+                        Log::error("a send was cut short by a sandboxd restart; its checkpoint has ended")
+                            .s("sandbox", name)
+                            .emit();
+                        crate::util::remove_file(Self::sending_file(name).as_str());
+                    }
+                }
                 if e.state == RECEIVING {
                     e.state = RUNNING;
                     e.port = 0;
@@ -428,11 +449,10 @@ impl Sandboxes {
             if sl.entry.stopped {
                 sl.entry.alive = false;
             }
-            if sl.entry.state == RUNNING {
-                match scratch_used(sl.entry.spec.name.as_str()) {
-                    Some(u) => (sl.entry.scratch_used, sl.entry.scratch_have) = (u, true),
-                    None => sl.entry.scratch_have = false,
-                }
+            if sl.entry.orphan && !checkpoint_running(sl.entry.spec.name.as_str()) {
+                Log::info("the cut-short send's checkpoint ended").s("sandbox", sl.entry.spec.name.as_str()).emit();
+                (sl.entry.sending, sl.entry.orphan) = (false, false);
+                crate::util::remove_file(Self::sending_file(sl.entry.spec.name.as_str()).as_str());
             }
             let p = paths::sbx_cgroup(sl.entry.spec.name.as_str(), "cpu.stat");
             let mut b = [0u8; 1024];
@@ -455,7 +475,7 @@ impl Sandboxes {
         }
     }
 
-    fn write_listed(w: &mut W, e: &Entry) {
+    fn write_listed(w: &mut W, e: &Entry, scratch: Option<u64>) {
         let mem = paths::sbx_cgroup(e.spec.name.as_str(), "memory.current");
         let cur: u64 = crate::util::read_small::<32>(mem.as_str()).and_then(|s| s.as_str().parse().ok()).unwrap_or(0);
         w.obj()
@@ -472,8 +492,8 @@ impl Sandboxes {
         if e.sending {
             w.key("sending").bool(true);
         }
-        if e.scratch_have && e.state == RUNNING {
-            w.ku64("scratchUsed", e.scratch_used);
+        if let Some(u) = scratch.filter(|_| e.state == RUNNING) {
+            w.ku64("scratchUsed", u);
         }
         w.end();
     }
@@ -483,7 +503,7 @@ impl Sandboxes {
         w.arr();
         let t = self.table();
         for sl in t.iter().filter(|s| s.used) {
-            Self::write_listed(w, &sl.entry);
+            Self::write_listed(w, &sl.entry, listed_scratch(&sl.entry));
         }
         w.end_arr();
     }
@@ -492,7 +512,7 @@ impl Sandboxes {
         let t = self.table();
         match t.iter().find(|s| s.used && s.name.as_str() == name) {
             Some(sl) => {
-                Self::write_listed(w, &sl.entry);
+                Self::write_listed(w, &sl.entry, listed_scratch(&sl.entry));
                 true
             }
             None => false,
@@ -627,8 +647,7 @@ impl Sandboxes {
                 alive: true,
                 stopped: false,
                 sending: false,
-                scratch_used: 0,
-                scratch_have: false,
+                orphan: false,
             };
             self.save(&lk, &e, sc.big)
         })();
@@ -774,8 +793,7 @@ impl Sandboxes {
                 alive: true,
                 stopped: false,
                 sending: false,
-                scratch_used: 0,
-                scratch_have: false,
+                orphan: false,
             };
             self.save(&lk, &e, sc.big)?;
             let out = log_file(name, true)?;
@@ -1014,6 +1032,9 @@ impl Sandboxes {
             Some(e) if e.state == RUNNING => e,
             _ => return Err(err!(404, "{name} is not running here")),
         };
+        if e.orphan {
+            return Err(err!(409, "an earlier send of {name} still runs its checkpoint here"));
+        }
         // listed `sending` from here until the entry goes; a send that leaves it running clears it on the way out
         self.set_sending(&lk, true);
         let _sending = Sending { s: self, lk: &lk };
@@ -1127,11 +1148,28 @@ impl Sandboxes {
         Ok(stats)
     }
 
+    /// `sending` in the table and on disk: a sandboxd that starts while the marker is there lists the source
+    /// `sending` until the checkpoint the earlier one started has ended (`init`, `orphan`).
     fn set_sending(&self, lk: &OpLock, on: bool) {
-        let mut t = self.table();
-        let sl = &mut t[lk.idx];
-        if sl.used {
-            sl.entry.sending = on;
+        let mut name: Str<48> = Str::new();
+        {
+            let mut t = self.table();
+            let sl = &mut t[lk.idx];
+            if sl.used {
+                sl.entry.sending = on;
+                name = sl.entry.spec.name;
+            }
+        }
+        if name.is_empty() {
+            return;
+        }
+        let f = Self::sending_file(name.as_str());
+        if on {
+            if let Err(e) = crate::util::write_file_atomic(f.as_str(), b"", 0o600) {
+                Log::error("send marker not written").s("sandbox", name.as_str()).s("error", e.msg.as_str()).emit();
+            }
+        } else {
+            crate::util::remove_file(f.as_str());
         }
     }
 
@@ -1367,6 +1405,44 @@ impl Drop for Sending<'_, '_> {
     }
 }
 
+/// Whether a `runsc checkpoint --migrate-to … <name>` (a send's checkpoint) runs on this host: /proc is scanned (a
+/// restarted sandboxd has no handle on the one an earlier sandboxd started).
+fn checkpoint_running(name: &str) -> bool {
+    let mut found = false;
+    let _ = crate::util::each_dir_entry("/proc", |pid| {
+        if found || pid.is_empty() || !pid.bytes().all(|c| c.is_ascii_digit()) {
+            return;
+        }
+        let mut p: Str<32> = Str::new();
+        let _ = write!(p, "/proc/{pid}/cmdline");
+        let mut b = [0u8; 4096];
+        if let Ok(c) = read_file(p.as_str(), &mut b) {
+            found = is_checkpoint_of(c, name);
+        }
+    });
+    found
+}
+
+/// A process's `/proc/<pid>/cmdline` (NUL-separated) is a send's checkpoint of `name`: `checkpoint`, `--migrate-to`
+/// and `name` last (runsc::argv puts runsc's own flags first).
+fn is_checkpoint_of(cmdline: &[u8], name: &str) -> bool {
+    let c = cmdline.strip_suffix(b"\0").unwrap_or(cmdline);
+    let mut args = c.split(|b| *b == 0);
+    let (mut ck, mut to, mut last) = (false, false, &b""[..]);
+    for a in args.by_ref() {
+        ck |= a == b"checkpoint";
+        to |= a == b"--migrate-to";
+        last = a;
+    }
+    ck && to && last == name.as_bytes()
+}
+
+/// A running sandbox's scratch figure read now (one statvfs), so a listing's `scratchUsed` is as of the listing, not
+/// of the last 10 s sample (hermit 13.10 `movable` bounds the final delta's checksum by it).
+fn listed_scratch(e: &Entry) -> Option<u64> {
+    if e.state == RUNNING { scratch_used(e.spec.name.as_str()) } else { None }
+}
+
 /// Bytes in use on a sandbox's scratch filesystem (its loop-mounted ext4), or None when it is not mounted (the
 /// directory is then on its parent's filesystem) or statvfs fails.
 fn scratch_used(name: &str) -> Option<u64> {
@@ -1420,24 +1496,37 @@ mod tests {
     fn a_source_lists_its_send_and_scratch() {
         let st = br#"{"spec":{"name":"sbx-send1","ip":"10.98.250.23","image":"a18f79b442fee2d4bae0fc5da3b2d892f015af58446c3c4363863991b8d76eb5","env":{},"cpu":1,"memory":536870912},"state":"running","createdAt":"2026-11-02T02:13:58.974Z"}"#;
         let mut e = Sandboxes::parse_state(st, "10.98.0.0/16").ok().unwrap();
-        let listed = |e: &Entry| -> sandboxd_api::Listed {
+        let mut scratch = None;
+        let listed = |e: &Entry, scratch: Option<u64>| -> sandboxd_api::Listed {
             let mut out = [0u8; 1024];
             let mut b = Buf::new(&mut out);
-            Sandboxes::write_listed(&mut W::new(&mut b), e);
+            Sandboxes::write_listed(&mut W::new(&mut b), e, scratch);
             assert!(!b.full);
             let n = b.len;
             serde_json::from_slice(&out[..n]).unwrap()
         };
-        let l = listed(&e);
+        let l = listed(&e, scratch);
         assert_eq!((l.sending, l.scratch_used, l.alive), (false, None, Some(true)));
-        (e.sending, e.scratch_used, e.scratch_have) = (true, 4_800 << 20, true);
-        let l = listed(&e);
+        (e.sending, scratch) = (true, Some(4_800 << 20));
+        let l = listed(&e, scratch);
         assert_eq!((l.sending, l.scratch_used, l.alive), (true, Some(4_800 << 20), Some(true)));
         e.stopped = true;
-        let l = listed(&e);
+        let l = listed(&e, scratch);
         assert_eq!((l.sending, l.alive), (true, Some(false)), "stopped by its checkpoint, the send still runs");
         e.state = RECEIVING;
-        assert_eq!(listed(&e).scratch_used, None);
+        assert_eq!(listed(&e, scratch).scratch_used, None);
+    }
+
+    /// A sandboxd restarted mid-send finds the earlier send's checkpoint by its command line.
+    #[test]
+    fn a_send_checkpoint_is_found_by_its_command_line() {
+        let ck = b"/usr/local/bin/runsc\0--root=/run/sbx/runsc\0checkpoint\0--migrate-to\x0010.99.0.11:7100\0--migrate-downtime\x00300ms\0sbx-a\0";
+        assert!(is_checkpoint_of(ck, "sbx-a"));
+        assert!(!is_checkpoint_of(ck, "sbx-b"));
+        assert!(!is_checkpoint_of(ck, "sbx-"));
+        assert!(!is_checkpoint_of(b"/usr/local/bin/runsc\0state\0sbx-a\0", "sbx-a"));
+        assert!(!is_checkpoint_of(b"/usr/local/bin/runsc\0checkpoint\0--image-path\0/x\0sbx-a\0", "sbx-a"));
+        assert!(!is_checkpoint_of(b"", "sbx-a"));
     }
 
     #[test]
