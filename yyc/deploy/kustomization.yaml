@@ -6,7 +6,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   # the base, pinned to a jarvis3 commit (bump with the image tags below)
-  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=52c9b8c498b608b7f80345e0981c11bd68ebb86a
+  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=099125449bd8f8555ba3a1e5d71d3160d230a3a3
   # what is left of the in-cluster sandboxes: the (inert) RuntimeClass gvisor
   - sandbox.yaml
   # the fenced SealedSecret applier may write SealedSecrets in jarvis (./sealed/, Kustomization yyc-ai-secrets)
@@ -26,7 +26,7 @@ resources:
 images:
   - name: jarvis3-chat
     newName: ghcr.io/de0ch/jarvis3-chat
-    newTag: 52c9b8c498b6
+    newTag: 099125449bd8
   # the UI image, built by DE0CH/claudecodeui's jarvis-image workflow from that fork commit
   - name: yyc-ai-ui
     newName: ghcr.io/de0ch/yyc-ai-ui
@@ -58,6 +58,16 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value: {name: JARVIS_SENT_FILES_TOKEN, valueFrom: {secretKeyRef: {name: egress-env, key: JARVIS_SENT_FILES_TOKEN}}}
+  # egress injects the Access service token yyc-labels-ai on its labels route (config.json egress.routes, mcp: true:
+  # YYC's label store as the MCP server `labels`, DE0CH/jarvis3 docs/CLAUDE-CODE.md "Route MCP servers"; labels/README.md)
+  - target: {kind: Deployment, name: egress}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: LABELS_AI_CLIENT_ID, valueFrom: {secretKeyRef: {name: egress-env, key: LABELS_AI_CLIENT_ID}}}
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: LABELS_AI_CLIENT_SECRET, valueFrom: {secretKeyRef: {name: egress-env, key: LABELS_AI_CLIENT_SECRET}}}
   - target: {kind: Deployment, name: tools}
     patch: |-
       - {op: replace, path: /spec/template/spec/containers/0/resources/requests/memory, value: 128Mi}
@@ -74,13 +84,14 @@ patches:
   # the Secrets' revision: a resealed Secret reaches running pods only through a new pod template, so bump this with
   # every change to a Secret they read (a kubectl rollout restart is undone by Flux). 2026-10-27: the databases moved
   # from Neon to YYC's Postgres (web-env, egress-env, tools-env, ui-env, ui-juicefs); then WEB_FETCH_TOKEN in tools-env;
-  # 2026-10-28: ANYAPI_API_KEY in tools-env; JARVIS_SENT_FILES_TOKEN in egress-env and ui-env (bumped twice: the first roll started before the controller had decrypted the new Secrets)
+  # 2026-10-28: ANYAPI_API_KEY in tools-env; JARVIS_SENT_FILES_TOKEN in egress-env and ui-env (bumped twice: the first roll started before the controller had decrypted the new Secrets);
+  # 2026-11-03: LABELS_AI_CLIENT_ID/_SECRET in egress-env (pushed after the Secret was in the cluster)
   - target: {kind: Deployment, name: "web|egress|tools|ui"}
     patch: |-
       apiVersion: apps/v1
       kind: Deployment
       metadata: {name: any}
-      spec: {template: {metadata: {annotations: {yyc/secrets-rev: "2026-10-28-sentfiles-2"}}}}
+      spec: {template: {metadata: {annotations: {yyc/secrets-rev: "2026-11-03-labels"}}}}
   # provider vm: sandboxd mTLS (CA, client cert/key, the AWS hosts' server cert/key) and the scaler's AWS key
   # (IAM user yyc-ai-sandbox-scaler), SealedSecret sealed/sandbox-vm.yaml
   - target: {kind: Deployment, name: web}
