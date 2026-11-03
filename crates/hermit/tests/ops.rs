@@ -1080,19 +1080,32 @@ async fn every_admin_call_is_audited_and_does_what_it_says() {
         )
         .await;
     assert_eq!((a.status, a.body["released"].clone()), (200, json!(1)), "{:?}", a.body);
-    let pending: Value = h
+    // the recycle starts each release at once (run_requested), so sb1 is either still pending or already released
+    let row = h
         .pool()
         .get()
         .await
         .unwrap()
-        .query_one("select release_pending from sandboxes where id = $1", &[&w.sb1])
+        .query_one(
+            "select release_pending, release_reason from sandboxes where id = $1",
+            &[&w.sb1],
+        )
         .await
-        .unwrap()
-        .get(0);
-    assert_eq!(
-        (pending["reason"].clone(), pending["force"].clone()),
-        (json!("recycle"), json!(false))
-    );
+        .unwrap();
+    let (pending, reason): (Option<Value>, Option<String>) = (row.get(0), row.get(1));
+    if let Some(p) = pending {
+        assert_eq!(
+            (p["reason"].clone(), p["force"].clone()),
+            (json!("recycle"), json!(false))
+        );
+    } else {
+        assert_eq!(reason.as_deref(), Some("recycle"), "released by the recycle");
+        assert!(
+            h.fabric.release_bodies(w.sb1).iter().all(|b| b["force"] != true),
+            "a soft recycle: {:?}",
+            h.fabric.release_bodies(w.sb1)
+        );
+    }
 
     // purge: refused while allowed; for a former person magpie purges and its count is the answer
     let a = admin

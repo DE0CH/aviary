@@ -1735,13 +1735,40 @@ async fn the_feed_ends_turns_and_recovers_from_an_expired_cursor() {
     assert!(common::eventually(Duration::from_secs(10), async || head().await.is_some_and(|h| h >= 2)).await);
     // the feed's events are gone before the follower reads them: 410, then the re-read finds the sandbox gone
     let sandbox = w.fake().live(conv).unwrap();
+    let after_of = |c: &aviary_fakes::script::Call| {
+        c.query
+            .as_ref()
+            .and_then(|q| q.get("after"))
+            .and_then(|a| a.as_str())
+            .map(str::to_owned)
+    };
+    let installed = w.fake().script().calls_to("sandbox_events").len();
     w.fake().script().handle("sandbox_events", |c| {
         let after = c.query.as_ref()?.get("after")?.as_str()?.to_owned();
         (after != "latest").then(|| Reply::error(410, "cursor_expired", "expired"))
     });
     w.fake().end(conv, ReleaseReason::HostLost, "host lost");
-    assert!(w.state_is(turn, "failed").await, "the recovery ended the turn");
+    // the long-poll in flight when the script was installed may still deliver the gone event (it was recorded
+    // before the script), so the turn ends either from that page or from the recovery's re-read
+    assert!(w.state_is(turn, "failed").await, "the gone sandbox ended the turn");
     assert_eq!(w.turn(turn).await.1.as_deref(), Some("sandbox.lost"));
+    // either way the next numeric long-poll is answered 410 and the follower recovers from `latest`
+    assert!(
+        common::eventually(Duration::from_secs(10), async || {
+            let calls = w.fake().script().calls_to("sandbox_events");
+            let expired = calls
+                .iter()
+                .skip(installed)
+                .position(|c| after_of(c).is_some_and(|a| a != "latest"));
+            expired.is_some_and(|i| {
+                calls[installed + i..]
+                    .iter()
+                    .any(|c| after_of(c).as_deref() == Some("latest"))
+            })
+        })
+        .await,
+        "an expired numeric cursor was followed by a recovery"
+    );
     w.fake().script().clear("sandbox_events");
     let row = w
         .pool()
@@ -1757,13 +1784,6 @@ async fn the_feed_ends_turns_and_recovers_from_an_expired_cursor() {
     assert_eq!(row.get::<_, Option<Uuid>>(0), Some(sandbox.id));
     assert_eq!(row.get::<_, Option<String>>(1).as_deref(), Some("gone"));
     // the follower re-read hermit's head (`latest`), stored it as the cursor, and continues after it by number
-    let after_of = |c: &aviary_fakes::script::Call| {
-        c.query
-            .as_ref()
-            .and_then(|q| q.get("after"))
-            .and_then(|a| a.as_str())
-            .map(str::to_owned)
-    };
     let calls = w.fake().script().calls_to("sandbox_events");
     let recovery = calls
         .iter()
