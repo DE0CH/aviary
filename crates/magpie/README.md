@@ -8,7 +8,7 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 
 | Path | What |
 |---|---|
-| `src/main.rs` | start (env, ops port 9090, migrations, LISTEN, jobs, API on 8080) and drain |
+| `../magpie-import/src/main.rs` | the `magpie` binary: start (env, ops port 9090, migrations, LISTEN, jobs, API on 8080) and drain, and `magpie import …`. It lives in `crates/magpie-import` for the switch window (that crate links this one, and a package cannot depend on one that depends on it); it moves back here, without the `import` arm, when the importer is deleted (cutover 10.5 step 8) |
 | `src/admin.rs` | hermit's routes (a leaver's purge, `workspaces/exists`) and the admin reads with their audit |
 | `src/app.rs` | `Service` (start and the drain's last steps), `Magpie` (shared state), the `Server` impl, the router |
 | `src/auth.rs` | callers from `MAGPIE_ACCEPT_*`, the route layer that checks them against `magpie_api::routes::ROUTES` |
@@ -33,6 +33,7 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 | `src/http/` | the handlers, one module per route group (no SQL) |
 | `src/turns/` | turns (magpie 8): admission (M7, M3's first message), the driver (hermit's get-or-start and long-poll), the command queue and acks, the supervisor's reports and heartbeat reconciliation, cancel (M8) and ask answers (M11), titles, the sweeper (deadlines, watchdog, lapsed claims, availability tick), and `end::end`, the one way a turn ends |
 | `src/hermit/` | the hermit sandbox-events feed follower (magpie 8.7, R8), run by the job leader |
+| `src/ccfs/display.rs` | magpie 19.3's display fixes of imported prompts (the old sandbox-reset note, pasted-content wrappers, the `<image_uploads>`/`<files_input>` blocks as attachments), applied by `ccfs::lines` to lines the importer writes (`ccfs::Caller::importer`, whose writes need `migrating` instead of the lease); deleted with the importer |
 | `src/legacy/` | the switch window (WP-51; DESIGN 9.2-9.5, cutover 6.4 and 7.8): `window` (pigeon's view of the window and an upload's bytes), `tickets` (taken before every legacy write, closed only on an outcome), `fence` (the importer's fence, release and unfence, the 3 s lease, the fenced wait of native mutations), `mirror` (the running mirror's `run_state`), `paths` (old asset paths resolved through `uploads.legacy_path`, `import_uploads` and `ingest`'s synchronous ingest, a fresh upload copy per send), `metrics`; `a6_contraction.sql` (the A6 schema change, tested). Deleted in A6 except `paths`, which goes in A7 |
 
 ## The internal seam

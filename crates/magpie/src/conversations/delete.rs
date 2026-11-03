@@ -116,6 +116,20 @@ impl ShareRevoke {
 /// # Errors
 /// When a statement fails.
 pub async fn purge_locked(tx: &Tx<'_>, person: &str, conversation: Uuid, why: ShareRevoke) -> Result<()> {
+    purge_rows(tx, person, conversation, why, true).await
+}
+
+/// [`purge_locked`] without any hermit call: the importer's removal of a migrating conversation (a sessions row
+/// that vanished, `magpie import reset`, cutover 7.4.1 and 7.9). Its workspace and its shares' frozen workspaces
+/// belong to the old stack until the release, so nothing deletes them here and no sandbox is released.
+///
+/// # Errors
+/// When a statement fails.
+pub async fn forget_locked(tx: &Tx<'_>, person: &str, conversation: Uuid) -> Result<()> {
+    purge_rows(tx, person, conversation, ShareRevoke::Deleted, false).await
+}
+
+async fn purge_rows(tx: &Tx<'_>, person: &str, conversation: Uuid, why: ShareRevoke, hermit: bool) -> Result<()> {
     // 1. its shares: revoke the live ones, remove every frozen snapshot, queue each frozen workspace's deletion
     let shares = tx
         .query(
@@ -134,13 +148,15 @@ pub async fn purge_locked(tx: &Tx<'_>, person: &str, conversation: Uuid, why: Sh
         drop_scope(tx, snapshot).await?;
         tx.execute("delete from share_rows where share_id = $1", &[&share_id])
             .await?;
-        outbox::enqueue(
-            tx,
-            &Item::DeleteWorkspace {
-                workspace_id: workspace,
-            },
-        )
-        .await?;
+        if hermit {
+            outbox::enqueue(
+                tx,
+                &Item::DeleteWorkspace {
+                    workspace_id: workspace,
+                },
+            )
+            .await?;
+        }
     }
     // 2. the conversation (cascades: events, rows, row_seqs, turns, commands, tool links, uploads, sent files,
     //    sent staging, report ids), its uploads' blob refs, its cc scope, its live frames
@@ -174,6 +190,10 @@ pub async fn purge_locked(tx: &Tx<'_>, person: &str, conversation: Uuid, why: Sh
     fanout::notify(tx, fanout::ROWS, &key, 0).await?;
     fanout::notify(tx, fanout::COMMANDS, &key, 0).await?;
     fanout::notify(tx, fanout::LIVE, &key, 0).await?;
+    if !hermit {
+        tracing::info!(conversation = %conversation, "imported conversation removed");
+        return Ok(());
+    }
     // 4. hermit: release the sandbox, delete the workspace (a conversation's workspace id is its id, hermit 3.8)
     outbox::enqueue(
         tx,

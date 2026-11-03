@@ -18,4 +18,4 @@ docker run --rm --user "$(id -u):$(id -g)" \
   -e CARGO_HOME=/cargo -e HOME=/tmp -e RUSTUP_TOOLCHAIN=1.99.1 \
   -e CARGO_TARGET_DIR=/src/target/trixie -e CARGO_TERM_COLOR \
   -e AVIARY_REVISION -e SOURCE_DATE_EPOCH \
-  "$tag" cargo build --release --locked -p magpie --bin magpie
+  "$tag" cargo build --release --locked -p magpie-import --bin magpie

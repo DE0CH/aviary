@@ -182,7 +182,7 @@ jobs:
       - name: musl binaries (rust-lld, static)
         run: |
           export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
-          cargo build --release --locked --target x86_64-unknown-linux-musl --workspace --exclude magpie --exclude sandboxd --bins
+          cargo build --release --locked --target x86_64-unknown-linux-musl --workspace --exclude magpie --exclude magpie-import --exclude sandboxd --bins
           mkdir -p dist
           find target/x86_64-unknown-linux-musl/release -maxdepth 1 -type f -executable -exec cp {} dist/ \;
       - name: sandboxd (static musl, its own profile, crates/sandboxd/docs/MEMORY.md)

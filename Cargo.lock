@@ -2692,6 +2692,25 @@ dependencies = [
 [[package]]
 name = "magpie-import"
 version = "0.0.0"
+dependencies = [
+ "aviary-core",
+ "aviary-pg",
+ "axum",
+ "base64 0.23.1",
+ "http-body-util",
+ "magpie",
+ "magpie-api",
+ "proptest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
 
 [[package]]
 name = "matchit"

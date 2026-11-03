@@ -1,6 +1,6 @@
 //! `magpie serve`: one replica (magpie 18). `magpie --version` prints the build. `magpie check-image <file>` decodes
 //! an image as an upload would and prints its type and upright size (the image build's check that libheif and its
-//! decoder plugins are there).
+//! decoder plugins are there). `magpie import …`: the switch's importer (cutover 7.9, [`magpie_import::cli`]).
 
 use std::process::ExitCode;
 use std::time::Duration;
@@ -31,6 +31,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("check-image") => check_image(args.get(1).map(String::as_str)),
+        Some("import") => magpie_import::cli::main(&build(), &args[1..]),
         Some("serve") => {
             let Ok(rt) = tokio::runtime::Runtime::new() else {
                 return ExitCode::FAILURE;
@@ -41,7 +42,7 @@ fn main() -> ExitCode {
             let mut err = std::io::stderr().lock();
             let _ = std::io::Write::write_all(
                 &mut err,
-                b"usage: magpie serve | magpie --version | magpie check-image <file>\n",
+                b"usage: magpie serve | magpie --version | magpie check-image <file> | magpie import <command>\n",
             );
             ExitCode::from(2)
         }

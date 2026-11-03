@@ -166,6 +166,26 @@ impl Service {
         draining: Draining,
         intervals: jobs::Intervals,
     ) -> Result<Self, StartError> {
+        Self::start_inner(cfg, readiness, draining, intervals, true).await
+    }
+
+    /// magpie's library without its jobs (no leader lock, purge, outbox, driver or hermit feed): the importer's
+    /// process (`magpie import …`, cutover 7.1), which writes through the same functions as a replica and serves no
+    /// API. Waits for the migrations a replica applies (it applies them itself when it is first).
+    ///
+    /// # Errors
+    /// As [`Service::start`].
+    pub async fn start_library(cfg: Config, readiness: &Readiness, draining: Draining) -> Result<Self, StartError> {
+        Self::start_inner(cfg, readiness, draining, jobs::Intervals::default(), false).await
+    }
+
+    async fn start_inner(
+        cfg: Config,
+        readiness: &Readiness,
+        draining: Draining,
+        intervals: jobs::Intervals,
+        run_jobs: bool,
+    ) -> Result<Self, StartError> {
         let migrations_gate = readiness.gate("migrations");
         let listen_gate = readiness.gate("listen");
         let pool = aviary_pg::connect(
@@ -206,15 +226,18 @@ impl Service {
             crate::error::Error::Db(d) => StartError(d),
             other => StartError(aviary_pg::Error::Config(other.to_string())),
         })?);
-        let mut jobs = Jobs::start_with(&pool, outbox::Hermit(hermit.clone()), blobs.clone(), intervals);
-        let driver = Driver {
-            pool: pool.clone(),
-            hermit: hermit.clone(),
-            pod: cfg.pod.clone(),
-            draining: draining.clone(),
-        };
-        jobs.push(turns::sweeper::start(driver.clone()));
-        jobs.push(crate::hermit::feed::spawn(jobs.leader(), driver));
+        let jobs = run_jobs.then(|| {
+            let mut jobs = Jobs::start_with(&pool, outbox::Hermit(hermit.clone()), blobs.clone(), intervals);
+            let driver = Driver {
+                pool: pool.clone(),
+                hermit: hermit.clone(),
+                pod: cfg.pod.clone(),
+                draining: draining.clone(),
+            };
+            jobs.push(turns::sweeper::start(driver.clone()));
+            jobs.push(crate::hermit::feed::spawn(jobs.leader(), driver));
+            jobs
+        });
         Ok(Self {
             app: Arc::new_cyclic(|this| Magpie {
                 pool,
@@ -228,7 +251,7 @@ impl Service {
                 ingest,
             }),
             callers: cfg.callers,
-            jobs: Some(jobs),
+            jobs,
         })
     }
 
