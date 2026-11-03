@@ -396,8 +396,7 @@ magpie/hermit requests up to 60 s, tools calls up to 180 s; what is left at its 
   hermit, the model and the internet together, so running turns stop until hermit or the database is back (aviary
   platform 3.2 wants readiness independent of other services; a gateway that cannot verify a token cannot serve).
 - The hermit-outage check in CI is accept-and-reset only, not connection refused (`run.sh`, the suite's fakes keep
-  :80); the conformance suites are built from source at `chat/aviary.ref`, not run from the published
-  `ghcr.io/de0ch/aviary-testing` image (aviary WP-28).
+  :80).
 - The old relay listener (staff's own Claude Code on the model route, `EGRESS_RELAY_PORT`, table `relay_tokens`) is
   not in this egress: awaiting Deyao's decision (aviary refactor DESIGN 10, "Open: the relay").
 - Route MCP servers (an old-stack route with `mcp: true`, docs/CLAUDE-CODE.md "Route MCP servers"; YYC's label
@@ -414,8 +413,8 @@ message), `models`, `defaultModel`, `smallModel`, `titleModel`, `titleReasoning`
 **Env:** `EGRESS_DATABASE_URL`, `EGRESS_TOKEN_MAGPIE`, `EGRESS_TOKEN_HERMIT`, `EGRESS_ACCEPT_PIGEON`,
 `EGRESS_ACCEPT_HERMIT`, `EGRESS_ACCEPT_ADMIN` and every variable a route's `inject` names (`OPENROUTER_API_KEY`,
 `EGRESS_TOKEN_TOOLS`); a missing one is a start failure. **CI:** chat.yml's `conformance` job runs aviary's
-`gateway` and `model` suites against the image under test (`chat/test/conformance/run.sh`, the aviary commit in
-`chat/aviary.ref`) on the chat image built once by the `chat-image` job; `images` pushes that same image (its id
+`gateway` and `model` suites against the image under test (`chat/test/conformance/run.sh`, the binaries of
+`ghcr.io/de0ch/aviary-testing` at the aviary commit in `chat/aviary.ref`, which must have a release) on the chat image built once by the `chat-image` job; `images` pushes that same image (its id
 checked), only when the tests and both suites pass.
 
 ### The sandbox allowlist (`chat/egress-allowlist/`, `chat/src/egress/allowlist.ts`, `threatdns.ts`)
