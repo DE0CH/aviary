@@ -65,6 +65,7 @@ use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse, Lis
 use magpie_api::errors::{ErrorCode, Refusal};
 use magpie_api::events::{EventsPage, EventsQuery};
 use magpie_api::files::{FilesPanel, RawFileQuery};
+use magpie_api::legacy::{LegacyPathRequest, TicketDone, TicketRequest, TicketResponse};
 use magpie_api::live::{LiveFramesRequest, LiveState};
 use magpie_api::ops::{
     AdminConversation, AdminConversationList, AdminListQuery, OpsStats, PeopleQuery, PeopleResponse,
@@ -1514,5 +1515,33 @@ impl Server for FakeMagpie {
     async fn admin_timeline(&self, ctx: Ctx, id_: Uuid, query: TimelineQuery) -> Result<TimelinePage, ApiError> {
         live_pair(&query)?;
         scripted!(self, "admin_timeline", ctx, id(id_), ser(&query), None, typed)
+    }
+
+    async fn legacy_ticket(&self, ctx: Ctx, id_: Uuid, body: TicketRequest) -> Result<TicketResponse, ApiError> {
+        scripted!(self, "legacy_ticket", ctx, id(id_), None, ser(&body), typed)
+    }
+
+    async fn legacy_ticket_done(&self, ctx: Ctx, ticket: Uuid, body: TicketDone) -> Result<(), ApiError> {
+        scripted!(
+            self,
+            "legacy_ticket_done",
+            ctx,
+            json!({"ticket": ticket.to_string()}),
+            None,
+            ser(&body),
+            unit
+        )
+    }
+
+    async fn upload_legacy_path(&self, ctx: Ctx, upload_id: Uuid, body: LegacyPathRequest) -> Result<(), ApiError> {
+        scripted!(
+            self,
+            "upload_legacy_path",
+            ctx,
+            json!({"uploadId": upload_id.to_string()}),
+            None,
+            ser(&body),
+            unit
+        )
     }
 }

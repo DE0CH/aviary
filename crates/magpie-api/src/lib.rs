@@ -21,6 +21,7 @@ pub mod conversations;
 pub mod errors;
 pub mod events;
 pub mod files;
+pub mod legacy;
 pub mod live;
 pub mod mime;
 pub mod ops;

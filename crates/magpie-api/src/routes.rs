@@ -116,6 +116,12 @@ pub const SHARE_FILES_RAW: &str = "/v1/shares/{shareId}/files/raw";
 pub const SHARE_CONTINUE: &str = "/v1/shares/{shareId}/continue";
 /// `POST` record view-as (M17).
 pub const VIEW_AS: &str = "/v1/view-as";
+/// `POST` take a ticket for a legacy write (the switch window, [`crate::legacy`]).
+pub const LEGACY_TICKETS: &str = "/v1/conversations/{id}/legacy/tickets";
+/// `POST` a ticket's outcome (the switch window).
+pub const LEGACY_TICKET_DONE: &str = "/v1/legacy/tickets/{ticket}/done";
+/// `PUT` a teed upload's old asset path (until A7).
+pub const UPLOAD_LEGACY_PATH: &str = "/v1/uploads/{uploadId}/legacy-path";
 
 /// `POST` lease.
 pub const SANDBOX_LEASE: &str = "/v1/sandbox/lease";
@@ -308,6 +314,10 @@ pub const ROUTES: &[Route] = &[
         admin: false,
         surface: Surface::Person,
     },
+    // the switch window (DESIGN 9; cutover 6.4): tickets until A6, the legacy-path record until A7
+    pigeon_extra("legacy_ticket", Post, LEGACY_TICKETS, &[200]),
+    pigeon_extra("legacy_ticket_done", Post, LEGACY_TICKET_DONE, &[204]),
+    pigeon_extra("upload_legacy_path", Put, UPLOAD_LEGACY_PATH, &[204]),
     // 16.2 the supervisor through the gateway
     sandbox("lease", Post, SANDBOX_LEASE, &[200], false),
     sandbox("cc_tree", Get, SANDBOX_CC_TREE, &[200], false),
@@ -481,7 +491,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 59);
+        assert_eq!(ROUTES.len(), 62);
     }
 
     #[test]

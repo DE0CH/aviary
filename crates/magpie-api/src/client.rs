@@ -26,6 +26,7 @@ use crate::headers::{
     AVIARY_ADMIN, AVIARY_LEASE, AVIARY_PERSON, AVIARY_PROTOCOL, AVIARY_REQUEST, AVIARY_UPLOAD_KIND, AVIARY_UPLOAD_NAME,
     AVIARY_VIEW_SESSION, AVIARY_VIEWER,
 };
+use crate::legacy::{LegacyPathRequest, TicketDone, TicketRequest, TicketResponse};
 use crate::live::{LiveFramesRequest, LiveState};
 use crate::ops::{
     AdminConversation, AdminConversationList, AdminListQuery, OpsStats, PeopleQuery, PeopleResponse,
@@ -685,6 +686,23 @@ impl PersonCalls<'_> {
     /// M16 continue.
     pub async fn continue_share(&self, share_id: &str) -> Result<ContinueResponse, ClientError> {
         self.send_json("continue_share", &[share_id], &Empty {}).await
+    }
+
+    /// The switch window: a ticket before a legacy write (waits up to 3 s while the conversation is fenced).
+    pub async fn legacy_ticket(&self, id: Uuid, req: &TicketRequest) -> Result<TicketResponse, ClientError> {
+        self.send_json("legacy_ticket", &[&id.to_string()], req).await
+    }
+
+    /// The switch window: a ticket's outcome.
+    pub async fn legacy_ticket_done(&self, ticket: Uuid, done: &TicketDone) -> Result<(), ClientError> {
+        self.empty("legacy_ticket_done", &[&ticket.to_string()], json(done)?)
+            .await
+    }
+
+    /// Until A7: the old asset path a teed upload got from the old child.
+    pub async fn upload_legacy_path(&self, upload_id: Uuid, req: &LegacyPathRequest) -> Result<(), ClientError> {
+        self.empty("upload_legacy_path", &[&upload_id.to_string()], json(req)?)
+            .await
     }
 }
 

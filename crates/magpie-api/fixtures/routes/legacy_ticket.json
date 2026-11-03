@@ -1,0 +1,32 @@
+{
+  "route": "legacy_ticket",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "request": {
+    "kind": "send",
+    "clientMessageId": "draft-7f3a:3"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "route": "legacy",
+        "ticket": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e2a"
+      }
+    },
+    {
+      "status": 200,
+      "body": {
+        "route": "native"
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

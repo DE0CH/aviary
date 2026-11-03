@@ -20,6 +20,7 @@ use magpie_api::changes::*;
 use magpie_api::conversations::*;
 use magpie_api::events::*;
 use magpie_api::files::*;
+use magpie_api::legacy::*;
 use magpie_api::live::*;
 use magpie_api::ops::*;
 use magpie_api::rows::*;
@@ -58,6 +59,9 @@ fn check_route(id: &str, f: &serde_json::Value) {
         "share_files_raw" => check::<Json<RawFileQuery>, NoBody, RawBytes>(id, f),
         "continue_share" => check::<NoQuery, Json<Empty>, Json<ContinueResponse>>(id, f),
         "view_as" => check::<NoQuery, Json<ViewAsRequest>, Json<Empty>>(id, f),
+        "legacy_ticket" => check::<NoQuery, Json<TicketRequest>, Json<TicketResponse>>(id, f),
+        "legacy_ticket_done" => check::<NoQuery, Json<TicketDone>, NoContent>(id, f),
+        "upload_legacy_path" => check::<NoQuery, Json<LegacyPathRequest>, NoContent>(id, f),
         "lease" => check::<NoQuery, Json<Empty>, Json<LeaseResponse>>(id, f),
         "cc_tree" => check::<NoQuery, NoBody, Json<CcTree>>(id, f),
         "cc_file" => check::<Json<CcFileQuery>, NoBody, RawBytes>(id, f),

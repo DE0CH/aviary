@@ -1,0 +1,28 @@
+{
+  "route": "legacy_ticket_done",
+  "params": {
+    "ticket": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e2a"
+  },
+  "request": {
+    "outcome": "started"
+  },
+  "responses": [
+    {
+      "status": 204
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "bad_request",
+        "message": "outcome applied does not close a send ticket"
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

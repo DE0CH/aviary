@@ -24,7 +24,7 @@ use axum::extract::{FromRequest, FromRequestParts, Path, Query, Request, State};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderName, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
@@ -34,6 +34,7 @@ use crate::conversations::{Conversation, CreateRequest, CreateResponse, ListQuer
 use crate::errors::{ErrorCode, Refusal};
 use crate::events::{EventsPage, EventsQuery};
 use crate::files::{FilesPanel, RawFileQuery};
+use crate::legacy::{LegacyPathRequest, TicketDone, TicketRequest, TicketResponse};
 use crate::live::{LiveFramesRequest, LiveState};
 use crate::ops::{
     AdminConversation, AdminConversationList, AdminListQuery, OpsStats, PeopleQuery, PeopleResponse,
@@ -43,12 +44,12 @@ use crate::ops::{
 use crate::routes::{
     self, ADMIN_CONVERSATION, ADMIN_CONVERSATIONS, ADMIN_EVENTS, ADMIN_TIMELINE, ASK_ANSWER, BLOB, CANCEL, CHANGES,
     CONVERSATION, CONVERSATION_DELETE, CONVERSATION_RESTORE, CONVERSATION_SHARES, CONVERSATIONS, CREATION, FILES,
-    FILES_RAW, HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS, PROMPTS,
-    SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME,
-    SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE,
-    SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SENT_FILES,
-    SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS, SEARCH, SHARE,
-    SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TURNS, UPLOADS, VIEW_AS,
+    FILES_RAW, HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS, LEGACY_TICKET_DONE, LEGACY_TICKETS, LIVE, OPS_PEOPLE,
+    OPS_STATS, OPS_VIEW_AS, PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE,
+    SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME, SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE,
+    SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE, SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_HEARTBEAT, SANDBOX_LEASE,
+    SANDBOX_SENT_FILES, SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS,
+    SEARCH, SHARE, SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TURNS, UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
 };
 use crate::rows::{PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery};
 use crate::sandbox::{
@@ -721,6 +722,63 @@ pub trait Server: Send + Sync + 'static {
     ) -> impl Future<Output = Result<TimelinePage, ApiError>> + Send {
         async move { Err(not_implemented("admin_timeline")) }
     }
+
+    /// Route `legacy_ticket` (the switch window).
+    fn legacy_ticket(
+        &self,
+        ctx: Ctx,
+        id: Uuid,
+        body: TicketRequest,
+    ) -> impl Future<Output = Result<TicketResponse, ApiError>> + Send {
+        async move { Err(not_implemented("legacy_ticket")) }
+    }
+
+    /// Route `legacy_ticket_done` (the switch window).
+    fn legacy_ticket_done(
+        &self,
+        ctx: Ctx,
+        ticket: Uuid,
+        body: TicketDone,
+    ) -> impl Future<Output = Result<(), ApiError>> + Send {
+        async move { Err(not_implemented("legacy_ticket_done")) }
+    }
+
+    /// Route `upload_legacy_path` (until A7).
+    fn upload_legacy_path(
+        &self,
+        ctx: Ctx,
+        upload_id: Uuid,
+        body: LegacyPathRequest,
+    ) -> impl Future<Output = Result<(), ApiError>> + Send {
+        async move { Err(not_implemented("upload_legacy_path")) }
+    }
+}
+
+async fn h_legacy_ticket<S: Server>(
+    State(s): State<Arc<S>>,
+    ctx: Ctx,
+    P(id): P<Uuid>,
+    J(body): J<TicketRequest>,
+) -> Response {
+    reply("legacy_ticket", s.legacy_ticket(ctx, id, body).await)
+}
+
+async fn h_legacy_ticket_done<S: Server>(
+    State(s): State<Arc<S>>,
+    ctx: Ctx,
+    P(ticket): P<Uuid>,
+    J(body): J<TicketDone>,
+) -> Response {
+    reply_empty(s.legacy_ticket_done(ctx, ticket, body).await)
+}
+
+async fn h_upload_legacy_path<S: Server>(
+    State(s): State<Arc<S>>,
+    ctx: Ctx,
+    P(upload_id): P<Uuid>,
+    J(body): J<LegacyPathRequest>,
+) -> Response {
+    reply_empty(s.upload_legacy_path(ctx, upload_id, body).await)
 }
 
 async fn h_list_conversations<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, Q(query): Q<ListQuery>) -> Response {
@@ -1075,6 +1133,9 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
         .route(SHARE_FILES_RAW, get(h_share_files_raw::<S>))
         .route(SHARE_CONTINUE, post(h_continue_share::<S>))
         .route(VIEW_AS, post(h_view_as::<S>))
+        .route(LEGACY_TICKETS, post(h_legacy_ticket::<S>))
+        .route(LEGACY_TICKET_DONE, post(h_legacy_ticket_done::<S>))
+        .route(UPLOAD_LEGACY_PATH, put(h_upload_legacy_path::<S>))
         .route(SANDBOX_LEASE, post(h_lease::<S>))
         .route(SANDBOX_CC_TREE, get(h_cc_tree::<S>))
         .route(SANDBOX_CC_FILE, get(h_cc_file::<S>))

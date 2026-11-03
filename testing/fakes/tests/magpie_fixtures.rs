@@ -17,6 +17,7 @@ use magpie_api::client::{Client, ClientError};
 use magpie_api::conversations::*;
 use magpie_api::events::*;
 use magpie_api::files::*;
+use magpie_api::legacy::*;
 use magpie_api::live::*;
 use magpie_api::ops::*;
 use magpie_api::rows::*;
@@ -236,6 +237,21 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
         "view_as" => c.view_as(&request::<ViewAsRequest>(&f)).await.map(|()| Value::Null),
+        "legacy_ticket" => c
+            .person(PERSON)
+            .legacy_ticket(param_uuid(&f, "id"), &request::<TicketRequest>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "legacy_ticket_done" => c
+            .person(PERSON)
+            .legacy_ticket_done(param_uuid(&f, "ticket"), &request::<TicketDone>(&f))
+            .await
+            .map(|()| Value::Null),
+        "upload_legacy_path" => c
+            .person(PERSON)
+            .upload_legacy_path(param_uuid(&f, "uploadId"), &request::<LegacyPathRequest>(&f))
+            .await
+            .map(|()| Value::Null),
         "lease" => c
             .sandbox(Some(LEASE))
             .lease()

@@ -1,0 +1,28 @@
+{
+  "route": "upload_legacy_path",
+  "params": {
+    "uploadId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e3b"
+  },
+  "request": {
+    "legacyPath": "/home/u0123456789abcdef01234567/.claude/cloudcli-assets/1762054010120-q3-report.pdf"
+  },
+  "responses": [
+    {
+      "status": 204
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "bad_path",
+        "message": "not an old asset path of the person"
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

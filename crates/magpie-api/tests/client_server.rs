@@ -26,6 +26,7 @@ use magpie_api::client::{Client, ClientError};
 use magpie_api::conversations::*;
 use magpie_api::events::*;
 use magpie_api::files::*;
+use magpie_api::legacy::*;
 use magpie_api::live::*;
 use magpie_api::ops::*;
 use magpie_api::rows::*;
@@ -629,6 +630,39 @@ impl Server for FixtureServer {
         );
         self.answer_json("admin_timeline")
     }
+
+    async fn legacy_ticket(&self, ctx: Ctx, id: Uuid, body: TicketRequest) -> Result<TicketResponse, ApiError> {
+        self.received(
+            "legacy_ticket",
+            &ctx,
+            &json!({"id": id.to_string()}),
+            None,
+            Some(serde_json::to_value(&body).unwrap()),
+        );
+        self.answer_json("legacy_ticket")
+    }
+
+    async fn legacy_ticket_done(&self, ctx: Ctx, ticket: Uuid, body: TicketDone) -> Result<(), ApiError> {
+        self.received(
+            "legacy_ticket_done",
+            &ctx,
+            &json!({"ticket": ticket.to_string()}),
+            None,
+            Some(serde_json::to_value(&body).unwrap()),
+        );
+        self.answer_empty("legacy_ticket_done")
+    }
+
+    async fn upload_legacy_path(&self, ctx: Ctx, upload_id: Uuid, body: LegacyPathRequest) -> Result<(), ApiError> {
+        self.received(
+            "upload_legacy_path",
+            &ctx,
+            &json!({"uploadId": upload_id.to_string()}),
+            None,
+            Some(serde_json::to_value(&body).unwrap()),
+        );
+        self.answer_empty("upload_legacy_path")
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -777,6 +811,21 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
         "view_as" => c.view_as(&request::<ViewAsRequest>(&f)).await.map(|()| Value::Null),
+        "legacy_ticket" => c
+            .person(PERSON)
+            .legacy_ticket(param_uuid(&f, "id"), &request::<TicketRequest>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "legacy_ticket_done" => c
+            .person(PERSON)
+            .legacy_ticket_done(param_uuid(&f, "ticket"), &request::<TicketDone>(&f))
+            .await
+            .map(|()| Value::Null),
+        "upload_legacy_path" => c
+            .person(PERSON)
+            .upload_legacy_path(param_uuid(&f, "uploadId"), &request::<LegacyPathRequest>(&f))
+            .await
+            .map(|()| Value::Null),
         "lease" => c
             .sandbox(Some(LEASE))
             .lease()
