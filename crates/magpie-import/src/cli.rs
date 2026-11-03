@@ -116,7 +116,23 @@ pub fn main(build: &version::Build, args: &[String]) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        run(&imp, cmd, rest).await
+        // every command that writes the importer's state holds the leader lock while it runs (cutover 7.1)
+        let lock = if matches!(cmd, "plan" | "status") {
+            None
+        } else {
+            match crate::lock::OneShot::take(&imp.magpie.pool).await {
+                Ok(l) => Some(l),
+                Err(e) => {
+                    tracing::error!(error = %e, "cannot take the importer's lock");
+                    return ExitCode::FAILURE;
+                }
+            }
+        };
+        let code = run(&imp, cmd, rest).await;
+        if let Some(l) = lock {
+            l.release().await;
+        }
+        code
     })
 }
 

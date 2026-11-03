@@ -25,8 +25,9 @@ own library, so an imported conversation is what live writes would have made: cc
 | `src/pass.rs` | one pass (`run`, `catch-up`), 8 conversations at a time |
 | `src/verify.rs` | byte-exact verification through magpie's read path, the re-ingest, the released-source check |
 | `src/plan.rs` | `plan`: counts, sizes, the largest lines, memory files, blockers |
+| `src/lock.rs` | the leader lock (`hashtext('magpie-import.leader')`): the hand-over replicas' bid, a one-shot command's wait (seen in `pg_locks`), the waiter check the loop yields to |
 | `src/control.rs` | `status`, `hold`, `reset --yes`, `unfence`, `release <id> --force` |
-| `src/cli.rs` | `magpie import <command>`: one JSON document on stdout, logs on stderr |
+| `src/cli.rs` | `magpie import <command>`: one JSON document on stdout, logs on stderr; every command but `plan` and `status` holds the leader lock |
 | `tests/import.rs` | the end-to-end tests against the CI Postgres and S3 with fixtures made in the test |
 | `tests/convergence.rs` | the property test of cutover 7.12 item 3 (random source changes, a pass at random points: byte-exact, visible events = the source's lines) |
 
@@ -50,5 +51,6 @@ own library, so an imported conversation is what live writes would have made: cc
 
 ## Not built yet (WP-29 continues)
 
-Shares (7.4.4), `holds.js` and `holds`, the leader lock, `allow-handover`, `parity`, `reverse` and `export` (14.2-14.3), and
-tests 4 (the routes of 6.4 beyond the write guard), 5-8 of 7.12. The hand-over loop itself is WP-52.
+Shares (7.4.4), `holds.js` and `holds`, `allow-handover`, `parity`, `reverse` and `export` (14.2-14.3), and
+tests 4 (the routes of 6.4 beyond the write guard), 5-7 of 7.12 and item 8's process-level half (the loop's
+yield between passes). The hand-over loop itself is WP-52.
