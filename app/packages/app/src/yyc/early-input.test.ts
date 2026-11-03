@@ -23,12 +23,18 @@ interface Early {
 /** public/index.html with its inline scripts run, at `url`. */
 function page(
   url: string,
-  options: { signedOut?: boolean; session?: Record<string, string>; local?: Record<string, string> } = {},
+  options: {
+    signedOut?: boolean;
+    session?: Record<string, string>;
+    local?: Record<string, string>;
+    userAgent?: string;
+  } = {},
 ) {
   let html = indexHtml;
   if (options.signedOut) html = html.replace("<head>", '<head><meta name="yyc-signed-out" content="1">');
   const dom = new JSDOM(html, {
     url,
+    ...(options.userAgent ? { userAgent: options.userAgent } : {}),
     runScripts: "dangerously",
     pretendToBeVisual: true,
     beforeParse(window) {
@@ -75,6 +81,15 @@ describe("public/index.html early message box", () => {
     expect(page("https://ai.example/new#jarvis-view-as=t.x").box()).toBeNull();
     expect(page("https://ai.example/new", { session: { "yyc.view-as": "t.x" } }).box()).toBeNull();
     expect(page("https://ai.example/h/a/workspace/b/").box()).not.toBeNull();
+  });
+
+  it("and the page frame are both left out inside the Android app", () => {
+    const { window, box } = page("https://ai.example/new", {
+      userAgent: "Mozilla/5.0 (Linux; Android 15; wv) Chrome/140.0 Mobile Safari/537.36 YYCAI-Android/1.0",
+    });
+    expect(box()).toBeNull();
+    expect(window.document.getElementById("boot")).toBeNull();
+    expect((window as unknown as { __yycBootFrame?: string }).__yycBootFrame).toBeUndefined();
   });
 
   it("puts the box at the bottom on a conversation page", () => {
