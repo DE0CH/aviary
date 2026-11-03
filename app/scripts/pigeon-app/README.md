@@ -77,7 +77,10 @@ commits a week, so spec 17.1's "every build of the last 30 days, or the last 5" 
    and the builds fail on the budget until the pre-split seeds leave (the test "projectMandatory at the measured seed
    growth": over from 2026-11-14, peak 651 MiB, fits again 2026-11-29 12:00, Claude's projection). After that the
    seeds settle at 744 h of pins at the rate of the time (at 11 MiB a day about 340 MiB of seeds, 410 MiB with two
-   builds; less if pins slow down). So, for A1 (WP-31 and WP-35): either the emptyDir and this budget are sized above the projected
+   builds; less if pins slow down). The run's own projection measures the rate over the last 7 days, so until
+   2026-11-05 11:44 it still counts pre-split pins (21.5 MiB of new files each) and overstates the growth: run
+   41600312622 (bdbae2af, 2026-11-03) measured 32.1 MiB a day from 17 pins, headroom 155.1 MiB, over the budget from
+   2026-11-08. So, for A1 (WP-31 and WP-35): either the emptyDir and this budget are sized above the projected
    peak (with gap 2's ephemeral-storage limit to match), or A1 waits until the run's projection stays under the budget.
 2. **The pod's ephemeral-storage limit (for the pigeon manifests, WP-31).** Platform 9.4's pigeon Deployment gives the
    pigeon container `ephemeral-storage` limit 128Mi and the initContainer none. kubelet counts a disk-backed emptyDir
