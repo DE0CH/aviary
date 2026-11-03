@@ -496,7 +496,8 @@ aviary platform spec 17.2 tools. The MCP server Claude Code in a sandbox sees is
   `chat/src/tools/db.ts` under tools' own advisory lock): conversation, sandbox, person, request, tool, args, ok, ms,
   error, cost. Written without waiting: while the database is away a row is dropped and counted
   (`tools_tool_calls_dropped_total`), the call answers as usual.
-- **Read-only tools only.** Nothing here sends, posts, writes or changes anything outside, and nothing asks for or
+- **Read-only tools only** (in this role: an instance's own service that may be changed is a route MCP server instead,
+  docs/CLAUDE-CODE.md "Route MCP servers"). Nothing here sends, posts, writes or changes anything outside, and nothing asks for or
   waits on a confirmation. Tools (names lowercase, `snake_case`; annotations set `readOnlyHint`): `web_search`,
   `web_fetch`, `social_search` (TikHub), the AnyAPI tools (below), plus the **listed** tools of each configured upstream
   MCP server, exposed as `<prefix>_<tool>` (YYC: prefix `yyc`, the yyc-mcp Worker, whose `wisers_*` tools are YYC's WiseSearch, service token +
