@@ -69,7 +69,9 @@ call, `/compact` with `CLAUDE_CODE_TRANSCRIPT_LOCAL_GC=1` (in hermit.json's `san
 every turn completes, the compaction and the subagent's transcript and meta file are in magpie, no line has two
 events, every user or assistant line that is not a prompt's echo (a slash command's `<command-name>` form included)
 has its event, and the subagent's lines made none. The tombstone stays unreproduced by 2.1.304 (supervisor GATE.md
-open item 3). Then E8 (Stop during a 60 s stream: canceled at once, the next turn works), E10 (`kill -9` of the
+open item 3). Then E6 (120 turns, then `tail` and `before` pages of 40: no gap, no repeat, no page slower than
+twice the first), E7 (the socket closed at the first live row and reopened: the catch-up after the last seen seq and
+the live rows end every row where the timeline ends it), E8 (Stop during a 60 s stream: canceled at once, the next turn works), E10 (`kill -9` of the
 supervisor mid-turn: the turn completes, every transcript line once in magpie), E11 (the sandbox Pod deleted
 mid-turn: `sandbox.lost` within 40 s, the next turn on a new sandbox sees the history), E18 (the same requests through
 each pigeon Pod answer alike), E24 (hermit at 0 replicas for 3 minutes during a turn with a tool call: the turn

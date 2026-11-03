@@ -11,7 +11,7 @@ use crate::{ADMIN, ALICE, Harness, JFS, PIGEON, STRANGER, TURN_MODEL, eventually
 
 /// The scenarios in the order `aviary-e2e` runs them when none is named.
 pub const ALL: &[&str] = &[
-    "e1", "e2", "e3", "e19", "e16", "e14", "cc", "e8", "e10", "e11", "e18", "e24", "e12", "e17",
+    "e1", "e2", "e3", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e24", "e12", "e17",
 ];
 
 /// How long a turn may take, sandbox start included (the image is local; the first start makes the host).
@@ -1092,7 +1092,13 @@ async fn e7(h: &Harness) -> anyhow::Result<()> {
             *e = (*e).max(seq);
         }
     };
-    // close at the first row
+    // the app's first load: the tail, then the live rows
+    let loaded = page(&mut ws, &id, "tail", None, 40).await?;
+    for r in loaded["entries"].as_array().into_iter().flatten() {
+        let e = seen.entry(row_key(&r["item"])).or_insert(0);
+        *e = (*e).max(r["seqEnd"].as_u64().unwrap_or(0));
+    }
+    // close at the first live row
     let id2 = id.clone();
     let first = ws
         .wait_for("the first row", TURN_WAIT, move |v| {
