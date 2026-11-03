@@ -9,6 +9,8 @@
 //! - [`server`]: the 8080 listener (timeouts, connection tracking, the drain of 11.2).
 //! - [`paseo`]: the `/paseo-ws` protocol (spec 7): transport, handshake, dispatch, pushes, the row and object
 //!   projections, the strings; [`feeds`]: live streaming from magpie (spec 8).
+//! - [`legacy`]: the switch window (DESIGN 9.2-9.5): the legacy upstream to the old stack for the conversations it
+//!   still owns, tickets, the upload tee and copy-at-send, the old view-as key, the move's activity report.
 //!
 //! pigeon holds no durable state: everything in memory is a cache of an upstream answer. It reaches its upstreams by
 //! fixed names ([`Upstreams::cluster`]); its only configuration is the secrets of [`Secrets::from_env`].
@@ -17,6 +19,7 @@ pub mod blobs;
 pub mod feeds;
 pub mod http;
 pub mod identity;
+pub mod legacy;
 pub mod metrics;
 pub mod ops;
 pub mod paseo;
@@ -57,6 +60,8 @@ pub struct Upstreams {
     pub model: String,
     /// The origin of a Cloudflare Access team's endpoints (`/cdn-cgi/access/*`), from its team domain.
     pub access: Arc<dyn Fn(&str) -> String + Send + Sync>,
+    /// The old stack's front (the switch window's legacy upstream, [`legacy::LU_BASE`]).
+    pub legacy: String,
 }
 
 impl std::fmt::Debug for Upstreams {
@@ -65,6 +70,7 @@ impl std::fmt::Debug for Upstreams {
             .field("magpie", &self.magpie)
             .field("hermit", &self.hermit)
             .field("model", &self.model)
+            .field("legacy", &self.legacy)
             .finish_non_exhaustive()
     }
 }
@@ -79,6 +85,7 @@ impl Upstreams {
             hermit: "http://hermit".into(),
             model: "http://model".into(),
             access: Arc::new(|team| format!("https://{team}")),
+            legacy: legacy::LU_BASE.into(),
         }
     }
 }
@@ -131,6 +138,10 @@ pub struct Secrets {
     pub view_as_keys: KeyList,
     /// `PIGEON_BLOB_KEYS`.
     pub blob_keys: KeyList,
+    /// `PIGEON_TOKEN_UI`: the pair token the old router knows the legacy upstream by (DESIGN 9.6). Deleted in A6.
+    pub token_ui: String,
+    /// `PIGEON_LEGACY_VIEW_AS_KEY`: the old router's view-as key (spec 6.2, DESIGN 9.5). Deleted in A6.
+    pub legacy_view_as_key: KeyList,
 }
 
 impl std::fmt::Debug for Secrets {
@@ -157,6 +168,8 @@ impl Secrets {
             token_model: aviary_core::env::required("PIGEON_TOKEN_MODEL"),
             view_as_keys: keys("PIGEON_VIEW_AS_KEYS"),
             blob_keys: keys("PIGEON_BLOB_KEYS"),
+            token_ui: aviary_core::env::required("PIGEON_TOKEN_UI"),
+            legacy_view_as_key: keys("PIGEON_LEGACY_VIEW_AS_KEY"),
         }
     }
 }
@@ -211,6 +224,10 @@ pub struct Tuning {
     pub drain_rpc_wait: Duration,
     /// A socket is request-free after this long with nothing but heartbeats (5 s, DESIGN 9.3).
     pub socket_quiet: Duration,
+    /// The switch window's state is read from magpie at most this often per person (2 s, WP-50).
+    pub legacy_window: Duration,
+    /// The legacy upstream's `client_heartbeat` period (15 s: it also keeps the old child from its idle stop).
+    pub legacy_heartbeat: Duration,
 }
 
 impl Default for Tuning {
@@ -239,6 +256,8 @@ impl Default for Tuning {
             drain_jitter: Duration::from_secs(15),
             drain_rpc_wait: Duration::from_secs(10),
             socket_quiet: Duration::from_secs(5),
+            legacy_window: Duration::from_secs(2),
+            legacy_heartbeat: Duration::from_secs(15),
         }
     }
 }
@@ -311,6 +330,7 @@ pub(crate) struct Inner {
     pub(crate) socket: Arc<dyn paseo::SocketHandler>,
     pub(crate) projector: Arc<dyn paseo::RowProjector>,
     pub(crate) transfers: server::Transfers,
+    pub(crate) legacy: legacy::Legacy,
 }
 
 impl App {
@@ -373,6 +393,7 @@ impl App {
         let external = rpc(None, Duration::from_secs(5));
         let bundle = static_files::Bundle::load(&app_dir)?;
         let metrics = metrics::Metrics::register(registry);
+        let legacy = legacy::Legacy::new(&build, &upstreams, &secrets, &tuning, registry);
         let identity = identity::Identities::new(
             hermit.clone(),
             external,
@@ -380,8 +401,10 @@ impl App {
             tuning.clone(),
             secrets.view_as_keys.clone(),
             metrics.clone(),
+            legacy.tokens(),
         );
-        Ok(Self(Arc::new(Inner {
+        let socket = paseo::transport::PaseoSocket::new(feeds::Hub::new(legacy.owners()));
+        let app = Self(Arc::new(Inner {
             build,
             secrets,
             upstreams,
@@ -399,11 +422,14 @@ impl App {
             warm: http::Warm::new(tuning.warm_every),
             models: http::Models::default(),
             metrics,
-            socket: Arc::new(paseo::transport::PaseoSocket::default()),
+            socket: Arc::new(socket),
             projector: Arc::new(paseo::mapping::PaseoProjector),
             transfers: server::Transfers::default(),
             tuning,
-        })))
+            legacy,
+        }));
+        app.0.legacy.set_app(&app);
+        Ok(app)
     }
 
     /// The same state with the `/paseo-ws` handler and the row projection of the socket package.
@@ -415,9 +441,8 @@ impl App {
         Self(Arc::new(inner))
     }
 
-    /// The same state with the Paseo socket on a hub whose conversations `owners` routes (WP-50's switch window:
-    /// its [`feeds::Owners`] hands conversations to a [`feeds::Delegate`]; outside it, [`feeds::NativeOnly`], the
-    /// default of [`App::new`]).
+    /// The same state with the Paseo socket on a hub whose conversations `owners` routes instead of the legacy
+    /// upstream's ([`legacy::Legacy::owners`], what [`App::new`] installs): tests of the seam alone.
     #[must_use]
     pub fn with_owners(self, owners: Arc<dyn feeds::Owners>) -> Self {
         let projector = self.0.projector.clone();
@@ -460,6 +485,18 @@ impl App {
     /// The router of port 8080.
     pub fn router(&self) -> axum::Router {
         http::router(self.clone())
+    }
+
+    /// The switch window's legacy upstream.
+    #[must_use]
+    pub fn legacy(&self) -> &legacy::Legacy {
+        &self.0.legacy
+    }
+
+    /// The internal routes of the ops port (`GET /internal/switch/activity`, DESIGN 9.3): `main` serves them beside
+    /// the ops routes, which the edge never reaches.
+    pub fn internal_router(&self) -> axum::Router {
+        legacy::activity::router(self.clone())
     }
 
     /// The build this process runs.

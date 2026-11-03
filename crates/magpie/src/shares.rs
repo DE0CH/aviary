@@ -399,9 +399,15 @@ pub async fn revoke(app: &Magpie, person: &Person, share_id: &str) -> Result<()>
             )
             .await?
         {
-            crate::conversations::lock(t, &person.email, c.get(0))
-                .await?
-                .refuse_migrating()?;
+            let id: Uuid = c.get(0);
+            if crate::conversations::lock(t, &person.email, id).await?.migrating {
+                // pigeon's ticket for the revoke through its legacy upstream names the conversation
+                let mut r = magpie_api::errors::Refusal::legacy_route();
+                r.retry_after_ms = Some(crate::limits::MIGRATING_RETRY_AFTER_MS);
+                r.extra
+                    .insert("conversationId".to_owned(), serde_json::Value::String(id.to_string()));
+                return Err(r.into());
+            }
         }
         let row = t
             .query_opt(

@@ -4,6 +4,7 @@
 
 pub mod corpus;
 pub mod model;
+pub mod old;
 pub mod ws;
 
 use std::collections::HashMap;
@@ -39,6 +40,10 @@ pub const ADMIN2: &str = "admin2@example.com";
 pub const OUTSIDER: &str = "someone@elsewhere.example";
 pub const VIEW_KEY: [u8; 32] = [3; 32];
 pub const BLOB_KEY: [u8; 32] = [5; 32];
+/// The old router's view-as key (the switch window).
+pub const OLD_VIEW_KEY: [u8; 32] = [7; 32];
+/// pigeon's pair token for its legacy upstream.
+pub const LU_PAIR: &str = "lu-pair-token";
 pub const PRODUCT: &str = "Example AI";
 pub const HASHED: &str = "/_expo/static/js/web/entry-0123456789abcdef0123.js";
 
@@ -245,8 +250,10 @@ pub struct Opts {
     pub wait_ready: bool,
     /// Another magpie (its base URL) instead of fake-magpie: the socket tests' model.
     pub magpie: Option<String>,
-    /// Who serves each conversation (WP-50's seam); `None`: pigeon's default (native only).
+    /// Who serves each conversation (WP-50's seam); `None`: pigeon's own (the legacy upstream's owners).
     pub owners: Option<Arc<dyn pigeon::feeds::Owners>>,
+    /// The old router's base URL (the switch window's legacy upstream); `None`: nothing listens.
+    pub legacy: Option<String>,
 }
 
 impl Default for Opts {
@@ -258,6 +265,7 @@ impl Default for Opts {
             wait_ready: true,
             magpie: None,
             owners: None,
+            legacy: None,
         }
     }
 }
@@ -333,6 +341,7 @@ impl Harness {
             wait_ready,
             magpie: magpie_url,
             owners,
+            legacy,
         } = opts;
         let _ = rustls::crypto::ring::default_provider().install_default();
         let dir = tmp("keys");
@@ -384,6 +393,7 @@ impl Harness {
                     .cloned()
                     .unwrap_or_else(|| "http://127.0.0.1:9".into())
             }),
+            legacy: legacy.unwrap_or_else(|| "http://127.0.0.1:9".into()),
         };
         // the model stub lives as long as the harness
         std::mem::forget(model);
@@ -393,6 +403,8 @@ impl Harness {
             token_model: model_token,
             view_as_keys: KeyList(vec![VIEW_KEY]),
             blob_keys: KeyList(vec![BLOB_KEY]),
+            token_ui: LU_PAIR.into(),
+            legacy_view_as_key: KeyList(vec![OLD_VIEW_KEY]),
         };
         let app_dir = bundle();
         let mut registry = prometheus_client::registry::Registry::with_prefix("pigeon");

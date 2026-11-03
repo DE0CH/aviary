@@ -4,9 +4,12 @@ The stateless gateway the web and iOS apps talk to (pigeon spec, `refactor/spec-
 `pigeon --version` prints the build. Image: `images/pigeon/Dockerfile` (`ghcr.io/de0ch/pigeon:<sha12>`).
 
 Environment: secrets only (spec 3.3) — `PIGEON_TOKEN_MAGPIE`, `PIGEON_TOKEN_HERMIT`, `PIGEON_TOKEN_MODEL`,
-`PIGEON_VIEW_AS_KEYS`, `PIGEON_BLOB_KEYS` — plus `POD_NAME` from the downward API (`aviary_core::log::init_in_pod`).
-Upstreams are the fixed names `http://magpie`, `http://hermit`, `http://model` and `https://<team domain>`
-(`Upstreams::cluster`); the app bundle is read from `/srv/app`.
+`PIGEON_VIEW_AS_KEYS`, `PIGEON_BLOB_KEYS`, and for the switch window (deleted in A6) `PIGEON_TOKEN_UI` (the pair token
+the old router knows the legacy upstream by) and `PIGEON_LEGACY_VIEW_AS_KEY` (the old router's view-as key, one
+base64url 32-byte key) — plus `POD_NAME` from the downward API (`aviary_core::log::init_in_pod`). Upstreams are the
+fixed names `http://magpie`, `http://hermit`, `http://model`, `https://<team domain>` and, for the switch window,
+`http://ui-legacy:8080` (the bridge Service of DESIGN 15.5 B1; `Upstreams::cluster`); the app bundle is read from
+`/srv/app`. The ops port (9090) also serves `GET /internal/switch/activity`.
 
 ## Modules
 
@@ -25,6 +28,7 @@ Upstreams are the fixed names `http://magpie`, `http://hermit`, `http://model` a
 | `paseo::messages`, `paseo::pushes` | 7.2-7.6 | envelopes, `server_info`, the static replies, `DAEMON_CONFIG`, the push payloads (built once, the socket's subscription id spliced in) |
 | `paseo::mapping` | 7.4, 7.7, 7.8 | the object projections and `PaseoProjector`: rows of every kind, the ported Paseo tool-call mapper (Apache-2.0 notice in the file), the 16 MiB cap |
 | `paseo::strings` | 7.9 | the zh (HK) / en sentences by data code and the fixed strings |
+| `legacy` | DESIGN 9.2-9.5, switch-final 4.1 | the switch window (WP-50, below): ownership as magpie last said, the legacy upstream (`lu`: one socket per native socket to the old router, as the person with the newest verified token), the delegate (`delegate`: reads relayed, writes under tickets, the supersede read, the copy-at-send, creates during a rollback), the upload tee (`uploads`), LU HTTP (`upstream`, `rest`: warm before the gate, shares, files), the token book and old view-as key (`tokens`), the move's activity (`activity`) |
 | `feeds` | 8 | the replica's `Hub` (sockets, who watches which timeline, pollers, the 2 s list single-flight), `change_poller` (M12 per person: list pushes, joins, sandbox chip, asks, turn events handed on) and `timeline_poller` (M9 per conversation: rows in `seqEnd` order, turn events after their rows, one replacement per new epoch) |
 
 ## The socket (WP-17) and the seams for the switch window (WP-50)
@@ -55,6 +59,69 @@ WP-50 plugs into `feeds`:
   their replies (`Conn::close_for_drain`). The pollers keep feeding open sockets until the drain ends, and the drain
   (so the process) ends only when the sockets are gone or at the transfer bound. A socket whose upgrade was in
   flight at SIGTERM is closed 1012 as it registers. `Conn::request_free` is the same test for the move.
+
+## The switch window (WP-50; `src/legacy/`, deleted in A6)
+
+pigeon fronts the conversations the old stack still owns (DESIGN 9.2-9.5). `App::new` installs the legacy upstream's
+`feeds::Owners`; outside the window (nothing `migrating`) it hands nothing over and costs one cached magpie read per
+person every 2 s at most (`GET /v1/legacy/window`).
+- **Ownership** is what magpie last said per conversation (`migrating`), learnt from every list answer, conversation
+  read and person change, and looked up for a conversation pigeon has not read while the person has legacy ones. A
+  native write answered 409 `conversation_migrating` with `route: "legacy"` is sent again through the legacy
+  upstream (the re-route), never shown.
+- **The legacy upstream (LU)**: one WebSocket per native socket to the old router's `/paseo-ws` through
+  `http://ui-legacy:8080`, opened the first time the socket touches a legacy conversation, with the newest Access
+  token pigeon verified for the person (any request refreshes it), pigeon's pair token in `x-aviary-lu`, and for a
+  view the same claims signed with the old key. It carries the conversation's timeline (the old child's epoch, so a
+  moved tab's cursors stay valid), its live stream (`agent_stream` and the sandbox chip, with the tab's own
+  subscription id, only while the conversation is legacy) and its writes; a `client_heartbeat` every 15 s. It closes
+  with its tab. An LU that drops while its tab stays is reopened only with a token that lives an hour more; otherwise
+  the tab is closed 1012 once request-free and reconnects through the edge. An LU 401 closes the tab 4401 (HTTP: 401
+  `NOT_SIGNED_IN`), the signed-out answer, never a write error.
+- **Writes under tickets** (WP-51's contract, `magpie_api::legacy`): ticket first (a send's carries its
+  `clientMessageId`, generated when the app sent none), `native` → the native write (the fence won), `legacy` → the
+  write through LU within `holdMs` of sending the ticket call (past it the ticket is closed `refused` and another
+  taken), at most `TICKET_WRITE_TIMEOUT` for the old child's answer, then the outcome: a send `started` when the old
+  child accepted it (the old hub starts the turn and holds it in `pendingUserMessages` before it answers), otherwise
+  `refused`; other writes `applied` / `refused`. A write that never reached the old child (the LU did not open) is
+  closed `refused`; one that may have (no answer) is left open for the importer's expiry. A repeat whose answer
+  `supersedes` an open send reads the old child after `settleMs` (its timeline for the `clientMessageId` or the row
+  `paseo-user-<id>`, and whether a turn runs) and sends only when the first send is absent; when present it reports
+  `started`/`completed` and answers accepted. Outcomes are reported in the background with retries.
+- **Owner changes**: at a release (the change feed's `migrating: false`, or a ticket's `native`) every socket watching
+  the conversation gets one `agent.timeline.replacement` in magpie's epoch and the native feed (`Hub::owner_changed`);
+  at a reverse hand-over one replacement in the old child's epoch and the LU feed. None before
+  (`pigeon_legacy_replacements_total` counts them).
+- **Uploads**: while any conversation is legacy, the old route's 30 MB cap; from T0 to the gate (and while
+  `rollback_at` is set) the file is written into the old child first (its refusal is the answer,
+  `pigeon_upload_tee_failed_total`), then into magpie with the old path recorded, and the answer carries the old path.
+  From the gate magpie only; a send of `uploads/<id>/…` paths to a legacy conversation takes the send's ticket, then
+  per file an upload ticket of its own, the bytes from magpie (`GET /v1/uploads/{id}/raw`) into the old child, and
+  sends with the old paths; an upload ticket answered `native` sends natively with the magpie paths.
+- **REST**: a legacy conversation's warm before the gate is the old warm under a ticket (from the gate a hermit hint
+  only); its share links are listed, created and revoked through the old child (writes under tickets; magpie's 409
+  names the conversation of a revoke, and a share made through LU on this replica is remembered until the importer
+  copies it); its `files/raw` is the old child's.
+- **Creates** go through LU, born legacy, while `rollback_at` is set (DESIGN 9.10 step 1).
+- **View-as**: a token the old router signed is honoured while any conversation is legacy (spec 6.2).
+- **The move's input**: `GET /internal/switch/activity` on the ops port: `{generatedAt, persons: {email: {lastWarm,
+  lastUpload}}}` of this replica (the runner reads every replica).
+- **Counters** (DESIGN 9.9; registry prefix `pigeon`): `pigeon_switch_write_refused_total`, `pigeon_lu_errors_total`,
+  `pigeon_lu_503_total`, `pigeon_lu_401_total` (DESIGN's `lu_401_total`), `pigeon_upload_tee_failed_total`,
+  `pigeon_legacy_replacements_total`, the gauge `pigeon_lu_sockets`.
+- **Tests**: `tests/legacy.rs` against the LU contract rig (`tests/common/old.rs`, a fake old router speaking the
+  bridge's protocol for what pigeon relays, and the window's routes in `tests/common/model.rs`): a running old turn
+  streams and Stop ends it, every write once under a ticket closed on the outcome, one replacement per subscribed
+  socket at release and none before, the fence winning a send and the 409 re-route, a superseded repeat that gives the
+  old child exactly one turn, the tee until the gate and the copy-at-send after it (and one that loses to the fence),
+  an LU 401, a replica gone with LU sockets, the drain's request-free-first rule with an LU write outstanding, an old
+  view-as token, warm and activity, creates during a rollback and shares, and the 1 000-send fence-race fuzz. Frames a
+  test socket gets through LU are the fake old child's and are not checked against the frame corpus
+  (`Ws::relayed`).
+- **Recorded deviations**: the activity route is on the ops port, not 8080 (DESIGN 15.5 reads it through a
+  port-forward, and 8080 faces the edge); the old router recognises the LU by the pair token alone in `x-aviary-lu`
+  (WP-56's module compares the whole value), so switch-final 4.1's `<pod>/<socket id>` suffix is not sent; LU frames
+  are relayed as the old child sends them (the old projection, which the moved tab was showing).
 
 ## Deviations (recorded)
 
@@ -115,7 +182,7 @@ WP-50 plugs into `feeds`:
 - **`sub_agent`**: the vendored mapper has no `sub_agent` branch (`Task` is `unknown`, as the bridge showed it); the
   port keeps that.
 - **No 7.10 migration retry and no "being moved" sentence** (DESIGN 12 D14, D24); a `conversation_migrating` answer
-  is the unreachable sentence until WP-50's delegate routes such conversations.
+  with `route: "legacy"` is re-routed through the legacy upstream (WP-50).
 - **Live frames in M9 (`liveAfter`)**: off in this release (R36), so `timeline_poller` sends neither `liveAfter` nor
   `liveTurn`. When live frames are turned on (WP-17/WP-50, magpie 21.2), every `liveAfter` must go with `liveTurn`,
   the `LiveState.turnId` the frame number counts in: magpie answers 400 for either alone (frames are numbered per

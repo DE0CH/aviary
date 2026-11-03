@@ -7,7 +7,8 @@
 //!   `cargo metadata`; `deny.toml` bans the same with wrappers).
 //! - `crates/pigeon`, `crates/magpie`, `crates/supervisor` and `crates/*-api` never name `yyc`, `juicefs`,
 //!   `openrouter` or `gvisor` (but the wire field names of [`ALLOWED_WIRE_NAMES`]), and in `crates/pigeon` the literals
-//!   `jarvis` and `yyc` appear only in `src/paseo/compat.rs` ([`name_violations`]).
+//!   `jarvis` and `yyc` appear only in `src/paseo/compat.rs` and the switch window's `src/legacy/`
+//!   ([`name_violations`]).
 //! - No crate under `crates/` turns on `aviary-core`'s `testing` feature (`env::test_only`, the one optional read)
 //!   outside `[dev-dependencies]` ([`testing_feature_violations`]), so no service gets optional configuration.
 //! - No network call inside `aviary_pg::tx!` (platform 4.3): [`tx_rule`] generates the configuration of the second
@@ -51,6 +52,10 @@ pub const PIGEON_COMPAT_NAMES: &[&str] = &["jarvis", "yyc"];
 
 /// The one pigeon file allowed to hold [`PIGEON_COMPAT_NAMES`].
 pub const PIGEON_COMPAT_FILE: &str = "crates/pigeon/src/paseo/compat.rs";
+
+/// pigeon's switch-window module, which talks to the old stack in its own names (WP-50; deleted in A6) and may also
+/// hold [`PIGEON_COMPAT_NAMES`].
+pub const PIGEON_LEGACY_DIR: &str = "crates/pigeon/src/legacy/";
 
 /// The files allowed to read the process environment: `aviary-core::env` for every service, and sandboxd's own
 /// `env` module. sandboxd is a host daemon with a fixed memory budget that cannot link `aviary-core` (no tokio, no
@@ -140,7 +145,7 @@ pub fn name_violations(root: &Path) -> io::Result<Vec<Violation>> {
             let mut names: BTreeSet<&str> = DEPLOYMENT_NAMES.iter().copied().collect();
             if in_pigeon {
                 names.extend(PIGEON_COMPAT_NAMES.iter().copied());
-                if rel == PIGEON_COMPAT_FILE {
+                if rel == PIGEON_COMPAT_FILE || rel.starts_with(PIGEON_LEGACY_DIR) {
                     for n in PIGEON_COMPAT_NAMES {
                         names.remove(n);
                     }

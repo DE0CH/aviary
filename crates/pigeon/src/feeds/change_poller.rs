@@ -277,8 +277,14 @@ impl Poller {
     fn change(&mut self, conns: &[Arc<Conn>], ch: &Change, view: &View<'_>) {
         let c = ch.conversation_id;
         match &ch.body {
-            ChangeBody::ConversationUpserted { .. } | ChangeBody::ConversationRemoved { .. } => {
+            ChangeBody::ConversationUpserted { conversation } => {
                 self.list_change(conns, ch, view, None);
+                // the switch window: a change of owner is a release or a reverse hand-over
+                self.app.legacy().observe(&self.person, conversation);
+            }
+            ChangeBody::ConversationRemoved { .. } => {
+                self.list_change(conns, ch, view, None);
+                self.app.legacy().forget(&c);
             }
             ChangeBody::Turn(t) => {
                 let ended = t.phase != TurnPhase::Started;

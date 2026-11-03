@@ -284,3 +284,28 @@ fn clippy_config_rejects_env_reads_and_allows_the_marked_one() {
         None
     );
 }
+
+#[test]
+fn names_rule_allows_compat_names_in_pigeons_legacy_module_only() {
+    let root = scratch("legacy");
+    write(
+        &root,
+        "crates/pigeon/src/legacy/lu.rs",
+        "pub const H: &str = \"x-jarvis-view-as\"; // the old yyc router\n// gvisor\n",
+    );
+    write(&root, "crates/pigeon/src/feeds/mod.rs", "// talks to jarvis\n");
+    write(&root, "crates/pigeon/tests/legacy.rs", "// the old yyc stack\n");
+    let found: Vec<String> = name_violations(&root)
+        .unwrap()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(
+        found,
+        vec![
+            "crates/pigeon/src/feeds/mod.rs:1: names `jarvis`",
+            "crates/pigeon/src/legacy/lu.rs:2: names `gvisor`",
+            "crates/pigeon/tests/legacy.rs:1: names `yyc`",
+        ]
+    );
+}

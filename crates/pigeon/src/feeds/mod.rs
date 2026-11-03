@@ -480,6 +480,9 @@ impl Hub {
             })
             .await
             .clone();
+        if let Ok(list) = &r {
+            app.legacy().observe_all(&conn.person, &list.conversations);
+        }
         if r.is_err() {
             // callers already waiting on this cell share the failure; later ones call again
             let mut st = self.st();

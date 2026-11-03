@@ -22,6 +22,10 @@ use magpie_api::conversations::{
     OriginKind, RenameRequest, RunInfo, RunState, SandboxPhase, TitleSource, TurnRef,
 };
 use magpie_api::errors::{ErrorCode, ErrorInfo, Refusal};
+use magpie_api::legacy::{
+    LegacyPathRequest, Superseded, TicketDone, TicketKind, TicketOutcome, TicketRequest, TicketResponse, TicketRoute,
+    WindowState,
+};
 use magpie_api::rows::{Prompt, PromptsResponse, Row, RowItem, TimelinePage, TimelineQuery, UserItem};
 use magpie_api::server::{Ctx, Server};
 use magpie_api::turns::{
@@ -57,6 +61,33 @@ pub struct State {
     /// Held answers per route: the call waits until released.
     pub hold: HashMap<&'static str, Arc<Notify>>,
     pub epochs: u64,
+    /// The switch window (WP-50): `import_control.handover_allowed_at` and `rollback_at`.
+    pub gate: Option<Timestamp>,
+    pub rollback: Option<Timestamp>,
+    /// Every ticket taken: (ticket, conversation, kind, clientMessageId, outcome).
+    pub tickets: Vec<Ticket>,
+    /// Conversations whose next ticket call finds them released (the fence won): `native`, and owned from then.
+    pub release_at_ticket: std::collections::HashSet<Uuid>,
+    /// The next send ticket call answers with `supersedes` (settle ms).
+    pub supersede_next: Option<u64>,
+    /// The next ticket answer's `holdMs` (else 60 000).
+    pub hold_ms_next: Option<u64>,
+    /// A ticket of this kind for this conversation finds it released (the fence won between a send's ticket and its
+    /// copies).
+    pub release_on_kind: Option<(Uuid, TicketKind)>,
+    /// Upload bytes by id (`upload_raw`), and the recorded old paths.
+    pub upload_bytes: HashMap<Uuid, (String, axum::body::Bytes)>,
+    pub legacy_paths: Vec<(Uuid, String)>,
+}
+
+/// A ticket the model issued.
+#[derive(Debug, Clone)]
+pub struct Ticket {
+    pub id: Uuid,
+    pub conversation: Uuid,
+    pub kind: TicketKind,
+    pub cmid: Option<String>,
+    pub outcome: Option<TicketOutcome>,
 }
 
 #[derive(Clone, Default)]
@@ -195,6 +226,54 @@ impl Model {
         drop(st);
         self.bump();
         id
+    }
+
+    /// A legacy conversation's writes answer 409 `route: "legacy"` (magpie's migrating table).
+    fn not_legacy(&self, id: Uuid) -> Result<(), ApiError> {
+        if self.st().convs.get(&id).is_some_and(|c| c.conv.migrating) {
+            return Err(Refusal::legacy_route().into());
+        }
+        Ok(())
+    }
+
+    /// Sets a conversation's owner (`true`: the old stack's) with its list change, as the importer's release or
+    /// reverse hand-over does.
+    pub fn set_migrating(&self, id: Uuid, migrating: bool) {
+        let mut st = self.st();
+        st.convs.get_mut(&id).unwrap().conv.migrating = migrating;
+        Self::upsert(&mut st, id);
+        drop(st);
+        self.bump();
+    }
+
+    /// A legacy conversation of `person` (as the bulk import makes it).
+    pub fn add_legacy(&self, person: &str, title: Option<&str>) -> Uuid {
+        let id = self.add(person, title);
+        self.set_migrating(id, true);
+        id
+    }
+
+    /// The importer's release: only with no open ticket (else `false`, nothing changes).
+    pub fn try_release(&self, id: Uuid) -> bool {
+        let mut st = self.st();
+        if st.tickets.iter().any(|t| t.conversation == id && t.outcome.is_none()) {
+            return false;
+        }
+        st.convs.get_mut(&id).unwrap().conv.migrating = false;
+        Self::upsert(&mut st, id);
+        drop(st);
+        self.bump();
+        true
+    }
+
+    /// The tickets of a conversation.
+    pub fn tickets_of(&self, id: Uuid) -> Vec<Ticket> {
+        self.st()
+            .tickets
+            .iter()
+            .filter(|t| t.conversation == id)
+            .cloned()
+            .collect()
     }
 
     pub fn with_conv<R>(&self, id: Uuid, f: impl FnOnce(&mut Conv) -> R) -> R {
@@ -507,6 +586,7 @@ impl Server for Model {
         self.record("rename_conversation", &ctx)?;
         Self::read_only(&ctx)?;
         self.mine(&ctx, id)?;
+        self.not_legacy(id)?;
         if body.title.trim().is_empty() {
             return Err(refusal(ErrorCode::EmptyTitle, "empty"));
         }
@@ -521,6 +601,7 @@ impl Server for Model {
         self.record("delete_conversation", &ctx)?;
         Self::read_only(&ctx)?;
         self.mine(&ctx, id)?;
+        self.not_legacy(id)?;
         self.edit(id, |c| c.deleted_at = Some(now()));
         Ok(self.st().convs[&id].conv.clone())
     }
@@ -529,6 +610,7 @@ impl Server for Model {
         self.record("restore_conversation", &ctx)?;
         Self::read_only(&ctx)?;
         self.mine(&ctx, id)?;
+        self.not_legacy(id)?;
         self.edit(id, |c| c.deleted_at = None);
         Ok(self.st().convs[&id].conv.clone())
     }
@@ -537,6 +619,7 @@ impl Server for Model {
         self.record("purge_conversation", &ctx)?;
         Self::read_only(&ctx)?;
         self.mine(&ctx, id)?;
+        self.not_legacy(id)?;
         let mut st = self.st();
         let c = st.convs.remove(&id).unwrap();
         Self::push_change(
@@ -556,6 +639,7 @@ impl Server for Model {
         self.record("send_turn", &ctx)?;
         self.held("send_turn").await;
         self.mine(&ctx, id)?;
+        self.not_legacy(id)?;
         let mut st = self.st();
         st.sent.push((id, body.clone()));
         let c = st.convs.get_mut(&id).unwrap();
@@ -603,6 +687,7 @@ impl Server for Model {
     async fn cancel_turn(&self, ctx: Ctx, id: Uuid) -> Result<CancelResponse, ApiError> {
         self.record("cancel_turn", &ctx)?;
         self.mine(&ctx, id)?;
+        self.not_legacy(id)?;
         let turn = self.st().convs[&id].conv.turn.as_ref().map(|t| t.id);
         if turn.is_some() {
             self.end_turn(id, TurnPhase::Canceled, None);
@@ -721,6 +806,9 @@ impl Server for Model {
         let bytes = axum::body::to_bytes(body, 200 << 20).await.unwrap();
         self.st().uploads.push((meta.content_type.clone(), bytes.len()));
         let id = Uuid::new_v4();
+        self.st()
+            .upload_bytes
+            .insert(id, (meta.content_type.clone(), bytes.clone()));
         Ok(UploadResponse {
             upload_id: id,
             path: format!("uploads/{id}/{}", meta.name),
@@ -730,6 +818,143 @@ impl Server for Model {
             width: None,
             height: None,
         })
+    }
+
+    async fn revoke_share(&self, ctx: Ctx, _share_id: String) -> Result<(), ApiError> {
+        self.record("revoke_share", &ctx)?;
+        Err(refusal(ErrorCode::NotFound, "not found"))
+    }
+
+    async fn legacy_window(&self, ctx: Ctx) -> Result<WindowState, ApiError> {
+        self.record("legacy_window", &ctx)?;
+        Ok(self.window(&ctx))
+    }
+
+    async fn legacy_ticket(&self, ctx: Ctx, id: Uuid, body: TicketRequest) -> Result<TicketResponse, ApiError> {
+        self.record("legacy_ticket", &ctx)?;
+        self.held("legacy_ticket").await;
+        self.ticket(&ctx, id, &body)
+    }
+
+    async fn legacy_ticket_done(&self, ctx: Ctx, ticket: Uuid, body: TicketDone) -> Result<(), ApiError> {
+        self.record("legacy_ticket_done", &ctx)?;
+        let mut st = self.st();
+        let Some(t) = st.tickets.iter_mut().find(|t| t.id == ticket) else {
+            return Err(refusal(ErrorCode::NotFound, "not found"));
+        };
+        if t.outcome.is_none() && t.kind.closes_on(body.outcome) {
+            t.outcome = Some(body.outcome);
+        }
+        Ok(())
+    }
+
+    async fn upload_legacy_path(&self, ctx: Ctx, upload_id: Uuid, body: LegacyPathRequest) -> Result<(), ApiError> {
+        self.record("upload_legacy_path", &ctx)?;
+        self.st().legacy_paths.push((upload_id, body.legacy_path));
+        Ok(())
+    }
+
+    async fn upload_raw(&self, ctx: Ctx, upload_id: Uuid) -> Result<axum::response::Response, ApiError> {
+        self.record("upload_raw", &ctx)?;
+        let Some((mime, bytes)) = self.st().upload_bytes.get(&upload_id).cloned() else {
+            return Err(refusal(ErrorCode::NotFound, "not found"));
+        };
+        Ok(axum::response::Response::builder()
+            .header("content-type", mime)
+            .body(Body::from(bytes))
+            .unwrap())
+    }
+}
+
+impl Model {
+    fn window(&self, ctx: &Ctx) -> WindowState {
+        let st = self.st();
+        let person = ctx.person.clone().unwrap_or_default();
+        WindowState {
+            handover_allowed_at: st.gate,
+            rollback_at: st.rollback,
+            any_legacy: st.convs.values().any(|c| c.conv.migrating),
+            person_legacy: st
+                .convs
+                .values()
+                .filter(|c| c.person == person && c.conv.migrating)
+                .count() as u64,
+        }
+    }
+
+    fn ticket(&self, ctx: &Ctx, id: Uuid, body: &TicketRequest) -> Result<TicketResponse, ApiError> {
+        let mut st = self.st();
+        match st.convs.get(&id) {
+            Some(c) if Some(&c.person) == ctx.person.as_ref() => {}
+            _ => return Err(refusal(ErrorCode::NotFound, "not found")),
+        }
+        if body.client_message_id.is_some() && body.kind != TicketKind::Send {
+            return Err(refusal(ErrorCode::BadRequest, "only a send carries a clientMessageId"));
+        }
+        let on_kind = st.release_on_kind.is_some_and(|(c, k)| c == id && k == body.kind);
+        if on_kind {
+            st.release_on_kind = None;
+        }
+        if st.release_at_ticket.remove(&id) || on_kind {
+            st.convs.get_mut(&id).unwrap().conv.migrating = false;
+            Self::upsert(&mut st, id);
+        }
+        if !st.convs[&id].conv.migrating {
+            drop(st);
+            self.bump();
+            return Ok(TicketResponse {
+                route: TicketRoute::Native,
+                ticket: None,
+                issued_at: None,
+                hold_ms: None,
+                supersedes: None,
+            });
+        }
+        let supersedes = if body.kind == TicketKind::Send {
+            st.supersede_next.take().and_then(|settle_ms| {
+                let open = st
+                    .tickets
+                    .iter()
+                    .rev()
+                    .find(|t| t.conversation == id && t.cmid == body.client_message_id && t.outcome.is_none())?;
+                Some(Superseded {
+                    ticket: open.id,
+                    settle_ms,
+                })
+            })
+        } else {
+            None
+        };
+        let t = Ticket {
+            id: Uuid::new_v4(),
+            conversation: id,
+            kind: body.kind,
+            cmid: body.client_message_id.clone(),
+            outcome: None,
+        };
+        let ticket = t.id;
+        st.tickets.push(t);
+        let hold_ms = st.hold_ms_next.take().unwrap_or(60_000);
+        Ok(TicketResponse {
+            route: TicketRoute::Legacy,
+            ticket: Some(ticket),
+            issued_at: Some(now()),
+            hold_ms: Some(hold_ms),
+            supersedes,
+        })
+    }
+}
+
+impl Model {
+    /// Waits until the ticket list satisfies `pred` (outcomes are reported in the background).
+    pub async fn wait_tickets(&self, pred: impl Fn(&[Ticket]) -> bool) {
+        for _ in 0..500 {
+            if pred(&self.st().tickets) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("tickets never matched: {:?}", self.st().tickets);
     }
 }
 

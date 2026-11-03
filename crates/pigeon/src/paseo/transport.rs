@@ -67,6 +67,8 @@ pub struct Viewer {
     pub admin: String,
     /// The view session.
     pub session: String,
+    /// When the view ends (the token's `e`), seconds: the legacy upstream signs the same claims for the old router.
+    pub exp: i64,
 }
 
 #[derive(Debug)]
@@ -456,6 +458,12 @@ impl Conn {
         }
     }
 
+    /// The `appVersion` the client's hello named (empty before it).
+    #[must_use]
+    pub fn app_version(&self) -> String {
+        self.st().app_version.clone()
+    }
+
     pub(crate) fn hello(&self) -> bool {
         self.st().hello
     }
@@ -554,6 +562,7 @@ fn person_of(id: &Identity) -> Option<(String, Option<Viewer>, i64)> {
             Some(Viewer {
                 admin: v.admin.email.clone(),
                 session: v.session.clone(),
+                exp: v.exp,
             }),
             v.exp.min(v.admin.exp),
         )),

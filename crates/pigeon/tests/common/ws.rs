@@ -26,11 +26,14 @@ pub struct Ws {
     /// Everything this socket sent and received (frames sent with [`Ws::raw_invalid`] aside).
     seen: Vec<Record>,
     next_id: u64,
+    /// Checked against the frame corpus on drop (off for a socket fed through the switch window's legacy upstream:
+    /// those frames are the old child's own shapes, relayed).
+    check: bool,
 }
 
 impl Drop for Ws {
     fn drop(&mut self) {
-        if !std::thread::panicking() {
+        if self.check && !std::thread::panicking() {
             super::corpus::check(&self.seen);
         }
     }
@@ -54,6 +57,7 @@ impl Ws {
                 log: None,
                 seen: Vec::new(),
                 next_id: 0,
+                check: true,
             }),
             Err(tokio_tungstenite::tungstenite::Error::Http(r)) => Err(r.status().as_u16()),
             Err(e) => panic!("connect: {e}"),
@@ -70,6 +74,13 @@ impl Ws {
         .await;
         let info = ws.next_session("status").await;
         (ws, info)
+    }
+
+    /// No corpus check on drop: a socket served through the legacy upstream, whose frames are the old child's.
+    #[must_use]
+    pub fn relayed(mut self) -> Self {
+        self.check = false;
+        self
     }
 
     pub fn record(mut self, log: &Arc<Mutex<Vec<Record>>>, case: &str) -> Self {

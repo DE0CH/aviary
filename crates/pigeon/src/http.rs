@@ -742,9 +742,18 @@ async fn warm(app: &App, body: Body, id: &Identity) -> Response {
     let Some(person) = id.subject().map(str::to_owned) else {
         return ok;
     };
-    let Ok(conversation) = warm_target(small_body(body, SMALL_BODY).await.as_deref()) else {
+    // the move's input (DESIGN 9.3): who is typing
+    app.legacy().0.activity.warm(&person);
+    let raw = small_body(body, SMALL_BODY).await;
+    let Ok(conversation) = warm_target(raw.as_deref()) else {
         return ok;
     };
+    // a legacy conversation before the gate: the old stack's warm, under a ticket
+    if let (Some(c), Some(raw)) = (conversation, raw.clone())
+        && app.legacy().warm(app, id, c, raw).await
+    {
+        return ok;
+    }
     if app.0.warm.take(&person, conversation) {
         let hermit = app.0.hermit.clone();
         tokio::spawn(async move {

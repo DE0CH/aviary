@@ -1560,7 +1560,11 @@ impl Server for FakeMagpie {
     }
 
     async fn legacy_window(&self, ctx: Ctx) -> Result<WindowState, ApiError> {
-        scripted!(self, "legacy_window", ctx, json!({}), None, None, typed)
+        // unscripted: a deployment outside the switch window (nothing legacy), which every pigeon upload reads
+        match self.record("legacy_window", &ctx, json!({}), None, None, None) {
+            Some(r) => typed(&r, "legacy_window"),
+            None => Ok(WindowState::closed()),
+        }
     }
 
     async fn upload_raw(&self, ctx: Ctx, upload_id: Uuid) -> Result<Response, ApiError> {
