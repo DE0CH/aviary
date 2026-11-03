@@ -443,12 +443,85 @@ fn every_opcode_against_both_scopes() {
     // the root lists the union
     let r = s.call(op::READDIR, 1, PID, &body::readdir(0));
     assert_eq!(out::names(&r), [".", "..", "brand-new", "projects", "sessions"]);
+
+    // every opcode of the table against a file and a directory of each scope
+    let lpath = "sessions/13.json";
+    let r = s.call(
+        op::CREATE,
+        ws,
+        PID,
+        &body::create("o.json", O_RDWR | libc::O_CREAT, 0o600),
+    );
+    ok(&r, "create o.json");
+    let mf = out::node(&r);
+    for (scope, file, dir, name) in [("magpie", mf, ws, "o.json"), ("local", lf, sessions, "13.json")] {
+        let what = |o: u32| format!("{scope} {}", opname(o));
+        let r = s.call(op::OPEN, file, PID, &body::open(O_RDWR | libc::O_APPEND));
+        ok(&r, &what(op::OPEN));
+        let h = out::open_fh(&r);
+        ok(&s.call(op::FLUSH, file, PID, &body::fh(h)), &what(op::FLUSH));
+        ok(&s.call(op::FSYNC, file, PID, &body::fh(h)), &what(op::FSYNC));
+        ok(&s.call(op::GETATTR, file, PID, &body::getattr()), &what(op::GETATTR));
+        ok(&s.call(op::ACCESS, file, PID, &body::fh(0)), &what(op::ACCESS));
+        assert_eq!(
+            s.call(op::GETXATTR, file, PID, &body::fh(0)).errno,
+            libc::ENODATA,
+            "{}",
+            what(op::GETXATTR)
+        );
+        ok(&s.call(op::LISTXATTR, file, PID, &body::fh(0)), &what(op::LISTXATTR));
+        for o in [op::SETXATTR, op::REMOVEXATTR] {
+            assert_eq!(s.call(o, file, PID, &body::fh(0)).errno, libc::ENOTSUP, "{}", what(o));
+        }
+        assert_eq!(
+            s.call(op::FALLOCATE, file, PID, &body::fh(h)).errno,
+            libc::EOPNOTSUPP,
+            "{}",
+            what(op::FALLOCATE)
+        );
+        for o in [op::GETLK, op::SETLK, op::SETLKW, op::READDIRPLUS] {
+            assert_eq!(s.call(o, file, PID, &body::fh(h)).errno, libc::ENOSYS, "{}", what(o));
+        }
+        assert_eq!(s.call(op::LINK, file, PID, &body::link(file, "h")).errno, libc::EPERM);
+        ok(&s.call(op::RELEASE, file, PID, &body::fh(h)), &what(op::RELEASE));
+        ok(&s.call(op::OPENDIR, dir, PID, &body::open(0)), &what(op::OPENDIR));
+        ok(&s.call(op::READDIR, dir, PID, &body::readdir(0)), &what(op::READDIR));
+        ok(&s.call(op::FSYNCDIR, dir, PID, &body::fh(0)), &what(op::FSYNCDIR));
+        ok(&s.call(op::RELEASEDIR, dir, PID, &body::fh(0)), &what(op::RELEASEDIR));
+        // RENAME2 without flags renames; NOREPLACE/EXCHANGE are refused (2.5)
+        ok(
+            &s.call(op::RENAME2, dir, PID, &body::rename2(dir, 0, name, "r2")),
+            &what(op::RENAME2),
+        );
+        assert_eq!(out::node(&s.call(op::LOOKUP, dir, PID, &body::name("r2"))), file);
+        assert_eq!(
+            s.call(op::RENAME2, dir, PID, &body::rename2(dir, 1, "r2", name)).errno,
+            libc::EINVAL,
+            "{}",
+            what(op::RENAME2)
+        );
+        ok(
+            &s.call(op::RENAME2, dir, PID, &body::rename2(dir, 0, "r2", name)),
+            &what(op::RENAME2),
+        );
+        // FORGET and BATCH_FORGET get no reply; the next request is served
+        s.submit(op::FORGET, file, PID, &1u64.to_le_bytes());
+        s.submit(op::BATCH_FORGET, 0, PID, &[0u8; 8]);
+        assert_eq!(
+            out::node(&s.call(op::LOOKUP, dir, PID, &body::name(name))),
+            file,
+            "{scope} after FORGET"
+        );
+    }
+    assert!(w.dir.join("local").join(lpath).exists());
+    assert!(w.data("projects/-workspace/o.json").is_some());
     assert_eq!(
         s.call(op::BATCH_FORGET + 50, 1, PID, &[]).errno,
         libc::ENOSYS,
         "{}",
         opname(op::BATCH_FORGET + 50)
     );
+    ok(&s.call(op::DESTROY, 0, PID, &[]), "destroy");
 }
 
 /// 9.9 / 22 item 4: a "kill" at each fault point; the next instance (the keeper's connection) replays the slot.
@@ -484,6 +557,8 @@ fn journal_replay_at_each_fault_point() {
             );
             let (t, fh) = (out::node(&r), out::create_fh(&r));
             ok(&s.call(op::WRITE, t, PID, &body::write(fh, 0, b"one\n")), "first write");
+            // the previous request's worker has passed its own fault points (it replies before reply-written)
+            assert!(core.settle(Duration::from_secs(5)));
             armed.store(true, Ordering::SeqCst);
             let b = match opcode {
                 op::WRITE => body::write(fh, 4, b"two\n"),
@@ -524,7 +599,8 @@ fn journal_replay_at_each_fault_point() {
                 assert_eq!(
                     s.refused(u),
                     1,
-                    "the replay's reply is refused: it was delivered before the kill"
+                    "{}: the replay's reply is refused: it was delivered before the kill",
+                    opname(opcode)
                 );
             }
             // node ids survive: the file is still the same node
@@ -998,4 +1074,385 @@ fn the_end_report_waits_for_the_uuids_magpie_acknowledged() {
     let r =
         w.rt.block_on(async { tokio::time::timeout(Duration::from_secs(5), waiting).await });
     assert_eq!(r.unwrap().unwrap(), Stored::Stuck);
+}
+
+/// The node of a path that exists in magpie (LOOKUP from the root).
+fn lookup(w: &World, path: &str) -> u64 {
+    let mut node = 1;
+    for part in path.split('/') {
+        let r = w.sentry.call(op::LOOKUP, node, PID, &body::name(part));
+        ok(&r, &format!("lookup {part}"));
+        node = out::node(&r);
+    }
+    node
+}
+
+fn lines(n: usize) -> Vec<u8> {
+    let line = b"{\"x\":\"0123456789012345678901234567890123456789012345678901234567890123456789\"}\n";
+    line.iter().copied().cycle().take(n - n % line.len()).collect()
+}
+
+/// 9.5 item 6 / magpie 6.10: an `O_APPEND` write carries `append`, so a write at a size magpie does not have (here
+/// another writer made magpie's file longer than the sentry thinks) is refused with `offset_mismatch` and goes to the
+/// repair, which finds magpie longer than the cache: the fork path (EIO, the agent stopped), never an overwrite.
+#[test]
+fn an_append_at_a_stale_offset_is_refused_not_overwritten() {
+    let w = world();
+    let fs = w.fs(fast());
+    let forked = Arc::new(Mutex::new(Vec::new()));
+    let fk = forked.clone();
+    let hooks = Hooks {
+        forked: Arc::new(move |m| fk.lock().unwrap().push(m)),
+        ..Hooks::default()
+    };
+    let _core = w.start(&fs, Uuid::new_v4(), false, hooks);
+    let s = &w.sentry;
+    let ws = workspace_dir(&w);
+    let r = s.call(
+        op::CREATE,
+        ws,
+        PID,
+        &body::create("t.jsonl", libc::O_WRONLY | libc::O_APPEND | libc::O_CREAT, 0o600),
+    );
+    let (t, fh) = (out::node(&r), out::create_fh(&r));
+    ok(
+        &s.call(op::WRITE, t, PID, &body::write(fh, 0, b"one\n")),
+        "first append",
+    );
+    let last = w.magpie.script().calls_to("cc_write").pop().unwrap();
+    assert!(
+        last.query.as_ref().and_then(|q| q.get("append")).is_some(),
+        "an O_APPEND write is sent as an append: {:?}",
+        last.query
+    );
+    w.magpie.seed_file(w.cid, "projects/-workspace/t.jsonl", b"one\nXX\n");
+    assert_eq!(
+        s.call(op::WRITE, t, PID, &body::write(fh, 4, b"two\n")).errno,
+        libc::EIO
+    );
+    assert_eq!(
+        w.data("projects/-workspace/t.jsonl").unwrap(),
+        b"one\nXX\n",
+        "magpie's bytes are not overwritten"
+    );
+    assert_eq!(forked.lock().unwrap().len(), 1, "the agent is stopped");
+    // a handle without O_APPEND keeps pwrite semantics (no append flag)
+    let r = s.call(op::OPEN, t, PID, &body::open(O_RDWR));
+    let h = out::open_fh(&r);
+    w.magpie.seed_file(w.cid, "projects/-workspace/t.jsonl", b"one\n");
+    let _ = s.call(op::READ, t, PID, &body::read(h, 0, 1));
+    let before = w.calls("cc_write");
+    let _ = s.call(op::WRITE, t, PID, &body::write(h, 0, b"ONE\n"));
+    let q = w.magpie.script().calls_to("cc_write")[before].query.clone().unwrap();
+    assert!(q.get("append").is_none(), "{q:?}");
+}
+
+/// 9.5 item 7: a `lease_lost` answered to a repair's write runs the lease loop like any request's: the hook, a new
+/// lease, and magpie-scope requests served again (not EIO for good).
+#[test]
+fn a_lease_lost_on_a_repair_write_runs_the_lease_loop() {
+    let w = world();
+    let fs = w.fs(fast());
+    let lost = Arc::new(AtomicUsize::new(0));
+    let regained = Arc::new(AtomicUsize::new(0));
+    let (l, g) = (lost.clone(), regained.clone());
+    let hooks = Hooks {
+        lease_lost: Arc::new(move || {
+            l.fetch_add(1, Ordering::SeqCst);
+        }),
+        lease_regained: Arc::new(move |_| {
+            g.fetch_add(1, Ordering::SeqCst);
+        }),
+        ..Hooks::default()
+    };
+    let _core = w.start(&fs, Uuid::new_v4(), false, hooks);
+    let s = &w.sentry;
+    let ws = workspace_dir(&w);
+    let r = s.call(
+        op::CREATE,
+        ws,
+        PID,
+        &body::create("t.jsonl", O_RDWR | libc::O_CREAT, 0o600),
+    );
+    let (t, fh) = (out::node(&r), out::create_fh(&r));
+    ok(&s.call(op::WRITE, t, PID, &body::write(fh, 0, b"one\n")), "1");
+    ok(&s.call(op::WRITE, t, PID, &body::write(fh, 4, b"two\n")), "2");
+    // magpie loses the second write; the repair's first write (at magpie's size, 4) is answered lease_lost
+    w.magpie.seed_file(w.cid, "projects/-workspace/t.jsonl", b"one\n");
+    let once = Arc::new(AtomicBool::new(true));
+    w.magpie.script().handle("cc_write", move |c| {
+        let off = c.query.as_ref().and_then(|q| q.get("offset")).cloned();
+        let at4 = off.is_some_and(|v| v.as_u64() == Some(4) || v.as_str() == Some("4"));
+        (at4 && once.swap(false, Ordering::SeqCst))
+            .then(|| aviary_fakes::script::Reply::error(409, "lease_lost", "another lease"))
+    });
+    assert_eq!(
+        s.call(op::WRITE, t, PID, &body::write(fh, 8, b"three\n")).errno,
+        libc::EIO
+    );
+    assert_eq!(lost.load(Ordering::SeqCst), 1, "the lease_lost hook ran");
+    for _ in 0..300 {
+        if regained.load(Ordering::SeqCst) == 1 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(regained.load(Ordering::SeqCst), 1, "a new lease was taken");
+    ok(
+        &s.call(op::MKDIR, ws, PID, &body::mkdir("after", 0o700)),
+        "magpie scope is served again",
+    );
+}
+
+/// 9.5 item 4: a 500 from magpie is not definitive: the write is retried with the same `opId` and stored once.
+#[test]
+fn a_transient_500_on_cc_write_is_retried() {
+    let w = world();
+    let fs = w.fs(fast());
+    let _core = w.start(&fs, Uuid::new_v4(), false, Hooks::default());
+    let s = &w.sentry;
+    let ws = workspace_dir(&w);
+    let r = s.call(
+        op::CREATE,
+        ws,
+        PID,
+        &body::create("t.jsonl", O_RDWR | libc::O_APPEND | libc::O_CREAT, 0o600),
+    );
+    let (t, fh) = (out::node(&r), out::create_fh(&r));
+    let before = w.calls("cc_write");
+    w.magpie.script().once(
+        "cc_write",
+        aviary_fakes::script::Reply::error(500, "internal", "a database error"),
+    );
+    ok(&s.call(op::WRITE, t, PID, &body::write(fh, 0, b"one\n")), "after a 500");
+    assert_eq!(w.data("projects/-workspace/t.jsonl").unwrap(), b"one\n");
+    let calls = w.magpie.script().calls_to("cc_write");
+    assert_eq!(calls.len() - before, 2, "one refused attempt, one retry");
+    let ids: Vec<_> = calls[before..]
+        .iter()
+        .map(|c| c.query.as_ref().unwrap()["opId"].clone())
+        .collect();
+    assert_eq!(ids[0], ids[1], "the retry keeps the opId");
+}
+
+/// `Core::start` never replays or drops node ids against a tree that did not load: a 500 on cc/tree is retried
+/// before the replay; a definitive failure fails the start and leaves the node ids alone.
+#[test]
+fn a_start_waits_for_the_tree_and_never_runs_on_an_empty_one() {
+    let w = world();
+    let fs = w.fs(fast());
+    let boot = Uuid::new_v4();
+    super::store_boot_id(&w.dir.join("state"), boot).unwrap();
+    let armed = Arc::new(AtomicBool::new(false));
+    let a = armed.clone();
+    let hooks = Hooks {
+        fault: Some(Arc::new(move |p, h| {
+            p == Point::CallAnswered && h.opcode == op::RENAME && a.swap(false, Ordering::SeqCst)
+        })),
+        ..Hooks::default()
+    };
+    let core = w.start(&fs, boot, false, hooks);
+    let s = &w.sentry;
+    let ws = workspace_dir(&w);
+    let r = s.call(
+        op::CREATE,
+        ws,
+        PID,
+        &body::create("t.jsonl", O_RDWR | libc::O_CREAT, 0o600),
+    );
+    let t = out::node(&r);
+    assert!(core.settle(Duration::from_secs(5)));
+    armed.store(true, Ordering::SeqCst);
+    let u = s.submit(op::RENAME, ws, PID, &body::rename(ws, "t.jsonl", "u.jsonl"));
+    for _ in 0..500 {
+        if core.died() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(core.died());
+    // a definitive answer to the tree: the start fails, nothing is dropped
+    w.magpie
+        .script()
+        .once("cc_tree", aviary_fakes::script::Reply::error(404, "not_found", "x"));
+    let lease = w.lease();
+    assert!(w.rt.block_on(fs.serve(w.sentry.conn(), boot, true, &lease)).is_err());
+    let log = std::fs::read_to_string(super::nodes::log_path(&w.dir.join("state"))).unwrap();
+    assert!(!log.contains("drop"), "no node id dropped: {log}");
+    // a 500 first, then the tree: the replay sees magpie's state
+    w.magpie
+        .script()
+        .once("cc_tree", aviary_fakes::script::Reply::error(500, "internal", "x"));
+    let _core2 = w.start(&fs, boot, true, Hooks::default());
+    let r = s.wait(u, Duration::from_secs(10)).expect("the rename completes");
+    assert_eq!(r.errno, 0, "the replayed rename succeeds");
+    assert_eq!(out::node(&s.call(op::LOOKUP, ws, PID, &body::name("u.jsonl"))), t);
+    let log = std::fs::read_to_string(super::nodes::log_path(&w.dir.join("state"))).unwrap();
+    assert!(!log.contains("drop"), "no node id dropped: {log}");
+}
+
+/// 9.9 for local scope: a replayed mutation whose effect the killed instance already made answers success.
+#[test]
+fn journal_replay_at_each_fault_point_local_scope() {
+    for point in [Point::ReadReturned, Point::CallAnswered, Point::ReplyWritten] {
+        for opcode in [op::MKDIR, op::CREATE, op::RENAME, op::UNLINK, op::RMDIR, op::SYMLINK] {
+            let w = world();
+            let fs = w.fs(fast());
+            let boot = Uuid::new_v4();
+            super::store_boot_id(&w.dir.join("state"), boot).unwrap();
+            let armed = Arc::new(AtomicBool::new(false));
+            let a = armed.clone();
+            let hooks = Hooks {
+                fault: Some(Arc::new(move |p, h| {
+                    p == point && h.opcode == opcode && a.swap(false, Ordering::SeqCst)
+                })),
+                ..Hooks::default()
+            };
+            let core = w.start(&fs, boot, false, hooks);
+            let s = &w.sentry;
+            let r = s.call(op::MKDIR, 1, PID, &body::mkdir("sessions", 0o700));
+            let d = out::node(&r);
+            let r = s.call(
+                op::CREATE,
+                d,
+                PID,
+                &body::create("a.json", O_RDWR | libc::O_CREAT, 0o600),
+            );
+            let f = out::node(&r);
+            ok(&s.call(op::RELEASE, f, PID, &body::fh(out::create_fh(&r))), "release");
+            ok(&s.call(op::MKDIR, d, PID, &body::mkdir("old.lock", 0o700)), "mkdir");
+            // the previous request's worker has passed its own fault points (it replies before reply-written)
+            assert!(core.settle(Duration::from_secs(5)));
+            armed.store(true, Ordering::SeqCst);
+            let b = match opcode {
+                op::MKDIR => body::mkdir("x.lock", 0o700),
+                op::CREATE => body::create("n.json", O_RDWR | libc::O_CREAT | libc::O_EXCL, 0o600),
+                op::RENAME => body::rename(d, "a.json", "b.json"),
+                op::UNLINK => body::name("a.json"),
+                op::RMDIR => body::name("old.lock"),
+                _ => body::symlink("ln", "a.json"),
+            };
+            let u = s.submit(opcode, d, PID, &b);
+            for _ in 0..500 {
+                if core.died() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(core.died(), "{point:?} {}: the fault fired", opname(opcode));
+            let _core2 = w.start(&fs, boot, true, Hooks::default());
+            let r = s
+                .wait(u, Duration::from_secs(10))
+                .expect("the caller's syscall completes");
+            let what = format!("{point:?} {}", opname(opcode));
+            if point == Point::ReplyWritten {
+                assert_eq!(r.errno, 0, "{what}: delivered before the kill");
+                assert_eq!(s.refused(u), 1, "{what}: the replay's reply is refused");
+            } else {
+                assert_eq!(r.errno, 0, "{what}: one success, not EEXIST/ENOENT");
+            }
+            let l = w.dir.join("local/sessions");
+            match opcode {
+                op::MKDIR => assert!(l.join("x.lock").is_dir(), "{what}"),
+                op::CREATE => assert!(l.join("n.json").is_file(), "{what}"),
+                op::RENAME => {
+                    assert!(l.join("b.json").is_file() && !l.join("a.json").exists(), "{what}");
+                    assert_eq!(
+                        out::node(&s.call(op::LOOKUP, d, PID, &body::name("b.json"))),
+                        f,
+                        "{what}"
+                    );
+                }
+                op::UNLINK => assert!(!l.join("a.json").exists(), "{what}"),
+                op::RMDIR => assert!(!l.join("old.lock").exists(), "{what}"),
+                _ => assert!(l.join("ln").is_symlink(), "{what}"),
+            }
+        }
+    }
+}
+
+/// 9.7: one whole-file fetch per node however many READs miss the cache at once.
+#[test]
+fn concurrent_cache_misses_share_one_fetch() {
+    let w = world();
+    let data = lines(3 << 20);
+    w.magpie.seed_file(w.cid, "projects/-workspace/big.jsonl", &data);
+    let fs = w.fs(fast());
+    let _core = w.start(&fs, Uuid::new_v4(), false, Hooks::default());
+    let s = &w.sentry;
+    let t = lookup(&w, "projects/-workspace/big.jsonl");
+    let hold = Hold::new();
+    let f = w.magpie.faults().times("cc_file", FaultKind::Hold(hold.clone()), 1);
+    let offs = [0u64, 1 << 20, 2 << 20, (3 << 20) - 9000];
+    let us: Vec<u64> = offs
+        .iter()
+        .enumerate()
+        .map(|(i, off)| {
+            s.submit(
+                op::READ,
+                t,
+                PID + 1 + u32::try_from(i).unwrap(),
+                &body::read(0, *off, 4096),
+            )
+        })
+        .collect();
+    assert!(w.rt.block_on(hold.wait_held(1, Duration::from_secs(5))));
+    std::thread::sleep(Duration::from_millis(100));
+    hold.release();
+    for (u, off) in us.iter().zip(offs) {
+        let r = s.wait(*u, Duration::from_secs(10)).expect("the read completes");
+        ok(&r, "read");
+        let off = usize::try_from(off).unwrap();
+        let end = (off + 4096).min(data.len());
+        assert_eq!(r.payload, &data[off..end]);
+    }
+    w.magpie.faults().remove(f);
+    assert_eq!(w.calls("cc_file"), 1, "one fetch for every miss");
+    ok(&s.call(op::READ, t, PID, &body::read(0, 0, 10)), "now cached");
+    assert_eq!(w.calls("cc_file"), 1);
+}
+
+/// 9.7: a write that lands while the main transcript's prefetch streams is applied to the fetched copy, so the
+/// pinned transcript is cached at the new version when the prefetch ends (not left uncached until the next READ).
+#[test]
+fn a_write_during_the_prefetch_leaves_the_main_transcript_cached() {
+    let w = world();
+    let data = lines(2 << 20);
+    w.magpie.seed_file(w.cid, "projects/-workspace/s.jsonl", &data);
+    w.magpie.set_provider_session(w.cid, "s");
+    // the prefetch's answer is the file as magpie read it, delivered 1.5 s later (after the write below)
+    let (first, old) = (Arc::new(AtomicBool::new(true)), data.clone());
+    w.magpie.script().handle("cc_file", move |_| {
+        first
+            .swap(false, Ordering::SeqCst)
+            .then(|| aviary_fakes::script::Reply::bytes(200, old.clone()))
+    });
+    let f = w
+        .magpie
+        .faults()
+        .times("cc_file", FaultKind::Latency(Duration::from_millis(1500)), 1);
+    let fs = w.fs(fast());
+    let _core = w.start(&fs, Uuid::new_v4(), false, Hooks::default());
+    for _ in 0..500 {
+        if w.magpie.faults().hits() > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(w.magpie.faults().hits() > 0, "the prefetch's fetch is under way");
+    let s = &w.sentry;
+    let t = lookup(&w, "projects/-workspace/s.jsonl");
+    let r = s.call(op::OPEN, t, PID, &body::open(libc::O_WRONLY | libc::O_APPEND));
+    let h = out::open_fh(&r);
+    let n = data.len() as u64;
+    ok(
+        &s.call(op::WRITE, t, PID, &body::write(h, n, b"{\"new\":1}\n")),
+        "append during the prefetch",
+    );
+    let r = s.call(op::READ, t, PID, &body::read(0, n - 4, 100));
+    ok(&r, "read the tail");
+    assert_eq!(&r.payload[..4], &data[data.len() - 4..]);
+    assert_eq!(&r.payload[4..], b"{\"new\":1}\n");
+    w.magpie.faults().remove(f);
+    assert_eq!(w.calls("cc_file"), 1, "the prefetch's copy is current: no second fetch");
 }

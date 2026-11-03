@@ -1,5 +1,6 @@
 //! What is cached locally (supervisor 9.7): the tree (every magpie-scope path's kind, size, mtime, mode and
-//! version, in memory and in `tree.json` every 5 s) and the content cache (`cache/<node>.<version>`, a file's bytes as
+//! version, in memory; loaded from magpie at every lease, never from a local copy, so spec 9.7's `tree.json`, which
+//! nothing would read, is not written) and the content cache (`cache/<node>.<version>`, a file's bytes as
 //! last read or written; 256 MiB LRU for every file but the main transcript, which is never evicted).
 
 use std::collections::{BTreeMap, HashMap};
@@ -36,8 +37,6 @@ pub struct Tree {
     pub files: BTreeMap<String, Entry>,
     pub cc_bytes: u64,
     pub quota_bytes: u64,
-    #[serde(skip)]
-    dirty: bool,
 }
 
 impl Tree {
@@ -65,7 +64,6 @@ impl Tree {
             files,
             cc_bytes: t.cc_bytes,
             quota_bytes: t.quota_bytes,
-            dirty: true,
         }
     }
 
@@ -75,7 +73,6 @@ impl Tree {
     }
 
     pub fn get_mut(&mut self, path: &str) -> Option<&mut Entry> {
-        self.dirty = true;
         self.files.get_mut(path)
     }
 
@@ -111,14 +108,12 @@ impl Tree {
     }
 
     pub fn insert(&mut self, path: &str, e: Entry) {
-        self.dirty = true;
         let old = self.files.insert(path.to_owned(), e).map_or(0, |o| o.size);
         self.cc_bytes = (self.cc_bytes + e.size).saturating_sub(old);
     }
 
     /// Removes a path and its subtree.
     pub fn remove(&mut self, path: &str) -> Option<Entry> {
-        self.dirty = true;
         let pre = format!("{path}/");
         let kids: Vec<String> = self
             .files
@@ -162,23 +157,6 @@ impl Tree {
             }
             self.files.insert(to.to_owned(), e);
         }
-        self.dirty = true;
-    }
-
-    /// Writes `tree.json` if anything changed since the last save (temporary file and rename).
-    pub fn save_if_dirty(&mut self, path: &Path) {
-        if !self.dirty {
-            return;
-        }
-        let tmp = path.with_extension("tmp");
-        let res = serde_json::to_vec(self)
-            .map_err(std::io::Error::other)
-            .and_then(|b| std::fs::write(&tmp, b))
-            .and_then(|()| std::fs::rename(&tmp, path));
-        match res {
-            Ok(()) => self.dirty = false,
-            Err(e) => tracing::warn!(error = %e, "tree.json not saved"),
-        }
     }
 }
 
@@ -192,6 +170,45 @@ pub fn kind_of(path: &str) -> CcKind {
     } else {
         CcKind::Bytes
     }
+}
+
+/// A change magpie acknowledged for a node whose whole-file fetch was streaming (applied to it when it ends).
+#[derive(Clone, Debug)]
+enum Pending {
+    Write {
+        old: u64,
+        offset: u64,
+        data: Vec<u8>,
+        version: u64,
+        size: u64,
+    },
+    Truncate {
+        old: u64,
+        version: u64,
+        size: u64,
+    },
+    Reversion {
+        old: u64,
+        version: u64,
+    },
+}
+
+impl Pending {
+    fn old(&self) -> u64 {
+        match self {
+            Pending::Write { old, .. } | Pending::Truncate { old, .. } | Pending::Reversion { old, .. } => *old,
+        }
+    }
+}
+
+/// The most bytes of writes kept for one fetch in progress; past it the fetch is not cached.
+const PENDING_MAX: usize = 64 << 20;
+
+#[derive(Debug, Default)]
+struct Fetching {
+    ops: Vec<Pending>,
+    bytes: usize,
+    overflow: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -210,6 +227,7 @@ pub struct Content {
     pinned: Option<u64>,
     total: u64,
     tick: u64,
+    fetching: HashMap<u64, Fetching>,
 }
 
 impl Content {
@@ -226,6 +244,7 @@ impl Content {
             pinned: None,
             total: 0,
             tick: 0,
+            fetching: HashMap::new(),
         })
     }
 
@@ -327,6 +346,80 @@ impl Content {
         self.evict();
     }
 
+    /// A whole-file fetch of `node` starts: changes acknowledged until it ends are kept for it.
+    pub fn begin_fetch(&mut self, node: u64) {
+        self.fetching.insert(node, Fetching::default());
+    }
+
+    /// A fetch ended without a file.
+    pub fn abort_fetch(&mut self, node: u64) {
+        self.fetching.remove(&node);
+    }
+
+    /// A fetch of `node` at `version` and `size` completed into `staging`: the changes acknowledged meanwhile are
+    /// applied to it in order, and it becomes the entry at the version they reached (returned with its size).
+    /// `None` (and the staging file removed) when they do not chain from the fetched version or did not fit.
+    pub fn fill_fetched(&mut self, node: u64, version: u64, size: u64, staging: &Path) -> Option<(u64, u64)> {
+        let f = self.fetching.remove(&node).unwrap_or_default();
+        let applied = (|| {
+            if f.overflow {
+                return None;
+            }
+            let mut cur = (version, size);
+            if f.ops.is_empty() {
+                return Some(cur);
+            }
+            let file = OpenOptions::new().write(true).open(staging).ok()?;
+            for op in &f.ops {
+                if op.old() != cur.0 {
+                    return None;
+                }
+                cur = match op {
+                    Pending::Write {
+                        offset,
+                        data,
+                        version,
+                        size,
+                        ..
+                    } => {
+                        file.write_all_at(data, *offset).ok()?;
+                        file.set_len(*size).ok()?;
+                        (*version, *size)
+                    }
+                    Pending::Truncate { version, size, .. } => {
+                        file.set_len(*size).ok()?;
+                        (*version, *size)
+                    }
+                    Pending::Reversion { version, .. } => (*version, cur.1),
+                };
+            }
+            Some(cur)
+        })();
+        let Some((v, s)) = applied else {
+            let _ = std::fs::remove_file(staging);
+            return None;
+        };
+        self.filled(node, v, s, staging);
+        self.entries.contains_key(&node).then_some((v, s))
+    }
+
+    /// Keeps a change for the node's fetch in progress; whether there is one.
+    fn pend(&mut self, node: u64, op: Pending) -> bool {
+        let Some(f) = self.fetching.get_mut(&node) else {
+            return false;
+        };
+        if let Pending::Write { data, .. } = &op {
+            f.bytes += data.len();
+        }
+        if f.bytes > PENDING_MAX {
+            f.overflow = true;
+            f.ops.clear();
+        } else if !f.overflow {
+            f.ops.push(op);
+        }
+        true
+    }
+
     /// An empty file just created at `version`.
     pub fn created(&mut self, node: u64, version: u64) {
         let st = self.staging(node);
@@ -340,6 +433,16 @@ impl Content {
     pub fn wrote(&mut self, node: u64, old: (u64, u64), new_version: u64, offset: u64, data: &[u8], new_size: u64) {
         let Some(path) = self.valid(node, old.0, old.1) else {
             self.forget(node);
+            self.pend(
+                node,
+                Pending::Write {
+                    old: old.0,
+                    offset,
+                    data: data.to_vec(),
+                    version: new_version,
+                    size: new_size,
+                },
+            );
             return;
         };
         let ok = OpenOptions::new()
@@ -357,6 +460,14 @@ impl Content {
     pub fn truncated(&mut self, node: u64, old: (u64, u64), new_version: u64, size: u64) {
         let Some(path) = self.valid(node, old.0, old.1) else {
             self.forget(node);
+            self.pend(
+                node,
+                Pending::Truncate {
+                    old: old.0,
+                    version: new_version,
+                    size,
+                },
+            );
             return;
         };
         let ok = OpenOptions::new()
@@ -371,6 +482,13 @@ impl Content {
     pub fn reversion(&mut self, node: u64, old: (u64, u64), new_version: u64) {
         let Some(path) = self.valid(node, old.0, old.1) else {
             self.forget(node);
+            self.pend(
+                node,
+                Pending::Reversion {
+                    old: old.0,
+                    version: new_version,
+                },
+            );
             return;
         };
         let ok = std::fs::rename(&path, self.file(node, new_version));

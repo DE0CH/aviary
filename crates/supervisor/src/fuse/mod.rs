@@ -45,7 +45,7 @@ pub fn now_ns() -> i64 {
 pub struct Config {
     /// The mount point (`/home/sandbox/.claude`).
     pub mount: PathBuf,
-    /// `nodes.log`, `tree.json`, `boot_id` (`/var/lib/supervisor/state`).
+    /// `nodes.log`, `boot_id` (`/var/lib/supervisor/state`).
     pub state: PathBuf,
     /// The content cache (`/var/lib/supervisor/cache`).
     pub cache: PathBuf,
@@ -319,6 +319,9 @@ pub struct FuseFs {
     hooks: Mutex<Hooks>,
     core: Mutex<Option<Arc<Core>>>,
     remote: Arc<Remote>,
+    /// The keeper holds this process's connection: a mount retried after a failed start takes it back instead of
+    /// mounting a second one.
+    handed: std::sync::atomic::AtomicBool,
 }
 
 impl std::fmt::Debug for FuseFs {
@@ -338,6 +341,7 @@ impl FuseFs {
             hooks: Mutex::new(Hooks::default()),
             core: Mutex::new(None),
             remote,
+            handed: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -395,6 +399,8 @@ impl FuseFs {
         keeper: &crate::keeper::Client,
         restart: bool,
     ) -> Result<(), MountError> {
+        // (a start that failed after this process handed its connection to the keeper is retried on that one)
+        let restart = restart || self.handed.load(std::sync::atomic::Ordering::SeqCst);
         let k = keeper.clone();
         let held = if restart {
             tokio::task::spawn_blocking(move || k.get_fd(crate::keeper::FUSE_FD))
@@ -405,6 +411,7 @@ impl FuseFs {
             None
         };
         let (fd, restart, boot) = if let Some(fd) = held {
+            self.handed.store(true, std::sync::atomic::Ordering::SeqCst);
             (fd, true, boot_id_for(&self.cfg.state, true)?)
         } else {
             let mount = self.cfg.mount.clone();
@@ -420,6 +427,7 @@ impl FuseFs {
                 .await
                 .map_err(std::io::Error::other)?
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
+            self.handed.store(true, std::sync::atomic::Ordering::SeqCst);
             (fd, false, boot)
         };
         tracing::info!(restart, %boot, "fuse connection");

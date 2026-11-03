@@ -37,6 +37,19 @@ use super::scope::{self, Scope, Unclassified};
 use super::seen::{self, Seen};
 use super::{Config, Device, Hooks, Point, StuckOp, now_ns};
 
+/// A replayed local-scope mutation whose effect is already there (9.9): the killed instance made it before its
+/// reply, so the replay answers success. The limit: the same state made by another process between the kill and the
+/// replay reads as this request's own (a `mkdir` lock taken meanwhile is then held twice); the window is the
+/// supervisor's restart, about 0.1-1 s.
+fn replayed_as_done(h: &InHeader, path: &str) {
+    tracing::info!(
+        unique = h.unique,
+        op = proto::opname(h.opcode),
+        path,
+        "journal replay: the local change was already made"
+    );
+}
+
 /// A worker that "died" at a fault point (tests without the `fault-injection` feature): unwinds the worker.
 struct Died;
 
@@ -122,6 +135,54 @@ pub struct Core {
     dead: AtomicBool,
     stopped: AtomicBool,
     started_ns: i64,
+    /// Whole-file fetches in progress, one per node (9.7).
+    fetches: Mutex<HashMap<u64, Arc<Fetch>>>,
+    /// Reads that left no whole request in the slot (`fuse.short_read`, 9.9).
+    short_reads: AtomicU64,
+    /// The first request of this instance was logged (its `unique`: the rig's monotonicity check across restarts).
+    first_logged: AtomicBool,
+}
+
+/// A whole-file fetch into the content cache (9.7): streamed into its staging file in the background; READs of
+/// ranges that already arrived are answered from that file while the rest streams, and every READ of the node waits
+/// on this one fetch instead of starting its own.
+struct Fetch {
+    version: u64,
+    size: u64,
+    staging: std::path::PathBuf,
+    arrived: AtomicU64,
+    done: Mutex<Option<Result<std::path::PathBuf, i32>>>,
+    cv: Condvar,
+}
+
+/// What a READ waiting on a fetch gets.
+enum Got {
+    /// The asked range arrived: read it from the staging file.
+    Range(std::path::PathBuf),
+    /// The fetch ended: the cache file (at the version the fetch ended at), or why not.
+    Done(Result<std::path::PathBuf, i32>),
+}
+
+impl Fetch {
+    /// Waits until `upto` bytes arrived or the fetch ended.
+    fn wait(&self, upto: u64) -> Got {
+        let mut g = lock(&self.done);
+        loop {
+            if let Some(r) = g.clone() {
+                return Got::Done(r);
+            }
+            if self.arrived.load(Ordering::SeqCst) >= upto {
+                return Got::Range(self.staging.clone());
+            }
+            g = self.cv.wait(g).unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+
+    fn progress(&self, n: u64) {
+        self.arrived.fetch_add(n, Ordering::SeqCst);
+        let _g = lock(&self.done);
+        self.cv.notify_all();
+    }
 }
 
 impl std::fmt::Debug for Core {
@@ -196,20 +257,34 @@ impl Core {
             dead: AtomicBool::new(false),
             stopped: AtomicBool::new(false),
             started_ns: now_ns(),
+            fetches: Mutex::new(HashMap::new()),
+            short_reads: AtomicU64::new(0),
+            first_logged: AtomicBool::new(false),
             cfg,
         });
         core.remote.set_lease(Some(Lease {
             id: a.lease.lease_id,
             epoch: a.lease.epoch,
         }));
-        core.fetch_tree();
+        if a.lease.resync {
+            // magpie 6.12: the reconcile of this tree load re-sends every suffix magpie lacks (it runs at every tree
+            // load, so `resync: true` needs nothing more than this load)
+            tracing::warn!("the lease asks for a resync: the cache's suffixes magpie lacks are re-sent now");
+        }
+        // Never replay or drop node ids against a tree that was not loaded: an empty tree would answer ENOENT to
+        // replays magpie already applied and drop every magpie-scope node the sentry holds. The fetch waits through
+        // magpie's unavailability (the retry rule); a definitive failure fails the start, and the mount is retried
+        // on the keeper's connection.
+        if let Err(e) = core.fetch_tree() {
+            tracing::error!(error = ?e, "the tree could not be loaded: the start fails");
+            return Err(std::io::Error::other(format!("cc/tree: {e:?}")));
+        }
         if a.restart {
             core.restore_kept();
             core.replay();
         }
         core.retain_nodes();
         core.spawn_workers();
-        core.spawn_saver();
         if !a.restart {
             let c = core.clone();
             std::thread::spawn(move || c.prefetch_main());
@@ -374,13 +449,14 @@ impl Core {
             let c2 = c.clone();
             let l2 = lease.clone();
             let _ = tokio::task::spawn_blocking(move || {
-                c2.remote.set_lease(None);
-                c2.load_tree();
-                lock(&c2.main).clone_from(&l2.main_transcript);
+                // the new lease first, so the tree load's repair writes carry it; requests keep answering EIO
+                // until `relocking` is cleared (`leased`)
                 c2.remote.set_lease(Some(Lease {
                     id: l2.lease_id,
                     epoch: l2.epoch,
                 }));
+                lock(&c2.main).clone_from(&l2.main_transcript);
+                c2.load_tree();
             })
             .await;
             c.relocking.store(false, Ordering::SeqCst);
@@ -390,15 +466,24 @@ impl Core {
     }
 
     /// After a restore (or a clock jump): re-load the tree and revalidate the cache.
-    pub fn resumed(&self) {
+    pub fn resumed(self: &Arc<Self>) {
         self.load_tree();
+    }
+
+    /// Reads that left no whole request in their slot since start (`fuse.short_read`).
+    #[must_use]
+    pub fn short_reads(&self) -> u64 {
+        self.short_reads.load(Ordering::SeqCst)
     }
 
     // ---- the tree, the cache, the repair ----
 
-    fn load_tree(&self) {
-        self.fetch_tree();
-        self.retain_nodes();
+    /// A new tree from magpie; node ids are dropped only against a tree that loaded (else the old tree stays).
+    fn load_tree(self: &Arc<Self>) {
+        match self.fetch_tree() {
+            Ok(()) => self.retain_nodes(),
+            Err(e) => tracing::error!(error = ?e, "the tree could not be re-loaded: the previous one is kept"),
+        }
     }
 
     /// Drops the node ids of paths that no longer exist (after the tree load and, on a restart, the replay: a
@@ -415,17 +500,14 @@ impl Core {
         });
     }
 
-    fn fetch_tree(&self) {
+    fn fetch_tree(self: &Arc<Self>) -> Result<(), CallError> {
         let ctl = OpCtl::default();
         let t = self.rt.block_on(self.remote.read(
             &ctl,
             "cc/tree",
             |c| async move { c.client.sandbox(None).cc_tree().await },
             &|| {},
-        ));
-        let Ok(t) = t else {
-            return;
-        };
+        ))?;
         let tree = Tree::from_magpie(&t);
         let main = lock(&self.main).clone();
         let candidates = {
@@ -445,12 +527,13 @@ impl Core {
         for c in candidates {
             self.repair_candidate(&c);
         }
+        Ok(())
     }
 
     /// 9.5 item 6 / magpie 6.12: a cache file newer and longer than magpie's copy whose first bytes equal magpie's
     /// is re-sent from magpie's end with fresh `opId`s. (A repeated repair after a crash is harmless: magpie answers
     /// a write whose range already holds those bytes with success, rule 0.)
-    fn repair_candidate(&self, c: &Candidate) -> bool {
+    fn repair_candidate(self: &Arc<Self>, c: &Candidate) -> bool {
         let (path, entry) = {
             let st = lock(&self.st);
             let Some((p, false)) = st.nodes.get(c.node) else {
@@ -481,7 +564,12 @@ impl Core {
     }
 
     /// Compares magpie's last 64 KiB with the cached copy and re-sends `[magpie.size, local)`; magpie's new version.
-    fn resend_suffix(&self, path: &str, file: &std::path::Path, e: Entry, local: u64) -> Option<u64> {
+    /// Each write is an append at magpie's size (`append`: a size magpie does not have answers `offset_mismatch`,
+    /// never an overwrite). Its `opId` is a fresh v4 UUID not recorded first (a deviation from 9.5 item 6's "recorded
+    /// in `run.json` before sending"): a crash during a repair repeats it after the next tree load, and magpie
+    /// answers a repeated write whose range already holds those bytes with success (rule 0), or a write at the size
+    /// it now has as an ordinary append. A `lease_lost` here runs the lease loop as any request's does.
+    fn resend_suffix(self: &Arc<Self>, path: &str, file: &std::path::Path, e: Entry, local: u64) -> Option<u64> {
         if e.size >= local {
             return None;
         }
@@ -518,7 +606,7 @@ impl Core {
                 create: false,
                 mode: e.mode,
                 turn_id: None,
-                append: false,
+                append: true,
             };
             let r = self.rt.block_on(self.remote.call(
                 &ctl,
@@ -530,6 +618,7 @@ impl Core {
                 },
                 &|| {},
             ));
+            self.after_call("cc/write (repair)", &r);
             match r {
                 Ok(sv) => {
                     version = sv.version;
@@ -574,91 +663,151 @@ impl Core {
             .map_err(|e| e.errno())
     }
 
-    /// The whole file into the cache (streamed to disk); the cache file's path.
-    fn fetch_whole(&self, ctl: &OpCtl, node: u64, path: &str, e: Entry) -> Result<std::path::PathBuf, i32> {
-        let staging = lock(&self.content).staging(node);
-        let q = CcFileQuery {
-            path: path.to_owned(),
-            offset: None,
-            length: None,
-        };
-        let st = staging.clone();
-        let r = self.rt.block_on(self.remote.read(
-            ctl,
-            "cc/file",
-            |c| {
-                let q = q.clone();
-                let st = st.clone();
-                async move {
-                    let mut r = c.client.sandbox(None).cc_file(&q).await?;
-                    let mut f = std::fs::File::create(&st).map_err(|e| magpie_api::client::ClientError::Decode {
-                        route: "cc_file",
-                        error: format!("cache file: {e}"),
-                    })?;
-                    let mut n = 0u64;
-                    while let Some(chunk) = r.chunk().await.map_err(magpie_api::client::ClientError::Http)? {
-                        use std::io::Write;
-                        f.write_all(&chunk)
-                            .map_err(|e| magpie_api::client::ClientError::Decode {
-                                route: "cc_file",
-                                error: format!("cache file: {e}"),
-                            })?;
-                        n += chunk.len() as u64;
-                    }
-                    Ok(n)
-                }
-            },
-            &|| {},
-        ));
-        match r {
-            Ok(n) if n == e.size => {
-                let mut c = lock(&self.content);
-                c.filled(node, e.version, e.size, &staging);
-                c.valid(node, e.version, e.size).ok_or(EIO)
-            }
-            Ok(n) => {
-                let _ = std::fs::remove_file(&staging);
-                tracing::warn!(
-                    path,
-                    got = n,
-                    want = e.size,
-                    "a fetched file's size differs from the tree"
-                );
-                Err(EIO)
-            }
-            Err(err) => {
-                let _ = std::fs::remove_file(&staging);
-                Err(err.errno())
-            }
+    /// The node's whole-file fetch: the one in progress, or a new one started in the background (9.7).
+    fn fetch(self: &Arc<Self>, node: u64, path: &str, e: Entry) -> Arc<Fetch> {
+        let mut fs = lock(&self.fetches);
+        if let Some(f) = fs.get(&node) {
+            return f.clone();
         }
-    }
-
-    fn prefetch_main(&self) {
-        let Some(m) = lock(&self.main).clone() else { return };
-        let (node, e) = {
-            let mut st = lock(&self.st);
-            let Some(e) = st.tree.get(&m).copied() else { return };
-            (st.nodes.assign(&m), e)
+        let staging = {
+            let mut c = lock(&self.content);
+            c.begin_fetch(node);
+            c.staging(node)
         };
-        lock(&self.content).pin(Some(node));
-        if lock(&self.content).valid(node, e.version, e.size).is_none() {
-            let _ = self.fetch_whole(&OpCtl::default(), node, &m, e);
-        }
-    }
-
-    fn spawn_saver(self: &Arc<Self>) {
-        let c = Arc::downgrade(self);
-        let path = self.cfg.state.join("tree.json");
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(Duration::from_secs(5));
-                let Some(c) = c.upgrade() else { return };
-                if c.stopped.load(Ordering::SeqCst) || c.died() {
-                    return;
-                }
-                lock(&c.st).tree.save_if_dirty(&path);
-            }
+        let f = Arc::new(Fetch {
+            version: e.version,
+            size: e.size,
+            staging,
+            arrived: AtomicU64::new(0),
+            done: Mutex::new(None),
+            cv: Condvar::new(),
         });
+        fs.insert(node, f.clone());
+        drop(fs);
+        let (c, f2, path) = (self.clone(), f.clone(), path.to_owned());
+        self.rt.spawn(async move {
+            let r = c.run_fetch(&f2, &path).await;
+            let c2 = c.clone();
+            let _ = tokio::task::spawn_blocking(move || c2.finish_fetch(node, &f2, r)).await;
+        });
+        f
+    }
+
+    /// Streams the file into the staging file. Each wait (the answer, every next chunk) is bounded by the attempt
+    /// timeout, not the whole body, and a retry resumes from the bytes that arrived (a range from there) while the
+    /// file is still at the fetched version.
+    async fn run_fetch(self: &Arc<Self>, f: &Arc<Fetch>, path: &str) -> Result<u64, CallError> {
+        use super::remote::AttemptError;
+        let t = self.remote.attempt_timeout();
+        let me = self.clone();
+        self.remote
+            .read_streamed(&OpCtl::default(), "cc/file", |c| {
+                let (f, path, me) = (f.clone(), path.to_owned(), me.clone());
+                async move {
+                    let have = f.arrived.load(Ordering::SeqCst);
+                    if have >= f.size {
+                        return Ok(have);
+                    }
+                    if have > 0 && me.magpie_entry(&path).map(|e| e.version) != Ok(f.version) {
+                        // the file changed since the fetch began: a range would mix two versions
+                        return Err(AttemptError::Local(EIO));
+                    }
+                    let q = CcFileQuery {
+                        path,
+                        offset: (have > 0).then_some(have),
+                        length: (have > 0).then(|| f.size - have),
+                    };
+                    let mut r = tokio::time::timeout(t, c.client.sandbox(None).cc_file(&q))
+                        .await
+                        .map_err(|_| AttemptError::TimedOut)??;
+                    let mut file = std::fs::OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(false)
+                        .open(&f.staging)
+                        .and_then(|file| file.set_len(have).map(|()| file))
+                        .map_err(|e| {
+                            tracing::warn!(error = %e, "the cache file cannot be written");
+                            AttemptError::Local(EIO)
+                        })?;
+                    use std::io::{Seek, Write};
+                    file.seek(std::io::SeekFrom::Start(have))
+                        .map_err(|_| AttemptError::Local(EIO))?;
+                    loop {
+                        let chunk = tokio::time::timeout(t, r.chunk())
+                            .await
+                            .map_err(|_| AttemptError::TimedOut)?
+                            .map_err(|e| AttemptError::Client(magpie_api::client::ClientError::Http(e)))?;
+                        let Some(chunk) = chunk else { break };
+                        file.write_all(&chunk).map_err(|_| AttemptError::Local(EIO))?;
+                        f.progress(chunk.len() as u64);
+                    }
+                    Ok(f.arrived.load(Ordering::SeqCst))
+                }
+            })
+            .await
+    }
+
+    /// The fetch ended: the staging file becomes the cache entry, with the writes, truncates and renames magpie
+    /// acknowledged while it streamed applied to it, so the entry is current when the fetch ends (the pinned main
+    /// transcript is never left uncached by a write during its prefetch).
+    fn finish_fetch(&self, node: u64, f: &Fetch, r: Result<u64, CallError>) {
+        let res = match r {
+            Ok(n) if n == f.size => {
+                let st = lock(&self.st);
+                let cur = st
+                    .nodes
+                    .get(node)
+                    .filter(|(_, gone)| !gone)
+                    .and_then(|(p, _)| st.tree.get(p))
+                    .map(|e| (e.version, e.size));
+                let mut c = lock(&self.content);
+                match c.fill_fetched(node, f.version, f.size, &f.staging) {
+                    Some(got) if Some(got) == cur => c.valid(node, got.0, got.1).ok_or(EIO),
+                    Some(got) => {
+                        tracing::info!(node, ?got, ?cur, "a fetched file changed meanwhile: not cached");
+                        c.forget(node);
+                        Err(EIO)
+                    }
+                    None => Err(EIO),
+                }
+            }
+            r => {
+                if let Ok(n) = r {
+                    tracing::warn!(
+                        node,
+                        got = n,
+                        want = f.size,
+                        "a fetched file's size differs from the tree"
+                    );
+                }
+                lock(&self.content).abort_fetch(node);
+                let _ = std::fs::remove_file(&f.staging);
+                r.map_err(|e| e.errno()).and(Err(EIO))
+            }
+        };
+        lock(&self.fetches).remove(&node);
+        *lock(&f.done) = Some(res);
+        f.cv.notify_all();
+    }
+
+    /// At first start: the main transcript into the cache (9.7), until the entry is current.
+    fn prefetch_main(self: &Arc<Self>) {
+        let Some(m) = lock(&self.main).clone() else { return };
+        for _ in 0..5 {
+            let (node, e) = {
+                let mut st = lock(&self.st);
+                let Some(e) = st.tree.get(&m).copied() else { return };
+                (st.nodes.assign(&m), e)
+            };
+            lock(&self.content).pin(Some(node));
+            if lock(&self.content).valid(node, e.version, e.size).is_some() {
+                return;
+            }
+            if let Got::Done(Err(errno)) = self.fetch(node, &m, e).wait(u64::MAX) {
+                tracing::info!(errno, "the main transcript's prefetch failed");
+            }
+        }
     }
 
     // ---- the workers ----
@@ -681,7 +830,7 @@ impl Core {
         }
         #[cfg(feature = "fault-injection")]
         {
-            tracing::warn!(point = ?p, opcode = proto::opname(h.opcode), "fault-injection: SIGKILL");
+            tracing::warn!(point = ?p, opcode = proto::opname(h.opcode), unique = h.unique, "fault-injection: SIGKILL");
             // SAFETY: kill(2) of this process.
             #[allow(unsafe_code)]
             unsafe {
@@ -706,18 +855,49 @@ impl Core {
                 Ok(n) => n,
                 Err(e) => match e.raw_os_error() {
                     Some(libc::EINTR | libc::EAGAIN | libc::ENOENT) => continue,
-                    _ => {
+                    // the connection ended (unmounted, aborted): every worker ends with it
+                    Some(libc::ENODEV | libc::EBADF) => {
                         if !self.stopped.load(Ordering::SeqCst) && !self.died() {
                             tracing::info!(slot = i, error = %e, "fuse read ended");
                         }
                         return;
                     }
+                    _ => {
+                        if self.stopped.load(Ordering::SeqCst) || self.died() {
+                            return;
+                        }
+                        // anything else is not the connection's end: this worker keeps reading, loudly
+                        tracing::error!(slot = i, error = %e, "fuse read failed: retrying");
+                        std::thread::sleep(Duration::from_millis(100));
+                        continue;
+                    }
                 },
             };
             if !self.journal.whole_request(i, slot, n) {
+                self.short_reads.fetch_add(1, Ordering::SeqCst);
+                // the caller must not wait for ever: EIO to any unique a copy of the header names
+                if let Some(h) = self.journal.lost_header(i, slot) {
+                    tracing::error!(
+                        event = "fuse.short_read",
+                        unique = h.unique,
+                        op = proto::opname(h.opcode),
+                        "answered EIO: no whole request to serve"
+                    );
+                    self.send(
+                        &h,
+                        &Outcome {
+                            errno: EIO,
+                            payload: Vec::new(),
+                            effect: false,
+                        },
+                    );
+                }
                 continue;
             }
             let Some(h) = InHeader::parse(slot) else { continue };
+            if !self.first_logged.swap(true, Ordering::SeqCst) {
+                tracing::info!(unique = h.unique, op = proto::opname(h.opcode), "fuse first request");
+            }
             let len = (h.len as usize).min(slot.len());
             let body = &slot[IN_HEADER..len];
             let r = std::panic::catch_unwind(AssertUnwindSafe(|| {
@@ -849,7 +1029,10 @@ impl Core {
             *lock(&me.done) = Some(o.clone());
             me.cv.notify_all();
         }
-        let werr = self.send(h, &o);
+        // Under the resend lock from leaving the in-flight list to keeping a refused reply: the thread's next
+        // request (sent once this reply arrived, and possibly identical: a second `mkdir` of a held lock) must never
+        // find this one still listed and be taken for its resend, and a real resend finds it either in flight or
+        // kept.
         let mut rs = lock(&self.resend);
         if let Some(list) = rs.inflight.get_mut(&h.pid) {
             list.retain(|i| !Arc::ptr_eq(i, &me));
@@ -857,6 +1040,7 @@ impl Core {
                 rs.inflight.remove(&h.pid);
             }
         }
+        let werr = self.send(h, &o);
         if werr == ENOENT && o.effect && !me.matched.load(Ordering::SeqCst) {
             self.keep_locked(&mut rs, h, key, &o);
         }
@@ -952,12 +1136,14 @@ impl Core {
         st.nodes.get(node).map(|(p, g)| (p.to_owned(), g)).ok_or(ENOENT)
     }
 
+    /// Whether magpie-scope requests are served: a lease, and not between a lost lease and the reload of the tree
+    /// under the new one.
+    fn is_leased(&self) -> bool {
+        self.remote.lease().is_some() && !self.relocking.load(Ordering::SeqCst)
+    }
+
     fn leased(&self) -> Result<(), i32> {
-        if self.remote.lease().is_some() {
-            Ok(())
-        } else {
-            Err(EIO)
-        }
+        if self.is_leased() { Ok(()) } else { Err(EIO) }
     }
 
     fn root_attr(&self) -> Attr {
@@ -1050,7 +1236,18 @@ impl Core {
                 match scope::scope_of(&p) {
                     Scope::Local => {
                         *effect = true;
-                        self.local.symlink(target, &p)?;
+                        match self.local.symlink(target, &p) {
+                            Ok(()) => {}
+                            Err(e)
+                                if e == EEXIST
+                                    && ctl.replay
+                                    && self.local.readlink(&p).ok().as_deref() == Some(target) =>
+                            {
+                                replayed_as_done(h, &p);
+                            }
+                            Err(e) => return Err(e),
+                        }
+                        self.answered(h);
                         let mut a = self.local.getattr(0, &p, None)?;
                         a.ino = lock(&self.st).nodes.assign(&p);
                         Ok(self.entry(&a))
@@ -1119,6 +1316,10 @@ impl Core {
         }
     }
 
+    fn local_kind(&self, p: &str) -> Option<FileType> {
+        self.local.getattr(0, p, None).ok().map(|a| a.kind)
+    }
+
     fn op_id(&self, h: &InHeader, step: u32) -> Uuid {
         crate::magpie::op_id(self.boot, h.unique, step)
     }
@@ -1141,7 +1342,14 @@ impl Core {
         if ctl.executed() {
             *effect = true;
         }
-        match &r {
+        self.after_call(what, &r);
+        r
+    }
+
+    /// What every leased magpie call's outcome sets off, whoever made it (a request, or a repair's writes): the
+    /// quota flag, the lease loop on `lease_lost` (9.5 item 7), the stuck-op report (item 4).
+    fn after_call<T>(self: &Arc<Self>, what: &str, r: &Result<T, CallError>) {
+        match r {
             Ok(_) => self.quota_exceeded.store(false, Ordering::SeqCst),
             Err(CallError::Errno(e)) if *e == libc::EDQUOT => {
                 tracing::warn!(what, "magpie quota exceeded");
@@ -1158,7 +1366,6 @@ impl Core {
             }
             _ => {}
         }
-        r
     }
 
     fn answered(&self, h: &InHeader) {
@@ -1296,7 +1503,7 @@ impl Core {
         f(self).map_err(|e| e.errno())
     }
 
-    fn repair_file(&self, path: &str) -> bool {
+    fn repair_file(self: &Arc<Self>, path: &str) -> bool {
         let ctl = OpCtl::default();
         let t = self.rt.block_on(self.remote.read(
             &ctl,
@@ -1400,7 +1607,16 @@ impl Core {
             Scope::Refused => Err(EACCES),
             Scope::Local | Scope::Root => {
                 *effect = true;
-                let handle = self.local.create(|| lock(&self.st).nodes.assign(&p), &p, flags, mode)?;
+                let handle = match self.local.create(|| lock(&self.st).nodes.assign(&p), &p, flags, mode) {
+                    Err(e) if e == EEXIST && ctl.replay && self.local_kind(&p) == Some(FileType::File) => {
+                        // the create took effect before the kill: open what it made (no O_EXCL, no O_TRUNC)
+                        replayed_as_done(h, &p);
+                        let f = flags & !(libc::O_EXCL | libc::O_TRUNC);
+                        self.local.create(|| lock(&self.st).nodes.assign(&p), &p, f, mode)?
+                    }
+                    r => r?,
+                };
+                self.answered(h);
                 let a = self.local.getattr(fh::node(handle), &p, Some(handle))?;
                 let mut o = self.entry(&a);
                 o.extend_from_slice(&proto::open_out(handle));
@@ -1504,22 +1720,33 @@ impl Core {
                 if off >= e.size {
                     return Ok(Vec::new());
                 }
-                let cached = lock(&self.content).valid(node, e.version, e.size);
-                let file = match cached {
-                    Some(f) => Ok(f),
-                    None if e.size <= magpie_api::sandbox::CC_FILE_MAX_BYTES => {
-                        self.fetch_whole(&OpCtl::default(), node, &p, e)
-                    }
-                    None => Err(EFBIG),
-                };
-                match file {
-                    Ok(f) => cache::read_at(&f, off, size as usize).map_err(|_| EIO),
-                    Err(err) if err == EIO => {
-                        // the cache cannot hold it (disk full): serve the range from magpie
-                        let n = u64::from(size).min(e.size - off);
-                        self.fetch_range(&OpCtl::default(), &p, off, n)
-                    }
-                    Err(err) => Err(err),
+                let end = (off + u64::from(size)).min(e.size);
+                #[allow(clippy::cast_possible_truncation)] // at most `size`
+                let want = (end - off) as usize;
+                // the range from magpie: when the cache cannot hold the file (disk full) or the fetch could not
+                // become a cache entry
+                let direct = || self.fetch_range(&OpCtl::default(), &p, off, end - off);
+                if let Some(f) = lock(&self.content).valid(node, e.version, e.size) {
+                    return cache::read_at(&f, off, want).or_else(|_| direct());
+                }
+                if e.size > magpie_api::sandbox::CC_FILE_MAX_BYTES {
+                    return Err(EFBIG);
+                }
+                let fetch = self.fetch(node, &p, e);
+                // an older fetch (the tree moved since) ends at the newer version: wait for its end
+                let upto = if fetch.version == e.version { end } else { u64::MAX };
+                match fetch.wait(upto) {
+                    Got::Range(staging) => match cache::read_at(&staging, off, want) {
+                        Ok(b) if b.len() == want => Ok(b),
+                        _ => match fetch.wait(u64::MAX) {
+                            // (the staging file just became the cache entry)
+                            Got::Done(Ok(f)) => cache::read_at(&f, off, want).or_else(|_| direct()),
+                            _ => direct(),
+                        },
+                    },
+                    Got::Done(Ok(f)) => cache::read_at(&f, off, want).or_else(|_| direct()),
+                    Got::Done(Err(err)) if err == EIO => direct(),
+                    Got::Done(Err(err)) => Err(err),
                 }
             }
         }
@@ -1553,7 +1780,10 @@ impl Core {
                     create: false,
                     mode: e.mode,
                     turn_id: *lock(&self.turn),
-                    append: false,
+                    // an O_APPEND handle (Claude Code's transcript appends): `offset` is the size the sentry expects,
+                    // and magpie answers `offset_mismatch` to any other size instead of overwriting inside the file
+                    // (magpie 6.10), which sends it to the repair of 9.5 item 6
+                    append: handle & fh::APPEND != 0,
                 };
                 let bytes = Bytes::copy_from_slice(data);
                 let sv = self.with_repair(h, &p, |s| {
@@ -1592,7 +1822,14 @@ impl Core {
             Scope::Refused => Err(EACCES),
             Scope::Local | Scope::Root => {
                 *effect = true;
-                self.local.mkdir(&p, mode)?;
+                match self.local.mkdir(&p, mode) {
+                    Ok(()) => {}
+                    Err(e) if e == EEXIST && ctl.replay && self.local_kind(&p) == Some(FileType::Dir) => {
+                        replayed_as_done(h, &p);
+                    }
+                    Err(e) => return Err(e),
+                }
+                self.answered(h);
                 let mut a = self.local.getattr(0, &p, None)?;
                 a.ino = lock(&self.st).nodes.assign(&p);
                 Ok(self.entry(&a))
@@ -1650,11 +1887,17 @@ impl Core {
             Scope::Refused => Err(ENOENT),
             Scope::Local | Scope::Root => {
                 *effect = true;
-                if rmdir {
-                    self.local.rmdir(&p)?;
+                let r = if rmdir {
+                    self.local.rmdir(&p)
                 } else {
-                    self.local.unlink(&p)?;
+                    self.local.unlink(&p)
+                };
+                match r {
+                    Ok(()) => {}
+                    Err(e) if e == ENOENT && ctl.replay => replayed_as_done(h, &p),
+                    Err(e) => return Err(e),
                 }
+                self.answered(h);
                 lock(&self.st).nodes.drop_path(&p);
                 Ok(Vec::new())
             }
@@ -1722,8 +1965,19 @@ impl Core {
             (Scope::Refused, _) => Err(ENOENT),
             (Scope::Local, Scope::Local) => {
                 *effect = true;
-                self.local.rename(&from, &to)?;
-                lock(&self.st).nodes.rename(&from, &to);
+                match self.local.rename(&from, &to) {
+                    Ok(()) => {}
+                    Err(e) if e == ENOENT && ctl.replay && !self.local.exists(&from) && self.local.exists(&to) => {
+                        replayed_as_done(h, &from);
+                    }
+                    Err(e) => return Err(e),
+                }
+                self.answered(h);
+                let mut st = lock(&self.st);
+                // (a replayed rename whose node already moved moves nothing: renaming again would drop it)
+                if !ctl.replay || st.nodes.id_of(&from).is_some() {
+                    st.nodes.rename(&from, &to);
+                }
                 Ok(Vec::new())
             }
             (Scope::Magpie, Scope::Magpie) => {
@@ -1809,7 +2063,7 @@ impl Core {
         match scope::scope_of(&p) {
             Scope::Root => {
                 let st = lock(&self.st);
-                if self.remote.lease().is_some() {
+                if self.is_leased() {
                     for (n, e) in st.tree.children("") {
                         if scope::scope_of(&n) == Scope::Magpie {
                             names.push((n, if e.is_dir() { FileType::Dir } else { FileType::File }));

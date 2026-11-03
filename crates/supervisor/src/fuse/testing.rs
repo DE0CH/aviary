@@ -258,6 +258,15 @@ pub mod body {
         v.extend(cs(new));
         v
     }
+    /// RENAME2 (`fuse_rename2_in`: newdir, flags, padding, then the names).
+    #[must_use]
+    pub fn rename2(newdir: u64, flags: u32, old: &str, new: &str) -> Vec<u8> {
+        let mut v = le(&[newdir]);
+        v.extend(le32(&[flags, 0]));
+        v.extend(cs(old));
+        v.extend(cs(new));
+        v
+    }
     #[must_use]
     pub fn symlink(name: &str, target: &str) -> Vec<u8> {
         let mut v = cs(name);

@@ -26,7 +26,7 @@ hermit's side), WP-22 (the `~/.claude` filesystem), WP-23 (the Claude Code drive
 | `local` | 15.2: `agent.sock` secrets, `sandbox-secret` |
 | `magpie` | 4.3 step 5: the lease at start; the cc operations' `opId`s (9.3: UUIDv5 of `bootId ‖ unique ‖ step` under `SUPERVISOR_OP_NS`) |
 | `fuse::{proto, errno, scope}` | 2.5, 9.1, 9.3, 9.5 items 5-7: the 7.31 wire format, magpie's answers as errno, the scope table and path checks |
-| `fuse::{nodes, cache, local}` | 9.7, 9.8, 9.1: node ids and `nodes.log`, the tree (`tree.json` every 5 s) and the content cache (`cache/<node>.<version>`, 256 MiB LRU, the main transcript pinned), local scope's passthrough and fd table |
+| `fuse::{nodes, cache, local}` | 9.7, 9.8, 9.1: node ids and `nodes.log`, the tree (in memory, loaded from magpie at every lease) and the content cache (`cache/<node>.<version>`, 256 MiB LRU, the main transcript pinned), local scope's passthrough and fd table |
 | `fuse::remote` | 9.5, 19, 20: the lease, 16 calls at once, 30 s attempts, the retry rule (general outage vs one stuck op), INTERRUPT before any attempt |
 | `fuse::{journal, dispatch}` | 9.3, 9.9, 9.10: the `MAP_SHARED` journal (requests read straight into a slot, the short-read check, the kept results of the resend rule), the workers, every opcode, the resend rule, the replay, the repair, the lease loop after `lease_lost` |
 | `fuse` (`FuseFs`) | 4.3 step 6, 9.3: the `Filesystem` the binary mounts: a fresh `/dev/fuse` connection (`mount(2)`, the new `bootId` stored atomically, then `PUT_FD`) or the keeper's (`GET_FD`, the stored `bootId` or exit 75 `boot_id_unreadable`) |

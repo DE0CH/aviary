@@ -131,7 +131,16 @@ pub fn opname(opcode: u32) -> &'static str {
 pub fn mutates(opcode: u32) -> bool {
     matches!(
         opcode,
-        op::SETATTR | op::MKDIR | op::UNLINK | op::RMDIR | op::RENAME | op::OPEN | op::WRITE | op::CREATE | op::SYMLINK
+        op::SETATTR
+            | op::MKDIR
+            | op::UNLINK
+            | op::RMDIR
+            | op::RENAME
+            | op::RENAME2
+            | op::OPEN
+            | op::WRITE
+            | op::CREATE
+            | op::SYMLINK
     )
 }
 

@@ -182,6 +182,22 @@ impl Journal {
         false
     }
 
+    /// After a short read: the header of the request the slot should hold, from the mapping or else the journal
+    /// file's copy, when one names a request that waits for a reply (a non-zero `unique`, not FORGET or INTERRUPT).
+    #[must_use]
+    pub fn lost_header(&self, i: usize, slot: &[u8]) -> Option<InHeader> {
+        let mut fb = vec![0u8; IN_HEADER];
+        let fread = self.file.read_at(&mut fb, (i * self.slot_bytes) as u64).unwrap_or(0);
+        let file = (fread >= IN_HEADER).then(|| InHeader::parse(&fb)).flatten();
+        [InHeader::parse(slot), file].into_iter().flatten().find(|h| {
+            h.unique != 0
+                && !matches!(
+                    h.opcode,
+                    super::proto::op::FORGET | super::proto::op::BATCH_FORGET | super::proto::op::INTERRUPT
+                )
+        })
+    }
+
     fn kept_ptr(&self, k: usize) -> *mut u8 {
         assert!(k < KEPT_SLOTS);
         // SAFETY: inside the mapping (the kept area follows the slots).

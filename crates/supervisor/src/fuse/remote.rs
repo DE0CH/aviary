@@ -104,6 +104,23 @@ impl OpCtl {
     }
 }
 
+/// Why one attempt of a streamed read ended without a result.
+#[derive(Debug)]
+pub enum AttemptError {
+    /// magpie's answer, or the connection's.
+    Client(ClientError),
+    /// No byte (or no next chunk) within the attempt timeout: retried like a timed-out call.
+    TimedOut,
+    /// A local failure (the cache file): this errno at once, no retry.
+    Local(i32),
+}
+
+impl From<ClientError> for AttemptError {
+    fn from(e: ClientError) -> Self {
+        AttemptError::Client(e)
+    }
+}
+
 /// What one attempt gets: an owned client and the lease (so the attempt's future borrows nothing).
 #[derive(Clone, Debug)]
 pub struct Calls {
@@ -256,7 +273,11 @@ impl Remote {
         F: Fn(Calls) -> Fut,
         Fut: Future<Output = Result<T, ClientError>>,
     {
-        self.retry(ctl, what, true, f, sent).await
+        let f = |c: Calls| {
+            let fut = f(c);
+            async move { fut.await.map_err(AttemptError::Client) }
+        };
+        self.retry(ctl, what, true, Some(self.timing.attempt), f, sent).await
     }
 
     /// A lease-free read (tree, file bytes) with the same retry rule.
@@ -268,7 +289,32 @@ impl Remote {
         F: Fn(Calls) -> Fut,
         Fut: Future<Output = Result<T, ClientError>>,
     {
-        self.retry(ctl, what, false, f, sent).await
+        let f = |c: Calls| {
+            let fut = f(c);
+            async move { fut.await.map_err(AttemptError::Client) }
+        };
+        self.retry(ctl, what, false, Some(self.timing.attempt), f, sent).await
+    }
+
+    /// A lease-free streamed read (a whole file): no bound on the whole attempt, since a large body may take longer
+    /// than one attempt's timeout to arrive. `f` bounds the wait for the answer and for each next chunk with
+    /// [`Remote::attempt_timeout`] itself ([`AttemptError::TimedOut`]), and resumes from what earlier attempts
+    /// fetched. The same retry rule otherwise.
+    ///
+    /// # Errors
+    /// As [`Remote::call`].
+    pub async fn read_streamed<T, F, Fut>(&self, ctl: &OpCtl, what: &str, f: F) -> Result<T, CallError>
+    where
+        F: Fn(Calls) -> Fut,
+        Fut: Future<Output = Result<T, AttemptError>>,
+    {
+        self.retry(ctl, what, false, None, f, &|| {}).await
+    }
+
+    /// The timeout of one attempt (30 s): a streamed read's bound on each wait.
+    #[must_use]
+    pub fn attempt_timeout(&self) -> Duration {
+        self.timing.attempt
     }
 
     async fn retry<T, F, Fut>(
@@ -276,12 +322,13 @@ impl Remote {
         ctl: &OpCtl,
         what: &str,
         leased: bool,
+        limit: Option<Duration>,
         f: F,
         sent: &(dyn Fn() + Sync),
     ) -> Result<T, CallError>
     where
         F: Fn(Calls) -> Fut,
-        Fut: Future<Output = Result<T, ClientError>>,
+        Fut: Future<Output = Result<T, AttemptError>>,
     {
         let mut rx = self.lease.subscribe();
         let lease = *rx.borrow_and_update();
@@ -303,7 +350,12 @@ impl Remote {
                     client: self.client.clone(),
                     lease: if leased { lease.map(|l| l.id) } else { None },
                 };
-                let r = tokio::time::timeout(self.timing.attempt, f(calls)).await;
+                let r = match limit {
+                    Some(l) => tokio::time::timeout(l, f(calls))
+                        .await
+                        .unwrap_or(Err(AttemptError::TimedOut)),
+                    None => f(calls).await,
+                };
                 drop(permit);
                 r
             };
@@ -321,12 +373,13 @@ impl Remote {
             };
             sent();
             let err = match res {
-                Ok(Ok(v)) => {
+                Ok(v) => {
                     self.record_ok();
                     return Ok(v);
                 }
-                Ok(Err(e)) => e,
-                Err(_elapsed) => {
+                Err(AttemptError::Client(e)) => e,
+                Err(AttemptError::Local(n)) => return Err(CallError::Errno(n)),
+                Err(AttemptError::TimedOut) => {
                     ctl.sticky.store(true, Ordering::SeqCst);
                     tracing::info!(what, "magpie attempt timed out");
                     let t = *first_fail.get_or_insert_with(Instant::now);
@@ -387,9 +440,14 @@ impl Remote {
         rx: &mut watch::Receiver<Option<Lease>>,
         leased: bool,
     ) -> Result<(), CallError> {
+        // the Notified exists before the interrupt check, so an INTERRUPT between the two is not missed
+        let woken = ctl.wake.notified();
+        if ctl.interrupted.load(Ordering::SeqCst) && !ctl.executed() {
+            return Err(CallError::Interrupted);
+        }
         tokio::select! {
             () = tokio::time::sleep(*wait) => {}
-            () = ctl.wake.notified(), if !ctl.executed() => return Err(CallError::Interrupted),
+            () = woken, if !ctl.executed() => return Err(CallError::Interrupted),
             _ = rx.changed(), if leased => return Err(CallError::Errno(EIO)),
         }
         *wait = (*wait * 2).min(self.timing.retry_max);
