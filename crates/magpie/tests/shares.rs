@@ -561,6 +561,116 @@ async fn a_share_freezes_only_rows_of_finished_events_and_continue_takes_the_fro
     );
 }
 
+/// A prompt line R before the freeze, its rewrite X after it: at the freeze R is still on the transcript, so the
+/// continued conversation does not count R as gone, and a rewrite of R there takes over R's row (one `user` row).
+#[tokio::test]
+async fn a_prompt_line_rewritten_after_the_freeze_stays_on_the_continued_transcript() {
+    let hermit = FakeHermit::unguarded(HermitConfig::default());
+    let running = hermit.serve().await.unwrap();
+    let db = common::fresh_db("shareprompt").await;
+    let t = common::Tokens::new();
+    let r = common::replica_with(&db.url, &t, &running.url(), common::idle()).await;
+    let c = ev::conversation(&r.pigeon(), ALICE).await;
+    hermit.write_file(c, "notes.txt", b"n");
+    let t1 = Uuid::new_v4();
+    let p1 = ev::append(
+        r.pool(),
+        ALICE,
+        c,
+        vec![
+            ev::prompt("p1", "queued"),
+            ev::in_turn(turn_started(t1), t1),
+            ev::in_turn(assistant("msg_1", json!([text("first answer")])), t1),
+            ev::in_turn(turn_ended(t1, "completed"), t1),
+        ],
+    )
+    .await[0];
+    // a running turn starts (the freeze stops before it), then the prompt line is rewritten (R taken over at X)
+    let t2 = Uuid::new_v4();
+    let s2 = ev::append(
+        r.pool(),
+        ALICE,
+        c,
+        vec![
+            user_sent("m2", "second question"),
+            ev::in_turn(turn_started(t2), t2),
+            ev::in_turn(
+                ev::with_meta(
+                    ev::prompt("p1", "queued, edited"),
+                    json!({"prompt": true, "replaces": p1}),
+                ),
+                t2,
+            ),
+        ],
+    )
+    .await;
+    let x = s2[2];
+    let sql = r.pool().get().await.unwrap();
+    sql.execute(
+        "insert into turns (id, conversation_id, origin, state, user_seq, start_seq) values ($1, $2, 'person', 'running', $3, $4)",
+        &[&t2, &c, &s2[0], &s2[1]],
+    )
+    .await
+    .unwrap();
+    sql.execute(
+        "update conversations set active_turn = $2, run_state = 'running' where id = $1",
+        &[&c, &t2],
+    )
+    .await
+    .unwrap();
+    let by: Option<i64> = sql
+        .query_one(
+            "select by_seq from retracted where conversation_id = $1 and seq = $2",
+            &[&c, &p1],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(by, Some(x), "the takeover records the line that took R over");
+    let share = r.pigeon().person(ALICE).create_share(c).await.unwrap();
+    let upto: i64 = sql
+        .query_one("select upto_seq from shares where id = $1", &[&share.id])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(p1 <= upto && upto < x, "R {p1}, freeze {upto}, X {x}");
+    let cont = r.pigeon().person(BOB).continue_share(&share.id).await.unwrap();
+    let gone: i64 = sql
+        .query_one(
+            "select count(*) from retracted where conversation_id = $1 and seq = $2",
+            &[&cont.conversation_id, &p1],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(gone, 0, "R counts as gone in the continued conversation");
+    // a rewrite of R in the continued conversation takes over R's row
+    ev::append1(
+        r.pool(),
+        BOB,
+        cont.conversation_id,
+        ev::with_meta(
+            ev::prompt("p1", "queued, again"),
+            json!({"prompt": true, "replaces": p1}),
+        ),
+    )
+    .await;
+    let users: Vec<String> = r
+        .pigeon()
+        .person(BOB)
+        .timeline(cont.conversation_id, &ev::tail(100))
+        .await
+        .unwrap()
+        .rows
+        .iter()
+        .filter_map(|row| match &row.item {
+            magpie_api::rows::RowItem::User(u) if u.message_id == "p1" => Some(u.text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(users, vec!["queued, again".to_owned()], "one user row for p1");
+}
+
 #[tokio::test]
 async fn clones_not_yet_committed_count_as_referenced_and_expire() {
     let db = common::fresh_db("pendingws").await;

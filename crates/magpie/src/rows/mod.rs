@@ -393,9 +393,10 @@ pub async fn project(tx: &Tx<'_>, ev: &Stored) -> Result<()> {
 
 /// Rule 2 for a rewritten prompt line (`meta.replaces = R`, R a `cc.user` line with the same `uuid` that still
 /// counts): the new line takes over R's `user` row, as rule 4 does for an assistant line. R counts as gone from now
-/// on (`retracted`), the row keeps its `row_id` and is updated at a new row seq, or keeps its version when the text,
-/// images and files are the same. R's retract then touches no row, so no commit shows two `user` rows with one
-/// `messageId`. `false` when there is nothing to take over (the caller inserts a new row).
+/// on (`retracted`, with `by_seq` the new line, so a share frozen before the rewrite still has R), the row keeps its
+/// `row_id` and is updated at a new row seq, or keeps its version when the text, images and files are the same. R's
+/// retract then touches no row, so no commit shows two `user` rows with one `messageId`. `false` when there is
+/// nothing to take over (the caller inserts a new row).
 async fn prompt_takeover(tx: &Tx<'_>, w: &mut Writer, ev: &Stored, meta: &EventMeta, item: &RowItem) -> Result<bool> {
     let RowItem::User(u) = item else {
         return Ok(false);
@@ -427,8 +428,8 @@ async fn prompt_takeover(tx: &Tx<'_>, w: &mut Writer, ev: &Stored, meta: &EventM
         return Ok(false);
     };
     tx.execute(
-        "insert into retracted (conversation_id, seq) values ($1, $2) on conflict do nothing",
-        &[&w.conversation, &r],
+        "insert into retracted (conversation_id, seq, by_seq) values ($1, $2, $3) on conflict do nothing",
+        &[&w.conversation, &r, &ev.seq],
     )
     .await?;
     if *item == old.item {
