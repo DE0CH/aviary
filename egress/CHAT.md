@@ -566,7 +566,8 @@ aviary platform spec 17.2 tools. The MCP server Claude Code in a sandbox sees is
   is left is cut and counted (each cut tool call is aborted and its `tool_calls` row written, `ok` false, error "cut by
   the drain"), the pending rows are written within 8 s (rows still unwritten count as dropped), the pool closes within
   2 s, exit 0 with log `drained`. `terminationGracePeriodSeconds` 180: 10 + 150 + 8 + 2 = 170 s even with the database
-  blackholed. The bounds are code, not configuration.
+  blackholed. The bounds are code, not configuration. `test/tools-main.test.ts` runs this whole path in a child
+  process (`run(site)` with temp paths and OS-picked ports; `main()` always runs the pod's fixed `SITE`).
 
 ## Deploying an instance
 
