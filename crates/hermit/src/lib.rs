@@ -21,6 +21,7 @@ pub mod fabric;
 pub mod feed;
 pub mod health_verdict;
 pub mod janitor;
+pub mod legacy;
 pub mod live;
 pub mod ops;
 pub mod people;

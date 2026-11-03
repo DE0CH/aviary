@@ -1,5 +1,6 @@
-//! `hermit`: `serve` (the replica), `catalogue-check <file>` (the catalogue rules alone, for YYC's CI) and
-//! `--version` (the build and its protocol numbers, which the image's labels are made from, platform 5.3).
+//! `hermit`: `serve` (the replica), `catalogue-check <file>` (the catalogue rules alone, for YYC's CI),
+//! `--version` (the build and its protocol numbers, which the image's labels are made from, platform 5.3), and the
+//! switch's one-shot commands `import-jarvis [--delta]`, `jfs-owner`, `legacy-cleanup [--confirm]` (`hermit::legacy`).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -41,6 +42,25 @@ enum Command {
     Serve,
     /// Check a catalogue file against the rules hermit applies (hermit 3.4.1).
     CatalogueCheck { file: PathBuf },
+    /// The switch's copy of the old stack's sandbox history and share workspaces (hermit 22.3 step 3, cutover 8.1;
+    /// `CronJob` `hermit-import`). Env: `HERMIT_DATABASE_URL`, `HERMIT_IMPORT_JARVIS_URL` (read-only), the `JuiceFS` pair.
+    ImportJarvis {
+        /// Only what can be new since the last run.
+        #[arg(long)]
+        delta: bool,
+    },
+    /// Everything under `/jfs/ws` to uid/gid 1000 (hermit 15.4; Job `hermit-jfs-owner`, as root, unsquashed mount).
+    JfsOwner {
+        #[arg(long, default_value = MOUNT)]
+        root: PathBuf,
+    },
+    /// Removes `users/`, `sent/` and the empty `ws/` folders magpie no longer references (hermit 22.3 step 6). Without
+    /// `--confirm` it prints the plan and removes nothing. Env: `HERMIT_DATABASE_URL`, `HERMIT_TOKEN_MAGPIE`, the
+    /// `JuiceFS` pair.
+    LegacyCleanup {
+        #[arg(long)]
+        confirm: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -55,7 +75,7 @@ fn main() -> ExitCode {
     let Some(command) = args.command else {
         let _ = std::io::Write::write_all(
             &mut std::io::stderr(),
-            b"usage: hermit serve | hermit catalogue-check <file> | hermit --version\n",
+            b"usage: hermit serve | catalogue-check <file> | import-jarvis [--delta] | jfs-owner | legacy-cleanup [--confirm] | --version\n",
         );
         return ExitCode::from(2);
     };
@@ -86,6 +106,128 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             };
             rt.block_on(serve())
+        }
+        Command::ImportJarvis { delta } => one_shot("import-jarvis", import_jarvis(delta)),
+        Command::JfsOwner { root } => one_shot("jfs-owner", jfs_owner(root)),
+        Command::LegacyCleanup { confirm } => one_shot("legacy-cleanup", legacy_cleanup(confirm)),
+    }
+}
+
+/// Runs a one-shot command: logs to stdout like `serve`, exits with what it returns.
+fn one_shot(name: &str, f: impl std::future::Future<Output = ExitCode>) -> ExitCode {
+    log::init(&build(), Some(name.to_owned()), log::Output::Stdout);
+    let Ok(rt) = tokio::runtime::Runtime::new() else {
+        return ExitCode::FAILURE;
+    };
+    rt.block_on(f)
+}
+
+/// The workspace store of a one-shot command: hermit.json's quota, the `JuiceFS` pair from the env.
+fn store() -> Result<JuiceFs, ExitCode> {
+    let config = Config::load(std::path::Path::new(CONFIG_PATH)).map_err(|e| {
+        tracing::error!(error = %e, "hermit.json refused");
+        ExitCode::from(2)
+    })?;
+    let cli = Arc::new(JuiceCli::new(
+        env::required("HERMIT_JUICEFS_META_URL"),
+        env::required("HERMIT_JUICEFS_META_PASSWORD"),
+    ));
+    let ws = &config.file.sandbox.workspace;
+    Ok(JuiceFs::new(MOUNT, cli, ws.quota_gib, ws.quota_inodes))
+}
+
+fn pool(var: &str, name: &str) -> Result<aviary_pg::Pool, ExitCode> {
+    aviary_pg::connect(&env::required(var), name, 2, Duration::from_secs(120)).map_err(|e| {
+        tracing::error!(name = var, error = %e, "invalid database url");
+        ExitCode::from(2)
+    })
+}
+
+async fn import_jarvis(delta: bool) -> ExitCode {
+    let (hermit, source) = match (
+        pool("HERMIT_DATABASE_URL", "hermit:import-jarvis"),
+        pool("HERMIT_IMPORT_JARVIS_URL", "hermit:import-jarvis"),
+    ) {
+        (Ok(h), Ok(s)) => (h, s),
+        (Err(e), _) | (_, Err(e)) => return e,
+    };
+    let fs = match store() {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match hermit::legacy::import_jarvis(&hermit, &source, Some(&fs), std::path::Path::new(MOUNT), delta).await {
+        Ok(r) => {
+            let failed = r.shares.as_ref().is_some_and(|s| !s.failed.is_empty());
+            tracing::info!(report = %serde_json::to_string(&r).unwrap_or_default(), "import-jarvis done");
+            if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS }
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "import-jarvis failed (the next run retries)");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn jfs_owner(root: PathBuf) -> ExitCode {
+    let res = tokio::task::spawn_blocking(move || {
+        hermit::legacy::fix_owner(&root, hermit::legacy::SANDBOX_UID, hermit::legacy::SANDBOX_UID, 16)
+    })
+    .await;
+    match res {
+        Ok(Ok(r)) => {
+            tracing::info!(report = %serde_json::to_string(&r).unwrap_or_default(), "jfs-owner done");
+            if r.error_count == 0 {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Ok(Err(e)) => {
+            tracing::error!(error = %e, "jfs-owner: ws/ not read");
+            ExitCode::FAILURE
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "jfs-owner");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn legacy_cleanup(confirm: bool) -> ExitCode {
+    let hermit = match pool("HERMIT_DATABASE_URL", "hermit:legacy-cleanup") {
+        Ok(h) => h,
+        Err(e) => return e,
+    };
+    let cli = JuiceCli::new(
+        env::required("HERMIT_JUICEFS_META_URL"),
+        env::required("HERMIT_JUICEFS_META_PASSWORD"),
+    );
+    let magpie = magpie_api::client::Client::new(
+        hermit::ops::http(),
+        "http://magpie",
+        aviary_core::auth::outbound_token("HERMIT", "MAGPIE"),
+    );
+    match hermit::legacy::legacy_cleanup(std::path::Path::new(MOUNT), &hermit, &magpie, &cli, confirm).await {
+        Ok(hermit::legacy::Cleanup::Refused { plan }) => {
+            let shown = serde_json::to_string(&plan).unwrap_or_default();
+            tracing::warn!(plan = %shown, "legacy-cleanup refused without --confirm: nothing removed");
+            ExitCode::from(2)
+        }
+        Ok(hermit::legacy::Cleanup::Done { plan, done }) => {
+            let (p, d) = (
+                serde_json::to_string(&plan).unwrap_or_default(),
+                serde_json::to_string(&done).unwrap_or_default(),
+            );
+            tracing::info!(plan = %p, done = %d, "legacy-cleanup done");
+            if done.trees_removed.len() == plan.trees.len() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "legacy-cleanup failed (nothing removed when the plan failed)");
+            ExitCode::FAILURE
         }
     }
 }

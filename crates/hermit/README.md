@@ -2,7 +2,7 @@
 
 hermit spec sections 3-12, 19, 20, 23 and 24.1-24.2 (WP-18, the core) and 13 (WP-19, the fabric). The library
 (`src/lib.rs`) is one replica; the binary (`src/main.rs`) runs it as `hermit serve` and checks catalogues as
-`hermit catalogue-check <file>`.
+`hermit catalogue-check <file>`, and runs the switch's one-shot commands (`legacy`, below).
 
 | Module | Spec |
 |---|---|
@@ -36,6 +36,42 @@ hermit spec sections 3-12, 19, 20, 23 and 24.1-24.2 (WP-18, the core) and 13 (WP
 | `fabric::ec2` | 13.5, 14.4: `RunInstances`/`TerminateInstances`/`DescribeInstances` (`aws-sdk-ec2`), `WireGuard` keys |
 | `fabric::images` | 13.14: the warm-up of a host that just became active |
 | `server`, `app` | the `hermit_api::Server` implementation; start, loops, drain (20.2), kill |
+| `legacy` | 15.4, 22.3 (cutover 8.1): `import-jarvis`, `jfs-owner`, `legacy-cleanup`, deleted after the switch |
+| `fabric/aws/legacy-down.sh` | 22.3 step 5: the old fabric's teardown, every name from the deployment's legacy file |
+
+## The switch's one-shot commands (`src/legacy.rs`; deleted with the old stack, `legacy-cleanup` after P6)
+
+- **`hermit import-jarvis [--delta]`** (CronJob `hermit-import`, every minute from A2 to A6; cutover 8.1). Env
+  `HERMIT_DATABASE_URL`, `HERMIT_IMPORT_JARVIS_URL` (a read-only role on the old `jarvis` database),
+  `HERMIT_JUICEFS_META_URL`, `HERMIT_JUICEFS_META_PASSWORD`; reads `hermit.json` (the quota) and needs `/jfs`
+  read-write (the clones). Copies, each idempotent: old `sandboxes` (owner set, gone, released in the last 400 days;
+  same id, `imported = true`, `token_kid` null, `release_reason` as it is, `release_code` from the old string by
+  `old_release_code`, CPU and memory the old fabric's fixed 1 CPU / 1 GiB) on their id; `ops_events` kind
+  `sandbox_start` of the last 30 days → `sandbox_starts`, the event tables `vm_events` → `host_events` on
+  `source_id`; gone `vm_hosts` → `hosts` (`hub` → `gateway`) on the name; every old share's
+  `users/<key>/shares/<id>/ws` cloned into `ws/<uuidv5(SHARE_NS, "share:" + id)>` with its quota and `workspaces`
+  row, a target already there skipped. Every `at` keeps its source value (microseconds included). `--delta` reads
+  event ids above the highest copied less 1 000 and sandboxes released after the latest imported release less 1 h
+  (rows committed out of id order are still found); hosts and share folders are listed whole every run. Exit 1 when
+  the database failed or a share clone failed (the next run retries), 2 on a bad URL or `hermit.json`. One log line
+  per table and one `import-jarvis done` with the whole report.
+- **`hermit jfs-owner [--root /jfs]`** (Job `hermit-jfs-owner`, root, the volume mounted without squashing; A2
+  before the first import, A6 after `legacy-down.sh`; 15.4): `ws/` and everything under it to 1000:1000 with
+  `lchown` (a symlink's target is never touched), staying on the volume, only entries not owned already, the top-level
+  folders on 16 threads. Exit 1 when an entry could not be changed (the report names the first 20).
+- **`hermit legacy-cleanup [--confirm]`** (P6, 30 days after the switch; 22.3 step 6). Env `HERMIT_DATABASE_URL`,
+  `HERMIT_TOKEN_MAGPIE`, the `JuiceFS` pair. Plans the removal of `users/` and `sent/` and of every empty `ws/<uuid>`
+  folder that magpie's `POST /v1/hermit/workspaces/exists` (batches of 1 000) does not name and no sandbox that is not
+  gone uses; folders with content, other names (a clone's temporary tree) and everything magpie names are kept.
+  Without `--confirm` it logs the plan, removes nothing and exits 2. With it: `juicefs rmr` of the two trees, `rmdir`
+  of each empty folder (a folder that got content since is kept), its quota and its `workspaces` row. magpie not
+  answering means no plan and nothing removed.
+- **`fabric/aws/legacy-down.sh --config <legacy.json> aws|host|hetzner [--confirm]`** (A6, once): terminates the old
+  fabric's tagged instances, deletes its launch template, tagged AMIs and their snapshots, IAM users and security
+  group; on the old gateway server stops its units and removes its interface, nft table, ip rules and routes of its
+  table and its paths (never a path with a mount at or under it: the old hosts mount `JuiceFS` under their state
+  directory); deletes the Hetzner network routes and the firewall. Every name comes from the deployment's file; a dry
+  run (no `--confirm`) only reads. Tested offline by `fabric/aws/test-legacy-down.sh` in CI's lint job.
 
 ## Tests
 
@@ -44,6 +80,13 @@ database per test, a fake fabric whose sandboxes are `aviary-fakes` supervisors 
 and replicas started in-process with short timings (`Timings` is code, not configuration).
 
 - `tests/conformance.rs`: `aviary-conformance hermit` (24.1) against a replica, every check passing, none skipped.
+- `tests/legacy.rs`: the switch's commands against an old-stack database made by `tests/fixtures/jarvis-legacy.sql`
+  and a scratch directory standing in for `/jfs`: every mapped column and its exact value, the rows left out (owner
+  null, live, older than the windows, other event kinds), re-runs and `--delta` copying nothing twice, the lookback
+  finding a row committed out of id order, share clones once into their `uuidv5` and never over a folder that is
+  there, `jfs-owner` (as root: real ownership, a symlink's target untouched; as a user: nothing changed, EPERM
+  counted), `legacy-cleanup` refused without `--confirm` and keeping what magpie names, live sandboxes' folders and
+  folders with content.
 - `tests/workspaces.rs`: hermit 24.2 "Workspaces" on the real `JuiceFs` store over a plain directory (the CLI
   replaced by a copy/remove fake with an in-memory quota table): the quota on every ensure, path escapes refused
   (an absolute symlink, `..` through a symlink into a neighbour), symlinks inside followed, a FIFO never blocking a
@@ -200,6 +243,24 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   matched a bare `@domain` before; every caller normalises the address first, so no request could use that).
 - **The page's zone** is the browser's (`Intl`), falling back to `ops.timeZone`; times are shown in it (18.2: "polls
   `./snapshot?tz=<browser zone>`").
+### The switch's commands (WP-30)
+
+- **Old release reasons → codes**: 13.13 maps hermit's own reasons; the old stack's strings (live values on
+  2026-11-03: `idle`, `pool`, `deleted`, `unhealthy`, `host lost`, `sandbox vanished`, `stuck`, `egress-check`,
+  `live check`, `test`, `test done`, `start failed: …`) get `sandbox_busy` for the start failures for lack of room
+  (`no sandbox host became available`, `all sandbox hosts are full`, a Kubernetes quota), `sandbox_failed` for other
+  start failures, `sandbox_lost` for the deaths, none for `stuck`, `sandbox_released` for the rest (Claude's call).
+- **Imported rows' CPU and memory** are 1 CPU and 1 GiB, the old fabric's fixed size (`config.json` `sandbox.cpu`,
+  `sandbox.memory`), since the old rows do not record them and hermit's columns are required.
+- **`import-jarvis` reads `hermit.json`** (the workspace quota of the clones), so CronJob `hermit-import` mounts
+  hermit's ConfigMap as the Deployment does (platform 9.12 lists only its Secrets).
+- **`legacy-cleanup` without `--confirm`** logs the full plan and exits 2 (a refusal), so a dry run can be read
+  before the real one.
+- **`legacy-down.sh` takes a legacy file** (`--config`) for every old name (tags, template, IAM users, security
+  group, units, interface, nft table, route table, paths, Hetzner network routes and firewall), as `infra.sh` takes
+  `hermit.json`; the public repository names no deployment. It runs by step (`aws`, `host`, `hetzner`) since each
+  needs other credentials or another machine.
+
 ### The fabric (WP-19)
 
 - **User data names the hub peer `hub`**, as sandboxd's `host.json` parser does (`crates/sandboxd/src/config.rs`),

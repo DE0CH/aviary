@@ -629,6 +629,91 @@ impl JuiceFs {
         }
     }
 
+    /// Copies the tree `src` (a workspace's folder, or another folder on the volume) to `ws/<wid>` (15.5): a
+    /// `juicefs clone` under a temporary name, renamed into place without replacing anything, then ensure's quota.
+    /// 409 `exists` when `ws/<wid>` appeared meanwhile.
+    async fn clone_dir(&self, wid: Uuid, src: PathBuf) -> Result<Workspace, WorkspaceError> {
+        // the copy is made under a temporary name and renamed into place without replacing anything: ws/<wid> is
+        // never a partial tree, and a clone that made the target meanwhile wins (this one answers what it would
+        // have answered a moment later)
+        let tmp = self.ws_root().join(format!(
+            "{CLONE_PREFIX}{wid}-{}-{}",
+            unix_now(),
+            Uuid::new_v4().simple()
+        ));
+        let guard = TempTree {
+            cli: self.cli.clone(),
+            path: Some(tmp.clone()),
+        };
+        self.cli
+            .clone_tree(&src, &tmp)
+            .await
+            .map_err(|e| unavailable(e.to_string()))?;
+        let target = self.dir(wid);
+        let t = tmp.clone();
+        let mut rename = tokio::task::spawn_blocking(move || rename_noreplace(&t, &target));
+        let renamed = match tokio::time::timeout(FS_TIMEOUT, &mut rename).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => return Err(unavailable(e.to_string())),
+            Err(_) => {
+                // the blocked rename may still land: its tree is not removed under it
+                guard.keep();
+                tokio::spawn(settle_late_rename(
+                    rename,
+                    self.cli.clone(),
+                    tmp,
+                    wid,
+                    self.quota_gib,
+                    self.quota_inodes,
+                ));
+                return Err(self.not_mounted(format!(
+                    "rename of a clone into place: no answer in {} s",
+                    FS_TIMEOUT.as_secs()
+                )));
+            }
+        };
+        match renamed {
+            Ok(()) => guard.keep(),
+            Err(Errno::EXIST | Errno::NOTEMPTY) => {
+                return Err(api(error::api(409, codes::EXISTS, "the workspace exists")));
+            }
+            Err(e) => return Err(unavailable(format!("rename of a clone into ws/{wid}: {e}"))),
+        }
+        // the copy gets its own quota (a directory quota is not copied with the tree)
+        self.set_quota(wid).await?;
+        let created = self.created_at(wid).await?.unwrap_or_else(Timestamp::now);
+        self.workspace(wid, created, false).await
+    }
+
+    /// The import's clone of an old share's frozen folder (hermit 22.3 step 3, cutover 8.1): `from` (a path under the
+    /// mount, such as `users/<key>/shares/<id>/ws`) to `ws/<wid>`, then the quota. `Ok(None)` when `ws/<wid>` is
+    /// already there (made by an earlier pass or by magpie): the import is idempotent and never replaces a workspace.
+    ///
+    /// # Errors
+    /// The store is unavailable, `from` is not a directory, or the clone failed.
+    pub async fn import_clone(&self, wid: Uuid, from: &Path) -> Result<Option<Workspace>, WorkspaceError> {
+        self.check().await?;
+        if self.created_at(wid).await?.is_some() {
+            return Ok(None);
+        }
+        let src = self.root.join(from);
+        let s = src.clone();
+        let is_dir = self
+            .blocking("stat of a clone source", FS_TIMEOUT, move || {
+                std::fs::symlink_metadata(&s)
+            })
+            .await?
+            .is_ok_and(|m| m.is_dir());
+        if !is_dir {
+            return Err(unavailable(format!("{} is not a directory", from.display())));
+        }
+        match self.clone_dir(wid, src).await {
+            Ok(w) => Ok(Some(w)),
+            Err(WorkspaceError::Api(e)) if e.code() == codes::EXISTS => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Sets the quota when absent or different (every ensure, A18.F2-F3).
     async fn set_quota(&self, wid: Uuid) -> Result<(), WorkspaceError> {
         let want = self.wanted();
@@ -1015,56 +1100,7 @@ impl Workspaces for JuiceFs {
             if self.created_at(wid).await?.is_some() {
                 return Err(api(error::api(409, codes::EXISTS, "the workspace exists")));
             }
-            // the copy is made under a temporary name and renamed into place without replacing anything: ws/<wid> is
-            // never a partial tree, and a clone that made the target meanwhile wins (this one answers what it would
-            // have answered a moment later)
-            let tmp = self.ws_root().join(format!(
-                "{CLONE_PREFIX}{wid}-{}-{}",
-                unix_now(),
-                Uuid::new_v4().simple()
-            ));
-            let guard = TempTree {
-                cli: self.cli.clone(),
-                path: Some(tmp.clone()),
-            };
-            self.cli
-                .clone_tree(&self.dir(from), &tmp)
-                .await
-                .map_err(|e| unavailable(e.to_string()))?;
-            let target = self.dir(wid);
-            let t = tmp.clone();
-            let mut rename = tokio::task::spawn_blocking(move || rename_noreplace(&t, &target));
-            let renamed = match tokio::time::timeout(FS_TIMEOUT, &mut rename).await {
-                Ok(Ok(r)) => r,
-                Ok(Err(e)) => return Err(unavailable(e.to_string())),
-                Err(_) => {
-                    // the blocked rename may still land: its tree is not removed under it
-                    guard.keep();
-                    tokio::spawn(settle_late_rename(
-                        rename,
-                        self.cli.clone(),
-                        tmp,
-                        wid,
-                        self.quota_gib,
-                        self.quota_inodes,
-                    ));
-                    return Err(self.not_mounted(format!(
-                        "rename of a clone into place: no answer in {} s",
-                        FS_TIMEOUT.as_secs()
-                    )));
-                }
-            };
-            match renamed {
-                Ok(()) => guard.keep(),
-                Err(Errno::EXIST | Errno::NOTEMPTY) => {
-                    return Err(api(error::api(409, codes::EXISTS, "the workspace exists")));
-                }
-                Err(e) => return Err(unavailable(format!("rename of a clone into ws/{wid}: {e}"))),
-            }
-            // the copy gets its own quota (a directory quota is not copied with the tree)
-            self.set_quota(wid).await?;
-            let created = self.created_at(wid).await?.unwrap_or_else(Timestamp::now);
-            self.workspace(wid, created, false).await
+            self.clone_dir(wid, self.dir(from)).await
         })
     }
 
