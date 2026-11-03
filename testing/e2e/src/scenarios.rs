@@ -11,8 +11,8 @@ use crate::{ADMIN, ALICE, Harness, JFS, PIGEON, STRANGER, TURN_MODEL, eventually
 
 /// The scenarios in the order `aviary-e2e` runs them when none is named.
 pub const ALL: &[&str] = &[
-    "e1", "e2", "e3", "e4", "e5", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e9", "e23", "e13",
-    "e15", "e24", "e12", "e17", "stale",
+    "e1", "e2", "e3", "e4", "e5", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e9", "e23", "e21",
+    "e13", "e15", "e24", "e12", "e17", "stale",
 ];
 
 /// How long a turn may take, sandbox start included (the image is local; the first start makes the host).
@@ -42,6 +42,7 @@ pub async fn run(h: &Harness, name: &str) -> anyhow::Result<()> {
         "e4" => e4(h).await,
         "e5" => e5(h).await,
         "e23" => e23(h).await,
+        "e21" => e21(h).await,
         "e15" => e15(h).await,
         "e7" => e7(h).await,
         other => bail!("no scenario {other}"),
@@ -1727,4 +1728,82 @@ async fn e23(h: &Harness) -> anyhow::Result<()> {
         (ws, r)
     })
     .await
+}
+
+/// E21: the socket closed while Claude Code compacts (the transcript renamed over) and reopened: one catch-up after
+/// the last seen row, no reset (the epoch is unchanged: no visible row changed, magpie 7.3 rule 9), and every row of
+/// the timeline seen once at its last seq.
+async fn e21(h: &Harness) -> anyhow::Result<()> {
+    let token = h.mint(ALICE, 3600, None).await?;
+    let (mut ws, _) = Ws::open(PIGEON, &token).await?;
+    let id = create(&mut ws, &format!("Before a compaction ({})", marker("E21"))).await?;
+    let end = turn_end_kind(&mut ws, &id, TURN_WAIT).await?;
+    ensure!(end["type"] == "turn_completed", "the first turn ended {end}");
+    let before = page(&mut ws, &id, "tail", None, 500).await?;
+    let epoch = before["epoch"].clone();
+    let mut seen: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    let mut last = 0u64;
+    for r in before["entries"].as_array().into_iter().flatten() {
+        let seq = r["seqEnd"].as_u64().unwrap_or(0);
+        seen.insert(row_key(&r["item"]), seq);
+        last = last.max(seq);
+    }
+    send(&mut ws, &id, "/compact").await?;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    ws.close().await;
+    let (mut ws, _) = Ws::open(PIGEON, &token).await?;
+    let r = async {
+        let (_, _) = ws
+            .rpc("agent.timeline.set_subscription.request", json!({"agentIds": [id]}))
+            .await?;
+        let caught = page(&mut ws, &id, "after", Some(&json!({"epoch": epoch, "seq": last})), 500).await?;
+        ensure!(
+            c["reset"] != true && c["staleCursor"] != true,
+            "the catch-up reset: {c}"
+        );
+        ensure!(
+            c["epoch"] == epoch,
+            "the epoch changed across the compaction: {} -> {}",
+            epoch,
+            c["epoch"]
+        );
+        for r in caught["entries"].as_array().into_iter().flatten() {
+            seen.insert(row_key(&r["item"]), r["seqEnd"].as_u64().unwrap_or(0));
+        }
+        let snapshot = agent(&mut ws, &id).await?;
+        if snapshot["status"] != "idle" {
+            let end = turn_end_kind(&mut ws, &id, TURN_WAIT).await?;
+            ensure!(end["type"] == "turn_completed", "the compaction ended {end}");
+        }
+        for (_, v) in ws.log.clone() {
+            let p = &v["message"]["payload"];
+            if v["message"]["type"] == "agent_stream" && p["agentId"] == id.as_str() && p["event"]["type"] == "timeline"
+            {
+                ensure!(p["epoch"] == epoch, "a live row of another epoch: {p}");
+                let e = seen.entry(row_key(&p["event"]["item"])).or_insert(0);
+                *e = (*e).max(p["seq"].as_u64().unwrap_or(0));
+            }
+        }
+        let all = timeline(&mut ws, &id).await?;
+        for r in &all {
+            let k = row_key(&r["item"]);
+            ensure!(
+                seen.get(&k).copied() == r["seqEnd"].as_u64(),
+                "row {k} not seen at its last seq"
+            );
+        }
+        ensure!(
+            seen.len() == all.len(),
+            "{} rows seen, {} in the timeline",
+            seen.len(),
+            all.len()
+        );
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    if r.is_err() {
+        eprintln!("{}", ws.tail(30));
+    }
+    ws.close().await;
+    r
 }
