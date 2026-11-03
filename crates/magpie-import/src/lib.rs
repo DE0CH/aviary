@@ -30,6 +30,7 @@ pub mod cli;
 pub mod control;
 pub mod conv;
 pub mod export;
+pub mod export_more;
 pub mod failed;
 pub mod holds;
 pub mod kube;
@@ -113,6 +114,9 @@ pub struct Importer {
     pub jarvis: Pool,
     /// The `JuiceFS` mount (`/jfs`), read-only.
     pub jfs: PathBuf,
+    /// The `JuiceFS` client the export clones a share's workspace with (`juicefs clone`, metadata only, through the
+    /// mount's `.control` file: no credentials); `None` copies the tree instead (tests, which have no mount).
+    pub juicefs: Option<PathBuf>,
 }
 
 /// Lowercase hex.

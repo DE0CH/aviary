@@ -13,15 +13,14 @@
 //! - Failed turns after `since` that never reached Claude Code (no Claude Code event in the turn) become
 //!   `jarvis_failed_turns` rows with the old sentence of their error.
 //! - Sent files after `since`: `sent/<conversation>/<toolUseId>/<path>` from their blobs.
-//! - Not exported: view-as rows (they stay in magpie's audit); uploads (already in the shared workspace); shares made
-//!   on the new side (the old share page reads a `messages.json` in `CloudCLI`'s own message format, which magpie
-//!   does not have; they are listed in the result as `sharesNotExported`).
+//! - Shares made on the new side, shares revoked there, and conversations deleted for good there: [`crate::export_more`].
+//! - Not exported: view-as rows (they stay in magpie's audit); uploads (already in the shared workspace).
 
 use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 
 use http_body_util::BodyExt as _;
-use magpie::ccfs::{Caller, reconstruct};
+use magpie::ccfs::reconstruct;
 use magpie_api::sandbox::CcFileQuery;
 use serde::Serialize;
 use time::OffsetDateTime;
@@ -39,8 +38,8 @@ pub const OWNER_ID: u32 = 1000;
 pub struct Exported {
     /// Per conversation.
     pub conversations: Vec<Conversation>,
-    /// Shares made on the new side that were not written back (see the module's note).
-    pub shares_not_exported: Vec<String>,
+    /// Conversations deleted for good on the new side, deleted on the old side.
+    pub purged: Vec<crate::export_more::Purged>,
     /// Per conversation errors.
     pub errors: Vec<(String, String)>,
 }
@@ -65,6 +64,8 @@ pub struct Conversation {
     pub failed_turns: usize,
     /// Sent files written.
     pub sent_files: usize,
+    /// Its shares written to the old side, and old share links revoked.
+    pub shares: crate::export_more::Shares,
 }
 
 fn ts(t: OffsetDateTime) -> String {
@@ -112,24 +113,12 @@ pub async fn export(imp: &Importer, since: Option<OffsetDateTime>, ids: &[Uuid])
             }
         }
     }
-    let shares = imp
-        .magpie
-        .pool
-        .get()
-        .await?
-        .query(
-            "select s.id from shares s where s.revoked_at is null
-               and not exists (select 1 from import_shares i where i.share_id = s.id)
-               and ($1::timestamptz is null or s.created_at > $1) order by s.id",
-            &[&since],
-        )
-        .await?;
-    out.shares_not_exported = shares.iter().map(|r| r.get(0)).collect();
+    out.purged = crate::export_more::purged(imp, since, ids, &mut out.errors).await?;
     Ok(out)
 }
 
 /// A relative path with only normal components (no `..`, no root), joined under `base`.
-fn under(base: &Path, rel: &str) -> Result<PathBuf> {
+pub(crate) fn under(base: &Path, rel: &str) -> Result<PathBuf> {
     let p = Path::new(rel);
     if rel.is_empty() || !p.components().all(|c| matches!(c, Component::Normal(_))) {
         return Err(Error::Source(format!("not a relative path: {rel}")));
@@ -145,7 +134,7 @@ fn destination(claude: &Path, id: Uuid, path: &str) -> Result<PathBuf> {
     }
 }
 
-fn own(p: &Path) {
+pub(crate) fn own(p: &Path) {
     // only root can give the file to Claude Code's uid (the export's writer sidecar runs as root)
     match std::os::unix::fs::chown(p, Some(OWNER_ID), Some(OWNER_ID)) {
         Ok(()) => {}
@@ -192,15 +181,14 @@ where
     Ok(n)
 }
 
-/// Writes magpie's reconstruction of `path` of `id` to `dest`.
-async fn write_cc(imp: &Importer, id: Uuid, person: &str, path: &str, dest: &Path) -> Result<u64> {
-    let caller = Caller::importer(id, person, magpie::ccfs::Importer::default());
+/// Writes magpie's reconstruction of `path` of cc scope `scope` (a conversation or a share snapshot) to `dest`.
+pub(crate) async fn write_scope(imp: &Importer, scope: Uuid, path: &str, dest: &Path) -> Result<u64> {
     let q = CcFileQuery {
         path: path.to_owned(),
         offset: None,
         length: None,
     };
-    let res = reconstruct::file(imp.magpie.clone(), &caller, &q).await?;
+    let res = reconstruct::scope_file(imp.magpie.clone(), scope, &q).await?;
     replace(dest, |mut f| async move {
         let mut body = res.into_body();
         let mut n = 0u64;
@@ -263,13 +251,14 @@ async fn conversation(imp: &Importer, id: Uuid, since: Option<OffsetDateTime>) -
     };
     for (path, _) in crate::verify::magpie_files(imp, id).await? {
         let dest = destination(&claude, id, &path)?;
-        out.bytes += write_cc(imp, id, &m.person, &path, &dest).await?;
+        out.bytes += write_scope(imp, id, &path, &dest).await?;
         out.files += 1;
         if path.starts_with(crate::tree::MEMORY) {
             out.memory += 1;
         }
     }
-    out.sent_files = sent(imp, id, since).await?;
+    let base = imp.jfs.join("sent").join(id.to_string());
+    out.sent_files = write_sent(imp, id, since, None, &base).await?.len();
     let schema = format!("cc_{key}");
     let conn = imp.cloudcli.get().await?;
     let has: bool = conn
@@ -312,6 +301,7 @@ async fn conversation(imp: &Importer, id: Uuid, since: Option<OffsetDateTime>) -
         out.row = true;
         out.failed_turns = failed(imp, &conn, &schema, id, since).await?;
     }
+    out.shares = crate::export_more::shares(imp, id, &key).await?;
     tracing::info!(conversation = %id, files = out.files, row = out.row, "conversation exported");
     Ok(out)
 }
@@ -365,8 +355,15 @@ async fn failed(
     Ok(n)
 }
 
-/// Sent files after `since`: `sent/<conversation>/<toolUseId>/<path>` from their blobs.
-async fn sent(imp: &Importer, id: Uuid, since: Option<OffsetDateTime>) -> Result<usize> {
+/// The sends of `id` after `since` and up to event `upto` written under `base` as `<toolUseId>/<path>` from their
+/// blobs (the conversation's `sent/<id>/`, or a share folder's `sent/`); their paths, in send order.
+pub(crate) async fn write_sent(
+    imp: &Importer,
+    id: Uuid,
+    since: Option<OffsetDateTime>,
+    upto: Option<i64>,
+    base: &Path,
+) -> Result<Vec<String>> {
     let rows = imp
         .magpie
         .pool
@@ -374,12 +371,12 @@ async fn sent(imp: &Importer, id: Uuid, since: Option<OffsetDateTime>) -> Result
         .await?
         .query(
             "select tool_use_id, path, blob from sent_files where conversation_id = $1
-               and ($2::timestamptz is null or sent_at > $2) order by seq, path",
-            &[&id, &since],
+               and ($2::timestamptz is null or sent_at > $2) and ($3::int8 is null or seq <= $3)
+             order by seq, path",
+            &[&id, &since, &upto],
         )
         .await?;
-    let base = imp.jfs.join("sent").join(id.to_string());
-    let mut n = 0;
+    let mut paths = Vec::new();
     for r in rows {
         let tool: String = r.get(0);
         let path: String = r.get(1);
@@ -390,15 +387,15 @@ async fn sent(imp: &Importer, id: Uuid, since: Option<OffsetDateTime>) -> Result
             .await?
             .remove(&sha)
             .ok_or_else(|| Error::Source(format!("sent file {path}: its blob is missing")))?;
-        let dest = under(&under(&base, &tool)?, &path)?;
+        let dest = under(&under(base, &tool)?, &path)?;
         replace(&dest, |mut f| async move {
             f.write_all(&bytes)?;
             Ok((f, bytes.len() as u64))
         })
         .await?;
-        n += 1;
+        paths.push(path);
     }
-    Ok(n)
+    Ok(paths)
 }
 
 #[cfg(test)]

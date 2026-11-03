@@ -73,13 +73,25 @@ own library, so an imported conversation is what live writes would have made: cc
 - `export` does not fence: the reverse hand-over (14.2, WP-52) fences, calls it and unfences. Without `--since` it
   exports every owned conversation. A failed turn is exported when it never reached Claude Code (no Claude Code
   event in the turn: those are the ones the old stack kept in `jarvis_failed_turns`), with the Traditional Chinese
-  sentence of its code, once per `error_at`. Deletions for good on the new side are not exported, and neither are
-  shares made on the new side: the old share page reads a `messages.json` in `CloudCLI`'s own message format,
-  which magpie does not hold; `export` lists them as `sharesNotExported`.
+  sentence of its code, once per `error_at`.
+- Shares made on the new side go back in the old layout (`users/<key>/shares/<id>/`: `transcript.jsonl` and
+  `session/` from the share's snapshot scope, `sent/` from the blobs of the sends within it, `ws/` cloned from the
+  share's workspace with `juicefs clone`) and a `cc_shared.shares` row with the same id. No `messages.json` is
+  written: magpie does not hold `CloudCLI`'s message format, and the old share page builds a snapshot's history
+  from its transcript and session folder when that file is absent (DE0CH/claudecodeui `frozenHistory`, shipped by
+  the A1 ui rollout). A share revoked on the new side is revoked on the old side (row marked, folder removed).
+- Deletions for good on the new side: magpie's purge (not the importer's forget) writes a tombstone to
+  `import_purged` (conversation, person, Claude Code session id, cc paths) while that table exists (dropped in
+  A6). `export` deletes the old sessions row, its failed turns, its transcript and session folder, its
+  `aviary-memory/<id>/` and `sent/<id>/`, and revokes its old share links; the person's shared memory folder is
+  never touched, and `ws/<id>` is hermit's (the purge's own outbox call). A tombstone whose id is a conversation in
+  magpie again is skipped.
+- The import image carries the `JuiceFS` client at `/usr/local/bin/juicefs` (`cli::JUICEFS`), which the export's
+  share clone runs through the mount's `.control` file (no credentials).
 - A sent-file snapshot's time is its folder's mtime to the nanosecond.
 
-## Not built yet (WP-29 continues)
+## Owned by other packages
 
-`allow-handover` and `reverse` (14.2, with WP-52's loop), the export of new-side shares and
-of permanent deletions, and tests 4 (the routes of 6.4 beyond the write guard), 5-6 of 7.12 and item 8's
-process-level half (the loop's yield between passes). The hand-over loop itself is WP-52.
+`allow-handover` and `reverse` (14.2, with WP-52's loop), and tests 4 (the routes of 6.4 beyond the write
+guard), 5-6 of 7.12 and item 8's process-level half (the loop's yield between passes). The hand-over loop itself is
+WP-52.

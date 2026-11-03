@@ -187,6 +187,7 @@ impl World {
                 cloudcli,
                 jarvis,
                 jfs: jfs.0.clone(),
+                juicefs: None,
             },
             jfs,
             service: Some(service),

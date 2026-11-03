@@ -22,6 +22,9 @@ use crate::Importer;
 /// Where the `JuiceFS` volume is mounted (read-only) in the import Job and Deployment (cutover 7.2).
 pub const JFS: &str = "/jfs";
 
+/// The `JuiceFS` client in the import image (the official static build), used for metadata-only clones.
+pub const JUICEFS: &str = "/usr/local/bin/juicefs";
+
 const USAGE: &str = "usage: magpie import plan | run | catch-up | verify [--all | <id>…] | status | holds | hold on|off \
                      | reset --yes | unfence <id> | release <id> --force | export [--since <time>] [<id>…] \
                      | parity <id>…\n";
@@ -90,6 +93,7 @@ pub async fn connect(build: &version::Build) -> Result<Importer, String> {
         cloudcli,
         jarvis,
         jfs: PathBuf::from(JFS),
+        juicefs: Some(PathBuf::from(JUICEFS)),
     })
 }
 
