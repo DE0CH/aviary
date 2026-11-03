@@ -34,7 +34,6 @@ function page(
   if (options.signedOut) html = html.replace("<head>", '<head><meta name="yyc-signed-out" content="1">');
   const dom = new JSDOM(html, {
     url,
-    ...(options.userAgent ? { userAgent: options.userAgent } : {}),
     runScripts: "dangerously",
     pretendToBeVisual: true,
     beforeParse(window) {
@@ -45,6 +44,7 @@ function page(
         window.localStorage.setItem(key, value);
       }
       Object.assign(window, { matchMedia: () => ({ matches: true }) });
+      if (options.userAgent) Object.defineProperty(window.navigator, "userAgent", { value: options.userAgent });
     },
   });
   const window = dom.window;
