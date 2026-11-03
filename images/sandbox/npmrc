@@ -1,0 +1,3 @@
+; /usr/local/etc/npmrc, npm's global config (node's prefix is /usr/local): `npm install -g` goes to uid 1000's own
+; prefix, whatever the environment says (the supervisor passes no NPM_CONFIG_PREFIX, supervisor spec 6.2)
+prefix=/home/sandbox/.npm-global

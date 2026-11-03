@@ -1,4 +1,4 @@
-# platform spec 6.1. Jobs still to come with their packages: images, sandbox-smoke, gvisor, e2e, publish (main only,
+# platform spec 6.1. Jobs still to come with their packages: images, gvisor, e2e, publish (main only,
 # needs every gate). Actions are pinned by commit SHA (6.3).
 name: ci
 
@@ -289,6 +289,31 @@ jobs:
           name: conformance
           path: ${{ runner.temp }}/conformance/
           if-no-files-found: warn
+
+  sandbox-smoke:
+    # platform 6.1 `sandbox-smoke` (WP-24): images/sandbox (ghcr.io/de0ch/hermit-sandbox) built from this commit's
+    # supervisor and keeper, then images/sandbox/smoke.sh under runc: hermit spec 17's list and supervisor spec 22's
+    # image checks, with the image's own keeper and supervisor running a Claude Code turn against the test gateway.
+    # The slow layers come from the GHA cache; pushing is the images job's.
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - run: chmod +x dist/*
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: the cache service's token for buildx (type=gha)
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      - name: images/sandbox
+        env:
+          SANDBOX_BUILD_FLAGS: --load --cache-from type=gha,scope=hermit-sandbox --cache-to type=gha,scope=hermit-sandbox
+        run: images/sandbox/build.sh dist hermit-sandbox:ci "$GITHUB_SHA"
+      - name: images/sandbox/smoke.sh
+        run: images/sandbox/smoke.sh hermit-sandbox:ci dist
 
   paseo-contract:
     # testing/paseo-contract (pigeon spec 18.1): frames validated against every client build in clients.txt, and a

@@ -1,0 +1,7 @@
+# /etc/sudoers.d/sandbox (hermit spec 17, A5.F4): uid 1000 (`node`) has passwordless sudo; root exists only inside the
+# sandbox. sudo keeps the proxy and the package mirrors' variables, so `sudo apt-get`, `sudo pip` and `sudo npm` reach
+# them as uid 1000 does.
+Defaults env_keep += "HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy"
+Defaults env_keep += "PIP_INDEX_URL PIP_TRUSTED_HOST npm_config_registry DEBIAN_FRONTEND"
+Defaults !lecture, !syslog
+node ALL=(ALL:ALL) NOPASSWD: ALL
