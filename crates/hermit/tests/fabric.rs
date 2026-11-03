@@ -84,6 +84,8 @@ struct HostSim {
     /// The next send's answer is lost (500) while the send goes on here: the source lists the sandbox running,
     /// alive and `sending` until the test ends the send (`Rig::finish_move`, or `sending` cleared: it stayed).
     lose_answer_keep_sending: AtomicBool,
+    /// This many deletes answer 500 and remove nothing (a host that does not answer one).
+    fail_deletes: AtomicU32,
 }
 
 impl HostSim {
@@ -197,6 +199,10 @@ impl Server for HostSim {
     }
     async fn delete(&self, name: String) -> Answer<Deleted> {
         self.saw(format!("delete {name}"));
+        if self.fail_deletes.load(Ordering::SeqCst) > 0 {
+            self.fail_deletes.fetch_sub(1, Ordering::SeqCst);
+            return Err(ApiError::new(500, "the delete did not answer"));
+        }
         self.sandboxes.lock().unwrap().remove(&name);
         Ok(Deleted { deleted: name })
     }
@@ -398,6 +404,7 @@ impl Fleet {
             sends_waiting: AtomicU32::new(0),
             stop_and_lose_answer: AtomicBool::new(false),
             lose_answer_keep_sending: AtomicBool::new(false),
+            fail_deletes: AtomicU32::new(0),
         });
         let host = Arc::new(FakeHost {
             sim: sim.clone(),
@@ -1754,6 +1761,39 @@ async fn a_receive_that_never_ends_is_ended_at_the_migration_limit() {
         "{:?}",
         dst.calls()
     );
+    let failed = rig.events("migration-failed").await;
+    assert_eq!(failed.len(), 1);
+    assert_eq!(
+        (&failed[0]["kept"], &failed[0]["overdue"]),
+        (&json!(false), &json!(true))
+    );
+}
+
+/// Past the migration limit, a target whose delete of the receive does not land (500) is asked to delete it again
+/// while it still lists the receive; the sandbox then ends lost.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_receive_whose_delete_fails_is_deleted_again() {
+    let rig = Rig::new(
+        "fabric_receive_delete_fails",
+        |_| {},
+        Timings {
+            migration_limit: Duration::from_secs(4),
+            ..manual()
+        },
+    )
+    .await;
+    let (r1, g1) = packing_pair(&rig, |h| h.stop_and_lose_answer.store(true, Ordering::SeqCst)).await;
+    let p = pass(&g1, &r1).await;
+    let (id, _from, to) = p.migration.expect("a packing move");
+    let name = db::load(&rig.h.pool(), id).await.unwrap().unwrap().name;
+    let dst = rig.fleet.sim(&to);
+    // the migration started under a second ago; its limit is 4 s
+    dst.fail_deletes.store(1, Ordering::SeqCst);
+    assert!(
+        eventually(|| async { db::load(&rig.h.pool(), id).await.unwrap().unwrap().status == SandboxState::Gone }).await
+    );
+    let deletes = dst.calls().iter().filter(|c| *c == &format!("delete {name}")).count();
+    assert!(deletes >= 2, "{:?}", dst.calls());
     let failed = rig.events("migration-failed").await;
     assert_eq!(failed.len(), 1);
     assert_eq!(

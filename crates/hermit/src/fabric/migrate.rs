@@ -328,6 +328,16 @@ async fn settle(
             .await?;
             return Ok(());
         }
+        // past the limit, a receive still listed is one whose delete did not land: delete it again
+        if ended
+            && target == Some(Seen::Receiving)
+            && let Some(t) = to
+        {
+            let Some(_effect) = claim.guard(core).await? else {
+                return Ok(());
+            };
+            delete(clients, t, &row.name).await;
+        }
         // a host that does not answer, a send or a receive still in progress decides nothing: ask again (the
         // host-loss rule may end it meanwhile, and the migration limit bounds it)
         tokio::time::sleep(core.timings.release_retry).await;
