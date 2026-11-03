@@ -573,6 +573,12 @@ async fn a_resend_and_a_truncate_at_a_plain_line_need_no_bucket() {
     // a truncate inside the image line needs its blob: 503 until the bucket is back
     let e = sb2.truncate(path, 100).await.unwrap_err();
     assert_eq!(common::cc::code(&e), "unavailable");
+    // the replica that uploaded the blob keeps its bytes in its read cache: it cuts the image line without the bucket
+    let size = image.len() as u64;
+    let v = sb.write(path, 10, &image.as_bytes()[10..40]).await.unwrap();
+    assert_eq!(sb.write(path, 10, &image.as_bytes()[10..40]).await.unwrap(), v);
+    assert_eq!(sb.truncate(path, size - 7).await.unwrap().size, size - 7);
+    assert_eq!(sb.read(path).await.unwrap(), image.as_bytes()[..image.len() - 7]);
     proxy.restore();
     assert_eq!(sb2.truncate(path, 100).await.unwrap().size, 100);
     assert_eq!(sb2.read(path).await.unwrap(), image.as_bytes()[..100]);

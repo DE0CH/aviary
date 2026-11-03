@@ -349,10 +349,12 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   promotion, so the old transcript's dropped lines are retracted at once (6.6).
 - Bucket down (6.13): rule 0 compares a line the range covers whole by its sha256 and length, so the sentry's resend
   after a checkpoint answers without the bucket; appends and truncates at a line start or inside a line without
-  blobs need no bucket either. A gap is left: a write, truncate or overwrite that cuts a line whose blob has left
-  staging, and a kind change on rename, reconstruct that line from its blobs and answer 503 while the bucket is
-  unreachable (the supervisor retries; `tests/blobs.rs` `a_resend_and_a_truncate_at_a_plain_line_need_no_bucket`
-  pins both sides).
+  blobs need no bucket either. The uploader puts the bytes it stores into its replica's read cache, so on that
+  replica (and on any replica that has read the blob) a write, truncate or overwrite that cuts the line also answers.
+  A gap is left, which 5.2's design implies (staged bytes leave Postgres once uploaded, so the bucket then holds the
+  only copy): on a replica without the blob in its cache, a cut of a line whose blob has left staging, and a kind
+  change on rename, reconstruct that line from the bucket and answer 503 while it is unreachable (the supervisor
+  retries; `tests/blobs.rs` `a_resend_and_a_truncate_at_a_plain_line_need_no_bucket` pins every side).
 - An upload's or a sent file's body (at most 50 MiB and 64 MiB) is read whole, hashed, then put in the bucket under
   its content key with one `PUT`, rather than hashed while it streams (the key is the hash, known only at the end).
   No object magpie writes is over 64 MiB, so magpie 5.2's multipart path has nothing to carry and is not built.

@@ -5,7 +5,7 @@
 //! two replicas never upload the same blob at once and an item whose replica died is taken again after the claim
 //! lapses. The `PUT` runs outside any transaction under the blob's shared lock (on the lock session, holding no pooled
 //! connection); then one transaction sets `stored`
-//! and deletes the staging row. The claim answers sizes only: each item reads its bytes once it holds that much of
+//! and deletes the staging row; the stored bytes then go into the replica's read cache. The claim answers sizes only: each item reads its bytes once it holds that much of
 //! the buffered-body budget ([`Blobs::hold_body`]), so the uploader's blobs count against the replica's memory bound. A failed `PUT` backs off (1 s doubling to 5 min) and logs `blob upload failing` at
 //! most every 10 min per replica.
 
@@ -87,7 +87,7 @@ impl Uploader {
         drop(row);
         held.keep(size);
         let lock = blobs.shared(&sha).await?;
-        let put = blobs.put(&lock, &sha, bytes).await;
+        let put = blobs.put(&lock, &sha, bytes.clone()).await;
         let held = &lock;
         let outcome = match put {
             Ok(()) => aviary_pg::tx!(pool, |t| -> Result<()> {
@@ -120,6 +120,11 @@ impl Uploader {
             }
         };
         lock.release().await;
+        if matches!(outcome, Ok(true)) {
+            // the bytes leave staging: this replica keeps them in its read cache, so its cc writes that cut the line
+            // (a truncate or an overwrite inside it) still answer while the bucket is unreachable (6.13)
+            blobs.cache.insert(sha, bytes).await;
+        }
         outcome
     }
 }
