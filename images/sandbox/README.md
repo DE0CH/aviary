@@ -79,5 +79,8 @@ driver on the containerd image store refuses it ("conflicts with unpack"). Elsew
 - **Docker on demand under runc** needs `/var/lib/docker` on a volume (overlay snapshots cannot sit on the
   container's overlay root); in a sandbox it is on the scratch disk.
 - **Built in the images job.** ci.yml's `images` job builds it as `hermit-sandbox:<sha12>` from `build`'s `dist`
-  (layers cached in the GHA cache) and saves it as the artifact `image-sandbox`, which `sandbox-smoke` loads; the
-  `publish` job pushes it after every gate passed.
+  (layers cached in the GHA cache) and saves it as the artifact `image-sandbox`, which `sandbox-smoke` loads (runc),
+  `gvisor` loads under runsc of the DE0CH/gvisor fork (smoke.sh part 2 with `SMOKE_RUNTIME=runsc`: the FUSE mount
+  and a Claude Code turn in gVisor), and `e2e` runs as the harness's sandbox Pods; the `publish` job pushes it after
+  every gate passed. Under runsc the keeper's VmRSS reads 9 MiB (gVisor's accounting; under 4 MiB under runc), so its
+  4 MiB budget is checked under runc only.
