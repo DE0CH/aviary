@@ -34,6 +34,11 @@ export interface EgressRoute {
   /** also served on egress's relay listener to a person's own Claude Code, authenticated by their relay token
    * (docs/CLAUDE-CODE.md, "Relay"); model routes only, so ZDR, the model list and the budget apply as in a sandbox */
   relay?: boolean;
+  /** an MCP server for Claude Code in the sandbox: web registers it as the MCP server named after the route, at
+   * `/x/<name>/mcp`, and exports the route's base URL as `JARVIS_ROUTE_<NAME>_URL` (with the sandbox's egress token in
+   * `JARVIS_EGRESS_TOKEN`) so the sandbox can fetch its other allowed paths too (docs/CLAUDE-CODE.md, "Route MCP
+   * servers"). The upstream decides what its tools may do; the tools role's read-only rule doesn't apply. */
+  mcp?: boolean;
   inject: Record<string, string>;
   allowPaths?: string[];
 }
@@ -306,6 +311,8 @@ export function parseConfig(raw: unknown): ChatConfig {
   }
   for (const r of (c.egress?.routes ?? []) as EgressRoute[]) {
     if (r.relay && (r.model !== true || r.identity || r.keepAuth)) throw new Error(`config: egress route ${r.name}: relay needs a model route without identity or keepAuth`);
+    if (r.mcp && (r.model || r.relay || r.keepAuth)) throw new Error(`config: egress route ${r.name}: an mcp route can't be a model, relay or keepAuth route`);
+    if (r.mcp && !/^[a-z][a-z0-9-]*$/.test(r.name)) throw new Error(`config: egress route ${r.name}: an mcp route's name must be lowercase letters, digits and -`);
   }
   if (c.titleReasoning !== undefined && !REASONING_EFFORTS.has(c.titleReasoning)) throw new Error(`config: titleReasoning must be one of ${[...REASONING_EFFORTS].join(", ")}`);
   let budget: BudgetConfig | undefined;

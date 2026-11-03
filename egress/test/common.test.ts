@@ -100,6 +100,21 @@ test("Claude Code in a sandbox: egress for the model and tools, SendUserFile on,
   assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined, "no contextWindow: Claude Code's own idea");
 });
 
+test("route MCP servers: an mcp route is an MCP server for Claude Code and a URL in the sandbox's env", async () => {
+  const off = await claudeCodeEnv(parseConfig({ ...base, systemPromptFile: "/dev/null" }), "http://10.201.1.1:3128", "tok");
+  assert.deepEqual(Object.keys(JSON.parse(Buffer.from(off.JARVIS_CLAUDE_MCP!, "base64").toString()).mcpServers), ["tools"]);
+  assert.equal(off.JARVIS_EGRESS_TOKEN, undefined, "no mcp route: the token stays only in the proxy settings");
+  const routes = [{ name: "labels", upstream: "https://labels.example", mcp: true, identity: true, inject: { "CF-Access-Client-Id": "x" }, allowPaths: ["/mcp", "/fs/"] }];
+  const env = await claudeCodeEnv(parseConfig({ ...base, systemPromptFile: "/dev/null", egress: { routes } }), "http://10.201.1.1:3128", "tok");
+  const mcp = JSON.parse(Buffer.from(env.JARVIS_CLAUDE_MCP!, "base64").toString()).mcpServers;
+  assert.deepEqual(mcp.labels, { type: "http", url: "http://10.201.1.1:3128/x/labels/mcp", headers: { Authorization: "Bearer tok" } });
+  assert.ok(mcp.tools);
+  assert.equal(env.JARVIS_ROUTE_LABELS_URL, "http://10.201.1.1:3128/x/labels");
+  assert.equal(env.JARVIS_EGRESS_TOKEN, "tok");
+  assert.throws(() => parseConfig({ ...base, egress: { routes: [{ ...routes[0], model: true }] } }), /an mcp route can't be/);
+  assert.throws(() => parseConfig({ ...base, egress: { routes: [{ ...routes[0], name: "Labels" }] } }), /lowercase/);
+});
+
 test("Claude Code in a sandbox: the default model's contextWindow is its window; a bad one is refused", async () => {
   const models = [{ id: "deepseek/deepseek-v4.1-flash-1017", label: "DS", contextWindow: 1048576 }];
   const env = await claudeCodeEnv(parseConfig({ ...base, systemPromptFile: "/dev/null", models, defaultModel: models[0]!.id }), "http://10.201.1.1:3128", "tok");

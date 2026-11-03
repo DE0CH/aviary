@@ -37,11 +37,17 @@ export async function managedClaudeMd(config: ChatConfig): Promise<string> {
 
 /** The sandbox env additions: Claude Code → egress for the model and the tools (MCP), and SendUserFile on. */
 export async function claudeCodeEnv(config: ChatConfig, egressBase: string, egressToken: string): Promise<Record<string, string>> {
+  const auth = { Authorization: `Bearer ${egressToken}` };
+  const routes = config.egress.routes.filter((r) => r.mcp);
   const mcp = {
     mcpServers: {
-      tools: { type: "http", url: `${egressBase}/x/tools/mcp`, headers: { Authorization: `Bearer ${egressToken}` } },
+      tools: { type: "http", url: `${egressBase}/x/tools/mcp`, headers: auth },
+      // Route MCP servers (docs/CLAUDE-CODE.md): an instance's own services, through egress, which injects their credentials
+      ...Object.fromEntries(routes.map((r) => [r.name, { type: "http", url: `${egressBase}/x/${r.name}/mcp`, headers: auth }])),
     },
   };
+  const routeEnv: Record<string, string> = Object.fromEntries(routes.map((r) => [`JARVIS_ROUTE_${r.name.toUpperCase().replace(/-/g, "_")}_URL`, `${egressBase}/x/${r.name}`]));
+  if (routes.length) routeEnv.JARVIS_EGRESS_TOKEN = egressToken;
   const contextWindow = config.models.find((m) => m.id === config.defaultModel)?.contextWindow;
   return {
     ANTHROPIC_BASE_URL: `${egressBase}/x/claude`,
@@ -60,6 +66,7 @@ export async function claudeCodeEnv(config: ChatConfig, egressBase: string, egre
     CLAUDE_CODE_ATTACHMENTS_BY_PATH: "1",
     JARVIS_CLAUDE_MD: Buffer.from(await managedClaudeMd(config)).toString("base64"),
     JARVIS_CLAUDE_MCP: Buffer.from(JSON.stringify(mcp)).toString("base64"),
+    ...routeEnv,
     ...sentFileSnapshots(config, egressBase),
   };
 }
