@@ -12,6 +12,10 @@
 // `--delta` starts after the highest `source_id` already copied, less LOOKBACK ids: an old-stack row whose id was
 // handed out before a neighbour's but committed after it (two replicas inserting at once) is still read by the next
 // pass; the overlap costs nothing (conflicts are skipped). A first run without rows copied is a full pass either way.
+//
+// A full pass (no `--delta`; A6's last runs, cutover 8.2) also counts the source rows it read that the target does
+// not hold (`missing`, logged with the pass; the subcommands exit 1 when any is missing): the lookback is the only
+// guarantee a delta pass has, so the last pass reads everything and checks it.
 import pg from "pg";
 import { log, logError } from "./log.ts";
 
@@ -40,6 +44,8 @@ export interface CopyResult {
   after: number;
   /** The highest source id read, or `after` when none. */
   last: number;
+  /** A full pass only: source rows read that the target does not hold after it. */
+  missing?: number;
 }
 
 /** Every value as Postgres text (the copy passes them back as text: no Date or float conversion on the way). */
@@ -68,6 +74,7 @@ export async function copy(src: pg.ClientBase, dst: pg.Pool, spec: CopySpec, del
   let last = after;
   let read = 0;
   let copied = 0;
+  const ids: string[] = [];
   for (;;) {
     const { rows } = await src.query<Record<string, string | null>>(sql, [last, BATCH]);
     if (!rows.length) break;
@@ -77,8 +84,11 @@ export async function copy(src: pg.ClientBase, dst: pg.Pool, spec: CopySpec, del
     copied += res.rowCount ?? 0;
     read += rows.length;
     last = Number(rows.at(-1)!.source_id);
+    if (!delta) for (const r of rows) ids.push(r.source_id!);
   }
-  return { read, copied, after, last };
+  if (delta) return { read, copied, after, last };
+  const { rows: held } = await dst.query<{ n: string }>(`select count(*)::text as n from ${spec.target} where source_id = any($1::bigint[])`, [ids]);
+  return { read, copied, after, last, missing: read - Number(held[0]?.n ?? 0) };
 }
 
 /** A whole `import-jarvis` run: connects to the old database (`sourceUrl`, read-only), opens one repeatable-read

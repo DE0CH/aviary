@@ -1,6 +1,6 @@
 // `node src/main.ts tools import-jarvis [--delta]` (aviary cutover spec 8.2, platform spec 17.2 tools item 5): copies
 // the old stack's `jarvis.tool_calls` into tools' own `tool_calls`, every column, `source_id` = the old id. CronJob
-// `tools-import` (A2 once, A6 once with `--delta`); deleted in A6. Environment: TOOLS_IMPORT_JARVIS_URL (read-only,
+// `tools-import` (A2 once, A6 once as a full pass, which also checks that every source row is there); deleted in A6. Environment: TOOLS_IMPORT_JARVIS_URL (read-only,
 // the old database), TOOLS_DATABASE_URL (tools' own).
 import { logError } from "../common/log.ts";
 import { parseArgs, run, type CopySpec } from "../common/importjarvis.ts";
@@ -29,7 +29,8 @@ export async function importJarvis(args: readonly string[]): Promise<void> {
   const db = connect(target);
   try {
     await migrate(db);
-    await run("tools", source, db, [TOOL_CALLS], delta);
+    const results = await run("tools", source, db, [TOOL_CALLS], delta);
+    if (results.some((r) => (r.missing ?? 0) > 0)) throw new Error("source rows read are not in tool_calls (see the log line)");
   } catch (e) {
     logError("tools import-jarvis", e);
     process.exitCode = 1;

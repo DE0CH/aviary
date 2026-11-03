@@ -2,8 +2,10 @@
 // old stack's `jarvis.egress_log` into egress's own `egress_log`, every column, `source_id` = the old id, so the new
 // egress's budget counts the old stack's spend like its own. `person` is the old row's sandbox owner
 // (`jarvis.sandboxes.owner` by `sandbox_id`), else the owner of its conversation (`jarvis.conversations.owner` by
-// `conversation_id`, the legacy UI's calls), else null. CronJob `egress-import` (every minute from A2 to A6,
-// `--delta` after the first run); deleted in A6. Environment: EGRESS_IMPORT_JARVIS_URL (read-only, the old
+// `conversation_id`, the legacy UI's calls), else null, lowercased (one person key however the old row spelled it,
+// as hermit's import does). CronJob `egress-import` (every minute from A2 to A6,
+// `--delta` after the first run; A6's last run is a full pass, which also checks that every source row is there); deleted
+// in A6. Environment: EGRESS_IMPORT_JARVIS_URL (read-only, the old
 // database), EGRESS_DATABASE_URL (egress's own).
 import { logError } from "../common/log.ts";
 import { hasTable, parseArgs, run, type CopySpec } from "../common/importjarvis.ts";
@@ -17,7 +19,7 @@ export const EGRESS_LOG: CopySpec = {
   async sourceSql(src) {
     const sbx = await hasTable(src, "sandboxes");
     const conv = await hasTable(src, "conversations");
-    const person = `coalesce(${sbx ? "s.owner" : "null"}, ${conv ? "c.owner" : "null"})`;
+    const person = `lower(coalesce(${sbx ? "s.owner" : "null"}, ${conv ? "c.owner" : "null"}))`;
     return `select e.at, e.conversation_id, e.sandbox_id, e.turn_id, e.kind, e.method, e.host, e.port, e.path, e.status,
         e.decision, e.bytes_up, e.bytes_down, e.ms, e.cost_usd, e.model, e.owner, ${person} as person, e.id as source_id
       from egress_log e
@@ -41,7 +43,8 @@ export async function importJarvis(args: readonly string[]): Promise<void> {
   const db = connect(target);
   try {
     await migrate(db);
-    await run("egress", source, db, [EGRESS_LOG], delta);
+    const results = await run("egress", source, db, [EGRESS_LOG], delta);
+    if (results.some((r) => (r.missing ?? 0) > 0)) throw new Error("source rows read are not in egress_log (see the log line)");
   } catch (e) {
     logError("egress import-jarvis", e);
     process.exitCode = 1;

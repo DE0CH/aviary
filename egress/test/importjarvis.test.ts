@@ -112,6 +112,20 @@ test("egress: every column copied exactly, person by sandbox then conversation t
   assert.equal(dst.rows[0].cost_usd, "0.000123456789");
   assert.deepEqual(dst.rows.map((x) => [x.id, x.person]), [[a, ALICE], [b, BOB], [c, null], [d, null]]);
   assert.equal(dst.rows[2].owner, "relay@example.com");
+  assert.equal(r.missing, 0, "a full pass checks that every row read is there");
+});
+
+test("egress: a mixed-case legacy owner is one person key", async () => {
+  const s = randomUUID();
+  await old.query(
+    `insert into sandboxes (id, conversation_id, pod, egress_token_hash, exec_token, status, expires_at, owner)
+     values ($1, $2, $3, $4, 'x', 'gone', now(), 'Alice@Example.COM')`,
+    [s, randomUUID(), `sbx-${s}`, `h-${s}`],
+  );
+  const id = await oldEgress({ sandbox: s, cost: "0.5", owner: "Alice@Example.COM" });
+  await pass(EGRESS_LOG, egress, true);
+  const { rows } = await egress.query("select person, owner from egress_log where source_id = $1", [id]);
+  assert.deepEqual(rows, [{ person: ALICE, owner: "Alice@Example.COM" }]);
 });
 
 test("egress: a second full pass and overlapping passes copy nothing twice; --delta reads only new rows and the lookback", async () => {
@@ -119,6 +133,7 @@ test("egress: a second full pass and overlapping passes copy nothing twice; --de
   const again = await pass(EGRESS_LOG, egress, false);
   assert.equal(again.copied, 0);
   assert.equal(again.read, before);
+  assert.equal(again.missing, 0);
   const both = await Promise.all([pass(EGRESS_LOG, egress, false), pass(EGRESS_LOG, egress, true)]);
   assert.deepEqual(both.map((x) => x.copied), [0, 0]);
   const n = await oldEgress({ sandbox: sbx, cost: "0.25" });
@@ -186,6 +201,22 @@ test("egress: without the legacy conversations table, person comes from the sand
       }
       const { rows } = await d.query("select person from egress_log order by source_id");
       assert.deepEqual(rows.map((x) => x.person), [ALICE, null]);
+      // a row the target lost (here a trigger drops it) is counted missing by a full pass
+      await d.query(`create function drop_lost() returns trigger language plpgsql as $$ begin
+          if new.host = 'lost' then return null; end if; return new; end $$;
+        create trigger drop_lost before insert on egress_log for each row execute function drop_lost()`);
+      await o.query("insert into egress_log (kind, host, decision) values ('http', 'lost', 'allow')");
+      const src2 = sourceClient(url);
+      await src2.connect();
+      try {
+        await src2.query("begin transaction isolation level repeatable read read only");
+        const r = await copy(src2, d, EGRESS_LOG, false);
+        assert.deepEqual([r.read, r.copied, r.missing], [3, 0, 1]);
+        const dr = await copy(src2, d, EGRESS_LOG, true);
+        assert.equal(dr.missing, undefined, "a delta pass does not count");
+      } finally {
+        await src2.end();
+      }
     } finally {
       await d.end();
       await dropDb(dstName);
