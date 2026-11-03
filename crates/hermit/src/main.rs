@@ -1,4 +1,5 @@
-//! `hermit`: `serve` (the replica) and `catalogue-check <file>` (the catalogue rules alone, for YYC's CI).
+//! `hermit`: `serve` (the replica), `catalogue-check <file>` (the catalogue rules alone, for YYC's CI) and
+//! `--version` (the build and its protocol numbers, which the image's labels are made from, platform 5.3).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -18,10 +19,20 @@ use hermit::tokens::Keys;
 use hermit::workspaces::{JuiceCli, JuiceFs, MOUNT};
 
 #[derive(Parser, Debug)]
-#[command(about = "hermit: sandbox lifecycle")]
+#[command(about = "hermit: sandbox lifecycle", disable_version_flag = true)]
 struct Args {
+    /// Print `hermit <sha12> protocols=<json>` and exit.
+    #[arg(long)]
+    version: bool,
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
+}
+
+/// hermit's build facts: the surfaces it serves (hermit-api's numbers).
+fn build() -> version::Build {
+    version::Build::new("hermit")
+        .surface(hermit_api::CORE.0, hermit_api::CORE.1)
+        .surface(hermit_api::SANDBOX.0, hermit_api::SANDBOX.1)
 }
 
 #[derive(Subcommand, Debug)]
@@ -34,7 +45,21 @@ enum Command {
 
 fn main() -> ExitCode {
     let args = Args::parse();
-    match args.command {
+    if args.version {
+        let _ = std::io::Write::write_all(
+            &mut std::io::stdout(),
+            format!("{}\n", build().version_line()).as_bytes(),
+        );
+        return ExitCode::SUCCESS;
+    }
+    let Some(command) = args.command else {
+        let _ = std::io::Write::write_all(
+            &mut std::io::stderr(),
+            b"usage: hermit serve | hermit catalogue-check <file> | hermit --version\n",
+        );
+        return ExitCode::from(2);
+    };
+    match command {
         Command::CatalogueCheck { file } => {
             let mut err = std::io::stderr();
             match catalogue::check_file(&file) {
@@ -76,9 +101,7 @@ const CALLERS: [Caller; 6] = [
 
 #[allow(clippy::too_many_lines)] // the start sequence in order: env, config, start, listener, drain
 async fn serve() -> ExitCode {
-    let build = version::Build::new("hermit")
-        .surface(hermit_api::CORE.0, hermit_api::CORE.1)
-        .surface(hermit_api::SANDBOX.0, hermit_api::SANDBOX.1);
+    let build = build();
     let pod = env::field("HERMIT_POD");
     log::init(&build, Some(pod.clone()), log::Output::Stdout);
     let mut registry = ops::registry(&build);

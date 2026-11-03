@@ -1,5 +1,4 @@
-# platform spec 6.1. Jobs still to come with their packages: images, gvisor, e2e, publish (main only,
-# needs every gate). Actions are pinned by commit SHA (6.3).
+# platform spec 6.1. Actions are pinned by commit SHA (6.3).
 name: ci
 
 on:
@@ -55,7 +54,7 @@ jobs:
       - name: shellcheck
         run: |
           shopt -s globstar nullglob
-          files=(.github/ci/*.sh fabric/**/*.sh images/sandbox/*.sh testing/paseo-contract/**/*.sh crates/hermit/scripts/*.sh)
+          files=(.github/ci/*.sh fabric/**/*.sh images/*.sh images/sandbox/*.sh testing/paseo-contract/**/*.sh crates/hermit/scripts/*.sh)
           shellcheck "${files[@]}"
       - name: fabric/aws/infra.sh against a stand-in aws (every value from the config)
         run: bash fabric/aws/test-infra.sh
@@ -202,57 +201,6 @@ jobs:
           printf '%s' "$g" | sed 's/"wgAddress":"10.99.0.1"/"wgAddress":"10.95.0.1"/' > "$RUNNER_TEMP/gw-bad.json"
           if "$b" check-config "$RUNNER_TEMP/gw-bad.json"; then echo "a wgAddress outside hostCidr passed" >&2; exit 1; fi
           cp "$b" dist/
-      - name: images/sandboxd (the gateway pod's image; built and run here, pushing is the images job's)
-        # a context of just the file the Dockerfile copies (the checkout's target/ would make it gigabytes)
-        run: |
-          ctx=$RUNNER_TEMP/sandboxd-image
-          mkdir -p "$ctx/dist"
-          cp dist/sandboxd "$ctx/dist/"
-          docker build -f images/sandboxd/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t sandboxd-gateway:ci "$ctx"
-          docker run --rm sandboxd-gateway:ci --version
-          # the commands sandboxd runs on a gateway, and its refusal of a host.json it cannot run with
-          docker run --rm --entrypoint sh sandboxd-gateway:ci -c 'ip -V && wg --version && nft -v && sysctl --version && crane version && tar --version | head -1 && zstd --version'
-          if docker run --rm -v "$RUNNER_TEMP/gw-bad.json:/etc/sbx/host.json:ro" sandboxd-gateway:ci; then echo "the image started on a bad host.json" >&2; exit 1; fi
-      - name: the gateway image keeps its data plane across its main process (crates/sandboxd/tests/gateway/adopt.sh)
-        run: |
-          sudo apt-get install -y -q --no-install-recommends wireguard-tools nftables
-          sudo SBX_GATEWAY_IMAGE=sandboxd-gateway:ci timeout -k 10 300 bash crates/sandboxd/tests/gateway/adopt.sh
-      - name: images/aviary-testing (the testing binaries; built and run here, pushing is the images job's)
-        run: |
-          ctx=$RUNNER_TEMP/aviary-testing-image
-          mkdir -p "$ctx/dist"
-          cp dist/aviary-conformance dist/test-gateway dist/mock-model dist/fake-tools dist/fake-access dist/fake-sandboxd "$ctx/dist/"
-          docker build -f images/aviary-testing/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t aviary-testing:ci "$ctx"
-          docker run --rm aviary-testing:ci test-gateway --version
-          docker run --rm aviary-testing:ci aviary-conformance --help
-      - name: images/hermit (built and run here, pushing is the images job's)
-        # hermit spec 8.5: the binary and the juicefs CLI; the catalogue rules run in the image as YYC's CI runs them
-        run: |
-          ctx=$RUNNER_TEMP/hermit-image
-          mkdir -p "$ctx/dist"
-          cp dist/hermit "$ctx/dist/"
-          docker build -f images/hermit/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t hermit:ci "$ctx"
-          docker run --rm hermit:ci --help
-          docker run --rm --entrypoint /usr/local/bin/juicefs hermit:ci version
-          printf '{"users": ["@example.org"], "admins": []}' > "$RUNNER_TEMP/catalogue.json"
-          docker run --rm -v "$RUNNER_TEMP/catalogue.json:/c.json:ro" hermit:ci catalogue-check /c.json
-          # with no secrets it refuses to start (exit 78, platform 3.1)
-          code=0; docker run --rm hermit:ci serve || code=$?; test "$code" -eq 78
-      - name: images/pigeon (built and run here, pushing is the images job's)
-        # pigeon spec 3.3: with no secrets it refuses to start (exit 78), naming the variable, never a value
-        run: |
-          ctx=$RUNNER_TEMP/pigeon-image
-          mkdir -p "$ctx/dist"
-          cp dist/pigeon "$ctx/dist/"
-          docker build -f images/pigeon/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t pigeon:ci "$ctx"
-          docker run --rm pigeon:ci --version
-          set +e
-          out=$(docker run --rm --read-only -e POD_NAME=ci pigeon:ci 2>&1)
-          code=$?
-          set -e
-          echo "$out"
-          test "$code" = 78
-          grep -q '"name":"PIGEON_TOKEN_MAGPIE"' <<< "$out"
       - name: magpie (glibc, debian trixie + libheif-dev)
         # a docker run of the pinned trixie image + libheif-dev rather than a job container, so it shares this job's
         # dist/ and cargo cache and runs as the runner's uid (.github/ci/build-magpie.sh). Trixie, not bookworm: libheif-rs
@@ -261,17 +209,6 @@ jobs:
           export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
           .github/ci/build-magpie.sh rust:1.99.1-trixie@sha256:09027f873d45b8ecd1dc86f1fa13b7a62b875c961f017a0e331267b350430137
           cp target/trixie/release/magpie dist/
-      - name: images/magpie (built and run here, pushing is the images job's)
-        # the runtime image decodes the HEIC fixture with the release binary: libheif1 and its HEVC plugin are there
-        run: |
-          ctx=$RUNNER_TEMP/magpie-image
-          mkdir -p "$ctx/dist"
-          cp dist/magpie "$ctx/dist/"
-          docker build -f images/magpie/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t magpie:ci "$ctx"
-          docker run --rm magpie:ci --version
-          out=$(docker run --rm -v "$PWD/crates/magpie/tests/fixtures/photo-640x480.heic:/photo.heic:ro" magpie:ci check-image /photo.heic)
-          echo "$out"
-          test "$out" = "image/heic 640x480"
       - name: SHA256SUMS
         run: cd dist && sha256sum * | tee SHA256SUMS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -279,6 +216,124 @@ jobs:
           name: dist
           path: dist/
           if-no-files-found: error
+
+  images:
+    # platform 6.1 `images`: every image of 5.2 built from `build`'s dist/ with 5.3's labels (images/build.sh,
+    # images/sandbox/build.sh), run here, and saved as one tar artifact each (`image-<name>`), which the later jobs
+    # load and `publish` pushes; GHA layer cache scopes per image
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      AVIARY_REVISION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - run: chmod +x dist/*
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: the cache service's token for buildx (type=gha)
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      - name: tags (<name>:<sha12>)
+        run: |
+          echo "SHA12=${GITHUB_SHA::12}" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/images"
+      - name: images/sandboxd (the gateway pod's image)
+        env:
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=sandboxd --cache-to type=gha,scope=sandboxd
+        run: |
+          images/build.sh sandboxd dist "sandboxd:$SHA12" "$RUNNER_TEMP/images/sandboxd.tar"
+          docker run --rm "sandboxd:$SHA12" --version
+          # the commands sandboxd runs on a gateway, and its refusal of a host.json it cannot run with
+          docker run --rm --entrypoint sh "sandboxd:$SHA12" -c 'ip -V && wg --version && nft -v && sysctl --version && crane version && tar --version | head -1 && zstd --version'
+          g='{"name":"gw","role":"hub","gateway":true,"wgAddress":"10.95.0.1","hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","privateGateway":"10.97.0.1","podCidr":"10.96.0.0/16","reserveMemory":0}'
+          printf '%s' "$g" > "$RUNNER_TEMP/gw-bad.json"
+          if docker run --rm -v "$RUNNER_TEMP/gw-bad.json:/etc/sbx/host.json:ro" "sandboxd:$SHA12"; then echo "the image started on a bad host.json" >&2; exit 1; fi
+      - name: the gateway image keeps its data plane across its main process (crates/sandboxd/tests/gateway/adopt.sh)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends wireguard-tools nftables
+          sudo SBX_GATEWAY_IMAGE="sandboxd:$SHA12" timeout -k 10 300 bash crates/sandboxd/tests/gateway/adopt.sh
+      - name: images/aviary-testing (the testing binaries)
+        env:
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=aviary-testing --cache-to type=gha,scope=aviary-testing
+        run: |
+          images/build.sh aviary-testing dist "aviary-testing:$SHA12" "$RUNNER_TEMP/images/aviary-testing.tar"
+          docker run --rm "aviary-testing:$SHA12" test-gateway --version
+          docker run --rm "aviary-testing:$SHA12" aviary-conformance --help
+      - name: images/hermit
+        # hermit spec 8.5: the binary and the juicefs CLI; the catalogue rules run in the image as YYC's CI runs them
+        env:
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=hermit --cache-to type=gha,scope=hermit
+        run: |
+          images/build.sh hermit dist "hermit:$SHA12" "$RUNNER_TEMP/images/hermit.tar"
+          docker run --rm "hermit:$SHA12" --help
+          docker run --rm --entrypoint /usr/local/bin/juicefs "hermit:$SHA12" version
+          printf '{"users": ["@example.org"], "admins": []}' > "$RUNNER_TEMP/catalogue.json"
+          docker run --rm -v "$RUNNER_TEMP/catalogue.json:/c.json:ro" "hermit:$SHA12" catalogue-check /c.json
+          # with no secrets it refuses to start (exit 78, platform 3.1)
+          code=0; docker run --rm "hermit:$SHA12" serve || code=$?; test "$code" -eq 78
+      - name: images/pigeon
+        # pigeon spec 3.3: with no secrets it refuses to start (exit 78), naming the variable, never a value
+        env:
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=pigeon --cache-to type=gha,scope=pigeon
+        run: |
+          images/build.sh pigeon dist "pigeon:$SHA12" "$RUNNER_TEMP/images/pigeon.tar"
+          docker run --rm "pigeon:$SHA12" --version
+          set +e
+          out=$(docker run --rm --read-only -e POD_NAME=ci "pigeon:$SHA12" 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          test "$code" = 78
+          grep -q '"name":"PIGEON_TOKEN_MAGPIE"' <<< "$out"
+      - name: images/magpie
+        # the runtime image decodes the HEIC fixture with the release binary: libheif1 and its HEVC plugin are there
+        env:
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=magpie --cache-to type=gha,scope=magpie
+        run: |
+          images/build.sh magpie dist "magpie:$SHA12" "$RUNNER_TEMP/images/magpie.tar"
+          docker run --rm "magpie:$SHA12" --version
+          out=$(docker run --rm -v "$PWD/crates/magpie/tests/fixtures/photo-640x480.heic:/photo.heic:ro" "magpie:$SHA12" check-image /photo.heic)
+          echo "$out"
+          test "$out" = "image/heic 640x480"
+      - name: images/sandbox (hermit-sandbox)
+        env:
+          SANDBOX_BUILD_FLAGS: --cache-from type=gha,scope=hermit-sandbox --cache-to type=gha,scope=hermit-sandbox
+        run: |
+          images/sandbox/build.sh dist "hermit-sandbox:$SHA12" "$GITHUB_SHA"
+          docker save -o "$RUNNER_TEMP/images/hermit-sandbox.tar" "hermit-sandbox:$SHA12"
+      - name: the labels (platform 5.3)
+        run: |
+          for i in pigeon magpie hermit sandboxd aviary-testing hermit-sandbox; do
+            l=$(docker image inspect -f '{{json .Config.Labels}}' "$i:$SHA12")
+            echo "$i $l"
+            jq -e --arg rev "$GITHUB_SHA" --arg v "$SHA12" '."org.opencontainers.image.revision" == $rev
+              and ."org.opencontainers.image.version" == $v
+              and ."org.opencontainers.image.source" == "https://github.com/DE0CH/aviary"
+              and ."org.opencontainers.image.licenses" == "AGPL-3.0-or-later"' <<< "$l" >/dev/null
+          done
+          docker image inspect -f '{{index .Config.Labels "dev.de0ch.aviary.provides"}}' "magpie:$SHA12" | jq -e 'has("magpie-person") and has("magpie-sandbox")'
+          docker image inspect -f '{{index .Config.Labels "dev.de0ch.aviary.accepts"}}' "hermit:$SHA12" | jq -e 'length > 0'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-sandbox
+          path: ${{ runner.temp }}/images/hermit-sandbox.tar
+          if-no-files-found: error
+          compression-level: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-services
+          path: |
+            ${{ runner.temp }}/images/pigeon.tar
+            ${{ runner.temp }}/images/magpie.tar
+            ${{ runner.temp }}/images/hermit.tar
+            ${{ runner.temp }}/images/sandboxd.tar
+            ${{ runner.temp }}/images/aviary-testing.tar
+          if-no-files-found: error
+          compression-level: 1
 
   conformance:
     # platform 8 (WP-09): the gateway suite against test-gateway with the contract's own durations (a 3 min hermit
@@ -303,11 +358,10 @@ jobs:
           if-no-files-found: warn
 
   sandbox-smoke:
-    # platform 6.1 `sandbox-smoke` (WP-24): images/sandbox (ghcr.io/de0ch/hermit-sandbox) built from this commit's
-    # supervisor and keeper, then images/sandbox/smoke.sh under runc: hermit spec 17's list and supervisor spec 22's
-    # image checks, with the image's own keeper and supervisor running a Claude Code turn against the test gateway.
-    # The slow layers come from the GHA cache; pushing is the images job's.
-    needs: build
+    # platform 6.1 `sandbox-smoke` (WP-24): the images job's ghcr.io/de0ch/hermit-sandbox, then images/sandbox/smoke.sh
+    # under runc: hermit spec 17's list and supervisor spec 22's image checks, with the image's own keeper and
+    # supervisor running a Claude Code turn against the test gateway
+    needs: [build, images]
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -316,16 +370,15 @@ jobs:
         with:
           name: dist
           path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-sandbox
+          path: ${{ runner.temp }}/images
       - run: chmod +x dist/*
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: the cache service's token for buildx (type=gha)
-        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
-      - name: images/sandbox
-        env:
-          SANDBOX_BUILD_FLAGS: --cache-from type=gha,scope=hermit-sandbox --cache-to type=gha,scope=hermit-sandbox
-        run: images/sandbox/build.sh dist hermit-sandbox:ci "$GITHUB_SHA"
+      - name: load the image
+        run: docker load -i "$RUNNER_TEMP/images/hermit-sandbox.tar"
       - name: images/sandbox/smoke.sh
-        run: images/sandbox/smoke.sh hermit-sandbox:ci dist
+        run: images/sandbox/smoke.sh "hermit-sandbox:${GITHUB_SHA::12}" dist
 
   paseo-contract:
     # testing/paseo-contract (pigeon spec 18.1): frames validated against every client build in clients.txt, and a

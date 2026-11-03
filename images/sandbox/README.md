@@ -78,7 +78,6 @@ driver on the containerd image store refuses it ("conflicts with unpack"). Elsew
   Streamable-HTTP server answers) and the 405 to its GET for a server stream.
 - **Docker on demand under runc** needs `/var/lib/docker` on a volume (overlay snapshots cannot sit on the
   container's overlay root); in a sandbox it is on the scratch disk.
-- **Built in the smoke job.** Platform 6.1 has an `images` job exporting OCI tars for `sandbox-smoke`; until that
-  job exists, `sandbox-smoke` builds this image itself from `build`'s `dist` (layers cached in the GHA cache), and
-  nothing is pushed. WP-28 (the release pipeline) adds the `images` job that builds it as `<sha12>` and exports the
-  tar `sandbox-smoke` then consumes, the `gvisor` job that runs it under runsc, and the push after `e2e`.
+- **Built in the images job.** ci.yml's `images` job builds it as `hermit-sandbox:<sha12>` from `build`'s `dist`
+  (layers cached in the GHA cache) and saves it as the artifact `image-sandbox`, which `sandbox-smoke` loads; the
+  `publish` job pushes it after every gate passed.

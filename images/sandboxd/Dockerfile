@@ -7,7 +7,7 @@
 #   /var/lib/sbx     hostPath /var/lib/hermit-gateway (saved peer set and egress targets, the image cache)
 #   /etc/sbx/host.json            the deployment's host.json (ConfigMap), SBX_CONFIG
 #   the TLS files and wg.key      where host.json's `tls` and `wgKeyFile` name them (Secret)
-# Its context needs only dist/sandboxd (the static musl binary, cargo build --profile sandboxd); ci.yml's `build` job
+# Its context needs only dist/sandboxd (the static musl binary, cargo build --profile sandboxd); ci.yml's `images` job (images/build.sh)
 # builds it from that:
 #   docker build -f images/sandboxd/Dockerfile --build-arg REVISION=<40 hex> <context>
 FROM alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f
