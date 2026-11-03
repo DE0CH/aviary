@@ -37,10 +37,12 @@ use super::scope::{self, Scope, Unclassified};
 use super::seen::{self, Seen};
 use super::{Config, Device, Hooks, Point, StuckOp, now_ns};
 
-/// A replayed local-scope mutation whose effect is already there (9.9): the killed instance made it before its
-/// reply, so the replay answers success. The limit: the same state made by another process between the kill and the
-/// replay reads as this request's own (a `mkdir` lock taken meanwhile is then held twice); the window is the
-/// supervisor's restart, about 0.1-1 s.
+/// A replayed local-scope mutation whose effect is already there (9.9): the killed instance made it and marked its
+/// slot done ([`Journal::mark_done`], right after the change, before the reply), so the replay answers success. A
+/// replay that finds the state but no mark answers the error as any request would (the change was never made by this
+/// request: an unlink of a missing file stays ENOENT, a `mkdir` lock another process took meanwhile stays EEXIST).
+/// The limit: a kill between the change and the mark (two adjacent instructions) answers the error for a change
+/// that was this request's own.
 fn replayed_as_done(h: &InHeader, path: &str) {
     tracing::info!(
         unique = h.unique,
@@ -48,6 +50,11 @@ fn replayed_as_done(h: &InHeader, path: &str) {
         path,
         "journal replay: the local change was already made"
     );
+}
+
+thread_local! {
+    /// The journal slot of the request this thread serves (a worker's, or the replay's), for the done marks.
+    static SLOT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 
 /// A worker that "died" at a fault point (tests without the `fault-injection` feature): unwinds the worker.
@@ -93,8 +100,8 @@ struct Inflight {
 #[derive(Default)]
 struct Resend {
     inflight: HashMap<u32, Vec<Arc<Inflight>>>,
-    /// pid → (kept slot, record, order).
-    kept: HashMap<u32, (usize, KeptRecord, u64)>,
+    /// pid → (kept slot, record, order, since: when it was kept, restored or the server resumed).
+    kept: HashMap<u32, (usize, KeptRecord, u64, std::time::Instant)>,
     order: u64,
 }
 
@@ -139,6 +146,8 @@ pub struct Core {
     fetches: Mutex<HashMap<u64, Arc<Fetch>>>,
     /// Reads that left no whole request in the slot (`fuse.short_read`, 9.9).
     short_reads: AtomicU64,
+    /// Short reads whose request no copy of the header names (`fuse.request_lost`): no reply was possible.
+    lost_requests: AtomicU64,
     /// The first request of this instance was logged (its `unique`: the rig's monotonicity check across restarts).
     first_logged: AtomicBool,
 }
@@ -193,6 +202,19 @@ impl std::fmt::Debug for Core {
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// How a re-send of the suffix magpie lost ended (9.5 item 6).
+enum Resent {
+    /// magpie holds the whole cached copy now, at this version.
+    Done(u64),
+    /// magpie holds at least as many bytes as the cache: nothing to re-send.
+    NotAhead,
+    /// magpie's bytes are not a prefix of the cache's (the `forked` hook ran).
+    Forked,
+    /// Not finished for a reason that proves nothing about the bytes (a read or a write that failed: unavailable,
+    /// stuck, quota, lease); `advanced` is magpie's version when some writes were stored.
+    Failed { advanced: Option<u64> },
 }
 
 /// What [`Core::start`] needs besides the configuration.
@@ -259,6 +281,7 @@ impl Core {
             started_ns: now_ns(),
             fetches: Mutex::new(HashMap::new()),
             short_reads: AtomicU64::new(0),
+            lost_requests: AtomicU64::new(0),
             first_logged: AtomicBool::new(false),
             cfg,
         });
@@ -285,10 +308,11 @@ impl Core {
         }
         core.retain_nodes();
         core.spawn_workers();
-        if !a.restart {
-            let c = core.clone();
-            std::thread::spawn(move || c.prefetch_main());
-        }
+        // 9.7's prefetch after every start, not only a fresh connection's: a first start that failed is retried on
+        // the keeper's connection, and a restart's reconcile may have dropped the main transcript's entry (a crash
+        // between magpie's 200 and the cache update); `prefetch_main` does nothing while the entry is current
+        let c = core.clone();
+        std::thread::spawn(move || c.prefetch_main());
         Ok(core)
     }
 
@@ -465,8 +489,15 @@ impl Core {
         });
     }
 
-    /// After a restore (or a clock jump): re-load the tree and revalidate the cache.
+    /// After a restore (or a clock jump): re-load the tree and revalidate the cache. The kept interrupted results
+    /// (9.3) count their time from now: the thread's resend follows the restore, however long the pause was.
     pub fn resumed(self: &Arc<Self>) {
+        {
+            let mut rs = lock(&self.resend);
+            for v in rs.kept.values_mut() {
+                v.3 = std::time::Instant::now();
+            }
+        }
         self.load_tree();
     }
 
@@ -474,6 +505,12 @@ impl Core {
     #[must_use]
     pub fn short_reads(&self) -> u64 {
         self.short_reads.load(Ordering::SeqCst)
+    }
+
+    /// Short reads whose request could not be answered at all (no copy of its header, `fuse.request_lost`).
+    #[must_use]
+    pub fn lost_requests(&self) -> u64 {
+        self.lost_requests.load(Ordering::SeqCst)
     }
 
     // ---- the tree, the cache, the repair ----
@@ -552,12 +589,20 @@ impl Core {
         };
         let file = lock(&self.content).candidate_file(c);
         match self.resend_suffix(&path, &file, entry, c.size) {
-            Some(v) => {
+            Resent::Done(v) => {
                 lock(&self.content).adopt(c, v);
                 true
             }
-            None => {
+            Resent::NotAhead | Resent::Forked => {
                 lock(&self.content).discard(c);
+                false
+            }
+            Resent::Failed { advanced } => {
+                // not a proven mismatch: the only copy of what magpie lost stays for the next tree load or lease
+                tracing::warn!(path = %path, "repair not finished: the cached copy is kept for the next tree load");
+                if let Some(v) = advanced {
+                    lock(&self.content).rekey_candidate(c, v);
+                }
                 false
             }
         }
@@ -569,15 +614,27 @@ impl Core {
     /// in `run.json` before sending"): a crash during a repair repeats it after the next tree load, and magpie
     /// answers a repeated write whose range already holds those bytes with success (rule 0), or a write at the size
     /// it now has as an ordinary append. A `lease_lost` here runs the lease loop as any request's does.
-    fn resend_suffix(self: &Arc<Self>, path: &str, file: &std::path::Path, e: Entry, local: u64) -> Option<u64> {
+    fn resend_suffix(self: &Arc<Self>, path: &str, file: &std::path::Path, e: Entry, local: u64) -> Resent {
         if e.size >= local {
-            return None;
+            return Resent::NotAhead;
         }
         let from = e.size.saturating_sub(64 * 1024);
         let ctl = OpCtl::default();
-        let theirs = self.fetch_range(&ctl, path, from, e.size - from).ok()?;
+        let theirs = match self.fetch_range(&ctl, path, from, e.size - from) {
+            Ok(b) => b,
+            Err(errno) => {
+                tracing::warn!(path, errno, "repair: magpie's bytes could not be read");
+                return Resent::Failed { advanced: None };
+            }
+        };
         #[allow(clippy::cast_possible_truncation)] // 64 KiB
-        let ours = cache::read_at(file, from, (e.size - from) as usize).ok()?;
+        let ours = match cache::read_at(file, from, (e.size - from) as usize) {
+            Ok(b) => b,
+            Err(err) => {
+                tracing::warn!(path, error = %err, "repair: the cached copy could not be read");
+                return Resent::Failed { advanced: None };
+            }
+        };
         if theirs != ours {
             tracing::error!(
                 path,
@@ -590,14 +647,21 @@ impl Core {
                 "{path}: cached copy disagrees with magpie at {from}..{}",
                 e.size
             ));
-            return None;
+            return Resent::Forked;
         }
         let mut off = e.size;
         let mut version = e.version;
+        let advanced = |v: u64| Resent::Failed {
+            advanced: (v != e.version).then_some(v),
+        };
         while off < local {
             #[allow(clippy::cast_possible_truncation)] // a chunk is at most 1 MiB
             let n = ((local - off) as usize).min(self.cfg.max_write as usize);
-            let data = Bytes::from(cache::read_at(file, off, n).ok()?);
+            let Ok(data) = cache::read_at(file, off, n) else {
+                tracing::warn!(path, offset = off, "repair: the cached copy could not be read");
+                return advanced(version);
+            };
+            let data = Bytes::from(data);
             let q = CcWriteQuery {
                 path: path.to_owned(),
                 offset: off,
@@ -626,7 +690,7 @@ impl Core {
                 }
                 Err(err) => {
                     tracing::error!(path, offset = off, error = ?err, "repair write failed");
-                    return None;
+                    return advanced(version);
                 }
             }
         }
@@ -637,7 +701,7 @@ impl Core {
             ent.version = version;
             st.tree.insert(path, ent);
         }
-        Some(version)
+        Resent::Done(version)
     }
 
     fn fetch_range(&self, ctl: &OpCtl, path: &str, offset: u64, len: u64) -> Result<Vec<u8>, i32> {
@@ -701,50 +765,55 @@ impl Core {
         let t = self.remote.attempt_timeout();
         let me = self.clone();
         self.remote
-            .read_streamed(&OpCtl::default(), "cc/file", |c| {
-                let (f, path, me) = (f.clone(), path.to_owned(), me.clone());
-                async move {
-                    let have = f.arrived.load(Ordering::SeqCst);
-                    if have >= f.size {
-                        return Ok(have);
-                    }
-                    if have > 0 && me.magpie_entry(&path).map(|e| e.version) != Ok(f.version) {
-                        // the file changed since the fetch began: a range would mix two versions
-                        return Err(AttemptError::Local(EIO));
-                    }
-                    let q = CcFileQuery {
-                        path,
-                        offset: (have > 0).then_some(have),
-                        length: (have > 0).then(|| f.size - have),
-                    };
-                    let mut r = tokio::time::timeout(t, c.client.sandbox(None).cc_file(&q))
-                        .await
-                        .map_err(|_| AttemptError::TimedOut)??;
-                    let mut file = std::fs::OpenOptions::new()
-                        .create(true)
-                        .write(true)
-                        .truncate(false)
-                        .open(&f.staging)
-                        .and_then(|file| file.set_len(have).map(|()| file))
-                        .map_err(|e| {
-                            tracing::warn!(error = %e, "the cache file cannot be written");
-                            AttemptError::Local(EIO)
-                        })?;
-                    use std::io::{Seek, Write};
-                    file.seek(std::io::SeekFrom::Start(have))
-                        .map_err(|_| AttemptError::Local(EIO))?;
-                    loop {
-                        let chunk = tokio::time::timeout(t, r.chunk())
+            .read_streamed(
+                &OpCtl::default(),
+                "cc/file",
+                |c| {
+                    let (f, path, me) = (f.clone(), path.to_owned(), me.clone());
+                    async move {
+                        let have = f.arrived.load(Ordering::SeqCst);
+                        if have >= f.size {
+                            return Ok(have);
+                        }
+                        if have > 0 && me.magpie_entry(&path).map(|e| e.version) != Ok(f.version) {
+                            // the file changed since the fetch began: a range would mix two versions
+                            return Err(AttemptError::Local(EIO));
+                        }
+                        let q = CcFileQuery {
+                            path,
+                            offset: (have > 0).then_some(have),
+                            length: (have > 0).then(|| f.size - have),
+                        };
+                        let mut r = tokio::time::timeout(t, c.client.sandbox(None).cc_file(&q))
                             .await
-                            .map_err(|_| AttemptError::TimedOut)?
-                            .map_err(|e| AttemptError::Client(magpie_api::client::ClientError::Http(e)))?;
-                        let Some(chunk) = chunk else { break };
-                        file.write_all(&chunk).map_err(|_| AttemptError::Local(EIO))?;
-                        f.progress(chunk.len() as u64);
+                            .map_err(|_| AttemptError::TimedOut)??;
+                        let mut file = std::fs::OpenOptions::new()
+                            .create(true)
+                            .write(true)
+                            .truncate(false)
+                            .open(&f.staging)
+                            .and_then(|file| file.set_len(have).map(|()| file))
+                            .map_err(|e| {
+                                tracing::warn!(error = %e, "the cache file cannot be written");
+                                AttemptError::Local(EIO)
+                            })?;
+                        use std::io::{Seek, Write};
+                        file.seek(std::io::SeekFrom::Start(have))
+                            .map_err(|_| AttemptError::Local(EIO))?;
+                        loop {
+                            let chunk = tokio::time::timeout(t, r.chunk())
+                                .await
+                                .map_err(|_| AttemptError::TimedOut)?
+                                .map_err(|e| AttemptError::Client(magpie_api::client::ClientError::Http(e)))?;
+                            let Some(chunk) = chunk else { break };
+                            file.write_all(&chunk).map_err(|_| AttemptError::Local(EIO))?;
+                            f.progress(chunk.len() as u64);
+                        }
+                        Ok(f.arrived.load(Ordering::SeqCst))
                     }
-                    Ok(f.arrived.load(Ordering::SeqCst))
-                }
-            })
+                },
+                &|| f.arrived.load(Ordering::SeqCst),
+            )
             .await
     }
 
@@ -791,7 +860,7 @@ impl Core {
         f.cv.notify_all();
     }
 
-    /// At first start: the main transcript into the cache (9.7), until the entry is current.
+    /// After every start: the main transcript into the cache (9.7) unless its entry is current, until it is.
     fn prefetch_main(self: &Arc<Self>) {
         let Some(m) = lock(&self.main).clone() else { return };
         for _ in 0..5 {
@@ -843,6 +912,9 @@ impl Core {
     }
 
     fn worker(self: Arc<Self>, i: usize) {
+        SLOT.set(Some(i));
+        // the last `unique` this slot held: a header after a short read must name a newer one
+        let mut last = 0u64;
         loop {
             if self.stopped.load(Ordering::SeqCst) || self.died() {
                 return;
@@ -875,8 +947,9 @@ impl Core {
             };
             if !self.journal.whole_request(i, slot, n) {
                 self.short_reads.fetch_add(1, Ordering::SeqCst);
-                // the caller must not wait for ever: EIO to any unique a copy of the header names
-                if let Some(h) = self.journal.lost_header(i, slot) {
+                // the caller must not wait for ever: EIO to the unique a copy of the new header names
+                if let Some(h) = self.journal.lost_header(i, slot, last) {
+                    last = h.unique;
                     tracing::error!(
                         event = "fuse.short_read",
                         unique = h.unique,
@@ -891,10 +964,21 @@ impl Core {
                             effect: false,
                         },
                     );
+                } else {
+                    // no copy names the request: nothing can be answered (a reply to an older unique would be
+                    // refused, or worse, reach another request), so it is logged and counted
+                    self.lost_requests.fetch_add(1, Ordering::SeqCst);
+                    tracing::error!(
+                        event = "fuse.request_lost",
+                        slot = i,
+                        read = n,
+                        "a read left no header of a new request in the slot: its caller cannot be answered"
+                    );
                 }
                 continue;
             }
             let Some(h) = InHeader::parse(slot) else { continue };
+            last = h.unique;
             if !self.first_logged.swap(true, Ordering::SeqCst) {
                 tracing::info!(unique = h.unique, op = proto::opname(h.opcode), "fuse first request");
             }
@@ -969,9 +1053,17 @@ impl Core {
         });
         let original = {
             let mut rs = lock(&self.resend);
-            if let Some((k, rec, _)) = rs.kept.remove(&h.pid) {
+            if let Some((k, rec, _, since)) = rs.kept.remove(&h.pid) {
                 self.journal.unkeep(k);
-                if (rec.opcode, rec.nodeid, rec.key) == key {
+                let fresh = since.elapsed() <= self.cfg.kept_ttl;
+                if !fresh {
+                    tracing::info!(
+                        pid = h.pid,
+                        op = proto::opname(rec.opcode),
+                        "a kept interrupted result expired unused"
+                    );
+                }
+                if fresh && (rec.opcode, rec.nodeid, rec.key) == key {
                     drop(rs);
                     tracing::info!(
                         unique = h.unique,
@@ -1016,8 +1108,8 @@ impl Core {
                 if rs
                     .kept
                     .get(&h.pid)
-                    .is_some_and(|(_, r, _)| (r.opcode, r.nodeid, r.key) == key)
-                    && let Some((k, _, _)) = rs.kept.remove(&h.pid)
+                    .is_some_and(|(_, r, _, _)| (r.opcode, r.nodeid, r.key) == key)
+                    && let Some((k, _, _, _)) = rs.kept.remove(&h.pid)
                 {
                     self.journal.unkeep(k);
                 }
@@ -1050,12 +1142,12 @@ impl Core {
     }
 
     fn keep_locked(&self, rs: &mut Resend, h: &InHeader, key: Key, o: &Outcome) {
-        if let Some((k, _, _)) = rs.kept.remove(&h.pid) {
+        if let Some((k, _, _, _)) = rs.kept.remove(&h.pid) {
             self.journal.unkeep(k);
         }
         if rs.kept.len() >= KEPT_SLOTS
             && let Some(oldest) = rs.kept.iter().min_by_key(|(_, v)| v.2).map(|(p, _)| *p)
-            && let Some((k, _, _)) = rs.kept.remove(&oldest)
+            && let Some((k, _, _, _)) = rs.kept.remove(&oldest)
         {
             self.journal.unkeep(k);
         }
@@ -1074,7 +1166,7 @@ impl Core {
         self.journal.keep(k, &rec);
         rs.order += 1;
         let ord = rs.order;
-        rs.kept.insert(h.pid, (k, rec, ord));
+        rs.kept.insert(h.pid, (k, rec, ord, std::time::Instant::now()));
         tracing::info!(
             unique = h.unique,
             pid = h.pid,
@@ -1088,7 +1180,7 @@ impl Core {
         for (k, rec) in self.journal.kept() {
             rs.order += 1;
             let ord = rs.order;
-            if let Some((old, _, _)) = rs.kept.insert(rec.pid, (k, rec, ord)) {
+            if let Some((old, _, _, _)) = rs.kept.insert(rec.pid, (k, rec, ord, std::time::Instant::now())) {
                 self.journal.unkeep(old);
             }
         }
@@ -1112,7 +1204,9 @@ impl Core {
                 self.journal.free(*i);
                 continue;
             }
+            SLOT.set(Some(*i));
             let o = self.serve_as(&h, &body, true);
+            SLOT.set(None);
             let e = self.send(&h, &o);
             tracing::info!(unique, op = proto::opname(h.opcode), reply_errno = e, "journal replay");
             self.journal.free(*i);
@@ -1240,10 +1334,11 @@ impl Core {
                     Scope::Local => {
                         *effect = true;
                         match self.local.symlink(target, &p) {
-                            Ok(()) => {}
+                            Ok(()) => self.mark_done(h),
                             Err(e)
                                 if e == EEXIST
                                     && ctl.replay
+                                    && self.done_before(h)
                                     && self.local.readlink(&p).ok().as_deref() == Some(target) =>
                             {
                                 replayed_as_done(h, &p);
@@ -1373,6 +1468,18 @@ impl Core {
 
     fn answered(&self, h: &InHeader) {
         self.point(Point::CallAnswered, h);
+    }
+
+    /// Marks this request's local-scope change as made (its slot's done mark, 9.9).
+    fn mark_done(&self, h: &InHeader) {
+        if let Some(i) = SLOT.get() {
+            self.journal.mark_done(i, h.unique);
+        }
+    }
+
+    /// Whether the killed instance made this replayed request's local-scope change (its slot's done mark).
+    fn done_before(&self, h: &InHeader) -> bool {
+        SLOT.get().is_some_and(|i| self.journal.marked_done(i, h.unique))
     }
 
     fn magpie_entry(&self, path: &str) -> Result<Entry, i32> {
@@ -1535,16 +1642,15 @@ impl Core {
             return false;
         };
         match self.resend_suffix(path, &file, e, o.size) {
-            Some(v) => {
+            Resent::Done(v) => {
                 lock(&self.content).reversion(node, (o.version, o.size), v);
                 true
             }
-            None => {
-                if e.size >= o.size {
-                    (self.hooks().forked)(format!("{path}: magpie has {} bytes, the cache {}", e.size, o.size));
-                }
+            Resent::NotAhead => {
+                (self.hooks().forked)(format!("{path}: magpie has {} bytes, the cache {}", e.size, o.size));
                 false
             }
+            Resent::Forked | Resent::Failed { .. } => false,
         }
     }
 
@@ -1611,13 +1717,22 @@ impl Core {
             Scope::Local | Scope::Root => {
                 *effect = true;
                 let handle = match self.local.create(|| lock(&self.st).nodes.assign(&p), &p, flags, mode) {
-                    Err(e) if e == EEXIST && ctl.replay && self.local_kind(&p) == Some(FileType::File) => {
+                    Ok(handle) => {
+                        self.mark_done(h);
+                        handle
+                    }
+                    Err(e)
+                        if e == EEXIST
+                            && ctl.replay
+                            && self.done_before(h)
+                            && self.local_kind(&p) == Some(FileType::File) =>
+                    {
                         // the create took effect before the kill: open what it made (no O_EXCL, no O_TRUNC)
                         replayed_as_done(h, &p);
                         let f = flags & !(libc::O_EXCL | libc::O_TRUNC);
                         self.local.create(|| lock(&self.st).nodes.assign(&p), &p, f, mode)?
                     }
-                    r => r?,
+                    Err(e) => return Err(e),
                 };
                 self.answered(h);
                 let a = self.local.getattr(fh::node(handle), &p, Some(handle))?;
@@ -1826,8 +1941,13 @@ impl Core {
             Scope::Local | Scope::Root => {
                 *effect = true;
                 match self.local.mkdir(&p, mode) {
-                    Ok(()) => {}
-                    Err(e) if e == EEXIST && ctl.replay && self.local_kind(&p) == Some(FileType::Dir) => {
+                    Ok(()) => self.mark_done(h),
+                    Err(e)
+                        if e == EEXIST
+                            && ctl.replay
+                            && self.done_before(h)
+                            && self.local_kind(&p) == Some(FileType::Dir) =>
+                    {
                         replayed_as_done(h, &p);
                     }
                     Err(e) => return Err(e),
@@ -1896,8 +2016,8 @@ impl Core {
                     self.local.unlink(&p)
                 };
                 match r {
-                    Ok(()) => {}
-                    Err(e) if e == ENOENT && ctl.replay => replayed_as_done(h, &p),
+                    Ok(()) => self.mark_done(h),
+                    Err(e) if e == ENOENT && ctl.replay && self.done_before(h) => replayed_as_done(h, &p),
                     Err(e) => return Err(e),
                 }
                 self.answered(h);
@@ -1969,8 +2089,14 @@ impl Core {
             (Scope::Local, Scope::Local) => {
                 *effect = true;
                 match self.local.rename(&from, &to) {
-                    Ok(()) => {}
-                    Err(e) if e == ENOENT && ctl.replay && !self.local.exists(&from) && self.local.exists(&to) => {
+                    Ok(()) => self.mark_done(h),
+                    Err(e)
+                        if e == ENOENT
+                            && ctl.replay
+                            && self.done_before(h)
+                            && !self.local.exists(&from)
+                            && self.local.exists(&to) =>
+                    {
                         replayed_as_done(h, &from);
                     }
                     Err(e) => return Err(e),

@@ -545,6 +545,14 @@ impl Content {
         }
     }
 
+    /// A candidate whose repair stored part of the suffix (magpie is now at `magpie_version`): renamed above that
+    /// version, so the next reconcile still finds it newer than magpie's copy.
+    pub fn rekey_candidate(&self, c: &Candidate, magpie_version: u64) {
+        if c.version <= magpie_version {
+            let _ = std::fs::rename(self.file(c.node, c.version), self.file(c.node, magpie_version + 1));
+        }
+    }
+
     /// Drops a candidate that could not be repaired.
     pub fn discard(&self, c: &Candidate) {
         let _ = std::fs::remove_file(self.file(c.node, c.version));

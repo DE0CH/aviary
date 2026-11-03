@@ -114,6 +114,22 @@ fn fast() -> Timing {
     }
 }
 
+/// The distinct `opId`s magpie received on `route` (query or JSON body).
+fn op_ids(w: &World, route: &str) -> std::collections::BTreeSet<String> {
+    w.magpie
+        .script()
+        .calls_to(route)
+        .iter()
+        .filter_map(|c| {
+            c.query
+                .as_ref()
+                .and_then(|q| q.get("opId"))
+                .or_else(|| c.body.as_ref().and_then(|b| b.get("opId")))
+                .map(ToString::to_string)
+        })
+        .collect()
+}
+
 fn ok(r: &super::proto::Reply, what: &str) {
     assert_eq!(r.errno, 0, "{what}: errno {}", r.errno);
 }
@@ -567,6 +583,12 @@ fn journal_replay_at_each_fault_point() {
                 _ => body::rename(ws, "t.jsonl", "u.jsonl"),
             };
             let node = if opcode == op::WRITE { t } else { ws };
+            let route = match opcode {
+                op::WRITE | op::CREATE => "cc_write",
+                op::MKDIR => "cc_mkdir",
+                _ => "cc_rename",
+            };
+            let ids_before = op_ids(&w, route);
             let u = s.submit(opcode, node, PID, &b);
             for _ in 0..500 {
                 if core.died() {
@@ -575,6 +597,7 @@ fn journal_replay_at_each_fault_point() {
                 std::thread::sleep(Duration::from_millis(10));
             }
             assert!(core.died(), "{point:?} {}: the fault fired", opname(opcode));
+            let ids_killed = op_ids(&w, route);
             // the next supervisor: same connection, same bootId, replays the journal
             let _core2 = w.start(&fs, boot, true, Hooks::default());
             let r = s
@@ -594,6 +617,29 @@ fn journal_replay_at_each_fault_point() {
                 op::MKDIR => assert!(w.magpie.node(w.cid, "projects/-workspace/t.lock").is_some()),
                 op::CREATE => assert!(w.data("projects/-workspace/n.json").is_some()),
                 _ => assert!(w.data("projects/-workspace/u.jsonl").is_some()),
+            }
+            // magpie's rule 0 would hide a second application of the same bytes: the replay must reuse the derived
+            // opId, so the request names exactly one opId whether or not the killed instance sent it
+            let ids_after = op_ids(&w, route);
+            let new: Vec<_> = ids_after.difference(&ids_before).collect();
+            assert_eq!(
+                new.len(),
+                1,
+                "{point:?} {}: one opId for the request: {new:?}",
+                opname(opcode)
+            );
+            if point != Point::ReadReturned {
+                assert_eq!(
+                    ids_killed.difference(&ids_before).count(),
+                    1,
+                    "{point:?} {}: the killed instance sent it",
+                    opname(opcode)
+                );
+                assert!(
+                    ids_killed.is_superset(&ids_after),
+                    "{point:?} {}: the replay reused it",
+                    opname(opcode)
+                );
             }
             if point == Point::ReplyWritten {
                 assert_eq!(
@@ -1455,4 +1501,267 @@ fn a_write_during_the_prefetch_leaves_the_main_transcript_cached() {
     assert_eq!(&r.payload[4..], b"{\"new\":1}\n");
     w.magpie.faults().remove(f);
     assert_eq!(w.calls("cc_file"), 1, "the prefetch's copy is current: no second fetch");
+}
+
+fn wait_for(what: &str, mut f: impl FnMut() -> bool) {
+    for _ in 0..500 {
+        if f() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("timed out waiting for {what}");
+}
+
+/// 9.9 (WP-22 review 3 item 1): a read that leaves no whole request in its slot. The header is zeroed before each
+/// read, so a slot the read left untouched never answers the slot's previous, already answered request: nothing is
+/// answered and the request is counted as lost. A header that landed without its `len` gets EIO under its own
+/// `unique`.
+#[test]
+fn a_short_read_answers_only_the_request_it_names() {
+    let w = world();
+    let mut cfg = w.cfg(fast());
+    cfg.slots = 1; // every request goes through the same slot
+    let fs = FuseFs::new(cfg, w.client("sbx-1"));
+    let core = w.start(&fs, Uuid::new_v4(), false, Hooks::default());
+    let s = &w.sentry;
+    let u1 = s.submit(op::GETATTR, 1, PID, &body::getattr());
+    ok(&s.wait(u1, Duration::from_secs(5)).unwrap(), "getattr");
+    // nothing of the request landed (the WP-57 case: the slot kept len 0 while read returned 56)
+    let u2 = s.submit_short(op::GETATTR, 1, PID, &body::getattr(), 0..0);
+    wait_for("the short read", || core.short_reads() == 1);
+    assert!(s.wait(u2, Duration::from_millis(300)).is_none(), "nothing names u2");
+    assert_eq!(s.refused(u1), 0, "no EIO to the slot's previous, answered request");
+    assert_eq!(core.lost_requests(), 1, "counted as lost");
+    // the header without its len: EIO to the request it names
+    let u3 = s.submit_short(op::GETATTR, 1, PID, &body::getattr(), 4..56);
+    let r = s
+        .wait(u3, Duration::from_secs(5))
+        .expect("the named request is answered");
+    assert_eq!(r.errno, libc::EIO);
+    assert_eq!((core.short_reads(), core.lost_requests()), (2, 1));
+    ok(&s.call(op::GETATTR, 1, PID, &body::getattr()), "the slot serves again");
+}
+
+/// 9.5 item 6 (WP-22 review 3 item 2): a repair candidate's cache file holds the only copy of what magpie lost, so
+/// a repair that fails for a reason that proves nothing about the bytes (quota, lease) keeps it for the next tree
+/// load; only a mismatch discards it.
+#[test]
+fn a_repair_that_fails_without_a_mismatch_keeps_the_cached_copy() {
+    for (status, code) in [(507, "quota_exceeded"), (409, "lease_lost")] {
+        let w = world();
+        let fs = w.fs(fast());
+        let regained = Arc::new(AtomicUsize::new(0));
+        let g = regained.clone();
+        let hooks = Hooks {
+            lease_regained: Arc::new(move |_| {
+                g.fetch_add(1, Ordering::SeqCst);
+            }),
+            ..Hooks::default()
+        };
+        let core = w.start(&fs, Uuid::new_v4(), false, hooks);
+        let s = &w.sentry;
+        let ws = workspace_dir(&w);
+        let r = s.call(
+            op::CREATE,
+            ws,
+            PID,
+            &body::create("t.jsonl", O_RDWR | libc::O_CREAT, 0o600),
+        );
+        let (t, fh) = (out::node(&r), out::create_fh(&r));
+        ok(&s.call(op::WRITE, t, PID, &body::write(fh, 0, b"one\n")), "1");
+        ok(&s.call(op::WRITE, t, PID, &body::write(fh, 4, b"two\n")), "2");
+        let path = "projects/-workspace/t.jsonl";
+        let v = w.magpie.node(w.cid, path).unwrap().version;
+        // a restore lost the second write: magpie is one version behind the cache
+        w.magpie.restore_file(w.cid, path, b"one\n", v - 1);
+        w.magpie
+            .script()
+            .once("cc_write", aviary_fakes::script::Reply::error(status, code, "x"));
+        let cached = || {
+            std::fs::read_dir(w.dir.join("cache"))
+                .unwrap()
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().starts_with(&format!("{t}.")))
+                .map(|e| std::fs::read(e.path()).unwrap())
+                .collect::<Vec<_>>()
+        };
+        core.resumed();
+        if status == 507 {
+            assert_eq!(w.data(path).unwrap(), b"one\n", "{code}: the repair write was refused");
+            assert_eq!(cached(), vec![b"one\ntwo\n".to_vec()], "{code}: the candidate is kept");
+            core.resumed();
+        }
+        // the next tree load (the second `resumed`, or the lease loop's reload) repairs from the kept copy
+        wait_for("the repair", || w.data(path).unwrap() == b"one\ntwo\n");
+        if status == 409 {
+            wait_for("the new lease", || regained.load(Ordering::SeqCst) == 1);
+        }
+        ok(&s.call(op::WRITE, t, PID, &body::write(fh, 8, b"three\n")), "3");
+        assert_eq!(w.data(path).unwrap(), b"one\ntwo\nthree\n", "{code}");
+    }
+}
+
+/// 9.3 (WP-22 review 3 item 4): a kept interrupted result survives the thread's non-mutating requests (a restarted
+/// syscall may walk its path first) but expires `kept_ttl` after it was kept or the server resumed, so a much later
+/// identical request from a reused thread id is executed, not answered with the old result.
+#[test]
+fn a_kept_result_survives_a_path_walk_and_expires() {
+    let w = world();
+    let mut cfg = w.cfg(fast());
+    cfg.kept_ttl = Duration::from_millis(500);
+    let fs = FuseFs::new(cfg, w.client("sbx-1"));
+    let _core = w.start(&fs, Uuid::new_v4(), false, Hooks::default());
+    let s = &w.sentry;
+    let ws = workspace_dir(&w);
+    let keep = |name: &str| {
+        let b = body::mkdir(name, 0o700);
+        let hold = Hold::new();
+        let f = w.magpie.faults().times("cc_mkdir", FaultKind::Hold(hold.clone()), 1);
+        let u1 = s.submit(op::MKDIR, ws, PID, &b);
+        assert!(w.rt.block_on(hold.wait_held(1, Duration::from_secs(5))));
+        s.forget(u1); // the checkpoint
+        hold.release();
+        assert!(
+            s.wait_refused(u1, Duration::from_secs(5)),
+            "the original's reply is refused"
+        );
+        w.magpie.faults().remove(f);
+        b
+    };
+    // the resend after a path walk: the kept result
+    let b = keep("a.lock");
+    ok(&s.call(op::GETATTR, ws, PID, &body::getattr()), "path walk");
+    let before = w.calls("cc_mkdir");
+    ok(&s.call(op::MKDIR, ws, PID, &b), "the resend gets the kept result");
+    assert_eq!(w.calls("cc_mkdir"), before, "not executed again");
+    // later: another thread removed the lock and took it again; the thread's identical mkdir is a new request
+    let b = keep("b.lock");
+    ok(&s.call(op::GETATTR, ws, PID, &body::getattr()), "path walk");
+    ok(
+        &s.call(op::RMDIR, ws, PID + 1, &body::name("b.lock")),
+        "released by another thread",
+    );
+    ok(&s.call(op::MKDIR, ws, PID + 1, &b), "taken by another thread");
+    std::thread::sleep(Duration::from_millis(700));
+    assert_eq!(
+        s.call(op::MKDIR, ws, PID, &b).errno,
+        libc::EEXIST,
+        "the expired result is not handed to a later identical mkdir: the lock is held"
+    );
+}
+
+/// 9.9 (WP-22 review 3 item 6): a replayed local change answers success only when its slot's done mark says the
+/// killed instance made it; one that was never applicable keeps its error.
+#[test]
+fn a_local_replay_that_was_never_applicable_keeps_its_error() {
+    for opcode in [op::UNLINK, op::RENAME, op::MKDIR] {
+        let w = world();
+        let fs = w.fs(fast());
+        let boot = Uuid::new_v4();
+        super::store_boot_id(&w.dir.join("state"), boot).unwrap();
+        let armed = Arc::new(AtomicBool::new(false));
+        let a = armed.clone();
+        let hooks = Hooks {
+            fault: Some(Arc::new(move |p, h| {
+                p == Point::ReadReturned && h.opcode == opcode && a.swap(false, Ordering::SeqCst)
+            })),
+            ..Hooks::default()
+        };
+        let core = w.start(&fs, boot, false, hooks);
+        let s = &w.sentry;
+        let d = out::node(&s.call(op::MKDIR, 1, PID, &body::mkdir("sessions", 0o700)));
+        let r = s.call(
+            op::CREATE,
+            d,
+            PID,
+            &body::create("b.json", O_RDWR | libc::O_CREAT, 0o600),
+        );
+        ok(
+            &s.call(op::RELEASE, out::node(&r), PID, &body::fh(out::create_fh(&r))),
+            "release",
+        );
+        ok(
+            &s.call(op::MKDIR, d, PID, &body::mkdir("held.lock", 0o700)),
+            "a lock held already",
+        );
+        assert!(core.settle(Duration::from_secs(5)));
+        armed.store(true, Ordering::SeqCst);
+        let (b, want) = match opcode {
+            op::UNLINK => (body::name("missing.json"), libc::ENOENT),
+            // `from` is missing and `to` existed before: not a rename already made
+            op::RENAME => (body::rename(d, "a.json", "b.json"), libc::ENOENT),
+            _ => (body::mkdir("held.lock", 0o700), libc::EEXIST),
+        };
+        let u = s.submit(opcode, d, PID, &b);
+        wait_for("the fault", || core.died());
+        let _core2 = w.start(&fs, boot, true, Hooks::default());
+        let r = s.wait(u, Duration::from_secs(10)).expect("the replay answers");
+        assert_eq!(r.errno, want, "{}: the error, not a replayed success", opname(opcode));
+    }
+}
+
+/// 9.10 as built (WP-22 review 3 item 3, recorded in GATE.md): a supervisor restart during a magpie outage serves
+/// nothing until magpie answers (4.3 step 5 takes the lease before the mount, and the start loads the tree), then
+/// completes the journal's requests and serves new ones.
+#[test]
+fn a_restart_during_an_outage_waits_for_magpie_then_completes() {
+    let w = world();
+    let fs = w.fs(fast());
+    let boot = Uuid::new_v4();
+    super::store_boot_id(&w.dir.join("state"), boot).unwrap();
+    let armed = Arc::new(AtomicBool::new(false));
+    let a = armed.clone();
+    let hooks = Hooks {
+        fault: Some(Arc::new(move |p, h| {
+            p == Point::ReadReturned && h.opcode == op::MKDIR && a.swap(false, Ordering::SeqCst)
+        })),
+        ..Hooks::default()
+    };
+    let core = w.start(&fs, boot, false, hooks);
+    let s = &w.sentry;
+    assert!(core.settle(Duration::from_secs(5)));
+    armed.store(true, Ordering::SeqCst);
+    let u = s.submit(op::MKDIR, 1, PID, &body::mkdir("sessions", 0o700)); // local scope
+    wait_for("the fault", || core.died());
+    let lease = w.lease();
+    let f = w
+        .magpie
+        .faults()
+        .on("cc_tree", FaultKind::Unavailable { retry_after_secs: 0 });
+    std::thread::scope(|sc| {
+        let start = sc.spawn(|| w.rt.block_on(fs.serve(w.sentry.conn(), boot, true, &lease)));
+        let g = s.submit(op::GETATTR, 1, PID + 1, &body::getattr());
+        std::thread::sleep(Duration::from_millis(800));
+        assert!(s.wait(u, Duration::ZERO).is_none(), "the local replay waits for magpie");
+        assert!(s.wait(g, Duration::ZERO).is_none(), "a new request waits too");
+        w.magpie.faults().remove(f);
+        assert!(start.join().unwrap().is_ok());
+        ok(&s.wait(u, Duration::from_secs(10)).unwrap(), "the replayed mkdir");
+        ok(&s.wait(g, Duration::from_secs(10)).unwrap(), "the new getattr");
+    });
+}
+
+/// 9.7 (WP-22 review 3 item 7): the main transcript is prefetched after every start, also when the first start
+/// failed and the retry runs on the keeper's connection.
+#[test]
+fn the_main_transcript_is_prefetched_after_a_retried_start() {
+    let w = world();
+    let data = lines(64 << 10);
+    w.magpie.seed_file(w.cid, "projects/-workspace/s.jsonl", &data);
+    w.magpie.set_provider_session(w.cid, "s");
+    let fs = w.fs(fast());
+    let boot = Uuid::new_v4();
+    w.magpie
+        .script()
+        .once("cc_tree", aviary_fakes::script::Reply::error(404, "not_found", "x"));
+    let lease = w.lease();
+    assert!(w.rt.block_on(fs.serve(w.sentry.conn(), boot, false, &lease)).is_err());
+    let _core = w.start(&fs, boot, true, Hooks::default());
+    wait_for("the prefetch", || w.calls("cc_file") == 1);
+    let t = lookup(&w, "projects/-workspace/s.jsonl");
+    let r = w.sentry.call(op::READ, t, PID, &body::read(0, 0, 100));
+    ok(&r, "read");
+    assert_eq!(r.payload, &data[..100]);
+    assert_eq!(w.calls("cc_file"), 1, "served from the prefetched copy");
 }

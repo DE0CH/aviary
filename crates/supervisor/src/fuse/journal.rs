@@ -1,14 +1,17 @@
 //! The request journal (supervisor 9.9): `fuse-journal` on scratch, mapped `MAP_SHARED`; the FUSE reader reads each
 //! request straight into a free slot's mapped memory, so once `read(2)` returned the request is in page cache that
-//! outlives the process. A slot is occupied exactly when its header's `len` is non-zero; it is zeroed after the
-//! reply is written. After the 64 request slots, a 64-entry area keeps the interrupted results of 9.3 (a result
-//! whose reply the sentry refused with ENOENT, until the thread's resend takes it), so they survive a restart too.
+//! outlives the process. A slot is occupied exactly when its header's `len` is non-zero; the whole header is zeroed
+//! after the reply is written and before each read (so a read that leaves the slot untouched never shows the header
+//! of a request already answered). After the 64 request slots, a 64-entry area keeps the interrupted results of 9.3
+//! (a result whose reply the sentry refused with ENOENT, until the thread's resend takes it), so they survive a
+//! restart too; after it, one 8-byte mark per slot names the `unique` whose local-scope change was made (a replay
+//! tells "already done" from "never applicable" by it).
 
 use std::fs::{File, OpenOptions};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use super::proto::{IN_HEADER, InHeader, u32_at};
 
@@ -68,7 +71,7 @@ impl Journal {
             .create(true)
             .truncate(false)
             .open(path)?;
-        let len = slots * slot_bytes + KEPT_SLOTS * KEPT_BYTES;
+        let len = slots * slot_bytes + KEPT_SLOTS * KEPT_BYTES + slots * 8;
         file.set_len(len as u64)?;
         // SAFETY: a shared read/write mapping of a file just sized to `len`; unmapped in Drop.
         #[allow(unsafe_code)]
@@ -130,9 +133,40 @@ impl Journal {
         }
     }
 
-    /// Frees slot `i` (the reply was written).
+    /// Frees slot `i` (the reply was written; and before each read): `len` first (the slot is free from then on), then
+    /// the rest of the header and the slot's done mark, so no copy of an answered request's header stays in it.
     pub fn free(&self, i: usize) {
         self.len_field(i).store(0, Ordering::SeqCst);
+        // SAFETY: inside slot i's header (40 bytes at its start); the slot belongs to the caller.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::ptr::write_bytes(self.base.add(i * self.slot_bytes + 4), 0, IN_HEADER - 4);
+        }
+        self.mark_field(i).store(0, Ordering::SeqCst);
+    }
+
+    fn mark_field(&self, i: usize) -> &AtomicU64 {
+        assert!(i < self.slots);
+        // SAFETY: 8-byte aligned (the area starts at a multiple of 4096), inside the mapping.
+        #[allow(unsafe_code, clippy::cast_ptr_alignment)]
+        unsafe {
+            &*self
+                .base
+                .add(self.slots * self.slot_bytes + KEPT_SLOTS * KEPT_BYTES + i * 8)
+                .cast::<AtomicU64>()
+        }
+    }
+
+    /// Records that slot `i`'s request `unique` made its local-scope change (written right after the change, before
+    /// the reply).
+    pub fn mark_done(&self, i: usize, unique: u64) {
+        self.mark_field(i).store(unique, Ordering::SeqCst);
+    }
+
+    /// Whether slot `i`'s request `unique` made its local-scope change before a kill.
+    #[must_use]
+    pub fn marked_done(&self, i: usize, unique: u64) -> bool {
+        unique != 0 && self.mark_field(i).load(Ordering::SeqCst) == unique
     }
 
     /// The occupied slots in `unique` order (the replay after a restart).
@@ -183,14 +217,16 @@ impl Journal {
     }
 
     /// After a short read: the header of the request the slot should hold, from the mapping or else the journal
-    /// file's copy, when one names a request that waits for a reply (a non-zero `unique`, not FORGET or INTERRUPT).
+    /// file's copy, when one names a request that waits for a reply (a `unique` newer than `after`, the last one this
+    /// slot held, and not FORGET or INTERRUPT). The header was zeroed before the read, so a header found is the new
+    /// request's own; `None` when neither copy names one (the request cannot be answered).
     #[must_use]
-    pub fn lost_header(&self, i: usize, slot: &[u8]) -> Option<InHeader> {
+    pub fn lost_header(&self, i: usize, slot: &[u8], after: u64) -> Option<InHeader> {
         let mut fb = vec![0u8; IN_HEADER];
         let fread = self.file.read_at(&mut fb, (i * self.slot_bytes) as u64).unwrap_or(0);
         let file = (fread >= IN_HEADER).then(|| InHeader::parse(&fb)).flatten();
         [InHeader::parse(slot), file].into_iter().flatten().find(|h| {
-            h.unique != 0
+            h.unique > after
                 && !matches!(
                     h.opcode,
                     super::proto::op::FORGET | super::proto::op::BATCH_FORGET | super::proto::op::INTERRUPT
@@ -291,6 +327,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("journal-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("fuse-journal");
+        let mut hdr = [0u8; IN_HEADER];
         {
             let j = Journal::open(&p, 4, 8192).unwrap();
             let h = InHeader {
@@ -306,6 +343,7 @@ mod tests {
             #[allow(unsafe_code)]
             let s = unsafe { j.slot(2) };
             s[..40].copy_from_slice(&h.encode());
+            hdr.copy_from_slice(&h.encode());
             s[40..44].copy_from_slice(b"abcd");
             j.keep(
                 1,
@@ -329,8 +367,18 @@ mod tests {
         let s = unsafe { j.slot(2) };
         assert!(j.whole_request(2, s, 44));
         assert!(!j.whole_request(2, s, 40));
+        j.mark_done(2, 77);
+        assert!(j.marked_done(2, 77) && !j.marked_done(2, 78));
         j.free(2);
         assert_eq!(j.occupied(), Vec::new());
+        // the whole header is zeroed, and the mark: no copy of the answered request stays in the slot
+        assert!(s[..IN_HEADER].iter().all(|b| *b == 0));
+        assert!(!j.marked_done(2, 77));
+        assert_eq!(j.lost_header(2, s, 0), None);
+        // a header that landed without its len names its request, but only one newer than the slot's last
+        s[4..IN_HEADER].copy_from_slice(&hdr[4..]);
+        assert_eq!(j.lost_header(2, s, 0).map(|h| h.unique), Some(77));
+        assert_eq!(j.lost_header(2, s, 77), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

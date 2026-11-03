@@ -15,7 +15,8 @@ use super::proto::{IN_HEADER, InHeader, Reply, op};
 
 #[derive(Default)]
 struct S {
-    queue: VecDeque<Vec<u8>>,
+    /// (request, the byte range a read copies into the buffer: all of it unless a test asks for a short read).
+    queue: VecDeque<(Vec<u8>, std::ops::Range<usize>)>,
     /// unique → replies delivered (a request is waited for while present).
     waiting: HashMap<u64, Vec<Reply>>,
     refused: Vec<u64>,
@@ -44,8 +45,10 @@ impl Device for Conn {
             if s.closed.contains(&self.generation) {
                 return Err(std::io::Error::from_raw_os_error(libc::ENODEV));
             }
-            if let Some(r) = s.queue.pop_front() {
-                buf[..r.len()].copy_from_slice(&r);
+            if let Some((r, copy)) = s.queue.pop_front() {
+                // a read returns the whole request's length whatever it copied (9.9's short read: the count says
+                // n bytes, the slot does not hold them)
+                buf[copy.clone()].copy_from_slice(&r[copy]);
                 return Ok(r.len());
             }
             s = self.sentry.cv.wait(s).unwrap();
@@ -105,6 +108,23 @@ impl Sentry {
 
     /// Queues a request; its `unique`.
     pub fn submit(&self, opcode: u32, nodeid: u64, pid: u32, body: &[u8]) -> u64 {
+        self.submit_copying(opcode, nodeid, pid, body, None)
+    }
+
+    /// Queues a request whose read returns its whole length but copies only `copy` of its bytes into the reader's
+    /// buffer (`0..0`: nothing lands); its `unique`.
+    pub fn submit_short(&self, opcode: u32, nodeid: u64, pid: u32, body: &[u8], copy: std::ops::Range<usize>) -> u64 {
+        self.submit_copying(opcode, nodeid, pid, body, Some(copy))
+    }
+
+    fn submit_copying(
+        &self,
+        opcode: u32,
+        nodeid: u64,
+        pid: u32,
+        body: &[u8],
+        copy: Option<std::ops::Range<usize>>,
+    ) -> u64 {
         let mut s = self.s.lock().unwrap();
         s.next += 2;
         let unique = s.next;
@@ -122,7 +142,8 @@ impl Sentry {
         if opcode != op::INTERRUPT && opcode != op::FORGET {
             s.waiting.insert(unique, Vec::new());
         }
-        s.queue.push_back(r);
+        let copy = copy.unwrap_or(0..r.len());
+        s.queue.push_back((r, copy));
         self.cv.notify_all();
         unique
     }

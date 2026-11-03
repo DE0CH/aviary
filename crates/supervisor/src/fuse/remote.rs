@@ -153,7 +153,11 @@ struct Blocked {
 pub struct Remote {
     client: magpie_api::client::Client,
     timing: Timing,
+    /// Permits of the calls bounded by one attempt's timeout.
     sem: Semaphore,
+    /// Permits of the streamed whole-file fetches (no bound on the whole body), apart so they never hold the
+    /// writes' permits.
+    streams: Semaphore,
     lease: watch::Sender<Option<Lease>>,
     base: Instant,
     last_ok: AtomicU64,
@@ -188,7 +192,8 @@ impl Remote {
         Self {
             client,
             timing,
-            sem: Semaphore::new(crate::limits::MAGPIE_CONCURRENCY),
+            sem: Semaphore::new(crate::limits::MAGPIE_CONCURRENCY - crate::limits::MAGPIE_STREAMS),
+            streams: Semaphore::new(crate::limits::MAGPIE_STREAMS),
             lease: watch::channel(None).0,
             base: Instant::now(),
             last_ok: AtomicU64::new(0),
@@ -277,7 +282,8 @@ impl Remote {
             let fut = f(c);
             async move { fut.await.map_err(AttemptError::Client) }
         };
-        self.retry(ctl, what, true, Some(self.timing.attempt), f, sent).await
+        self.retry(ctl, what, true, Some(self.timing.attempt), &self.sem, f, sent, None)
+            .await
     }
 
     /// A lease-free read (tree, file bytes) with the same retry rule.
@@ -293,22 +299,32 @@ impl Remote {
             let fut = f(c);
             async move { fut.await.map_err(AttemptError::Client) }
         };
-        self.retry(ctl, what, false, Some(self.timing.attempt), f, sent).await
+        self.retry(ctl, what, false, Some(self.timing.attempt), &self.sem, f, sent, None)
+            .await
     }
 
     /// A lease-free streamed read (a whole file): no bound on the whole attempt, since a large body may take longer
     /// than one attempt's timeout to arrive. `f` bounds the wait for the answer and for each next chunk with
     /// [`Remote::attempt_timeout`] itself ([`AttemptError::TimedOut`]), and resumes from what earlier attempts
-    /// fetched. The same retry rule otherwise.
+    /// fetched. It holds a permit of its own pool ([`crate::limits::MAGPIE_STREAMS`]), never a write's.
+    /// `progress` counts what arrived: an attempt that advanced it restarts the stuck clock and the backoff (a fetch
+    /// that keeps advancing between dropped connections is not stuck). The same retry rule otherwise.
     ///
     /// # Errors
     /// As [`Remote::call`].
-    pub async fn read_streamed<T, F, Fut>(&self, ctl: &OpCtl, what: &str, f: F) -> Result<T, CallError>
+    pub async fn read_streamed<T, F, Fut>(
+        &self,
+        ctl: &OpCtl,
+        what: &str,
+        f: F,
+        progress: &(dyn Fn() -> u64 + Sync),
+    ) -> Result<T, CallError>
     where
         F: Fn(Calls) -> Fut,
         Fut: Future<Output = Result<T, AttemptError>>,
     {
-        self.retry(ctl, what, false, None, f, &|| {}).await
+        self.retry(ctl, what, false, None, &self.streams, f, &|| {}, Some(progress))
+            .await
     }
 
     /// The timeout of one attempt (30 s): a streamed read's bound on each wait.
@@ -317,14 +333,17 @@ impl Remote {
         self.timing.attempt
     }
 
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)] // the one retry loop of 9.5
     async fn retry<T, F, Fut>(
         &self,
         ctl: &OpCtl,
         what: &str,
         leased: bool,
         limit: Option<Duration>,
+        sem: &Semaphore,
         f: F,
         sent: &(dyn Fn() + Sync),
+        progress: Option<&(dyn Fn() -> u64 + Sync)>,
     ) -> Result<T, CallError>
     where
         F: Fn(Calls) -> Fut,
@@ -342,8 +361,9 @@ impl Remote {
             if ctl.interrupted.load(Ordering::SeqCst) && !ctl.executed() {
                 return Err(CallError::Interrupted);
             }
+            let before = progress.map(|p| p());
             let attempt = async {
-                let permit = self.sem.acquire().await;
+                let permit = sem.acquire().await;
                 // from here the attempt may reach magpie: an INTERRUPT no longer answers EINTR
                 ctl.executed.store(true, Ordering::SeqCst);
                 let calls = Calls {
@@ -372,6 +392,13 @@ impl Remote {
                 }
             };
             sent();
+            if let (Some(p), Some(b)) = (progress, before)
+                && p() > b
+            {
+                // the attempt advanced: whatever failed it, this op is not stuck since its first failure
+                first_fail = None;
+                wait = self.timing.retry_first;
+            }
             let err = match res {
                 Ok(v) => {
                     self.record_ok();
@@ -457,3 +484,94 @@ impl Remote {
 
 /// A shared handle.
 pub type SharedRemote = Arc<Remote>;
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use std::sync::atomic::AtomicU32;
+
+    use super::*;
+
+    fn remote(stuck_op: Duration) -> Arc<Remote> {
+        let client = magpie_api::client::Client::new(reqwest::Client::new(), "http://127.0.0.1:9", "unused");
+        Arc::new(Remote::new(
+            client,
+            Timing {
+                attempt: Duration::from_secs(5),
+                retry_first: Duration::from_millis(10),
+                retry_max: Duration::from_millis(20),
+                stuck_op,
+                healthy_within: Duration::from_secs(30),
+            },
+        ))
+    }
+
+    /// Six attempts of 150 ms, each failing (a dropped connection) while magpie answers others, against a 300 ms
+    /// stuck rule: stuck when nothing arrives, done when every attempt advanced.
+    async fn streamed(advance: bool) -> Result<(), CallError> {
+        let r = remote(Duration::from_millis(300));
+        let (got, attempts) = (AtomicU64::new(0), AtomicU32::new(0));
+        let (rr, g, a) = (&r, &got, &attempts);
+        r.read_streamed(
+            &OpCtl::default(),
+            "cc/file",
+            |_| async move {
+                rr.record_ok();
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                if advance {
+                    g.fetch_add(1, Ordering::SeqCst);
+                }
+                if a.fetch_add(1, Ordering::SeqCst) + 1 < 6 {
+                    Err(AttemptError::TimedOut)
+                } else {
+                    Ok(())
+                }
+            },
+            &|| got.load(Ordering::SeqCst),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_streamed_fetch_that_keeps_advancing_is_not_stuck() {
+        assert!(matches!(streamed(false).await, Err(CallError::Stuck(_))));
+        assert_eq!(streamed(true).await, Ok(()));
+    }
+
+    /// Streamed fetches that hold their permits for ever never take a call's.
+    #[tokio::test]
+    async fn streamed_fetches_never_hold_the_calls_permits() {
+        let r = remote(Duration::from_secs(600));
+        r.set_lease(Some(Lease {
+            id: Uuid::now_v7(),
+            epoch: 1,
+        }));
+        let forever = Arc::new(Notify::new());
+        for _ in 0..crate::limits::MAGPIE_CONCURRENCY {
+            let (r, n) = (r.clone(), forever.clone());
+            tokio::spawn(async move {
+                let n2 = n.clone();
+                r.read_streamed(
+                    &OpCtl::default(),
+                    "cc/file",
+                    move |_| {
+                        let n = n2.clone();
+                        async move {
+                            n.notified().await;
+                            Ok(())
+                        }
+                    },
+                    &|| 0,
+                )
+                .await
+            });
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let w = tokio::time::timeout(
+            Duration::from_secs(2),
+            r.call(&OpCtl::default(), "cc/write", |_| async { Ok(7) }, &|| {}),
+        )
+        .await;
+        assert_eq!(w.unwrap(), Ok(7), "a write finds a permit");
+    }
+}

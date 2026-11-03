@@ -37,10 +37,16 @@ pub const FUSE_ATTR_VALID: Duration = Duration::from_secs(1);
 /// Journal slots, each `FUSE_MAX_WRITE + 8 KiB`, `MAP_SHARED`.
 pub const JOURNAL_SLOTS: usize = 64;
 pub const JOURNAL_SLOT_BYTES: usize = 1024 * 1024 + 8 * 1024;
+/// How long an interrupted result (9.3) is kept for its thread's resend, counted from when it was kept, restored
+/// or the server resumed (the resend follows the restore; a later identical request is a new one).
+pub const KEPT_RESULT_TTL: Duration = Duration::from_secs(30);
 
 // magpie (9.5, 10, 11)
 
 pub const MAGPIE_CONCURRENCY: usize = 16;
+/// Of [`MAGPIE_CONCURRENCY`], the calls a streamed whole-file fetch may hold (its body can take minutes): the other
+/// 12 are only ever held for one 30 s attempt, so writes always find one.
+pub const MAGPIE_STREAMS: usize = 4;
 pub const MAGPIE_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CC_WRITE_RETRY_FIRST: Duration = Duration::from_millis(200);
 pub const CC_WRITE_RETRY_MAX: Duration = Duration::from_secs(10);

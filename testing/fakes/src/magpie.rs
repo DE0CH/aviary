@@ -496,6 +496,20 @@ impl FakeMagpie {
         );
     }
 
+    /// Sets an existing file's bytes and `version` without an operation: magpie as a restore left it, at an older
+    /// version that lacks writes it had acknowledged (the supervisor's repair, supervisor 9.5 item 6). A file that
+    /// does not exist is seeded first.
+    pub fn restore_file(&self, conversation: Uuid, path: &str, data: &[u8], version: u64) {
+        if self.node(conversation, path).is_none() {
+            self.seed_file(conversation, path, data);
+        }
+        let mut m = self.lock();
+        if let Some(n) = m.convs.get_mut(&conversation).and_then(|c| c.nodes.get_mut(path)) {
+            n.data = data.to_vec();
+            n.version = version;
+        }
+    }
+
     /// A node of `conversation`'s `~/.claude`.
     #[must_use]
     pub fn node(&self, conversation: Uuid, path: &str) -> Option<CcNode> {

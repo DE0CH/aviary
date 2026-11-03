@@ -60,6 +60,9 @@ pub struct Config {
     pub cache_budget: u64,
     pub attr_valid: Duration,
     pub timing: Timing,
+    /// How long an interrupted result (9.3) waits for its thread's resend, from when it was kept or the server
+    /// resumed.
+    pub kept_ttl: Duration,
 }
 
 impl Config {
@@ -86,6 +89,7 @@ impl Config {
             cache_budget: l::CACHE_BUDGET,
             attr_valid: l::FUSE_ATTR_VALID,
             timing: Timing::default(),
+            kept_ttl: l::KEPT_RESULT_TTL,
         }
     }
 }

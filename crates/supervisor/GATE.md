@@ -742,10 +742,10 @@ of `106166f3` with `a36f76cf`'s `fuse request` log in the fault-injection build 
   supervisor's own writes it restarts the READ's path instead: the READ falls back to the range from magpie).
   Writes, truncates and renames magpie acknowledges while a fetch streams are applied to the fetched copy (at most
   64 MiB of them), so the main transcript's prefetch leaves it cached at the current version.
-- Local-scope replays (9.9) whose effect the killed instance already made answer success. **The limit**: the same
-  state made by another process between the kill and the replay (about 0.1-1 s) reads as the request's own, so a
-  `mkdir` lock taken in that window is held twice.
-- A read that leaves no whole request in its slot answers EIO to any `unique` a copy of the header names and counts
+- Local-scope replays (9.9) whose effect the killed instance already made answer success (since review 3: only when
+  the slot's done mark says so, below).
+- A read that leaves no whole request in its slot answers EIO to the `unique` a copy of the header names (since
+  review 3: only a `unique` newer than the slot's last, the header being zeroed before each read) and counts
   `fuse.short_read`; a read error other than the connection's end is logged and retried, not a worker's silent exit.
 - The thread's next identical request (a second `mkdir` of a held lock) was taken for a resend of the one just
   answered when it arrived before that request left the in-flight list; the resend lock now covers the reply.
@@ -757,7 +757,8 @@ of `106166f3` with `a36f76cf`'s `fuse request` log in the fault-injection build 
    write at its size as an append, so nothing is written twice.
 2. `resync: true` on a lease is logged and needs no separate path: the reconcile that re-sends every suffix magpie
    lacks runs at every tree load, a superset of magpie 6.12's resync.
-3. `tree.json` is not written: every start loads the tree from magpie, so nothing would read it.
+3. `tree.json` is not written: every start loads the tree from magpie, so nothing would read it. Its consequence is
+   deviation 4 (review 3).
 
 **Open, not done by this package** (supervisor 22 items 2, 3 and 6; WP-22's acceptance):
 - (a) Item 2's tombstone rewrite is still not reproduced, and DESIGN 14 question 2 has no decision in DECISIONS.md:
@@ -767,3 +768,80 @@ of `106166f3` with `a36f76cf`'s `fuse request` log in the fault-injection build 
 - (c) Item 3's full-cache rule (final pause <= 2x the empty cache's) is not shown on the real build: the rig's fake
   magpie lives in the sandbox and rides the pre-copy stream. It needs magpie outside the sandbox (as (b)).
 - Items 2, 3, 6, 9 and 10 have not been re-run on current main (above).
+
+## WP-22 review 3 (2026-11-03)
+
+**Changed by the review** (each with a unit test in `fuse::tests`, `fuse::journal` or `fuse::remote`):
+- **Short reads** (9.9). `Journal::free` zeroes the whole 40-byte header (`len` first) and the slot's done mark, after
+  each reply and before each read, so a read that leaves the slot untouched can no longer show the header of the
+  request that used the slot before. `lost_header` takes only a `unique` newer than the last one the slot held. When
+  neither the mapping nor the file names one, nothing is answered: the request is logged (`fuse.request_lost`) and
+  counted (`Core::lost_requests`), since a reply to an older `unique` is refused or reaches another request. Its caller
+  waits for ever; that is the WP-57 case, whose fix is in the scratch move (9.9). Test
+  `a_short_read_answers_only_the_request_it_names` (one slot; a read that copies nothing gets no reply and sends no
+  EIO to the slot's previous `unique`; a header without its `len` gets EIO under its own `unique`). The test fails
+  on the old `free`/`lost_header`.
+- **Repair candidates** (9.5 item 6). A candidate's cache file is discarded only when magpie's bytes disagree
+  (`Resent::Forked`), magpie has no such file, or magpie holds at least as many bytes. A failed read of magpie's
+  window or the cached copy, or a repair write that ends in EDQUOT, stuck, `lease_lost` or a lease change, keeps
+  the file for the next tree load. If some suffix writes were stored first, the file is renamed above magpie's new
+  version, so the next reconcile still finds it newer. Test `a_repair_that_fails_without_a_mismatch_keeps_the_cached_copy`
+  covers 507 `quota_exceeded`: the candidate is still on disk and the next tree load repairs from it. It also covers
+  409 `lease_lost`: the lease loop's reload repairs from it.
+- **Resend expiry** (9.3). A kept interrupted result expires `KEPT_RESULT_TTL` (30 s) after it was kept, restored from
+  the journal, or the server `resumed` (the resend follows the restore, however long the pause). A much later
+  identical request from a reused thread id is then executed, not answered with the old result. Test
+  `a_kept_result_survives_a_path_walk_and_expires`: a GETATTR before the resend keeps the result. After the TTL, an
+  identical `mkdir` of a lock another thread removed and took again gets EEXIST.
+- **Streamed fetches** (9.5, 9.7). They take permits from their own pool (`MAGPIE_STREAMS` = 4 of the 16), so a
+  slow-trickling fetch never holds a write's permit (test `streamed_fetches_never_hold_the_calls_permits`: 16 fetches
+  held for ever, a write still runs). An attempt that advanced the fetch resets the stuck clock and the backoff, so a
+  fetch that keeps advancing between dropped connections is not answered EIO 10 min after its first failure (test
+  `a_streamed_fetch_that_keeps_advancing_is_not_stuck`).
+- **Local replays** (9.9). A local MKDIR, CREATE, SYMLINK, UNLINK, RMDIR or RENAME writes its slot's done mark (the
+  `unique`, in an 8-byte-per-slot area after the kept results) right after the change and before the reply. A
+  replay answers success on EEXIST/ENOENT only when the mark names its `unique`; otherwise it answers the error.
+  So an unlink of a missing file stays ENOENT, a rename whose `from` is missing stays ENOENT even when `to`
+  existed, and a `mkdir` lock another process took meanwhile stays EEXIST (test
+  `a_local_replay_that_was_never_applicable_keeps_its_error`). **The limit now**: a kill between the change and the
+  mark (two adjacent instructions) answers the error for a change that was the request's own.
+- **Prefetch** (9.7). `prefetch_main` runs after every successful start and does nothing while the main
+  transcript's entry is current. So a first start retried on the keeper's connection, and a restart whose reconcile
+  dropped the entry, prefetch it (test `the_main_transcript_is_prefetched_after_a_retried_start`).
+- **opIds in the replay test.** `journal_replay_at_each_fault_point` asserts that each request names exactly one
+  `opId` at magpie. After a kill past call-sent, the killed instance sent that `opId` and the replay sent no other.
+  So a replay with a fresh `opId`, which magpie's rule 0 would hide for identical bytes, fails the test.
+
+**Deviations recorded here** (for Deyao to accept):
+4. **A supervisor restart during a magpie or gateway outage serves nothing until magpie answers** (9.10's
+   "Supervisor crash" row assumes magpie answers). Requests queue in the sentry while magpie is unreachable: local
+   scope, cached READs, LOOKUP and GETATTR, and the journal's replays. Once magpie answers, the replays complete and
+   the new requests are served. Test `a_restart_during_an_outage_waits_for_magpie_then_completes`: a local MKDIR
+   killed at read-returned and a new GETATTR both stay unanswered for 0.8 s while `cc/tree` answers 503; both
+   succeed once it answers. This does not come from deviation 3. The start sequence of 4.3, which the spec applies
+   to every start, takes the lease from magpie at step 5 (`magpie::take_lease`, retried until magpie grants it,
+   `start.rs`) before the mount at step 6. So a restart during an outage would block before the mount even with a
+   persisted tree. Keeping the mount up through such a restart would need a start that mounts before it has a lease,
+   a change to 4.3's order (and magpie-scope replays still wait for the lease, since every state change carries
+   `Aviary-Lease`). A supervisor that keeps running through an outage behaves as 9.10 says.
+5. **A kept interrupted result is not dropped by the thread's non-mutating requests** (9.3 says "any other request
+   from that thread drops the entry"). A restarted syscall can walk its path (LOOKUP, GETATTR) before the sentry
+   resends it. Dropping the entry there would execute the resend a second time: EEXIST for a `mkdir` lock the
+   original took, so the lock would be held with no owner. The entry is dropped by the thread's next mutating
+   request, and expires after `KEPT_RESULT_TTL` (above).
+
+**Item 4's rig and the stuck rule.** In `kill-k3` case 19 (`plain-19.json`), the plain SIGKILL during the held 1 MiB
+write, the write took 1,210 s (31 `magpie attempt timed out`) and still succeeded. The 10-min stuck rule did not fire
+because nothing called `Remote::record_ok` while the write was held: the rig's held replay ran with no successful
+magpie call beside it. This is also the real supervisor's behaviour at a start, not only the rig's. The replay runs
+inside the mount (4.3 step 6), and the heartbeat that records successes (`cc::heartbeat_ok`, the `heartbeat_loop`
+in `cc/run.rs`) starts at step 7. So a replayed operation that magpie holds or refuses at a start, while magpie
+answers everything else, blocks the mount with no `cc.write_stuck` after 10 min. Item 4 on the real build therefore
+did not exercise the heartbeat and stuck-rule interplay, and that interplay at a start is **open**: it needs a call
+that records magpie's health during the start (before step 7) or a start that serves before its replays end. In
+`kill-k3` the hold was released by hand (the rig waited for the mount before releasing it); `kill-k4` re-ran only
+that one case, with the corrected release order.
+
+**Still open** (unchanged by review 3; WP-22 stays not done): (a)-(c) above; items 2, 3, 6, 9 and 10 have not been
+re-run on current main; the `unique`-across-a-migration half of item 4 (`rig-uniques.py` on `rig-mig.sh` with
+`RIG_FI=1`) is not run; the stuck rule during a start's replay (above); the migration acceptance waits for WP-57.
