@@ -1449,6 +1449,56 @@ mod tests {
         }
     }
 
+    /// A CLI whose `rmr` takes `.1` before it records.
+    #[derive(Default)]
+    struct Slow(Mutex<Vec<String>>, Duration);
+    impl JfsCli for Slow {
+        fn quota_get<'a>(&'a self, _: &'a str) -> Fut<'a, Result<Option<Quota>, CliError>> {
+            Box::pin(async { Ok(None) })
+        }
+        fn quota_set<'a>(&'a self, _: &'a str, _: u32, _: u64) -> Fut<'a, Result<(), CliError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn quota_delete<'a>(&'a self, _: &'a str) -> Fut<'a, Result<(), CliError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn clone_tree<'a>(&'a self, _: &'a Path, _: &'a Path) -> Fut<'a, Result<(), CliError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn rmr<'a>(&'a self, path: &'a Path) -> Fut<'a, Result<(), CliError>> {
+            Box::pin(async move {
+                tokio::time::sleep(self.1).await;
+                self.0.lock().unwrap().push(format!("rmr {}", path.display()));
+                Ok(())
+            })
+        }
+    }
+
+    // a one-shot command's store: the removal an unfinished clone left in the background is waited for before the
+    // command exits (the runtime would drop it), and one that outlasts the wait is counted
+    #[tokio::test]
+    async fn settle_waits_for_what_the_store_spawned() {
+        let cli = Arc::new(Slow(Mutex::default(), Duration::from_millis(200)));
+        let fs = JuiceFs::new("/nonexistent", cli.clone(), 1, 10);
+        drop(TempTree {
+            cli: cli.clone(),
+            path: Some("/jfs/ws/.clone-a".into()),
+            bg: fs.background.clone(),
+        });
+        assert!(cli.0.lock().unwrap().is_empty());
+        assert_eq!(fs.settle(Duration::from_secs(10)).await, 0);
+        assert_eq!(*cli.0.lock().unwrap(), vec!["rmr /jfs/ws/.clone-a".to_owned()]);
+
+        let stuck = Arc::new(Slow(Mutex::default(), Duration::from_secs(600)));
+        let fs = JuiceFs::new("/nonexistent", stuck.clone(), 1, 10);
+        drop(TempTree {
+            cli: stuck.clone(),
+            path: Some("/jfs/ws/.clone-b".into()),
+            bg: fs.background.clone(),
+        });
+        assert_eq!(fs.settle(Duration::from_millis(50)).await, 1);
+    }
+
     // a rename that answered after its request gave up: landed, the workspace gets its quota and its tree is kept;
     // failed, the temporary tree is removed (and never while the rename may still run)
     #[tokio::test]
