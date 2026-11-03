@@ -96,7 +96,7 @@ person every 2 s at most (`GET /v1/legacy/window`).
   open ticket handed back, e.g. a tab's resend after its socket dropped), reads the old child after `settleMs` (a
   reuse: 2 s) and sends only when the first send is absent: no user row of it (`clientMessageId` or
   `paseo-user-<id>`) in the timeline's tail, and the conversation not running, preparing or holding a pending
-  message (the agent's status and `GET /api/jarvis/switch/busy`, since a restarted old child rebuilds its timeline
+  message (the agent's status and the old child's busy state, `legacy::OLD_BUSY`, since a restarted old child rebuilds its timeline
   without the row's id); when present it reports `started`/`completed` and answers accepted, and when the old child
   cannot be read nothing is sent. Every other send is not sent again either when the timeline already holds its user
   row. Outcomes are reported in the background with retries; Delete, Restore and Purge outcomes set pigeon's view of
