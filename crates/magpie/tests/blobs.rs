@@ -670,14 +670,16 @@ async fn a_hanging_bucket_pins_no_request_connection() {
     proxy.restore();
 }
 
-/// The blob advisory locks (classid `mblb`) held on the database.
+/// The blob advisory locks (classid `mblb`) held on this test's database (`pg_locks` covers every database of the
+/// server, and other tests run alongside).
 async fn blob_locks(pool: &aviary_pg::Pool) -> i64 {
     pool.get()
         .await
         .unwrap()
         .query_one(
             "select count(*) from pg_locks where locktype = 'advisory' and classid = 1835166818::oid
-               and objsubid = 2 and granted",
+               and objsubid = 2 and granted
+               and database = (select oid from pg_database where datname = current_database())",
             &[],
         )
         .await
