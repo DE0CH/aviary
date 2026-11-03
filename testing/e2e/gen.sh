@@ -123,7 +123,8 @@ secret_files() { # secret_files <name> KEY=PATH…
   secret_files fake-ec2-tls "tls.crt=$ca/ec2.crt" "tls.key=$ca/ec2.key"
   secret_files fabric-gateway "host.json=$dir/gateway-host.json"
   secret_env driver-env \
-    "E2E_MAGPIE_ADMIN=$admin_magpie" "E2E_HERMIT_ADMIN=$admin_hermit" "E2E_HERMIT_MONITOR=$monitor_hermit"
+    "E2E_MAGPIE_ADMIN=$admin_magpie" "E2E_HERMIT_ADMIN=$admin_hermit" "E2E_HERMIT_MONITOR=$monitor_hermit" \
+    "E2E_MAGPIE_PIGEON=$pigeon_magpie" "E2E_HERMIT_MAGPIE=$magpie_hermit"
   secret_files driver-ca "ca.crt=$ca/ca.crt"
 } > "$out/secrets.yaml"
 
@@ -174,5 +175,7 @@ cat > "$dir/driver.env" <<ENV
 E2E_MAGPIE_ADMIN=$admin_magpie
 E2E_HERMIT_ADMIN=$admin_hermit
 E2E_HERMIT_MONITOR=$monitor_hermit
+E2E_MAGPIE_PIGEON=$pigeon_magpie
+E2E_HERMIT_MAGPIE=$magpie_hermit
 ENV
 echo "$out"

@@ -11,8 +11,8 @@ use crate::{ADMIN, ALICE, Harness, JFS, PIGEON, STRANGER, TURN_MODEL, eventually
 
 /// The scenarios in the order `aviary-e2e` runs them when none is named.
 pub const ALL: &[&str] = &[
-    "e1", "e2", "e3", "e4", "e5", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e9", "e23", "e21",
-    "e13", "e15", "e24", "e12", "e17", "stale",
+    "e1", "e2", "e3", "e4", "e5", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e9", "e23", "e20",
+    "e21", "e22", "e13", "e15", "e24", "e12", "e17", "stale",
 ];
 
 /// How long a turn may take, sandbox start included (the image is local; the first start makes the host).
@@ -43,6 +43,8 @@ pub async fn run(h: &Harness, name: &str) -> anyhow::Result<()> {
         "e5" => e5(h).await,
         "e23" => e23(h).await,
         "e21" => e21(h).await,
+        "e20" => e20(h).await,
+        "e22" => e22(h).await,
         "e15" => e15(h).await,
         "e7" => e7(h).await,
         other => bail!("no scenario {other}"),
@@ -1806,4 +1808,557 @@ async fn e21(h: &Harness) -> anyhow::Result<()> {
     }
     ws.close().await;
     r
+}
+
+/// Waits until Deployment `name` has its replicas ready again.
+async fn ready(h: &Harness, name: &str, within: Duration) -> anyhow::Result<()> {
+    let api = kube::Api::<k8s_openapi::api::apps::v1::Deployment>::namespaced(h.kube.clone(), crate::NS);
+    eventually(&format!("{name} ready"), within, Duration::from_secs(1), || async {
+        let d = api.get(name).await?;
+        let want = d.spec.as_ref().and_then(|s| s.replicas).unwrap_or(1);
+        let st = d.status.unwrap_or_default();
+        Ok((st.ready_replicas.unwrap_or(0) >= want && st.replicas.unwrap_or(0) == want).then_some(()))
+    })
+    .await
+}
+
+/// A client's live request on one Pod while it drains: what it saw.
+async fn live_client(
+    h: &Harness,
+    app: &str,
+    ip: &str,
+    token: &str,
+    id: &str,
+    deleted: &std::sync::OnceLock<Instant>,
+) -> anyhow::Result<String> {
+    match app {
+        "pigeon" => {
+            // a live socket on the draining Pod, subscribed to the running turn: closed 1012 by the drain
+            let (mut ws, _) = Ws::open(&format!("http://{ip}:8080"), token).await?;
+            let (_, _) = ws
+                .rpc("agent.timeline.set_subscription.request", json!({"agentIds": [id]}))
+                .await?;
+            let until = Instant::now() + Duration::from_secs(120);
+            while ws.closed.is_none() {
+                ensure!(Instant::now() < until, "the draining pigeon kept the socket open");
+                ws.drain(Duration::from_millis(500)).await;
+            }
+            let code = ws.closed.unwrap_or_default();
+            ensure!(code == 1012, "the draining pigeon closed the socket {code}, not 1012");
+            Ok(format!("socket closed {code}"))
+        }
+        "magpie" | "hermit" => {
+            // 25 s long-polls on the draining Pod, one after the other (pigeon's change feed on magpie, for a person
+            // with no activity; magpie's sandbox feed on hermit): the one in flight at the SIGTERM must answer
+            let (path, proto, key) = if app == "magpie" {
+                (
+                    "/v1/changes?after=latest&waitMs=25000",
+                    "magpie-person=1",
+                    "E2E_MAGPIE_PIGEON",
+                )
+            } else {
+                (
+                    "/v1/sandbox-events?after=latest&waitMs=25000",
+                    "hermit-core=1",
+                    "E2E_HERMIT_MAGPIE",
+                )
+            };
+            let until = Instant::now() + Duration::from_secs(180);
+            loop {
+                ensure!(Instant::now() < until, "no long-poll on {app} across the SIGTERM");
+                let t = Instant::now();
+                let r = h
+                    .http
+                    .get(format!("http://{ip}:8080{path}"))
+                    .header("aviary-protocol", proto)
+                    .header("aviary-person", BOB)
+                    .bearer_auth(h.token_of(key)?)
+                    .timeout(Duration::from_secs(90))
+                    .send()
+                    .await;
+                let across = deleted.get().is_some_and(|d| t < *d);
+                match r {
+                    Ok(r) => {
+                        let status = r.status().as_u16();
+                        let body = r.text().await;
+                        ensure!(
+                            status == 200 && body.is_ok(),
+                            "a long-poll on the draining {app} answered {status}: {body:?}"
+                        );
+                        if across {
+                            return Ok(format!(
+                                "the long-poll across the SIGTERM answered 200 after {:.1} s",
+                                t.elapsed().as_secs_f64()
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        ensure!(!across, "the long-poll in flight at the SIGTERM on {app} failed: {e:#}");
+                        bail!("{app} stopped answering before any long-poll spanned the SIGTERM: {e:#}");
+                    }
+                }
+            }
+        }
+        other => bail!("no live client for {other}"),
+    }
+}
+
+/// SIGTERM to one Pod of `app` with a live client on it: the Pod exits by itself (log `drained`) before its grace,
+/// the client's request ends normally, and the same request through the Service then lands on the other replica.
+#[allow(clippy::too_many_lines)] // one drain: the Pod, its log, the client, then the checks
+async fn drain_one(h: &Harness, app: &str, token: &str, id: &str) -> anyhow::Result<String> {
+    use futures_util::{AsyncBufReadExt as _, StreamExt as _};
+    ready(h, app, Duration::from_secs(300)).await?;
+    let pods = kube::Api::<k8s_openapi::api::core::v1::Pod>::namespaced(h.kube.clone(), crate::NS);
+    let list = pods
+        .list(&kube::api::ListParams::default().labels(&format!("app={app}")))
+        .await?;
+    let victim = list
+        .items
+        .iter()
+        .find(|p| {
+            p.metadata.deletion_timestamp.is_none() && p.status.as_ref().and_then(|s| s.pod_ip.as_ref()).is_some()
+        })
+        .with_context(|| format!("no running {app} Pod"))?;
+    let name = victim.metadata.name.clone().unwrap_or_default();
+    let ip = victim
+        .status
+        .as_ref()
+        .and_then(|s| s.pod_ip.clone())
+        .unwrap_or_default();
+    let grace = victim
+        .spec
+        .as_ref()
+        .and_then(|s| s.termination_grace_period_seconds)
+        .unwrap_or(30);
+    // the process's own log, followed until the container ends
+    let lp = kube::api::LogParams {
+        container: Some(app.to_owned()),
+        follow: true,
+        since_seconds: Some(1),
+        ..Default::default()
+    };
+    let logs = pods.log_stream(&name, &lp).await?;
+    let log_task = tokio::spawn(async move {
+        let mut lines = logs.lines();
+        let mut out = Vec::new();
+        while let Some(Ok(l)) = lines.next().await {
+            out.push(l);
+        }
+        out
+    });
+    let deleted = std::sync::OnceLock::new();
+    let client = live_client(h, app, &ip, token, id, &deleted);
+    let signal = async {
+        // the client's request is in flight before the signal
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let t0 = Instant::now();
+        let _ = deleted.set(t0);
+        h.delete_pod(&name, u32::try_from(grace).unwrap_or(30)).await?;
+        Ok::<_, anyhow::Error>(t0)
+    };
+    let (seen, t0) = tokio::join!(client, signal);
+    let (seen, t0) = (seen?, t0?);
+    let gone = eventually(
+        &format!("{name} gone"),
+        Duration::from_secs(u64::try_from(grace).unwrap_or(30) + 30),
+        Duration::from_millis(250),
+        || async {
+            match pods.get_opt(&name).await? {
+                None => Ok(Some(t0.elapsed())),
+                Some(_) => Ok(None),
+            }
+        },
+    )
+    .await?;
+    let log = tokio::time::timeout(Duration::from_secs(10), log_task)
+        .await
+        .context("the log stream did not end")??;
+    ensure!(
+        gone < Duration::from_secs(u64::try_from(grace).unwrap_or(30)),
+        "{name} took {gone:?}, its grace is {grace} s (killed, not drained)"
+    );
+    ensure!(
+        log.iter().any(|l| l.contains("drained")),
+        "{name} exited without its `drained` log; its last lines:\n{}",
+        log.iter().rev().take(15).rev().cloned().collect::<Vec<_>>().join("\n")
+    );
+    // the client resumes on the other replica
+    match app {
+        "pigeon" => {
+            let (mut ws, _) = Ws::open(PIGEON, token).await?;
+            let a = agent(&mut ws, id).await?;
+            ensure!(a["id"] == id, "the other pigeon's snapshot: {a}");
+            ws.close().await;
+        }
+        "magpie" => {
+            let r = h
+                .http
+                .get(format!("{}/v1/changes?after=latest&waitMs=0", crate::MAGPIE))
+                .header("aviary-protocol", "magpie-person=1")
+                .header("aviary-person", ALICE)
+                .bearer_auth(h.token_of("E2E_MAGPIE_PIGEON")?)
+                .send()
+                .await?;
+            ensure!(
+                r.status().is_success(),
+                "the change feed on the other magpie: {}",
+                r.status()
+            );
+        }
+        _ => {
+            let r = h
+                .http
+                .get(format!("{}/v1/sandbox-events?after=latest&waitMs=0", crate::HERMIT))
+                .header("aviary-protocol", "hermit-core=1")
+                .bearer_auth(h.token_of("E2E_HERMIT_MAGPIE")?)
+                .send()
+                .await?;
+            ensure!(
+                r.status().is_success(),
+                "the sandbox feed on the other hermit: {}",
+                r.status()
+            );
+        }
+    }
+    Ok(format!(
+        "{app}: {seen}, the Pod gone after {:.1} s of {grace} s",
+        gone.as_secs_f64()
+    ))
+}
+
+/// E20: SIGTERM to a pigeon, a magpie and a hermit Pod in turn, each with a live client on it (a subscribed socket;
+/// a 25 s long-poll), during a 150 s turn: each Pod exits by itself within its grace, each client's request ends
+/// normally and its next lands on the other replica, and the turn completes with every row seen once by a socket
+/// that reopens whenever pigeon's drain closes it.
+#[allow(clippy::too_many_lines)] // one scenario: the turn, the three drains and the socket that rides them out
+async fn e20(h: &Harness) -> anyhow::Result<()> {
+    let token = h.mint(ALICE, 3600, None).await?;
+    let m = marker("E20");
+    h.script(json!({"match": {"textContains": m, "model": TURN_MODEL},
+                    "reply": [{"text": "Before the drains."}, {"sleepMs": 150_000}, {"text": "After the drains."}],
+                    "times": 1}))
+        .await?;
+    let (mut ws, _) = Ws::open(PIGEON, &token).await?;
+    let id = create(&mut ws, &format!("Ride out the drains ({m})")).await?;
+    sandbox_of(h, &id).await?;
+    let mut pushes: Vec<(String, u64)> = Vec::new();
+    let loaded = page(&mut ws, &id, "tail", None, 40).await?;
+    let mut epoch = loaded["epoch"].clone();
+    let mut last = json!(null);
+    for r in loaded["entries"].as_array().into_iter().flatten() {
+        pushes.push((row_key(&r["item"]), r["seqEnd"].as_u64().unwrap_or(0)));
+        last = json!(r["seqEnd"]);
+    }
+    let drains = {
+        let (token, id) = (token.clone(), id.clone());
+        async move {
+            let mut said = Vec::new();
+            for app in ["pigeon", "magpie", "hermit"] {
+                said.push(drain_one(h, app, &token, &id).await?);
+            }
+            Ok::<_, anyhow::Error>(said)
+        }
+    };
+    tokio::pin!(drains);
+    let mut said: Option<Vec<String>> = None;
+    let mut ended: Option<Value> = None;
+    let until = Instant::now() + Duration::from_mins(15);
+    while ended.is_none() || said.is_none() {
+        ensure!(
+            Instant::now() < until,
+            "not done in 15 min (drained {said:?}, ended {ended:?})"
+        );
+        tokio::select! {
+            r = &mut drains, if said.is_none() => { said = Some(r?); }
+            frames = ws.drain(Duration::from_millis(500)) => {
+                for v in frames {
+                    let p = &v["message"]["payload"];
+                    if v["message"]["type"] != "agent_stream" || p["agentId"] != id.as_str() { continue; }
+                    match p["event"]["type"].as_str() {
+                        Some("timeline") => {
+                            let seq = p["seq"].as_u64().unwrap_or(0);
+                            pushes.push((row_key(&p["event"]["item"]), seq));
+                            last = json!(seq);
+                            epoch = p["epoch"].clone();
+                        }
+                        Some("turn_completed" | "turn_failed" | "turn_canceled") => ended = Some(p["event"].clone()),
+                        _ => {}
+                    }
+                }
+                if ws.closed.is_some() {
+                    let (w, _) = Ws::open(PIGEON, &token).await?;
+                    ws = w;
+                    let (_, _) = ws.rpc("agent.timeline.set_subscription.request", json!({"agentIds": [id]})).await?;
+                    if !last.is_null() {
+                        let c = page(&mut ws, &id, "after", Some(&json!({"epoch": epoch, "seq": last})), 500).await?;
+                        ensure!(c["reset"] != true, "the resume reset the timeline");
+                        for r in c["entries"].as_array().into_iter().flatten() {
+                            let seq = r["seqEnd"].as_u64().unwrap_or(0);
+                            pushes.push((row_key(&r["item"]), seq));
+                            last = json!(seq);
+                        }
+                    }
+                    let a = agent(&mut ws, &id).await?;
+                    if a["status"] == "idle" && ended.is_none() {
+                        ended = Some(json!({"type": "turn_completed", "seen": "after a reopen"}));
+                    }
+                }
+            }
+        }
+    }
+    let end = ended.unwrap_or_default();
+    ensure!(end["type"] == "turn_completed", "the turn ended {end}");
+    let all = timeline(&mut ws, &id).await?;
+    let mut counts = std::collections::BTreeMap::<(String, u64), u32>::new();
+    for p in &pushes {
+        *counts.entry(p.clone()).or_default() += 1;
+    }
+    let twice: Vec<_> = counts.iter().filter(|(_, n)| **n > 1).collect();
+    ensure!(twice.is_empty(), "rows seen twice: {twice:?}");
+    for r in &all {
+        let k = (row_key(&r["item"]), r["seqEnd"].as_u64().unwrap_or(0));
+        ensure!(counts.contains_key(&k), "row {k:?} never seen");
+    }
+    ensure!(
+        texts_of(&all, "assistant_message")
+            .iter()
+            .any(|t| t == "After the drains."),
+        "the reply's end is not in the timeline"
+    );
+    for s in said.unwrap_or_default() {
+        eprintln!("e20: {s}");
+    }
+    ws.close().await;
+    for app in ["pigeon", "magpie", "hermit"] {
+        ready(h, app, Duration::from_secs(300)).await?;
+    }
+    Ok(())
+}
+
+/// One socket's view of a conversation's rows, classified as the app classifies them (pigeon 7.6: a row seq that is
+/// not the next is stale when at most the last, a gap when beyond it; a gap is what makes the app refetch).
+#[derive(Debug, Default)]
+struct Feed {
+    epoch: Value,
+    last: u64,
+    /// (row, seq) of every live push, counted.
+    pushed: std::collections::BTreeMap<(String, u64), u32>,
+    /// (row, seq) from the first load and each replacement's tail.
+    loaded: std::collections::BTreeSet<(String, u64)>,
+    gaps: Vec<String>,
+    replacements: Vec<Value>,
+    /// Texts of assistant rows ever pushed or loaded.
+    said: std::collections::BTreeSet<String>,
+}
+
+impl Feed {
+    fn load(&mut self, page: &Value) {
+        self.epoch = page["epoch"].clone();
+        for r in page["entries"].as_array().into_iter().flatten() {
+            let seq = r["seqEnd"].as_u64().unwrap_or(0);
+            self.loaded.insert((row_key(&r["item"]), seq));
+            self.last = self.last.max(seq);
+            if let Some(t) = r["item"]["text"].as_str() {
+                self.said.insert(t.to_owned());
+            }
+        }
+    }
+
+    /// Takes the socket's frames; a replacement is followed by the app's one tail fetch on that socket.
+    async fn take(&mut self, ws: &mut Ws, id: &str, frames: Vec<Value>) -> anyhow::Result<()> {
+        for v in frames {
+            let p = &v["message"]["payload"];
+            if p["agentId"] != id {
+                continue;
+            }
+            match v["message"]["type"].as_str() {
+                Some("agent.timeline.replacement") => {
+                    self.replacements.push(p["epoch"].clone());
+                    let tail = page(ws, id, "tail", None, 500).await?;
+                    ensure!(
+                        tail["epoch"] == p["epoch"],
+                        "the tail after the replacement is in epoch {}, the replacement said {}",
+                        tail["epoch"],
+                        p["epoch"]
+                    );
+                    self.last = 0;
+                    self.load(&tail);
+                }
+                Some("agent_stream") if p["event"]["type"] == "timeline" => {
+                    let seq = p["seq"].as_u64().unwrap_or(0);
+                    let key = row_key(&p["event"]["item"]);
+                    if let Some(t) = p["event"]["item"]["text"].as_str() {
+                        self.said.insert(t.to_owned());
+                    }
+                    *self.pushed.entry((key.clone(), seq)).or_default() += 1;
+                    if p["epoch"] != self.epoch {
+                        self.gaps.push(format!(
+                            "row {key} seq {seq} of epoch {} while in {}",
+                            p["epoch"], self.epoch
+                        ));
+                    } else if seq == self.last + 1 {
+                        self.last = seq;
+                    } else if seq > self.last {
+                        self.gaps.push(format!("row {key}: seq {seq} after {}", self.last));
+                        self.last = seq;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+}
+
+/// E22: one turn whose events interleave `sandbox.*`, `title.changed`, `task.status` (a background Bash) and a
+/// `retract` (a tool rewrites the transcript without the turn's first text, renamed over it) between its rows, watched
+/// by two sockets: on each, every row arrives once with no false gap (zero refetches), and the retract that removed
+/// the visible row arrives as exactly one `agent.timeline.replacement`, after which the app's one tail fetch has the
+/// row gone.
+#[allow(clippy::too_many_lines)] // one scenario: the turn, the two sockets, then the checks
+async fn e22(h: &Harness) -> anyhow::Result<()> {
+    let token = h.mint(ALICE, 3600, None).await?;
+    let m = marker("E22");
+    let gone = "Soon to be retracted.";
+    // the command names the line's text only in two halves, so its own tool_use line survives the filter
+    let rewrite = format!(
+        "sleep 4; d=$HOME/.claude/projects/-workspace; f=$(grep -l '{m}' \"$d\"/*.jsonl | head -n1); \
+         p='Soon to be'; p=\"$p retracted.\"; grep -vF \"$p\" \"$f\" > \"$f.e22\" && mv -f \"$f.e22\" \"$f\"; \
+         sleep 12; echo rewritten"
+    );
+    h.script(json!({"match": {"textContains": m, "model": TURN_MODEL},
+                    "reply": [{"text": gone},
+                              {"toolUse": {"name": "Bash", "input": {"command": "sleep 8; echo background-done",
+                                  "description": "a background task", "run_in_background": true}}},
+                              {"toolUse": {"name": "Bash", "input": {"command": rewrite,
+                                  "description": "rewrite the transcript"}}}],
+                    "times": 1}))
+        .await?;
+    let (mut wa, _) = Ws::open(PIGEON, &token).await?;
+    let (mut wb, _) = Ws::open(PIGEON, &token).await?;
+    let mut fa = Feed::default();
+    let mut fb = Feed::default();
+    let res = async {
+        let id = create(&mut wa, &format!("Interleaved events ({m})")).await?;
+        let (_, _) = wb
+            .rpc("agent.timeline.set_subscription.request", json!({"agentIds": [id]}))
+            .await?;
+        let la = page(&mut wa, &id, "tail", None, 500).await?;
+        fa.load(&la);
+        let lb = page(&mut wb, &id, "tail", None, 500).await?;
+        fb.load(&lb);
+        let first_epoch = fa.epoch.clone();
+        let is_end = |v: &Value| {
+            v["message"]["type"] == "agent_stream"
+                && v["message"]["payload"]["agentId"] == id.as_str()
+                && matches!(
+                    v["message"]["payload"]["event"]["type"].as_str(),
+                    Some("turn_completed" | "turn_failed" | "turn_canceled")
+                )
+        };
+        let mut ended: Option<Value> = None;
+        let mut quiet_since: Option<Instant> = None;
+        let until = Instant::now() + TURN_WAIT + Duration::from_secs(120);
+        // until a turn has ended and both sockets were quiet for 8 s (the background task's follow-up, if Claude
+        // Code makes one, ends too)
+        loop {
+            ensure!(Instant::now() < until, "the turn did not end (ended {ended:?})");
+            let va = wa.drain(Duration::from_millis(400)).await;
+            let vb = wb.drain(Duration::from_millis(400)).await;
+            ensure!(
+                wa.closed.is_none() && wb.closed.is_none(),
+                "a socket closed: {:?} {:?}",
+                wa.closed,
+                wb.closed
+            );
+            if let Some(e) = va.iter().rev().find(|v| is_end(v)) {
+                ended = Some(e["message"]["payload"]["event"].clone());
+            }
+            let busy = va
+                .iter()
+                .chain(vb.iter())
+                .any(|v| v["message"]["payload"]["agentId"] == id.as_str());
+            fa.take(&mut wa, &id, va).await?;
+            fb.take(&mut wb, &id, vb).await?;
+            if busy {
+                quiet_since = None;
+            } else if ended.is_some() {
+                let q = *quiet_since.get_or_insert_with(Instant::now);
+                if q.elapsed() > Duration::from_secs(8) && agent(&mut wa, &id).await?["status"] == "idle" {
+                    break;
+                }
+            }
+        }
+        let end = ended.unwrap_or_default();
+        ensure!(end["type"] == "turn_completed", "the turn ended {end}");
+        // the events interleave between the rows' events
+        let evs = events(h, &id).await?;
+        let row_seqs: Vec<u64> = evs
+            .iter()
+            .filter(|e| e["kind"] == "user.sent" || e["kind"].as_str().is_some_and(|k| k.starts_with("cc.")))
+            .filter_map(|e| e["seq"].as_u64())
+            .collect();
+        let (lo, hi) = (
+            row_seqs.iter().min().copied().unwrap_or(0),
+            row_seqs.iter().max().copied().unwrap_or(0),
+        );
+        let kinds: Vec<String> = evs
+            .iter()
+            .map(|e| format!("{}:{}", e["seq"], e["kind"].as_str().unwrap_or("?")))
+            .collect();
+        for want in ["sandbox.", "title.changed", "task.status", "retract"] {
+            ensure!(
+                evs.iter().any(|e| {
+                    let s = e["seq"].as_u64().unwrap_or(0);
+                    e["kind"].as_str().is_some_and(|k| k.starts_with(want)) && s > lo && s < hi
+                }),
+                "no {want} event between the rows' events ({lo}..{hi}): {kinds:?}"
+            );
+        }
+        let all = timeline(&mut wa, &id).await?;
+        ensure!(
+            !texts_of(&all, "assistant_message").iter().any(|t| t == gone),
+            "the retracted text is still a row"
+        );
+        for (name, f) in [("a", &fa), ("b", &fb)] {
+            ensure!(
+                f.gaps.is_empty(),
+                "socket {name} saw gaps (each a refetch): {:?}",
+                f.gaps
+            );
+            ensure!(
+                f.replacements.len() == 1 && f.replacements[0] != first_epoch,
+                "socket {name}: replacements {:?} (the first epoch {first_epoch})",
+                f.replacements
+            );
+            ensure!(
+                f.said.contains(gone),
+                "socket {name} never had the row the retract removed"
+            );
+            let twice: Vec<_> = f.pushed.iter().filter(|(_, n)| **n > 1).collect();
+            ensure!(twice.is_empty(), "socket {name}: rows pushed twice: {twice:?}");
+            for r in &all {
+                let k = (row_key(&r["item"]), r["seqEnd"].as_u64().unwrap_or(0));
+                ensure!(
+                    f.pushed.contains_key(&k) || f.loaded.contains(&k),
+                    "socket {name} never had row {k:?}"
+                );
+            }
+        }
+        eprintln!(
+            "e22: {} rows, {} pushes on a and {} on b, one replacement each, events {kinds:?}",
+            all.len(),
+            fa.pushed.len(),
+            fb.pushed.len()
+        );
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    if res.is_err() {
+        eprintln!("{}\n--\n{}", wa.tail(30), wb.tail(30));
+    }
+    wa.close().await;
+    wb.close().await;
+    res
 }

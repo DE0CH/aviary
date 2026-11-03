@@ -94,7 +94,7 @@ impl Harness {
         Ok(Self { http, env, kube })
     }
 
-    fn token_of(&self, key: &str) -> anyhow::Result<&str> {
+    pub fn token_of(&self, key: &str) -> anyhow::Result<&str> {
         self.env
             .get(key)
             .map(String::as_str)
