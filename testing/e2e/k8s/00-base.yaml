@@ -1,0 +1,87 @@
+# The harness namespace, its service accounts and their rights (platform 7.1). hermit reads the cluster as in YYC
+# (its egress Service's endpoints, the ops page's Deployments, Pods and events); fake-sandboxd manages the Pods that
+# stand in for fabric hosts and sandboxes; the driver reads and execs into Pods for its probes.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aviary-e2e
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: hermit, namespace: aviary-e2e}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: fake-sandboxd, namespace: aviary-e2e}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: driver, namespace: aviary-e2e}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: plain, namespace: aviary-e2e}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: hermit, namespace: aviary-e2e}
+rules:
+  - apiGroups: [""]
+    resources: [endpoints, pods, events, services]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, daemonsets, statefulsets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: hermit, namespace: aviary-e2e}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: hermit}
+subjects: [{kind: ServiceAccount, name: hermit, namespace: aviary-e2e}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: fake-sandboxd, namespace: aviary-e2e}
+rules:
+  - apiGroups: [""]
+    resources: [pods, secrets]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: fake-sandboxd, namespace: aviary-e2e}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fake-sandboxd}
+subjects: [{kind: ServiceAccount, name: fake-sandboxd, namespace: aviary-e2e}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: driver, namespace: aviary-e2e}
+rules:
+  - apiGroups: [""]
+    resources: [services, endpoints]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods, pods/log, events]
+    verbs: [get, list, watch, delete]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create, get]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [apps]
+    resources: [deployments/scale]
+    verbs: [get, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: driver, namespace: aviary-e2e}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: driver}
+subjects: [{kind: ServiceAccount, name: driver, namespace: aviary-e2e}]

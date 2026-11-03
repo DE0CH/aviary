@@ -230,16 +230,29 @@ impl HostSim {
                     "imagePullPolicy": "IfNotPresent",
                     "env": env,
                     "securityContext": {"privileged": true},
-                    "resources": {"limits": {
-                        "memory": spec.memory.to_string(),
-                        "cpu": format!("{}m", (spec.cpu * 1000.0).round()),
-                    }},
-                    "volumeMounts": [{"name": "workspace", "mountPath": "/workspace"}],
+                    // the spec's sizes are limits; the request is small, so the harness's one node schedules the
+                    // sandboxes hermit packs on a host far bigger than it (testing/e2e/README.md "Sizes")
+                    "resources": {
+                        "limits": {
+                            "memory": spec.memory.to_string(),
+                            "cpu": format!("{}m", (spec.cpu * 1000.0).round()),
+                        },
+                        "requests": {"memory": "64Mi", "cpu": "50m"},
+                    },
+                    // sandboxd's bundle: /tmp and /var/lib/docker on the sandbox's scratch, /workspace from JuiceFS
+                    "volumeMounts": [
+                        {"name": "workspace", "mountPath": "/workspace"},
+                        {"name": "scratch", "mountPath": "/tmp", "subPath": "tmp"},
+                        {"name": "scratch", "mountPath": "/var/lib/docker", "subPath": "docker"},
+                    ],
                 }],
-                "volumes": [{"name": "workspace", "hostPath": {
-                    "path": format!("{}/ws/{workspace}", self.facts.jfs_root),
-                    "type": "Directory",
-                }}],
+                "volumes": [
+                    {"name": "workspace", "hostPath": {
+                        "path": format!("{}/ws/{workspace}", self.facts.jfs_root),
+                        "type": "Directory",
+                    }},
+                    {"name": "scratch", "emptyDir": {"sizeLimit": "5Gi"}},
+                ],
             },
         });
         serde_json::from_value(pod).map_err(|e| ApiError::new(500, format!("pod: {e}")))

@@ -238,6 +238,21 @@ dependencies = [
 [[package]]
 name = "aviary-e2e"
 version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "aviary-core",
+ "clap",
+ "futures-util",
+ "k8s-openapi",
+ "kube",
+ "reqwest",
+ "rustls",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-tungstenite 0.29.0",
+ "uuid",
+]
 
 [[package]]
 name = "aviary-fakes"

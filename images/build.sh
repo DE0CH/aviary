@@ -24,7 +24,7 @@ case $image in
   magpie) files=(magpie); bin=magpie ;;
   hermit) files=(hermit); bin=hermit ;;
   sandboxd) files=(sandboxd); bin= ;;
-  aviary-testing) files=(aviary-conformance test-gateway mock-model fake-tools fake-access fake-sandboxd); bin= ;;
+  aviary-testing) files=(aviary-conformance test-gateway mock-model fake-tools fake-access fake-sandboxd aviary-e2e); bin= ;;
   *) echo "build.sh: unknown image $image" >&2; exit 2 ;;
 esac
 ctx=$(mktemp -d)

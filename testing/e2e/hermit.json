@@ -1,0 +1,49 @@
+{
+  "product": { "name": "Aviary E2E", "locale": "zh-HK" },
+  "signIn": {
+    "access": [ { "teamDomain": "access.aviary-e2e.svc.cluster.local", "audience": "e2e0000000000000000000000000000000000000000000000000000000000e2e" } ],
+    "appScheme": "org.example.aviary-e2e"
+  },
+  "catalogue": "/etc/hermit/catalogue/catalogue.json",
+  "prompt": { "instructions": "/etc/hermit/config/system-prompt.md", "rules": "/etc/hermit/config/sandbox-rules.md",
+              "title": "/etc/hermit/config/title-system.md" },
+  "sandbox": {
+    "image": "docker.io/aviary-e2e/hermit-sandbox:e2e@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "cpu": 1, "memory": "28Gi", "pids": 4096, "openFiles": 65536,
+    "maxActive": 6, "idleMinutes": 2, "maxLifetimeHours": 1, "lifetimeGraceMinutes": 10,
+    "capacityWaitSeconds": 60, "hostWaitSeconds": 170, "supervisorWaitSeconds": 120, "startDeadlineSeconds": 480,
+    "poolVictimIdleSeconds": 120, "reserveSeconds": 120, "activityEverySeconds": 15,
+    "workspace": { "quotaGiB": 1, "quotaInodes": 100000 },
+    "tmpGiB": 5,
+    "proxy": "http://sbx:{token}@{vip}:3128",
+    "env": {
+      "HTTP_PROXY": "http://sbx:{token}@{vip}:3128", "HTTPS_PROXY": "http://sbx:{token}@{vip}:3128",
+      "http_proxy": "http://sbx:{token}@{vip}:3128", "https_proxy": "http://sbx:{token}@{vip}:3128"
+    }
+  },
+  "fabric": {
+    "sandboxCidr": "10.52.128.0/17", "hostCidr": "10.52.0.0/24", "egressVip": "10.43.200.10",
+    "controlCidr": "10.48.0.0/16", "podCidr": "10.48.0.0/16",
+    "egressPorts": [ { "vip": 3128, "target": 3128 } ],
+    "egressService": "egress",
+    "gateway": { "name": "hermit-gw", "url": "https://10.52.0.1:7443", "endpoint": "[fd00::1]:51821" },
+    "sandboxd": "aviary-e2e",
+    "runsc": "e2e-0",
+    "cpuFeatures": "sse4_2,avx2",
+    "cpuOvercommit": 3, "spareSlots": 0, "minAvailableMemory": "256Mi",
+    "minHostLifetimeSeconds": 900, "hostDeadSeconds": 30, "gatewayDeadSeconds": 120, "gatewaySettleSeconds": 5,
+    "bootTimeoutSeconds": 300, "orphanInstanceSeconds": 600, "jfsRetireSeconds": 120,
+    "migration": { "downtimeMs": 100, "maxRounds": 20, "maxDowntimeMs": 500, "idleCpu": 0.05, "minAgeSeconds": 30 },
+    "aws": {
+      "region": "ap-east-1", "launchTemplate": "hermit-host", "maxHosts": 1,
+      "subnet": "subnet-00000000000000000", "tags": { "app": "hermit-host" },
+      "fallbackHost": { "memory": "256Gi", "reserve": "1Gi", "cpus": 8 }
+    }
+  },
+  "ops": {
+    "timeZone": "Asia/Hong_Kong",
+    "deployments": [ "pigeon", "magpie", "hermit", "test-gateway", "fake-tools" ],
+    "podNodePrefix": "k3d-",
+    "budgetWatch": 0.8
+  }
+}

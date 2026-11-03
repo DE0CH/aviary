@@ -1,0 +1,176 @@
+# Harness NetworkPolicies (platform 7.7): YYC's shape (platform 10) with the harness's labels, enforced by Calico.
+# Default deny both ways; each component gets exactly the paths of 7.7. Rules that name the Docker network's
+# addresses (the API server, Postgres, S3) are generated per run (gen.sh, external.yaml). The ops port 9090 and the
+# fakes' ports answer the kubelet's probes from the node.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: aviary-e2e}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: dns, namespace: aviary-e2e}
+spec:
+  # everyone but the sandboxes, which have no DNS
+  podSelector: {matchExpressions: [{key: app, operator: NotIn, values: [sandbox]}]}
+  policyTypes: [Egress]
+  egress:
+    - to: [{namespaceSelector: {}, podSelector: {matchLabels: {k8s-app: kube-dns}}}]
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: probes, namespace: aviary-e2e}
+spec:
+  podSelector: {matchExpressions: [{key: app, operator: NotIn, values: [sandbox]}]}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ipBlock: {cidr: 0.0.0.0/0, except: [10.48.0.0/13]}}]
+      ports: [{port: 9090}, {port: 8080}, {port: 8443}, {port: 7443}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: pigeon, namespace: aviary-e2e}
+spec:
+  podSelector: {matchLabels: {app: pigeon}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: driver}}}]
+      ports: [{port: 8080}]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: magpie}}}, {podSelector: {matchLabels: {app: hermit}}}]
+      ports: [{port: 8080}]
+    - to: [{podSelector: {matchLabels: {app: test-gateway}}}]
+      ports: [{port: 8082}]
+    - to: [{podSelector: {matchLabels: {app: fake-access}}}]
+      ports: [{port: 8443}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: magpie, namespace: aviary-e2e}
+spec:
+  podSelector: {matchLabels: {app: magpie}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: pigeon}}
+        - podSelector: {matchLabels: {app: hermit}}
+        - podSelector: {matchLabels: {app: test-gateway}}
+        - podSelector: {matchLabels: {app: driver}}
+      ports: [{port: 8080}]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: hermit}}}]
+      ports: [{port: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: hermit, namespace: aviary-e2e}
+spec:
+  podSelector: {matchLabels: {app: hermit}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: pigeon}}
+        - podSelector: {matchLabels: {app: magpie}}
+        - podSelector: {matchLabels: {app: test-gateway}}
+        - podSelector: {matchLabels: {app: fake-tools}}
+        - podSelector: {matchLabels: {app: driver}}
+      ports: [{port: 8080}]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: magpie}}}]
+      ports: [{port: 8080}]
+    - to: [{podSelector: {matchLabels: {app: test-gateway}}}]
+      ports: [{port: 8082}]
+    - to: [{podSelector: {matchLabels: {app: sandbox}}}]
+      ports: [{port: 7070}]
+    - to: [{podSelector: {matchLabels: {app: fabric-gateway}}}, {podSelector: {matchLabels: {app: fake-host}}}]
+      ports: [{port: 7443}]
+    - to: [{podSelector: {matchLabels: {app: fake-ec2}}}]
+      ports: [{port: 8443}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: test-gateway, namespace: aviary-e2e}
+spec:
+  podSelector: {matchLabels: {app: test-gateway}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: sandbox}}}, {podSelector: {matchLabels: {app: driver}}}]
+      ports: [{port: 3128}]
+    - from: [{podSelector: {matchLabels: {app: pigeon}}}, {podSelector: {matchLabels: {app: hermit}}}]
+      ports: [{port: 8082}]
+  egress:
+    - to:
+        - podSelector: {matchLabels: {app: magpie}}
+        - podSelector: {matchLabels: {app: hermit}}
+        - podSelector: {matchLabels: {app: mock-model}}
+        - podSelector: {matchLabels: {app: fake-tools}}
+      ports: [{port: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: mock-model, namespace: aviary-e2e}
+spec:
+  podSelector: {matchLabels: {app: mock-model}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: test-gateway}}}, {podSelector: {matchLabels: {app: driver}}}]
+      ports: [{port: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: fake-tools, namespace: aviary-e2e}
+spec:
+  podSelector: {matchLabels: {app: fake-tools}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: test-gateway}}}, {podSelector: {matchLabels: {app: driver}}}]
+      ports: [{port: 8080}]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: hermit}}}]
+      ports: [{port: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: fake-access, namespace: aviary-e2e}
+spec:
+  podSelector: {matchLabels: {app: fake-access}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: pigeon}}}, {podSelector: {matchLabels: {app: driver}}}]
+      ports: [{port: 8443}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: fabric, namespace: aviary-e2e}
+spec:
+  podSelector: {matchExpressions: [{key: app, operator: In, values: [fabric-gateway, fake-host, fake-ec2]}]}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: hermit}}}, {podSelector: {matchLabels: {app: driver}}}]
+      ports: [{port: 7443}, {port: 8443}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: sandbox, namespace: aviary-e2e}
+spec:
+  # the proxy only, by address (the VIP); hermit reaches the supervisor's :7070
+  podSelector: {matchLabels: {app: sandbox}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: hermit}}}]
+      ports: [{port: 7070}]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: test-gateway}}}]
+      ports: [{port: 3128}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: driver, namespace: aviary-e2e}
+spec:
+  podSelector: {matchLabels: {app: driver}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchExpressions: [{key: app, operator: NotIn, values: [sandbox]}]}}]

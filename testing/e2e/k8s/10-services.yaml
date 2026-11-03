@@ -1,0 +1,310 @@
+# The services under test and the fakes around them (platform 7.1). Images are the ones run.sh imported under the
+# aviary-e2e/ names; every Secret and the hermit ConfigMap are generated per run (gen.sh). Env is secrets only, as in
+# a deployment; the one harness-only variable is SSL_CERT_FILE (trust of the harness CA: fake-access for pigeon, the
+# stand-in EC2 endpoint for hermit), which changes trust, not behaviour.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: magpie, namespace: aviary-e2e}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: magpie}}
+  strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 0, maxSurge: 1}}
+  template:
+    metadata: {labels: {app: magpie}}
+    spec:
+      serviceAccountName: plain
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: magpie
+          image: aviary-e2e/magpie:e2e
+          imagePullPolicy: Never
+          args: [serve]
+          envFrom: [{secretRef: {name: magpie-env}}]
+          env:
+            - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+          ports: [{containerPort: 8080}, {containerPort: 9090}]
+          readinessProbe: {httpGet: {path: /readyz, port: 9090}, periodSeconds: 2}
+          securityContext: {readOnlyRootFilesystem: true, allowPrivilegeEscalation: false}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: magpie, namespace: aviary-e2e}
+spec:
+  selector: {app: magpie}
+  ports: [{name: http, port: 80, targetPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: hermit, namespace: aviary-e2e}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: hermit}}
+  strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 0, maxSurge: 1}}
+  template:
+    metadata: {labels: {app: hermit}}
+    spec:
+      serviceAccountName: hermit
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: hermit
+          image: aviary-e2e/hermit:e2e
+          imagePullPolicy: Never
+          args: [serve]
+          envFrom: [{secretRef: {name: hermit-env}}]
+          env:
+            - {name: HERMIT_POD, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: HERMIT_NAMESPACE, valueFrom: {fieldRef: {fieldPath: metadata.namespace}}}
+            - {name: SSL_CERT_FILE, value: /etc/aviary-e2e/ca.crt}
+          ports: [{containerPort: 8080}, {containerPort: 9090}]
+          readinessProbe: {httpGet: {path: /readyz, port: 9090}, periodSeconds: 2}
+          securityContext: {readOnlyRootFilesystem: true, allowPrivilegeEscalation: false}
+          volumeMounts:
+            - {name: config, mountPath: /etc/hermit/config, readOnly: true}
+            - {name: catalogue, mountPath: /etc/hermit/catalogue, readOnly: true}
+            - {name: ca, mountPath: /etc/aviary-e2e, readOnly: true}
+            - {name: jfs, mountPath: /jfs, mountPropagation: HostToContainer}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: config, configMap: {name: hermit-config}}
+        - {name: catalogue, configMap: {name: hermit-catalogue}}
+        - {name: ca, secret: {secretName: harness-ca}}
+        # hermit's own JuiceFS mount (all-squash=1000:1000), testing/e2e/run.sh
+        - {name: jfs, hostPath: {path: /mnt/aviary/jfs-hermit, type: Directory}}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: hermit, namespace: aviary-e2e}
+spec:
+  selector: {app: hermit}
+  ports: [{name: http, port: 80, targetPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: pigeon, namespace: aviary-e2e}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: pigeon}}
+  strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 0, maxSurge: 1}}
+  template:
+    metadata: {labels: {app: pigeon}}
+    spec:
+      serviceAccountName: plain
+      terminationGracePeriodSeconds: 60
+      initContainers:
+        # the app bundle (pigeon 17.1 mounts the app image's files at /srv/app): one page is enough for the harness
+        - name: app
+          image: busybox:1.37.0
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c, 'printf "<!doctype html><title>aviary-e2e</title><div id=root></div>\n" > /srv/app/index.html']
+          volumeMounts: [{name: app, mountPath: /srv/app}]
+      containers:
+        - name: pigeon
+          image: aviary-e2e/pigeon:e2e
+          imagePullPolicy: Never
+          envFrom: [{secretRef: {name: pigeon-env}}]
+          env:
+            - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: SSL_CERT_FILE, value: /etc/aviary-e2e/ca.crt}
+          ports: [{containerPort: 8080}, {containerPort: 9090}]
+          readinessProbe: {httpGet: {path: /readyz, port: 9090}, periodSeconds: 2}
+          securityContext: {readOnlyRootFilesystem: true, allowPrivilegeEscalation: false}
+          volumeMounts:
+            - {name: app, mountPath: /srv/app, readOnly: true}
+            - {name: ca, mountPath: /etc/aviary-e2e, readOnly: true}
+      volumes:
+        - {name: app, emptyDir: {}}
+        - {name: ca, secret: {secretName: harness-ca}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: pigeon, namespace: aviary-e2e}
+spec:
+  selector: {app: pigeon}
+  ports: [{name: http, port: 80, targetPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: test-gateway, namespace: aviary-e2e}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: test-gateway}}
+  strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 0, maxSurge: 1}}
+  template:
+    metadata: {labels: {app: test-gateway}}
+    spec:
+      serviceAccountName: plain
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: test-gateway
+          image: aviary-e2e/testing:e2e
+          imagePullPolicy: Never
+          command: [test-gateway, --self-host, 10.43.200.10]
+          envFrom: [{secretRef: {name: gateway-env}}]
+          ports: [{containerPort: 3128}, {containerPort: 8082}, {containerPort: 9090}]
+          readinessProbe: {httpGet: {path: /readyz, port: 9090}, periodSeconds: 2}
+---
+# the proxy at the egress VIP (hermit.json fabric.egressVip): sandboxes address it by IP, they have no DNS
+apiVersion: v1
+kind: Service
+metadata: {name: gateway-vip, namespace: aviary-e2e}
+spec:
+  clusterIP: 10.43.200.10
+  selector: {app: test-gateway}
+  ports: [{name: proxy, port: 3128, targetPort: 3128}]
+---
+# pigeon's `model` (models list) and hermit's `egress` (ops summary): the gateway's in-cluster API
+apiVersion: v1
+kind: Service
+metadata: {name: model, namespace: aviary-e2e}
+spec:
+  selector: {app: test-gateway}
+  ports: [{name: http, port: 80, targetPort: 8082}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: egress, namespace: aviary-e2e}
+spec:
+  selector: {app: test-gateway}
+  ports: [{name: http, port: 80, targetPort: 8082}, {name: proxy, port: 3128, targetPort: 3128}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: mock-model, namespace: aviary-e2e}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: mock-model}}
+  template:
+    metadata: {labels: {app: mock-model}}
+    spec:
+      serviceAccountName: plain
+      containers:
+        - name: mock-model
+          image: aviary-e2e/testing:e2e
+          imagePullPolicy: Never
+          command: [mock-model, --listen, 0.0.0.0:8080]
+          ports: [{containerPort: 8080}]
+          readinessProbe: {tcpSocket: {port: 8080}, periodSeconds: 2}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: mock-model, namespace: aviary-e2e}
+spec:
+  selector: {app: mock-model}
+  ports: [{name: http, port: 80, targetPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: fake-tools, namespace: aviary-e2e}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: fake-tools}}
+  template:
+    metadata: {labels: {app: fake-tools}}
+    spec:
+      serviceAccountName: plain
+      containers:
+        - name: fake-tools
+          image: aviary-e2e/testing:e2e
+          imagePullPolicy: Never
+          command: [fake-tools, --listen, 0.0.0.0:8080, --token-file, /etc/fake-tools/token]
+          ports: [{containerPort: 8080}]
+          readinessProbe: {tcpSocket: {port: 8080}, periodSeconds: 2}
+          volumeMounts: [{name: token, mountPath: /etc/fake-tools, readOnly: true}]
+      volumes: [{name: token, secret: {secretName: tools-token}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: tools, namespace: aviary-e2e}
+spec:
+  selector: {app: fake-tools}
+  ports: [{name: http, port: 80, targetPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: fake-access, namespace: aviary-e2e}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: fake-access}}
+  template:
+    metadata: {labels: {app: fake-access}}
+    spec:
+      serviceAccountName: plain
+      containers:
+        - name: fake-access
+          image: aviary-e2e/testing:e2e
+          imagePullPolicy: Never
+          command: [fake-access, --listen, 0.0.0.0:8443, --team-domain, access.aviary-e2e.svc.cluster.local,
+                    --aud, e2e0000000000000000000000000000000000000000000000000000000000e2e, --key, k1=/etc/fake-access/k1.pem,
+                    --next-key, k2=/etc/fake-access/k2.pem,
+                    --tls-cert, /etc/fake-access/tls.crt, --tls-key, /etc/fake-access/tls.key]
+          ports: [{containerPort: 8443}]
+          readinessProbe: {tcpSocket: {port: 8443}, periodSeconds: 2}
+          volumeMounts: [{name: keys, mountPath: /etc/fake-access, readOnly: true}]
+      volumes: [{name: keys, secret: {secretName: access-keys}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: access, namespace: aviary-e2e}
+spec:
+  selector: {app: fake-access}
+  ports: [{name: https, port: 443, targetPort: 8443}]
+---
+# EC2 for hermit's scaler: hermit resolves ec2.<region>.amazonaws.com to this Service (CoreDNS override, run.sh)
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: fake-ec2, namespace: aviary-e2e}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: fake-ec2}}
+  template:
+    metadata: {labels: {app: fake-ec2}}
+    spec:
+      serviceAccountName: fake-sandboxd
+      containers:
+        - name: fake-ec2
+          image: aviary-e2e/testing:e2e
+          imagePullPolicy: Never
+          command: [fake-sandboxd, ec2, --listen, 0.0.0.0:8443, --tls-cert, /etc/fake-ec2/tls.crt,
+                    --tls-key, /etc/fake-ec2/tls.key, --host-image, aviary-e2e/testing:e2e,
+                    --namespace, aviary-e2e, --mem-total, "274877906944", --cpu-features, "sse4_2,avx2", --runsc, release-e2e,
+                    --gvisor-release, e2e-0, --sandboxd-version, aviary-e2e]
+          ports: [{containerPort: 8443}]
+          readinessProbe: {tcpSocket: {port: 8443}, periodSeconds: 2}
+          volumeMounts: [{name: tls, mountPath: /etc/fake-ec2, readOnly: true}]
+      volumes: [{name: tls, secret: {secretName: fake-ec2-tls}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: fake-ec2, namespace: aviary-e2e}
+spec:
+  selector: {app: fake-ec2}
+  ports: [{name: https, port: 443, targetPort: 8443}]
+---
+# the fabric's gateway host (hermit.json fabric.gateway): sandboxd's API at the gateway's overlay address
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: fabric-gateway, namespace: aviary-e2e}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: fabric-gateway}}
+  template:
+    metadata:
+      labels: {app: fabric-gateway}
+      annotations: {cni.projectcalico.org/ipAddrs: '["10.52.0.1"]'}
+    spec:
+      serviceAccountName: fake-sandboxd
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: sandboxd
+          image: aviary-e2e/testing:e2e
+          imagePullPolicy: Never
+          command: [fake-sandboxd, host, --config, /etc/fake-sandboxd/host.json, --namespace, aviary-e2e,
+                    --gvisor-release, e2e-0, --sandboxd-version, aviary-e2e]
+          ports: [{containerPort: 7443}]
+          readinessProbe: {tcpSocket: {port: 7443}, periodSeconds: 2}
+          volumeMounts: [{name: config, mountPath: /etc/fake-sandboxd, readOnly: true}]
+      volumes: [{name: config, secret: {secretName: fabric-gateway}}]

@@ -21,7 +21,7 @@ struct FactsArgs {
     #[arg(long)]
     namespace: String,
     /// The node path of the `JuiceFS` mount.
-    #[arg(long, default_value = "/mnt/aviary-jfs")]
+    #[arg(long, default_value = "/mnt/aviary/jfs")]
     jfs_root: String,
     #[arg(long, default_value_t = 8)]
     cpus: u64,

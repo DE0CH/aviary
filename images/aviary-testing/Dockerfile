@@ -10,7 +10,7 @@ FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c
 ARG REVISION=dev
 
 COPY --chmod=755 dist/aviary-conformance dist/test-gateway dist/mock-model dist/fake-tools dist/fake-access \
-     dist/fake-sandboxd /usr/local/bin/
+     dist/fake-sandboxd dist/aviary-e2e /usr/local/bin/
 
 LABEL org.opencontainers.image.source="https://github.com/DE0CH/aviary" \
       org.opencontainers.image.revision="${REVISION}" \
