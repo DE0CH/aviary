@@ -1859,6 +1859,133 @@ async fn a_replay_with_a_file_rewrites_nothing() {
     w.idle(&second).await;
 }
 
+/// A message that cannot be kept for a replay fails its turn before anything is written: a `written` record always
+/// has the bytes a replay sends again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_message_that_cannot_be_kept_fails_its_turn_unwritten() {
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let d = sup.driver.clone();
+    until("initialised", || {
+        lock(&d.st).live.as_ref().is_some_and(|g| g.initialized)
+    })
+    .await;
+    let n = lock(&sup.driver.st).live.as_ref().unwrap().n;
+    // the kept file's temporary name is taken by a directory: the write fails (as root too)
+    let blocked: Vec<PathBuf> = (1..=64)
+        .map(|s| w.dir.join(format!("gens/{n}/stdin-{s}.tmp")))
+        .collect();
+    for b in &blocked {
+        std::fs::create_dir_all(b).unwrap();
+    }
+    let (t, seq) = w.turn("say:never");
+    let end = w.ended(t).await;
+    assert_eq!(end["state"], "failed");
+    assert_eq!(end["error"]["code"], "run.error");
+    assert!(
+        end["error"]["message"].as_str().unwrap().contains("could not be kept"),
+        "{end}"
+    );
+    assert!(w.acked(seq).await.error.is_some());
+    assert!(w.prompts().is_empty(), "nothing written");
+    assert!(
+        lock(&sup.driver.st)
+            .delivered
+            .get(&seq)
+            .is_none_or(|d| d.state == "acked"),
+        "no written record"
+    );
+    for b in &blocked {
+        std::fs::remove_dir(b).unwrap();
+    }
+    w.idle(&sup).await;
+    let (t, _) = w.turn("say:kept");
+    assert_eq!(w.ended(t).await["state"], "completed");
+}
+
+/// A replayed turn whose interrupt was already sent gets no second one; a turn interrupted before its message was
+/// handed over gets its interrupt once, right after the message.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_replayed_interrupted_turn_is_interrupted_exactly_once() {
+    for handed in [true, false] {
+        let w = world().await;
+        let first = w.attach(None, crate::start::Reattach::Nothing).await;
+        let d = first.driver.clone();
+        until("initialised", || {
+            lock(&d.st).live.as_ref().is_some_and(|g| g.initialized)
+        })
+        .await;
+        let (n, pid) = {
+            let st = lock(&first.driver.st);
+            let g = st.live.as_ref().unwrap();
+            (g.n, g.pid)
+        };
+        first.driver.abort_all();
+        first.persisted.flush().await;
+        let (turn, seq) = w.turn("deaf");
+        let boot_id = "b00700000000000a";
+        let id = msg_id(boot_id, seq);
+        let line = prompt::user_line(
+            &prompt::content(prompt::text("deaf", &[], &[]), &[]),
+            &magpie_api::Timestamp::now().to_wire(),
+        );
+        std::fs::write(w.dir.join(format!("gens/{n}/stdin-{seq}.ndjson")), &line).unwrap();
+        if handed {
+            // the first supervisor handed the message over and wrote the interrupt after it
+            let client = w.keeper.client.clone();
+            let message = line.clone();
+            tokio::task::spawn_blocking(move || {
+                client.stdin(pid, id, &message)?;
+                client.stdin(pid, keeper::new_msg_id(), &control::interrupt("intr-first"))
+            })
+            .await
+            .unwrap()
+            .unwrap();
+            until("interrupt read", || {
+                w.fake_log().iter().any(|l| l == "control interrupt")
+            })
+            .await;
+        }
+        let mut prior = first.persisted.read(Clone::clone);
+        prior.delivered.insert(
+            seq.to_string(),
+            Delivered {
+                state: "written".into(),
+                msg_id: Some(hex(&id)),
+                generation: Some(n),
+                pending_inputs_after: Some(1),
+                turn_id: Some(turn.to_string()),
+            },
+        );
+        prior.cmd_after = seq;
+        prior.run.state = "running".into();
+        prior.run.turn_id = Some(turn.to_string());
+        prior.run.origin = Some("person".into());
+        prior.run.pending_inputs = 1;
+        prior.run.interrupt_sent_at = Some(magpie_api::Timestamp::now().to_wire());
+        prior.run.interrupt_elapsed_ms = Some(0);
+        prior.run.handed = Some(handed);
+        drop(first);
+        let second = w.attach(Some(prior), crate::start::Reattach::Alive { n, pid }).await;
+        assert_eq!(w.acked(seq).await.delivered, Some(true), "handed: {handed}");
+        until("the prompt", || w.prompts() == ["prompt deaf"]).await;
+        until("an interrupt", || w.fake_log().iter().any(|l| l == "control interrupt")).await;
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        let interrupts = w.fake_log().iter().filter(|l| *l == "control interrupt").count();
+        assert_eq!(interrupts, 1, "handed: {handed}\n{}", texts(&w));
+        assert_eq!(w.prompts(), ["prompt deaf"], "the message once");
+        w.magpie.push_command(
+            w.cid,
+            Some(turn),
+            CommandBody::Kill(KillCommand {
+                reason: KillReason::Stop,
+            }),
+        );
+        assert_eq!(w.ended(turn).await["state"], "canceled");
+        w.idle(&second).await;
+    }
+}
+
 /// A restored ask keeps its `toolUseID` (the answer carries it) and its turn's lane.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_restored_ask_is_answered_with_its_tool_use_id() {

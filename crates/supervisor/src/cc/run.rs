@@ -1842,25 +1842,29 @@ impl Driver {
         self.cfg.gen_dir.join(n.to_string()).join(format!("stdin-{seq}.ndjson"))
     }
 
-    async fn save_message(&self, n: u32, seq: u64, line: &[u8]) {
+    /// Keeps the message before its `written` record exists: a turn whose message cannot be kept is not started,
+    /// so a replay always finds the bytes it must send again.
+    async fn save_message(&self, n: u32, seq: u64, line: &[u8]) -> Result<(), String> {
         let path = self.message_path(n, seq);
         let bytes = line.to_vec();
-        let r = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             let tmp = path.with_extension("tmp");
             std::fs::write(&tmp, &bytes)?;
             std::fs::rename(&tmp, &path)
         })
         .await
         .map_err(std::io::Error::other)
-        .and_then(|r| r);
-        if let Err(e) = r {
-            // a replay then builds the message again
-            tracing::warn!(seq, error = %e, "the message was not kept for a replay");
-        }
+        .and_then(|r| r)
+        .map_err(|e| format!("the message could not be kept for a replay: {e}"))
     }
 
-    fn drop_message(&self, n: u32, seq: u64) {
-        let _ = std::fs::remove_file(self.message_path(n, seq));
+    /// Removes the kept message once `run.json` no longer needs it: the state that makes a replay unnecessary
+    /// (`running`, or the turn's end) is on disk first, so a restart in between still finds the bytes.
+    async fn drop_message(&self, n: u32, seq: u64) {
+        if let Some(ctx) = self.ctx() {
+            ctx.persisted.flush().await;
+        }
+        let _ = tokio::fs::remove_file(self.message_path(n, seq)).await;
     }
 
     /// Ends the preparation of `turn_id` that was interrupted, killed, or overtaken by a release or pause: nothing
@@ -2065,6 +2069,7 @@ impl Driver {
             _ => None,
         };
         if replay && kept.is_none() {
+            // unreachable unless the file was removed by hand: save_message comes before the record
             tracing::warn!(seq, "the replayed message was not kept: built again");
         }
         let (n, line) = if let Some(k) = kept {
@@ -2084,8 +2089,8 @@ impl Driver {
             };
             match self.ensure_gen(&session, Some(turn_id)).await {
                 Ok(n) => {
-                    if !replay {
-                        self.save_message(n, seq, &line).await;
+                    if !replay && let Err(e) = self.save_message(n, seq, &line).await {
+                        return fail(self, e);
                     }
                     (n, line)
                 }
@@ -2171,15 +2176,15 @@ impl Driver {
         match prepared {
             Prepared::Write => {}
             Prepared::Stopped => {
-                self.drop_message(n, seq);
+                self.drop_message(n, seq).await;
                 return delivered_ack(self, false);
             }
             Prepared::Gone => {
-                self.drop_message(n, seq);
+                self.drop_message(n, seq).await;
                 return self.ack_in(Some(turn_id), seq, err_ack("Claude Code exited"));
             }
             Prepared::Answered => {
-                self.drop_message(n, seq);
+                self.drop_message(n, seq).await;
                 return delivered_ack(self, true);
             }
         }
@@ -2203,12 +2208,14 @@ impl Driver {
                 return None;
             }
             let w = st.live.as_ref().filter(|g| g.n == n).map(|g| g.writer.clone())?;
+            let queued = st.queued.as_ref().is_some_and(|q| q.id == turn_id);
             let t = [st.turn.as_mut(), st.queued.as_mut()]
                 .into_iter()
                 .flatten()
                 .find(|t| t.id == turn_id)?;
-            // a restored turn whose message was with the writer had its interrupt written then: not again
-            let was_handed = std::mem::replace(&mut t.handed, true);
+            // a restored turn whose message was with the writer had its interrupt written then: not again. A
+            // queued turn is interrupted once it is the turn (the agent turn had its own interrupt), not here.
+            let was_handed = std::mem::replace(&mut t.handed, true) || queued;
             let (tx, rx) = oneshot::channel();
             w.send(Write {
                 msg_id: id,
@@ -2228,7 +2235,7 @@ impl Driver {
         });
         let Some(rx) = rx else {
             // killed or exited before the message was handed over: its end is reported already
-            self.drop_message(n, seq);
+            self.drop_message(n, seq).await;
             return delivered_ack(self, false);
         };
         if let Err(e) = rx.await.unwrap_or_else(|_| Err("writer gone".into())) {
@@ -2251,7 +2258,7 @@ impl Driver {
                     )));
                 }
             });
-            self.drop_message(n, seq);
+            self.drop_message(n, seq).await;
             return self.ack_in(Some(turn_id), seq, err_ack(&e));
         }
         // 6: delivered (the `running` report went with step 5), then the ack
@@ -2264,7 +2271,7 @@ impl Driver {
                 },
             );
         });
-        self.drop_message(n, seq);
+        self.drop_message(n, seq).await;
         delivered_ack(self, true);
     }
 
