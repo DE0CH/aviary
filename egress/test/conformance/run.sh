@@ -47,7 +47,14 @@ hosts=(--add-host magpie:host-gateway --add-host tools:host-gateway --add-host u
 dnat=(-i docker0 -d "$HERMIT_IP" -p tcp --dport 80 -j DNAT --to-destination "$gw:8081")
 asroot iptables -t nat -I PREROUTING "${dnat[@]}"
 start_egress() { # <name> <egress.json> <database> <hermit's address>
-  docker exec conf-pg psql -q -U egress -d egress -c "create database $3" >/dev/null 2>&1 || true
+  # postgres:17's entrypoint answers pg_isready from its init-time server, then restarts it: retry until the database
+  # is there (a create during the restart failed silently and egress never started)
+  local _
+  for _ in $(seq 30); do
+    docker exec conf-pg psql -q -U egress -d egress -c "create database $3" >/dev/null 2>&1 || true
+    docker exec conf-pg psql -tA -U egress -d egress -c "select 1 from pg_database where datname = '$3'" 2>/dev/null | grep -q 1 && break
+    sleep 1
+  done
   docker run -d --name "$1" "${hosts[@]}" --add-host "hermit:$4" -v "$2:/etc/egress/egress.json:ro" \
     -e EGRESS_DATABASE_URL="postgres://egress:$PGPW@$pg:5432/$3" \
     -e EGRESS_TOKEN_MAGPIE="$MAGPIE" -e EGRESS_TOKEN_HERMIT="$HERMIT" -e EGRESS_TOKEN_TOOLS="$TOOLS" \
