@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """One filesystem operation, its result as JSON on stdout (errno instead of an exception).
-usage: rigop.py write PATH NBYTES | create PATH | mkdir PATH | rename SRC DST
+usage: rigop.py write PATH NBYTES | read PATH | create PATH | mkdir PATH | rename SRC DST
 write: one write(2) of NBYTES (a pattern, newline-terminated) with O_APPEND to an existing file; the result has the
-count written and the bytes' sha256 (so the copy in magpie can be compared)."""
+count written and the bytes' sha256 (so the copy in magpie can be compared). read: the whole file in 128 KiB read(2)s;
+the result has its size and sha256."""
 import hashlib, json, os, sys, time
 
 def pattern(n):
@@ -19,6 +20,17 @@ try:
         os.close(fd)
         res["sha256"] = hashlib.sha256(data).hexdigest()
         res["ok"] = res["ret"] == len(data)
+    elif op == "read":
+        fd = os.open(sys.argv[2], os.O_RDONLY)
+        h, n = hashlib.sha256(), 0
+        while True:
+            b = os.read(fd, 131072)
+            if not b:
+                break
+            h.update(b)
+            n += len(b)
+        os.close(fd)
+        res["size"], res["sha256"], res["ok"] = n, h.hexdigest(), True
     elif op == "create":
         fd = os.open(sys.argv[2], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         os.close(fd)

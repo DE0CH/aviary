@@ -1,0 +1,3 @@
+{"op":"WRITE","point":"sigkill","syscall_ok":"true","magpie_opids":1,"magpie_state_ok":"true","killed_at_point":1,"pass":true,"result":"{\"op\": \"write\", \"args\": [\"/home/sandbox/.claude/projects/k1/w.jsonl\", \"1048576\"], \"start\": 1793668351.360477, \"ret\": 1048576, \"sha256\": \"8988f6e8cdebc61970f719899c913119f6f02c6e90e51d47e80f68ab53927c01\", \"ok\": true, \"end\": 1793668352.9952028}"}
+cases: 1, failed: 0, replays logged: 1, fuse connections: 2, uniques: {"instances": 2, "boots": 1, "requests_read": 222, "replays": 1, "opids": 9, "violations": []}
+PASS

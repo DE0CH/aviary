@@ -40,6 +40,8 @@ keeper as PID 1, which starts `/usr/local/bin/supervisor run` (the rig's binary 
 ./rig/host-rig.sh                          # once per host: Claude Code at /opt/claude-code/bin/claude, the stdout tap
 ./rig/rig-mount.sh m1                      # items 1 and 5 on the real build
 ./rig/rig-kill.sh k1                       # item 4: the fault-injection build SIGKILLs itself at each journal point
+                                           #   (WRITE, MKDIR, CREATE, RENAME, READ), a plain SIGKILL during a held
+                                           #   write, and rig/rig-uniques.py: no unique read twice, no opId reused
 ./rig/rig-mig.sh w1 write <target ip>      # one migration with a write (or create, mkdir, rename) held in magpie
 ./rig/rig-batch.sh X 10 <target ip>        # 10 rounds of the four ops in both layouts (LAYOUTS, OPS)
 LOOPBACK=1 ./rig/rig-batch.sh L 10         # the same with the target on this host (gate.sh GATE_SIDE=b)

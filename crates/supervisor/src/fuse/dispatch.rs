@@ -898,6 +898,9 @@ impl Core {
             if !self.first_logged.swap(true, Ordering::SeqCst) {
                 tracing::info!(unique = h.unique, op = proto::opname(h.opcode), "fuse first request");
             }
+            // the test build logs every request, so the rig checks that a `unique` never repeats (22 item 4)
+            #[cfg(feature = "fault-injection")]
+            tracing::info!(unique = h.unique, op = proto::opname(h.opcode), "fuse request");
             let len = (h.len as usize).min(slot.len());
             let body = &slot[IN_HEADER..len];
             let r = std::panic::catch_unwind(AssertUnwindSafe(|| {

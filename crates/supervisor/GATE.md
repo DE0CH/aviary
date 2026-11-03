@@ -712,3 +712,58 @@ because the tap execs it; the session's relocation (`set_cwd`) and `--fallback-m
 they were not run. The first latency runs lost fuse-rig's world to the supervisor's memory guard (supervisor 5: it
 counts every process in the sandbox against the descriptor's 1 GiB, and fake magpie keeps every byte written in
 memory); the rig now sets the descriptor's `memoryBytes` (`RIG_SANDBOX_MEMORY`) for those runs.
+
+## WP-22 review 2 (2026-11-03)
+
+**Which build each piece of real-build evidence covers.** Items 1, 3 (the 160 resend migrations), 4 (`kill-k1`,
+`kill-k2`) and 5 ran on `61023e3`; the Claude Code items (2, 3 mid-turn, 6, 9, 10) on `0a06093`. Neither includes
+`797df2ce` and `31056c96` (`fuse::seen` on every `.jsonl` write; the end-of-turn uuid wait of 8.2, which item 10's
+turn times under the 30 s hold depend on) nor this review's FUSE changes (`106166f3`). Item 4 was re-run on a build
+of `106166f3` (`kill-k3`, below); items 2, 3, 6, 9 and 10 have not been re-run on current main.
+
+**Item 4 on `106166f3`** (`results/wp22/kill-k3`, scratch layout; one throwaway Hetzner ccx23, runsc
+`precopy-20261102.1`, image `ghcr.io/de0ch/jarvis3-sandbox:2eb5bf396b5f`): **pass, 19 of 19 cases plus the plain kill.** The fault-injection build SIGKILLed itself at read-returned, call-sent, call-answered and reply-written of a WRITE (1 MiB, `O_APPEND`), MKDIR, CREATE `O_EXCL` and RENAME, and at read-returned and reply-written of a READ (a 1 MiB file read whole); the keeper restarted it, the next supervisor took the fd back and replayed the journal (19 `journal replay` lines). Every syscall returned success once (the READ: the file's 1,048,576 bytes and sha256), magpie applied each operation under one `opId` and holds the expected state. A plain SIGKILL (no fault point) while the 1 MiB write was held in magpie: one new supervisor, one replay, the write stored once (`kill-k3` case 19, and `kill-k4`, run again with the script's corrected release order: in `kill-k3` the rig waited for the mount before releasing the hold and the hold was released by hand, since a new supervisor replays the held write before it serves any new request, 9.9). `rig/rig-uniques.py` over `supervisor.log` (the test build logs every request it reads) and every route's calls: 38 supervisor instances on one connection read 933 requests, no `unique` twice, each instance only above every earlier one's, every replay of a `unique` an earlier instance read; 157 `opId`s, none naming two operations (`uniques.json`). The `unique`-across-a-migration half of 22 item 4 is not in this run: `rig-uniques.py` is ready for `rig-mig.sh`'s `supervisor.log` with `RIG_FI=1`, not yet run.
+
+**Changed by the review** (supervisor 9.3-9.9; each with a unit test in `fuse::tests`):
+- A start never runs on an unloaded tree: `Core::start` waits through magpie's unavailability for `cc/tree` and fails
+  the start on a definitive answer (the mount is retried on the keeper's connection, `FuseFs::handed`), so the replay
+  never answers ENOENT to an operation magpie applied and no node id is dropped against an empty tree.
+- An `O_APPEND` handle's WRITE and the repair's suffix writes carry `append` (magpie 6.10): a size magpie does not
+  have is `offset_mismatch` and the repair (or the fork path: EIO, the agent stopped), never an overwrite.
+- `lease_lost` on a repair write runs the lease loop like a request's (`after_call`); the new lease is set before the
+  tree reload so the reload's repair writes carry it, and requests answer EIO until the reload ends.
+- Only the answers 9.5 items 5-7 name are definitive. **Recorded reading of 9.5**: a 500, another 5xx, an unknown code
+  (409 `conversation_migrating`) and an undecodable body are in neither of 9.5's lists; they are retried under the
+  general-unavailability and stuck-op rule (EIO and `cc.write_stuck` after 10 min while magpie answers others),
+  because failing a transcript append on one transient answer is the log-and-drop outcome item 4 ends.
+- Whole-file fetches (9.7) are single-flight per node and stream in the background; READs of ranges that arrived are
+  answered from the staging file while the rest streams; the 30 s bound applies to the answer and to each next chunk,
+  not to the whole body; a retry resumes by range while the file is still at the fetched version (after one of the
+  supervisor's own writes it restarts the READ's path instead: the READ falls back to the range from magpie).
+  Writes, truncates and renames magpie acknowledges while a fetch streams are applied to the fetched copy (at most
+  64 MiB of them), so the main transcript's prefetch leaves it cached at the current version.
+- Local-scope replays (9.9) whose effect the killed instance already made answer success. **The limit**: the same
+  state made by another process between the kill and the replay (about 0.1-1 s) reads as the request's own, so a
+  `mkdir` lock taken in that window is held twice.
+- A read that leaves no whole request in its slot answers EIO to any `unique` a copy of the header names and counts
+  `fuse.short_read`; a read error other than the connection's end is logged and retried, not a worker's silent exit.
+- The thread's next identical request (a second `mkdir` of a held lock) was taken for a resend of the one just
+  answered when it arrived before that request left the in-flight list; the resend lock now covers the reply.
+- RENAME2 follows the resend rule; an INTERRUPT between a backoff's interrupt check and its wait is not missed.
+
+**Deviations recorded here** (from supervisor 9.5 item 6 and 9.7):
+1. The repair's `opId`s are fresh v4 UUIDs not recorded in `run.json` first. A crash during a repair repeats it at the
+   next tree load: magpie answers a repeated write whose range already holds those bytes with success (rule 0) and a
+   write at its size as an append, so nothing is written twice.
+2. `resync: true` on a lease is logged and needs no separate path: the reconcile that re-sends every suffix magpie
+   lacks runs at every tree load, a superset of magpie 6.12's resync.
+3. `tree.json` is not written: every start loads the tree from magpie, so nothing would read it.
+
+**Open, not done by this package** (supervisor 22 items 2, 3 and 6; WP-22's acceptance):
+- (a) Item 2's tombstone rewrite is still not reproduced, and DESIGN 14 question 2 has no decision in DECISIONS.md:
+  deviation 5 above stands, and WP-22 is not done until Deyao records the deferral or a run reproduces it.
+- (b) Item 6's sandbox-to-magpie-in-cluster round trip (1 MiB write p99 <= 200 ms) is not measured: only loopback to
+  the in-sandbox fake exists. It needs a magpie in the cluster and an AWS sandbox host (WP-40's fabric).
+- (c) Item 3's full-cache rule (final pause <= 2x the empty cache's) is not shown on the real build: the rig's fake
+  magpie lives in the sandbox and rides the pre-copy stream. It needs magpie outside the sandbox (as (b)).
+- Items 2, 3, 6, 9 and 10 have not been re-run on current main (above).

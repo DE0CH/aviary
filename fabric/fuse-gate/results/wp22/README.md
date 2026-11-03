@@ -40,3 +40,15 @@ runsc `precopy-20261102.1`, image `ghcr.io/de0ch/jarvis3-sandbox:2eb5bf396b5f`; 
 - `rmig-batch.log`, `rmig-e4/`, `rmig-m1/`…`m5/` (empty cache), `rmig-f1/`…`f3/` (`FILL=1`): `rig-migcc.sh` (item 3
   with Claude Code mid-turn): `turn.summary.json`, `op.json`, `w.node.json`, `report.json`, `send.json`,
   `receive.json`, `failures.txt` (empty = pass), `supervisor.log`, `cc-stdout.jsonl`.
+
+## WP-22 review 2 (2026-11-03): item 4 on `106166f3`
+
+One throwaway Hetzner Cloud ccx23 in fsn1 (Ubuntu 24.04, runsc `precopy-20261102.1`, image
+`ghcr.io/de0ch/jarvis3-sandbox:2eb5bf396b5f`; `supervisor`, `supervisor-fi`, `supervisor-keeper` and `fuse-rig` musl
+release builds of `106166f3`), deleted after the run.
+
+- `kill-k3/`: `rig-kill.sh` (scratch layout): the four journal points of WRITE, MKDIR, CREATE and RENAME, read-returned
+  and reply-written of a READ, and a plain SIGKILL during a held 1 MiB write (case 19; its hold was released by hand
+  in this run, see `kill-k4`). `cases.jsonl`, `calls-N.json`, `calls-final-<route>.json`, `supervisor.log` (every
+  request the test build read, as `fuse request`), `uniques.json` (`rig/rig-uniques.py`), `run.log`.
+- `kill-k4/`: `OPS=plain rig-kill.sh`: the plain SIGKILL case alone with the script's release order as committed.
