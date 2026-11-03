@@ -26,7 +26,9 @@ const PID: u32 = 4242;
 const O_RDWR: i32 = libc::O_RDWR;
 
 struct World {
-    rt: tokio::runtime::Runtime,
+    /// Shut down with a bound in `drop` (a plain drop waits for every blocking task, which a test that failed while a
+    /// start retried through an outage would leave running for ever).
+    rt: std::mem::ManuallyDrop<tokio::runtime::Runtime>,
     magpie: Arc<FakeMagpie>,
     served: aviary_fakes::magpie::Running,
     dir: PathBuf,
@@ -46,7 +48,7 @@ fn world() -> World {
     let dir = std::env::temp_dir().join(format!("fuse-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     World {
-        rt,
+        rt: std::mem::ManuallyDrop::new(rt),
         magpie,
         served,
         dir,
@@ -55,12 +57,24 @@ fn world() -> World {
     }
 }
 
+/// Bounds every FUSE test's teardown, also after a failed assertion: the sentry's handles close (the workers' reads
+/// end), the runtime gets [`TEARDOWN`] for its blocking tasks, and the directory goes.
 impl Drop for World {
     fn drop(&mut self) {
         self.sentry.close_all();
+        // SAFETY: `rt` is taken once, here, and never used again (the struct is being dropped).
+        #[allow(unsafe_code)]
+        let rt = unsafe { std::mem::ManuallyDrop::take(&mut self.rt) };
+        rt.shutdown_timeout(TEARDOWN);
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
+
+/// How long a test's teardown waits for the runtime's blocking tasks.
+const TEARDOWN: Duration = Duration::from_secs(5);
+
+/// The bound on a start in these tests (a start retries through magpie's unavailability for ever).
+const START_BOUND: Duration = Duration::from_secs(30);
 
 impl World {
     fn client(&self, sandbox: &str) -> magpie_api::client::Client {
@@ -91,8 +105,21 @@ impl World {
     fn start(&self, fs: &FuseFs, boot: Uuid, restart: bool, hooks: Hooks) -> Arc<Core> {
         fs.set_hooks(hooks);
         let lease = self.lease();
-        let conn = self.sentry.conn();
-        self.rt.block_on(fs.serve(conn, boot, restart, &lease)).unwrap()
+        self.serve(fs, self.sentry.conn(), boot, restart, &lease).unwrap()
+    }
+
+    /// `fs.serve` on `dev`, failing the test after [`START_BOUND`].
+    fn serve(
+        &self,
+        fs: &FuseFs,
+        dev: Arc<dyn super::Device>,
+        boot: Uuid,
+        restart: bool,
+        lease: &LeaseResponse,
+    ) -> std::io::Result<Arc<Core>> {
+        self.rt
+            .block_on(async { tokio::time::timeout(START_BOUND, fs.serve(dev, boot, restart, lease)).await })
+            .expect("the start finishes in time")
     }
 
     fn data(&self, path: &str) -> Option<Vec<u8>> {
@@ -798,6 +825,71 @@ fn one_stuck_op_is_eio_and_write_stuck() {
     w.magpie.faults().remove(f);
 }
 
+/// 9.5 item 4 at a start (WP-22 review 3's open item): a write replayed from the journal that magpie holds, while
+/// it answers everything else, ends in EIO and `cc.write_stuck` after the stuck time, though the heartbeat (4.3
+/// step 7) has not started: the start's health probe records magpie's answers, and the start then completes.
+#[test]
+fn a_replayed_write_magpie_holds_is_stuck_without_the_heartbeat() {
+    let w = world();
+    let mut timing = fast();
+    timing.attempt = Duration::from_millis(200);
+    timing.stuck_op = Duration::from_millis(800);
+    timing.healthy_within = Duration::from_millis(300);
+    let fs = w.fs(timing);
+    let boot = Uuid::new_v4();
+    super::store_boot_id(&w.dir.join("state"), boot).unwrap();
+    let armed = Arc::new(AtomicBool::new(false));
+    let a = armed.clone();
+    let hooks = Hooks {
+        fault: Some(Arc::new(move |p, h| {
+            p == Point::ReadReturned && h.opcode == op::WRITE && a.swap(false, Ordering::SeqCst)
+        })),
+        ..Hooks::default()
+    };
+    let core = w.start(&fs, boot, false, hooks);
+    let s = &w.sentry;
+    let ws = workspace_dir(&w);
+    let r = s.call(
+        op::CREATE,
+        ws,
+        PID,
+        &body::create("t.jsonl", O_RDWR | libc::O_CREAT, 0o600),
+    );
+    let (t, fh) = (out::node(&r), out::create_fh(&r));
+    assert!(core.settle(Duration::from_secs(5)));
+    armed.store(true, Ordering::SeqCst);
+    let u = s.submit(op::WRITE, t, PID, &body::write(fh, 0, b"x\n"));
+    wait_for("the fault", || core.died());
+    // magpie holds every cc write from now on and answers the rest; no heartbeat runs (nothing calls record_ok)
+    let hold = Hold::new();
+    let f = w.magpie.faults().on("cc_write", FaultKind::Hold(hold.clone()));
+    let stuck = Arc::new(Mutex::new(Vec::new()));
+    let st = stuck.clone();
+    let hooks = Hooks {
+        write_stuck: Arc::new(move |o| st.lock().unwrap().push(o)),
+        ..Hooks::default()
+    };
+    let t0 = std::time::Instant::now();
+    let core2 = w.start(&fs, boot, true, hooks);
+    let r = s
+        .wait(u, Duration::from_secs(10))
+        .expect("the replayed write is answered");
+    assert_eq!(r.errno, libc::EIO, "stuck: EIO");
+    assert!(t0.elapsed() >= Duration::from_millis(800), "{:?}", t0.elapsed());
+    let got = stuck.lock().unwrap().clone();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].what, "cc/write");
+    assert_eq!(core2.stuck_count(), 1);
+    assert!(w.calls("cc_tree") >= 3, "the probe asked magpie");
+    // the start went on: a new request is served
+    ok(
+        &s.call(op::GETATTR, 1, PID, &body::getattr()),
+        "getattr after the start",
+    );
+    w.magpie.faults().remove(f);
+    hold.release();
+}
+
 #[test]
 fn offset_repair_from_the_cache() {
     let w = world();
@@ -983,10 +1075,12 @@ fn a_kernel_mount_serves_real_syscalls() {
     let fs = w.fs(fast());
     let mnt = w.dir.join("mnt");
     let fd = super::mount_fresh(&mnt).unwrap();
+    // dropped before `w`: whatever happens below, the connection is aborted and the mount detached
+    let mount = KernelMount::new(&mnt);
     let lease = w.lease();
-    let core =
-        w.rt.block_on(fs.serve(Arc::new(super::FdDevice(fd)), Uuid::new_v4(), false, &lease))
-            .unwrap();
+    let core = w
+        .serve(&fs, Arc::new(super::FdDevice(fd)), Uuid::new_v4(), false, &lease)
+        .unwrap();
     let m = mnt.clone();
     let worker = std::thread::spawn(move || {
         let ws = m.join("projects/-workspace");
@@ -1035,19 +1129,64 @@ fn a_kernel_mount_serves_real_syscalls() {
         );
         std::fs::remove_file(ws.join("r.jsonl")).unwrap();
     });
-    let r = worker.join();
-    let c = std::ffi::CString::new(mnt.to_string_lossy().as_bytes()).unwrap();
-    // SAFETY: umount2(2) of a NUL-terminated path.
-    #[allow(unsafe_code)]
-    unsafe {
-        libc::umount2(c.as_ptr(), libc::MNT_DETACH);
+    // the syscalls get a bound: past it the connection is aborted, so each pending one fails and the worker ends
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while !worker.is_finished() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
     }
+    let hung = !worker.is_finished();
+    if hung {
+        mount.abort();
+    }
+    let r = worker.join();
+    mount.detach();
     core.stop();
+    assert!(!hung, "the syscalls on the kernel mount gave no answer in 60 s");
     r.unwrap();
     assert!(w.dir.join("local/sessions/1.json").exists());
     assert!(w.data("projects/-workspace/r.jsonl").is_none());
     assert!(w.magpie.node(w.cid, "projects/-workspace").is_some());
     eprintln!("kernel fuse mount served real syscalls");
+}
+
+/// A test's kernel FUSE mount. Dropped (at the end, or by a failed assertion) it aborts its connection if it is
+/// still mounted, so every request still pending in the kernel fails at once and nothing can wait on a server that is
+/// gone, and detaches it. Only the test's own path is touched (never a fusectl connection number, which another
+/// mount on the host could hold).
+struct KernelMount {
+    path: std::ffi::CString,
+}
+
+impl KernelMount {
+    fn new(mnt: &std::path::Path) -> Self {
+        Self {
+            path: std::ffi::CString::new(mnt.to_string_lossy().as_bytes()).unwrap(),
+        }
+    }
+
+    fn umount(&self, flags: libc::c_int) {
+        // SAFETY: umount2(2) of a NUL-terminated path; an error (already unmounted) is ignored.
+        #[allow(unsafe_code)]
+        unsafe {
+            libc::umount2(self.path.as_ptr(), flags);
+        }
+    }
+
+    /// Aborts the connection (a forced unmount: FUSE's `umount_begin` aborts it) and detaches the mount; nothing
+    /// when it is no longer mounted (EINVAL).
+    fn abort(&self) {
+        self.umount(libc::MNT_FORCE | libc::MNT_DETACH);
+    }
+
+    fn detach(&self) {
+        self.umount(libc::MNT_DETACH);
+    }
+}
+
+impl Drop for KernelMount {
+    fn drop(&mut self) {
+        self.abort();
+    }
 }
 
 /// 8.2: a turn's end waits until magpie acknowledged the writes holding its uuids; a restarted server finds the
@@ -1322,7 +1461,7 @@ fn a_start_waits_for_the_tree_and_never_runs_on_an_empty_one() {
         .script()
         .once("cc_tree", aviary_fakes::script::Reply::error(404, "not_found", "x"));
     let lease = w.lease();
-    assert!(w.rt.block_on(fs.serve(w.sentry.conn(), boot, true, &lease)).is_err());
+    assert!(w.serve(&fs, w.sentry.conn(), boot, true, &lease).is_err());
     let log = std::fs::read_to_string(super::nodes::log_path(&w.dir.join("state"))).unwrap();
     assert!(!log.contains("drop"), "no node id dropped: {log}");
     // a 500 first, then the tree: the replay sees magpie's state
@@ -1730,12 +1869,15 @@ fn a_restart_during_an_outage_waits_for_magpie_then_completes() {
         .faults()
         .on("cc_tree", FaultKind::Unavailable { retry_after_secs: 0 });
     std::thread::scope(|sc| {
-        let start = sc.spawn(|| w.rt.block_on(fs.serve(w.sentry.conn(), boot, true, &lease)));
+        let start = sc.spawn(|| w.serve(&fs, w.sentry.conn(), boot, true, &lease));
         let g = s.submit(op::GETATTR, 1, PID + 1, &body::getattr());
         std::thread::sleep(Duration::from_millis(800));
-        assert!(s.wait(u, Duration::ZERO).is_none(), "the local replay waits for magpie");
-        assert!(s.wait(g, Duration::ZERO).is_none(), "a new request waits too");
+        let (replay_waited, new_waited) = (s.wait(u, Duration::ZERO).is_none(), s.wait(g, Duration::ZERO).is_none());
+        // magpie comes back before any assertion: a failed one would otherwise leave the scope joining a start that
+        // retries for ever
         w.magpie.faults().remove(f);
+        assert!(replay_waited, "the local replay waits for magpie");
+        assert!(new_waited, "a new request waits too");
         assert!(start.join().unwrap().is_ok());
         ok(&s.wait(u, Duration::from_secs(10)).unwrap(), "the replayed mkdir");
         ok(&s.wait(g, Duration::from_secs(10)).unwrap(), "the new getattr");
@@ -1756,7 +1898,7 @@ fn the_main_transcript_is_prefetched_after_a_retried_start() {
         .script()
         .once("cc_tree", aviary_fakes::script::Reply::error(404, "not_found", "x"));
     let lease = w.lease();
-    assert!(w.rt.block_on(fs.serve(w.sentry.conn(), boot, false, &lease)).is_err());
+    assert!(w.serve(&fs, w.sentry.conn(), boot, false, &lease).is_err());
     let _core = w.start(&fs, boot, true, Hooks::default());
     wait_for("the prefetch", || w.calls("cc_file") == 1);
     let t = lookup(&w, "projects/-workspace/s.jsonl");

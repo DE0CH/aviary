@@ -173,6 +173,16 @@ impl std::fmt::Debug for Remote {
     }
 }
 
+/// [`Remote::health_probe`]'s task, ended on drop.
+#[derive(Debug)]
+pub struct HealthProbe(tokio::task::JoinHandle<()>);
+
+impl Drop for HealthProbe {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 struct BlockedGuard<'a>(&'a Remote, u64);
 
 impl Drop for BlockedGuard<'_> {
@@ -236,6 +246,27 @@ impl Remote {
         let n = self.base.elapsed().as_nanos() as u64 + 1;
         self.last_ok.store(n, Ordering::SeqCst);
         self.reachable.store(true, Ordering::SeqCst);
+    }
+
+    /// Until the guard drops, asks magpie for the tree every half of `healthy_within` and records each answer: the
+    /// stuck rule's evidence while nothing else talks to magpie. A start's journal replay runs before the heartbeat
+    /// (4.3 step 6, the heartbeat at step 7), so without this a replayed op that magpie holds or keeps refusing while
+    /// it answers everything else would block the start for ever instead of ending in EIO and `cc.write_stuck`.
+    #[must_use]
+    pub fn health_probe(self: &Arc<Self>, rt: &tokio::runtime::Handle) -> HealthProbe {
+        let me = self.clone();
+        let every = (self.timing.healthy_within / 2).max(Duration::from_millis(10));
+        HealthProbe(rt.spawn(async move {
+            loop {
+                tokio::time::sleep(every).await;
+                let r = tokio::time::timeout(me.timing.attempt, me.client.sandbox(None).cc_tree()).await;
+                match r {
+                    Ok(Ok(_)) => me.record_ok(),
+                    Ok(Err(e)) => tracing::debug!(error = %e, "the start's health probe failed"),
+                    Err(_) => tracing::debug!("the start's health probe timed out"),
+                }
+            }
+        }))
     }
 
     fn ok_since(&self, t: Instant) -> bool {

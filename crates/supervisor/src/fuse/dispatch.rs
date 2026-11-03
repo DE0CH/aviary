@@ -298,6 +298,9 @@ impl Core {
         // replays magpie already applied and drop every magpie-scope node the sentry holds. The fetch waits through
         // magpie's unavailability (the retry rule); a definitive failure fails the start, and the mount is retried
         // on the keeper's connection.
+        // The tree load's repairs and the replay run before the heartbeat starts (4.3 step 7): while they run, the
+        // probe gives the stuck rule its evidence that magpie answers others (9.5 item 4).
+        let _probe = core.remote.health_probe(&core.rt);
         if let Err(e) = core.fetch_tree() {
             tracing::error!(error = ?e, "the tree could not be loaded: the start fails");
             return Err(std::io::Error::other(format!("cc/tree: {e:?}")));
