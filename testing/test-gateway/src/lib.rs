@@ -14,6 +14,10 @@
 //!   and `hermit` 60 s, `tools` 180 s); what is still open then is cut and counted in
 //!   `test_gateway_drain_cut_total{kind}`.
 //!
+//! - **What it saw** ([`Running::seen`]): every proxy request as it arrived (method, request target, `User-Agent`)
+//!   with the status it was answered, so a harness can tell absolute-form `http://model/…` requests and who made them
+//!   from anything else (the last [`SEEN_KEPT`] are kept).
+//!
 //! [`Faults`] seed the four mistakes the conformance suite must catch; the binary never sets them.
 
 use std::collections::HashMap;
@@ -328,8 +332,26 @@ struct Keys {
     fetching: tokio::sync::Mutex<()>,
 }
 
+/// How many proxy requests [`Running::seen`] keeps (the oldest go first).
+pub const SEEN_KEPT: usize = 4096;
+
+/// One request the proxy received, as it arrived.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Seen {
+    /// The request method.
+    pub method: String,
+    /// The request target as received: `http://model/v1/messages` for an absolute-form request, `/v1/messages` for
+    /// an origin-form one.
+    pub target: String,
+    /// The client's `User-Agent`, when it sent one.
+    pub user_agent: Option<String>,
+    /// The status the proxy answered with.
+    pub status: u16,
+}
+
 struct Inner {
     cfg: Config,
+    seen: Mutex<std::collections::VecDeque<Seen>>,
     client: Client<HttpConnector, Body>,
     keys: Keys,
     live: Mutex<HashMap<Uuid, LiveEntry>>,
@@ -439,6 +461,12 @@ impl Running {
         let _ = rx.wait_for(|l| *l).await;
     }
 
+    /// The proxy requests received so far, oldest first (at most [`SEEN_KEPT`]).
+    #[must_use]
+    pub fn seen(&self) -> Vec<Seen> {
+        lock(&self.inner.seen).iter().cloned().collect()
+    }
+
     /// Whether a drain has started.
     #[must_use]
     pub fn is_draining(&self) -> bool {
@@ -538,6 +566,7 @@ pub async fn start(cfg: Config, registry: &mut Registry) -> std::io::Result<Runn
         .build(connector);
     let inner = Arc::new(Inner {
         cfg,
+        seen: Mutex::new(std::collections::VecDeque::new()),
         client,
         keys: Keys {
             set: RwLock::new(KeySet::default()),
@@ -656,7 +685,25 @@ async fn handle(
     uploaded: Arc<AtomicU64>,
     req: Request<Incoming>,
 ) -> Response<Body> {
+    let method = req.method().to_string();
+    let target = req.uri().to_string();
+    let user_agent = req
+        .headers()
+        .get(header::USER_AGENT)
+        .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned());
     let mut resp = route(&inner, peer, &uploaded, req).await;
+    {
+        let mut seen = lock(&inner.seen);
+        if seen.len() == SEEN_KEPT {
+            seen.pop_front();
+        }
+        seen.push_back(Seen {
+            method,
+            target,
+            user_agent,
+            status: resp.status().as_u16(),
+        });
+    }
     if *inner.draining.borrow() {
         resp.headers_mut()
             .insert(header::CONNECTION, HeaderValue::from_static("close"));

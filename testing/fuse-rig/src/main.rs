@@ -12,6 +12,9 @@
 //! - `POST /latency/{route}?ms=N`: every later call of a magpie route waits N ms first (`/release` removes it too);
 //! - `POST /env`: merge a JSON object into the descriptor's `env` (hermit's `SandboxSelf.env`; a new `etag`, so the
 //!   supervisor applies it at the next spawn);
+//! - `GET /gateway`: every request the gateway's proxy received (`method`, `target` as received, so absolute-form
+//!   `http://model/…`, `userAgent`, `status`); `GET /tools`: every request fake-tools answered (`method`, `path`,
+//!   `userAgent`, and the JSON-RPC `rpc` method of a POST, e.g. `initialize`, `tools/list`);
 //! - `POST /turn`: queue a `start_turn` command (`{"text", "resume"}`: `resume` the provider session id or null),
 //!   answered with `{"turnId", "cmdSeq"}`; the turn's reports are `GET /calls/turn_state` (the `turnId` in `params`).
 //!
@@ -51,7 +54,12 @@ struct World {
     cid: Uuid,
     holds: Mutex<Vec<(FaultId, Hold)>>,
     latencies: Mutex<Vec<FaultId>>,
+    gateway: Arc<test_gateway::Running>,
+    tools_seen: ToolsSeen,
 }
+
+/// What fake-tools was asked, as JSON objects.
+type ToolsSeen = Arc<Mutex<Vec<Value>>>;
 
 fn fail(msg: &str) -> ! {
     let _ = writeln!(std::io::stderr(), "fuse-rig: {msg}");
@@ -93,7 +101,8 @@ async fn world(dir: PathBuf, model_url: String, memory: Option<u64>) {
     let hs = hermit.serve().await.unwrap_or_else(|e| fail(&e.to_string()));
     let ms = magpie.serve().await.unwrap_or_else(|e| fail(&e.to_string()));
     let tools_token = token_of("t");
-    let tools_url = serve_tools(&tools_token).await;
+    let tools_seen = ToolsSeen::default();
+    let tools_url = serve_tools(&tools_token, tools_seen.clone()).await;
     let cid = Uuid::now_v7();
     let put = hs
         .client(reqwest::Client::new(), Caller::Magpie)
@@ -138,6 +147,7 @@ async fn world(dir: PathBuf, model_url: String, memory: Option<u64>) {
     )
     .await
     .unwrap_or_else(|e| fail(&e.to_string()));
+    let gateway = Arc::new(gateway);
     gateway.keys_loaded().await;
     let st = hermit
         .mint_token(cid, Ipv4Addr::LOCALHOST)
@@ -162,8 +172,20 @@ async fn world(dir: PathBuf, model_url: String, memory: Option<u64>) {
         cid,
         holds: Mutex::new(Vec::new()),
         latencies: Mutex::new(Vec::new()),
+        gateway: gateway.clone(),
+        tools_seen,
     });
-    let app = Router::new()
+    let app = admin_router(w);
+    let _ = writeln!(std::io::stderr(), "fuse-rig: world up, proxy {}", gateway.proxy_addr());
+    if let Err(e) = axum::serve(admin, app).await {
+        fail(&e.to_string());
+    }
+    drop((hs, ms, gateway));
+}
+
+/// The admin port's routes (the module docs).
+fn admin_router(w: Arc<World>) -> Router {
+    Router::new()
         .route("/hold/{route}", post(hold))
         .route("/release", post(release))
         .route("/held", get(held))
@@ -174,24 +196,65 @@ async fn world(dir: PathBuf, model_url: String, memory: Option<u64>) {
         .route("/latency/{route}", post(latency))
         .route("/env", post(env))
         .route("/turn", post(turn))
-        .with_state(w);
-    let _ = writeln!(std::io::stderr(), "fuse-rig: world up, proxy {}", gateway.proxy_addr());
-    if let Err(e) = axum::serve(admin, app).await {
-        fail(&e.to_string());
-    }
-    drop((hs, ms, gateway));
+        .route("/gateway", get(gateway_seen))
+        .route("/tools", get(tools_seen_route))
+        .with_state(w)
 }
 
 /// fake-tools behind the gateway's tools pair token, on loopback; its URL.
-async fn serve_tools(token: &str) -> String {
+async fn serve_tools(token: &str, seen: ToolsSeen) -> String {
     let tools = fake_tools::FakeTools::new(token);
     let tl = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .unwrap_or_else(|e| fail(&e.to_string()));
     let url = format!("http://{}", tl.local_addr().unwrap_or_else(|e| fail(&e.to_string())));
-    let app = tools.router();
+    let app = tools.router().layer(axum::middleware::from_fn(
+        move |req: axum::extract::Request, next: axum::middleware::Next| {
+            let seen = seen.clone();
+            async move { record_tools(&seen, req, next).await }
+        },
+    ));
     tokio::spawn(async move { axum::serve(tl, app).await });
     url
+}
+
+/// Records a request to fake-tools (its JSON-RPC method from the body, which is small) and passes it on.
+async fn record_tools(seen: &ToolsSeen, req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    let (parts, body) = req.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, 1 << 20).await else {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    };
+    let rpc = serde_json::from_slice::<Value>(&bytes)
+        .ok()
+        .and_then(|v| v.get("method").and_then(Value::as_str).map(str::to_owned));
+    let ua = parts
+        .headers
+        .get(axum::http::header::USER_AGENT)
+        .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned());
+    seen.lock().unwrap_or_else(PoisonError::into_inner).push(json!({
+        "method": parts.method.as_str(),
+        "path": parts.uri.path(),
+        "userAgent": ua,
+        "rpc": rpc,
+    }));
+    next.run(axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes)))
+        .await
+}
+
+async fn gateway_seen(State(w): State<Arc<World>>) -> Json<Value> {
+    let v: Vec<Value> = w
+        .gateway
+        .seen()
+        .into_iter()
+        .map(|s| json!({ "method": s.method, "target": s.target, "userAgent": s.user_agent, "status": s.status }))
+        .collect();
+    Json(Value::Array(v))
+}
+
+async fn tools_seen_route(State(w): State<Arc<World>>) -> Json<Value> {
+    Json(Value::Array(
+        w.tools_seen.lock().unwrap_or_else(PoisonError::into_inner).clone(),
+    ))
 }
 
 /// The descriptor's proxy URL (the four spellings) and, when given, its `memoryBytes`.

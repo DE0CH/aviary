@@ -23,6 +23,15 @@ async fn run(faults: Faults, only: &[&str]) -> Report {
 }
 
 async fn run_with(faults: Faults, only: &[&str], upstream_idle: std::time::Duration) -> Report {
+    run_seen(faults, only, upstream_idle).await.0
+}
+
+/// [`run_with`], with what the gateway saw.
+async fn run_seen(
+    faults: Faults,
+    only: &[&str],
+    upstream_idle: std::time::Duration,
+) -> (Report, Vec<test_gateway::Seen>) {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let tokens = Tokens {
         gateway_to_magpie: token("magpie"),
@@ -92,7 +101,7 @@ async fn run_with(faults: Faults, only: &[&str], upstream_idle: std::time::Durat
     let report = Report::new("gateway", only.iter().map(|s| (*s).to_owned()).collect(), true);
     gateway::run(o, fakes, &report).await;
     drop(served);
-    report
+    (report, running.seen())
 }
 
 fn failed(report: &Report, check: &str) -> bool {
@@ -193,4 +202,21 @@ async fn a_silent_magpie_past_the_idle_timeout_is_ended() {
         Err(Problem::Fail(m)) => assert!(m.contains("504"), "{m}"),
         other => panic!("{other:?}"),
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_gateway_records_what_it_saw() {
+    let (report, seen) = run_seen(
+        Faults::default(),
+        &["route.model-messages"],
+        gateway_api::limits::IDLE_TIMEOUT,
+    )
+    .await;
+    assert!(report.passed(), "failures: {:#?}", report.failures());
+    let model: Vec<_> = seen.iter().filter(|s| s.target.starts_with("http://model/")).collect();
+    assert!(!model.is_empty(), "{seen:#?}");
+    assert!(
+        model.iter().all(|s| !s.method.is_empty() && s.status != 0),
+        "{model:#?}"
+    );
 }
