@@ -298,6 +298,41 @@ async fn a_conversation_that_is_not_migrating_is_never_written() {
     assert_eq!(w.versions(u).await, v);
     assert_eq!(w.kinds(u).await.len(), n);
     assert_ne!(w.conv(u).await["title"], "renamed");
+
+    // the flip inside one sync: the pass's reads (the sources and `import_sources`) taken while it was migrating,
+    // the release after them, then the writes: every one refused, nothing written
+    w.magpie()
+        .get()
+        .await
+        .unwrap()
+        .execute("update conversations set migrating = true where id = $1", &[&u])
+        .await
+        .unwrap();
+    let snap = magpie_import::source::read(&w.imp.cloudcli).await.unwrap();
+    let known = pass::known(&w.imp).await.unwrap();
+    let (person, row) = pass::find(&snap, u).unwrap();
+    let failed = person.failed.get(&row.session_id).cloned().unwrap_or_default();
+    w.magpie()
+        .get()
+        .await
+        .unwrap()
+        .execute("update conversations set migrating = false where id = $1", &[&u])
+        .await
+        .unwrap();
+    let got = pass::sync_conversation(
+        &w.imp,
+        &person.person,
+        &person.schema,
+        &person.key,
+        row,
+        &failed,
+        known.get(&u),
+    )
+    .await;
+    assert!(matches!(got, Err(magpie_import::Error::Released)), "{got:?}");
+    assert_eq!(w.versions(u).await, v);
+    assert_eq!(w.kinds(u).await.len(), n);
+    assert_ne!(w.conv(u).await["title"], "renamed");
 }
 
 #[tokio::test]

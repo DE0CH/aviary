@@ -2,7 +2,7 @@
 //! of appends, partial-line appends and their completion, rewrites from a line, truncate-then-rewrite, compaction
 //! (a temporary file renamed over), relocation, file creation and removal and sessions-row edits, with passes at
 //! random points. After every pass, magpie's reconstruction equals the source byte for byte and the visible events
-//! equal the classification of the source's current complete lines; the title follows the row.
+//! equal the classification of the source's current complete lines; the title and Recently deleted follow the row.
 
 #![allow(
     clippy::unwrap_used,
@@ -34,6 +34,8 @@ enum Op {
     Relocate,
     Remove,
     Rename,
+    Delete,
+    Restore,
     Pass,
 }
 
@@ -49,6 +51,8 @@ fn op() -> impl Strategy<Value = Op> {
         1 => Just(Op::Relocate),
         1 => Just(Op::Remove),
         1 => Just(Op::Rename),
+        1 => Just(Op::Delete),
+        1 => Just(Op::Restore),
         3 => Just(Op::Pass),
     ]
 }
@@ -65,6 +69,7 @@ struct Model {
     files: BTreeSet<String>,
     next: u32,
     title: String,
+    deleted: bool,
 }
 
 impl Model {
@@ -116,7 +121,9 @@ async fn check(w: &World, m: &Model) {
         i64::try_from(m.lines.len()).unwrap(),
         "visible events"
     );
-    assert_eq!(w.conv(m.id).await["title"], m.title.as_str());
+    let c = w.conv(m.id).await;
+    assert_eq!(c["title"], m.title.as_str());
+    assert_eq!(c["deleted"], m.deleted, "Recently deleted follows the row");
 }
 
 async fn case(w: &World, key: &str, ops: Vec<Op>) {
@@ -131,6 +138,7 @@ async fn case(w: &World, key: &str, ops: Vec<Op>) {
         files: BTreeSet::new(),
         next: 0,
         title: "first".to_owned(),
+        deleted: false,
     };
     w.cloudcli(&format!(
         "insert into cc_{key}.sessions (session_id, provider_session_id, custom_name, created_at, updated_at)
@@ -221,6 +229,25 @@ async fn case(w: &World, key: &str, ops: Vec<Op>) {
                 ))
                 .await;
             }
+            Op::Delete => {
+                m.deleted = true;
+                w.cloudcli(&format!(
+                    "update cc_{}.sessions set \"isArchived\" = 1, deleted_at = '2026-10-23 00:00:{:02}'
+                     where session_id = '{}'",
+                    m.key,
+                    m.next % 60,
+                    m.id
+                ))
+                .await;
+            }
+            Op::Restore => {
+                m.deleted = false;
+                w.cloudcli(&format!(
+                    "update cc_{}.sessions set \"isArchived\" = 0, deleted_at = null where session_id = '{}'",
+                    m.key, m.id
+                ))
+                .await;
+            }
             Op::Pass => check(w, &m).await,
         }
     }
@@ -233,12 +260,12 @@ fn random_source_changes_converge_after_every_pass() {
     let w = rt.block_on(World::new("converge_prop"));
     let key = rt.block_on(w.person(ALICE));
     let mut runner = proptest::test_runner::TestRunner::new(ProptestConfig {
-        cases: 24,
+        cases: 48,
         failure_persistence: None,
         ..ProptestConfig::default()
     });
     runner
-        .run(&proptest::collection::vec(op(), 1..12), |ops| {
+        .run(&proptest::collection::vec(op(), 1..16), |ops| {
             rt.block_on(case(&w, &key, ops));
             Ok(())
         })
