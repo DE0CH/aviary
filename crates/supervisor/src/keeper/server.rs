@@ -293,14 +293,42 @@ fn cstr(p: &Path) -> io::Result<CString> {
     CString::new(p.as_os_str().as_bytes()).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))
 }
 
-/// One JSON log line on stderr, written from a stack buffer (supervisor 21.1: the sandbox's console log).
+/// A log line's level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Level {
+    /// What happened.
+    Info,
+    /// Something degraded that the keeper carries on without.
+    Warn,
+    /// Why the keeper (and so the sandbox) failed: an exit or a supervisor that cannot be started.
+    Error,
+}
+
+impl Level {
+    fn as_str(self) -> &'static str {
+        match self {
+            Level::Info => "info",
+            Level::Warn => "warn",
+            Level::Error => "error",
+        }
+    }
+}
+
+/// One JSON log line at `info` on stderr ([`log_at`]).
 pub fn log(msg: &str, fields: &[(&str, i64)]) {
+    log_at(Level::Info, msg, fields);
+}
+
+/// One JSON log line on stderr, written from a stack buffer (supervisor 21.1: the sandbox's console log).
+pub fn log_at(level: Level, msg: &str, fields: &[(&str, i64)]) {
     let mut buf = [0u8; 512];
     let mut w = Writer::new(&mut buf);
     w.bytes_raw(b"{\"t\":\"");
     let mut t = [0u8; 24];
     w.bytes_raw(rfc3339(sys::wall_ms(), &mut t));
-    w.bytes_raw(b"\",\"level\":\"info\",\"svc\":\"supervisor-keeper\",\"msg\":\"");
+    w.bytes_raw(b"\",\"level\":\"")
+        .bytes_raw(level.as_str().as_bytes())
+        .bytes_raw(b"\",\"svc\":\"supervisor-keeper\",\"msg\":\"");
     w.bytes_raw(msg.as_bytes());
     w.bytes_raw(b"\"");
     for (k, v) in fields {
@@ -385,7 +413,7 @@ impl Keeper {
         if cfg.protect_self {
             // SAFETY: mlockall has no memory-safety effects; a failure is logged and not fatal.
             if unsafe { libc::mlockall(libc::MCL_CURRENT | libc::MCL_FUTURE) } != 0 {
-                log("mlockall failed", &[("errno", i64::from(sys::errno()))]);
+                log_at(Level::Warn, "mlockall failed", &[("errno", i64::from(sys::errno()))]);
             }
             if let Err(e) = std::fs::write("/proc/self/oom_score_adj", b"-1000") {
                 log(
@@ -659,7 +687,11 @@ impl Keeper {
             }
         }
         if pid < 0 {
-            log("supervisor fork failed", &[("errno", i64::from(sys::errno()))]);
+            log_at(
+                Level::Error,
+                "supervisor fork failed",
+                &[("errno", i64::from(sys::errno()))],
+            );
             self.schedule_restart(now);
             return;
         }
@@ -1592,7 +1624,7 @@ fn mount_tmpfs(dir: &Path) {
             c"mode=0755,size=1m".as_ptr().cast(),
         );
         if r != 0 {
-            log("tmpfs mount failed", &[("errno", i64::from(sys::errno()))]);
+            log_at(Level::Warn, "tmpfs mount failed", &[("errno", i64::from(sys::errno()))]);
         }
     }
 }

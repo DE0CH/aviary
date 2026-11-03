@@ -4,7 +4,7 @@
 //! supervisor could ever start, so the keeper exits 78 at once with "no sandbox proxy credential" (hermit 17)
 //! rather than restart a supervisor that fails the same way, which would hide the cause in a crash loop.
 
-use supervisor::keeper::server::{Config, Keeper, log};
+use supervisor::keeper::server::{Config, Keeper, Level, log_at};
 
 /// `EX_CONFIG`: the sandbox was started without what it needs.
 const EXIT_NO_CREDENTIAL: i32 = 78;
@@ -13,7 +13,8 @@ fn main() {
     let credential = aviary_core::env::try_required(supervisor::boot::PROXY_VAR)
         .is_ok_and(|p| supervisor::boot::proxy_token(&p).is_some());
     if !credential {
-        log(
+        log_at(
+            Level::Error,
             "no sandbox proxy credential",
             &[("exit", i64::from(EXIT_NO_CREDENTIAL))],
         );
@@ -22,7 +23,8 @@ fn main() {
     let code = match Keeper::new(Config::sandbox()) {
         Ok(mut k) => k.run(),
         Err(e) => {
-            log(
+            log_at(
+                Level::Error,
                 "keeper start failed",
                 &[("errno", i64::from(e.raw_os_error().unwrap_or(0)))],
             );
