@@ -941,10 +941,32 @@ async fn a_workspace_keeps_its_creation_time_and_loses_it_with_the_workspace() {
         .call(&r.url, "GET", &format!("/v1/workspaces/{old}"), None, &[])
         .await;
     assert_eq!(a.body["createdAt"], first);
-    // delete removes the row
+    // delete removes the row; when the workspace is an old share's clone, it records that share deleted on purpose
+    // (the switch's import never clones it again)
+    h.sql(&format!(
+        "insert into legacy_shares (id, workspace, revoked, cloned_at) values ('oldShare', '{wid}', false, now()),
+           ('otherShare', '{}', false, now())",
+        Uuid::new_v4()
+    ))
+    .await;
     let a = magpie
         .call(&r.url, "DELETE", &format!("/v1/workspaces/{wid}"), None, &[])
         .await;
     assert!(a.status < 300, "{:?}", a.body);
     assert_eq!(stored().await, None);
+    let deleted: Vec<(String, bool)> = h
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query("select id, deleted_at is not null from legacy_shares order by id", &[])
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| (r.get(0), r.get(1)))
+        .collect();
+    assert_eq!(
+        deleted,
+        [("oldShare".to_owned(), true), ("otherShare".to_owned(), false)]
+    );
 }

@@ -60,13 +60,17 @@ enum Command {
         #[arg(long, default_value = MOUNT)]
         root: PathBuf,
     },
-    /// Removes `users/`, `sent/`, the empty `ws/` folders and the old shares' clones magpie no longer references
-    /// (hermit 22.3 step 6), once every old share folder is carried over. Without `--confirm` it prints the plan and
-    /// removes nothing. Env: `HERMIT_DATABASE_URL`, `HERMIT_TOKEN_MAGPIE`, the
-    /// `JuiceFS` pair.
+    /// Removes `users/`, `sent/`, the empty `ws/` folders and the clones of old shares revoked or deleted that magpie
+    /// no longer references (hermit 22.3 step 6), once every old share is carried over. Without `--confirm` it prints
+    /// the plan and removes nothing. Check first that magpie's import is complete (its last `verify --all` clean):
+    /// hermit sees only that magpie answers. Env: `HERMIT_DATABASE_URL`, `HERMIT_TOKEN_MAGPIE`, the `JuiceFS` pair.
     LegacyCleanup {
         #[arg(long)]
         confirm: bool,
+        /// Lets one old share folder with no committed share row go (a failed make of the old UI), once it is 24 h
+        /// old; repeatable, each logged and listed in the plan's `dropped`.
+        #[arg(long = "drop-share", value_name = "SHARE_ID")]
+        drop_share: Vec<String>,
     },
 }
 
@@ -82,7 +86,7 @@ fn main() -> ExitCode {
     let Some(command) = args.command else {
         let _ = std::io::Write::write_all(
             &mut std::io::stderr(),
-            b"usage: hermit serve | catalogue-check <file> | import-jarvis [--delta | --final] | jfs-owner | legacy-cleanup [--confirm] | --version\n",
+            b"usage: hermit serve | catalogue-check <file> | import-jarvis [--delta | --final] | jfs-owner | legacy-cleanup [--confirm] [--drop-share <id>]... | --version\n",
         );
         return ExitCode::from(2);
     };
@@ -116,7 +120,9 @@ fn main() -> ExitCode {
         }
         Command::ImportJarvis { delta, final_pass } => one_shot("import-jarvis", import_jarvis(delta, final_pass)),
         Command::JfsOwner { root } => one_shot("jfs-owner", jfs_owner(root)),
-        Command::LegacyCleanup { confirm } => one_shot("legacy-cleanup", legacy_cleanup(confirm)),
+        Command::LegacyCleanup { confirm, drop_share } => {
+            one_shot("legacy-cleanup", legacy_cleanup(confirm, drop_share))
+        }
     }
 }
 
@@ -225,7 +231,7 @@ async fn jfs_owner(root: PathBuf) -> ExitCode {
     }
 }
 
-async fn legacy_cleanup(confirm: bool) -> ExitCode {
+async fn legacy_cleanup(confirm: bool, drop: Vec<String>) -> ExitCode {
     let hermit = match pool("HERMIT_DATABASE_URL", "hermit:legacy-cleanup") {
         Ok(h) => h,
         Err(e) => return e,
@@ -239,7 +245,7 @@ async fn legacy_cleanup(confirm: bool) -> ExitCode {
         "http://magpie",
         aviary_core::auth::outbound_token("HERMIT", "MAGPIE"),
     );
-    match hermit::legacy::legacy_cleanup(std::path::Path::new(MOUNT), &hermit, &magpie, &cli, confirm).await {
+    match hermit::legacy::legacy_cleanup(std::path::Path::new(MOUNT), &hermit, &magpie, &cli, confirm, &drop).await {
         Ok(hermit::legacy::Cleanup::Refused { plan }) => {
             let shown = serde_json::to_string(&plan).unwrap_or_default();
             tracing::warn!(plan = %shown, "legacy-cleanup refused without --confirm: nothing removed");

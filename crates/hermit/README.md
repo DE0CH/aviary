@@ -55,36 +55,48 @@ hermit spec sections 3-12, 19, 20, 23 and 24.1-24.2 (WP-18, the core) and 13 (WP
   `ws/<uuidv5(SHARE_NS, "share:" + id)>` with its quota and `workspaces` row, a target already there skipped with
   its quota and row still ensured. A share folder with no committed row (the old UI copies the folder first and
   commits the row after it) is never cloned, so no half-copied share is frozen; it is cloned whole by the first pass
-  after its row commits. Every share row read is kept in `legacy_shares` (migration 0005) for `legacy-cleanup`. Every
+  after its row commits. Every share row read is kept in `legacy_shares` (migration 0005) for `legacy-cleanup`. A
+  share whose clone hermit deleted on purpose is never cloned again: `DELETE /v1/workspaces/<id>` (magpie revoking
+  the share or purging its conversation) records `legacy_shares.deleted_at` (migration 0006) before it removes
+  anything, the import skips such a share (the old share table, which only the old UI wrote, still holds it live) and
+  one whose delete is in flight, and a clone whose share was recorded deleted while it copied is removed again. Every
   `at` keeps its source value (microseconds included). `--delta` reads event ids above the highest copied less 1 000
   and sandboxes released after the latest imported release less 1 h (rows committed out of id order are still
   found); hosts and shares are read whole every run. A full pass (no `--delta`) counts per table the source rows it
   read that hermit does not hold (`missing`; any is an error). `--final` is a full pass that also imports what the
   old fabric left unfinished: owned sandboxes not gone as gone (`sandbox_lost`, reason `old fabric removed`), hosts
   not gone (the old gateway) as gone with that reason. One copy failing does not stop the others or the share pass.
-  The share pass starts no clone 4 minutes into the run (the rest wait for the next run), so a run ends within
-  4 minutes plus one clone's 15-minute limit: the CronJob's `activeDeadlineSeconds` is 1200. Before it exits, the run
-  waits up to 60 s for the store's background work (an unfinished clone's removal, a late rename's quota). Exit 1
-  when a copy failed, a count does not match or a share clone failed (the next run retries), 2 on a bad URL or
-  `hermit.json`. One log line per table, one for the shares and one `import-jarvis done` with the whole report.
+  The share pass starts no clone 2 minutes into the run (the rest wait for the next run), so a run ends within
+  2 minutes plus one clone's 15-minute limit, a timed-out clone's removal (60 s) and the settle below (60 s): 19
+  minutes, under the CronJob's `activeDeadlineSeconds` of 1200. Before it exits, the run waits up to 60 s for the
+  store's background work (an unfinished clone's removal, a late rename's quota). Exit 1 when a copy failed, a count
+  does not match, a share clone failed (the next run retries), or a full pass (`--final` among them) left a live
+  share for later (the budget, a delete in flight); 2 on a bad URL or `hermit.json`. One log line per table, one for the shares and one `import-jarvis done` with the whole report.
 - **`hermit jfs-owner [--root /jfs]`** (Job `hermit-jfs-owner`, root, the volume mounted without squashing; A2
   before the first import, A6 after `legacy-down.sh`; 15.4): `ws/` and everything under it to 1000:1000 with
   `lchown` (a symlink's target is never touched), staying on the volume, only entries not owned already, the top-level
   folders on 16 threads. Exit 1 when an entry could not be changed (the report names the first 20).
-- **`hermit legacy-cleanup [--confirm]`** (P6, 30 days after the switch; 22.3 step 6). Env `HERMIT_DATABASE_URL`,
-  `HERMIT_TOKEN_MAGPIE`, the `JuiceFS` pair. First checks that every old share folder `users/<key>/shares/<id>/ws`
-  is carried over: its share revoked, or its clone `ws/<uuidv5>` there (from `legacy_shares`); one that is not (no
-  committed row was imported, or its clone is missing) blocks the whole cleanup (exit 1, nothing removed), since
-  `users/` holds its only copy. Then plans the removal of `users/` and `sent/`, of every empty `ws/<uuid>` folder and
-  of every old share's clone with content (a share revoked, or gone with its conversation, before magpie took it)
-  that magpie's `POST /v1/hermit/workspaces/exists` (batches of 1 000; at least one call, so a magpie that does not
-  answer stops the cleanup) does not name, no sandbox that is not gone uses, and that is older than 24 h (the folder
-  and its `workspaces` row); other folders with content, other names (a clone's temporary tree) and everything
-  magpie names are kept. Without `--confirm` it logs the plan, removes nothing and exits 2. With it: `juicefs rmr` of
-  the two trees, then the folders batch by batch: each marked in `workspace_deletes` (starts and ensures refuse it
-  from then on; a folder with a delete of hermit's own in flight is skipped), magpie asked again, the sandboxes and
-  the folder's age checked again right before it goes; then `rmdir` (a folder that got content since is kept) or
-  `juicefs rmr` for an orphan clone, its quota, its `workspaces` row and its mark. Exit 1 when a removal failed.
+- **`hermit legacy-cleanup [--confirm] [--drop-share <id>]…`** (P6, 30 days after the switch; 22.3 step 6). Env
+  `HERMIT_DATABASE_URL`, `HERMIT_TOKEN_MAGPIE`, the `JuiceFS` pair. Before `--confirm` the operator checks that
+  magpie's import is complete (its last `verify --all` clean): `users/` and `sent/` hold the only other copy of what
+  it imported, and hermit sees only that magpie answers. First checks that every old share is carried over (from
+  `legacy_shares`): revoked in the old UI, deleted on purpose through hermit (`deleted_at`), its clone `ws/<uuidv5>`
+  there, or cloned once with the clone gone since and magpie not referencing it (`sharesGone`). Blocking (exit 1,
+  nothing removed): a share folder with no committed row (listed with its age), a live share never cloned, a clone
+  that is gone while magpie references it, and a live share's clone with content that magpie does not name (its
+  import may have missed it). `--drop-share <id>` lets a folder with no committed row go (a failed make of the old
+  UI, which copies the folder before it commits the row) once it and its `ws/` are 24 h old; each is logged and
+  listed in `dropped`. Then plans the removal of `users/` and `sent/`, of every empty `ws/<uuid>` folder and of every
+  clone with content of a share revoked or deleted that magpie's `POST /v1/hermit/workspaces/exists` (batches of
+  1 000; at least one call, so a magpie that does not answer stops the cleanup) does not name, no sandbox that is not
+  gone uses, and that is older than 24 h (the folder and its `workspaces` row); other folders with content, other
+  names (a clone's temporary tree) and everything magpie names are kept. Without `--confirm` it logs the plan,
+  removes nothing and exits 2. With it: `juicefs rmr` of the two trees, then the folders batch by batch: each marked
+  in `workspace_deletes` (starts and ensures refuse it from then on; a folder with a delete of hermit's own in flight
+  is skipped), magpie asked again, then right before it goes its mark renewed (a mark lapses after 10 minutes) and
+  the sandboxes and the folder's age checked again; then `rmdir` (a folder that got content since is kept) or, for an
+  orphan clone, its `deleted_at` and `juicefs rmr`; its quota, its `workspaces` row and its mark. Exit 1 when a
+  removal failed.
 - **`fabric/aws/legacy-down.sh --config <legacy.json> aws|host|hetzner [--confirm]`** (A6, once): terminates the old
   fabric's tagged instances, deletes its launch template, tagged AMIs and their snapshots, IAM users and security
   group, after checking that no AMI it would deregister is used by another launch template or by an instance outside
@@ -112,8 +124,11 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   it is cloned whole once its row commits; a revoked one never), the share budget, `--final` and the full-pass
   counts, an old host updated and hermit's own never, one copy failing without stopping the others, a new host never
   taking an imported host's name, `jfs-owner` (as root: real ownership, a symlink's target untouched; as a user:
-  nothing changed, EPERM counted), `legacy-cleanup` refused without `--confirm`, blocked while an old share is not
-  carried over, asking magpie even with nothing to ask about, keeping what magpie names, live sandboxes' and recent
+  nothing changed, EPERM counted), a share deleted through hermit never cloned again (also when the delete lands
+  while its clone copies; a delete in flight defers it and makes a full pass incomplete), `legacy-cleanup` refused
+  without `--confirm`, blocked while an old share is not carried over (no row, a lost clone magpie references, a live
+  clone magpie does not name) and not by a share deleted or revoked or a lost clone magpie no longer references,
+  `--drop-share` only for an old folder with no row, asking magpie even with nothing to ask about, keeping what magpie names, live sandboxes' and recent
   folders and folders with content, removing an orphan share clone, and every re-check between the plan and the
   removal (magpie naming a folder late, a sandbox started late, a delete of hermit's own in flight, a failed
   removal).
@@ -297,7 +312,9 @@ and replicas started in-process with short timings (`Timings` is code, not confi
 - **`import-jarvis` reads `cc_shared.shares`** (`HERMIT_IMPORT_CLOUDCLI_URL`, a second read-only role) to clone only
   committed, unrevoked shares: the folder alone cannot tell a finished share from one being copied.
 - **`legacy_shares` outlives the import** (migration 0005): `legacy-cleanup` needs it 30 days later, after the old
-  databases are gone; it is dropped with the cleanup.
+  databases are gone; it is dropped with the cleanup. hermit's workspace delete writes its `deleted_at` (migration
+  0006) until then, the only place the serving code touches a switch table: the import and the cleanup cannot see a
+  delete otherwise once its folder is gone.
 - **`legacy-down.sh` takes a legacy file** (`--config`) for every old name (tags, template, IAM users, security
   group, units, interface, nft table, route table, paths, Hetzner network routes and firewall), as `infra.sh` takes
   `hermit.json`; the public repository names no deployment. It runs by step (`aws`, `host`, `hetzner`) since each

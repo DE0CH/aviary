@@ -1045,6 +1045,13 @@ async fn every_admin_call_is_audited_and_does_what_it_says() {
         ))
         .await;
     }
+    // sb1 sits on the current image for this call, so its own recycle below is the only one it gets (a release this
+    // call started could otherwise finish before that call and leave it nothing to count)
+    h.sql(&format!(
+        "update sandboxes set image = '{}' where id = '{}'",
+        h.config.image_digest, w.sb1
+    ))
+    .await;
     let a = admin
         .call(
             &r.url,
@@ -1054,7 +1061,7 @@ async fn every_admin_call_is_audited_and_does_what_it_says() {
             &as_admin,
         )
         .await;
-    assert_eq!((a.status, a.body["released"].clone()), (200, json!(2)), "{:?}", a.body);
+    assert_eq!((a.status, a.body["released"].clone()), (200, json!(1)), "{:?}", a.body);
     let pending = |id: Uuid| {
         let h = &h;
         async move {
@@ -1084,6 +1091,11 @@ async fn every_admin_call_is_audited_and_does_what_it_says() {
     );
     h.sql(&format!(
         "delete from sandboxes where id in ('{starting}', '{old_start}')"
+    ))
+    .await;
+    h.sql(&format!(
+        "update sandboxes set image = '{old_image}' where id = '{}'",
+        w.sb1
     ))
     .await;
     let a = admin

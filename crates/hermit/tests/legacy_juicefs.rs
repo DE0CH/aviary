@@ -287,7 +287,7 @@ async fn the_commands_on_a_real_juicefs_volume() {
 
     // legacy-cleanup through the squashed mount: blocked while a share folder has no committed row
     let magpie = Magpie(Mutex::new(vec![wid]));
-    let blocked = legacy::legacy_cleanup(&v.squashed, &hp, &magpie, cli.as_ref(), true)
+    let blocked = legacy::legacy_cleanup(&v.squashed, &hp, &magpie, cli.as_ref(), true, &[])
         .await
         .unwrap();
     assert!(matches!(blocked, Cleanup::Blocked { .. }), "{blocked:?}");
@@ -300,7 +300,7 @@ async fn the_commands_on_a_real_juicefs_volume() {
         .execute("update workspaces set created_at = now() - interval '3 days'", &[])
         .await
         .unwrap();
-    let Cleanup::Done { plan, done } = legacy::legacy_cleanup(&v.squashed, &hp, &magpie, cli.as_ref(), true)
+    let Cleanup::Done { plan, done } = legacy::legacy_cleanup(&v.squashed, &hp, &magpie, cli.as_ref(), true, &[])
         .await
         .unwrap()
     else {

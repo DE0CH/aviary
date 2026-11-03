@@ -21,7 +21,9 @@
 //!   there is skipped (its quota still ensured). The old UI writes that folder first and commits the row after it, so
 //!   a folder without a row (a share being made, or one whose making failed) is never cloned half-written; it is
 //!   cloned whole by the first pass after its row commits. Every row read is kept in `legacy_shares` (revoked or not,
-//!   cloned or not) for `legacy-cleanup`.
+//!   cloned or not) for `legacy-cleanup`. A share whose clone hermit deleted on purpose (`legacy_shares.deleted_at`:
+//!   magpie revoked it or purged its conversation, `DELETE /v1/workspaces/<id>`) is never cloned again, although the
+//!   old share table, which only the old UI wrote, still holds it live; nor is one whose delete is in flight.
 //!
 //! Every `at` keeps its source value. Each copy is idempotent (sandboxes and hosts by their own key, the event tables
 //! by the unique `source_id`, shares by the target folder), so a run that is cut short or repeated changes nothing it
@@ -34,8 +36,10 @@
 //! is gone) is a full pass that also imports what the old fabric left unfinished: owned sandboxes not `gone` become
 //! `gone` with `release_code` `sandbox_lost` and reason [`FINAL_REASON`], hosts not `gone` (the old gateway among
 //! them) become `gone` with that reason. The share pass starts no clone after [`ImportOptions::share_budget`] of the
-//! run (the rest wait for the next run), so a run fits its `CronJob`'s deadline: the budget plus one clone's
-//! [`crate::workspaces::CLONE_TIMEOUT`].
+//! run (the rest wait for the next run), so a run fits its `CronJob`'s deadline (1 200 s) with room: the budget (2
+//! min), one clone's [`crate::workspaces::CLONE_TIMEOUT`] (15 min), a timed-out clone's removal
+//! ([`crate::workspaces::CLI_TIMEOUT`]) and the binary's settle (60 s) end by 19 min. A full pass (and so `--final`)
+//! that left a live share for later (the budget, a delete in flight) is not complete: it exits 1.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::IpAddr;
@@ -53,7 +57,7 @@ use serde_json::Value;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::fabric::Fut;
+use crate::fabric::{Fut, Workspaces as _};
 use crate::workspaces::{Imported, JfsCli, JuiceFs};
 
 /// Old sandboxes released in the last this many days are imported (hermit's own retention keeps 400 days, 10.6).
@@ -67,7 +71,7 @@ pub const RELEASE_LOOKBACK: Duration = Duration::from_hours(1);
 /// The release reason (sandboxes) and gone reason (hosts) `--final` gives what the old fabric left unfinished.
 pub const FINAL_REASON: &str = "old fabric removed";
 /// The share pass's default budget: no clone starts later than this into the run.
-pub const SHARE_BUDGET: Duration = Duration::from_mins(4);
+pub const SHARE_BUDGET: Duration = Duration::from_mins(2);
 /// The old fabric gave every sandbox one CPU and 1 GiB (its `sandbox.cpu` and `sandbox.memory`); the old rows do not
 /// record it, and hermit's rows require it.
 pub const OLD_CPU: f32 = 1.0;
@@ -106,6 +110,11 @@ pub struct ShareCount {
     pub skipped: u64,
     /// Live shares not tried because the run's share budget was spent (the next run takes them).
     pub deferred: u64,
+    /// Shares whose clone hermit deleted on purpose (`legacy_shares.deleted_at`): never cloned again.
+    pub deleted: u64,
+    /// Shares whose clone has a delete in flight (`workspace_deletes`): not cloned now; the next run finds them
+    /// deleted, or clones them if that delete did not happen.
+    pub deleting: u64,
     /// Share folders on the volume with no committed row (being made, or a failed make): not cloned.
     pub uncommitted: Vec<String>,
     /// Shares whose clone failed (the next run retries them), as `<id>: <error>`.
@@ -130,10 +139,17 @@ pub struct ImportReport {
 }
 
 impl ImportReport {
-    /// Whether everything was copied: no error, no failed share clone.
+    /// Whether everything was copied: no error, no failed share clone, and for a full pass (`--final` among them)
+    /// no live share left for a later run (deferred by the budget, or with a delete in flight). Folders without a
+    /// committed row ([`ShareCount::uncommitted`]) are reported, not counted: after the old stack is gone they are
+    /// failed makes, which `legacy-cleanup --drop-share` lets go.
     #[must_use]
     pub fn complete(&self) -> bool {
-        self.errors.is_empty() && self.shares.as_ref().is_none_or(|s| s.failed.is_empty())
+        self.errors.is_empty()
+            && self
+                .shares
+                .as_ref()
+                .is_none_or(|s| s.failed.is_empty() && (self.delta || (s.deferred == 0 && s.deleting == 0)))
     }
 }
 
@@ -550,9 +566,11 @@ async fn import_host_events(hermit: &Pool, source: &Pool, delta: bool) -> Result
     Ok(n)
 }
 
-/// Hosts are always read whole (a few dozen rows), so every pass counts [`Count::missing`]. A host hermit already
-/// holds by that name is updated only when it is `gone` there and has the same instance (the same old host, whose
-/// row changed since: gone, back, gone again); a name hermit's own scaler gave a host of its own is left alone.
+/// Hosts are always read whole (a few dozen rows), so every pass counts [`Count::missing`]: the rows with an unreadable
+/// `wg_ip`, and those hermit holds no `gone` host of the same name, kind and instance for. A host hermit already holds
+/// by that name is updated only when it is `gone` there and has the same kind and instance (the same old host, whose
+/// row changed since: gone, back, gone again); a name hermit's own scaler gave a host of its own is left alone, and
+/// that old row counts as missing.
 async fn import_hosts(hermit: &Pool, source: &Pool, final_pass: bool) -> Result<Count, LegacyError> {
     let (hermit, source) = (hermit.get().await?, source.get().await?);
     let rows = source
@@ -567,15 +585,19 @@ async fn import_hosts(hermit: &Pool, source: &Pool, final_pass: bool) -> Result<
         )
         .await?;
     let mut n = Count::default();
-    let mut names = Vec::with_capacity(rows.len());
+    let (mut names, mut kinds, mut instances) = (Vec::new(), Vec::new(), Vec::<Option<String>>::new());
+    let mut unreadable = 0u64;
     for r in &rows {
         n.read += 1;
         let name: String = get(r, "name")?;
         let Some(wg_ip) = inet(get(r, "wg_ip")?) else {
             tracing::warn!(host = %name, "old host with an unreadable wg_ip not imported");
+            unreadable += 1;
             continue;
         };
         names.push(name.clone());
+        kinds.push(get::<String>(r, "kind")?);
+        instances.push(get(r, "instance_id")?);
         let max: Option<i32> = get(r, "max_sandboxes")?;
         n.copied += hermit
             .execute(
@@ -617,7 +639,17 @@ async fn import_hosts(hermit: &Pool, source: &Pool, final_pass: bool) -> Result<
             )
             .await?;
     }
-    n.missing = Some(missing(&hermit, "select count(*) as n from hosts where name = any($1)", &names).await?);
+    let held = hermit
+        .query_one(
+            "select count(*) as n from hosts h
+               join unnest($1::text[], $2::text[], $3::text[]) as s(name, kind, instance_id)
+                 on h.name = s.name and h.kind = s.kind and h.instance_id is not distinct from s.instance_id
+              where h.status = 'gone'",
+            &[&names, &kinds, &instances],
+        )
+        .await?;
+    let held = u64::try_from(get::<i64>(&held, "n")?).unwrap_or(0);
+    n.missing = Some(unreadable + (names.len() as u64).saturating_sub(held));
     Ok(n)
 }
 
@@ -679,14 +711,20 @@ async fn import_shares(
     for s in &rows {
         n.rows += 1;
         let wid = share_workspace(&s.id);
-        db.execute(
-            "insert into legacy_shares (id, workspace, revoked) values ($1, $2, $3)
-             on conflict (id) do update set revoked = legacy_shares.revoked or excluded.revoked, seen_at = now()",
-            &[&s.id, &wid, &s.revoked],
-        )
-        .await?;
+        let row = db
+            .query_one(
+                "insert into legacy_shares (id, workspace, revoked) values ($1, $2, $3)
+                 on conflict (id) do update set revoked = legacy_shares.revoked or excluded.revoked, seen_at = now()
+                 returning deleted_at is not null as deleted",
+                &[&s.id, &wid, &s.revoked],
+            )
+            .await?;
         if s.revoked {
             n.revoked += 1;
+            continue;
+        }
+        if get::<bool>(&row, "deleted")? {
+            n.deleted += 1;
             continue;
         }
         let Some(rel) = share_folder(&s.id, &s.dir) else {
@@ -698,8 +736,26 @@ async fn import_shares(
             n.deferred += 1;
             continue;
         }
+        if crate::db::workspace_deleting(hermit, wid).await? {
+            n.deleting += 1;
+            continue;
+        }
         let made = match src.store.import_clone(wid, &rel).await {
             Ok(Imported::Cloned(w)) => {
+                // a delete that recorded itself while the clone ran: the clone goes again (that delete may have run
+                // before the copy was in place)
+                if share_deleted(&db, &s.id).await? {
+                    if let Err(e) = src.store.delete(wid).await {
+                        n.failed.push(format!(
+                            "{}: deleted during its clone, and the clone not removed: {e}",
+                            s.id
+                        ));
+                        continue;
+                    }
+                    crate::db::forget_workspace(hermit, wid).await;
+                    n.deleted += 1;
+                    continue;
+                }
                 crate::db::workspace_created(hermit, wid, w.created_at, true).await;
                 tracing::info!(share = %s.id, workspace = %wid, "share workspace cloned");
                 n.cloned += 1;
@@ -725,6 +781,16 @@ async fn import_shares(
         }
     }
     Ok(n)
+}
+
+async fn share_deleted(db: &aviary_pg::Conn, id: &str) -> Result<bool, LegacyError> {
+    let r = db
+        .query_one(
+            "select deleted_at is not null as deleted from legacy_shares where id = $1",
+            &[&id],
+        )
+        .await?;
+    get(&r, "deleted")
 }
 
 // ---- jfs-owner (15.4) ----
@@ -835,9 +901,13 @@ pub fn fix_owner(root: &Path, uid: u32, gid: u32, threads: usize) -> std::io::Re
         errors: Mutex::new(Vec::new()),
     };
     walk.own(&ws);
-    let tops: Vec<PathBuf> = std::fs::read_dir(&ws)?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .collect();
+    let mut tops: Vec<PathBuf> = Vec::new();
+    for e in std::fs::read_dir(&ws)? {
+        match e {
+            Ok(e) => tops.push(e.path()),
+            Err(e) => walk.fail(&ws, &e),
+        }
+    }
     let next = AtomicUsize::new(0);
     std::thread::scope(|s| {
         for _ in 0..threads.max(1) {
@@ -898,9 +968,16 @@ pub struct CleanupPlan {
     pub trees: Vec<String>,
     /// Empty `ws/<id>` folders that magpie does not reference and no live sandbox uses.
     pub empty_workspaces: Vec<Uuid>,
-    /// Old shares' clones (`legacy_shares`) with content that magpie does not reference: a share revoked, or deleted
-    /// with its conversation, before magpie's import took it.
+    /// Old shares' clones (`legacy_shares`) with content that magpie does not reference, of shares revoked in the old
+    /// UI or deleted on purpose through hermit (`deleted_at`). A live share's clone magpie does not name blocks the
+    /// cleanup instead ([`CleanupPlan::shares_not_carried`]): magpie's import may have missed it.
     pub orphan_shares: Vec<Uuid>,
+    /// Old shares cloned once whose clone is gone now and that magpie does not reference (deleted on purpose before
+    /// `deleted_at` recorded it): carried over, and removed since, as `<share id>: ws/<id>`.
+    pub shares_gone: Vec<String>,
+    /// Old share folders the operator let go (`--drop-share <id>`: no committed share row, and not modified for
+    /// [`RECENT`]), as `<share id>: <why it would block>`.
+    pub dropped: Vec<String>,
     /// Folders kept because magpie references them.
     pub kept_referenced: u64,
     /// Folders kept because a sandbox that is not gone has that workspace.
@@ -909,8 +986,8 @@ pub struct CleanupPlan {
     pub kept_recent: u64,
     /// Workspace folders with content that are not old shares' clones (never removed here).
     pub kept_with_content: u64,
-    /// Old share folders whose data the switch has not carried over, as `<share id>: <why>`. Any one blocks the
-    /// whole cleanup: `users/` holds their only copy.
+    /// Old shares whose data the switch has not carried over, as `<share id>: <why>`. Any one blocks the whole
+    /// cleanup: `users/` (or the clone magpie does not name) holds their only copy.
     pub shares_not_carried: Vec<String>,
 }
 
@@ -956,13 +1033,28 @@ fn recent(t: SystemTime) -> bool {
 struct LegacyShare {
     workspace: Uuid,
     revoked: bool,
+    /// Cloned (or found cloned) once.
+    cloned: bool,
+    /// Deleted on purpose through hermit, or by an earlier cleanup.
+    deleted: bool,
+}
+
+impl LegacyShare {
+    /// Revoked in the old UI or deleted on purpose since: its clone may go, and it needs no clone.
+    fn ended(&self) -> bool {
+        self.revoked || self.deleted
+    }
 }
 
 async fn legacy_shares(hermit: &Pool) -> Result<BTreeMap<String, LegacyShare>, LegacyError> {
     hermit
         .get()
         .await?
-        .query("select id, workspace, revoked from legacy_shares", &[])
+        .query(
+            "select id, workspace, revoked, cloned_at is not null as cloned, deleted_at is not null as deleted
+               from legacy_shares",
+            &[],
+        )
         .await?
         .iter()
         .map(|r| {
@@ -971,19 +1063,46 @@ async fn legacy_shares(hermit: &Pool) -> Result<BTreeMap<String, LegacyShare>, L
                 LegacyShare {
                     workspace: get(r, "workspace")?,
                     revoked: get(r, "revoked")?,
+                    cloned: get(r, "cloned")?,
+                    deleted: get(r, "deleted")?,
                 },
             ))
         })
         .collect()
 }
 
+/// When an old share folder (`users/<key>/shares/<id>` and its `ws/`) was last modified, the later of the two.
+fn share_modified(root: &Path, ws: &Path) -> SystemTime {
+    let at = |p: &Path| {
+        std::fs::symlink_metadata(root.join(p))
+            .and_then(|m| m.modified())
+            .unwrap_or_else(|_| SystemTime::now())
+    };
+    let own = ws.parent().map_or_else(SystemTime::now, at);
+    own.max(at(ws))
+}
+
+fn hours_ago(t: SystemTime) -> String {
+    t.elapsed()
+        .map_or_else(|_| "just now".to_owned(), |d| format!("{} h ago", d.as_secs() / 3600))
+}
+
 /// The plan of one `legacy-cleanup`: reads the volume, hermit's live sandboxes, recent workspace rows and the import's
-/// `legacy_shares`, checks that every old share folder is carried over, and asks magpie about every folder it could
-/// remove (at least one call: a magpie that does not answer stops the cleanup). Removes nothing.
+/// `legacy_shares`, checks that every old share is carried over, and asks magpie about every folder it could remove
+/// and every old share's clone it needs to know about (at least one call: a magpie that does not answer stops the
+/// cleanup). An old share is carried over when it was revoked in the old UI, deleted on purpose through hermit, has
+/// its clone, or was cloned once and magpie does not reference the clone that is gone now; `drop` (`--drop-share`)
+/// lets a folder with no committed share row go once it is [`RECENT`] old. Removes nothing.
 ///
 /// # Errors
 /// The volume or the database cannot be read, or magpie does not answer: then nothing is to be removed.
-pub async fn cleanup_plan(root: &Path, hermit: &Pool, magpie: &dyn Referenced) -> Result<CleanupPlan, LegacyError> {
+#[allow(clippy::too_many_lines)] // one pass over every kind of old share and folder
+pub async fn cleanup_plan(
+    root: &Path,
+    hermit: &Pool,
+    magpie: &dyn Referenced,
+    drop: &[String],
+) -> Result<CleanupPlan, LegacyError> {
     let r = root.to_owned();
     let (folders, trees, shares) = tokio::task::spawn_blocking(move || {
         let trees: Vec<String> = ["users", "sent"]
@@ -992,7 +1111,14 @@ pub async fn cleanup_plan(root: &Path, hermit: &Pool, magpie: &dyn Referenced) -
             .map(str::to_owned)
             .collect();
         let folders = workspace_folders(&r).map_err(|e| format!("ws/: {e}"))?;
-        let shares = old_shares(&r).map_err(|e| format!("users/: {e}"))?;
+        let shares: Vec<(String, SystemTime)> = old_shares(&r)
+            .map_err(|e| format!("users/: {e}"))?
+            .into_iter()
+            .map(|(id, rel)| {
+                let at = share_modified(&r, &rel);
+                (id, at)
+            })
+            .collect();
         Ok::<_, String>((folders, trees, shares))
     })
     .await
@@ -1014,26 +1140,45 @@ pub async fn cleanup_plan(root: &Path, hermit: &Pool, magpie: &dyn Referenced) -
         )
         .await?)?;
     let legacy = legacy_shares(hermit).await?;
-    let share_clones: BTreeSet<Uuid> = legacy.values().map(|s| s.workspace).collect();
+    let by_workspace: BTreeMap<Uuid, (&str, &LegacyShare)> =
+        legacy.iter().map(|(id, s)| (s.workspace, (id.as_str(), s))).collect();
     let present: BTreeSet<Uuid> = folders.iter().map(|f| f.id).collect();
     let mut plan = CleanupPlan {
         trees,
         ..CleanupPlan::default()
     };
-    for (id, _) in &shares {
-        match legacy.get(id) {
-            None => plan.shares_not_carried.push(format!(
-                "{id}: no committed share row was imported (being made, a failed make, or the import did not run)"
-            )),
-            Some(s) if s.revoked => {}
-            Some(s) if !present.contains(&s.workspace) => plan
-                .shares_not_carried
-                .push(format!("{id}: its clone ws/{} is missing", s.workspace)),
-            Some(_) => {}
+    // clones made once and gone now: carried over only if magpie no longer references them
+    let mut gone_clones: Vec<(String, Uuid)> = Vec::new();
+    for (id, modified) in &shares {
+        let why = match legacy.get(id) {
+            None => format!(
+                "{id}: no committed share row was imported (being made, a failed make, or the import did not run); \
+                 its folder was modified {}",
+                hours_ago(*modified)
+            ),
+            Some(s) if s.ended() || present.contains(&s.workspace) => continue,
+            Some(s) if s.cloned => {
+                gone_clones.push((id.clone(), s.workspace));
+                continue;
+            }
+            Some(s) => format!("{id}: a live share never cloned into ws/{}", s.workspace),
+        };
+        if !drop.contains(id) {
+            plan.shares_not_carried.push(why);
+        } else if legacy.contains_key(id) {
+            plan.shares_not_carried.push(format!(
+                "{why} (--drop-share takes only a folder with no committed share row)"
+            ));
+        } else if recent(*modified) {
+            plan.shares_not_carried
+                .push(format!("{why} (--drop-share refused: modified in the last 24 h)"));
+        } else {
+            tracing::warn!(share = %id, why = %why, "legacy-cleanup: old share folder dropped by the operator (--drop-share)");
+            plan.dropped.push(why);
         }
     }
     let mut empty = Vec::new();
-    let mut orphans = Vec::new();
+    let mut clones = Vec::new();
     for f in &folders {
         if live.contains(&f.id) {
             plan.kept_live += 1;
@@ -1041,28 +1186,46 @@ pub async fn cleanup_plan(root: &Path, hermit: &Pool, magpie: &dyn Referenced) -
             plan.kept_recent += 1;
         } else if f.empty {
             empty.push(f.id);
-        } else if share_clones.contains(&f.id) {
-            orphans.push(f.id);
+        } else if by_workspace.contains_key(&f.id) {
+            clones.push(f.id);
         } else {
             plan.kept_with_content += 1;
         }
     }
+    let gone_ids: Vec<Uuid> = gone_clones.iter().map(|(_, w)| *w).collect();
     let named = referenced(magpie, &empty, EXISTS_BATCH).await?;
-    let named_orphans = referenced(magpie, &orphans, EXISTS_BATCH).await?;
-    if empty.is_empty() && orphans.is_empty() {
+    let named_clones = referenced(magpie, &clones, EXISTS_BATCH).await?;
+    let named_gone = referenced(magpie, &gone_ids, EXISTS_BATCH).await?;
+    if empty.is_empty() && clones.is_empty() && gone_ids.is_empty() {
         // nothing to ask about: magpie still has to answer before its import's trees go
         magpie.exists(&[]).await.map_err(LegacyError::Other)?;
     }
-    for (all, named, out) in [
-        (&empty, &named, &mut plan.empty_workspaces),
-        (&orphans, &named_orphans, &mut plan.orphan_shares),
-    ] {
-        for id in all {
-            if named.contains(id) {
-                plan.kept_referenced += 1;
-            } else {
-                out.push(*id);
-            }
+    for id in &empty {
+        if named.contains(id) {
+            plan.kept_referenced += 1;
+        } else {
+            plan.empty_workspaces.push(*id);
+        }
+    }
+    for id in &clones {
+        if named_clones.contains(id) {
+            plan.kept_referenced += 1;
+            continue;
+        }
+        match by_workspace.get(id) {
+            Some((_, s)) if s.ended() => plan.orphan_shares.push(*id),
+            Some((sid, _)) => plan.shares_not_carried.push(format!(
+                "{sid}: magpie does not reference ws/{id}, the clone of a live share (its import may have missed it)"
+            )),
+            None => plan.kept_with_content += 1,
+        }
+    }
+    for (sid, w) in &gone_clones {
+        if named_gone.contains(w) {
+            plan.shares_not_carried
+                .push(format!("{sid}: its clone ws/{w} is missing and magpie references it"));
+        } else {
+            plan.shares_gone.push(format!("{sid}: ws/{w}"));
         }
     }
     Ok(plan)
@@ -1109,8 +1272,9 @@ async fn unmark(hermit: &Pool, id: Uuid) -> Result<(), LegacyError> {
 
 /// Carries out `plan`: `juicefs rmr` of each tree, then the workspace folders batch by batch. Each folder of a batch
 /// is first marked as being deleted (`workspace_deletes`: a start or an ensure refuses it from then on), then magpie
-/// is asked again about the batch, then, right before each removal, hermit's sandboxes and the folder's age are
-/// checked again; a folder that fails any of these is kept and unmarked. An empty folder goes with `rmdir` (which
+/// is asked again about the batch, then, right before each removal, its mark is renewed (a mark lapses after
+/// [`crate::db::DELETE_GUARD`]) and hermit's sandboxes and the folder's age are checked again; a folder that fails any
+/// of these is kept and unmarked. An empty folder goes with `rmdir` (which
 /// keeps one that got content since the plan), an orphan share clone with `juicefs rmr`; then its quota, its
 /// `workspaces` row and its mark.
 ///
@@ -1157,6 +1321,8 @@ pub async fn cleanup_apply(
             }
         };
         for id in marked {
+            // the mark lapses after DELETE_GUARD; a batch can take longer, so each folder's mark is fresh when it goes
+            crate::db::mark_workspace_deleting(hermit, id).await?;
             if let Some(why) = keep_now(root, hermit, id, &named).await? {
                 unmark(hermit, id).await?;
                 done.kept.push(format!("ws/{id}: {why}"));
@@ -1164,6 +1330,7 @@ pub async fn cleanup_apply(
             }
             let dir = root.join("ws").join(id.to_string());
             let removed = if orphan {
+                crate::db::record_share_deleted(hermit, id).await?;
                 cli.rmr(&dir).await.map_err(|e| e.to_string())
             } else {
                 let d = dir.clone();
@@ -1247,8 +1414,10 @@ pub enum Cleanup {
     },
 }
 
-/// `hermit legacy-cleanup [--confirm]`: the plan ([`cleanup_plan`]), then, only with `confirm` and every old share
-/// carried over, [`cleanup_apply`].
+/// `hermit legacy-cleanup [--confirm] [--drop-share <id>]…`: the plan ([`cleanup_plan`]), then, only with `confirm`
+/// and every old share carried over, [`cleanup_apply`]. Before `--confirm` the operator checks that magpie's import
+/// is complete (cutover's `magpie import verify --all` clean, its last full pass recorded): `users/` and `sent/`
+/// hold the only other copy of what it imported, and hermit sees only that magpie answers.
 ///
 /// # Errors
 /// As [`cleanup_plan`] (nothing removed) and [`cleanup_apply`].
@@ -1258,8 +1427,9 @@ pub async fn legacy_cleanup(
     magpie: &dyn Referenced,
     cli: &dyn JfsCli,
     confirm: bool,
+    drop: &[String],
 ) -> Result<Cleanup, LegacyError> {
-    let plan = cleanup_plan(root, hermit, magpie).await?;
+    let plan = cleanup_plan(root, hermit, magpie, drop).await?;
     if !confirm {
         return Ok(Cleanup::Refused { plan });
     }

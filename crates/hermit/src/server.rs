@@ -152,6 +152,8 @@ impl Server for Hermit {
         // no start mounts the workspace from here on (its workspace step refuses it), so the release below leaves
         // nothing that can come up on a tree being removed
         db::mark_workspace_deleting(&self.core().pool, wid).await.or_503()?;
+        // an old share's clone stays deleted: the switch's import would otherwise clone it again from the old folder
+        db::record_share_deleted(&self.core().pool, wid).await.or_503()?;
         // the conversation's live sandbox goes first (3.8), at most 60 s
         if !self.release_and_wait(wid).await? {
             tracing::warn!(workspace = %wid, "workspace delete refused: its sandbox is still releasing");
