@@ -365,17 +365,34 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   its content key with one `PUT`, rather than hashed while it streams (the key is the hash, known only at the end).
   No object magpie writes is over 64 MiB, so magpie 5.2's multipart path has nothing to carry and is not built.
   Buffered bodies are admitted under a memory budget of their own (`limits::BODY_MEMORY_BYTES`, 256 MiB per replica,
-  shared with the uploader's staged blobs): a body takes its `Content-Length` (else its route's limit) before a byte
-  is read. A blob read the read cache cannot answer takes the blob's size of the same budget before it fetches, and
-  its bytes keep it until the response has been sent (what the cache then keeps counts in the cache's budget; a
-  base64 blob's decoded copy and a cached entry evicted while its response is in flight are not counted). With the
-  decode budget (384 MiB), the read cache (224 MiB) and the recent uploads (32 MiB) that keeps a replica inside magpie 18.2's 1 GiB
-  (`tests/uploads_perf.rs` and `tests/bodies_perf.rs` measure it with the cache full). A decode whose estimate is over the whole decode
-  budget answers 415, like one over 40 MP: in practice a 16-bit image above about 35 MP (an 8-bit one never is).
+  shared with the uploader's staged blobs and the cc store's fetched blobs): a body takes its `Content-Length` (else
+  its route's limit) before a byte is read. The cc store's fetch of the blobs a transaction or a read needs
+  (`blobs::fetch_stored`) takes the whole batch's size at once (twice a staged blob's), waiting at most 30 s, and the
+  fetched buffers themselves (no copies) keep it until the transaction or the read is done.
+  Blob reads sent to a client (M15, the files panel's downloads, the sandbox's blob reads) are sent at the client's
+  pace, so they take a part of that budget of their own, `limits::READ_MEMORY_BYTES` (128 MiB), before the whole
+  budget: reads never hold more than that, and slow or stalled downloads never keep uploads, sandbox `PUT`s or the cc
+  store waiting. A read the read cache cannot answer takes the bytes it fetches (twice a staged blob's size while
+  its row and its copy are both alive); a base64-json or json-string blob's decoded copy takes twice the stored size
+  while it decodes and its own size afterwards. The bytes keep their share until the response has been sent or cut
+  off; a read that waits more than 20 s for it answers 503 with a `retry-after`. Concurrent reads of one uncached blob
+  make one fetch: the others wait for it and are answered from the cache. Bytes answered from the read cache take
+  nothing (the cache counts them); not counted are a cached entry evicted while its response is in flight, a
+  thumbnail or display copy (small WebP files), and a cc file read's assembled batch. Every blob response is sent in
+  256 KiB copies by a task that cuts the response off when the client takes nothing for 60 s
+  (`limits::SEND_IDLE`), so a client that vanished without closing gives the memory back within a minute instead of
+  when TCP gives up. With the decode budget (384 MiB), the read cache (224 MiB) and the recent uploads (32 MiB) that
+  keeps a replica inside magpie 18.2's 1 GiB (`tests/uploads_perf.rs` and `tests/bodies_perf.rs` measure it with the
+  cache full). A decode whose estimate is over the whole decode budget answers 415, like one over 40 MP: in practice
+  a 16-bit image above about 35 MP (an 8-bit one never is).
 - A blob lock is given back when its holder is dropped (a request whose client went away mid-`PUT`), not only by an
   explicit release, and taking one runs in a task of its own, so cancellation never leaves a lock on the lock
-  session. A GC that loses its lock session mid-delete takes the blob's lock again and checks a stored row's object
-  with a `HEAD`: a lost object clears `stored` (the next writer puts the bytes again) and logs `blob object lost`.
+  session. A lock session found ended (a failed statement, a lock found lost by the GC or by a writer's check) is
+  replaced on the next lock, and its replacement connection is taken without blocking the session's other locks. A
+  GC that loses its lock session mid-delete records the blob in `blob_reverify`, takes the blob's lock again and
+  checks a stored row's object with a `HEAD`: a lost object clears `stored` (the next writer puts the bytes again)
+  and logs `blob object lost`. The record is removed only once that check has run, so a check that could not run
+  (the lock not had again within 5 min, the bucket or the database unreachable) is retried by every GC pass.
 - The bucket and the GC are kept consistent by an advisory lock per blob (the two-key space, classid `mblb`):
   every writer of a blob's object holds it shared from before its `PUT` until its row commits (uploads, sent files,
   the uploader); the GC holds it exclusively from before it deletes a row until it has deleted the objects, and the

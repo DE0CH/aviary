@@ -68,6 +68,8 @@ tokio-rustls = { version = "=0.26.6", default-features = false, features = ["rin
 hyper-util = { version = "=0.1.21", default-features = false, features = ["tokio"] }
 # streamed bodies in test-gateway and aviary-conformance (testing/); already in the graph through axum and reqwest
 http-body-util = "=0.1.5"
+# magpie's sized streamed blob bodies; already in the graph through axum and hyper
+http-body = "=1.1.0"
 tower = "=0.5.3"
 tower-http = "=0.7.1"
 reqwest = { version = "=0.13.5", default-features = false, features = ["rustls-no-provider", "http2", "stream", "json"] }

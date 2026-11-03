@@ -88,8 +88,12 @@ pub async fn tree(app: &Magpie, caller: &Caller) -> Result<CcTree> {
 }
 
 /// The bytes of blobs `shas`: staged, else from the bucket (no connection held while the bucket is called).
-async fn blob_bytes(app: &Magpie, shas: &[Sha]) -> Result<HashMap<Sha, Vec<u8>>> {
-    let mut got = blobs::staging::read(&app.pool.get().await?, shas).await?;
+async fn blob_bytes(app: &Magpie, shas: &[Sha]) -> Result<HashMap<Sha, Bytes>> {
+    let mut got: HashMap<Sha, Bytes> = blobs::staging::read(&app.pool.get().await?, shas)
+        .await?
+        .into_iter()
+        .map(|(s, b)| (s, Bytes::from(b)))
+        .collect();
     let missing: Vec<Sha> = shas.iter().filter(|s| !got.contains_key(*s)).copied().collect();
     if !missing.is_empty() {
         got.extend(blobs::fetch_stored(app, &missing).await?);
@@ -143,8 +147,7 @@ async fn render(app: &Magpie, f: &File, b: Batch, to: i64) -> Result<(Vec<u8>, O
             blob_bytes(app, &shas).await?
         };
         for r in &rows {
-            let line =
-                extract::splice(&r.stub, &r.spans, |s| bytes.get(s).map(Vec::as_slice)).map_err(Error::Internal)?;
+            let line = extract::splice(&r.stub, &r.spans, |s| bytes.get(s).map(|b| &b[..])).map_err(Error::Internal)?;
             check_sha(&line, r)?;
             out.extend_from_slice(&line);
         }

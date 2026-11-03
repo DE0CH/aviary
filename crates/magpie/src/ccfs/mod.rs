@@ -285,7 +285,12 @@ pub enum Begun<'p> {
 ///
 /// # Errors
 /// 404, 409 `conversation_migrating` / `lease_lost`; a statement error.
-pub async fn begin<'p>(tx: &Tx<'_>, caller: &Caller, op_id: Uuid, pre: &'p HashMap<Sha, Vec<u8>>) -> Result<Begun<'p>> {
+pub async fn begin<'p>(
+    tx: &Tx<'_>,
+    caller: &Caller,
+    op_id: Uuid,
+    pre: &'p HashMap<Sha, axum::body::Bytes>,
+) -> Result<Begun<'p>> {
     let conv = lock(tx, caller).await?;
     conv.refuse_migrating()?;
     conv.check_lease(caller)?;
@@ -557,7 +562,7 @@ pub async fn set_resync(tx: &Tx<'_>, conversation: Uuid) -> Result<()> {
 #[doc(hidden)]
 macro_rules! cc_tx {
     ($app:expr, |$pre:ident, $t:ident| -> $ret:ty $body:block) => {{
-        let mut __cc_pre: ::std::collections::HashMap<$crate::ccfs::extract::Sha, Vec<u8>> =
+        let mut __cc_pre: ::std::collections::HashMap<$crate::ccfs::extract::Sha, ::axum::body::Bytes> =
             ::std::collections::HashMap::new();
         let mut __cc_tries = 0u32;
         loop {

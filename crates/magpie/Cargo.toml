@@ -17,6 +17,7 @@ base64.workspace = true
 chrono-tz.workspace = true
 futures-util.workspace = true
 fast_image_resize = { workspace = true, features = ["image"] }
+http-body.workspace = true
 http-body-util.workspace = true
 hermit-api = { path = "../hermit-api" }
 image = { workspace = true, features = ["jpeg", "png", "gif", "webp", "tiff", "bmp"] }

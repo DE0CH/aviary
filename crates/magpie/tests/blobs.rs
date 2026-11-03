@@ -869,3 +869,285 @@ async fn a_revalidation_answers_304_before_the_bucket_is_asked() {
     );
     proxy.restore();
 }
+
+/// A stored blob of `mib` MiB put straight into the bucket under a made-up sha (`seed`), referenced from a made-up
+/// conversation, so M15 serves it; nothing is cached.
+async fn stored_blob(r: &common::Replica, seed: u8, mib: usize, encoding: &str, bytes: Option<Vec<u8>>) -> [u8; 32] {
+    let bytes = bytes.unwrap_or_else(|| vec![seed; mib << 20]);
+    let mut sha = [seed; 32];
+    sha[31] = 0xa5;
+    r.app()
+        .blobs
+        .bucket
+        .put(&store::blob_key(&blobs::to_hex(&sha)), bytes.clone().into(), None)
+        .await
+        .unwrap();
+    let sql = r.pool().get().await.unwrap();
+    let kind = if encoding == "raw" { "file" } else { "media" };
+    let mime = if encoding == "raw" { None } else { Some("image/png") };
+    sql.execute(
+        "insert into blobs (sha256, size, kind, encoding, mime, stored) values ($1, $2, $3, $4, $5, true)",
+        &[
+            &sha.as_slice(),
+            &i64::try_from(bytes.len()).unwrap(),
+            &kind,
+            &encoding,
+            &mime,
+        ],
+    )
+    .await
+    .unwrap();
+    sql.execute(
+        "insert into blob_refs (owner, owner_kind, blob) values ($1, 'conversation', $2)",
+        &[&Uuid::new_v4(), &sha.as_slice()],
+    )
+    .await
+    .unwrap();
+    sha
+}
+
+/// Opens M15 reads of `shas` that never read their bodies (stalled clients): each sends its status once it has its
+/// headers and holds its response until `release` fires.
+fn stalled_readers(
+    r: &common::Replica,
+    shas: &[[u8; 32]],
+    release: &Arc<tokio::sync::Notify>,
+) -> (
+    tokio::sync::mpsc::UnboundedReceiver<u16>,
+    Vec<tokio::task::JoinHandle<()>>,
+) {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let tasks = shas
+        .iter()
+        .map(|sha| {
+            let p = r.pigeon();
+            let hex = blobs::to_hex(sha);
+            let tx = tx.clone();
+            let release = release.clone();
+            tokio::spawn(async move {
+                let resp = p
+                    .blob(
+                        &hex,
+                        &BlobQuery {
+                            variant: Some(BlobVariant::Full),
+                        },
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                let _ = tx.send(resp.status().as_u16());
+                release.notified().await;
+                drop(resp);
+            })
+        })
+        .collect();
+    (rx, tasks)
+}
+
+#[tokio::test]
+async fn slow_readers_of_large_uncached_blobs_never_keep_an_upload_waiting() {
+    // eight clients read 30 MiB blobs the cache does not hold and never take their bodies: reads hold at most their
+    // part of the body budget (128 MiB: four of them), the others wait for it, and an upload is still admitted at once
+    let db = common::fresh_db("slowreads").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let mut shas = Vec::new();
+    for seed in 1..=8u8 {
+        shas.push(stored_blob(&r, seed, 30, "raw", None).await);
+    }
+    let release = Arc::new(tokio::sync::Notify::new());
+    let (mut statuses, readers) = stalled_readers(&r, &shas, &release);
+    for _ in 0..4 {
+        let st = tokio::time::timeout(Duration::from_secs(15), statuses.recv())
+            .await
+            .expect("four reads fit the reads' part")
+            .unwrap();
+        assert_eq!(st, 200);
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(statuses.try_recv().is_err(), "a fifth read waits for the reads' part");
+    // the four hold 120 MiB of the whole budget (the waiting fifth has the last 8 MiB of the reads' part set aside)
+    let (body_free, read_free) = r.app().blobs.memory_free();
+    assert!(read_free <= 128 - 120);
+    assert_eq!(body_free, 256 - 120);
+    // an upload is admitted while the reads wait
+    let up = tokio::time::timeout(
+        Duration::from_secs(20),
+        r.pigeon().person(ALICE).upload(
+            "while-reading.bin",
+            magpie_api::uploads::UploadKind::File,
+            "application/octet-stream",
+            vec![7u8; 20 << 20],
+        ),
+    )
+    .await
+    .expect("the upload is not kept waiting by slow readers")
+    .unwrap();
+    assert_eq!(up.size, 20 << 20);
+    // the stalled clients go: the waiting reads are answered
+    for _ in 0..4 {
+        release.notify_one();
+    }
+    for _ in 0..4 {
+        let st = tokio::time::timeout(Duration::from_secs(15), statuses.recv())
+            .await
+            .expect("the waiting reads are answered")
+            .unwrap();
+        assert_eq!(st, 200);
+    }
+    for _ in 0..4 {
+        release.notify_one();
+    }
+    for t in readers {
+        t.await.unwrap();
+    }
+    assert!(
+        common::eventually(Duration::from_secs(10), async || r.app().blobs.memory_free()
+            == (256, 128))
+        .await,
+        "the reads give their memory back: {:?}",
+        r.app().blobs.memory_free()
+    );
+}
+
+#[tokio::test]
+async fn many_readers_of_one_uncached_blob_make_one_fetch() {
+    // six stalled clients open one 60 MiB blob the cache does not hold at once: one fetch holds its 60 MiB, and the
+    // others are answered from the cache it filled (each taking its own 60 MiB, only two would fit the reads' part)
+    let db = common::fresh_db("onefetch").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let sha = stored_blob(&r, 9, 60, "raw", None).await;
+    let release = Arc::new(tokio::sync::Notify::new());
+    let (mut statuses, readers) = stalled_readers(&r, &[sha; 6], &release);
+    for _ in 0..6 {
+        let st = tokio::time::timeout(Duration::from_secs(15), statuses.recv())
+            .await
+            .expect("every reader is answered")
+            .unwrap();
+        assert_eq!(st, 200);
+    }
+    assert_eq!(r.app().blobs.memory_free().1, 128 - 60);
+    for _ in 0..6 {
+        release.notify_one();
+    }
+    for t in readers {
+        t.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn fetched_and_decoded_blobs_hold_their_memory_until_dropped() {
+    let db = common::fresh_db("heldfetch").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let first = stored_blob(&r, 21, 8, "raw", None).await;
+    let second = stored_blob(&r, 22, 8, "raw", None).await;
+    // the cc store's batch: the whole batch's share at once, kept by the buffers themselves (no copies)
+    let got = blobs::fetch_stored(r.app(), &[first, second]).await.unwrap();
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[&first].len(), 8 << 20);
+    assert_eq!(r.app().blobs.memory_free(), (256 - 16, 128));
+    let one = got[&first].clone();
+    drop(got);
+    assert_eq!(
+        r.app().blobs.memory_free().0,
+        256 - 16,
+        "a buffer still alive keeps the batch's share"
+    );
+    drop(one);
+    assert_eq!(r.app().blobs.memory_free(), (256, 128));
+    // a base64-json blob's decoded copy (from the cache now) holds its own size of the reads' part while it is alive
+    let raw = vec![3u8; 6 << 20];
+    let text = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &raw).into_bytes();
+    let encoded = stored_blob(&r, 23, 0, "base64-json", Some(text)).await;
+    let row = blobs::row(&r.pool().get().await.unwrap(), &encoded)
+        .await
+        .unwrap()
+        .unwrap();
+    let decoded = r.app().blobs.original(r.pool(), &row).await.unwrap();
+    assert_eq!(decoded.as_ref(), raw.as_slice());
+    assert_eq!(r.app().blobs.memory_free().1, 128 - 6);
+    drop(decoded);
+    assert_eq!(r.app().blobs.memory_free(), (256, 128));
+}
+
+async fn queued(sql: &aviary_pg::Conn, sha: &[u8; 32]) -> i64 {
+    sql.query_one(
+        "select count(*) from blob_reverify where sha256 = $1",
+        &[&sha.as_slice()],
+    )
+    .await
+    .unwrap()
+    .get(0)
+}
+
+#[tokio::test]
+async fn a_reverification_the_gc_could_not_run_is_retried_by_the_next_pass() {
+    // the GC lost a blob's lock mid-delete and cannot take it back (a writer holds it) within its wait: the blob stays
+    // recorded in blob_reverify, and a later pass runs the check (here: the object is gone, so stored is cleared)
+    let db = common::fresh_db("reverifyq").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let bytes = b"an object a late GC delete took".to_vec();
+    let sha = blobs::sha256(&bytes);
+    let sql = r.pool().get().await.unwrap();
+    sql.execute(
+        "insert into blobs (sha256, size, kind, encoding, stored) values ($1, $2, 'file', 'raw', true)",
+        &[&sha.as_slice(), &i64::try_from(bytes.len()).unwrap()],
+    )
+    .await
+    .unwrap();
+    let writer = r.app().blobs.shared(&sha).await.unwrap();
+    gc::reverify_within(r.pool(), &r.app().blobs, &sha, Duration::from_millis(500))
+        .await
+        .unwrap();
+    assert_eq!(queued(&sql, &sha).await, 1, "not checked: recorded for the next pass");
+    // still held at the next pass: still recorded
+    assert_eq!(gc::reverify_queued(r.pool(), &r.app().blobs).await.unwrap(), 1);
+    writer.release().await;
+    assert_eq!(gc::reverify_queued(r.pool(), &r.app().blobs).await.unwrap(), 0);
+    assert_eq!(queued(&sql, &sha).await, 0);
+    let stored: bool = sql
+        .query_one("select stored from blobs where sha256 = $1", &[&sha.as_slice()])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(!stored, "the missing object was found and stored cleared");
+}
+
+#[tokio::test]
+async fn a_lock_session_found_ended_is_replaced_without_a_failed_lock() {
+    // a writer's check finds its lock lost (the session's backend ended): the next lock opens a new session at once
+    // instead of failing once on the dead one
+    let db = common::fresh_db("lockbroken").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let a = blobs::sha256(b"a");
+    let lock = r.app().blobs.shared(&a).await.unwrap();
+    let sql = r.pool().get().await.unwrap();
+    let pid: i32 = sql
+        .query_one(
+            "select pid from pg_locks where locktype = 'advisory' and classid = 1835166818::oid and granted
+               and database = (select oid from pg_database where datname = current_database())",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    sql.execute("select pg_terminate_backend($1)", &[&pid]).await.unwrap();
+    assert!(
+        common::eventually(Duration::from_secs(5), async || lock.check(&sql).await.is_err()).await,
+        "the check finds the lock lost"
+    );
+    drop(lock);
+    let b = blobs::sha256(b"b");
+    let next = r
+        .app()
+        .blobs
+        .shared(&b)
+        .await
+        .expect("a new session, not a failed lock");
+    next.check(&sql).await.unwrap();
+    next.release().await;
+}

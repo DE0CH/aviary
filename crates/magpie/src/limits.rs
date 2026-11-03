@@ -137,10 +137,24 @@ pub const DECODES: usize = 4;
 /// ([`RECENT_UPLOADS_BYTES`]) and the buffered bodies ([`BODY_MEMORY_BYTES`]) it keeps a replica inside its 1 GiB
 /// (magpie 18.2): 384 + 224 + 32 + 256 MiB, and 128 MiB for the rest.
 pub const DECODE_MEMORY_BYTES: u64 = 384 << 20;
-/// The memory request bodies read whole (uploads, the sandbox's blob `PUT`s), the uploader's staged blobs and blob
-/// reads the read cache cannot answer may hold at once per replica; a body waits for its share (its
+/// The memory request bodies read whole (uploads, the sandbox's blob `PUT`s), the uploader's staged blobs, the cc
+/// store's fetched blobs and blob reads being sent may hold at once per replica; a body waits for its share (its
 /// `Content-Length`, else its route's limit) before it is read, a read for its blob's size before it fetches.
 pub const BODY_MEMORY_BYTES: u64 = 256 << 20;
+/// The part of [`BODY_MEMORY_BYTES`] blob reads being sent may hold at once (bytes the read cache could not answer,
+/// and decoded copies): a read is sent at its client's pace, so reads never hold more than this and the rest is
+/// always there for uploads, sandbox `PUT`s, the uploader and the cc store.
+pub const READ_MEMORY_BYTES: u64 = 128 << 20;
+/// How long a blob read waits for its share of [`READ_MEMORY_BYTES`] (and for a fetch of the same blob already in
+/// flight) before it answers 503 `unavailable` with a `retry-after`.
+pub const READ_WAIT: Duration = Duration::from_secs(20);
+/// How long the cc store waits for its fetched blobs' share of [`BODY_MEMORY_BYTES`] before it answers 503.
+pub const FETCH_WAIT: Duration = Duration::from_secs(30);
+/// A blob response whose client takes no chunk for this long is cut off, and the memory it held given back.
+pub const SEND_IDLE: Duration = Duration::from_secs(60);
+/// A blob response is sent in chunks of this many bytes, each a copy, so a stalled send pins at most a few chunks
+/// once it is cut off ([`SEND_IDLE`]).
+pub const SEND_CHUNK: usize = 256 << 10;
 /// An image decode over this many pixels answers 415 (40 megapixels).
 pub const DECODE_MAX_PIXELS: u64 = 40_000_000;
 /// Thumbnail: long edge, pixels.

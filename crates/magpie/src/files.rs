@@ -354,9 +354,14 @@ pub fn bytes_download(ctx: &Ctx, name: &str, inline: bool, etag: &str, bytes: By
                 usize::try_from(first).unwrap_or(0),
                 usize::try_from(last).unwrap_or(0) + 1,
             );
-            (StatusCode::PARTIAL_CONTENT, h, Body::from(bytes.slice(a..b))).into_response()
+            (
+                StatusCode::PARTIAL_CONTENT,
+                h,
+                crate::blobs::read::send_body(bytes.slice(a..b)),
+            )
+                .into_response()
         }
-        None => (StatusCode::OK, h, Body::from(bytes)).into_response(),
+        None => (StatusCode::OK, h, crate::blobs::read::send_body(bytes)).into_response(),
     }
 }
 

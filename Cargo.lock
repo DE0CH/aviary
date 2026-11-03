@@ -2630,6 +2630,7 @@ dependencies = [
  "fast_image_resize",
  "futures-util",
  "hermit-api",
+ "http-body",
  "http-body-util",
  "image",
  "kamadak-exif",

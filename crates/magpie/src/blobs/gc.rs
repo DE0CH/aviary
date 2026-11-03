@@ -12,7 +12,9 @@
 //! `PUT`. So when the GC finds its lock lost after a delete, it waits to take the blob's lock again (every writer of
 //! that moment has finished), and if a row says the blob is stored, it asks the bucket (`HEAD`): a missing object
 //! clears `stored`, so the next writer of those bytes puts them again ([`super::record_stored`]), and logs
-//! `blob object lost`.
+//! `blob object lost`. The blob is first recorded in `blob_reverify`, and the row is removed only once the check has
+//! run, so a check that could not run (the lock not had again within [`limits::BLOB_REVERIFY_WAIT`], the bucket or the
+//! database unreachable) is retried by every later GC pass until it has.
 //!
 //! The reconcile lists the bucket and deletes objects older than 24 h whose blob has no row (a `PUT` whose
 //! transaction then failed, a derived copy made after its blob was freed), each re-checked under the same lock; a lock
@@ -53,6 +55,7 @@ impl Gc {
     /// # Errors
     /// When a statement fails.
     pub async fn pass(&self, pool: &Pool, blobs: &Arc<Blobs>) -> Result<u64> {
+        reverify_queued(pool, blobs).await?;
         let mut n = free(pool, blobs).await?;
         let mut last = self.last_reconcile.lock().await;
         if last.is_none_or(|t| t.elapsed() >= limits::BUCKET_RECONCILE_EVERY) {
@@ -157,44 +160,127 @@ async fn free_one(pool: &Pool, blobs: &Arc<Blobs>, sha: &Sha) -> Result<bool> {
     Ok(deleted)
 }
 
-/// After the GC lost a blob's lock while deleting its objects: once the lock is had again (no writer is mid-put),
-/// a row that says stored is checked against the bucket, and `stored` is cleared when the object is gone.
+/// After the GC lost a blob's lock while deleting its objects: records the blob in `blob_reverify`, then, once the
+/// lock is had again (no writer is mid-put), checks a row that says stored against the bucket and clears `stored`
+/// when the object is gone. Waits at most [`limits::BLOB_REVERIFY_WAIT`]; a check not done by then stays recorded
+/// for the next pass ([`reverify_queued`]).
 ///
 /// # Errors
-/// When a statement fails.
+/// None today (failures are retried, then left recorded); kept for the callers' `?`.
 pub async fn reverify(pool: &Pool, blobs: &Arc<Blobs>, sha: &Sha) -> Result<()> {
+    reverify_within(pool, blobs, sha, limits::BLOB_REVERIFY_WAIT).await
+}
+
+/// [`reverify`], waiting at most `wait`.
+///
+/// # Errors
+/// As [`reverify`].
+pub async fn reverify_within(pool: &Pool, blobs: &Arc<Blobs>, sha: &Sha, wait: std::time::Duration) -> Result<()> {
     let hex = to_hex(sha);
     let start = Instant::now();
-    let lock = loop {
-        match blobs.gc_locks().try_exclusive(sha).await {
-            Ok(Some(l)) => break l,
-            Ok(None) | Err(_) if start.elapsed() < limits::BLOB_REVERIFY_WAIT => {
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            }
-            _ => {
-                tracing::error!(blob = %hex, "blob lock lost by the GC and not had again; its object is not re-verified");
-                return Ok(());
-            }
+    let mut queued = false;
+    loop {
+        if !queued {
+            queued = queue(pool, sha).await.is_ok();
         }
-    };
-    let stored = super::row(&pool.get().await?, sha).await?.is_some_and(|r| r.stored);
-    if stored {
-        match blobs.bucket.exists(&store::blob_key(&hex)).await {
-            Ok(true) => {}
-            Ok(false) => {
-                pool.get()
-                    .await?
-                    .execute("update blobs set stored = false where sha256 = $1", &[&sha.as_slice()])
-                    .await?;
-                tracing::error!(blob = %hex, "blob object lost to a GC delete; stored cleared for the next writer");
+        if verify_once(pool, blobs, sha).await {
+            return Ok(());
+        }
+        if start.elapsed() >= wait {
+            if queued {
+                tracing::warn!(blob = %hex, "blob lock lost by the GC; re-verification left for the next pass");
+            } else {
+                tracing::error!(blob = %hex, "blob lock lost by the GC; its object neither re-verified nor queued");
             }
-            Err(e) => {
-                tracing::error!(blob = %hex, error = %e, "blob lock lost by the GC and its object not checked");
-            }
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+}
+
+async fn queue(pool: &Pool, sha: &Sha) -> Result<()> {
+    pool.get()
+        .await?
+        .execute(
+            "insert into blob_reverify (sha256) values ($1) on conflict do nothing",
+            &[&sha.as_slice()],
+        )
+        .await?;
+    Ok(())
+}
+
+/// Re-verifies every recorded blob it can now (one try each); how many are still recorded.
+///
+/// # Errors
+/// When the recorded blobs cannot be listed.
+pub async fn reverify_queued(pool: &Pool, blobs: &Arc<Blobs>) -> Result<u64> {
+    let rows = pool
+        .get()
+        .await?
+        .query("select sha256 from blob_reverify order by since", &[])
+        .await?;
+    let mut left = 0u64;
+    for r in rows {
+        let sha: Vec<u8> = r.get(0);
+        let Ok(sha) = Sha::try_from(sha.as_slice()) else {
+            continue;
+        };
+        if !verify_once(pool, blobs, &sha).await {
+            left += 1;
         }
     }
+    if left > 0 {
+        tracing::warn!(
+            blobs = left,
+            "blobs still waiting for re-verification after a lost GC lock"
+        );
+    }
+    Ok(left)
+}
+
+/// One try of the check under the blob's exclusive lock; whether it ran (and the record is gone).
+async fn verify_once(pool: &Pool, blobs: &Arc<Blobs>, sha: &Sha) -> bool {
+    let hex = to_hex(sha);
+    let Ok(Some(lock)) = blobs.gc_locks().try_exclusive(sha).await else {
+        return false;
+    };
+    let done = async {
+        let stored = super::row(&pool.get().await?, sha).await?.is_some_and(|r| r.stored);
+        if stored {
+            match blobs.bucket.exists(&store::blob_key(&hex)).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    pool.get()
+                        .await?
+                        .execute("update blobs set stored = false where sha256 = $1", &[&sha.as_slice()])
+                        .await?;
+                    tracing::error!(blob = %hex, "blob object lost to a GC delete; stored cleared for the next writer");
+                }
+                Err(e) => {
+                    tracing::warn!(blob = %hex, error = %e, "blob re-verification: the bucket did not answer");
+                    return Ok::<_, crate::error::Error>(false);
+                }
+            }
+        }
+        if !lock.held().await {
+            // lost again meanwhile: what was checked may be stale
+            return Ok(false);
+        }
+        pool.get()
+            .await?
+            .execute("delete from blob_reverify where sha256 = $1", &[&sha.as_slice()])
+            .await?;
+        Ok(true)
+    }
+    .await;
     lock.release().await;
-    Ok(())
+    match done {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(blob = %hex, error = %e, "blob re-verification failed");
+            false
+        }
+    }
 }
 
 /// The sha a bucket key belongs to.

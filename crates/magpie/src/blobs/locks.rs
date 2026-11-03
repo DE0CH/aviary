@@ -21,6 +21,7 @@
 //! back; dropping a [`SharedLock`] or [`ExclusiveLock`] spawns its unlock on the session.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use aviary_pg::{Conn, Pool};
@@ -44,7 +45,19 @@ const RETRY: Duration = Duration::from_millis(20);
 struct Session {
     conn: Conn,
     pid: i32,
+    /// A statement on it failed or a lock on it was found lost: it has ended, and the next lock opens a new one.
+    broken: AtomicBool,
 }
+
+impl Session {
+    fn mark_broken(&self) {
+        self.broken.store(true, Ordering::Relaxed);
+    }
+}
+
+/// How long opening a lock session waits for a connection of its pool (both may still be held by a broken session's
+/// holders) before the lock answers 503.
+const SESSION_WAIT: Duration = Duration::from_secs(5);
 
 /// One lock session of a replica (opened on first use, replaced when it breaks).
 pub struct LockSession {
@@ -78,25 +91,33 @@ impl LockSession {
         })
     }
 
+    /// The current session, or a new one when there is none or it is broken. The connection is taken without the
+    /// `current` mutex held (and waits at most [`SESSION_WAIT`]), so a pool whose connections are both still held
+    /// by a broken session's holders keeps only this lock waiting, not every other lock of the session.
     async fn session(&self) -> Result<Arc<Session>> {
-        let mut cur = self.current.lock().await;
-        if let Some(s) = cur.as_ref() {
+        if let Some(s) = self.current.lock().await.as_ref()
+            && !s.broken.load(Ordering::Relaxed)
+        {
             return Ok(s.clone());
         }
-        let conn = self.pool.get().await?;
+        let conn = tokio::time::timeout(SESSION_WAIT, self.pool.get())
+            .await
+            .map_err(|_| unavailable("no connection for a new lock session"))??;
         let pid: i32 = conn.query_one("select pg_backend_pid()", &[]).await?.get(0);
-        let s = Arc::new(Session { conn, pid });
+        let mut cur = self.current.lock().await;
+        if let Some(s) = cur.as_ref()
+            && !s.broken.load(Ordering::Relaxed)
+        {
+            // another lock opened one meanwhile; this connection goes back to the pool
+            return Ok(s.clone());
+        }
+        let s = Arc::new(Session {
+            conn,
+            pid,
+            broken: AtomicBool::new(false),
+        });
         *cur = Some(s.clone());
         Ok(s)
-    }
-
-    /// Forgets `s` after a statement on it failed: the next lock opens a new session. Locks still held on `s` are
-    /// given back when their holders release them or when `s` goes back to its pool (which resets its session).
-    async fn broken(&self, s: &Arc<Session>) {
-        let mut cur = self.current.lock().await;
-        if cur.as_ref().is_some_and(|c| Arc::ptr_eq(c, s)) {
-            *cur = None;
-        }
     }
 
     async fn try_lock(&self, sha: &Sha, exclusive: bool) -> Result<Option<Arc<Session>>> {
@@ -109,7 +130,9 @@ impl LockSession {
         match s.conn.query_one(sql, &[&LOCK_CLASS, &lock_obj(sha)]).await {
             Ok(r) => Ok(r.get::<_, bool>(0).then_some(s)),
             Err(e) => {
-                self.broken(&s).await;
+                // locks still held on `s` are given back when their holders release them or when `s` goes back to
+                // its pool (which resets its session)
+                s.mark_broken();
                 Err(e.into())
             }
         }
@@ -221,6 +244,9 @@ impl SharedLock {
         if held {
             Ok(())
         } else {
+            if let Some(s) = self.held.as_ref() {
+                s.mark_broken();
+            }
             Err(unavailable("the lock session ended while the object was put"))
         }
     }
@@ -252,7 +278,8 @@ impl ExclusiveLock {
         let Some(s) = self.held.as_ref() else {
             return false;
         };
-        s.conn
+        let held = s
+            .conn
             .query_one(
                 "select exists (select 1 from pg_locks where locktype = 'advisory' and pid = pg_backend_pid()
                                  and classid = ($1::int4)::oid and objid = ($2::int4)::oid and objsubid = 2
@@ -260,7 +287,12 @@ impl ExclusiveLock {
                 &[&LOCK_CLASS, &lock_obj(&self.sha)],
             )
             .await
-            .is_ok_and(|r| r.get::<_, bool>(0))
+            .is_ok_and(|r| r.get::<_, bool>(0));
+        if !held {
+            // the session ended (or its connection failed): the next lock opens a new one
+            s.mark_broken();
+        }
+        held
     }
 
     /// Releases the lock (and waits until it is given back).

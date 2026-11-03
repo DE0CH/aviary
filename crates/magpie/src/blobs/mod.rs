@@ -201,6 +201,8 @@ pub struct Blobs {
     decodes: Arc<Semaphore>,
     decode_memory: Arc<Semaphore>,
     body_memory: Arc<Semaphore>,
+    read_memory: Arc<Semaphore>,
+    fetching: std::sync::Mutex<HashMap<Sha, std::sync::Weak<tokio::sync::Mutex<()>>>>,
     writer_locks: Arc<locks::LockSession>,
     gc_locks: Arc<locks::LockSession>,
 }
@@ -215,17 +217,23 @@ fn budget(bytes: u64) -> Arc<Semaphore> {
     Arc::new(Semaphore::new(usize::try_from(bytes >> 20).unwrap_or(usize::MAX)))
 }
 
-/// Memory held from [`Blobs::hold_body`]: given back when dropped.
+/// Memory held from [`Blobs::hold_body`] (and, for a blob read being sent, [`Blobs::hold_read`]'s share of the
+/// reads' part): given back when dropped.
 #[derive(Debug)]
-pub struct BodyMemory(tokio::sync::OwnedSemaphorePermit);
+pub struct BodyMemory {
+    body: tokio::sync::OwnedSemaphorePermit,
+    read: Option<tokio::sync::OwnedSemaphorePermit>,
+}
 
 impl BodyMemory {
     /// Keeps `bytes` of the held memory (at least 1 MiB) and gives the rest back.
     pub fn keep(&mut self, bytes: u64) {
         let keep = usize::try_from(mib_permits(bytes)).unwrap_or(usize::MAX);
-        let extra = self.0.num_permits().saturating_sub(keep);
-        if extra > 0 {
-            drop(self.0.split(extra));
+        for p in std::iter::once(&mut self.body).chain(self.read.as_mut()) {
+            let extra = p.num_permits().saturating_sub(keep);
+            if extra > 0 {
+                drop(p.split(extra));
+            }
         }
     }
 }
@@ -251,6 +259,8 @@ impl Blobs {
             decodes: Arc::new(Semaphore::new(limits::DECODES)),
             decode_memory: budget(limits::DECODE_MEMORY_BYTES),
             body_memory: budget(limits::BODY_MEMORY_BYTES),
+            read_memory: budget(limits::READ_MEMORY_BYTES),
+            fetching: std::sync::Mutex::new(HashMap::new()),
             writer_locks: Arc::new(locks::LockSession::new(database_url, "magpie-blob-locks")?),
             gc_locks: Arc::new(locks::LockSession::new(database_url, "magpie-gc-locks")?),
         })
@@ -276,21 +286,65 @@ impl Blobs {
     }
 
     /// Takes `bytes` of the buffered-body budget ([`limits::BODY_MEMORY_BYTES`]): a request body read whole (an
-    /// upload, a sandbox blob `PUT`), a staged blob the uploader holds or a blob read the read cache cannot answer
-    /// ([`Blobs::stored_bytes`]), waiting until that much is free. Taken
-    /// before the bytes are read and held until they are dropped. A holder may then take decode memory
-    /// ([`Blobs::decode`]), never the other way round, so the two budgets cannot deadlock.
+    /// upload, a sandbox blob `PUT`), a staged blob the uploader holds or the blobs the cc store fetched
+    /// ([`fetch_stored`]), waiting until that much is free. Taken before the bytes are read and held until they are
+    /// dropped. A holder may then take decode memory ([`Blobs::decode`]), never the other way round, so the two
+    /// budgets cannot deadlock.
     ///
     /// # Errors
     /// [`Error::Internal`] when the budget was closed (never).
     pub async fn hold_body(&self, bytes: u64) -> Result<BodyMemory> {
         let total = u32::try_from(limits::BODY_MEMORY_BYTES >> 20).unwrap_or(u32::MAX);
-        self.body_memory
+        let body = self
+            .body_memory
             .clone()
             .acquire_many_owned(mib_permits(bytes).min(total))
             .await
-            .map(BodyMemory)
-            .map_err(|_| Error::Internal("body memory closed".into()))
+            .map_err(|_| Error::Internal("body memory closed".into()))?;
+        Ok(BodyMemory { body, read: None })
+    }
+
+    /// Takes `bytes` of the buffered-body budget for a blob read that is sent at its client's pace (bytes the read
+    /// cache could not answer, a decoded copy): first that much of the reads' part ([`limits::READ_MEMORY_BYTES`]),
+    /// then of the whole budget, so reads never hold more than their part and a slow or stalled client cannot keep
+    /// uploads waiting. Waits until `deadline`.
+    ///
+    /// # Errors
+    /// 503 `unavailable` (with a `retry-after`) when the share is not had by `deadline`.
+    pub async fn hold_read(&self, bytes: u64, deadline: tokio::time::Instant) -> Result<BodyMemory> {
+        let part = u32::try_from(limits::READ_MEMORY_BYTES >> 20).unwrap_or(u32::MAX);
+        let n = mib_permits(bytes).min(part);
+        let take = async {
+            let read = self.read_memory.clone().acquire_many_owned(n).await.ok()?;
+            let body = self.body_memory.clone().acquire_many_owned(n).await.ok()?;
+            Some(BodyMemory { body, read: Some(read) })
+        };
+        match tokio::time::timeout_at(deadline, take).await {
+            Ok(Some(m)) => Ok(m),
+            Ok(None) => Err(Error::Internal("body memory closed".into())),
+            Err(_) => Err(busy()),
+        }
+    }
+
+    /// The free MiB of the buffered-body budget and of the reads' part of it (for tests and metrics).
+    #[must_use]
+    pub fn memory_free(&self) -> (usize, usize) {
+        (
+            self.body_memory.available_permits(),
+            self.read_memory.available_permits(),
+        )
+    }
+
+    /// The lock that makes concurrent fetches of `sha` one fetch ([`Blobs::stored_bytes`]).
+    fn fetch_lock(&self, sha: &Sha) -> Arc<tokio::sync::Mutex<()>> {
+        let mut m = self.fetching.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(l) = m.get(sha).and_then(std::sync::Weak::upgrade) {
+            return l;
+        }
+        m.retain(|_, w| w.strong_count() > 0);
+        let l = Arc::new(tokio::sync::Mutex::new(()));
+        m.insert(*sha, Arc::downgrade(&l));
+        l
     }
 
     /// Takes `sha`'s shared lock (writers of its object; see the module docs), on the writers' lock session.
@@ -374,6 +428,17 @@ impl Blobs {
     }
 }
 
+/// 503 `unavailable` for a read that did not get its share of the read memory in time.
+fn busy() -> Error {
+    tracing::warn!("blob read waited too long for memory");
+    let mut r = magpie_api::errors::Refusal::new(
+        magpie_api::errors::ErrorCode::Unavailable,
+        "too many blob reads at once; try again",
+    );
+    r.retry_after = Some(limits::UNAVAILABLE_RETRY_AFTER_S);
+    Error::Refused(r)
+}
+
 /// 503 `unavailable` for a bucket that cannot be reached.
 #[must_use]
 pub fn unavailable(e: &store::StoreError) -> Error {
@@ -441,14 +506,14 @@ pub async fn meta(db: &impl Db, shas: &[Sha]) -> Result<HashMap<Sha, Meta>> {
 /// staging or stages itself.
 #[derive(Debug)]
 pub struct Bytes<'p> {
-    pre: &'p HashMap<Sha, Vec<u8>>,
+    pre: &'p HashMap<Sha, axum::body::Bytes>,
     own: HashMap<Sha, Vec<u8>>,
 }
 
 impl<'p> Bytes<'p> {
     /// With the bytes fetched before the transaction.
     #[must_use]
-    pub fn with(pre: &'p HashMap<Sha, Vec<u8>>) -> Self {
+    pub fn with(pre: &'p HashMap<Sha, axum::body::Bytes>) -> Self {
         Self {
             pre,
             own: HashMap::new(),
@@ -483,7 +548,10 @@ impl<'p> Bytes<'p> {
     /// The bytes of `sha`, once loaded.
     #[must_use]
     pub fn get(&self, sha: &Sha) -> Option<&[u8]> {
-        self.own.get(sha).or_else(|| self.pre.get(sha)).map(Vec::as_slice)
+        self.own
+            .get(sha)
+            .map(Vec::as_slice)
+            .or_else(|| self.pre.get(sha).map(|b| &b[..]))
     }
 
     /// Adds bytes (a blob the transaction itself staged).
@@ -496,9 +564,15 @@ impl<'p> Bytes<'p> {
 /// transaction needs, [`Error::NeedBlobs`], and the read path's batches): their rows in one statement on a connection
 /// returned before the bucket is called, then [`limits::BLOB_FETCH_CONCURRENCY`] objects at a time (magpie 6.11).
 ///
+/// The whole batch's size (twice for a blob still staged, whose row and copy are alive together) is taken of the
+/// buffered-body budget at once before anything is fetched, never blob by blob (a batch holding part of its share
+/// while it waits for the rest could deadlock with another), waiting at most [`limits::FETCH_WAIT`]; every buffer
+/// answered keeps that share until the last of them is dropped (the transaction or the read done). The buffers are
+/// the fetched bytes themselves (shared with the read cache when it keeps them), never copies.
+///
 /// # Errors
-/// 404 for a blob the bucket lost, 503 when it cannot be reached; a statement error.
-pub async fn fetch_stored(app: &Magpie, shas: &[Sha]) -> Result<HashMap<Sha, Vec<u8>>> {
+/// 404 for a blob the bucket lost, 503 when it cannot be reached or the budget not had in time; a statement error.
+pub async fn fetch_stored(app: &Magpie, shas: &[Sha]) -> Result<HashMap<Sha, axum::body::Bytes>> {
     use futures_util::{StreamExt as _, TryStreamExt as _};
     if shas.is_empty() {
         return Ok(HashMap::new());
@@ -536,10 +610,21 @@ pub async fn fetch_stored(app: &Magpie, shas: &[Sha]) -> Result<HashMap<Sha, Vec
     if let Some(sha) = shas.iter().find(|s| !found.contains_key(*s)) {
         return Err(Error::Internal(format!("blob {} has no row", hex(sha))));
     }
+    let total: u64 = found
+        .values()
+        .map(|r| u64::try_from(r.size).unwrap_or(0) * if r.stored { 1 } else { 2 })
+        .sum();
+    let held = match tokio::time::timeout(limits::FETCH_WAIT, app.blobs.hold_body(total)).await {
+        Ok(h) => Arc::new(h?),
+        Err(_) => return Err(busy()),
+    };
     futures_util::stream::iter(found.into_values())
-        .map(|r| async move {
-            let b = app.blobs.stored_bytes(&app.pool, &r).await?;
-            Ok::<_, Error>((r.sha, b.to_vec()))
+        .map(|r| {
+            let held = held.clone();
+            async move {
+                let b = app.blobs.fetch(&app.pool, &r).await?;
+                Ok::<_, Error>((r.sha, read::held_bytes(b, held)))
+            }
         })
         .buffer_unordered(limits::BLOB_FETCH_CONCURRENCY)
         .try_collect()
