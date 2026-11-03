@@ -10,19 +10,27 @@
 //! processing, or ended; anything else: applied or refused), never frame delivery, so the importer cannot release a
 //! conversation the old stack is about to write (switch-final C5.1).
 //!
-//! A ticket call carrying a `clientMessageId` is idempotent per `(conversation, kind, clientMessageId)` while that
-//! ticket is open, so a retry after a timeout gets the ticket the first call opened. pigeon starts no legacy write
-//! under a ticket older than [`TICKET_HOLD_MAX`] (it takes a new one); the importer relies on that bound to expire a
-//! ticket whose outcome never arrives.
+//! A send's ticket call carries the send's `clientMessageId` (only a send's may): a repeat for the same
+//! `(conversation, clientMessageId)` returns the open ticket the first call opened while that ticket is younger than
+//! [`TICKET_HOLD_MAX`], so a retry after a timeout opens no second one. Past that age the repeat gets a new ticket and
+//! the old one stays open (a write may still be in flight under it) until its outcome arrives or the importer expires
+//! it. Every ticket answer carries `issuedAt`: pigeon starts no legacy write under a ticket issued more than
+//! [`TICKET_HOLD_MAX`] ago (it takes a new one); the importer relies on that bound to expire a ticket whose outcome
+//! never arrives. Other kinds carry no `clientMessageId` (400): a send's upload tickets, one per attached file, must
+//! each be a ticket of their own, or the first file's `applied` would close a ticket the other copies still write
+//! under.
 
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// The oldest ticket pigeon may still start a legacy write under (the write itself is then bounded by pigeon's own
-/// upstream timeouts). magpie's importer expires an open ticket only once it is older than this and the old child
-/// shows nothing in flight for the conversation.
+use crate::common::Timestamp;
+
+/// The oldest ticket pigeon may still start a legacy write under, judged by the ticket's `issuedAt` (the write itself
+/// is then bounded by pigeon's own upstream timeouts). A send's ticket call repeated with its `clientMessageId` gets
+/// the open ticket back only while it is younger than this. magpie's importer expires an open ticket only once it is
+/// older than this and the old child shows nothing in flight for the conversation.
 pub const TICKET_HOLD_MAX: Duration = Duration::from_secs(60);
 
 /// What the ticketed write is (switch-final 4.3; DESIGN 9.1's list of LU writes).
@@ -87,8 +95,9 @@ impl TicketKind {
 pub struct TicketRequest {
     /// The write.
     pub kind: TicketKind,
-    /// A send's `clientMessageId`: a repeat with the same kind and id returns the conversation's open ticket for it
-    /// (the old child's and magpie's own idempotency of the write itself are unchanged).
+    /// A send's `clientMessageId` (kind `send` only; any other kind with one is 400 `bad_request`): a repeat returns
+    /// the conversation's open ticket for it while that ticket is younger than [`TICKET_HOLD_MAX`] (the old child's
+    /// and magpie's own idempotency of the write itself are unchanged).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_message_id: Option<String>,
 }
@@ -112,6 +121,10 @@ pub struct TicketResponse {
     /// The ticket, with `route: "legacy"` only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ticket: Option<Uuid>,
+    /// When the ticket was issued (database time), with `route: "legacy"` only: pigeon starts no legacy write under
+    /// it once [`TICKET_HOLD_MAX`] has passed since.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issued_at: Option<Timestamp>,
 }
 
 /// What the old stack did with a ticketed write.

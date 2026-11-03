@@ -12,7 +12,8 @@
       "status": 200,
       "body": {
         "route": "legacy",
-        "ticket": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e2a"
+        "ticket": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e2a",
+        "issuedAt": "2026-11-02T09:14:03.120Z"
       }
     },
     {

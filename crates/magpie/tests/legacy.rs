@@ -121,9 +121,12 @@ async fn fence_at(r: &common::Replica, c: Uuid) -> Option<time::OffsetDateTime> 
 
 #[tokio::test]
 async fn every_route_of_the_migrating_table() {
+    use aviary_fakes::hermit::{FakeHermit, HermitConfig};
+    let hermit = FakeHermit::unguarded(HermitConfig::default());
+    let running = hermit.serve().await.unwrap();
     let db = common::fresh_db("lg_table").await;
     let t = common::Tokens::new();
-    let r = common::replica(&db.url, &t).await;
+    let r = common::replica_with(&db.url, &t, &running.url(), common::idle()).await;
     let c = migrating(&r, ALICE, "m").await;
     let p = r.pigeon();
     let a = p.person(ALICE);
@@ -231,6 +234,145 @@ async fn every_route_of_the_migrating_table() {
     assert!(!a.get_conversation(c).await.unwrap().migrating);
     a.rename_conversation(c, &rename).await.unwrap();
     assert_eq!(fence::fence(r.pool(), c).await.unwrap(), Fence::NotMigrating);
+
+    // M16 continue of a migrating conversation's share: the new conversation is born owned (not migrating)
+    let src = answered(&r, &hermit, ALICE).await;
+    let share = a.create_share(src).await.unwrap();
+    set_migrating(&r, src).await;
+    let cont = r.pigeon().person(BOB).continue_share(&share.id).await.unwrap();
+    let born = r
+        .pigeon()
+        .person(BOB)
+        .get_conversation(cont.conversation_id)
+        .await
+        .unwrap();
+    assert!(!born.migrating);
+    assert!(
+        a.get_conversation(src).await.unwrap().migrating,
+        "the source stays the old stack's"
+    );
+
+    // hermit's sandbox events for a migrating conversation change nothing
+    let h = migrating(&r, ALICE, "h").await;
+    let sandbox = Uuid::new_v4();
+    let sql = r.pool().get().await.unwrap();
+    sql.execute(
+        "update conversations set lease_id = gen_random_uuid(), lease_sandbox = $2 where id = $1",
+        &[&h, &sandbox],
+    )
+    .await
+    .unwrap();
+    let ev = |state, version| hermit_api::sandbox::SandboxEvent {
+        seq: version,
+        at: hermit_api::Timestamp::now(),
+        sandbox_id: sandbox,
+        conversation_id: h,
+        person: ALICE.into(),
+        state,
+        phase: None,
+        version,
+        busy: false,
+        release: None,
+    };
+    let (ready, gone) = (
+        ev(hermit_api::sandbox::SandboxState::Ready, 1),
+        ev(hermit_api::sandbox::SandboxState::Gone, 2),
+    );
+    let row = async |h: Uuid| {
+        let x = r
+            .pool()
+            .get()
+            .await
+            .unwrap()
+            .query_one(
+                "select lease_sandbox, hermit_sandbox from conversations where id = $1",
+                &[&h],
+            )
+            .await
+            .unwrap();
+        (x.get::<_, Option<Uuid>>(0), x.get::<_, Option<Uuid>>(1))
+    };
+    let apply = async |ev: &hermit_api::sandbox::SandboxEvent| {
+        aviary_pg::tx!(r.pool(), |tx| -> magpie::error::Result<()> {
+            magpie::hermit::feed::apply(tx, ev).await
+        })
+        .await
+        .unwrap();
+    };
+    apply(&ready).await;
+    apply(&gone).await;
+    assert_eq!(row(h).await, (Some(sandbox), None), "ignored while migrating");
+    // (the same events once it is native: the sandbox recorded, and its lease cleared when it is gone)
+    sql.execute("update conversations set migrating = false where id = $1", &[&h])
+        .await
+        .unwrap();
+    apply(&ready).await;
+    apply(&gone).await;
+    assert_eq!(row(h).await, (None, Some(sandbox)));
+
+    // magpie's own jobs skip migrating conversations: the 30-day purge, and the turn sweep and its drivers
+    let old = common::files::conversation(&r, ALICE, "purge").await;
+    a.delete_conversation(old).await.unwrap();
+    sql.execute(
+        "update conversations set deleted_at = now() - interval '31 days', migrating = true where id = $1",
+        &[&old],
+    )
+    .await
+    .unwrap();
+    assert_eq!(magpie::conversations::delete::purge_due(r.pool(), 20).await.unwrap(), 0);
+    assert!(a.get_conversation(old).await.unwrap().migrating);
+    let swept = migrating(&r, ALICE, "sweep").await;
+    let turn = Uuid::new_v4();
+    sql.execute(
+        "insert into turns (id, conversation_id, origin, state, deadline)
+         values ($1, $2, 'person', 'admitted', now() - interval '1 minute')",
+        &[&turn, &swept],
+    )
+    .await
+    .unwrap();
+    let d = magpie::turns::driver::Driver::of(r.app());
+    assert_eq!(magpie::turns::sweeper::pass(&d).await.unwrap(), 0);
+    magpie::turns::driver::drive(&d, turn).await.unwrap();
+    let t_row = sql
+        .query_one(
+            "select state, driver, deadline < now() from turns where id = $1",
+            &[&turn],
+        )
+        .await
+        .unwrap();
+    assert_eq!(t_row.get::<_, String>(0), "admitted");
+    assert_eq!(t_row.get::<_, Option<String>>(1), None, "no driver claimed it");
+    assert!(t_row.get::<_, bool>(2), "the sweep did not claim its deadline");
+    // (once owned, both act)
+    sql.execute(
+        "update conversations set migrating = false where id in ($1, $2)",
+        &[&old, &swept],
+    )
+    .await
+    .unwrap();
+    assert_eq!(magpie::conversations::delete::purge_due(r.pool(), 20).await.unwrap(), 1);
+    assert!(magpie::turns::sweeper::pass(&d).await.unwrap() >= 1);
+}
+
+/// A conversation of `person` with a finished turn and a workspace file: something to share.
+async fn answered(r: &common::Replica, hermit: &aviary_fakes::hermit::FakeHermit, person: &str) -> Uuid {
+    use common::ev::{self, assistant, text, turn_ended, turn_started, user_sent};
+    let c = ev::conversation(&r.pigeon(), person).await;
+    let tid = Uuid::new_v4();
+    ev::append(
+        r.pool(),
+        person,
+        c,
+        vec![
+            user_sent("m1", "q"),
+            ev::in_turn(turn_started(tid), tid),
+            ev::in_turn(assistant("msg_1", serde_json::json!([text("a")])), tid),
+            ev::in_turn(turn_ended(tid, "completed"), tid),
+        ],
+    )
+    .await;
+    hermit.write_file(c, "x.txt", b"x");
+    c
 }
 
 #[tokio::test]
@@ -710,7 +852,11 @@ async fn a_miss_is_ingested_synchronously_before_unknown_upload() {
 async fn the_legacy_path_set_outlives_the_a6_contraction() {
     let db = common::fresh_db("lg_a6").await;
     let t = common::Tokens::new();
-    let r = common::replica(&db.url, &t).await;
+    // the import Deployment knows no file: a miss is `unknown_upload`, as once the A6 release removes the ingest
+    let pool = aviary_pg::connect(&db.url, "test", 2, Duration::from_secs(10)).unwrap();
+    let (url, _) = fake_import(pool, Arc::new(Mutex::new(HashMap::new()))).await;
+    let bucket = common::test_bucket(&db.url).await;
+    let r = common::replica_import(&db.url, &t, "http://127.0.0.1:1", common::idle(), bucket, &url).await;
     let teed = upload(&r, ALICE, "teed.pdf", b"teed").await;
     r.pigeon()
         .person(ALICE)
@@ -769,6 +915,42 @@ async fn the_legacy_path_set_outlives_the_a6_contraction() {
         Some(imported.upload_id)
     );
     assert_eq!(paths::lookup(&conn, ALICE, "t.pdf").await.unwrap(), Some(teed_record));
+    // a send's resolution (M3/M7's step before admission) after the contraction: both old paths become fresh copies,
+    // and one in neither table is `unknown_upload`, not a statement error. (M7 itself cannot run on this schema:
+    // admission still reads `conversations.migrating`, which the A6 release drops together with that read.)
+    let person = magpie::conversations::Person {
+        email: ALICE.into(),
+        viewer: None,
+    };
+    let mut m = send(
+        "a6:1",
+        vec![
+            file(&old_path(ALICE, "i.pdf"), &imported),
+            file(&old_path(ALICE, "t.pdf"), &teed),
+        ],
+    );
+    paths::resolve(r.app(), &person, &mut m).await.unwrap();
+    let ids: Vec<Uuid> = m
+        .files
+        .iter()
+        .map(|f| {
+            let rest = f.path.strip_prefix("uploads/").expect("a fresh copy's path");
+            rest.split('/').next().unwrap().parse().unwrap()
+        })
+        .collect();
+    assert_eq!(ids.len(), 2);
+    assert!(!ids.contains(&imported.upload_id) && !ids.contains(&teed_record));
+    for id in &ids {
+        let unattached: bool = conn
+            .query_one("select conversation_id is null from uploads where id = $1", &[id])
+            .await
+            .unwrap()
+            .get(0);
+        assert!(unattached);
+    }
+    let mut m = send("a6:2", vec![file(&old_path(ALICE, "gone.pdf"), &imported)]);
+    let e = paths::resolve(r.app(), &person, &mut m).await.unwrap_err();
+    assert!(e.is(&ErrorCode::UnknownUpload), "{e:?}");
 }
 
 async fn set_migrating(r: &common::Replica, c: Uuid) {
@@ -911,13 +1093,101 @@ async fn a_stranded_ticket_expires_and_a_retried_ticket_call_reuses_the_open_one
         let p = r.pigeon();
         async move { p.person(ALICE).legacy_ticket(c, &req).await.unwrap().ticket.unwrap() }
     };
-    // a retried call (the first timed out after it committed) gets the open ticket; another kind or no id: a new one
+    // a retried call (the first timed out after it committed) gets the open ticket; no id: a new one each time
     let first = take(TicketKind::Send, Some("s:1")).await;
     assert_eq!(take(TicketKind::Send, Some("s:1")).await, first);
-    let stop = take(TicketKind::Stop, Some("s:1")).await;
-    assert_ne!(stop, first);
     let plain = take(TicketKind::Rename, None).await;
     assert_ne!(take(TicketKind::Rename, None).await, plain);
+    // only a send's ticket carries a clientMessageId: a send's upload tickets, one per file, are each their own, so
+    // the first file's `applied` closes only its own ticket
+    for kind in [TicketKind::Upload, TicketKind::Stop] {
+        let e = r
+            .pigeon()
+            .person(ALICE)
+            .legacy_ticket(
+                c,
+                &TicketRequest {
+                    kind,
+                    client_message_id: Some("s:1".into()),
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(e.code(), Some(&ErrorCode::BadRequest), "{kind:?}");
+    }
+    let up1 = take(TicketKind::Upload, None).await;
+    let up2 = take(TicketKind::Upload, None).await;
+    assert_ne!(up1, up2);
+    done(&r, up1, TicketOutcome::Applied).await.unwrap();
+    assert_eq!(fence::fence(r.pool(), c).await.unwrap(), Fence::OpenTicket);
+    done(&r, up2, TicketOutcome::Applied).await.unwrap();
+    // every ticket answer carries its issue time; a repeat answers the first one's
+    let answer = |cmid: &'static str| {
+        let p = r.pigeon();
+        async move {
+            p.person(ALICE)
+                .legacy_ticket(
+                    c,
+                    &TicketRequest {
+                        kind: TicketKind::Send,
+                        client_message_id: Some(cmid.into()),
+                    },
+                )
+                .await
+                .unwrap()
+        }
+    };
+    let issued = answer("s:1").await.issued_at.unwrap().0;
+    let row_issued: time::OffsetDateTime = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select issued_at from legacy_tickets where ticket = $1", &[&first])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(
+        (issued - row_issued).abs() < time::Duration::milliseconds(1),
+        "{issued} {row_issued}"
+    );
+    // a repeat past TICKET_HOLD_MAX (pigeon may no longer write under that ticket): a new ticket, issued now, while
+    // the old one stays open (a write started under it may still be in flight)
+    let aged = magpie_api::legacy::TICKET_HOLD_MAX.as_secs_f64() + 1.0;
+    r.pool()
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            "update legacy_tickets set issued_at = issued_at - make_interval(secs => $2) where ticket = $1",
+            &[&first, &aged],
+        )
+        .await
+        .unwrap();
+    let late = answer("s:1").await;
+    let late_ticket = late.ticket.unwrap();
+    assert_ne!(late_ticket, first);
+    let age = time::OffsetDateTime::now_utc() - late.issued_at.unwrap().0;
+    assert!(age.abs() < time::Duration::seconds(5), "{age}");
+    assert_eq!(
+        answer("s:1").await.ticket,
+        Some(late_ticket),
+        "the new one is the open ticket now"
+    );
+    let first_open: bool = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select done_at is null and superseded_at is not null from legacy_tickets where ticket = $1",
+            &[&first],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(first_open, "the superseded ticket stays open");
+    done(&r, late_ticket, TicketOutcome::Started).await.unwrap();
     let open: i64 = r
         .pool()
         .get()
@@ -930,7 +1200,7 @@ async fn a_stranded_ticket_expires_and_a_retried_ticket_call_reuses_the_open_one
         .await
         .unwrap()
         .get(0);
-    assert_eq!(open, 4);
+    assert_eq!(open, 3, "the superseded send ticket and the two renames");
     // pigeon never reports (it died): the conversation cannot be fenced, so it stays legacy
     assert_eq!(fence::fence(r.pool(), c).await.unwrap(), Fence::OpenTicket);
     // the importer expires only tickets issued before its bound
@@ -957,7 +1227,7 @@ async fn a_stranded_ticket_expires_and_a_retried_ticket_call_reuses_the_open_one
         .await
         .unwrap()
         .get(0);
-    assert_eq!(magpie::legacy::tickets::expire(r.pool(), c, now).await.unwrap(), 4);
+    assert_eq!(magpie::legacy::tickets::expire(r.pool(), c, now).await.unwrap(), 3);
     // a late report keeps the expiry; the same clientMessageId now opens a new ticket
     done(&r, first, TicketOutcome::Started).await.unwrap();
     let outcome: String = r
@@ -991,7 +1261,9 @@ async fn the_release_judges_the_lease_by_the_clock() {
     let in_tx = |c: Uuid, sleep: f64| {
         let pool = pool.clone();
         async move {
-            aviary_pg::tx!(&pool, |tx| -> magpie::error::Result<Result<f64, NotReleased>> {
+            aviary_pg::tx!(&pool, |tx| -> magpie::error::Result<
+                Result<fence::Released, NotReleased>,
+            > {
                 // the importer's own work earlier in the release transaction
                 tx.execute("select pg_sleep($1)", &[&sleep]).await?;
                 fence::release_in(tx, c, &Release::default()).await
@@ -1003,7 +1275,7 @@ async fn the_release_judges_the_lease_by_the_clock() {
     // a release 1.2 s into its transaction measures the fence from the clock, not the transaction's start
     let a = migrating(&r, ALICE, "c1").await;
     assert!(matches!(fence::fence(r.pool(), a).await.unwrap(), Fence::Fenced(_)));
-    let held = in_tx(a, 1.2).await.unwrap();
+    let held = in_tx(a, 1.2).await.unwrap().held;
     assert!(held >= 1.2, "{held}");
     // a fence that lapsed by the clock during the transaction is not released
     let b = migrating(&r, ALICE, "c2").await;
@@ -1120,7 +1392,7 @@ async fn misses_are_ingested_together_under_one_deadline() {
 }
 
 #[tokio::test]
-async fn an_ingest_past_the_deadline_is_503_and_after_import_done_a_miss_is_unknown_at_once() {
+async fn an_ingest_past_the_deadline_is_503_and_a_miss_is_always_ingested() {
     let db = common::fresh_db("lg_slow").await;
     let t = common::Tokens::new();
     let pool = aviary_pg::connect(&db.url, "test", 2, Duration::from_secs(10)).unwrap();
@@ -1172,7 +1444,8 @@ async fn an_ingest_past_the_deadline_is_503_and_after_import_done_a_miss_is_unkn
         .unwrap()
         .get(0);
     assert_eq!(uploads_before, uploads_after);
-    // once every conversation is owned, nothing is left to ingest: unknown_upload at once
+    // every conversation recorded owned changes nothing (a reverse hand-over may reopen one): a miss is still
+    // ingested before any answer
     r.pool()
         .get()
         .await
@@ -1180,11 +1453,9 @@ async fn an_ingest_past_the_deadline_is_503_and_after_import_done_a_miss_is_unkn
         .execute("update import_control set all_owned_at = now()", &[])
         .await
         .unwrap();
-    let started = Instant::now();
     let e = a.send_turn(c, &send("sl:2", files)).await.unwrap_err();
-    assert_eq!(e.code(), Some(&ErrorCode::UnknownUpload));
-    assert!(started.elapsed() < Duration::from_secs(1));
-    assert_eq!(*calls.lock().unwrap(), 3);
+    assert_eq!(e.code(), Some(&ErrorCode::Unavailable));
+    assert_eq!(*calls.lock().unwrap(), 6);
 }
 
 #[tokio::test]
@@ -1247,4 +1518,136 @@ async fn a_teed_upload_attached_by_its_id_and_purged_keeps_its_old_path() {
         .unwrap()
         .get(0);
     assert_eq!(n, 1);
+}
+
+#[tokio::test]
+async fn an_importer_release_in_its_own_transaction_is_counted_after_the_commit() {
+    let db = common::fresh_db("lg_fence_metric").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    // the import Deployment registers the window's metrics on its own registry (its 9090 /metrics)
+    let mut registry = prometheus_client::registry::Registry::with_prefix("magpie");
+    let m = magpie::legacy::Metrics::register(&mut registry);
+    let count = |registry: &prometheus_client::registry::Registry| {
+        let mut out = String::new();
+        prometheus_client::encoding::text::encode(&mut out, registry).unwrap();
+        out.lines()
+            .find_map(|l| l.strip_prefix("magpie_fence_seconds_count "))
+            .map(|v| v.trim().parse::<u64>().unwrap())
+            .unwrap()
+    };
+    let c = migrating(&r, ALICE, "fm").await;
+    assert!(matches!(fence::fence(r.pool(), c).await.unwrap(), Fence::Fenced(_)));
+    let imported = upload(&r, ALICE, "fm.pdf", b"fm").await;
+    // a release transaction that rolls back after release_in: no release, nothing counted
+    let rolled: magpie::error::Result<()> = aviary_pg::tx!(r.pool(), |tx| -> magpie::error::Result<()> {
+        let _ = fence::release_in(tx, c, &Release::default()).await?;
+        Err(magpie::error::Error::Internal("the importer's pass failed".into()))
+    })
+    .await;
+    assert!(rolled.is_err());
+    assert!(r.pigeon().person(ALICE).get_conversation(c).await.unwrap().migrating);
+    assert_eq!(count(&registry), 0);
+    // the importer's release: its ingestion pass and import_sources update, then release_in last, in one
+    // transaction; recorded once it committed
+    let released = aviary_pg::tx!(r.pool(), |tx| -> magpie::error::Result<fence::Released> {
+        paths::import_upload(tx, ALICE, "fm.pdf", imported.upload_id, &[4u8; 32]).await?;
+        tx.execute(
+            "update import_sources set released_at = now(), release_reason = 'idle' where conversation_id = $1",
+            &[&c],
+        )
+        .await?;
+        Ok(fence::release_in(tx, c, &Release::default()).await?.unwrap())
+    })
+    .await
+    .unwrap();
+    released.record(&m);
+    assert!((0.0..3.0).contains(&released.held), "{}", released.held);
+    assert_eq!(count(&registry), 1);
+    assert!(!r.pigeon().person(ALICE).get_conversation(c).await.unwrap().migrating);
+}
+
+#[tokio::test]
+async fn a_send_fenced_between_its_owner_read_and_admission_resolves_its_old_path() {
+    let db = common::fresh_db("lg_fence_race").await;
+    let t = common::Tokens::new();
+    let r = Arc::new(common::replica(&db.url, &t).await);
+    let imported = upload(&r, ALICE, "race.pdf", b"%PDF-1.4 race").await;
+    aviary_pg::tx!(r.pool(), |tx| -> magpie::error::Result<()> {
+        paths::import_upload(tx, ALICE, "1-race.pdf", imported.upload_id, &[5u8; 32]).await
+    })
+    .await
+    .unwrap();
+    let c = migrating(&r, ALICE, "race").await;
+    // the importer's fence transaction holds the row lock: the send reads the owner (legacy, unfenced: no
+    // resolution) and then waits in admission's lock
+    let (locked, go) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    let holder = {
+        let (pool, locked, go) = (r.pool().clone(), locked.clone(), go.clone());
+        tokio::spawn(async move {
+            aviary_pg::tx!(&pool, |tx| -> magpie::error::Result<()> {
+                tx.execute("select 1 from conversations where id = $1 for update", &[&c])
+                    .await?;
+                locked.notify_one();
+                go.notified().await;
+                tx.execute(
+                    "update conversations set legacy_fence_at = clock_timestamp() where id = $1",
+                    &[&c],
+                )
+                .await?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        })
+    };
+    locked.notified().await;
+    let conn = r.pool().get().await.unwrap();
+    let path = old_path(ALICE, "1-race.pdf");
+    let r2 = r.clone();
+    let req = send("race:1", vec![file(&path, &imported)]);
+    let sent = tokio::spawn(async move { r2.pigeon().person(ALICE).send_turn(c, &req).await });
+    let waiting = common::eventually(Duration::from_secs(5), async || {
+        conn.query_one(
+            "select count(*) from pg_stat_activity
+             where datname = current_database() and wait_event_type = 'Lock' and pid <> pg_backend_pid()",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get::<_, i64>(0)
+            > 0
+    })
+    .await;
+    assert!(waiting, "the send waits on the row lock in admission");
+    go.notify_one();
+    holder.await.unwrap();
+    // admission answers conversation_migrating (fenced): the send waits for the release, then is native
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!sent.is_finished(), "the send waits in the fence");
+    fence::release(r.pool(), c, &Release::default(), "idle", &r.app().legacy)
+        .await
+        .unwrap()
+        .unwrap();
+    let turn = sent
+        .await
+        .unwrap()
+        .expect("a fenced send proceeds natively")
+        .into_inner()
+        .turn;
+    let now_native = r.pigeon().person(ALICE).get_conversation(c).await.unwrap();
+    assert_eq!(now_native.turn.map(|x| x.id), Some(turn.id));
+    // the old path was resolved on the attempt after the fence: a fresh copy attached
+    let row = conn
+        .query_one(
+            "select count(*), bool_and(id <> $2) from uploads where conversation_id = $1 and name = 'race.pdf'",
+            &[&c, &imported.upload_id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, i64>(0), 1);
+    assert_eq!(row.get::<_, Option<bool>>(1), Some(true));
 }

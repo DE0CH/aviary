@@ -167,10 +167,29 @@ pub enum NotReleased {
     OpenTicket,
 }
 
+/// A release that happened inside a transaction: how long the fence was held. Recorded on `magpie_fence_seconds`
+/// with [`Released::record`] once that transaction has committed (a rolled-back release is no release).
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use = "record it on magpie_fence_seconds once the release transaction has committed"]
+pub struct Released {
+    /// Fence to release, in seconds (by the clock at the release).
+    pub held: f64,
+}
+
+impl Released {
+    /// Observes the held time on `metrics`' `magpie_fence_seconds` (the gate of DESIGN 9.9 and cutover 10.3's A5
+    /// checklist).
+    pub fn record(self, metrics: &super::Metrics) {
+        metrics.fence_released(self.held);
+    }
+}
+
 /// The release, inside the caller's transaction (the importer adds its upload-ingestion rows and its
 /// `import_sources` update): locks the row, requires the conversation migrating with a live fence and no open
 /// ticket, then makes it native (`migrating = false`, the fence cleared, `run_state = 'idle'`, the release-time model
-/// and `name_source`) with change `conversation_upserted`. Answers how long the fence was held (seconds).
+/// and `name_source`) with change `conversation_upserted`. Answers how long the fence was held, which the caller
+/// records with [`Released::record`] after its commit, on the `magpie::legacy::Metrics` its process registers (the
+/// import Deployment's own `/metrics`, where every release runs).
 ///
 /// The lease and the held time are judged by the clock when this runs (`clock_timestamp()`), not the transaction's
 /// start, so work done earlier in the caller's transaction counts against the 3 s. The importer calls this **last**
@@ -179,7 +198,7 @@ pub enum NotReleased {
 ///
 /// # Errors
 /// When a statement fails.
-pub async fn release_in(t: &Tx<'_>, id: Uuid, r: &Release) -> Result<Result<f64, NotReleased>> {
+pub async fn release_in(t: &Tx<'_>, id: Uuid, r: &Release) -> Result<Result<Released, NotReleased>> {
     let Some(row) = t
         .query_opt(
             "select person, migrating, legacy_fence_at > clock_timestamp() - make_interval(secs => $2),
@@ -214,11 +233,12 @@ pub async fn release_in(t: &Tx<'_>, id: Uuid, r: &Release) -> Result<Result<f64,
     )
     .await?;
     changes::upserted(t, &person, id).await?;
-    Ok(Ok(held))
+    Ok(Ok(Released { held }))
 }
 
 /// The release transaction of cutover 7.8 on its own: [`release_in`] plus `import_sources.released_at` and
-/// `release_reason` (`idle` or `forced`). The fence time goes to `magpie_fence_seconds` of `metrics`.
+/// `release_reason` (`idle` or `forced`). The fence time goes to `magpie_fence_seconds` of `metrics` after the commit;
+/// answers it.
 ///
 /// # Errors
 /// When a statement fails.
@@ -229,7 +249,7 @@ pub async fn release(
     reason: &str,
     metrics: &super::Metrics,
 ) -> Result<Result<f64, NotReleased>> {
-    let out = aviary_pg::tx!(pool, |t| -> Result<Result<f64, NotReleased>> {
+    let out = aviary_pg::tx!(pool, |t| -> Result<Result<Released, NotReleased>> {
         let out = release_in(t, id, r).await?;
         if out.is_ok() {
             t.execute(
@@ -241,10 +261,10 @@ pub async fn release(
         Ok(out)
     })
     .await?;
-    if let Ok(s) = out {
-        metrics.fence_released(s);
-    }
-    Ok(out)
+    Ok(out.map(|r| {
+        r.record(metrics);
+        r.held
+    }))
 }
 
 /// Lifts a fence (a fingerprint changed inside it, cutover 7.8): writes waiting in it then go through the legacy

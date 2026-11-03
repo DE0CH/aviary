@@ -4,13 +4,18 @@
 //!
 //! A ticket whose outcome never arrives (pigeon died or rolled out between the ticket and the report, or a ticket call
 //! that timed out after it committed was not retried with its `clientMessageId`) would keep its conversation legacy
-//! for ever. A ticket call repeated with the same `(kind, clientMessageId)` returns the open ticket instead of a
-//! second one; anything still stranded is closed by the importer with [`expire`] once the old child shows that no
-//! write under it can still be in flight (switch-final 8.1's "done or expired"; the design gap is recorded in
-//! `crates/magpie/README.md`).
+//! for ever. A send's ticket call repeated with the same `clientMessageId` returns the open ticket instead of a second
+//! one while it is younger than [`TICKET_HOLD_MAX`]; past that the old ticket is superseded (left open: a write
+//! started under it may still be in flight) and the repeat gets a new one, so a retried send is never stuck behind a
+//! ticket pigeon may no longer write under. Anything still stranded is closed by the importer with [`expire`] once the
+//! old child shows that no write under it can still be in flight (switch-final 8.1's "done or expired"; the design
+//! gap is recorded in `crates/magpie/README.md`).
 
 use aviary_pg::Pool;
-use magpie_api::legacy::{TicketDone, TicketKind, TicketOutcome, TicketRequest, TicketResponse, TicketRoute};
+use magpie_api::Timestamp;
+use magpie_api::legacy::{
+    TICKET_HOLD_MAX, TicketDone, TicketKind, TicketOutcome, TicketRequest, TicketResponse, TicketRoute,
+};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -30,17 +35,19 @@ const FENCE_WAITS: usize = 3;
 
 enum Take {
     Native,
-    Legacy(Uuid),
+    Legacy(Uuid, OffsetDateTime),
     Wait,
 }
 
 /// `POST /v1/conversations/{id}/legacy/tickets`: `native` once magpie owns the conversation; a ticket while it is
-/// legacy (a lapsed fence is cleared first); while it is fenced, waits for the release or the fence's end. With a
-/// `clientMessageId`, a repeat of an open ticket's `(kind, clientMessageId)` returns that ticket (pigeon's retry of a
-/// call that timed out after it committed opens no second one).
+/// legacy (a lapsed fence is cleared first); while it is fenced, waits for the release or the fence's end. A send's
+/// `clientMessageId` repeated returns the open ticket for it while that ticket is younger than [`TICKET_HOLD_MAX`]
+/// (pigeon's retry of a call that timed out after it committed opens no second one); an older one is superseded and a
+/// new ticket issued (the old one stays open until its outcome or the importer's expiry).
 ///
 /// # Errors
-/// 400 `bad_request` (a `clientMessageId` over 200 bytes), 404, 503 when fences never end; a statement error.
+/// 400 `bad_request` (a `clientMessageId` over 200 bytes, or on a kind other than `send`), 404, 503 when fences never
+/// end; a statement error.
 pub async fn take(app: &Magpie, person: &Person, id: Uuid, req: &TicketRequest) -> Result<TicketResponse> {
     if req
         .client_message_id
@@ -48,6 +55,11 @@ pub async fn take(app: &Magpie, person: &Person, id: Uuid, req: &TicketRequest) 
         .is_some_and(|c| c.len() > limits::IDEMPOTENCY_KEY_MAX)
     {
         return Err(Error::bad_request("clientMessageId must be at most 200 bytes"));
+    }
+    if req.client_message_id.is_some() && req.kind != TicketKind::Send {
+        // one key per write: a send's upload tickets sharing the send's id would share one ticket, closed by the
+        // first file's `applied` while the other copies still write under it
+        return Err(Error::bad_request("only a send's ticket carries a clientMessageId"));
     }
     let kind = req.kind.as_str();
     let cmid = req.client_message_id.as_deref();
@@ -74,21 +86,37 @@ pub async fn take(app: &Magpie, person: &Person, id: Uuid, req: &TicketRequest) 
             if let Some(cmid) = cmid
                 && let Some(r) = t
                     .query_opt(
-                        "select ticket from legacy_tickets
-                         where conversation_id = $1 and kind = $2 and client_message_id = $3 and done_at is null",
-                        &[&id, &kind, &cmid],
+                        "select ticket, issued_at, clock_timestamp() - issued_at < make_interval(secs => $3)
+                         from legacy_tickets
+                         where conversation_id = $1 and client_message_id = $2 and done_at is null
+                           and superseded_at is null",
+                        &[&id, &cmid, &TICKET_HOLD_MAX.as_secs_f64()],
                     )
                     .await?
             {
-                return Ok(Take::Legacy(r.get(0)));
+                let ticket: Uuid = r.get(0);
+                if r.get::<_, bool>(2) {
+                    return Ok(Take::Legacy(ticket, r.get(1)));
+                }
+                // too old for pigeon to start a write under: it stays open (one may be in flight) and the repeat
+                // gets a new ticket
+                t.execute(
+                    "update legacy_tickets set superseded_at = clock_timestamp() where ticket = $1",
+                    &[&ticket],
+                )
+                .await?;
+                tracing::info!(conversation = %id, %ticket, "a repeated send's ticket was past its hold: superseded");
             }
             let ticket = Uuid::now_v7();
-            t.execute(
-                "insert into legacy_tickets (ticket, conversation_id, kind, client_message_id) values ($1, $2, $3, $4)",
-                &[&ticket, &id, &kind, &cmid],
-            )
-            .await?;
-            Ok(Take::Legacy(ticket))
+            let issued: OffsetDateTime = t
+                .query_one(
+                    "insert into legacy_tickets (ticket, conversation_id, kind, client_message_id, issued_at)
+                     values ($1, $2, $3, $4, clock_timestamp()) returning issued_at",
+                    &[&ticket, &id, &kind, &cmid],
+                )
+                .await?
+                .get(0);
+            Ok(Take::Legacy(ticket, issued))
         })
         .await?;
         match taken {
@@ -96,12 +124,14 @@ pub async fn take(app: &Magpie, person: &Person, id: Uuid, req: &TicketRequest) 
                 return Ok(TicketResponse {
                     route: TicketRoute::Native,
                     ticket: None,
+                    issued_at: None,
                 });
             }
-            Take::Legacy(ticket) => {
+            Take::Legacy(ticket, issued) => {
                 return Ok(TicketResponse {
                     route: TicketRoute::Legacy,
                     ticket: Some(ticket),
+                    issued_at: Some(Timestamp(issued)),
                 });
             }
             Take::Wait => match fence::await_unfenced(app, id).await? {
@@ -110,6 +140,7 @@ pub async fn take(app: &Magpie, person: &Person, id: Uuid, req: &TicketRequest) 
                     return Ok(TicketResponse {
                         route: TicketRoute::Native,
                         ticket: None,
+                        issued_at: None,
                     });
                 }
                 Some(_) => {}
@@ -180,10 +211,11 @@ pub async fn done(app: &Magpie, person: &Person, ticket: Uuid, req: &TicketDone)
 ///
 /// Only the importer (or `magpie import release <id> --force`, after inspection) calls this, and only with evidence
 /// that no write under those tickets can still reach the old child or be in flight in it: pigeon never starts a
-/// legacy write under a ticket older than [`magpie_api::legacy::TICKET_HOLD_MAX`], so with `issued_before` at most
+/// legacy write under a ticket older than [`TICKET_HOLD_MAX`], so with `issued_before` at most
 /// the start of an old-child read (running list, and `pendingUserMessages`/`preparing` for the conversation) that
 /// showed nothing for it, minus that bound, every such write has either not happened or settled. The quiet period
-/// and the two running-set reads of the release rule still follow (switch-final 8.1, C5.2).
+/// and the two running-set reads of the release rule still follow (switch-final 8.1, C5.2). Superseded tickets are
+/// expired the same way (they are open).
 ///
 /// # Errors
 /// When a statement fails.

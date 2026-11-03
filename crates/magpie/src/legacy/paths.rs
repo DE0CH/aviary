@@ -149,9 +149,9 @@ fn unknown() -> Error {
 /// Resolves every old asset path of `m.files` (see the module), rewriting it to the fresh copy's
 /// `uploads/<id>/<name>` path. Paths that are not old asset paths are left to the admission. The same old path twice
 /// in one send becomes one copy, so it is one attachment, as the same upload id twice is (the admission de-duplicates
-/// by upload id). The misses are ingested concurrently
-/// under one deadline ([`limits::INGEST_TIMEOUT`], magpie 8.2's 5 s for the whole send); once every conversation is
-/// owned (`import_control.all_owned_at`) nothing is left to ingest and a miss is `unknown_upload` at once.
+/// by upload id). The misses are ingested concurrently under one deadline ([`limits::INGEST_TIMEOUT`], magpie 8.2's
+/// 5 s for the whole send), on every miss until the A6 release removes the ingest (DESIGN 9.5): nothing here reads a
+/// table the A6 contraction drops, so after it only the ingest call goes, and a miss is `unknown_upload`.
 ///
 /// # Errors
 /// 400 `unknown_upload` when an old path resolves nowhere, 503 when the synchronous ingest cannot be reached or does
@@ -183,7 +183,7 @@ pub async fn resolve(app: &Magpie, person: &Person, m: &mut SendRequest) -> Resu
         }
     }
     let misses: Vec<&String> = names.iter().filter(|n| !found.contains_key(*n)).collect();
-    if !misses.is_empty() && !all_owned(&app.pool.get().await?).await? {
+    if !misses.is_empty() {
         let calls = futures_util::future::join_all(misses.iter().map(|n| app.ingest.ingest(&person.email, n)));
         let answers = tokio::time::timeout(limits::INGEST_TIMEOUT, calls).await.map_err(|_| {
             tracing::warn!(person = %key, "the synchronous ingest did not answer in time");
@@ -216,15 +216,6 @@ pub async fn resolve(app: &Magpie, person: &Person, m: &mut SendRequest) -> Resu
         }
     }
     Ok(())
-}
-
-/// Whether the importer has recorded every conversation owned (`import_control.all_owned_at`): from then on no old
-/// asset is left to ingest.
-async fn all_owned(db: &impl Db) -> Result<bool> {
-    Ok(db
-        .query_opt("select all_owned_at is not null from import_control", &[])
-        .await?
-        .is_some_and(|r| r.get::<_, bool>(0)))
 }
 
 /// Whether `m` names an old asset path of `person` (a send without one skips [`resolve`] entirely).
