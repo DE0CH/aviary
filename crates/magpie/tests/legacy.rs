@@ -887,7 +887,7 @@ async fn the_legacy_path_set_outlives_the_a6_contraction() {
     let gone: i64 = conn
         .query_one(
             "select count(*) from information_schema.tables
-             where table_name in ('legacy_tickets', 'import_sources', 'import_shares', 'import_control')",
+             where table_name in ('legacy_tickets', 'import_sources', 'import_shares', 'import_control', 'import_purged')",
             &[],
         )
         .await

@@ -158,7 +158,12 @@ async fn purge_rows(tx: &Tx<'_>, person: &str, conversation: Uuid, why: ShareRev
             .await?;
         }
     }
-    // 2. the conversation (cascades: events, rows, row_seqs, turns, commands, tool links, uploads, sent files,
+    // 2. in the switch window, the tombstone the reverse export reads (cutover 14.3; not for the importer's forget,
+    //    whose conversation the old stack deleted itself)
+    if hermit {
+        tombstone(tx, person, conversation).await?;
+    }
+    // 3. the conversation (cascades: events, rows, row_seqs, turns, commands, tool links, uploads, sent files,
     //    sent staging, report ids), its uploads' blob refs, its cc scope, its live frames
     tx.execute(
         "delete from blob_refs where owner_kind = 'upload'
@@ -171,7 +176,7 @@ async fn purge_rows(tx: &Tx<'_>, person: &str, conversation: Uuid, why: ShareRev
         .await?;
     tx.execute("delete from conversations where id = $1", &[&conversation])
         .await?;
-    // 3. the person's counter and change; held polls of the conversation wake (and answer 404)
+    // 4. the person's counter and change; held polls of the conversation wake (and answer 404)
     tx.execute(
         "update persons set purged_conversations = purged_conversations + 1 where person = $1",
         &[&person],
@@ -194,7 +199,7 @@ async fn purge_rows(tx: &Tx<'_>, person: &str, conversation: Uuid, why: ShareRev
         tracing::info!(conversation = %conversation, "imported conversation removed");
         return Ok(());
     }
-    // 4. hermit: release the sandbox, delete the workspace (a conversation's workspace id is its id, hermit 3.8)
+    // 5. hermit: release the sandbox, delete the workspace (a conversation's workspace id is its id, hermit 3.8)
     outbox::enqueue(
         tx,
         &Item::ReleaseSandbox {
@@ -211,6 +216,29 @@ async fn purge_rows(tx: &Tx<'_>, person: &str, conversation: Uuid, why: ShareRev
     )
     .await?;
     tracing::info!(conversation = %conversation, "conversation purged");
+    Ok(())
+}
+
+/// Records a purged conversation in `import_purged` while that table exists (the switch window; A6 drops it): its
+/// Claude Code session id and cc paths, which the reverse export needs to delete its old-side copy.
+async fn tombstone(tx: &Tx<'_>, person: &str, conversation: Uuid) -> Result<()> {
+    let window: bool = tx
+        .query_one("select to_regclass('import_purged') is not null", &[])
+        .await?
+        .get(0);
+    if !window {
+        return Ok(());
+    }
+    tx.execute(
+        "insert into import_purged (conversation_id, person, provider_session_id, cc_paths)
+         select c.id, $2, c.provider_session_id,
+                coalesce((select array_agg(f.path order by f.path) from cc_files f where f.scope = c.id), '{}')
+         from conversations c where c.id = $1
+         on conflict (conversation_id) do update set person = excluded.person,
+             provider_session_id = excluded.provider_session_id, cc_paths = excluded.cc_paths, purged_at = now()",
+        &[&conversation, &person],
+    )
+    .await?;
     Ok(())
 }
 

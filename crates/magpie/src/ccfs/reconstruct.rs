@@ -18,6 +18,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use magpie_api::sandbox::{CcEntry, CcFileQuery, CcTree};
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use super::extract::{self, Sha};
 use super::lines::{Row, rows_from};
@@ -175,6 +176,18 @@ pub async fn file(app: Arc<Magpie>, caller: &Caller, q: &CcFileQuery) -> Result<
     check_path(&q.path)?;
     let conn = app.pool.get().await?;
     owned(&conn, caller).await?;
+    drop(conn);
+    scope_file(app, caller.conversation, q).await
+}
+
+/// A file of any cc scope, a share snapshot's included, with no caller check: the importer's reverse export of a
+/// share made on the new side (cutover 14.3), which writes the snapshot's Claude Code files back to the old stack.
+/// The same bytes and headers as [`file`].
+///
+/// # Errors
+/// 400 `bad_path`, 404; 500 / 503 for the first batch.
+pub async fn scope_file(app: Arc<Magpie>, scope: Uuid, q: &CcFileQuery) -> Result<Response> {
+    check_path(&q.path)?;
     let ranged = q.offset.is_some() || q.length.is_some();
     let status = if ranged {
         StatusCode::PARTIAL_CONTENT
@@ -183,12 +196,11 @@ pub async fn file(app: Arc<Magpie>, caller: &Caller, q: &CcFileQuery) -> Result<
     };
     // the file's row and its lines (or pages) are separate statements: a write committed between them would mix two
     // versions, so a read that answers at once checks the version afterwards and reads again
-    drop(conn);
     let mut attempt = 0;
     let (f, start, end, body) = loop {
         // a connection per step, none held while blobs come from the bucket (6.11)
         let conn = app.pool.get().await?;
-        let f = load_file(&conn, caller.conversation, &q.path)
+        let f = load_file(&conn, scope, &q.path)
             .await?
             .filter(|f| f.kind != Kind::Dir)
             .ok_or_else(Error::not_found)?;

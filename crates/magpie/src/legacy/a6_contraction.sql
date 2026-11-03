@@ -4,5 +4,6 @@ drop table legacy_tickets;
 drop table import_sources;
 drop table import_shares;
 drop table import_control;
+drop table import_purged;
 alter table conversations drop column legacy_fence_at;
 alter table conversations drop column migrating;
