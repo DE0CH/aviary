@@ -20,6 +20,8 @@ own library, so an imported conversation is what live writes would have made: cc
 | `src/sync.rs` | the sync of one file (cutover 7.4.2 rules 1-6), 16 MiB chunks, deterministic `opId`s |
 | `src/conv.rs` | creating a migrating conversation, mapping a sessions row's changes, removing one whose row vanished (no hermit call) |
 | `src/failed.rs` | failed turns as `user.sent` + `turn.ended` failed, sentences mapped back to codes, placed by time on the first import |
+| `src/sent.rs` | the old hook's `sent/<conversation>/<toolUseId>/` snapshots as blobs, `sent_files` and `files.sent` (caption from the call's input) |
+| `src/viewas.rs` | `jarvis.ops_events` view-as rows as `view_as_log` (the old `conversation` event is `send`) |
 | `src/pass.rs` | one pass (`run`, `catch-up`), 8 conversations at a time |
 | `src/verify.rs` | byte-exact verification through magpie's read path, the re-ingest, the released-source check |
 | `src/plan.rs` | `plan`: counts, sizes, the largest lines, memory files, blockers |
@@ -38,12 +40,15 @@ own library, so an imported conversation is what live writes would have made: cc
 - A sessions row that vanished while migrating removes the conversation's rows without any hermit call
   (`magpie::conversations::delete::forget_locked`): its workspace and its shares' clones are the old stack's until the
   release. `reset --yes` does the same.
+- A `files.sent` event is appended at the next seq on the first import too (cutover 7.4.3 places it after the
+  call); its `toolUseSeq` ties it to the call's tool row, which is where the timeline shows it.
+- The view-as audit has no source id in magpie's log: a row is the same row when its time, admin, person, session
+  and event are.
 - Events of imported transcript lines carry the line's own `timestamp` as their time.
 - Each conversation's sync ends by flushing the `truncated` limbo its writes left (one `retract`, as a turn's end
   does), so the visible events match the source after every pass rather than after magpie's 10 s sweeper.
 
 ## Not built yet (WP-29 continues)
 
-Shares (7.4.4), the view-as audit (7.4.5), upload ingestion and sent files (7.4.3), `holds.js` and `holds`, the
-leader lock, `allow-handover`, `parity`, `reverse` and `export` (14.2-14.3), and
+Shares (7.4.4), `holds.js` and `holds`, the leader lock, `allow-handover`, `parity`, `reverse` and `export` (14.2-14.3), and
 tests 4 (the routes of 6.4 beyond the write guard), 5-8 of 7.12. The hand-over loop itself is WP-52.

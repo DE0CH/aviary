@@ -12,6 +12,8 @@
 //! - [`sync`]: the sync of one file (cutover 7.4.2 rules 1-6) through the importer's cc writes.
 //! - [`conv`]: creating a migrating conversation, mapping a sessions row's changes, the purge of a vanished one.
 //! - [`failed`]: `jarvis_failed_turns` as `user.sent` + `turn.ended` failed.
+//! - [`sent`]: the old hook's sent-file snapshots as `sent_files` and `files.sent`.
+//! - [`viewas`]: `jarvis.ops_events` view-as rows as magpie's `view_as_log`.
 //! - [`pass`]: one pass (`run`, `catch-up`): every conversation whose fingerprints changed, 8 at a time.
 //! - [`verify`]: byte-exact verification through magpie's read path (cutover 7.7).
 //! - [`plan`]: the dry run that reports blockers (cutover 7.9).
@@ -24,10 +26,12 @@ pub mod conv;
 pub mod failed;
 pub mod pass;
 pub mod plan;
+pub mod sent;
 pub mod source;
 pub mod sync;
 pub mod tree;
 pub mod verify;
+pub mod viewas;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -93,6 +97,8 @@ pub struct Importer {
     pub magpie: Arc<Magpie>,
     /// Database `cloudcli`, read-only.
     pub cloudcli: Pool,
+    /// Database `jarvis` (the view-as audit), read-only.
+    pub jarvis: Pool,
     /// The `JuiceFS` mount (`/jfs`), read-only.
     pub jfs: PathBuf,
 }

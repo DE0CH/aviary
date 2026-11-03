@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::conv::{self, Created};
 use crate::failed::{self, Placement};
+use crate::sent;
 use crate::source::{self, FailedTurn, PersonSource, SessionRow};
 use crate::sync::{Files, Writer};
 use crate::tree;
@@ -30,6 +31,8 @@ pub struct Known {
     pub files: Files,
     /// `failed_turns_fp`.
     pub failed_fp: String,
+    /// `sent_fp`.
+    pub sent_fp: String,
     /// Released (the importer never writes it again).
     pub released: bool,
 }
@@ -45,7 +48,8 @@ pub async fn known(imp: &Importer) -> Result<HashMap<Uuid, Known>> {
         .get()
         .await?
         .query(
-            "select conversation_id, row_fp, files, failed_turns_fp, released_at is not null from import_sources",
+            "select conversation_id, row_fp, files, failed_turns_fp, released_at is not null, sent_fp
+             from import_sources",
             &[],
         )
         .await?;
@@ -58,6 +62,7 @@ pub async fn known(imp: &Importer) -> Result<HashMap<Uuid, Known>> {
                 files: serde_json::from_value(r.get(2))?,
                 failed_fp: r.get(3),
                 released: r.get(4),
+                sent_fp: r.get(5),
             },
         );
     }
@@ -96,6 +101,8 @@ pub struct Report {
     pub conflicts: Vec<Uuid>,
     /// Per conversation (or schema) errors.
     pub errors: Vec<(String, String)>,
+    /// The view-as pass (a full pass only).
+    pub view_as: crate::viewas::Copied,
 }
 
 /// One pass over every person's conversations (`only`: just these).
@@ -155,6 +162,12 @@ pub async fn pass(imp: &Importer, only: Option<&BTreeSet<Uuid>>) -> Result<Repor
             }
         }
     }
+    if only.is_none() {
+        match crate::viewas::pass(imp, &imp.jarvis).await {
+            Ok(c) => report.view_as = c,
+            Err(e) => report.errors.push(("view-as".into(), e.to_string())),
+        }
+    }
     if only.is_none() && snap.problems.is_empty() {
         for (id, k) in known.iter() {
             if !k.released && !seen.contains(id) && conv::purge(imp, *id).await? {
@@ -200,6 +213,7 @@ pub async fn sync_conversation(
         files: Files::new(),
         failed_fp: String::new(),
         released: false,
+        sent_fp: String::new(),
     };
     let k = if let Some(k) = known {
         k.clone()
@@ -220,7 +234,9 @@ pub async fn sync_conversation(
     let imported = failed::ids_of(&k.failed_fp);
     let new_failed: Vec<FailedTurn> = failed.iter().filter(|f| !imported.contains(&f.id)).cloned().collect();
     let row_changed = k.row_fp != s.fingerprint();
-    if !stats_changed(&sources, &k.files) && !row_changed && new_failed.is_empty() {
+    let (snapshots, sent_fp) = sent::read(&imp.jfs, id)?;
+    let sent_changed = sent_fp != k.sent_fp;
+    if !stats_changed(&sources, &k.files) && !row_changed && new_failed.is_empty() && !sent_changed {
         return Ok(outcome);
     }
     let workspace = tree::workspace_uploads(&imp.jfs, id)?;
@@ -244,10 +260,17 @@ pub async fn sync_conversation(
         all.insert(f.id);
     }
     let mut changed = wrote || !new_failed.is_empty();
+    if sent_changed {
+        let done = sent::imported(imp, id).await?;
+        for snap in snapshots.iter().filter(|s| !done.contains(&s.tool_use_id)) {
+            sent::import(imp, person, id, snap).await?;
+            changed = true;
+        }
+    }
     if row_changed {
         changed |= conv::apply_row(imp, person, s).await?;
     }
-    conv::record(imp, id, &files, &failed::fingerprint(&all), changed).await?;
+    conv::record(imp, id, &files, &failed::fingerprint(&all), &sent_fp, changed).await?;
     if changed && outcome == Outcome::Unchanged {
         outcome = Outcome::Changed;
     }

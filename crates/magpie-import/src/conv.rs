@@ -223,17 +223,24 @@ pub async fn apply_row(imp: &Importer, person: &str, s: &SessionRow) -> Result<b
 ///
 /// # Errors
 /// [`Error::Released`] when it is not; a statement error.
-pub async fn record(imp: &Importer, id: Uuid, files: &Files, failed_fp: &str, changed: bool) -> Result<()> {
+pub async fn record(
+    imp: &Importer,
+    id: Uuid,
+    files: &Files,
+    failed_fp: &str,
+    sent_fp: &str,
+    changed: bool,
+) -> Result<()> {
     let files = serde_json::to_value(files)?;
     let pool = &imp.magpie.pool;
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let n = t
             .execute(
-                "update import_sources s set files = $2, failed_turns_fp = $3, last_synced_at = now(),
+                "update import_sources s set files = $2, failed_turns_fp = $3, sent_fp = $5, last_synced_at = now(),
                         last_change_at = case when $4 then now() else last_change_at end, last_error = null
                  from conversations c
                  where s.conversation_id = $1 and c.id = s.conversation_id and c.migrating",
-                &[&id, &files, &failed_fp, &changed],
+                &[&id, &files, &failed_fp, &changed, &sent_fp],
             )
             .await?;
         if n == 0 {

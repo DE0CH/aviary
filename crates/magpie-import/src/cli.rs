@@ -2,7 +2,8 @@
 //! standard error) and exits 0, 1 when it found a blocker or a failure, 2 on a usage error.
 //!
 //! Bindings (platform 12.2): magpie's own (`MAGPIE_DATABASE_URL`, `MAGPIE_S3_*`) from Secret `magpie`, the old
-//! database from Secret `magpie-import` (`MAGPIE_IMPORT_CLOUDCLI_URL`), the `JuiceFS` mount at [`JFS`], `POD_NAME`.
+//! databases from Secret `magpie-import` (`MAGPIE_IMPORT_CLOUDCLI_URL`, `MAGPIE_IMPORT_JARVIS_URL`; every read is a
+//! read-only transaction), the `JuiceFS` mount at [`JFS`], `POD_NAME`.
 //! The hand-over loop and the commands that drive it (`handover`, `holds`, `allow-handover`, `reverse`, `parity`,
 //! `export`) are not built yet.
 
@@ -74,16 +75,17 @@ pub async fn connect(build: &version::Build) -> Result<Importer, String> {
         Duration::from_secs(120),
     )
     .map_err(|e| e.to_string())?;
-    cloudcli
-        .get()
-        .await
-        .map_err(|e| e.to_string())?
-        .batch_execute("set default_transaction_read_only = on")
-        .await
-        .map_err(|e| e.to_string())?;
+    let jarvis = aviary_pg::connect(
+        &env::required("MAGPIE_IMPORT_JARVIS_URL"),
+        "magpie-import",
+        2,
+        Duration::from_secs(120),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(Importer {
         magpie: service.app.clone(),
         cloudcli,
+        jarvis,
         jfs: PathBuf::from(JFS),
     })
 }

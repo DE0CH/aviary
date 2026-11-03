@@ -135,6 +135,11 @@ CREATE TABLE jarvis_failed_turns (
 );
 "#;
 
+/// The old chat stack's audit table the importer reads (database `jarvis`).
+pub const JARVIS_SCHEMA: &str =
+    "create table ops_events (id bigserial primary key, at timestamptz not null default now(),
+    kind text not null, ok boolean, ms integer, sandbox_id uuid, conversation_id uuid, host text, detail jsonb)";
+
 /// The world of one test.
 pub struct World {
     pub imp: Importer,
@@ -142,6 +147,7 @@ pub struct World {
     pub service: Option<Service>,
     pub magpie_db: TestDb,
     pub cloudcli_db: TestDb,
+    pub jarvis_db: TestDb,
 }
 
 impl World {
@@ -154,6 +160,7 @@ impl World {
         );
         let magpie_db = fresh_db(&format!("mi_{test}")).await;
         let cloudcli_db = fresh_db(&format!("cc_{test}")).await;
+        let jarvis_db = fresh_db(&format!("jv_{test}")).await;
         let bucket = bucket(&magpie_db.name).await;
         let readiness = Readiness::detached();
         let drain = Drain::new(readiness.clone());
@@ -170,18 +177,22 @@ impl World {
         };
         let service = Service::start_library(cfg, &readiness, drain.draining()).await.unwrap();
         let cloudcli = aviary_pg::connect(&cloudcli_db.url, "magpie-import-test", 4, Duration::from_secs(30)).unwrap();
+        let jarvis = aviary_pg::connect(&jarvis_db.url, "magpie-import-test", 2, Duration::from_secs(30)).unwrap();
+        jarvis.get().await.unwrap().batch_execute(JARVIS_SCHEMA).await.unwrap();
         let jfs = TempDir(std::env::temp_dir().join(format!("magpie-import-{test}-{}", Uuid::new_v4().simple())));
         std::fs::create_dir_all(&jfs.0).unwrap();
         Self {
             imp: Importer {
                 magpie: Arc::clone(&service.app),
                 cloudcli,
+                jarvis,
                 jfs: jfs.0.clone(),
             },
             jfs,
             service: Some(service),
             magpie_db,
             cloudcli_db,
+            jarvis_db,
         }
     }
 
@@ -203,6 +214,11 @@ impl World {
             .unwrap();
         c.batch_execute("set search_path = public").await.unwrap();
         key
+    }
+
+    /// Runs a statement in `jarvis`.
+    pub async fn jarvis(&self, sql: &str) {
+        self.imp.jarvis.get().await.unwrap().batch_execute(sql).await.unwrap();
     }
 
     /// Runs a statement in `cloudcli`.

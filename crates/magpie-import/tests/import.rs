@@ -438,3 +438,80 @@ async fn conflicts_vanished_rows_forced_release_and_reset() {
         .get(0);
     assert_eq!(n, 0);
 }
+
+#[tokio::test]
+async fn sent_files_and_the_view_as_audit() {
+    let w = World::new("sent").await;
+    let k = w.person(ALICE).await;
+    let (u, p) = (Uuid::new_v4(), Uuid::new_v4());
+    w.cloudcli(&format!(
+        "insert into cc_{k}.sessions (session_id, provider_session_id, created_at, updated_at)
+           values ('{u}', '{p}', '2026-10-22 06:00:00', '2026-10-22 06:00:00')"
+    ))
+    .await;
+    let mut t = user("l1", "2026-10-22T06:00:01.000Z", "send me the report");
+    t.extend(common::line(&serde_json::json!({
+        "type": "assistant", "uuid": "l2", "timestamp": "2026-10-22T06:00:02.000Z",
+        "message": {"id": "msg_l2", "role": "assistant", "model": "claude-test", "content": [
+            {"type": "tool_use", "id": "toolu_abc", "name": "SendUserFile",
+             "input": {"files": ["/workspace/out/report.pdf"], "caption": " the report "}}
+        ]}
+    })));
+    w.put(&k, &format!("projects/-workspace/{p}.jsonl"), &t);
+    let dir = w.jfs.0.join("sent").join(u.to_string()).join("toolu_abc").join("out");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("report.pdf"), b"%PDF-1.4 a report").unwrap();
+    w.jarvis(&format!(
+        "insert into ops_events (kind, conversation_id, detail) values
+           ('view_as', null, '{{\"admin\": \"Boss@Example.com\", \"user\": \"{ALICE}\", \"session\": \"s1\", \"event\": \"start\"}}'),
+           ('view_as', '{u}', '{{\"admin\": \"boss@example.com\", \"user\": \"{ALICE}\", \"session\": \"s1\", \"event\": \"conversation\", \"chars\": 12}}'),
+           ('view_as', null, '{{\"admin\": \"boss@example.com\", \"user\": \"{ALICE}\", \"session\": \"s1\", \"event\": \"peek\"}}'),
+           ('other', null, '{{}}')"
+    ))
+    .await;
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!((r.view_as.copied, r.view_as.skipped), (2, 1));
+    let c = w.magpie().get().await.unwrap();
+    let row = c
+        .query_one(
+            "select s.path, s.name, s.caption, s.size, e.data->>'toolUseSeq', e.seq
+             from sent_files s join events e on e.conversation_id = s.conversation_id and e.seq = s.seq
+             where s.conversation_id = $1",
+            &[&u],
+        )
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, String>(0), "out/report.pdf");
+    assert_eq!(row.get::<_, String>(1), "report.pdf");
+    assert_eq!(row.get::<_, Option<String>>(2).as_deref(), Some("the report"));
+    assert_eq!(row.get::<_, i64>(3), 17);
+    let call: i64 = c
+        .query_one(
+            "select seq from events where conversation_id = $1 and kind = 'cc.assistant'",
+            &[&u],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(row.get::<_, Option<String>>(4), Some(call.to_string()));
+    let audit: Vec<(String, String, Option<i32>)> = c
+        .query("select admin, event, chars from view_as_log order by id", &[])
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| (r.get(0), r.get(1), r.get(2)))
+        .collect();
+    assert_eq!(
+        audit,
+        [
+            ("boss@example.com".to_owned(), "start".to_owned(), None),
+            ("boss@example.com".to_owned(), "send".to_owned(), Some(12))
+        ]
+    );
+    drop(c);
+    let n = w.kinds(u).await.len();
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert_eq!((r.changed, r.view_as.copied, r.view_as.present), (0, 0, 2));
+    assert_eq!(w.kinds(u).await.len(), n);
+}
