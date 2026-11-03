@@ -101,6 +101,8 @@ spec:
       ports: [{port: 3128}]
     - from: [{podSelector: {matchLabels: {app: pigeon}}}, {podSelector: {matchLabels: {app: hermit}}}]
       ports: [{port: 8082}]
+    - from: [{podSelector: {matchLabels: {app: driver}}}]
+      ports: [{port: 9090}]
   egress:
     - to:
         - podSelector: {matchLabels: {app: magpie}}

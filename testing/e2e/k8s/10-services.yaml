@@ -136,7 +136,8 @@ spec:
     metadata: {labels: {app: test-gateway}}
     spec:
       serviceAccountName: plain
-      terminationGracePeriodSeconds: 120
+      # above the gateway's longest drain bound (a model stream, 600 s, platform 3.11.6)
+      terminationGracePeriodSeconds: 620
       containers:
         - name: test-gateway
           image: aviary-e2e/testing:e2e

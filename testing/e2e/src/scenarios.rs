@@ -11,8 +11,8 @@ use crate::{ADMIN, ALICE, Harness, JFS, PIGEON, STRANGER, TURN_MODEL, eventually
 
 /// The scenarios in the order `aviary-e2e` runs them when none is named.
 pub const ALL: &[&str] = &[
-    "e1", "e2", "e3", "e4", "e5", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e9", "e13", "e15",
-    "e24", "e12", "e17", "stale",
+    "e1", "e2", "e3", "e4", "e5", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e9", "e23", "e13",
+    "e15", "e24", "e12", "e17", "stale",
 ];
 
 /// How long a turn may take, sandbox start included (the image is local; the first start makes the host).
@@ -41,6 +41,7 @@ pub async fn run(h: &Harness, name: &str) -> anyhow::Result<()> {
         "e13" => e13(h).await,
         "e4" => e4(h).await,
         "e5" => e5(h).await,
+        "e23" => e23(h).await,
         "e15" => e15(h).await,
         "e7" => e7(h).await,
         other => bail!("no scenario {other}"),
@@ -1642,6 +1643,84 @@ async fn e5(h: &Harness) -> anyhow::Result<()> {
             };
             let code = h.pigeon(Method::GET, &bad, &token).send().await?.status().as_u16();
             ensure!(code == 404, "the thumbnail with a bad signature: {code}");
+            Ok(())
+        }
+        .await;
+        (ws, r)
+    })
+    .await
+}
+
+/// The sum of `drain_cut_total` on a gateway Pod's metrics, or `None` once it no longer answers.
+async fn drain_cut(h: &Harness, ip: &str) -> Option<f64> {
+    let text = h
+        .http
+        .get(format!("http://{ip}:9090/metrics"))
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await
+        .ok()?
+        .text()
+        .await
+        .ok()?;
+    Some(
+        text.lines()
+            .filter(|l| l.starts_with("drain_cut_total"))
+            .filter_map(|l| l.rsplit(' ').next()?.parse::<f64>().ok())
+            .sum(),
+    )
+}
+
+/// E23: both gateway Pods get SIGTERM during a 60 s model stream: the stream completes unbroken, the turn's later
+/// calls land on the new Pods, and no request is cut at a drain bound (`drain_cut_total` stays 0 on the draining
+/// Pods until they exit).
+async fn e23(h: &Harness) -> anyhow::Result<()> {
+    let m = marker("E23");
+    h.script(slow(&m, 60_000, 1)).await?;
+    as_alice(h, |mut ws| async move {
+        let r = async {
+            let id = create(&mut ws, &format!("Through a gateway drain ({m})")).await?;
+            sandbox_of(h, &id).await?;
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let pods = kube::Api::<k8s_openapi::api::core::v1::Pod>::namespaced(h.kube.clone(), crate::NS)
+                .list(&kube::api::ListParams::default().labels("app=test-gateway"))
+                .await?;
+            let old: Vec<(String, String)> = pods
+                .items
+                .iter()
+                .filter_map(|p| Some((p.metadata.name.clone()?, p.status.as_ref()?.pod_ip.clone()?)))
+                .collect();
+            for (name, _) in &old {
+                h.delete_pod(name, 620).await?;
+            }
+            let mut ended = None;
+            let mut cut = 0f64;
+            let mut scraped = 0u32;
+            let until = Instant::now() + Duration::from_secs(300);
+            while ended.is_none() {
+                ensure!(Instant::now() < until, "the turn did not end");
+                for (_, ip) in &old {
+                    if let Some(c) = drain_cut(h, ip).await {
+                        cut = cut.max(c);
+                        scraped += 1;
+                    }
+                }
+                if let Ok(e) = turn_end_kind(&mut ws, &id, Duration::from_secs(2)).await {
+                    ended = Some(e);
+                }
+            }
+            let end = ended.unwrap_or_default();
+            ensure!(end["type"] == "turn_completed", "the turn ended {end}");
+            ensure!(scraped > 0, "no draining gateway's metrics were read");
+            ensure!(cut == 0.0, "drain_cut_total {cut} on a draining gateway");
+            eprintln!("e23: {scraped} scrapes of the draining gateways, drain_cut_total 0");
+            let rows = timeline(&mut ws, &id).await?;
+            ensure!(
+                texts_of(&rows, "assistant_message")
+                    .iter()
+                    .any(|t| t == "Done after the pause."),
+                "the stream's end is missing"
+            );
             Ok(())
         }
         .await;
