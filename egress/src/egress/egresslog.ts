@@ -5,7 +5,11 @@
 // written in order once the database is back. A row Postgres refuses as data (SQLSTATE class 22 or 23) is a bad row,
 // not an outage: it is found by writing its batch row by row, dropped and counted, and the rows after it go on. Rows
 // are cleaned in add() first (port 1-65535 or null, no NUL in text, lengths capped), so a sandbox's odd request (a
-// CONNECT to port 99999999999, a model name with \u0000) never reaches that path in practice.
+// CONNECT to port 99999999999, a model name with \u0000) never reaches that path in practice. Writes are idempotent:
+// each row carries a row_id made once in add() (unique index, insert ... on conflict do nothing), so a batch retried
+// after an insert whose outcome is unknown (the client's query_timeout, a connection lost after COMMIT) is never
+// written twice and never counts its model cost twice toward the budget.
+import { randomUUID } from "node:crypto";
 import type { Db } from "./db.ts";
 import { logError, log } from "../common/log.ts";
 
@@ -33,9 +37,11 @@ export interface EgressRow {
   person?: string | null;
   /** the Aviary-Request id */
   request?: string | null;
+  /** the row's own id, made once in add() and kept through retries (the insert's idempotency key) */
+  row_id?: string;
 }
 
-const COLS = ["at", "conversation_id", "sandbox_id", "kind", "method", "host", "port", "path", "status", "decision", "bytes_up", "bytes_down", "ms", "cost_usd", "model", "person", "request"] as const;
+const COLS = ["at", "conversation_id", "sandbox_id", "kind", "method", "host", "port", "path", "status", "decision", "bytes_up", "bytes_down", "ms", "cost_usd", "model", "person", "request", "row_id"] as const;
 /** About 15 MB of rows. */
 export const MAX_BUFFERED = 50_000;
 const BATCH = 500;
@@ -70,6 +76,7 @@ export function cleanRow(r: EgressRow): EgressRow {
     model: text(r.model, TEXT_CAPS.model),
     person: text(r.person, TEXT_CAPS.person),
     request: text(r.request, TEXT_CAPS.request),
+    row_id: typeof r.row_id === "string" && UUID.test(r.row_id) ? r.row_id : randomUUID(),
   };
 }
 
@@ -161,7 +168,7 @@ export class EgressLog {
       for (const c of COLS) vals.push(r[c] ?? null);
       return `(${COLS.map((_, j) => `$${i * COLS.length + j + 1}`).join(",")})`;
     });
-    await this.#db.query(`insert into egress_log (${COLS.join(",")}) values ${tuples.join(",")}`, vals);
+    await this.#db.query(`insert into egress_log (${COLS.join(",")}) values ${tuples.join(",")} on conflict (row_id) do nothing`, vals);
   }
 
   #writing(): void {
@@ -193,7 +200,8 @@ export class EgressLog {
       } catch (e) {
         if (!isDataError(e)) return this.#outage(rows, e);
       }
-      // a bad row in the batch: write it row by row, drop what Postgres refuses as data
+      // a bad row in the batch: write it row by row, drop what Postgres refuses as data. #inflight holds only the
+      // rows not yet written or dropped, so unwrittenModelCost never counts a row that is already in the table.
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i]!;
         try {
@@ -205,6 +213,7 @@ export class EgressLog {
           this.rejected++;
           logError("egress log row refused", e, { kind: r.kind, decision: r.decision, status: r.status, request: r.request });
         }
+        this.#inflight = rows.slice(i + 1);
       }
       this.#inflight = [];
       this.#writing();

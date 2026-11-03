@@ -32,6 +32,14 @@ create table budget_state (since timestamptz primary key, limit_usd numeric not 
   `
 create table token_keys (id int primary key default 1 check (id = 1), body text not null, fetched_at timestamptz not null);
 `,
+  // each row's own id, made once by the writer and kept through its retries: a batch retried after an insert whose
+  // outcome was unknown (query_timeout, a connection lost after COMMIT) is not written twice (on conflict do nothing),
+  // so a model row's cost counts once toward the budget. Null on rows copied from the old stack and rows of a build
+  // before this one (a unique index allows any number of nulls).
+  `
+alter table egress_log add column row_id uuid;
+create unique index egress_log_row_id on egress_log (row_id);
+`,
 ];
 
 export function connect(url: string | undefined): Db {

@@ -1070,6 +1070,59 @@ test("egress_log: a row Postgres refuses as data is dropped and counted; its bat
   }
 });
 
+test("egress_log: a batch retried after an insert that committed but lost its reply is written once; its cost counts once", async () => {
+  const d = await freshEgressDb("egress_idem");
+  try {
+    // the database commits the insert, then the client sees an error with no SQLSTATE (query_timeout, a connection
+    // lost after COMMIT): the writer treats it as an outage and retries the same rows in 1 s
+    let lose = 1;
+    let inserts = 0;
+    const db = Object.create(d.db) as typeof d.db;
+    db.query = (async (sql: string, vals?: unknown[]) => {
+      const res = await d.db.query(sql, vals);
+      if (String(sql).startsWith("insert into egress_log") && (inserts++, lose-- > 0)) throw new Error("Query read timeout");
+      return res;
+    }) as typeof d.db.query;
+    const log = new EgressLog(db);
+    log.add({ kind: "model", host: "m", decision: "allow", cost_usd: 1.25 });
+    log.add({ kind: "connect", host: "h", decision: "allow" });
+    await log.flush();
+    await log.close(5000);
+    assert.equal(log.buffered, 0);
+    assert.equal(inserts, 2, "the unknown outcome was retried with the same rows");
+    assert.equal(log.rejected, 0, "the retry is a no-op for rows already written, not a refused row");
+    const got = (await d.db.query("select count(*)::int as n, coalesce(sum(cost_usd), 0)::float as usd, count(distinct row_id)::int as ids from egress_log")).rows[0];
+    assert.deepEqual(got, { n: 2, usd: 1.25, ids: 2 });
+  } finally {
+    await d.drop();
+  }
+});
+
+test("egress_log: while a batch is written row by row, rows already written leave the unwritten model cost", async () => {
+  const d = await freshEgressDb("egress_rowcost");
+  try {
+    await d.db.query("alter table egress_log add constraint test_poison check (host <> 'poison')");
+    const seen: number[] = [];
+    let log: EgressLog;
+    const db = Object.create(d.db) as typeof d.db;
+    db.query = (async (sql: string, vals?: unknown[]) => {
+      // a single-row insert of the row-by-row path: what a budget read at this moment would add to the table's sum
+      if (String(sql).startsWith("insert into egress_log") && !String(sql).includes("),(")) seen.push(log.unwrittenModelCost(Date.now() + 60_000));
+      return d.db.query(sql, vals);
+    }) as typeof d.db.query;
+    log = new EgressLog(db);
+    log.add({ kind: "model", host: "a", decision: "allow", cost_usd: 1 });
+    log.add({ kind: "http", host: "poison", decision: "allow" });
+    log.add({ kind: "model", host: "b", decision: "allow", cost_usd: 2 });
+    await log.flush();
+    assert.equal(log.rejected, 1);
+    assert.deepEqual(seen, [3, 2, 2], "a's cost leaves once a is in the table");
+    assert.equal(log.unwrittenModelCost(Date.now() + 60_000), 0);
+  } finally {
+    await d.drop();
+  }
+});
+
 test("egress_log rows are cleaned: ports outside 1-65535, NUL in text, long text, bad uuids", async () => {
   const { cleanRow, isDataError } = await import("../src/egress/egresslog.ts");
   for (const port of [0, -1, 65536, 99999999999, 1.5, NaN]) assert.equal(cleanRow({ kind: "connect", host: "h", decision: "allow", port }).port, null, String(port));
