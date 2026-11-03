@@ -1,10 +1,30 @@
 [package]
 name = "fake-sandboxd"
-description = "sandboxd's API backed by Kubernetes Pods of the real sandbox image."
+description = "sandboxd's API backed by Kubernetes Pods of the real sandbox image, and the EC2 calls hermit makes."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+base64.workspace = true
+clap.workspace = true
+hyper = { workspace = true, features = ["server", "http1"] }
+hyper-util.workspace = true
+k8s-openapi.workspace = true
+kube.workspace = true
+ring.workspace = true
+rustls.workspace = true
+sandboxd-api = { path = "../../crates/sandboxd-api" }
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tower.workspace = true
+x25519-dalek = { workspace = true, default-features = false }
 
 [lints]
 workspace = true

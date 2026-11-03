@@ -1503,6 +1503,26 @@ dependencies = [
 [[package]]
 name = "fake-sandboxd"
 version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64 0.23.1",
+ "clap",
+ "hyper",
+ "hyper-util",
+ "k8s-openapi",
+ "kube",
+ "ring",
+ "rustls",
+ "sandboxd-api",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+ "tokio-rustls",
+ "tower",
+ "x25519-dalek",
+]
 
 [[package]]
 name = "fake-tools"
