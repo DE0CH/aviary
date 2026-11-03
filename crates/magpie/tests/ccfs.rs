@@ -971,6 +971,77 @@ async fn an_echo_rewritten_after_its_limbo_flushed_is_still_no_prompt() {
 }
 
 #[tokio::test]
+async fn an_echo_written_again_with_other_bytes_is_still_no_prompt() {
+    let (db, _r, mut s) = setup("cc_echo_uuid").await;
+    let sql = common::sql(&db.url);
+    let p = main_path();
+    let conv = s.conversation;
+    set_main(&sql, conv, &p).await;
+    let names = |v: Vec<(i64, String, Option<String>)>| v.into_iter().map(|e| (e.1, e.2)).collect::<Vec<_>>();
+    let prompt_events = async |sql: &aviary_pg::Pool| -> i64 {
+        sql.get()
+            .await
+            .unwrap()
+            .query_one(
+                "select count(*) from events where conversation_id = $1 and kind = 'cc.user'",
+                &[&conv],
+            )
+            .await
+            .unwrap()
+            .get(0)
+    };
+    // turn 1: its echo and a reply
+    let t1 = person_turn(&sql, &mut s).await;
+    let content = [prompt("p1", "hello"), assistant("a1", "hi")].concat();
+    s.write(&p, 0, &content).await.unwrap();
+    flush_turn(&sql, conv, Some(t1)).await;
+    let only_reply = vec![("cc.assistant".to_owned(), Some("a1".to_owned()))];
+    assert_eq!(names(visible(&sql, conv).await), only_reply);
+    // the same message with other bytes (another sessionId, the fields in another order): never retracted, so no
+    // line with its uuid ever had an event
+    let p1_again = line(
+        &json!({"sessionId": "another", "message": {"content": "hello", "role": "user"},
+        "type": "user", "uuid": "p1"}),
+    );
+    assert_ne!(p1_again, prompt("p1", "hello"));
+    // turn 2 (a person's, its echo pending) writes it, then its own echo: p1 does not take turn 2's echo
+    let t2 = person_turn(&sql, &mut s).await;
+    let mut at = content.len() as u64;
+    s.write(&p, at, &p1_again).await.unwrap();
+    at += p1_again.len() as u64;
+    let p2 = prompt("p2", "and then");
+    s.write(&p, at, &p2).await.unwrap();
+    at += p2.len() as u64;
+    assert_eq!(
+        names(visible(&sql, conv).await),
+        only_reply,
+        "p1 is internal, p2 is turn 2's echo"
+    );
+    let matched: bool = sql
+        .get()
+        .await
+        .unwrap()
+        .query_one("select echo_matched from turns where id = $1", &[&t2])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(matched, "p2 matched turn 2's echo");
+    assert_eq!(prompt_events(&sql).await, 0);
+    // with no echo pending (turn 2's is matched), p2 with other bytes is no prompt event either
+    let p2_again = line(
+        &json!({"uuid": "p2", "type": "user", "message": {"role": "user", "content": "and then"},
+        "cwd": "/workspace"}),
+    );
+    s.write(&p, at, &p2_again).await.unwrap();
+    assert_eq!(names(visible(&sql, conv).await), only_reply);
+    assert_eq!(
+        prompt_events(&sql).await,
+        0,
+        "no cc.user prompt event was made for an echo"
+    );
+}
+
+#[tokio::test]
 async fn the_end_of_a_turn_flushes_only_its_own_limbo() {
     let (db, _r, mut s) = setup("cc_flush_turn").await;
     let sql = common::sql(&db.url);

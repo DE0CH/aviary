@@ -200,6 +200,8 @@ async fn drop_scope(tx: &Tx<'_>, scope: Uuid) -> Result<()> {
     tx.execute("delete from cc_files where scope = $1", &[&scope]).await?;
     tx.execute("delete from cc_limbo where scope = $1", &[&scope]).await?;
     tx.execute("delete from cc_echoes where scope = $1", &[&scope]).await?;
+    tx.execute("delete from cc_echo_uuids where scope = $1", &[&scope])
+        .await?;
     tx.execute("delete from cc_ops where scope = $1", &[&scope]).await?;
     tx.execute("delete from blob_refs where owner = $1", &[&scope]).await?;
     Ok(())

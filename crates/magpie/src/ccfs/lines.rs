@@ -14,7 +14,8 @@
 //! transcript has visible events, so only its lines are put in limbo or retracted.
 //!
 //! A line once classified as the echo of a person's prompt is also remembered by its sha256 for the conversation's
-//! life (`cc_echoes`), so writing it again after its limbo was flushed is internal again (6.5).
+//! life (`cc_echoes`, and by its uuid in `cc_echo_uuids`), so writing it again after its limbo was flushed is internal
+//! again (6.5), with the same bytes or not.
 //!
 //! Every operation works on the lines it touches in bounded batches: a read seeks with `cc_lines_off` and takes
 //! [`limits::CC_READ_BATCH`] lines at a time, a truncate removes its suffix (into limbo) in one statement, new lines
@@ -349,12 +350,15 @@ fn event_data(stub: &[u8], spans: &[(usize, Sha)], meta: &HashMap<Sha, blobs::Me
     serde_json::from_slice(&out).ok()
 }
 
-/// Whether `sha` is a line once classified as the echo of a person's prompt in `conversation` (6.5).
-async fn was_echo(tx: &Tx<'_>, conversation: Uuid, sha: &Sha) -> Result<bool> {
+/// Whether a line with `sha` (or with `uuid`) was once classified as the echo of a person's prompt in
+/// `conversation` (6.5): the same bytes, or the same message written again with other bytes.
+async fn was_echo(tx: &Tx<'_>, conversation: Uuid, sha: &Sha, uuid: Option<&str>) -> Result<bool> {
     Ok(tx
         .query_opt(
-            "select 1 from cc_echoes where scope = $1 and sha256 = $2",
-            &[&conversation, &sha.as_slice()],
+            "select 1 from cc_echoes where scope = $1 and sha256 = $2
+             union all select 1 from cc_echo_uuids where scope = $1 and uuid = $3
+             limit 1",
+            &[&conversation, &sha.as_slice(), &uuid],
         )
         .await?
         .is_some())
@@ -368,6 +372,23 @@ async fn was_retracted(tx: &Tx<'_>, conversation: Uuid, uuid: Option<&str>) -> R
     Ok(limbo::replaced(tx, conversation, uuid).await?.is_some())
 }
 
+/// Records a line with `sha` and `uuid` as the echo of a person's prompt in `conversation` (6.5).
+async fn remember_echo(tx: &Tx<'_>, conversation: Uuid, sha: &Sha, uuid: Option<&str>) -> Result<()> {
+    tx.execute(
+        "insert into cc_echoes (scope, sha256) values ($1, $2) on conflict do nothing",
+        &[&conversation, &sha.as_slice()],
+    )
+    .await?;
+    if let Some(uuid) = uuid {
+        tx.execute(
+            "insert into cc_echo_uuids (scope, uuid) values ($1, $2) on conflict do nothing",
+            &[&conversation, &uuid],
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 /// The uuid of a line's event data.
 fn uuid_of(data: Option<&Value>) -> Option<&str> {
     data.and_then(|d| d.get("uuid")).and_then(Value::as_str)
@@ -375,8 +396,9 @@ fn uuid_of(data: Option<&Value>) -> Option<&str> {
 
 /// The class of a main-transcript line with sha256 `sha` and event data `data`.
 ///
-/// A line once classified as the echo of a person's prompt is remembered by its sha256 for the conversation's life
-/// (`cc_echoes`), so writing it again after its limbo was flushed (a truncate whose turn ended, a rewrite retried past
+/// A line once classified as the echo of a person's prompt is remembered by its sha256 and its uuid for the
+/// conversation's life (`cc_echoes`, `cc_echo_uuids`), so writing it again (the same bytes, or the same message with
+/// other bytes) after its limbo was flushed (a truncate whose turn ended, a rewrite retried past
 /// the 10 s debounce) is internal again: it neither takes a later turn's echo nor becomes a prompt event. A line with
 /// the uuid of a retracted line is a line written again, never the echo of the turn now running (6.5).
 async fn class_of(tx: &Tx<'_>, op: &Op<'_>, sha: &Sha, data: Option<&Value>) -> Result<Class> {
@@ -387,7 +409,7 @@ async fn class_of(tx: &Tx<'_>, op: &Op<'_>, sha: &Sha, data: Option<&Value>) -> 
         Class::Event(e) => e.is_prompt,
         _ => false,
     };
-    if prompt_like && was_echo(tx, op.conv.id, sha).await? {
+    if prompt_like && was_echo(tx, op.conv.id, sha, uuid_of(data)).await? {
         return Ok(Class::Internal);
     }
     if class == Class::Echo && was_retracted(tx, op.conv.id, uuid_of(data)).await? {
@@ -415,11 +437,7 @@ async fn apply(
                     .await?;
                 t.echo_pending = false;
             }
-            tx.execute(
-                "insert into cc_echoes (scope, sha256) values ($1, $2) on conflict do nothing",
-                &[&op.conv.id, &sha.as_slice()],
-            )
-            .await?;
+            remember_echo(tx, op.conv.id, sha, uuid_of(data.as_ref())).await?;
             Ok(None)
         }
         Class::Title(title) => {

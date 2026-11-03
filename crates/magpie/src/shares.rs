@@ -98,6 +98,11 @@ async fn copy_scope(t: &Tx<'_>, from: Uuid, to: Uuid, cut: Option<Uuid>) -> Resu
         &[&from, &to],
     )
     .await?;
+    t.execute(
+        "insert into cc_echo_uuids (scope, uuid) select $2, uuid from cc_echo_uuids where scope = $1 on conflict do nothing",
+        &[&from, &to],
+    )
+    .await?;
     if let Some(turn) = cut {
         // each cut file ends where its first left-out line began
         t.execute(
@@ -136,6 +141,8 @@ async fn drop_frozen(t: &Tx<'_>, share_id: &str, snapshot: Uuid, workspace: Uuid
     t.execute("delete from cc_files where scope = $1", &[&snapshot]).await?;
     t.execute("delete from cc_limbo where scope = $1", &[&snapshot]).await?;
     t.execute("delete from cc_echoes where scope = $1", &[&snapshot])
+        .await?;
+    t.execute("delete from cc_echo_uuids where scope = $1", &[&snapshot])
         .await?;
     t.execute("delete from cc_ops where scope = $1", &[&snapshot]).await?;
     t.execute("delete from blob_refs where owner = $1", &[&snapshot])
