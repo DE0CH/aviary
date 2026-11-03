@@ -1151,9 +1151,15 @@ async fn a_stranded_ticket_expires_and_a_retried_ticket_call_reuses_the_open_one
         (issued - row_issued).abs() < time::Duration::milliseconds(1),
         "{issued} {row_issued}"
     );
-    // a repeat past TICKET_HOLD_MAX (pigeon may no longer write under that ticket): a new ticket, issued now, while
-    // the old one stays open (a write started under it may still be in flight)
-    let aged = magpie_api::legacy::TICKET_HOLD_MAX.as_secs_f64() + 1.0;
+    // a fresh ticket's whole hold is left; a reuse answers what is left of the first one's
+    let fresh = answer("s:1").await;
+    assert_eq!(fresh.ticket, Some(first));
+    let hold = fresh.hold_ms.unwrap();
+    assert!(hold <= 60_000 && hold > 55_000, "{hold}");
+    assert!(fresh.supersedes.is_none());
+    // a repeat past TICKET_REUSE_MAX (too little hold left to hand back): a new ticket, issued now, that names the old
+    // one, while the old one stays open (a write started under it may still be in flight)
+    let aged = magpie_api::legacy::TICKET_REUSE_MAX.as_secs_f64() + 1.0;
     r.pool()
         .get()
         .await
@@ -1167,12 +1173,19 @@ async fn a_stranded_ticket_expires_and_a_retried_ticket_call_reuses_the_open_one
     let late = answer("s:1").await;
     let late_ticket = late.ticket.unwrap();
     assert_ne!(late_ticket, first);
+    let hold = late.hold_ms.unwrap();
+    assert!(hold <= 60_000 && hold > 55_000, "a new ticket's whole hold: {hold}");
+    let sup = late.supersedes.clone().expect("names the superseded ticket");
+    assert_eq!(sup.ticket, first);
+    // TICKET_SETTLE_MAX (90 s) less the first ticket's 31 s and change
+    assert!(sup.settle_ms <= 59_000 && sup.settle_ms > 54_000, "{}", sup.settle_ms);
     let age = time::OffsetDateTime::now_utc() - late.issued_at.unwrap().0;
     assert!(age.abs() < time::Duration::seconds(5), "{age}");
-    assert_eq!(
-        answer("s:1").await.ticket,
-        Some(late_ticket),
-        "the new one is the open ticket now"
+    let again = answer("s:1").await;
+    assert_eq!(again.ticket, Some(late_ticket), "the new one is the open ticket now");
+    assert!(
+        again.supersedes.is_none(),
+        "only the superseding answer names the old ticket"
     );
     let first_open: bool = r
         .pool()
@@ -1227,7 +1240,21 @@ async fn a_stranded_ticket_expires_and_a_retried_ticket_call_reuses_the_open_one
         .await
         .unwrap()
         .get(0);
-    assert_eq!(magpie::legacy::tickets::expire(r.pool(), c, now).await.unwrap(), 3);
+    assert!((now - magpie::legacy::tickets::now(r.pool()).await.unwrap()).abs() < time::Duration::seconds(5));
+    // the hand-over loop's bound: a read that started now settles nothing issued within TICKET_SETTLE_MAX of it (the
+    // superseded ticket is 31 s old, the others fresh), however quiet the old child looked
+    assert_eq!(
+        magpie::legacy::tickets::expire_settled(r.pool(), c, now).await.unwrap(),
+        0
+    );
+    assert_eq!(fence::fence(r.pool(), c).await.unwrap(), Fence::OpenTicket);
+    let settled = now + time::Duration::try_from(magpie_api::legacy::TICKET_SETTLE_MAX).unwrap();
+    assert_eq!(
+        magpie::legacy::tickets::expire_settled(r.pool(), c, settled + time::Duration::seconds(1))
+            .await
+            .unwrap(),
+        3
+    );
     // a late report keeps the expiry; the same clientMessageId now opens a new ticket
     done(&r, first, TicketOutcome::Started).await.unwrap();
     let outcome: String = r

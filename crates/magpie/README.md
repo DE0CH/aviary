@@ -448,19 +448,35 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   release). The closest correct thing: (1) a send's ticket call carries the send's `clientMessageId` (only a send's
   may: 400 for any other kind, so a send's upload tickets, one per attached file, are each their own and the first
   file's `applied` never closes a ticket another copy still writes under) and is idempotent per
-  `(conversation, clientMessageId)` while that ticket is open and younger than `magpie_api::legacy::TICKET_HOLD_MAX`
-  (`legacy_tickets_open_send_cmid`), so a retry gets the first ticket; a repeat past that age supersedes the old
-  ticket (`superseded_at`: it stays open, a write started under it may still be in flight) and gets a new one, so a
-  retried send is never stuck behind a ticket pigeon may no longer write under; (2) every ticket answer carries
-  `issuedAt`, and pigeon starts no legacy write under a ticket issued more than `TICKET_HOLD_MAX` (60 s) ago (a
-  contract for WP-50); (3) `legacy::tickets::expire(pool, id, issued_before)` closes the open tickets (superseded
-  ones included) issued
-  before a bound with outcome `expired` and wakes the importer. The importer (WP-52) calls it with `issued_before` =
-  the start of an old-child read (running list and `pendingUserMessages`/`preparing`) that showed nothing for the
-  conversation, minus `TICKET_HOLD_MAX`: any write under those tickets has then either not happened or settled, and
-  the quiet period and two running-set reads still follow. `release <id> --force` (WP-29) calls it with the current
-  time after the operator's inspection, then fences and releases. A late outcome on an expired ticket keeps
-  `expired`. Tested in `tests/legacy.rs` (`a_stranded_ticket_expires_and_a_retried_ticket_call_reuses_the_open_one`).
+  `(conversation, clientMessageId)` while that ticket is open and younger than `magpie_api::legacy::TICKET_REUSE_MAX`
+  (30 s; `legacy_tickets_open_send_cmid`), so a retry gets the first ticket with at least 30 s of its hold left; a
+  repeat past that age supersedes the old ticket (`superseded_at`: it stays open, a write started under it may still
+  be in flight) and gets a new one whose answer names it (`supersedes: {ticket, settleMs}`), so a retried send is
+  never stuck behind a ticket pigeon may no longer write under; (2) every ticket answer carries `issuedAt` and
+  `holdMs`, what is left of `TICKET_HOLD_MAX` (60 s) on the database clock, and pigeon starts no legacy write under a
+  ticket later than `holdMs` after it sent the ticket call (its monotonic clock: no skew between pigeon and the
+  database moves the bound) and aborts a ticketed legacy write that has no answer within `TICKET_WRITE_TIMEOUT`
+  (20 s) (a contract for WP-50); (3) `legacy::tickets::expire(pool, id, issued_before)` closes the open tickets
+  (superseded ones included) issued before a bound with outcome `expired` and wakes the importer. The importer
+  (WP-52) calls `legacy::tickets::expire_settled(pool, id, read_started)`, with `read_started` from
+  `legacy::tickets::now` (the database clock) taken right before an old-child read (running list and
+  `pendingUserMessages`/`preparing`) that showed nothing for the conversation; it expires what was issued more than
+  `TICKET_SETTLE_MAX` (90 s = the hold, the write timeout and 10 s for bytes sent just before an abort) before that:
+  any write under those tickets had then either reached the old child, and would have shown in the read until it
+  settled, or never will. The quiet period and two running-set reads still follow. `release <id> --force` (WP-29)
+  calls `expire` with `tickets::now` after the operator's inspection, then fences and releases. A late outcome on an
+  expired ticket keeps `expired`. Tested in `tests/legacy.rs`
+  (`a_stranded_ticket_expires_and_a_retried_ticket_call_reuses_the_open_one`).
+- The old stack does not de-duplicate a send by `clientMessageId`: CloudCLI's paseo hub (DE0CH/claudecodeui
+  `server/modules/paseo/paseo-hub.ts` `send`, called from `paseo-connection.ts` `send_agent_message_request`)
+  refuses a send only while a turn runs and otherwise delivers a second `chat.send`, a second turn. So a send whose
+  repeat got a new ticket with `supersedes` is not simply sent again: pigeon waits `settleMs` from when it sent that
+  ticket call, reads the old child (running list, `pendingUserMessages`, and the timeline for a user message with
+  the send's `clientMessageId`, which the hub's rows carry as `clientMessageId` and id `paseo-user-<id>`), and sends under the new ticket only when the first send is absent; when it is
+  there, it reports the new ticket `started` or `completed` from what the old child shows and answers the send as
+  accepted (a carried note for WP-50). Until the importer's expiry exists (WP-52), a superseded ticket whose outcome
+  never comes holds its conversation legacy; WP-52's hand-over pass calls `expire_settled` for every migrating
+  conversation on every pass, which covers superseded tickets (their `done_at` is null).
 - A fence is a lease: `conversations.legacy_fence_at` older than 3 s holds nothing, cannot be released, and is
   cleared by the next writer that finds it (a ticket call, a waiting mutation). The lease and the fence's held time
   (`magpie_fence_seconds`) are judged by `clock_timestamp()`, not the transaction's start, so the importer's work
@@ -503,7 +519,11 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
 - Migrations `0013_window.sql` and `0010_shares_frozen.sql` were edited in place after they reached `main` (nothing
   was deployed); a database built from an earlier commit (for 0013, from 0822f0ad) fails aviary-pg's checksum
   check and must be recreated. Every migration is frozen from now on: further changes go in new migrations (0015
-  added the superseded ticket).
+  added the superseded ticket). 0015 replaces 0013's reuse rule: 0013's header still describes a repeated ticket
+  call returning the open ticket through `legacy_tickets_open_cmid`, which 0015 drops for
+  `legacy_tickets_open_send_cmid` (sends only, not superseded), and 0015's own header names `TICKET_HOLD_MAX` as the
+  reuse age, which is now `TICKET_REUSE_MAX` (30 s, enforced in `legacy::tickets::take`, not in the index). Neither
+  header can change (checksums); this note and `legacy::tickets` are the current rule.
 - The tee's record (`PUT …/legacy-path`) is an unattached copy of the upload carrying `legacy_path`, not the upload
   itself: pigeon may still attach the upload by its magpie id (DESIGN 9.5), and purging that conversation then
   deletes the upload row but not the record.
