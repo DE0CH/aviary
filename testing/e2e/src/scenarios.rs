@@ -1023,17 +1023,38 @@ async fn e6(h: &Harness) -> anyhow::Result<()> {
             }
             // rows in order, each starting after the previous ended: no duplicate, no overlap
             for w in rows.windows(2) {
-                let (end, next) = (w[0]["seqEnd"].as_u64().unwrap_or(0), w[1]["seqStart"].as_u64().unwrap_or(0));
+                let (end, next) = (
+                    w[0]["seqEnd"].as_u64().unwrap_or(0),
+                    w[1]["seqStart"].as_u64().unwrap_or(0),
+                );
                 ensure!(next > end, "rows out of order or repeated: {end} then {next}");
             }
             let users = rows.iter().filter(|r| r["item"]["type"] == "user_message").count();
             let replies = rows.iter().filter(|r| r["item"]["type"] == "assistant_message").count();
-            ensure!(users == 120 && replies >= 120, "{users} user rows and {replies} replies in the pages");
+            ensure!(
+                users == 120 && replies >= 120,
+                "{users} user rows and {replies} replies in the pages"
+            );
             let all = timeline(&mut ws, &id).await?;
-            ensure!(all.len() == rows.len(), "pages hold {} rows, the whole timeline {}", rows.len(), all.len());
-            let slow = times.iter().filter(|d| **d > first * 2 + Duration::from_millis(50)).count();
-            ensure!(slow == 0, "{slow} pages slower than twice the first ({first:?}): {times:?}");
-            eprintln!("e6: {} rows in {} pages, first {first:?}, others {times:?}", rows.len(), times.len() + 1);
+            ensure!(
+                all.len() == rows.len(),
+                "pages hold {} rows, the whole timeline {}",
+                rows.len(),
+                all.len()
+            );
+            let slow = times
+                .iter()
+                .filter(|d| **d > first * 2 + Duration::from_millis(50))
+                .count();
+            ensure!(
+                slow == 0,
+                "{slow} pages slower than twice the first ({first:?}): {times:?}"
+            );
+            eprintln!(
+                "e6: {} rows in {} pages, first {first:?}, others {times:?}",
+                rows.len(),
+                times.len() + 1
+            );
             Ok(())
         }
         .await;
@@ -1109,7 +1130,12 @@ async fn e7(h: &Harness) -> anyhow::Result<()> {
                 r["seqEnd"]
             );
         }
-        ensure!(seen.len() == all.len(), "{} rows seen, the timeline has {}", seen.len(), all.len());
+        ensure!(
+            seen.len() == all.len(),
+            "{} rows seen, the timeline has {}",
+            seen.len(),
+            all.len()
+        );
         Ok::<_, anyhow::Error>(())
     }
     .await;
