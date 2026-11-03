@@ -30,9 +30,11 @@ own library, so an imported conversation is what live writes would have made: cc
 | `src/kube.rs` | the old cluster's API with `reqwest` and `tungstenite` (the Kubernetes crates are hermit's): ui pods in every phase, `pods/exec` over `v4.channel.k8s.io`; bindings `MAGPIE_IMPORT_LEGACY_KUBE_URL`, `MAGPIE_IMPORT_LEGACY_KUBE_TOKEN`, the CA at `/etc/legacy-kube-ca/ca.crt` |
 | `src/lock.rs` | the leader lock (`hashtext('magpie-import.leader')`): the hand-over replicas' bid, a one-shot command's wait (seen in `pg_locks`), the waiter check the loop yields to |
 | `src/control.rs` | `status`, `hold`, `reset --yes`, `unfence`, `release <id> --force` |
+| `src/export.rs` | the reverse export (14.3): an owned conversation's cc files (memory to `aviary-memory/<id>/`), its sessions row, its failed turns and sent files written back to the old side (temporary file, then rename; 0600, uid 1000 when root) |
 | `src/cli.rs` | `magpie import <command>`: one JSON document on stdout, logs on stderr; every command but `plan` and `status` holds the leader lock |
 | `tests/import.rs` | the end-to-end tests against the CI Postgres and S3 with fixtures made in the test |
 | `tests/shares.rs` | prefix and non-prefix frozen transcripts, revoked before and after the import, a share of a gone conversation, `reset` |
+| `tests/export.rs` | 7.12 item 7: import, release, grow the conversation on the new side, export, the old side's files equal magpie's reconstruction, the sessions row and the failed turn match, memory in `aviary-memory/<id>/`, a re-import verifies |
 | `tests/holds_js.rs`, `tests/kube.rs` | `holds.js` against fake CloudCLI children (node), the transport against a fake Kubernetes API |
 | `tests/convergence.rs` | the property test of cutover 7.12 item 3 (random source changes, a pass at random points: byte-exact, visible events = the source's lines) |
 
@@ -66,8 +68,16 @@ own library, so an imported conversation is what live writes would have made: cc
 - A share whose conversation has no sessions row is stored revoked (`deleted`), as the old stack answers 404 for it.
   `reset --yes` removes the imported shares with their conversations.
 
+- `export` does not fence: the reverse hand-over (14.2, WP-52) fences, calls it and unfences. Without `--since` it
+  exports every owned conversation. A failed turn is exported when it never reached Claude Code (no Claude Code
+  event in the turn: those are the ones the old stack kept in `jarvis_failed_turns`), with the Traditional Chinese
+  sentence of its code, once per `error_at`. Deletions for good on the new side are not exported, and neither are
+  shares made on the new side: the old share page reads a `messages.json` in `CloudCLI`'s own message format,
+  which magpie does not hold; `export` lists them as `sharesNotExported`.
+- A sent-file snapshot's time is its folder's mtime to the nanosecond.
+
 ## Not built yet (WP-29 continues)
 
-`allow-handover`, `parity`, `reverse` and `export` (14.2-14.3), and
-tests 4 (the routes of 6.4 beyond the write guard), 5-7 of 7.12 and item 8's process-level half (the loop's
-yield between passes). The hand-over loop itself is WP-52.
+`parity` (10.2 item 6), `allow-handover` and `reverse` (14.2, with WP-52's loop), the export of new-side shares and
+of permanent deletions, and tests 4 (the routes of 6.4 beyond the write guard), 5-6 of 7.12 and item 8's
+process-level half (the loop's yield between passes). The hand-over loop itself is WP-52.

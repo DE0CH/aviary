@@ -68,7 +68,11 @@ pub fn read(jfs: &Path, conversation: Uuid) -> Result<(Vec<Snapshot>, String)> {
                 fm.mtime().saturating_mul(1_000_000_000) + fm.mtime_nsec(),
             ));
         }
-        let at = OffsetDateTime::from_unix_timestamp(m.mtime()).unwrap_or_else(|_| OffsetDateTime::now_utc());
+        // the snapshot folder's own time, to the nanosecond (an export `--since` compares it)
+        let at = OffsetDateTime::from_unix_timestamp_nanos(
+            i128::from(m.mtime()) * 1_000_000_000 + i128::from(m.mtime_nsec()),
+        )
+        .unwrap_or_else(|_| OffsetDateTime::now_utc());
         out.push(Snapshot {
             tool_use_id: id,
             files,

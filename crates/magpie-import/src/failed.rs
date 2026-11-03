@@ -96,6 +96,25 @@ pub fn error_of(sentence: &str) -> ErrorInfo {
     ErrorInfo::new(DataCode::SandboxFailed, s)
 }
 
+/// The old UI's sentence for a failed turn's error (the reverse export, cutover 14.3): the Traditional Chinese one
+/// staff read, `model.refused` with the provider's words after it, and an unknown code's own message.
+#[must_use]
+pub fn sentence_of(code: &str, detail: Option<&str>) -> String {
+    if code == DataCode::ModelRefused.as_str() {
+        return match detail.filter(|d| !d.is_empty()) {
+            Some(d) => format!("{}：{d}", REFUSED[1]),
+            None => REFUSED[1].to_owned(),
+        };
+    }
+    if let Some((t, _)) = SENTENCES.iter().find(|(t, c)| c.as_str() == code && !t.is_ascii()) {
+        return (*t).to_owned();
+    }
+    detail.filter(|d| !d.is_empty()).map_or_else(
+        || "未能啟動這個對話的電腦，請再試一次；如問題持續，請通知管理員。".to_owned(),
+        str::to_owned,
+    )
+}
+
 /// The fingerprint of a set of failed-turn ids.
 #[must_use]
 pub fn fingerprint(ids: &BTreeSet<i32>) -> String {
@@ -299,6 +318,17 @@ mod tests {
         let u = error_of("something new");
         assert_eq!(u.code, DataCode::SandboxFailed);
         assert_eq!(u.message, "something new");
+    }
+
+    #[test]
+    fn codes_map_to_the_old_sentences() {
+        for (t, c) in SENTENCES.iter().filter(|(t, _)| !t.is_ascii()) {
+            assert_eq!(sentence_of(c.as_str(), None), *t);
+            assert_eq!(error_of(&sentence_of(c.as_str(), None)).code, c.clone());
+        }
+        let r = sentence_of(DataCode::ModelRefused.as_str(), Some("no"));
+        assert_eq!(error_of(&r).code, DataCode::ModelRefused);
+        assert_eq!(sentence_of("something.else", Some("words")), "words");
     }
 
     #[test]

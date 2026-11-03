@@ -11,6 +11,7 @@
 //! - [`tree`]: a conversation's source files on `JuiceFS` and their cc paths (cutover 7.4.2), stats and hashes.
 //! - [`sync`]: the sync of one file (cutover 7.4.2 rules 1-6) through the importer's cc writes.
 //! - [`conv`]: creating a migrating conversation, mapping a sessions row's changes, the purge of a vanished one.
+//! - [`export`]: the reverse export of owned conversations to the old stack (cutover 14.3).
 //! - [`failed`]: `jarvis_failed_turns` as `user.sent` + `turn.ended` failed.
 //! - [`sent`]: the old hook's sent-file snapshots as `sent_files` and `files.sent`.
 //! - [`share`]: `cc_shared.shares` as magpie shares with the same ids (cutover 7.4.4).
@@ -27,6 +28,7 @@
 pub mod cli;
 pub mod control;
 pub mod conv;
+pub mod export;
 pub mod failed;
 pub mod holds;
 pub mod kube;
