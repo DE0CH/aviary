@@ -11,8 +11,8 @@ use crate::{ADMIN, ALICE, Harness, JFS, PIGEON, STRANGER, TURN_MODEL, eventually
 
 /// The scenarios in the order `aviary-e2e` runs them when none is named.
 pub const ALL: &[&str] = &[
-    "e1", "e2", "e3", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e9", "e13", "e15", "e24",
-    "e12", "e17", "stale",
+    "e1", "e2", "e3", "e4", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e9", "e13", "e15",
+    "e24", "e12", "e17", "stale",
 ];
 
 /// How long a turn may take, sandbox start included (the image is local; the first start makes the host).
@@ -39,6 +39,7 @@ pub async fn run(h: &Harness, name: &str) -> anyhow::Result<()> {
         "stale" => stale(h).await,
         "e9" => e9(h).await,
         "e13" => e13(h).await,
+        "e4" => e4(h).await,
         "e15" => e15(h).await,
         "e7" => e7(h).await,
         other => bail!("no scenario {other}"),
@@ -1502,4 +1503,64 @@ async fn e15(h: &Harness) -> anyhow::Result<()> {
     }
     vws.close().await;
     r
+}
+
+/// E4: `SendUserFile` of a 5 MiB file: the sent-file snapshot downloads byte-equal after the workspace file is deleted.
+async fn e4(h: &Harness) -> anyhow::Result<()> {
+    use sha2::Digest as _;
+    let m = marker("E4");
+    // one assistant message with both calls: Claude Code runs them in order (neither is safe to run alongside)
+    h.script(json!({"match": {"textContains": m, "model": TURN_MODEL},
+                    "reply": [{"toolUse": {"name": "Bash", "input": {
+                                  "command": "head -c 5242880 /dev/urandom > /workspace/big.bin",
+                                  "description": "a 5 MiB file"}}},
+                              {"toolUse": {"name": "SendUserFile", "input": {
+                                  "files": ["/workspace/big.bin"], "caption": "the big file"}}}],
+                    "times": 1}))
+        .await?;
+    let token = h.mint(ALICE, 3600, None).await?;
+    as_alice(h, |mut ws| async move {
+        let r = async {
+            let id = create(&mut ws, &format!("Send me a file ({m})")).await?;
+            let end = turn_end_kind(&mut ws, &id, TURN_WAIT).await?;
+            ensure!(end["type"] == "turn_completed", "the turn ended {end}");
+            let rows = timeline(&mut ws, &id).await?;
+            let sent = rows
+                .iter()
+                .find_map(|r| {
+                    r["item"]["metadata"]["sentFiles"]
+                        .as_array()
+                        .and_then(|a| a.first())
+                        .cloned()
+                })
+                .context("no sentFiles on any tool row")?;
+            let call = sent["sent"].as_str().context("no sent id")?.to_owned();
+            let path = sent["path"].as_str().context("no path")?.to_owned();
+            let original = std::fs::read(format!("{JFS}/ws/{id}/{path}")).context("the file on the mount")?;
+            let want = sha2::Sha256::digest(&original);
+            let pod = sandbox_of(h, &id).await?;
+            let (ok, out) = h.exec(&pod, &["rm", &format!("/workspace/{path}")]).await?;
+            ensure!(ok, "rm: {out}");
+            let resp = h
+                .pigeon(
+                    Method::GET,
+                    &format!("/api/jarvis/sessions/{id}/files/raw?path={path}&sent={call}"),
+                    &token,
+                )
+                .send()
+                .await?;
+            let status = resp.status().as_u16();
+            let body = resp.bytes().await?;
+            ensure!(status == 200, "the sent file: {status}");
+            ensure!(
+                body.len() == 5 << 20 && sha2::Sha256::digest(&body) == want,
+                "the snapshot differs ({} bytes)",
+                body.len()
+            );
+            Ok(())
+        }
+        .await;
+        (ws, r)
+    })
+    .await
 }
