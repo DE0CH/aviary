@@ -126,6 +126,11 @@ pub(crate) fn retry_after(e: &ClientError) -> Option<Duration> {
         .map(|d| d.min(RETRY_AFTER_MAX))
 }
 
+/// Whether a failed report is worth another attempt (the reporter's own rule; a lost lease is not).
+pub(crate) fn retryable(e: &ClientError) -> bool {
+    matches!(classify(e), Attempt::Retry(..))
+}
+
 fn classify(e: &ClientError) -> Attempt {
     match e.code() {
         Some(ErrorCode::LeaseLost) => Attempt::GiveUp("lease lost".into()),

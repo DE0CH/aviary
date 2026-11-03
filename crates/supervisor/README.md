@@ -190,8 +190,8 @@ heartbeat (the stuck rule's evidence that magpie answers other calls). The binar
 5. **SIGTERM** is a forced release with reason `requested` and code `sandbox_lost` (4.7 names none).
 6. **The 24 h soak with synthetic turns and 1 MiB lines** needs the driver (WP-23) and `nightly.yml` (WP-28); this
    package runs the 20 s soak (one supervisor restart, hermit and magpie outages) in `ci.yml` and provides
-   `soak_long` (1 h, restarts and outages every 10 min). Open items: WP-23 adds turns and 1 MiB lines to the soak;
-   WP-28 runs `soak_long` in `nightly.yml`; the keeper's 4 MiB RSS needs it as PID 1 with root (its fixed paths),
+   `soak_long` (1 h, restarts and outages every 10 min), which `nightly.yml`'s `supervisor-soak` job runs every
+   night. Open items: WP-23 adds turns and 1 MiB lines to the soak; WP-28 lengthens the nightly run; the keeper's 4 MiB RSS needs it as PID 1 with root (its fixed paths),
    so it is left to the image smoke test (WP-24).
 7. **`RELEASED`.** 4.3 says exit 0 means a requested shutdown; the keeper (4.2) restarts the supervisor whenever it
    exits. Both hold with a keeper op the table does not have: when a release reaches `released` the supervisor
@@ -202,7 +202,9 @@ heartbeat (the stuck rule's evidence that magpie answers other calls). The binar
 8. **The exits ring holds tracked children only.** PID 1 reaps every reparented process; those are counted
    (`STATUS` gains `orphans`) and kept out of the 64-entry ring, so a burst of them cannot push out a Claude Code,
    exec or dockerd exit. If more than 64 tracked exits land between two polls, `keeper::watch::Exits` sees the gap,
-   checks `STATUS` and reports every waited pid that is gone as a `lost` record (code unknown).
+   checks `STATUS` and reports every waited pid that is gone as a `lost` record (code unknown). A wait registered
+   after the watcher may have lost its exit (a gap resolved before it, or more than 256 exits since) asks the
+   keeper once: not running and not in the ring is `lost` at once.
 9. **The keeper during its stop grace** keeps answering on its socket (4.2 leaves it open; the forced release
    signals Claude Code and polls exits through it) and refuses `SPAWN` with `ESHUTDOWN`. `SPAWN` is answered from
    the poll loop when the child's error pipe closes, so a child stuck before exec (a stalled `/workspace` in its
@@ -222,19 +224,33 @@ heartbeat (the stuck rule's evidence that magpie answers other calls). The binar
 14. **SIGTERM with no supervisor running** (the restart backoff, or a supervisor just forked): the keeper starts
     one at once, skipping the backoff, and hands it the SIGTERM; the supervisor is forked with SIGTERM and SIGINT
     blocked and unblocks them once its handlers are installed (`Start::spawn`), so a stop is always a forced
-    release within the 20 s grace, never the default action. The stop ends when the supervisor that got the
-    SIGTERM exits, or at the grace.
+    release within the 20 s grace, never the default action. A supervisor that dies during the stop without
+    having finished the release (exit 0 after `RELEASED`) is started again at once (at most every 100 ms) and gets
+    the SIGTERM too. The stop ends when a supervisor exits 0 after `RELEASED`, or at the grace.
 15. **SIGINT**, which the keeper forwards (4.2), is a forced release like SIGTERM (A0.F30, a graceful drain on
     SIGTERM or SIGINT); the keeper itself does not stop on it (4.2 stops only on SIGTERM), so the sandbox stays up,
     released, until the runtime stops it.
-16. **`prepare pause` during a release** (15.5 has no row): `409 sandbox_busy` while the release runs (nothing is
-    quiesced yet), `ready: true` once it has finished (everything is stopped and unmounted, a checkpoint is safe).
+16. **`prepare pause` during a release** (15.5 has no row): `409 sandbox_busy` while the release runs, its final
+    report and unmount included (nothing is quiesced yet), `ready: true` once its last step is done (everything is
+    stopped and unmounted, a checkpoint is safe).
 17. **`SPAWN` answers `OK pid since`**, the keeper's exit counter at the fork (4.2: `OK pid`), so a wait matches only
     exits after it (`Exits::wait(pid, since)`). `start::reattach` reads the newest exit of `run.json`'s generation
     pid, since `run.json` (4.4) records no counter.
 18. **Every call to hermit is bounded by `HERMIT_TIMEOUT` (10 s)** (the client's default is 30 s), and each attempt
     of a release's final `released` report by what is left of the release's deadline: a hermit that holds the
-    request never keeps the release past it.
+    request never keeps the release past it. The final report is set up before the descriptor is read, so a
+    release at any step (a SIGTERM while hermit's descriptor is retried) reports `released`.
+19. **A release ends exec runs and dockerd** (15.5 names only Claude Code): once a release has begun, `/v1/exec`
+    answers `409 sandbox_lost` and the docker socket's `GET /start` `409`, a spawn in progress finishes first (the
+    lifecycle's spawn gate), and the release ends every process the keeper runs other than the supervisor and the
+    agent's generation (SIGTERM to its group, 3 s, SIGKILL) beside the agent's stop, so nothing writes
+    `/workspace` after `released: true`.
+20. **A release before the agent attached on a restart** (during the lease wait, the mount retry or the attach)
+    ends what the previous supervisor left: every `claude` the keeper runs that the agent does not own (stdin
+    closed, 5 s, SIGTERM to its group, 3 s, SIGKILL), and the turns `run.json` names (running and queued:
+    `failed` `sandbox.lost`; unanswered ends: sent again) while the lease is held; before the lease, magpie ends
+    them from hermit's `gone` (magpie 8.7). Until the agent attached, that running turn makes an unforced release
+    or a pause `409 sandbox_busy`.
 
 ## The Claude Code driver (WP-23)
 

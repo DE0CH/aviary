@@ -25,18 +25,20 @@
 //!    and the memory guard run from step 2 on).
 //!
 //! Every waiting step (the descriptor, the lease, the mount retry, the attach) gives way to a release: once one has
-//! begun the sequence stops, `attach` is never called, and the process exits 0 when the release has finished
+//! begun the sequence stops, `attach` is never called (a release before it ends what a previous supervisor left,
+//! [`leftovers`]: its `claude` and its running turn), and the process exits 0 when the release has finished
 //! (hermit's call, the activity reply's repeat, or SIGTERM, which is always a forced release) and the keeper has
 //! taken `RELEASED` (until then it does not exit: an exit 0 the keeper does not know as final is restarted). 70 on
 //! an internal error (the keeper restarts it).
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use aviary_core::version::Build;
-use hermit_api::sandbox_surface::{ActivityEvent, ActivityEventKind, SandboxSelf};
+use hermit_api::sandbox_surface::{ActivityEvent, ActivityEventKind, ActivityState, SandboxSelf};
+use supervisor_api::control::RunSummary;
 use supervisor_api::server::{control_router, local_router};
 
 use crate::boot::{BootEnv, ROOT_HOME};
@@ -419,6 +421,7 @@ impl Start {
                 .unwrap_or_else(|| crate::hermit::exec::WORKSPACE.into()),
             paths.exec_ids,
         );
+        exec.gate(&lifecycle);
         let control_server = Arc::new(Control {
             hermit: hermit.clone(),
             lifecycle: lifecycle.clone(),
@@ -430,6 +433,24 @@ impl Start {
             let _ = axum::serve(control, router).await;
         });
         let activity = Activity::new(hermit.clone(), lifecycle.clone(), facts);
+        // the final `released` report goes to hermit whenever a release happens, before the descriptor too
+        {
+            let a = activity.clone();
+            lifecycle.on_final_report(Arc::new(move |deadline| a.final_report(deadline)));
+        }
+        let lease_slot = Arc::new(OnceLock::new());
+        {
+            let prior = prior.clone().filter(|_| started.same_boot);
+            lifecycle.set_prior_run(prior.as_ref().and_then(prior_run));
+            let left = Arc::new(leftovers::Leftovers {
+                keeper: keeper.clone(),
+                agent: agent.clone(),
+                prior,
+                magpie: magpie.clone(),
+                lease: lease_slot.clone(),
+            });
+            lifecycle.on_leftovers(left.hook());
+        }
 
         if released_before {
             // the predecessor finished a release (and crashed before its exit, or the keeper restarted it): report
@@ -467,10 +488,6 @@ impl Start {
         // the activity loop (hermit sees `booting` sandboxes as alive) and the memory guard run from here: exec and
         // dockerd can run before the mount
         tokio::spawn(activity.clone().run());
-        {
-            let a = activity.clone();
-            lifecycle.on_final_report(Arc::new(move |deadline| a.final_report(deadline)));
-        }
         // the guard kills processes: only inside a sandbox, where the keeper is PID 1 (4.1), never on a host that
         // runs a supervisor for a test
         // SAFETY: getppid has no memory effects.
@@ -498,9 +515,11 @@ impl Start {
         }
         let docker = Docker::new(
             keeper.clone(),
+            exits.clone(),
             paths.docker.clone(),
             boot.child_env(ROOT_HOME, &descriptor.env, &[]),
         );
+        docker.gate(&lifecycle);
         if let Err(e) = serve_unix(&paths.docker_socket, 0o666, docker.router()) {
             tracing::error!(error = %e, "docker socket");
         }
@@ -544,6 +563,7 @@ impl Start {
         let Some(lease) = unless_released(&lifecycle, take).await else {
             return finish(&lifecycle).await;
         };
+        let _ = lease_slot.set(lease.clone());
         persisted.update(Change::State, |s| s.lease_epoch = Some(lease.epoch));
         lifecycle.set_lease_epoch(lease.epoch);
         lifecycle.set_ready(|r| r.lease = true);
@@ -602,6 +622,18 @@ impl Start {
         lifecycle.set_ready(|r| r.attached = true);
         finish(&lifecycle).await
     }
+}
+
+/// The turn `run.json` names as running (busy until the agent has attached).
+fn prior_run(p: &RunState) -> Option<RunSummary> {
+    let turn_id = p.run.turn_id.as_deref().and_then(|t| uuid::Uuid::parse_str(t).ok())?;
+    let state = serde_json::from_value::<ActivityState>(serde_json::Value::String(p.run.state.clone()))
+        .unwrap_or(ActivityState::Running);
+    Some(RunSummary {
+        state: if state.is_busy() { state } else { ActivityState::Running },
+        turn_id: Some(turn_id),
+        tasks: u32::try_from(p.tasks.len()).unwrap_or(u32::MAX),
+    })
 }
 
 /// Runs `f` unless a release begins first (then `None`).
@@ -676,5 +708,6 @@ fn unblock_stop_signals() {
     }
 }
 
+pub mod leftovers;
 #[cfg(test)]
 mod tests;

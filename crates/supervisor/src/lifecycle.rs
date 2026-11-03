@@ -15,6 +15,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -138,6 +139,12 @@ pub trait Agent: Send + Sync + 'static {
     fn resume(&self) -> BoxFuture<'_, ()>;
     /// The memory guard killed Claude Code's main process: end the running turn with `run.oom`.
     fn oom_killed(&self);
+    /// `attach` has taken over the previous supervisor's run state (`run.json`'s turns and generation): from then on
+    /// `end_turn` and `stop` end them. Until then a release ends them through the start sequence's
+    /// [`Lifecycle::on_leftovers`] hook.
+    fn restored(&self) -> bool {
+        false
+    }
     /// The open background tasks for `GET /v1/state`'s `run.tasks[]` (15.4; display only).
     fn tasks(&self) -> Vec<serde_json::Value> {
         Vec::new()
@@ -299,6 +306,17 @@ pub struct Lifecycle {
     refresh: Mutex<Option<Refresh>>,
     /// The final `released` activity report (set by the start sequence), sent before the unmount.
     final_report: Mutex<Option<FinalReport>>,
+    /// `true` once `attach` has finished (4.3 steps 8-9): the agent owns every `claude` the keeper runs.
+    attached: AtomicBool,
+    /// What a release ends besides the agent's generation (set by the start sequence): exec runs, dockerd, and
+    /// before the agent attached, what a previous supervisor left running.
+    leftovers: Mutex<Option<Leftovers>>,
+    /// Held (shared) by an exec run or the dockerd start while it spawns; a release takes it exclusively once it
+    /// has begun, so a spawn in progress is done (and its process found by the release) and none starts after.
+    spawn_gate: tokio::sync::RwLock<()>,
+    /// Before `attach`: the turn a previous supervisor's `run.json` names as running (a restart). It is busy for an
+    /// unforced release or a pause until the agent has taken it over.
+    prior_run: Mutex<Option<RunSummary>>,
 }
 
 /// The hook that re-reads hermit's descriptor.
@@ -309,6 +327,29 @@ pub type Hook = Arc<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>;
 
 /// The hook that sends the final `released` activity report, retried until the deadline it is given.
 pub type FinalReport = Arc<dyn Fn(Instant) -> BoxFuture<'static, ()> + Send + Sync>;
+
+/// The hook a release runs beside the agent's stop ([`Lifecycle::on_leftovers`]), done by its deadline.
+pub type Leftovers = Arc<dyn Fn(LeftoverCall) -> BoxFuture<'static, ()> + Send + Sync>;
+
+/// What the leftovers hook is told.
+#[derive(Clone, Debug)]
+pub struct LeftoverCall {
+    /// hermit's release reason (`sandbox.lost`'s message is `released: <reason>`).
+    pub reason: String,
+    /// `attach` had finished when the release began: every `claude` is the agent's to end.
+    pub attached: bool,
+    pub deadline: Instant,
+}
+
+/// The 409 an exec run or a dockerd start gets once a release has begun.
+#[must_use]
+pub fn releasing() -> aviary_core::http::ApiError {
+    hermit_api::error::api(
+        409,
+        hermit_api::error::codes::SANDBOX_LOST,
+        "the sandbox is being released",
+    )
+}
 
 impl std::fmt::Debug for Lifecycle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -338,6 +379,10 @@ impl Lifecycle {
             lease_epoch: Mutex::new(None),
             refresh: Mutex::new(None),
             final_report: Mutex::new(None),
+            attached: AtomicBool::new(false),
+            leftovers: Mutex::new(None),
+            spawn_gate: tokio::sync::RwLock::new(()),
+            prior_run: Mutex::new(None),
         })
     }
 
@@ -457,11 +502,38 @@ impl Lifecycle {
     pub async fn attach_unless_released(&self, attach: impl Future<Output = ()>) -> bool {
         let _gate = self.boot_gate.lock().await;
         let mut phases = self.phases();
-        tokio::select! {
+        let done = tokio::select! {
             biased;
             _ = phases.wait_for(|p| matches!(p, Phase::Releasing | Phase::Released)) => false,
             () = attach => true,
+        };
+        if done {
+            self.attached.store(true, Ordering::SeqCst);
         }
+        done
+    }
+
+    /// `attach` has finished.
+    #[must_use]
+    pub fn attached(&self) -> bool {
+        self.attached.load(Ordering::SeqCst)
+    }
+
+    /// Sets what a release ends besides the agent's generation.
+    pub fn on_leftovers(&self, f: Leftovers) {
+        *self.leftovers.lock().unwrap_or_else(PoisonError::into_inner) = Some(f);
+    }
+
+    /// The turn a previous supervisor left running (a restart), busy until the agent has attached.
+    pub fn set_prior_run(&self, run: Option<RunSummary>) {
+        *self.prior_run.lock().unwrap_or_else(PoisonError::into_inner) = run;
+    }
+
+    /// The door for an exec run or a dockerd start: hold the guard while spawning. `None` once a release has
+    /// begun (answer [`releasing`]).
+    pub async fn admit_spawn(&self) -> Option<tokio::sync::RwLockReadGuard<'_, ()>> {
+        let g = self.spawn_gate.read().await;
+        (!matches!(self.phase(), Phase::Releasing | Phase::Released)).then_some(g)
     }
 
     /// Sets the hook that re-reads hermit's descriptor (after a restore).
@@ -486,12 +558,21 @@ impl Lifecycle {
         }
     }
 
-    /// Closes admission when `allowed(busy status)` says so; the status it saw.
-    fn close_admission_if(&self, force: bool) -> Result<(), RunStatus> {
+    /// Closes admission unless busy and not forced; busy: the run it saw. Busy is the agent's run, or before the
+    /// agent attached, the turn a previous supervisor left running.
+    fn close_admission_if(&self, force: bool) -> Result<(), RunSummary> {
         let mut open = self.admission.lock().unwrap_or_else(PoisonError::into_inner);
         let status = self.agent.status().borrow().clone();
-        if status.busy() && !force {
-            return Err(status);
+        if !force {
+            if status.busy() {
+                return Err(status.summary());
+            }
+            let prior = *self.prior_run.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(p) = prior.filter(|_| !self.attached())
+                && p.state.is_busy()
+            {
+                return Err(p);
+            }
         }
         *open = false;
         Ok(())
@@ -512,12 +593,19 @@ impl Lifecycle {
             Ok(()) => self.agent.status().borrow().clone(),
             Err(busy) => {
                 tracing::info!(reason = %req.reason, state = %busy.state.as_str(), "lifecycle release refused: busy");
-                return Outcome::Busy(busy.summary());
+                return Outcome::Busy(busy);
             }
         };
         tracing::info!(reason = %req.reason, force = req.force, "lifecycle release");
         let times = ReleaseTimes::new(Instant::now(), req.deadline_ms);
         self.phase.send_replace(Phase::Releasing);
+        // an exec or dockerd spawn in progress finishes (so the leftovers below find its process); none starts after
+        if tokio::time::timeout_at(times.interrupt_by, self.spawn_gate.write())
+            .await
+            .is_err()
+        {
+            tracing::warn!("release: a spawn did not finish in time");
+        }
         // an attach in progress sees the phase and is dropped; none starts after this. Bounded all the same: the
         // stop must keep its time whatever an attach does
         if tokio::time::timeout_at(times.interrupt_by, self.boot_gate.lock())
@@ -526,12 +614,26 @@ impl Lifecycle {
         {
             tracing::warn!("release: the attach did not give way in time");
         }
-        if req.force && status.state.is_busy() {
-            self.agent
-                .end_turn(req.reason.as_str().to_owned(), times.interrupt_by)
+        let agent = async {
+            if req.force && status.state.is_busy() {
+                self.agent
+                    .end_turn(req.reason.as_str().to_owned(), times.interrupt_by)
+                    .await;
+            }
+            self.agent.stop(times.settle_by).await;
+        };
+        let hook = self.leftovers.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        let leftovers = async {
+            if let Some(f) = hook {
+                f(LeftoverCall {
+                    reason: req.reason.as_str().to_owned(),
+                    attached: self.attached(),
+                    deadline: times.settle_by,
+                })
                 .await;
-        }
-        self.agent.stop(times.settle_by).await;
+            }
+        };
+        tokio::join!(agent, leftovers);
         if !self.fs.settle(times.settle_by).await {
             tracing::warn!("release: FUSE operations still blocked at the deadline");
         }
@@ -564,21 +666,18 @@ impl Lifecycle {
                 Outcome::Done
             }
             PrepareKind::Pause => {
-                // a release in progress: not quiesced yet, so not ready (409 sandbox_busy); a finished release
-                // has stopped everything and unmounted, so a checkpoint of it is safe
-                match self.phase() {
-                    Phase::Releasing => return Outcome::Busy(self.agent.status().borrow().summary()),
-                    Phase::Released => return Outcome::Done,
-                    _ => {}
+                // a release in progress (its final report and unmount included): not quiesced yet, so not ready
+                // (409 sandbox_busy); a finished release has stopped everything and unmounted, so a checkpoint of it
+                // is safe
+                if let Some(o) = self.pause_during_release() {
+                    return o;
                 }
                 let _one = self.release_lock.lock().await;
-                match self.phase() {
-                    Phase::Releasing => return Outcome::Busy(self.agent.status().borrow().summary()),
-                    Phase::Released => return Outcome::Done,
-                    _ => {}
+                if let Some(o) = self.pause_during_release() {
+                    return o;
                 }
                 if let Err(busy) = self.close_admission_if(req.force) {
-                    return Outcome::Busy(busy.summary());
+                    return Outcome::Busy(busy);
                 }
                 self.agent.quiesce().await;
                 let deadline = Instant::now() + Duration::from_millis(u64::from(req.deadline_ms));
@@ -592,6 +691,17 @@ impl Lifecycle {
                 self.phase.send_replace(Phase::Quiesced);
                 Outcome::Done
             }
+        }
+    }
+
+    /// A pause's answer while a release has begun: busy until the release's last step (the unmount) is done.
+    fn pause_during_release(&self) -> Option<Outcome> {
+        match self.phase() {
+            Phase::Releasing | Phase::Released if !*self.done.borrow() => {
+                Some(Outcome::Busy(self.agent.status().borrow().summary()))
+            }
+            Phase::Released => Some(Outcome::Done),
+            _ => None,
         }
     }
 
@@ -1018,6 +1128,73 @@ pub(crate) mod tests {
         assert!(!agent.log().contains(&"quiesce".to_owned()));
         assert_eq!(rel.await.unwrap(), Outcome::Done);
         assert_eq!(l.prepare(pause(false)).await, Outcome::Done);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_pause_while_the_final_report_or_the_unmount_runs_is_busy() {
+        let l = Lifecycle::new(FakeAgent::new(), Arc::new(FakeFs::default()));
+        ready(&l);
+        // the final report is held (hermit holds the request) until the test lets it go
+        let gate = Arc::new(tokio::sync::Notify::new());
+        {
+            let g = gate.clone();
+            l.on_final_report(Arc::new(move |_| {
+                let g = g.clone();
+                Box::pin(async move { g.notified().await })
+            }));
+        }
+        let l2 = l.clone();
+        let rel = tokio::spawn(async move { l2.release(release(false)).await });
+        let mut phases = l.phases();
+        let _ = phases.wait_for(|p| *p == Phase::Released).await;
+        // released, but FUSE is still mounted: not ready for a checkpoint yet
+        assert!(matches!(l.prepare(pause(false)).await, Outcome::Busy(_)));
+        assert!(matches!(l.prepare(pause(true)).await, Outcome::Busy(_)));
+        gate.notify_one();
+        assert_eq!(rel.await.unwrap(), Outcome::Done);
+        assert_eq!(l.prepare(pause(false)).await, Outcome::Done);
+    }
+
+    #[tokio::test]
+    async fn before_attach_a_previous_supervisors_running_turn_is_busy() {
+        let l = Lifecycle::new(FakeAgent::new(), Arc::new(FakeFs::default()));
+        l.set_prior_run(Some(RunSummary {
+            state: ActivityState::Running,
+            turn_id: Some(Uuid::now_v7()),
+            tasks: 0,
+        }));
+        assert!(matches!(l.release(release(false)).await, Outcome::Busy(r) if r.state == ActivityState::Running));
+        assert!(matches!(l.prepare(pause(false)).await, Outcome::Busy(_)));
+        assert_eq!(l.phase(), Phase::Booting, "nothing changed");
+        // once the agent has attached, its own state counts (idle here)
+        assert!(l.attach_unless_released(async {}).await);
+        assert_eq!(l.release(release(false)).await, Outcome::Done);
+    }
+
+    #[tokio::test]
+    async fn a_release_runs_the_leftovers_hook_and_closes_the_spawn_gate() {
+        let l = Lifecycle::new(FakeAgent::new(), Arc::new(FakeFs::default()));
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        {
+            let c = calls.clone();
+            l.on_leftovers(Arc::new(move |call| {
+                c.lock().unwrap().push((call.reason, call.attached));
+                Box::pin(async {})
+            }));
+        }
+        // a spawn admitted before the release holds it back until the spawn is done
+        let guard = l.admit_spawn().await.unwrap();
+        let l2 = l.clone();
+        let rel = tokio::spawn(async move { l2.release(release(true)).await });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "the release waits for the spawn in progress"
+        );
+        drop(guard);
+        assert_eq!(rel.await.unwrap(), Outcome::Done);
+        assert_eq!(*calls.lock().unwrap(), vec![("deleted".to_owned(), false)]);
+        assert!(l.admit_spawn().await.is_none(), "nothing spawns after a release");
     }
 
     #[test]

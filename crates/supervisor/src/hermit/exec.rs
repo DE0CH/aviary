@@ -1,11 +1,12 @@
 //! `POST /v1/exec` (supervisor 15.4): for hermit's operator tooling and acceptance checks, never a product path.
 //! Runs as uid 1000 (never root) through the keeper; argv non-empty without NUL, cwd `/workspace` or below, stdin
 //! at most 1 MiB, timeout at most 60 s, stdout and stderr at most 1 MiB each (`truncated` beyond), at most 2 at once
-//! (a third is 429).
+//! (a third is 429). Once a release has begun it answers 409 `sandbox_lost` (and the release ends the runs in
+//! progress, [`crate::start::leftovers`]).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
 use aviary_core::http::ApiError;
@@ -18,6 +19,7 @@ use tokio::sync::Semaphore;
 use crate::boot::{AGENT_HOME, BootEnv, valid_name};
 use crate::keeper::watch::Exits;
 use crate::keeper::{self, SpawnSpec};
+use crate::lifecycle::{Lifecycle, releasing};
 use crate::limits::{EXEC_CONCURRENCY, EXEC_GID, EXEC_IO_MAX, EXEC_TIMEOUT_MAX, EXEC_UID};
 
 /// Where exec runs keep their output while they run (the scratch disk).
@@ -36,6 +38,8 @@ pub struct Exec {
     uid: u32,
     gid: u32,
     slots: Semaphore,
+    /// Spawns go through its door ([`Lifecycle::admit_spawn`]) once set.
+    lifecycle: OnceLock<Weak<Lifecycle>>,
 }
 
 impl Exec {
@@ -71,7 +75,13 @@ impl Exec {
             uid,
             gid,
             slots: Semaphore::new(EXEC_CONCURRENCY),
+            lifecycle: OnceLock::new(),
         })
+    }
+
+    /// Ties the runs to the lifecycle: none starts once a release has begun.
+    pub fn gate(&self, lifecycle: &Arc<Lifecycle>) {
+        let _ = self.lifecycle.set(Arc::downgrade(lifecycle));
     }
 
     /// The cwd if it is the workspace or below it (no `.` or `..` components).
@@ -156,11 +166,17 @@ impl Exec {
             stderr: Some(err.to_string_lossy().into_owned()),
             stdin_pipe: stdin.is_some(),
         };
+        let lifecycle = self.lifecycle.get().and_then(Weak::upgrade);
+        let admitted = match &lifecycle {
+            Some(l) => Some(l.admit_spawn().await.ok_or_else(releasing)?),
+            None => None,
+        };
         let k = self.keeper.clone();
         let keeper::Spawned { pid, since } = tokio::task::spawn_blocking(move || k.spawn_tracked(&spec))
             .await
             .map_err(|e| ApiError::internal(e.to_string()))?
             .map_err(|e| ApiError::internal(format!("spawn: {e}")))?;
+        drop(admitted);
         if let Some(bytes) = stdin {
             let k = self.keeper.clone();
             // in the background: a process that never reads must not hold up its timeout
@@ -310,6 +326,26 @@ mod tests {
             .unwrap();
         assert!(out.truncated);
         assert_eq!(STANDARD.decode(out.stdout).unwrap().len(), EXEC_IO_MAX);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn nothing_runs_once_a_release_has_begun() {
+        use crate::lifecycle::tests::{FakeAgent, FakeFs};
+        let k = Running::start(None);
+        let (e, _h) = exec(&k);
+        let l = Lifecycle::new(FakeAgent::new(), Arc::new(FakeFs::default()));
+        e.gate(&l);
+        assert!(e.run(req(&["/bin/true"]), &BTreeMap::new()).await.is_ok());
+        let rel =
+            supervisor_api::control::ReleaseRequest::new(hermit_api::sandbox::ReleaseReason::Deleted, true, 10_000)
+                .unwrap();
+        assert_eq!(l.release(rel).await, supervisor_api::control::Outcome::Done);
+        let refused = e.run(req(&["/bin/true"]), &BTreeMap::new()).await.unwrap_err();
+        assert_eq!(refused.status().as_u16(), 409);
+        assert!(
+            !k.client.status().unwrap().children.iter().any(|(_, n)| n == "exec"),
+            "nothing was spawned"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -593,3 +593,134 @@ async fn a_sigterm_release_ends_in_time_while_hermit_holds_every_report() {
     assert!(t.elapsed() < crate::limits::KEEPER_STOP_GRACE, "{:?}", t.elapsed());
     hold.release();
 }
+
+/// A previous supervisor's state: `claude` running under the keeper mid-turn, named in a `run.json` of this boot.
+fn crashed_mid_turn(w: &World) -> (i32, Uuid) {
+    let mut spec = w.running_keeper.spec("claude", &["/bin/sleep", "100"]);
+    spec.stdin_pipe = true;
+    let pid = w.keeper.spawn(&spec).unwrap();
+    let boot_id = std::fs::read_to_string(w.dir.join("run").join(keeper::BOOT_ID_NAME))
+        .unwrap()
+        .trim()
+        .to_owned();
+    let turn = Uuid::now_v7();
+    StateFile::new(w.dir.join("state"))
+        .save(&RunState {
+            version: VERSION,
+            boot_id,
+            generation: Some(GenState {
+                n: 1,
+                pid,
+                ..GenState::default()
+            }),
+            run: crate::state::RunPart {
+                state: "running".into(),
+                turn_id: Some(turn.to_string()),
+                ..crate::state::RunPart::default()
+            },
+            ..RunState::default()
+        })
+        .unwrap();
+    (pid, turn)
+}
+
+fn turn_states(w: &World, turn: Uuid) -> Vec<serde_json::Value> {
+    w.magpie
+        .script()
+        .calls_to("turn_state")
+        .into_iter()
+        .filter(|c| c.param("turnId") == Some(turn.to_string().as_str()))
+        .filter_map(|c| c.body)
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_release_before_attach_ends_the_previous_generation_and_reports_its_turn() {
+    let w = world().await;
+    let (pid, turn) = crashed_mid_turn(&w);
+    // the mount is retried (the lease is held), so the agent never attaches
+    let fs: Arc<dyn Filesystem> = Arc::new(crate::lifecycle::UnbuiltFilesystem);
+    let agent = FakeAgent::new();
+    let (running, done, cc, _) = w.start(agent.clone(), fs).await;
+    let l = running.lifecycle.clone();
+    until("the lease", || l.readiness().lease).await;
+    // the previous supervisor's turn is running: an unforced release is refused and changes nothing
+    let idle = ReleaseRequest::new(ReleaseReason::Idle, false, 30_000).unwrap();
+    assert!(matches!(cc.release(&idle).await.unwrap(), Outcome::Busy(r) if r.turn_id == Some(turn)));
+    assert_eq!(l.phase(), Phase::Booting);
+    // a forced one (the conversation was deleted) ends it
+    let rel = ReleaseRequest::new(ReleaseReason::Deleted, true, 30_000).unwrap();
+    assert_eq!(cc.release(&rel).await.unwrap(), Outcome::Done);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), done)
+            .await
+            .unwrap()
+            .unwrap(),
+        0
+    );
+    assert_eq!(agent.log(), vec!["stop"], "attach never ran");
+    // the generation was ended the graceful way (stdin closed, 5 s, SIGTERM): sleep ignores stdin, so SIGTERM
+    let e = w.running_keeper.wait_exit(pid);
+    assert_eq!(e.signal, Some(libc::SIGTERM));
+    let states = turn_states(&w, turn);
+    assert_eq!(states.len(), 1, "{states:?}");
+    assert_eq!(states[0]["state"], "failed");
+    assert_eq!(states[0]["error"]["code"], "sandbox.lost");
+    assert_eq!(states[0]["error"]["message"], "released: deleted");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_sigterm_during_the_lease_wait_ends_the_previous_generation() {
+    let w = world().await;
+    let (pid, turn) = crashed_mid_turn(&w);
+    let _f = w
+        .magpie
+        .faults()
+        .on("lease", aviary_fakes::FaultKind::Unavailable { retry_after_secs: 1 });
+    let agent = FakeAgent::new();
+    let (running, done, _cc, _) = w.start(agent.clone(), Arc::new(FakeFs::default())).await;
+    let l = running.lifecycle.clone();
+    until("the descriptor", || l.readiness().descriptor).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(l.release(sigterm_release()).await, Outcome::Done);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), done)
+            .await
+            .unwrap()
+            .unwrap(),
+        0
+    );
+    assert!(w.running_keeper.wait_exit(pid).signal.is_some());
+    // no lease: magpie ends the turn from hermit's gone (magpie 8.7), nothing is sent without one
+    assert_eq!(turn_states(&w, turn), Vec::<serde_json::Value>::new());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_release_before_the_descriptor_still_reports_released() {
+    let w = world().await;
+    let _f = w.hermit.faults().on(
+        "sandbox_self",
+        aviary_fakes::FaultKind::Unavailable { retry_after_secs: 1 },
+    );
+    let agent = FakeAgent::new();
+    let (running, done, _cc, _) = w.start(agent.clone(), Arc::new(FakeFs::default())).await;
+    let l = running.lifecycle.clone();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(!l.readiness().descriptor);
+    assert_eq!(l.release(sigterm_release()).await, Outcome::Done);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), done)
+            .await
+            .unwrap()
+            .unwrap(),
+        0
+    );
+    let released = w
+        .hermit
+        .script()
+        .calls_to("sandbox_activity")
+        .into_iter()
+        .filter_map(|c| c.body)
+        .any(|b| b["state"] == "released");
+    assert!(released, "hermit got the final released report");
+}

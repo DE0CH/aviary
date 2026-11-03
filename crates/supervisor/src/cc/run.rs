@@ -2849,6 +2849,11 @@ impl Agent for Driver {
         lock(&self.st).live.as_ref().map(|g| g.pid)
     }
 
+    fn restored(&self) -> bool {
+        // set in `attach` right before `restore` runs, with no await between them
+        self.ctx.get().is_some()
+    }
+
     fn end_turn(&self, reason: String, deadline: Instant) -> BoxFuture<'_, ()> {
         Box::pin(async move {
             let open = self.with(Change::State, |st, fx| {

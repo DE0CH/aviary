@@ -1,0 +1,33 @@
+# platform spec 6.2: the long runs that do not fit a push. Cron 18:00 UTC (02:00 HKT) and by hand. Jobs still to
+# come with their packages: e2e-chaos, deps, and the 5 h supervisor soak (synthetic turns, FUSE, outages).
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  supervisor-soak:
+    # WP-21's acceptance "RSS under 64 MiB in a soak", for an hour: the keeper, a real supervisor process restarted
+    # every 10 minutes (hermit and magpie away meanwhile), RSS under the budget and flat within each process
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: toolchain (rust-toolchain.toml, exactly)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: soak (1 h)
+        run: timeout -k 30 4500 cargo test --locked -p supervisor --test soak soak_long -- --ignored --exact --nocapture
