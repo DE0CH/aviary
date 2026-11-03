@@ -1157,6 +1157,7 @@ async fn a_stranded_ticket_expires_and_a_retried_ticket_call_reuses_the_open_one
     let hold = fresh.hold_ms.unwrap();
     assert!(hold <= 60_000 && hold > 55_000, "{hold}");
     assert!(fresh.supersedes.is_none());
+    assert!(fresh.reused, "a reuse says so");
     // a repeat past TICKET_REUSE_MAX (too little hold left to hand back): a new ticket, issued now, that names the old
     // one, while the old one stays open (a write started under it may still be in flight)
     let aged = magpie_api::legacy::TICKET_REUSE_MAX.as_secs_f64() + 1.0;
@@ -1173,6 +1174,7 @@ async fn a_stranded_ticket_expires_and_a_retried_ticket_call_reuses_the_open_one
     let late = answer("s:1").await;
     let late_ticket = late.ticket.unwrap();
     assert_ne!(late_ticket, first);
+    assert!(!late.reused);
     let hold = late.hold_ms.unwrap();
     assert!(hold <= 60_000 && hold > 55_000, "a new ticket's whole hold: {hold}");
     let sup = late.supersedes.clone().expect("names the superseded ticket");

@@ -45,6 +45,7 @@ struct Issued {
     at: OffsetDateTime,
     hold_ms: u64,
     supersedes: Option<Superseded>,
+    reused: bool,
 }
 
 /// Milliseconds left of `bound` since `issued_at`, on the database clock (0 once it has passed).
@@ -114,6 +115,7 @@ pub async fn take(app: &Magpie, person: &Person, id: Uuid, req: &TicketRequest) 
                     issued_at: None,
                     hold_ms: None,
                     supersedes: None,
+                    reused: false,
                 });
             }
             Take::Legacy(issued) => {
@@ -123,6 +125,7 @@ pub async fn take(app: &Magpie, person: &Person, id: Uuid, req: &TicketRequest) 
                     issued_at: Some(Timestamp(issued.at)),
                     hold_ms: Some(issued.hold_ms),
                     supersedes: issued.supersedes,
+                    reused: issued.reused,
                 });
             }
             Take::Wait => match fence::await_unfenced(app, id).await? {
@@ -134,6 +137,7 @@ pub async fn take(app: &Magpie, person: &Person, id: Uuid, req: &TicketRequest) 
                         issued_at: None,
                         hold_ms: None,
                         supersedes: None,
+                        reused: false,
                     });
                 }
                 Some(_) => {}
@@ -176,6 +180,7 @@ async fn issue_in(t: &Tx<'_>, id: Uuid, kind: &str, cmid: Option<&str>) -> Resul
                 at: r.get(1),
                 hold_ms: ms(r.get(3)),
                 supersedes: None,
+                reused: true,
             });
         }
         // too old to hand back (too little hold left): it stays open (a write may be in flight under it)
@@ -207,6 +212,7 @@ async fn issue_in(t: &Tx<'_>, id: Uuid, kind: &str, cmid: Option<&str>) -> Resul
         at: r.get(0),
         hold_ms: ms(r.get(1)),
         supersedes,
+        reused: false,
     })
 }
 

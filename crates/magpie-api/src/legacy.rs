@@ -160,6 +160,12 @@ pub struct TicketResponse {
     /// did not arrive (DESIGN 9.2; WP-50's carried note).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersedes: Option<Superseded>,
+    /// With `route: "legacy"` only: the answer is a send's open ticket handed back to a repeat of its
+    /// `clientMessageId` (younger than [`TICKET_REUSE_MAX`]). A write under it may already have reached the old child
+    /// (another replica, or a tab's resend after its socket dropped), so pigeon reads the old child before it sends,
+    /// as for `supersedes`. pigeon never compares `issuedAt` with its own clock to tell.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reused: bool,
 }
 
 /// The ticket a send's repeated ticket call superseded.

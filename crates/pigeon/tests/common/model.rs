@@ -908,6 +908,7 @@ impl Model {
                 issued_at: None,
                 hold_ms: None,
                 supersedes: None,
+                reused: false,
             });
         }
         let supersedes = if body.kind == TicketKind::Send {
@@ -941,6 +942,7 @@ impl Model {
             issued_at: Some(now()),
             hold_ms: Some(hold_ms),
             supersedes,
+            reused: false,
         })
     }
 }
