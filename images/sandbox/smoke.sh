@@ -24,7 +24,7 @@ name=sandbox-smoke-$$
 status=0
 # shellcheck disable=SC2317 # run by the trap
 cleanup() {
-  docker rm -f -v "$name" >/dev/null 2>&1 || true
+  docker rm -f -v "$name" "$name-nocred" >/dev/null 2>&1 || true
   jobs -p | xargs -r kill 2>/dev/null || true
   rm -rf "$work"
 }
@@ -106,8 +106,31 @@ check "sudo keeps HTTPS_PROXY" img_run -u 1000 -e HTTPS_PROXY=http://proxy.inval
 check "the image's npm prefix and pip config hold with only PATH, LANG and HOME (supervisor 6.2)" img_run -u 1000 "$img" -c '
   test "$(env -i PATH="$PATH" HOME=/home/sandbox LANG=C.UTF-8 npm config get prefix)" = /home/sandbox/.npm-global &&
   env -i PATH="$PATH" HOME=/home/sandbox pip config list | grep -q "disable-pip-version-check"'
+# root's npm keeps node's prefix (/usr/local): `sudo npm install -g` puts nothing root-owned into uid 1000's prefix,
+# and uid 1000's own `npm install -g` (of the same package too) works after it; local tarballs, so offline
+check "sudo npm -g installs into /usr/local, then uid 1000's npm -g into ~/.npm-global" img_run -u 1000 "$img" -c '
+  set -e
+  cd "$(mktemp -d)"
+  for p in smoke-a smoke-b; do
+    mkdir $p && printf "{\"name\":\"%s\",\"version\":\"1.0.0\",\"bin\":{\"%s\":\"b.js\"}}" $p $p > $p/package.json
+    printf "#!/usr/bin/env node\nconsole.log(1)\n" > $p/b.js
+    (cd $p && npm pack -q >/dev/null)
+  done
+  test "$(sudo -n npm config get prefix)" = /usr/local
+  sudo -n npm install -g -q --offline --no-audit --no-fund "$PWD/smoke-a/smoke-a-1.0.0.tgz" >/dev/null 2>&1
+  test -d /usr/local/lib/node_modules/smoke-a
+  test -z "$(find /home/sandbox -user root -print -quit)"
+  for p in smoke-b smoke-a; do
+    env -i PATH="$PATH" HOME=/home/sandbox LANG=C.UTF-8 npm install -g -q --offline --no-audit --no-fund "$PWD/$p/$p-1.0.0.tgz" >/dev/null 2>&1
+    test -d /home/sandbox/.npm-global/lib/node_modules/$p
+  done
+  test "$(env -i PATH="$PATH" HOME=/home/sandbox sh -c "command -v smoke-b")" = /home/sandbox/.npm-global/bin/smoke-b'
+# PYTHONUNBUFFERED's job without the environment: output to a pipe (BashOutput) is line-buffered
+check "python3's stdout and stderr to a pipe are line-buffered with only PATH and HOME" img_run -u 1000 "$img" -c '
+  env -i PATH="$PATH" HOME=/home/sandbox python3 -c "import sys; assert sys.stdout.line_buffering and sys.stderr.line_buffering" 2>&1 | cat
+  test "${PIPESTATUS[0]}" = 0'
 check "/opt/image-setup has the Dockerfile and the files it installs" img_run "$img" -c '
-  cd /opt/image-setup && ls Dockerfile apt-wrapper.sh docker-wrapper.sh reportlab-cjk.py 90sandbox sudoers npmrc pip.conf profile >/dev/null'
+  cd /opt/image-setup && ls Dockerfile apt-wrapper.sh docker-wrapper.sh reportlab-cjk.py line-buffered.pth 90sandbox sudoers npmrc pip.conf profile >/dev/null'
 check "uid 1000 can apt-get install sl (through sudo, fetching the lists first)" \
   docker run --rm --network "${SMOKE_INTERNET_NETWORK:-bridge}" --entrypoint /bin/bash -u 1000 "$img" -c 'apt-get install -qq sl >/dev/null 2>&1 && test -x /usr/games/sl'
 code=0
@@ -116,10 +139,14 @@ docker run --rm --network none --security-opt no-new-privileges --entrypoint /bi
 check "without root (no-new-privileges) apt-get install exits 100 ($code)" test "$code" = 100
 
 for proxy in "" "http://proxy.invalid:3128"; do
-  code=0
-  timeout 30 docker run --rm --network none ${proxy:+-e HTTP_PROXY="$proxy"} "$img" > "$work/nocred.log" 2>&1 || code=$?
-  check "the keeper without a proxy credential (HTTP_PROXY='$proxy') exits 78 saying why ($code)" \
-    sh -c "test '$code' = 78 && grep -q '\"msg\":\"no sandbox proxy credential\"' '$work/nocred.log'"
+  # detached and waited on with a bound, then removed: a keeper that kept running is stopped here, not left behind
+  docker rm -f "$name-nocred" >/dev/null 2>&1
+  docker run -d --name "$name-nocred" --network none ${proxy:+-e HTTP_PROXY="$proxy"} "$img" >/dev/null
+  code=$(timeout 30 docker wait "$name-nocred" || echo "still running after 30 s")
+  docker logs "$name-nocred" > "$work/nocred.log" 2>&1
+  docker rm -f "$name-nocred" >/dev/null 2>&1
+  check "the keeper without a proxy credential (HTTP_PROXY='$proxy') exits 78 saying why at level error ($code)" \
+    sh -c "test '$code' = 78 && grep -q '\"level\":\"error\",\"svc\":\"supervisor-keeper\",\"msg\":\"no sandbox proxy credential\"' '$work/nocred.log'"
 done
 
 echo "== the keeper and the supervisor against the test gateway"
@@ -168,10 +195,21 @@ check "the managed files are root's, 0644" x sh -c '
     test "$(stat -c "%U %a" /etc/claude-code/$f)" = "root 644" || exit 1
   done'
 curl -sf "http://127.0.0.1:7200/__requests?conversation=$cid" > "$work/requests.json"
-check "mock-model got Claude Code's Messages API calls through the gateway ($(jq length "$work/requests.json") filed under the conversation)" \
+curl -sf http://127.0.0.1:7300/gateway > "$work/gateway.json"
+curl -sf http://127.0.0.1:7300/tools > "$work/tools.json"
+echo "  the gateway saw (method, target, User-Agent, status):"
+jq -r '.[] | "    \(.method) \(.target) \(.userAgent // "-") \(.status)"' "$work/gateway.json" | sort | uniq -c
+# Claude Code's own calls, told apart from the supervisor's (`User-Agent: supervisor/<sha12>`, its title and model
+# calls take the same proxy) by their User-Agent: absolute-form requests to the fixed names, answered 200
+cc='(.userAgent // "") as $ua | ($ua != "") and ($ua | startswith("supervisor/") | not)'
+check "the gateway proxied Claude Code's POST http://model/v1/messages (absolute form, not the supervisor's)" \
+  jq -e "any(.[]; .method == \"POST\" and (.target | test(\"^http://model/v1/messages([?]|\$)\")) and .status == 200 and ($cc))" "$work/gateway.json"
+check "the gateway proxied Claude Code's POST http://tools/mcp (absolute form)" \
+  jq -e "[.[] | select(.method == \"POST\" and .target == \"http://tools/mcp\" and (.status | . >= 200 and . < 300) and ($cc))] | length >= 2" "$work/gateway.json"
+check "fake-tools got Claude Code's initialize and tools/list on /mcp through the gateway" \
+  jq -e "[.[] | select(.path == \"/mcp\" and ($cc)) | .rpc] | index(\"initialize\") != null and index(\"tools/list\") != null" "$work/tools.json"
+check "mock-model filed Claude Code's Messages calls under the conversation the gateway adds ($(jq length "$work/requests.json"))" \
   jq -e 'length > 0' "$work/requests.json"
-# the MCP server: initialize and tools/list at http://tools/mcp answered by fake-tools (Claude Code 2.1.304 defers MCP
-# tools behind ToolSearch, so the Messages API calls do not list them; its init message does)
 check "Claude Code reported the MCP server tools connected, with fake-tools' tools as mcp__tools__*" \
   jq -se '[.[] | select(.type == "system" and .subtype == "init")] | first
     | (.mcp_servers | any(.name == "tools" and .status == "connected")) and (.tools | index("mcp__tools__echo") != null)' \

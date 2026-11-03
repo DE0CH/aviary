@@ -13,7 +13,8 @@ uid 1000 in `/workspace`, under the supervisor and keeper of the same aviary com
 | `90sandbox` | `/etc/apt/apt.conf.d/90sandbox` | no prompts, no recommended packages |
 | `sudoers` | `/etc/sudoers.d/sandbox` | passwordless sudo for `node` (uid 1000), proxy and mirror variables kept |
 | `profile` | `/etc/profile.d/00-sandbox-path.sh` | a login shell's PATH and `VIRTUAL_ENV` |
-| `npmrc`, `pip.conf` | `/usr/local/etc/npmrc`, `/etc/pip.conf` | npm's user prefix and pip's settings, whatever the environment |
+| `npmrc`, `pip.conf` | `/home/sandbox/.npmrc` (uid 1000's), `/etc/pip.conf` | uid 1000's npm prefix and pip's settings, whatever the environment; root's npm keeps `/usr/local` |
+| `line-buffered.pth` | `sbx-line-buffered.pth` in the venv | Python's stdout and stderr line-buffered when not a terminal (what `PYTHONUNBUFFERED` did for Claude Code's tools) |
 | `build.sh` | | the build, with platform 5.3's labels |
 | `smoke.sh` | | the image smoke test (`ci.yml` job `sandbox-smoke`) |
 
@@ -43,22 +44,31 @@ reference test gateway) and `mock-model`: a magpie `start_turn` runs Claude Code
 reach mock-model and fake-tools only through the gateway's proxy as `http://model/…` and `http://tools/mcp`; then
 Docker on demand as uid 1000 and a runtime stop (exit 0). On a host whose Docker bridge has no route out (an
 IPv6-only host), build with `SANDBOX_BUILD_FLAGS=--network=host` and smoke with `SMOKE_INTERNET_NETWORK=host`.
+`build.sh` exports with `rewrite-timestamp=true` (platform 5.2: the layers' file times from the commit), which needs a
+buildx builder with the `docker-container` driver (as `ci.yml`'s `setup-buildx-action` makes): Docker's own `docker`
+driver on the containerd image store refuses it ("conflicts with unpack"). Elsewhere, create one and pass
+`SANDBOX_BUILD_FLAGS=--builder=<name>`.
 
 ## Where this differs from the specs
 
 - **The image's environment defaults reach the agent through files.** Supervisor 6.2 gives every process it starts
   the image's `PATH`, `LANG`, `LC_ALL` and `HOME` and nothing else of the image's environment, so the old image's
   `NPM_CONFIG_PREFIX`, `PIP_DISABLE_PIP_VERSION_CHECK` and `DEBIAN_FRONTEND` (hermit 17's "env defaults", A5.F5)
-  would be lost to Claude Code's tools. They are set where each tool reads them whatever the environment: npm's
-  global `npmrc`, `/etc/pip.conf`, and the apt wrapper's own `DEBIAN_FRONTEND=noninteractive`. `MPLCONFIGDIR` was
-  matplotlib's default for `HOME=/home/sandbox` already; `VIRTUAL_ENV` is in the login profile (`/opt/py/bin` leads
-  `PATH` either way); `PYTHONUNBUFFERED` stays in the image `ENV` only.
+  would be lost to Claude Code's tools. They are set where each tool reads them whatever the environment: uid
+  1000's `~/.npmrc` (root's npm, `sudo npm install -g`, reads `/root/.npmrc` and keeps node's `/usr/local`, as the
+  old image's `sudo`, which drops `NPM_CONFIG_PREFIX`, did), `/etc/pip.conf`, and the apt wrapper's own
+  `DEBIAN_FRONTEND=noninteractive`. `PYTHONUNBUFFERED`'s effect for output to a pipe comes from a `.pth` in the venv
+  that makes `sys.stdout` and `sys.stderr` line-buffered when they are not a terminal (line, not byte, buffering:
+  a `print` without a newline waits for one). `MPLCONFIGDIR` was matplotlib's default for `HOME=/home/sandbox`
+  already; `VIRTUAL_ENV` is in the login profile (`/opt/py/bin` leads `PATH` either way).
 - **No `fuse3`.** Hermit 17 lists it "for `fusermount3` if the supervisor needs it"; the supervisor mounts with
   `mount(2)` itself (supervisor 2), so the package (and its setuid helper) is left out.
-- **The MCP evidence is Claude Code's own.** Claude Code 2.1.304 defers MCP tools behind ToolSearch, so the turn's
-  Messages API calls do not list `mcp__tools__*`; the smoke checks the init message instead (server `tools`
-  `connected`, `mcp__tools__echo` from fake-tools' `tools/list`), with no address for `tools` in the container, so
-  the calls went through the proxy.
+- **What the gateway saw is checked by `User-Agent`.** The supervisor's own title and model calls take the same
+  proxy, so the smoke reads the test gateway's record of every proxy request (fuse-rig `GET /gateway`) and requires
+  absolute-form `POST http://model/v1/messages` and `POST http://tools/mcp` from a client that is not
+  `supervisor/<sha12>`, and fake-tools' record (`GET /tools`) of `initialize` and `tools/list` from that client.
+  Claude Code 2.1.304 defers MCP tools behind ToolSearch, so the Messages API calls do not list `mcp__tools__*`;
+  its init message (server `tools` `connected`, `mcp__tools__echo`) is checked as well.
 - **Docker on demand under runc** needs `/var/lib/docker` on a volume (overlay snapshots cannot sit on the
   container's overlay root); in a sandbox it is on the scratch disk.
 - **Built in the smoke job.** Platform 6.1 has an `images` job exporting OCI tars for `sandbox-smoke`; until that

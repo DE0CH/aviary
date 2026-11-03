@@ -4,7 +4,8 @@
 # (sha12), what the supervisor speaks (`supervisor --speaks`) and the supervisor binary's sha256 (says whether a new
 # sandbox image actually changed the supervisor).
 # Usage: build.sh <dir with supervisor and supervisor-keeper> <tag> [<40 hex revision>]
-#   extra `docker build` flags (a cache, --progress) in SANDBOX_BUILD_FLAGS
+#   extra `docker buildx build` flags (a cache, --progress) in SANDBOX_BUILD_FLAGS; the image is loaded into the
+#   local Docker (`--output type=docker`)
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 bin=$(cd "${1:?dir with supervisor and supervisor-keeper}" && pwd)
@@ -16,17 +17,18 @@ for b in supervisor supervisor-keeper; do
 done
 ctx=$(mktemp -d)
 trap 'rm -rf "$ctx"' EXIT
-cp "$here"/Dockerfile "$here"/*.sh "$here"/*.py "$here"/90sandbox "$here"/sudoers "$here"/profile "$here"/npmrc "$here"/pip.conf "$ctx/"
+cp "$here"/Dockerfile "$here"/*.sh "$here"/*.py "$here"/*.pth "$here"/90sandbox "$here"/sudoers "$here"/profile "$here"/npmrc "$here"/pip.conf "$ctx/"
 rm -f "$ctx/build.sh" "$ctx/smoke.sh"
 mkdir -p "$ctx/dist"
 cp "$bin/supervisor" "$bin/supervisor-keeper" "$ctx/dist/"
 speaks=$("$bin/supervisor" --speaks)
 sum=$(sha256sum "$bin/supervisor" | cut -d' ' -f1)
-# the image config's timestamps from the commit (platform 5.2)
+# the image's timestamps from the commit (platform 5.2): SOURCE_DATE_EPOCH for the config and history, and
+# rewrite-timestamp=true for the files in the layers
 epoch=${SOURCE_DATE_EPOCH:-$(git -C "$here" log -1 --format=%ct 2>/dev/null || echo 0)}
 # shellcheck disable=SC2086 # SANDBOX_BUILD_FLAGS is a list of flags
 docker buildx build ${SANDBOX_BUILD_FLAGS:-} -f "$ctx/Dockerfile" \
   --build-arg REVISION="$rev" --build-arg VERSION="${rev:0:12}" \
   --build-arg SOURCE_DATE_EPOCH="$epoch" \
   --build-arg SPEAKS="$speaks" --build-arg SUPERVISOR_SHA256="$sum" \
-  -t "$tag" "$ctx"
+  --output type=docker,rewrite-timestamp=true -t "$tag" "$ctx"

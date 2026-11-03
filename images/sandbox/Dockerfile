@@ -94,10 +94,12 @@ COPY --chmod=440 sudoers /etc/sudoers.d/sandbox
 RUN ln -s apt-get /usr/local/bin/apt && visudo -cq
 
 # The image's environment defaults reach the agent only through files: the supervisor gives the processes it starts
-# the image's PATH, LANG, LC_ALL and HOME and nothing else of it (supervisor spec 6.2), so npm's prefix, pip's version
-# check and a login shell's PATH are configured where each tool reads them whatever the environment (A5.F5).
-COPY --chmod=644 npmrc /usr/local/etc/npmrc
+# the image's PATH, LANG, LC_ALL and HOME and nothing else of it (supervisor spec 6.2), so npm's prefix (uid 1000's
+# ~/.npmrc, below), pip's version check, Python's line-buffered output (PYTHONUNBUFFERED's job: a .pth in the venv
+# makes stdout and stderr line-buffered when they are not a terminal) and a login shell's PATH are configured where
+# each tool reads them whatever the environment (A5.F5).
 COPY --chmod=644 pip.conf /etc/pip.conf
+COPY --chmod=644 --chown=1000:1000 line-buffered.pth /opt/py/lib/python3.13/site-packages/sbx-line-buffered.pth
 COPY --chmod=644 profile /etc/profile.d/00-sandbox-path.sh
 
 # uid 1000 is the image's `node` user, with home /home/sandbox. /home/sandbox/.claude is an empty directory: the
@@ -109,6 +111,7 @@ RUN mkdir -p /home/sandbox/.claude /work /workspace \
  && chown 1000:1000 /home/sandbox /home/sandbox/.claude /work /workspace \
  && usermod -d /home/sandbox node \
  && install -d -m 0700 -o root -g root /var/lib/supervisor
+COPY --chmod=644 --chown=1000:1000 npmrc /home/sandbox/.npmrc
 
 ENV HOME=/home/sandbox \
     NPM_CONFIG_PREFIX=/home/sandbox/.npm-global \
@@ -121,7 +124,7 @@ ENV PATH=/home/sandbox/.npm-global/bin:/home/sandbox/.local/bin:/home/sandbox/.c
 
 # The image's own setup, readable inside the sandbox so Claude can see exactly what is installed and how (the
 # instance prompt points at it, A5.F6): this Dockerfile and the files it installs.
-COPY Dockerfile apt-wrapper.sh docker-wrapper.sh reportlab-cjk.py 90sandbox sudoers npmrc pip.conf profile /opt/image-setup/
+COPY Dockerfile apt-wrapper.sh docker-wrapper.sh reportlab-cjk.py line-buffered.pth 90sandbox sudoers npmrc pip.conf profile /opt/image-setup/
 
 # The supervisor and the keeper of this commit (static musl, root 0755), and `sandbox-secret`, which the supervisor
 # binary answers by argv[0] (supervisor spec 3). Last, so a new commit rebuilds only this layer.

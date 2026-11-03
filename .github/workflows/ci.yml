@@ -310,7 +310,7 @@ jobs:
         uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
       - name: images/sandbox
         env:
-          SANDBOX_BUILD_FLAGS: --load --cache-from type=gha,scope=hermit-sandbox --cache-to type=gha,scope=hermit-sandbox
+          SANDBOX_BUILD_FLAGS: --cache-from type=gha,scope=hermit-sandbox --cache-to type=gha,scope=hermit-sandbox
         run: images/sandbox/build.sh dist hermit-sandbox:ci "$GITHUB_SHA"
       - name: images/sandbox/smoke.sh
         run: images/sandbox/smoke.sh hermit-sandbox:ci dist

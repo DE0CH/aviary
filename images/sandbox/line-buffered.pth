@@ -1,0 +1,1 @@
+import sys; [s.reconfigure(line_buffering=True) for s in (sys.stdout, sys.stderr) if s is not None and hasattr(s, 'reconfigure') and not s.isatty()]

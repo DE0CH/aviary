@@ -1,3 +1,4 @@
-; /usr/local/etc/npmrc, npm's global config (node's prefix is /usr/local): `npm install -g` goes to uid 1000's own
-; prefix, whatever the environment says (the supervisor passes no NPM_CONFIG_PREFIX, supervisor spec 6.2)
+; /home/sandbox/.npmrc, uid 1000's own npm config: its `npm install -g` goes to its own prefix, whatever
+; the environment says (the supervisor passes no NPM_CONFIG_PREFIX, supervisor spec 6.2). Root's npm (`sudo npm`,
+; HOME=/root) does not read it and keeps node's prefix /usr/local, as before.
 prefix=/home/sandbox/.npm-global
