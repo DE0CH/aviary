@@ -586,19 +586,22 @@ the old stack): `node src/main.ts egress import-jarvis [--delta]` copies the old
 `tool_calls` (`chat/src/common/importjarvis.ts`, `chat/src/egress/importjarvis.ts`, `chat/src/tools/importjarvis.ts`).
 The deployment runs them as CronJobs (`args: [egress, import-jarvis, --delta]`): `egress-import` every minute from A2
 to A6, so the new egress's budget counts the old stack's spend within a minute; `tools-import` in A2 and once more in
-A6.
+A6. A6's last run of each is a full pass (no `--delta`): the lookback is the only guarantee a delta pass has, so the
+last one reads every row and checks that each is there.
 
 - **Env:** `EGRESS_IMPORT_JARVIS_URL` / `TOOLS_IMPORT_JARVIS_URL` (a read-only role on the old database) and the
   service's own `EGRESS_DATABASE_URL` / `TOOLS_DATABASE_URL` (the pass applies the service's migrations first, as the
   service does). Exit 0 after a pass, 1 when it failed (the next run retries), 2 on a missing variable or an argument
-  other than `--delta`. One log line per table: `{"at":"import-jarvis","table","delta","read","copied","after","last"}`.
+  other than `--delta`, and 1 when a full pass finds a source row it read missing from the target. One log line per
+  table: `{"at":"import-jarvis","table","delta","read","copied","after","last","missing"}` (`missing`: full passes
+  only).
 - **Every column, exactly:** the pass reads in id order inside one repeatable-read, read-only transaction and passes
   every value as Postgres text both ways (timestamps keep their microseconds, numerics their digits). `source_id` is
   the old id; egress's own rows have none. Copied rows have no `row_id` and no `request`; tools rows no `sandbox_id`.
 - **`person` on egress rows** (aviary hermit spec 22.4): the old row's sandbox owner (`jarvis.sandboxes.owner` by
   `sandbox_id`), else its conversation's owner (`jarvis.conversations.owner` by `conversation_id`, the legacy UI's
-  calls), else null; a source without one of those tables skips that step. `owner` (the old relay's caller) is copied
-  as it is.
+  calls), else null, lowercased (one person key however the old row spelled the email, as hermit's import does); a
+  source without one of those tables skips that step. `owner` (the old relay's caller) is copied as it is.
 - **Idempotent by `source_id`** (unique in both targets): every insert is `on conflict (source_id) do nothing`, so a
   pass run again, cut short or overlapping another writes each old row once. `--delta` starts 1 000 ids below the
   highest `source_id` copied, so a row whose id was handed out before a neighbour's but committed after it is still
