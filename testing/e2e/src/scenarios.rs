@@ -10,7 +10,7 @@ use crate::ws::Ws;
 use crate::{ADMIN, ALICE, Harness, JFS, PIGEON, STRANGER, TURN_MODEL, eventually};
 
 /// The scenarios in the order `aviary-e2e` runs them when none is named.
-pub const ALL: &[&str] = &["e1", "e2", "e3", "e19", "e16", "e14"];
+pub const ALL: &[&str] = &["e1", "e2", "e3", "e19", "e16", "e14", "cc"];
 
 /// How long a turn may take, sandbox start included (the image is local; the first start makes the host).
 const TURN_WAIT: Duration = Duration::from_secs(420);
@@ -24,6 +24,7 @@ pub async fn run(h: &Harness, name: &str) -> anyhow::Result<()> {
         "e14" => e14(h).await,
         "e16" => e16(h).await,
         "e19" => e19(h).await,
+        "cc" => cc(h).await,
         other => bail!("no scenario {other}"),
     }
 }
@@ -51,6 +52,18 @@ async fn create(ws: &mut Ws, prompt: &str) -> anyhow::Result<String> {
         .await?;
     ensure!(s["agentIds"][0] == id.as_str(), "subscription: {s}");
     Ok(id)
+}
+
+/// Sends `text` to conversation `id`.
+async fn send(ws: &mut Ws, id: &str, text: &str) -> anyhow::Result<()> {
+    let (_, p) = ws
+        .rpc(
+            "send_agent_message_request",
+            json!({"agentId": id, "text": text, "messageId": uuid::Uuid::new_v4().to_string()}),
+        )
+        .await?;
+    ensure!(p["accepted"] == true, "send refused: {p}");
+    Ok(())
 }
 
 /// The conversation's snapshot (`fetch_agent_request`).
@@ -392,4 +405,178 @@ async fn e14(h: &Harness) -> anyhow::Result<()> {
     ws.close().await;
     watcher.close().await;
     r
+}
+
+/// Every event of a conversation from magpie's admin route.
+async fn events(h: &Harness, id: &str) -> anyhow::Result<Vec<Value>> {
+    let mut out = Vec::new();
+    let mut after = 0u64;
+    loop {
+        let r = h
+            .magpie_admin(&format!("/v1/admin/conversations/{id}/events?after={after}&limit=500"))?
+            .send()
+            .await?;
+        let status = r.status().as_u16();
+        let page: Value = r.json().await?;
+        ensure!(status == 200, "events: {status} {page}");
+        let evs = page["events"].as_array().cloned().unwrap_or_default();
+        if let Some(last) = evs.last().and_then(|e| e["seq"].as_u64()) {
+            after = last;
+        }
+        let more = page["hasNewer"] == true && !evs.is_empty();
+        out.extend(evs);
+        if !more {
+            return Ok(out);
+        }
+    }
+}
+
+/// magpie 20's Claude Code acceptance on the real binary (WP-12's carried item): Claude Code 2.1.304 in the sandbox
+/// image, its transcript written through the supervisor's FUSE mount into magpie, person turns (each prompt the echo
+/// of its `user.sent`): a foreground subagent with its own tool call, `/compact` (with
+/// `CLAUDE_CODE_TRANSCRIPT_LOCAL_GC=1` from hermit.json's `sandbox.env`, the compaction's temp file renamed over the
+/// transcript), and a turn after it. Passes when every turn completes, magpie's main transcript holds the compaction,
+/// the subagent's transcript and its meta file are in magpie, no two `cc.*` events carry one line `uuid` (a retract's
+/// replacement aside), every user or assistant line of the final transcript that is not a prompt echo has its event,
+/// and no event comes from the subagent's transcript. The tombstone of 9.1's script is not reproduced by 2.1.304
+/// (crates/supervisor/GATE.md, open item 3).
+async fn cc(h: &Harness) -> anyhow::Result<()> {
+    let token = h.mint(ALICE, 3600, None).await?;
+    let (mut ws, _) = Ws::open(PIGEON, &token).await?;
+    let m = marker("CC");
+    let sub = format!("{m}-subagent");
+    h.script(
+        json!({"match": {"textContains": format!("{m}-agent"), "model": TURN_MODEL},
+                    "reply": [{"toolUse": {"name": "Agent", "input": {
+                        "description": "harness subagent", "prompt": format!("Subagent task ({sub})."),
+                        "subagent_type": "general-purpose", "run_in_background": false}}}],
+                    "times": 1}),
+    )
+    .await?;
+    h.script(json!({"match": {"textContains": sub},
+                    "reply": [{"toolUse": {"name": "Bash", "input": {"command": "echo from-subagent",
+                                                                      "description": "sub"}}}],
+                    "times": 1}))
+        .await?;
+    let r = async {
+        let id = create(&mut ws, &format!("Start a subagent ({m}-agent)")).await?;
+        turn_end(&mut ws, &id).await?;
+        send(&mut ws, &id, "/compact").await?;
+        turn_end_nth(&mut ws, &id, 2).await?;
+        send(&mut ws, &id, &format!("After compaction ({m}-after)")).await?;
+        turn_end_nth(&mut ws, &id, 3).await?;
+        let pod = h.sandbox_pod(&id).await?.context("the sandbox went away")?;
+        let pod = pod.metadata.name.clone().unwrap_or_default();
+        let dir = "/home/sandbox/.claude/projects/-workspace";
+        let (ok, main) = h.exec(&pod, &["cat", &format!("{dir}/{id}.jsonl")]).await?;
+        ensure!(ok, "the main transcript: {main}");
+        let (ok, agents) = h
+            .exec(&pod, &["sh", "-c", &format!("cat {dir}/{id}/subagents/agent-*.jsonl")])
+            .await?;
+        ensure!(ok && !agents.is_empty(), "the subagent's transcript: {agents}");
+        let (ok, meta) = h
+            .exec(
+                &pod,
+                &["sh", "-c", &format!("cat {dir}/{id}/subagents/agent-*.meta.json")],
+            )
+            .await?;
+        ensure!(
+            ok && meta.contains("general-purpose"),
+            "the subagent's meta file: {meta}"
+        );
+        let lines: Vec<Value> = main.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+        ensure!(
+            lines
+                .iter()
+                .any(|l| l["isCompactSummary"] == true || l["subtype"] == "compact_boundary"),
+            "no compaction in the transcript"
+        );
+        let evs = events(h, &id).await?;
+        let cc: Vec<&Value> = evs
+            .iter()
+            .filter(|e| e["kind"].as_str().is_some_and(|k| k.starts_with("cc.")))
+            .collect();
+        let mut seen = std::collections::BTreeMap::<String, u64>::new();
+        for e in &cc {
+            let Some(u) = e["data"]["uuid"].as_str() else { continue };
+            if e["meta"]["replaces"].is_null() {
+                ensure!(
+                    seen.insert(u.to_owned(), e["seq"].as_u64().unwrap_or(0)).is_none(),
+                    "a duplicate event of {u}"
+                );
+            }
+        }
+        let prompts: Vec<String> = evs
+            .iter()
+            .filter(|e| e["kind"] == "user.sent")
+            .filter_map(|e| e["data"]["text"].as_str().map(str::to_owned))
+            .collect();
+        // a prompt's echo: its text, or a slash command as Claude Code writes it (`<command-name>/compact</command-name>…`)
+        let is_echo = |l: &Value| {
+            l["type"] == "user"
+                && l["message"]["content"].as_str().is_some_and(|t| {
+                    prompts
+                        .iter()
+                        .any(|p| p == t || t.starts_with(&format!("<command-name>{p}</command-name>")))
+                })
+        };
+        let missing: Vec<String> = lines
+            .iter()
+            .filter(|l| matches!(l["type"].as_str(), Some("user" | "assistant")))
+            .filter(|l| l["isSidechain"] != true && l["isMeta"] != true && !is_echo(l))
+            .filter_map(|l| l["uuid"].as_str())
+            .filter(|u| !seen.contains_key(*u))
+            .map(str::to_owned)
+            .collect();
+        ensure!(missing.is_empty(), "lines without their event: {missing:?}");
+        let sub_uuids: Vec<&str> = agents
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter_map(|l| l["uuid"].as_str().map(str::to_owned))
+            .filter(|u| seen.contains_key(u))
+            .map(|_| "x")
+            .collect();
+        ensure!(
+            sub_uuids.is_empty(),
+            "{} events from the subagent's transcript",
+            sub_uuids.len()
+        );
+        eprintln!(
+            "cc: {} lines, {} cc events, {} prompts",
+            lines.len(),
+            cc.len(),
+            prompts.len()
+        );
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    if r.is_err() {
+        eprintln!("{}", ws.tail(40));
+    }
+    ws.close().await;
+    r
+}
+
+/// [`turn_end`] for the conversation's `n`th turn end on this socket.
+async fn turn_end_nth(ws: &mut Ws, id: &str, n: usize) -> anyhow::Result<()> {
+    let ended = |ws: &Ws| {
+        ws.log
+            .iter()
+            .filter(|(dir, v)| {
+                *dir == "out"
+                    && v["message"]["type"] == "agent_stream"
+                    && v["message"]["payload"]["agentId"] == id
+                    && matches!(
+                        v["message"]["payload"]["event"]["type"].as_str(),
+                        Some("turn_completed" | "turn_failed" | "turn_canceled")
+                    )
+            })
+            .count()
+    };
+    let until = Instant::now() + TURN_WAIT;
+    while ended(ws) < n {
+        ensure!(Instant::now() < until, "turn {n} did not end");
+        turn_end(ws, id).await?;
+    }
+    Ok(())
 }

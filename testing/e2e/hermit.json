@@ -18,7 +18,8 @@
     "proxy": "http://sbx:{token}@{vip}:3128",
     "env": {
       "HTTP_PROXY": "http://sbx:{token}@{vip}:3128", "HTTPS_PROXY": "http://sbx:{token}@{vip}:3128",
-      "http_proxy": "http://sbx:{token}@{vip}:3128", "https_proxy": "http://sbx:{token}@{vip}:3128"
+      "http_proxy": "http://sbx:{token}@{vip}:3128", "https_proxy": "http://sbx:{token}@{vip}:3128",
+      "CLAUDE_CODE_TRANSCRIPT_LOCAL_GC": "1"
     }
   },
   "fabric": {
