@@ -244,6 +244,29 @@ pub async fn record(imp: &Importer, id: Uuid, files: &Files, failed_fp: &str, ch
     .await
 }
 
+/// Ends a sync that wrote cc files: the `truncated` limbo its operations left (lines a rewrite removed, credited to
+/// no turn) becomes one `retract` now, as a turn's end does for a live sandbox (magpie 6.7), so the conversation's
+/// visible events equal the classification of the source's current lines after every pass. How many lines.
+///
+/// # Errors
+/// [`Error::Released`] when the conversation is not migrating; a statement error.
+pub async fn flush_limbo(imp: &Importer, id: Uuid) -> Result<usize> {
+    let pool = &imp.magpie.pool;
+    aviary_pg::tx!(pool, |t| -> Result<usize> {
+        let Some(r) = t
+            .query_opt("select migrating from conversations where id = $1 for update", &[&id])
+            .await?
+        else {
+            return Err(Error::Released);
+        };
+        if !r.get::<_, bool>(0) {
+            return Err(Error::Released);
+        }
+        Ok(magpie::ccfs::limbo::flush_scope(t, id, None).await?)
+    })
+    .await
+}
+
 /// Records a sync error (the pass goes on, cutover 7.5).
 ///
 /// # Errors

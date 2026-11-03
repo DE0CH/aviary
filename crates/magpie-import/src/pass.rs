@@ -233,6 +233,9 @@ pub async fn sync_conversation(
     } else {
         w.sync_all(&sources, &k.files, None, None).await?
     };
+    if wrote {
+        conv::flush_limbo(imp, id).await?;
+    }
     let mut all = imported;
     for f in &new_failed {
         if !placement.placed.contains(&f.id) {

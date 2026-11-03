@@ -26,6 +26,7 @@ own library, so an imported conversation is what live writes would have made: cc
 | `src/control.rs` | `status`, `hold`, `reset --yes`, `unfence`, `release <id> --force` |
 | `src/cli.rs` | `magpie import <command>`: one JSON document on stdout, logs on stderr |
 | `tests/import.rs` | the end-to-end tests against the CI Postgres and S3 with fixtures made in the test |
+| `tests/convergence.rs` | the property test of cutover 7.12 item 3 (random source changes, a pass at random points: byte-exact, visible events = the source's lines) |
 
 ## Where this differs from the spec
 
@@ -38,9 +39,11 @@ own library, so an imported conversation is what live writes would have made: cc
   (`magpie::conversations::delete::forget_locked`): its workspace and its shares' clones are the old stack's until the
   release. `reset --yes` does the same.
 - Events of imported transcript lines carry the line's own `timestamp` as their time.
+- Each conversation's sync ends by flushing the `truncated` limbo its writes left (one `retract`, as a turn's end
+  does), so the visible events match the source after every pass rather than after magpie's 10 s sweeper.
 
 ## Not built yet (WP-29 continues)
 
 Shares (7.4.4), the view-as audit (7.4.5), upload ingestion and sent files (7.4.3), `holds.js` and `holds`, the
-leader lock, `allow-handover`, `parity`, `reverse` and `export` (14.2-14.3), the property test of 7.12 item 3, and
-tests 5-8 of 7.12. The hand-over loop itself is WP-52.
+leader lock, `allow-handover`, `parity`, `reverse` and `export` (14.2-14.3), and
+tests 4 (the routes of 6.4 beyond the write guard), 5-8 of 7.12. The hand-over loop itself is WP-52.
