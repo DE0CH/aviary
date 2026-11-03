@@ -7,7 +7,7 @@
 //! waited for). It samples the current supervisor's `VmRSS` and checks the peak, and that each supervisor process
 //! stays flat after its own warm-up (a restart starts a fresh process, so growth is compared within one pid). The
 //! 24 h soak with synthetic turns and 1 MiB lines needs the Claude Code driver (WP-23); `soak_long`
-//! (1 h) is for `nightly.yml` (WP-28).
+//! (`SOAK_SECONDS`, 5 h there) is for `nightly.yml` (WP-28).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::print_stderr)]
 
@@ -160,9 +160,14 @@ async fn rss_stays_under_the_budget() {
     soak(SOAK, SOAK / 2).await;
 }
 
-/// The longer soak for `nightly.yml`: an hour, a supervisor restart (with hermit and magpie away) every 10 minutes.
+/// The longer soak for `nightly.yml`: `SOAK_SECONDS` long (default an hour; the nightly runs 5 h), a supervisor
+/// restart (with hermit and magpie away) every 10 minutes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "an hour; nightly"]
+#[ignore = "an hour or more; nightly"]
 async fn soak_long() {
-    soak(Duration::from_secs(3600), Duration::from_secs(600)).await;
+    let secs = std::env::var("SOAK_SECONDS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(3600);
+    soak(Duration::from_secs(secs), Duration::from_secs(600)).await;
 }

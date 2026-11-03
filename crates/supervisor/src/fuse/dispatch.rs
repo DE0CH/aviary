@@ -33,7 +33,7 @@ use super::local::{Local, SetAttr, fh};
 use super::nodes::{self, Nodes, ROOT};
 use super::proto::{self, Attr, FileType, IN_HEADER, InHeader, cstr, fattr, op, u32_at, u64_at};
 use super::remote::{CallError, Lease, OpCtl, Remote};
-use super::scope::{self, Scope, Unclassified};
+use super::scope::{self, Scope, Unanswered, Unclassified};
 use super::seen::{self, Seen};
 use super::{Config, Device, Hooks, Point, StuckOp, now_ns};
 
@@ -127,6 +127,7 @@ pub struct Core {
     main: Mutex<Option<String>>,
     turn: Mutex<Option<Uuid>>,
     unclassified: Unclassified,
+    unanswered: Unanswered,
     resend: Mutex<Resend>,
     ctls: Mutex<HashMap<u64, Arc<OpCtl>>>,
     inflight: AtomicU32,
@@ -267,6 +268,7 @@ impl Core {
             main: Mutex::new(a.lease.main_transcript.clone()),
             turn: Mutex::new(None),
             unclassified: Unclassified::default(),
+            unanswered: Unanswered::default(),
             resend: Mutex::new(Resend::default()),
             ctls: Mutex::new(HashMap::new()),
             inflight: AtomicU32::new(0),
@@ -1357,7 +1359,7 @@ impl Core {
                     _ => Err(EPERM),
                 }
             }
-            op::MKNOD | op::LINK => Err(EPERM),
+            op::MKNOD | op::LINK => self.unanswered_op(h.opcode, EPERM),
             op::MKDIR => self.mkdir(h, b, ctl, effect),
             op::UNLINK | op::RMDIR => self.remove(h, b, ctl, effect),
             op::RENAME | op::RENAME2 => self.rename(h, b, ctl, effect),
@@ -1411,10 +1413,16 @@ impl Core {
                     Ok(Vec::new())
                 }
             }
-            op::SETXATTR | op::REMOVEXATTR => Err(ENOTSUP),
-            op::FALLOCATE => Err(EOPNOTSUPP),
-            _ => Err(ENOSYS),
+            op::SETXATTR | op::REMOVEXATTR => self.unanswered_op(h.opcode, ENOTSUP),
+            op::FALLOCATE => self.unanswered_op(h.opcode, EOPNOTSUPP),
+            _ => self.unanswered_op(h.opcode, ENOSYS),
         }
+    }
+
+    /// Refuses an opcode the mount does not serve, logging it once (`claude-code-gate` reads the log).
+    fn unanswered_op(&self, opcode: u32, errno: i32) -> Result<Vec<u8>, i32> {
+        self.unanswered.note(opcode, proto::opname(opcode), errno);
+        Err(errno)
     }
 
     fn local_kind(&self, p: &str) -> Option<FileType> {

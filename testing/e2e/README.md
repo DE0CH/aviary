@@ -81,7 +81,15 @@ each pigeon Pod answer alike), E9 (rollouts of pigeon, magpie, hermit and the ga
 90 s turn: the turn completes, the socket, reopened when pigeon's rollout closes it and resumed after its last row,
 sees every row once), E21 (the socket closed during `/compact` and reopened: one catch-up after the last row, no reset, the
 epoch unchanged, every row seen at its last seq), E23 (both gateway Pods get SIGTERM during a 60 s model stream: it completes, and
-`drain_cut_total` stays 0 on the draining Pods; the harness's gateway grace is 620 s, above the model drain bound), E13 (a share seen by another person stops at the share point; continuing it
+`drain_cut_total` stays 0 on the draining Pods; the harness's gateway grace is 620 s, above the model drain bound), E20
+(SIGTERM to one pigeon, one magpie and one hermit Pod in turn during a 150 s turn, each with a live client on it: a
+subscribed socket on the pigeon, 25 s long-polls on magpie's `/v1/changes` and hermit's `/v1/sandbox-events`; each Pod
+logs `drained` and is gone before its grace, the socket is closed 1012, the long-poll in flight at the signal answers
+200, the next request through the Service is answered by the other replica, and the turn completes with every row
+seen once), E22 (one turn whose events put `sandbox.*`, `title.changed`, `task.status` from a background Bash, and a
+`retract` between its rows: a tool renames the transcript over itself without the turn's first text; two sockets each
+see every row once with no seq gap, which is what makes the app refetch, and exactly one `agent.timeline.replacement`,
+after which the tail no longer has the retracted text), E13 (a share seen by another person stops at the share point; continuing it
 makes the viewer's conversation with the shared `/workspace`), E15 (view as: an admin's view of Alice lists her
 conversations and refuses a rename and a delete; staff cannot start one; the link is refused to anyone else), E24 (hermit at 0 replicas for 3 minutes during a turn with a tool call: the turn
 completes), E12 (the idle release, then a new sandbox that resumes the history) and E17 (seven starts with six slots:
@@ -89,8 +97,21 @@ never more than six sandboxes, the seventh waits and completes once a pool victi
 `reserveSeconds` and `poolVictimIdleSeconds` are 20 so that happens inside `capacityWaitSeconds`). Last, `stale`: magpie 6.10's stale append end to end (WP-12's carried item),
 from inside a sandbox through the gateway: an append, its retry under a new `opId` at the same offset (rule 0: 200,
 nothing written twice), a different append at that stale offset (409 `offset_mismatch`), the append at the size, and
-magpie's bytes read back. It takes the conversation's lease, so it runs last. The other scenarios of 7.8 are still
-to come (WP-28's remaining list).
+magpie's bytes read back. It takes the conversation's lease, so it runs last.
+
+Not in the default run: `chaos` (nightly.yml `e2e-chaos`, platform 6.2): Alice and Bob send turns one after another
+for 60 min (`chaos:<minutes>` sets the length) while pigeon, magpie, hermit and the gateway roll in a random order
+every 2-5 min and a random sandbox's supervisor is killed every 10 min. Every turn must complete (no `error` row, one
+reply end per turn), each socket, reopened and resumed after each drain, must have seen every row exactly once, and
+every send must be accepted within 180 s (a refusal during a rollout is sent again under the same message id and
+printed). `run.sh test` bounds the driver Job by `E2E_DRIVER_SECONDS` (default 2400).
+
+The `cc` scenario prints `cc-counts {"events": …, "rows": …}` (magpie's events by kind without the timing-dependent
+`sandbox.*` and the title, and the rows by kind). nightly.yml's `claude-code-gate` runs `cc`, `e21` and `e22` with the
+release's sandbox image and with its Claude Code replaced by the newest release (`.github/ci/claude-code-gate.sh`),
+and `claude-code-verdict` fails on an `unclassified path` or an `unanswered opcode` (the supervisor's once-per-opcode
+log of what the mount refuses: ENOSYS, ENOTSUP, EOPNOTSUPP, and EPERM for LINK and MKNOD) that the pinned release did
+not log, or on any change in those counts.
 
 Found by the harness, for other packages: right after hermit returns from an outage longer than `hostDeadSeconds`, a
 start fails `hosts_full` until the hosts' next heartbeat (every host looks dead); E24 waits 20 s before the next

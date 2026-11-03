@@ -1,11 +1,19 @@
-# platform spec 6.2: the long runs that do not fit a push. Cron 18:00 UTC (02:00 HKT) and by hand. Jobs still to
-# come with their packages: e2e-chaos, deps, and the 5 h supervisor soak (synthetic turns, FUSE, outages).
+# platform spec 6.2: the long runs that do not fit a push. Cron 18:00 UTC (02:00 HKT) and by hand. The harness jobs
+# run the images of the newest aviary-<sha12> release (every published tag passed ci.yml's gates), checked out at
+# that commit, so the driver, the manifests and the images agree.
 name: nightly
 
 on:
   schedule:
     - cron: "0 18 * * *"
   workflow_dispatch:
+    inputs:
+      chaos_minutes:
+        description: e2e-chaos length in minutes (platform 6.2 says 60)
+        default: "60"
+      soak_seconds:
+        description: supervisor-soak length in seconds (platform 6.2 says 5 h)
+        default: "18000"
 
 concurrency:
   group: nightly
@@ -19,15 +27,181 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  supervisor-soak:
-    # WP-21's acceptance "RSS under 64 MiB in a soak", for an hour: the keeper, a real supervisor process restarted
-    # every 10 minutes (hermit and magpie away meanwhile), RSS under the budget and flat within each process
+  release:
+    # the newest aviary-<sha12> release: its sha12 and its commit
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 5
+    outputs:
+      sha12: ${{ steps.r.outputs.sha12 }}
+      sha: ${{ steps.r.outputs.sha }}
+    steps:
+      - id: r
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" --jq '[.[] | select(.tag_name | startswith("aviary-"))][0].tag_name')
+          [ -n "$tag" ] || { echo "no aviary-<sha12> release" >&2; exit 1; }
+          sha12=${tag#aviary-}
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha12" --jq .sha)
+          echo "release $tag, commit $sha" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "sha12=$sha12" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  supervisor-soak:
+    # supervisor spec 22's soak at the hosted runner's length (5 h of the 6 h limit), on main: the keeper and a real
+    # supervisor process killed and restarted every 10 minutes with hermit's activity route and magpie's lease route
+    # away meanwhile, exec with 256 KiB of stdin, snapshot prepares and secrets driven throughout; RSS under the 64 MiB
+    # budget and flat within each process (crates/supervisor/tests/soak.rs)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    env:
+      SOAK_SECONDS: ${{ inputs.soak_seconds || '18000' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: toolchain (rust-toolchain.toml, exactly)
         run: rustup toolchain install && rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - name: soak (1 h)
-        run: timeout -k 30 4500 cargo test --locked -p supervisor --test soak soak_long -- --ignored --exact --nocapture
+      - name: build the soak
+        run: cargo test --locked -p supervisor --test soak --no-run
+      - name: soak
+        run: timeout -k 30 $((SOAK_SECONDS + 600)) cargo test --locked -p supervisor --test soak soak_long -- --ignored --exact --nocapture
+
+  deps:
+    # what `cargo update` would change, and the advisories against today's database; opens nothing, writes the summary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: toolchain (rust-toolchain.toml, exactly)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
+        with:
+          tool: cargo-deny@0.20.2
+      - name: cargo update --dry-run
+        run: |
+          {
+            echo '### cargo update --dry-run'
+            echo '```'
+            cargo update --dry-run 2>&1 | grep -v '^ *Updating crates.io index' || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: cargo deny check advisories
+        run: |
+          set -o pipefail
+          {
+            echo '### cargo deny check advisories'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          code=0
+          cargo deny --locked check advisories 2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || code=$?
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit "$code"
+
+  e2e-chaos:
+    # platform 6.2: the harness for 60 min with two people sending turns continuously while pigeon, magpie, hermit and
+    # the gateway roll in random order every 2-5 min and a random supervisor is killed every 10 min (the driver's
+    # `chaos` scenario, testing/e2e/src/scenarios/chaos.rs)
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CHAOS_MINUTES: ${{ inputs.chaos_minutes || '60' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+      - run: .github/ci/e2e-tools.sh
+      - run: .github/ci/release-images.sh "${{ needs.release.outputs.sha12 }}"
+      - name: up
+        run: |
+          s=${{ needs.release.outputs.sha12 }}
+          timeout 1500 testing/e2e/run.sh up "pigeon:$s" "magpie:$s" "hermit:$s" "aviary-testing:$s" "hermit-sandbox:$s"
+      - name: chaos
+        run: E2E_DRIVER_SECONDS=$((CHAOS_MINUTES * 60 + 1200)) timeout $((CHAOS_MINUTES * 60 + 1500)) testing/e2e/run.sh test "chaos:$CHAOS_MINUTES"
+      - name: artifacts
+        if: failure()
+        run: timeout 300 testing/e2e/run.sh artifacts "$RUNNER_TEMP/e2e"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: e2e-chaos
+          path: ${{ runner.temp }}/e2e/
+          if-no-files-found: warn
+      - name: down
+        if: always()
+        run: timeout 300 testing/e2e/run.sh down
+
+  claude-code-gate:
+    # supervisor spec 22 / magpie 20, the Claude Code release gate: the harness's real-binary scenarios (`cc`: a
+    # subagent, /compact and a turn after it; `e21`; `e22`) with the release's sandbox image (the pinned Claude Code)
+    # and with that image's Claude Code replaced by the newest release; claude-code-verdict compares them. The sandbox
+    # image's pin (images/sandbox/Dockerfile CLAUDE_CODE_VERSION) moves only on a green verdict.
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        claude: [pinned, newest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+      - run: .github/ci/e2e-tools.sh
+      - run: .github/ci/release-images.sh "${{ needs.release.outputs.sha12 }}"
+      - name: the sandbox image with the newest Claude Code
+        if: matrix.claude == 'newest'
+        run: |
+          v=$(npm view @anthropic-ai/claude-code version)
+          echo "the newest Claude Code: $v" | tee -a "$GITHUB_STEP_SUMMARY"
+          # the same install as images/sandbox/Dockerfile, over the release's image
+          docker build -t "hermit-sandbox-newest:${{ needs.release.outputs.sha12 }}" - <<DOCKERFILE
+          FROM hermit-sandbox:${{ needs.release.outputs.sha12 }}
+          RUN rm -rf /opt/claude-code /usr/local/bin/claude \
+           && npm install --prefix /opt/claude-code -g @anthropic-ai/claude-code@$v \
+           && npm cache clean --force && rm -rf /root/.npm \
+           && chown -R root:root /opt/claude-code && chmod -R go-w /opt/claude-code \
+           && ln -s /opt/claude-code/bin/claude /usr/local/bin/claude \
+           && /opt/claude-code/bin/claude --version | grep -qF "$v"
+          DOCKERFILE
+      - name: the gate's scenarios
+        run: |
+          s=${{ needs.release.outputs.sha12 }}
+          if [ "${{ matrix.claude }}" = newest ]; then image=hermit-sandbox-newest:$s; else image=hermit-sandbox:$s; fi
+          .github/ci/claude-code-gate.sh "$s" "$image" "$RUNNER_TEMP/gate"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: claude-code-gate-${{ matrix.claude }}
+          path: ${{ runner.temp }}/gate/
+          if-no-files-found: warn
+      - name: artifacts
+        if: failure()
+        run: timeout 300 testing/e2e/run.sh artifacts "$RUNNER_TEMP/e2e"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: claude-code-gate-${{ matrix.claude }}-harness
+          path: ${{ runner.temp }}/e2e/
+          if-no-files-found: warn
+      - name: down
+        if: always()
+        run: timeout 300 testing/e2e/run.sh down
+
+  claude-code-verdict:
+    needs: [release, claude-code-gate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: claude-code-gate-pinned
+          path: ${{ runner.temp }}/pinned
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: claude-code-gate-newest
+          path: ${{ runner.temp }}/newest
+      - run: .github/ci/claude-code-verdict.sh "$RUNNER_TEMP/pinned/gate.json" "$RUNNER_TEMP/newest/gate.json"

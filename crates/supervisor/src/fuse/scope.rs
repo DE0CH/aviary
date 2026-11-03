@@ -95,6 +95,21 @@ impl Unclassified {
     }
 }
 
+/// Logs `unanswered opcode` once per opcode the mount refuses as unsupported (ENOSYS, ENOTSUP, EOPNOTSUPP) or by
+/// policy (LINK, MKNOD: EPERM), so `claude-code-gate` sees a Claude Code release that issues one the pinned release
+/// did not (supervisor 22).
+#[derive(Debug, Default)]
+pub struct Unanswered(Mutex<HashSet<u32>>);
+
+impl Unanswered {
+    pub fn note(&self, opcode: u32, name: &str, errno: i32) {
+        let mut seen = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if seen.insert(opcode) {
+            tracing::warn!(opcode = name, errno, "unanswered opcode");
+        }
+    }
+}
+
 /// A component as the kernel sends it: at most 255 bytes, UTF-8 (magpie stores text paths), no NUL, not `.`/`..`,
 /// no `/`.
 ///

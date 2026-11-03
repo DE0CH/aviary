@@ -187,8 +187,9 @@ deploy() {
   log "up"
 }
 
-driver() { # the driver Job with the named scenarios
+driver() { # the driver Job with the named scenarios (E2E_DRIVER_SECONDS bounds it, default 2400)
   k delete job driver --ignore-not-found --wait=true >/dev/null
+  local deadline=${E2E_DRIVER_SECONDS:-2400}
   local args=
   if [ $# -gt 0 ]; then args=$(printf ', "%s"' "$@"); fi
   k apply -f - >/dev/null <<YAML
@@ -197,7 +198,7 @@ kind: Job
 metadata: {name: driver, namespace: $ns}
 spec:
   backoffLimit: 0
-  activeDeadlineSeconds: 2400
+  activeDeadlineSeconds: $deadline
   template:
     metadata: {labels: {app: driver}}
     spec:
@@ -219,7 +220,7 @@ spec:
         - {name: ca, secret: {secretName: driver-ca}}
         - {name: jfs, hostPath: {path: $jfs, type: Directory}}
 YAML
-  local until=$((SECONDS + 2450)) phase=
+  local until=$((SECONDS + deadline + 50)) phase=
   while [ "$SECONDS" -lt "$until" ]; do
     phase=$(k get job driver -o jsonpath='{.status.conditions[?(@.status=="True")].type}' 2>/dev/null || true)
     case $phase in *Complete*|*Failed*) break ;; esac

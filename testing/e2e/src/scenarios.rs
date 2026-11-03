@@ -7,6 +7,8 @@ use reqwest::Method;
 use serde_json::{Value, json};
 
 use crate::ws::Ws;
+
+mod chaos;
 use crate::{ADMIN, ALICE, Harness, JFS, PIGEON, STRANGER, TURN_MODEL, eventually};
 
 /// The scenarios in the order `aviary-e2e` runs them when none is named.
@@ -47,6 +49,11 @@ pub async fn run(h: &Harness, name: &str) -> anyhow::Result<()> {
         "e22" => e22(h).await,
         "e15" => e15(h).await,
         "e7" => e7(h).await,
+        "chaos" => Box::pin(chaos::run(h, 60)).await,
+        other if other.starts_with("chaos:") => {
+            let minutes: u64 = other["chaos:".len()..].parse().context("chaos:<minutes>")?;
+            Box::pin(chaos::run(h, minutes)).await
+        }
         other => bail!("no scenario {other}"),
     }
 }
@@ -570,6 +577,23 @@ async fn cc(h: &Harness) -> anyhow::Result<()> {
             cc.len(),
             prompts.len()
         );
+        // what claude-code-gate compares between the pinned and the newest Claude Code (nightly.yml): the events
+        // magpie derived, by kind (the timing-dependent `sandbox.*` and the title aside), and the rows
+        let mut kinds = std::collections::BTreeMap::<String, u64>::new();
+        for e in &evs {
+            let k = e["kind"].as_str().unwrap_or_default();
+            if !k.starts_with("sandbox.") && k != "title.changed" {
+                *kinds.entry(k.to_owned()).or_default() += 1;
+            }
+        }
+        let rows = timeline(&mut ws, &id).await?;
+        let mut row_kinds = std::collections::BTreeMap::<String, u64>::new();
+        for r in &rows {
+            *row_kinds
+                .entry(r["item"]["type"].as_str().unwrap_or_default().to_owned())
+                .or_default() += 1;
+        }
+        eprintln!("cc-counts {}", json!({"events": kinds, "rows": row_kinds}));
         Ok::<_, anyhow::Error>(())
     }
     .await;
