@@ -75,8 +75,23 @@ pub struct Plan {
     pub memory: Vec<MemoryFile>,
     /// The largest lines.
     pub largest_lines: Vec<LongLine>,
+    /// Shares.
+    pub shares: SharesPlan,
     /// What stops an import (exit 1).
     pub blockers: Vec<String>,
+}
+
+/// The shares `plan` found (cutover 7.4.4).
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct SharesPlan {
+    /// Live rows.
+    pub live: usize,
+    /// Revoked rows.
+    pub revoked: usize,
+    /// Live rows whose conversation has no sessions row (imported as revoked).
+    pub orphaned: usize,
+    /// Live rows without a frozen transcript on the mount.
+    pub no_transcript: usize,
 }
 
 fn longest_line(abs: &std::path::Path, size: u64) -> Result<u64> {
@@ -174,6 +189,24 @@ pub async fn plan(imp: &Importer) -> Result<Plan> {
         plan.conversations += sp.conversations;
         plan.bytes += sp.bytes;
         plan.schemas.push(sp);
+    }
+    let ids: std::collections::BTreeSet<&str> = snap
+        .persons
+        .iter()
+        .flat_map(|p| p.sessions.iter().map(|s| s.session_id.as_str()))
+        .collect();
+    for s in &snap.shares {
+        if s.revoked_at.is_some() {
+            plan.shares.revoked += 1;
+            continue;
+        }
+        plan.shares.live += 1;
+        if !ids.contains(s.session_id.as_str()) {
+            plan.shares.orphaned += 1;
+        }
+        if !crate::share::folder(&imp.jfs, s).join("transcript.jsonl").is_file() {
+            plan.shares.no_transcript += 1;
+        }
     }
     lines.sort_by_key(|l| std::cmp::Reverse(l.bytes));
     lines.truncate(LARGEST);

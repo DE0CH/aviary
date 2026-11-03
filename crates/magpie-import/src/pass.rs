@@ -103,6 +103,8 @@ pub struct Report {
     pub errors: Vec<(String, String)>,
     /// The view-as pass (a full pass only).
     pub view_as: crate::viewas::Copied,
+    /// The share pass (a full pass only).
+    pub shares: crate::share::Copied,
 }
 
 /// One pass over every person's conversations (`only`: just these).
@@ -119,6 +121,7 @@ pub async fn pass(imp: &Importer, only: Option<&BTreeSet<Uuid>>) -> Result<Repor
     let gate = Arc::new(Semaphore::new(PARALLEL));
     let mut set = tokio::task::JoinSet::new();
     let mut seen: BTreeSet<Uuid> = BTreeSet::new();
+    let mut failed_ids: BTreeSet<Uuid> = BTreeSet::new();
     for p in &snap.persons {
         for s in &p.sessions {
             let Ok(id) = s.id() else {
@@ -158,6 +161,7 @@ pub async fn pass(imp: &Importer, only: Option<&BTreeSet<Uuid>>) -> Result<Repor
                 let msg = e.to_string();
                 tracing::warn!(conversation = %id, error = %msg, "conversation not synced");
                 let _ = conv::record_error(imp, id, &msg).await;
+                failed_ids.insert(id);
                 report.errors.push((id.to_string(), msg));
             }
         }
@@ -173,6 +177,18 @@ pub async fn pass(imp: &Importer, only: Option<&BTreeSet<Uuid>>) -> Result<Repor
             if !k.released && !seen.contains(id) && conv::purge(imp, *id).await? {
                 report.purged += 1;
             }
+        }
+    }
+    // shares after the conversations (and the purge of vanished rows, so a share of a purged one is revoked)
+    if only.is_none() {
+        match crate::share::pass(imp, &snap.shares, &failed_ids).await {
+            Ok(c) => {
+                for (id, e) in &c.errors {
+                    report.errors.push((format!("share {id}"), e.clone()));
+                }
+                report.shares = c;
+            }
+            Err(e) => report.errors.push(("shares".into(), e.to_string())),
         }
     }
     Ok(report)

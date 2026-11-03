@@ -13,6 +13,7 @@
 //! - [`conv`]: creating a migrating conversation, mapping a sessions row's changes, the purge of a vanished one.
 //! - [`failed`]: `jarvis_failed_turns` as `user.sent` + `turn.ended` failed.
 //! - [`sent`]: the old hook's sent-file snapshots as `sent_files` and `files.sent`.
+//! - [`share`]: `cc_shared.shares` as magpie shares with the same ids (cutover 7.4.4).
 //! - [`viewas`]: `jarvis.ops_events` view-as rows as magpie's `view_as_log`.
 //! - [`pass`]: one pass (`run`, `catch-up`): every conversation whose fingerprints changed, 8 at a time.
 //! - [`verify`]: byte-exact verification through magpie's read path (cutover 7.7).
@@ -33,6 +34,7 @@ pub mod lock;
 pub mod pass;
 pub mod plan;
 pub mod sent;
+pub mod share;
 pub mod source;
 pub mod sync;
 pub mod tree;

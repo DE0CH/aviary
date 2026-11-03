@@ -21,6 +21,7 @@ own library, so an imported conversation is what live writes would have made: cc
 | `src/conv.rs` | creating a migrating conversation, mapping a sessions row's changes, removing one whose row vanished (no hermit call) |
 | `src/failed.rs` | failed turns as `user.sent` + `turn.ended` failed, sentences mapped back to codes, placed by time on the first import |
 | `src/sent.rs` | the old hook's `sent/<conversation>/<toolUseId>/` snapshots as blobs, `sent_files` and `files.sent` (caption from the call's input) |
+| `src/share.rs` | `cc_shared.shares` as magpie shares with the same ids (7.4.4): frozen from magpie's copy of the conversation up to where the share's `transcript.jsonl` ends, revoked ones revoked, ones of a conversation that is gone stored revoked |
 | `src/viewas.rs` | `jarvis.ops_events` view-as rows as `view_as_log` (the old `conversation` event is `send`) |
 | `src/pass.rs` | one pass (`run`, `catch-up`), 8 conversations at a time |
 | `src/verify.rs` | byte-exact verification through magpie's read path, the re-ingest, the released-source check, and 7.7's sanity notes (event and prompt counts against the classifier's count of the source, a workspace not on disk) |
@@ -31,6 +32,7 @@ own library, so an imported conversation is what live writes would have made: cc
 | `src/control.rs` | `status`, `hold`, `reset --yes`, `unfence`, `release <id> --force` |
 | `src/cli.rs` | `magpie import <command>`: one JSON document on stdout, logs on stderr; every command but `plan` and `status` holds the leader lock |
 | `tests/import.rs` | the end-to-end tests against the CI Postgres and S3 with fixtures made in the test |
+| `tests/shares.rs` | prefix and non-prefix frozen transcripts, revoked before and after the import, a share of a gone conversation, `reset` |
 | `tests/holds_js.rs`, `tests/kube.rs` | `holds.js` against fake CloudCLI children (node), the transport against a fake Kubernetes API |
 | `tests/convergence.rs` | the property test of cutover 7.12 item 3 (random source changes, a pass at random points: byte-exact, visible events = the source's lines) |
 
@@ -52,8 +54,20 @@ own library, so an imported conversation is what live writes would have made: cc
 - Each conversation's sync ends by flushing the `truncated` limbo its writes left (one `retract`, as a turn's end
   does), so the visible events match the source after every pass rather than after magpie's 10 s sweeper.
 
+- A share is frozen from magpie's copy of its conversation rather than from a hidden copy of its frozen files
+  (magpie 19.1): its `upto_seq` covers the events of the main-transcript lines the frozen `transcript.jsonl` holds
+  (matched line by line by sha256 from offset 0, up to the next line that has an event), and its snapshot scope is
+  the conversation's scope with the main transcript cut there. For a frozen transcript that is a byte prefix of the
+  live one (all five live shares on 2026-11-03) that is exactly the frozen file. For one that is not, the share keeps
+  the common lines (`shares.notPrefix` in the pass report), because a hidden copy would have to be a conversation
+  that is neither listed nor in Recently deleted, which magpie's model has no state for (a deleted source answers
+  404, magpie 12.3). The snapshot's `tool-results/` and `subagents/` are the conversation's at import time (a
+  superset of the frozen `session/`).
+- A share whose conversation has no sessions row is stored revoked (`deleted`), as the old stack answers 404 for it.
+  `reset --yes` removes the imported shares with their conversations.
+
 ## Not built yet (WP-29 continues)
 
-Shares (7.4.4), `allow-handover`, `parity`, `reverse` and `export` (14.2-14.3), and
+`allow-handover`, `parity`, `reverse` and `export` (14.2-14.3), and
 tests 4 (the routes of 6.4 beyond the write guard), 5-7 of 7.12 and item 8's process-level half (the loop's
 yield between passes). The hand-over loop itself is WP-52.

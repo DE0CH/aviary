@@ -134,6 +134,31 @@ pub struct Snapshot {
     pub persons: Vec<PersonSource>,
     /// Schemas the importer cannot map (`plan` blockers): the schema and why.
     pub problems: Vec<(String, String)>,
+    /// `cc_shared.shares`, every row (live and revoked), by id.
+    pub shares: Vec<ShareRow>,
+}
+
+/// A `cc_shared.shares` row (`jarvis-shares.ts`): a frozen copy under `users/<key>/shares/<id>/`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ShareRow {
+    /// 22 characters of base64url.
+    pub id: String,
+    /// The owner's email.
+    pub owner: String,
+    /// The local part of the owner's email.
+    pub owner_name: String,
+    /// The shared conversation's id (its sessions row).
+    pub session_id: String,
+    /// The title at the freeze.
+    pub title: String,
+    /// The frozen copy's folder in the old pods (`/jfs/users/<key>/shares/<id>`).
+    pub dir: String,
+    /// The files a viewer may download (canonical JSON text).
+    pub files: String,
+    /// When it was made (RFC 3339).
+    pub created_at: String,
+    /// When it was revoked (RFC 3339).
+    pub revoked_at: Option<String>,
 }
 
 /// Whether `name` is a person's schema (`cc_u` + 24 hex).
@@ -235,9 +260,42 @@ pub async fn read(pool: &Pool) -> Result<Snapshot> {
                 failed,
             });
         }
+        snap.shares = shares(t).await?;
         Ok(snap)
     })
     .await
+}
+
+/// `cc_shared.shares` (none when the schema does not exist), in the snapshot's transaction.
+async fn shares(t: &aviary_pg::Tx<'_>) -> Result<Vec<ShareRow>> {
+    let has_shares: bool = t
+        .query_one("select to_regclass('cc_shared.shares') is not null", &[])
+        .await?
+        .get(0);
+    if !has_shares {
+        return Ok(Vec::new());
+    }
+    Ok(t.query(
+        "select id::text, owner::text, owner_name::text, session_id::text, title::text, dir::text,
+                    files::text, to_char(created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),
+                    to_char(revoked_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')
+             from cc_shared.shares order by id",
+        &[],
+    )
+    .await?
+    .iter()
+    .map(|r| ShareRow {
+        id: r.get(0),
+        owner: r.get(1),
+        owner_name: r.get(2),
+        session_id: r.get(3),
+        title: r.get(4),
+        dir: r.get(5),
+        files: r.get(6),
+        created_at: r.get(7),
+        revoked_at: r.get(8),
+    })
+    .collect())
 }
 
 /// A `CloudCLI` text timestamp (magpie 19.1): `YYYY-MM-DD HH:MM:SS` (UTC) or ISO 8601 / RFC 3339. The 1970

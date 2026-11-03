@@ -63,8 +63,11 @@ pub fn local_part(email: &str) -> &str {
 /// Copies cc scope `from` into `to` (files, lines, pages; a scope is a conversation or a share snapshot). With
 /// `cut = Some(turn)` every lines file (the main transcript, a subagent's, any other) is cut at its first line of
 /// `turn` by `ord`: that line and every later one are left out, and the file ends where that line began. Byte files
-/// carry no turn and are copied whole.
-async fn copy_scope(t: &Tx<'_>, from: Uuid, to: Uuid, cut: Option<Uuid>) -> Result<()> {
+/// carry no turn and are copied whole. Also the importer's freeze of an imported share (cutover 7.4.4).
+///
+/// # Errors
+/// When a statement fails.
+pub async fn copy_scope(t: &Tx<'_>, from: Uuid, to: Uuid, cut: Option<Uuid>) -> Result<()> {
     t.execute(
         "insert into cc_files (scope, path, kind, mode, mtime_ns, size, version, tail, next_ord, last_op_at)
          select $2, path, kind, mode, mtime_ns, size, version, tail, next_ord, last_op_at from cc_files where scope = $1",
@@ -120,7 +123,10 @@ async fn copy_scope(t: &Tx<'_>, from: Uuid, to: Uuid, cut: Option<Uuid>) -> Resu
 }
 
 /// Copies `from`'s blob references to `to` (`owner_kind` of `to`), bumping each blob's `last_ref_at`.
-async fn copy_refs(t: &Tx<'_>, from: Uuid, to: Uuid, owner_kind: &str) -> Result<()> {
+///
+/// # Errors
+/// When a statement fails.
+pub async fn copy_refs(t: &Tx<'_>, from: Uuid, to: Uuid, owner_kind: &str) -> Result<()> {
     t.execute(
         "update blobs set last_ref_at = now() where sha256 in (select blob from blob_refs where owner = $1)",
         &[&from],
@@ -136,8 +142,11 @@ async fn copy_refs(t: &Tx<'_>, from: Uuid, to: Uuid, owner_kind: &str) -> Result
 }
 
 /// Removes a share's frozen data (its snapshot scope, rows and blob references) and queues its workspace's
-/// deletion; the share row stays (audit).
-async fn drop_frozen(t: &Tx<'_>, share_id: &str, snapshot: Uuid, workspace: Uuid) -> Result<()> {
+/// deletion; the share row stays (audit). Also the importer's revoke of an imported share (cutover 7.4.4).
+///
+/// # Errors
+/// When a statement fails.
+pub async fn drop_frozen(t: &Tx<'_>, share_id: &str, snapshot: Uuid, workspace: Uuid) -> Result<()> {
     t.execute("delete from cc_files where scope = $1", &[&snapshot]).await?;
     t.execute("delete from cc_limbo where scope = $1", &[&snapshot]).await?;
     t.execute("delete from cc_echoes where scope = $1", &[&snapshot])
@@ -159,8 +168,9 @@ async fn drop_frozen(t: &Tx<'_>, share_id: &str, snapshot: Uuid, workspace: Uuid
     Ok(())
 }
 
-/// The rows whose source events are all at most `$N` (over `rows` or `share_rows`).
-fn within(n: u8) -> String {
+/// The rows whose source events are all at most `$N` (over `rows` or `share_rows`): a SQL condition.
+#[must_use]
+pub fn within(n: u8) -> String {
     format!("not exists (select 1 from unnest(source_seqs) x where x > ${n})")
 }
 

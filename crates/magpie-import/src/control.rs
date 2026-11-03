@@ -201,6 +201,15 @@ pub async fn reset(imp: &Importer) -> Result<u64> {
             n += 1;
         }
     }
+    // the imported shares with them: the purge revoked them and left them without a conversation; a later run
+    // imports them again
+    pool.get()
+        .await?
+        .batch_execute(
+            "delete from shares where conversation_id is null and id in (select share_id from import_shares);
+             delete from import_shares where share_id not in (select id from shares);",
+        )
+        .await?;
     Ok(n)
 }
 

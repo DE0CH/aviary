@@ -221,6 +221,50 @@ impl World {
         self.imp.jarvis.get().await.unwrap().batch_execute(sql).await.unwrap();
     }
 
+    /// A share's folder (`users/<key>/shares/<id>`) with its frozen transcript, and its `cc_shared.shares` row.
+    pub async fn share(&self, id: &str, owner: &str, conversation: Uuid, transcript: &[u8], revoked: bool) {
+        let key = aviary_core::log::person_key(owner);
+        let dir = self.jfs.0.join("users").join(&key).join("shares").join(id);
+        std::fs::create_dir_all(dir.join("ws")).unwrap();
+        std::fs::write(dir.join("transcript.jsonl"), transcript).unwrap();
+        let c = self.imp.cloudcli.get().await.unwrap();
+        c.batch_execute(
+            "do $$ begin if to_regclass('cc_shared.shares') is null then
+             create schema cc_shared; create table cc_shared.shares (id text primary key, owner text not null,
+             owner_name text not null, session_id text not null, title text not null, dir text not null,
+             files jsonb not null default '[]', created_at timestamptz not null default now(),
+             revoked_at timestamptz); end if; end $$",
+        )
+        .await
+        .unwrap();
+        let revoked_at = revoked.then(|| "2026-10-28T04:52:12Z".to_owned());
+        c.execute(
+            "insert into cc_shared.shares (id, owner, owner_name, session_id, title, dir, created_at, revoked_at)
+             values ($1, $2, split_part($2, '@', 1), $3, 'Shared', $4, '2026-10-28T03:04:32Z', $5::text::timestamptz)",
+            &[
+                &id,
+                &owner,
+                &conversation.to_string(),
+                &format!("/jfs/users/{key}/shares/{id}"),
+                &revoked_at,
+            ],
+        )
+        .await
+        .unwrap();
+    }
+
+    /// Revokes a share in `cloudcli`.
+    pub async fn revoke_share(&self, id: &str) {
+        self.imp
+            .cloudcli
+            .get()
+            .await
+            .unwrap()
+            .execute("update cc_shared.shares set revoked_at = now() where id = $1", &[&id])
+            .await
+            .unwrap();
+    }
+
     /// Runs a statement in `cloudcli`.
     pub async fn cloudcli(&self, sql: &str) {
         self.imp.cloudcli.get().await.unwrap().batch_execute(sql).await.unwrap();
