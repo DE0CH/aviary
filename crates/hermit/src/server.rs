@@ -41,6 +41,11 @@ fn bad_path() -> ApiError {
     error::api(400, codes::BAD_PATH, "a relative path without . or .. components")
 }
 
+/// 503 for a workspace whose delete is in flight ([`db::workspace_deleting`]).
+fn being_deleted() -> ApiError {
+    error::api(503, codes::WORKSPACE_UNAVAILABLE, "the workspace is being deleted").retry_after(5)
+}
+
 impl Hermit {
     fn core(&self) -> &Arc<Core> {
         &self.0
@@ -119,6 +124,9 @@ impl Server for Hermit {
 
     async fn put_workspace(&self, _ctx: Ctx, wid: Uuid) -> Result<PutWorkspace, ApiError> {
         let core = self.core();
+        if db::workspace_deleting(&core.pool, wid).await.or_503()? {
+            return Err(being_deleted());
+        }
         let (mut w, made) = core.providers.workspaces.ensure(wid).await?;
         w.created_at = db::workspace_created(&core.pool, wid, w.created_at, made).await;
         Ok(if made {
@@ -141,6 +149,9 @@ impl Server for Hermit {
     }
 
     async fn delete_workspace(&self, _ctx: Ctx, wid: Uuid) -> Result<(), ApiError> {
+        // no start mounts the workspace from here on (its workspace step refuses it), so the release below leaves
+        // nothing that can come up on a tree being removed
+        db::mark_workspace_deleting(&self.core().pool, wid).await.or_503()?;
         // the conversation's live sandbox goes first (3.8), at most 60 s
         if !self.release_and_wait(wid).await? {
             tracing::warn!(workspace = %wid, "workspace delete refused: its sandbox is still releasing");

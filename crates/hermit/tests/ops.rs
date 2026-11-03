@@ -1027,17 +1027,24 @@ async fn every_admin_call_is_audited_and_does_what_it_says() {
         .await;
     assert_eq!(a.status, 404, "no live sandbox");
 
-    // recycle: every live sandbox on another image (sb1, inserted with an old image). A start still in progress
-    // has no image yet and gets the configured one: recycling everything but that image leaves it alone
-    let starting = Uuid::new_v4();
-    h.sql(&format!(
-        "insert into sandboxes (id, conversation_id, person, status, name, cpu, memory_bytes, start_deadline,
-           expires_at, hard_expires_at, created_at)
-         values ('{starting}', '{}', '{STAFF}', 'starting', 'sbx-starting', 1, 1073741824, now() + interval '1 minute',
-           now() + interval '1 hour', now() + interval '9 hours', now())",
-        Uuid::new_v4()
-    ))
-    .await;
+    // recycle: every live sandbox on another image (sb1, inserted with an old image). A start's image is fixed when
+    // its row is inserted (the inserting replica's configured one): a start this configuration inserted is left
+    // alone, and one an old replica inserted during a rollout is recycled, whichever replica drives it
+    let (starting, old_start) = (Uuid::new_v4(), Uuid::new_v4());
+    let old_image = format!("sha256:{}", "1".repeat(64));
+    for (id, name, image) in [
+        (starting, "sbx-starting", h.config.image_digest.clone()),
+        (old_start, "sbx-old-start", old_image.clone()),
+    ] {
+        h.sql(&format!(
+            "insert into sandboxes (id, conversation_id, person, status, name, cpu, memory_bytes, start_deadline,
+               expires_at, hard_expires_at, created_at, image)
+             values ('{id}', '{}', '{STAFF}', 'starting', '{name}', 1, 1073741824, now() + interval '1 minute',
+               now() + interval '1 hour', now() + interval '9 hours', now(), '{image}')",
+            Uuid::new_v4()
+        ))
+        .await;
+    }
     let a = admin
         .call(
             &r.url,
@@ -1047,18 +1054,38 @@ async fn every_admin_call_is_audited_and_does_what_it_says() {
             &as_admin,
         )
         .await;
-    assert_eq!((a.status, a.body["released"].clone()), (200, json!(1)), "{:?}", a.body);
-    let pending: Option<Value> = h
-        .pool()
-        .get()
-        .await
-        .unwrap()
-        .query_one("select release_pending from sandboxes where id = $1", &[&starting])
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(pending, None, "a start about to get the current image is not recycled");
-    h.sql(&format!("delete from sandboxes where id = '{starting}'")).await;
+    assert_eq!((a.status, a.body["released"].clone()), (200, json!(2)), "{:?}", a.body);
+    let pending = |id: Uuid| {
+        let h = &h;
+        async move {
+            let row = h
+                .pool()
+                .get()
+                .await
+                .unwrap()
+                .query_one(
+                    "select release_pending, release_reason from sandboxes where id = $1",
+                    &[&id],
+                )
+                .await
+                .unwrap();
+            (row.get::<_, Option<Value>>(0), row.get::<_, Option<String>>(1))
+        }
+    };
+    assert_eq!(
+        pending(starting).await,
+        (None, None),
+        "a start on the current image is not recycled"
+    );
+    let (p, reason) = pending(old_start).await;
+    assert!(
+        p.is_some_and(|p| p["reason"] == "recycle") || reason.as_deref() == Some("recycle"),
+        "a start an old replica inserted is recycled: {reason:?}"
+    );
+    h.sql(&format!(
+        "delete from sandboxes where id in ('{starting}', '{old_start}')"
+    ))
+    .await;
     let a = admin
         .call(
             &r.url,

@@ -171,6 +171,7 @@ fn still_releasing(core: &Core, since: tokio::time::Instant) -> Result<Duration,
     Ok(left)
 }
 
+#[allow(clippy::too_many_lines)] // one transaction: the live row's cases, then the new row with its parameters
 async fn put_once(core: &Arc<Core>, cid: Uuid, person: &str) -> Result<PutStep, ApiError> {
     let cfg = &core.cfg;
     let s = cfg.sandbox();
@@ -186,6 +187,8 @@ async fn put_once(core: &Arc<Core>, cid: Uuid, person: &str) -> Result<PutStep, 
     let (cpu, memory) = (s.cpu, i64::try_from(cfg.memory_bytes).unwrap_or(i64::MAX));
     let kid = i16::try_from(core.keys.newest()).unwrap_or(i16::MAX);
     let owner = person.to_owned();
+    // the image this start creates is fixed here, whichever replica drives it (migration 0004)
+    let (image, image_ref) = (cfg.image_digest.clone(), s.image.clone());
     let c = core.clone();
     let res = aviary_pg::tx!(&core.pool, |t| -> Result<PutStep, PutError> {
         let live = t
@@ -241,12 +244,29 @@ async fn put_once(core: &Arc<Core>, cid: Uuid, person: &str) -> Result<PutStep, 
         let name = format!("sbx-{}", &id.simple().to_string()[..16]);
         t.execute(
             "insert into sandboxes (id, conversation_id, person, status, phase, name, token_kid, cpu, memory_bytes,
-               task, task_owner, task_until, start_deadline, expires_at, hard_expires_at, reserved_until)
+               task, task_owner, task_until, start_deadline, expires_at, hard_expires_at, reserved_until,
+               image, image_ref)
              values ($1, $2, $3, 'starting', 'capacity', $4, $5, $6, $7,
                'start', $8, now() + $9::bigint * interval '1 millisecond', now() + $10::bigint * interval '1 millisecond',
                now() + $11::bigint * interval '1 millisecond', now() + ($11::bigint + $12::bigint) * interval '1 millisecond',
-               now() + $13::bigint * interval '1 millisecond')",
-            &[&id, &cid, &owner, &name, &kid, &cpu, &memory, &pod, &claim_ms, &start_deadline, &expires, &grace, &reserve],
+               now() + $13::bigint * interval '1 millisecond', $14, $15)",
+            &[
+                &id,
+                &cid,
+                &owner,
+                &name,
+                &kid,
+                &cpu,
+                &memory,
+                &pod,
+                &claim_ms,
+                &start_deadline,
+                &expires,
+                &grace,
+                &reserve,
+                &image,
+                &image_ref,
+            ],
         )
         .await?;
         let row = bump(t, id).await?;

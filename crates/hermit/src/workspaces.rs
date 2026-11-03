@@ -13,14 +13,20 @@
 //! [`FS_TIMEOUT`] the mount is hung and every check fails at once until it returns. A listing slower than
 //! [`LIST_TIMEOUT`] or a read chunk slower than [`READ_TIMEOUT`] is a slow call, not a hung mount: 503 (the listing)
 //! or a body that ends with an error (the read), and the mount's health is left to the `stat`. A listing still running
-//! is joined by the next request for the same folder (never a second scan of it), and its answer is kept briefly for
-//! the retry. A read holds one of [`MAX_READS`] permits from before its `open` until its last chunk (or its blocked
-//! thread) returns; a client that takes no chunk for [`READ_IDLE`] loses the body.
+//! is joined by the next request for the same folder (never a second scan of it), and its answer is kept
+//! [`LIST_KEEP`] for the retry: a request for the same page in that time gets that scan's page, not a new one. A
+//! read holds one of [`MAX_READS`] permits from before its `open` until its last chunk (or its blocked thread)
+//! returns; a client that takes no chunk for [`READ_IDLE`] loses the body.
 //!
 //! A clone is made under a temporary name in `ws/` ([`CLONE_PREFIX`]) and renamed into place with
 //! `RENAME_NOREPLACE` (`JuiceFS` 1.4.1 supports the flag: `pkg/meta/base.go` `Rename`), so `ws/<wid>` is never a
 //! partial tree: a failed, timed-out or abandoned clone removes its temporary tree, and the probe sweeps the ones a
-//! dead replica left (older than [`CLONE_STALE`]).
+//! dead replica left (older than [`CLONE_STALE`]). The temporary name is unique to one clone call (a random part
+//! after the time), so two clones of the same id at once (a retry, two magpie replicas freezing one share) never
+//! share a tree, and one's cleanup never removes the other's copy. A rename with no answer in [`FS_TIMEOUT`] (a hung
+//! mount) answers 503 and leaves the temporary tree alone while the rename's thread is blocked: if the rename lands
+//! later, `ws/<wid>` gets its quota then (the next ensure sets it too, if that fails); if it fails, the tree is
+//! removed then. A copy whose rename never returns stays under its temporary name until the sweep.
 //!
 //! The CLI is behind [`JfsCli`] so the tests run the store on a plain directory with an in-memory quota table; no
 //! configuration selects it.
@@ -64,15 +70,18 @@ pub const FS_TIMEOUT: Duration = Duration::from_secs(2);
 /// One page of a listing (`readdir` of the folder and a `stat` per entry of the page): longer answers 503, and the
 /// scan goes on for the retry.
 pub const LIST_TIMEOUT: Duration = Duration::from_secs(10);
-/// A finished listing that nobody waited for is kept this long for the retry.
-pub const LIST_KEEP: Duration = Duration::from_secs(30);
+/// A finished listing that nobody waited for is kept this long for the retry (the 503's retry-after is 2 s), and served
+/// to any request for the same folder and cursor meanwhile: such a page shows the folder as it was during that scan,
+/// at most this long after the scan ended.
+pub const LIST_KEEP: Duration = Duration::from_secs(5);
 /// One 64 KiB chunk of a file read (a cold chunk comes from the object store).
 pub const READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// A read waits this long for one of the [`MAX_READS`] permits, then answers 503.
 pub const READ_WAIT: Duration = Duration::from_secs(5);
 /// A client that takes no chunk of a file for this long loses the body (and its read permit).
 pub const READ_IDLE: Duration = Duration::from_secs(60);
-/// A clone's temporary name in `ws/`: `.clone-<wid>-<unix seconds>`.
+/// A clone's temporary name in `ws/`: `.clone-<wid>-<unix seconds>-<random>` (the random part keeps two clones of
+/// the same id in the same second apart).
 pub const CLONE_PREFIX: &str = ".clone-";
 /// A temporary clone tree older than this belongs to no running clone ([`CLONE_TIMEOUT`] kills every clone).
 pub const CLONE_STALE: Duration = Duration::from_mins(30);
@@ -829,6 +838,40 @@ fn unix_now() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+/// A temporary clone name's time, from `<wid>-<unix seconds>-<random>` (what follows [`CLONE_PREFIX`]).
+fn clone_started(rest: &str) -> Option<u64> {
+    let wid = rest.get(..36)?;
+    Uuid::try_parse(wid).ok()?;
+    let after = rest.get(36..)?.strip_prefix('-')?;
+    after.split('-').next()?.parse().ok()
+}
+
+/// A rename of a clone into place that had no answer in [`FS_TIMEOUT`]: its thread may still finish. The temporary
+/// tree is left to it: a rename that lands gives `ws/<wid>` its quota (a directory quota is not copied with the
+/// tree), one that fails removes the tree.
+async fn settle_late_rename(
+    rename: tokio::task::JoinHandle<Result<(), Errno>>,
+    cli: Arc<dyn JfsCli>,
+    tmp: PathBuf,
+    wid: Uuid,
+    gib: u32,
+    inodes: u64,
+) {
+    match rename.await {
+        Ok(Ok(())) => match cli.quota_set(&JuiceFs::volume_path(wid), gib, inodes).await {
+            Ok(()) => tracing::warn!(%wid, "a late clone rename landed; its quota is set"),
+            Err(e) => {
+                tracing::warn!(%wid, error = %e, "a late clone rename landed; quota not set (the next ensure sets it)");
+            }
+        },
+        Ok(Err(e)) => {
+            tracing::info!(%wid, error = %e, "a late clone rename failed");
+            drop(TempTree { cli, path: Some(tmp) });
+        }
+        Err(e) => tracing::info!(%wid, error = %e, "a late clone rename's thread failed (the sweep removes its tree)"),
+    }
+}
+
 /// The temporary clone trees in `ws_root` older than [`CLONE_STALE`] (by the time in their name).
 fn stale_clones(ws_root: &Path, now: u64) -> io::Result<Vec<PathBuf>> {
     let mut out = Vec::new();
@@ -838,7 +881,7 @@ fn stale_clones(ws_root: &Path, now: u64) -> io::Result<Vec<PathBuf>> {
         let Some(rest) = name.to_str().and_then(|n| n.strip_prefix(CLONE_PREFIX)) else {
             continue;
         };
-        let Some(at) = rest.rsplit_once('-').and_then(|(_, t)| t.parse::<u64>().ok()) else {
+        let Some(at) = clone_started(rest) else {
             continue;
         };
         if now.saturating_sub(at) > CLONE_STALE.as_secs() {
@@ -975,7 +1018,11 @@ impl Workspaces for JuiceFs {
             // the copy is made under a temporary name and renamed into place without replacing anything: ws/<wid> is
             // never a partial tree, and a clone that made the target meanwhile wins (this one answers what it would
             // have answered a moment later)
-            let tmp = self.ws_root().join(format!("{CLONE_PREFIX}{wid}-{}", unix_now()));
+            let tmp = self.ws_root().join(format!(
+                "{CLONE_PREFIX}{wid}-{}-{}",
+                unix_now(),
+                Uuid::new_v4().simple()
+            ));
             let guard = TempTree {
                 cli: self.cli.clone(),
                 path: Some(tmp.clone()),
@@ -985,11 +1032,28 @@ impl Workspaces for JuiceFs {
                 .await
                 .map_err(|e| unavailable(e.to_string()))?;
             let target = self.dir(wid);
-            let renamed = self
-                .blocking("rename of a clone into place", FS_TIMEOUT, move || {
-                    rename_noreplace(&tmp, &target)
-                })
-                .await?;
+            let t = tmp.clone();
+            let mut rename = tokio::task::spawn_blocking(move || rename_noreplace(&t, &target));
+            let renamed = match tokio::time::timeout(FS_TIMEOUT, &mut rename).await {
+                Ok(Ok(r)) => r,
+                Ok(Err(e)) => return Err(unavailable(e.to_string())),
+                Err(_) => {
+                    // the blocked rename may still land: its tree is not removed under it
+                    guard.keep();
+                    tokio::spawn(settle_late_rename(
+                        rename,
+                        self.cli.clone(),
+                        tmp,
+                        wid,
+                        self.quota_gib,
+                        self.quota_inodes,
+                    ));
+                    return Err(self.not_mounted(format!(
+                        "rename of a clone into place: no answer in {} s",
+                        FS_TIMEOUT.as_secs()
+                    )));
+                }
+            };
             match renamed {
                 Ok(()) => guard.keep(),
                 Err(Errno::EXIST | Errno::NOTEMPTY) => {
@@ -1226,9 +1290,14 @@ mod tests {
         let now = 2_000_000_000;
         let (old, fresh) = (Uuid::new_v4(), Uuid::new_v4());
         for n in [
-            format!("{CLONE_PREFIX}{old}-{}", now - CLONE_STALE.as_secs() - 1),
-            format!("{CLONE_PREFIX}{fresh}-{}", now - 60),
+            format!(
+                "{CLONE_PREFIX}{old}-{}-{}",
+                now - CLONE_STALE.as_secs() - 1,
+                Uuid::new_v4().simple()
+            ),
+            format!("{CLONE_PREFIX}{fresh}-{}-{}", now - 60, Uuid::new_v4().simple()),
             format!("{CLONE_PREFIX}garbage"),
+            format!("{CLONE_PREFIX}garbage-{}", now - CLONE_STALE.as_secs() - 1),
             Uuid::new_v4().to_string(),
         ] {
             std::fs::create_dir_all(root.join(n)).unwrap();
@@ -1237,6 +1306,85 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert!(found[0].to_string_lossy().contains(&old.to_string()));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_clone_name_s_time_is_read_from_its_fixed_place() {
+        let wid = Uuid::new_v4();
+        let r = Uuid::new_v4().simple();
+        assert_eq!(clone_started(&format!("{wid}-1700000000-{r}")), Some(1_700_000_000));
+        assert_eq!(clone_started(&format!("{wid}-1700000000")), Some(1_700_000_000));
+        assert_eq!(clone_started(&format!("{wid}-x-{r}")), None);
+        assert_eq!(clone_started("not-a-uuid-at-all-not-a-uuid-at-all1-1700000000"), None);
+        assert_eq!(clone_started(""), None);
+    }
+
+    /// A CLI that records quota sets and removals.
+    #[derive(Default)]
+    struct Rec(Mutex<Vec<String>>);
+    impl JfsCli for Rec {
+        fn quota_get<'a>(&'a self, _: &'a str) -> Fut<'a, Result<Option<Quota>, CliError>> {
+            Box::pin(async { Ok(None) })
+        }
+        fn quota_set<'a>(&'a self, path: &'a str, _: u32, _: u64) -> Fut<'a, Result<(), CliError>> {
+            Box::pin(async move {
+                self.0.lock().unwrap().push(format!("quota {path}"));
+                Ok(())
+            })
+        }
+        fn quota_delete<'a>(&'a self, _: &'a str) -> Fut<'a, Result<(), CliError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn clone_tree<'a>(&'a self, _: &'a Path, _: &'a Path) -> Fut<'a, Result<(), CliError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn rmr<'a>(&'a self, path: &'a Path) -> Fut<'a, Result<(), CliError>> {
+            Box::pin(async move {
+                self.0.lock().unwrap().push(format!("rmr {}", path.display()));
+                Ok(())
+            })
+        }
+    }
+
+    // a rename that answered after its request gave up: landed, the workspace gets its quota and its tree is kept;
+    // failed, the temporary tree is removed (and never while the rename may still run)
+    #[tokio::test]
+    async fn a_late_clone_rename_is_settled_when_it_returns() {
+        let wid = Uuid::new_v4();
+        let rec = Arc::new(Rec::default());
+        let (go, wait) = std::sync::mpsc::channel::<()>();
+        let rename = tokio::task::spawn_blocking(move || {
+            let _ = wait.recv();
+            Ok(())
+        });
+        let settle = tokio::spawn(settle_late_rename(rename, rec.clone(), "/jfs/ws/t".into(), wid, 1, 10));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            rec.0.lock().unwrap().is_empty(),
+            "nothing is done while the rename is blocked"
+        );
+        go.send(()).unwrap();
+        settle.await.unwrap();
+        assert_eq!(*rec.0.lock().unwrap(), vec![format!("quota /ws/{wid}")]);
+
+        let rec = Arc::new(Rec::default());
+        let rename = tokio::task::spawn_blocking(|| Err(Errno::IO));
+        settle_late_rename(rename, rec.clone(), "/jfs/ws/t".into(), wid, 1, 10).await;
+        assert!(
+            crate_eventually(|| rec.0.lock().unwrap().clone() == vec!["rmr /jfs/ws/t".to_owned()]).await,
+            "{:?}",
+            rec.0.lock().unwrap()
+        );
+    }
+
+    async fn crate_eventually(f: impl Fn() -> bool) -> bool {
+        for _ in 0..100 {
+            if f() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        false
     }
 
     #[test]

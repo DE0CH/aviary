@@ -305,6 +305,21 @@ impl Start {
                     return Step::Stop;
                 }
             }
+            // a workspace being deleted is never mounted: the delete released the conversation's sandbox and is
+            // removing the tree (migration 0004)
+            match crate::db::workspace_deleting(&self.core.pool, row.conversation_id).await {
+                Ok(false) => {}
+                Ok(true) => {
+                    let mut f = Fail::new(ReleaseReason::WorkspaceUnavailable, "the workspace is being deleted");
+                    f.note = Some("workspace".into());
+                    return Step::Fail(f);
+                }
+                Err(e) => {
+                    unmounted = false;
+                    last = format!("workspace delete check: {e}");
+                    continue;
+                }
+            }
             match ws.ensure(row.conversation_id).await {
                 Ok((w, made)) => {
                     crate::db::workspace_created(&self.core.pool, row.conversation_id, w.created_at, made).await;
@@ -439,10 +454,15 @@ impl Start {
     }
 
     async fn image(&mut self, _row: &SandboxRow) -> Step {
-        // the configured image is pinned by digest: the digest is the pin (13.14)
+        // the image is pinned by digest (the digest is the pin, 13.14) and fixed on the row at insert; a row without
+        // one gets this replica's
         let digest = self.core.cfg.image_digest.clone();
-        self.next(SandboxPhase::Creating, "image = $4", vec![Param::Text(digest)])
-            .await
+        self.next(
+            SandboxPhase::Creating,
+            "image = coalesce(image, $4)",
+            vec![Param::Text(digest)],
+        )
+        .await
     }
 
     /// The boot environment of hermit 5.1 with the derived token.
@@ -477,7 +497,10 @@ impl Start {
             host,
             ip,
             image: row.image.clone().unwrap_or_else(|| self.core.cfg.image_digest.clone()),
-            image_ref: s.image.clone(),
+            image_ref: match (&row.image, &row.image_ref) {
+                (Some(_), Some(r)) => r.clone(),
+                _ => s.image.clone(),
+            },
             env,
             cpu: row.cpu,
             memory_bytes: u64::try_from(row.memory_bytes).unwrap_or(0),

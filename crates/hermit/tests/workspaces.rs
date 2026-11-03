@@ -34,6 +34,8 @@ struct FakeCli {
     refuse_rmr: AtomicBool,
     /// `clone` copies the tree, then fails (a `juicefs clone` killed midway).
     fail_clone: AtomicBool,
+    /// Each `clone` takes the next plan: it copies the tree, waits, then fails or not.
+    clone_plan: Mutex<std::collections::VecDeque<(Duration, bool)>>,
     hook: Mutex<Option<Hook>>,
 }
 
@@ -130,8 +132,11 @@ impl JfsCli for Cli {
     fn clone_tree<'a>(&'a self, from: &'a Path, to: &'a Path) -> Fut<'a, Result<(), CliError>> {
         Box::pin(async move {
             self.note("clone");
+            let plan = self.fake.clone_plan.lock().unwrap().pop_front();
             copy_tree(from, to).map_err(|e| CliError::Failed(e.to_string()))?;
-            if self.fake.fail_clone.load(Ordering::SeqCst) {
+            let (wait, fail) = plan.unwrap_or_default();
+            tokio::time::sleep(wait).await;
+            if fail || self.fake.fail_clone.load(Ordering::SeqCst) {
                 return Err(CliError::Failed("juicefs clone: no answer in 900 s".into()));
             }
             Ok(())
@@ -504,6 +509,77 @@ async fn clone_flushes_a_live_sandbox_first_and_delete_releases_it_first() {
     assert_eq!(row.release_reason.as_deref(), Some("deleted"));
 }
 
+// a workspace whose delete is in flight is never mounted again: from the delete's start (before it releases the
+// sandbox) until the tree is gone, a start fails at its workspace step and an ensure answers 503; a delete that
+// succeeds lifts the guard
+#[tokio::test]
+async fn a_workspace_being_deleted_is_refused_to_starts_and_ensures() {
+    let h = Harness::new("ws_deleting").await;
+    let s = store();
+    let r = h.replica_with("hermit-a", s.jfs.clone()).await;
+    let magpie = h.client(Caller::Magpie);
+    let cid = Uuid::new_v4();
+    let a = magpie
+        .call(&r.url, "PUT", &format!("/v1/workspaces/{cid}"), None, &[])
+        .await;
+    assert!(a.status < 300, "{:?}", a.body);
+    std::fs::write(s.ws(cid).join("a"), b"x").unwrap();
+    // a delete whose rmr is refused stays in flight (magpie's outbox retries it)
+    s.cli.refuse_rmr.store(true, Ordering::SeqCst);
+    let a = magpie
+        .call(&r.url, "DELETE", &format!("/v1/workspaces/{cid}"), None, &[])
+        .await;
+    assert_eq!(a.status, 503, "{:?}", a.body);
+    let a = magpie
+        .call(&r.url, "PUT", &format!("/v1/workspaces/{cid}"), None, &[])
+        .await;
+    assert_eq!(
+        (a.status, a.body["code"].clone()),
+        (503, json!("workspace_unavailable")),
+        "{:?}",
+        a.body
+    );
+    let a = magpie
+        .call(
+            &r.url,
+            "PUT",
+            &format!("/v1/conversations/{cid}/sandbox"),
+            Some(json!({"person": STAFF})),
+            &[],
+        )
+        .await;
+    assert_eq!(a.status, 202, "{:?}", a.body);
+    assert!(
+        eventually(Duration::from_secs(20), || async {
+            hermit::db::latest_of(&r.core().pool, cid)
+                .await
+                .unwrap()
+                .is_some_and(|row| row.release_reason.as_deref() == Some("workspace_unavailable"))
+        })
+        .await,
+        "the start failed at its workspace step: {:?}",
+        hermit::db::latest_of(&r.core().pool, cid)
+            .await
+            .unwrap()
+            .map(|r| r.release_reason)
+    );
+    assert!(
+        h.fabric.created.lock().unwrap().is_empty(),
+        "no sandbox was created on the workspace"
+    );
+    // the retried delete succeeds and lifts the guard
+    s.cli.refuse_rmr.store(false, Ordering::SeqCst);
+    let a = magpie
+        .call(&r.url, "DELETE", &format!("/v1/workspaces/{cid}"), None, &[])
+        .await;
+    assert_eq!(a.status, 204, "{:?}", a.body);
+    assert!(!s.ws(cid).exists());
+    let a = magpie
+        .call(&r.url, "PUT", &format!("/v1/workspaces/{cid}"), None, &[])
+        .await;
+    assert_eq!(a.status, 201, "{:?}", a.body);
+}
+
 #[tokio::test]
 async fn a_start_on_a_replica_with_a_broken_mount_is_handed_to_one_whose_mount_works() {
     let h = Harness::new("ws_handover").await;
@@ -610,6 +686,57 @@ async fn a_clone_that_fails_midway_leaves_no_tree() {
     s.jfs.clone_workspace(wid, from).await.unwrap();
     assert_eq!(std::fs::read(s.ws(wid).join("a")).unwrap(), b"abc");
     assert_eq!(s.ws_names(), sorted(&[from, wid]));
+}
+
+// two clones of the same id at once (a retry after a dropped connection, two magpie replicas freezing one share):
+// each copies under its own temporary name, so the one that fails removes only its own copy and the winner's
+// ws/<wid> is complete
+#[tokio::test]
+async fn two_clones_of_one_id_at_once_never_share_a_tree() {
+    let s = store();
+    let (from, wid) = (Uuid::new_v4(), Uuid::new_v4());
+    s.jfs.ensure(from).await.unwrap();
+    std::fs::create_dir(s.ws(from).join("d")).unwrap();
+    for i in 0..50 {
+        std::fs::write(s.ws(from).join(format!("d/f{i}")), format!("{i}")).unwrap();
+    }
+    // the first fails after the second has finished; both start in the same second
+    s.cli
+        .clone_plan
+        .lock()
+        .unwrap()
+        .extend([(Duration::from_millis(400), true), (Duration::ZERO, false)]);
+    let first = s.jfs.clone_workspace(wid, from);
+    let second = async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        s.jfs.clone_workspace(wid, from).await
+    };
+    let (a, b) = futures_util::future::join(first, second).await;
+    assert_eq!(code(a.unwrap_err()).0, 503);
+    let w = b.unwrap();
+    assert_eq!((w.quota.bytes, w.quota.inodes), (1 << 30, 1000));
+    // the failed clone's cleanup has run and the winner's tree is whole
+    assert!(
+        eventually(Duration::from_secs(5), || async {
+            s.ws_names() == sorted(&[from, wid])
+        })
+        .await,
+        "{:?}",
+        s.ws_names()
+    );
+    assert!(
+        eventually(Duration::from_secs(5), || async {
+            s.cli.log.lock().unwrap().iter().any(|l| l == "rmr")
+        })
+        .await
+    );
+    for i in 0..50 {
+        assert_eq!(
+            std::fs::read_to_string(s.ws(wid).join(format!("d/f{i}"))).unwrap(),
+            format!("{i}")
+        );
+    }
+    assert!(s.cli.quotas.lock().unwrap().contains_key(&format!("/ws/{wid}")));
 }
 
 // a replica that died mid-clone left a temporary tree: the probe removes it once it is older than any clone can run

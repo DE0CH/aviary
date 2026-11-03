@@ -430,16 +430,15 @@ pub async fn recycle(core: &Arc<Core>, ctx: &Ctx, body: &Recycle) -> Result<Valu
         return Err(error::api(400, codes::BAD_REQUEST, "exceptImage is sha256:<64 hex>"));
     }
     let (c, image, force) = (core.clone(), body.except_image.clone(), !body.only_idle);
-    // a starting row has no image until its creating step, and gets the configured one (starts.rs)
-    let current = core.cfg.image_digest.clone();
     // the audit row and every pending release commit together
     let (ids, took) = aviary_pg::tx!(&core.pool, |t| -> Result<(Vec<Uuid>, Vec<Uuid>), aviary_pg::Error> {
         let ids: Vec<Uuid> = t
             .query(
-                "select id from sandboxes where status in ('starting', 'ready')
-                    and coalesce(image, $2) is distinct from $1
+                // every row has its image from insert (migration 0004): a start an old replica inserted during a
+                // rollout is on the old image whichever replica drives it
+                "select id from sandboxes where status in ('starting', 'ready') and image is distinct from $1
                   order by id",
-                &[&image, &current],
+                &[&image],
             )
             .await?
             .iter()

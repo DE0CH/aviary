@@ -40,7 +40,8 @@ pub async fn migrate(pool: &Pool) -> Result<Vec<i32>, aviary_pg::Error> {
     let list = aviary_pg::migrations![
         "0001_init.sql",
         "0002_replicas.sql",
-        "0003_created_handovers_fresh_host.sql"
+        "0003_created_handovers_fresh_host.sql",
+        "0004_image_ref_workspace_deletes.sql"
     ]?;
     aviary_pg::migrate(pool, &LOCK_MIGRATIONS, &list).await
 }
@@ -82,13 +83,51 @@ pub async fn workspace_created(pool: &Pool, wid: Uuid, seen: Timestamp, made: bo
     }
 }
 
-/// Removes a deleted workspace's creation time (best effort: a leftover row is overwritten by the next make).
+/// A workspace delete in flight younger than this guards its workspace (migration 0004): its release waits at most
+/// a minute and its `juicefs rmr` a minute more, so an older row belongs to a delete that ended with its replica.
+pub const DELETE_GUARD: std::time::Duration = std::time::Duration::from_mins(10);
+
+/// Marks `wid`'s delete as in flight (before its sandbox is released): starts and ensures refuse the workspace until
+/// [`forget_workspace`] or [`DELETE_GUARD`].
+///
+/// # Errors
+/// The database.
+pub async fn mark_workspace_deleting(pool: &Pool, wid: Uuid) -> Result<(), aviary_pg::Error> {
+    pool.get()
+        .await?
+        .execute(
+            "insert into workspace_deletes (id) values ($1) on conflict (id) do update set started_at = now()",
+            &[&wid],
+        )
+        .await?;
+    Ok(())
+}
+
+/// Whether a delete of `wid` is in flight ([`mark_workspace_deleting`], younger than [`DELETE_GUARD`]).
+///
+/// # Errors
+/// The database.
+pub async fn workspace_deleting(pool: &Pool, wid: Uuid) -> Result<bool, aviary_pg::Error> {
+    let guard_ms = i64::try_from(DELETE_GUARD.as_millis()).unwrap_or(i64::MAX);
+    Ok(pool
+        .get()
+        .await?
+        .query_opt(
+            "select 1 from workspace_deletes
+              where id = $1 and started_at > now() - $2::bigint * interval '1 millisecond'",
+            &[&wid, &guard_ms],
+        )
+        .await?
+        .is_some())
+}
+
+/// Removes a deleted workspace's creation time and its delete mark (best effort: a leftover creation time is
+/// overwritten by the next make, a leftover mark lapses after [`DELETE_GUARD`]).
 pub async fn forget_workspace(pool: &Pool, wid: Uuid) {
     let res = async {
-        pool.get()
-            .await?
-            .execute("delete from workspaces where id = $1", &[&wid])
-            .await
+        let c = pool.get().await?;
+        c.execute("delete from workspaces where id = $1", &[&wid]).await?;
+        c.execute("delete from workspace_deletes where id = $1", &[&wid]).await
     }
     .await;
     if let Err(e) = res {
@@ -147,6 +186,8 @@ pub struct SandboxRow {
     pub host: Option<String>,
     pub ip: Option<IpAddr>,
     pub image: Option<String>,
+    /// The pinned reference of `image` (`<repo>@sha256:…`), fixed with it at insert (migration 0004).
+    pub image_ref: Option<String>,
     pub cpu: f32,
     pub memory_bytes: i64,
     pub busy: bool,
@@ -202,6 +243,7 @@ impl SandboxRow {
             host: r.try_get("host")?,
             ip: r.try_get("ip")?,
             image: r.try_get("image")?,
+            image_ref: r.try_get("image_ref")?,
             cpu: r.try_get("cpu")?,
             memory_bytes: r.try_get("memory_bytes")?,
             busy: r.try_get("busy")?,
