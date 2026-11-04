@@ -70,7 +70,9 @@ spec:
             - {name: MOCK_URL, value: "http://model.jarvis.svc.cluster.local:8080"}
             - {name: SELF_URL, value: "http://web.jarvis.svc.cluster.local:8080"}
             - {name: JARVIS_DB_URL, value: "__JARVIS_DB__"}
-            - {name: SANDBOX_IDLE_MS, value: "20000"}
+            # the old janitor's 30 min, scaled to past the hand-over's 60 s quiet, so a warm old sandbox is what a
+            # release waits for (the warm and hold personas)
+            - {name: SANDBOX_IDLE_MS, value: "90000"}
             - {name: JFS, value: /jfs}
           securityContext: {privileged: true, runAsUser: 0}
           readinessProbe: {httpGet: {path: /healthz, port: 8080}, periodSeconds: 2}
@@ -114,7 +116,8 @@ spec:
             - {name: JARVIS_UI_PEERS, value: ui-peers.jarvis.svc.cluster.local}
             - name: POD_IP
               valueFrom: {fieldRef: {fieldPath: status.podIP}}
-            - {name: JARVIS_UI_MAX_USERS, value: "8"}
+            # above the box's people at once (every persona and seed is a person of its own; idle children stay 30 min)
+            - {name: JARVIS_UI_MAX_USERS, value: "24"}
             - {name: JARVIS_UI_IDLE_MINUTES, value: "30"}
             - {name: JARVIS_UI_DRAIN_SECONDS, value: "60"}
             - {name: DATABASE_URL, value: "__CLOUDCLI_DB__"}

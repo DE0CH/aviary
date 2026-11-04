@@ -131,11 +131,11 @@ jobs:
     # WP-54 (DESIGN 9.9): the switch window on one machine, testing/legacy-in-a-box: the release's new stack (the
     # e2e harness) and the old stack of the A1 ui image (testing/lu-rig/ui-image.txt) in a second k3d cluster, the
     # bridges, the bulk import, then the persona drivers of DE0CH/claudecodeui at that image's commit with its persona
-    # build (clean must pass, each seeded defect must be caught). Not gating anything until the whole rig passes
-    # (testing/legacy-in-a-box/run.sh says what is not done yet).
+    # build (clean must pass, each seeded defect must be caught), after a seeded defect per zero counter. Not gating
+    # anything until the whole rig passes (testing/legacy-in-a-box/run.sh says what is not done yet).
     needs: release
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -166,10 +166,12 @@ jobs:
         run: timeout 3000 testing/legacy-in-a-box/run.sh up "${{ needs.release.outputs.sha12 }}" "${{ steps.ui.outputs.image }}"
       - name: smoke
         run: timeout 900 testing/legacy-in-a-box/run.sh smoke
-      - name: personas
-        run: timeout 2400 testing/legacy-in-a-box/run.sh personas claudecodeui "$RUNNER_TEMP/persona-web"
       - name: seeded defects per zero counter
         run: timeout 1800 testing/legacy-in-a-box/run.sh seeds
+      - name: fresh counting processes
+        run: timeout 1200 testing/legacy-in-a-box/run.sh reset
+      - name: personas
+        run: timeout 3600 testing/legacy-in-a-box/run.sh personas claudecodeui "$RUNNER_TEMP/persona-web"
       - name: logs
         if: failure()
         run: timeout 600 testing/legacy-in-a-box/run.sh logs "$RUNNER_TEMP/box"

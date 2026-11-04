@@ -1,6 +1,9 @@
 // The rig's model (Anthropic Messages API), no cost: a turn's last user text decides the answer.
 //   "[[slow N]]"  a long old turn: N Bash tool calls in a row, each `sleep 1; echo chunk <k>` (so the turn streams a
 //                 row a second and runs a real process in the sandbox: across a move, Stop ends it), then "done N"
+//   "[[ask]]"     an AskUserQuestion call (one question, two options), then "asked" once it has its result
+//   "[[bg N]]"    one Bash call run in the background (`sleep N; echo bg done`), then "started": Claude Code holds
+//                 its process open after the result until the task ends (a hold, DESIGN 9.9)
 //   anything else  "Echo: <the first 80 characters of the prompt>" in one chunk
 // Every request is kept for GET /__log ({at, stream, prompt}); a title or small-model request (no tools) answers
 // "Rig title". Plain Node, no dependencies.
@@ -21,19 +24,19 @@ function lastUserText(messages) {
   return "";
 }
 
-/** One Bash tool call as the whole answer (streamed when asked). */
-function toolUse(res, p, command) {
+/** One tool call as the whole answer (streamed when asked): Bash `command` unless another tool is named. */
+function toolUse(res, p, command, name = "Bash", given = null) {
   const id = `toolu_rig_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
-  const input = { command, description: "rig step" };
+  const input = given ?? { command, description: "rig step" };
   const msg = { id: `msg_rig_${Date.now()}`, type: "message", role: "assistant", model: p.model || "claude-rig", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 1 } };
   if (!p.stream) {
     res.setHeader("content-type", "application/json");
-    return res.end(JSON.stringify({ ...msg, content: [{ type: "tool_use", id, name: "Bash", input }], stop_reason: "tool_use" }));
+    return res.end(JSON.stringify({ ...msg, content: [{ type: "tool_use", id, name, input }], stop_reason: "tool_use" }));
   }
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
   const ev = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
   ev("message_start", { message: msg });
-  ev("content_block_start", { index: 0, content_block: { type: "tool_use", id, name: "Bash", input: {} } });
+  ev("content_block_start", { index: 0, content_block: { type: "tool_use", id, name, input: {} } });
   ev("content_block_delta", { index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify(input) } });
   ev("content_block_stop", { index: 0 });
   ev("message_delta", { delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 20 } });
@@ -56,23 +59,31 @@ http.createServer((req, res) => {
     const lastUser = [...(p.messages || [])].reverse().find((m) => m.role === "user");
     log.push({ at: new Date().toISOString(), stream: !!p.stream, main, prompt: prompt.slice(0, 200), user: JSON.stringify(lastUser?.content ?? "").slice(0, 4000) });
     const slow = main ? /\[\[slow (\d+)\]\]/.exec(prompt) : null;
-    if (slow) {
-      // the tool results after the prompt's message: how far the turn is
-      const msgs = p.messages || [];
-      let k = 0;
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const m = msgs[i];
-        const blocks = Array.isArray(m.content) ? m.content : [];
-        if (m.role === "user" && blocks.some((b) => b.type === "tool_result")) { k++; continue; }
-        if (m.role === "user") break;
-      }
-      const n = Number(slow[1]);
-      if (k < n && p.tools.some((t) => t.name === "Bash")) return toolUse(res, p, `sleep 1; echo chunk ${k + 1}`);
+    const ask = main && /\[\[ask\]\]/.test(prompt);
+    const bg = main ? /\[\[bg (\d+)\]\]/.exec(prompt) : null;
+    // the tool results after the prompt's message: how far the turn is
+    const msgs = p.messages || [];
+    let k = 0;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      const blocks = Array.isArray(m.content) ? m.content : [];
+      if (m.role === "user" && blocks.some((b) => b.type === "tool_result")) { k++; continue; }
+      if (m.role === "user") break;
+    }
+    const has = (name) => (p.tools || []).some((t) => t.name === name);
+    if (slow && k < Number(slow[1]) && has("Bash")) return toolUse(res, p, `sleep 1; echo chunk ${k + 1}`);
+    if (ask && k === 0 && has("AskUserQuestion")) {
+      return toolUse(res, p, "", "AskUserQuestion", { questions: [{ question: "Persona question: go on?", header: "Persona", multiSelect: false,
+        options: [{ label: "Yes", description: "go on" }, { label: "No", description: "stop" }] }] });
+    }
+    if (bg && k === 0 && has("Bash")) {
+      return toolUse(res, p, "", "Bash", { command: `sleep ${bg[1]}; echo bg done`, description: "rig background step", run_in_background: true });
     }
     // a title names the persona token of the conversation's text when it has one (the persona drivers find it in
     // the list by it)
     const tag = /persona-[0-9a-f]{8}/.exec(JSON.stringify(p.messages || []))?.[0];
-    const chunks = slow ? [`done ${slow[1]}`] : [main ? `Echo: ${prompt.slice(0, 80)}` : tag ? `Rig ${tag}` : "Rig title"];
+    const chunks = slow ? [`done ${slow[1]}`] : ask ? ["asked"] : bg ? ["started"]
+      : [main ? `Echo: ${prompt.slice(0, 80)}` : tag ? `Rig ${tag}` : "Rig title"];
     const msg = { id: `msg_rig_${Date.now()}`, type: "message", role: "assistant", model: p.model || "claude-rig", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 1 } };
     if (!p.stream) {
       res.setHeader("content-type", "application/json");

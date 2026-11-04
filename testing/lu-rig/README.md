@@ -17,7 +17,7 @@ Needs docker, openssl and curl. `nightly.yml` runs it on the ui image pinned in 
 |---|---|
 | `lu-ui` | the ui image unchanged, run as `jarvis/ui.yaml` runs it: config with `access.jwksFile` (the rig's key), the switch module on (`JARVIS_UI_SWITCH_TOKEN`, `JARVIS_UI_LU_TOKEN` = pigeon's harness pair token, pass-on to a closed port), the purge off |
 | `lu-old` (`old/fake-web.mjs`) | jarvis3 `web`'s `/internal/cc/*` and the sandbox agent's `GET /proc`, in a container of the ui image (its Claude Code binary): each process in its own mount namespace with `/workspace` = `/jfs/ws/<conversation>` and `~/.claude` = the person's `/jfs/users/<key>/claude`, as uid 1000; a `/proc` that drops while its process runs is logged as a cut (the old agent kills Claude Code then) |
-| `lu-model` (`old/mock-model.mjs`) | the Messages API: `[[slow N]]` is N Bash calls (`sleep 1; echo chunk k`) then `done N`; anything else is `Echo: …`; `/__log` keeps what each request's last user message was |
+| `lu-model` (`old/mock-model.mjs`) | the Messages API: `[[slow N]]` is N Bash calls (`sleep 1; echo chunk k`) then `done N`; `[[ask]]` an AskUserQuestion call; `[[bg N]]` one Bash call in the background (`sleep N`: Claude Code holds its process open after the result); anything else is `Echo: …`; `/__log` keeps what each request's last user message was |
 | `lu-pg` | Postgres 17 (database `cloudcli`) |
 
 The cases (`crates/pigeon/tests/lu_rig.rs`, pigeon in-process before the in-memory magpie model, its LU through a
