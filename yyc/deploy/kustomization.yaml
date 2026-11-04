@@ -32,7 +32,7 @@ images:
   # (DESIGN 9.6, cutover freeze-check)
   - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "e9df2733a68d"}
   # egress and tools (DE0CH/jarvis3 chat.yml); the ZDR guard reads this tag (yyc-ai/tests/test_zdr.py)
-  - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "6c881c119abf"}
+  - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "156c50bab96b"}
 configMapGenerator:
   # hermit's YYC configuration (hermit spec 9): hashed, so a change rolls hermit
   - name: hermit-config
