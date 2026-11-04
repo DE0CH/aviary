@@ -43,7 +43,8 @@ pub async fn migrate(pool: &Pool) -> Result<Vec<i32>, aviary_pg::Error> {
         "0003_created_handovers_fresh_host.sql",
         "0004_image_ref_workspace_deletes.sql",
         "0005_legacy_shares.sql",
-        "0006_legacy_share_deletes.sql"
+        "0006_legacy_share_deletes.sql",
+        "0007_legacy_share_tombstones.sql"
     ]?;
     aviary_pg::migrate(pool, &LOCK_MIGRATIONS, &list).await
 }
@@ -123,9 +124,10 @@ pub async fn workspace_deleting(pool: &Pool, wid: Uuid) -> Result<bool, aviary_p
         .is_some())
 }
 
-/// Records that `wid`, when it is an old share's clone (`legacy_shares`, migrations 0005-0006), is deleted on purpose,
-/// before its delete removes anything: the switch's import never clones that share again (hermit 22.3 step 3) and
-/// `legacy-cleanup` counts it carried over. Nothing for any other workspace.
+/// Records that `wid` is deleted on purpose (`legacy_share_deletes`, migration 0007), before its delete removes
+/// anything, whether or not the switch's import has read an old share for it yet: the import never clones that share
+/// again (hermit 22.3 step 3) and `legacy-cleanup` counts it carried over. Written for every workspace, since the id
+/// alone cannot tell an old share's clone from any other.
 ///
 /// # Errors
 /// The database.
@@ -133,7 +135,7 @@ pub async fn record_share_deleted(pool: &Pool, wid: Uuid) -> Result<(), aviary_p
     pool.get()
         .await?
         .execute(
-            "update legacy_shares set deleted_at = coalesce(deleted_at, now()) where workspace = $1",
+            "insert into legacy_share_deletes (workspace) values ($1) on conflict (workspace) do nothing",
             &[&wid],
         )
         .await?;

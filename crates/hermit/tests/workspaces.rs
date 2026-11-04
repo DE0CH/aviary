@@ -959,7 +959,11 @@ async fn a_workspace_keeps_its_creation_time_and_loses_it_with_the_workspace() {
         .get()
         .await
         .unwrap()
-        .query("select id, deleted_at is not null from legacy_shares order by id", &[])
+        .query(
+            "select s.id, exists (select 1 from legacy_share_deletes d where d.workspace = s.workspace)
+               from legacy_shares s order by s.id",
+            &[],
+        )
         .await
         .unwrap()
         .iter()
@@ -969,4 +973,23 @@ async fn a_workspace_keeps_its_creation_time_and_loses_it_with_the_workspace() {
         deleted,
         [("oldShare".to_owned(), true), ("otherShare".to_owned(), false)]
     );
+    // a delete before the import has read a share for that workspace is recorded too (by workspace id)
+    let first = Uuid::new_v4();
+    let a = magpie
+        .call(&r.url, "DELETE", &format!("/v1/workspaces/{first}"), None, &[])
+        .await;
+    assert!(a.status < 300, "{:?}", a.body);
+    let recorded: i64 = h
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select count(*) from legacy_share_deletes where workspace = $1",
+            &[&first],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(recorded, 1);
 }

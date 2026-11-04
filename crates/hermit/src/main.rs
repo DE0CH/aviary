@@ -261,7 +261,11 @@ async fn legacy_cleanup(confirm: bool, drop: Vec<String>) -> ExitCode {
                 serde_json::to_string(&plan).unwrap_or_default(),
                 serde_json::to_string(&done).unwrap_or_default(),
             );
-            tracing::info!(plan = %p, done = %d, "legacy-cleanup done");
+            if let Some(why) = &plan.trees_held {
+                tracing::error!(plan = %p, done = %d, why = %why, "legacy-cleanup kept users/ and sent/ (the folders were cleaned up)");
+            } else {
+                tracing::info!(plan = %p, done = %d, "legacy-cleanup done");
+            }
             if done.complete(&plan) {
                 ExitCode::SUCCESS
             } else {

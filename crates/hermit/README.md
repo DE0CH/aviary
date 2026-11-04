@@ -50,15 +50,18 @@ hermit spec sections 3-12, 19, 20, 23 and 24.1-24.2 (WP-18, the core) and 13 (WP
   `release_code` from the old string by `old_release_code`, CPU and memory the old fabric's fixed 1 CPU / 1 GiB) on
   their id; `ops_events` kind `sandbox_start` of the last 30 days → `sandbox_starts`, the event tables `vm_events` →
   `host_events` on `source_id`; gone `vm_hosts` → `hosts` (`hub` → `gateway`) on the name (an old host whose row
-  changed since, same instance, is updated; a host of hermit's own is never touched); for every share row committed
+  changed since, same instance, is updated; a host of hermit's own is never touched, and an old host whose name
+  hermit's scaler gave a host of its own is imported as `<name>-old`); for every share row committed
   in `cc_shared.shares` and not revoked, its `users/<key>/shares/<id>/ws` cloned into
   `ws/<uuidv5(SHARE_NS, "share:" + id)>` with its quota and `workspaces` row, a target already there skipped with
-  its quota and row still ensured. A share folder with no committed row (the old UI copies the folder first and
+  its quota and row still ensured (unless hermit never cloned that share and the folder is empty while the share's
+  frozen folder is not: then something else made it, and the share fails rather than counting as carried over). A
+  share folder with no committed row (the old UI copies the folder first and
   commits the row after it) is never cloned, so no half-copied share is frozen; it is cloned whole by the first pass
   after its row commits. Every share row read is kept in `legacy_shares` (migration 0005) for `legacy-cleanup`. A
-  share whose clone hermit deleted on purpose is never cloned again: `DELETE /v1/workspaces/<id>` (magpie revoking
-  the share or purging its conversation) records `legacy_shares.deleted_at` (migration 0006) before it removes
-  anything, the import skips such a share (the old share table, which only the old UI wrote, still holds it live) and
+  share whose workspace hermit deleted on purpose is never cloned again: `DELETE /v1/workspaces/<id>` (magpie revoking
+  the share or purging its conversation) records the workspace id in `legacy_share_deletes` (migration 0007) before
+  it removes anything, also when the import has not read that share yet, the import skips such a share (the old share table, which only the old UI wrote, still holds it live) and
   one whose delete is in flight, and a clone whose share was recorded deleted while it copied is removed again. Every
   `at` keeps its source value (microseconds included). `--delta` reads event ids above the highest copied less 1 000
   and sandboxes released after the latest imported release less 1 h (rows committed out of id order are still
@@ -77,11 +80,13 @@ hermit spec sections 3-12, 19, 20, 23 and 24.1-24.2 (WP-18, the core) and 13 (WP
   `lchown` (a symlink's target is never touched), staying on the volume, only entries not owned already, the top-level
   folders on 16 threads. Exit 1 when an entry could not be changed (the report names the first 20).
 - **`hermit legacy-cleanup [--confirm] [--drop-share <id>]…`** (P6, 30 days after the switch; 22.3 step 6). Env
-  `HERMIT_DATABASE_URL`, `HERMIT_TOKEN_MAGPIE`, the `JuiceFS` pair. Before `--confirm` the operator checks that
-  magpie's import is complete (its last `verify --all` clean): `users/` and `sent/` hold the only other copy of what
-  it imported, and hermit sees only that magpie answers. First checks that every old share is carried over (from
-  `legacy_shares`): revoked in the old UI, deleted on purpose through hermit (`deleted_at`), its clone `ws/<uuidv5>`
-  there, or cloned once with the clone gone since and magpie not referencing it (`sharesGone`). Blocking (exit 1,
+  `HERMIT_DATABASE_URL`, `HERMIT_TOKEN_MAGPIE`, the `JuiceFS` pair. `users/` and `sent/` hold the only other copy of
+  what magpie imported, so they go only when magpie's `GET /v1/hermit/legacy-import` says its import is complete (the
+  record a clean `magpie import verify --all` leaves once every conversation is owned and every source row imported,
+  not stale since); otherwise the plan's `treesHeld` says why, the folder removals below still run, and the run exits
+  1. First checks that every old share is carried over (from `legacy_shares`): revoked in the old UI, deleted on
+  purpose through hermit (`legacy_share_deletes`), its clone `ws/<uuidv5>` there (not an empty folder hermit never
+  cloned into while the share's folder has content), or cloned once with the clone gone since and magpie not referencing it (`sharesGone`). Blocking (exit 1,
   nothing removed): a share folder with no committed row (listed with its age), a live share never cloned, a clone
   that is gone while magpie references it, and a live share's clone with content that magpie does not name (its
   import may have missed it). `--drop-share <id>` lets a folder with no committed row go (a failed make of the old
@@ -91,12 +96,14 @@ hermit spec sections 3-12, 19, 20, 23 and 24.1-24.2 (WP-18, the core) and 13 (WP
   1 000; at least one call, so a magpie that does not answer stops the cleanup) does not name, no sandbox that is not
   gone uses, and that is older than 24 h (the folder and its `workspaces` row); other folders with content, other
   names (a clone's temporary tree) and everything magpie names are kept. Without `--confirm` it logs the plan,
-  removes nothing and exits 2. With it: `juicefs rmr` of the two trees, then the folders batch by batch: each marked
-  in `workspace_deletes` (starts and ensures refuse it from then on; a folder with a delete of hermit's own in flight
-  is skipped), magpie asked again, then right before it goes its mark renewed (a mark lapses after 10 minutes) and
-  the sandboxes and the folder's age checked again; then `rmdir` (a folder that got content since is kept) or, for an
-  orphan clone, its `deleted_at` and `juicefs rmr`; its quota, its `workspaces` row and its mark. Exit 1 when a
-  removal failed.
+  removes nothing and exits 2. With it: `juicefs rmr` of the two trees, then the folders batch by batch: magpie asked
+  about the batch, the folders it does not name marked in `workspace_deletes` (starts and ensures refuse them from
+  then on; a folder with a delete of hermit's own in flight is skipped), magpie asked again, then right before each
+  goes its mark renewed (a mark lapses after 10 minutes; renewed every 200 s while a `juicefs rmr` runs) and the
+  sandboxes and the folder's age checked again; then `rmdir` (a folder that got content since is kept) or, for an
+  orphan clone, its `legacy_share_deletes` row and `juicefs rmr`; its quota, its `workspaces` row and its mark. Last,
+  `workspaces` rows older than 24 h whose folder is gone (a removal cut short before its row went) lose their row and
+  quota. Exit 1 when a removal failed or the trees were held.
 - **`fabric/aws/legacy-down.sh --config <legacy.json> aws|host|hetzner [--confirm]`** (A6, once): terminates the old
   fabric's tagged instances, deletes its launch template, tagged AMIs and their snapshots (tagged `legacy-down-of`
   before the AMI goes, so a re-run deletes one whose delete failed), IAM users (every attachment first: keys, login
@@ -315,8 +322,9 @@ and replicas started in-process with short timings (`Timings` is code, not confi
 - **`import-jarvis` reads `cc_shared.shares`** (`HERMIT_IMPORT_CLOUDCLI_URL`, a second read-only role) to clone only
   committed, unrevoked shares: the folder alone cannot tell a finished share from one being copied.
 - **`legacy_shares` outlives the import** (migration 0005): `legacy-cleanup` needs it 30 days later, after the old
-  databases are gone; it is dropped with the cleanup. hermit's workspace delete writes its `deleted_at` (migration
-  0006) until then, the only place the serving code touches a switch table: the import and the cleanup cannot see a
+  databases are gone; it is dropped with the cleanup, with `legacy_share_deletes`. hermit's workspace delete writes a
+  `legacy_share_deletes` row (migration 0007, by workspace id, for every workspace, since the id cannot tell a
+  share's clone) until then, the only place the serving code touches a switch table: the import and the cleanup cannot see a
   delete otherwise once its folder is gone.
 - **`legacy-down.sh` takes a legacy file** (`--config`) for every old name (tags, template, IAM users, security
   group, units, interface, nft table, route table, paths, Hetzner network routes and firewall), as `infra.sh` takes

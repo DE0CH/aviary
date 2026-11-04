@@ -100,7 +100,7 @@ impl Drop for Volume {
     }
 }
 
-/// magpie's `workspaces/exists` as a set.
+/// magpie's `workspaces/exists` as a set; its import recorded complete.
 struct Magpie(Mutex<Vec<Uuid>>);
 
 impl Referenced for Magpie {
@@ -109,6 +109,9 @@ impl Referenced for Magpie {
             let known = self.0.lock().unwrap();
             Ok(ids.iter().filter(|i| known.contains(i)).copied().collect())
         })
+    }
+    fn import_incomplete(&self) -> Fut<'_, Result<Option<String>, String>> {
+        Box::pin(async { Ok(None) })
     }
 }
 

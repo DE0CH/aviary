@@ -467,6 +467,63 @@ async fn delta_reads_only_what_is_new_and_the_lookback() {
     );
 }
 
+/// With source ids well above `ID_LOOKBACK`, `--delta` reads only the event rows above the highest id copied less
+/// `ID_LOOKBACK`: a row below that is left to the next full pass.
+#[tokio::test]
+async fn delta_reads_event_ids_from_the_highest_copied_less_the_lookback() {
+    let (_h, hp, _o, op) = dbs("deltaids").await;
+    exec(&op, OLD).await;
+    let root = Root::new();
+    let base = 3 * ID_LOOKBACK;
+    exec(
+        &op,
+        &format!(
+            "select setval('vm_events_id_seq', {base}); select setval('ops_events_id_seq', {base});
+             insert into vm_events (kind) select 'pack' from generate_series(1, 20);
+             insert into ops_events (kind, ok, ms) select 'sandbox_start', true, 5 from generate_series(1, 20);"
+        ),
+    )
+    .await;
+    legacy::import_jarvis(&hp, &op, None, &root.0, opts(false))
+        .await
+        .unwrap();
+    let top = base + 20;
+    // a row far below the lookback (committed late with an old id), and five new ones above
+    exec(
+        &op,
+        &format!(
+            "insert into vm_events (id, kind) values ({}, 'drain');
+             insert into ops_events (id, kind, ok, ms) values ({}, 'sandbox_start', false, 1);
+             insert into vm_events (kind) select 'pack' from generate_series(1, 5);
+             insert into ops_events (kind, ok, ms) select 'sandbox_start', true, 5 from generate_series(1, 5);",
+            top - ID_LOOKBACK - 500,
+            top - ID_LOOKBACK - 500
+        ),
+    )
+    .await;
+    let d = legacy::import_jarvis(&hp, &op, None, &root.0, opts(true))
+        .await
+        .unwrap();
+    let above = |t: &str| format!("select count(*) from {t} where id > {}", top - ID_LOOKBACK);
+    let (ev, st) = (
+        count(&op, &above("vm_events")).await,
+        count(&op, &above("ops_events")).await,
+    );
+    assert_eq!(d.host_events.read, u64::try_from(ev).unwrap(), "{d:?}");
+    assert_eq!(d.sandbox_starts.read, u64::try_from(st).unwrap(), "{d:?}");
+    assert_eq!((d.host_events.copied, d.sandbox_starts.copied), (5, 5), "{d:?}");
+    assert!(
+        d.host_events.read < count(&op, "select count(*) from vm_events").await.unsigned_abs(),
+        "a delta that rereads everything"
+    );
+    // the full pass finds the row below the lookback
+    let f = legacy::import_jarvis(&hp, &op, None, &root.0, opts(false))
+        .await
+        .unwrap();
+    assert_eq!((f.host_events.copied, f.sandbox_starts.copied), (1, 1), "{f:?}");
+    assert!(f.complete(), "{f:?}");
+}
+
 #[tokio::test]
 async fn final_pass_imports_what_the_old_fabric_left_unfinished() {
     let (_h, hp, _o, op) = dbs("final").await;
@@ -551,11 +608,10 @@ async fn a_host_that_went_gone_again_is_updated_and_a_hermit_host_is_not() {
     let r = legacy::import_jarvis(&hp, &op, None, &root.0, opts(true))
         .await
         .unwrap();
-    assert_eq!(r.hosts.copied, 1, "{r:?}");
-    // the old aws-0000aa is not imported (the name is hermit's own host's): a missing row, an error
-    assert_eq!(r.hosts.missing, Some(1), "{r:?}");
-    assert_eq!(r.errors, ["hosts: 1 source rows read are not in hermit"], "{r:?}");
-    assert!(!r.complete());
+    assert_eq!(r.hosts.copied, 2, "{r:?}");
+    // the old aws-0000aa is imported as aws-0000aa-old (the name is hermit's own host's): nothing missing
+    assert_eq!(r.hosts.missing, Some(0), "{r:?}");
+    assert!(r.complete(), "{r:?}");
     let h = rows(
         &hp,
         "select gone_at::text, gone_reason from hosts where name = 'aws-6582f2'",
@@ -569,11 +625,18 @@ async fn a_host_that_went_gone_again_is_updated_and_a_hermit_host_is_not() {
     let mine = rows(&hp, "select status, instance_id from hosts where name = 'aws-0000aa'").await;
     assert_eq!(mine[0].get::<_, String>(0), "active");
     assert_eq!(mine[0].get::<_, Option<String>>(1).as_deref(), Some("i-new"));
+    let old = rows(
+        &hp,
+        "select status, instance_id from hosts where name = 'aws-0000aa-old'",
+    )
+    .await;
+    assert_eq!(old[0].get::<_, String>(0), "gone");
+    assert_eq!(old[0].get::<_, Option<String>>(1).as_deref(), Some("i-old"));
     let again = legacy::import_jarvis(&hp, &op, None, &root.0, opts(true))
         .await
         .unwrap();
     assert_eq!(again.hosts.copied, 0, "an unchanged host is not written again");
-    assert_eq!(again.hosts.missing, Some(1));
+    assert_eq!(again.hosts.missing, Some(0));
     // an old gone host with an unreadable address is not imported, and counts as missing too
     exec(
         &op,
@@ -980,12 +1043,14 @@ fn jfs_owner_owns_every_entry_without_following_symlinks() {
     }
 }
 
-/// magpie's `workspaces/exists` as a set, with the batch sizes it was asked.
+/// magpie's `workspaces/exists` as a set, with the batch sizes it was asked, and its `legacy-import` record
+/// (complete unless `incomplete` says why not).
 #[derive(Default)]
 struct Magpie {
     known: Mutex<Vec<Uuid>>,
     batches: Mutex<Vec<usize>>,
     down: bool,
+    incomplete: Option<String>,
 }
 
 impl Magpie {
@@ -1006,6 +1071,14 @@ impl Referenced for Magpie {
             self.batches.lock().unwrap().push(ids.len());
             let known = self.known.lock().unwrap();
             Ok(ids.iter().filter(|i| known.contains(i)).copied().collect())
+        })
+    }
+    fn import_incomplete(&self) -> Fut<'_, Result<Option<String>, String>> {
+        Box::pin(async move {
+            if self.down {
+                return Err("magpie legacy-import: unreachable".into());
+            }
+            Ok(self.incomplete.clone())
         })
     }
 }
@@ -1213,6 +1286,53 @@ async fn cleanup_asks_magpie_even_with_nothing_to_ask_about() {
     assert_eq!(done.trees_removed, ["users"]);
 }
 
+/// `users/` and `sent/` stay while magpie does not record its import complete; the folder removals still go, and the
+/// run is not complete.
+#[tokio::test]
+async fn the_old_trees_stay_until_magpie_records_its_import_complete() {
+    let (_h, hp, _o, _op) = dbs("cleanupimport").await;
+    let root = Root::new();
+    let (cli, _fs) = store(&root.0);
+    std::fs::create_dir_all(root.0.join("users/u1/claude")).unwrap();
+    std::fs::create_dir_all(root.0.join("sent/c1")).unwrap();
+    let empty = id(900);
+    old_folder(&root.0.join("ws"), empty);
+    let not_yet = Magpie {
+        incomplete: Some("no clean verify --all with every conversation owned is recorded".into()),
+        ..Magpie::default()
+    };
+    let Cleanup::Done { plan, done } = legacy::legacy_cleanup(&root.0, &hp, &not_yet, cli.as_ref(), true, &[])
+        .await
+        .unwrap()
+    else {
+        panic!("not done")
+    };
+    assert!(plan.trees_held.as_deref().unwrap().contains("verify --all"), "{plan:?}");
+    assert!(done.trees_removed.is_empty(), "{done:?}");
+    assert!(!done.complete(&plan));
+    assert!(root.0.join("users/u1/claude").exists() && root.0.join("sent/c1").exists());
+    assert_eq!(done.workspaces_removed, 1, "the empty folder still goes");
+    // magpie unreachable: nothing at all
+    let down = Magpie {
+        down: true,
+        ..Magpie::default()
+    };
+    legacy::legacy_cleanup(&root.0, &hp, &down, cli.as_ref(), true, &[])
+        .await
+        .unwrap_err();
+    // recorded complete: the trees go
+    let Cleanup::Done { plan, done } =
+        legacy::legacy_cleanup(&root.0, &hp, &Magpie::default(), cli.as_ref(), true, &[])
+            .await
+            .unwrap()
+    else {
+        panic!("not done")
+    };
+    assert_eq!(plan.trees_held, None);
+    assert_eq!(done.trees_removed, ["users", "sent"]);
+    assert!(done.complete(&plan));
+}
+
 /// Sets an old share folder's times (the folder and its `ws/`) two days back.
 fn age_share(root: &Path, key: &str, id: &str) {
     let d = root.join("users").join(key).join("shares").join(id);
@@ -1301,6 +1421,140 @@ async fn a_share_deleted_through_hermit_is_never_cloned_again() {
         .unwrap();
     assert!(full.complete(), "{full:?}");
     assert!(!ws(gone).exists());
+}
+
+/// magpie imports an old share before hermit's share pass has read its row (cutover 7.4.4), then revokes it or purges
+/// its conversation: hermit's delete of the share's workspace (mark, record, remove, forget, as
+/// `DELETE /v1/workspaces/<id>`) comes before the import has a `legacy_shares` row for it. Once the delete's mark has
+/// lapsed (`DELETE_GUARD`), no later pass clones the share back, and the cleanup counts it carried over.
+#[tokio::test]
+async fn a_share_deleted_before_the_import_saw_it_is_never_cloned() {
+    let (_h, hp, _o, op) = dbs("deletedfirst").await;
+    let (_c, cp) = cloudcli("deletedfirst").await;
+    let root = Root::new();
+    let (_cli, fs) = store(&root.0);
+    let src = ShareSource {
+        cloudcli: &cp,
+        store: &fs,
+    };
+    let sid = "deletedFirst0000000000";
+    let wid = share_workspace(sid);
+    old_share(&root.0, "k", sid, sid);
+    // the delete, before the share's row has committed in the old UI's table (or been read by any pass)
+    delete_through_hermit(&hp, &fs, wid).await;
+    assert_eq!(count(&hp, "select count(*) from legacy_shares").await, 0);
+    commit_share(&cp, "k", sid, false).await;
+    // DELETE_GUARD passes: the delete's mark lapses
+    exec(&hp, "delete from workspace_deletes").await;
+    for delta in [false, true, false] {
+        let r = legacy::import_jarvis(&hp, &op, Some(src), &root.0, opts(delta))
+            .await
+            .unwrap();
+        let s = r.shares.clone().unwrap();
+        assert_eq!((s.cloned, s.skipped, s.deleted, s.failed.len()), (0, 0, 1, 0), "{s:?}");
+        assert!(r.complete(), "{r:?}");
+        assert!(!root.0.join("ws").join(wid.to_string()).exists(), "cloned again");
+    }
+    age_share(&root.0, "k", sid);
+    let magpie = Magpie::default();
+    let plan = legacy::cleanup_plan(&root.0, &hp, &magpie, &[]).await.unwrap();
+    assert!(plan.shares_not_carried.is_empty(), "{plan:?}");
+    assert!(plan.orphan_shares.is_empty() && plan.shares_gone.is_empty(), "{plan:?}");
+}
+
+/// A share's `ws/<uuidv5>` that something else made first (an empty folder, the share never cloned by hermit) is not
+/// taken for its clone: the import fails the share and the cleanup is blocked, until the folder is removed and the
+/// next pass clones the share.
+#[tokio::test]
+async fn an_empty_folder_in_a_shares_place_is_not_its_clone() {
+    let (_h, hp, _o, op) = dbs("emptyplace").await;
+    let (_c, cp) = cloudcli("emptyplace").await;
+    let root = Root::new();
+    let (_cli, fs) = store(&root.0);
+    let src = ShareSource {
+        cloudcli: &cp,
+        store: &fs,
+    };
+    let sid = "emptyFirst000000000000";
+    let target = root.0.join("ws").join(share_workspace(sid).to_string());
+    old_share(&root.0, "k", sid, "the only copy");
+    commit_share(&cp, "k", sid, false).await;
+    std::fs::create_dir(&target).unwrap();
+    let r = legacy::import_jarvis(&hp, &op, Some(src), &root.0, opts(false))
+        .await
+        .unwrap();
+    let s = r.shares.clone().unwrap();
+    assert_eq!((s.cloned, s.skipped), (0, 0), "{s:?}");
+    assert!(s.failed[0].contains("exists empty"), "{s:?}");
+    assert!(!r.complete());
+    age(&target);
+    age_share(&root.0, "k", sid);
+    let plan = legacy::cleanup_plan(&root.0, &hp, &Magpie::default(), &[])
+        .await
+        .unwrap();
+    assert!(
+        plan.shares_not_carried.iter().any(|w| w.contains("exists empty")),
+        "{plan:?}"
+    );
+    std::fs::remove_dir(&target).unwrap();
+    let s = legacy::import_jarvis(&hp, &op, Some(src), &root.0, opts(true))
+        .await
+        .unwrap()
+        .shares
+        .unwrap();
+    assert_eq!(s.cloned, 1, "{s:?}");
+    assert_eq!(
+        std::fs::read_to_string(target.join("out/report.md")).unwrap(),
+        "the only copy"
+    );
+    // hermit's own clone, emptied: still the clone (only a folder hermit never cloned into is suspect)
+    std::fs::remove_dir_all(target.join("out")).unwrap();
+    let s = legacy::import_jarvis(&hp, &op, Some(src), &root.0, opts(true))
+        .await
+        .unwrap()
+        .shares
+        .unwrap();
+    assert_eq!((s.skipped, s.failed.len()), (1, 0), "{s:?}");
+}
+
+/// A `workspaces` row whose folder is gone (a removal cut short between the folder and the row) goes with its quota;
+/// a folder magpie names when the cleanup starts its batch is never marked (it is not in the batch's second ask).
+#[tokio::test]
+async fn cleanup_removes_stale_rows_and_marks_only_unnamed_folders() {
+    let (_h, hp, _o, _op) = dbs("cleanupstale").await;
+    let root = Root::new();
+    let (cli, _fs) = store(&root.0);
+    let ws = root.0.join("ws");
+    let (stale, a, b, taken) = (id(700), id(701), id(702), id(703));
+    exec(
+        &hp,
+        &format!("insert into workspaces (id, created_at) values ('{stale}', now() - interval '2 days')"),
+    )
+    .await;
+    for f in [a, b, taken] {
+        old_folder(&ws, f);
+    }
+    let magpie = Magpie::default();
+    let plan = legacy::cleanup_plan(&root.0, &hp, &magpie, &[]).await.unwrap();
+    assert_eq!(plan.stale_rows, [stale]);
+    assert_eq!(plan.empty_workspaces, [a, b, taken]);
+    magpie.known.lock().unwrap().push(taken);
+    magpie.batches.lock().unwrap().clear();
+    let done = legacy::cleanup_apply(&root.0, cli.as_ref(), &hp, &magpie, &plan)
+        .await
+        .unwrap();
+    assert_eq!(
+        *magpie.batches.lock().unwrap(),
+        [3, 2],
+        "asked first, then about the marked ones"
+    );
+    assert_eq!((done.workspaces_removed, done.rows_removed), (2, 1), "{done:?}");
+    assert!(ws.join(taken.to_string()).exists());
+    assert_eq!(
+        count(&hp, &format!("select count(*) from workspaces where id = '{stale}'")).await,
+        0
+    );
+    assert!(cli.calls.lock().unwrap().contains(&format!("quota delete /ws/{stale}")));
 }
 
 #[tokio::test]
@@ -1445,7 +1699,10 @@ async fn cleanup_needs_every_old_share_carried_over_and_removes_orphan_clones() 
     assert_eq!(
         count(
             &hp,
-            &format!("select count(*) from legacy_shares where id = '{revoked_late}' and deleted_at is not null")
+            &format!(
+                "select count(*) from legacy_shares s join legacy_share_deletes d using (workspace)
+                  where s.id = '{revoked_late}'"
+            )
         )
         .await,
         1,
