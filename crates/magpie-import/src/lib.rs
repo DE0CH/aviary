@@ -22,6 +22,10 @@
 //! - [`plan`]: the dry run that reports blockers (cutover 7.9).
 //! - [`holds`]: the running sets, `holds.js` run in the old ui pods.
 //! - [`kube`]: the old cluster's API: the ui pods and `pods/exec` (the running sets' transport).
+//! - [`gate`]: the gate's socket check (every ui pod's switch-module report).
+//! - [`handover`]: the hand-over loop (cutover 7.5, DESIGN 9.4).
+//! - [`uploads`]: upload ingestion of the old asset folders (cutover 7.4.3).
+//! - [`server`]: `handover` and `export-server`.
 //! - [`lock`]: the leader lock the hand-over replicas bid for and every one-shot command waits for.
 //! - [`control`]: `status`, `hold`, `reset`, `unfence`, `release --force`.
 //! - [`cli`]: `magpie import <command>`.
@@ -32,6 +36,8 @@ pub mod conv;
 pub mod export;
 pub mod export_more;
 pub mod failed;
+pub mod gate;
+pub mod handover;
 pub mod holds;
 pub mod kube;
 pub mod lock;
@@ -39,10 +45,12 @@ pub mod parity;
 pub mod pass;
 pub mod plan;
 pub mod sent;
+pub mod server;
 pub mod share;
 pub mod source;
 pub mod sync;
 pub mod tree;
+pub mod uploads;
 pub mod verify;
 pub mod viewas;
 

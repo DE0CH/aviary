@@ -38,6 +38,7 @@ own library, so an imported conversation is what live writes would have made: cc
 | `tests/shares.rs` | prefix and non-prefix frozen transcripts, revoked before and after the import, a share of a gone conversation, `reset` |
 | `tests/export.rs` | 7.12 item 7: import, release, grow the conversation on the new side, export (refused unfenced), the old side's files equal magpie's reconstruction, a stale old-side file deleted, the sessions row and the failed turn match, memory in `aviary-memory/<id>/`, a re-import verifies; a purge on the new side is not re-imported by a pass before the export |
 | `tests/handover.rs` | `release --force`'s final sync inside the fence, `verified_stats`' fingerprints, the re-ingest's record and limbo, a rename onto an existing path, a released conversation's check (shared memory left out, new files seen), the mount check, the sent folders' quiet period, the lost lock, read-only sources, a cleared title, non-UTF-8 names |
+| `tests/loop.rs` | 7.12 item 5: the hand-over loop against a fake Kubernetes API (ui pods, one Terminating; exec answering `holds.js`; `pods/proxy` answering `/__jarvis/sockets`) and a fake `jarvis.sandboxes`: nothing before the gate; `allow-handover` refused while a pod has no report; a socket or HTTP request not LU, an old sandbox not `gone`, an unanswered child each hold the release; two clean reads release the idle conversation and never its running sibling; a source change waits for a pass that finds it unchanged |
 | `tests/holds_js.rs`, `tests/kube.rs` | `holds.js` against fake CloudCLI children (node), the transport against a fake Kubernetes API |
 | `tests/convergence.rs` | the property test of cutover 7.12 item 3 (random source changes of several line kinds, lines written again as another kind, a pass at random points: byte-exact, visible events (kind, uuid) = magpie's classifier over the source's lines) |
 
@@ -182,6 +183,9 @@ own library, so an imported conversation is what live writes would have made: cc
 
 ## Owned by other packages
 
-`allow-handover` and `reverse` (14.2, with WP-52's loop), and tests 4 (the routes of 6.4 beyond the write
-guard), 5-6 of 7.12 and item 8's process-level half (the loop's yield between passes). The hand-over loop itself is
-WP-52.
+The hand-over loop (`handover`, `src/handover.rs`: sync, pre-verify, upload ingestion, running sets, the running
+mirror, settled tickets, DESIGN 9.4's release, warm hints; `src/server.rs`: the leader loop, `:9090/status` and the
+`export-server` sidecar's `POST /v1/ingest-upload`), `allow-handover` (`src/gate.rs`) and `uploads` are WP-52's.
+Still open in WP-52: `reverse` (14.2, with a reverse fence in magpie), the per-person gate (`allow-handover
+--person`), and 7.12 item 6's fence cases (fence-race fuzz, leader `kill -9` between fence and release, a magpie
+switchover during a fence).

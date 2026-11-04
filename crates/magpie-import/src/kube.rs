@@ -28,6 +28,10 @@ pub const NAMESPACE: &str = "jarvis";
 pub const SELECTOR: &str = "app=ui";
 /// The container `holds.js` runs in.
 pub const CONTAINER: &str = "ui";
+/// The old router's port in a ui pod.
+pub const UI_PORT: u16 = 8080;
+/// The header the old router's switch module also takes its token in (claudecodeui `jarvis/router.mjs`).
+pub const SWITCH_TOKEN_HEADER: &str = "x-jarvis-switch-token";
 /// One exec's bound (cutover 6.3).
 pub const EXEC_TIMEOUT: Duration = Duration::from_secs(8);
 
@@ -148,6 +152,38 @@ impl Kube {
                 terminating: i.metadata.deletion_timestamp.is_some(),
             })
             .collect())
+    }
+
+    /// A call to the old router in `pod` through the API server's `pods/proxy` (DESIGN 15.5 B7): `method` on `path`
+    /// (with its query) at [`UI_PORT`], the switch token in `x-jarvis-switch-token` (the API server keeps
+    /// `Authorization` for its own login), within `bound`. The status and the body.
+    ///
+    /// # Errors
+    /// The API unreachable or refusing the proxy, or no answer within `bound`.
+    pub async fn proxy(
+        &self,
+        method: reqwest::Method,
+        pod: &str,
+        path: &str,
+        switch_token: &str,
+        bound: Duration,
+    ) -> Result<(u16, String)> {
+        let url = format!(
+            "{}/api/v1/namespaces/{NAMESPACE}/pods/{pod}:{UI_PORT}/proxy{path}",
+            self.base
+        );
+        let res = self
+            .http
+            .request(method, url)
+            .bearer_auth(&self.token)
+            .header(SWITCH_TOKEN_HEADER, switch_token)
+            .timeout(bound)
+            .send()
+            .await
+            .map_err(|e| err("pods/proxy", e))?;
+        let status = res.status().as_u16();
+        let body = res.text().await.map_err(|e| err("pods/proxy", e))?;
+        Ok((status, body))
     }
 
     /// Runs `argv` in `pod`'s container `container`; its standard output, within `bound`.

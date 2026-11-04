@@ -6,7 +6,8 @@
 //! read-only transaction, and every command but `export` connects with `default_transaction_read_only = on`, cutover
 //! 7.2), the `JuiceFS` mount at [`JFS`], `POD_NAME`.
 //! `holds` reads the running sets through the old cluster's API ([`crate::kube`]'s bindings). The hand-over loop
-//! and the commands that drive it (`handover`, `allow-handover`, `reverse`) are not built yet. `export` is
+//! and the commands that drive it: `handover` (the loop, [`crate::server::handover`]), `allow-handover` (the gate)
+//! and `export-server` (the writer sidecar's API); `reverse` (cutover 14.2) is not built yet. `export` is
 //! the only command that writes the old side (`JuiceFS` and `cloudcli`): it runs in the writer sidecar, whose mount
 //! and `cloudcli` connection are read-write (cutover 14.3).
 
@@ -28,7 +29,8 @@ pub const JUICEFS: &str = "/usr/local/bin/juicefs";
 
 const USAGE: &str = "usage: magpie import plan | run | catch-up | verify [--all | <id>…] | status | holds | hold on|off \
                      | reset --yes | unfence <id> | release <id> --force | purge <id>… \
-                     | export [--unfenced] [--since <time>] [<id>…] | parity <id>…\n";
+                     | export [--unfenced] [--since <time>] [<id>…] | parity <id>… | handover | export-server \
+                     | allow-handover\n";
 
 fn out(v: &impl Serialize) {
     let mut s = serde_json::to_string_pretty(v).unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}"));
@@ -51,6 +53,17 @@ fn ids(args: &[String]) -> Option<Vec<Uuid>> {
 /// # Errors
 /// A database URL that does not parse, a magpie start that cannot go on.
 pub async fn connect(build: &version::Build, writes_old_side: bool) -> Result<Importer, String> {
+    connect_with(build, writes_old_side).await.map(|(i, _)| i)
+}
+
+/// [`connect`], also answering the registry the importer's metrics are on (the hand-over's `/metrics`).
+///
+/// # Errors
+/// As [`connect`].
+pub async fn connect_with(
+    build: &version::Build,
+    writes_old_side: bool,
+) -> Result<(Importer, prometheus_client::registry::Registry), String> {
     let mut registry = ops::registry(build);
     let legacy_metrics = magpie::legacy::Metrics::register(&mut registry);
     let cfg = magpie::app::Config {
@@ -99,7 +112,7 @@ pub async fn connect(build: &version::Build, writes_old_side: bool) -> Result<Im
         Duration::from_secs(120),
     )
     .map_err(|e| e.to_string())?;
-    Ok(Importer {
+    let imp = Importer {
         magpie: service.app.clone(),
         cloudcli,
         jarvis,
@@ -109,7 +122,8 @@ pub async fn connect(build: &version::Build, writes_old_side: bool) -> Result<Im
         sent_quiet: crate::sent::QUIET,
         pause_in_fence: std::time::Duration::ZERO,
         owner: Some(crate::export::OWNER_ID),
-    })
+    };
+    Ok((imp, registry))
 }
 
 /// Runs `magpie import <args>`.
@@ -121,8 +135,10 @@ pub fn main(build: &version::Build, args: &[String]) -> ExitCode {
     let rest = &args[1..];
     let known = matches!(
         (cmd, rest.len()),
-        ("plan" | "run" | "catch-up" | "status" | "holds", 0)
-            | ("parity" | "purge", 1..)
+        (
+            "plan" | "run" | "catch-up" | "status" | "holds" | "handover" | "export-server" | "allow-handover",
+            0
+        ) | ("parity" | "purge", 1..)
             | ("verify" | "hold" | "reset" | "unfence" | "export", _)
             | ("release", 2)
     );
@@ -134,6 +150,21 @@ pub fn main(build: &version::Build, args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     };
     rt.block_on(async {
+        if matches!(cmd, "handover" | "export-server") {
+            let (imp, registry) = match connect_with(build, cmd == "export-server").await {
+                Ok(i) => i,
+                Err(e) => {
+                    tracing::error!(error = %e, "cannot connect");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let ops = ops::Ops::new(build.clone(), registry);
+            return if cmd == "handover" {
+                crate::server::handover(imp, ops).await
+            } else {
+                crate::server::export_server(imp, ops).await
+            };
+        }
         let mut imp = match connect(build, cmd == "export").await {
             Ok(i) => i,
             Err(e) => {
@@ -237,6 +268,16 @@ async fn run(imp: &Importer, cmd: &str, rest: &[String]) -> ExitCode {
             out(&verdicts);
             if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE }
         }
+        "allow-handover" => match crate::kube::Kube::from_env() {
+            Ok(k) => match crate::handover::allow(imp, &k, &env::required("MAGPIE_IMPORT_TOKEN_UI")).await {
+                Ok((check, set)) => {
+                    out(&serde_json::json!({ "gateSet": set, "check": check, "problems": check.problems() }));
+                    if set { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+                }
+                Err(e) => fail(e),
+            },
+            Err(e) => fail(e),
+        },
         "holds" => match crate::kube::Kube::from_env() {
             Ok(k) => {
                 let set = crate::kube::running_set(&k).await;

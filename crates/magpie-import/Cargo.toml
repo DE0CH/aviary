@@ -18,11 +18,13 @@ aviary-core = { path = "../aviary-core" }
 aviary-pg = { path = "../aviary-pg" }
 axum.workspace = true
 futures-util.workspace = true
+hermit-api = { path = "../hermit-api" }
 http-body-util.workspace = true
 magpie = { path = "../magpie" }
 magpie-api = { path = "../magpie-api" }
 # `parity` renders magpie's rows through pigeon's own projection (cutover 10.2 rehearsal 6)
 pigeon = { path = "../pigeon" }
+prometheus-client.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true
