@@ -11,7 +11,7 @@
     "image": "docker.io/aviary-e2e/hermit-sandbox:e2e@sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "cpu": 1, "memory": "28Gi", "pids": 4096, "openFiles": 65536,
     "maxActive": 6, "idleMinutes": 2, "maxLifetimeHours": 1, "lifetimeGraceMinutes": 10,
-    "capacityWaitSeconds": 120, "hostWaitSeconds": 170, "supervisorWaitSeconds": 120, "startDeadlineSeconds": 480,
+    "capacityWaitSeconds": 240, "hostWaitSeconds": 170, "supervisorWaitSeconds": 120, "startDeadlineSeconds": 480,
     "poolVictimIdleSeconds": 20, "reserveSeconds": 20, "activityEverySeconds": 15,
     "workspace": { "quotaGiB": 1, "quotaInodes": 100000 },
     "tmpGiB": 5,

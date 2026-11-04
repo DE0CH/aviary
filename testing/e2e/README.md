@@ -94,7 +94,7 @@ makes the viewer's conversation with the shared `/workspace`), E15 (view as: an 
 conversations and refuses a rename and a delete; staff cannot start one; the link is refused to anyone else), E24 (hermit at 0 replicas for 3 minutes during a turn with a tool call: the turn
 completes), E12 (the idle release, then a new sandbox that resumes the history) and E17 (seven starts with six slots:
 never more than six sandboxes, the seventh waits and completes once a pool victim frees a slot; the harness's
-`reserveSeconds` and `poolVictimIdleSeconds` are 20 so that happens inside `capacityWaitSeconds`). Last, `stale`: magpie 6.10's stale append end to end (WP-12's carried item),
+`reserveSeconds` and `poolVictimIdleSeconds` are 20 so that happens inside `capacityWaitSeconds`, 240 s: on a hosted runner the slot frees 100-110 s after the creates, and at 120 s E17 failed one run in three). Last, `stale`: magpie 6.10's stale append end to end (WP-12's carried item),
 from inside a sandbox through the gateway: an append, its retry under a new `opId` at the same offset (rule 0: 200,
 nothing written twice), a different append at that stale offset (409 `offset_mismatch`), the append at the size, and
 magpie's bytes read back. It takes the conversation's lease, so it runs last.

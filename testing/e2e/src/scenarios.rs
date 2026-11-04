@@ -872,7 +872,10 @@ async fn e17(h: &Harness) -> anyhow::Result<()> {
                 .rpc("agent.timeline.set_subscription.request", json!({"agentIds": ids}))
                 .await?;
             let mut most = 0usize;
-            let until = Instant::now() + Duration::from_secs(150);
+            // the seventh's slot frees once a first sandbox has been idle poolVictimIdleSeconds, seen through the
+            // 15 s activity reports, and is gone: 100-110 s after the creates on a hosted runner (hermit.json's
+            // capacityWaitSeconds is 240 for that)
+            let until = Instant::now() + Duration::from_secs(300);
             let mut done = std::collections::BTreeSet::new();
             while done.len() < ids.len() {
                 ensure!(Instant::now() < until, "only {} of 7 turns ended", done.len());
