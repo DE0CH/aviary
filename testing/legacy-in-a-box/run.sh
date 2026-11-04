@@ -112,8 +112,20 @@ follow_ui_logs() { # the old ui pods' log into $work/ui.log, restarted after a r
   kubectl --kubeconfig "$work/kubeconfig-old" -n jarvis logs -f -l app=ui --prefix --max-log-requests 6 --tail=-1 >> "$work/ui.log" 2>&1 &
 }
 
+# two k3s clusters on one kernel run past the default 128 inotify instances: a kubelet then fails to follow a pod's
+# log ("failed to create fsnotify watcher: too many open files") and the old ui log loses the line old_turn_cut_total
+# is read from (the drain's "old turn cut" of a pod being deleted). Raised as kind's and k3d's docs advise.
+inotify() {
+  local k v
+  for k in fs.inotify.max_user_instances=8192 fs.inotify.max_user_watches=524288; do
+    v=$(sysctl -n "${k%=*}")
+    [ "$v" -ge "${k#*=}" ] || sudo sysctl -q -w "$k"
+  done
+}
+
 up() {
   local s=${1:?release sha12} ui=${2:?ui image}
+  inotify
   mkdir -p "$work"
   # the new cluster, unchanged (kept when it is already up: BOX_KEEP_NEW=1, a rerun of the old side)
   if [ "${BOX_KEEP_NEW:-}" != 1 ]; then
@@ -700,10 +712,29 @@ seeds() {
   label_pods; follow_ui_logs; sleep 3
   admit_all
   cut_turn() {
-    docker run -d --rm --name aviary-seed-turn --network "$net" -v "$here/../lu-rig:/rig:ro" -v "$E2E_WORK/ca:/ca:ro" --user 0 \
-      --entrypoint node -e "RIG_ISS=https://$team" -e "RIG_AUD=$aud" -e RIG_KID=k1 -e RIG_EMAIL=seed@example.org \
-      -e "RIG_PROMPT=[[slow 120]] cut me" "$UI_IMAGE" /rig/smoke.mjs "$BRIDGE:8080" /ca/k1.pem >/dev/null
-    sleep 15
+    # the long turn, running on an old pod before the drain: right after this seed's rollout the router can answer a
+    # person whose child was on a pod now gone with its transient 503 (peer unreachable; the app retries, smoke.mjs
+    # does not), so the client is started again until a pod's busy route lists the turn
+    local tries=0 running=0 lp w
+    while [ "$tries" -lt 4 ] && [ "$running" = 0 ]; do
+      tries=$((tries + 1))
+      docker rm -f aviary-seed-turn >/dev/null 2>&1 || true
+      docker run -d --name aviary-seed-turn --network "$net" -v "$here/../lu-rig:/rig:ro" -v "$E2E_WORK/ca:/ca:ro" --user 0 \
+        --entrypoint node -e "RIG_ISS=https://$team" -e "RIG_AUD=$aud" -e RIG_KID=k1 -e RIG_EMAIL=seed@example.org \
+        -e "RIG_PROMPT=[[slow 120]] cut me" "$UI_IMAGE" /rig/smoke.mjs "$BRIDGE:8080" /ca/k1.pem >/dev/null
+      local until=$((SECONDS + 40))
+      while [ "$SECONDS" -lt "$until" ]; do
+        for lp in $(kold -n jarvis get pods -l app=ui --field-selector=status.phase=Running -o jsonpath='{.items[*].metadata.name}'); do
+          w=$(old_work "$lp")
+          if [ "$w" != 0 ] && [ "$w" != 1000000 ]; then running=1; fi
+        done
+        [ "$running" = 1 ] && break
+        [ "$(docker inspect -f '{{.State.Running}}' aviary-seed-turn 2>/dev/null)" = true ] || break
+        sleep 2
+      done
+    done
+    [ "$running" = 1 ] || log "seed: the long turn did not start ($(docker logs aviary-seed-turn 2>&1 | tail -1 | cut -c1-160))"
+    sleep 3
     # each pod's own log stream to its end (the drain's line is the last thing a pod writes)
     local lp
     for lp in $(kold -n jarvis get pods -l app=ui -o name); do

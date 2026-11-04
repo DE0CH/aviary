@@ -14,7 +14,8 @@ testing/legacy-in-a-box/run.sh logs <dir> | down
 ```
 
 Needs what `testing/e2e` needs (docker, k3d, kubectl, jq, openssl, juicefs, sudo; `crane` with `E2E_PRELOAD=1`) and
-node 22. `E2E_PG_PORT`/`E2E_S3_PORT` move the harness's host ports on a machine whose own services hold them;
+node 22. `up` raises `fs.inotify.max_user_instances` (8192) and `max_user_watches` (524288) when lower: two k3s
+clusters on one kernel exceed the defaults and a kubelet then cannot follow a pod's log. `E2E_PG_PORT`/`E2E_S3_PORT` move the harness's host ports on a machine whose own services hold them;
 `BOX_KEEP_NEW=1` reruns only the old side.
 
 | Piece | Where |
