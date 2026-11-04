@@ -1835,6 +1835,23 @@ async fn deleting_a_conversation_releases_its_sandbox_once_and_ends_its_turn() {
     assert!(w.state_is(turn, "starting").await);
     let sup = w.supervisor(conv).await;
     sup.run(turn).await;
+    // the leader follows hermit's feed from `latest` on its first start: a `gone` before that is never seen (on a
+    // busy CI runner the follower started after the release, and the turn did not end within the wait)
+    assert!(
+        common::eventually(Duration::from_secs(10), async || {
+            w.pool()
+                .get()
+                .await
+                .unwrap()
+                .query_opt("select after_seq from hermit_feed where id", &[])
+                .await
+                .unwrap()
+                .and_then(|r| r.get::<_, Option<i64>>(0))
+                .is_some()
+        })
+        .await,
+        "the feed follower started"
+    );
     w.a.pigeon().person(ALICE).delete_conversation(conv).await.unwrap();
     let hermit = outbox::Hermit(w.hermit.client(common::http(), aviary_core::auth::Caller::Magpie));
     assert_eq!(outbox::pass(w.pool(), &hermit).await.unwrap(), 1);
