@@ -1,5 +1,5 @@
 //! A terminating TCP proxy between pigeon and the fake old router, as bridge B1 is (DESIGN 15.5: the Hetzner load
-//! balancer `yyc-bridge-old`, then the old router's own relay to the child), whose far leg stalls like a partition:
+//! balancer of the old bridge, then the old router's own relay to the child), whose far leg stalls like a partition:
 //! while a connection is stalled the proxy keeps reading (and so acknowledging) what pigeon sends and holds it. When
 //! it heals, every held byte is delivered to the old side, whether or not pigeon reset its connection meanwhile: a
 //! proxy has already acknowledged those bytes, and pigeon's reset only ends pigeon's own leg. So a write that reaches
