@@ -1042,6 +1042,62 @@ async fn an_echo_written_again_with_other_bytes_is_still_no_prompt() {
 }
 
 #[tokio::test]
+async fn a_uuid_less_prompt_written_again_is_itself_and_one_with_the_same_text_is_the_echo() {
+    let (db, _r, mut s) = setup("cc_uuidless").await;
+    let sql = common::sql(&db.url);
+    let p = main_path();
+    let conv = s.conversation;
+    set_main(&sql, conv, &p).await;
+    let users = async |sql: &aviary_pg::Pool| -> Vec<i64> {
+        visible(sql, conv)
+            .await
+            .into_iter()
+            .filter(|e| e.1 == "cc.user")
+            .map(|e| e.0)
+            .collect()
+    };
+    // a uuid-less user line with no echo pending: a prompt event of its own
+    let u1 = line(&json!({"type": "user", "message": {"role": "user", "content": "same"}, "timestamp": "t1"}));
+    s.write(&p, 0, &u1).await.unwrap();
+    let first = users(&sql).await;
+    assert_eq!(first.len(), 1, "u1 is a cc.user event");
+    // a truncate whose limbo is flushed: retracted
+    s.truncate(&p, 0).await.unwrap();
+    flush_turn(&sql, conv, None).await;
+    assert!(users(&sql).await.is_empty(), "u1 retracted");
+    // a person's turn (its echo pending) writes u1 back (the same line again: an event, not the turn's echo), then a
+    // prompt with the same text and other data (its own timestamp): that one is the turn's echo
+    let t = person_turn(&sql, &mut s).await;
+    s.write(&p, 0, &u1).await.unwrap();
+    assert_eq!(users(&sql).await.len(), 1, "u1 written again is itself");
+    let e2 = line(&json!({"type": "user", "message": {"role": "user", "content": "same"}, "timestamp": "t2"}));
+    s.write(&p, u1.len() as u64, &e2).await.unwrap();
+    assert_eq!(users(&sql).await.len(), 1, "e2 is no prompt event");
+    let matched: bool = sql
+        .get()
+        .await
+        .unwrap()
+        .query_one("select echo_matched from turns where id = $1", &[&t])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(matched, "e2 matched the turn's echo");
+    // the lookup is by index: the retracted line is recorded by its data's key
+    let keys: i64 = sql
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select count(*) from cc_retracted where conversation_id = $1 and uuid like 'data:%'",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(keys, 1);
+}
+
+#[tokio::test]
 async fn the_end_of_a_turn_flushes_only_its_own_limbo() {
     let (db, _r, mut s) = setup("cc_flush_turn").await;
     let sql = common::sql(&db.url);

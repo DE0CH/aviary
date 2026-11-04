@@ -375,17 +375,15 @@ async fn was_retracted(tx: &Tx<'_>, conversation: Uuid, uuid: Option<&str>, data
     let Some(data) = data else {
         return Ok(false);
     };
+    // a uuid-less line: the retracted `cc.user` events' data keys ([`limbo::retract`]), by the same index
     Ok(tx
-        .query_opt(
-            "select 1 from events e
-              where e.conversation_id = $1 and e.kind = 'cc.user' and e.data = $2
-                and exists (select 1 from events r where r.conversation_id = $1 and r.kind = 'retract'
-                             and r.data->'seqs' @> to_jsonb(e.seq))
-              limit 1",
+        .query_one(
+            "select exists (select 1 from cc_retracted
+                             where conversation_id = $1 and uuid = 'data:' || md5($2::jsonb::text))",
             &[&conversation, data],
         )
         .await?
-        .is_some())
+        .get(0))
 }
 
 /// Records a line with `sha` and `uuid` as the echo of a person's prompt in `conversation` (6.5).

@@ -194,7 +194,10 @@ pub async fn drop_moved(tx: &Tx<'_>, scope: Uuid, file: i64) -> Result<()> {
 }
 
 /// Appends one `retract` event for `seqs` (the conversation is locked) and records the retracted lines' uuids so a
-/// later line with the same uuid carries `meta.replaces` (6.7). Events are never deleted.
+/// later line with the same uuid carries `meta.replaces` (6.7). Events are never deleted. A retracted `cc.user` line
+/// without a uuid is recorded by its data instead (`data:` and the md5 of its `jsonb` text, never a uuid's form), so
+/// the same line written again is found by index ([`crate::ccfs::lines`]' `was_retracted`), not by scanning the
+/// conversation's events; a prompt with the same text and other data (another timestamp) is not that line.
 ///
 /// # Errors
 /// When a statement fails.
@@ -210,8 +213,8 @@ pub async fn retract(tx: &Tx<'_>, conversation: Uuid, turn: Option<Uuid>, mut se
     let by = events::append(tx, conversation, NewEvent::of(&body)?.turn(turn)).await?;
     tx.execute(
         "insert into cc_retracted (conversation_id, uuid, seq, by_seq)
-         select conversation_id, data->>'uuid', seq, $3 from events
-          where conversation_id = $1 and seq = any($2) and data->>'uuid' is not null
+         select conversation_id, coalesce(data->>'uuid', 'data:' || md5(data::text)), seq, $3 from events
+          where conversation_id = $1 and seq = any($2) and (data->>'uuid' is not null or kind = 'cc.user')
          on conflict do nothing",
         &[&conversation, &seqs, &by],
     )

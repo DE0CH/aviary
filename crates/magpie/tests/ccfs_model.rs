@@ -142,6 +142,9 @@ fn lines_of(b: &[u8]) -> Vec<(usize, &[u8])> {
 
 struct Case<'a> {
     s: &'a mut Sandbox,
+    /// This test's own database (never a process-wide pool: each test has its own, and `cargo test` runs them in one
+    /// process).
+    sql: &'a aviary_pg::Pool,
     model: Vec<u8>,
     main_known: bool,
     n: usize,
@@ -172,7 +175,7 @@ impl Case<'_> {
             self.model.len()
         );
         // the visible events: the model's lines' (once the main path is known) and those waiting in limbo
-        let conn = POOL.get().unwrap().get().await.unwrap();
+        let conn = self.sql.get().await.unwrap();
         let mut visible = events_of(
             &conn
                 .query(
@@ -214,7 +217,7 @@ impl Case<'_> {
                 if !self.main_known {
                     return;
                 }
-                let sql = POOL.get().unwrap();
+                let sql = self.sql;
                 let rewrite = matches!(step, Step::RewriteNextTurn(_));
                 if rewrite {
                     self.s.truncate(&p, 0).await.unwrap();
@@ -340,7 +343,7 @@ impl Case<'_> {
             }
             Step::SetMain => {
                 if !self.main_known {
-                    set_main(POOL.get().unwrap(), self.s.conversation, &p).await;
+                    set_main(self.sql, self.s.conversation, &p).await;
                     self.main_known = true;
                 }
             }
@@ -348,8 +351,6 @@ impl Case<'_> {
         self.check(&format!("{step:?}")).await;
     }
 }
-
-static POOL: std::sync::OnceLock<aviary_pg::Pool> = std::sync::OnceLock::new();
 
 fn events_of(rows: &[aviary_pg::Row]) -> Vec<(String, String)> {
     rows.iter().map(|r| (r.get(0), r.get(1))).collect()
@@ -380,7 +381,6 @@ async fn random_operation_sequences_match_the_model() {
     let t = common::Tokens::new();
     let r = common::replica(&db.url, &t).await;
     let sql = common::sql(&db.url);
-    let _ = POOL.set(sql.clone());
     let pool = pool();
     let seed: u64 = aviary_core::env::test_only("AVIARY_TEST_CCFS_SEED")
         .and_then(|v| v.parse().ok())
@@ -427,7 +427,6 @@ async fn fixed_regression_cases() {
     let t = common::Tokens::new();
     let r = common::replica(&db.url, &t).await;
     let sql = common::sql(&db.url);
-    let _ = POOL.set(sql.clone());
     let pool = pool();
     // AVIARY_TEST_CCFS_SEED=1793710934704315484 case 48: a user line whose `uuid` an overwrite damaged, written again
     // by the next person turn's rewrite before that turn's echo, took the echo (WP-29 review)
@@ -481,6 +480,7 @@ async fn run_case(
     let ctx = format!("case {case} (AVIARY_TEST_CCFS_SEED={seed}): {steps:?}");
     let mut c = Case {
         s: &mut s,
+        sql,
         model: Vec::new(),
         main_known,
         n: 0,
