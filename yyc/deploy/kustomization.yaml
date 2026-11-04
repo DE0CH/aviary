@@ -46,7 +46,6 @@ configMapGenerator:
     namespace: yyc-ai
     files:
       - labels.SKILL.md=hermit/skills/labels/SKILL.md
-      - labels.design-format.md=hermit/skills/labels/design-format.md
       - newswatch.SKILL.md=hermit/skills/newswatch/SKILL.md
       - web.SKILL.md=hermit/skills/web/SKILL.md
   - name: catalogue
