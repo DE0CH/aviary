@@ -1,0 +1,185 @@
+# The old stack in the old cluster (k3d aviary-old), namespace jarvis, as YYC's yyc-ai/legacy runs it where it matters
+# to the switch: two ui pods (the A1 image, rendezvous peers, the switch module on, the purge off), the web role and
+# sandbox agent stand-in (testing/lu-rig/old/fake-web.mjs, writing jarvis.sandboxes) and the mock model, both in
+# containers of the ui image; /jfs is the harness's JuiceFS mount, shared with the new cluster. run.sh fills the
+# __PLACEHOLDERS__.
+apiVersion: v1
+kind: Namespace
+metadata: {name: jarvis}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: jarvis-config, namespace: jarvis}
+data:
+  config.json: |
+    __CONFIG_JSON__
+  jwks.json: |
+    __JWKS_JSON__
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: rig, namespace: jarvis}
+data:
+  fake-web.mjs: |
+__FAKE_WEB__
+  mock-model.mjs: |
+__MOCK_MODEL__
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: model, namespace: jarvis}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: model}}
+  template:
+    metadata: {labels: {app: model}}
+    spec:
+      containers:
+        - name: model
+          image: __UI_IMAGE__
+          imagePullPolicy: Never
+          command: [node, /rig/mock-model.mjs]
+          env: [{name: PORT, value: "8080"}]
+          volumeMounts: [{name: rig, mountPath: /rig}]
+      volumes: [{name: rig, configMap: {name: rig}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: model, namespace: jarvis}
+spec:
+  selector: {app: model}
+  ports: [{port: 8080, targetPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: web, namespace: jarvis}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: web}}
+  template:
+    metadata: {labels: {app: web}}
+    spec:
+      containers:
+        - name: web
+          image: __UI_IMAGE__
+          imagePullPolicy: Never
+          command: [sh, -c, "mkdir -p /workspace /home/sandbox && exec node /rig/fake-web.mjs"]
+          env:
+            - {name: PORT, value: "8080"}
+            - {name: JARVIS_CC_TOKEN, value: "__CC__"}
+            - {name: MOCK_URL, value: "http://model.jarvis.svc.cluster.local:8080"}
+            - {name: SELF_URL, value: "http://web.jarvis.svc.cluster.local:8080"}
+            - {name: JARVIS_DB_URL, value: "__JARVIS_DB__"}
+            - {name: SANDBOX_IDLE_MS, value: "20000"}
+            - {name: JFS, value: /jfs}
+          securityContext: {privileged: true, runAsUser: 0}
+          readinessProbe: {httpGet: {path: /healthz, port: 8080}, periodSeconds: 2}
+          volumeMounts:
+            - {name: rig, mountPath: /rig}
+            - {name: jfs, mountPath: /jfs, mountPropagation: HostToContainer}
+      volumes:
+        - {name: rig, configMap: {name: rig}}
+        - {name: jfs, hostPath: {path: __JFS__, type: Directory}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: web, namespace: jarvis}
+spec:
+  selector: {app: web}
+  ports: [{port: 8080, targetPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: ui, namespace: jarvis, labels: {app: ui}}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: ui}}
+  strategy: {type: RollingUpdate, rollingUpdate: {maxSurge: 1, maxUnavailable: 0}}
+  template:
+    metadata: {labels: {app: ui}}
+    spec:
+      terminationGracePeriodSeconds: 120
+      securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000}
+      containers:
+        - name: ui
+          image: __UI_IMAGE__
+          imagePullPolicy: Never
+          ports: [{name: http, containerPort: 8080}]
+          env:
+            - {name: PORT, value: "8080"}
+            - {name: JARVIS_CONFIG, value: /etc/jarvis/config.json}
+            - {name: JARVIS_WEB_URL, value: "http://web.jarvis.svc.cluster.local:8080"}
+            - {name: JARVIS_JFS_ROOT, value: /jfs}
+            - {name: JARVIS_UI_HOME_ROOT, value: /var/lib/cloudcli/home}
+            - {name: JARVIS_UI_PEERS, value: ui-peers.jarvis.svc.cluster.local}
+            - name: POD_IP
+              valueFrom: {fieldRef: {fieldPath: status.podIP}}
+            - {name: JARVIS_UI_MAX_USERS, value: "8"}
+            - {name: JARVIS_UI_IDLE_MINUTES, value: "30"}
+            - {name: JARVIS_UI_DRAIN_SECONDS, value: "60"}
+            - {name: DATABASE_URL, value: "__CLOUDCLI_DB__"}
+            - {name: JWT_SECRET, value: legacy-in-a-box-jwt}
+            - {name: JARVIS_CC_TOKEN, value: "__CC__"}
+            - {name: JARVIS_SENT_FILES_TOKEN, value: legacy-in-a-box-sent}
+            - {name: JARVIS_UI_SWITCH_TOKEN, value: "__SWITCH__"}
+            - {name: JARVIS_UI_LU_TOKEN, value: "__LU__"}
+            - {name: JARVIS_UI_PASS_ON_URL, value: "__PASS_ON__"}
+            - {name: JARVIS_UI_PURGE, value: "off"}
+          readinessProbe: {httpGet: {path: /readyz, port: 8080}, periodSeconds: 2}
+          lifecycle: {preStop: {sleep: {seconds: 3}}}
+          volumeMounts:
+            - {name: config, mountPath: /etc/jarvis, readOnly: true}
+            - {name: home, mountPath: /var/lib/cloudcli/home}
+            - {name: tmp, mountPath: /tmp}
+            - {name: jfs, mountPath: /jfs, mountPropagation: HostToContainer}
+      volumes:
+        - {name: config, configMap: {name: jarvis-config}}
+        - {name: home, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+        - {name: jfs, hostPath: {path: __JFS__, type: Directory}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: ui, namespace: jarvis}
+spec:
+  type: NodePort
+  selector: {app: ui}
+  ports: [{name: http, port: 8080, targetPort: 8080, nodePort: 30080}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: ui-peers, namespace: jarvis}
+spec:
+  clusterIP: None
+  selector: {app: ui}
+  ports: [{name: http, port: 8080, targetPort: 8080}]
+---
+# the importer's access to the old API (bridge B7): the ui pods, exec for holds.js, proxy for the switch module
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: magpie-import, namespace: jarvis}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: magpie-import-token
+  namespace: jarvis
+  annotations: {kubernetes.io/service-account.name: magpie-import}
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: magpie-import, namespace: jarvis}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/exec, pods/proxy]
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: magpie-import, namespace: jarvis}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: magpie-import}
+subjects: [{kind: ServiceAccount, name: magpie-import, namespace: jarvis}]

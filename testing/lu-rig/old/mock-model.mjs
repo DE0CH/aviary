@@ -69,7 +69,10 @@ http.createServer((req, res) => {
       const n = Number(slow[1]);
       if (k < n && p.tools.some((t) => t.name === "Bash")) return toolUse(res, p, `sleep 1; echo chunk ${k + 1}`);
     }
-    const chunks = slow ? [`done ${slow[1]}`] : [main ? `Echo: ${prompt.slice(0, 80)}` : "Rig title"];
+    // a title names the persona token of the conversation's text when it has one (the persona drivers find it in
+    // the list by it)
+    const tag = /persona-[0-9a-f]{8}/.exec(JSON.stringify(p.messages || []))?.[0];
+    const chunks = slow ? [`done ${slow[1]}`] : [main ? `Echo: ${prompt.slice(0, 80)}` : tag ? `Rig ${tag}` : "Rig title"];
     const msg = { id: `msg_rig_${Date.now()}`, type: "message", role: "assistant", model: p.model || "claude-rig", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 1 } };
     if (!p.stream) {
       res.setHeader("content-type", "application/json");

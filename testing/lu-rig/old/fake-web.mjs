@@ -8,7 +8,10 @@
 // (CloudCLI keeps `headers` and drops the URL's path). Calls are logged as JSON lines on stdout and kept for
 // GET /__rig/calls (the rig's checks: which conversations ran, touches, warms, releases).
 //
-// Env: PORT (17070), JARVIS_CC_TOKEN (the ui's bearer), JFS (/jfs), MOCK_URL (the mock model), CLAUDE_BIN.
+// Env: PORT (17070), JARVIS_CC_TOKEN (the ui's bearer), JFS (/jfs), MOCK_URL (the mock model), CLAUDE_BIN, and
+// optionally JARVIS_DB_URL (legacy-in-a-box: the old `jarvis` database, whose `sandboxes` rows the importer's
+// release waits on): a sandbox's row is `running` from its first call and `gone` once no process of its
+// conversation has run for SANDBOX_IDLE_MS (default 20 s; the old janitor's 30 min, scaled).
 import { spawn } from "node:child_process";
 import { mkdirSync, chownSync } from "node:fs";
 import http from "node:http";
@@ -26,6 +29,26 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const calls = [];
 const procs = new Map(); // id -> {conversation, args, startedAt, exited}
 const owners = new Map(); // conversation -> owner email (from /internal/cc/sandbox)
+const IDLE_MS = Number(process.env.SANDBOX_IDLE_MS || 20000);
+let db = null;
+if (process.env.JARVIS_DB_URL) {
+  const pg = (await import("/app/node_modules/pg/lib/index.js")).default;
+  db = new pg.Pool({ connectionString: process.env.JARVIS_DB_URL, max: 4 });
+  await db.query("create table if not exists sandboxes (id text primary key, conversation_id uuid not null, owner text, status text not null, updated_at timestamptz not null default now())");
+}
+const lastUse = new Map(); // conversation -> ms of the last process start or exit
+const sandboxRow = async (conversation, owner, status) => {
+  if (!db) return;
+  await db.query("insert into sandboxes (id, conversation_id, owner, status) values ($1, $2, $3, $4) on conflict (id) do update set status = $4, updated_at = now()",
+    [`sbx-${conversation}`, conversation, owner, status]).catch((e) => log({ db: String(e.message) }));
+};
+if (db) setInterval(() => {
+  const now = Date.now();
+  for (const [c, at] of lastUse) {
+    const running = [...procs.values()].some((p) => p.conversation === c && !p.exited);
+    if (!running && now - at >= IDLE_MS) { lastUse.delete(c); log({ released: c }); void sandboxRow(c, owners.get(c), "gone"); }
+  }
+}, 1000).unref();
 let nextProc = 1;
 const log = (o) => { const e = { t: new Date().toISOString(), ...o }; calls.push(e); if (calls.length > 5000) calls.shift(); console.log(JSON.stringify(e)); };
 const frame = (t, b) => { const p = Buffer.isBuffer(b) ? b : Buffer.from(b ?? ""); const h = Buffer.alloc(5); h[0] = t; h.writeUInt32BE(p.length, 1); return Buffer.concat([h, p]); };
@@ -45,6 +68,8 @@ const server = http.createServer((req, res) => {
     if (req.url === "/internal/cc/sandbox") {
       if (!UUID.test(String(b.conversation))) return json(400, { error: "conversation must be a uuid" });
       owners.set(b.conversation, b.owner);
+      if (!lastUse.has(b.conversation)) void sandboxRow(b.conversation, b.owner, "running");
+      lastUse.set(b.conversation, Date.now());
       return json(200, { id: `sbx-${b.conversation.slice(0, 8)}`, url: SELF, token: AGENT_TOKEN, headers: { "x-rig-conversation": b.conversation } });
     }
     if (req.url.startsWith("/internal/cc/")) return json(200, { ok: true, hinted: false });
@@ -69,6 +94,8 @@ server.on("upgrade", (req, sock) => {
   if (args[0] === "claude") args[0] = CLAUDE;
   const id = nextProc++;
   procs.set(id, { conversation, args: spec.args.slice(0, 4), startedAt: new Date().toISOString(), exited: null });
+  if (!lastUse.has(conversation)) void sandboxRow(conversation, owner, "running");
+  lastUse.set(conversation, Date.now());
   log({ proc: id, conversation, args: spec.args.slice(0, 3), env: Object.keys(spec.env || {}) });
   sock.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: jarvis-proc\r\n\r\n");
   // a mount namespace of its own: /workspace is this conversation's folder, then uid 1000
@@ -84,6 +111,7 @@ server.on("upgrade", (req, sock) => {
   child.stderr.on("data", (d) => { if (!sock.destroyed) sock.write(frame(2, d)); });
   child.on("exit", (code, signal) => {
     procs.get(id).exited = { code, signal, at: new Date().toISOString() };
+    if (lastUse.has(conversation)) lastUse.set(conversation, Date.now());
     log({ proc: id, exit: code, signal });
     if (!sock.destroyed) sock.end(frame(3, JSON.stringify({ code, signal })));
   });

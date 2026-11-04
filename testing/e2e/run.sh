@@ -20,6 +20,10 @@ net=aviary-e2e
 subnet=172.30.0.0/24
 pg_ip=172.30.0.10
 s3_ip=172.30.0.11
+# the host ports of Postgres and S3 (the JuiceFS mounts use them); E2E_PG_PORT/E2E_S3_PORT on a host whose own
+# services hold the defaults (a shared build machine)
+pg_port=${E2E_PG_PORT:-15432}
+s3_port=${E2E_S3_PORT:-19000}
 # both JuiceFS mounts live under one folder the node shares (rshared), as in YYC: the hosts' mount (sandboxes'
 # /workspace, root-squash=1000:1000) and hermit's own (all-squash=1000:1000: everything hermit makes is the sandbox
 # user's, hermit spec 15.4)
@@ -51,10 +55,19 @@ node_import() { # node_import <image…>: into the node's containerd (k3d image 
     for i in "$@"; do
       docker image inspect "$i" >/dev/null 2>&1 || docker pull -q --platform linux/amd64 "$i" >/dev/null
       if ! docker save --platform linux/amd64 "$i" 2>/dev/null | docker exec -i "k3d-$cluster-server-0" ctr -n k8s.io images import --platform linux/amd64 - >/dev/null 2>&1; then
-        # an image Docker keeps without its amd64 manifest's layers: the registry's copy (crane)
-        crane pull --platform linux/amd64 "$i" "$work/preload.tar"
+        # an image Docker keeps without its amd64 manifest's layers: the registry's copy (crane), by a registry
+        # name of the same image when $i is a local tag (aviary-e2e/<name>:e2e of a release's ghcr.io image)
+        local src=$i ref
+        ref=$(docker image inspect -f '{{range .RepoTags}}{{println .}}{{end}}' "$i" 2>/dev/null | grep -m1 -E '^(ghcr\.io|docker\.io|quay\.io)/' || true)
+        [ -n "$ref" ] && src=$ref
+        crane pull --platform linux/amd64 "$src" "$work/preload.tar"
         docker exec -i "k3d-$cluster-server-0" ctr -n k8s.io images import - < "$work/preload.tar" >/dev/null
         rm -f "$work/preload.tar"
+        if [ "$src" != "$i" ]; then
+          local want=$i
+          case $want in */*/*) ;; */*) want=docker.io/$want ;; *) want=docker.io/library/$want ;; esac
+          docker exec "k3d-$cluster-server-0" ctr -n k8s.io images tag --force "$src" "$want" >/dev/null
+        fi
       fi
     done
   else
@@ -83,7 +96,7 @@ ENV
     -keyout "$pgdir/server.key" -out "$pgdir/server.crt" 2>/dev/null
   printf '%s\n' "$pg_password" > "$pgdir/pw"
   chmod 0755 "$pgdir" && chmod 0644 "$pgdir"/*
-  docker run -d --name aviary-e2e-pg --network "$net" --ip "$pg_ip" -p 127.0.0.1:15432:5432 -v "$pgdir:/ci:ro" \
+  docker run -d --name aviary-e2e-pg --network "$net" --ip "$pg_ip" -p "127.0.0.1:${pg_port}:5432" -v "$pgdir:/ci:ro" \
     "$pg_image" bash -ec '
     bin=$(ls -d /usr/lib/postgresql/*/bin)
     "$bin/initdb" -D /tmp/pgdata -U postgres --pwfile=/ci/pw -A scram-sha-256 >/dev/null
@@ -101,22 +114,22 @@ ENV
   local s3dir=$work/s3
   mkdir -p "$s3dir/magpie" "$s3dir/jfs"
   chmod -R 0777 "$s3dir"
-  docker run -d --name aviary-e2e-s3 --network "$net" --ip "$s3_ip" -p 127.0.0.1:19000:9000 -v "$s3dir:/data" \
+  docker run -d --name aviary-e2e-s3 --network "$net" --ip "$s3_ip" -p "127.0.0.1:${s3_port}:9000" -v "$s3dir:/data" \
     "$s3_image" --access "$s3_access" --secret "$s3_secret" --region us-east-1 --port :9000 posix /data >/dev/null
-  wait_for 60 s3 curl -s -o /dev/null http://127.0.0.1:19000/
+  wait_for 60 s3 curl -s -o /dev/null "http://127.0.0.1:${s3_port}/"
   # JuiceFS: meta in Postgres jfs, data in bucket jfs, mounted where the node and hermit see /workspace folders
-  META_PASSWORD=$jfs_password timeout 120 juicefs format --storage s3 --bucket http://127.0.0.1:19000/jfs \
+  META_PASSWORD=$jfs_password timeout 120 juicefs format --storage s3 --bucket "http://127.0.0.1:${s3_port}/jfs" \
     --access-key "$s3_access" --secret-key "$s3_secret" \
-    "postgres://jfs@127.0.0.1:15432/jfs?sslmode=require" aviary-e2e >"$work/juicefs-format.log" 2>&1 \
+    "postgres://jfs@127.0.0.1:${pg_port}/jfs?sslmode=require" aviary-e2e >"$work/juicefs-format.log" 2>&1 \
     || { cat "$work/juicefs-format.log" >&2; die "juicefs format failed"; }
   sudo mkdir -p "$mnt"
   mountpoint -q "$mnt" || sudo mount --bind "$mnt" "$mnt"
   sudo mount --make-rshared "$mnt"
   sudo mkdir -p "$jfs" "$jfs_hermit"
   sudo env META_PASSWORD="$jfs_password" timeout 120 juicefs mount -d --log "$work/juicefs.log" \
-    --root-squash 1000:1000 "postgres://jfs@127.0.0.1:15432/jfs?sslmode=require" "$jfs" >/dev/null
+    --root-squash 1000:1000 "postgres://jfs@127.0.0.1:${pg_port}/jfs?sslmode=require" "$jfs" >/dev/null
   sudo env META_PASSWORD="$jfs_password" timeout 120 juicefs mount -d --log "$work/juicefs-hermit.log" \
-    --all-squash 1000:1000 "postgres://jfs@127.0.0.1:15432/jfs?sslmode=require" "$jfs_hermit" >/dev/null
+    --all-squash 1000:1000 "postgres://jfs@127.0.0.1:${pg_port}/jfs?sslmode=require" "$jfs_hermit" >/dev/null
   wait_for 30 "the JuiceFS mount" mountpoint -q "$jfs"
   wait_for 30 "hermit's JuiceFS mount" mountpoint -q "$jfs_hermit"
   # the top folder is the sandbox user's (YYC's one-time jfs-owner Job, hermit spec 15.4)

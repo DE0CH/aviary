@@ -20,8 +20,8 @@ machine whose containers cannot pull (an IPv6-only build host).
 
 | Piece | Where | Notes |
 |---|---|---|
-| Postgres 17.11 (the production image, TLS, scram) | container `aviary-e2e-pg` on Docker network `aviary-e2e` (172.30.0.10), host port 15432 | databases and roles `magpie`, `hermit`, `jfs` |
-| S3 (versitygw 1.9.0) | container `aviary-e2e-s3` (172.30.0.11), host port 19000 | buckets `magpie`, `jfs` (MinIO publishes no image any more, `.github/ci/s3.sh`) |
+| Postgres 17.11 (the production image, TLS, scram) | container `aviary-e2e-pg` on Docker network `aviary-e2e` (172.30.0.10), host port 15432 (`E2E_PG_PORT`) | databases and roles `magpie`, `hermit`, `jfs` |
+| S3 (versitygw 1.9.0) | container `aviary-e2e-s3` (172.30.0.11), host port 19000 (`E2E_S3_PORT`) | buckets `magpie`, `jfs` (MinIO publishes no image any more, `.github/ci/s3.sh`) |
 | JuiceFS | two host mounts under `/mnt/aviary` (rshared, shared with the node) | `jfs` with `root-squash=1000:1000` (the hosts' mount: sandboxes' `/workspace`), `jfs-hermit` with `all-squash=1000:1000` (hermit's `/jfs`), as hermit spec 15.4 has them in YYC; `ws/` owned by 1000 (YYC's jfs-owner Job) |
 | k3d cluster `aviary-e2e` | rancher/k3s:v1.36.5-k3s1, one server | Calico (NetworkPolicy, and Pods at fixed addresses), traefik off |
 | pigeon x2, magpie x2, hermit x2, test-gateway x2 | Deployments of the images under test | env is secrets only; `SSL_CERT_FILE` (the harness CA) for pigeon (fake-access) and hermit (the stand-in EC2) |

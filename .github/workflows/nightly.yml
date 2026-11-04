@@ -127,6 +127,60 @@ jobs:
         if: always()
         run: testing/lu-rig/run.sh down
 
+  legacy-in-a-box:
+    # WP-54 (DESIGN 9.9): the switch window on one machine, testing/legacy-in-a-box: the release's new stack (the
+    # e2e harness) and the old stack of the A1 ui image (testing/lu-rig/ui-image.txt) in a second k3d cluster, the
+    # bridges, the bulk import, then the persona drivers of DE0CH/claudecodeui at that image's commit with its persona
+    # build (clean must pass, each seeded defect must be caught). Not gating anything until the whole rig passes
+    # (testing/legacy-in-a-box/run.sh says what is not done yet).
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+      - name: the ui image's commit
+        id: ui
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          image=$(cat testing/lu-rig/ui-image.txt)
+          sha=$(gh api "repos/DE0CH/claudecodeui/commits/${image##*:}" --jq .sha)
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: DE0CH/claudecodeui
+          ref: ${{ steps.ui.outputs.sha }}
+          path: claudecodeui
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.23.4
+      - run: .github/ci/e2e-tools.sh
+      - run: .github/ci/release-images.sh "${{ needs.release.outputs.sha12 }}"
+      - name: the persona build
+        run: timeout 2400 claudecodeui/jarvis/test/persona/build.sh "$RUNNER_TEMP/persona-web"
+      - name: up
+        run: timeout 3000 testing/legacy-in-a-box/run.sh up "${{ needs.release.outputs.sha12 }}" "${{ steps.ui.outputs.image }}"
+      - name: smoke
+        run: timeout 900 testing/legacy-in-a-box/run.sh smoke
+      - name: personas
+        run: timeout 2400 testing/legacy-in-a-box/run.sh personas claudecodeui "$RUNNER_TEMP/persona-web"
+      - name: logs
+        if: failure()
+        run: timeout 600 testing/legacy-in-a-box/run.sh logs "$RUNNER_TEMP/box"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: legacy-in-a-box
+          path: ${{ runner.temp }}/box/
+          if-no-files-found: warn
+      - name: down
+        if: always()
+        run: timeout 600 testing/legacy-in-a-box/run.sh down
+
   e2e-chaos:
     # platform 6.2: the harness for 60 min with two people sending turns continuously while pigeon, magpie, hermit and
     # the gateway roll in random order every 2-5 min and a random supervisor is killed every 10 min (the driver's

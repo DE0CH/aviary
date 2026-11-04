@@ -1,1 +1,1 @@
-ghcr.io/de0ch/yyc-ai-ui:07b81b309f52
+ghcr.io/de0ch/yyc-ai-ui:ed505c4e6e7d
