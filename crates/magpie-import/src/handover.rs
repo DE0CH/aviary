@@ -210,9 +210,6 @@ pub struct Handover {
     reads: VecDeque<Read>,
     seen: uploads::Seen,
     last_warm: Option<tokio::time::Instant>,
-    /// Released conversations whose sources differ from their record, by the stats they were last checked at (a
-    /// change is checked, and its mismatches counted, once).
-    released_checked: BTreeMap<Uuid, crate::verify::Stats>,
 }
 
 impl std::fmt::Debug for Handover {
@@ -243,7 +240,6 @@ impl Handover {
             reads: VecDeque::new(),
             seen: uploads::Seen::new(),
             last_warm: None,
-            released_checked: BTreeMap::new(),
         }
     }
 
@@ -420,16 +416,16 @@ impl Handover {
     }
 
     /// Every released conversation (but a forced release, whose later writes are the cut-off turn's, cutover 7.10)
-    /// whose source files' stats differ from what its release recorded, at stats this process has not checked it
-    /// at: the released check (`verify`'s, which hashes the files) runs and counts each file the old side wrote in
+    /// whose source files' stats differ from what its release recorded, at stats it was not checked at before
+    /// (`import_sources.released_checked`, kept across processes): the released check (`verify`'s, which hashes the files) runs and counts each file the old side wrote in
     /// `magpie_import_verify_mismatch_total`. A stat alone is cheap; a file is hashed only after its stat changed, and
     /// a change is counted once (a later write changes the stats again and is checked again). Answers how many
     /// conversations were checked.
-    async fn check_released(&mut self, imp: &Importer) -> usize {
+    async fn check_released(&self, imp: &Importer) -> usize {
         let rows = match imp.magpie.pool.get().await {
             Ok(c) => c
                 .query(
-                    "select conversation_id, user_key, provider_session, files from import_sources
+                    "select conversation_id, user_key, provider_session, files, released_checked from import_sources
                      where released_at is not null and release_reason is distinct from 'forced'",
                     &[],
                 )
@@ -445,7 +441,6 @@ impl Handover {
             }
         };
         let mut checked = 0;
-        let mut differing = std::collections::BTreeSet::new();
         for r in &rows {
             let id: Uuid = r.get(0);
             let Ok(files) = serde_json::from_value::<crate::sync::Files>(r.get(3)) else {
@@ -459,11 +454,10 @@ impl Handover {
                     continue;
                 }
             };
-            if recorded == now {
-                continue;
-            }
-            differing.insert(id);
-            if self.released_checked.get(&id) == Some(&now) {
+            let before: Option<crate::verify::Stats> = r
+                .get::<_, Option<serde_json::Value>>(4)
+                .and_then(|v| serde_json::from_value(v).ok());
+            if recorded == now || before.as_ref() == Some(&now) {
                 continue;
             }
             checked += 1;
@@ -478,9 +472,22 @@ impl Handover {
                     continue;
                 }
             }
-            self.released_checked.insert(id, now);
+            let stats = serde_json::to_value(&now).unwrap_or_default();
+            let saved = match imp.magpie.pool.get().await {
+                Ok(c) => c
+                    .execute(
+                        "update import_sources set released_checked = $2 where conversation_id = $1",
+                        &[&id, &stats],
+                    )
+                    .await
+                    .map(drop)
+                    .map_err(Error::from),
+                Err(e) => Err(Error::from(e)),
+            };
+            if let Err(e) = saved {
+                tracing::warn!(conversation = %id, error = %e, "a released check's stats not kept (checked again)");
+            }
         }
-        self.released_checked.retain(|id, _| differing.contains(id));
         checked
     }
 

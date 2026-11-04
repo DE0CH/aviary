@@ -442,6 +442,15 @@ async fn the_loop_counts_an_old_side_write_to_a_released_conversation_once() {
         before + 1,
         "a change counted once"
     );
+    // a restart or another leader: the same write is not counted again
+    let mut h2 = Handover::new(kube.clone(), "sw".into());
+    h2.pass(&w.imp).await.unwrap();
+    assert_eq!(h2.status.read().await.pass.released_changed, 0);
+    assert_eq!(
+        w.imp.magpie.legacy.verify_mismatches(),
+        before + 1,
+        "not counted again by a new process"
+    );
     // a new file in its session folder: the stats change again, checked again (the transcript and the new file)
     w.put(
         &ka,
