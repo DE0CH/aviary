@@ -77,8 +77,8 @@ driver on the containerd image store refuses it ("conflicts with unpack"). Elsew
   `curl` the `echo` skill shows; fake-tools' record (`GET /tools`) must have that call with the tools pair bearer,
   the sandbox owner as `Aviary-Sandbox-Person` and the conversation, and its answer must be the Bash result in the
   transcript. The managed files (`CLAUDE.md`, `managed-settings.json`, `.claude/skills/echo/SKILL.md`) are root's
-  0644, there is no `managed-mcp.json`, Claude Code's init message lists no MCP server and no `mcp__*` tool, and the
-  skill's description reaches the model (mock-model's record of the last user message's text).
+  0644, there is no `managed-mcp.json`, Claude Code's init message lists no MCP server and no `mcp__*` tool, and its
+  init message lists the skill `echo` among its `skills` (managed skills load under `--setting-sources=`).
 - **Docker on demand under runc** needs `/var/lib/docker` on a volume (overlay snapshots cannot sit on the
   container's overlay root); in a sandbox it is on the scratch disk.
 - **Built in the images job.** ci.yml's `images` job builds it as `hermit-sandbox:<sha12>` from `build`'s `dist`

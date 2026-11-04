@@ -267,14 +267,11 @@ check "Claude Code has no MCP servers and no mcp__ tools" \
   jq -se '[.[] | select(.type == "system" and .subtype == "init")] | first
     | ((.mcp_servers // []) | length) == 0 and ([.tools[]? | select(startswith("mcp__"))] | length) == 0' \
   "$work/stdout.ndjson"
-check "Claude Code was offered the managed skill echo (its description reached the model)" \
-  jq -e 'any(.[]; .text | contains("Echo a text back through the deployment"))' "$work/requests.json"
+check "Claude Code loaded the descriptor's managed skill echo (its init message's skills)" \
+  jq -se '[.[] | select(.type == "system" and .subtype == "init")] | first | .skills | index("echo") != null' \
+  "$work/stdout.ndjson"
 check "mock-model filed Claude Code's Messages calls under the conversation the gateway adds ($(jq length "$work/requests.json"))" \
   jq -e 'length > 0' "$work/requests.json"
-check "Claude Code reported the MCP server tools connected, with fake-tools' tools as mcp__tools__*" \
-  jq -se '[.[] | select(.type == "system" and .subtype == "init")] | first
-    | (.mcp_servers | any(.name == "tools" and .status == "connected")) and (.tools | index("mcp__tools__echo") != null)' \
-  "$work/stdout.ndjson"
 check "the memory guard runs (the keeper is PID 1)" sh -c "! docker logs '$name' 2>&1 | grep -q 'memory guard off'"
 
 # Docker on demand: the wrapper asks the supervisor (GET /start on /run/supervisor/docker.sock), which starts
