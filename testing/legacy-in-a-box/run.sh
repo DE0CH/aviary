@@ -330,8 +330,10 @@ counters() {
     case $who in
       pigeon|magpie)
         local sel; [ "$who" = pigeon ] && sel=app=pigeon || sel="app in (magpie,import)"
-        # the running pods only (the box's Jobs carry app=import too)
-        for p in $(knew -n aviary-e2e get pods -l "$sel" --field-selector=status.phase=Running -o jsonpath='{.items[*].metadata.name}'); do
+        # the running pods only (the box's Jobs carry app=import too), not those being deleted: a rollout's old pod
+        # stays Running while it terminates and still exports what the fresh one no longer counts (reset's check)
+        for p in $(knew -n aviary-e2e get pods -l "$sel" --field-selector=status.phase=Running -o json \
+            | jq -r '.items[] | select(.metadata.deletionTimestamp == null) | .metadata.name'); do
           v=$( (knew get --raw "/api/v1/namespaces/aviary-e2e/pods/$p:9090/proxy/metrics" 2>/dev/null || true) \
             | awk -v s="$series" 'index($0, s " ") == 1 {print $2}' | head -1)
           total=$(python3 -c "print(int(float('${v:-0}')) + $total)")
