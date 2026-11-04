@@ -13,6 +13,9 @@ arm=$2
 sha12=$3
 out=$4
 echo '{}' > "$out"
+# release.sh reads hermit-sandbox's labels from the local image, so it is loaded even when its tag exists (a re-run)
+[ -s "$dir/hermit-sandbox.tar" ] || { echo "publish-images: no $dir/hermit-sandbox.tar" >&2; exit 1; }
+docker load -q -i "$dir/hermit-sandbox.tar" >/dev/null
 push() { # push <local image> <remote>: prints the pushed manifest's digest
   docker tag "$1" "$2"
   local log digest
@@ -27,9 +30,6 @@ for name in pigeon magpie hermit sandboxd aviary-testing hermit-sandbox; do
   if digest=$(docker buildx imagetools inspect "$remote" --format '{{json .Manifest.Digest}}' 2>/dev/null | jq -r .); then
     echo "$remote exists ($digest): not pushed again"
   elif [ "$name" = hermit-sandbox ]; then
-    tar=$dir/$name.tar
-    [ -s "$tar" ] || { echo "publish-images: no $tar" >&2; exit 1; }
-    docker load -q -i "$tar" >/dev/null
     digest=$(push "$name:$sha12" "$remote")
   else
     refs=()
