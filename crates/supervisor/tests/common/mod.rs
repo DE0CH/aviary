@@ -63,6 +63,7 @@ impl Fakes {
                     tools: token("t"),
                     model: token("m"),
                 },
+                routes: Vec::new(),
                 callers: Callers::new([(Caller::Pigeon, vec![token("p")]), (Caller::Hermit, vec![token("h")])])
                     .unwrap(),
                 self_hosts: vec![],

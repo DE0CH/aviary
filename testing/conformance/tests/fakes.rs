@@ -12,6 +12,7 @@ async fn the_refuse_phase_refuses_connects_on_hermits_own_listener() {
             hermit: "h".into(),
             tools: "t".into(),
             model: "x".into(),
+            route: None,
         },
         Vec::new(),
     );

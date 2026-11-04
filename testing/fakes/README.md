@@ -65,9 +65,10 @@ title one id (as YYC's `egress.json` does), one shaped like the supervisor's tit
 
 ## fake-tools
 
-A Streamable-HTTP MCP server at `/mcp` with `echo` and `slow_echo` behind the tools pair tokens (one per line of
-the token file, for a rotation), with sessions (400 without one, 404 for an unknown or ended one; `DELETE` ends
-it), recording calls with `Aviary-Sandbox-Person` (`GET /__calls`). The token file is read again on every request, so a
+The tools REST API (decision 15, the shape of jarvis3's tools): `GET /v1/tools`, `POST /v1/tools/<name>` (JSON
+arguments; the text as `text/plain`; 400 bad arguments, 404 an unknown tool) and `GET /v1/openapi.json`, with `echo`
+and `slow_echo` behind the tools pair tokens (one per line of the token file, for a rotation), recording calls with
+`Aviary-Sandbox-Person` and `Aviary-Sandbox-Conversation` (`GET /__calls`). The token file is read again on every request, so a
 rotation is driven by changing the mounted Secret (current plus `_NEXT`, then the next one alone) without a
 restart; an unreadable or empty file keeps the last tokens. `fake-tools --listen 0.0.0.0:80 --token-file <path>`.
 

@@ -14,7 +14,10 @@
     ]
   },
   "claude": {
-    "managedClaudeMd": "You are the deployment's assistant.\n\nThe workspace holds 1 GiB and 1000 files."
+    "managedClaudeMd": "You are the deployment's assistant.\n\nThe workspace holds 1 GiB and 1000 files.",
+    "managedSkills": {
+      "echo/SKILL.md": "---\nname: echo\ndescription: Echo a text back through the deployment's tools API. Use it when asked to call the echo tool.\n---\n\n# Echo\n\n```sh\ncurl -sS -H 'Content-Type: application/json' http://tools/v1/tools/echo -d '{\"text\": \"hello\"}'\n```\n\n`GET http://tools/v1/tools` lists every tool with its arguments.\n"
+    }
   },
   "title": {
     "system": "Write a short title for this conversation."

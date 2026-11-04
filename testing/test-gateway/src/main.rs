@@ -3,7 +3,8 @@
 //! Upstreams and listeners are flags (the harness's Service names are the defaults); the credentials are the
 //! environment: `GATEWAY_TOKEN_MAGPIE`, `GATEWAY_TOKEN_HERMIT`, `GATEWAY_TOKEN_TOOLS` (the pair tokens it presents),
 //! `GATEWAY_MODEL_KEY` (sent to the model upstream as `x-api-key`), `GATEWAY_ACCEPT_PIGEON` and
-//! `GATEWAY_ACCEPT_HERMIT` (the in-cluster API's callers).
+//! `GATEWAY_ACCEPT_HERMIT` (the in-cluster API's callers). A configured route (`--route`, platform 3.11.8) presents
+//! `Authorization: Bearer $GATEWAY_ROUTE_TOKEN_<NAME>` (the name uppercased, `-` as `_`).
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -35,6 +36,9 @@ struct Args {
     /// The `model` route's upstream.
     #[arg(long, default_value = "http://mock-model")]
     model: String,
+    /// A configured route (3.11.8): `<name>=<upstream base>,<path prefix>[,<path prefix>…]`; repeatable.
+    #[arg(long = "route")]
+    routes: Vec<String>,
     /// A host that is the proxy itself (its VIP, a Service name); repeatable.
     #[arg(long = "self-host")]
     self_hosts: Vec<String>,
@@ -67,6 +71,11 @@ async fn main() -> anyhow::Result<()> {
         tools: outbound_token("GATEWAY", "TOOLS"),
         model: env::required("GATEWAY_MODEL_KEY"),
     };
+    let routes = args
+        .routes
+        .iter()
+        .map(|r| configured_route(r))
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let callers = Callers::from_env("GATEWAY", &[Caller::Pigeon, Caller::Hermit]);
     let mut registry = ops::registry(&build);
     let cfg = test_gateway::Config {
@@ -79,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
             model: args.model,
         },
         credentials,
+        routes,
         callers,
         self_hosts: args.self_hosts,
         ops_summary,
@@ -111,4 +121,22 @@ async fn main() -> anyhow::Result<()> {
     );
     let outcome = d.run(&mut drain::Signals::os()?).await;
     drain::exit(outcome)
+}
+
+/// `<name>=<upstream base>,<prefix>[,<prefix>…]` and its credential from the environment.
+fn configured_route(flag: &str) -> anyhow::Result<test_gateway::ConfiguredRoute> {
+    let (name, rest) = flag.split_once('=').context("--route <name>=<upstream>,<prefix>…")?;
+    let mut parts = rest.split(',');
+    let upstream = parts
+        .next()
+        .filter(|u| !u.is_empty())
+        .context("--route: the upstream")?;
+    let prefixes: Vec<&str> = parts.collect();
+    let route = gateway_api::routes::Route::new(name, &prefixes)?;
+    let var = format!("GATEWAY_ROUTE_TOKEN_{}", name.to_ascii_uppercase().replace('-', "_"));
+    Ok(test_gateway::ConfiguredRoute {
+        route,
+        upstream: upstream.to_owned(),
+        credential: (hyper::header::AUTHORIZATION, format!("Bearer {}", env::required(&var))),
+    })
 }

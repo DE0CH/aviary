@@ -77,6 +77,7 @@ pub fn descriptor(core: &Core, e: &Entry) -> Option<SandboxSelf> {
         },
         claude: Claude {
             managed_claude_md: cfg.managed_claude_md.clone(),
+            managed_skills: cfg.managed_skills.clone(),
         },
         title: Title {
             system: cfg.title_system.clone(),

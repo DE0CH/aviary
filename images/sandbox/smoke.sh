@@ -6,10 +6,12 @@
 # 2. the real thing: the image's keeper (PID 1) and supervisor against fuse-rig's world (fake hermit and fake
 #    magpie behind the reference test gateway) and mock-model, all on the host's loopback (the container shares the
 #    host's network, so the sandbox token's source address is 127.0.0.1). A magpie `start_turn` makes the supervisor
-#    mount ~/.claude and launch Claude Code; the turn's model and MCP calls must reach mock-model and fake-tools
-#    through the gateway's proxy as absolute-form `http://model/…` and `http://tools/mcp` requests (the container has
-#    no address for either name, and only the gateway adds the verified `Aviary-Sandbox-Conversation` mock-model
-#    files them under). Then Docker on demand through /run/supervisor/docker.sock, and a runtime stop.
+#    mount ~/.claude and launch Claude Code with the descriptor's managed skills; the turn's model calls, and the
+#    `curl http://tools/v1/tools/echo` its Bash runs (decision 15: tools are REST, no MCP), must reach mock-model and
+#    fake-tools through the gateway's proxy as absolute-form `http://model/…` and `http://tools/v1/tools/echo`
+#    requests (the container has no address for either name, and only the gateway adds the verified
+#    `Aviary-Sandbox-*` headers mock-model and fake-tools file them under). Then Docker on demand through
+#    /run/supervisor/docker.sock, and a runtime stop.
 # Usage: smoke.sh <image> <dir with the static mock-model and fuse-rig of the same commit>
 # SMOKE_RUNTIME names a Docker runtime for part 2's sandbox container (ci.yml's `gvisor` job: runsc, the fork's
 # release, so the supervisor's FUSE mount and Claude Code run in gVisor as on a host); SMOKE_PARTS=2 skips part 1.
@@ -201,20 +203,16 @@ fi
 check "the container has no address for model or tools: only the proxy reaches them" \
   x sh -c '! getent hosts model && ! getent hosts tools'
 
-# the turn's model replies: load the deferred MCP tool (Claude Code 2.1.304 defers MCP tools behind ToolSearch), call
-# it, then (unscripted) "ok"; matched to Claude Code's model, not the title model the supervisor's title call uses
+# the turn's model replies: a Bash call that runs the echo skill's curl through the proxy (the sandbox's http_proxy),
+# then (unscripted) "ok"; matched to Claude Code's model, not the title model the supervisor's title call uses
 default_model=$(curl -sf http://127.0.0.1:7200/v1/aviary/models | jq -r .default)
+tool_curl="curl -sS -H 'Content-Type: application/json' http://tools/v1/tools/echo -d '{\"text\": \"smoke-echo\"}'"
 # shellcheck disable=SC2317 # run by check
 script_turn() {
-  local entry
-  for entry in \
+  jq -nc --arg c "$cid" --arg m "$default_model" --arg cmd "$tool_curl" \
     '{match: {conversation: $c, model: $m, textContains: "smoke-echo"},
-      reply: [{toolUse: {name: "ToolSearch", input: {query: "select:mcp__tools__echo", max_results: 1}}}]}' \
-    '{match: {conversation: $c, model: $m}, reply: [{toolUse: {name: "mcp__tools__echo", input: {text: "smoke-echo"}}}]}'
-  do
-    jq -nc --arg c "$cid" --arg m "$default_model" "$entry" |
-      curl -sf -X POST -H 'content-type: application/json' --data @- http://127.0.0.1:7200/__script -o /dev/null || return 1
-  done
+      reply: [{toolUse: {name: "Bash", input: {command: $cmd, description: "Call the echo tool"}}}]}' |
+    curl -sf -X POST -H 'content-type: application/json' --data @- http://127.0.0.1:7200/__script -o /dev/null
 }
 check "mock-model took the turn's script (Claude Code's model: $default_model)" script_turn
 turn=$(curl -sf -X POST -H 'content-type: application/json' --data '{"text":"Call the echo tool with smoke-echo."}' \
@@ -234,38 +232,43 @@ claude_pid=$(x sh -c 'for p in /proc/[0-9]*; do
 done' | head -1)
 check "Claude Code runs as uid 1000 from /opt/claude-code/bin/claude (pid ${claude_pid:-none})" \
   x sh -c "test -n '$claude_pid' && test \"\$(awk '/^Uid:/ {print \$2}' /proc/$claude_pid/status)\" = 1000"
-check "the managed files are root's, 0644" x sh -c '
-  for f in CLAUDE.md managed-settings.json managed-mcp.json; do
+check "the managed files and the descriptor's skill are root's, 0644 (folders 0755)" x sh -c '
+  for f in CLAUDE.md managed-settings.json .claude/skills/echo/SKILL.md; do
     test "$(stat -c "%U %a" /etc/claude-code/$f)" = "root 644" || exit 1
+  done
+  for d in .claude .claude/skills .claude/skills/echo; do
+    test "$(stat -c "%U %a" /etc/claude-code/$d)" = "root 755" || exit 1
   done'
+check "no managed-mcp.json: Claude Code has no MCP servers (decision 15)" x sh -c '! test -e /etc/claude-code/managed-mcp.json'
 curl -sf "http://127.0.0.1:7200/__requests?conversation=$cid" > "$work/requests.json"
 curl -sf http://127.0.0.1:7300/gateway > "$work/gateway.json"
 curl -sf http://127.0.0.1:7300/tools > "$work/tools.json"
 echo "  the gateway saw (method, target, User-Agent, status):"
 jq -r '.[] | "    \(.method) \(.target) \(.userAgent // "-") \(.status)"' "$work/gateway.json" | sort | uniq -c
-echo "  fake-tools answered, in order (method, JSON-RPC method, Mcp-Session-Id sent, status, User-Agent):"
-jq -r '.[] | "    \(.method) \(.rpc // "-") session=\(.session) \(.status) \(.userAgent // "-")"' "$work/tools.json"
+echo "  fake-tools answered, in order (method, path, status, User-Agent):"
+jq -r '.[] | "    \(.method) \(.path) \(.status) \(.userAgent // "-")"' "$work/tools.json"
 # Claude Code's own calls, told apart from the supervisor's (`User-Agent: supervisor/<sha12>`, its title and model
 # calls take the same proxy) by their User-Agent: absolute-form requests to the fixed names, answered 200
 cc='(.userAgent // "") as $ua | ($ua != "") and ($ua | startswith("supervisor/") | not)'
 check "the gateway proxied Claude Code's POST http://model/v1/messages (absolute form, not the supervisor's)" \
   jq -e "any(.[]; .method == \"POST\" and (.target | test(\"^http://model/v1/messages([?]|\$)\")) and .status == 200 and ($cc))" "$work/gateway.json"
-check "the gateway proxied Claude Code's POST http://tools/mcp (absolute form)" \
-  jq -e "[.[] | select(.method == \"POST\" and .target == \"http://tools/mcp\" and (.status | . >= 200 and . < 300) and ($cc))] | length >= 2" "$work/gateway.json"
-check "fake-tools got Claude Code's initialize and tools/list on /mcp through the gateway" \
-  jq -e "[.[] | select(.path == \"/mcp\" and ($cc)) | .rpc] | index(\"initialize\") != null and index(\"tools/list\") != null" "$work/tools.json"
-# Claude Code 2.1.304 first probes `server/discover` without a session (400, as from the MCP SDK's Streamable-HTTP
-# server, which needs `initialize` first), then initializes; a GET for a server stream is 405 (fake-tools offers none)
-check "fake-tools' only non-2xx answers are the session-less server/discover probe (400) and the stream GET (405)" \
-  jq -e "[.[] | select(.path == \"/mcp\" and ($cc) and (.status | . < 200 or . >= 300)) | \"\\(.method) \\(.rpc) \\(.status)\"]
-    - [\"POST server/discover 400\", \"GET null 405\"] == []" "$work/tools.json"
-check "Claude Code's tools/call reached fake-tools through the gateway with its session and was answered 200" \
-  jq -e "any(.[]; .path == \"/mcp\" and .rpc == \"tools/call\" and .session and .status == 200 and ($cc))" "$work/tools.json"
-check "the transcript has mcp__tools__echo's result, smoke-echo, not an error" \
-  jq -se '([.[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use" and .name == "mcp__tools__echo") | .id]) as $ids
+check "the gateway proxied the Bash curl's POST http://tools/v1/tools/echo (absolute form), answered 200" \
+  jq -e 'any(.[]; .method == "POST" and .target == "http://tools/v1/tools/echo" and .status == 200 and ((.userAgent // "") | startswith("curl/")))' "$work/gateway.json"
+check "fake-tools got the echo call with the tools pair bearer, the owner as Aviary-Sandbox-Person and the conversation" \
+  jq -e --arg c "$cid" 'any(.[]; .method == "POST" and .path == "/v1/tools/echo" and .status == 200 and .bearer
+    and .person == "staff@example.org" and .conversation == $c and (.body | fromjson | .text) == "smoke-echo" and .answer == "smoke-echo")' \
+  "$work/tools.json"
+check "the transcript has the Bash call's result, smoke-echo, not an error" \
+  jq -se '([.[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use" and .name == "Bash") | .id]) as $ids
     | ($ids | length) > 0 and any(.[] | select(.type == "user") | .message.content[]? | select(.type == "tool_result");
         (.tool_use_id as $t | $ids | index($t) != null) and (.is_error != true) and (tostring | contains("smoke-echo")))' \
   "$work/stdout.ndjson"
+check "Claude Code has no MCP servers and no mcp__ tools" \
+  jq -se '[.[] | select(.type == "system" and .subtype == "init")] | first
+    | ((.mcp_servers // []) | length) == 0 and ([.tools[]? | select(startswith("mcp__"))] | length) == 0' \
+  "$work/stdout.ndjson"
+check "Claude Code was offered the managed skill echo (its description reached the model)" \
+  jq -e 'any(.[]; .text | contains("Echo a text back through the deployment"))' "$work/requests.json"
 check "mock-model filed Claude Code's Messages calls under the conversation the gateway adds ($(jq length "$work/requests.json"))" \
   jq -e 'length > 0' "$work/requests.json"
 check "Claude Code reported the MCP server tools connected, with fake-tools' tools as mcp__tools__*" \

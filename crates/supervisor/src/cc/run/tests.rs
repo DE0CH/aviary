@@ -431,6 +431,7 @@ async fn world() -> World {
             tools: token("tools"),
             model: token("model"),
         },
+        routes: Vec::new(),
         callers: Callers::new([(Caller::Pigeon, vec![token("p")]), (Caller::Hermit, vec![token("h")])]).unwrap(),
         self_hosts: vec![],
         ops_summary: test_gateway::default_ops_summary(),
@@ -724,6 +725,17 @@ async fn a_turn_runs_and_the_generation_lives_across_turns() {
     let md = std::fs::read_to_string(w.dir.join("managed/CLAUDE.md")).unwrap();
     assert_eq!(md, sup.driver.hermit.descriptor().unwrap().claude.managed_claude_md);
     assert!(w.dir.join("managed/managed-settings.json").exists());
+    // decision 15: the descriptor's managed skills, no MCP file
+    let skills = &sup.driver.hermit.descriptor().unwrap().claude.managed_skills;
+    assert!(!skills.is_empty());
+    for (k, text) in skills {
+        assert_eq!(
+            &std::fs::read_to_string(w.dir.join("managed/.claude/skills").join(k)).unwrap(),
+            text,
+            "{k}"
+        );
+    }
+    assert!(!w.dir.join("managed/managed-mcp.json").exists());
 
     let (t1, s1) = w.turn("say:你好");
     let end = w.ended(t1).await;

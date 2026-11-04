@@ -1,6 +1,6 @@
 [package]
 name = "fake-tools"
-description = "A minimal MCP server for tests."
+description = "A minimal tools REST API for tests."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -15,11 +15,11 @@ serde.workspace = true
 serde_json.workspace = true
 subtle.workspace = true
 tokio.workspace = true
-uuid.workspace = true
 
 [dev-dependencies]
 reqwest.workspace = true
 rustls.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

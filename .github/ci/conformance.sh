@@ -20,11 +20,14 @@ GATEWAY_TOKEN_TOOLS=$(tok)
 GATEWAY_MODEL_KEY=$(tok)
 GATEWAY_ACCEPT_PIGEON=$(tok)
 GATEWAY_ACCEPT_HERMIT=$(tok)
-export GATEWAY_TOKEN_MAGPIE GATEWAY_TOKEN_HERMIT GATEWAY_TOKEN_TOOLS GATEWAY_MODEL_KEY GATEWAY_ACCEPT_PIGEON GATEWAY_ACCEPT_HERMIT
+GATEWAY_ROUTE_TOKEN_CONFORMANCE_ROUTE=$(tok) # the configured route's bearer (platform 3.11.8)
+export GATEWAY_TOKEN_MAGPIE GATEWAY_TOKEN_HERMIT GATEWAY_TOKEN_TOOLS GATEWAY_MODEL_KEY GATEWAY_ACCEPT_PIGEON GATEWAY_ACCEPT_HERMIT \
+  GATEWAY_ROUTE_TOKEN_CONFORMANCE_ROUTE
 cat > "$work/tokens.json" <<JSON
 {"gatewayToMagpie": "$GATEWAY_TOKEN_MAGPIE", "gatewayToHermit": "$GATEWAY_TOKEN_HERMIT",
  "gatewayToTools": "$GATEWAY_TOKEN_TOOLS", "gatewayToModel": "$GATEWAY_MODEL_KEY",
- "pigeonToGateway": "$GATEWAY_ACCEPT_PIGEON", "hermitToGateway": "$GATEWAY_ACCEPT_HERMIT"}
+ "pigeonToGateway": "$GATEWAY_ACCEPT_PIGEON", "hermitToGateway": "$GATEWAY_ACCEPT_HERMIT",
+ "gatewayToRoute": "$GATEWAY_ROUTE_TOKEN_CONFORMANCE_ROUTE"}
 JSON
 echo "1:$(tok)" > "$work/signing-key"
 
@@ -32,6 +35,7 @@ fakes=127.0.0.1:18080
 hermit_fakes=127.0.0.1:18081 # hermit alone: its outage closes this port, so connects are refused
 "$bin/test-gateway" --proxy-listen 127.0.0.1:13128 --api-listen 127.0.0.1:18082 --ops-listen 127.0.0.1:19090 \
   --magpie "http://$fakes" --hermit "http://$hermit_fakes" --tools "http://$fakes" --model "http://$fakes" \
+  --route "conformance-route=http://$fakes,/api/v1/" \
   --self-host 192.0.2.10 --self-host egress > "$out/test-gateway.log" 2>&1 &
 gw=$!
 # scrape its metrics until it exits: the last scrape is from inside the drain
@@ -44,7 +48,7 @@ status=0
 "$bin/aviary-conformance" --junit "$out/gateway.xml" gateway \
   --proxy http://127.0.0.1:13128 --api http://127.0.0.1:18082 --sandbox-ip 127.0.0.1 \
   --serve-fakes "$fakes" --serve-hermit-fakes "$hermit_fakes" --tokens "$work/tokens.json" --signing-key "@$work/signing-key" \
-  --sigterm "kill -TERM $gw" --self-host 192.0.2.10 --self-host egress || status=1
+  --sigterm "kill -TERM $gw" --self-host 192.0.2.10 --self-host egress --route conformance-route || status=1
 
 # the drained gateway exits 0 with log `drained`
 gw_exit=0

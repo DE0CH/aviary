@@ -11,7 +11,11 @@ use serde::{Deserialize, Serialize};
 pub const MESSAGES: &str = "/v1/messages";
 pub const COUNT_TOKENS: &str = "/v1/messages/count_tokens";
 pub const MODELS: &str = "/v1/aviary/models";
-pub const TOOLS_MCP: &str = "/mcp";
+/// `tools` (decision 15: REST, no MCP): `GET /v1/tools` lists the tools, `POST /v1/tools/<name>` calls one with its
+/// JSON arguments, `GET /v1/openapi.json` describes both.
+pub const TOOLS_LIST: &str = "/v1/tools";
+pub const TOOLS_CALL_PREFIX: &str = "/v1/tools/";
+pub const TOOLS_OPENAPI: &str = "/v1/openapi.json";
 
 /// `GET /v1/aviary/models`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

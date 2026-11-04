@@ -1,4 +1,4 @@
-//! A minimal MCP server for tests (platform 7.6). See the library docs.
+//! A minimal tools REST API for tests (platform 7.6). See the library docs.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -7,12 +7,12 @@ use anyhow::Context as _;
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(about = "A minimal MCP server for tests")]
+#[command(about = "A minimal tools REST API for tests")]
 struct Args {
     /// Address to listen on.
     #[arg(long, default_value = "0.0.0.0:80")]
     listen: SocketAddr,
-    /// A file holding the gateway's tools pair tokens, one per line (the bearers `/mcp` accepts: the current token
+    /// A file holding the gateway's tools pair tokens, one per line (the bearers `/v1/tools` accepts: the current token
     /// and, during a rotation, the next one), read again on every request.
     #[arg(long)]
     token_file: PathBuf,

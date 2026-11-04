@@ -8,7 +8,9 @@
 //!   refuse phase closes that listener so connects are refused (ECONNREFUSED); on the shared listener it can only
 //!   accept and reset the connection.
 //! - **magpie** counts request bodies (`{"bytes": n}`) and holds `GET /v1/sandbox/poll?ms=` that long.
-//! - **tools** answers `/mcp` after `?delayMs=`.
+//! - **tools** answers its REST paths (`GET /v1/tools`, `POST /v1/tools/<name>`, decision 15) after `?delayMs=`.
+//! - **a configured route** (`--route <name>`, platform 3.11.8) answers `{"ok": true}` at the route's name, and on
+//!   any host for a path under its prefix `/api/v1/` (an upstream the gateway reaches by address sends that `Host`).
 //! - **model** serves the models route and the Messages API: a JSON reply, or an SSE stream whose length the
 //!   request's `x-conformance-stream-ms` header sets, recording when it sent its first data byte.
 //!
@@ -50,6 +52,8 @@ pub enum Name {
     Magpie,
     Hermit,
     Tools,
+    /// The configured route (`--route`).
+    Route,
     Model,
 }
 
@@ -60,6 +64,8 @@ pub struct Expected {
     pub hermit: String,
     pub tools: String,
     pub model: String,
+    /// The configured route's name and the bearer the gateway presents on it.
+    pub route: Option<(String, String)>,
 }
 
 impl std::fmt::Debug for Expected {
@@ -303,7 +309,7 @@ impl Fakes {
     }
 }
 
-fn which(headers: &HeaderMap) -> Name {
+fn which(st: &St, headers: &HeaderMap, path: &str) -> Name {
     let host = headers
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
@@ -311,7 +317,13 @@ fn which(headers: &HeaderMap) -> Name {
     let name = host
         .rsplit_once(':')
         .map_or(host, |(h, p)| if p.parse::<u16>().is_ok() { h } else { host });
-    match name.to_ascii_lowercase().as_str() {
+    let name = name.to_ascii_lowercase();
+    if st.expected.route.as_ref().is_some_and(|(r, _)| *r == name)
+        || (st.expected.route.is_some() && path.starts_with(crate::gateway::ROUTE_PREFIX) && name != "tools")
+    {
+        return Name::Route;
+    }
+    match name.as_str() {
         "magpie" => Name::Magpie,
         "hermit" => Name::Hermit,
         "tools" => Name::Tools,
@@ -325,6 +337,10 @@ fn credential_ok(st: &St, name: Name, h: &HeaderMap) -> bool {
         Name::Magpie => &st.expected.magpie,
         Name::Hermit => &st.expected.hermit,
         Name::Tools => &st.expected.tools,
+        Name::Route => match &st.expected.route {
+            Some((_, t)) => t,
+            None => return false,
+        },
         Name::Model => {
             let key = h.get("x-api-key").and_then(|v| v.to_str().ok());
             return key == Some(st.expected.model.as_str()) || bearer == Some(st.expected.model.as_str());
@@ -367,7 +383,7 @@ async fn dispatch(State(st): State<Arc<St>>, req: Request) -> Response {
 
 async fn handle(st: Arc<St>, forced: Option<Name>, req: Request) -> Response {
     let (parts, body) = req.into_parts();
-    let name = forced.unwrap_or_else(|| which(&parts.headers));
+    let name = forced.unwrap_or_else(|| which(&st, &parts.headers, parts.uri.path()));
     let pq = parts.uri.path_and_query().map_or("/", |p| p.as_str()).to_owned();
     let path = parts.uri.path().to_owned();
     let case = parts.headers.get(CASE).and_then(|v| v.to_str().ok()).map(str::to_owned);
@@ -431,8 +447,9 @@ async fn handle(st: Arc<St>, forced: Option<Name>, req: Request) -> Response {
         Name::Tools => {
             let ms = query_u64(&pq, "delayMs").unwrap_or(0);
             tokio::time::sleep(Duration::from_millis(ms)).await;
-            axum::Json(json!({"jsonrpc": "2.0", "id": 1, "result": {"delayedMs": ms}})).into_response()
+            axum::Json(json!({"delayedMs": ms})).into_response()
         }
+        Name::Route => axum::Json(json!({"ok": true, "bytes": body_bytes})).into_response(),
         Name::Model => model(&st, &path, &parts.headers, case, &json_body),
     }
 }

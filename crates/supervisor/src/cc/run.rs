@@ -1655,7 +1655,7 @@ impl Driver {
     fn apply_descriptor(&self, d: &hermit_api::sandbox_surface::SandboxSelf) {
         let differs = lock(&self.st).etag != d.etag;
         if differs {
-            match managed::write(&self.cfg.managed_dir, &d.claude.managed_claude_md) {
+            match managed::write(&self.cfg.managed_dir, &d.claude) {
                 Ok(()) => {
                     self.with(Change::State, |st, _| st.etag.clone_from(&d.etag));
                 }

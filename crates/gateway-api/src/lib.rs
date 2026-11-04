@@ -4,6 +4,7 @@
 //! - [`credential`]: the one addressing mode, an HTTP proxy with `sbx:<sandbox token>` as its credential, and the
 //!   boot environment that carries it (the token travels only there, DESIGN 12 D1).
 //! - [`FixedName`]: `magpie`, `hermit`, `model`, `tools`, their paths, upstreams and body limits.
+//! - [`routes`]: the deployment's configured routes (3.11.8), names beside the four with their own path prefixes.
 //! - [`headers`]: what the gateway strips and adds.
 //! - [`liveness`]: the revocation view of R33 (served stale without limit while hermit fails).
 //! - [`models`]: the models route of R18 and its client.
@@ -15,6 +16,7 @@ pub mod headers;
 pub mod liveness;
 pub mod models;
 pub mod ops;
+pub mod routes;
 
 use std::time::Duration;
 
@@ -114,7 +116,13 @@ impl FixedName {
                 (method, path),
                 ("POST", models::MESSAGES | models::COUNT_TOKENS) | ("GET", models::MODELS)
             ),
-            Self::Tools => path == models::TOOLS_MCP,
+            Self::Tools => match method {
+                "GET" => path == models::TOOLS_LIST || path == models::TOOLS_OPENAPI,
+                "POST" => path
+                    .strip_prefix(models::TOOLS_CALL_PREFIX)
+                    .is_some_and(|tool| !tool.is_empty() && !tool.contains('/')),
+                _ => false,
+            },
         }
     }
 
@@ -139,7 +147,9 @@ impl FixedName {
     }
 }
 
-fn clean_path(path: &str) -> bool {
+/// A path with no dot segment, no empty segment and no percent-encoded `.`, `/` or `\` (3.11.3).
+#[must_use]
+pub fn clean_path(path: &str) -> bool {
     if !path.starts_with('/') {
         return false;
     }
@@ -179,8 +189,18 @@ mod tests {
         assert!(Model.allows("GET", "/v1/aviary/models"));
         assert!(!Model.allows("GET", "/v1/messages"));
         assert!(!Model.allows("GET", "/v1/models"));
-        assert!(Tools.allows("POST", "/mcp"));
-        assert!(!Tools.allows("POST", "/mcp/x"));
+        assert!(Tools.allows("GET", "/v1/tools"));
+        assert!(Tools.allows("GET", "/v1/openapi.json"));
+        assert!(Tools.allows("POST", "/v1/tools/web_search"));
+        assert!(Tools.allows("POST", "/v1/tools/echo?x=1"));
+        assert!(!Tools.allows("POST", "/v1/tools"));
+        assert!(!Tools.allows("POST", "/v1/tools/"));
+        assert!(!Tools.allows("POST", "/v1/tools/a/b"));
+        assert!(!Tools.allows("GET", "/v1/tools/echo"));
+        assert!(!Tools.allows("DELETE", "/v1/tools/echo"));
+        assert!(!Tools.allows("POST", "/v1/tools/%2e%2e"));
+        assert!(!Tools.allows("POST", "/mcp"));
+        assert!(!Tools.allows("GET", "/v1/openapi.json/x"));
         assert_eq!(Tools.body_limit(), 2_000_000);
         assert_eq!(Magpie.body_limit(), 64 << 20);
     }

@@ -32,7 +32,7 @@ kill_cc() { r python3 /media/rig/rigctl.py kill-cc >> "$out/kill-cc.log"; sleep 
 t0=$(date +%s%N)
 r python3 /media/rig/rigsession.py /tmp/s/a.json /tmp/out-a > "$out/a.summary.json"
 t1=$(date +%s%N)
-r sh -c "ls -la /etc/claude-code; cat /etc/claude-code/managed-settings.json /etc/claude-code/managed-mcp.json; echo; cat /etc/claude-code/CLAUDE.md" > "$out/managed.txt" 2>&1
+r sh -c "ls -la /etc/claude-code; cat /etc/claude-code/managed-settings.json; echo; ls -lR /etc/claude-code/.claude/skills; cat /etc/claude-code/CLAUDE.md" > "$out/managed.txt" 2>&1
 r sh -c "for p in /proc/[0-9]*; do c=\$(tr '\0' ' ' < \$p/cmdline 2>/dev/null); case \"\$c\" in *claude*) echo \"\${p#/proc/} uid=\$(awk '/^Uid/{print \$2}' \$p/status) cwd=\$(readlink \$p/cwd): \$c\"; tr '\0' '\n' < \$p/environ | sort | sed 's/sbx:[^@]*@/sbx:<token>@/';; esac; done" > "$out/claude-process.txt"
 kill_cc
 # (b) the last byte off: a complete JSON line without its newline

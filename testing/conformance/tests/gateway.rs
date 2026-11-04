@@ -13,6 +13,9 @@ use hermit_api::token::MasterKey;
 use test_gateway::{Config, Credentials, DrainBounds, Faults, Running, Upstreams};
 use uuid::Uuid;
 
+/// The configured route the reference gateway is given (platform 3.11.8).
+const ROUTE: &str = "conformance-route";
+
 fn token(name: &str) -> String {
     format!("{name}-{}", Uuid::new_v4().simple())
 }
@@ -40,12 +43,13 @@ async fn run_seen(
         gateway_to_model: token("model"),
         pigeon_to_gateway: token("pigeon"),
         hermit_to_gateway: token("hermit-in"),
+        gateway_to_route: Some(token("route")),
     };
     let mut secret = [0u8; 32];
     secret[..16].copy_from_slice(Uuid::new_v4().as_bytes());
     secret[16..].copy_from_slice(Uuid::new_v4().as_bytes());
     let key = MasterKey::new(1, secret);
-    let fakes = Fakes::new(tokens.expected(), vec![gateway::public_key(&key).unwrap()]);
+    let fakes = Fakes::new(tokens.expected(Some(ROUTE)), vec![gateway::public_key(&key).unwrap()]);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let up = format!("http://{}", listener.local_addr().unwrap());
     let served = fakes.serve(listener).unwrap();
@@ -67,6 +71,14 @@ async fn run_seen(
             tools: tokens.gateway_to_tools.clone(),
             model: tokens.gateway_to_model.clone(),
         },
+        routes: vec![test_gateway::ConfiguredRoute {
+            route: gateway_api::routes::Route::new(ROUTE, &[gateway::ROUTE_PREFIX]).unwrap(),
+            upstream: up.clone(),
+            credential: (
+                hyper::header::AUTHORIZATION,
+                format!("Bearer {}", tokens.gateway_to_route.clone().unwrap()),
+            ),
+        }],
         callers: Callers::new([
             (Caller::Pigeon, vec![tokens.pigeon_to_gateway.clone()]),
             (Caller::Hermit, vec![tokens.hermit_to_gateway.clone()]),
@@ -89,6 +101,7 @@ async fn run_seen(
         tokens,
         signing_key: key,
         self_hosts: vec!["gateway.conformance.invalid".into(), "192.0.2.10".into()],
+        route: Some(ROUTE.into()),
         sigterm: Some(Box::new(move || {
             let r = r.clone();
             Box::pin(async move {
@@ -123,7 +136,7 @@ async fn the_reference_gateway_passes() {
         .map(|r| r.name.clone())
         .collect();
     assert!(skipped.is_empty(), "skipped: {skipped:?}");
-    assert!(results.len() >= 27, "{} checks", results.len());
+    assert!(results.len() >= 30, "{} checks", results.len());
     let junit = report.junit();
     assert!(junit.contains("<testsuite name=\"gateway\""), "{junit}");
     assert!(junit.contains("failures=\"0\""));
@@ -137,11 +150,12 @@ async fn a_stripped_header_kept_fails() {
             keep_client_aviary_headers: true,
             ..Faults::default()
         },
-        &["route.magpie", "route.hermit"],
+        &["route.magpie", "route.hermit", "route.configured"],
     )
     .await;
     assert!(failed(&report, "route.magpie"), "{:#?}", report.results());
     assert!(failed(&report, "route.hermit"), "{:#?}", report.results());
+    assert!(failed(&report, "route.configured"), "{:#?}", report.results());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

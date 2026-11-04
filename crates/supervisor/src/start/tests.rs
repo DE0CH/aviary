@@ -68,6 +68,7 @@ async fn world() -> World {
             tools: token("tools"),
             model: token("model"),
         },
+        routes: Vec::new(),
         callers: Callers::new([(Caller::Pigeon, vec![token("p")]), (Caller::Hermit, vec![token("h")])]).unwrap(),
         self_hosts: vec![],
         ops_summary: test_gateway::default_ops_summary(),

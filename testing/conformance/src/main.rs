@@ -64,7 +64,7 @@ enum Suite {
         #[arg(long)]
         serve_hermit_fakes: Option<String>,
         /// JSON: {"gatewayToMagpie", "gatewayToHermit", "gatewayToTools", "gatewayToModel", "pigeonToGateway",
-        /// "hermitToGateway"}.
+        /// "hermitToGateway"} and, with --route, "gatewayToRoute".
         #[arg(long)]
         tokens: PathBuf,
         /// hermit's signing key, `kid:base64url(32 bytes)` (or `@file`).
@@ -76,6 +76,10 @@ enum Suite {
         /// One of the gateway's own addresses (its VIP, a Service name); repeatable.
         #[arg(long = "self-host")]
         self_hosts: Vec<String>,
+        /// A configured route's name (platform 3.11.8): the gateway routes it to --serve-fakes with the prefix
+        /// `/api/v1/` and `Authorization: Bearer <gatewayToRoute>` (the route.configured checks; skipped without).
+        #[arg(long)]
+        route: Option<String>,
         /// Short durations, for the suite's own tests only (a pass then proves nothing).
         #[arg(long, hide = true)]
         quick: bool,
@@ -164,6 +168,7 @@ async fn main() -> anyhow::Result<ExitCode> {
             signing_key,
             sigterm,
             self_hosts,
+            route,
             quick,
         } => {
             let report = Report::new("gateway", args.only, true);
@@ -174,7 +179,7 @@ async fn main() -> anyhow::Result<ExitCode> {
             let signing_key = MasterKey::parse(key_text.trim()).map_err(|e| anyhow::anyhow!("--signing-key: {e}"))?;
             let tokens: gateway::Tokens = read_json(&tokens)?;
             let fakes = fakes::Fakes::new(
-                tokens.expected(),
+                tokens.expected(route.as_deref()),
                 vec![gateway::public_key(&signing_key).map_err(anyhow::Error::msg)?],
             );
             let listener = tokio::net::TcpListener::bind(fakes::listen_addr(&serve_fakes).map_err(anyhow::Error::msg)?)
@@ -194,6 +199,7 @@ async fn main() -> anyhow::Result<ExitCode> {
                 tokens,
                 signing_key,
                 self_hosts,
+                route,
                 sigterm: sigterm.map(|cmd| -> gateway::Sigterm {
                     Box::new(move || {
                         let cmd = cmd.clone();

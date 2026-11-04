@@ -67,6 +67,11 @@ pub struct Prompt {
     pub instructions: PathBuf,
     pub rules: PathBuf,
     pub title: PathBuf,
+    /// The managed skills' folder (decision 15): `<skill>/<file>` two levels down, each file the text of the
+    /// descriptor's `claude.managedSkills["<skill>/<file>"]`. Names starting with `.` are skipped (a mounted
+    /// `ConfigMap`'s `..data`); a deeper folder is refused. Absent = no managed skills.
+    #[serde(default)]
+    pub skills: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -208,6 +213,8 @@ pub struct Config {
     pub tmp_bytes: u64,
     /// The instance prompt + a blank line + the sandbox rules with their placeholders filled (3.7.1).
     pub managed_claude_md: String,
+    /// The managed skills, `<skill>/<file>` → text (decision 15; the descriptor's `claude.managedSkills`).
+    pub managed_skills: BTreeMap<String, String>,
     pub title_system: String,
 }
 
@@ -222,7 +229,37 @@ impl Config {
         let instructions = read(&file.prompt.instructions)?;
         let rules = read(&file.prompt.rules)?;
         let title = read(&file.prompt.title)?;
-        Self::from_parts(file, &instructions, &rules, &title)
+        let skills = match &file.prompt.skills {
+            Some(dir) => read_skills(dir)?,
+            None => BTreeMap::new(),
+        };
+        Self::from_parts(file, &instructions, &rules, &title)?.with_skills(skills)
+    }
+
+    /// The configuration with these managed skills, checked: every key `<skill>/<file>`, and the managed content
+    /// within [`hermit_api::sandbox_surface::MANAGED_MAX_BYTES`].
+    ///
+    /// # Errors
+    /// A bad key, or the content over the bound.
+    pub fn with_skills(mut self, skills: BTreeMap<String, String>) -> Result<Self, ConfigError> {
+        if let Some(bad) = skills
+            .keys()
+            .find(|k| !hermit_api::sandbox_surface::valid_skill_path(k))
+        {
+            return Err(invalid(format!(
+                "prompt.skills: {bad:?} is not <skill>/<file> ([A-Za-z0-9][A-Za-z0-9._-]* each)"
+            )));
+        }
+        self.managed_skills = skills;
+        let size = serde_json::to_string(&(&self.managed_claude_md, &self.managed_skills, &self.title_system))
+            .map_or(usize::MAX, |s| s.len());
+        let max = hermit_api::sandbox_surface::MANAGED_MAX_BYTES;
+        if size > max {
+            return Err(invalid(format!(
+                "the managed CLAUDE.md, skills and title instructions are {size} bytes as JSON, over {max}"
+            )));
+        }
+        Ok(self)
     }
 
     /// The configuration from an already parsed file and the three texts (tests build it this way).
@@ -291,6 +328,7 @@ impl Config {
             workspace_quota_bytes,
             tmp_bytes,
             managed_claude_md,
+            managed_skills: BTreeMap::new(),
             title_system: title.to_owned(),
             file,
         })
@@ -322,6 +360,45 @@ impl Config {
             .replace("{token}", token)
             .replace("{vip}", &self.file.fabric.egress_vip.to_string())
     }
+}
+
+/// `dir/<skill>/<file>` → text; hidden names skipped, a deeper folder refused (symlinks followed, as a mounted
+/// `ConfigMap`'s entries are links into `..data`).
+fn read_skills(dir: &Path) -> Result<BTreeMap<String, String>, ConfigError> {
+    let err = |path: &Path, source: std::io::Error| ConfigError::Read {
+        path: path.display().to_string(),
+        source,
+    };
+    let visible = |dir: &Path| -> Result<Vec<(String, PathBuf)>, ConfigError> {
+        let mut out = Vec::new();
+        for e in std::fs::read_dir(dir).map_err(|e| err(dir, e))? {
+            let e = e.map_err(|e| err(dir, e))?;
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !name.starts_with('.') {
+                out.push((name, e.path()));
+            }
+        }
+        Ok(out)
+    };
+    let mut skills = BTreeMap::new();
+    for (skill, sdir) in visible(dir)? {
+        if !std::fs::metadata(&sdir).map_err(|e| err(&sdir, e))?.is_dir() {
+            return Err(invalid(format!(
+                "prompt.skills: {} is not a skill folder",
+                sdir.display()
+            )));
+        }
+        for (file, path) in visible(&sdir)? {
+            if std::fs::metadata(&path).map_err(|e| err(&path, e))?.is_dir() {
+                return Err(invalid(format!(
+                    "prompt.skills: {} is a folder (a skill holds files only)",
+                    path.display()
+                )));
+            }
+            skills.insert(format!("{skill}/{file}"), read(&path)?);
+        }
+    }
+    Ok(skills)
 }
 
 fn read(path: &Path) -> Result<String, ConfigError> {
@@ -427,5 +504,50 @@ mod tests {
         v["sandbox"]["idleMinute"] = 3.into();
         let e = serde_json::from_value::<HermitJson>(v).unwrap_err();
         assert!(e.to_string().contains("idleMinute"), "{e}");
+    }
+
+    #[test]
+    fn skills_from_a_mounted_folder() {
+        use std::os::unix::fs::symlink;
+        // a ConfigMap volume with items: the visible entries are links into ..data
+        let d = std::env::temp_dir().join(format!("hermit-skills-{}", uuid::Uuid::new_v4().simple()));
+        let data = d.join("..2026_11_04_00_00_00.1");
+        std::fs::create_dir_all(data.join("web")).unwrap();
+        std::fs::create_dir_all(data.join("labels")).unwrap();
+        std::fs::write(data.join("web/SKILL.md"), "網頁\n").unwrap();
+        std::fs::write(data.join("labels/SKILL.md"), "l\n").unwrap();
+        std::fs::write(data.join("labels/design-format.md"), "f\n").unwrap();
+        symlink("..2026_11_04_00_00_00.1", d.join("..data")).unwrap();
+        symlink("..data/web", d.join("web")).unwrap();
+        symlink("..data/labels", d.join("labels")).unwrap();
+        let skills = read_skills(&d).unwrap();
+        assert_eq!(
+            skills.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["labels/SKILL.md", "labels/design-format.md", "web/SKILL.md"]
+        );
+        assert_eq!(skills["web/SKILL.md"], "網頁\n");
+
+        let file: HermitJson = serde_json::from_str(EXAMPLE).unwrap();
+        let c = Config::from_parts(file, "i", "r", "t").unwrap();
+        assert!(c.managed_skills.is_empty());
+        let c = c.with_skills(skills).unwrap();
+        assert_eq!(c.managed_skills.len(), 3);
+        let mut bad = BTreeMap::new();
+        bad.insert("../x".to_owned(), String::new());
+        assert!(c.clone().with_skills(bad).is_err());
+        let mut big = BTreeMap::new();
+        big.insert(
+            "a/b".to_owned(),
+            "x".repeat(hermit_api::sandbox_surface::MANAGED_MAX_BYTES),
+        );
+        assert!(c.with_skills(big).unwrap_err().to_string().contains("over"));
+
+        // a folder inside a skill, or a file at the top, is refused
+        std::fs::create_dir_all(data.join("web/sub")).unwrap();
+        assert!(read_skills(&d).is_err());
+        std::fs::remove_dir(data.join("web/sub")).unwrap();
+        std::fs::write(d.join("stray.md"), "x").unwrap();
+        assert!(read_skills(&d).is_err());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

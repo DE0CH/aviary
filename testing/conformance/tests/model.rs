@@ -62,6 +62,7 @@ async fn mock_model_through_the_reference_gateway_passes() {
             tools: "unused".into(),
             model: "model-key".into(),
         },
+        routes: Vec::new(),
         callers: Callers::new([
             (Caller::Pigeon, vec![pigeon.clone()]),
             (Caller::Hermit, vec!["h".to_owned()]),

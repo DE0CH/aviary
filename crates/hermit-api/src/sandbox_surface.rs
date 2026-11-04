@@ -152,7 +152,31 @@ pub struct Control {
 pub struct Claude {
     /// Written by the supervisor to `/etc/claude-code/CLAUDE.md`.
     pub managed_claude_md: String,
+    /// The deployment's managed skills (decision 15), `{"<skill>/<file>": text}`: written by the supervisor to
+    /// `/etc/claude-code/.claude/skills/<skill>/<file>`; every key passes [`valid_skill_path`]. Absent = none.
+    #[serde(default)]
+    pub managed_skills: BTreeMap<String, String>,
 }
+
+/// A managed skill file's key: `<skill>/<file>`, each part `[A-Za-z0-9][A-Za-z0-9._-]{0,127}` (no dot segments, no
+/// further folders), so it names a file two levels under the skills folder and nowhere else.
+#[must_use]
+pub fn valid_skill_path(key: &str) -> bool {
+    fn part(p: &str) -> bool {
+        let b = p.as_bytes();
+        !b.is_empty()
+            && b.len() <= 128
+            && b[0].is_ascii_alphanumeric()
+            && b.iter()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
+    }
+    key.split_once('/')
+        .is_some_and(|(skill, file)| part(skill) && part(file))
+}
+
+/// The managed content (CLAUDE.md, the skills, the title instructions) is at most this many bytes as JSON, so the
+/// descriptor stays within [`SELF_MAX_BYTES`] beside a full `env` ([`ENV_MAX_BYTES`]) and the other fields.
+pub const MANAGED_MAX_BYTES: usize = SELF_MAX_BYTES - ENV_MAX_BYTES - 8 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -394,6 +418,30 @@ mod tests {
         assert!(!valid_secret_key("_A"));
         assert!(!valid_secret_key(&format!("A{}", "B".repeat(64))));
         assert!(valid_secret_key(&format!("A{}", "B".repeat(63))));
+    }
+
+    #[test]
+    fn skill_paths() {
+        for ok in ["web/SKILL.md", "labels/design-format.md", "a/b", "x_1/y.z"] {
+            assert!(valid_skill_path(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "web",
+            "/web/SKILL.md",
+            "web/",
+            "web/a/b",
+            "../x",
+            "web/..",
+            ".hidden/x",
+            "web/.x",
+            "w b/x",
+        ] {
+            assert!(!valid_skill_path(bad), "{bad}");
+        }
+        // an older hermit's descriptor (no managedSkills) still reads
+        let c: Claude = serde_json::from_str(r#"{"managedClaudeMd": "x"}"#).unwrap();
+        assert!(c.managed_skills.is_empty());
     }
 
     #[test]

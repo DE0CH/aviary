@@ -42,6 +42,9 @@ pub struct Tokens {
     pub pigeon_to_gateway: String,
     /// hermit's bearer on the in-cluster ops summary.
     pub hermit_to_gateway: String,
+    /// The bearer the gateway presents on the configured route (`--route`, platform 3.11.8).
+    #[serde(default)]
+    pub gateway_to_route: Option<String>,
 }
 
 impl std::fmt::Debug for Tokens {
@@ -51,13 +54,17 @@ impl std::fmt::Debug for Tokens {
 }
 
 impl Tokens {
+    /// What the fakes expect; `route` is the configured route's name (`--route`).
     #[must_use]
-    pub fn expected(&self) -> crate::fakes::Expected {
+    pub fn expected(&self, route: Option<&str>) -> crate::fakes::Expected {
         crate::fakes::Expected {
             magpie: self.gateway_to_magpie.clone(),
             hermit: self.gateway_to_hermit.clone(),
             tools: self.gateway_to_tools.clone(),
             model: self.gateway_to_model.clone(),
+            route: route
+                .zip(self.gateway_to_route.as_deref())
+                .map(|(n, t)| (n.to_ascii_lowercase(), t.to_owned())),
         }
     }
 }
@@ -123,6 +130,9 @@ pub struct Options {
     pub signing_key: MasterKey,
     /// `--self-host`: the gateway's own addresses.
     pub self_hosts: Vec<String>,
+    /// `--route`: a configured route's name (3.11.8), routed to the fakes with exactly the prefix [`ROUTE_PREFIX`]
+    /// and `Authorization: Bearer <gatewayToRoute>`.
+    pub route: Option<String>,
     pub sigterm: Option<Sigterm>,
     pub durations: Durations,
 }
@@ -134,6 +144,7 @@ impl std::fmt::Debug for Options {
             .field("api", &self.api)
             .field("sandbox_ip", &self.sandbox_ip)
             .field("self_hosts", &self.self_hosts)
+            .field("route", &self.route)
             .field("sigterm", &self.sigterm.is_some())
             .field("durations", &self.durations)
             .finish_non_exhaustive()
@@ -338,6 +349,9 @@ async fn run_suite(o: Options, fakes: Fakes, report: &Report) {
         report.check("route.model-stream", route_model_stream(&s)),
         report.check("route.model-messages", route_model_messages(&s)),
         report.check("route.models", route_models(&s)),
+        report.check("route.tools-paths", route_tools_paths(&s)),
+        report.check("route.configured", route_configured(&s)),
+        report.check("route.configured-paths", route_configured_paths(&s)),
         report.check("transport.long-poll", long_poll(&s)),
         report.check("limits.64mib", limit_64mib(&s)),
         report.check("limits.64mib-plus-one", limit_over(&s)),
@@ -903,15 +917,14 @@ async fn route_tools(s: &Suite) -> Outcome {
     let (st, _, b) = s
         .once(
             "POST",
-            &format!("http://tools/mcp?delayMs={ms}"),
+            &format!("http://tools/v1/tools/slow_echo?delayMs={ms}"),
             Some(&sbx.credential),
             &[
                 (CASE, case),
                 ("content-type", "application/json"),
-                ("accept", "application/json, text/event-stream"),
                 ("authorization", "Bearer sandbox-sent-authorization"),
             ],
-            full(&br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#[..]),
+            full(&br#"{"text":"conformance"}"#[..]),
             delay + Duration::from_secs(30),
         )
         .await?;
@@ -932,6 +945,142 @@ async fn route_tools(s: &Suite) -> Outcome {
         "aviary-sandbox-person: {:?}",
         seen.header("aviary-sandbox-person")
     );
+    Ok(())
+}
+
+/// `tools`' REST paths (decision 15): the list and the description reach tools with its bearer; anything else on the
+/// name (the old `/mcp`, a nested tool path, a wrong method) is refused and not forwarded.
+async fn route_tools_paths(s: &Suite) -> Outcome {
+    let sbx = s.sandbox()?;
+    for (i, path) in ["/v1/tools", "/v1/openapi.json"].iter().enumerate() {
+        let case = format!("route.tools-paths.ok{i}");
+        let (st, b) = s.get(&format!("http://tools{path}"), &sbx, &case).await?;
+        ensure!(
+            st == StatusCode::OK,
+            "GET {path}: got {st} {}",
+            String::from_utf8_lossy(&b)
+        );
+        let seen = s.the_one(&case)?;
+        check_identity(&seen, &sbx, &s.o.tokens.gateway_to_tools)?;
+    }
+    for (i, (method, path)) in [
+        ("POST", "/mcp"),
+        ("POST", "/v1/tools/a/b"),
+        ("POST", "/v1/tools/"),
+        ("DELETE", "/v1/tools/echo"),
+        ("GET", "/v1/other"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let case = format!("route.tools-paths.no{i}");
+        let (st, _, b) = s
+            .once(
+                method,
+                &format!("http://tools{path}"),
+                Some(&sbx.credential),
+                &[(CASE, case.as_str())],
+                empty(),
+                Duration::from_secs(20),
+            )
+            .await?;
+        expect_refused(st, &b, StatusCode::FORBIDDEN, &format!("{method} {path}"))?;
+        ensure!(s.fakes.seen(&case).is_empty(), "{method} {path} was forwarded");
+    }
+    Ok(())
+}
+
+/// The configured route's path prefix the suite expects (`--route`).
+pub const ROUTE_PREFIX: &str = "/api/v1/";
+
+fn route_name(s: &Suite) -> Result<&str, Problem> {
+    match (&s.o.route, &s.o.tokens.gateway_to_route) {
+        (Some(r), Some(_)) => Ok(r),
+        (Some(_), None) => Err(Problem::Fail(
+            "--route given but tokens.json has no gatewayToRoute".into(),
+        )),
+        (None, _) => Err(Problem::Skip("no --route given".into())),
+    }
+}
+
+/// A configured route (3.11.8): a GET and a POST under its prefix reach the upstream with its bearer alone, the
+/// identity triple and the client's own credentials and `Aviary-*` headers stripped, path, query and body unchanged.
+async fn route_configured(s: &Suite) -> Outcome {
+    let name = route_name(s)?;
+    let bearer = s.o.tokens.gateway_to_route.clone().unwrap_or_default();
+    let sbx = s.sandbox()?;
+    let case = "route.configured";
+    let mut hdrs: Vec<(&str, &str)> = vec![(CASE, case)];
+    hdrs.extend_from_slice(FORGED);
+    let (st, _, b) = s
+        .once(
+            "GET",
+            &format!("http://{name}{ROUTE_PREFIX}designs?x=1"),
+            Some(&sbx.credential),
+            &hdrs,
+            empty(),
+            Duration::from_secs(20),
+        )
+        .await?;
+    ensure!(st == StatusCode::OK, "got {st} {}", String::from_utf8_lossy(&b));
+    let seen = s.the_one(case)?;
+    ensure!(
+        seen.path_and_query == format!("{ROUTE_PREFIX}designs?x=1"),
+        "path {}",
+        seen.path_and_query
+    );
+    check_identity(&seen, &sbx, &bearer)?;
+    for h in ["aviary-person", "aviary-admin", "aviary-viewer"] {
+        ensure!(
+            seen.header(h).is_none(),
+            "the client's {h} reached the route's upstream"
+        );
+    }
+    let case = "route.configured.post";
+    let body = vec![b'x'; 300_000];
+    let (st, _, b) = s
+        .once(
+            "POST",
+            &format!("http://{name}{ROUTE_PREFIX}files/a.csv"),
+            Some(&sbx.credential),
+            &[(CASE, case), ("content-type", "text/csv")],
+            full(body.clone()),
+            Duration::from_secs(20),
+        )
+        .await?;
+    ensure!(st == StatusCode::OK, "POST: got {st} {}", String::from_utf8_lossy(&b));
+    let seen = s.the_one(case)?;
+    ensure!(
+        seen.body_bytes == body.len() as u64,
+        "POST body: {} of {} bytes",
+        seen.body_bytes,
+        body.len()
+    );
+    check_identity(&seen, &sbx, &bearer)
+}
+
+/// Paths outside the route's prefix, or unclean, are 403 `not_allowed` and not forwarded; `CONNECT` to the name is
+/// not the route.
+async fn route_configured_paths(s: &Suite) -> Outcome {
+    let name = route_name(s)?.to_owned();
+    let sbx = s.sandbox()?;
+    for (i, path) in [
+        "/other",
+        "/api/v2/designs",
+        "/api/v1",
+        "/api/v1/../admin",
+        "/api/v1/%2e%2e/admin",
+        "/api/v1//designs",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let case = format!("route.configured-paths.{i}");
+        let url = format!("http://{name}{path}");
+        let (st, b) = s.get(&url, &sbx, &case).await?;
+        expect_refused(st, &b, StatusCode::FORBIDDEN, &url)?;
+        ensure!(s.fakes.seen(&case).is_empty(), "{url} was forwarded");
+    }
     Ok(())
 }
 

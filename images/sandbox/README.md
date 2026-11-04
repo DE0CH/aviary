@@ -40,8 +40,9 @@ images/sandbox/smoke.sh hermit-sandbox:dev target/x86_64-unknown-linux-musl/rele
 `smoke.sh` checks the image as built (entrypoint, users and folders, Claude Code's path and owner, the tools, the
 wrappers, sudo, apt as uid 1000 and without root, the keeper without a credential), then runs the image's own keeper
 and supervisor (`--network host --privileged`) against `fuse-rig`'s world (fake hermit and fake magpie behind the
-reference test gateway) and `mock-model`: a magpie `start_turn` runs Claude Code through an MCP `tools/call`, whose Messages API and MCP calls
-reach mock-model and fake-tools only through the gateway's proxy as `http://model/…` and `http://tools/mcp`; then
+reference test gateway) and `mock-model`: a magpie `start_turn` runs Claude Code with the descriptor's managed skill
+`echo`, and its Bash `curl`s the tools REST API (decision 15); its Messages API calls and that `curl` reach mock-model
+and fake-tools only through the gateway's proxy as `http://model/…` and `http://tools/v1/tools/echo`; then
 Docker on demand as uid 1000 and a runtime stop (exit 0). On a host whose Docker bridge has no route out (an
 IPv6-only host), build with `SANDBOX_BUILD_FLAGS=--network=host` and smoke with `SMOKE_INTERNET_NETWORK=host`.
 `build.sh` exports with `rewrite-timestamp=true` (platform 5.2: the layers' file times from the commit), which needs a
@@ -71,14 +72,13 @@ driver on the containerd image store refuses it ("conflicts with unpack"). Elsew
   `mount(2)` itself (supervisor 2), so the package (and its setuid helper) is left out.
 - **What the gateway saw is checked by `User-Agent`.** The supervisor's own title and model calls take the same
   proxy, so the smoke reads the test gateway's record of every proxy request (fuse-rig `GET /gateway`) and requires
-  absolute-form `POST http://model/v1/messages` and `POST http://tools/mcp` from a client that is not
-  `supervisor/<sha12>`, and fake-tools' record (`GET /tools`) of `initialize` and `tools/list` from that client.
-  Claude Code 2.1.304 defers MCP tools behind ToolSearch, so the Messages API calls do not list `mcp__tools__*`;
-  its init message (server `tools` `connected`, `mcp__tools__echo`) is checked as well. mock-model's script for
-  the turn loads `mcp__tools__echo` with ToolSearch and calls it: the `tools/call` must reach fake-tools with its
-  `Mcp-Session-Id` (200) and its result must be in the transcript. fake-tools' only other answers that are not 2xx
-  are the 400 to Claude Code's session-less `server/discover` probe before `initialize` (as the MCP SDK's
-  Streamable-HTTP server answers) and the 405 to its GET for a server stream.
+  absolute-form `POST http://model/v1/messages` from a client that is not `supervisor/<sha12>`, and `POST
+  http://tools/v1/tools/echo` from `curl/…`. mock-model's script for the turn has Claude Code run, in Bash, the
+  `curl` the `echo` skill shows; fake-tools' record (`GET /tools`) must have that call with the tools pair bearer,
+  the sandbox owner as `Aviary-Sandbox-Person` and the conversation, and its answer must be the Bash result in the
+  transcript. The managed files (`CLAUDE.md`, `managed-settings.json`, `.claude/skills/echo/SKILL.md`) are root's
+  0644, there is no `managed-mcp.json`, Claude Code's init message lists no MCP server and no `mcp__*` tool, and the
+  skill's description reaches the model (mock-model's record of the last user message's text).
 - **Docker on demand under runc** needs `/var/lib/docker` on a volume (overlay snapshots cannot sit on the
   container's overlay root); in a sandbox it is on the scratch disk.
 - **Built in the images job.** ci.yml's `images` job builds it as `hermit-sandbox:<sha12>` from `build`'s `dist`

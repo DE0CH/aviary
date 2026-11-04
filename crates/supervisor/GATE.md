@@ -694,7 +694,10 @@ exactly 6.1's (`--output-format stream-json --verbose --input-format stream-json
 --session-id <conversation id>`, then `--resume <id>` after a restart), the environment of 6.2 (the fixed table, then
 the descriptor's `env` with the proxy URL and the session's own additions), `/etc/claude-code/{CLAUDE.md,
 managed-settings.json, managed-mcp.json}` root-owned 0644 with 6.4's content; Claude Code reported the MCP server
-`tools` as `connected` (`source: enterprise`) and called `mcp__tools__echo` through the gateway.
+`tools` as `connected` (`source: enterprise`) and called `mcp__tools__echo` through the gateway. (Since decision 15,
+2026-11-04: no `managed-mcp.json`; the supervisor writes the descriptor's managed skills to
+`/etc/claude-code/.claude/skills/` and Claude Code calls `http://tools/v1/tools/<name>` with `curl`; the image smoke
+checks that path, `images/sandbox/smoke.sh`. This run's record is unchanged.)
 
 | Item | Result |
 |---|---|

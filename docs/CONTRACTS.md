@@ -80,14 +80,15 @@ the workspace does not declare `jsonwebtoken`, and pigeon's Access verifier uses
 
 ## Endpoint names
 
-A sandbox reaches four fixed names, always through the gateway's proxy (below), never by DNS:
+A sandbox reaches four fixed names, and the deployment's configured routes (below), always through the gateway's
+proxy, never by DNS:
 
 | Name | What answers | Paths a sandbox may use |
 |---|---|---|
 | `magpie` | the store of record | `/v1/sandbox/**` |
 | `hermit` | sandboxes, people and secrets | `/v1/sandbox/**` (`self`, `secrets`, `secrets/{key}`, `activity`) |
 | `model` | the deployment's model | `POST /v1/messages`, `POST /v1/messages/count_tokens`, `GET /v1/aviary/models` |
-| `tools` | the deployment's MCP tools | `/mcp` |
+| `tools` | the deployment's tools, a REST API (no MCP) | `GET /v1/tools`, `POST /v1/tools/<name>`, `GET /v1/openapi.json` |
 
 In the cluster the services are `http://pigeon`, `http://magpie`, `http://hermit`, `http://model` (the gateway's
 in-cluster API: the models route for pigeon, `GET /v1/ops/summary` for hermit) and `http://tools`. Inside a sandbox
@@ -115,7 +116,7 @@ Crate `gateway-api` (constants, credential helpers, the revocation view) with th
 back from it (`credential::token_from_proxy_url`). Every client sends absolute-form requests (`GET
 http://hermit/v1/sandbox/self`) or `CONNECT host:443` to the proxy. A fixed name is an exact host match, ASCII case
 insensitive, with no port or port 80 (`FixedName::from_host`). The proxy's own addresses serve the implementation's
-local paths (a package mirror, say). Order: credential, fixed name, self host, internet rules.
+local paths (a package mirror, say). Order: credential, fixed name, configured route, self host, internet rules.
 
 **Credential.** `Proxy-Authorization: Basic base64("sbx:" + token)` (also `Authorization` on self-host paths).
 Missing: 407 with `Proxy-Authenticate: Basic realm="aviary-gateway"`.
@@ -164,6 +165,21 @@ magpie 6.9); neither names an identity. Add `Aviary-Sandbox-Id`,
 `Aviary-Sandbox-Conversation`, `Aviary-Sandbox-Person` (trimmed, lowercased) from the verified token
 (`headers::identity`), `Aviary-Request` (the client's if it is a lowercase RFC 4122 uuid v7, else new) and the callee's credential: the
 gateway→magpie, gateway→hermit or gateway→tools pair bearer, or the model's own credential.
+
+**Configured routes** (platform 3.11.8; `gateway_api::routes`). A deployment may add names beside the four, each to a
+service of its own the sandbox calls directly (YYC: `labels`, its label store's `/api/v1`). A name is one lowercase
+DNS label that is not a fixed name, recognised exactly as a fixed name is (no port or port 80, never `CONNECT`).
+Only its path prefixes are routed (each `/…/`, the clean-path rule above; anything else 403 `not_allowed`, not
+forwarded), any method; headers are stripped and the identity triple and `Aviary-Request` added as on a fixed name;
+the upstream gets the route's own credential, which the implementation's configuration names. Limits: 64 MiB per
+request body, the `tools` route's timeout and drain bound. `aviary-conformance gateway --route <name>` checks one
+(prefix `/api/v1/`, bearer `gatewayToRoute`).
+
+**Tools** (decision 15). Claude Code has no MCP servers: it calls the tools REST API with `curl` as the managed skills
+(the descriptor's `claude.managedSkills`) say. `GET /v1/tools` lists each tool's `name`, `title`, `description` and
+`inputSchema`; `POST /v1/tools/<name>` runs one with its JSON arguments as the body (the tool's text as
+`text/plain`, else its JSON; 400 bad arguments, 422 the tool's own error, 502 a failure); `GET /v1/openapi.json`
+describes both. `testing/fake-tools` is the test double.
 
 **Transport.** Bodies stream both ways without buffering (SSE, NDJSON); first byte within 200 ms of the upstream's.
 Body limit 64 MiB per request on `magpie`, `hermit` and `model` (64 MiB + 1 → 413 `too_large`), tools' own 2 MB on
@@ -245,7 +261,10 @@ What an implementation must do, beyond the shapes:
 - **The sandbox's own routes** answer only with the gateway's credential and three headers matching a live row (else
   404 `no_sandbox`). `GET /v1/sandbox/self` is the descriptor (at most 64 KiB; `etag` is `"` + the first 32 hex of
   SHA-256 over the canonical JSON, keys sorted, of every other field + `"`, also sent as `ETag`; `If-None-Match` →
-  304). `GET /v1/sandbox/secrets[/{key}]`: the granted keys; a key not granted is 404 `not_granted`.
+  304). Its `claude` holds `managedClaudeMd` and `managedSkills` (`{"<skill>/<file>": text}`, from hermit's
+  `prompt.skills` folder; `valid_skill_path`; with the CLAUDE.md and the title instructions at most
+  `MANAGED_MAX_BYTES` as JSON), which the supervisor writes to `/etc/claude-code/CLAUDE.md` and
+  `/etc/claude-code/.claude/skills/<skill>/<file>` (root, 0644; stale skill files removed; no `managed-mcp.json`). `GET /v1/sandbox/secrets[/{key}]`: the granted keys; a key not granted is 404 `not_granted`.
   `POST /v1/sandbox/activity` takes the supervisor's report and answers `{state, release}`, where a non-null
   `release` repeats a pending release for the supervisor to act on as on `:7070`'s release call.
 - **Boot.** A sandbox starts with the supervisor's keeper as PID 1, the gateway's boot environment (above) and nothing

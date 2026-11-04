@@ -14,8 +14,9 @@
 //!   supervisor applies it at the next spawn);
 //! - `GET /gateway`: every request the gateway's proxy received (`method`, `target` as received, so absolute-form
 //!   `http://model/…`, `userAgent`, `status`); `GET /tools`: every request fake-tools answered (`method`, `path`,
-//!   `userAgent`, the JSON-RPC `rpc` method of a POST, e.g. `initialize`, `tools/list`, whether it carried an
-//!   `Mcp-Session-Id` (`session`), and fake-tools' `status`);
+//!   `userAgent`, the `Aviary-Sandbox-Person` and `Aviary-Sandbox-Conversation` the gateway added (`person`,
+//!   `conversation`), whether it carried the tools pair bearer (`bearer`), the request `body` (as text, up to 1 MiB)
+//!   and fake-tools' `status`, with its answer as text in `answer`);
 //! - `POST /turn`: queue a `start_turn` command (`{"text", "resume"}`: `resume` the provider session id or null),
 //!   answered with `{"turnId", "cmdSeq"}`; the turn's reports are `GET /calls/turn_state` (the `turnId` in `params`).
 //!
@@ -135,6 +136,7 @@ async fn world(dir: PathBuf, model_url: String, memory: Option<u64>) {
                 tools: tools_token,
                 model: token("m"),
             },
+            routes: Vec::new(),
             callers: Callers::new([(Caller::Pigeon, vec![token("p")]), (Caller::Hermit, vec![token("h")])])
                 .unwrap_or_else(|e| fail(&e.to_string())),
             self_hosts: vec![],
@@ -209,45 +211,58 @@ async fn serve_tools(token: &str, seen: ToolsSeen) -> String {
         .await
         .unwrap_or_else(|e| fail(&e.to_string()));
     let url = format!("http://{}", tl.local_addr().unwrap_or_else(|e| fail(&e.to_string())));
+    let token = token.to_owned();
     let app = tools.router().layer(axum::middleware::from_fn(
         move |req: axum::extract::Request, next: axum::middleware::Next| {
-            let seen = seen.clone();
-            async move { record_tools(&seen, req, next).await }
+            let (seen, token) = (seen.clone(), token.clone());
+            async move { record_tools(&seen, &token, req, next).await }
         },
     ));
     tokio::spawn(async move { axum::serve(tl, app).await });
     url
 }
 
-/// Records a request to fake-tools (its JSON-RPC method from the body, which is small) and passes it on.
-async fn record_tools(seen: &ToolsSeen, req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+/// Records a request to fake-tools (its body and answer, which are small) and passes it on.
+async fn record_tools(
+    seen: &ToolsSeen,
+    token: &str,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
     let (parts, body) = req.into_parts();
     let Ok(bytes) = axum::body::to_bytes(body, 1 << 20).await else {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     };
-    let rpc = serde_json::from_slice::<Value>(&bytes)
-        .ok()
-        .and_then(|v| v.get("method").and_then(Value::as_str).map(str::to_owned));
     let header = |name: &str| {
         parts
             .headers
             .get(name)
             .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
     };
-    let (ua, session) = (header("user-agent"), header("mcp-session-id"));
+    let ua = header("user-agent");
+    let person = header("aviary-sandbox-person");
+    let conversation = header("aviary-sandbox-conversation");
+    let bearer = header("authorization").as_deref() == Some(format!("Bearer {token}").as_str());
     let (method, path) = (parts.method.to_string(), parts.uri.path().to_owned());
+    let sent = String::from_utf8_lossy(&bytes).into_owned();
     let res = next
         .run(axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes)))
         .await;
+    let status = res.status();
+    let (rparts, rbody) = res.into_parts();
+    let answer = axum::body::to_bytes(rbody, 1 << 20).await.unwrap_or_default();
     seen.lock().unwrap_or_else(PoisonError::into_inner).push(json!({
         "method": method,
         "path": path,
         "userAgent": ua,
-        "rpc": rpc,
-        "session": session.is_some(),
-        "status": res.status().as_u16(),
+        "person": person,
+        "conversation": conversation,
+        "bearer": bearer,
+        "body": sent,
+        "status": status.as_u16(),
+        "answer": String::from_utf8_lossy(&answer),
     }));
-    res
+    Response::from_parts(rparts, axum::body::Body::from(answer))
 }
 
 async fn gateway_seen(State(w): State<Arc<World>>) -> Json<Value> {

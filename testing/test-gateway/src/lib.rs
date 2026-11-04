@@ -5,7 +5,7 @@
 //!   missing), the `hst1.` token verified locally with hermit's published keys (refetched every 5 min and at most
 //!   every 10 s on an unknown kid), liveness from hermit cached 30 s and served stale without limit while hermit
 //!   fails, then the fixed names `magpie`, `hermit`, `model`, `tools` with the contract's paths, headers, body
-//!   limits and streaming. A self host (`--self-host`) has no local paths here (404); `CONNECT` and every other host
+//!   limits and streaming, then the configured routes (3.11.8, [`ConfiguredRoute`]). A self host (`--self-host`) has no local paths here (404); `CONNECT` and every other host
 //!   are refused with 403 `not_allowed` (the harness has no internet).
 //! - **`:8082`, the in-cluster API** (3.11.7): `GET /v1/aviary/models` for pigeon's bearer (forwarded to the model
 //!   upstream), `GET /v1/ops/summary` for hermit's (a fixture in the shape of 15.3).
@@ -97,6 +97,32 @@ impl std::fmt::Debug for Credentials {
     }
 }
 
+/// A configured route (platform 3.11.8): a name beside the fixed ones, its path prefixes, its upstream base and the
+/// credential header the gateway presents there. `Debug` writes no credential.
+#[derive(Clone)]
+pub struct ConfiguredRoute {
+    pub route: gateway_api::routes::Route,
+    /// `http://host[:port]` with an optional base path (the request's path is appended to it).
+    pub upstream: String,
+    pub credential: (HeaderName, String),
+}
+
+impl AsRef<gateway_api::routes::Route> for ConfiguredRoute {
+    fn as_ref(&self) -> &gateway_api::routes::Route {
+        &self.route
+    }
+}
+
+impl std::fmt::Debug for ConfiguredRoute {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConfiguredRoute")
+            .field("route", &self.route)
+            .field("upstream", &self.upstream)
+            .field("credential", &self.credential.0)
+            .finish_non_exhaustive()
+    }
+}
+
 /// How long in-flight work may run on after a drain starts (3.11.6 step 3).
 #[derive(Clone, Copy, Debug)]
 pub struct DrainBounds {
@@ -139,6 +165,8 @@ pub struct Config {
     pub api_listen: SocketAddr,
     pub upstreams: Upstreams,
     pub credentials: Credentials,
+    /// The configured routes (3.11.8), checked together by [`start`].
+    pub routes: Vec<ConfiguredRoute>,
     /// The in-cluster API's callers: pigeon (models) and hermit (ops summary).
     pub callers: Callers,
     /// Hosts that are the proxy itself (its VIP, its Service names): served locally, never forwarded.
@@ -550,6 +578,8 @@ impl Drop for Running {
 /// # Errors
 /// When a listener cannot be bound.
 pub async fn start(cfg: Config, registry: &mut Registry) -> std::io::Result<Running> {
+    gateway_api::routes::check_set(&cfg.routes)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()))?;
     let proxy_listener = TcpListener::bind(cfg.proxy_listen).await?;
     let api_listener = TcpListener::bind(cfg.api_listen).await?;
     let proxy = proxy_listener.local_addr()?;
@@ -647,6 +677,8 @@ async fn connection(inner: Arc<Inner>, stream: tokio::net::TcpStream, peer: Sock
 /// Where a request is going.
 enum Target {
     Fixed(FixedName),
+    /// A configured route, by index into the config's `routes`.
+    Route(usize),
     SelfHost,
     Internet(String),
 }
@@ -672,11 +704,21 @@ fn target_of(inner: &Inner, req: &Request<Incoming>) -> Target {
     {
         return Target::Fixed(name);
     }
+    if req.method() != Method::CONNECT
+        && let Some(i) = route_of(&inner.cfg.routes, &with_port)
+    {
+        return Target::Route(i);
+    }
     let bare = host.trim_start_matches('[').trim_end_matches(']');
     if req.method() != Method::CONNECT && inner.cfg.self_hosts.iter().any(|s| s.eq_ignore_ascii_case(bare)) {
         return Target::SelfHost;
     }
     Target::Internet(with_port)
+}
+
+fn route_of(routes: &[ConfiguredRoute], host: &str) -> Option<usize> {
+    let found = gateway_api::routes::from_host(routes, host)?;
+    routes.iter().position(|r| std::ptr::eq(r, found))
 }
 
 async fn handle(
@@ -763,7 +805,15 @@ async fn route(inner: &Arc<Inner>, peer: SocketAddr, uploaded: &AtomicU64, req: 
             if !name.allows(req.method().as_str(), &pq) {
                 return refuse(inner, &not_allowed("path not routed on this name"));
             }
-            forward(inner, name, &claims, uploaded, req, &pq).await
+            forward(inner, Dest::Fixed(name), &claims, uploaded, req, &pq).await
+        }
+        Target::Route(i) => {
+            let r = &inner.cfg.routes[i];
+            let pq = req.uri().path_and_query().map_or("/", |p| p.as_str()).to_owned();
+            if !r.route.allows(&pq) {
+                return refuse(inner, &not_allowed("path not routed on this name"));
+            }
+            forward(inner, Dest::Route(r), &claims, uploaded, req, &pq).await
         }
         Target::SelfHost => refuse(inner, &ApiError::not_found("the proxy serves no local paths here")),
         Target::Internet(host) => {
@@ -959,19 +1009,50 @@ fn too_large(limit: u64) -> ApiError {
     ApiError::too_large(format!("request body over {limit} bytes"))
 }
 
+/// Where [`forward`] sends a request.
+#[derive(Clone, Copy)]
+enum Dest<'a> {
+    Fixed(FixedName),
+    Route(&'a ConfiguredRoute),
+}
+
+impl Dest<'_> {
+    fn name(&self) -> &str {
+        match self {
+            Self::Fixed(n) => n.as_str(),
+            Self::Route(r) => &r.route.name,
+        }
+    }
+
+    /// A configured route is drained and timed like `tools` (3.11.8).
+    fn kind(&self) -> Kind {
+        match self {
+            Self::Fixed(n) => Kind::of(*n),
+            Self::Route(_) => Kind::Tools,
+        }
+    }
+
+    fn body_limit(&self) -> u64 {
+        match self {
+            Self::Fixed(n) => n.body_limit(),
+            Self::Route(_) => limits::FIXED_BODY_BYTES,
+        }
+    }
+}
+
 #[allow(clippy::too_many_lines)] // one request's path through the gateway, kept in order
 async fn forward(
     inner: &Arc<Inner>,
-    name: FixedName,
+    dest: Dest<'_>,
     claims: &Claims,
     uploaded: &AtomicU64,
     req: Request<Incoming>,
     pq: &str,
 ) -> Response<Body> {
-    let kind = Kind::of(name);
+    let kind = dest.kind();
     let guard = inner.inflight.enter(kind);
     let started = Instant::now();
-    let limit = name.body_limit();
+    let limit = dest.body_limit();
     let declared = req
         .headers()
         .get(header::CONTENT_LENGTH)
@@ -989,8 +1070,17 @@ async fn forward(
         return refuse(inner, &too_large(limit));
     }
 
-    let (base, host, credential): (&str, String, (HeaderName, String)) = match name {
-        FixedName::Magpie => (
+    let (base, host, credential): (&str, String, (HeaderName, String)) = match dest {
+        Dest::Route(r) => {
+            let host = r
+                .upstream
+                .parse::<Uri>()
+                .ok()
+                .and_then(|u| u.authority().map(|a| a.as_str().to_owned()))
+                .unwrap_or_default();
+            (&r.upstream, host, r.credential.clone())
+        }
+        Dest::Fixed(FixedName::Magpie) => (
             &inner.cfg.upstreams.magpie,
             "magpie".into(),
             (
@@ -998,7 +1088,7 @@ async fn forward(
                 format!("Bearer {}", inner.cfg.credentials.magpie),
             ),
         ),
-        FixedName::Hermit => (
+        Dest::Fixed(FixedName::Hermit) => (
             &inner.cfg.upstreams.hermit,
             "hermit".into(),
             (
@@ -1006,12 +1096,12 @@ async fn forward(
                 format!("Bearer {}", inner.cfg.credentials.hermit),
             ),
         ),
-        FixedName::Tools => (
+        Dest::Fixed(FixedName::Tools) => (
             &inner.cfg.upstreams.tools,
             "tools".into(),
             (header::AUTHORIZATION, format!("Bearer {}", inner.cfg.credentials.tools)),
         ),
-        FixedName::Model => {
+        Dest::Fixed(FixedName::Model) => {
             let base = &inner.cfg.upstreams.model;
             let host = base
                 .parse::<Uri>()
@@ -1083,7 +1173,11 @@ async fn forward(
             Err(_) => {
                 return refuse(
                     inner,
-                    &ApiError::new(StatusCode::GATEWAY_TIMEOUT, "upstream_timeout", "tools did not answer"),
+                    &ApiError::new(
+                        StatusCode::GATEWAY_TIMEOUT,
+                        "upstream_timeout",
+                        format!("{} did not answer", dest.name()),
+                    ),
                 );
             }
         }
@@ -1096,7 +1190,7 @@ async fn forward(
                     &ApiError::new(
                         StatusCode::GATEWAY_TIMEOUT,
                         "upstream_timeout",
-                        format!("{} did not answer", name.as_str()),
+                        format!("{} did not answer", dest.name()),
                     ),
                 );
             }
@@ -1110,13 +1204,13 @@ async fn forward(
             if over_limit(&e) {
                 return refuse(inner, &too_large(limit));
             }
-            tracing::warn!(name = name.as_str(), error = %e, "upstream unreachable");
+            tracing::warn!(name = dest.name(), error = %e, "upstream unreachable");
             return refuse(
                 inner,
                 &ApiError::new(
                     StatusCode::BAD_GATEWAY,
                     codes::UPSTREAM_UNREACHABLE,
-                    format!("{} could not be reached", name.as_str()),
+                    format!("{} could not be reached", dest.name()),
                 ),
             );
         }
@@ -1129,7 +1223,7 @@ async fn forward(
                 .fixed
                 .get_or_create(&SandboxRoute {
                     sandbox: claims.sandbox_id.to_string(),
-                    route: name.as_str().to_owned(),
+                    route: dest.name().to_owned(),
                 })
                 .inc();
         }
@@ -1137,7 +1231,7 @@ async fn forward(
             tracing::info!(
                 sandbox = %claims.sandbox_id,
                 conversation = %claims.conversation_id,
-                kind = name.as_str(),
+                kind = dest.name(),
                 path = %parts.uri.path(),
                 status = res.status().as_u16(),
                 ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
