@@ -72,6 +72,17 @@ patches:
     patch: |-
       - {op: replace, path: /spec/template/spec/containers/0/resources/requests/memory, value: 128Mi}
       - {op: replace, path: /spec/template/spec/containers/0/resources/limits/memory, value: 128Mi}
+  # tools' outside calls (web_search and web_fetch through Exa, social_search through TikHub, AnyAPI) go out through
+  # YYC's socks pool by name (news-stream/deploy/apps/socks.yaml): Node's fetch follows HTTPS_PROXY with
+  # NODE_USE_ENV_PROXY=1; names inside the cluster (yyc-mcp, the news stream's capture, Postgres) go direct. The pool
+  # resolves over its node's IPv6, so a WARP or DNS outage on one node no longer fails a search (2026-11-03: Apple
+  # Ho's web_search, `fetch failed` on CoreDNS's 8.8.8.8 through WARP).
+  - target: {kind: Deployment, name: tools}
+    patch: |-
+      - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: HTTPS_PROXY, value: "http://socks.egress.svc.cluster.local:1080"}}
+      - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: HTTP_PROXY, value: "http://socks.egress.svc.cluster.local:1080"}}
+      - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: NO_PROXY, value: "localhost,127.0.0.1,::1,.cluster.local,.svc,kubernetes.default,10.45.0.1,10.0.0.0/8,169.254.0.0/16"}}
+      - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: NODE_USE_ENV_PROXY, value: "1"}}
   - target: {kind: Deployment, name: cloudflared}
     patch: |-
       - {op: replace, path: /spec/template/spec/containers/0/resources/requests/memory, value: 64Mi}
