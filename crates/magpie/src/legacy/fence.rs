@@ -6,6 +6,13 @@
 //! leader never keeps writes waiting), cannot be released, and the next writer that finds it clears it
 //! ([`lapse`]). While a conversation is fenced, a native mutation waits for the release and then proceeds natively
 //! ([`native`]); a ticket call waits the same way ([`crate::legacy::tickets`]).
+//!
+//! The reverse hand-over (cutover 14.2) fences an owned, idle conversation the same way ([`reverse_fence`]: the same
+//! column on a conversation that is not migrating), renews the lease while the export and the old child's stop run
+//! ([`renew_reverse`]), then either reopens it into legacy ([`reopen_in`]) or lifts the fence with nothing changed
+//! ([`unfence_reverse`]). Meanwhile every native mutation of it waits in its call ([`native`], up to
+//! [`limits::REVERSE_FENCE_WAIT`] while the lease is renewed) and then runs natively, or answers 409
+//! `route: "legacy"` once it was reopened.
 
 use std::future::Future;
 use std::time::Duration;
@@ -26,6 +33,11 @@ use crate::limits;
 /// How often a draining replica re-reads a fenced conversation's owner ([`await_unfenced`]).
 const DRAIN_POLL: Duration = Duration::from_millis(50);
 
+/// A live reverse fence on a row of `conversations`, as SQL (the writers' locks read it beside `migrating`): set on a
+/// conversation that is not migrating and younger than [`limits::FENCE_LEASE`] (3 s, tested).
+pub const REVERSE_FENCED_SQL: &str = "(not migrating and legacy_fence_at is not null \
+                                       and legacy_fence_at > clock_timestamp() - interval '3 seconds')";
+
 fn lease_secs() -> f64 {
     limits::FENCE_LEASE.as_secs_f64()
 }
@@ -37,7 +49,8 @@ pub enum Owner {
     Native,
     /// The old stack, through pigeon's legacy upstream (migrating, no fence or a lapsed one).
     Legacy,
-    /// Nobody: fenced, for at most `remaining` more.
+    /// Nobody: fenced (by the hand-over, or by a reverse hand-over of an owned conversation), for at most `remaining`
+    /// more unless the lease is renewed.
     Fenced {
         /// What is left of the fence's lease.
         remaining: Duration,
@@ -63,10 +76,10 @@ pub async fn owner_of(db: &impl Db, id: Uuid) -> Result<Option<(String, String, 
     let migrating: bool = r.get(2);
     let left: Option<f64> = r.get(3);
     let owner = match (migrating, left) {
-        (false, _) => Owner::Native,
-        (true, Some(s)) if s > 0.0 => Owner::Fenced {
+        (_, Some(s)) if s > 0.0 => Owner::Fenced {
             remaining: Duration::from_secs_f64(s),
         },
+        (false, _) => Owner::Native,
         (true, _) => Owner::Legacy,
     };
     Ok(Some((r.get(0), r.get(1), owner)))
@@ -290,7 +303,7 @@ pub async fn unfence(pool: &Pool, id: Uuid) -> Result<bool> {
     .await
 }
 
-/// Clears a lapsed fence (one older than its lease); whether one was cleared.
+/// Clears a lapsed fence (one older than its lease, a reverse one included); whether one was cleared.
 ///
 /// # Errors
 /// When a statement fails.
@@ -306,7 +319,7 @@ pub async fn lapse_in(t: &Tx<'_>, id: Uuid) -> Result<bool> {
     let Some(r) = t
         .query_opt(
             "update conversations set legacy_fence_at = null
-             where id = $1 and migrating and legacy_fence_at <= clock_timestamp() - make_interval(secs => $2)
+             where id = $1 and legacy_fence_at <= clock_timestamp() - make_interval(secs => $2)
              returning person",
             &[&id, &lease_secs()],
         )
@@ -319,9 +332,12 @@ pub async fn lapse_in(t: &Tx<'_>, id: Uuid) -> Result<bool> {
     Ok(true)
 }
 
-/// Waits while `id` is fenced, at most what is left of the fence's lease (so never more than 3 s), woken by the
-/// person's change feed (the release, an unfence and a lapse each write a change; a draining replica polls instead). The owner then; a fence that
-/// lapsed meanwhile is cleared and answers [`Owner::Legacy`]. `None` when the conversation does not exist.
+/// Waits while `id` is fenced, woken by the person's change feed (the release, an unfence, a reopen and a lapse each
+/// write a change; a draining replica polls instead): what is left of the fence's lease, and again for as long as the
+/// lease is renewed, at most [`limits::REVERSE_FENCE_WAIT`] in all. Only a reverse hand-over renews its lease (cutover
+/// 14.2: the export and the old child's stop), so a hand-over fence is waited for at most 3 s. The owner then; a fence
+/// that lapsed meanwhile is cleared (a hand-over fence's conversation is then plainly legacy again, a reverse fence's
+/// plainly native). `None` when the conversation does not exist.
 ///
 /// # Errors
 /// When a statement fails.
@@ -331,35 +347,41 @@ pub async fn await_unfenced(app: &Magpie, id: Uuid) -> Result<Option<Owner>> {
     let Some((_, key, first)) = owner_of(&pool.get().await?, id).await? else {
         return Ok(None);
     };
-    let Owner::Fenced { remaining } = first else {
+    let Owner::Fenced { mut remaining } = first else {
         return Ok(Some(first));
     };
-    let deadline = tokio::time::Instant::now() + remaining + Duration::from_millis(20);
-    let mut last = app
-        .fanout
-        .hold_until(
-            &[(fanout::CHANGES, key.as_str())],
-            remaining + Duration::from_millis(20),
-            &app.draining,
-            || async move {
+    let cap = tokio::time::Instant::now() + limits::REVERSE_FENCE_WAIT;
+    let mut last;
+    loop {
+        let now = tokio::time::Instant::now();
+        let wait = (remaining + Duration::from_millis(20)).min(cap.saturating_duration_since(now));
+        let deadline = now + wait;
+        last = app
+            .fanout
+            .hold_until(&[(fanout::CHANGES, key.as_str())], wait, &app.draining, || async move {
                 let o = read().await?;
                 Ok((!matches!(o, Some(Owner::Fenced { .. })), o))
-            },
-        )
-        .await?;
-    // a draining replica's hold answers at once: wait out the rest of the lease anyway (at most 3 s, well inside the
-    // drain grace), so a fenced write still becomes native at the release instead of 409 `route: "legacy"`
-    while matches!(last, Some(Owner::Fenced { .. })) {
-        let now = tokio::time::Instant::now();
-        if now >= deadline {
-            break;
+            })
+            .await?;
+        // a draining replica's hold answers at once: wait out the rest of the lease anyway (at most 3 s, well inside
+        // the drain grace), so a fenced write still becomes native at the release instead of 409 `route: "legacy"`
+        while matches!(last, Some(Owner::Fenced { .. })) {
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            tokio::time::sleep((deadline - now).min(DRAIN_POLL)).await;
+            last = read().await?;
         }
-        tokio::time::sleep((deadline - now).min(DRAIN_POLL)).await;
-        last = read().await?;
+        match last {
+            // the lease was renewed (a reverse hand-over's export or stop still runs)
+            Some(Owner::Fenced { remaining: r }) if tokio::time::Instant::now() < cap => remaining = r,
+            _ => break,
+        }
     }
     match last {
         Some(Owner::Native) | None => Ok(last),
-        // lapsed while waiting (or about to): cleared, so the conversation is plainly legacy again
+        // lapsed while waiting (or about to): cleared, so the conversation is plainly legacy (or native) again
         Some(_) => {
             lapse(pool, id).await?;
             read().await
@@ -367,10 +389,16 @@ pub async fn await_unfenced(app: &Magpie, id: Uuid) -> Result<Option<Owner>> {
     }
 }
 
+/// Whether `e` is the 409 `route: "legacy"` of a migrating conversation (rather than a fence's wait).
+fn is_legacy_route(e: &Error) -> bool {
+    matches!(e, Error::Refused(r) if r.route == Some(magpie_api::errors::RouteHint::Legacy))
+}
+
 /// A native mutation of `id` (cutover 6.4): runs `op`; when it answers 409 `conversation_migrating` and the
 /// conversation is fenced, waits for the release ([`await_unfenced`]) and runs `op` once more, so a send during a
 /// fence becomes the first native turn. An unfenced legacy conversation's 409 (`route: "legacy"`) is answered as it
-/// is and counted.
+/// is and counted. A write held by a reverse fence (cutover 14.2) runs once more when the fence ends: natively when
+/// the conversation stayed owned, else its 409 `route: "legacy"` (it was reopened into legacy), which pigeon follows.
 ///
 /// # Errors
 /// `op`'s, or a statement error of the wait.
@@ -383,6 +411,7 @@ where
     let out = match first {
         Err(e) if e.is(&ErrorCode::ConversationMigrating) => match await_unfenced(app, id).await? {
             Some(Owner::Native) => op().await,
+            Some(Owner::Legacy) if !is_legacy_route(&e) => op().await,
             _ => Err(e),
         },
         other => other,
@@ -395,8 +424,162 @@ where
     out
 }
 
-/// [`Error`] for a write that found the conversation fenced past every wait (never expected: a fence lapses in 3 s).
+/// What [`reverse_fence`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReverseFence {
+    /// Fenced at this instant (database time).
+    Fenced(OffsetDateTime),
+    /// No such conversation, or it is migrating (the old stack's already).
+    NotOwned,
+    /// A fence that has not lapsed is already set.
+    AlreadyFenced,
+    /// Not idle (cutover 14.2): what keeps it busy.
+    Busy(&'static str),
+}
+
+/// The reverse fence (cutover 14.2 step 2): an owned conversation that is idle (no active turn, `run_state` idle: no
+/// hold or background task, no open ask, no sandbox lease) and has no live fence gets `legacy_fence_at`, so every
+/// native mutation of it waits in its call until [`reopen_in`] or [`unfence_reverse`]. A 3 s lease like the hand-over's
+/// fence, renewed by the reverse hand-over ([`renew_reverse`]); a lapsed one holds nothing. Change
+/// `conversation_upserted`.
+///
+/// # Errors
+/// When a statement fails.
+pub async fn reverse_fence(pool: &Pool, id: Uuid) -> Result<ReverseFence> {
+    aviary_pg::tx!(pool, |t| -> Result<ReverseFence> {
+        let Some(r) = t
+            .query_opt(
+                "select person, migrating, legacy_fence_at > clock_timestamp() - make_interval(secs => $2),
+                        active_turn is not null, run_state, lease_id is not null,
+                        exists (select 1 from events a where a.conversation_id = c.id and a.kind = 'ask.pending'
+                                 and not exists (select 1 from events b where b.conversation_id = c.id
+                                                  and b.kind = 'ask.resolved' and b.seq > a.seq
+                                                  and b.data->>'askId' = a.data->>'askId'))
+                 from conversations c where id = $1 for update",
+                &[&id, &lease_secs()],
+            )
+            .await?
+        else {
+            return Ok(ReverseFence::NotOwned);
+        };
+        let person: String = r.get(0);
+        if r.get::<_, bool>(1) {
+            return Ok(ReverseFence::NotOwned);
+        }
+        if r.get::<_, Option<bool>>(2) == Some(true) {
+            return Ok(ReverseFence::AlreadyFenced);
+        }
+        if r.get::<_, bool>(3) {
+            return Ok(ReverseFence::Busy("a turn is active"));
+        }
+        if r.get::<_, String>(4) != "idle" {
+            return Ok(ReverseFence::Busy("not idle (a hold or a background task)"));
+        }
+        if r.get::<_, bool>(5) {
+            return Ok(ReverseFence::Busy("a sandbox holds its lease"));
+        }
+        if r.get::<_, bool>(6) {
+            return Ok(ReverseFence::Busy("an ask is open"));
+        }
+        let at: OffsetDateTime = t
+            .query_one(
+                "update conversations set legacy_fence_at = clock_timestamp() where id = $1 returning legacy_fence_at",
+                &[&id],
+            )
+            .await?
+            .get(0);
+        changes::upserted(t, &person, id).await?;
+        Ok(ReverseFence::Fenced(at))
+    })
+    .await
+}
+
+/// Renews a live reverse fence of `id` (set on the owned conversation and younger than its lease): whether it was. A
+/// lapsed one is not renewed (a native write may have gone through it). No change is written: the writers waiting in
+/// it keep waiting.
+///
+/// # Errors
+/// When the statement fails.
+pub async fn renew_reverse(pool: &Pool, id: Uuid) -> Result<bool> {
+    Ok(pool
+        .get()
+        .await?
+        .execute(
+            "update conversations set legacy_fence_at = clock_timestamp()
+              where id = $1 and not migrating
+                and legacy_fence_at > clock_timestamp() - make_interval(secs => $2)",
+            &[&id, &lease_secs()],
+        )
+        .await?
+        == 1)
+}
+
+/// Lifts a reverse fence with nothing changed (cutover 14.2 step 4's `busy`, a failed export): the conversation stays
+/// owned and the writes waiting in it run natively. Whether a fence was lifted.
+///
+/// # Errors
+/// When a statement fails.
+pub async fn unfence_reverse(pool: &Pool, id: Uuid) -> Result<bool> {
+    aviary_pg::tx!(pool, |t| -> Result<bool> {
+        let Some(r) = t
+            .query_opt(
+                "update conversations set legacy_fence_at = null
+                 where id = $1 and not migrating and legacy_fence_at is not null returning person",
+                &[&id],
+            )
+            .await?
+        else {
+            return Ok(false);
+        };
+        changes::upserted(t, &r.get::<_, String>(0), id).await?;
+        Ok(true)
+    })
+    .await
+}
+
+/// The reopen of cutover 14.2 step 5, inside the caller's transaction (the importer adds its `import_sources` row):
+/// locks the row, requires an owned conversation with a live reverse fence, and makes it legacy again (`migrating`,
+/// the fence cleared, `run_state` idle) with change `conversation_upserted`, which pigeon answers with one timeline
+/// replacement per subscribed socket and its next request routes through its legacy upstream. Whether it was
+/// reopened (`false`: not owned, or no live fence: nothing changed).
+///
+/// # Errors
+/// When a statement fails.
+pub async fn reopen_in(t: &Tx<'_>, id: Uuid) -> Result<bool> {
+    let Some(r) = t
+        .query_opt(
+            "select person, migrating, legacy_fence_at > clock_timestamp() - make_interval(secs => $2)
+             from conversations where id = $1 for update",
+            &[&id, &lease_secs()],
+        )
+        .await?
+    else {
+        return Ok(false);
+    };
+    if r.get::<_, bool>(1) || r.get::<_, Option<bool>>(2) != Some(true) {
+        return Ok(false);
+    }
+    t.execute(
+        "update conversations set migrating = true, legacy_fence_at = null, run_state = 'idle' where id = $1",
+        &[&id],
+    )
+    .await?;
+    changes::upserted(t, &r.get::<_, String>(0), id).await?;
+    Ok(true)
+}
+
+/// [`Error`] for a write that found the conversation fenced past every wait (never expected: a fence lapses in 3 s
+/// unless a reverse hand-over renews it, and that one is waited for up to [`limits::REVERSE_FENCE_WAIT`]).
 #[must_use]
 pub fn still_fenced() -> Error {
     Error::code(ErrorCode::Unavailable, "the conversation stayed fenced")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_reverse_fence_sql_has_the_lease() {
+        assert_eq!(super::limits::FENCE_LEASE, std::time::Duration::from_secs(3));
+        assert!(super::REVERSE_FENCED_SQL.contains("interval '3 seconds'"));
+    }
 }

@@ -4,127 +4,25 @@
 //! of DESIGN 9.4; a running one is never released while its idle sibling is; a schema with an unanswered child releases
 //! nothing; a missing or unclean report keeps the gate unset; the running mirror follows the reads.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::too_many_lines,
+    clippy::many_single_char_names
+)]
 
 mod common;
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use axum::extract::ws::{Message, WebSocketUpgrade};
-use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use common::old::{Fake, Old, serve};
 use common::{World, assistant, user};
+use magpie_import::control;
 use magpie_import::handover::{self, Handover, Wait};
 use magpie_import::kube::Kube;
 use uuid::Uuid;
 
 const ALICE: &str = "alice@example.com";
-
-#[derive(Default)]
-struct Old {
-    /// pod → terminating
-    pods: Vec<(String, bool)>,
-    /// pod → its children's lines (schema, ok, sessions)
-    children: HashMap<String, Vec<(String, bool, Vec<String>)>>,
-    /// pod → (non-LU sockets, non-LU http); absent: no report (404)
-    reports: HashMap<String, (u64, u64)>,
-}
-
-type Fake = Arc<Mutex<Old>>;
-
-fn authorised(h: &HeaderMap) -> bool {
-    h.get("authorization").and_then(|v| v.to_str().ok()) == Some("Bearer t0ken")
-}
-
-async fn list(State(f): State<Fake>, h: HeaderMap) -> Response {
-    if !authorised(&h) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    let items: Vec<serde_json::Value> = f
-        .lock()
-        .unwrap()
-        .pods
-        .iter()
-        .map(|(n, t)| {
-            let mut meta = serde_json::json!({"name": n});
-            if *t {
-                meta["deletionTimestamp"] = "2026-11-03T00:00:00Z".into();
-            }
-            serde_json::json!({"metadata": meta})
-        })
-        .collect();
-    axum::Json(serde_json::json!({"items": items})).into_response()
-}
-
-async fn exec(State(f): State<Fake>, Path(pod): Path<String>, h: HeaderMap, ws: WebSocketUpgrade) -> Response {
-    if !authorised(&h) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    let lines: String = f
-        .lock()
-        .unwrap()
-        .children
-        .get(&pod)
-        .cloned()
-        .unwrap_or_default()
-        .iter()
-        .fold(String::new(), |mut out, (schema, ok, s)| {
-            out.push_str(&serde_json::json!({"schema": schema, "port": 3001, "ok": ok, "sessions": s}).to_string());
-            out.push('\n');
-            out
-        });
-    ws.protocols(["v4.channel.k8s.io"])
-        .on_upgrade(move |mut s| async move {
-            let mut out = vec![1u8];
-            out.extend_from_slice(lines.as_bytes());
-            let _ = s.send(Message::Binary(out.into())).await;
-            let mut st = vec![3u8];
-            st.extend_from_slice(b"{\"status\":\"Success\"}");
-            let _ = s.send(Message::Binary(st.into())).await;
-            let _ = s.send(Message::Close(None)).await;
-        })
-        .into_response()
-}
-
-async fn sockets(State(f): State<Fake>, Path(pod): Path<String>, h: HeaderMap) -> Response {
-    if !authorised(&h) || h.get("x-jarvis-switch-token").and_then(|v| v.to_str().ok()) != Some("sw") {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    let Some(pod) = pod.strip_suffix(":8080") else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Some((sockets, http)) = f.lock().unwrap().reports.get(pod).copied() else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let now = time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap();
-    axum::Json(serde_json::json!({
-        "generatedAt": now, "armed": true, "persons": {},
-        "totals": {"sockets": sockets, "opaque": 0, "lu": 2, "luOpaque": 0, "http": http, "passOnInFlight": 0,
-                   "hopSockets": 0, "hopOpaque": 0},
-        "counters": {}
-    }))
-    .into_response()
-}
-
-async fn serve(f: Fake) -> String {
-    let app = axum::Router::new()
-        .route("/api/v1/namespaces/jarvis/pods", get(list))
-        .route("/api/v1/namespaces/jarvis/pods/{pod}/exec", get(exec))
-        .route(
-            "/api/v1/namespaces/jarvis/pods/{pod}/proxy/__jarvis/sockets",
-            get(sockets),
-        )
-        .with_state(f);
-    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = l.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(l, app).await });
-    format!("http://{addr}")
-}
 
 async fn conversation(w: &World, ka: &str, title: &str) -> Uuid {
     let (u, p) = (Uuid::new_v4(), Uuid::new_v4());
@@ -223,14 +121,14 @@ async fn the_loop_releases_only_under_every_condition() {
     assert_eq!(run_state(&w, idle).await, "idle");
 
     // the gate refuses while a pod (the Terminating one) has no report
-    let (check, set) = handover::allow(&w.imp, &kube, "sw").await.unwrap();
+    let (check, set) = handover::allow(&w.imp, &kube, "sw", None).await.unwrap();
     assert!(
         !set && check.problems().iter().any(|p| p.starts_with("ui-b")),
         "{:?}",
         check.problems()
     );
     fake.lock().unwrap().reports.insert("ui-b".into(), (0, 0));
-    assert!(handover::allow(&w.imp, &kube, "sw").await.unwrap().1);
+    assert!(handover::allow(&w.imp, &kube, "sw", None).await.unwrap().1);
 
     // a socket that is not LU on any pod holds every release
     fake.lock().unwrap().reports.insert("ui-a".into(), (1, 0));
@@ -303,7 +201,7 @@ async fn a_source_change_inside_the_fence_window_keeps_it_legacy() {
     let kube = Kube::new(&serve(fake.clone()).await, "t0ken", None).unwrap();
     let mut h = Handover::new(kube.clone(), "sw".into());
     h.pass(&w.imp).await.unwrap();
-    assert!(handover::allow(&w.imp, &kube, "sw").await.unwrap().1);
+    assert!(handover::allow(&w.imp, &kube, "sw", None).await.unwrap().1);
     // the old side writes between passes: the pass syncs it, verification is stale, nothing is released
     let p: String = w
         .magpie()
@@ -328,4 +226,167 @@ async fn a_source_change_inside_the_fence_window_keeps_it_legacy() {
     h.pass(&w.imp).await.unwrap();
     h.pass(&w.imp).await.unwrap();
     assert_eq!(released(&w, id).await.as_deref(), Some("idle"));
+}
+
+const BOB: &str = "bob@example.com";
+
+#[tokio::test]
+async fn a_person_gate_releases_that_persons_conversations_only() {
+    let w = World::new("loop_person").await;
+    w.jarvis("create table sandboxes (id uuid primary key, conversation_id uuid not null, status text not null)")
+        .await;
+    let ka = w.person(ALICE).await;
+    let kb = w.person(BOB).await;
+    let a = conversation(&w, &ka, "Alice first").await;
+    let b = conversation(&w, &kb, "Bob first").await;
+    let (fake, kube) = common::old::cluster(&["ui-a"]).await;
+    // Bob still has an old-path socket: the gate for everyone is refused, Alice's own is not
+    fake.lock().unwrap().reports.insert("ui-a".into(), (1, 0));
+    fake.lock()
+        .unwrap()
+        .persons
+        .insert("ui-a".into(), [(BOB.to_owned(), (1, 0))].into());
+    let mut h = Handover::new(kube.clone(), "sw".into());
+    h.pass(&w.imp).await.unwrap();
+    assert!(!handover::allow(&w.imp, &kube, "sw", None).await.unwrap().1);
+    // Alice with a socket of her own: refused too
+    fake.lock()
+        .unwrap()
+        .persons
+        .get_mut("ui-a")
+        .unwrap()
+        .insert(ALICE.to_owned(), (0, 1));
+    let (check, set) = handover::allow(&w.imp, &kube, "sw", Some(ALICE)).await.unwrap();
+    assert!(!set && check.problems()[0].contains("HTTP"), "{:?}", check.problems());
+    fake.lock().unwrap().persons.get_mut("ui-a").unwrap().remove(ALICE);
+    assert!(handover::allow(&w.imp, &kube, "sw", Some(ALICE)).await.unwrap().1);
+    let st = control::status(&w.imp).await.unwrap();
+    assert_eq!(st.person_gates, vec![ka.clone()]);
+    assert_eq!(st.phase, "handover");
+    // two clean reads: Alice's goes, Bob's waits for the gate
+    h.pass(&w.imp).await.unwrap();
+    h.pass(&w.imp).await.unwrap();
+    assert_eq!(released(&w, a).await.as_deref(), Some("idle"));
+    assert_eq!(released(&w, b).await, None);
+    assert_eq!(waits(&h, b).await, Some(Wait::Gate));
+    // the per-person gate is judged every pass: none of Alice's is released while a socket of hers shows up
+    let a2 = conversation(&w, &ka, "Alice second").await;
+    fake.lock()
+        .unwrap()
+        .persons
+        .get_mut("ui-a")
+        .unwrap()
+        .insert(ALICE.to_owned(), (1, 0));
+    for _ in 0..3 {
+        h.pass(&w.imp).await.unwrap();
+    }
+    assert_eq!(released(&w, a2).await, None);
+    assert_eq!(waits(&h, a2).await, Some(Wait::Gate));
+    let gates = h.status.read().await.person_gates.clone();
+    assert!(gates.len() == 1 && !gates[0].clean, "{gates:?}");
+}
+
+async fn fenced(w: &World, id: Uuid) -> bool {
+    w.magpie()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select legacy_fence_at is not null from conversations where id = $1",
+            &[&id],
+        )
+        .await
+        .unwrap()
+        .get(0)
+}
+
+/// Runs leader A's passes until it holds a fence (its release paused inside it), then kills it (the task is
+/// dropped where it stands: nothing after the fence runs, as with `kill -9`).
+async fn kill_inside_the_fence(w: &World, kube: &Kube, id: Uuid) {
+    // one read here, the second in the slow pass, which fences
+    let mut a = Handover::new(kube.clone(), "sw".into());
+    a.pass(&w.imp).await.unwrap();
+    let slow = magpie_import::Importer {
+        pause_in_fence: std::time::Duration::from_secs(30),
+        ..w.imp.clone()
+    };
+    let task = tokio::spawn(async move { a.pass(&slow).await });
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !fenced(w, id).await {
+        assert!(std::time::Instant::now() < end, "leader A never fenced");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(fenced(w, id).await, "the fence is left behind");
+}
+
+#[tokio::test]
+async fn a_leader_killed_between_fence_and_release_is_finished_by_the_next() {
+    let w = World::new("loop_kill").await;
+    w.jarvis("create table sandboxes (id uuid primary key, conversation_id uuid not null, status text not null)")
+        .await;
+    let ka = w.person(ALICE).await;
+    let (_fake, kube) = common::old::cluster(&["ui-a"]).await;
+    let mut warm = Handover::new(kube.clone(), "sw".into());
+    let id = conversation(&w, &ka, "Killed").await;
+    warm.pass(&w.imp).await.unwrap();
+    assert!(handover::allow(&w.imp, &kube, "sw", None).await.unwrap().1);
+
+    // 1. the other replica takes over within the lease: it re-stats and releases
+    kill_inside_the_fence(&w, &kube, id).await;
+    let mut b = Handover::new(kube.clone(), "sw".into());
+    let rec = handover::recover(&w.imp, &mut magpie_import::uploads::Seen::new())
+        .await
+        .unwrap();
+    assert_eq!(rec.released, 1, "{rec:?}");
+    assert_eq!(released(&w, id).await.as_deref(), Some("idle"));
+    assert!(!fenced(&w, id).await);
+    b.pass(&w.imp).await.unwrap();
+
+    // 2. the source changed while the fence was left: the next leader lifts it, and releases only once re-verified
+    let id2 = conversation(&w, &ka, "Changed").await;
+    b.pass(&w.imp).await.unwrap();
+    kill_inside_the_fence(&w, &kube, id2).await;
+    let p: String = w
+        .magpie()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select provider_session from import_sources where conversation_id = $1",
+            &[&id2],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    w.append(
+        &ka,
+        &format!("projects/-workspace/{p}.jsonl"),
+        &user("c3", "2026-10-22T06:40:00.000Z", "and one more"),
+    );
+    let mut c = Handover::new(kube.clone(), "sw".into());
+    c.pass(&w.imp).await.unwrap();
+    assert!(!fenced(&w, id2).await, "unfenced");
+    assert_eq!(released(&w, id2).await, None);
+    for _ in 0..3 {
+        c.pass(&w.imp).await.unwrap();
+    }
+    assert_eq!(released(&w, id2).await.as_deref(), Some("idle"));
+
+    // 3. nobody took over within the lease: the fence lapsed, the next leader clears it and goes the normal way
+    let id3 = conversation(&w, &ka, "Lapsed").await;
+    c.pass(&w.imp).await.unwrap();
+    kill_inside_the_fence(&w, &kube, id3).await;
+    tokio::time::sleep(magpie::limits::FENCE_LEASE + std::time::Duration::from_millis(200)).await;
+    let rec = handover::recover(&w.imp, &mut magpie_import::uploads::Seen::new())
+        .await
+        .unwrap();
+    assert_eq!(rec.lapsed, 1, "{rec:?}");
+    assert!(!fenced(&w, id3).await);
+    let mut d = Handover::new(kube.clone(), "sw".into());
+    for _ in 0..3 {
+        d.pass(&w.imp).await.unwrap();
+    }
+    assert_eq!(released(&w, id3).await.as_deref(), Some("idle"));
 }

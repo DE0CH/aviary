@@ -305,6 +305,20 @@ pub async fn create(app: &Magpie, person: &Person, conversation: Uuid) -> Result
         r.retry_after_ms = Some(crate::limits::MIGRATING_RETRY_AFTER_MS);
         return Err(r.into());
     }
+    // a reverse hand-over's fence (cutover 14.2): wait before hermit clones anything (the lock below checks it again)
+    let fenced: bool = conn
+        .query_one(
+            &format!(
+                "select {} from conversations where id = $1",
+                crate::legacy::fence::REVERSE_FENCED_SQL
+            ),
+            &[&conversation],
+        )
+        .await?
+        .get(0);
+    if fenced {
+        return Err(magpie_api::errors::Refusal::migrating(crate::limits::MIGRATING_RETRY_AFTER_MS).into());
+    }
     let f = freeze_point(&conn, conversation).await?;
     has_reply(&conn, conversation, f.upto).await?;
     drop(conn);
@@ -410,7 +424,12 @@ pub async fn revoke(app: &Magpie, person: &Person, share_id: &str) -> Result<()>
             .await?
         {
             let id: Uuid = c.get(0);
-            if crate::conversations::lock(t, &person.email, id).await?.migrating {
+            let l = crate::conversations::lock(t, &person.email, id).await?;
+            if l.fenced {
+                // a reverse hand-over holds it (cutover 14.2): the revoke waits in its call
+                return Err(magpie_api::errors::Refusal::migrating(crate::limits::MIGRATING_RETRY_AFTER_MS).into());
+            }
+            if l.migrating {
                 // pigeon's ticket for the revoke through its legacy upstream names the conversation
                 let mut r = magpie_api::errors::Refusal::legacy_route();
                 r.retry_after_ms = Some(crate::limits::MIGRATING_RETRY_AFTER_MS);

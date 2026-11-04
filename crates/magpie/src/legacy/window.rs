@@ -14,7 +14,8 @@ use crate::blobs::Sha;
 use crate::conversations::Person;
 use crate::error::{Error, Result};
 
-/// The gate, the rollback mark, whether anything is legacy, and how much of it is the person's.
+/// The gate (for everyone, else the person's own, cutover 7.9 `allow-handover --person`), the rollback mark, whether
+/// anything is legacy, and how much of it is the person's.
 ///
 /// # Errors
 /// The database's.
@@ -24,7 +25,9 @@ pub async fn state(app: &Magpie, person: &Person) -> Result<WindowState> {
         .get()
         .await?
         .query_one(
-            "select c.handover_allowed_at, c.rollback_at,
+            "select coalesce(c.handover_allowed_at,
+                             (select g.allowed_at from import_gate_persons g where g.person = $1)),
+                    c.rollback_at,
                     exists (select 1 from conversations where migrating),
                     (select count(*) from conversations where person = $1 and migrating)
                from import_control c",

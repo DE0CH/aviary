@@ -1,8 +1,9 @@
 //! The hand-over loop (cutover 7.5, DESIGN 9.4): `magpie import handover`, the import Deployment's command. Every
 //! pass, as the leader: a pass over the sources (sync), pre-verification of what is synced and stable, upload
-//! ingestion, a running-set read, the running mirror, the stranded tickets' expiry, and, once the gate is set, the
-//! release of each conversation that meets every condition of DESIGN 9.4; warm hints to hermit every minute while any
-//! conversation is legacy. Nothing is ever released by a deadline: a condition that cannot be shown keeps the
+//! ingestion, a running-set read, the running mirror, the stranded tickets' expiry, and, once the gate is set (for
+//! everyone, or for the conversation's person: `allow-handover --person`), the release of each conversation that meets
+//! every condition of DESIGN 9.4; warm hints to hermit every minute while any conversation is legacy. A pass starts by
+//! settling the fences a previous lock holder left ([`recover`]: a leader killed between fence and release). Nothing is ever released by a deadline: a condition that cannot be shown keeps the
 //! conversation legacy, and any doubt inside the fence lifts it.
 
 use std::collections::{BTreeMap, VecDeque};
@@ -43,7 +44,7 @@ pub struct Read {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Wait {
-    /// The gate is not set, or a ui report is stale or shows the old path in use.
+    /// The gate (for everyone or for its person) is not set, or a ui report is stale or shows the old path in use.
     Gate,
     /// `hold on`.
     Hold,
@@ -179,6 +180,20 @@ pub struct LoopStatus {
     pub old_live_sandboxes: usize,
     /// Released by this process.
     pub released_total: u64,
+    /// The per-person gates' last checks (before the gate for everyone; persons with an open conversation).
+    pub person_gates: Vec<PersonGate>,
+}
+
+/// One per-person gate's check in the status document.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonGate {
+    /// The person's key (never the email).
+    pub person_key: String,
+    /// Their part of every report was clean.
+    pub clean: bool,
+    /// The problems, one line per pod.
+    pub problems: Vec<String>,
 }
 
 /// The loop's state.
@@ -237,6 +252,11 @@ impl Handover {
             at: Some(at),
             ..PassInfo::default()
         };
+        // the fences a killed leader (or reverse hand-over) left, before anything syncs
+        let rec = recover(imp, &mut self.seen).await?;
+        if rec != Recovered::default() {
+            tracing::info!(recovered = ?rec, "fences left by the last lock holder");
+        }
         let pass_started = tickets::now(&imp.magpie.pool).await?;
         let report = crate::pass::pass(imp, None).await?;
         info.changed = report.changed + report.created;
@@ -299,6 +319,31 @@ impl Handover {
             None
         };
         let gate_open = check.as_ref().is_some_and(gate::Check::clean);
+        // before the gate for everyone: the per-person gates (cutover 7.9), each person with an open conversation
+        // judged on their own part of every report
+        let mut person_open: BTreeMap<String, bool> = BTreeMap::new();
+        let mut person_gates = Vec::new();
+        if !gate_set {
+            let gated: Vec<String> = imp
+                .magpie
+                .pool
+                .get()
+                .await?
+                .query("select person from import_gate_persons order by person", &[])
+                .await?
+                .iter()
+                .map(|r| r.get(0))
+                .collect();
+            for p in gated.iter().filter(|p| persons.contains_key(p.as_str())) {
+                let c = gate::check(&self.kube, &self.ui_token, Some(p)).await;
+                person_open.insert(p.clone(), c.clean());
+                person_gates.push(PersonGate {
+                    person_key: aviary_core::log::person_key(p),
+                    clean: c.clean(),
+                    problems: c.problems(),
+                });
+            }
+        }
         // the facts again after the expiry (an expired ticket is a close: two more reads must follow it)
         let facts = self::facts(imp, &open).await?;
         let now = tickets::now(&imp.magpie.pool).await?;
@@ -307,10 +352,11 @@ impl Handover {
         let mut released = 0;
         for o in &open {
             let Some(f) = facts.get(&o.id) else { continue };
+            let open_for = gate_open || person_open.get(&o.person).copied().unwrap_or(false);
             let verdict = if o.error {
                 Err(Wait::Verify)
             } else {
-                decide(&o.id.to_string(), f, gate_open, hold, &reads, now)
+                decide(&o.id.to_string(), f, open_for, hold, &reads, now)
             };
             match verdict {
                 Ok(()) => match release(imp, o, &mut self.seen).await {
@@ -352,6 +398,7 @@ impl Handover {
             })
             .collect();
         st.old_live_sandboxes = facts.values().filter(|f| f.old_sandbox).count();
+        st.person_gates = person_gates;
         if let Some(c) = &check {
             st.old_path_sockets = c.old_path();
             st.lu_sockets = c.lu();
@@ -476,14 +523,10 @@ async fn facts(imp: &Importer, open: &[OpenRow]) -> Result<BTreeMap<Uuid, Facts>
     Ok(out)
 }
 
-/// The strict release of cutover 7.8 for one conversation that met every condition: fence (no open ticket), one more
-/// ingestion of the person's old asset folder, a re-stat of every source and fingerprint against what verification
-/// recorded, then the release transaction (`release_reason = 'idle'`, a provisional title kept as the title model's
-/// so it is never retitled). Anything that changed, failed or ran past the fence's lease lifts the fence and leaves
-/// the conversation legacy (`Ok(false)` or an error); nothing is synced or cut inside the fence.
+/// The strict release of cutover 7.8 for one conversation that met every condition: fence (no open ticket), then
+/// [`finish`].
 async fn release(imp: &Importer, o: &OpenRow, seen: &mut uploads::Seen) -> Result<bool> {
-    let pool = &imp.magpie.pool;
-    match fence::fence(pool, o.id).await? {
+    match fence::fence(&imp.magpie.pool, o.id).await? {
         fence::Fence::Fenced(_) => {}
         other => {
             tracing::info!(conversation = %o.id, fence = ?other, "not fenced");
@@ -492,6 +535,16 @@ async fn release(imp: &Importer, o: &OpenRow, seen: &mut uploads::Seen) -> Resul
     }
     let fenced = std::time::Instant::now();
     crate::pause(imp.pause_in_fence).await;
+    finish(imp, o, seen, fenced).await
+}
+
+/// What follows a fence (cutover 7.8): one more ingestion of the person's old asset folder, a re-stat of every source
+/// and fingerprint against what verification recorded, then the release transaction (`release_reason = 'idle'`, a
+/// provisional title kept as the title model's so it is never retitled). Anything that changed, failed or ran past
+/// the fence's lease lifts the fence and leaves the conversation legacy (`Ok(false)` or an error); nothing is synced
+/// or cut inside the fence.
+async fn finish(imp: &Importer, o: &OpenRow, seen: &mut uploads::Seen, fenced: std::time::Instant) -> Result<bool> {
+    let pool = &imp.magpie.pool;
     let inside = async {
         let ing = uploads::person(imp, &o.person, &o.key, seen).await?;
         if !ing.failed.is_empty() {
@@ -549,25 +602,126 @@ async fn release(imp: &Importer, o: &OpenRow, seen: &mut uploads::Seen) -> Resul
     }
 }
 
-/// `allow-handover`: sets the gate when every ui report is fresh and shows nothing but LU (cutover 7.9). The check,
-/// and whether the gate is set now.
+/// What [`recover`] found.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Recovered {
+    /// Live hand-over fences re-stated and released.
+    pub released: usize,
+    /// Live hand-over fences lifted (a change, a failure).
+    pub unfenced: usize,
+    /// Lapsed fences cleared.
+    pub lapsed: usize,
+    /// Reverse fences of a reverse hand-over that ended without lifting them, lifted (the conversation stays owned).
+    pub reverse_lifted: usize,
+}
+
+/// The fences a previous holder of the leader lock left (cutover 7.5: the leader killed between fence and release;
+/// a reverse hand-over killed between its fence and its reopen), at the start of a pass: this process holds the lock,
+/// so no other fence-taker runs. A live hand-over fence is re-stated and released, or lifted on any doubt
+/// ([`finish`]); a lapsed one is cleared; a reverse fence is lifted (nothing was reopened: the conversation stays
+/// owned, and the export's record, if it wrote one, is what `verify` checks).
+///
+/// # Errors
+/// A statement error; the lock lost.
+pub async fn recover(imp: &Importer, seen: &mut uploads::Seen) -> Result<Recovered> {
+    let pool = &imp.magpie.pool;
+    let mut out = Recovered::default();
+    let hold: bool = pool
+        .get()
+        .await?
+        .query_one("select hold from import_control", &[])
+        .await?
+        .get(0);
+    let rows = pool
+        .get()
+        .await?
+        .query(
+            "select c.id, s.person, s.user_key, s.source_schema, s.last_error is not null,
+                    c.legacy_fence_at > clock_timestamp() - make_interval(secs => $1)
+             from conversations c join import_sources s on s.conversation_id = c.id
+             where c.migrating and c.legacy_fence_at is not null and s.released_at is null",
+            &[&magpie::limits::FENCE_LEASE.as_secs_f64()],
+        )
+        .await?;
+    for r in &rows {
+        let fenced = std::time::Instant::now();
+        let o = OpenRow {
+            id: r.get(0),
+            person: r.get(1),
+            key: r.get(2),
+            schema: r.get(3),
+            error: r.get(4),
+        };
+        if !r.get::<_, bool>(5) {
+            if fence::lapse(pool, o.id).await? {
+                out.lapsed += 1;
+            }
+            continue;
+        }
+        tracing::info!(conversation = %o.id, "a fence the last leader left: re-stat");
+        if o.error || hold {
+            fence::unfence(pool, o.id).await?;
+            out.unfenced += 1;
+            continue;
+        }
+        match finish(imp, &o, seen, fenced).await {
+            Ok(true) => out.released += 1,
+            Ok(false) => out.unfenced += 1,
+            Err(e @ Error::LockLost) => return Err(e),
+            Err(e) => {
+                tracing::warn!(conversation = %o.id, error = %e, "a left fence was not released");
+                out.unfenced += 1;
+            }
+        }
+    }
+    let owned: Vec<Uuid> = pool
+        .get()
+        .await?
+        .query(
+            "select id from conversations where not migrating and legacy_fence_at is not null",
+            &[],
+        )
+        .await?
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    for id in owned {
+        if fence::unfence_reverse(pool, id).await? {
+            tracing::info!(conversation = %id, "a reverse fence the last holder left: lifted");
+            out.reverse_lifted += 1;
+        }
+    }
+    Ok(out)
+}
+
+/// `allow-handover [--person <email>]`: sets the gate when every ui report is fresh and shows nothing but LU
+/// (cutover 7.9): for everyone, or, with `person`, for that person only, judged on their part of every report
+/// ([`gate::judge`]'s person mode; stored in `import_gate_persons`). The check, and whether the gate is set now.
 ///
 /// # Errors
 /// A statement error.
-pub async fn allow(imp: &Importer, kube: &Kube, ui_token: &str) -> Result<(gate::Check, bool)> {
-    let c = gate::check(kube, ui_token, None).await;
+pub async fn allow(imp: &Importer, kube: &Kube, ui_token: &str, person: Option<&str>) -> Result<(gate::Check, bool)> {
+    let c = gate::check(kube, ui_token, person).await;
     if !c.clean() {
         return Ok((c, false));
     }
-    imp.magpie
-        .pool
-        .get()
-        .await?
-        .execute(
-            "update import_control set handover_allowed_at = coalesce(handover_allowed_at, now())",
-            &[],
-        )
-        .await?;
+    let conn = imp.magpie.pool.get().await?;
+    match person {
+        None => {
+            conn.execute(
+                "update import_control set handover_allowed_at = coalesce(handover_allowed_at, now())",
+                &[],
+            )
+            .await?;
+        }
+        Some(p) => {
+            conn.execute(
+                "insert into import_gate_persons (person) values ($1) on conflict (person) do nothing",
+                &[&p],
+            )
+            .await?;
+        }
+    }
     Ok((c, true))
 }
 

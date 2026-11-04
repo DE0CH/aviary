@@ -203,6 +203,8 @@ pub struct Conv {
     pub model: Option<String>,
     /// The importer holds it.
     pub migrating: bool,
+    /// A reverse hand-over has fenced it (owned, cutover 14.2).
+    pub fenced: bool,
     lease_id: Option<Uuid>,
     lease_sandbox: Option<Uuid>,
 }
@@ -240,9 +242,12 @@ pub struct Op<'p> {
 pub async fn lock(tx: &Tx<'_>, caller: &Caller) -> Result<Conv> {
     let row = tx
         .query_opt(
-            "select person, main_transcript, active_turn, cc_bytes, title, name_source, model, migrating, lease_id,
-                    lease_sandbox
-             from conversations where id = $1 for update",
+            &format!(
+                "select person, main_transcript, active_turn, cc_bytes, title, name_source, model, migrating, lease_id,
+                        lease_sandbox, {}
+                 from conversations where id = $1 for update",
+                crate::legacy::fence::REVERSE_FENCED_SQL
+            ),
             &[&caller.conversation],
         )
         .await?
@@ -261,6 +266,7 @@ pub async fn lock(tx: &Tx<'_>, caller: &Caller) -> Result<Conv> {
         name_source: row.get(5),
         model: row.get(6),
         migrating: row.get(7),
+        fenced: row.get(10),
         lease_id: row.get(8),
         lease_sandbox: row.get(9),
     })
@@ -283,12 +289,13 @@ impl Conv {
         }
     }
 
-    /// 409 `conversation_migrating` while the importer holds the conversation.
+    /// 409 `conversation_migrating` while the importer holds the conversation, or a reverse hand-over has fenced it
+    /// (cutover 14.2: no lease is granted and nothing is written until it ends).
     ///
     /// # Errors
     /// That refusal.
     pub fn refuse_migrating(&self) -> Result<()> {
-        if self.migrating {
+        if self.migrating || self.fenced {
             return Err(Refusal::migrating(limits::MIGRATING_RETRY_AFTER_MS).into());
         }
         Ok(())

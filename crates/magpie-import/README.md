@@ -28,9 +28,11 @@ own library, so an imported conversation is what live writes would have made: cc
 | `src/verify.rs` | byte-exact verification through magpie's read path, the re-ingest, the released-source check, 7.7's sanity notes (event and prompt counts against the classifier's count of the source, a workspace not on disk), and the record a clean `verify --all` leaves when the import is complete (`legacy_import_verified`, read by hermit's `legacy-cleanup` through `GET /v1/hermit/legacy-import`) |
 | `src/plan.rs` | `plan`: counts, sizes, the largest lines, memory files, blockers |
 | `src/holds.js`, `src/holds.rs` | the running sets (cutover 6.3): the script run in every old ui pod (each CloudCLI child asked for its running list, `ok: false` when it does not answer in 5 s), its output, the fail-closed merge |
-| `src/kube.rs` | the old cluster's API with `reqwest` and `tungstenite` (the Kubernetes crates are hermit's): ui pods in every phase, `pods/exec` over `v4.channel.k8s.io`; bindings `MAGPIE_IMPORT_LEGACY_KUBE_URL`, `MAGPIE_IMPORT_LEGACY_KUBE_TOKEN`, the CA at `/etc/legacy-kube-ca/ca.crt` |
+| `src/kube.rs` | the old cluster's API with `reqwest` and `tungstenite` (the Kubernetes crates are hermit's): ui pods in every phase, `pods/exec` over `v4.channel.k8s.io`, `pods/proxy` to the old router's switch module (`x-jarvis-switch-token`: the report and `restart`); bindings `MAGPIE_IMPORT_LEGACY_KUBE_URL`, `MAGPIE_IMPORT_LEGACY_KUBE_TOKEN`, the CA at `/etc/legacy-kube-ca/ca.crt` |
 | `src/lock.rs` | the leader lock (`hashtext('magpie-import.leader')`): the hand-over replicas' bid, a one-shot command's wait (seen in `pg_locks`), the waiter check the loop yields to |
 | `src/control.rs` | `status`, `hold`, `reset --yes`, `unfence`, `release <id> --force`, `purge <id>…` |
+| `src/handover.rs`, `src/gate.rs`, `src/server.rs` | the hand-over loop (7.5): its pass, DESIGN 9.4's release, the per-person gate (`allow-handover --person`, table `import_gate_persons`), the recovery of fences a killed lock holder left, `allow-handover`; the leader loop (letting the lock go to a waiting one-shot command between passes), `:9090/status`, the writer sidecar's `export-server` |
+| `src/reverse.rs` | `reverse <id>…` (14.2): the old child's running set, magpie's reverse fence (renewed every second), the export by the writer sidecar (pod-local `POST /v1/export`), the old router's `restart` on every ui pod, the reopen into legacy with `import_sources` synced to what the export wrote |
 | `src/export.rs` | the reverse export (14.3): a reverse-fenced owned conversation's cc files (memory to `aviary-memory/<id>/`; old-side files its scope no longer has deleted), its sessions row (with `project_path`), its failed turns and sent files written back to the old side (temporary file, then rename; 0600, uid 1000, or an error) |
 | `src/parity.rs` | `parity <id>…` (10.2 rehearsal 6): magpie's rows through pigeon's own `PaseoProjector` (zh), each normalised to `[kind, role, text sha256, tool name, tool status, attachment names]` |
 | `src/cli.rs` | `magpie import <command>`: one JSON document on stdout, logs on stderr; every command but `plan` and `status` holds the leader lock |
@@ -38,7 +40,9 @@ own library, so an imported conversation is what live writes would have made: cc
 | `tests/shares.rs` | prefix and non-prefix frozen transcripts, revoked before and after the import, a share of a gone conversation, `reset` |
 | `tests/export.rs` | 7.12 item 7: import, release, grow the conversation on the new side, export (refused unfenced), the old side's files equal magpie's reconstruction, a stale old-side file deleted, the sessions row and the failed turn match, memory in `aviary-memory/<id>/`, a re-import verifies; a purge on the new side is not re-imported by a pass before the export |
 | `tests/handover.rs` | `release --force`'s final sync inside the fence, `verified_stats`' fingerprints, the re-ingest's record and limbo, a rename onto an existing path, a released conversation's check (shared memory left out, new files seen), the mount check, the sent folders' quiet period, the lost lock, read-only sources, a cleared title, non-UTF-8 names |
-| `tests/loop.rs` | 7.12 item 5: the hand-over loop against a fake Kubernetes API (ui pods, one Terminating; exec answering `holds.js`; `pods/proxy` answering `/__jarvis/sockets`) and a fake `jarvis.sandboxes`: nothing before the gate; `allow-handover` refused while a pod has no report; a socket or HTTP request not LU, an old sandbox not `gone`, an unanswered child each hold the release; two clean reads release the idle conversation and never its running sibling; a source change waits for a pass that finds it unchanged |
+| `tests/loop.rs` | 7.12 item 5: the hand-over loop against a fake Kubernetes API (ui pods, one Terminating; exec answering `holds.js`; `pods/proxy` answering `/__jarvis/sockets`) and a fake `jarvis.sandboxes`: nothing before the gate; `allow-handover` refused while a pod has no report; a socket or HTTP request not LU, an old sandbox not `gone`, an unanswered child each hold the release; two clean reads release the idle conversation and never its running sibling; a source change waits for a pass that finds it unchanged; a per-person gate releases that person's conversations only, judged on their part of every report each pass; a leader killed between fence and release (its pass dropped inside the fence) is finished by the next one (re-stat and release, or a change that lifts the fence, or a lapsed fence cleared) |
+| `tests/reverse.rs` | 14.2: a reverse that waits while the person's old child runs something or does not answer, and while `restart` answers `busy` (exported, the fence lifted, native writes go on); a native write during the reverse fence waits past one lease and then answers 409 `route: "legacy"`; the reopened conversation imports nothing again on the next pass and verifies; a conversation born on the new side gets its `import_sources` row; a person with no old schema is refused |
+| `../magpie/tests/fence_race.rs` | 7.12 item 6 on magpie's side: the fence-race fuzz (1 000 sends around fences that release or lift, a third with a magpie-only file copied under the send's ticket), a database switchover during a fence (within and past the lease), the reverse fence's waits, the per-person gate in the window state |
 | `tests/holds_js.rs`, `tests/kube.rs` | `holds.js` against fake CloudCLI children (node), the transport against a fake Kubernetes API |
 | `tests/convergence.rs` | the property test of cutover 7.12 item 3 (random source changes of several line kinds, lines written again as another kind, a pass at random points: byte-exact, visible events (kind, uuid) = magpie's classifier over the source's lines) |
 
@@ -134,9 +138,9 @@ own library, so an imported conversation is what live writes would have made: cc
   is not written, unless `--unfenced`. The export renews the lease before each file, before the `cloudcli` writes
   and at the end (a lapse is the conversation's error), and compares the conversation's head seq, cc file versions,
   row (title, `name_source`, Recently deleted, session id, model, activity) and shares before and after its writes,
-  reading what it writes only after the first snapshot: a change is the conversation's error, to be exported again. magpie's
-  native writes do not yet wait for a reverse fence (WP-52's, 14.2 step 2): until they do, that before-and-after
-  check is what catches a native write during an export. Each exported conversation's result has `recorded`, the
+  reading what it writes only after the first snapshot: a change is the conversation's error, to be exported again
+  (magpie's native writes wait in their call while the reverse fence is live, so that check catches only a write
+  through a lapsed fence). Each exported conversation's result has `recorded`, the
   files written with their stat and sha256 in `import_sources.files`' shape, for the reopen (14.2 step 5). For an
   imported (released) conversation the export also makes that its release record (`import_sources.files`, the
   deleted paths taken out; also when it stops part-way), so a conversation exported and left owned (14.2 step 4's
@@ -181,11 +185,25 @@ own library, so an imported conversation is what live writes would have made: cc
   share clone runs through the mount's `.control` file (no credentials).
 - A sent-file snapshot's time is its folder's mtime to the nanosecond.
 
+- `reverse` (14.2) makes one attempt per conversation and answers `waiting` (still owned and native, nothing
+  changed) when the person's old child runs something, a child did not answer, the conversation is busy on the new
+  side, or `restart` answers `busy`; waiting and retrying is the caller's (`cutover rollback conversation`). It runs
+  in the hand-over container (the old API's bindings and `MAGPIE_IMPORT_TOKEN_UI`) holding the leader lock, and the
+  export runs in the writer sidecar through the pod-local `127.0.0.1:8081` (`MAGPIE_IMPORT_EXPORT_URL` overrides),
+  which needs no token: only the pod's own containers reach it. `restart` is called on every ui pod listed (one with
+  no child of the person answers `none`), so a child started after the running-set read is stopped too, or holds the
+  reverse. A person with no schema on the old side is refused: the export writes no sessions row for them, and the
+  old stack's disk discovery would index the transcript under an id that is not the conversation's. The reopen
+  stores, beside the export's files, the sessions row's, failed turns' and sent folders' fingerprints as the next
+  pass reads them, so the exported failed turns and sent files are not imported back as new ones. Reverse-fenced,
+  an owned conversation also refuses a sandbox lease, and a native write waits up to `limits::REVERSE_FENCE_WAIT`
+  (25 s) while the lease is renewed, then answers 409 `conversation_migrating` with `retryAfterMs`.
+- The hand-over leader lets the lock go between two passes when a one-shot command waits for it (`lock::waiter_present`)
+  and bids again at once; the waiter is granted the lock as it is let go, so the loop resumes once the command ends.
+- A pass starts by settling the fences a previous lock holder left (`handover::recover`): a live hand-over fence is
+  re-stated and released (or lifted on a change, an error or `hold on`), a lapsed one cleared, a reverse fence lifted.
+
 ## Owned by other packages
 
-The hand-over loop (`handover`, `src/handover.rs`: sync, pre-verify, upload ingestion, running sets, the running
-mirror, settled tickets, DESIGN 9.4's release, warm hints; `src/server.rs`: the leader loop, `:9090/status` and the
-`export-server` sidecar's `POST /v1/ingest-upload`), `allow-handover` (`src/gate.rs`) and `uploads` are WP-52's.
-Still open in WP-52: `reverse` (14.2, with a reverse fence in magpie), the per-person gate (`allow-handover
---person`), and 7.12 item 6's fence cases (fence-race fuzz, leader `kill -9` between fence and release, a magpie
-switchover during a fence).
+The hand-over loop, `allow-handover` (with `--person`), `uploads`, `reverse` and 7.12 item 6's fence cases are
+WP-52's, all built. WP-54 owns the move fuzz.

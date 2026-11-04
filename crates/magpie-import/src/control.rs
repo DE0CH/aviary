@@ -66,6 +66,8 @@ pub struct Status {
     /// The gate.
     #[serde(with = "time::serde::rfc3339::option")]
     pub gate: Option<OffsetDateTime>,
+    /// The per-person gates (`allow-handover --person`), by person key (never the email).
+    pub person_gates: Vec<String>,
     /// Hold (sync only, no release).
     pub hold: bool,
     /// Counts.
@@ -91,6 +93,12 @@ pub async fn status(imp: &Importer) -> Result<Status> {
     let gate: Option<OffsetDateTime> = c.get(0);
     let hold: bool = c.get(1);
     let done: Option<OffsetDateTime> = c.get(2);
+    let person_gates: Vec<String> = conn
+        .query("select person from import_gate_persons order by person", &[])
+        .await?
+        .iter()
+        .map(|r| aviary_core::log::person_key(r.get::<_, &str>(0)))
+        .collect();
     let n = conn
         .query_one(
             "select count(*),
@@ -133,12 +141,13 @@ pub async fn status(imp: &Importer) -> Result<Status> {
         leader: false,
         phase: if done.is_some() {
             "done"
-        } else if gate.is_some() {
+        } else if gate.is_some() || !person_gates.is_empty() {
             "handover"
         } else {
             "sync"
         },
         gate,
+        person_gates,
         hold,
         conversations: Counts {
             imported: n.get(0),
@@ -174,13 +183,16 @@ pub async fn hold(imp: &Importer, on: bool) -> Result<()> {
 /// [`Error::Source`] once the gate is set; a statement error.
 pub async fn reset(imp: &Importer) -> Result<u64> {
     let pool = &imp.magpie.pool;
-    let gate: Option<OffsetDateTime> = pool
+    let gate: bool = pool
         .get()
         .await?
-        .query_one("select handover_allowed_at from import_control", &[])
+        .query_one(
+            "select handover_allowed_at is not null or exists (select 1 from import_gate_persons) from import_control",
+            &[],
+        )
         .await?
         .get(0);
-    if gate.is_some() {
+    if gate {
         return Err(Error::Source("the hand-over gate is set: reset is for A2 only".into()));
     }
     let ids: Vec<Uuid> = pool

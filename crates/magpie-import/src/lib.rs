@@ -21,9 +21,12 @@
 //! - [`verify`]: byte-exact verification through magpie's read path (cutover 7.7).
 //! - [`plan`]: the dry run that reports blockers (cutover 7.9).
 //! - [`holds`]: the running sets, `holds.js` run in the old ui pods.
-//! - [`kube`]: the old cluster's API: the ui pods and `pods/exec` (the running sets' transport).
+//! - [`kube`]: the old cluster's API: the ui pods, `pods/exec` (the running sets' transport) and `pods/proxy` (the
+//!   switch module's report and restart).
 //! - [`gate`]: the gate's socket check (every ui pod's switch-module report).
-//! - [`handover`]: the hand-over loop (cutover 7.5, DESIGN 9.4).
+//! - [`handover`]: the hand-over loop (cutover 7.5, DESIGN 9.4), the per-person gate, and the recovery of fences a
+//!   killed leader left.
+//! - [`reverse`]: the reverse hand-over of one conversation (cutover 14.2).
 //! - [`uploads`]: upload ingestion of the old asset folders (cutover 7.4.3).
 //! - [`server`]: `handover` and `export-server`.
 //! - [`lock`]: the leader lock the hand-over replicas bid for and every one-shot command waits for.
@@ -44,6 +47,7 @@ pub mod lock;
 pub mod parity;
 pub mod pass;
 pub mod plan;
+pub mod reverse;
 pub mod sent;
 pub mod server;
 pub mod share;

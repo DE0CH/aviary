@@ -109,6 +109,10 @@ pub const UNAVAILABLE_RETRY_AFTER_S: u64 = 1;
 pub const MIGRATING_RETRY_AFTER_MS: u64 = 2_000;
 /// A fence's lease (cutover 7.8): fence to release is at most this; an older fence holds nothing.
 pub const FENCE_LEASE: Duration = Duration::from_secs(3);
+/// How long a native write waits in its call for a reverse fence (cutover 14.2: the export and the old child's stop,
+/// seconds) while the reverse hand-over renews its lease; then it answers 409 `conversation_migrating` with
+/// `retryAfterMs`. Inside the drain's in-flight grace.
+pub const REVERSE_FENCE_WAIT: Duration = Duration::from_secs(25);
 /// The synchronous ingest of one old asset (magpie 8.2 step 4).
 pub const INGEST_TIMEOUT: Duration = Duration::from_secs(5);
 

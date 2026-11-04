@@ -316,7 +316,8 @@ pub struct LegacyPathRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowState {
-    /// `import_control.handover_allowed_at`: the gate (DESIGN 9.2). Null before it (an old-path socket may still
+    /// `import_control.handover_allowed_at`: the gate (DESIGN 9.2), or, before it, the person's own gate
+    /// (`import_gate_persons`, cutover 7.9 `allow-handover --person`). Null before it (an old-path socket may still
     /// exist, so uploads are teed) and after a rollback cleared it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handover_allowed_at: Option<Timestamp>,

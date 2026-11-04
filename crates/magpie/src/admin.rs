@@ -69,8 +69,8 @@ pub async fn purge_person(app: &Magpie, person: &str) -> Result<PersonPurgeRespo
                 Err(e) if e.is(&ErrorCode::NotFound) => return Ok(false),
                 Err(e) => return Err(e),
             };
-            let Locked { migrating, .. } = l;
-            if migrating {
+            let Locked { migrating, fenced, .. } = l;
+            if migrating || fenced {
                 return Err(migrating_refusal());
             }
             purge_locked(t, p, id, ShareRevoke::Offboarded).await?;

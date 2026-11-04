@@ -1160,6 +1160,7 @@ pub async fn set_main_transcript(tx: &Tx<'_>, conversation: Uuid, path: &str) ->
             name_source: row.get(5),
             model: row.get(6),
             migrating: false,
+            fenced: false,
             lease_id: None,
             lease_sandbox: None,
         },

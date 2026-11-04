@@ -6,8 +6,9 @@
 //! read-only transaction, and every command but `export` connects with `default_transaction_read_only = on`, cutover
 //! 7.2), the `JuiceFS` mount at [`JFS`], `POD_NAME`.
 //! `holds` reads the running sets through the old cluster's API ([`crate::kube`]'s bindings). The hand-over loop
-//! and the commands that drive it: `handover` (the loop, [`crate::server::handover`]), `allow-handover` (the gate)
-//! and `export-server` (the writer sidecar's API); `reverse` (cutover 14.2) is not built yet. `export` is
+//! and the commands that drive it: `handover` (the loop, [`crate::server::handover`]), `allow-handover [--person
+//! <email>]` (the gate, for everyone or one person), `export-server` (the writer sidecar's API) and `reverse <id>…`
+//! (cutover 14.2, [`crate::reverse`]; run in the hand-over container, it exports through the sidecar). `export` is
 //! the only command that writes the old side (`JuiceFS` and `cloudcli`): it runs in the writer sidecar, whose mount
 //! and `cloudcli` connection are read-write (cutover 14.3).
 
@@ -30,7 +31,7 @@ pub const JUICEFS: &str = "/usr/local/bin/juicefs";
 const USAGE: &str = "usage: magpie import plan | run | catch-up | verify [--all | <id>…] | status | holds | hold on|off \
                      | reset --yes | unfence <id> | release <id> --force | purge <id>… \
                      | export [--unfenced] [--since <time>] [<id>…] | parity <id>… | handover | export-server \
-                     | allow-handover\n";
+                     | allow-handover [--person <email>] | reverse <id>…\n";
 
 fn out(v: &impl Serialize) {
     let mut s = serde_json::to_string_pretty(v).unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}"));
@@ -136,9 +137,10 @@ pub fn main(build: &version::Build, args: &[String]) -> ExitCode {
     let known = matches!(
         (cmd, rest.len()),
         (
-            "plan" | "run" | "catch-up" | "status" | "holds" | "handover" | "export-server" | "allow-handover",
+            "plan" | "run" | "catch-up" | "status" | "holds" | "handover" | "export-server",
             0
-        ) | ("parity" | "purge", 1..)
+        ) | ("allow-handover", 0 | 2)
+            | ("parity" | "purge" | "reverse", 1..)
             | ("verify" | "hold" | "reset" | "unfence" | "export", _)
             | ("release", 2)
     );
@@ -268,16 +270,57 @@ async fn run(imp: &Importer, cmd: &str, rest: &[String]) -> ExitCode {
             out(&verdicts);
             if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE }
         }
-        "allow-handover" => match crate::kube::Kube::from_env() {
-            Ok(k) => match crate::handover::allow(imp, &k, &env::required("MAGPIE_IMPORT_TOKEN_UI")).await {
-                Ok((check, set)) => {
-                    out(&serde_json::json!({ "gateSet": set, "check": check, "problems": check.problems() }));
-                    if set { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+        "allow-handover" => {
+            let person = match rest {
+                [] => None,
+                [flag, p] if flag == "--person" && p.contains('@') => Some(p.trim().to_lowercase()),
+                _ => return usage(),
+            };
+            match crate::kube::Kube::from_env() {
+                Ok(k) => {
+                    let token = env::required("MAGPIE_IMPORT_TOKEN_UI");
+                    match crate::handover::allow(imp, &k, &token, person.as_deref()).await {
+                        Ok((check, set)) => {
+                            out(&serde_json::json!({
+                                "gateSet": set,
+                                "personKey": person.as_deref().map(aviary_core::log::person_key),
+                                "check": check,
+                                "problems": check.problems(),
+                            }));
+                            if set { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+                        }
+                        Err(e) => fail(e),
+                    }
                 }
                 Err(e) => fail(e),
-            },
-            Err(e) => fail(e),
-        },
+            }
+        }
+        "reverse" => {
+            let Some(given) = ids(rest) else { return usage() };
+            let kube = match crate::kube::Kube::from_env() {
+                Ok(k) => k,
+                Err(e) => return fail(e),
+            };
+            let token = env::required("MAGPIE_IMPORT_TOKEN_UI");
+            let url =
+                env::try_required("MAGPIE_IMPORT_EXPORT_URL").unwrap_or_else(|_| crate::reverse::EXPORT_URL.to_owned());
+            let old = crate::reverse::Old {
+                kube: &kube,
+                ui_token: &token,
+                export_url: &url,
+            };
+            match crate::reverse::reverse(imp, &old, &given).await {
+                Ok(r) => {
+                    out(&r);
+                    if r.iter().all(|x| x.outcome == crate::reverse::Outcome::Reversed) {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
+                    }
+                }
+                Err(e) => fail(e),
+            }
+        }
         "holds" => match crate::kube::Kube::from_env() {
             Ok(k) => {
                 let set = crate::kube::running_set(&k).await;

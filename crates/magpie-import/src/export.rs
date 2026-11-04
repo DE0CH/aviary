@@ -136,22 +136,10 @@ pub async fn targets(imp: &Importer, since: Option<OffsetDateTime>, ids: &[Uuid]
     Ok(rows.iter().map(|r| r.get(0)).collect())
 }
 
-/// Renews the reverse fence of owned conversation `id` when it is live (`legacy_fence_at` set while not migrating,
-/// younger than its lease): whether it was. A lapsed fence is not renewed: a native write may have gone through it.
+/// Renews the reverse fence of owned conversation `id` when it is live ([`magpie::legacy::fence::renew_reverse`]):
+/// whether it was. A lapsed fence is not renewed: a native write may have gone through it.
 async fn renew(imp: &Importer, id: Uuid) -> Result<bool> {
-    Ok(imp
-        .magpie
-        .pool
-        .get()
-        .await?
-        .execute(
-            "update conversations set legacy_fence_at = clock_timestamp()
-              where id = $1 and not migrating
-                and legacy_fence_at > clock_timestamp() - make_interval(secs => $2)",
-            &[&id, &magpie::limits::FENCE_LEASE.as_secs_f64()],
-        )
-        .await?
-        == 1)
+    Ok(magpie::legacy::fence::renew_reverse(&imp.magpie.pool, id).await?)
 }
 
 /// Keeps the reverse fence of `id` for the next write (nothing when exporting `--unfenced`).

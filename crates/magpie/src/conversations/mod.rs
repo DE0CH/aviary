@@ -335,6 +335,8 @@ pub struct Locked {
     pub deleted_at: Option<OffsetDateTime>,
     /// The importer holds it.
     pub migrating: bool,
+    /// A reverse hand-over has fenced it (owned, cutover 14.2): its writes wait ([`crate::legacy::fence::native`]).
+    pub fenced: bool,
 }
 
 /// Locks the person's conversation row (`select … for update`, magpie 4: always the conversation before the
@@ -345,7 +347,10 @@ pub struct Locked {
 pub async fn lock(db: &impl Db, person: &str, id: Uuid) -> Result<Locked> {
     let row = db
         .query_opt(
-            "select person, deleted_at, migrating from conversations where id = $1 for update",
+            &format!(
+                "select person, deleted_at, migrating, {} from conversations where id = $1 for update",
+                crate::legacy::fence::REVERSE_FENCED_SQL
+            ),
             &[&id],
         )
         .await?
@@ -359,13 +364,16 @@ pub async fn lock(db: &impl Db, person: &str, id: Uuid) -> Result<Locked> {
         person: owner,
         deleted_at: row.get(1),
         migrating: row.get(2),
+        fenced: row.get(3),
     })
 }
 
 impl Locked {
     /// 409 `conversation_migrating` `route: "legacy"` for a migrating conversation (cutover 6.4, DESIGN 12 D14):
     /// its writes belong to the old stack until the importer releases it. A fenced conversation's wait for the
-    /// release is the window routes' (WP-51).
+    /// release is the window routes' (WP-51). An owned conversation under a reverse fence (cutover 14.2) answers 409
+    /// `conversation_migrating` without a route: the window routes wait for its end, then run natively or follow the
+    /// reopen's 409 `route: "legacy"`.
     ///
     /// # Errors
     /// That refusal.
@@ -374,6 +382,9 @@ impl Locked {
             let mut r = Refusal::legacy_route();
             r.retry_after_ms = Some(limits::MIGRATING_RETRY_AFTER_MS);
             return Err(r.into());
+        }
+        if self.fenced {
+            return Err(Refusal::migrating(limits::MIGRATING_RETRY_AFTER_MS).into());
         }
         Ok(())
     }

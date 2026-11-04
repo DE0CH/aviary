@@ -1,7 +1,8 @@
 //! The old cluster's Kubernetes API for the running sets (cutover 6.3, 7.2; bridge B7): the `app=ui` pods of
 //! namespace `jarvis` listed from the API in every phase (Terminating ones included), and `pods/exec` into each
 //! one's container `ui` over the API's WebSocket exec protocol (`v4.channel.k8s.io`: binary frames whose first byte
-//! is the stream, 1 stdout, 2 stderr, 3 the final status). Plain HTTP and `reqwest`/`tungstenite` only: the
+//! is the stream, 1 stdout, 2 stderr, 3 the final status), and `pods/proxy` to the old router's switch module (the
+//! gate's report, the reverse hand-over's [`restart`]). Plain HTTP and `reqwest`/`tungstenite` only: the
 //! Kubernetes client crates are hermit's (platform 4.5).
 //!
 //! Bindings: `MAGPIE_IMPORT_LEGACY_KUBE_URL` (the old API's address), `MAGPIE_IMPORT_LEGACY_KUBE_TOKEN` (the
@@ -297,28 +298,79 @@ fn url_query(pairs: &[(&str, &str)]) -> String {
         .join("&")
 }
 
-/// One running-set read (cutover 6.3): `holds.js` in every ui pod at once, each within [`EXEC_TIMEOUT`]; a pod that
-/// could not be listed, entered or read makes the read incomplete.
-pub async fn running_set(kube: &Kube) -> RunningSet {
-    let pods = match kube.ui_pods().await {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!(error = %e, "ui pods not listed");
-            return RunningSet::of(vec![Err(e)]);
-        }
-    };
-    let reads = futures_util::future::join_all(pods.iter().map(|p| async move {
+/// Each ui pod's children (`holds.js` in every ui pod at once, each within [`EXEC_TIMEOUT`]): the pod and its read.
+///
+/// # Errors
+/// The pods could not be listed.
+pub async fn pod_reads(kube: &Kube) -> Result<Vec<(Pod, Result<Vec<holds::Child>>)>> {
+    let pods = kube.ui_pods().await?;
+    Ok(futures_util::future::join_all(pods.into_iter().map(|p| async move {
         let out = kube
             .exec(&p.name, CONTAINER, &["node", "-e", holds::SCRIPT], EXEC_TIMEOUT)
             .await;
-        match out {
+        let read = match out {
             Ok(o) => holds::parse(&o),
             Err(e) => {
                 tracing::warn!(pod = %p.name, terminating = p.terminating, error = %e, "running set not read");
                 Err(e)
             }
-        }
+        };
+        (p, read)
     }))
-    .await;
-    RunningSet::of(reads)
+    .await)
+}
+
+/// One running-set read (cutover 6.3): [`pod_reads`]; a pod that could not be listed, entered or read makes the read
+/// incomplete.
+pub async fn running_set(kube: &Kube) -> RunningSet {
+    match pod_reads(kube).await {
+        Ok(reads) => RunningSet::of(reads.into_iter().map(|(_, r)| r).collect()),
+        Err(e) => {
+            tracing::warn!(error = %e, "ui pods not listed");
+            RunningSet::of(vec![Err(e)])
+        }
+    }
+}
+
+/// The old router's restart route (DESIGN 9.6, claudecodeui `jarvis/router.mjs`): stops the person's `CloudCLI` child
+/// in that pod only if nothing of theirs is busy.
+pub const RESTART: &str = "/__jarvis/restart";
+
+/// What a pod's restart route answered (`{"result": "none" | "busy" | "stopped", "why"?}`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Restart {
+    /// The pod has no child of the person.
+    None,
+    /// The child was stopped (its running set was empty and no request of the person was outstanding).
+    Stopped,
+    /// The child is busy: why.
+    Busy(String),
+}
+
+/// `POST /__jarvis/restart?person=<email>` on `pod` through `pods/proxy`, within `bound`.
+///
+/// # Errors
+/// The API unreachable, a status other than 200, an answer that does not parse.
+pub async fn restart(kube: &Kube, pod: &str, switch_token: &str, person: &str, bound: Duration) -> Result<Restart> {
+    #[derive(Deserialize)]
+    struct Answer {
+        result: String,
+        #[serde(default)]
+        why: Option<String>,
+    }
+    let path = format!("{RESTART}?{}", url_query(&[("person", person)]));
+    let (status, body) = kube
+        .proxy(reqwest::Method::POST, pod, &path, switch_token, bound)
+        .await?;
+    if status != 200 {
+        return Err(err("restart", format!("{pod} answered {status}")));
+    }
+    let a: Answer = serde_json::from_str(&body).map_err(|e| err("restart", e))?;
+    match a.result.as_str() {
+        "none" => Ok(Restart::None),
+        "stopped" => Ok(Restart::Stopped),
+        "busy" => Ok(Restart::Busy(a.why.unwrap_or_default())),
+        other => Err(err("restart", format!("{pod} answered {other:?}"))),
+    }
 }

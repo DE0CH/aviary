@@ -4,6 +4,8 @@
 
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::missing_panics_doc)]
 
+pub mod old;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
