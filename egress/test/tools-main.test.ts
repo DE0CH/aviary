@@ -71,31 +71,29 @@ before(async () => {
   });
   hermitUrl = await listen(hermit);
 
-  // an upstream MCP server with one read-only tool, `wait`, that answers after `ms`
+  // an upstream REST API with one tool, `wait`, that answers after `ms`
   upstream = createServer((req, res) => {
     let b = "";
     req.on("data", (c) => (b += c));
     req.on("end", async () => {
-      const m = JSON.parse(b || "{}");
-      const answer = (result: unknown) => {
+      const answer = (v: unknown) => {
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ jsonrpc: "2.0", id: m.id, result }));
+        res.end(JSON.stringify(v));
       };
-      if (m.method === "tools/list") return answer({ tools: [{ name: "wait", description: "waits", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }] });
-      if (m.method === "tools/call") {
-        const ms = Number(m.params?.arguments?.ms ?? 0);
+      if (req.url === "/api/openapi.json") return answer({ openapi: "3.1.0", paths: { "/api/wait": { post: { summary: "waits" } } } });
+      if (req.url === "/api/wait") {
+        const ms = Number(JSON.parse(b || "{}").ms ?? 0);
         for (const w of upstreamCallWaiters.get(ms)?.splice(0) ?? []) w();
         // unref'd: a call the test leaves hanging never holds this test process open
-        await new Promise((r) => setTimeout(r, Number(m.params?.arguments?.ms ?? 0)).unref());
-        return answer({ content: [{ type: "text", text: "waited" }] });
+        await new Promise((r) => setTimeout(r, ms).unref());
+        return answer({ waited: true });
       }
-      if (m.id === undefined) return void res.writeHead(202).end();
-      answer({});
+      res.writeHead(404).end();
     });
   });
   upstreamUrl = await listen(upstream);
 
-  writeFileSync(join(dir, "tools.json"), JSON.stringify({ upstreams: [{ prefix: "up", url: `${upstreamUrl}/mcp`, tools: ["wait"], listAs: "lister@example.com" }] }));
+  writeFileSync(join(dir, "tools.json"), JSON.stringify({ upstreams: [{ prefix: "up", url: `${upstreamUrl}/api`, tools: ["wait"], listAs: "lister@example.com" }] }));
   writeFileSync(join(dir, "catalogue.json"), JSON.stringify({ users: ["@example.com"], admins: [] }));
 });
 
@@ -185,7 +183,7 @@ async function ready(c: Child): Promise<{ api: string; health: string }> {
 }
 
 function call(api: string, ms: number, request: string, agent?: Agent): Promise<{ status: number; headers: IncomingHttpHeaders; body: string }> {
-  const u = new URL(`${api}/mcp`);
+  const u = new URL(`${api}/v1/tools/up_wait`);
   const headers = {
     authorization: `Bearer ${GW}`,
     "aviary-sandbox-id": sbx.id,
@@ -201,7 +199,7 @@ function call(api: string, ms: number, request: string, agent?: Agent): Promise<
       res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: b }));
     });
     req.on("error", reject);
-    req.end(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "up_wait", arguments: { ms } } }));
+    req.end(JSON.stringify({ ms }));
   });
 }
 

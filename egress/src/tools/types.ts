@@ -1,5 +1,7 @@
-// What every tool of the tools server is (docs/CHAT.md, "tools"): an MCP tool definition plus the function that runs it
-// for one call. Results are MCP content; costUsd (when the provider reports one) goes into tool_calls.
+// What every tool of the tools server is (docs/CHAT.md, "tools"): a tool definition (name, description, JSON Schema of
+// its arguments) plus the function that runs it for one call. A result is content (text the reader reads, pictures)
+// and/or JSON (structuredContent), which server.ts `answer` turns into the HTTP answer; costUsd (when the provider
+// reports one) goes into tool_calls.
 import type { ToolsConfig } from "./config.ts";
 
 /** Who is calling: Claude Code in a sandbox, as the gateway verified it (its pair bearer plus the `Aviary-Sandbox-*`

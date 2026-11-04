@@ -25,7 +25,7 @@ export interface EgressRoute {
    * sandbox's egress token. */
   model?: boolean;
   /** pass the caller's Authorization on (an upstream that identifies the sandbox by its own egress token: our tools
-   * role's MCP endpoint for Claude Code, docs/CLAUDE-CODE.md); otherwise caller credentials never go upstream */
+   * role's REST API, docs/CLAUDE-CODE.md "Skills and sandbox routes"); otherwise caller credentials never go upstream */
   keepAuth?: boolean;
   /** send the caller's identity as egress verified it: `X-Jarvis-Conversation` (the sandbox's conversation id) and
    * `X-Jarvis-Sandbox` (its id), replacing any the caller sent (an upstream that acts on the conversation's files: the
@@ -34,22 +34,21 @@ export interface EgressRoute {
   /** also served on egress's relay listener to a person's own Claude Code, authenticated by their relay token
    * (docs/CLAUDE-CODE.md, "Relay"); model routes only, so ZDR, the model list and the budget apply as in a sandbox */
   relay?: boolean;
-  /** an MCP server for Claude Code in the sandbox: web registers it as the MCP server named after the route, at
-   * `/x/<name>/mcp`, and exports the route's base URL as `JARVIS_ROUTE_<NAME>_URL` (with the sandbox's egress token in
-   * `JARVIS_EGRESS_TOKEN`) so the sandbox can fetch its other allowed paths too (docs/CLAUDE-CODE.md, "Route MCP
-   * servers"). The upstream decides what its tools may do; the tools role's read-only rule doesn't apply. */
-  mcp?: boolean;
+  /** an API Claude Code in the sandbox calls itself (with curl, as a managed skill says): web exports the route's base
+   * URL as `JARVIS_ROUTE_<NAME>_URL` (the sandbox's egress token is `JARVIS_EGRESS_TOKEN`; docs/CLAUDE-CODE.md,
+   * "Skills"). The upstream decides what its API may do; the tools role's read-only rule doesn't apply. */
+  sandbox?: boolean;
   inject: Record<string, string>;
   allowPaths?: string[];
 }
 
-export interface UpstreamMcp {
+export interface UpstreamApi {
   prefix: string;
   url: string;
   headers: Record<string, string>;
   /**
    * The upstream's tools (their own names, without the prefix) the model may use: read-only ones only. Default deny: a
-   * tool not named here, or one the upstream marks readOnlyHint false or destructiveHint true, is never offered.
+   * tool not named here is never offered.
    */
   tools?: string[];
 }
@@ -162,6 +161,9 @@ export interface ChatConfig {
   /** Thinking level for the title model's tool-less calls (titles, Claude Code's quick calls); absent = its default. */
   titleReasoning?: ReasoningEffort;
   systemPromptFile: string;
+  /** Claude Code's managed skills (docs/CLAUDE-CODE.md, "Skills"): a folder of files named `<skill>.<file>` (a
+   * ConfigMap's keys can't hold "/"), e.g. `labels.SKILL.md`, `labels.design-format.md`; absent = none. */
+  skillsDir?: string;
   sandbox: {
     /** Where sandboxes run (docs/CHAT.md, "Sandbox providers"). */
     provider: "kubernetes" | "e2b" | "vm";
@@ -209,7 +211,7 @@ export interface ChatConfig {
      * captured_at, excerpt, dashboard_url}. YYC: its news monitor's copy of an article, or its capture of a site it reads.
      */
     capture?: { url: string; tokenEnv: string; name: string };
-    upstreams: UpstreamMcp[];
+    upstreams: UpstreamApi[];
   };
   /** absent = no limit */
   budget?: BudgetConfig;
@@ -233,7 +235,7 @@ export function allowedModels(config: ChatConfig): string[] {
 const DEFAULTS = {
   sandbox: { provider: "kubernetes" as const, image: "", namespace: "jarvis-sandbox", runtimeClass: "gvisor", idleMinutes: 30, maxLifetimeHours: 8, maxActive: 6, cpu: "1", memory: "1Gi" },
   egress: { defaultAllowedHosts: [] as string[], denyHosts: [] as string[], generatedAllowlist: true, maxUploadBytes: 8 * 1024 * 1024, routes: [] as EgressRoute[], cacheGiB: 5 },
-  tools: { upstreams: [] as UpstreamMcp[] },
+  tools: { upstreams: [] as UpstreamApi[] },
 };
 
 export function parseConfig(raw: unknown): ChatConfig {
@@ -311,8 +313,9 @@ export function parseConfig(raw: unknown): ChatConfig {
   }
   for (const r of (c.egress?.routes ?? []) as EgressRoute[]) {
     if (r.relay && (r.model !== true || r.identity || r.keepAuth)) throw new Error(`config: egress route ${r.name}: relay needs a model route without identity or keepAuth`);
-    if (r.mcp && (r.model || r.relay || r.keepAuth)) throw new Error(`config: egress route ${r.name}: an mcp route can't be a model, relay or keepAuth route`);
-    if (r.mcp && !/^[a-z][a-z0-9-]*$/.test(r.name)) throw new Error(`config: egress route ${r.name}: an mcp route's name must be lowercase letters, digits and -`);
+    if ((r as { mcp?: unknown }).mcp !== undefined) throw new Error(`config: egress route ${r.name}: "mcp" is gone; a route the sandbox calls is "sandbox": true`);
+    if (r.sandbox && (r.model || r.relay || r.keepAuth)) throw new Error(`config: egress route ${r.name}: a sandbox route can't be a model, relay or keepAuth route`);
+    if (r.sandbox && !/^[a-z][a-z0-9-]*$/.test(r.name)) throw new Error(`config: egress route ${r.name}: a sandbox route's name must be lowercase letters, digits and -`);
   }
   if (c.titleReasoning !== undefined && !REASONING_EFFORTS.has(c.titleReasoning)) throw new Error(`config: titleReasoning must be one of ${[...REASONING_EFFORTS].join(", ")}`);
   let budget: BudgetConfig | undefined;
@@ -335,6 +338,7 @@ export function parseConfig(raw: unknown): ChatConfig {
     titleModel: c.titleModel ?? c.defaultModel,
     ...(c.titleReasoning ? { titleReasoning: c.titleReasoning } : {}),
     systemPromptFile: c.systemPromptFile,
+    ...(typeof c.skillsDir === "string" && c.skillsDir ? { skillsDir: c.skillsDir } : {}),
     sandbox: { ...DEFAULTS.sandbox, ...c.sandbox, provider, e2b, vm },
     egress: { ...DEFAULTS.egress, ...c.egress },
     tools: { ...DEFAULTS.tools, ...c.tools },

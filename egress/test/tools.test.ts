@@ -21,7 +21,7 @@ import { isPrivateAddress, htmlToText } from "../src/tools/netguard.ts";
 import { iso } from "../src/tools/providers.ts";
 import { acceptList, createToolsServer, DRAIN_MS, FLUSH_MS, POOL_END_MS, toolList, type ToolsServer } from "../src/tools/server.ts";
 import type { Deps, ToolDef } from "../src/tools/types.ts";
-import { pickResponse, readOnlyAllowed, startRefresh, Upstream } from "../src/tools/upstream.ts";
+import { offered, startRefresh, toolsOfOpenApi, Upstream } from "../src/tools/upstream.ts";
 import { startFakes, type Fakes } from "./fakes/tools-upstreams.ts";
 
 const GW = "gateway-pair-token-current";
@@ -127,8 +127,28 @@ function gw(s: Sbx, bearer = GW, request = "0190f6c2-0000-7000-8000-000000000001
   };
 }
 
+/** A tool's REST answer in the shape of a tool result (content, isError, structuredContent). */
+export function asResult(status: number, type: string, text: string): any {
+  if (status === 422 || status === 400 || status === 502) {
+    const v = JSON.parse(text);
+    return { isError: true, content: [{ type: "text", text: v.error ?? v.message }] };
+  }
+  if (type.startsWith("text/plain")) return { content: [{ type: "text", text }] };
+  const v = JSON.parse(text);
+  return v && typeof v === "object" && "content" in v ? v : { structuredContent: v, content: [{ type: "text", text }] };
+}
+
+/** "tools/list" → GET /v1/tools; "tools/call" {name, arguments} → POST /v1/tools/<name>, its answer as {result}. */
 async function rpc(method: string, params: Record<string, unknown> = {}, s: Sbx = sbx, headers?: Record<string, string>): Promise<{ status: number; body: any }> {
-  const r = await fetch(`${url}/mcp`, { method: "POST", headers: headers ?? gw(s), body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
+  const h = headers ?? gw(s);
+  if (method === "tools/call") {
+    const r = await fetch(`${url}/v1/tools/${params.name}`, { method: "POST", headers: h, body: JSON.stringify(params.arguments ?? {}) });
+    const text = await r.text();
+    if (r.status === 200 || r.status === 422 || r.status === 502 || (r.status === 400 && JSON.parse(text).code === "bad_request" && !/Aviary-Sandbox/.test(text)))
+      return { status: r.status, body: { result: asResult(r.status, r.headers.get("content-type") ?? "", text) } };
+    return { status: r.status, body: text ? JSON.parse(text) : null };
+  }
+  const r = await fetch(`${url}/v1/tools`, { headers: h });
   const text = await r.text();
   return { status: r.status, body: text ? JSON.parse(text) : null };
 }
@@ -181,7 +201,7 @@ before(async () => {
     tikhub: { keyEnv: "TIK_KEY", baseUrl: `${fakes.url}/tikhub` },
     anyapi: { keyEnv: "ANY_KEY", baseUrl: `${fakes.url}/anyapi`, denySkus: ["facebook.marketplace"] },
     capture: { url: `${fakes.url}/capture`, tokenEnv: "CAP", name: "YYC" },
-    upstreams: [{ prefix: "yyc", url: `${fakes.url}/mcp-up`, headers: { Authorization: "Bearer ${UP_TOKEN}", "X-YYC-User": "${USER_EMAIL}" }, tools: ["posts_search", "post_delete"], listAs: "Lister@example.com" }],
+    upstreams: [{ prefix: "yyc", url: `${fakes.url}/rest-up`, headers: { Authorization: "Bearer ${UP_TOKEN}", "X-YYC-User": "${USER_EMAIL}" }, tools: ["posts_search"], listAs: "Lister@example.com" }],
   });
   deps = {
     config,
@@ -368,9 +388,9 @@ test("tool_calls: a database outage drops the row and never delays the call", as
   try {
     const s = sandbox();
     const t0 = Date.now();
-    const r = await fetch(`${other.url}/mcp`, { method: "POST", headers: gw(s), body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "slow_wait", arguments: { ms: 0 } } }) });
+    const r = await fetch(`${other.url}/v1/tools/slow_wait`, { method: "POST", headers: gw(s), body: JSON.stringify({ ms: 0 }) });
     assert.equal(r.status, 200);
-    assert.equal(textOf(((await r.json()) as any).result), "waited");
+    assert.equal(await r.text(), "waited");
     assert.ok(Date.now() - t0 < 1000);
     await deadLog.flush();
     assert.equal(deadLog.dropped, 1);
@@ -400,9 +420,9 @@ test("tool_calls: the final flush is bounded, so a blackholed database cannot ho
   }
 });
 
-/** One request on a kept-alive connection of `agent` (node:http, so Connection headers are visible). */
+/** One slow_wait call on a kept-alive connection of `agent` (node:http, so Connection headers are visible). */
 function post(base: string, s: Sbx, body: unknown, agent: import("node:http").Agent): Promise<{ status: number; headers: import("node:http").IncomingHttpHeaders; body: string }> {
-  const u = new URL(`${base}/mcp`);
+  const u = new URL(`${base}/v1/tools/slow_wait`);
   return new Promise((resolve, reject) => {
     const req = httpRequest({ hostname: u.hostname, port: u.port, path: u.pathname, method: "POST", headers: gw(s), agent }, (res) => {
       let b = "";
@@ -421,7 +441,7 @@ test("drain: 150 s bound; in-flight calls finish, a kept-alive request is answer
   const one = await startServer();
   const agent = new Agent({ keepAlive: true, maxSockets: 2 });
   try {
-    const slowCall = (ms: number) => ({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "slow_wait", arguments: { ms } } });
+    const slowCall = (ms: number) => ({ ms });
     // two kept-alive connections: one busy with a 600 ms call, one idle after a quick call
     await post(one.url, s, slowCall(0), agent);
     const inflight = post(one.url, s, slowCall(600), agent);
@@ -432,16 +452,16 @@ test("drain: 150 s bound; in-flight calls finish, a kept-alive request is answer
     assert.match(r.body, /waited/);
     assert.equal(r.headers.connection, "close", "the answer during the drain closes its connection");
     assert.equal(await drained, 0, "nothing cut");
-    await assert.rejects(fetch(`${one.url}/mcp`, { method: "POST", headers: gw(s), body: "{}" }), "no new connections after the drain");
+    await assert.rejects(fetch(`${one.url}/v1/tools/slow_wait`, { method: "POST", headers: gw(s), body: "{}" }), "no new connections after the drain");
   } finally {
     agent.destroy();
   }
   // a call longer than the bound is cut and counted
   const two = await startServer();
-  const p = fetch(`${two.url}/mcp`, { method: "POST", headers: gw(s), body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "slow_wait", arguments: { ms: 5000 } } }) }).catch((e) => e);
+  const p = fetch(`${two.url}/v1/tools/slow_wait`, { method: "POST", headers: gw(s), body: JSON.stringify({ ms: 5000 }) }).catch((e) => e);
   await new Promise((r) => setTimeout(r, 100));
   const cutRequest = "0190f6c2-0000-7000-8000-0000000000cc";
-  const p2 = fetch(`${two.url}/mcp`, { method: "POST", headers: gw(s, GW, cutRequest), body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "slow_wait", arguments: { ms: 5000 } } }) }).catch((e) => e);
+  const p2 = fetch(`${two.url}/v1/tools/slow_wait`, { method: "POST", headers: gw(s, GW, cutRequest), body: JSON.stringify({ ms: 5000 }) }).catch((e) => e);
   await new Promise((r) => setTimeout(r, 100));
   assert.equal(await two.srv.drain(300), 2);
   assert.ok((await p) instanceof Error);
@@ -458,7 +478,7 @@ test("upstreams: the first tool-list read is bounded, so an upstream that hangs 
   const hang = createServer(() => {});
   await new Promise<void>((r) => hang.listen(0, "127.0.0.1", r));
   try {
-    const cfg = parseToolsConfig({ upstreams: [{ prefix: "stuck", url: `http://127.0.0.1:${(hang.address() as AddressInfo).port}/mcp`, tools: ["x"], listAs: "lister@example.org" }] });
+    const cfg = parseToolsConfig({ upstreams: [{ prefix: "stuck", url: `http://127.0.0.1:${(hang.address() as AddressInfo).port}`, tools: ["x"], listAs: "lister@example.org" }] });
     const ups = cfg.upstreams.map((u) => new Upstream(u, { ...deps, config: cfg }));
     const t0 = Date.now();
     const r = startRefresh(ups, 600_000, 300);
@@ -479,14 +499,13 @@ test("upstreams: an upstream whose first read failed is read again soon (backoff
     req.on("data", (c) => (b += c));
     req.on("end", () => {
       if (++seen === 1) return void req.socket.destroy(); // down for the first read
-      const { id } = JSON.parse(b);
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ jsonrpc: "2.0", id, result: { tools: [{ name: "x", annotations: { readOnlyHint: true } }] } }));
+      res.end(JSON.stringify({ openapi: "3.1.0", paths: { "/x": { post: { summary: "x" } } } }));
     });
   });
   await new Promise<void>((r) => flaky.listen(0, "127.0.0.1", r));
   try {
-    const cfg = parseToolsConfig({ upstreams: [{ prefix: "flaky", url: `http://127.0.0.1:${(flaky.address() as AddressInfo).port}/mcp`, tools: ["x"], listAs: "lister@example.org" }] });
+    const cfg = parseToolsConfig({ upstreams: [{ prefix: "flaky", url: `http://127.0.0.1:${(flaky.address() as AddressInfo).port}`, tools: ["x"], listAs: "lister@example.org" }] });
     const ups = cfg.upstreams.map((u) => new Upstream(u, { ...deps, config: cfg }));
     const r = startRefresh(ups, 600_000, 300, [50, 100]);
     await r.ready;
@@ -554,12 +573,12 @@ test("config, catalogue and migrations", async () => {
 });
 
 test("a body over tools' 2 MB cap is answered 413 too_large with Connection: close, not a reset", async () => {
-  const big = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "slow_wait", arguments: { pad: "x".repeat(2_100_000) } } });
+  const big = JSON.stringify({ pad: "x".repeat(2_100_000) });
   const { Agent } = await import("node:http");
   const agent = new Agent({ keepAlive: true });
   try {
     const r = await new Promise<{ status: number; headers: import("node:http").IncomingHttpHeaders; body: string }>((resolve, reject) => {
-      const u = new URL(`${url}/mcp`);
+      const u = new URL(`${url}/v1/tools/slow_wait`);
       const req = httpRequest({ hostname: u.hostname, port: u.port, path: u.pathname, method: "POST", headers: gw(sbx), agent }, (res) => {
         let b = "";
         res.on("data", (c) => (b += c));
@@ -575,27 +594,21 @@ test("a body over tools' 2 MB cap is answered 413 too_large with Connection: clo
     agent.destroy();
   }
   // the server goes on serving
-  assert.equal((await rpc("ping")).status, 200);
+  assert.equal((await rpc("tools/list")).status, 200);
 });
 
-test("MCP: initialize, ping, list, unknown method, notifications, batch", async () => {
-  const init = (await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "claude-code" } })).body;
-  assert.equal(init.result.protocolVersion, "2025-06-18");
-  assert.ok(init.result.capabilities.tools);
-  assert.equal((await rpc("initialize", { protocolVersion: "1999-01-01" })).body.result.protocolVersion, "2025-06-18");
-  assert.deepEqual((await rpc("ping")).body.result, {});
-  assert.equal((await rpc("nope/nope")).body.error.code, -32601);
-  const names = (await rpc("tools/list")).body.result.tools.map((x: any) => x.name);
+test("REST: the tool list, OpenAPI, an unknown tool, wrong methods and paths, a body that isn't an object", async () => {
+  const names = (await rpc("tools/list")).body.map((x: any) => x.name);
   assert.deepEqual(names, ["web_search", "web_fetch", "social_search", "anyapi_search", "anyapi_describe", "anyapi_run", "anyapi_result", "yyc_posts_search", "slow_wait"]);
   for (const n of names) assert.match(n, /^[a-z0-9_]+$/, "lowercase names");
-  const note = await fetch(`${url}/mcp`, { method: "POST", headers: gw(sbx), body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
-  assert.equal(note.status, 202);
-  const batch = await fetch(`${url}/mcp`, {
-    method: "POST",
-    headers: gw(sbx),
-    body: JSON.stringify([{ jsonrpc: "2.0", id: 7, method: "ping" }, { jsonrpc: "2.0", method: "notifications/initialized" }]),
-  });
-  assert.deepEqual(await batch.json(), [{ jsonrpc: "2.0", id: 7, result: {} }]);
+  const api: any = await (await fetch(`${url}/v1/openapi.json`, { headers: gw(sbx) })).json();
+  assert.equal(api.openapi, "3.1.0");
+  assert.ok(api.paths["/v1/tools/web_search"].post.requestBody);
+  assert.equal((await fetch(`${url}/v1/tools/nope`, { method: "POST", headers: gw(sbx), body: "{}" })).status, 404);
+  assert.equal((await fetch(`${url}/v1/tools/web_search`, { headers: gw(sbx) })).status, 405);
+  assert.equal((await fetch(`${url}/mcp`, { method: "POST", headers: gw(sbx), body: "{}" })).status, 404, "no MCP");
+  const bad = await fetch(`${url}/v1/tools/slow_wait`, { method: "POST", headers: gw(sbx), body: "[1]" });
+  assert.equal(bad.status, 400);
 });
 
 test("web_search: Exa results as text, cost logged in tool_calls", async () => {
@@ -619,10 +632,8 @@ test("web_fetch: the instance's own copy or capture first, labelled; original: t
   assert.match(textOf(cached), /^Source: YYC's stored copy \(captured 2026-10-27 10:00\)/);
   assert.match(textOf(cached), /存檔全文/);
   assert.match(textOf(cached), /YYC's page for it: https:\/\/yyc\.example\/item\/7/);
-  assert.equal((cached as any).structuredContent.via, "own-cache");
   const captured = await call("web_fetch", { url: "https://news.example/known-site/x" });
   assert.match(textOf(captured), /^Source: YYC's capture, read just now/);
-  assert.equal((captured as any).structuredContent.via, "own-capture");
   // asked for as it is: the page itself (Exa here), no label
   const orig = await call("web_fetch", { url: "https://news.example/known-article", original: true });
   assert.match(textOf(orig), /全文內容/);
@@ -695,38 +706,37 @@ test("social_search: TikHub posts, fallback endpoint, platform check", async () 
   assert.equal(Number(rows[0].cost_usd), 0.001);
 });
 
-test("upstream MCP: listed read-only tools are proxied with the staff member's identity; everything else is hidden", async () => {
+test("upstream REST: listed tools are proxied with the staff member's identity; everything else is hidden", async () => {
   const r = await call("yyc_posts_search", { query: "x" });
-  // the owner the gateway named (Aviary-Sandbox-Person) reaches yyc-mcp as X-YYC-User
-  assert.equal(textOf(r), `called posts_search for ${owner}`);
-  const up = fakes.seen.filter((s) => s.path === "/mcp-up" && s.body?.method === "tools/call").at(-1)!;
+  // the owner the gateway named (Aviary-Sandbox-Person) reaches yyc-mcp as X-YYC-User; its JSON comes back as it is
+  assert.deepEqual(r.structuredContent, { called: "posts_search", for: owner, query: "x" });
+  const up = fakes.seen.filter((s) => s.path === "/rest-up/posts_search").at(-1)!;
   assert.equal(up.headers.authorization, "Bearer up");
   assert.equal(up.headers["x-yyc-user"], owner);
   // another person's sandbox: their own email, never the listing identity or another caller's
   const other = sandbox({ person: "other@example.com" });
   const r2 = (await rpc("tools/call", { name: "yyc_posts_search", arguments: { query: "y" } }, other)).body.result;
-  assert.equal(textOf(r2), "called posts_search for other@example.com");
-  // the tool list is read as the upstream's listAs
-  const listing = fakes.seen.filter((s) => s.path === "/mcp-up" && s.body?.method === "tools/list").at(-1)!;
+  assert.equal(r2.structuredContent.for, "other@example.com");
+  // the tool list (OpenAPI) is read as the upstream's listAs
+  const listing = fakes.seen.filter((s) => s.path === "/rest-up/openapi.json").at(-1)!;
   assert.equal(listing.headers["x-yyc-user"], "lister@example.com");
+  // the upstream's own refusal (400 {error}) is the tool's error
+  const refused = await call("yyc_posts_search", { query: "" });
+  assert.equal(refused.isError, true);
+  assert.equal(textOf(refused), "query is required");
 
-  // not listed (Send-Mail, a new read-only tool) or listed but marked as writing (post_delete): never offered, never run
-  const before = fakes.seen.filter((s) => s.body?.method === "tools/call").length;
-  for (const name of ["yyc_send_mail", "yyc_stream_items", "yyc_post_delete"]) {
-    const res = await rpc("tools/call", { name, arguments: {} });
-    assert.equal(res.body.error.code, -32602, name);
-    assert.match(res.body.error.message, /unknown tool/);
-  }
-  assert.equal(fakes.seen.filter((s) => s.body?.method === "tools/call").length, before, "never forwarded");
+  // not listed (send_mail, stream_items): never offered, never run
+  const before = fakes.seen.filter((s) => s.path.startsWith("/rest-up/") && s.path !== "/rest-up/openapi.json").length;
+  for (const name of ["yyc_send_mail", "yyc_stream_items"]) assert.equal((await rpc("tools/call", { name, arguments: {} })).status, 404, name);
+  assert.equal(fakes.seen.filter((s) => s.path.startsWith("/rest-up/") && s.path !== "/rest-up/openapi.json").length, before, "never forwarded");
 
   // default deny: an upstream without a `tools` list offers nothing
-  const bare: { tools?: string[] } = {};
-  assert.equal(readOnlyAllowed(bare, { name: "posts_search", annotations: { readOnlyHint: true } }), false);
-  const listed = { ...bare, tools: ["a"] };
-  assert.equal(readOnlyAllowed(listed, { name: "a" }), true);
-  assert.equal(readOnlyAllowed(listed, { name: "a", annotations: { readOnlyHint: false } }), false);
-  assert.equal(readOnlyAllowed(listed, { name: "a", annotations: { destructiveHint: true } }), false);
-  assert.equal(readOnlyAllowed(listed, { name: "b", annotations: { readOnlyHint: true } }), false);
+  assert.equal(offered({}, { name: "posts_search" }), false);
+  assert.equal(offered({ tools: ["a"] }, { name: "a" }), true);
+  assert.equal(offered({ tools: ["a"] }, { name: "b" }), false);
+  // OpenAPI → tools: each POST operation, its JSON body schema as the arguments
+  assert.deepEqual(toolsOfOpenApi({ paths: { "/api/v1/x": { post: { summary: "X", description: "d", requestBody: { content: { "application/json": { schema: { type: "object" } } } } } }, "/api/v1/y": { get: {} } } }),
+    [{ name: "x", title: "X", description: "d", inputSchema: { type: "object" } }]);
 });
 
 test("helpers: private addresses, hostnames, dates, SSE answers, HTML text", () => {
@@ -737,7 +747,6 @@ test("helpers: private addresses, hostnames, dates, SSE answers, HTML text", () 
   assert.equal(iso("1792000000000"), "2026-10-14T17:46:40.000Z");
   assert.equal(iso("Wed Oct 15 10:00:00 +0800 2026"), "2026-10-15T02:00:00.000Z");
   assert.equal(iso("garbage"), null);
-  assert.equal(pickResponse('event: message\ndata: {"jsonrpc":"2.0","id":4,"result":{"a":1}}\n\n', "text/event-stream", 4).result.a, 1);
   assert.deepEqual(htmlToText("<html><title>T &amp; U</title><script>x()</script><p>一</p><p>二&nbsp;三</p></html>"), { title: "T & U", text: "T & U 一\n二 三" });
   assert.deepEqual(toolList({ ...deps, config: { upstreams: [] } }, []).map((d) => d.name), ["web_fetch"]);
 });

@@ -1,19 +1,19 @@
 // tools' own configuration (aviary platform spec 17.2 tools item 1): `/etc/tools/tools.json` (ConfigMap `tools-config`),
 // what the old shared config held under `tools`: the providers (exa, tikhub, anyapi), the instance's page capture and
-// the upstream MCP servers. Secrets come from the environment: a provider names its variable (`keyEnv`, `tokenEnv`),
+// the upstream REST APIs (OpenAPI at <url>/openapi.json). Secrets come from the environment: a provider names its variable (`keyEnv`, `tokenEnv`),
 // an upstream header may name one as ${VAR} (expanded per call, checked once at start).
 import { readFileSync } from "node:fs";
 import { expandEnv } from "../common/config.ts";
 
 export const TOOLS_CONFIG_PATH = "/etc/tools/tools.json";
 
-export interface UpstreamMcp {
+export interface UpstreamApi {
   prefix: string;
   url: string;
   headers: Record<string, string>;
   /**
    * The upstream's tools (their own names, without the prefix) the model may use: read-only ones only. Default deny: a
-   * tool not named here, or one the upstream marks readOnlyHint false or destructiveHint true, is never offered.
+   * tool not named here is never offered.
    */
   tools?: string[];
   /** The identity the tool list is read as (`${USER_EMAIL}` while listing); each call goes as the sandbox's owner. */
@@ -34,7 +34,7 @@ export interface ToolsConfig {
    * captured_at, excerpt, dashboard_url}. YYC: its news monitor's copy of an article, or its capture of a site it reads.
    */
   capture?: { url: string; tokenEnv: string; name: string };
-  upstreams: UpstreamMcp[];
+  upstreams: UpstreamApi[];
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+$/;

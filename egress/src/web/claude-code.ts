@@ -1,8 +1,9 @@
 // What a sandbox made for the CloudCLI UI gets so Claude Code runs inside it (docs/CLAUDE-CODE.md): the environment
-// that points Claude Code at egress (model calls and our MCP tools, authenticated by the sandbox's own egress token),
-// and the managed CLAUDE.md (the instance's prompt plus the sandbox's rules), which sbx-init.mjs writes to
-// /etc/claude-code. Nothing here is a secret the sandbox doesn't already hold (its egress token is in HTTP_PROXY).
-import { readFile } from "node:fs/promises";
+// that points Claude Code at egress (model calls, and the APIs it calls with curl: the tools route and the sandbox
+// routes, authenticated by the sandbox's own egress token), the managed CLAUDE.md (the instance's prompt plus the
+// sandbox's rules) and the managed skills (how to use those APIs), which sbx-init.mjs writes to /etc/claude-code.
+// Nothing here is a secret the sandbox doesn't already hold (its egress token is in HTTP_PROXY).
+import { readdir, readFile } from "node:fs/promises";
 import type { ChatConfig } from "../common/config.ts";
 
 /**
@@ -27,7 +28,7 @@ You work on a sandboxed Linux computer. Your working folder is /workspace.
 - **Installing software:** \`sudo apt-get install -y …\` for system packages, \`pip install …\` for Python, \`npm install
   -g …\` for Node. They work through the sandbox's proxy.
 - **Internet:** only sites on the sandbox's allowlist are reachable from here; a refused site cannot be enabled.
-  Use the web search and web fetch tools for reading web pages.
+  Read web pages and search the web with the \`web\` skill.
 `;
 
 export async function managedClaudeMd(config: ChatConfig): Promise<string> {
@@ -35,19 +36,28 @@ export async function managedClaudeMd(config: ChatConfig): Promise<string> {
   return `${prompt.trimEnd()}\n\n${SANDBOX_RULES}`;
 }
 
-/** The sandbox env additions: Claude Code → egress for the model and the tools (MCP), and SendUserFile on. */
+/**
+ * The managed skills (docs/CLAUDE-CODE.md, "Skills"): `skillsDir`'s files named `<skill>.<file>` as
+ * {"<skill>/<file>": text}; sbx-init.mjs writes them to /etc/claude-code/.claude/skills/<skill>/<file>.
+ */
+export async function managedSkills(config: ChatConfig): Promise<Record<string, string>> {
+  if (!config.skillsDir) return {};
+  const out: Record<string, string> = {};
+  for (const name of (await readdir(config.skillsDir)).sort()) {
+    const m = /^([a-z0-9][a-z0-9-]*)\.([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(name);
+    if (!m) continue; // ConfigMap internals (..data, ..2026_…) and anything else
+    out[`${m[1]}/${m[2]}`] = await readFile(`${config.skillsDir}/${name}`, "utf8");
+  }
+  return out;
+}
+
+/** The sandbox env additions: Claude Code → egress for the model; the APIs it calls with curl (the tools route and the
+ * sandbox routes) and its egress token; the managed instructions and skills; SendUserFile on. */
 export async function claudeCodeEnv(config: ChatConfig, egressBase: string, egressToken: string): Promise<Record<string, string>> {
-  const auth = { Authorization: `Bearer ${egressToken}` };
-  const routes = config.egress.routes.filter((r) => r.mcp);
-  const mcp = {
-    mcpServers: {
-      tools: { type: "http", url: `${egressBase}/x/tools/mcp`, headers: auth },
-      // Route MCP servers (docs/CLAUDE-CODE.md): an instance's own services, through egress, which injects their credentials
-      ...Object.fromEntries(routes.map((r) => [r.name, { type: "http", url: `${egressBase}/x/${r.name}/mcp`, headers: auth }])),
-    },
-  };
+  const routes = [{ name: "tools" }, ...config.egress.routes.filter((r) => r.sandbox && r.name !== "tools")];
   const routeEnv: Record<string, string> = Object.fromEntries(routes.map((r) => [`JARVIS_ROUTE_${r.name.toUpperCase().replace(/-/g, "_")}_URL`, `${egressBase}/x/${r.name}`]));
-  if (routes.length) routeEnv.JARVIS_EGRESS_TOKEN = egressToken;
+  routeEnv.JARVIS_EGRESS_TOKEN = egressToken;
+  const skills = await managedSkills(config);
   const contextWindow = config.models.find((m) => m.id === config.defaultModel)?.contextWindow;
   return {
     ANTHROPIC_BASE_URL: `${egressBase}/x/claude`,
@@ -65,7 +75,7 @@ export async function claudeCodeEnv(config: ChatConfig, egressBase: string, egre
     // the tool then only checks and records the paths; the CloudCLI UI shows the files from the transcript.
     CLAUDE_CODE_ATTACHMENTS_BY_PATH: "1",
     JARVIS_CLAUDE_MD: Buffer.from(await managedClaudeMd(config)).toString("base64"),
-    JARVIS_CLAUDE_MCP: Buffer.from(JSON.stringify(mcp)).toString("base64"),
+    ...(Object.keys(skills).length ? { JARVIS_CLAUDE_SKILLS: Buffer.from(JSON.stringify(skills)).toString("base64") } : {}),
     ...routeEnv,
     ...sentFileSnapshots(config, egressBase),
   };

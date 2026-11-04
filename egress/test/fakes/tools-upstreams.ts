@@ -99,28 +99,15 @@ export async function startFakes(): Promise<Fakes> {
         return json(200, { code: 200, data: { cards: [{ mblog: { mid: "M1", created_at: "Wed Oct 15 10:00:00 +0800 2026", text: "<b>微博</b> 內容", user: { screen_name: "博主" }, attitudes_count: "1.2万" } }] } });
       return json(200, { code: 200, data: {} });
     }
-    // ---- upstream MCP (answers as SSE to exercise the parser)
-    if (u.pathname === "/mcp-up") {
-      const m = parsed;
-      if (!m?.id && m?.method?.startsWith("notifications/")) {
-        res.writeHead(202);
-        return res.end();
-      }
-      const answer = (result: unknown) => {
-        res.writeHead(200, { "content-type": "text/event-stream" });
-        res.end(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: m.id, result })}\n\n`);
-      };
-      if (m.method === "tools/list")
-        return answer({
-          tools: [
-            { name: "posts_search", description: "Search the stream", inputSchema: { type: "object", properties: { query: { type: "string" } } }, annotations: { readOnlyHint: true } },
-            { name: "Send-Mail", description: "Send", inputSchema: { type: "object", properties: { to: { type: "string" } } } },
-            { name: "stream_items", description: "New, read-only, not listed yet", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
-            { name: "post_delete", description: "Listed by mistake, but marked destructive", inputSchema: { type: "object" }, annotations: { readOnlyHint: false, destructiveHint: true } },
-          ],
-        });
-      if (m.method === "tools/call") return answer({ content: [{ type: "text", text: `called ${m.params.name} for ${req.headers["x-yyc-user"]}` }] });
-      return answer({});
+    // ---- upstream REST API (yyc-mcp's /api/v1 shape)
+    if (u.pathname === "/rest-up/openapi.json") {
+      const op = (summary: string) => ({ post: { summary, description: summary, requestBody: { content: { "application/json": { schema: { type: "object", properties: { query: { type: "string" } } } } } } } });
+      return json(200, { openapi: "3.1.0", paths: { "/api/v1/posts_search": op("Search the stream"), "/api/v1/send_mail": op("Send"), "/api/v1/stream_items": op("New, not listed yet") } });
+    }
+    if (u.pathname.startsWith("/rest-up/")) {
+      const name = u.pathname.slice("/rest-up/".length);
+      if (name === "posts_search" && !parsed?.query) return json(400, { error: "query is required" });
+      return json(200, { called: name, for: req.headers["x-yyc-user"], query: parsed?.query });
     }
     json(404, { error: "no fake for " + u.pathname });
   });

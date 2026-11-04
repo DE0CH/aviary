@@ -1,6 +1,6 @@
 // The tools role (`node src/main.ts tools`, Kubernetes `args: [tools]`; aviary platform spec 17.2 tools; docs/CHAT.md
-// "tools"): YYC's read-only MCP server, named `tools`, which Claude Code in a sandbox reaches as `http://tools/mcp`
-// through the gateway (egress). Holds the tool keys (Exa, TikHub, AnyAPI, upstream MCP tokens). Ports are fixed: the
+// "tools"): YYC's read-only tools as a REST API (server.ts), which Claude Code in a sandbox calls with curl through the
+// gateway (egress). Holds the tool keys (Exa, TikHub, AnyAPI, upstream API tokens). Ports are fixed: the
 // API on 8080, health on 9090 (/healthz, /readyz, /metrics, /version).
 //
 // Configuration: /etc/tools/tools.json (config.ts) and the staff catalogue /etc/tools/catalogue/catalogue.json

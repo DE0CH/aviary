@@ -1,4 +1,9 @@
-// tools' HTTP side (aviary platform spec 17.2 tools items 2 and 5): `POST /mcp` from the gateway only. Every call
+// tools' HTTP side (aviary platform spec 17.2 tools items 2 and 5), a REST API from the gateway only:
+//   GET  /v1/tools               the tools: name, title, description, inputSchema (JSON Schema of the arguments)
+//   POST /v1/tools/<name>        run one: the JSON body is its arguments; the answer is the tool's JSON (structured
+//                                tools) or its text (text/plain); a tool's own error is 422 {error}, bad arguments 400
+//   GET  /v1/openapi.json        the same as OpenAPI 3.1
+// Claude Code in a sandbox calls it with curl, as its managed skills say (docs/CLAUDE-CODE.md "Skills"). Every call
 // carries the gateway's pair bearer (one of TOOLS_ACCEPT_GATEWAY) and the sandbox the gateway verified
 // (`Aviary-Sandbox-Id`, `-Conversation`, `-Person`, `Aviary-Request`; platform 3.11.3); the person must be in the
 // staff catalogue and hermit must say the sandbox is live and starting or ready (liveness.ts). Every tools/call is a
@@ -13,8 +18,8 @@ import { BUILTIN } from "./builtin.ts";
 import type { Catalogue } from "./catalogue.ts";
 import type { CallLog } from "./db.ts";
 import type { Liveness } from "./liveness.ts";
-import { handleMessage, type McpHandlers } from "./mcp.ts";
 import type { Caller, Deps, ToolCtx, ToolDef, ToolResult } from "./types.ts";
+import { ToolInputError } from "./types.ts";
 import type { Upstream } from "./upstream.ts";
 
 /** tools' own cap on a request body (platform 3.11.3); a bigger one is answered 413 too_large. */
@@ -96,12 +101,9 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[], parts: Serv
   /** the tool calls running now: each entry writes the call's row as cut and aborts it */
   const runningCalls = new Set<() => void>();
 
-  const handlers: McpHandlers = {
-    serverName: "tools",
-    serverVersion: "1",
-    instructions: "Read-only search and reading tools for news, PR and data analysis work. None of them sends, posts or changes anything outside.",
+  const handlers = {
     tools: () => toolList(deps, upstreams),
-    async call(tool, args, ctx) {
+    async call(tool: ToolDef, args: Record<string, unknown>, ctx: ToolCtx): Promise<ToolResult> {
       const t0 = Date.now();
       let r: ToolResult | undefined;
       let err: string | null = null;
@@ -182,13 +184,16 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[], parts: Serv
     return (Array.isArray(v) ? v[0] : v)?.trim() ?? "";
   };
 
+  const listEntry = (t: ToolDef) => ({ name: t.name, ...(t.title ? { title: t.title } : {}), description: t.description, inputSchema: t.inputSchema });
+
   const server = createServer(async (req, res) => {
     const url = new URL(req.url || "/", "http://x");
-    if (url.pathname !== "/mcp") return refuse(res, 404, "not_found", "only /mcp is served here");
-    if (req.method !== "POST")
-      return req.method === "GET"
-        ? refuse(res, 405, "method_not_allowed", "this server does not stream; POST JSON-RPC", { allow: "POST" })
-        : refuse(res, 405, "method_not_allowed", "POST only", { allow: "POST" });
+    const path = url.pathname;
+    const call = /^\/v1\/tools\/([a-z0-9_]{1,64})$/.exec(path);
+    const known = path === "/v1/tools" || path === "/v1/openapi.json" || call;
+    if (!known) return refuse(res, 404, "not_found", "GET /v1/tools, POST /v1/tools/<name>, GET /v1/openapi.json");
+    const want = call ? "POST" : "GET";
+    if (req.method !== want) return refuse(res, 405, "method_not_allowed", `${want} only`, { allow: want });
     active++;
     let caller: Caller | null = null;
     try {
@@ -203,6 +208,10 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[], parts: Serv
       const v = await parts.liveness.check(sandboxId, conversationId, person);
       if (!v.ok)
         return refuse(res, 403, "not_allowed", v.why === "mismatch" ? "the sandbox belongs to another conversation or person" : `the sandbox is not live (${v.state ?? "unknown"})`);
+      if (path === "/v1/tools") return send(res, 200, handlers.tools().map(listEntry));
+      if (path === "/v1/openapi.json") return send(res, 200, openapi(handlers.tools()));
+      const tool = handlers.tools().find((t) => t.name === call![1]);
+      if (!tool) return refuse(res, 404, "not_found", `no tool ${call![1]}: GET /v1/tools lists them`);
       let body: string;
       try {
         body = await readBody(req);
@@ -210,21 +219,26 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[], parts: Serv
         if (e instanceof TooLarge) return refuse(res, 413, "too_large", `the request body is over tools' ${MAX_BODY} byte cap`, { connection: "close" });
         throw e;
       }
-      let msg: unknown;
+      let args: unknown;
       try {
-        msg = JSON.parse(body);
+        args = body.trim() ? JSON.parse(body) : {};
       } catch {
-        return send(res, 400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } });
+        return refuse(res, 400, "bad_request", "the body must be a JSON object of the tool's arguments");
       }
-      const ctx: ToolCtx = { caller, deps };
-      if (Array.isArray(msg)) {
-        const out = (await Promise.all(msg.map((m) => handleMessage(handlers, m, ctx)))).filter((x) => x !== null);
-        return out.length ? send(res, 200, out) : send(res, 202);
+      if (!args || typeof args !== "object" || Array.isArray(args)) return refuse(res, 400, "bad_request", "the body must be a JSON object of the tool's arguments");
+      let r: ToolResult;
+      try {
+        r = await handlers.call(tool, args as Record<string, unknown>, { caller, deps });
+      } catch (e) {
+        if (e instanceof ToolInputError) return refuse(res, 400, "bad_request", e.message);
+        return refuse(res, 502, "tool_failed", `${tool.name} failed: ${(e as Error).message}`.slice(0, 500));
       }
-      const out = await handleMessage(handlers, msg, ctx);
-      return out ? send(res, 200, out) : send(res, 202);
+      const a = answer(r);
+      count(answered, String(a.status));
+      res.writeHead(a.status, { "content-type": a.type, "cache-control": "no-store", "x-content-type-options": "nosniff", ...(draining ? { connection: "close" } : {}) });
+      return res.end(a.body);
     } catch (e) {
-      logError("mcp request", e, caller ? { request: caller.request, conversation: caller.conversationId, person_key: personKey(caller.person) } : {});
+      logError("tools request", e, caller ? { request: caller.request, conversation: caller.conversationId, person_key: personKey(caller.person) } : {});
       if (!res.headersSent) refuse(res, 500, "internal", "internal error");
     } finally {
       active--;
@@ -269,4 +283,37 @@ export function createToolsServer(deps: Deps, upstreams: Upstream[], parts: Serv
       return cut;
     },
   };
+}
+
+/** The tools as OpenAPI 3.1: one `POST /v1/tools/<name>` per tool, its arguments as the JSON body. */
+export function openapi(tools: ToolDef[]): Record<string, unknown> {
+  const paths: Record<string, unknown> = {};
+  for (const t of tools) {
+    paths[`/v1/tools/${t.name}`] = {
+      post: {
+        operationId: t.name,
+        ...(t.title ? { summary: t.title } : {}),
+        description: t.description,
+        requestBody: { required: false, content: { "application/json": { schema: t.inputSchema } } },
+        responses: {
+          "200": { description: "the answer: JSON for structured tools, else text/plain" },
+          "400": { description: "bad arguments; `message` says what to change" },
+          "422": { description: "the tool's own error; `error` says what happened" },
+        },
+      },
+    };
+  }
+  return { openapi: "3.1.0", info: { title: "tools", version: "1", description: "Search, reading and data tools for the sandbox. None of them sends, posts or changes anything outside." }, paths };
+}
+
+/** A tool's result as the HTTP answer: its text (text/plain), else its JSON, or {content} (pictures);
+ * the tool's own error is 422 {error}. */
+export function answer(r: ToolResult): { status: number; type: string; body: string } {
+  const words = r.content.map((c) => (c as { text?: string }).text ?? "").filter(Boolean).join("\n\n");
+  const J = "application/json; charset=utf-8";
+  if (r.isError) return { status: 422, type: J, body: JSON.stringify({ error: words || "the tool failed" }) };
+  // the text a tool writes for the reader (search results, a page) when it has some; else its JSON (an upstream API's)
+  if (r.content.length && r.content.every((c) => (c as { type?: string }).type === "text")) return { status: 200, type: "text/plain; charset=utf-8", body: words };
+  if (r.structuredContent !== undefined) return { status: 200, type: J, body: JSON.stringify(r.structuredContent) };
+  return { status: 200, type: J, body: JSON.stringify({ content: r.content }) };
 }

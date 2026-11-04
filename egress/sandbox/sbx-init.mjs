@@ -24,12 +24,11 @@ const DIR = "/run/sbx-docker";
 const SOCK = `${DIR}/start.sock`;
 const DOCKER_SOCK = "/var/run/docker.sock";
 
-// Claude Code's managed instructions, MCP servers and settings (its hooks; docs/CLAUDE-CODE.md): the controller passes
-// them base64-encoded in JARVIS_CLAUDE_MD, JARVIS_CLAUDE_MCP and JARVIS_CLAUDE_SETTINGS; they are written root-owned,
-// mode 644, and removed from the environment
+// Claude Code's managed instructions, settings (its hooks) and skills (docs/CLAUDE-CODE.md): the controller passes them
+// base64-encoded in JARVIS_CLAUDE_MD, JARVIS_CLAUDE_SETTINGS and JARVIS_CLAUDE_SKILLS ({"<skill>/<file>": text}); they
+// are written root-owned, mode 644, and removed from the environment
 for (const [key, file] of [
   ["JARVIS_CLAUDE_MD", "/etc/claude-code/CLAUDE.md"],
-  ["JARVIS_CLAUDE_MCP", "/etc/claude-code/managed-mcp.json"],
   ["JARVIS_CLAUDE_SETTINGS", "/etc/claude-code/managed-settings.json"],
 ]) {
   const v = process.env[key];
@@ -40,6 +39,24 @@ for (const [key, file] of [
     writeFileSync(file, Buffer.from(v, "base64"), { mode: 0o644 });
   } catch (e) {
     console.error(JSON.stringify({ at: "sbx-init claude config", file, error: String(e?.message || e) }));
+  }
+}
+
+{
+  const v = process.env.JARVIS_CLAUDE_SKILLS;
+  delete process.env.JARVIS_CLAUDE_SKILLS;
+  if (v) {
+    try {
+      const skills = JSON.parse(Buffer.from(v, "base64").toString("utf8"));
+      for (const [rel, text] of Object.entries(skills)) {
+        if (!/^[a-z0-9][a-z0-9-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(rel)) continue;
+        const dir = `/etc/claude-code/.claude/skills/${rel.split("/")[0]}`;
+        mkdirSync(dir, { recursive: true, mode: 0o755 });
+        writeFileSync(`/etc/claude-code/.claude/skills/${rel}`, String(text), { mode: 0o644 });
+      }
+    } catch (e) {
+      console.error(JSON.stringify({ at: "sbx-init claude skills", error: String(e?.message || e) }));
+    }
   }
 }
 
