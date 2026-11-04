@@ -735,3 +735,64 @@ async fn a_send_into_a_subfolder_waits_for_the_subfolder_to_be_quiet() {
     assert!(r.errors.is_empty(), "{:?}", r.errors);
     assert!(!w.kinds(u1).await.contains(&"files.sent".to_owned()));
 }
+
+/// A conversation imported before Claude Code's session id reached its sessions row (imported while its first turn
+/// ran) is created under its own id; once the row has the session id, the conversation, its record and its main
+/// transcript follow it, so verification finds the transcript the pass synced and the conversation can be released
+/// (found by legacy-in-a-box: such a conversation stayed `verify` for ever).
+#[tokio::test]
+async fn a_session_id_that_arrives_after_the_import_is_followed() {
+    let w = World::new("late_psid").await;
+    let ka = w.person(ALICE).await;
+    let (u, p) = (Uuid::new_v4(), Uuid::new_v4());
+    w.cloudcli(&format!(
+        "insert into cc_{ka}.sessions (session_id, custom_name, name_source, created_at, updated_at)
+           values ('{u}', 'Late', 'user', '2026-10-22 06:22:36', '2026-10-22T07:00:00.000Z');"
+    ))
+    .await;
+    let main = format!("projects/-workspace/{p}.jsonl");
+    w.put(
+        &ka,
+        &main,
+        &[
+            user("a1", "2026-10-22T06:22:40.000Z", "write the report"),
+            assistant("a2", "2026-10-22T06:23:00.000Z", "here it is"),
+        ]
+        .concat(),
+    );
+    pass::pass(&w.imp, None).await.unwrap();
+    let psid = async || -> (String, Option<String>, Option<String>) {
+        let r = w
+            .magpie()
+            .get()
+            .await
+            .unwrap()
+            .query_one(
+                "select s.provider_session, c.provider_session_id, c.main_transcript from import_sources s
+                 join conversations c on c.id = s.conversation_id where s.conversation_id = $1",
+                &[&u],
+            )
+            .await
+            .unwrap();
+        (r.get(0), r.get(1), r.get(2))
+    };
+    assert_eq!(psid().await.0, u.to_string(), "created under its own id");
+    // the session id reaches the row
+    w.cloudcli(&format!(
+        "update cc_{ka}.sessions set provider_session_id = '{p}', updated_at = '2026-10-22T07:01:00.000Z'
+           where session_id = '{u}';"
+    ))
+    .await;
+    pass::pass(&w.imp, None).await.unwrap();
+    let (rec, conv, main_t) = psid().await;
+    assert_eq!(rec, p.to_string());
+    assert_eq!(conv.as_deref(), Some(p.to_string().as_str()));
+    assert_eq!(main_t.as_deref(), Some(main.as_str()));
+    assert!(files_record(&w, u).await.contains_key(&main));
+    assert_eq!(
+        verify::changed_since_sync(&w.imp, u).await.unwrap(),
+        Vec::<String>::new()
+    );
+    let v = verify::verify(&w.imp, u).await.unwrap();
+    assert!(v.ok() && v.files == 1, "{v:?}");
+}

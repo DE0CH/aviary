@@ -169,7 +169,7 @@ pub async fn apply_row(imp: &Importer, person: &str, s: &SessionRow) -> Result<b
         imp.check_lock_in(t).await?;
         let Some(r) = t
             .query_opt(
-                "select migrating, title, name_source, deleted_at, model, person from conversations
+                "select migrating, title, name_source, deleted_at, model, person, provider_session_id from conversations
                  where id = $1 for update",
                 &[&id],
             )
@@ -230,6 +230,7 @@ pub async fn apply_row(imp: &Importer, person: &str, s: &SessionRow) -> Result<b
                 .await?;
             changed = true;
         }
+        changed |= follow_session(t, id, s.psid(), r.get::<_, Option<String>>(6).as_deref()).await?;
         if let Some(a) = activity {
             t.execute(
                 "update conversations set activity_at = greatest(activity_at, $2) where id = $1",
@@ -248,6 +249,28 @@ pub async fn apply_row(imp: &Importer, person: &str, s: &SessionRow) -> Result<b
         Ok(changed)
     })
     .await
+}
+
+/// Claude Code's session id arrived (or changed) after the import: a conversation imported while its first turn ran
+/// has no `provider_session_id` on its row yet, so it was created under its own id. The transcript the pass now syncs
+/// is the session id's; the conversation, its record and its main transcript follow it, else verification looks for
+/// a transcript that is not there and the conversation is never released. Whether it changed.
+async fn follow_session(t: &aviary_pg::Tx<'_>, id: Uuid, psid: &str, recorded: Option<&str>) -> Result<bool> {
+    if recorded == Some(psid) {
+        return Ok(false);
+    }
+    t.execute(
+        "update conversations set provider_session_id = $2 where id = $1",
+        &[&id, &psid],
+    )
+    .await?;
+    t.execute(
+        "update import_sources set provider_session = $2 where conversation_id = $1",
+        &[&id, &psid],
+    )
+    .await?;
+    magpie::ccfs::lines::set_main_transcript(t, id, &crate::tree::main_path(psid)).await?;
+    Ok(true)
 }
 
 /// The error of a write for one person to another person's conversation (a sessions row id in two schemas, or a
