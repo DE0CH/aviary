@@ -358,6 +358,18 @@ fn events_of(rows: &[aviary_pg::Row]) -> Vec<(String, String)> {
 
 /// `(kind, uuid)` of the events the model's main-transcript lines classify into (the echoes make none).
 fn expected(model: &[u8], echoes: &HashSet<Vec<u8>>) -> Vec<(String, String)> {
+    // an echo is remembered by its bytes and by its uuid (magpie 6.5, `cc_echo_uuids`): a prompt line with an echo's
+    // uuid but other bytes (an overwrite inside it) is the same message written again, internal
+    let echo_uuids: HashSet<String> = echoes
+        .iter()
+        .filter_map(|l| {
+            serde_json::from_slice::<Value>(l)
+                .ok()?
+                .get("uuid")?
+                .as_str()
+                .map(str::to_owned)
+        })
+        .collect();
     let mut out: Vec<(String, String)> = lines_of(model)
         .into_iter()
         .filter_map(|(_, l)| {
@@ -366,6 +378,7 @@ fn expected(model: &[u8], echoes: &HashSet<Vec<u8>>) -> Vec<(String, String)> {
             }
             let v: Value = serde_json::from_slice(l).ok()?;
             match classify(Some(&v), Context::default()) {
+                Class::Event(e) if e.is_prompt && e.uuid.as_ref().is_some_and(|u| echo_uuids.contains(u)) => None,
                 Class::Event(e) => Some((e.kind.to_owned(), e.uuid.unwrap_or_default())),
                 _ => None,
             }
@@ -458,6 +471,21 @@ async fn fixed_regression_cases() {
         Step::Truncate(519),
     ];
     run_case(&r, &sql, &pool, 48, &steps, 1_793_710_934_704_315_484).await;
+    // AVIARY_TEST_CCFS_SEED=1793757453309101713 case 4: an overwrite inside a person turn's echo keeps its uuid, so
+    // the line stays internal (the echo remembered by uuid); the model once matched echoes by their bytes only
+    let steps = vec![
+        Step::Tombstone(1),
+        Step::SetMain,
+        Step::PersonTurn(vec![]),
+        Step::Overwrite(3_038_961_805_330_092_434, vec![118, 108]),
+        Step::SetAside(vec![]),
+        Step::Append(vec![33, 8, 36, 0], vec![192, 357, 302]),
+        Step::Overwrite(
+            13_897_163_169_673_082_175,
+            vec![109, 111, 120, 97, 100, 112, 114, 102, 98, 114],
+        ),
+    ];
+    run_case(&r, &sql, &pool, 4, &steps, 1_793_757_453_309_101_713).await;
 }
 
 /// One case; `(events, retracted, echoes)` at its end.
