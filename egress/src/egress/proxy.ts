@@ -24,6 +24,7 @@ import { EgressLog, type EgressRow } from "./egresslog.ts";
 import { HostPolicy } from "./allowlist.ts";
 import { AddressGuard, GuardError, normHost } from "./netguard.ts";
 import { DnsRefusal, ThreatResolver } from "./threatdns.ts";
+import { exitConnect, ExitHttpsAgent, ExitRefusal, internalHost, type ExitConfig } from "./exit.ts";
 import { BodyBudget, forceZdr, type ModelBody } from "./modelbody.ts";
 import { isRequestId, personKey, uuidv7 } from "./ids.ts";
 import { PROXY_REALM, presentedToken, type Claims, type SandboxTokens } from "./tokens.ts";
@@ -171,6 +172,9 @@ export class Egress {
   readonly #routes: Record<"model" | "tools", EgressRoute>;
   readonly #internal: Record<"magpie" | "hermit", URL>;
   readonly #agent = new Agent({ keepAlive: true, maxSockets: 256, maxFreeSockets: 64, keepAliveMsecs: 30_000 });
+  /** egress.json `exit` (exit.ts): internet connections by name through it; the outside routes' agent */
+  readonly #exit: ExitConfig | undefined;
+  readonly #exitAgent: ExitHttpsAgent | undefined;
   readonly #work = new Set<Work>();
   readonly counters = { requests: 0, denied: 0, tunnels: 0, bytesUp: 0, bytesDown: 0 };
   /** egress_fixed_requests_total{route,status}: "route status" → n */
@@ -184,6 +188,8 @@ export class Egress {
     this.#o = o;
     const c = o.config;
     this.#guard = o.guard ?? new AddressGuard(c.blockCidrs);
+    this.#exit = c.exit;
+    this.#exitAgent = c.exit ? new ExitHttpsAgent(c.exit, { keepAlive: true, maxSockets: 256, maxFreeSockets: 64, keepAliveMsecs: 30_000 }) : undefined;
     const threat = o.resolver ? null : new ThreatResolver();
     this.#resolve = o.resolver ?? ((h) => threat!.resolve(h));
     this.#maxUp = c.maxUploadBytes;
@@ -568,7 +574,9 @@ export class Egress {
           resolve();
         };
         const mk = up.protocol === "https:" ? httpsRequest : httpRequest;
-        const out = mk({ protocol: up.protocol, hostname: up.hostname, port: up.port || undefined, method: req.method, path: target, headers }, (ures) => {
+        // an outside upstream (the model route's OpenRouter) through the exit, by name; the cluster's own directly
+        const viaExit = this.#exitAgent && up.protocol === "https:" && !internalHost(up.hostname) ? { agent: this.#exitAgent } : {};
+        const out = mk({ protocol: up.protocol, hostname: up.hostname, port: up.port || undefined, method: req.method, path: target, headers, ...viaExit }, (ures) => {
           sniff.contentType = String(ures.headers["content-type"] || "");
           this.#head(res, ures.statusCode ?? 502, stripHop(ures.headers));
           res.flushHeaders();
@@ -648,6 +656,8 @@ export class Egress {
       this.#deny(row, verdict.reason, 403);
       return null;
     }
+    // with an exit the name goes there as it is: the exit resolves it and checks the address (#open)
+    if (this.#exit) return [];
     try {
       return await this.#guard.resolve(host, this.#resolve);
     } catch (e) {
@@ -658,6 +668,37 @@ export class Egress {
         const why = e instanceof GuardError ? e.message : `cannot resolve ${normHost(host)}`;
         deny(403, `egress: ${why}; only public internet addresses can be reached.\n`);
         this.#deny(row, "deny:address", 403);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * The upstream socket of an admitted internet connection: through the exit by name (its refusals answered and
+   * logged as the decisions #admit logs), or to the addresses #admit resolved. null after it has answered the caller.
+   */
+  async #open(host: string, port: number, addrs: string[], deny: (status: number, msg: string) => void, row: EgressRow, t0: number): Promise<Socket | null> {
+    if (!this.#exit) {
+      const s = await dial(addrs, port).catch(() => null);
+      if (!s) {
+        deny(502, `egress: could not connect to ${normHost(host)}:${port}\n`);
+        this.log.add({ ...row, decision: "allow", status: 502, ms: Date.now() - t0 });
+      }
+      return s;
+    }
+    try {
+      return await exitConnect(this.#exit, normHost(host), port, this.#exit.sandboxProfile);
+    } catch (e) {
+      const r = e instanceof ExitRefusal ? e : new ExitRefusal("connect", (e as Error).message);
+      if (r.reason === "connect") {
+        deny(502, `egress: could not connect to ${normHost(host)}:${port}\n`);
+        this.log.add({ ...row, decision: "allow", status: 502, ms: Date.now() - t0 });
+      } else if (r.reason === "deny:address") {
+        deny(403, `egress: ${r.message}; only public internet addresses can be reached.\n`);
+        this.#deny(row, "deny:address", 403);
+      } else {
+        deny(403, `egress: ${r.message}; the sandbox cannot reach it.\n`);
+        this.#deny(row, r.reason, 403);
       }
       return null;
     }
@@ -696,12 +737,8 @@ export class Egress {
     row.person = v.claims.person;
     const addrs = await this.#admit(host, port, deny, row);
     if (!addrs) return;
-    const upstream = await dial(addrs, port).catch(() => null);
-    if (!upstream) {
-      deny(502, `egress: could not connect to ${normHost(host)}:${port}\n`);
-      this.log.add({ ...row, decision: "allow", status: 502, ms: Date.now() - t0 });
-      return;
-    }
+    const upstream = await this.#open(host, port, addrs, deny, row, t0);
+    if (!upstream) return;
     w.cut = () => {
       client.destroy();
       upstream.destroy();
@@ -773,6 +810,9 @@ export class Egress {
         return;
       }
     }
+    // through the exit: the connection first (a refusal is answered here), then the request on it
+    const sock = this.#exit ? await this.#open(host, port, addrs, deny, row, t0) : null;
+    if (this.#exit && !sock) return;
     const headers = forwardHeaders(req.headers, new Set(["proxy-authorization"]));
     headers.host = t.authority;
     let up = 0;
@@ -788,7 +828,8 @@ export class Egress {
         this.log.add({ ...row, status, bytes_up: up, bytes_down: down, ms: Date.now() - t0, ...extra, ...(capped ? { decision: "deny:upload" } : {}) });
         resolve();
       };
-      const out = httpRequest({ host: addrs[0], port, method: req.method, path: t.pathq, headers, setHost: false }, (ures) => {
+      const where = sock ? { host: normHost(host), createConnection: () => sock } : { host: addrs[0] };
+      const out = httpRequest({ ...where, port, method: req.method, path: t.pathq, headers, setHost: false }, (ures) => {
         status = ures.statusCode ?? null;
         this.#head(res, ures.statusCode ?? 502, stripHop(ures.headers));
         const wr = cacheable && ures.statusCode === 200

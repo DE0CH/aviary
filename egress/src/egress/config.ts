@@ -1,6 +1,7 @@
 // egress's own configuration (aviary platform spec 17.2 item 2): `/etc/egress/egress.json` (ConfigMap `egress-config`),
 // nothing but egress's parts. Secrets come from the environment; a string in `inject` may name one as ${VAR}, expanded
 // where it is used (expandEnv) and checked once at start.
+import { parseExit, type ExitConfig } from "./exit.ts";
 import { readFileSync } from "node:fs";
 import { expandEnv, type ReasoningEffort, type ReasoningPlan } from "../common/config.ts";
 
@@ -59,6 +60,8 @@ export interface EgressConfig {
   cacheGiB: number;
   /** absent = no limit */
   budget?: BudgetConfig;
+  /** the way out (exit.ts): internet connections by name through this SOCKS5 server; absent = resolve and connect here */
+  exit?: ExitConfig;
 }
 
 const strings = (v: unknown, path: string): string[] => {
@@ -133,6 +136,7 @@ export function parseEgressConfig(raw: unknown): EgressConfig {
     maxUploadBytes: num(c.maxUploadBytes, 8 * 1024 * 1024, "maxUploadBytes"),
     cacheGiB: num(c.cacheGiB, 5, "cacheGiB"),
     ...(budget ? { budget } : {}),
+    ...(c.exit != null ? { exit: parseExit(c.exit) } : {}),
   };
 }
 

@@ -24,6 +24,9 @@ import { isRequestId, uuidv7 } from "../src/egress/ids.ts";
 import { AddressGuard } from "../src/egress/netguard.ts";
 import { CostSniffer, denyText, Egress, FIXED_BODY_MAX, parseTarget, routed, type EgressOptions } from "../src/egress/proxy.ts";
 import { DnsRefusal, ThreatResolver } from "../src/egress/threatdns.ts";
+import { exitConnect, ExitHttpsAgent, ExitRefusal, internalHost, parseExit } from "../src/egress/exit.ts";
+import { createServer as createNetServer } from "node:net";
+import { createServer as createHttpsServer, get as httpsGet } from "node:https";
 import { credentialToken, hermitGetter, KeySet, SandboxTokens, signingKey } from "../src/egress/tokens.ts";
 import { freshEgressDb } from "./egress-db.ts";
 import { FakeHermit, FakeMagpie, masterKey } from "./fakes/hermit.ts";
@@ -800,6 +803,161 @@ test("absolute-URI HTTP is forwarded; apt-style GETs are cached", async () => {
   assert.equal(second.headers["x-egress-cache"], "hit");
   assert.equal(upHits["/pool/main/x.deb"], 1);
   assert.equal((await http(`http://other.test:${upPort}/plain`, { headers: pa() })).status, 403);
+});
+
+// ---- the exit (egress.json `exit`: internet connections by name through a SOCKS5 server) ------------------------
+
+/** A SOCKS5 server playing YYC's yyc-socks: records [profile, host, port] and answers by host like its policy does. */
+class FakeExit {
+  readonly seen: [string, string, number][] = [];
+  readonly server = createNetServer((c) => {
+    c.on("error", () => {});
+    let buf = Buffer.alloc(0);
+    let step = "greet";
+    let profile = "";
+    c.on("data", (d: Buffer) => {
+      buf = Buffer.concat([buf, d]);
+      if (step === "greet" && buf.length >= 2 && buf.length >= 2 + buf[1]!) {
+        const offersAuth = buf.subarray(2, 2 + buf[1]!).includes(2);
+        buf = buf.subarray(2 + buf[1]!);
+        c.write(Buffer.from([5, offersAuth ? 2 : 0]));
+        step = offersAuth ? "auth" : "req";
+      }
+      if (step === "auth" && buf.length >= 2 && buf.length >= 3 + buf[1]! && buf.length >= 3 + buf[1]! + buf[2 + buf[1]!]!) {
+        profile = buf.subarray(2, 2 + buf[1]!).toString();
+        buf = buf.subarray(3 + buf[1]! + buf[2 + buf[1]!]!);
+        c.write(Buffer.from([1, 0]));
+        step = "req";
+      }
+      if (step === "req" && buf.length >= 5 && buf[3] === 3 && buf.length >= 7 + buf[4]!) {
+        const host = buf.subarray(5, 5 + buf[4]!).toString();
+        const port = buf.readUInt16BE(5 + buf[4]!);
+        buf = buf.subarray(7 + buf[4]!);
+        step = "relay";
+        this.seen.push([profile, host, port]);
+        const code = { "malware.test": 0x80, "evil.test": 0x02, "www.ranked.test": 0x04 }[host];
+        if (code) return void c.end(Buffer.from([5, code, 0, 1, 0, 0, 0, 0, 0, 0]));
+        const u = netConnect(port, "127.0.0.1", () => {
+          c.write(Buffer.from([5, 0, 0, 1, 127, 0, 0, 1, 0, 0]));
+          if (buf.length) u.write(buf);
+          c.pipe(u);
+          u.pipe(c);
+        });
+        u.on("error", () => c.destroy());
+      }
+    });
+  });
+  port = 0;
+  async listen() {
+    await new Promise<void>((r) => this.server.listen(0, "127.0.0.1", r));
+    this.port = (this.server.address() as AddressInfo).port;
+    return this;
+  }
+}
+
+test("exit: egress.json exit parses; internal hosts are told from outside ones", () => {
+  assert.deepEqual(parseExit({ socks: "socks.egress.svc.cluster.local:1080" }), { host: "socks.egress.svc.cluster.local", port: 1080, sandboxProfile: "sandbox" });
+  assert.deepEqual(parseExit({ socks: "[fd00::1]:1080", sandboxProfile: "sbx" }), { host: "fd00::1", port: 1080, sandboxProfile: "sbx" });
+  assert.throws(() => parseExit({ socks: "nohost" }), /host:port/);
+  assert.equal(parseExit(undefined), undefined);
+  for (const h of ["tools.jarvis.svc.cluster.local", "ui.jarvis.svc", "localhost", "10.0.0.3", "fd00::1", "magpie"]) assert.ok(internalHost(h), h);
+  for (const h of ["openrouter.ai", "labels.yyc-internal.com", "1.1.1.1", "2606:4700::1"]) assert.ok(!internalHost(h), h);
+});
+
+test("exit: tunnels and plain HTTP go out by name with the sandbox profile; its refusals are the usual decisions; egress resolves nothing", async () => {
+  const fake = await new FakeExit().listen();
+  let resolved = 0;
+  const c = config(`http://127.0.0.1:${upPort}`, { exit: { socks: `127.0.0.1:${fake.port}` } });
+  const e = new Egress(options({ db: t.db, cacheDir: join(tmp, "cache-exit"), config: c, resolver: async () => { resolved++; return ["127.0.0.1"]; } }));
+  const p = await e.listen(0, "127.0.0.1");
+  try {
+    const { status, sock } = await connectVia(`allowed.test:${tlsPort}`, basic(sb.token), p);
+    assert.equal(status, 200);
+    const reply = await new Promise<string>((resolve, reject) => {
+      const tc = tlsConnect({ socket: sock, servername: "allowed.test", rejectUnauthorized: false }, () => tc.write("hi"));
+      tc.on("data", (d) => { resolve(d.toString()); tc.end(); });
+      tc.on("error", reject);
+    });
+    assert.equal(reply, "echo:hi");
+    const mal = await connectVia(`malware.test:${tlsPort}`, basic(sb.token), p);
+    assert.equal(mal.status, 403);
+    assert.match(mal.head, /security threat/);
+    const evil = await connectVia(`evil.test:${tlsPort}`, basic(sb.token), p);
+    assert.equal(evil.status, 403);
+    assert.match(evil.head, /only public internet addresses/);
+    const gone = await connectVia(`www.ranked.test:${tlsPort}`, basic(sb.token), p);
+    assert.equal(gone.status, 403);
+    assert.match(gone.head, /does not exist/);
+    // the allowlist still decides first: an unlisted host never reaches the exit
+    assert.equal((await connectVia(`other.test:${tlsPort}`, basic(sb.token), p)).status, 403);
+    const h = await http(`http://allowed.test:${upPort}/plain`, { headers: pa(), port: p });
+    assert.equal(h.status, 200);
+    assert.equal(h.body, "DEB");
+    assert.deepEqual(fake.seen, [
+      ["sandbox", "allowed.test", tlsPort],
+      ["sandbox", "malware.test", tlsPort],
+      ["sandbox", "evil.test", tlsPort],
+      ["sandbox", "www.ranked.test", tlsPort],
+      ["sandbox", "allowed.test", upPort],
+    ]);
+    assert.equal(resolved, 0, "with an exit egress resolves no internet name");
+    await sleep(100);
+    const r = (await rows(e.log)).filter((x) => [`malware.test`, `evil.test`, `www.ranked.test`].includes(x.host) && x.port === tlsPort);
+    assert.deepEqual(r.slice(-3).map((x) => [x.host, x.decision]), [["malware.test", "deny:threat"], ["evil.test", "deny:address"], ["www.ranked.test", "deny:nxdomain"]]);
+  } finally {
+    await e.drain();
+    fake.server.close();
+  }
+});
+
+test("exit: an unreachable exit is a 502, logged as allow with status 502", async () => {
+  const dead = createNetServer();
+  await new Promise<void>((r) => dead.listen(0, "127.0.0.1", r));
+  const deadPort = (dead.address() as AddressInfo).port;
+  await new Promise<void>((r) => dead.close(() => r()));
+  const c = config(`http://127.0.0.1:${upPort}`, { exit: { socks: `127.0.0.1:${deadPort}` } });
+  const e = new Egress(options({ db: t.db, cacheDir: join(tmp, "cache-exit-dead"), config: c }));
+  const p = await e.listen(0, "127.0.0.1");
+  try {
+    assert.equal((await connectVia(`allowed.test:${tlsPort}`, basic(sb.token), p)).status, 502);
+    await expectReject(exitConnect({ host: "127.0.0.1", port: deadPort, sandboxProfile: "sandbox" }, "allowed.test", 443), "connect");
+  } finally {
+    await e.drain();
+  }
+});
+
+async function expectReject(p: Promise<unknown>, reason: string) {
+  try {
+    await p;
+    assert.fail("expected a refusal");
+  } catch (err) {
+    assert.ok(err instanceof ExitRefusal, String(err));
+    assert.equal((err as ExitRefusal).reason, reason);
+  }
+}
+
+test("exit: the outside routes' agent carries TLS by name through the exit (default profile, the name as SNI)", async () => {
+  const fake = await new FakeExit().listen();
+  execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(tmp, "mk.pem"), "-out", join(tmp, "mc.pem"), "-days", "1", "-subj", "/CN=model.example", "-addext", "subjectAltName=DNS:model.example"], { stdio: "ignore" });
+  const srv = createHttpsServer({ key: readFileSync(join(tmp, "mk.pem")), cert: readFileSync(join(tmp, "mc.pem")) }, (req, res) => res.end(`model:${req.headers.host}`));
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+  const sp = (srv.address() as AddressInfo).port;
+  const agent = new ExitHttpsAgent({ host: "127.0.0.1", port: fake.port, sandboxProfile: "sandbox" }, { ca: readFileSync(join(tmp, "mc.pem")), keepAlive: true });
+  try {
+    const body = await new Promise<string>((resolve, reject) => {
+      httpsGet({ host: "model.example", port: sp, path: "/v1/messages", agent }, (res) => {
+        let b = "";
+        res.on("data", (d) => (b += d));
+        res.on("end", () => resolve(b));
+      }).on("error", reject);
+    });
+    assert.equal(body, `model:model.example:${sp}`);
+    assert.deepEqual(fake.seen, [["", "model.example", sp]]);
+  } finally {
+    agent.destroy();
+    srv.close();
+    fake.server.close();
+  }
 });
 
 // ---- self hosts: the package mirror -----------------------------------------------------------------------------
