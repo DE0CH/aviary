@@ -1875,3 +1875,25 @@ async fn a_write_through_a_stalled_bridge_never_lands_after_it_heals() {
     assert_eq!(e.m.tickets_of(c)[0].claims, 2, "written again under its ticket");
     assert_eq!(e.metric("pigeon_switch_write_refused_total"), 0.0);
 }
+
+/// A ticket's outcome is reported in the background after the tab's answer: until it lands it counts as a transfer of
+/// the process, so a drain does not exit before magpie has it (the ticket would otherwise wait for the importer to
+/// expire it, the conversation held legacy meanwhile).
+#[tokio::test]
+async fn a_ticket_outcome_still_being_reported_holds_the_drain() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    let mut ws = e.ws(STAFF).await;
+    list(&mut ws).await;
+    let done = e.m.hold("legacy_ticket_done");
+    let r = send(&mut ws, c, "m-report", json!({})).await;
+    assert_eq!(r["accepted"], true, "{r}");
+    until("the outcome is being reported", || {
+        e.m.calls_to("legacy_ticket_done") == 1
+    })
+    .await;
+    assert_eq!(e.h.app.transfers().active(), 1, "a transfer while it is reported");
+    done.notify_one();
+    until("reported", || e.h.app.transfers().active() == 0).await;
+    e.m.wait_tickets(|t| t[0].outcome == Some(TicketOutcome::Started)).await;
+}

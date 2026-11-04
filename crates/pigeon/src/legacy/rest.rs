@@ -195,7 +195,10 @@ impl Legacy {
         }
         let Some(who) = self.who(id) else { return false };
         let (me, app, id) = (self.clone(), app.clone(), id.clone());
+        // the drain waits for it before the process exits (its ticket's outcome with it)
+        let transfer = app.transfers().guard();
         tokio::spawn(async move {
+            let _transfer = transfer;
             let call = || {
                 me.request(Method::POST, OLD_WARM, &who)
                     .header(header::CONTENT_TYPE, "application/json")

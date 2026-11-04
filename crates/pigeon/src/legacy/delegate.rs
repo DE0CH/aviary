@@ -39,8 +39,9 @@
 //! - an outcome is `refused` only when the old route itself answered no (a 4xx, the old child's own refusal) or
 //!   nothing was written; a 5xx, a gateway error or no answer may come after the write was applied, so the ticket is
 //!   left for the importer to expire after its settle read;
-//! - a socket with a ticketed write in flight, or a ticket outcome still being reported, counts as a transfer for the
-//!   drain (its 1012 waits for them, up to the transfer bound), and every write the switch fails counts in
+//! - a socket with a ticketed write in flight counts as a transfer for the drain (its 1012 waits for the write, up
+//!   to the transfer bound), an outcome still being reported in the background counts as one of the process (the
+//!   drain waits for it before the process exits), and every write the switch fails counts in
 //!   `pigeon_switch_write_refused_total`;
 //! - a holder with no unexpired token on this replica (a tab that outlived its Access token) gets the signed-out
 //!   answer, never a write error; an LU that does not open still takes the ticket (magpie may own the conversation
@@ -294,8 +295,9 @@ impl Legacy {
     /// conversation legacy, which only delays its release).
     fn report(&self, conn: &Arc<Conn>, h: Held, outcome: TicketOutcome) {
         let (me, conn) = (self.clone(), conn.clone());
-        // the drain waits for it as for the write: an outcome lost at exit would leave the ticket to expire
-        let transfer = conn.transfer();
+        // a transfer of the process, which the drain waits for before it exits (up to the transfer bound): an
+        // outcome lost at exit would leave the ticket to expire, the conversation held legacy meanwhile
+        let transfer = self.app().map(|a| a.transfers().guard());
         tokio::spawn(async move {
             me.report_now(&conn, h, outcome).await;
             drop(transfer);

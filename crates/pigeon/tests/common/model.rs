@@ -889,6 +889,7 @@ impl Server for Model {
 
     async fn legacy_ticket_done(&self, ctx: Ctx, ticket: Uuid, body: TicketDone) -> Result<(), ApiError> {
         self.record("legacy_ticket_done", &ctx)?;
+        self.held("legacy_ticket_done").await;
         let mut st = self.st();
         let Some(t) = st.tickets.iter_mut().find(|t| t.id == ticket) else {
             return Err(refusal(ErrorCode::NotFound, "not found"));
