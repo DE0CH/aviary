@@ -90,6 +90,7 @@ fn check_route(id: &str, f: &serde_json::Value) {
         "sent_files_commit" => check::<NoQuery, Json<Empty>, Json<SentFilesCommitted>>(id, f),
         "person_purge" => check::<NoQuery, Json<PersonPurgeRequest>, Json<PersonPurgeResponse>>(id, f),
         "workspaces_exists" => check::<NoQuery, Json<WorkspacesExistsRequest>, Json<WorkspacesExistsResponse>>(id, f),
+        "legacy_import" => check::<NoQuery, NoBody, Json<LegacyImportStatus>>(id, f),
         "ops_people" => check::<Json<PeopleQuery>, NoBody, Json<PeopleResponse>>(id, f),
         "ops_view_as" => check::<Json<ViewAsLogQuery>, NoBody, Json<ViewAsLog>>(id, f),
         "ops_stats" => check::<NoQuery, NoBody, Json<OpsStats>>(id, f),

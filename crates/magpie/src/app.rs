@@ -24,9 +24,9 @@ use magpie_api::legacy::{
 };
 use magpie_api::live::{LiveFramesRequest, LiveState};
 use magpie_api::ops::{
-    AdminConversation, AdminConversationList, AdminListQuery, OpsStats, PeopleQuery, PeopleResponse,
-    PersonPurgeRequest, PersonPurgeResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest, WorkspacesExistsRequest,
-    WorkspacesExistsResponse,
+    AdminConversation, AdminConversationList, AdminListQuery, LegacyImportStatus, OpsStats, PeopleQuery,
+    PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest,
+    WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
 use magpie_api::rows::{PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery};
 use magpie_api::sandbox::{
@@ -521,6 +521,10 @@ impl Server for Magpie {
 
     async fn workspaces_exists(&self, ctx: Ctx, body: WorkspacesExistsRequest) -> Answer<WorkspacesExistsResponse> {
         http::hermit::workspaces_exists(self, ctx, body).await
+    }
+
+    async fn legacy_import(&self, ctx: Ctx) -> Answer<LegacyImportStatus> {
+        http::hermit::legacy_import(self, ctx).await
     }
 
     async fn admin_conversations(&self, ctx: Ctx, query: AdminListQuery) -> Answer<AdminConversationList> {

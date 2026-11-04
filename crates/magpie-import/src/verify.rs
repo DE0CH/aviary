@@ -563,3 +563,65 @@ pub async fn targets(imp: &Importer, ids: &[Uuid]) -> Result<Vec<Uuid>> {
         .await?;
     Ok(rows.iter().map(|r| r.get(0)).collect())
 }
+
+/// After a clean `verify --all` (every conversation in `verified` equal): records the import complete in
+/// `legacy_import_verified`, which hermit's `legacy-cleanup` asks for (`GET /v1/hermit/legacy-import`) before it
+/// removes the old `users/` and `sent/` trees (cutover 10.6). Recorded only when the import holds at least one
+/// conversation, every imported conversation is released to magpie and was verified in this run, and every sessions
+/// row of the source (read now) is imported or purged on the new side; otherwise the reason, and the record stays as
+/// it was. The caller holds the importer's lock, so no pass ran during the verification.
+///
+/// # Errors
+/// A database statement.
+pub async fn record_complete(imp: &Importer, verified: &std::collections::BTreeSet<Uuid>) -> Result<Option<String>> {
+    let snap = crate::source::read(&imp.cloudcli).await?;
+    if let Some((schema, why)) = snap.problems.first() {
+        return Ok(Some(format!("the source has problems ({schema}: {why})")));
+    }
+    let db = imp.magpie.pool.get().await?;
+    let rows = db
+        .query(
+            "select conversation_id, released_at is not null as released from import_sources",
+            &[],
+        )
+        .await?;
+    if rows.is_empty() {
+        return Ok(Some("no conversation is imported".to_owned()));
+    }
+    let mut imported = std::collections::BTreeSet::new();
+    for r in &rows {
+        let id: Uuid = r.get(0);
+        if !r.get::<_, bool>(1) {
+            return Ok(Some(format!("conversation {id} is not released to magpie")));
+        }
+        if !verified.contains(&id) {
+            return Ok(Some(format!("conversation {id} was not verified in this run")));
+        }
+        imported.insert(id);
+    }
+    let purged: std::collections::BTreeSet<Uuid> = db
+        .query("select conversation_id from import_purged", &[])
+        .await?
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    for p in &snap.persons {
+        for s in &p.sessions {
+            let id = s.id()?;
+            if !imported.contains(&id) && !purged.contains(&id) {
+                return Ok(Some(format!(
+                    "the source's sessions row {id} ({}) is not imported",
+                    p.schema
+                )));
+            }
+        }
+    }
+    db.execute(
+        "insert into legacy_import_verified (verified_at, conversations) values (now(), $1)
+         on conflict (id) do update set verified_at = excluded.verified_at, conversations = excluded.conversations",
+        &[&i64::try_from(imported.len()).unwrap_or(i64::MAX)],
+    )
+    .await?;
+    tracing::info!(conversations = imported.len(), "the import is recorded complete");
+    Ok(None)
+}

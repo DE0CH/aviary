@@ -156,6 +156,69 @@ async fn workspaces_magpie_still_references() {
     assert_eq!(e.code(), Some(&ErrorCode::BadRequest));
 }
 
+async fn status(r: &common::Replica) -> magpie_api::ops::LegacyImportStatus {
+    r.hermit().service(None).legacy_import().await.unwrap()
+}
+
+async fn sql(r: &common::Replica, q: &str) {
+    r.pool().get().await.unwrap().batch_execute(q).await.unwrap();
+}
+
+/// `GET /v1/hermit/legacy-import`: incomplete until a clean `verify --all` is recorded; stale when a conversation is
+/// imported, changed or taken back after it; after A6 (no importer tables) the record alone.
+#[tokio::test]
+async fn the_import_is_complete_only_from_a_record_that_still_holds() {
+    let db = common::fresh_db("legacyimport").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let s = status(&r).await;
+    assert!(!s.complete && s.verified_at.is_none(), "{s:?}");
+    let c = with_reply(&r, STAFF).await;
+    sql(
+        &r,
+        &format!(
+            "insert into import_sources (conversation_id, person, user_key, source_schema, row_fp, files, sent_fp,
+                                     first_imported_at, last_synced_at, last_change_at, released_at)
+         values ('{c}', '{STAFF}', 'u0', 'cc_u0', 'fp', '{{}}', 'fp', now() - interval '2 hours',
+                 now() - interval '1 hour', now() - interval '1 hour', now() - interval '1 hour');
+         insert into legacy_import_verified (verified_at, conversations) values (now(), 1);"
+        ),
+    )
+    .await;
+    let s = status(&r).await;
+    assert!(s.complete, "{s:?}");
+    assert_eq!((s.conversations, s.why), (1, None));
+    // a change after the verify
+    sql(
+        &r,
+        "update import_sources set last_change_at = now() + interval '1 minute'",
+    )
+    .await;
+    let s = status(&r).await;
+    assert!(
+        !s.complete && s.why.as_deref().unwrap().contains("changed after"),
+        "{s:?}"
+    );
+    // taken back (a reverse hand-over)
+    sql(
+        &r,
+        "update import_sources set last_change_at = now() - interval '1 hour', released_at = null",
+    )
+    .await;
+    let s = status(&r).await;
+    assert!(
+        !s.complete && s.why.as_deref().unwrap().contains("not released"),
+        "{s:?}"
+    );
+    // A6 drops the importer's tables: the record alone
+    sql(&r, "drop table import_sources cascade").await;
+    let s = status(&r).await;
+    assert!(s.complete, "{s:?}");
+    // pigeon may not ask
+    let e = r.pigeon().service(None).legacy_import().await.unwrap_err();
+    assert_eq!(e.code(), Some(&ErrorCode::WrongCaller));
+}
+
 #[tokio::test]
 async fn admin_reads_are_audited_once_a_day() {
     let db = common::fresh_db("adminreads").await;

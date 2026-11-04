@@ -64,6 +64,22 @@ pub struct WorkspacesExistsResponse {
     pub exists: Vec<Uuid>,
 }
 
+/// `GET /v1/hermit/legacy-import`: whether the switch's import is complete (cutover 10.6, hermit 22.3 step 6), from
+/// the record a clean `magpie import verify --all` leaves once every imported conversation is owned by magpie. hermit's
+/// `legacy-cleanup` removes the old `users/` and `sent/` trees only when `complete`. Deleted with `legacy-cleanup`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyImportStatus {
+    /// The record holds, and nothing the import did since makes it stale.
+    pub complete: bool,
+    /// When the last clean `verify --all` with every conversation owned ran (`None`: never).
+    pub verified_at: Option<Timestamp>,
+    /// How many imported conversations it verified.
+    pub conversations: u64,
+    /// Why it is not complete (`None` when it is).
+    pub why: Option<String>,
+}
+
 /// `GET /v1/ops/people` query.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

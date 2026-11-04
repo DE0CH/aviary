@@ -9,7 +9,7 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 | Path | What |
 |---|---|
 | `../magpie-import/src/main.rs` | the `magpie` binary: start (env, ops port 9090, migrations, LISTEN, jobs, API on 8080) and drain, and `magpie import …`. It lives in `crates/magpie-import` for the switch window (that crate links this one, and a package cannot depend on one that depends on it); it moves back here, without the `import` arm, when the importer is deleted (cutover 10.5 step 8) |
-| `src/admin.rs` | hermit's routes (a leaver's purge, `workspaces/exists`) and the admin reads with their audit |
+| `src/admin.rs` | hermit's routes (a leaver's purge, `workspaces/exists`, `legacy-import`: whether the switch's import is recorded complete) and the admin reads with their audit |
 | `src/app.rs` | `Service` (start and the drain's last steps), `Magpie` (shared state), the `Server` impl, the router |
 | `src/auth.rs` | callers from `MAGPIE_ACCEPT_*`, the route layer that checks them against `magpie_api::routes::ROUTES` |
 | `src/limits.rs` | every limit and timeout (magpie 17) |
@@ -94,7 +94,7 @@ the model copy's bounds, EXIF rotation, HEIC through libheif, the decode cap, vi
 sent-file snapshot, its validation and lease, the files panel, downloads of a send's snapshot with `Range`, live
 workspace files through fake-hermit. `tests/shares.rs`: the freeze leaves a running turn out, the view equals the
 timeline at the freeze, the frozen workspace is a clone, soft delete hides a link and restore brings it back,
-continue, revoke, purge, view-as, a failed clone. `tests/admin.rs`: a leaver's purge, `workspaces/exists`, the admin
+continue, revoke, purge, view-as, a failed clone. `tests/admin.rs`: a leaver's purge, `workspaces/exists`, `legacy-import`, the admin
 reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with libheif's `heif-enc`.
 
 ## Deviations from the spec text

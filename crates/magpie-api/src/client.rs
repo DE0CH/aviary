@@ -31,9 +31,9 @@ use crate::legacy::{
 };
 use crate::live::{LiveFramesRequest, LiveState};
 use crate::ops::{
-    AdminConversation, AdminConversationList, AdminListQuery, OpsStats, PeopleQuery, PeopleResponse,
-    PersonPurgeRequest, PersonPurgeResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest, WorkspacesExistsRequest,
-    WorkspacesExistsResponse,
+    AdminConversation, AdminConversationList, AdminListQuery, LegacyImportStatus, OpsStats, PeopleQuery,
+    PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest,
+    WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
 use crate::routes::{self, Route, Surface};
 use crate::rows::{PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery};
@@ -969,6 +969,11 @@ impl ServiceCalls<'_> {
         self.client
             .exec_json(&self.scope, route("workspaces_exists"), &[], NO_QUERY, json(req)?)
             .await
+    }
+
+    /// Whether the switch's import is complete (caller hermit's `legacy-cleanup`).
+    pub async fn legacy_import(&self) -> Result<LegacyImportStatus, ClientError> {
+        self.get("legacy_import", &[], NO_QUERY).await
     }
 
     /// Per-person counts.

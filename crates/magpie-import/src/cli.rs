@@ -221,6 +221,19 @@ async fn run(imp: &Importer, cmd: &str, rest: &[String]) -> ExitCode {
                     }
                 }
             }
+            // `verify --all` clean: the record hermit's legacy-cleanup asks for (cutover 10.6); the output stays the
+            // verdicts, the outcome is logged
+            if ok && given.is_empty() {
+                let done: std::collections::BTreeSet<Uuid> = verdicts
+                    .iter()
+                    .filter_map(|v| v["conversation"].as_str().and_then(|c| Uuid::parse_str(c).ok()))
+                    .collect();
+                match crate::verify::record_complete(imp, &done).await {
+                    Ok(None) => {}
+                    Ok(Some(why)) => tracing::warn!(why = %why, "verify --all clean, the import not recorded complete"),
+                    Err(e) => return fail(e),
+                }
+            }
             out(&verdicts);
             if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE }
         }

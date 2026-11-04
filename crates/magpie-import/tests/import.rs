@@ -706,3 +706,62 @@ async fn an_id_in_two_schemas_is_never_written_and_an_untrusted_read_purges_noth
     assert_eq!(count(&w, &[alice[5]]).await, 0);
     assert_eq!(count(&w, &[bob]).await, 1);
 }
+
+/// A clean `verify --all` records the import complete (`legacy_import_verified`, read by hermit's `legacy-cleanup`)
+/// only with every imported conversation released, verified in that run, and every source row imported; magpie's
+/// `legacy-import` answer turns stale once the import changes after it.
+#[tokio::test]
+async fn a_clean_verify_all_records_the_import_complete_only_when_it_is() {
+    let w = World::new("complete").await;
+    let k = w.person(ALICE).await;
+    let (a, b, late) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    for id in [a, b] {
+        w.cloudcli(&format!(
+            "insert into cc_{k}.sessions (session_id, provider_session_id, created_at, updated_at)
+               values ('{id}', '{id}', '2026-10-22 06:00:00', '2026-10-22 06:00:00')"
+        ))
+        .await;
+        w.put(
+            &k,
+            &format!("projects/-workspace/{id}.jsonl"),
+            &user("l1", "2026-10-22T06:00:01.000Z", "one"),
+        );
+    }
+    let status = || async {
+        magpie::admin::legacy_import(&w.magpie().get().await.unwrap())
+            .await
+            .unwrap()
+    };
+    assert!(
+        verify::record_complete(&w.imp, &[a, b].into())
+            .await
+            .unwrap()
+            .unwrap()
+            .contains("no conversation"),
+    );
+    pass::pass(&w.imp, None).await.unwrap();
+    verify_all(&w).await;
+    let why = verify::record_complete(&w.imp, &[a, b].into()).await.unwrap().unwrap();
+    assert!(why.contains("not released"), "{why}");
+    for id in [a, b] {
+        control::release_forced(&w.imp, id).await.unwrap();
+    }
+    verify_all(&w).await;
+    let why = verify::record_complete(&w.imp, &[a].into()).await.unwrap().unwrap();
+    assert!(why.contains("not verified"), "{why}");
+    assert!(!status().await.complete);
+    assert_eq!(verify::record_complete(&w.imp, &[a, b].into()).await.unwrap(), None);
+    let s = status().await;
+    assert!(s.complete && s.conversations == 2, "{s:?}");
+    // a source row the import does not hold: not recorded again, and once imported the record is stale
+    w.cloudcli(&format!(
+        "insert into cc_{k}.sessions (session_id, provider_session_id, created_at, updated_at)
+           values ('{late}', '{late}', '2026-10-22 06:00:00', '2026-10-22 06:00:00')"
+    ))
+    .await;
+    let why = verify::record_complete(&w.imp, &[a, b].into()).await.unwrap().unwrap();
+    assert!(why.contains("not imported"), "{why}");
+    pass::pass(&w.imp, None).await.unwrap();
+    let s = status().await;
+    assert!(!s.complete, "{s:?}");
+}

@@ -25,7 +25,7 @@ own library, so an imported conversation is what live writes would have made: cc
 | `src/share.rs` | `cc_shared.shares` as magpie shares with the same ids (7.4.4): frozen from magpie's copy of the conversation up to where the share's `transcript.jsonl` ends, revoked ones revoked, ones of a conversation that is gone stored revoked |
 | `src/viewas.rs` | `jarvis.ops_events` view-as rows as `view_as_log` (the old `conversation` event is `send`) |
 | `src/pass.rs` | one pass (`run`, `catch-up`), 8 conversations at a time |
-| `src/verify.rs` | byte-exact verification through magpie's read path, the re-ingest, the released-source check, and 7.7's sanity notes (event and prompt counts against the classifier's count of the source, a workspace not on disk) |
+| `src/verify.rs` | byte-exact verification through magpie's read path, the re-ingest, the released-source check, 7.7's sanity notes (event and prompt counts against the classifier's count of the source, a workspace not on disk), and the record a clean `verify --all` leaves when the import is complete (`legacy_import_verified`, read by hermit's `legacy-cleanup` through `GET /v1/hermit/legacy-import`) |
 | `src/plan.rs` | `plan`: counts, sizes, the largest lines, memory files, blockers |
 | `src/holds.js`, `src/holds.rs` | the running sets (cutover 6.3): the script run in every old ui pod (each CloudCLI child asked for its running list, `ok: false` when it does not answer in 5 s), its output, the fail-closed merge |
 | `src/kube.rs` | the old cluster's API with `reqwest` and `tungstenite` (the Kubernetes crates are hermit's): ui pods in every phase, `pods/exec` over `v4.channel.k8s.io`; bindings `MAGPIE_IMPORT_LEGACY_KUBE_URL`, `MAGPIE_IMPORT_LEGACY_KUBE_TOKEN`, the CA at `/etc/legacy-kube-ca/ca.crt` |

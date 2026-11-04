@@ -387,6 +387,11 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .workspaces_exists(&request::<WorkspacesExistsRequest>(&f))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
+        "legacy_import" => c
+            .service(Some(ADMIN))
+            .legacy_import()
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
         "ops_people" => c
             .service(Some(ADMIN))
             .ops_people(&query::<PeopleQuery>(&f))

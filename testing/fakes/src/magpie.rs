@@ -70,9 +70,9 @@ use magpie_api::legacy::{
 };
 use magpie_api::live::{LiveFramesRequest, LiveState};
 use magpie_api::ops::{
-    AdminConversation, AdminConversationList, AdminListQuery, OpsStats, PeopleQuery, PeopleResponse,
-    PersonPurgeRequest, PersonPurgeResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest, WorkspacesExistsRequest,
-    WorkspacesExistsResponse,
+    AdminConversation, AdminConversationList, AdminListQuery, LegacyImportStatus, OpsStats, PeopleQuery,
+    PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest,
+    WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
 use magpie_api::rows::{PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery};
 use magpie_api::sandbox::{
@@ -1502,6 +1502,10 @@ impl Server for FakeMagpie {
         body: WorkspacesExistsRequest,
     ) -> Result<WorkspacesExistsResponse, ApiError> {
         scripted!(self, "workspaces_exists", ctx, json!({}), None, ser(&body), typed)
+    }
+
+    async fn legacy_import(&self, ctx: Ctx) -> Result<LegacyImportStatus, ApiError> {
+        scripted!(self, "legacy_import", ctx, json!({}), None, None, typed)
     }
 
     async fn ops_people(&self, ctx: Ctx, query: PeopleQuery) -> Result<PeopleResponse, ApiError> {

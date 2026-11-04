@@ -566,6 +566,11 @@ impl Server for FixtureServer {
         self.answer_json("workspaces_exists")
     }
 
+    async fn legacy_import(&self, ctx: Ctx) -> Result<LegacyImportStatus, ApiError> {
+        self.received("legacy_import", &ctx, &json!({}), None, None);
+        self.answer_json("legacy_import")
+    }
+
     async fn ops_people(&self, ctx: Ctx, query: PeopleQuery) -> Result<PeopleResponse, ApiError> {
         self.received(
             "ops_people",
@@ -986,6 +991,11 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
         "workspaces_exists" => c
             .service(Some(ADMIN))
             .workspaces_exists(&request::<WorkspacesExistsRequest>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "legacy_import" => c
+            .service(Some(ADMIN))
+            .legacy_import()
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
         "ops_people" => c

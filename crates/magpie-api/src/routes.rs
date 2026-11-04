@@ -180,6 +180,8 @@ pub const SANDBOX_SENT_FILES_COMMIT: &str = "/v1/sandbox/sent-files/{toolUseId}/
 pub const HERMIT_PERSON_PURGE: &str = "/v1/hermit/persons/{person}/purge";
 /// `POST` workspace references (hermit).
 pub const HERMIT_WORKSPACES_EXISTS: &str = "/v1/hermit/workspaces/exists";
+/// `GET` whether the switch's import is complete (hermit's `legacy-cleanup`).
+pub const HERMIT_LEGACY_IMPORT: &str = "/v1/hermit/legacy-import";
 /// `GET` per-person counts.
 pub const OPS_PEOPLE: &str = "/v1/ops/people";
 /// `GET` view-as log.
@@ -363,6 +365,7 @@ pub const ROUTES: &[Route] = &[
         &[200],
         false,
     ),
+    service("legacy_import", Get, HERMIT_LEGACY_IMPORT, HERMIT, &[200], false),
     // 16.4 ops and admin
     service("ops_people", Get, OPS_PEOPLE, OPS, &[200], false),
     service("ops_view_as", Get, OPS_VIEW_AS, OPS, &[200], false),
@@ -502,7 +505,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 65);
+        assert_eq!(ROUTES.len(), 66);
     }
 
     #[test]

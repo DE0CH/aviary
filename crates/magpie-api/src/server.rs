@@ -39,20 +39,20 @@ use crate::legacy::{
 };
 use crate::live::{LiveFramesRequest, LiveState};
 use crate::ops::{
-    AdminConversation, AdminConversationList, AdminListQuery, OpsStats, PeopleQuery, PeopleResponse,
-    PersonPurgeRequest, PersonPurgeResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest, WorkspacesExistsRequest,
-    WorkspacesExistsResponse,
+    AdminConversation, AdminConversationList, AdminListQuery, LegacyImportStatus, OpsStats, PeopleQuery,
+    PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest,
+    WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
 use crate::routes::{
     self, ADMIN_CONVERSATION, ADMIN_CONVERSATIONS, ADMIN_EVENTS, ADMIN_TIMELINE, ASK_ANSWER, BLOB, CANCEL, CHANGES,
     CONVERSATION, CONVERSATION_DELETE, CONVERSATION_RESTORE, CONVERSATION_SHARES, CONVERSATIONS, CREATION, FILES,
-    FILES_RAW, HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS, LEGACY_TICKET_CLAIM, LEGACY_TICKET_DONE, LEGACY_TICKETS,
-    LEGACY_WINDOW, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS, PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB,
-    SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME, SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE,
-    SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE, SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_HEARTBEAT,
-    SANDBOX_LEASE, SANDBOX_SENT_FILES, SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE,
-    SANDBOX_TURNS, SEARCH, SHARE, SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TURNS, UPLOAD_LEGACY_PATH, UPLOAD_RAW,
-    UPLOADS, VIEW_AS,
+    FILES_RAW, HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS, LEGACY_TICKET_CLAIM,
+    LEGACY_TICKET_DONE, LEGACY_TICKETS, LEGACY_WINDOW, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS, PROMPTS,
+    SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME,
+    SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE,
+    SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SENT_FILES,
+    SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS, SEARCH, SHARE,
+    SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TURNS, UPLOAD_LEGACY_PATH, UPLOAD_RAW, UPLOADS, VIEW_AS,
 };
 use crate::rows::{PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery};
 use crate::sandbox::{
@@ -669,6 +669,11 @@ pub trait Server: Send + Sync + 'static {
         async move { Err(not_implemented("workspaces_exists")) }
     }
 
+    /// Route `legacy_import`.
+    fn legacy_import(&self, ctx: Ctx) -> impl Future<Output = Result<LegacyImportStatus, ApiError>> + Send {
+        async move { Err(not_implemented("legacy_import")) }
+    }
+
     /// Route `ops_people`.
     fn ops_people(
         &self,
@@ -1102,6 +1107,10 @@ async fn h_workspaces_exists<S: Server>(
     reply("workspaces_exists", s.workspaces_exists(ctx, body).await)
 }
 
+async fn h_legacy_import<S: Server>(State(s): State<Arc<S>>, ctx: Ctx) -> Response {
+    reply("legacy_import", s.legacy_import(ctx).await)
+}
+
 async fn h_ops_people<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, Q(query): Q<PeopleQuery>) -> Response {
     reply("ops_people", s.ops_people(ctx, query).await)
 }
@@ -1203,6 +1212,7 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
         .route(SANDBOX_SENT_FILES_COMMIT, post(h_sent_files_commit::<S>))
         .route(HERMIT_PERSON_PURGE, post(h_person_purge::<S>))
         .route(HERMIT_WORKSPACES_EXISTS, post(h_workspaces_exists::<S>))
+        .route(HERMIT_LEGACY_IMPORT, get(h_legacy_import::<S>))
         .route(OPS_PEOPLE, get(h_ops_people::<S>))
         .route(OPS_VIEW_AS, get(h_ops_view_as::<S>))
         .route(OPS_STATS, get(h_ops_stats::<S>))

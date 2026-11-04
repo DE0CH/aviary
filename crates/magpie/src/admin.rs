@@ -8,8 +8,8 @@ use magpie_api::conversations::ListState;
 use magpie_api::errors::ErrorCode;
 use magpie_api::events::{Event, EventsPage, EventsQuery};
 use magpie_api::ops::{
-    AdminConversation, AdminConversationList, AdminHeartbeat, AdminLease, AdminListQuery, PersonPurgeResponse,
-    WORKSPACES_EXISTS_MAX, WorkspacesExistsRequest, WorkspacesExistsResponse,
+    AdminConversation, AdminConversationList, AdminHeartbeat, AdminLease, AdminListQuery, LegacyImportStatus,
+    PersonPurgeResponse, WORKSPACES_EXISTS_MAX, WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
 use magpie_api::rows::{TimelinePage, TimelineQuery};
 use magpie_api::server::Ctx;
@@ -135,6 +135,58 @@ pub async fn workspaces_exist(db: &impl Db, req: &WorkspacesExistsRequest) -> Re
     let mut exists: Vec<Uuid> = req.ids.iter().copied().filter(|i| found.contains(i)).collect();
     exists.dedup();
     Ok(WorkspacesExistsResponse { exists })
+}
+
+/// `GET /v1/hermit/legacy-import`: the record of the last clean `magpie import verify --all` with every conversation
+/// owned (`legacy_import_verified`, written by the importer), and, while the importer's tables still exist (until A6),
+/// whether the import changed since: a conversation imported or changed after it, or one not released any more (a
+/// reverse hand-over), makes it stale.
+///
+/// # Errors
+/// A statement error.
+pub async fn legacy_import(db: &impl Db) -> Result<LegacyImportStatus> {
+    let Some(rec) = db
+        .query_opt("select verified_at, conversations from legacy_import_verified", &[])
+        .await?
+    else {
+        return Ok(LegacyImportStatus {
+            complete: false,
+            verified_at: None,
+            conversations: 0,
+            why: Some("no clean verify --all with every conversation owned is recorded".to_owned()),
+        });
+    };
+    let verified_at: time::OffsetDateTime = rec.get(0);
+    let conversations = u64::try_from(rec.get::<_, i64>(1)).unwrap_or(0);
+    let has_sources: bool = db
+        .query_one("select to_regclass('import_sources') is not null", &[])
+        .await?
+        .get(0);
+    let mut why = None;
+    if has_sources {
+        let r = db
+            .query_one(
+                "select count(*), count(*) filter (where released_at is null),
+                        count(*) filter (where greatest(last_change_at, first_imported_at) > $1)
+                   from import_sources",
+                &[&verified_at],
+            )
+            .await?;
+        let (n, open, changed) = (r.get::<_, i64>(0), r.get::<_, i64>(1), r.get::<_, i64>(2));
+        if open > 0 {
+            why = Some(format!("{open} imported conversations are not released to magpie"));
+        } else if changed > 0 {
+            why = Some(format!("{changed} imported conversations changed after the verify"));
+        } else if u64::try_from(n).unwrap_or(0) != conversations {
+            why = Some(format!("{n} conversations are imported, {conversations} were verified"));
+        }
+    }
+    Ok(LegacyImportStatus {
+        complete: why.is_none(),
+        verified_at: Some(Timestamp(verified_at)),
+        conversations,
+        why,
+    })
 }
 
 /// The admin of an admin read (`Aviary-Admin`, required).
