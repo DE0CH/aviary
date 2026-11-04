@@ -420,6 +420,47 @@ async fn random_operation_sequences_match_the_model() {
     );
 }
 
+/// Fixed cases that once failed, run on every run whatever the random seed draws.
+#[tokio::test]
+async fn fixed_regression_cases() {
+    let db = common::fresh_db("cc_model_fixed").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let sql = common::sql(&db.url);
+    let _ = POOL.set(sql.clone());
+    let pool = pool();
+    // AVIARY_TEST_CCFS_SEED=1793710934704315484 case 48: a user line whose `uuid` an overwrite damaged, written again
+    // by the next person turn's rewrite before that turn's echo, took the echo (WP-29 review)
+    let steps = vec![
+        Step::SetMain,
+        Step::RewriteNextTurn(vec![0]),
+        Step::AwayAndBack(vec![23]),
+        Step::Overwrite(2_025_415_451_385_247_489, vec![120]),
+        Step::Overwrite(
+            15_109_180_431_508_493_925,
+            vec![105, 117, 110, 98, 120, 106, 122, 108, 103],
+        ),
+        Step::SetMain,
+        Step::Append(vec![22, 13, 3, 22], vec![147, 364, 240]),
+        Step::Truncate(815),
+        Step::Append(vec![8, 10, 22], vec![144, 305, 101]),
+        Step::Append(vec![28], vec![72, 165, 203]),
+        Step::Overwrite(
+            16_568_458_092_785_901_111,
+            vec![117, 108, 108, 104, 98, 105, 110, 115, 110, 113],
+        ),
+        Step::RewriteNextTurn(vec![18]),
+        Step::Rewrite(vec![9], 30),
+        Step::Append(vec![38, 9], vec![310, 133]),
+        Step::TornRepair(38),
+        Step::Overwrite(15_382_845_386_182_560_308, vec![110, 112, 118, 107, 110, 103, 103, 106]),
+        Step::TornRepair(3),
+        Step::Compact(vec![], 1),
+        Step::Truncate(519),
+    ];
+    run_case(&r, &sql, &pool, 48, &steps, 1_793_710_934_704_315_484).await;
+}
+
 /// One case; `(events, retracted, echoes)` at its end.
 async fn run_case(
     r: &common::Replica,

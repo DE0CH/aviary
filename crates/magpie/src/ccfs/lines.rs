@@ -364,12 +364,28 @@ async fn was_echo(tx: &Tx<'_>, conversation: Uuid, sha: &Sha, uuid: Option<&str>
         .is_some())
 }
 
-/// Whether a line with `uuid` was retracted in `conversation` (it was in the transcript before).
-async fn was_retracted(tx: &Tx<'_>, conversation: Uuid, uuid: Option<&str>) -> Result<bool> {
-    let Some(uuid) = uuid else {
+/// Whether a line with `uuid` was retracted in `conversation` (it was in the transcript before). A line without a
+/// uuid (no line Claude Code writes, but a damaged one) is matched by its event data instead: a retracted `cc.user`
+/// event with the same data is the same line written again. That lookup scans the conversation's retracted user
+/// events, which is fine for a case this rare.
+async fn was_retracted(tx: &Tx<'_>, conversation: Uuid, uuid: Option<&str>, data: Option<&Value>) -> Result<bool> {
+    if let Some(uuid) = uuid {
+        return Ok(limbo::replaced(tx, conversation, uuid).await?.is_some());
+    }
+    let Some(data) = data else {
         return Ok(false);
     };
-    Ok(limbo::replaced(tx, conversation, uuid).await?.is_some())
+    Ok(tx
+        .query_opt(
+            "select 1 from events e
+              where e.conversation_id = $1 and e.kind = 'cc.user' and e.data = $2
+                and exists (select 1 from events r where r.conversation_id = $1 and r.kind = 'retract'
+                             and r.data->'seqs' @> to_jsonb(e.seq))
+              limit 1",
+            &[&conversation, data],
+        )
+        .await?
+        .is_some())
 }
 
 /// Records a line with `sha` and `uuid` as the echo of a person's prompt in `conversation` (6.5).
@@ -412,7 +428,7 @@ async fn class_of(tx: &Tx<'_>, op: &Op<'_>, sha: &Sha, data: Option<&Value>) -> 
     if prompt_like && was_echo(tx, op.conv.id, sha, uuid_of(data)).await? {
         return Ok(Class::Internal);
     }
-    if class == Class::Echo && was_retracted(tx, op.conv.id, uuid_of(data)).await? {
+    if class == Class::Echo && was_retracted(tx, op.conv.id, uuid_of(data), data).await? {
         return Ok(classify::classify(data, Context { echo_pending: false }));
     }
     Ok(class)
