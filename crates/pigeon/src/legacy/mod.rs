@@ -18,8 +18,12 @@
 //!   the old stack's outcome ([`delegate`]). An LU that drops while its tab stays is reopened at once (with one
 //!   replacement per watched conversation in the old epoch) only with a token that lives at least [`REOPEN_MIN_LIFE`]
 //!   more and after it had been up [`REOPEN_MIN_UP`]; otherwise the tab is closed 1012 at a request-free moment and
-//!   reconnects through the edge, which checks the Access session itself ([`Legacy::lu_ended`]). An LU answered 401 gives the tab pigeon's signed-out
-//!   answer (4401 on the socket, 401 `NOT_SIGNED_IN` on HTTP), never a write error (`pigeon_lu_401_total`).
+//!   reconnects through the edge, which checks the Access session itself ([`Legacy::lu_ended`]; DESIGN 9.5's
+//!   deviation E4). An LU answered 401, or one whose holder has no unexpired token here, gives the tab pigeon's
+//!   signed-out answer (4401 on the socket, 401 `NOT_SIGNED_IN` on HTTP), never a write error
+//!   (`pigeon_lu_401_total`). An LU that streams nothing and carries no call closes after
+//!   [`crate::Tuning::legacy_lu_idle`] while its tab stays (the old stack's LU count reaches zero, A5); the tab's next
+//!   legacy request opens a new one like a first one.
 //! - **The owner changes.** At a release (legacy → owned) every socket watching the conversation gets one
 //!   `agent.timeline.replacement` in magpie's epoch and the native feed from then ([`crate::feeds::Hub::
 //!   owner_changed`]); at a reverse hand-over (owned → legacy, a rollback) one replacement in the old child's epoch
@@ -75,7 +79,8 @@ pub const OLD_WARM: &str = "/api/jarvis/warm";
 pub const OLD_FILE_MAX: u64 = 30 * 1024 * 1024;
 /// The old timeline's id of a user message (`paseo-hub.ts`: `paseo-user-<clientMessageId>`).
 pub const OLD_USER_ROW_PREFIX: &str = "paseo-user-";
-/// An LU that dropped is reopened on the same tab only with a token that lives this much longer.
+/// An LU that dropped is reopened on the same tab only with a token that lives this much longer (a reopen with no
+/// reconnect, so a blip of the cross-cluster bridge does not reconnect every tab on it: DESIGN 9.5's deviation E4).
 pub const REOPEN_MIN_LIFE: Duration = Duration::from_hours(1);
 /// The LU upgrade and its hello (a cold old child starts within it).
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
