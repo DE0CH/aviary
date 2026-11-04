@@ -12,7 +12,9 @@
 # Usage (as root, from a copy of chat/sandboxd: host/ and bin/sandboxd side by side; host/fetch-sandboxd.sh fills
 # bin/):  gateway.sh [image ref]
 # Beforehand: /etc/sbx/tls/{ca.crt,host.crt,host.key} (a host certificate for 10.201.0.1, e.g. the old hub's) and,
-# optionally, /etc/sbx/wg.key (the old hub's, so AWS hosts that know its public key keep working).
+# optionally, /etc/sbx/wg.key (the old hub's, so AWS hosts that know its public key keep working) and
+# /etc/sbx/docker/config.json (a registry login, mode 600, for a private sandbox image: YYC's
+# YYC_SANDBOX_GHCR_DOCKERCONFIGJSON; sandboxd then pulls with it, `registryConfigDir`).
 # Environment: SBX_NAME (yyc-sbx-gw), SBX_WG_PORT (51821), SBX_PRIVATE_GATEWAY (10.0.0.1), SBX_CONTROL_CIDR (10.0.0.0/16),
 #              SBX_START (1: start or restart sandboxd now; 0: install only)
 set -euo pipefail
@@ -41,12 +43,14 @@ install -d -m 700 /etc/sbx /etc/sbx/tls /var/lib/sbx /var/lib/sbx/images /var/lo
 for f in ca.crt host.crt host.key; do [ -s /etc/sbx/tls/$f ] || { echo "missing /etc/sbx/tls/$f" >&2; exit 1; }; done
 
 umask 077
+registry=""
+[ -s /etc/sbx/docker/config.json ] && registry='"registryConfigDir": "/etc/sbx/docker",'
 cat > /etc/sbx/host.json.new <<EOF
 {
   "name": "${SBX_NAME:-yyc-sbx-gw}", "role": "hub", "gateway": true,
   "wgAddress": "10.201.0.1", "hostCidr": "10.201.0.0/24", "wgPort": ${SBX_WG_PORT:-51821},
   "controlCidr": "${SBX_CONTROL_CIDR:-10.0.0.0/16}", "sandboxCidr": "10.200.0.0/16", "egressVip": "10.201.1.1",
-  "privateGateway": "${SBX_PRIVATE_GATEWAY:-10.0.0.1}", "reserveMemory": 0,
+  "privateGateway": "${SBX_PRIVATE_GATEWAY:-10.0.0.1}", "reserveMemory": 0, $registry
   "tls": {"ca": "/etc/sbx/tls/ca.crt", "cert": "/etc/sbx/tls/host.crt", "key": "/etc/sbx/tls/host.key"}
 }
 EOF
