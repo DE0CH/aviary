@@ -1,5 +1,6 @@
 import { siteOrigin } from "@/yyc/site";
 import { mountSandboxStatusHandler } from "@/yyc/sandbox-status";
+import { personaConnectionStatus } from "@/yyc/persona";
 import { watchdog } from "@/watchdog";
 import { createHostChannelTransport } from "@getpaseo/client/internal/hosts";
 import type { OwnedSubscription } from "@getpaseo/client";
@@ -1490,6 +1491,7 @@ export class HostRuntimeController {
           void failConnection(new DaemonAuthenticationError(client.authFailureReason));
           return;
         }
+        personaConnectionStatus(state.status);
         if (state.status === "connected") this.learnRelaySecurity(client, connection.id);
         this.applyConnectionEvent({ type: "client_state", state, lastError: client.lastError });
         this.updateSnapshot({
