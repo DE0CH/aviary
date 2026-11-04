@@ -8,12 +8,15 @@
 //! stays is handled by [`Legacy::lu_ended`] (reopened with a replacement per watched conversation, or the tab
 //! resumes).
 //!
-//! A frame never reaches the old child late. Its write to the kernel is bounded (a call's bound; the heartbeat period
-//! for the heartbeat and the subscription), the connection's `TCP_USER_TIMEOUT` ([`LU_TCP_USER_TIMEOUT`]) aborts it
-//! once bytes stay unacknowledged that long, and a socket that ends with a call unanswered, a write past its bound or
-//! a write call that timed out ([`Lu::write`]) is reset (`SO_LINGER` 0), so the kernel discards what it has not
-//! delivered instead of retransmitting it after a partition heals. A frame of a call is therefore either at the old
-//! side within its bound plus [`LU_TCP_USER_TIMEOUT`], or never.
+//! A write is never applied by the old child late. pigeon's own leg cannot promise it: bridge B1 is a load balancer
+//! that acknowledges bytes itself, and the old router relays frames to the child on a socket of its own, so bytes
+//! either holds can still arrive after a partition heals, whatever pigeon does with its connection. So each write
+//! ([`Lu::write`]) carries its bound as an instant ([`OLD_NOT_AFTER`]), and the old ui's switch module refuses a write
+//! that reaches its commit point later: a write pigeon gave up on is applied within its bound (plus the clocks' skew,
+//! [`super::OLD_CLOCK_SKEW_MAX`]) or never. pigeon's leg also fails fast: a frame's write to the kernel is bounded (a
+//! call's bound; the heartbeat period for the heartbeat and the subscription), the connection's `TCP_USER_TIMEOUT`
+//! ([`LU_TCP_USER_TIMEOUT`]) aborts it once bytes stay unacknowledged that long, and a socket that ends with a call
+//! unanswered, a write past its bound or a write call that timed out is reset (`SO_LINGER` 0).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -27,7 +30,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use uuid::Uuid;
 
-use super::{CONNECT_TIMEOUT, LU_HEADER, LU_TCP_USER_TIMEOUT, Legacy, OLD_SOCKET, OLD_VIEW_AS_HEADER};
+use super::{CONNECT_TIMEOUT, LU_HEADER, LU_TCP_USER_TIMEOUT, Legacy, OLD_NOT_AFTER, OLD_SOCKET, OLD_VIEW_AS_HEADER};
 use crate::paseo::compat;
 use crate::paseo::transport::Conn;
 
@@ -183,9 +186,12 @@ impl Lu {
         self.st().idle
     }
 
-    /// It is being used (handed out for a request).
-    pub(crate) fn touch(&self) {
-        self.st().last_use = Instant::now();
+    /// It is being used (handed out for a request); `false` when it was already closed as unused (a new one is
+    /// opened instead: one closing must not take a request or a watch).
+    pub(crate) fn touch(&self) -> bool {
+        let mut st = self.st();
+        st.last_use = Instant::now();
+        !st.idle
     }
 
     /// Keeps it from closing as unused until the hold is dropped (a ticketed write's steps between its calls).
@@ -198,12 +204,16 @@ impl Lu {
         Hold(self.clone())
     }
 
-    /// Whether it has been unused for `idle`: nothing watched, no call in flight, no holder. Marked closed when so
-    /// (a call arriving after that is not sent).
+    /// Whether it has been unused for `idle`: nothing watched, no call in flight, no holder. When so it is closed as
+    /// unused and dead at once, under the same lock as those checks, before its Close goes out: [`Legacy::lu_for`]
+    /// hands out a new one from then and a call through this one is not sent ([`Self::call`]).
     fn idle_now(&self, idle: Duration) -> bool {
         let mut st = self.st();
-        if st.agents.is_empty() && st.pending.is_empty() && st.holders == 0 && st.last_use.elapsed() >= idle {
+        if !st.idle && st.agents.is_empty() && st.pending.is_empty() && st.holders == 0 && st.last_use.elapsed() >= idle
+        {
             st.idle = true;
+            self.up.lock().unwrap_or_else(std::sync::PoisonError::into_inner).1 = Some(Instant::now());
+            self.phase.send_replace(Phase::Dead(LuError::NotSent));
         }
         st.idle
     }
@@ -272,13 +282,16 @@ impl Lu {
         }
     }
 
-    /// [`Self::call`] for a ticketed write: when it times out the socket is reset, so the frame cannot reach the old
-    /// child after the caller has given up on it (its bytes may sit unacknowledged in the kernel through a stalled
-    /// bridge, and an ordinary close would still deliver them).
+    /// [`Self::call`] for a write: it carries `bound` as the instant past which the old child refuses it
+    /// ([`OLD_NOT_AFTER`]), and when it times out the socket is reset (its bytes may sit unacknowledged in the kernel
+    /// through a stalled leg).
     ///
     /// # Errors
     /// Why there is no answer ([`LuError`]).
-    pub async fn write(&self, message: Value, bound: Duration) -> Answer {
+    pub async fn write(&self, mut message: Value, bound: Duration) -> Answer {
+        if let Some(m) = message.as_object_mut() {
+            m.insert(OLD_NOT_AFTER.into(), json!(super::not_after(bound)));
+        }
         let a = self.call(message, bound).await;
         if matches!(a, Err(LuError::Timeout)) {
             self.abort.notify_one();
@@ -286,11 +299,18 @@ impl Lu {
         a
     }
 
-    /// The tab now watches a legacy conversation: the old child streams it.
-    pub fn watch(&self, conversation: Uuid) {
-        if self.st().agents.insert(conversation) {
+    /// The tab now watches a legacy conversation: the old child streams it. `false` when it was closed as unused
+    /// meanwhile (nothing watched through it: the caller opens a new one).
+    pub fn watch(&self, conversation: Uuid) -> bool {
+        let mut st = self.st();
+        if st.idle {
+            return false;
+        }
+        if st.agents.insert(conversation) {
+            drop(st);
             self.send_agents();
         }
+        true
     }
 
     /// …and no longer does (or it was released).
@@ -607,5 +627,63 @@ fn inbound(legacy: &Legacy, lu: &Lu, text: &str) {
             conn.reply(k, &payload);
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An LU with no socket task (the state machine alone).
+    fn detached() -> Lu {
+        Lu {
+            conn: Weak::new(),
+            conn_id: Uuid::new_v4(),
+            person: "staff@example.com".into(),
+            out: mpsc::unbounded_channel().0,
+            st: Mutex::new(St {
+                pending: HashMap::new(),
+                agents: HashSet::new(),
+                holders: 0,
+                last_use: Instant::now(),
+                idle: false,
+            }),
+            phase: watch::channel(Phase::Open).0,
+            next: AtomicU64::new(0),
+            up: Mutex::new((Some(Instant::now()), None)),
+            abort: tokio::sync::Notify::new(),
+        }
+    }
+
+    /// The idle decision makes the LU dead at once, before its Close goes out: it is not handed out again, takes no
+    /// watch and sends no call, so nothing can land on a socket that is closing.
+    #[tokio::test]
+    async fn an_lu_closed_as_unused_is_dead_from_that_moment() {
+        let lu = detached();
+        assert!(lu.touch(), "open and in use");
+        assert!(!lu.idle_now(Duration::from_secs(60)), "used just now");
+        assert!(lu.idle_now(Duration::ZERO));
+        assert!(lu.is_dead() && lu.closed_idle());
+        assert!(!lu.touch(), "not handed out once idle");
+        assert!(!lu.watch(Uuid::new_v4()), "no watch on a closing LU");
+        assert!(lu.watched().is_empty());
+        assert_eq!(
+            lu.call(json!({"type": "fetch_agent_request"}), Duration::from_secs(1))
+                .await,
+            Err(LuError::NotSent)
+        );
+    }
+
+    /// A watched conversation, a call in flight or a holder keeps it from closing as unused.
+    #[test]
+    fn what_keeps_an_lu_in_use() {
+        let lu = detached();
+        assert!(lu.watch(Uuid::new_v4()));
+        assert!(!lu.idle_now(Duration::ZERO), "watched");
+        let lu = Arc::new(detached());
+        let held = lu.hold();
+        assert!(!lu.idle_now(Duration::ZERO), "held");
+        drop(held);
+        assert!(lu.idle_now(Duration::ZERO));
     }
 }

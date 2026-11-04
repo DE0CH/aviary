@@ -1204,6 +1204,15 @@ impl Model {
         closed
     }
 
+    /// The ticket's latest take claims a write now (an earlier request, on a replica gone since, that wrote).
+    pub fn claim_by_holder(&self, ticket: Uuid) {
+        let mut st = self.st();
+        let t = st.tickets.iter_mut().find(|t| t.id == ticket).unwrap();
+        t.claimed = Some(std::time::Instant::now());
+        t.claim_take = Some(t.take);
+        t.claims += 1;
+    }
+
     /// Moves a ticket's last claim back by `by` (a write claimed that long ago).
     pub fn age_claim(&self, ticket: Uuid, by: Duration) {
         let mut st = self.st();

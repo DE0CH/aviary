@@ -228,10 +228,10 @@ pub struct Tuning {
     pub legacy_window: Duration,
     /// The legacy upstream's `client_heartbeat` period (15 s: it also keeps the old child from its idle stop).
     pub legacy_heartbeat: Duration,
-    /// How long after a legacy send's LU dropped or timed out with the write in flight pigeon reads the old child to
-    /// settle it (10 s: `TICKET_CLAIM_SETTLE - TICKET_WRITE_TIMEOUT`, the transit bound for bytes already sent; checked in
-    /// `legacy::delegate`).
-    pub legacy_transit: Duration,
+    /// How long after a legacy send's write started pigeon reads the old child to settle it when its LU dropped or
+    /// timed out with the write in flight (`TICKET_CLAIM_SETTLE`, 30 s: by then the old child has applied it or will
+    /// refuse it, `legacy::OLD_NOT_AFTER`; a test may only shorten it, with a write timeout to match).
+    pub legacy_settle: Duration,
     /// How long a release keeps reading magpie's new epoch before it closes the watching sockets 1012 to resubscribe
     /// instead (60 s, WP-50).
     pub legacy_release_wait: Duration,
@@ -272,7 +272,7 @@ impl Default for Tuning {
             socket_quiet: Duration::from_secs(5),
             legacy_window: Duration::from_secs(2),
             legacy_heartbeat: Duration::from_secs(15),
-            legacy_transit: Duration::from_secs(10),
+            legacy_settle: magpie_api::legacy::TICKET_CLAIM_SETTLE,
             legacy_release_wait: Duration::from_secs(60),
             legacy_write_timeout: magpie_api::legacy::TICKET_WRITE_TIMEOUT,
             legacy_lu_idle: Duration::from_secs(60),

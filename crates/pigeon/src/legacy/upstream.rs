@@ -112,13 +112,16 @@ impl Legacy {
         b
     }
 
-    /// Sends `b` and reads the whole answer, both within `bound`; 2xx is the body, anything else a [`CallError`] (a
+    /// Sends `b` (with `bound` as the instant past which the old ui refuses it, [`super::OLD_NOT_AFTER_HEADER`]) and
+    /// reads the whole answer, both within `bound`; 2xx is the body, anything else a [`CallError`] (a
     /// 2xx whose body was not read in time is [`CallError::AppliedUnread`]: the write was applied).
     ///
     /// # Errors
     /// The old router's refusal or no answer.
     pub async fn send(&self, b: reqwest::RequestBuilder, bound: Duration) -> Result<(u16, Bytes), CallError> {
         let deadline = tokio::time::Instant::now() + bound;
+        // the old ui refuses it once past its bound, so it is never applied after pigeon gave up on it (DESIGN 9.5)
+        let b = b.header(super::OLD_NOT_AFTER_HEADER, super::not_after(bound).to_string());
         let r = match tokio::time::timeout_at(deadline, b.send()).await {
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {

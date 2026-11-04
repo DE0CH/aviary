@@ -87,19 +87,40 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// A read through LU.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// An LU connection (socket and HTTP) is aborted once bytes it sent stay unacknowledged this long (`TCP_USER_TIMEOUT`):
-/// a write past its bound is not retransmitted for long after a partition of the bridge heals.
+/// a stalled leg to the bridge fails fast. It bounds nothing past the bridge (B1 is a load balancer that acknowledges
+/// bytes itself, and the old router relays them on its own socket); [`OLD_NOT_AFTER`] does.
 pub const LU_TCP_USER_TIMEOUT: Duration = Duration::from_secs(5);
+/// The field of an LU socket write naming the instant (Unix milliseconds, pigeon's clock) past which the old child
+/// must not apply it: the old ui's switch module refuses a write that reaches its commit point later (the user row of
+/// a send, the change of any other write; claudecodeui `paseo-connection.ts`). It is the write's own bound in pigeon,
+/// so a write pigeon gave up on is never applied, whatever a hop between holds and delivers late (bridge B1's load
+/// balancer, the old router's relay to the child, DESIGN 9.5).
+pub const OLD_NOT_AFTER: &str = "aviaryNotAfter";
+/// The same instant on an LU HTTP call (the old router passes it on; the old ui refuses a request that arrives later).
+pub const OLD_NOT_AFTER_HEADER: &str = "x-aviary-not-after";
+/// How far the old cluster's clock may run behind pigeon's for [`OLD_NOT_AFTER`] to hold within a claim's settle time
+/// (both clusters keep NTP time; WP-54's preflight compares the old router's `Date` with pigeon's clock).
+pub const OLD_CLOCK_SKEW_MAX: Duration = Duration::from_secs(3);
 /// A send's claim must be answered within this after pigeon sent it for the write to start: magpie stamps the claim
 /// when it takes it, and its claimed write settles [`magpie_api::legacy::TICKET_CLAIM_SETTLE`] later, so a write
 /// starting later than this could still land after that (and after the ticket's hold).
 pub const CLAIM_ANSWER_MAX: Duration = Duration::from_secs(3);
 
-// a claimed write starts within the claim answer's bound, is on the wire within the write timeout, and is delivered
-// within the TCP user timeout or never: all inside the claim's settle time
+// a claimed write starts within the claim answer's bound and carries its own bound (the write timeout) as the instant
+// past which the old child refuses it, read on a clock at most the skew behind: all inside the claim's settle time
 const _: () = assert!(
-    CLAIM_ANSWER_MAX.as_secs() + magpie_api::legacy::TICKET_WRITE_TIMEOUT.as_secs() + LU_TCP_USER_TIMEOUT.as_secs()
+    CLAIM_ANSWER_MAX.as_secs() + magpie_api::legacy::TICKET_WRITE_TIMEOUT.as_secs() + OLD_CLOCK_SKEW_MAX.as_secs()
         <= magpie_api::legacy::TICKET_CLAIM_SETTLE.as_secs()
 );
+
+/// Now plus `bound` as Unix milliseconds on pigeon's clock (an [`OLD_NOT_AFTER`] instant).
+#[must_use]
+pub fn not_after(bound: Duration) -> u64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    u64::try_from((now + bound).as_millis()).unwrap_or(u64::MAX)
+}
 
 /// An LU that lived less than this before it dropped is not reopened on its own: the tab is closed 1012 at a
 /// request-free moment and reconnects (an old router that keeps refusing is not hammered).
@@ -230,11 +251,14 @@ pub(crate) struct Inner {
     windows: Mutex<HashMap<String, (Instant, WindowState)>>,
     window_ttl: Duration,
     pub(crate) heartbeat: Duration,
-    pub(crate) transit: Duration,
+    pub(crate) settle: Duration,
     pub(crate) write_timeout: Duration,
     pub(crate) lu_idle: Duration,
     release_wait: Duration,
     lus: Mutex<HashMap<Uuid, Arc<lu::Lu>>>,
+    /// Sockets whose LU dropped and may not be reopened: closed 1012 at their first request-free moment, and their
+    /// failed legacy requests are left unanswered meanwhile (the tab resends them after the reconnect).
+    reconnecting: Mutex<std::collections::HashSet<Uuid>>,
     pub(crate) activity: activity::Activity,
     pub(crate) lu_shares: rest::LuShares,
     pub(crate) metrics: Metrics,
@@ -280,13 +304,14 @@ impl Legacy {
             windows: Mutex::new(HashMap::new()),
             window_ttl: tuning.legacy_window,
             heartbeat: tuning.legacy_heartbeat,
-            transit: tuning.legacy_transit,
+            settle: tuning.legacy_settle.min(magpie_api::legacy::TICKET_CLAIM_SETTLE),
             write_timeout: tuning
                 .legacy_write_timeout
                 .min(magpie_api::legacy::TICKET_WRITE_TIMEOUT),
             lu_idle: tuning.legacy_lu_idle,
             release_wait: tuning.legacy_release_wait,
             lus: Mutex::new(HashMap::new()),
+            reconnecting: Mutex::new(std::collections::HashSet::new()),
             activity: activity::Activity::default(),
             lu_shares: rest::LuShares::default(),
             metrics: Metrics::register(registry),
@@ -607,7 +632,7 @@ impl Legacy {
             let rest = crate::paseo::messages::payload_rest(&payload);
             for conn in &subs {
                 conn.send_sub("agent.timeline.replacement", &conn.timeline_sub(), &rest);
-                me.lu_for(conn).watch(conversation);
+                me.watch(conn, conversation);
             }
             me.0.metrics.replacements.inc_by(subs.len() as u64);
             tracing::info!(conversation = %conversation, sockets = subs.len(), "reversed: served through LU");
@@ -639,8 +664,9 @@ impl Legacy {
     pub fn lu_for(&self, conn: &Arc<Conn>) -> Arc<lu::Lu> {
         let mut lus = self.lus();
         if let Some(l) = lus.get(&conn.id) {
-            if !l.is_dead() {
-                l.touch();
+            // one being closed as unused is dead from the moment that is decided ([`lu::Lu::touch`] says so under the
+            // same lock), so it never takes a request or a watch
+            if !l.is_dead() && l.touch() {
                 return l.clone();
             }
             // one closed as unused is opened again like a first one; one that dropped follows the reopen rule
@@ -648,7 +674,7 @@ impl Legacy {
                 let l = l.clone();
                 drop(lus);
                 tracing::info!(conn = %conn.id, "LU dropped and the token is near its end: the tab reconnects");
-                close_when_request_free(conn.clone());
+                self.reconnect(conn.clone());
                 return l;
             }
         }
@@ -662,6 +688,16 @@ impl Legacy {
         lus.retain(|_, l| !l.is_dead() || l.conn_alive());
         lus.insert(conn.id, l.clone());
         l
+    }
+
+    /// The tab watches a legacy conversation through its LU (a new one if the one it had was just closed as unused).
+    pub(crate) fn watch(&self, conn: &Arc<Conn>, conversation: Uuid) {
+        for _ in 0..3 {
+            if self.lu_for(conn).watch(conversation) {
+                return;
+            }
+        }
+        tracing::warn!(conn = %conn.id, "no LU took the watch");
     }
 
     /// An LU ended. Once its socket is gone it is forgotten. If the tab stays (an old ui pod restart, a bridge blip,
@@ -683,7 +719,8 @@ impl Legacy {
             return;
         }
         if lu.closed_idle() {
-            // it streamed nothing: the tab's next legacy request opens a new one
+            // it watched nothing when it was closed, and took no watch after ([`lu::Lu::watch`]): the tab's next
+            // legacy request opens a new one
             return;
         }
         let watched: Vec<Uuid> = lu
@@ -704,13 +741,13 @@ impl Legacy {
             }
             if up.is_none_or(|d| d < REOPEN_MIN_UP) || !me.may_reopen(&conn) {
                 tracing::info!(conn = %conn.id, "LU dropped and not reopened: the tab reconnects");
-                close_when_request_free(conn);
+                me.reconnect(conn);
                 return;
             }
             let lu = me.lu_for(&conn);
             if lu.ready().await.is_err() {
                 tracing::info!(conn = %conn.id, "LU dropped and did not reopen: the tab reconnects");
-                close_when_request_free(conn);
+                me.reconnect(conn);
                 return;
             }
             me.0.metrics.lu_reopened.inc();
@@ -726,6 +763,43 @@ impl Legacy {
             }
             tracing::info!(conn = %conn.id, "LU reopened after a drop");
         });
+    }
+
+    /// Closes `conn` 1012 at its first request-free moment because its LU dropped and is not reopened; until then its
+    /// legacy requests that fail are left unanswered ([`Self::reconnecting`]), since the tab resends them after it
+    /// reconnects.
+    pub(crate) fn reconnect(&self, conn: Arc<Conn>) {
+        if !self
+            .0
+            .reconnecting
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(conn.id)
+        {
+            return;
+        }
+        let me = self.clone();
+        tokio::spawn(async move {
+            while !conn.request_free() && !conn.is_closing() {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            conn.close_after_queued(1012, "reconnect");
+            me.0.reconnecting
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&conn.id);
+        });
+    }
+
+    /// Whether `conn` is about to be closed 1012 to reconnect ([`Self::reconnect`]) or is closing.
+    pub(crate) fn reconnecting(&self, conn: &Conn) -> bool {
+        conn.is_closing()
+            || self
+                .0
+                .reconnecting
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains(&conn.id)
     }
 
     /// The old child's epoch of `conversation` (empty when it cannot be read: the tab refetches either way).

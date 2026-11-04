@@ -2,7 +2,9 @@
 //! socket at the old socket path, which takes an upgrade only with pigeon's pair token in the LU header, and answers
 //! like the old bridge (`paseo-connection.ts`) for what pigeon relays: hello, the timeline subscription, timeline
 //! and agent reads, sends (the user row and `turn_started` before the answer; a second send while a turn runs is
-//! refused, and a send is never de-duplicated by its id), Stop, rename, delete, restore; the old upload route (files
+//! refused, and a send is never de-duplicated by its id; a write that reaches its commit point past its
+//! `aviaryNotAfter` is refused, as the old ui's switch module does), Stop, rename, delete, restore; a create
+//! de-duplicated by its idempotency key across the person's sockets; the old upload route (files
 //! land in the person's old asset folder), the old warm and the share routes. A test can stream rows of a running
 //! turn, end it, refuse upgrades with a status, or hold sends. Every name of the old stack comes from pigeon's own
 //! constants, so this file names none.
@@ -76,6 +78,22 @@ pub struct St {
     pub share_lists_down: bool,
     /// Sends refused because an attachment path names no file the child holds (a copy-at-send gone wrong).
     pub broken_sends: Vec<(String, Vec<String>)>,
+    /// Writes (socket and HTTP) refused because they reached their commit point past their `aviaryNotAfter`.
+    pub late_refused: usize,
+    /// Creates by (person, idempotency key): the person's child de-duplicates a create across sockets.
+    pub creations: HashMap<(String, String), Uuid>,
+}
+
+/// Whether a write's not-after instant (Unix ms) has passed: the old ui's switch module refuses it then.
+fn past(not_after: Option<u64>) -> bool {
+    let now = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap();
+    not_after.is_some_and(|t| now > t)
 }
 
 /// The fake. Cheap to clone.
@@ -283,6 +301,17 @@ impl Old {
             .as_str()
             .or_else(|| m["workspaceId"].as_str().and_then(|w| w.strip_prefix("wks_")))
             .and_then(|s| Uuid::parse_str(s).ok());
+        let not_after = m[pigeon::legacy::OLD_NOT_AFTER].as_u64();
+        let refused_late = |old: &Self| {
+            old.st().late_refused += 1;
+            Some(session(
+                "rpc_error",
+                &json!({"requestId": rid, "requestType": kind, "error": "too late", "code": "expired"}),
+            ))
+        };
+        if kind != "send_agent_message_request" && past(not_after) {
+            return refused_late(self);
+        }
         match kind {
             "client_heartbeat" => {
                 self.st().heartbeats += 1;
@@ -371,6 +400,14 @@ impl Old {
                     }
                     n.await;
                 }
+                // the commit point: the old hub's steps before the user row are done
+                if past(not_after) {
+                    self.st().late_refused += 1;
+                    return Some(session(
+                        "send_agent_message_response",
+                        &json!({"requestId": rid, "agentId": id, "accepted": false, "error": "too late"}),
+                    ));
+                }
                 let cmid = m["messageId"].as_str().unwrap_or("").to_owned();
                 let text = m["text"].as_str().unwrap_or("").to_owned();
                 let paths: Vec<String> = m["attachments"]
@@ -449,8 +486,23 @@ impl Old {
                 Some(session("status", &json!({"status": "agent_refreshed", "agentId": id, "requestId": rid})))
             }
             "workspace.create.request" => {
+                let key = m["idempotencyKey"].as_str().unwrap_or("").to_owned();
+                let known = (!key.is_empty())
+                    .then(|| self.st().creations.get(&(person.to_owned(), key.clone())).copied())
+                    .flatten();
+                if let Some(id) = known {
+                    let snap = Self::snapshot(&self.agent(id), id);
+                    return Some(session(
+                        "workspace.create.response",
+                        &json!({"requestId": rid, "workspace": {"id": format!("wks_{id}")}, "agent": snap,
+                                "setupTerminalId": null, "error": null}),
+                    ));
+                }
                 let id = Uuid::new_v4();
                 self.add(id, person);
+                if !key.is_empty() {
+                    self.st().creations.insert((person.to_owned(), key), id);
+                }
                 let cmid = m["agent"]["clientMessageId"].as_str().unwrap_or("first").to_owned();
                 let text = m["agent"]["initialPrompt"].as_str().unwrap_or("").to_owned();
                 {
@@ -572,9 +624,18 @@ async fn handle(State(old): State<Old>, req: Request) -> Response {
         };
         return ws.on_upgrade(move |s| socket(old, s, person));
     }
+    let not_after = header(req.headers(), pigeon::legacy::OLD_NOT_AFTER_HEADER).and_then(|v| v.parse().ok());
     let body = axum::body::to_bytes(req.into_body(), 64 << 20)
         .await
         .unwrap_or_default();
+    if past(not_after) {
+        old.st().late_refused += 1;
+        return (
+            StatusCode::PRECONDITION_FAILED,
+            axum::Json(json!({"error": "too late"})),
+        )
+            .into_response();
+    }
     if path == OLD_UPLOAD && method == axum::http::Method::POST {
         let (name, mime, bytes) = parse_one_file(&body);
         let n = old.st().files.len() + 1;

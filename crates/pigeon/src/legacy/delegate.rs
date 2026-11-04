@@ -8,13 +8,15 @@
 //! - a send's ticket call carries its `clientMessageId` (a retry gets the open ticket, possibly while another request
 //!   still holds it); no write starts later than the answer's `holdMs` after pigeon SENT the ticket call (its
 //!   monotonic clock): past that, a new ticket; every write is given up after `TICKET_WRITE_TIMEOUT` (20 s) without
-//!   the old child's answer (and an LU frame not on the wire by then is dropped, [`Lu::call`]), and the ticket is
-//!   left for the importer to expire;
+//!   the old child's answer, carries that bound as the instant past which the old child refuses it
+//!   ([`super::OLD_NOT_AFTER`], [`Lu::write`]), and the ticket is left for the importer to expire;
 //! - a send's write is claimed under its take right before it starts, so of two requests holding one ticket only one
 //!   writes; it starts only when the claim's answer came within [`CLAIM_ANSWER_MAX`] of pigeon sending it and before
 //!   the hold (magpie stamps the claim when it takes it, and the claim's settle time counts from then), otherwise the
 //!   hand-out closes `refused` with nothing written and a new ticket is taken; a request that gives up without
-//!   writing reports `refused` under its own take, which closes nothing once another request holds the ticket;
+//!   writing reports `refused` under its own take, which closes nothing once another request holds the ticket or
+//!   while another take's claim stands; a request whose claim answers that its resend holds the ticket answers its
+//!   tab nothing (the resend's answer is the send's);
 //! - the old child does not de-duplicate a send by `clientMessageId` (a second send is a second turn), so a send
 //!   whose answer names an earlier hand-out (`reused`), an open earlier ticket (`supersedes`) or an earlier ticket
 //!   (`prior`) is checked first: a `prior` the old child accepted is answered `accepted` with nothing sent; otherwise
@@ -25,17 +27,22 @@
 //!   pages back through the whole old timeline (a timeline longer than pigeon reads, or one that changes epoch
 //!   between pages, cannot be read);
 //! - a send whose LU drops (or times out) with its write in flight, under a tab that stays, is settled the same way
-//!   through the reopened LU: accepted when the old child has it, written again within the hold when it does not;
+//!   through the reopened LU, read once the write's whole claim settle time has passed (by then the old child has
+//!   applied it or refuses it): accepted when the old child has it, written again within the hold when it does not;
+//!   under a tab whose LU is not reopened (DESIGN 9.5's E4) the write is left unanswered with its ticket open, and the
+//!   tab's resend after its 1012 reconnect is settled from the old timeline;
 //! - a write made after such a check (a repeat, an LU drop) that the old hub refuses may be refused because an
 //!   earlier write of the same send landed late and is the turn that runs: the old child is read once more, and when
 //!   it has the send the ticket is reported from what it shows and the send is answered as accepted;
 //! - a send of magpie-only files copies each into the old child first, each under an upload ticket of its own (a
 //!   new one when its hold ran out), once for the whole send, then sends with the old paths under the send's ticket;
-//!   a copy may run past its upload ticket's settle time ([`copy_bound`], sized by the file): the send's own ticket
-//!   stays open meanwhile, so the conversation cannot be released under it, and a copy that lands after a release is
-//!   a file in the old asset folder nothing refers to (the send then goes natively under a new ticket). magpie's
-//!   fence needs no open ticket, so an upload ticket answering `native` is not expected while the send's is open;
-//!   it would still send natively with the tab's own message (every path magpie's);
+//!   a copy may run past its upload ticket's settle time ([`copy_bound`], sized by the file, up to 120 s per file and
+//!   ten files). The send's ticket is not what keeps that safe: it is unclaimed while the files are copied, so the
+//!   importer may expire it `TICKET_SETTLE_MAX` (90 s) after its issue and release the conversation mid-copy. What
+//!   keeps it safe is the hold: a send whose ticket's hold passed during the copies takes a new ticket before it
+//!   writes, which answers `native` once the conversation is released, and the send goes natively with the tab's own
+//!   message (every path magpie's); a copy that lands after a release is a file in the old asset folder nothing
+//!   refers to;
 //! - an outcome is `refused` only when the old route itself answered no (a 4xx, the old child's own refusal) or
 //!   nothing was written; a 5xx, a gateway error or no answer may come after the write was applied, so the ticket is
 //!   left for the importer to expire after its settle read;
@@ -53,8 +60,7 @@ use std::time::{Duration, Instant};
 
 use magpie_api::client::ClientError;
 use magpie_api::legacy::{
-    TICKET_CLAIM_SETTLE, TICKET_WRITE_TIMEOUT, TicketClaim, TicketDone, TicketKind, TicketOutcome, TicketRequest,
-    TicketResponse, TicketRoute,
+    TicketClaim, TicketDone, TicketKind, TicketOutcome, TicketRequest, TicketResponse, TicketRoute,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -83,11 +89,6 @@ const OLD_PAGES: usize = 40;
 /// The longest a copy-at-send reads one upload's bytes from magpie.
 const COPY_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
-const _: () = assert!(
-    TICKET_CLAIM_SETTLE.as_secs() - TICKET_WRITE_TIMEOUT.as_secs() == 10,
-    "Tuning::legacy_transit's default is the claim's transit bound"
-);
-
 /// How long after an LU drop pigeon waits before it asks for the reopened LU (past a blip, as `lu_ended` does).
 const LU_REOPEN_WAIT: Duration = Duration::from_millis(400);
 
@@ -101,7 +102,7 @@ impl Delegate for LegacyDelegate {
     }
 
     fn subscribe(&self, socket: Arc<Conn>, conversation: Uuid) {
-        self.0.lu_for(&socket).watch(conversation);
+        self.0.watch(&socket, conversation);
     }
 
     fn unsubscribe(&self, socket: &Arc<Conn>, conversation: Uuid) {
@@ -256,6 +257,11 @@ impl Legacy {
             conn.close(4401, "signed out");
             return;
         }
+        if self.reconnecting(conn) {
+            // the tab is about to be closed 1012 and resends the request after it reconnects: no error for it
+            tracing::info!(error = ?e, kind, "LU call failed under a tab that reconnects: left unanswered");
+            return;
+        }
         tracing::warn!(error = ?e, kind, "LU call failed");
         self.0.metrics.lu_errors.inc();
         if !rid.is_empty() {
@@ -347,9 +353,11 @@ impl Legacy {
         }
     }
 
-    /// A write the switch could not make: counted, and the tab's error (the signed-out answer for a 401).
+    /// A write the switch could not make: counted, and the tab's error (the signed-out answer for a 401). Under a tab
+    /// that is about to be closed 1012 to reconnect it is neither: the tab resends it after the reconnect (a write
+    /// that may have reached the old child left its ticket open, so the resend's settled read finds it).
     fn write_lost(&self, conn: &Arc<Conn>, kind: &str, rid: &str, e: LuError) {
-        if e != LuError::SignedOut {
+        if e != LuError::SignedOut && !self.reconnecting(conn) {
             self.0.metrics.write_refused.inc();
         }
         self.lu_failed(conn, kind, rid, e);
@@ -424,7 +432,16 @@ impl Legacy {
                 }
             };
             if let Some(e) = lu_down {
-                // the old stack owns it and cannot be reached: nothing written under this hand-out
+                if t.prior.as_ref().is_some_and(|p| p.accepted) {
+                    // the old child took this send under an earlier ticket: accepted, nothing to write or read
+                    self.report(conn, h, TicketOutcome::Refused);
+                    let p = json!({"agentId": c, "accepted": true, "error": null});
+                    return answer(conn, "send_agent_message_response", p, rid);
+                }
+                // the old stack owns it and cannot be reached: nothing written under this hand-out. Its `refused`
+                // closes nothing an earlier holder may have written under (magpie keeps a ticket an earlier take
+                // claimed open, and a reused ticket's earlier take can no longer claim; `prior` and `supersedes` are
+                // other tickets), so the next resend still checks the old timeline
                 self.report(conn, h, TicketOutcome::Refused);
                 return self.write_lost(conn, kind, rid, e);
             }
@@ -508,9 +525,10 @@ impl Legacy {
                         }
                         Claim::Claimed => {}
                         Claim::Elsewhere => {
-                            // the tab's resend holds the ticket now and writes it; this request has nothing to do
+                            // the tab's resend holds the ticket now and writes it, and its answer is the send's: this
+                            // request answers nothing (an error here would show a failed send that is delivered)
                             tracing::info!(conversation = %c, "a send's ticket was handed to its resend");
-                            return self.write_failed(conn, kind, rid, false);
+                            return;
                         }
                         Claim::Closed => continue 'tickets,
                         Claim::Unknown => {
@@ -575,8 +593,10 @@ impl Legacy {
                         if let Err(e) = lu.ready().await {
                             return self.write_lost(conn, kind, rid, e);
                         }
-                        // bytes already sent land within the transit bound; a write still queued was dropped at its bound
-                        let until = (started + TICKET_CLAIM_SETTLE).min(Instant::now() + self.0.transit);
+                        // the write carried its bound as the instant past which the old child refuses it (it may
+                        // still be inside the old hub's steps before the user row, or held by a hop between): the
+                        // claim's whole settle time, never less
+                        let until = started + self.0.settle;
                         match self.settled_read(&lu, c, cmid, until).await {
                             Some(OldSend::Present { running }) => {
                                 self.report(
@@ -810,7 +830,9 @@ impl Legacy {
         }
         let key = str_field(&m, "idempotencyKey").unwrap_or("").to_owned();
         let lu = self.lu_for(&conn);
-        match lu.call(m, super::CONNECT_TIMEOUT).await {
+        // bounded at the old child too: a create the tab retries is de-duplicated by its idempotency key across the
+        // person's sockets there (claudecodeui `paseo-connection.ts`)
+        match lu.write(m, super::CONNECT_TIMEOUT).await {
             Ok((typ, p)) => {
                 let agent = p["agent"]["id"]
                     .as_str()

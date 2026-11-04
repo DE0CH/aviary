@@ -41,7 +41,7 @@ fn fast() -> Tuning {
         socket_quiet: Duration::from_millis(300),
         legacy_window: Duration::from_millis(50),
         legacy_heartbeat: Duration::from_millis(300),
-        legacy_transit: Duration::from_secs(2),
+        legacy_settle: Duration::from_secs(2),
         ..common::tuning()
     }
 }
@@ -1171,7 +1171,7 @@ impl Rng {
 /// turn.
 #[tokio::test]
 async fn fence_race_fuzz_a_thousand_sends_each_accepted_once() {
-    fuzz(20, 25, false).await;
+    fuzz(20, 25, false, false).await;
 }
 
 /// The fuzz with the old hub's busy refusal: an old turn runs until a random later instant, a send meanwhile is
@@ -1179,11 +1179,20 @@ async fn fence_race_fuzz_a_thousand_sends_each_accepted_once() {
 /// Every send still lands exactly once, in order.
 #[tokio::test]
 async fn fence_race_fuzz_with_busy_old_turns_each_lands_once() {
-    fuzz(8, 10, true).await;
+    fuzz(8, 10, true, false).await;
+}
+
+/// The fuzz with LU drops (an old ui pod restart, a blip of bridge B1) at random instants while sends are in flight,
+/// with tokens that let each LU be reopened: a send whose LU dropped is settled from the old timeline and written
+/// again only when the old child lacks it, so every send still lands exactly once, in order, and none is refused.
+#[tokio::test]
+async fn fence_race_fuzz_with_lu_drops_each_lands_once() {
+    fuzz(6, 24, false, true).await;
 }
 
 #[allow(clippy::print_stdout)] // the seed, for a rerun
-async fn fuzz(conversations: usize, per_tab: usize, busy: bool) {
+#[allow(clippy::fn_params_excessive_bools)] // the fuzz's variants
+async fn fuzz(conversations: usize, per_tab: usize, busy: bool, drops: bool) {
     let seed: u64 = aviary_core::env::test_only("AVIARY_TEST_FUZZ_SEED")
         .and_then(|s| s.parse().ok())
         .unwrap_or_else(|| (u64::from(std::process::id()) * 0x9e37_79b9) | 1);
@@ -1207,18 +1216,23 @@ async fn fuzz(conversations: usize, per_tab: usize, busy: bool) {
     let mut flips = tokio::task::JoinSet::new();
     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     for (i, c) in convs.iter().copied().enumerate() {
+        // with `drops` tokens that live past the reopen rule's hour, so a dropped LU is reopened under the tab
+        let life = if drops { 7200 } else { 3600 };
         for (tab, url, token) in [
-            (0, e.h.url.clone(), e.h.token(STAFF)),
-            (1, other.url.clone(), other.token(STAFF)),
+            (0, e.h.url.clone(), e.h.teams[0].mint(STAFF, life, None, None)),
+            (1, other.url.clone(), other.teams[0].mint(STAFF, life, None, None)),
         ] {
             let mut ws = Ws::hello(&url, &token, "").await.0.relayed();
             let file = file.clone();
             let mut r = Rng(rng.next() | 1);
             tasks.spawn(async move {
                 list(&mut ws).await;
+                // the tab shows the conversation it sends to (with `drops`, the watch is what a dropped LU is reopened
+                // for, lu_ended)
+                watch(&mut ws, &[c]).await;
                 let mut refused = Vec::new();
                 for n in 0..per_tab {
-                    tokio::time::sleep(Duration::from_millis(r.below(15))).await;
+                    tokio::time::sleep(Duration::from_millis(r.below(if drops { 500 } else { 15 }))).await;
                     let cmid = format!("{c}-{tab}-{n}");
                     let extra = if r.below(5) == 0 {
                         json!({"attachments": [{"type": "uploaded_file", "path": file, "fileName": "fuzz.pdf",
@@ -1247,7 +1261,9 @@ async fn fuzz(conversations: usize, per_tab: usize, busy: bool) {
         }
         // release, hand back, release: each at a random instant, each only when the model's rule allows it
         let m = e.m.clone();
-        let at: Vec<u64> = (0..3).map(|_| 20 + rng.below(250)).collect();
+        // with `drops` spread over the run, so drops meet legacy conversations
+        let stretch = if drops { 40 } else { 1 };
+        let at: Vec<u64> = (0..3).map(|_| 20 + rng.below(250) * stretch).collect();
         flips.spawn(async move {
             for (k, wait) in at.into_iter().enumerate() {
                 tokio::time::sleep(Duration::from_millis(wait)).await;
@@ -1279,6 +1295,21 @@ async fn fuzz(conversations: usize, per_tab: usize, busy: bool) {
             }
         })
     });
+    // with `drops`: every LU dropped at random instants, each time after the reopen rule's minimum time up
+    let dropper = drops.then(|| {
+        let (old, done) = (e.old.clone(), done.clone());
+        let mut r = Rng(rng.next() | 1);
+        tokio::spawn(async move {
+            let mut n = 0;
+            while !done.load(std::sync::atomic::Ordering::SeqCst) {
+                let wait = pigeon::legacy::REOPEN_MIN_UP + Duration::from_millis(500 + r.below(1500));
+                tokio::time::sleep(wait).await;
+                old.drop_sockets();
+                n += 1;
+            }
+            n
+        })
+    });
     while let Some(r) = tasks.join_next().await {
         let refused = r.unwrap();
         assert!(refused.is_empty(), "refused (seed {seed}): {refused:?}");
@@ -1286,6 +1317,13 @@ async fn fuzz(conversations: usize, per_tab: usize, busy: bool) {
     done.store(true, std::sync::atomic::Ordering::SeqCst);
     if let Some(t) = ender {
         t.await.unwrap();
+    }
+    if let Some(t) = dropper {
+        assert!(t.await.unwrap() >= 1, "no LU dropped during the run (seed {seed})");
+        assert!(
+            e.metric("pigeon_lu_reopened_total") >= 1.0,
+            "no LU reopened under a tab (seed {seed})"
+        );
     }
     while flips.join_next().await.is_some() {}
     assert!(
@@ -1831,9 +1869,10 @@ async fn an_lu_that_streams_nothing_closes_while_its_tab_stays() {
     assert_eq!(e.metric("pigeon_lu_errors_total"), 0.0);
 }
 
-/// A send through a bridge that stalls (a partition) until its write's bound passes: the LU is reset, so the bytes
-/// the kernel still holds are never delivered when the bridge heals; the reopened LU finds the send absent and writes
-/// it once.
+/// A send through a bridge whose far leg stalls (a partition behind the load balancer) until its write's bound passes:
+/// pigeon resets its LU, but the bridge has acknowledged the frame and delivers it when it heals; the old side
+/// refuses it there by its not-after instant, so the reopened LU's write, made once the write had settled and found it
+/// absent, is the one turn.
 #[tokio::test]
 async fn a_write_through_a_stalled_bridge_never_lands_after_it_heals() {
     let m = Model::default();
@@ -1845,6 +1884,7 @@ async fn a_write_through_a_stalled_bridge_never_lands_after_it_heals() {
         &bridge.url,
         Tuning {
             legacy_write_timeout: Duration::from_millis(1500),
+            legacy_settle: Duration::from_secs(2),
             ..fast()
         },
     )
@@ -1866,10 +1906,16 @@ async fn a_write_through_a_stalled_bridge_never_lands_after_it_heals() {
         bridge.resets.load(std::sync::atomic::Ordering::SeqCst) >= 1,
         "the stalled LU was reset"
     );
+    // the turn of the second write ends before the bridge heals: the old hub's busy refusal is no guard then
+    e.old.end_turn(c);
     bridge.heal();
-    tokio::time::sleep(Duration::from_millis(800)).await;
-    assert_eq!(e.old.agent(c).sends.len(), 1, "the stalled write never landed");
-    assert_eq!(bridge.late.load(std::sync::atomic::Ordering::SeqCst), 0);
+    until("the held frame delivered", || {
+        bridge.late.load(std::sync::atomic::Ordering::SeqCst) > 0
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(e.old.agent(c).sends.len(), 1, "the late frame is not a second turn");
+    assert!(e.old.st().late_refused >= 1, "refused as late");
     e.m.wait_tickets(|t| t.len() == 1 && t[0].outcome == Some(TicketOutcome::Started))
         .await;
     assert_eq!(e.m.tickets_of(c)[0].claims, 2, "written again under its ticket");
@@ -1896,4 +1942,179 @@ async fn a_ticket_outcome_still_being_reported_holds_the_drain() {
     done.notify_one();
     until("reported", || e.h.app.transfers().active() == 0).await;
     e.m.wait_tickets(|t| t[0].outcome == Some(TicketOutcome::Started)).await;
+}
+
+/// A resend meets the open ticket an earlier holder claimed and wrote under (its replica gone since), on a replica
+/// whose LU cannot open: its `refused` closes nothing, so the ticket stays open, and the next resend reads the old
+/// timeline, finds the send there and answers accepted with no second turn.
+#[tokio::test]
+async fn a_resend_whose_lu_cannot_open_leaves_an_earlier_claimed_ticket_open() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    // a token that lives past the reopen rule's hour (the failed LU is tried again, not the tab closed)
+    let token = e.h.teams[0].mint(STAFF, 7200, None, None);
+    let mut ws = Ws::hello(&e.h.url, &token, "").await.0.relayed();
+    list(&mut ws).await;
+    let t = e.m.open_send_ticket(c, "m-earlier", Duration::from_secs(2));
+    e.m.claim_by_holder(t);
+    // the earlier holder's write landed: its turn runs
+    e.old.take_send(c, "m-earlier", "繼續", Vec::new());
+    e.old.refuse.store(503, std::sync::atomic::Ordering::SeqCst);
+    let (kind, r) = ws
+        .rpc(
+            "send_agent_message_request",
+            json!({"agentId": c, "text": "繼續", "messageId": "m-earlier"}),
+        )
+        .await;
+    assert_eq!(kind, "rpc_error", "{r}");
+    until("the resend reported", || e.m.calls_to("legacy_ticket_done") >= 1).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let tk = e.m.tickets_of(c);
+    assert_eq!(tk.len(), 1, "{tk:?}");
+    assert!(
+        tk[0].open(),
+        "an earlier take's claim stands: not closed refused ({tk:?})"
+    );
+    e.old.refuse.store(0, std::sync::atomic::Ordering::SeqCst);
+    let r = send(&mut ws, c, "m-earlier", json!({})).await;
+    assert_eq!(r["accepted"], true, "{r}");
+    assert_eq!(e.old.agent(c).sends.len(), 1, "no second turn");
+    e.m.wait_tickets(|t| t[0].outcome == Some(TicketOutcome::Started)).await;
+}
+
+/// An LU drops with a send in flight under a tab whose token has under an hour left, so it is not reopened (DESIGN
+/// 9.5's E4): the write is left unanswered with its ticket open, the tab is closed 1012 and resends after it
+/// reconnects, and the resend is settled from the old timeline and written once. No error reaches the tab and no
+/// write counts as refused.
+#[tokio::test]
+async fn a_send_in_flight_under_a_tab_that_must_reconnect_is_answered_after_it() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    let token = e.h.teams[0].mint(STAFF, 1800, None, None);
+    let mut ws = Ws::hello(&e.h.url, &token, "").await.0.relayed();
+    list(&mut ws).await;
+    tokio::time::sleep(pigeon::legacy::REOPEN_MIN_UP).await;
+    // the old side's sockets drop as the send reaches it, before the child sees it
+    e.old.st().drop_on_send = true;
+    let rid = ws.rid();
+    ws.session(
+        json!({"type": "send_agent_message_request", "requestId": rid, "agentId": c, "text": "繼續",
+                      "messageId": "m-reconnect"}),
+    )
+    .await;
+    let frames = ws.drain_for(Duration::from_secs(5)).await;
+    assert!(
+        !frames
+            .iter()
+            .any(|f| f["message"]["payload"]["requestId"] == rid.as_str()),
+        "the write was answered before the reconnect: {frames:?}"
+    );
+    assert_eq!(ws.closed.as_ref().map(|c| c.0), Some(1012), "{frames:?}");
+    let t = e.m.tickets_of(c);
+    assert_eq!(t.len(), 1, "{t:?}");
+    assert!(t[0].open() && t[0].claims == 1, "left open for the resend: {t:?}");
+    assert_eq!(e.old.agent(c).sends.len(), 0);
+    // the claimed write has settled by the time the resend reads (a test does not wait the claim's 30 s)
+    e.m.age_claim(t[0].id, magpie_api::legacy::TICKET_CLAIM_SETTLE);
+    let token = e.h.teams[0].mint(STAFF, 1800, None, None);
+    let mut ws = Ws::hello(&e.h.url, &token, "").await.0.relayed();
+    list(&mut ws).await;
+    let r = send(&mut ws, c, "m-reconnect", json!({})).await;
+    assert_eq!(r["accepted"], true, "{r}");
+    assert_eq!(e.old.agent(c).sends.len(), 1, "one turn");
+    e.m.wait_tickets(|t| t[0].outcome == Some(TicketOutcome::Started)).await;
+    assert_eq!(e.metric("pigeon_switch_write_refused_total"), 0.0);
+    assert_eq!(e.metric("pigeon_lu_errors_total"), 0.0);
+}
+
+/// A holder whose claim answers that its resend holds the ticket answers its tab nothing, even while that tab is
+/// still connected: the resend's answer is the send's, and an error would show a failed send that is delivered.
+#[tokio::test]
+async fn a_holder_whose_resend_holds_the_ticket_answers_nothing() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    let claims = e.m.hold("legacy_ticket_claim");
+    let mut first = e.ws(STAFF).await;
+    list(&mut first).await;
+    let rid = first.rid();
+    first
+        .session(
+            json!({"type": "send_agent_message_request", "requestId": rid, "agentId": c, "text": "繼續",
+                          "messageId": "m-handed"}),
+        )
+        .await;
+    until("the first holder is at its claim", || {
+        e.m.st().calls.iter().any(|x| x.0 == "legacy_ticket_claim")
+    })
+    .await;
+    let mut second = e.ws(STAFF).await;
+    list(&mut second).await;
+    let rid2 = second.rid();
+    second
+        .session(
+            json!({"type": "send_agent_message_request", "requestId": rid2, "agentId": c, "text": "繼續",
+                          "messageId": "m-handed"}),
+        )
+        .await;
+    until("the resend is at its claim", || {
+        e.m.st().calls.iter().filter(|x| x.0 == "legacy_ticket_claim").count() == 2
+    })
+    .await;
+    claims.notify_waiters();
+    let r = second.next_session("send_agent_message_response").await;
+    assert_eq!(r["accepted"], true, "{r}");
+    let frames = first.drain_for(Duration::from_millis(600)).await;
+    assert!(
+        !frames
+            .iter()
+            .any(|f| f["message"]["payload"]["requestId"] == rid.as_str()),
+        "the first holder answered: {frames:?}"
+    );
+    assert_eq!(e.old.agent(c).sends.len(), 1, "one write");
+    assert_eq!(e.metric("pigeon_switch_write_refused_total"), 0.0);
+}
+
+/// A send's ticket is unclaimed while its files are copied, so the importer may expire it (issued more than
+/// `TICKET_SETTLE_MAX` before a read that showed nothing in flight) and release the conversation mid-copy: the send
+/// then finds its conversation owned and goes natively once, with the tab's own message; the old child gets no turn.
+#[tokio::test]
+async fn a_send_released_during_its_copies_goes_natively_once() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    e.m.st().gate = Some(magpie_api::Timestamp::now());
+    let mut ws = e.ws(STAFF).await;
+    list(&mut ws).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let r = upload(&e, "late.pdf", b"%PDF-1.4 late").await;
+    assert_eq!(r.status(), 201);
+    let mpath = common::body_json(r).await["attachments"][0]["path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let read = e.m.hold("upload_raw");
+    let rid = ws.rid();
+    ws.session(
+        json!({"type": "send_agent_message_request", "requestId": rid, "agentId": c, "text": "繼續",
+                      "messageId": "m-mid-copy",
+                      "attachments": [{"type": "uploaded_file", "path": mpath, "fileName": "late.pdf",
+                                       "mimeType": "application/pdf", "size": 13}]}),
+    )
+    .await;
+    until("the copy is reading the file", || e.m.calls_to("upload_raw") == 1).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let t = e.m.tickets_of(c);
+    assert_eq!(t.len(), 1, "{t:?}");
+    e.m.age_ticket(t[0].id, magpie_api::legacy::TICKET_SETTLE_MAX + Duration::from_secs(1));
+    assert_eq!(
+        e.m.expire_settled(c),
+        vec![t[0].id],
+        "the unclaimed send ticket expires"
+    );
+    assert!(e.m.try_release(c), "released mid-copy");
+    read.notify_waiters();
+    let r = ws.next_session("send_agent_message_response").await;
+    assert_eq!(r["accepted"], true, "{r}");
+    assert_eq!(e.m.st().sent.len(), 1, "sent natively");
+    assert_eq!(e.old.agent(c).sends.len(), 0, "no old turn");
+    assert_eq!(e.metric("pigeon_switch_write_refused_total"), 0.0);
 }

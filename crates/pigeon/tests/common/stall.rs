@@ -1,7 +1,9 @@
-//! A TCP relay between pigeon and the fake old router that stalls like a partition of the bridge (DESIGN 15.5 B1):
-//! while a connection is stalled the relay keeps reading what pigeon sends and holds it, as packets the network has
-//! not delivered yet. When it heals, held bytes are delivered (the sender's kernel retransmits them) unless pigeon
-//! reset the connection meanwhile (a reset stops the retransmission), as TCP does across a real partition.
+//! A terminating TCP proxy between pigeon and the fake old router, as bridge B1 is (DESIGN 15.5: the Hetzner load
+//! balancer `yyc-bridge-old`, then the old router's own relay to the child), whose far leg stalls like a partition:
+//! while a connection is stalled the proxy keeps reading (and so acknowledging) what pigeon sends and holds it. When
+//! it heals, every held byte is delivered to the old side, whether or not pigeon reset its connection meanwhile: a
+//! proxy has already acknowledged those bytes, and pigeon's reset only ends pigeon's own leg. So a write that reaches
+//! the old side late is refused there by its own not-after instant, or it is applied twice.
 #![allow(dead_code, clippy::unwrap_used, clippy::missing_panics_doc)] // tests
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -121,12 +123,9 @@ async fn relay(r: Stall, link: Arc<Link>, client: TcpStream, up: TcpStream) {
         }
     };
     if reset {
-        // the sender's kernel stopped retransmitting: what the network held is never delivered
         r.resets.fetch_add(1, Ordering::SeqCst);
-        back.abort();
-        return;
     }
-    // an ordinary close: the sender's kernel still delivers what it sent, once the path is back
+    // the proxy acknowledged what it holds: delivered once the far leg is back, a reset of pigeon's leg or not
     if !held.is_empty() {
         link.wait_healed().await;
         r.late.fetch_add(held.len(), Ordering::SeqCst);
