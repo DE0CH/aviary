@@ -1,0 +1,8 @@
+# The switch's importers (spec-platform 9.12; cutover 7-8): present only during the switch, all deleted in the teardown
+# (cutover 10.5). The CronJobs are suspended until A2 (cutover runner patches toggle `suspend`). magpie-import.yaml (the
+# hand-over Deployment, A3 to P4) is listed here by the runner's start-handover patch, not before.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - network.yaml
+  - cronjobs.yaml

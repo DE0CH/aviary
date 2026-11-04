@@ -1,132 +1,75 @@
-# YYC AI (ai.yyc-internal.com): Claude Code in a sandbox per conversation behind the CloudCLI fork's UI, on the
-# Jarvis 3 chat runtime (DE0CH/jarvis3, docs/CHAT.md, docs/CLAUDE-CODE.md). See
-# ../README.md. The cluster's Flux applies this folder (Kustomization `yyc-ai`, path ./yyc-ai/deploy). Its Secrets are
-# SealedSecrets in ./sealed/, applied by the fenced Kustomization `yyc-ai-secrets` (infra/seal.py, infra/secrets.txt).
+# YYC AI's new stack (aviary: pigeon, magpie, hermit; jarvis3: egress, tools), applied to the new Talos cluster by
+# .github/workflows/yyc-ai.yml (yyc-ai/refactor DESIGN 15, spec-platform 9 and 25). Its Secrets are SealedSecrets in
+# ./sealed/ (sealed with infra/sealed-secrets-talos.pem), applied by the same workflow's fenced step.
+#
+# Namespaces yyc-ai and yyc-ai-fabric, the deployer's rights and the JuiceFS CSI driver are cluster-level
+# (news-stream/deploy/clusters/talos/, the new cluster's own workflow): never in this render (check items 12-13).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  # the base, pinned to a jarvis3 commit (bump with the image tags below)
-  - https://github.com/DE0CH/jarvis3//deploy/chat?ref=e7b3977cf7945f10e4b9dedcd32105541b750e20
-  # what is left of the in-cluster sandboxes: the (inert) RuntimeClass gvisor
-  - sandbox.yaml
-  # the fenced SealedSecret applier may write SealedSecrets in jarvis (./sealed/, Kustomization yyc-ai-secrets)
-  - sealed-secrets-rbac.yaml
-  # own sandbox hosts (provider vm, jarvis3 docs/SANDBOX-VM.md): overlay routes on the nodes, network policies
-  - sandbox-vm.yaml
-  # the JuiceFS volume yyc-ai for the Claude Code UI: the CSI driver (kube-system) and the static PV + PVC jarvis/jfs
-  - juicefs.yaml
-  # the Claude Code UI (CloudCLI fork + router; README "Claude Code UI"): Deployment ui, Services, network policies
-  - ui.yaml
-  # the operator page reads pod health from the API server (web-to-apiserver NetworkPolicy); the news stream's live
-  # dashboard reads the operator snapshot (web-from-news-monitor)
-  - ops.yaml
-  # egress to YYC's Postgres (namespace db) for every pod
-  - db.yaml
-# the chat image built by jarvis3's `chat` workflow from that commit (the sandbox image tag is in config.json)
+  - limits.yaml
+  - network.yaml
+  - cloudflared.yaml
+  - pigeon.yaml
+  - magpie.yaml
+  - hermit/hermit.yaml
+  - hermit/fabric.yaml
+  - hermit/juicefs.yaml
+  - egress/egress.yaml
+  - tools/tools.yaml
+  # the cross-cluster bridges' new side (DESIGN 15.5): until A6 (B1, B2) and the apps' T4 moves (B4-B6)
+  - bridges.yaml
+  # the switch's importers (spec-platform 9.12): CronJobs suspended until A2; deleted in the teardown
+  - jobs
+# one aviary commit for pigeon, magpie, hermit and sandboxd (check item 4); sandboxd's tag is hermit.json's
+# fabric.sandboxd; the sandbox image is pinned by digest in hermit/hermit.json
 images:
-  - name: jarvis3-chat
-    newName: ghcr.io/de0ch/jarvis3-chat
-    newTag: e7b3977cf794
-  # the UI image, built by DE0CH/claudecodeui's jarvis-image workflow from that fork commit
-  - name: yyc-ai-ui
-    newName: ghcr.io/de0ch/yyc-ai-ui
-    newTag: 34d19c73c570
+  - {name: pigeon, newName: ghcr.io/de0ch/pigeon, newTag: "13b24d89312a"}
+  - {name: magpie, newName: ghcr.io/de0ch/magpie, newTag: "13b24d89312a"}
+  - {name: hermit, newName: ghcr.io/de0ch/hermit, newTag: "13b24d89312a"}
+  - {name: sandboxd, newName: ghcr.io/de0ch/sandboxd, newTag: "13b24d89312a"}
+  # the app bundle (DE0CH/claudecodeui pigeon-app.yml); from A1 to A5 only a pigeon-app-fix/* build may replace it
+  # (DESIGN 9.6, cutover freeze-check)
+  - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "e9df2733a68d"}
+  # egress and tools (DE0CH/jarvis3 chat.yml); the ZDR guard reads this tag (yyc-ai/tests/test_zdr.py)
+  - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "6c881c119abf"}
 configMapGenerator:
-  - name: jarvis-config
-    namespace: jarvis
-    files: [config.json, system-prompt.md]
-  # the access catalogue for yyc-mcp (news-stream/deploy/apps/yyc-mcp.yaml), which checks it on every call; a fixed name
-  # so the mounted file changes in place (no restart) when the catalogue does
-  - name: yyc-catalogue
-    namespace: yyc
-    files: [config.json]
+  # hermit's YYC configuration (hermit spec 9): hashed, so a change rolls hermit
+  - name: hermit-config
+    namespace: yyc-ai
+    files: [hermit/hermit.json, hermit/system-prompt.md, hermit/sandbox-rules.md, hermit/title-system.md]
+  # who may use YYC AI, and admins (hermit 3.4.1): a fixed name, so hermit and tools see a change in place (no roll)
+  - name: catalogue
+    namespace: yyc-ai
+    files: [catalogue.json]
     options: {disableNameSuffixHash: true}
-# GHCR packages are private: every pod pulls with Secret ghcr-pull (user DE0CH, a read:packages token)
+  # the gateway's host.json (hermit 14.2): hashed, so a change rolls the gateway pod (the data plane stays, HOST.md)
+  - name: hermit-gateway
+    namespace: yyc-ai-fabric
+    files: [hermit/gateway-host.json]
+  - name: egress-config
+    namespace: yyc-ai
+    files: [egress/egress.json]
+  - name: tools-config
+    namespace: yyc-ai
+    files: [tools/tools.json]
+  # the old cluster's API CA for magpie-import (bridge B7), a copy of infra/yyc-cluster-ca.pem kept byte-identical by
+  # yyc-ai.yml's check (kustomize loads no file outside this folder); until A6
+  - name: legacy-kube-ca
+    namespace: yyc-ai
+    files: [ca.crt=legacy-kube-ca.crt]
 patches:
-  # memory request = limit at about 2-4x the measured peak (2026-10-20, memory.peak since start: web 66 Mi, tools 60,
-  # cloudflared 19; web gets more room for real chats). The apps nodes are cx23s (2.7 GiB allocatable). egress keeps
-  # the base's 256Mi: about 60 Mi idle plus up to 64 MiB of model request bodies held at once (jarvis3 docs/CHAT.md
-  # "Memory"); at 128Mi a 7 MB conversation got both egress pods OOM-killed (2026-10-28).
-  - target: {kind: Deployment, name: web}
-    patch: |-
-      - {op: replace, path: /spec/template/spec/containers/0/resources/requests/memory, value: 256Mi}
-      - {op: replace, path: /spec/template/spec/containers/0/resources/limits/memory, value: 256Mi}
-  # egress injects JARVIS_SENT_FILES_TOKEN on its sent-files route (config.json egress.routes; the UI router's
-  # sent-file snapshots, DE0CH/jarvis3 docs/CLAUDE-CODE.md "Sent files")
+  # the Secrets' revision, per Deployment (gap-2 2.15): a resealed Secret reaches running pods only through a new pod
+  # template, so bump the value for the readers of that Secret only
+  - target: {kind: Deployment, name: pigeon}
+    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "initial"}}]'
+  - target: {kind: Deployment, name: magpie}
+    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "initial"}}]'
+  - target: {kind: Deployment, name: hermit}
+    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "initial"}}]'
   - target: {kind: Deployment, name: egress}
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: {name: JARVIS_SENT_FILES_TOKEN, valueFrom: {secretKeyRef: {name: egress-env, key: JARVIS_SENT_FILES_TOKEN}}}
-  # egress injects the Access service token yyc-labels-ai on its labels route (config.json egress.routes, mcp: true:
-  # YYC's label store as the MCP server `labels`, DE0CH/jarvis3 docs/CLAUDE-CODE.md "Route MCP servers"; labels/README.md)
-  - target: {kind: Deployment, name: egress}
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: {name: LABELS_AI_CLIENT_ID, valueFrom: {secretKeyRef: {name: egress-env, key: LABELS_AI_CLIENT_ID}}}
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: {name: LABELS_AI_CLIENT_SECRET, valueFrom: {secretKeyRef: {name: egress-env, key: LABELS_AI_CLIENT_SECRET}}}
+    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "initial"}}]'
   - target: {kind: Deployment, name: tools}
-    patch: |-
-      - {op: replace, path: /spec/template/spec/containers/0/resources/requests/memory, value: 128Mi}
-      - {op: replace, path: /spec/template/spec/containers/0/resources/limits/memory, value: 128Mi}
-  # tools' outside calls (web_search and web_fetch through Exa, social_search through TikHub, AnyAPI) go out through
-  # YYC's socks pool by name (news-stream/deploy/apps/socks.yaml): Node's fetch follows HTTPS_PROXY with
-  # NODE_USE_ENV_PROXY=1; names inside the cluster (yyc-mcp, the news stream's capture, Postgres) go direct. The pool
-  # resolves over its node's IPv6, so a WARP or DNS outage on one node no longer fails a search (2026-11-03: Apple
-  # Ho's web_search, `fetch failed` on CoreDNS's 8.8.8.8 through WARP).
-  - target: {kind: Deployment, name: tools}
-    patch: |-
-      - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: HTTPS_PROXY, value: "http://socks.egress.svc.cluster.local:1080"}}
-      - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: HTTP_PROXY, value: "http://socks.egress.svc.cluster.local:1080"}}
-      - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: NO_PROXY, value: "localhost,127.0.0.1,::1,.cluster.local,.svc,kubernetes.default,10.45.0.1,10.0.0.0/8,169.254.0.0/16"}}
-      - {op: add, path: /spec/template/spec/containers/0/env/-, value: {name: NODE_USE_ENV_PROXY, value: "1"}}
+    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "initial"}}]'
   - target: {kind: Deployment, name: cloudflared}
-    patch: |-
-      - {op: replace, path: /spec/template/spec/containers/0/resources/requests/memory, value: 64Mi}
-      - {op: replace, path: /spec/template/spec/containers/0/resources/limits/memory, value: 64Mi}
-  - target: {kind: Deployment}
-    patch: |-
-      - op: add
-        path: /spec/template/spec/imagePullSecrets
-        value: [{name: ghcr-pull}]
-  # the Secrets' revision: a resealed Secret reaches running pods only through a new pod template, so bump this with
-  # every change to a Secret they read (a kubectl rollout restart is undone by Flux). 2026-10-27: the databases moved
-  # from Neon to YYC's Postgres (web-env, egress-env, tools-env, ui-env, ui-juicefs); then WEB_FETCH_TOKEN in tools-env;
-  # 2026-10-28: ANYAPI_API_KEY in tools-env; JARVIS_SENT_FILES_TOKEN in egress-env and ui-env (bumped twice: the first roll started before the controller had decrypted the new Secrets);
-  # 2026-11-03: LABELS_AI_CLIENT_ID/_SECRET in egress-env (pushed after the Secret was in the cluster)
-  - target: {kind: Deployment, name: "web|egress|tools|ui"}
-    patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata: {name: any}
-      spec: {template: {metadata: {annotations: {yyc/secrets-rev: "2026-11-03-labels"}}}}
-  # provider vm: sandboxd mTLS (CA, client cert/key, the AWS hosts' server cert/key) and the scaler's AWS key
-  # (IAM user yyc-ai-sandbox-scaler), SealedSecret sealed/sandbox-vm.yaml
-  - target: {kind: Deployment, name: web}
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/envFrom
-        value: [{secretRef: {name: sandbox-vm, optional: true}}]
-  # provider e2b: the sandboxes' wire passes Access on egress.ai.yyc-internal.com with service token
-  # yyc-ai-sandbox-wire (config sandbox.e2b.egressHeaders); optional until web-env has them
-  - target: {kind: Deployment, name: web}
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: {name: EGRESS_WIRE_ACCESS_ID, valueFrom: {secretKeyRef: {name: web-env, key: EGRESS_WIRE_ACCESS_ID, optional: true}}}
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: {name: EGRESS_WIRE_ACCESS_SECRET, valueFrom: {secretKeyRef: {name: web-env, key: EGRESS_WIRE_ACCESS_SECRET, optional: true}}}
-  # Claude Code in the sandbox (jarvis3 docs/CLAUDE-CODE.md): the JuiceFS metadata URL + password that web hands to
-  # burst hosts in their user data (they mount /var/lib/sbx/jfs); the UI pods' token JARVIS_CC_TOKEN is in the base
-  - target: {kind: Deployment, name: web}
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: {name: JARVIS_JUICEFS_META_URL, valueFrom: {secretKeyRef: {name: web-env, key: JARVIS_JUICEFS_META_URL, optional: true}}}
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value: {name: JARVIS_JUICEFS_META_PASSWORD, valueFrom: {secretKeyRef: {name: web-env, key: JARVIS_JUICEFS_META_PASSWORD, optional: true}}}
+    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "initial"}}]'

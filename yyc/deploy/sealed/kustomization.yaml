@@ -1,14 +1,6 @@
-# SealedSecrets ONLY (seal with /infra/seal.py). Flux applies this folder as the fenced ServiceAccount
-# flux-system/sealed-secrets-applier (Kustomization in news-stream/deploy/clusters/hetzner/flux-sync.yaml), which can
-# create nothing but SealedSecrets: anything else here fails as Forbidden.
+# The new stack's SealedSecrets (infra/seal.py, infra/secrets.txt; sealed with infra/sealed-secrets-talos.pem),
+# applied by yyc-ai.yml's fenced step as yyc-deploy/sealed-secrets-applier. seal.py lists each file here when it seals
+# it.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources:
-  - ui-juicefs.yaml
-  - ui-env.yaml
-  - web-env.yaml
-  - tunnel.yaml
-  - tools-env.yaml
-  - ghcr-pull.yaml
-  - egress-env.yaml
-  - sandbox-vm.yaml
+resources: []
