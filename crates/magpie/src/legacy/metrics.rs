@@ -38,6 +38,13 @@ impl Metrics {
     /// Registers every metric on `registry` (whose prefix is `magpie_`).
     pub fn register(registry: &mut Registry) -> Self {
         let m = Self::default();
+        // both label values exist from the start, so `legacy="true"` (a zero counter) is scraped at 0 rather than
+        // absent (testing/switch/zero-counters.txt)
+        for legacy in [true, false] {
+            drop(m.unknown_upload.get_or_create(&Legacy {
+                legacy: legacy.to_string(),
+            }));
+        }
         registry.register(
             "fence_seconds",
             "Fence to release of a conversation's hand-over (DESIGN 9.4)",
