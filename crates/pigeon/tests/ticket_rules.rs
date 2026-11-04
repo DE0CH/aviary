@@ -17,7 +17,7 @@ async fn the_model_keeps_magpies_ticket_rules() {
     let m = Model::default();
     let served = model::serve(&m).await;
     let client = magpie_api::client::Client::new(reqwest::Client::new(), served.url(), "pigeon");
-    let (a, b, c, d) = (m.clone(), m.clone(), m.clone(), m.clone());
+    let (a, b, c, d, e, f) = (m.clone(), m.clone(), m.clone(), m.clone(), m.clone(), m.clone());
     let hooks = Hooks {
         legacy_conversation: Box::new(move || {
             let m = a.clone();
@@ -26,6 +26,22 @@ async fn the_model_keeps_magpies_ticket_rules() {
         age_ticket: Box::new(move |t, by| {
             let m = b.clone();
             Box::pin(async move { m.age_ticket(t, by) })
+        }),
+        age_claim: Box::new(move |t, by| {
+            let m = e.clone();
+            Box::pin(async move { m.age_claim(t, by) })
+        }),
+        expire_settled: Box::new(move |conv| {
+            let m = f.clone();
+            Box::pin(async move {
+                m.expire_settled(conv);
+                m.st()
+                    .tickets
+                    .iter()
+                    .filter(|t| t.conversation == conv && t.expired)
+                    .map(|t| t.id)
+                    .collect()
+            })
         }),
         outcome: Box::new(move |t| {
             let m = c.clone();
@@ -47,5 +63,5 @@ async fn the_model_keeps_magpies_ticket_rules() {
     )
     .await;
     assert!(report.passed(), "failures: {:#?}", report.failures());
-    assert_eq!(report.results().len(), 8);
+    assert_eq!(report.results().len(), 11);
 }

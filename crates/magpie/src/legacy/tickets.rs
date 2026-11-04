@@ -14,7 +14,8 @@
 //! A reused ticket has two holders. Each hand-out gets a take of its own (the latest is kept), a send's write is
 //! claimed with it right before it starts ([`claim`]: only the latest take may), and a `refused` from an older take
 //! changes nothing ([`done`]), so a holder that gave up without writing never closes the ticket under the one that
-//! writes. The reuse answer's `settleMs` covers a write claimed before it; a send's answer names its `prior` ticket.
+//! writes; nor does a `refused` from a take that never claimed while another take's claim stands (that write may be
+//! running). The reuse answer's `settleMs` covers a write claimed before it; a send's answer names its `prior` ticket.
 
 use aviary_pg::{Pool, Tx};
 use magpie_api::Timestamp;
@@ -289,7 +290,8 @@ fn kind_of(s: &str) -> Option<TicketKind> {
 /// `POST /v1/legacy/tickets/{ticket}/done`: `delivered` is recorded and closes nothing; an outcome that fits the
 /// ticket's kind closes it (and wakes the importer). A ticket already closed keeps its first outcome, and a `refused`
 /// from a take that is no longer the ticket's latest changes nothing (that holder wrote nothing; the request that
-/// holds the ticket now reports, or the importer expires it).
+/// holds the ticket now reports, or the importer expires it). Nor does a `refused` from a take other than the one the
+/// write was last claimed under: the latest holder gave up without writing, but the claimed write may be running.
 ///
 /// # Errors
 /// 400 `bad_request` for an outcome that does not close this kind; 404 for an unknown ticket or another person's; a
@@ -299,7 +301,7 @@ pub async fn done(app: &Magpie, person: &Person, ticket: Uuid, req: &TicketDone)
     aviary_pg::tx!(&app.pool, |t| -> Result<()> {
         let r = t
             .query_opt(
-                "select t.kind, t.done_at is not null, c.person, t.conversation_id, t.take
+                "select t.kind, t.done_at is not null, c.person, t.conversation_id, t.take, t.claim_take
                  from legacy_tickets t join conversations c on c.id = t.conversation_id
                  where t.ticket = $1 for update of t",
                 &[&ticket],
@@ -317,6 +319,13 @@ pub async fn done(app: &Magpie, person: &Person, ticket: Uuid, req: &TicketDone)
         let latest: Option<Uuid> = r.get(4);
         if outcome == TicketOutcome::Refused && req.take.is_some() && latest.is_some() && req.take != latest {
             tracing::info!(%conversation, %ticket, "a refused from an earlier take: the ticket stays with its holder");
+            return Ok(());
+        }
+        let claimer: Option<Uuid> = r.get(5);
+        if outcome == TicketOutcome::Refused && req.take.is_some() && claimer.is_some() && req.take != claimer {
+            // the latest holder gave up without writing, but an earlier take claimed the write and it may be running:
+            // the ticket stays open for that holder's outcome or the importer's settled expiry
+            tracing::info!(%conversation, %ticket, "a refused from a take that did not claim: an earlier claim stands");
             return Ok(());
         }
         if outcome == TicketOutcome::Delivered {
@@ -384,8 +393,8 @@ pub async fn claim(app: &Magpie, person: &Person, ticket: Uuid, req: &TicketClai
             });
         }
         t.execute(
-            "update legacy_tickets set claimed_at = clock_timestamp() where ticket = $1",
-            &[&ticket],
+            "update legacy_tickets set claimed_at = clock_timestamp(), claim_take = $2 where ticket = $1",
+            &[&ticket, &req.take],
         )
         .await?;
         Ok(TicketClaimed {

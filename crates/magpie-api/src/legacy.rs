@@ -30,7 +30,8 @@
 //! outcome closes it, every hand-out carries a `take` of its own: a send's write is claimed first
 //! (`POST /v1/legacy/tickets/{ticket}/claim` with the take, answered `claimed` only for the ticket's latest take
 //! while it is open and within its hold), pigeon starts the write at once after a claim, and a `refused` reported
-//! with a take that is no longer the latest changes nothing (that holder gave up while another holds the ticket). A
+//! with a take that is no longer the latest changes nothing (that holder gave up while another holds the ticket), nor
+//! does one from a take other than the one the write was last claimed under (that claimed write may be running). A
 //! reuse answer's `settleMs` says how long until a claimed write under the ticket has settled
 //! ([`TICKET_CLAIM_SETTLE`] after its claim). A send's ticket answer also names `prior`, an earlier ticket of the same
 //! `(conversation, clientMessageId)` that closed on the old child's acceptance (the send is there: nothing is sent
@@ -290,7 +291,10 @@ pub struct TicketDone {
     pub outcome: TicketOutcome,
     /// The hand-out this outcome comes from ([`TicketResponse::take`]). A `refused` with a take that is no longer the
     /// ticket's latest is a 204 that changes nothing: that holder gave up without writing while another request holds
-    /// the ticket, whose outcome closes it. Every other outcome closes the ticket whatever the take.
+    /// the ticket, whose outcome closes it. So is a `refused` from a take other than the one the ticket's write was
+    /// last claimed under: the latest holder gave up without writing while an earlier holder's claimed write may be
+    /// running (its outcome, or the importer's settled expiry, closes it). Every other outcome closes the ticket
+    /// whatever the take.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub take: Option<Uuid>,
 }

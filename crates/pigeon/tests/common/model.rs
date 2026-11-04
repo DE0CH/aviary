@@ -100,6 +100,18 @@ pub struct Ticket {
     pub claimed: Option<std::time::Instant>,
     /// Every claim answered `claimed`.
     pub claims: usize,
+    /// The take of the last claim (magpie's `claim_take`).
+    pub claim_take: Option<Uuid>,
+    /// Closed `expired` by the importer's settled expiry ([`Model::expire_settled`]).
+    pub expired: bool,
+}
+
+impl Ticket {
+    /// Neither an outcome nor expired.
+    #[must_use]
+    pub fn open(&self) -> bool {
+        self.outcome.is_none() && !self.expired
+    }
 }
 
 #[derive(Clone, Default)]
@@ -282,7 +294,7 @@ impl Model {
     /// The importer's release: only with no open ticket (else `false`, nothing changes).
     pub fn try_release(&self, id: Uuid) -> bool {
         let mut st = self.st();
-        if st.tickets.iter().any(|t| t.conversation == id && t.outcome.is_none()) {
+        if st.tickets.iter().any(|t| t.conversation == id && t.open()) {
             return false;
         }
         st.convs.get_mut(&id).unwrap().conv.migrating = false;
@@ -894,10 +906,14 @@ impl Server for Model {
         let Some(t) = st.tickets.iter_mut().find(|t| t.id == ticket) else {
             return Err(refusal(ErrorCode::NotFound, "not found"));
         };
-        // magpie's rules (`magpie::legacy::tickets::done`): a closed ticket, a `refused` from an earlier take and
-        // `delivered` change nothing; an outcome that does not close the kind is 400
-        let stale = body.outcome == TicketOutcome::Refused && body.take.is_some_and(|k| k != t.take);
-        if t.outcome.is_some() || stale || body.outcome == TicketOutcome::Delivered {
+        // magpie's rules (`magpie::legacy::tickets::done`): a closed ticket, a `refused` from an earlier take or from
+        // a take other than the standing claim's, and `delivered` change nothing; an outcome that does not close the
+        // kind is 400
+        let stale = body.outcome == TicketOutcome::Refused
+            && body
+                .take
+                .is_some_and(|k| k != t.take || t.claim_take.is_some_and(|c| c != k));
+        if !t.open() || stale || body.outcome == TicketOutcome::Delivered {
             return Ok(());
         }
         if !t.kind.closes_on(body.outcome) {
@@ -925,7 +941,7 @@ impl Server for Model {
                         Some(TicketOutcome::Started | TicketOutcome::Completed | TicketOutcome::Failed)
                     )
             });
-        if t.outcome.is_some() || t.issued.elapsed() >= magpie_api::legacy::TICKET_HOLD_MAX || accepted {
+        if !t.open() || t.issued.elapsed() >= magpie_api::legacy::TICKET_HOLD_MAX || accepted {
             return Ok(TicketClaimed {
                 claimed: false,
                 held_elsewhere: false,
@@ -939,6 +955,7 @@ impl Server for Model {
         }
         let t = st.tickets.iter_mut().find(|t| t.id == ticket).unwrap();
         t.claimed = Some(std::time::Instant::now());
+        t.claim_take = Some(body.take);
         t.claims += 1;
         Ok(TicketClaimed {
             claimed: true,
@@ -992,7 +1009,7 @@ impl Model {
         }
         // the importer's release (a fence) needs no open ticket of the conversation, as `try_release`: a trigger
         // that meets one waits for a later ticket call
-        let open = st.tickets.iter().any(|t| t.conversation == id && t.outcome.is_none());
+        let open = st.tickets.iter().any(|t| t.conversation == id && t.open());
         let mut on_kind = false;
         if let Some((c, k, after)) = st.release_on_kind
             && c == id
@@ -1034,10 +1051,11 @@ impl Model {
         let mut supersedes = None;
         let mut reuse = None;
         if let Some(cmid) = &body.client_message_id
-            && let Some(open) =
-                st.tickets.iter_mut().rev().find(|t| {
-                    t.conversation == id && t.cmid.as_ref() == Some(cmid) && t.outcome.is_none() && !t.superseded
-                })
+            && let Some(open) = st
+                .tickets
+                .iter_mut()
+                .rev()
+                .find(|t| t.conversation == id && t.cmid.as_ref() == Some(cmid) && t.open() && !t.superseded)
         {
             let age = open.issued.elapsed();
             if age < magpie_api::legacy::TICKET_REUSE_MAX {
@@ -1068,6 +1086,8 @@ impl Model {
                 take,
                 claimed: None,
                 claims: 0,
+                claim_take: None,
+                expired: false,
             };
             let ticket = t.id;
             st.tickets.push(t);
@@ -1095,7 +1115,7 @@ impl Model {
                 let open = others.iter().rev().find(|t| t.outcome.is_none());
                 let settle = others
                     .iter()
-                    .filter(|t| t.outcome.is_none())
+                    .filter(|t| t.open())
                     .map(|t| ms(magpie_api::legacy::TICKET_SETTLE_MAX.saturating_sub(t.issued.elapsed())))
                     .max()
                     .unwrap_or(0);
@@ -1153,10 +1173,35 @@ impl Model {
             take: Uuid::new_v4(),
             claimed: None,
             claims: 0,
+            claim_take: None,
+            expired: false,
         };
         let id = t.id;
         self.st().tickets.push(t);
         id
+    }
+
+    /// The importer's settled expiry (`magpie::legacy::tickets::expire_settled`) after an old-child read that starts
+    /// now and shows nothing in flight: every open ticket of `conversation` issued more than `TICKET_SETTLE_MAX` ago
+    /// (superseded ones included) closes `expired`. The tickets it closed.
+    pub fn expire_settled(&self, conversation: Uuid) -> Vec<Uuid> {
+        let mut st = self.st();
+        let mut closed = Vec::new();
+        for t in st
+            .tickets
+            .iter_mut()
+            .filter(|t| t.conversation == conversation && t.open())
+        {
+            if t.issued.elapsed() > magpie_api::legacy::TICKET_SETTLE_MAX {
+                t.expired = true;
+                closed.push(t.id);
+            }
+        }
+        drop(st);
+        if !closed.is_empty() {
+            self.bump();
+        }
+        closed
     }
 
     /// Moves a ticket's last claim back by `by` (a write claimed that long ago).

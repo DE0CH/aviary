@@ -1902,7 +1902,7 @@ async fn the_ticket_rules_pass_the_shared_suite() {
     let db = common::fresh_db("lg_suite").await;
     let t = common::Tokens::new();
     let r = Arc::new(common::replica(&db.url, &t).await);
-    let (a, b, c, d) = (r.clone(), r.clone(), r.clone(), r.clone());
+    let (a, b, c, d, e, f) = (r.clone(), r.clone(), r.clone(), r.clone(), r.clone(), r.clone());
     let n = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let hooks = Hooks {
         legacy_conversation: Box::new(move || {
@@ -1925,6 +1925,43 @@ async fn the_ticket_rules_pass_the_shared_suite() {
                     )
                     .await
                     .unwrap();
+            })
+        }),
+        age_claim: Box::new(move |ticket, by| {
+            let r = e.clone();
+            Box::pin(async move {
+                r.pool()
+                    .get()
+                    .await
+                    .unwrap()
+                    .execute(
+                        "update legacy_tickets set claimed_at = claimed_at - make_interval(secs => $2) where ticket = $1",
+                        &[&ticket, &by.as_secs_f64()],
+                    )
+                    .await
+                    .unwrap();
+            })
+        }),
+        expire_settled: Box::new(move |conv| {
+            let r = f.clone();
+            Box::pin(async move {
+                let now = magpie::legacy::tickets::now(r.pool()).await.unwrap();
+                magpie::legacy::tickets::expire_settled(r.pool(), conv, now)
+                    .await
+                    .unwrap();
+                r.pool()
+                    .get()
+                    .await
+                    .unwrap()
+                    .query(
+                        "select ticket from legacy_tickets where conversation_id = $1 and outcome = 'expired'",
+                        &[&conv],
+                    )
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(|row| row.get(0))
+                    .collect()
             })
         }),
         outcome: Box::new(move |ticket| {
@@ -1966,5 +2003,5 @@ async fn the_ticket_rules_pass_the_shared_suite() {
     )
     .await;
     assert!(report.passed(), "failures: {:#?}", report.failures());
-    assert_eq!(report.results().len(), 8);
+    assert_eq!(report.results().len(), 11);
 }

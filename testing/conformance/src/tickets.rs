@@ -4,7 +4,8 @@
 //! `native` answer. It runs against magpie (`crates/magpie/tests/legacy.rs`) and against pigeon's in-memory model of
 //! magpie (`crates/pigeon/tests/common/model.rs`, `tests/legacy.rs`), so pigeon's exactly-once tests rest on the
 //! rules magpie keeps. Each check uses a conversation of its own; the hooks make one, age a ticket (as if issued that
-//! much earlier), read a ticket's stored outcome, and release a conversation.
+//! much earlier) or its claim, read a ticket's stored outcome, expire as the importer does, and release a
+//! conversation.
 
 use std::time::Duration;
 
@@ -25,6 +26,12 @@ pub struct Hooks {
     pub legacy_conversation: Box<dyn Fn() -> BoxFuture<'static, Uuid> + Send + Sync>,
     /// Moves a ticket's issue time back by the duration.
     pub age_ticket: Box<dyn Fn(Uuid, Duration) -> BoxFuture<'static, ()> + Send + Sync>,
+    /// Moves a ticket's last claim back by the duration (a write claimed that much earlier).
+    pub age_claim: Box<dyn Fn(Uuid, Duration) -> BoxFuture<'static, ()> + Send + Sync>,
+    /// The importer's settled expiry of a conversation's tickets after an old-child read that started now and showed
+    /// nothing in flight (`magpie::legacy::tickets::expire_settled`); the conversation's tickets closed `expired`
+    /// after it.
+    pub expire_settled: Box<dyn Fn(Uuid) -> BoxFuture<'static, Vec<Uuid>> + Send + Sync>,
     /// A ticket's stored outcome (`None` while open).
     pub outcome: Box<dyn Fn(Uuid) -> BoxFuture<'static, Option<TicketOutcome>> + Send + Sync>,
     /// The importer's release of a conversation with no open ticket (magpie owns it from then).
@@ -217,6 +224,87 @@ async fn refused_is_no_prior(s: &S<'_>) -> Outcome {
     Ok(())
 }
 
+/// A re-claim under the same take restamps the claim, so a later reuse's `settleMs` counts from the newest claim.
+async fn reclaim(s: &S<'_>) -> Outcome {
+    let c = s.conversation().await;
+    let (tk, a) = held(&s.ticket(c, &send("cf:rc")).await?)?;
+    ensure!(s.claim(tk, a).await? == CLAIMED, "claimed");
+    (s.0.hooks.age_claim)(tk, Duration::from_secs(20)).await;
+    let second = s.ticket(c, &send("cf:rc")).await?;
+    let (_, b) = held(&second)?;
+    let settle = second.settle_ms.unwrap_or(0);
+    ensure!(
+        settle > 5_000 && settle <= 10_000,
+        "settleMs {settle} after a claim 20 s old"
+    );
+    ensure!(s.claim(tk, b).await? == CLAIMED, "the latest take claims again");
+    let third = s.ticket(c, &send("cf:rc")).await?;
+    let settle = third.settle_ms.unwrap_or(0);
+    ensure!(
+        settle > 25_000 && settle <= 30_000,
+        "settleMs {settle} after the re-claim"
+    );
+    Ok(())
+}
+
+/// The latest take's `refused` closes nothing while an earlier take's claim stands (that write may be running); the
+/// earlier take's real outcome closes it, and so does a `refused` once the latest take has claimed itself.
+async fn refused_after_an_earlier_claim(s: &S<'_>) -> Outcome {
+    let c = s.conversation().await;
+    let (tk, a) = held(&s.ticket(c, &send("cf:rl")).await?)?;
+    ensure!(s.claim(tk, a).await? == CLAIMED, "the first take claims");
+    let (_, b) = held(&s.ticket(c, &send("cf:rl")).await?)?;
+    s.done(tk, TicketOutcome::Refused, Some(b)).await?;
+    ensure!(
+        s.outcome(tk).await.is_none(),
+        "the latest take's refused closed a ticket an earlier take claimed"
+    );
+    let again = s.ticket(c, &send("cf:rl")).await?;
+    let (tk2, k) = held(&again)?;
+    ensure!(tk2 == tk && again.reused, "still open and handed back: {again:?}");
+    ensure!(s.claim(tk, k).await? == CLAIMED, "the newest take claims");
+    s.done(tk, TicketOutcome::Refused, Some(k)).await?;
+    ensure!(
+        s.outcome(tk).await == Some(TicketOutcome::Refused),
+        "the claimer's own refused closes it"
+    );
+    let (td, d) = held(&s.ticket(c, &send("cf:rl2")).await?)?;
+    ensure!(s.claim(td, d).await? == CLAIMED, "claimed");
+    let (_, e) = held(&s.ticket(c, &send("cf:rl2")).await?)?;
+    s.done(td, TicketOutcome::Refused, Some(e)).await?;
+    s.done(td, TicketOutcome::Started, Some(d)).await?;
+    ensure!(
+        s.outcome(td).await == Some(TicketOutcome::Started),
+        "the claimer's outcome closes it"
+    );
+    Ok(())
+}
+
+/// The importer's settled expiry closes every open ticket issued more than `TICKET_SETTLE_MAX` before its read
+/// (superseded and claimed ones included) as `expired`, and none younger.
+async fn expiry(s: &S<'_>) -> Outcome {
+    let c = s.conversation().await;
+    let (old, k) = held(&s.ticket(c, &send("cf:e")).await?)?;
+    ensure!(s.claim(old, k).await? == CLAIMED, "claimed");
+    (s.0.hooks.age_ticket)(old, Duration::from_secs(31)).await;
+    let (sup, _) = held(&s.ticket(c, &send("cf:e")).await?)?;
+    ensure!(sup != old, "a new ticket past the reuse age");
+    let (stop, _) = held(&s.ticket(c, &of(TicketKind::Stop)).await?)?;
+    (s.0.hooks.age_ticket)(old, Duration::from_secs(60)).await;
+    (s.0.hooks.age_ticket)(stop, Duration::from_secs(91)).await;
+    (s.0.hooks.age_ticket)(sup, Duration::from_secs(80)).await;
+    let mut expired = (s.0.hooks.expire_settled)(c).await;
+    expired.sort();
+    let mut want = vec![old, stop];
+    want.sort();
+    ensure!(
+        expired == want,
+        "expired {expired:?}, not the superseded claimed ticket and the Stop past TICKET_SETTLE_MAX"
+    );
+    ensure!(s.outcome(sup).await.is_none(), "a ticket 80 s old closed");
+    Ok(())
+}
+
 /// Past the hold a claim is refused (a write needs a new ticket); a reuse reports what is left of the hold.
 async fn hold(s: &S<'_>) -> Outcome {
     let c = s.conversation().await;
@@ -322,6 +410,14 @@ pub async fn run(o: Options, report: &Report) {
     report
         .check("tickets.refused-is-no-prior", refused_is_no_prior(&s))
         .await;
+    report.check("tickets.reclaim-restamps", reclaim(&s)).await;
+    report
+        .check(
+            "tickets.refused-after-an-earlier-claim",
+            refused_after_an_earlier_claim(&s),
+        )
+        .await;
+    report.check("tickets.expiry", expiry(&s)).await;
     report.check("tickets.hold", hold(&s)).await;
     report.check("tickets.supersede", supersede(&s)).await;
     report.check("tickets.kinds", kinds(&s)).await;
