@@ -169,6 +169,8 @@ impl Legacy {
     ) -> Result<Value, CallError> {
         let boundary = format!("lu{}", uuid::Uuid::new_v4().simple());
         let safe = name.replace(['"', '\r', '\n', '\\'], "_");
+        // a part header carries only a clean type (a tab's own text never adds header lines)
+        let mime = clean_mime(mime).unwrap_or_else(|| "application/octet-stream".to_owned());
         let mut body = Vec::with_capacity(bytes.len() + 512);
         body.extend_from_slice(
             format!(
@@ -192,5 +194,35 @@ impl Legacy {
             .filter(|a| a.get("path").and_then(Value::as_str).is_some())
             .cloned()
             .ok_or(CallError::AppliedUnread(status))
+    }
+}
+
+/// A media type fit for a header: `type/subtype` of token characters (parameters dropped), lower-cased; `None`
+/// otherwise.
+#[must_use]
+pub(crate) fn clean_mime(v: &str) -> Option<String> {
+    let essence = v.split(';').next().unwrap_or("").trim();
+    let (t, sub) = essence.split_once('/')?;
+    let token = |s: &str| {
+        !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"!#$&^_.+-".contains(&b))
+    };
+    (token(t) && token(sub)).then(|| essence.to_ascii_lowercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clean_mime;
+
+    #[test]
+    fn a_media_type_is_clean_or_dropped() {
+        assert_eq!(clean_mime("application/pdf").as_deref(), Some("application/pdf"));
+        assert_eq!(clean_mime("Text/Plain; charset=utf-8").as_deref(), Some("text/plain"));
+        assert_eq!(clean_mime("image/svg+xml").as_deref(), Some("image/svg+xml"));
+        assert_eq!(clean_mime("text/plain\r\nx-evil: 1"), None);
+        assert_eq!(clean_mime("pdf"), None);
+        assert_eq!(clean_mime("a/b/c"), None);
+        assert_eq!(clean_mime(""), None);
     }
 }

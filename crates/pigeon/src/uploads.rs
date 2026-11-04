@@ -76,8 +76,9 @@ pub(crate) fn too_large_old(app: &App, name: &str) -> Response {
 #[allow(clippy::too_many_lines)] // one request's steps in order: the window, the body, magpie's answer
 pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
     let mut max_file = MAX_FILE;
+    // the move's input: an upload counts as activity from its start to its end (DESIGN 9.3, "is not attaching")
+    let _uploading = id.subject().map(|p| app.legacy().0.activity.uploading(p));
     if let Some(person) = id.subject() {
-        app.legacy().0.activity.upload(person);
         match app.legacy().window(person).await {
             Ok(w) if w.tees_uploads() => return crate::legacy::uploads::tee(app, req, id).await,
             Ok(w) if w.any_legacy => max_file = crate::legacy::OLD_FILE_MAX,

@@ -2,8 +2,18 @@
 //! for one native socket, as its person. Requests go out with a request id of their own and their answer comes
 //! back to the caller; the old child's live frames of the legacy conversations the tab watches (`agent_stream`, the
 //! sandbox chip) go to the tab with the tab's own subscription id. A `client_heartbeat` every 15 s also keeps the old
-//! child from its idle stop. The socket ends with its tab; one that ends while its tab stays is handled by
-//! [`Legacy::lu_ended`] (reopened with a replacement per watched conversation, or the tab resumes).
+//! child from its idle stop. The socket ends with its tab, or once it has streamed nothing to the tab and carried no
+//! call for [`crate::Tuning::legacy_lu_idle`] (the old child then idles out, and the old stack's LU count reaches zero
+//! with the tab still open: DESIGN 9.2, A5; the tab's next legacy request opens a new one); one that ends while its tab
+//! stays is handled by [`Legacy::lu_ended`] (reopened with a replacement per watched conversation, or the tab
+//! resumes).
+//!
+//! A frame never reaches the old child late. Its write to the kernel is bounded (a call's bound; the heartbeat period
+//! for the heartbeat and the subscription), the connection's `TCP_USER_TIMEOUT` ([`LU_TCP_USER_TIMEOUT`]) aborts it
+//! once bytes stay unacknowledged that long, and a socket that ends with a call unanswered, a write past its bound or
+//! a write call that timed out ([`Lu::write`]) is reset (`SO_LINGER` 0), so the kernel discards what it has not
+//! delivered instead of retransmitting it after a partition heals. A frame of a call is therefore either at the old
+//! side within its bound plus [`LU_TCP_USER_TIMEOUT`], or never.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,7 +27,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use uuid::Uuid;
 
-use super::{CONNECT_TIMEOUT, LU_HEADER, Legacy, OLD_SOCKET, OLD_VIEW_AS_HEADER};
+use super::{CONNECT_TIMEOUT, LU_HEADER, LU_TCP_USER_TIMEOUT, Legacy, OLD_SOCKET, OLD_VIEW_AS_HEADER};
 use crate::paseo::compat;
 use crate::paseo::transport::Conn;
 
@@ -60,6 +70,12 @@ enum Phase {
 struct St {
     pending: HashMap<String, oneshot::Sender<Answer>>,
     agents: HashSet<Uuid>,
+    /// Requests holding the LU across their steps ([`Lu::hold`]): it is not closed as unused meanwhile.
+    holders: usize,
+    /// When it was last handed out, called or held.
+    last_use: Instant,
+    /// Closed as unused: a new one is opened for the tab's next legacy request, under no reopen rule.
+    idle: bool,
 }
 
 /// The socket. Its task owns the connection; this is the handle.
@@ -74,6 +90,20 @@ pub struct Lu {
     next: AtomicU64,
     /// When it opened, and when it ended.
     up: Mutex<(Option<Instant>, Option<Instant>)>,
+    /// A write call went unanswered past its bound: the socket is reset.
+    abort: tokio::sync::Notify,
+}
+
+/// A request's hold on an LU ([`Lu::hold`]).
+#[derive(Debug)]
+pub struct Hold(Arc<Lu>);
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        let mut st = self.0.st();
+        st.holders = st.holders.saturating_sub(1);
+        st.last_use = Instant::now();
+    }
 }
 
 impl std::fmt::Debug for Lu {
@@ -96,10 +126,14 @@ impl Lu {
             st: Mutex::new(St {
                 pending: HashMap::new(),
                 agents,
+                holders: 0,
+                last_use: Instant::now(),
+                idle: false,
             }),
             phase: watch::channel(Phase::Connecting).0,
             next: AtomicU64::new(0),
             up: Mutex::new((None, None)),
+            abort: tokio::sync::Notify::new(),
         });
         let me = lu.clone();
         let conn = conn.clone();
@@ -143,6 +177,37 @@ impl Lu {
         self.conn_id
     }
 
+    /// Whether it was closed as unused (not a drop: the tab's next legacy request opens a new one).
+    #[must_use]
+    pub fn closed_idle(&self) -> bool {
+        self.st().idle
+    }
+
+    /// It is being used (handed out for a request).
+    pub(crate) fn touch(&self) {
+        self.st().last_use = Instant::now();
+    }
+
+    /// Keeps it from closing as unused until the hold is dropped (a ticketed write's steps between its calls).
+    #[must_use]
+    pub fn hold(self: &Arc<Self>) -> Hold {
+        let mut st = self.st();
+        st.holders += 1;
+        st.last_use = Instant::now();
+        drop(st);
+        Hold(self.clone())
+    }
+
+    /// Whether it has been unused for `idle`: nothing watched, no call in flight, no holder. Marked closed when so
+    /// (a call arriving after that is not sent).
+    fn idle_now(&self, idle: Duration) -> bool {
+        let mut st = self.st();
+        if st.agents.is_empty() && st.pending.is_empty() && st.holders == 0 && st.last_use.elapsed() >= idle {
+            st.idle = true;
+        }
+        st.idle
+    }
+
     /// Whether its native socket is still there.
     #[must_use]
     pub fn conn_alive(&self) -> bool {
@@ -182,7 +247,15 @@ impl Lu {
             m.insert("requestId".into(), json!(rid));
         }
         let (tx, rx) = oneshot::channel();
-        self.st().pending.insert(rid.clone(), tx);
+        {
+            let mut st = self.st();
+            if st.idle {
+                // closed as unused just now: nothing sent
+                return Err(LuError::NotSent);
+            }
+            st.pending.insert(rid.clone(), tx);
+            st.last_use = Instant::now();
+        }
         let frame = json!({"type": "session", "message": message}).to_string();
         let deadline = tokio::time::Instant::now() + bound;
         if self.out.send((frame, Some(deadline))).is_err() {
@@ -197,6 +270,20 @@ impl Lu {
                 Err(LuError::Timeout)
             }
         }
+    }
+
+    /// [`Self::call`] for a ticketed write: when it times out the socket is reset, so the frame cannot reach the old
+    /// child after the caller has given up on it (its bytes may sit unacknowledged in the kernel through a stalled
+    /// bridge, and an ordinary close would still deliver them).
+    ///
+    /// # Errors
+    /// Why there is no answer ([`LuError`]).
+    pub async fn write(&self, message: Value, bound: Duration) -> Answer {
+        let a = self.call(message, bound).await;
+        if matches!(a, Err(LuError::Timeout)) {
+            self.abort.notify_one();
+        }
+        a
     }
 
     /// The tab now watches a legacy conversation: the old child streams it.
@@ -274,8 +361,28 @@ fn identity(legacy: &Legacy, conn: &Conn) -> Option<(String, Option<String>)> {
     }
 }
 
+/// A TCP connection to the old router (the bridge Service) whose unacknowledged bytes are given up after
+/// [`LU_TCP_USER_TIMEOUT`].
+async fn dial(base: &str) -> std::io::Result<tokio::net::TcpStream> {
+    let url = reqwest::Url::parse(base).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "no host"))?;
+    let port = url.port_or_known_default().unwrap_or(80);
+    let tcp = tokio::net::TcpStream::connect((host, port)).await?;
+    tcp.set_nodelay(true)?;
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    socket2::SockRef::from(&tcp).set_tcp_user_timeout(Some(LU_TCP_USER_TIMEOUT))?;
+    Ok(tcp)
+}
+
 async fn connect(legacy: &Legacy, conn: &Conn) -> Result<Stream, LuError> {
-    let (token, view) = identity(legacy, conn).ok_or(LuError::NotSent)?;
+    let Some((token, view)) = identity(legacy, conn) else {
+        // no unexpired token of the holder on this replica: the tab outlived its Access token (switch-final C17), so
+        // the signed-out answer, never a write error
+        legacy.0.metrics.lu_401.inc();
+        return Err(LuError::SignedOut);
+    };
     let url = format!("{}{OLD_SOCKET}", legacy.0.base.replacen("http://", "ws://", 1));
     let mut req = url.into_client_request().map_err(|_| LuError::NotSent)?;
     let h = req.headers_mut();
@@ -286,7 +393,13 @@ async fn connect(legacy: &Legacy, conn: &Conn) -> Result<Stream, LuError> {
     if let Some(v) = view {
         h.insert(OLD_VIEW_AS_HEADER, header(&v)?);
     }
-    match tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(req)).await {
+    let open = async {
+        let tcp = dial(&legacy.0.base)
+            .await
+            .map_err(tokio_tungstenite::tungstenite::Error::Io)?;
+        tokio_tungstenite::client_async(req, tokio_tungstenite::MaybeTlsStream::Plain(tcp)).await
+    };
+    match tokio::time::timeout(CONNECT_TIMEOUT, open).await {
         Ok(Ok((s, _))) => Ok(s),
         Ok(Err(tokio_tungstenite::tungstenite::Error::Http(r))) => {
             let status = r.status().as_u16();
@@ -369,59 +482,87 @@ async fn run(legacy: Legacy, lu: Arc<Lu>, conn: Arc<Conn>, mut rx: mpsc::Unbound
         lu.send_agents();
     }
     let (mut sink, mut stream) = stream.split();
-    let mut beat = tokio::time::interval(legacy.0.heartbeat);
+    let hb = legacy.0.heartbeat;
+    let mut beat = tokio::time::interval(hb);
     beat.tick().await;
     let mut alive = tokio::time::interval(Duration::from_millis(250));
-    let gone = loop {
+    let end = loop {
         tokio::select! {
             f = rx.recv() => {
-                let Some((f, deadline)) = f else { break false };
-                match deadline {
+                let Some((f, deadline)) = f else { break End::Closed };
+                // the heartbeat period bounds a frame with no caller waiting (the subscription)
+                let d = deadline.unwrap_or_else(|| tokio::time::Instant::now() + hb);
+                if deadline.is_some() && tokio::time::Instant::now() >= d {
                     // its caller has given up: it must not reach the old child later
-                    Some(d) if tokio::time::Instant::now() >= d => {
-                        tracing::warn!(conn = %lu.conn_id, "an LU frame past its bound dropped unsent");
-                    }
-                    Some(d) => match tokio::time::timeout_at(d, sink.send(Message::Text(f.into()))).await {
-                        Ok(Ok(())) => {}
-                        Ok(Err(_)) => break false,
-                        Err(_) => {
-                            // a stalled socket: ended, so the frame's bytes never go out after its bound
-                            tracing::warn!(conn = %lu.conn_id, "an LU write stalled past its bound: the socket ends");
-                            break false;
-                        }
-                    },
-                    None => {
-                        if sink.send(Message::Text(f.into())).await.is_err() {
-                            break false;
-                        }
-                    }
+                    tracing::warn!(conn = %lu.conn_id, "an LU frame past its bound dropped unsent");
+                    continue;
+                }
+                match tokio::time::timeout_at(d, sink.send(Message::Text(f.into()))).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => break End::Closed,
+                    // a stalled socket: reset, so the frame's bytes never go out after its bound
+                    Err(_) => break End::Stalled,
                 }
             }
             m = stream.next() => match m {
                 Some(Ok(Message::Text(t))) => inbound(&legacy, &lu, &t),
-                Some(Ok(Message::Close(_)) | Err(_)) | None => break false,
+                Some(Ok(Message::Close(_)) | Err(_)) | None => break End::Closed,
                 Some(Ok(_)) => {}
             },
             _ = beat.tick() => {
                 let f = json!({"type": "session", "message": {"type": "client_heartbeat"}});
-                if sink.send(Message::Text(f.to_string().into())).await.is_err() {
-                    break false;
+                match tokio::time::timeout(hb, sink.send(Message::Text(f.to_string().into()))).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => break End::Closed,
+                    Err(_) => break End::Stalled,
                 }
             }
+            () = lu.abort.notified() => break End::Stalled,
             _ = alive.tick() => {
                 if lu.conn.upgrade().is_none_or(|c| c.is_closing()) {
-                    break true;
+                    break End::TabGone;
+                }
+                if lu.idle_now(legacy.0.lu_idle) {
+                    break End::Idle;
                 }
             }
         }
     };
-    if gone {
+    let unanswered = !lu.st().pending.is_empty();
+    if end == End::Stalled || unanswered {
+        // what the kernel holds for the old side is discarded, not delivered after the caller gave up on it
+        tracing::warn!(conn = %lu.conn_id, ?end, unanswered, "LU reset");
+        reset(sink, stream);
+    } else if matches!(end, End::TabGone | End::Idle) {
         let _ = tokio::time::timeout(Duration::from_secs(2), sink.send(Message::Close(None))).await;
     }
     legacy.0.metrics.lu_sockets.dec();
-    tracing::info!(conn = %lu.conn_id, tab_gone = gone, "LU closed");
+    tracing::info!(conn = %lu.conn_id, ?end, "LU closed");
     lu.end(LuError::Lost);
     legacy.lu_ended(lu.conn.upgrade(), &lu);
+}
+
+/// Why the socket loop ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum End {
+    /// Its tab went.
+    TabGone,
+    /// Unused for the idle time.
+    Idle,
+    /// The old side closed it, or it failed.
+    Closed,
+    /// A write did not reach the kernel within its bound, or a write call went unanswered past its bound.
+    Stalled,
+}
+
+/// Ends the connection with a reset (`SO_LINGER` 0): the kernel drops the bytes it has not delivered.
+fn reset(sink: futures_util::stream::SplitSink<Stream, Message>, stream: futures_util::stream::SplitStream<Stream>) {
+    if let Ok(ws) = sink.reunite(stream)
+        && let tokio_tungstenite::MaybeTlsStream::Plain(tcp) = ws.get_ref()
+        && let Err(e) = tcp.set_zero_linger()
+    {
+        tracing::warn!(error = %e, "LU reset not set");
+    }
 }
 
 /// A frame from the old child: an answer to a call, or a live frame for the tab.

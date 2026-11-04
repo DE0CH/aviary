@@ -74,6 +74,8 @@ pub struct St {
     pub timeline_down: bool,
     /// A conversation's share-list reads answered 500.
     pub share_lists_down: bool,
+    /// Sends refused because an attachment path names no file the child holds (a copy-at-send gone wrong).
+    pub broken_sends: Vec<(String, Vec<String>)>,
 }
 
 /// The fake. Cheap to clone.
@@ -109,6 +111,9 @@ pub fn old_path(person: &str, n: usize, name: &str) -> String {
         magpie_api::legacy::LEGACY_ASSET_DIR
     )
 }
+
+/// The old hub's refusal of a send while a turn runs.
+pub const BUSY: &str = "對話仍在進行中，請稍候。";
 
 fn session(kind: &str, payload: &Value) -> String {
     json!({"type": "session", "message": {"type": kind, "payload": payload}}).to_string()
@@ -241,6 +246,31 @@ impl Old {
         );
     }
 
+    /// The child takes a send (as when one arrives): its user row and `turn_started`, the turn running unless
+    /// `auto_end`.
+    pub fn take_send(&self, id: Uuid, cmid: &str, text: &str, paths: Vec<String>) {
+        let person = {
+            let mut st = self.st();
+            let auto_end = st.auto_end;
+            let a = st.agents.get_mut(&id).unwrap();
+            a.sends.push((cmid.to_owned(), text.to_owned(), paths));
+            a.running = !auto_end;
+            a.person.clone()
+        };
+        self.stream_row(
+            id,
+            json!({"type": "user_message", "id": format!("paseo-user-{cmid}"), "clientMessageId": cmid,
+                   "text": text}),
+        );
+        self.broadcast(
+            &person,
+            id,
+            "agent_stream",
+            &json!({"agentId": id, "event": {"type": "turn_started", "provider": "claude", "turnId": "t"},
+                    "timestamp": "2026-11-03T09:00:00.000Z"}),
+        );
+    }
+
     fn snapshot(a: &Agent, id: Uuid) -> Value {
         json!({"id": id, "status": if a.running { "running" } else { "idle" }, "title": a.title,
                "archivedAt": if a.deleted { json!("2026-11-03T09:00:00.000Z") } else { Value::Null }})
@@ -290,16 +320,29 @@ impl Old {
                                 "error": "Conversation not found"}),
                     ));
                 };
-                let entries: Vec<Value> = a
-                    .rows
+                // the old hub's paging: the tail, or the page before a cursor, `limit` rows (0 or none: all)
+                let n = a.rows.len();
+                let limit = m["limit"]
+                    .as_u64()
+                    .filter(|l| *l > 0)
+                    .map_or(n, |l| usize::try_from(l).unwrap());
+                let before = m["cursor"]["seq"].as_u64().map(|s| usize::try_from(s).unwrap());
+                let (direction, hi) = match (m["direction"].as_str(), before) {
+                    (Some("before"), Some(seq)) => ("before", seq.saturating_sub(1).min(n)),
+                    _ => ("tail", n),
+                };
+                let lo = hi.saturating_sub(limit);
+                let entries: Vec<Value> = a.rows[lo..hi]
                     .iter()
                     .enumerate()
-                    .map(|(i, r)| json!({"seqStart": i + 1, "seqEnd": i + 1, "item": r}))
+                    .map(|(i, r)| json!({"seqStart": lo + i + 1, "seqEnd": lo + i + 1, "item": r}))
                     .collect();
+                let start = (lo < hi).then(|| json!({"epoch": a.epoch, "seq": lo + 1}));
                 Some(session(
                     "fetch_agent_timeline_response",
                     &json!({"requestId": rid, "agentId": m["agentId"], "agent": Self::snapshot(a, agent.unwrap()),
-                            "direction": "tail", "epoch": a.epoch, "entries": entries, "error": null}),
+                            "direction": direction, "epoch": a.epoch, "entries": entries, "startCursor": start,
+                            "hasOlder": lo > 0, "error": null}),
                 ))
             }
             "fetch_agent_request" => {
@@ -337,31 +380,24 @@ impl Old {
                     .filter_map(|a| a["path"].as_str().map(str::to_owned))
                     .collect();
                 let running = self.st().agents.get(&id).is_some_and(|a| a.running);
-                let st_auto_end = self.st().auto_end;
                 if running {
                     return Some(session(
                         "send_agent_message_response",
-                        &json!({"requestId": rid, "agentId": id, "accepted": false, "error": "對話仍在進行中，請稍候。"}),
+                        &json!({"requestId": rid, "agentId": id, "accepted": false, "error": BUSY}),
                     ));
                 }
                 {
+                    // the old child reads each attached file from its asset folder: a path it does not hold fails
                     let mut st = self.st();
-                    let a = st.agents.get_mut(&id)?;
-                    a.sends.push((cmid.clone(), text.clone(), paths));
-                    a.running = !st_auto_end;
+                    if paths.iter().any(|p| !st.files.iter().any(|f| &f.0 == p)) {
+                        st.broken_sends.push((cmid, paths));
+                        return Some(session(
+                            "send_agent_message_response",
+                            &json!({"requestId": rid, "agentId": id, "accepted": false, "error": "附件不存在"}),
+                        ));
+                    }
                 }
-                self.stream_row(
-                    id,
-                    json!({"type": "user_message", "id": format!("paseo-user-{cmid}"), "clientMessageId": cmid,
-                           "text": text}),
-                );
-                self.broadcast(
-                    person,
-                    id,
-                    "agent_stream",
-                    &json!({"agentId": id, "event": {"type": "turn_started", "provider": "claude", "turnId": "t"},
-                            "timestamp": "2026-11-03T09:00:00.000Z"}),
-                );
+                self.take_send(id, &cmid, &text, paths);
                 Some(session(
                     "send_agent_message_response",
                     &json!({"requestId": rid, "agentId": id, "accepted": true, "error": null}),

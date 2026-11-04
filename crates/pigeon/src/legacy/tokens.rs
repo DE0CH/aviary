@@ -68,6 +68,11 @@ impl Book {
         }
     }
 
+    /// Forgets `email`'s token (what an expired or evicted entry looks like to [`Self::newest`]).
+    pub fn forget(&self, email: &str) {
+        self.map().remove(email);
+    }
+
     /// The newest token of `email` and its expiry, while it has not expired.
     #[must_use]
     pub fn newest(&self, email: &str) -> Option<(String, i64)> {

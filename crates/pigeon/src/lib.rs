@@ -235,6 +235,13 @@ pub struct Tuning {
     /// How long a release keeps reading magpie's new epoch before it closes the watching sockets 1012 to resubscribe
     /// instead (60 s, WP-50).
     pub legacy_release_wait: Duration,
+    /// The longest a ticketed legacy write waits for the old child's answer (`TICKET_WRITE_TIMEOUT`, 20 s; a test may
+    /// only shorten it, `legacy` clamps it to the contract's bound).
+    pub legacy_write_timeout: Duration,
+    /// An LU that streams nothing to its tab and has no call in flight is closed after this long unused (60 s), so
+    /// the old child idles out and the old stack's LU count reaches zero while the tab stays (DESIGN 9.2, A5); the
+    /// tab's next legacy request opens it again.
+    pub legacy_lu_idle: Duration,
 }
 
 impl Default for Tuning {
@@ -267,6 +274,8 @@ impl Default for Tuning {
             legacy_heartbeat: Duration::from_secs(15),
             legacy_transit: Duration::from_secs(10),
             legacy_release_wait: Duration::from_secs(60),
+            legacy_write_timeout: magpie_api::legacy::TICKET_WRITE_TIMEOUT,
+            legacy_lu_idle: Duration::from_secs(60),
         }
     }
 }

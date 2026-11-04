@@ -23,7 +23,7 @@ use crate::identity::Identity;
 use crate::uploads::{MAX_NAME, calls_upload, close, error, rest, sanitise_name, too_large_old};
 
 /// The old route's answer time for one file.
-const OLD_UPLOAD_BOUND: Duration = Duration::from_secs(120);
+pub(crate) const OLD_UPLOAD_BOUND: Duration = Duration::from_secs(120);
 
 /// The tee.
 #[allow(clippy::too_many_lines)] // one request's steps in order: read, old child, magpie, the record

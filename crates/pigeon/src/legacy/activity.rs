@@ -1,6 +1,8 @@
 //! The move's input (DESIGN 9.3): per person, the last warm call and the last upload this replica received. After T0
 //! every HTTP call of an old tab reaches pigeon, so the runner moves a person's old sockets only when no replica saw
-//! either in the last 60 s (the composer sends a warm call on the first keystroke and then at most every 30 s).
+//! either in the last 60 s (the composer sends a warm call on the first keystroke and then at most every 30 s). An
+//! upload counts from its start to its end: while one is in progress its person's `lastUpload` is the report's own
+//! time (and `uploading` counts them), so a slow upload never ages out of the look-back mid-way.
 //! The record is this replica's memory since it started: the report carries `startedAt` and `complete` (`false`
 //! while the replica has been up less than [`LOOKBACK`]), and a runner treats an incomplete report as "activity
 //! unknown" and moves nobody on it.
@@ -32,6 +34,21 @@ pub const LOOKBACK: Duration = Duration::from_secs(60);
 struct Seen {
     warm: Option<time::OffsetDateTime>,
     upload: Option<time::OffsetDateTime>,
+    /// Uploads in progress.
+    uploading: usize,
+}
+
+/// An upload in progress ([`Activity::uploading`]): its end is stamped too.
+#[derive(Debug)]
+pub struct Uploading(Activity, String);
+
+impl Drop for Uploading {
+    fn drop(&mut self) {
+        self.0.with(&self.1, |s| {
+            s.uploading = s.uploading.saturating_sub(1);
+            s.upload = Some(time::OffsetDateTime::now_utc());
+        });
+    }
 }
 
 /// The per-person record. Cheap to clone.
@@ -59,7 +76,7 @@ impl Activity {
         if m.len() > 20_000 {
             m.retain(|_, s| {
                 let last = s.warm.max(s.upload);
-                last.is_some_and(|t| now - t < KEEP)
+                s.uploading > 0 || last.is_some_and(|t| now - t < KEEP)
             });
         }
         f(m.entry(person.to_owned()).or_default());
@@ -75,7 +92,18 @@ impl Activity {
         self.with(person, |s| s.upload = Some(time::OffsetDateTime::now_utc()));
     }
 
-    /// `{"generatedAt", "startedAt", "uptimeSeconds", "complete", "persons": {email: {"lastWarm", "lastUpload"}}}`,
+    /// An upload of `person` starts: it counts as in progress until the guard is dropped.
+    #[must_use]
+    pub fn uploading(&self, person: &str) -> Uploading {
+        self.with(person, |s| {
+            s.uploading += 1;
+            s.upload = Some(time::OffsetDateTime::now_utc());
+        });
+        Uploading(self.clone(), person.to_owned())
+    }
+
+    /// `{"generatedAt", "startedAt", "uptimeSeconds", "complete", "persons": {email: {"lastWarm", "lastUpload",
+    /// "uploading"}}}`,
     /// entries of the last hour; `complete` is `false` while this replica has been up less than [`LOOKBACK`].
     #[must_use]
     pub fn report(&self) -> Value {
@@ -83,13 +111,16 @@ impl Activity {
         let m = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut persons = Map::new();
         for (p, s) in m.iter() {
-            let last = s.warm.max(s.upload);
+            // an upload in progress is activity now
+            let upload = if s.uploading > 0 { Some(now) } else { s.upload };
+            let last = s.warm.max(upload);
             if last.is_none_or(|t| now - t >= KEEP) {
                 continue;
             }
             persons.insert(
                 p.clone(),
-                json!({"lastWarm": s.warm.map(Timestamp), "lastUpload": s.upload.map(Timestamp)}),
+                json!({"lastWarm": s.warm.map(Timestamp), "lastUpload": upload.map(Timestamp),
+                       "uploading": s.uploading}),
             );
         }
         let up = self.2.elapsed();

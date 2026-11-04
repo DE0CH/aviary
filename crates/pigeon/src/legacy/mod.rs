@@ -81,6 +81,20 @@ pub const REOPEN_MIN_LIFE: Duration = Duration::from_hours(1);
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// A read through LU.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// An LU connection (socket and HTTP) is aborted once bytes it sent stay unacknowledged this long (`TCP_USER_TIMEOUT`):
+/// a write past its bound is not retransmitted for long after a partition of the bridge heals.
+pub const LU_TCP_USER_TIMEOUT: Duration = Duration::from_secs(5);
+/// A send's claim must be answered within this after pigeon sent it for the write to start: magpie stamps the claim
+/// when it takes it, and its claimed write settles [`magpie_api::legacy::TICKET_CLAIM_SETTLE`] later, so a write
+/// starting later than this could still land after that (and after the ticket's hold).
+pub const CLAIM_ANSWER_MAX: Duration = Duration::from_secs(3);
+
+// a claimed write starts within the claim answer's bound, is on the wire within the write timeout, and is delivered
+// within the TCP user timeout or never: all inside the claim's settle time
+const _: () = assert!(
+    CLAIM_ANSWER_MAX.as_secs() + magpie_api::legacy::TICKET_WRITE_TIMEOUT.as_secs() + LU_TCP_USER_TIMEOUT.as_secs()
+        <= magpie_api::legacy::TICKET_CLAIM_SETTLE.as_secs()
+);
 
 /// An LU that lived less than this before it dropped is not reopened on its own: the tab is closed 1012 at a
 /// request-free moment and reconnects (an old router that keeps refusing is not hammered).
@@ -212,6 +226,8 @@ pub(crate) struct Inner {
     window_ttl: Duration,
     pub(crate) heartbeat: Duration,
     pub(crate) transit: Duration,
+    pub(crate) write_timeout: Duration,
+    pub(crate) lu_idle: Duration,
     release_wait: Duration,
     lus: Mutex<HashMap<Uuid, Arc<lu::Lu>>>,
     pub(crate) activity: activity::Activity,
@@ -242,10 +258,12 @@ impl Legacy {
         tuning: &Tuning,
         registry: &mut Registry,
     ) -> Self {
-        let http = aviary_core::http::client_builder(build, None)
-            .connect_timeout(Duration::from_secs(5))
-            .build()
-            .unwrap_or_default();
+        let http = aviary_core::http::client_builder(build, None).connect_timeout(Duration::from_secs(5));
+        // a write's bytes are delivered within their bound plus this, or never (an aborted request's buffered body is
+        // not retransmitted for long after a partition heals; DESIGN 9.5)
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        let http = http.tcp_user_timeout(LU_TCP_USER_TIMEOUT);
+        let http = http.build().unwrap_or_default();
         let inner = Arc::new(Inner {
             base: upstreams.legacy.trim_end_matches('/').to_owned(),
             pair: secrets.token_ui.clone(),
@@ -258,6 +276,10 @@ impl Legacy {
             window_ttl: tuning.legacy_window,
             heartbeat: tuning.legacy_heartbeat,
             transit: tuning.legacy_transit,
+            write_timeout: tuning
+                .legacy_write_timeout
+                .min(magpie_api::legacy::TICKET_WRITE_TIMEOUT),
+            lu_idle: tuning.legacy_lu_idle,
             release_wait: tuning.legacy_release_wait,
             lus: Mutex::new(HashMap::new()),
             activity: activity::Activity::default(),
@@ -613,9 +635,11 @@ impl Legacy {
         let mut lus = self.lus();
         if let Some(l) = lus.get(&conn.id) {
             if !l.is_dead() {
+                l.touch();
                 return l.clone();
             }
-            if !self.may_reopen(conn) {
+            // one closed as unused is opened again like a first one; one that dropped follows the reopen rule
+            if !l.closed_idle() && !self.may_reopen(conn) {
                 let l = l.clone();
                 drop(lus);
                 tracing::info!(conn = %conn.id, "LU dropped and the token is near its end: the tab reconnects");
@@ -651,6 +675,10 @@ impl Legacy {
         };
         if lu.ended_with() == Some(lu::LuError::SignedOut) {
             conn.close(4401, "signed out");
+            return;
+        }
+        if lu.closed_idle() {
+            // it streamed nothing: the tab's next legacy request opens a new one
             return;
         }
         let watched: Vec<Uuid> = lu

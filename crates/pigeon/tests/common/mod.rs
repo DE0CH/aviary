@@ -5,6 +5,7 @@
 pub mod corpus;
 pub mod model;
 pub mod old;
+pub mod stall;
 pub mod ws;
 
 use std::collections::HashMap;

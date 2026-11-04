@@ -66,12 +66,13 @@ pub struct State {
     pub rollback: Option<Timestamp>,
     /// Every ticket taken: (ticket, conversation, kind, clientMessageId, outcome).
     pub tickets: Vec<Ticket>,
-    /// Conversations whose next ticket call finds them released (the fence won): `native`, and owned from then.
+    /// Conversations whose next ticket call with no open ticket of theirs finds them released (the fence won):
+    /// `native`, and owned from then.
     pub release_at_ticket: std::collections::HashSet<Uuid>,
     /// The next ticket answer's `holdMs` (else what is left of the hold).
     pub hold_ms_next: Option<u64>,
-    /// A ticket of this kind for this conversation finds it released (the fence won between a send's ticket and its
-    /// copies), after this many tickets of that kind went through.
+    /// A ticket call of this kind for this conversation with no open ticket of it finds it released (the fence won),
+    /// after this many tickets of that kind went through.
     pub release_on_kind: Option<(Uuid, TicketKind, usize)>,
     /// A native turn ends as soon as it starts (the fuzz).
     pub auto_end: bool,
@@ -983,10 +984,14 @@ impl Model {
         if body.client_message_id.is_some() && body.kind != TicketKind::Send {
             return Err(refusal(ErrorCode::BadRequest, "only a send carries a clientMessageId"));
         }
+        // the importer's release (a fence) needs no open ticket of the conversation, as `try_release`: a trigger
+        // that meets one waits for a later ticket call
+        let open = st.tickets.iter().any(|t| t.conversation == id && t.outcome.is_none());
         let mut on_kind = false;
         if let Some((c, k, after)) = st.release_on_kind
             && c == id
             && k == body.kind
+            && !open
         {
             if after == 0 {
                 st.release_on_kind = None;
@@ -995,7 +1000,7 @@ impl Model {
                 st.release_on_kind = Some((c, k, after - 1));
             }
         }
-        if st.release_at_ticket.remove(&id) || on_kind {
+        if (!open && st.release_at_ticket.remove(&id)) || on_kind {
             st.convs.get_mut(&id).unwrap().conv.migrating = false;
             Self::upsert(&mut st, id);
         }
@@ -1127,6 +1132,25 @@ impl Model {
         let mut st = self.st();
         let t = st.tickets.iter_mut().find(|t| t.id == ticket).unwrap();
         t.issued = t.issued.checked_sub(by).unwrap();
+    }
+
+    /// An open send ticket of `cmid` issued `age` ago, as an earlier request whose outcome never arrived left it.
+    pub fn open_send_ticket(&self, conversation: Uuid, cmid: &str, age: Duration) -> Uuid {
+        let t = Ticket {
+            id: Uuid::new_v4(),
+            conversation,
+            kind: TicketKind::Send,
+            cmid: Some(cmid.to_owned()),
+            outcome: None,
+            issued: std::time::Instant::now().checked_sub(age).unwrap(),
+            superseded: false,
+            take: Uuid::new_v4(),
+            claimed: None,
+            claims: 0,
+        };
+        let id = t.id;
+        self.st().tickets.push(t);
+        id
     }
 
     /// Moves a ticket's last claim back by `by` (a write claimed that long ago).
