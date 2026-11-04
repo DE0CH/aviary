@@ -409,7 +409,8 @@ magpie/hermit requests up to 60 s, tools calls up to 180 s; what is left at its 
 **Configuration** `/etc/egress/egress.json` (`chat/src/egress/config.ts`): `product` (`name`, `locale` for the budget
 message), `models`, `defaultModel`, `smallModel`, `titleModel`, `titleReasoning`, `contextTokens`, `routes` (exactly
 `model` and `tools`: `{name, upstream, model?, inject, allowPaths?, timeoutSeconds?}`), `selfHosts`,
-`generatedAllowlist`, `defaultAllowedHosts`, `denyHosts`, `blockCidrs`, `maxUploadBytes`, `cacheGiB`, `budget`.
+`generatedAllowlist`, `defaultAllowedHosts`, `denyHosts`, `blockCidrs`, `maxUploadBytes`, `cacheGiB`, `budget`,
+`exit` (below).
 **Env:** `EGRESS_DATABASE_URL`, `EGRESS_TOKEN_MAGPIE`, `EGRESS_TOKEN_HERMIT`, `EGRESS_ACCEPT_PIGEON`,
 `EGRESS_ACCEPT_HERMIT`, `EGRESS_ACCEPT_ADMIN` and every variable a route's `inject` names (`OPENROUTER_API_KEY`,
 `EGRESS_TOKEN_TOOLS`); a missing one is a start failure. **CI:** chat.yml's `conformance` job runs aviary's
@@ -472,6 +473,15 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
   as fallback, over plain DNS from the egress pod. 0.0.0.0/:: → `deny:threat`; NXDOMAIN/no address → `deny:nxdomain`;
   no resolver answering → `deny:dns` (fail closed). Answers are cached for their TTL (30 s – 5 min). The connection
   goes to exactly the checked address, after the private-address check.
+- **The exit (`exit` in egress.json, optional; `chat/src/egress/exit.ts`):** `{"socks": "host:port", "sandboxProfile":
+  "sandbox"}`. With it, egress resolves no internet name and checks no address itself: after the port and allowlist
+  checks it hands the connection to that SOCKS5 server by name (CONNECT tunnels and plain-HTTP forwards, SOCKS5
+  username = `sandboxProfile`), and the server resolves through malware-blocking DNS, refuses non-public addresses and
+  connects. Its refusals are logged as the same decisions: reply `0x80` → `deny:threat`, `0x04` → `deny:nxdomain`,
+  `0x01` → `deny:dns`, `0x02` → `deny:address`; any other failure is a 502 (`allow`, status 502). The routes' outside
+  https upstreams (the model route's OpenRouter) go through it too, on its default profile (no username); upstreams
+  inside the cluster (`*.cluster.local`, `*.svc`, single-label names, private addresses) are reached directly. YYC:
+  its yyc-socks pool (DE0CH/YYC `socks/`), which resolves over its nodes' IPv6 and connects IPv6 first, IPv4 after.
 - **Residual risk, accepted:** an allowed site that takes uploads with credentials the attacker supplies (an API
   token planted in injected content, e.g. for GitHub) is still reachable; the sandbox holds no secrets, staff data in
   the workspace is what such an upload could carry, and the upload cap bounds it.
