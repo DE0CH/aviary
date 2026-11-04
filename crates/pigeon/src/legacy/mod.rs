@@ -44,6 +44,7 @@ pub mod rest;
 pub mod tokens;
 pub mod uploads;
 pub mod upstream;
+pub(crate) mod view;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};

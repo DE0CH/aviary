@@ -915,14 +915,15 @@ fn magpie_upload_id(path: &str) -> Option<Uuid> {
     Uuid::parse_str(id).ok()
 }
 
-/// The old child's answer to the tab, under the tab's own request id.
+/// The old child's answer to the tab, under the tab's own request id; an agent snapshot in it is the conversation's
+/// shape on the socket ([`super::view`]: magpie's projection with the old stack's newest state).
 fn answer(conn: &Conn, typ: &str, mut p: Value, rid: &str) {
     if let Some(o) = p.as_object_mut()
         && !rid.is_empty()
     {
         o.insert("requestId".into(), json!(rid));
     }
-    conn.reply(typ, &p);
+    super::view::send_answer(conn, typ, p);
 }
 
 #[cfg(test)]

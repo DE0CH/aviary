@@ -405,10 +405,20 @@ impl Handler {
                     .iter()
                     .map(|c| json!({"agent": agent_snapshot(c, &view), "project": project_placement(c, &view)}))
                     .collect();
-                self.reply(
+                // the switch window: a legacy conversation carries the old stack's state over magpie's
+                // (`legacy::view`)
+                let legacy: HashSet<Uuid> = list
+                    .conversations
+                    .iter()
+                    .filter(|c| c.migrating)
+                    .map(|c| c.id)
+                    .collect();
+                crate::legacy::view::send_list(
+                    &self.conn,
                     "fetch_agents_response",
-                    &json!({"requestId": self.rid, "subscriptionId": sub, "entries": entries, "pageInfo": page_info,
-                            "sync": sync}),
+                    json!({"requestId": self.rid, "subscriptionId": sub, "entries": entries, "pageInfo": page_info,
+                           "sync": sync}),
+                    &|c| legacy.contains(c),
                 );
             }
         }

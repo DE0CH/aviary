@@ -254,7 +254,12 @@ impl Poller {
             ),
             _ => return,
         };
-        let (agent, workspace) = (payload_rest(&agent), payload_rest(&workspace));
+        // the switch window: a legacy conversation's snapshot carries, per socket, the old stack's state over
+        // magpie's (`legacy::view`); a conversation no longer legacy is magpie's on every socket from here
+        let legacy = matches!(&ch.body, ChangeBody::ConversationUpserted { conversation }
+            if conversation.deleted_at.is_none() && conversation.migrating);
+        let agent_value = agent;
+        let (agent, workspace) = (payload_rest(&agent_value), payload_rest(&workspace));
         for conn in conns {
             for kind in [ListKind::Agents, ListKind::Workspaces] {
                 if only.is_some_and(|o| o != kind) {
@@ -267,7 +272,15 @@ impl Poller {
                     continue;
                 }
                 match kind {
-                    ListKind::Agents => conn.send_sub("agent_update", &sub, &agent),
+                    ListKind::Agents if legacy => {
+                        let mut p = agent_value.clone();
+                        p["subscriptionId"] = serde_json::json!(sub);
+                        crate::legacy::view::send_list(conn, "agent_update", p, &|_| true)
+                    }
+                    ListKind::Agents => {
+                        conn.legacy_agents.forget(&ch.conversation_id);
+                        conn.send_sub("agent_update", &sub, &agent)
+                    }
                     ListKind::Workspaces => conn.send_sub("workspace_update", &sub, &workspace),
                 };
             }

@@ -39,6 +39,8 @@ pub struct Agent {
     /// Every send the child took: (clientMessageId, text, attachment paths).
     pub sends: Vec<(String, String, Vec<String>)>,
     pub cancels: usize,
+    /// The running turn's open questions (the old hub's `pendingQuestions`).
+    pub asks: Vec<Value>,
 }
 
 #[derive(Default)]
@@ -47,6 +49,8 @@ pub struct St {
     pub agents: HashMap<Uuid, Agent>,
     /// Open sockets: (id, person, sender, watched agents).
     sockets: Vec<(u64, String, mpsc::UnboundedSender<String>, HashSet<Uuid>)>,
+    /// Sockets that listed with `subscribe` (the old bridge's `agentsSubscription`): they get `agent_update`.
+    pub listing: HashSet<u64>,
     next: u64,
     /// Every upgrade and request: (token, pair header, view-as header).
     pub seen: Vec<(String, Option<String>, Option<String>)>,
@@ -217,6 +221,41 @@ impl Old {
         }
     }
 
+    /// The old bridge's `pushSession`: the conversation's snapshot as `agent_update` to every listing socket of
+    /// its person (on a turn's start and end, an ask and its resolution).
+    pub fn changed(&self, id: Uuid) {
+        let st = self.st();
+        let Some(a) = st.agents.get(&id) else { return };
+        let snap = Self::snapshot(a, id);
+        for (sock, p, tx, _) in &st.sockets {
+            if *p == a.person && st.listing.contains(sock) {
+                let _ = tx.send(session(
+                    "agent_update",
+                    &json!({"subscriptionId": "old-agents", "kind": "upsert", "agent": snap, "project": null,
+                            "generation": "old-gen", "seq": 1}),
+                ));
+            }
+        }
+    }
+
+    /// The running turn asks (AskUserQuestion): the request to every socket of the person, then the snapshot.
+    pub fn ask(&self, id: Uuid, request: &Value) {
+        let person = {
+            let mut st = self.st();
+            let a = st.agents.get_mut(&id).unwrap();
+            a.running = true;
+            a.asks.push(request.clone());
+            a.person.clone()
+        };
+        self.broadcast(
+            &person,
+            id,
+            "agent_permission_request",
+            &json!({"agentId": id, "request": request}),
+        );
+        self.changed(id);
+    }
+
     /// A row of the running turn, streamed to every socket of the person watching the conversation.
     #[allow(clippy::needless_pass_by_value)] // the tests' rows are built in place
     pub fn stream_row(&self, id: Uuid, item: Value) -> u64 {
@@ -251,6 +290,7 @@ impl Old {
             &json!({"agentId": id, "event": {"type": "turn_completed", "provider": "claude", "turnId": "t"},
                     "timestamp": "2026-11-03T09:00:00.000Z"}),
         );
+        self.changed(id);
     }
 
     /// The sandbox chip of a conversation.
@@ -293,10 +333,19 @@ impl Old {
             &json!({"agentId": id, "event": {"type": "turn_started", "provider": "claude", "turnId": "t"},
                     "timestamp": "2026-11-03T09:00:00.000Z"}),
         );
+        self.changed(id);
     }
 
+    /// The old bridge's `agentSnapshot` (`paseo-connection.ts`): the row's own time format, the turn while it runs,
+    /// the open questions and their attention.
     fn snapshot(a: &Agent, id: Uuid) -> Value {
+        let asking = !a.asks.is_empty();
         json!({"id": id, "status": if a.running { "running" } else { "idle" }, "title": a.title,
+               "updatedAt": "2026-11-03 09:00:00", "createdAt": "2026-11-03 08:00:00",
+               "activeTurn": if a.running { json!({"turnId": "t", "startedAt": "2026-11-03T09:00:00.000Z"}) } else { Value::Null },
+               "pendingPermissions": a.asks, "requiresAttention": asking,
+               "attentionReason": if asking { json!("permission") } else { Value::Null },
+               "attentionTimestamp": if asking { json!("2026-11-03T09:00:01.000Z") } else { Value::Null },
                "archivedAt": if a.deleted { json!("2026-11-03T09:00:00.000Z") } else { Value::Null }})
     }
 
@@ -380,6 +429,23 @@ impl Old {
                             "hasOlder": lo > 0, "error": null}),
                 ))
             }
+            "fetch_agents_request" => {
+                let mut st = self.st();
+                if !m["subscribe"].is_null() {
+                    st.listing.insert(sock);
+                }
+                let entries: Vec<Value> = st
+                    .agents
+                    .iter()
+                    .filter(|(_, a)| a.person == person && !a.deleted)
+                    .map(|(id, a)| json!({"agent": Self::snapshot(a, *id), "project": null}))
+                    .collect();
+                Some(session(
+                    "fetch_agents_response",
+                    &json!({"requestId": rid, "subscriptionId": "old-agents", "entries": entries,
+                            "pageInfo": {"nextCursor": null, "prevCursor": null, "hasMore": false}}),
+                ))
+            }
             "fetch_agent_request" => {
                 let st = self.st();
                 let a = agent.and_then(|id| st.agents.get(&id));
@@ -448,13 +514,25 @@ impl Old {
             }
             "cancel_agent_request" => {
                 let id = agent?;
-                let snap = {
+                // the old hub's abort answers with the snapshot as it is, its questions still open; they are
+                // resolved (and the snapshot pushed) only once the CLI has stopped
+                let (snap, asks) = {
                     let mut st = self.st();
                     let a = st.agents.get_mut(&id)?;
                     a.cancels += 1;
+                    let snap = Self::snapshot(a, id);
                     a.running = false;
-                    Self::snapshot(a, id)
+                    (snap, std::mem::take(&mut a.asks))
                 };
+                let (old, who) = (self.clone(), person.to_owned());
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    for q in &asks {
+                        old.broadcast(&who, id, "agent_permission_resolved",
+                            &json!({"agentId": id, "requestId": q["id"], "resolution": {"behavior": "deny", "message": "Stopped"}}));
+                    }
+                    old.changed(id);
+                });
                 self.broadcast(
                     person,
                     id,
@@ -587,7 +665,11 @@ async fn socket(old: Old, ws: WebSocket, person: String) {
             }
         });
     }
-    old.st().sockets.retain(|s| s.0 != id);
+    {
+        let mut st = old.st();
+        st.sockets.retain(|s| s.0 != id);
+        st.listing.remove(&id);
+    }
     writer.abort();
 }
 

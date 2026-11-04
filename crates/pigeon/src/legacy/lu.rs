@@ -1,7 +1,9 @@
 //! One legacy upstream socket (switch-final 4.1, DESIGN 9.1): pigeon's WebSocket to the old router's `/paseo-ws`
 //! for one native socket, as its person. Requests go out with a request id of their own and their answer comes
 //! back to the caller; the old child's live frames of the legacy conversations the tab watches (`agent_stream`, the
-//! sandbox chip, an ask and its resolution) go to the tab, `agent_stream` with the tab's own subscription id. A `client_heartbeat` every 15 s also keeps the old
+//! sandbox chip, an ask and its resolution) go to the tab, `agent_stream` with the tab's own subscription id; the
+//! old child's list is subscribed, and its snapshots of legacy conversations are their agent state on the tab
+//! ([`super::view`]). A `client_heartbeat` every 15 s also keeps the old
 //! child from its idle stop. The socket ends with its tab, or once it has streamed nothing to the tab and carried no
 //! call for [`crate::Tuning::legacy_lu_idle`] (the old child then idles out, and the old stack's LU count reaches zero
 //! with the tab still open: DESIGN 9.2, A5; the tab's next legacy request opens a new one); one that ends while its tab
@@ -501,6 +503,11 @@ async fn run(legacy: Legacy, lu: Arc<Lu>, conn: Arc<Conn>, mut rx: mpsc::Unbound
     if !lu.st().agents.is_empty() {
         lu.send_agents();
     }
+    // the old child's list, subscribed: its snapshots are the legacy conversations' agent state on the tab
+    // ([`super::view`]); the old bridge pushes `agent_update` only to a socket that listed with `subscribe`
+    let list = json!({"type": "session", "message": {"type": "fetch_agents_request", "requestId": lu.rid(),
+                                                     "subscribe": {}}});
+    let _ = lu.out.send((list.to_string(), None));
     let (mut sink, mut stream) = stream.split();
     let hb = legacy.0.heartbeat;
     let mut beat = tokio::time::interval(hb);
@@ -558,6 +565,9 @@ async fn run(legacy: Legacy, lu: Arc<Lu>, conn: Arc<Conn>, mut rx: mpsc::Unbound
     }
     legacy.0.metrics.lu_sockets.dec();
     tracing::info!(conn = %lu.conn_id, ?end, "LU closed");
+    if let Some(c) = lu.conn.upgrade() {
+        c.legacy_agents.lu_ended();
+    }
     lu.end(LuError::Lost);
     legacy.lu_ended(lu.conn.upgrade(), &lu);
 }
@@ -595,6 +605,29 @@ fn inbound(legacy: &Legacy, lu: &Lu, text: &str) {
     }
     let kind = v["message"]["type"].as_str().unwrap_or("").to_owned();
     let payload = v["message"]["payload"].clone();
+    // the old stack's state of its conversations, from every snapshot it sends: the list answer and its
+    // `agent_update`s, and an answer's `agent` (kept before the answer is handed on, so the tab's answer carries the
+    // newest state, [`super::view`]); only while a conversation is legacy
+    if let Some(conn) = lu.conn.upgrade() {
+        let legacy_agent = |a: &Value| {
+            a.get("id")
+                .and_then(Value::as_str)
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .is_some_and(|id| legacy.is_legacy(&lu.person, &id) == Some(true))
+        };
+        let snapshots: Vec<&Value> = match kind.as_str() {
+            "fetch_agents_response" => payload["entries"]
+                .as_array()
+                .map(|e| e.iter().map(|e| &e["agent"]).collect())
+                .unwrap_or_default(),
+            "agent_update" if payload["kind"] == "upsert" => vec![&payload["agent"]],
+            _ if payload.get("agent").is_some_and(Value::is_object) => vec![&payload["agent"]],
+            _ => Vec::new(),
+        };
+        for a in snapshots.into_iter().filter(|a| legacy_agent(a)) {
+            super::view::old_snapshot(&conn, a);
+        }
+    }
     if let Some(rid) = payload.get("requestId").and_then(Value::as_str)
         && lu.deliver(rid, Ok((kind.clone(), payload.clone())))
     {

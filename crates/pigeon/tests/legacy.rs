@@ -231,6 +231,127 @@ async fn an_old_turn_s_ask_and_its_resolution_reach_the_tab() {
     assert_eq!(v["message"]["payload"]["requestId"], "ask-1");
 }
 
+fn agent_update_of(v: &Value, c: Uuid) -> Option<&Value> {
+    (v["message"]["type"] == "agent_update" && v["message"]["payload"]["agent"]["id"] == c.to_string())
+        .then(|| &v["message"]["payload"])
+}
+
+/// On a moved tab a legacy conversation's agent state is the old stack's until its release, then magpie's: an ask
+/// the old turn makes is listed with its turn (the question card and Stop), a native upsert of the conversation (the
+/// running mirror, a title) keeps that state, Stop's answer and the old child's later resolution leave no question,
+/// and after the release magpie's snapshot is shown as it is. The state pushes carry the tab's own list subscription
+/// and no list position (WP-54's ask persona: no card, no Stop, and a card that stayed after Stop).
+#[tokio::test]
+async fn a_legacy_conversation_s_agent_state_is_the_old_stack_s_until_its_release() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    let mut ws = e.ws(STAFF).await;
+    let (_, r) = ws
+        .rpc(
+            "fetch_agents_request",
+            json!({"subscribe": {"subscriptionId": "agents"}}),
+        )
+        .await;
+    let sub = r["subscriptionId"].as_str().unwrap().to_owned();
+    let listed = r["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["agent"]["id"] == c.to_string())
+        .unwrap()["agent"]
+        .clone();
+    assert_eq!(listed["activeTurn"], Value::Null);
+    let updated = listed["updatedAt"].clone();
+    watch(&mut ws, &[c]).await;
+    let _ = ws
+        .rpc(
+            "fetch_agent_timeline_request",
+            json!({"agentId": c, "direction": "tail", "limit": 50}),
+        )
+        .await;
+    until("the LU", || {
+        e.old.st().seen.iter().any(|s| s.1.as_deref() == Some(LU_PAIR))
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    // an old turn asks after the move
+    let request = json!({"id": "ask-1", "provider": "claude", "name": "AskUserQuestion", "kind": "question",
+                         "input": {"questions": [{"question": "go on?", "options": [{"label": "Yes"}]}]}});
+    e.old.ask(c, &request);
+    let v = ws
+        .wait_for("the old turn's ask in the list", |v| {
+            agent_update_of(v, c).is_some_and(|p| p["agent"]["pendingPermissions"][0]["id"] == "ask-1")
+        })
+        .await;
+    let p = &v["message"]["payload"];
+    assert_eq!(p["subscriptionId"], sub);
+    assert_eq!(p["agent"]["status"], "running");
+    assert_eq!(
+        p["agent"]["activeTurn"]["turnId"], "t",
+        "the old turn, as the LU's turn events name it"
+    );
+    assert_eq!(p["agent"]["requiresAttention"], true);
+    assert_eq!(p["agent"]["attentionReason"], "permission");
+    assert_eq!(
+        p["agent"]["updatedAt"], updated,
+        "magpie's updatedAt, not the old row's"
+    );
+    assert_eq!(p["agent"]["title"], "舊對話");
+    assert!(
+        p.get("seq").is_none() && p.get("generation").is_none(),
+        "no list position: {p}"
+    );
+    // a native upsert of the conversation keeps the old stack's state
+    e.m.edit(c, |x| x.title = Some("新的標題".into()));
+    let v = ws
+        .wait_for("magpie's upsert", |v| {
+            agent_update_of(v, c).is_some_and(|p| p["agent"]["title"] == "新的標題")
+        })
+        .await;
+    let p = &v["message"]["payload"];
+    assert_eq!(p["agent"]["pendingPermissions"][0]["id"], "ask-1", "{p}");
+    assert_eq!(p["agent"]["activeTurn"]["turnId"], "t");
+    assert!(p["seq"].as_u64().is_some(), "magpie's own seq");
+    // Stop from the moved tab: the answer and then the old child's resolution leave no question
+    let (_, r) = ws.rpc("cancel_agent_request", json!({"agentId": c})).await;
+    assert_eq!(r["error"], Value::Null, "{r}");
+    let v = ws
+        .wait_for("the stopped turn's state", |v| {
+            agent_update_of(v, c).is_some_and(|p| p["agent"]["pendingPermissions"] == json!([]))
+        })
+        .await;
+    let p = &v["message"]["payload"];
+    assert_eq!(p["agent"]["activeTurn"], Value::Null);
+    assert_eq!(p["agent"]["status"], "idle");
+    assert_eq!(p["agent"]["requiresAttention"], false);
+    // released: magpie's snapshot as it is, and the old child's frames of it no longer shown
+    for _ in 0..200 {
+        if e.m.try_release(c) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(!e.m.st().convs[&c].conv.migrating);
+    e.m.edit(c, |x| x.title = Some("已交接".into()));
+    let v = ws
+        .wait_for("an upsert after the release", |v| {
+            agent_update_of(v, c).is_some_and(|p| p["agent"]["title"] == "已交接")
+        })
+        .await;
+    assert_eq!(v["message"]["payload"]["agent"]["activeTurn"], Value::Null);
+    e.old.ask(
+        c,
+        &json!({"id": "ask-2", "provider": "claude", "name": "AskUserQuestion", "kind": "question", "input": {}}),
+    );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    while let Some(v) = ws.next_raw(Duration::from_millis(50)).await {
+        assert!(
+            agent_update_of(&v, c).is_none_or(|p| !p["agent"]["pendingPermissions"].to_string().contains("ask-2")),
+            "an old snapshot after the release: {v}"
+        );
+    }
+}
+
 /// A running old turn streams to its end through LU and Stop ends it; every write is accepted once under a ticket
 /// that closes on the old stack's outcome; the LU carries pigeon's pair token and the person's newest token.
 #[tokio::test]
