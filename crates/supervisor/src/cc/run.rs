@@ -432,6 +432,9 @@ pub struct Driver {
     /// Every task the driver started (tests end a driver for good with [`Driver::abort_all`]).
     tasks: Mutex<Vec<tokio::task::AbortHandle>>,
     me: Weak<Driver>,
+    /// Tests: a kill lands while a prompt is with the writer, and its exit is handled after the failed write.
+    #[cfg(test)]
+    race_kill_with_prompt: std::sync::atomic::AtomicBool,
 }
 
 impl std::fmt::Debug for Driver {
@@ -679,6 +682,8 @@ impl Driver {
             inflight: Mutex::new(HashSet::new()),
             tasks: Mutex::new(Vec::new()),
             me: me.clone(),
+            #[cfg(test)]
+            race_kill_with_prompt: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -1504,8 +1509,14 @@ impl Driver {
         let Some(ctx) = self.ctx() else { return };
         // the writer: one message at a time, in order
         let k = ctx.keeper.clone();
+        #[cfg(test)]
+        let me = self.arc();
         self.go(async move {
             while let Some(w) = rx.recv().await {
+                #[cfg(test)]
+                if w.done.is_some() && me.race_kill_with_prompt.load(std::sync::atomic::Ordering::SeqCst) {
+                    me.hold_prompt_until_killed(n).await;
+                }
                 let k = k.clone();
                 let r =
                     tokio::task::spawn_blocking(move || k.stdin(pid, w.msg_id, &w.bytes).map_err(|e| e.to_string()))
@@ -1550,12 +1561,33 @@ impl Driver {
                 }
                 err_tail.copy().await;
                 if let Some(e) = exited {
+                    #[cfg(test)]
+                    if me.race_kill_with_prompt.load(std::sync::atomic::Ordering::SeqCst) {
+                        // the failed prompt write is handled first
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
                     let rec = (e.name != keeper::watch::LOST).then_some(e);
                     me.on_exit(n, rec.as_ref());
                     return;
                 }
             }
         });
+    }
+
+    /// Tests ([`Driver::race_kill_with_prompt`]): the prompt for generation `n` waits until a kill of `n` is
+    /// recorded and its SIGKILL has landed (at most 10 s), so the write fails before the exit is handled.
+    #[cfg(test)]
+    async fn hold_prompt_until_killed(&self, n: u32) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline
+            && !lock(&self.st)
+                .live
+                .as_ref()
+                .is_some_and(|g| g.n == n && g.why.is_some())
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
     }
 
     /// SIGKILLs generation `n`'s group at once and waits (at most 5 s) for its exit to be handled.
@@ -2278,7 +2310,11 @@ impl Driver {
         if let Err(e) = rx.await.unwrap_or_else(|_| Err("writer gone".into())) {
             tracing::warn!(turn = %turn_id, error = %e, "prompt not delivered");
             self.with(Change::State, |st, fx| {
-                if st.turn.as_ref().is_some_and(|t| t.id == turn_id) {
+                if st.live.as_ref().is_some_and(|g| g.n == n && g.why.is_some()) {
+                    // the generation is being ended on purpose (a kill, an interrupt's forced end, the memory
+                    // guard...) and that is why the write failed: its exit ends the turn with that reason (7.9),
+                    // never as an exit nobody asked for
+                } else if st.turn.as_ref().is_some_and(|t| t.id == turn_id) {
                     self.end_turn_now(
                         st,
                         fx,

@@ -64,7 +64,9 @@ impl Fake {
             .append(true)
             .open(&self.log)
             .unwrap();
-        writeln!(f, "{s}").unwrap();
+        // one write per line: a SIGKILL between the text and its newline would glue the next generation's first
+        // line (its argv) onto this one
+        f.write_all(format!("{s}\n").as_bytes()).unwrap();
     }
     fn assistant(&mut self, text: &str, tools: &[Value]) {
         let mut content = vec![json!({"type": "text", "text": text})];
@@ -819,7 +821,44 @@ async fn failed_results_interrupts_and_kills() {
     // every kill spawned a new generation, resumed
     let (t, _) = w.turn_with("say:back", Some(w.cid.to_string()), vec![], vec![]);
     assert_eq!(w.ended(t).await["state"], "completed");
-    assert!(w.spawns().last().unwrap().contains(&format!("--resume {}", w.cid)));
+    let spawns = w.spawns();
+    assert!(
+        spawns.last().unwrap().contains(&format!("--resume {}", w.cid)),
+        "{spawns:#?}\nfake:\n{}",
+        w.fake_log().join("\n")
+    );
+}
+
+/// A kill that lands after the `running` report but before the prompt is in Claude Code's stdin: the write fails
+/// before the exit is handled, and the turn still ends with the kill's reason (a watchdog kill `failed run.error`, a
+/// stop `canceled`), never as an exit nobody asked for (`run.exited`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_kill_during_the_prompt_write_ends_the_turn_with_the_kills_reason() {
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    sup.driver
+        .race_kill_with_prompt
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    for (reason, state, code) in [
+        (KillReason::Watchdog, "failed", Some("run.error")),
+        (KillReason::Stop, "canceled", None),
+    ] {
+        let (t, s) = w.turn("deaf");
+        until("running", || w.state_names(t) == ["running"]).await;
+        let k = w
+            .magpie
+            .push_command(w.cid, Some(t), CommandBody::Kill(KillCommand { reason }));
+        let end = w.ended(t).await;
+        assert_eq!(end["state"], state, "{end}");
+        assert_eq!(end["error"]["code"].as_str(), code, "{end}");
+        assert_eq!(w.state_names(t), ["running", state], "one end");
+        w.acked(k).await;
+        assert!(
+            w.acked(s).await.error.is_some(),
+            "the kill landed before the prompt write"
+        );
+        w.idle(&sup).await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
