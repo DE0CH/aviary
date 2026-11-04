@@ -1,10 +1,13 @@
-// magpie import's running-set read (cutover 6.3), run in a ui pod's container `ui` as `node -e <this>`: every
-// CloudCLI child of the old router (a process whose environment has DATABASE_SCHEMA, SERVER_PORT and JARVIS_CC_OWNER,
-// jarvis/router.mjs) is asked for its running list, the call the router itself makes (runningChats()):
-// GET http://127.0.0.1:<SERVER_PORT>/api/providers/sessions/running with x-jarvis-user: <JARVIS_CC_OWNER>. One JSON
-// line per child: {"schema", "port", "ok", "sessions": [<app session id>…]}. A child that does not answer 200 with a
-// session list within 5 s is ok: false (the importer then treats every conversation of that schema as running), and
-// so is one whose list has an entry without a string sessionId (a changed route shape must not read as "idle").
+// magpie import's running-set read (cutover 6.3, DESIGN 9.4 conditions 2 and 3), run in a ui pod's container `ui` as
+// `node -e <this>`: every CloudCLI child of the old router (a process whose environment has DATABASE_SCHEMA,
+// SERVER_PORT and JARVIS_CC_OWNER, jarvis/router.mjs) is asked what keeps it busy, the call the router's switch module
+// makes before a restart: GET http://127.0.0.1:<SERVER_PORT>/api/jarvis/switch/busy with x-jarvis-user:
+// <JARVIS_CC_OWNER> (claudecodeui jarvis-switch.routes.ts, in the A1 image) -> {running, processes, preparing,
+// pending}, each a list of app session ids: chat runs and tracked background work, Claude Code processes held open,
+// sandboxes being made, Paseo messages not yet completed. One JSON line per child: {"schema", "port", "ok",
+// "sessions": [every id of the four lists]}. A child that does not answer 200 with the four lists of strings within 5 s
+// is ok: false (the importer then treats every conversation of that schema as busy), so an image without the route
+// (before A1) releases nothing.
 // A process whose environment cannot be read for another reason than having exited (EACCES, hidepid) may be a child:
 // the script prints {"incomplete": <why>}, which makes the pod's read unusable. Processes the child started inherit
 // its environment; each (schema, port) is asked once.
@@ -44,7 +47,7 @@ function ask(c) {
       clearTimeout(timer);
       resolve({ schema: c.schema, port: c.port, ok, sessions });
     };
-    const q = http.get({ host: '127.0.0.1', port: c.port, path: '/api/providers/sessions/running',
+    const q = http.get({ host: '127.0.0.1', port: c.port, path: '/api/jarvis/switch/busy',
                          headers: { 'x-jarvis-user': c.owner } }, (res) => {
       let body = '';
       res.setEncoding('utf8');
@@ -53,10 +56,10 @@ function ask(c) {
         if (res.statusCode !== 200) return finish(false, []);
         try {
           const j = JSON.parse(body);
-          const s = (j && j.data && j.data.sessions) || (j && j.sessions);
-          if (!Array.isArray(s)) return finish(false, []);
-          if (!s.every((e) => e && typeof e.sessionId === 'string' && e.sessionId)) return finish(false, []);
-          finish(true, s.map((e) => e.sessionId));
+          const lists = ['running', 'processes', 'preparing', 'pending'].map((k) => j && j[k]);
+          // a changed route shape must never read as "idle"
+          if (!lists.every((l) => Array.isArray(l) && l.every((e) => typeof e === 'string' && e))) return finish(false, []);
+          finish(true, [...new Set(lists.flat())]);
         } catch (e) { finish(false, []); }
       });
       res.on('error', () => finish(false, []));

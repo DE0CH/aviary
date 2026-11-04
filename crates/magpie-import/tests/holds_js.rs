@@ -1,4 +1,4 @@
-//! `holds.js` against fake `CloudCLI` children (cutover 7.12 item 5's script half; the exec through the Kubernetes API
+//! `holds.js` against fake `CloudCLI` children answering the switch module's busy route (cutover 7.12 item 5's script half; the exec through the Kubernetes API
 //! and the gate are the hand-over's): every child of the old router is asked with its owner, a child that answers
 //! 500 or not at all within 5 s is `ok: false`, a process without the router's child environment is not asked, and
 //! a child's own processes (which inherit its environment) do not ask it twice, and a list entry without a string
@@ -20,14 +20,23 @@ http.createServer((req, res) => {
   if (mode === '500') { res.statusCode = 500; return res.end('no'); }
   if (mode === 'noid') {
     res.setHeader('content-type', 'application/json');
-    return res.end(JSON.stringify({ success: true, data: { sessions: [{ id: 'x' }] } }));
+    return res.end(JSON.stringify({ running: [{ id: 'x' }], processes: [], preparing: [], pending: [] }));
   }
-  if (req.url !== '/api/providers/sessions/running' || req.headers['x-jarvis-user'] !== owner) {
+  if (mode === 'nolist') {
+    res.setHeader('content-type', 'application/json');
+    return res.end(JSON.stringify({ running: [], processes: [] }));
+  }
+  if (req.url !== '/api/jarvis/switch/busy' || req.headers['x-jarvis-user'] !== owner) {
     res.statusCode = 404; return res.end();
   }
   res.setHeader('content-type', 'application/json');
-  const sessions = JSON.parse(process.env.FAKE_SESSIONS).map((s) => ({ sessionId: s, provider: 'claude' }));
-  res.end(JSON.stringify({ success: true, data: { sessions } }));
+  // the ids spread over the four lists, one repeated: the script answers each once
+  const ids = JSON.parse(process.env.FAKE_SESSIONS);
+  const lists = { running: [], processes: [], preparing: [], pending: [] };
+  const keys = Object.keys(lists);
+  ids.forEach((s, i) => lists[keys[i % 4]].push(s));
+  if (ids.length) lists.processes.push(ids[0]);
+  res.end(JSON.stringify(lists));
 }).listen(Number(process.env.SERVER_PORT || 0), '127.0.0.1', () => console.log('ready'));
 // a process of the child (inherits its environment), which ends when the child does
 if (process.env.FAKE_FORK) require('child_process').spawn(process.execPath,
@@ -71,13 +80,17 @@ fn spawn(env: &[(&str, String)]) -> Child {
 
 #[test]
 fn holds_js_asks_every_child_once_and_fails_closed() {
-    let (pa, pb, pc, pd, pe) = (port(), port(), port(), port(), port());
+    let (pa, pb, pc, pd, pe, pf) = (port(), port(), port(), port(), port(), port());
     let mut kids = Kids(Vec::new());
     kids.0.push(spawn(&[
         ("DATABASE_SCHEMA", "cc_ua".into()),
         ("SERVER_PORT", pa.to_string()),
         ("JARVIS_CC_OWNER", "a@example.com".into()),
-        ("FAKE_SESSIONS", "[\"11111111-1111-1111-1111-111111111111\"]".into()),
+        // running and processes (the first id in both): each answered once
+        (
+            "FAKE_SESSIONS",
+            "[\"11111111-1111-1111-1111-111111111111\",\"22222222-2222-2222-2222-222222222222\"]".into(),
+        ),
         ("FAKE_FORK", "1".into()),
     ]));
     kids.0.push(spawn(&[
@@ -97,6 +110,13 @@ fn holds_js_asks_every_child_once_and_fails_closed() {
         ("SERVER_PORT", pe.to_string()),
         ("JARVIS_CC_OWNER", "e@example.com".into()),
         ("FAKE_MODE", "noid".into()),
+    ]));
+    // a list missing (an image without the A1 route's shape): busy, never "idle"
+    kids.0.push(spawn(&[
+        ("DATABASE_SCHEMA", "cc_uf".into()),
+        ("SERVER_PORT", pf.to_string()),
+        ("JARVIS_CC_OWNER", "f@example.com".into()),
+        ("FAKE_MODE", "nolist".into()),
     ]));
     // not a router child: no owner
     kids.0.push(spawn(&[
@@ -130,7 +150,7 @@ fn holds_js_asks_every_child_once_and_fails_closed() {
     let lines = lines.join("\n");
     let mut children = holds::parse(&lines).unwrap();
     // other tests' processes on this machine are not ours
-    children.retain(|c| [pa, pb, pc, pd, pe].contains(&c.port));
+    children.retain(|c| [pa, pb, pc, pd, pe, pf].contains(&c.port));
     children.sort_by_key(|c| c.schema.clone());
     let got: Vec<(String, bool, Vec<String>)> = children.into_iter().map(|c| (c.schema, c.ok, c.sessions)).collect();
     assert_eq!(
@@ -139,11 +159,15 @@ fn holds_js_asks_every_child_once_and_fails_closed() {
             (
                 "cc_ua".to_owned(),
                 true,
-                vec!["11111111-1111-1111-1111-111111111111".to_owned()]
+                vec![
+                    "11111111-1111-1111-1111-111111111111".to_owned(),
+                    "22222222-2222-2222-2222-222222222222".to_owned()
+                ]
             ),
             ("cc_ub".to_owned(), false, vec![]),
             ("cc_uc".to_owned(), false, vec![]),
             ("cc_ue".to_owned(), false, vec![]),
+            ("cc_uf".to_owned(), false, vec![]),
         ]
     );
 }
