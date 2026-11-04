@@ -13,13 +13,14 @@
 #                                           the edge stand-in on the persona build, then the persona drivers
 #                                           (claudecodeui jarvis/test/persona) once clean (must pass) and once per
 #                                           seeded defect (must fail on that defect's check)
+#   run.sh gate | owner <id> | native-turns <id>   the runner's steps the drivers call (control.mjs)
+#   run.sh counters [--check] | seeds              the zero counters; a seeded defect per counter
 #   run.sh logs <dir> | down
 #
-# Not done yet (each a later step; this job is nightly/manual only until the whole rig passes): the gate and the
-# hand-over driven end to end with the importer's Deployment (it needs a release with WP-52's hand-over), the personas
-# beyond `draft` (a send in flight at the move, an upload after T0 on an unmoved tab, a file attached at move - 2 s, an
-# ask, view-as, a hold, an idle warm old sandbox), the bridge-kill and A1-rollout personas, iOS, the seeded defect per
-# zero counter.
+# Not done yet (each a later step; this job is nightly/manual only until the whole rig passes): seeded defects for the
+# zero counters beyond the in-flight close and the cut old turn; the personas beyond `draft` (a send in flight at
+# the move, an upload after T0 on an unmoved tab, a file attached at move - 2 s to a pigeon-born conversation, an ask,
+# view-as, a hold, an idle warm old sandbox, the A1 gated rollout, a bridge-node kill); iOS (out of scope).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 e2e=$here/../e2e
@@ -85,12 +86,39 @@ open(out, "w").write(s)
 PY
 }
 
+# each ui pod on a NodePort of its own (30090, 30091): the runner's move, admit and report calls reach every pod, as
+# cutover's do through pods/proxy (one Service would pin a kept-alive client to one pod); again after every rollout
+label_pods() {
+  local i=0 p
+  # the Deployment's current pods: running and not terminating (a rollout's old pods are both for a while)
+  wait_for 120 "two current ui pods" sh -c "[ \"\$(kubectl --kubeconfig '$work/kubeconfig-old' -n jarvis get pods -l app=ui -o json | jq '[.items[] | select(.metadata.deletionTimestamp == null and .status.phase == \"Running\")] | length')\" = 2 ]"
+  for p in $(kold -n jarvis get pods -l app=ui -o json | jq -r '.items[] | select(.metadata.deletionTimestamp == null and .status.phase == "Running") | "pod/" + .metadata.name'); do
+    kold -n jarvis label --overwrite "$p" "ui-pod=p$i" >/dev/null 2>&1 || continue
+    kold -n jarvis apply -f - >/dev/null <<YAML
+apiVersion: v1
+kind: Service
+metadata: {name: ui-p$i, namespace: jarvis}
+spec:
+  type: NodePort
+  selector: {app: ui, ui-pod: p$i}
+  ports: [{port: 8080, targetPort: 8080, nodePort: $((30090 + i))}]
+YAML
+    i=$((i + 1))
+  done
+}
+
+follow_ui_logs() { # the old ui pods' log into $work/ui.log, restarted after a rollout (new pods)
+  pkill -f "kubeconfig-old -n jarvis logs" 2>/dev/null || true
+  kubectl --kubeconfig "$work/kubeconfig-old" -n jarvis logs -f -l app=ui --prefix --max-log-requests 6 --tail=-1 >> "$work/ui.log" 2>&1 &
+}
+
 up() {
   local s=${1:?release sha12} ui=${2:?ui image}
   mkdir -p "$work"
   # the new cluster, unchanged (kept when it is already up: BOX_KEEP_NEW=1, a rerun of the old side)
   if [ "${BOX_KEEP_NEW:-}" != 1 ]; then
-    timeout 1800 "$e2e/run.sh" up "pigeon:$s" "magpie:$s" "hermit:$s" "aviary-testing:$s" "hermit-sandbox:$s"
+    # BOX_MAGPIE: another magpie image (a fix not yet in a release)
+    timeout 1800 "$e2e/run.sh" up "pigeon:$s" "${BOX_MAGPIE:-magpie:$s}" "hermit:$s" "aviary-testing:$s" "hermit-sandbox:$s"
   fi
   docker rm -f -v aviary-edge aviary-bridge aviary-old-pg >/dev/null 2>&1 || true
   k3d cluster delete "$old" >/dev/null 2>&1 || true
@@ -135,22 +163,7 @@ JSON
     timeout 400 kubectl --kubeconfig "$work/kubeconfig-old" -n jarvis rollout status "deploy/$d" --timeout=390s >/dev/null \
       || { kold -n jarvis get pods -o wide >&2; die "old deployment $d did not become ready"; }
   done
-  # each ui pod on a NodePort of its own (30090, 30091): the runner's move, admit and report calls reach every pod, as
-  # cutover's do through pods/proxy (one Service would pin a kept-alive client to one pod)
-  local i=0 p
-  for p in $(kold -n jarvis get pods -l app=ui -o name); do
-    kold -n jarvis label --overwrite "$p" "ui-pod=p$i" >/dev/null
-    kold -n jarvis apply -f - >/dev/null <<YAML
-apiVersion: v1
-kind: Service
-metadata: {name: ui-p$i, namespace: jarvis}
-spec:
-  type: NodePort
-  selector: {app: ui, ui-pod: p$i}
-  ports: [{port: 8080, targetPort: 8080, nodePort: $((30090 + i))}]
-YAML
-    i=$((i + 1))
-  done
+  label_pods
   # the bridges B1 and B2
   docker run -d --name aviary-bridge --network "$net" --ip "$bridge_ip" -v "$here:/box:ro" --entrypoint node "$ui" \
     /box/bridge.mjs --listen 8080 --to "$old_ip:30080" --listen 8081 --to "$new_ip:30081" >/dev/null
@@ -237,6 +250,99 @@ YAML
   knew -n aviary-e2e logs job/box-import --tail=5
 }
 
+# the runner's gate (DESIGN 9.2): `magpie import allow-handover` as a Job, which reads every ui pod's switch report
+# through the old API (B7) and sets import_control.handover_allowed_at only when none has a non-LU socket
+gate() {
+  knew -n aviary-e2e delete job box-gate --ignore-not-found --wait=true >/dev/null
+  knew apply -f - >/dev/null <<YAML
+apiVersion: batch/v1
+kind: Job
+metadata: {name: box-gate, namespace: aviary-e2e}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata: {labels: {app: import}}
+    spec:
+      serviceAccountName: plain
+      restartPolicy: Never
+      securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000}
+      containers:
+        - name: gate
+          image: aviary-e2e/magpie:e2e
+          imagePullPolicy: Never
+          args: [import, allow-handover]
+          envFrom: [{secretRef: {name: magpie-env}}, {secretRef: {name: magpie-import}}]
+          env: [{name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}]
+          volumeMounts:
+            - {name: jfs, mountPath: /jfs, readOnly: true, mountPropagation: HostToContainer}
+            - {name: legacy-kube-ca, mountPath: /etc/legacy-kube-ca, readOnly: true}
+      volumes:
+        - {name: jfs, hostPath: {path: $jfs, type: Directory}}
+        - {name: legacy-kube-ca, configMap: {name: legacy-kube-ca}}
+YAML
+  local until=$((SECONDS + 300)) phase=
+  while [ "$SECONDS" -lt "$until" ]; do
+    phase=$(knew -n aviary-e2e get job box-gate -o jsonpath='{.status.conditions[?(@.status=="True")].type}' 2>/dev/null || true)
+    case $phase in *Complete*|*Failed*) break ;; esac
+    sleep 2
+  done
+  knew -n aviary-e2e logs job/box-gate --tail=20
+  case $phase in *Complete*) ;; *) die "the gate was not set (${phase:-timed out})" ;; esac
+}
+
+# the zero counters of DESIGN 9.9 (testing/switch/zero-counters.txt), summed over every pod that exports them: pigeon,
+# magpie and the importer through the API's pod proxy, the old router's report per pod, and the old ui pods' log
+# (old_turn_cut_total outlives a drained pod only there: personas keeps $work/ui.log). Prints `<series> <value>`;
+# --check exits 1 when any is not 0.
+counters() {
+  local list=$here/../switch/zero-counters.txt out=$work/counters.txt
+  : > "$out"
+  local series who state p v total
+  while read -r series who state; do
+    case $series in ''|'#'*) continue ;; esac
+    [ "$state" = exported ] || continue
+    case $series in *_seconds_count) continue ;; esac # a histogram: not a zero counter
+    total=0
+    case $who in
+      pigeon|magpie)
+        local sel; [ "$who" = pigeon ] && sel=app=pigeon || sel="app in (magpie,import)"
+        # the running pods only (the box's Jobs carry app=import too)
+        for p in $(knew -n aviary-e2e get pods -l "$sel" --field-selector=status.phase=Running -o jsonpath='{.items[*].metadata.name}'); do
+          v=$( (knew get --raw "/api/v1/namespaces/aviary-e2e/pods/$p:9090/proxy/metrics" 2>/dev/null || true) \
+            | awk -v s="$series" 'index($0, s " ") == 1 {print $2}' | head -1)
+          total=$(python3 -c "print(int(float('${v:-0}')) + $total)")
+        done ;;
+      router)
+        # shellcheck disable=SC1091
+        . "$work/env"
+        local u
+        for u in ${OLD_PODS//,/ }; do
+          v=$( (curl -sf -H "x-jarvis-switch-token: $SWITCH" "$u/__jarvis/sockets" || echo '{}') | jq -r ".$series // 0")
+          total=$((total + ${v:-0}))
+        done
+        if [ "$series" = counters.oldTurnCutTotal ] && [ -f "$work/ui.log" ]; then
+          v=$(grep -c "old_turn_cut_total" "$work/ui.log" || true)
+          [ "${v:-0}" -gt "$total" ] && total=$v
+        fi ;;
+      *) continue ;;
+    esac
+    echo "$series $total" | tee -a "$out"
+  done < "$list"
+  if [ "${1:-}" = --check ] && awk '$2 != 0 {bad = 1} END {exit !bad}' "$out"; then
+    die "zero counters not 0: $(awk '$2 != 0' "$out" | tr '\n' ' ')"
+  fi
+}
+
+magpie_sql() { docker exec aviary-e2e-pg psql -q -t -A -h /var/run/postgresql -U postgres -d magpie -c "$1"; }
+
+owner() { # owner <conversation>: legacy | owned
+  local m; m=$(magpie_sql "select migrating from conversations where id = '${1:?id}'")
+  case $m in t) echo legacy ;; f) echo owned ;; *) die "no conversation $1" ;; esac
+}
+
+native_turns() { magpie_sql "select count(*) from turns where conversation_id = '${1:?id}' and origin = 'person'"; }
+
 # every old ui pod: the arming undone (between persona runs)
 admit_all() {
   local p
@@ -266,8 +372,15 @@ personas() {
   fi
   local lu; lu=$(secret_value pigeon-env PIGEON_TOKEN_UI)
   local results=$work/personas; mkdir -p "$results"
+  # the old ui pods' log, kept (old_turn_cut_total of a drained pod)
+  follow_ui_logs
+  # the drivers' control (control.mjs: gate, owner, native-turns), on the host
+  pkill -f "legacy-in-a-box/control.mjs" 2>/dev/null || true
+  node "$here/control.mjs" "$here/run.sh" 18299 > "$work/control.log" 2>&1 &
+  wait_for 20 "the control" curl -s -o /dev/null -X POST http://127.0.0.1:18299/none
   local fail=0 defect tag id out
-  for defect in "" lost-draft second-reconnect; do
+  # the defect runs first: the clean run goes on to the gate, after which conversations are released once idle
+  for defect in lost-draft second-reconnect ""; do
     tag="persona-$(openssl rand -hex 4)"
     # the previous run's move armed the old router (its non-LU HTTP goes to pigeon): undone first
     admit_all
@@ -276,7 +389,7 @@ personas() {
     # beside its node_modules: an ES module resolves playwright from its own folder
     cp "$ccui/jarvis/test/persona/personas.mjs" "$pw/personas.mjs"
     out=$(node "$pw/personas.mjs" --edge "http://$edge_ip:8443" \
-      --old-ui "$OLD_UI" --old-pods "$OLD_PODS" --switch-token "$SWITCH" --lu-token "$lu" --key "$E2E_WORK/ca/k1.pem" --kid k1 \
+      --old-ui "$OLD_UI" --old-pods "$OLD_PODS" --switch-token "$SWITCH" --control http://127.0.0.1:18299 --lu-token "$lu" --key "$E2E_WORK/ca/k1.pem" --kid k1 \
       --iss "https://$team" --aud "$aud" --email staff@example.org --title "$tag" --conversation "$id" \
       ${defect:+--defect "$defect"} --out "$results" | tail -1) || true
     echo "$out" | tee -a "$results/results.ndjson"
@@ -288,8 +401,56 @@ personas() {
         || { log "the seeded second reconnect was not caught"; fail=1; } ;;
     esac
   done
+  # the clean run's switch left every zero counter at 0 (the seeded defects above are client- and edge-side: none
+  # of them moves a counter)
+  counters --check || fail=1
   [ "$fail" = 0 ] || die "personas: see $results"
   log "personas: clean run passed, both seeded defects caught"
+}
+
+# a seeded defect per zero counter (WP-54 acceptance): each must move its counter, which counters --check reports
+seeds() {
+  # shellcheck disable=SC1091
+  . "$work/env"
+  local fail=0 first v
+  first=${OLD_PODS%%,*}
+  # every current pod on its NodePort, unarmed: an armed router refuses the seed's own upgrade (503 before the 101,
+  # as it should)
+  label_pods
+  admit_all
+  value() { awk -v s="$1" '$1 == s {print $2}' "$work/counters.txt"; }
+  # switch_inflight_closes_total: a client that sends a request after the move's close frame
+  docker run --rm --network "$net" -v "$here:/box:ro" -v "$E2E_WORK/ca:/ca:ro" --user 0 --entrypoint node "$UI_IMAGE" \
+    /box/seed-inflight.mjs "$first" "$SWITCH" /ca/k1.pem "https://$team" "$aud" seed@example.org || fail=1
+  counters >/dev/null
+  v=$(value counters.inflightClosesTotal)
+  if [ "${v:-0}" -gt 0 ]; then log "seed in-flight close: counted ($v)"; else log "seed in-flight close: not counted"; fail=1; fi
+  # old_turn_cut_total: an old pod drained (deadline 5 s) while its process runs a long turn
+  kold -n jarvis set env deploy/ui JARVIS_UI_DRAIN_SECONDS=5 >/dev/null
+  timeout 300 kubectl --kubeconfig "$work/kubeconfig-old" -n jarvis rollout status deploy/ui --timeout=290s >/dev/null
+  label_pods; follow_ui_logs; sleep 3
+  admit_all # the in-flight seed's move armed it (the old turn below is started through the old path)
+  docker run -d --rm --name aviary-seed-turn --network "$net" -v "$here/../lu-rig:/rig:ro" -v "$E2E_WORK/ca:/ca:ro" --user 0 \
+    --entrypoint node -e "RIG_ISS=https://$team" -e "RIG_AUD=$aud" -e RIG_KID=k1 -e RIG_EMAIL=seed@example.org \
+    -e "RIG_PROMPT=[[slow 120]] cut me" "$UI_IMAGE" /rig/smoke.mjs "$BRIDGE:8080" /ca/k1.pem >/dev/null
+  sleep 15
+  # each pod's own log stream to its end (the drain's line is the last thing a pod writes)
+  local lp
+  for lp in $(kold -n jarvis get pods -l app=ui -o name); do
+    kubectl --kubeconfig "$work/kubeconfig-old" -n jarvis logs -f "$lp" --tail=5 --prefix >> "$work/ui.log" 2>&1 &
+  done
+  sleep 2
+  kold -n jarvis delete pods -l app=ui --grace-period=60 --wait=true >/dev/null 2>&1 || true
+  docker rm -f aviary-seed-turn >/dev/null 2>&1 || true
+  sleep 3
+  counters >/dev/null
+  v=$(value counters.oldTurnCutTotal)
+  if [ "${v:-0}" -gt 0 ]; then log "seed cut old turn: counted ($v)"; else log "seed cut old turn: not counted"; fail=1; fi
+  kold -n jarvis set env deploy/ui JARVIS_UI_DRAIN_SECONDS=60 >/dev/null
+  timeout 300 kubectl --kubeconfig "$work/kubeconfig-old" -n jarvis rollout status deploy/ui --timeout=290s >/dev/null
+  label_pods; follow_ui_logs
+  [ "$fail" = 0 ] || die "seeds: a seeded defect was not counted"
+  log "seeds: each seeded defect moved its counter"
 }
 
 logs() {
@@ -315,6 +476,11 @@ case ${1:-} in
   up) shift; up "$@" ;;
   smoke) smoke ;;
   personas) shift; personas "$@" ;;
+  gate) gate ;;
+  owner) shift; owner "$@" ;;
+  native-turns) shift; native_turns "$@" ;;
+  counters) shift; counters "$@" ;;
+  seeds) seeds ;;
   logs) shift; logs "$@" ;;
   down) down ;;
   *) die "usage: run.sh up <release sha12> <ui image> | smoke | personas <claudecodeui dir> <build dir> | logs <dir> | down" ;;

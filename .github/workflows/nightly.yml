@@ -168,6 +168,8 @@ jobs:
         run: timeout 900 testing/legacy-in-a-box/run.sh smoke
       - name: personas
         run: timeout 2400 testing/legacy-in-a-box/run.sh personas claudecodeui "$RUNNER_TEMP/persona-web"
+      - name: seeded defects per zero counter
+        run: timeout 1800 testing/legacy-in-a-box/run.sh seeds
       - name: logs
         if: failure()
         run: timeout 600 testing/legacy-in-a-box/run.sh logs "$RUNNER_TEMP/box"

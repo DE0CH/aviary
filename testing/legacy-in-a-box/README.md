@@ -28,8 +28,18 @@ at the move, the draft kept, the send after the move accepted once, by the old c
 `lost-draft` (must fail "draft kept across the move") and with the edge's `second-reconnect` (must fail "one
 reconnect per move").
 
-Not done yet: the gate and the hand-over end to end (the importer's Deployment needs a release with WP-52's
-hand-over; a release then a replacement while a tab shows the conversation), the other personas of DESIGN 9.9 (a
+The clean run then goes on (through `control.mjs`, the box's runner steps for the driver): the gate
+(`run.sh gate`: `magpie import allow-handover`, which reads every ui pod's switch report through the old API), the
+release while the tab shows the conversation (no reconnect, the composer untouched by the replacement), and the next
+send is a native turn in magpie with nothing written to the old child. Then `counters --check`: every zero counter of
+`testing/switch/zero-counters.txt` is 0, summed over pigeon, magpie and the importer (the API's pod proxy), each old
+ui pod's report and the old ui log. `run.sh seeds` proves the counter path: a client that sends after the move's
+close frame moves `switch_inflight_closes_total`; an old pod drained (5 s deadline) under a long turn moves
+`old_turn_cut_total`.
+
+Not done yet: seeded defects for the other zero counters (`pigeon_switch_write_refused_total`, `pigeon_lu_errors_total`,
+`pigeon_lu_503_total`, `pigeon_lu_401_total`, `pigeon_upload_tee_failed_total`, `magpie_unknown_upload_total{legacy}`,
+`magpie_conversation_migrating_total`, `magpie_import_verify_mismatch_total`, `switch_opaque_sockets`), the other personas of DESIGN 9.9 (a
 send in flight at the move, an upload after T0 on an unmoved tab, a file attached at move - 2 s to a pigeon-born
 conversation, an ask, view-as, a hold, an idle warm old sandbox, the A1 gated rollout, a bridge-node kill), iOS, and a
 seeded defect per zero counter.
