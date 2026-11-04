@@ -390,11 +390,23 @@ impl Legacy {
         let mut _held = lu.hold();
         // the LU is open before any ticket, so its upgrade does not eat into a hold; one that does not open still
         // takes the ticket (magpie may own the conversation by now: a native write needs no LU)
-        let lu_down = match lu.ready().await {
+        let mut lu_down = match lu.ready().await {
             Ok(()) => None,
             Err(LuError::SignedOut) => return self.write_lost(conn, kind, rid, LuError::SignedOut),
             Err(e) => Some(e),
         };
+        if lu_down.is_some() && !conn.is_closing() && !self.reconnecting(conn) {
+            // an LU that dropped under a tab that stays is reopened by the reopen rule ([`Legacy::lu_ended`]): one
+            // more try after it had the time to, before the write is given up
+            tokio::time::sleep(LU_REOPEN_WAIT).await;
+            lu = self.lu_for(conn);
+            _held = lu.hold();
+            lu_down = match lu.ready().await {
+                Ok(()) => None,
+                Err(LuError::SignedOut) => return self.write_lost(conn, kind, rid, LuError::SignedOut),
+                Err(e) => Some(e),
+            };
+        }
         let write_timeout = self.0.write_timeout;
         // the tab's message stays as it is (every native fallback sends it); the LU send carries the old paths, copied
         // once for the whole send
@@ -575,7 +587,18 @@ impl Legacy {
                         return answer(conn, &typ, p, rid);
                     }
                     Err(e) if !e.maybe_sent() => {
-                        // nothing went out
+                        // nothing went out. The LU dropped before the write left, under a tab that stays: the reopen
+                        // rule reopens it, and the write goes again under this claim (within the hold and the
+                        // writes' bound), since nothing of it reached the old child
+                        if e != LuError::SignedOut && !conn.is_closing() && !self.reconnecting(conn) {
+                            tokio::time::sleep(LU_REOPEN_WAIT).await;
+                            lu = self.lu_for(conn);
+                            _held = lu.hold();
+                            if lu.ready().await.is_ok() {
+                                tracing::info!(conversation = %c, "a write the LU drop kept back: written again");
+                                continue;
+                            }
+                        }
                         self.report(conn, h, TicketOutcome::Refused);
                         return self.write_lost(conn, kind, rid, e);
                     }

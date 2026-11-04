@@ -1215,6 +1215,8 @@ async fn fuzz(conversations: usize, per_tab: usize, busy: bool, drops: bool) {
     let mut tasks = tokio::task::JoinSet::new();
     let mut flips = tokio::task::JoinSet::new();
     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // with `drops`: how many times the LUs were dropped (a tab stays until the first, so a drop meets open tabs)
+    let drop_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for (i, c) in convs.iter().copied().enumerate() {
         // with `drops` tokens that live past the reopen rule's hour, so a dropped LU is reopened under the tab
         let life = if drops { 7200 } else { 3600 };
@@ -1225,6 +1227,7 @@ async fn fuzz(conversations: usize, per_tab: usize, busy: bool, drops: bool) {
             let mut ws = Ws::hello(&url, &token, "").await.0.relayed();
             let file = file.clone();
             let mut r = Rng(rng.next() | 1);
+            let drop_count = drop_count.clone();
             tasks.spawn(async move {
                 list(&mut ws).await;
                 // the tab shows the conversation it sends to (with `drops`, the watch is what a dropped LU is reopened
@@ -1256,10 +1259,26 @@ async fn fuzz(conversations: usize, per_tab: usize, busy: bool, drops: bool) {
                         break;
                     }
                 }
+                let until = tokio::time::Instant::now() + Duration::from_secs(20);
+                while drops
+                    && drop_count.load(std::sync::atomic::Ordering::SeqCst) == 0
+                    && tokio::time::Instant::now() < until
+                {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                if drops {
+                    // past the reopen that follows the drop (lu_ended waits 300 ms, then opens)
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
                 refused
             });
         }
-        // release, hand back, release: each at a random instant, each only when the model's rule allows it
+        // release, hand back, release: each at a random instant, each only when the model's rule allows it. With
+        // `drops` the first conversation is never flipped: it stays legacy, so every drop meets a watched legacy
+        // conversation and the reopen rule has something to reopen for (all of them native by then reopens nothing)
+        if drops && i == 0 {
+            continue;
+        }
         let m = e.m.clone();
         // with `drops` spread over the run, so drops meet legacy conversations
         let stretch = if drops { 40 } else { 1 };
@@ -1297,7 +1316,7 @@ async fn fuzz(conversations: usize, per_tab: usize, busy: bool, drops: bool) {
     });
     // with `drops`: every LU dropped at random instants, each time after the reopen rule's minimum time up
     let dropper = drops.then(|| {
-        let (old, done) = (e.old.clone(), done.clone());
+        let (old, done, drop_count) = (e.old.clone(), done.clone(), drop_count.clone());
         let mut r = Rng(rng.next() | 1);
         tokio::spawn(async move {
             let mut n = 0;
@@ -1306,6 +1325,7 @@ async fn fuzz(conversations: usize, per_tab: usize, busy: bool, drops: bool) {
                 tokio::time::sleep(wait).await;
                 old.drop_sockets();
                 n += 1;
+                drop_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
             n
         })
