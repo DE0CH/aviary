@@ -1,9 +1,10 @@
 //! Sync convergence (cutover 7.12 item 3, a property test): a reference source folder is changed by random sequences
-//! of appends, partial-line appends and their completion, rewrites from a line, truncate-then-rewrite, compaction
-//! (a temporary file renamed over), relocation, file creation and removal and sessions-row edits, with passes at
-//! random points. The lines are of several kinds (prompts, answers, tool calls and their results, meta and system
+//! of appends, partial-line appends and their completion, rewrites from a line, truncate-then-rewrite, an in-place
+//! rewrite (written over at an offset, then cut), compaction (a temporary file renamed over), relocation of a file
+//! and of a folder with its files, file creation and removal and sessions-row edits, with whole passes at random
+//! points. The lines are of several kinds (prompts, answers, tool calls and their results, meta and system
 //! lines, which are not shown) and a line can be written again with another kind under the same uuid. After every
-//! pass, magpie's reconstruction equals the source byte for byte and the visible events equal magpie's classifier
+//! pass, magpie's reconstruction equals the source byte for byte and the visible events (every `cc.*` kind) equal magpie's classifier
 //! run over the source's current complete lines (kind and uuid of each, as a multiset like magpie's own ccfs model
 //! test: a line written again keeps or takes its event by sha, and a changed line's new event comes at the next seq,
 //! magpie 6.6); the title and Recently deleted follow the row.
@@ -34,9 +35,11 @@ enum Op {
     Complete,
     RewriteFrom(u8, u8),
     TruncateRewrite(u8, u8),
+    InPlace(u8, u8),
     Compaction(u8),
     Create,
     Relocate,
+    MoveFolder,
     Remove,
     Rename,
     Delete,
@@ -52,9 +55,11 @@ fn op() -> impl Strategy<Value = Op> {
         1 => Just(Op::Complete),
         1 => (0u8..8, 0u8..3).prop_map(|(k, n)| Op::RewriteFrom(k, n)),
         1 => (0u8..8, 0u8..3).prop_map(|(k, n)| Op::TruncateRewrite(k, n)),
+        1 => (0u8..8, 0u8..3).prop_map(|(k, n)| Op::InPlace(k, n)),
         1 => (0u8..8).prop_map(Op::Compaction),
         1 => Just(Op::Create),
         1 => Just(Op::Relocate),
+        1 => Just(Op::MoveFolder),
         1 => Just(Op::Remove),
         1 => Just(Op::Rename),
         1 => Just(Op::Delete),
@@ -141,7 +146,8 @@ fn expected(m: &Model) -> Vec<(String, Option<String>)> {
     v
 }
 
-/// The conversation's visible Claude Code events (kind, uuid), sorted.
+/// The conversation's visible Claude Code events (kind, uuid), sorted: every `cc.*` kind, so an event of a kind the
+/// classifier does not make (a leak) fails the comparison too.
 async fn visible(w: &World, id: Uuid) -> Vec<(String, Option<String>)> {
     let mut v: Vec<(String, Option<String>)> = w
         .magpie()
@@ -150,7 +156,7 @@ async fn visible(w: &World, id: Uuid) -> Vec<(String, Option<String>)> {
         .unwrap()
         .query(
             "select e.kind, e.data->>'uuid' from events e
-              where e.conversation_id = $1 and e.kind in ('cc.user', 'cc.assistant')
+              where e.conversation_id = $1 and e.kind like 'cc.%'
                 and not exists (select 1 from events r where r.conversation_id = $1 and r.kind = 'retract'
                                 and r.data->'seqs' @> to_jsonb(e.seq))
               order by e.seq",
@@ -166,8 +172,8 @@ async fn visible(w: &World, id: Uuid) -> Vec<(String, Option<String>)> {
 }
 
 async fn check(w: &World, m: &Model) {
-    let only: BTreeSet<Uuid> = [m.id].into_iter().collect();
-    let r = pass::pass(&w.imp, Some(&only)).await.unwrap();
+    // a whole pass (the purge, the shares and the view-as rows run too), over the earlier cases' conversations as well
+    let r = pass::pass(&w.imp, None).await.unwrap();
     assert!(r.errors.is_empty(), "{:?}", r.errors);
     let v = verify::verify(&w.imp, m.id).await.unwrap();
     assert!(v.ok() && v.reingested.is_empty(), "{v:?}");
@@ -255,6 +261,25 @@ async fn case(w: &World, key: &str, ops: Vec<Op>) {
                 }
                 std::fs::write(&path, m.bytes()).unwrap();
             }
+            Op::InPlace(k, n) => {
+                // Claude Code's in-place rewrite (`performRemoveByUuid`): the lines from k on written at their offset
+                // over the old bytes (no truncate first), then the file cut to its new length
+                let k = usize::from(k).min(m.lines.len());
+                let at: usize = m.lines[..k].iter().map(Vec::len).sum();
+                m.lines.truncate(k);
+                m.tail = None;
+                for _ in 0..n {
+                    let l = m.line();
+                    m.lines.push(l);
+                }
+                let bytes = m.bytes();
+                let f = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(w.claude(&m.key).join(&m.main))
+                    .unwrap();
+                std::os::unix::fs::FileExt::write_all_at(&f, &bytes[at..], at as u64).unwrap();
+                f.set_len(bytes.len() as u64).unwrap();
+            }
             Op::Compaction(k) => {
                 let k = usize::from(k).min(m.lines.len());
                 m.lines.truncate(k);
@@ -264,7 +289,13 @@ async fn case(w: &World, key: &str, ops: Vec<Op>) {
                 w.rename_over(&m.key, &m.main, &m.bytes());
             }
             Op::Create => {
-                let name = format!("projects/-workspace/{}/tool-results/t{}.txt", m.psid, m.next);
+                // in one of two folders of saved tool output, so a folder can move with several files in it
+                let name = format!(
+                    "projects/-workspace/{}/tool-results/d{}/t{}.txt",
+                    m.psid,
+                    m.next % 2,
+                    m.next
+                );
                 m.next += 1;
                 w.put(&m.key, &name, format!("output {}\n", m.next).as_bytes());
                 m.files.insert(name);
@@ -276,6 +307,23 @@ async fn case(w: &World, key: &str, ops: Vec<Op>) {
                     std::fs::rename(base.join(&f), base.join(&to)).unwrap();
                     m.files.remove(&f);
                     m.files.insert(to);
+                }
+            }
+            Op::MoveFolder => {
+                // a folder renamed with its files (rule 6 pairs each gone file with its new path by its bytes)
+                if let Some(f) = m.files.iter().find(|f| f.contains("/tool-results/d")).cloned() {
+                    let (dir, _) = f.rsplit_once('/').unwrap();
+                    m.next += 1;
+                    let to = format!("projects/-workspace/{}/subagents/moved{}", m.psid, m.next);
+                    let base = w.claude(&m.key);
+                    std::fs::create_dir_all(base.join(&to).parent().unwrap()).unwrap();
+                    std::fs::rename(base.join(dir), base.join(&to)).unwrap();
+                    let prefix = format!("{dir}/");
+                    let moved: Vec<String> = m.files.iter().filter(|p| p.starts_with(&prefix)).cloned().collect();
+                    for p in moved {
+                        m.files.remove(&p);
+                        m.files.insert(format!("{to}/{}", &p[prefix.len()..]));
+                    }
                 }
             }
             Op::Remove => {

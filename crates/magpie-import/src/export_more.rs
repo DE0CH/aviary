@@ -198,8 +198,10 @@ async fn write_share(imp: &Importer, conn: &aviary_pg::Conn, conversation: Uuid,
             return Err(e);
         }
     };
-    remove_tree(&dir)?;
-    std::fs::rename(&tmp, &dir)?;
+    if let Err(e) = remove_tree(&dir).and_then(|_| std::fs::rename(&tmp, &dir).map_err(Into::into)) {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err(e);
+    }
     let files = serde_json::to_string(&files).map_err(|e| Error::Source(e.to_string()))?;
     let title = s
         .title

@@ -139,6 +139,7 @@ pub async fn insert(imp: &Importer, person: &str, id: Uuid, f: &FailedTurn) -> R
     let cmid = format!("import-failed-{}", f.id);
     let pool = &imp.magpie.pool;
     aviary_pg::tx!(pool, |t| -> Result<()> {
+        imp.check_lock_in(t).await?;
         let Some(r) = t
             .query_opt(
                 "select migrating, person from conversations where id = $1 for update",

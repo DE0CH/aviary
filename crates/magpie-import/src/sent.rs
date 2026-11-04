@@ -117,6 +117,9 @@ fn walk(dir: &Path, rel: &str, out: &mut BTreeMap<String, PathBuf>, latest: &mut
     for e in std::fs::read_dir(dir)? {
         let e = e?;
         let name = crate::tree::utf8_name(&e, rel)?;
+        if crate::tree::is_export_temp(&name) {
+            continue;
+        }
         let child = if rel.is_empty() { name } else { format!("{rel}/{name}") };
         let m = e.metadata()?;
         if m.is_dir() {
@@ -220,6 +223,7 @@ pub async fn import(imp: &Importer, person: &str, id: Uuid, s: &Snapshot) -> Res
     let tool_use_id = s.tool_use_id.clone();
     let at = s.at;
     aviary_pg::tx!(&app.pool, |t| -> Result<()> {
+        imp.check_lock_in(t).await?;
         let Some(r) = t
             .query_opt(
                 "select migrating, person from conversations where id = $1 for update",

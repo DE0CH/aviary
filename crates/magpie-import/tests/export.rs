@@ -22,6 +22,20 @@ use uuid::Uuid;
 
 const ALICE: &str = "alice@example.com";
 
+async fn files_record(w: &World, id: Uuid) -> magpie_import::sync::Files {
+    serde_json::from_value(
+        w.magpie()
+            .get()
+            .await
+            .unwrap()
+            .query_one("select files from import_sources where conversation_id = $1", &[&id])
+            .await
+            .unwrap()
+            .get(0),
+    )
+    .unwrap()
+}
+
 async fn set(w: &World, sql: &str, id: Uuid) {
     w.magpie().get().await.unwrap().execute(sql, &[&id]).await.unwrap();
 }
@@ -248,6 +262,10 @@ async fn an_owned_conversation_exports_back_to_the_old_side() {
     assert_eq!(f.len(), 1);
     assert_eq!(f[0].get::<_, Option<String>>(0).as_deref(), Some("and a chart?"));
     assert_eq!(f[0].get::<_, String>(1), "所有電腦正在使用中，請過幾分鐘再試。");
+    // the export is the release record now: each file it wrote with its old-side path and sha256
+    let record = files_record(&w, u1).await;
+    assert_eq!(record[&main].src, w.claude(&ka).join(&main).to_string_lossy());
+    assert_eq!(record[&main].sha256, magpie_import::sha_hex(&grown));
 
     // a share made on the new side (as magpie's M16 makes it, hermit's clone stood in by a folder) goes back in the
     // old layout, without messages.json; a second export leaves it; a revoke on the new side revokes it there
@@ -355,19 +373,22 @@ async fn an_owned_conversation_exports_back_to_the_old_side() {
             "{path}"
         );
     }
-    // the old side changes the shared folder meanwhile: the reopened conversation's memory does not follow it
+    // the reopened conversation's old turns write the person's shared folder (the only one the old stack reads):
+    // what they write after the export reaches the conversation, files made there included; a shared file older than
+    // the export does not replace the conversation's own
     w.put(&ka, "projects/-workspace/memory/MEMORY.md", b"- something else\n");
+    w.put(&ka, "projects/-workspace/memory/later.md", b"- made by an old turn\n");
     let r = pass::pass(&w.imp, Some(&only)).await.unwrap();
     assert!(r.errors.is_empty(), "{:?}", r.errors);
     assert!(verify::verify(&w.imp, u1).await.unwrap().ok());
-    let got = verify::reconstruct(&w.imp, u1, ALICE, "projects/-workspace/memory/MEMORY.md")
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        got.0,
-        magpie_import::sha_hex(b"- prefers short answers\n- and tables\n")
-    );
+    for (path, want) in [
+        ("projects/-workspace/memory/MEMORY.md", &b"- something else\n"[..]),
+        ("projects/-workspace/memory/later.md", &b"- made by an old turn\n"[..]),
+        ("projects/-workspace/memory/charts.md", &b"- bar charts\n"[..]),
+    ] {
+        let got = verify::reconstruct(&w.imp, u1, ALICE, path).await.unwrap().unwrap();
+        assert_eq!(got.0, magpie_import::sha_hex(want), "{path}");
+    }
 }
 
 /// A share of `conversation` frozen up to its head, as M16 makes it (`magpie::shares::create` without hermit's clone).
@@ -733,4 +754,134 @@ async fn an_export_slower_than_its_fence_or_raced_by_a_write_is_the_conversation
     // exported again, it goes
     let x = export::export(&w.imp, None, &[u3], true).await.unwrap();
     assert!(x.errors.is_empty(), "{:?}", x.errors);
+
+    // a share made on the new side while it is written: seen too (the old side would lack the share)
+    let w2 = std::sync::Arc::new(w);
+    let racer = {
+        let w2 = w2.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            new_side_share(&w2, u3).await
+        })
+    };
+    let x = export::export(&paused, None, &[u3], true).await.unwrap();
+    racer.await.unwrap();
+    assert!(x.conversations.is_empty(), "{x:?}");
+    assert!(x.errors[0].1.contains("changed in magpie"), "{x:?}");
+}
+
+/// `export --since` takes changes that make no event (a move to Recently deleted, a share made), leaves the files of
+/// a session folder the importer never imports, and records what it wrote as the release record, so a conversation
+/// that stays released verifies against the export and still sees the old stack's own writes after it.
+#[tokio::test]
+async fn an_export_since_carries_eventless_changes_keeps_other_files_and_is_the_release_record() {
+    let w = World::new("export_since").await;
+    let ka = w.person(ALICE).await;
+    let (u1, p1, main1) = released_one(&w, &ka).await;
+    let (u2, _, _) = released_one(&w, &ka).await;
+    let (u3, _, _) = released_one(&w, &ka).await;
+    for u in [u1, u2, u3] {
+        // released by a hand-over (a forced release's old-side differences are not mismatches)
+        set(
+            &w,
+            "update import_sources set release_reason = 'idle' where conversation_id = $1",
+            u,
+        )
+        .await;
+    }
+    // a file Claude Code keeps in the session folder that the importer does not import
+    let extra = format!("projects/-workspace/{p1}/notes/keep.json");
+    w.put(&ka, &extra, b"{}\n");
+    let since = OffsetDateTime::now_utc();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // u1: moved to Recently deleted (a change, no event) and its tool result removed on the new side; u2: a share
+    // made (neither an event nor a change); u3: nothing
+    let alice = magpie::conversations::Person {
+        email: ALICE.to_owned(),
+        viewer: None,
+    };
+    magpie::conversations::delete::delete(w.magpie(), &alice, u1)
+        .await
+        .unwrap();
+    set(&w, "update conversations set migrating = true where id = $1", u1).await;
+    let tool = format!("projects/-workspace/{p1}/tool-results/t.txt");
+    magpie_import::sync::Writer::new(&w.imp, u1, ALICE, std::collections::BTreeMap::new())
+        .unlink(&tool)
+        .await
+        .unwrap();
+    set(&w, "update conversations set migrating = false where id = $1", u1).await;
+    let sid = new_side_share(&w, u2).await;
+    for u in [u1, u2, u3] {
+        set(&w, "update conversations set legacy_fence_at = now() where id = $1", u).await;
+    }
+    let x = export::export(&w.imp, Some(since), &[], false).await.unwrap();
+    assert!(x.errors.is_empty(), "{:?}", x.errors);
+    let ids: BTreeSet<Uuid> = x.conversations.iter().map(|c| c.conversation).collect();
+    assert_eq!(ids, [u1, u2].into(), "u3 changed nothing after since");
+    let c = w.imp.cloudcli.get().await.unwrap();
+    let row = c
+        .query_one(
+            &format!("select \"isArchived\", deleted_at is not null from cc_{ka}.sessions where session_id = $1"),
+            &[&u1.to_string()],
+        )
+        .await
+        .unwrap();
+    assert_eq!((row.get::<_, Option<i32>>(0), row.get::<_, bool>(1)), (Some(1), true));
+    let shared: i64 = c
+        .query_one("select count(*) from cc_shared.shares where id = $1", &[&sid])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(shared, 1, "u2's new share is on the old side");
+    assert!(
+        !w.claude(&ka).join(&tool).exists(),
+        "the removed tool result is removed"
+    );
+    assert!(
+        w.claude(&ka).join(&extra).exists(),
+        "a file the importer never imported stays"
+    );
+    assert!(!files_record(&w, u1).await.contains_key(&tool));
+    // still released: the old side is what the export wrote
+    for u in [u1, u2] {
+        let v = verify::verify(&w.imp, u).await.unwrap();
+        assert!(v.ok() && v.forced_writes.is_empty(), "{v:?}");
+    }
+    // the old stack writing after the export is a mismatch
+    w.append(&ka, &main1, &user("z1", "2026-10-22T08:00:00.000Z", "the old side"));
+    let v = verify::verify(&w.imp, u1).await.unwrap();
+    assert_eq!(v.mismatches.len(), 1, "{v:?}");
+}
+
+/// What a crash leaves of the export's temporary files is never a source, and the next export sweeps it once old.
+#[tokio::test]
+async fn a_temporary_file_an_export_left_is_never_imported() {
+    let w = World::new("export_tmp").await;
+    let ka = w.person(ALICE).await;
+    let (u1, p1, _) = released_one(&w, &ka).await;
+    let left = w.put(
+        &ka,
+        &format!("projects/-workspace/{p1}/tool-results/.t.txt.aviary-export-0123abcd"),
+        b"half",
+    );
+    let mem = w.put(&ka, "projects/-workspace/memory/.MEMORY.md.aviary-export-4567", b"half");
+    let sources = magpie_import::tree::sources(&w.jfs.0, &ka, &p1.to_string(), Some(u1)).unwrap();
+    assert!(
+        sources.keys().all(|p| !p.contains("aviary-export")),
+        "{:?}",
+        sources.keys()
+    );
+    // old enough to be a crash's: the next export of the conversation removes the session folder's one
+    let old = std::time::SystemTime::now() - export::TEMP_AGE - std::time::Duration::from_secs(5);
+    std::fs::File::options()
+        .write(true)
+        .open(&left)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    set(&w, "update conversations set legacy_fence_at = now() where id = $1", u1).await;
+    let x = export::export(&w.imp, None, &[u1], false).await.unwrap();
+    assert!(x.errors.is_empty(), "{:?}", x.errors);
+    assert!(!left.exists());
+    assert!(mem.exists(), "the shared memory folder is never touched");
 }

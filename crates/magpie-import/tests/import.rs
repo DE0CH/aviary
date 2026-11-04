@@ -675,7 +675,23 @@ async fn an_id_in_two_schemas_is_never_written_and_an_untrusted_read_purges_noth
     let r = pass::pass(&w.imp, None).await.unwrap();
     assert_eq!(r.purged, 0, "{r:?}");
     assert!(r.errors.iter().any(|(id, _)| id == "purge"), "{:?}", r.errors);
+    assert!(
+        r.errors.iter().any(|(id, _)| *id == alice[2].to_string()),
+        "each missing conversation is an error: {:?}",
+        r.errors
+    );
     assert_eq!(count(&w, &alice).await, 6);
+    // the operator purges one that is really gone (a fresh read of its schema has no row for it); one whose row is
+    // there is refused
+    let p = magpie_import::control::purge(&w.imp, &[alice[2], alice[0]])
+        .await
+        .unwrap();
+    assert!(p[0].purged && p[0].error.is_none(), "{p:?}");
+    assert!(
+        !p[1].purged && p[1].error.as_deref() == Some("its sessions row is there"),
+        "{p:?}"
+    );
+    assert_eq!(count(&w, &alice).await, 5);
 
     // no person schemas at all (an empty or wrong database): nothing purged
     w.cloudcli(&format!("alter schema cc_{ka} rename to moved_{ka}")).await;
@@ -688,9 +704,9 @@ async fn an_id_in_two_schemas_is_never_written_and_an_untrusted_read_purges_noth
         "{:?}",
         r.errors
     );
-    assert_eq!(count(&w, &alice).await + count(&w, &[bob]).await, 7);
+    assert_eq!(count(&w, &alice).await + count(&w, &[bob]).await, 6);
 
-    // the read is right again and one row is really gone: that one is purged, the rest stay
+    // the read is right again (alice[2], purged by the operator, comes back as a new import) and one row is really gone: that one is purged, the rest stay
     w.cloudcli(&format!(
         "alter schema moved_{ka} rename to cc_{ka}; alter schema moved_{kb} rename to cc_{kb};"
     ))

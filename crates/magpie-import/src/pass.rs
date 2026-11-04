@@ -22,9 +22,11 @@ use crate::{Error, Importer, Result};
 /// Conversations synced at once (cutover 7.6).
 pub const PARALLEL: usize = 8;
 
-/// The most conversations one pass purges on its own: more than this many (and more than half of the open ones)
-/// missing from one read looks like a wrong or partial `cloudcli` read, not people deleting conversations, and the
-/// pass purges none of them (each is an error until the read has them again, or an operator removes them).
+/// The most conversations one pass purges on its own: more than this many missing from one read, or more than half
+/// of the open ones (two or more), looks like a wrong or partial `cloudcli` read (a schema restored from an old
+/// backup, a sessions table being refilled), not people deleting conversations, and the pass purges none of them:
+/// each is an error until the read has them again or an operator purges it (`magpie import purge <id>…`,
+/// [`crate::control::purge`]).
 pub const PURGE_MAX: usize = 3;
 
 /// What the importer knows of an imported conversation.
@@ -279,8 +281,8 @@ fn purgeable(snap: &source::Snapshot, known: &HashMap<Uuid, Known>, seen: &BTree
 }
 
 /// Why open conversations missing from the read are not purged: `("purge", why)` when the read as a whole is not
-/// trusted (no persons at all while conversations are open, or more missing than [`PURGE_MAX`] and half the open
-/// ones), else one error per conversation whose schema is not in the read (a schema gone or renamed is an
+/// trusted (no persons at all while conversations are open, or [`untrusted`]: too many missing) with an error for each
+/// conversation missing, else one error per conversation whose schema is not in the read (a schema gone or renamed is an
 /// operator's call, never a purge).
 fn purge_refusals(
     snap: &source::Snapshot,
@@ -321,16 +323,30 @@ fn purge_refusals(
             ));
         }
     }
-    if gone > PURGE_MAX && gone * 2 > open {
+    if untrusted(gone, open) {
         out.push((
             "purge".to_owned(),
             format!(
                 "{gone} of {open} open conversations are missing from the cloudcli read: nothing purged (a wrong or \
-                 partial read?)"
+                 partial read? `magpie import purge <id>` purges one whose sessions row is really gone)"
             ),
         ));
+        for (id, k) in &missing {
+            if read.contains(k.schema.as_str()) {
+                out.push((
+                    id.to_string(),
+                    "its sessions row is missing from a read not trusted for a purge: not purged".to_owned(),
+                ));
+            }
+        }
     }
     out
+}
+
+/// Whether `gone` of `open` conversations missing from one read is too many to purge on the read's word: more than
+/// [`PURGE_MAX`], or two or more that are over half of the open ones (one missing is what one deletion looks like).
+fn untrusted(gone: usize, open: usize) -> bool {
+    gone > PURGE_MAX || (gone >= 2 && gone * 2 > open)
 }
 
 fn stats_changed(sources: &BTreeMap<String, tree::Source>, files: &Files) -> bool {
@@ -483,4 +499,68 @@ pub fn find(snap: &source::Snapshot, id: Uuid) -> Option<(&PersonSource, &Sessio
     snap.persons
         .iter()
         .find_map(|p| p.sessions.iter().find(|s| s.id().ok() == Some(id)).map(|s| (p, s)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn world(open: usize, missing: usize) -> (source::Snapshot, HashMap<Uuid, Known>, BTreeSet<Uuid>) {
+        let snap = source::Snapshot {
+            persons: vec![PersonSource {
+                schema: "cc_u1".into(),
+                key: "u1".into(),
+                person: "a@example.com".into(),
+                sessions: Vec::new(),
+                failed: std::collections::BTreeMap::new(),
+            }],
+            ..source::Snapshot::default()
+        };
+        let mut known = HashMap::new();
+        let mut seen = BTreeSet::new();
+        for n in 0..open {
+            let id = Uuid::from_u128(n as u128 + 1);
+            known.insert(
+                id,
+                Known {
+                    row_fp: String::new(),
+                    files: Files::new(),
+                    failed_fp: String::new(),
+                    sent_fp: String::new(),
+                    released: false,
+                    schema: "cc_u1".into(),
+                },
+            );
+            if n >= missing {
+                seen.insert(id);
+            }
+        }
+        (snap, known, seen)
+    }
+
+    #[test]
+    fn a_read_missing_too_many_purges_nothing() {
+        for (open, missing, purged) in [
+            (100, 10, 0),
+            (100, 3, 3),
+            (3, 3, 0),
+            (3, 2, 0),
+            (2, 1, 1),
+            (1, 1, 1),
+            (8, 3, 3),
+        ] {
+            let (snap, known, seen) = world(open, missing);
+            let got = purgeable(&snap, &known, &seen).len();
+            assert_eq!(got, purged, "{missing} of {open} missing");
+            let refused = purge_refusals(&snap, &known, &seen);
+            assert_eq!(
+                refused.iter().any(|(id, _)| id == "purge"),
+                purged == 0,
+                "{missing} of {open}: {refused:?}"
+            );
+            if purged == 0 {
+                assert_eq!(refused.len(), missing + 1, "each missing one is an error too");
+            }
+        }
+    }
 }

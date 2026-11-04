@@ -5,9 +5,10 @@
 //! [`magpie::limits::FENCE_LEASE`]) is the export's error and is not written, unless `--unfenced` says the operator
 //! has stopped writes some other way. The export renews the fence's lease before each file and before the
 //! `cloudcli` writes, so a conversation larger than one lease still exports; a lease that lapsed meanwhile is the
-//! conversation's error. Whatever the fence does, the export reads the conversation's head seq, cc file versions and
-//! row before writing and again after: a conversation that changed in magpie while it was written (a native write the
-//! fence did not hold) is the conversation's error, to be exported again. The only write to magpie is that lease.
+//! conversation's error. Whatever the fence does, the export reads the conversation's head seq, cc file versions, row
+//! and shares before writing and again after: a conversation that changed in magpie while it was written (a native write the
+//! fence did not hold) is the conversation's error, to be exported again. Its writes to magpie are that lease and,
+//! for an imported conversation, the release record (`import_sources.files`) set to the files it wrote and deleted.
 //! It checks the mount first and stops when the leader lock is lost.
 //!
 //! One Claude Code session id, one old-side transcript: a person who continued a share twice (or their own share)
@@ -24,7 +25,8 @@
 //!   `users/<key>/claude/<cc path>` (a temporary file in the same folder, then a rename; mode 0600, uid and gid 1000
 //!   as Claude Code writes them: a file that cannot be given to that uid fails the export, since the old sandbox could
 //!   not read it). A file the old side has that magpie's scope no longer has (removed or relocated on the new side)
-//!   is deleted: any file under the conversation's session folder `projects/-workspace/<psid>/` or its
+//!   is deleted: any file under the conversation's session folder's `tool-results/` and `subagents/` (the parts the
+//!   importer imports; other files there are never in magpie's scope and stay) or its
 //!   `aviary-memory/<conversation>/` folder, and any path the importer recorded for it (`import_sources.files`); the
 //!   person's shared memory folder is never touched.
 //! - Auto-memory (decision 6): the conversation's `projects/-workspace/memory/**` goes to
@@ -103,8 +105,9 @@ fn ts(t: OffsetDateTime) -> String {
     t.format(&Rfc3339).unwrap_or_default()
 }
 
-/// The conversations to export: `ids` when given, else every owned conversation with an event after `since` or
-/// created after it (every owned one without `since`).
+/// The conversations to export: `ids` when given, else every owned conversation created after `since`, or with an
+/// event, a change (magpie's `changes` feed: a move to Recently deleted and a restore append no event) or a share
+/// created or revoked after it (every owned one without `since`).
 ///
 /// # Errors
 /// A statement error.
@@ -114,7 +117,11 @@ pub async fn targets(imp: &Importer, since: Option<OffsetDateTime>, ids: &[Uuid]
         conn.query(
             "select c.id from conversations c where not c.migrating and
                     ($1::timestamptz is null or c.created_at > $1
-                     or exists (select 1 from events e where e.conversation_id = c.id and e.at > $1))
+                     or exists (select 1 from events e where e.conversation_id = c.id and e.at > $1)
+                     or exists (select 1 from changes x where x.person = c.person and x.conversation_id = c.id
+                                and x.at > $1)
+                     or exists (select 1 from shares s where s.conversation_id = c.id
+                                and (s.created_at > $1 or s.revoked_at > $1)))
              order by c.id",
             &[&since],
         )
@@ -159,19 +166,31 @@ async fn keep(imp: &Importer, id: Uuid, fenced: bool) -> Result<()> {
 }
 
 /// What the export reads of a conversation before writing it and again after: its head seq, every cc file's
-/// version, and the row columns the sessions row takes.
+/// version, the columns the sessions row takes, and its shares.
 #[derive(Debug, PartialEq, Eq)]
 struct Seen {
     head_seq: i64,
     files: Vec<(String, i64)>,
-    row: (Option<String>, Option<String>, Option<OffsetDateTime>, Option<String>),
+    row: SeenRow,
+    shares: Vec<(String, Option<OffsetDateTime>, i64)>,
 }
+
+/// `title, name_source, deleted_at, provider_session_id, model, activity_at`.
+type SeenRow = (
+    Option<String>,
+    Option<String>,
+    Option<OffsetDateTime>,
+    Option<String>,
+    Option<String>,
+    OffsetDateTime,
+);
 
 async fn seen(imp: &Importer, id: Uuid) -> Result<Seen> {
     let conn = imp.magpie.pool.get().await?;
     let r = conn
         .query_one(
-            "select head_seq, title, name_source, deleted_at, provider_session_id from conversations where id = $1",
+            "select head_seq, title, name_source, deleted_at, provider_session_id, model, activity_at
+             from conversations where id = $1",
             &[&id],
         )
         .await?;
@@ -184,10 +203,20 @@ async fn seen(imp: &Importer, id: Uuid) -> Result<Seen> {
         .iter()
         .map(|f| (f.get(0), f.get(1)))
         .collect();
+    let shares = conn
+        .query(
+            "select id, revoked_at, upto_seq from shares where conversation_id = $1 order by id",
+            &[&id],
+        )
+        .await?
+        .iter()
+        .map(|s| (s.get(0), s.get(1), s.get(2)))
+        .collect();
     Ok(Seen {
         head_seq: r.get(0),
         files,
-        row: (r.get(1), r.get(2), r.get(3), r.get(4)),
+        row: (r.get(1), r.get(2), r.get(3), r.get(4), r.get(5), r.get(6)),
+        shares,
     })
 }
 
@@ -299,21 +328,64 @@ where
             .mode(0o600)
             .open(&tmp)?
     };
-    let r = write(opened).await;
-    let (done, n) = match r {
-        Ok(x) => x,
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e);
-        }
-    };
-    done.sync_all()?;
-    drop(done);
-    if let Err(e) = own(owner, &tmp) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
+    let r = async {
+        let (done, n) = write(opened).await?;
+        done.sync_all()?;
+        drop(done);
+        own(owner, &tmp)?;
+        std::fs::rename(&tmp, dest)?;
+        Ok(n)
     }
-    std::fs::rename(&tmp, dest)?;
+    .await;
+    if r.is_err() {
+        // every failure takes its temporary file with it (a crash's is swept by a later export)
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
+}
+
+/// How old a leftover temporary file or share folder of the export must be before an export sweeps it (younger, it
+/// may be another export's still being written).
+pub const TEMP_AGE: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Removes the export's leftover temporary files and folders ([`crate::tree::is_export_temp`]) older than
+/// [`TEMP_AGE`] in `dir` (and its subfolders when `deep`): what a crash or a kill left. How many.
+pub(crate) fn sweep_temps(dir: &Path, deep: bool) -> Result<usize> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            return Ok(0);
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let mut n = 0;
+    for e in entries {
+        let e = e?;
+        let m = e.metadata()?;
+        let temp = e.file_name().to_str().is_some_and(crate::tree::is_export_temp);
+        if temp {
+            let old = m
+                .modified()
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|a| a >= TEMP_AGE);
+            if old {
+                if m.is_dir() {
+                    std::fs::remove_dir_all(e.path())?;
+                } else {
+                    std::fs::remove_file(e.path())?;
+                }
+                n += 1;
+            }
+        } else if deep && m.is_dir() {
+            n += sweep_temps(&e.path(), true)?;
+        }
+    }
     Ok(n)
 }
 
@@ -396,6 +468,8 @@ async fn meta(imp: &Importer, id: Uuid) -> Result<Meta> {
 
 #[allow(clippy::too_many_lines)] // files, sessions row, failed turns, shares, each fenced
 async fn conversation(imp: &Importer, id: Uuid, since: Option<OffsetDateTime>, fenced: bool) -> Result<Conversation> {
+    // the snapshot first, then what is written from it: a change between the two is in the snapshot taken after
+    let before = seen(imp, id).await?;
     let m = meta(imp, id).await?;
     let key = aviary_core::log::person_key(&m.person);
     let claude = crate::tree::claude_dir(&imp.jfs, &key);
@@ -407,27 +481,44 @@ async fn conversation(imp: &Importer, id: Uuid, since: Option<OffsetDateTime>, f
             m.psid
         )));
     }
-    let before = seen(imp, id).await?;
     let mut out = Conversation {
         conversation: id,
         person_key: key.clone(),
         ..Conversation::default()
     };
-    let scope = crate::verify::magpie_files(imp, id).await?;
-    for path in scope.keys() {
-        keep(imp, id, fenced).await?;
-        let dest = destination(&claude, id, path)?;
-        let rec = write_scope_recorded(imp, id, path, &dest).await?;
-        out.bytes += rec.size;
-        out.files += 1;
-        if path.starts_with(crate::tree::MEMORY) {
-            out.memory += 1;
-        }
-        out.recorded.insert(path.clone(), rec);
-        crate::pause(imp.pause_in_fence).await;
+    // what an earlier export that crashed left in this conversation's folders (and the person's share folders)
+    let project = claude.join(crate::tree::PROJECT);
+    sweep_temps(&project, false)?;
+    for part in crate::tree::SESSION_PARTS {
+        sweep_temps(&project.join(&m.psid).join(part), true)?;
     }
-    keep(imp, id, fenced).await?;
-    out.removed = remove_stale(imp, id, &claude, &m.psid, &scope).await?;
+    sweep_temps(&claude.join("aviary-memory").join(id.to_string()), true)?;
+    sweep_temps(&imp.jfs.join("sent").join(id.to_string()), true)?;
+    sweep_temps(&imp.jfs.join("users").join(&key).join("shares"), false)?;
+    let scope = crate::verify::magpie_files(imp, id).await?;
+    let mut removed = Vec::new();
+    let wrote = async {
+        for path in scope.keys() {
+            keep(imp, id, fenced).await?;
+            let dest = destination(&claude, id, path)?;
+            let rec = write_scope_recorded(imp, id, path, &dest).await?;
+            out.bytes += rec.size;
+            out.files += 1;
+            if path.starts_with(crate::tree::MEMORY) {
+                out.memory += 1;
+            }
+            out.recorded.insert(path.clone(), rec);
+            crate::pause(imp.pause_in_fence).await;
+        }
+        keep(imp, id, fenced).await?;
+        remove_stale(imp, id, &claude, &m.psid, &scope, &mut removed).await
+    }
+    .await;
+    out.removed = removed.len();
+    // what was written and deleted is the release record now (also when the export stopped part-way), so a released
+    // conversation that stays owned verifies against the export's files and still sees the old stack's own writes
+    record_export(imp, id, &out.recorded, &removed).await?;
+    wrote?;
     let base = imp.jfs.join("sent").join(id.to_string());
     out.sent_files = write_sent(imp, id, since, None, &base).await?.len();
     keep(imp, id, fenced).await?;
@@ -508,6 +599,29 @@ async fn conversation(imp: &Importer, id: Uuid, since: Option<OffsetDateTime>, f
     Ok(out)
 }
 
+/// Records the files the export wrote and deleted in an imported conversation's release record
+/// (`import_sources.files`, released conversations only; a magpie-born one has none until the reopen creates it):
+/// [`crate::verify`]'s check of a released conversation then holds the old side to what the export wrote, and what
+/// the old stack writes after it is still a mismatch.
+async fn record_export(imp: &Importer, id: Uuid, recorded: &crate::sync::Files, removed: &[String]) -> Result<()> {
+    if recorded.is_empty() && removed.is_empty() {
+        return Ok(());
+    }
+    let files = serde_json::to_value(recorded)?;
+    let pool = &imp.magpie.pool;
+    aviary_pg::tx!(pool, |t| -> Result<()> {
+        imp.check_lock_in(t).await?;
+        t.execute(
+            "update import_sources set files = (files - $3::text[]) || $2::jsonb
+              where conversation_id = $1 and released_at is not null",
+            &[&id, &files, &removed],
+        )
+        .await?;
+        Ok(())
+    })
+    .await
+}
+
 /// Failed turns after `since` that never reached Claude Code, as `jarvis_failed_turns` rows (once each: a row with
 /// the same `error_at` is not written again).
 async fn failed(
@@ -561,27 +675,32 @@ async fn failed(
 }
 
 /// Deletes the old side's files of conversation `id` that magpie's scope `scope` no longer has: everything under its
-/// session folder `projects/-workspace/<psid>/` and its `aviary-memory/<id>/` folder, and every path the importer
+/// session folder's `tool-results/` and `subagents/` (what the importer imports of it), its `aviary-memory/<id>/`
+/// folder, and every path the importer
 /// recorded for it (a main transcript before a relocation, an earlier session folder's files); never the person's
-/// shared memory folder. How many.
+/// shared memory folder. Each cc path deleted goes into `removed`.
 async fn remove_stale(
     imp: &Importer,
     id: Uuid,
     claude: &Path,
     psid: &str,
     scope: &std::collections::BTreeMap<String, u64>,
-) -> Result<usize> {
+    removed: &mut Vec<String>,
+) -> Result<()> {
     let memory = format!("{}/", crate::tree::MEMORY);
     let mut candidates: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     if let Some(r) = crate::verify::row(imp, id).await? {
         candidates.extend(r.files.into_keys().filter(|p| !p.starts_with(&memory)));
     }
+    // only the session folder's parts the importer imports (tree::sources): any other file Claude Code or the old
+    // stack keeps there is never in magpie's scope, and stays
     let mut session = Vec::new();
-    let folder = format!("{}/{psid}", crate::tree::PROJECT);
-    under(claude, &folder)?;
-    files_under(claude, &folder, &mut session)?;
+    for part in crate::tree::SESSION_PARTS {
+        let folder = format!("{}/{psid}/{part}", crate::tree::PROJECT);
+        under(claude, &folder)?;
+        files_under(claude, &folder, &mut session)?;
+    }
     candidates.extend(session);
-    let mut n = 0;
     for p in &candidates {
         if scope.contains_key(p) {
             continue;
@@ -589,7 +708,7 @@ async fn remove_stale(
         let f = under(claude, p)?;
         if std::fs::symlink_metadata(&f).is_ok_and(|m| !m.is_dir()) {
             std::fs::remove_file(&f)?;
-            n += 1;
+            removed.push(p.clone());
         }
     }
     let mem = claude.join("aviary-memory").join(id.to_string());
@@ -599,10 +718,10 @@ async fn remove_stale(
         let cc = format!("{memory}{rel}");
         if !scope.contains_key(&cc) {
             std::fs::remove_file(under(&mem, &rel)?)?;
-            n += 1;
+            removed.push(cc);
         }
     }
-    Ok(n)
+    Ok(())
 }
 
 /// The files under `base/rel` as `rel/…` paths (`rel` empty: relative to `base`); nothing for a folder that is not
@@ -628,6 +747,9 @@ fn files_under(base: &Path, rel: &str, out: &mut Vec<String>) -> Result<()> {
     for e in entries {
         let e = e?;
         let name = crate::tree::utf8_name(&e, rel)?;
+        if crate::tree::is_export_temp(&name) {
+            continue;
+        }
         let child = if rel.is_empty() { name } else { format!("{rel}/{name}") };
         let t = e.file_type()?;
         if t.is_dir() {

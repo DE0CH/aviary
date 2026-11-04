@@ -299,6 +299,7 @@ pub async fn record(
 pub async fn flush_limbo(imp: &Importer, id: Uuid) -> Result<usize> {
     let pool = &imp.magpie.pool;
     aviary_pg::tx!(pool, |t| -> Result<usize> {
+        imp.check_lock_in(t).await?;
         let Some(r) = t
             .query_opt("select migrating from conversations where id = $1 for update", &[&id])
             .await?

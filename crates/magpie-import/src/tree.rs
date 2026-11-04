@@ -5,11 +5,13 @@
 //! `claude/` folder, so `claude --resume` reads the same names.
 //!
 //! A conversation the reverse export wrote back (cutover 14.3) has its own memory in `aviary-memory/<conversation>/`,
-//! which the old stack does not read: once that folder is there, it is the conversation's memory source (cc paths
-//! `projects/-workspace/memory/**` still) instead of the person's shared folder, so a conversation reopened after a
-//! rollback keeps the memory it had on the new side, files made there included, and verification finds each of them
-//! in its source. What old turns write to the shared folder meanwhile goes to the person's other conversations, as
-//! each copy diverges anyway (decision 6). Every other `aviary-memory/` folder is ignored.
+//! which the old stack does not read: once that folder is there, the conversation's memory (cc paths
+//! `projects/-workspace/memory/**` still) is that folder's files, and over them every file of the person's shared
+//! folder written after the export (the folder's newest write). A conversation reopened after a rollback so keeps
+//! the memory it had on the new side, files made there included, and also gets what its old turns write, which can
+//! only go to the shared folder; what other conversations' old turns write there after the export comes with it, as
+//! nothing tells the writers apart, and a file deleted from the shared folder stays in the conversation. Verification
+//! finds each file in its source. Every other `aviary-memory/` folder is ignored.
 
 use std::collections::BTreeMap;
 use std::io::Read as _;
@@ -23,6 +25,10 @@ use crate::Result;
 
 /// The project folder every old conversation ran in (the cwd is always `/workspace`).
 pub const PROJECT: &str = "projects/-workspace";
+
+/// The parts of a session folder `projects/-workspace/<psid>/` that are the conversation's (imported, and deleted
+/// on the old side by the export when magpie's scope no longer has them); anything else there is left alone.
+pub const SESSION_PARTS: [&str; 2] = ["tool-results", "subagents"];
 
 /// Claude Code's auto-memory folder of the project.
 pub const MEMORY: &str = "projects/-workspace/memory";
@@ -96,11 +102,8 @@ pub fn sources(jfs: &Path, key: &str, psid: &str, id: Option<uuid::Uuid>) -> Res
             },
         );
     }
-    for dir in [
-        format!("{PROJECT}/{psid}/tool-results"),
-        format!("{PROJECT}/{psid}/subagents"),
-    ] {
-        walk(&base, &dir, &mut out)?;
+    for part in SESSION_PARTS {
+        walk(&base, &format!("{PROJECT}/{psid}/{part}"), &mut out)?;
     }
     let own = id.filter(|id| std::fs::symlink_metadata(exported_memory(jfs, key, *id)).is_ok_and(|m| m.is_dir()));
     match own {
@@ -108,13 +111,44 @@ pub fn sources(jfs: &Path, key: &str, psid: &str, id: Option<uuid::Uuid>) -> Res
             let name = id.to_string();
             let mut mine = BTreeMap::new();
             walk(&base.join("aviary-memory"), &name, &mut mine)?;
+            // the export's time: the newest write in the folder (only the export writes it)
+            let exported = newest(&exported_memory(jfs, key, id))?;
             for (rel, src) in mine {
                 out.insert(format!("{MEMORY}{}", &rel[name.len()..]), src);
+            }
+            // what old turns wrote to the shared folder after it (the reopened conversation's own among them)
+            let mut shared = BTreeMap::new();
+            walk(&base, MEMORY, &mut shared)?;
+            for (path, src) in shared {
+                if src.stat.mtime_ns > exported {
+                    out.insert(path, src);
+                }
             }
         }
         None => walk(&base, MEMORY, &mut out)?,
     }
     Ok(out)
+}
+
+/// The newest modification time (ns) of `dir` and everything in it; 0 for a folder that is not there.
+fn newest(dir: &Path) -> Result<i64> {
+    let mut t = match std::fs::symlink_metadata(dir) {
+        Ok(m) => Stat::of(&m).mtime_ns,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(e.into()),
+    };
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries {
+            let e = e?;
+            let m = e.metadata()?;
+            t = t.max(if m.is_dir() {
+                newest(&e.path())?
+            } else {
+                Stat::of(&m).mtime_ns
+            });
+        }
+    }
+    Ok(t)
 }
 
 /// The person's auto-memory files (for `plan`).
@@ -154,6 +188,9 @@ fn walk(base: &Path, rel: &str, out: &mut BTreeMap<String, Source>) -> Result<()
     for e in entries {
         let e = e?;
         let name = utf8_name(&e, rel)?;
+        if is_export_temp(&name) {
+            continue;
+        }
         names.push((name, e.metadata()?));
     }
     names.sort_by(|a, b| a.0.cmp(&b.0));
@@ -172,6 +209,13 @@ fn walk(base: &Path, rel: &str, out: &mut BTreeMap<String, Source>) -> Result<()
         }
     }
     Ok(())
+}
+
+/// Whether `name` is one of the export's temporary files or share folders (`.<name>.aviary-export-<hex>`, renamed
+/// into place when complete): never a source, whatever a crash left behind.
+#[must_use]
+pub fn is_export_temp(name: &str) -> bool {
+    name.starts_with('.') && name.contains(".aviary-export-")
 }
 
 /// A folder entry's name, which must be UTF-8 (a cc path is text): another name is the conversation's error, never

@@ -1,5 +1,5 @@
-//! The importer's one-shot commands (cutover 7.9): `status`, `hold on|off`, `reset --yes`, `unfence <id>` and
-//! `release <id> --force`.
+//! The importer's one-shot commands (cutover 7.9): `status`, `hold on|off`, `reset --yes`, `unfence <id>`,
+//! `release <id> --force` and `purge <id>…`.
 
 use magpie::legacy::{fence, tickets};
 use serde::Serialize;
@@ -214,6 +214,56 @@ pub async fn reset(imp: &Importer) -> Result<u64> {
     Ok(n)
 }
 
+/// What `purge <id>…` did with one conversation.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorPurge {
+    /// The conversation.
+    pub conversation: Uuid,
+    /// Purged.
+    pub purged: bool,
+    /// Why not.
+    pub error: Option<String>,
+}
+
+/// `purge <id>…`: the operator's purge of migrating conversations a pass would not purge on its own (a read missing
+/// too many at once, [`crate::pass::PURGE_MAX`]). Each is purged only when a fresh, clean read of its own schema has
+/// no sessions row for it, as a pass's purge (no hermit call; the old stack's workspace stays).
+///
+/// # Errors
+/// The lock lost; a statement error.
+pub async fn purge(imp: &Importer, ids: &[Uuid]) -> Result<Vec<OperatorPurge>> {
+    let mut out = Vec::new();
+    for &id in ids {
+        imp.check_lock().await?;
+        let why = match crate::verify::row(imp, id).await? {
+            None => Some("not imported".to_owned()),
+            Some(r) if r.released => Some("released: not the importer's".to_owned()),
+            Some(r) => match crate::source::read_schema(&imp.cloudcli, &r.schema).await {
+                Err(e) => Some(format!("the read of schema {}: {e}", r.schema)),
+                Ok(snap) => {
+                    if let Some((_, w)) = snap.problems.first() {
+                        Some(format!("schema {}: {w}", r.schema))
+                    } else if !snap.persons.iter().any(|p| p.schema == r.schema) {
+                        Some(format!("schema {} is not in the read", r.schema))
+                    } else if crate::pass::find(&snap, id).is_some() {
+                        Some("its sessions row is there".to_owned())
+                    } else {
+                        None
+                    }
+                }
+            },
+        };
+        let purged = why.is_none() && crate::conv::purge(imp, id).await?;
+        out.push(OperatorPurge {
+            conversation: id,
+            purged,
+            error: why.or_else(|| (!purged).then(|| "not migrating".to_owned())),
+        });
+    }
+    Ok(out)
+}
+
 /// `unfence <id>`: lifts a fence by hand (normally automatic). Whether one was lifted.
 ///
 /// # Errors
@@ -241,6 +291,10 @@ pub struct Forced {
     pub reingested: Vec<String>,
     /// Verification's own error, when it could not run.
     pub verify_error: Option<String>,
+    /// The conversation's own sync error (the last of the syncs before and inside the fence), released past as
+    /// forced: what that sync could not bring over (a file that appeared in a sent folder after its import, a main
+    /// transcript gone, a name that is not UTF-8, a write magpie refused) stays on the old side only.
+    pub sync_error: Option<String>,
     /// Fence to release by the database's clock, seconds (what `magpie_fence_seconds` of this process observed:
     /// a one-shot process's registry, which nothing scrapes, so forced releases are counted here and kept out of the
     /// A5 gate's histogram on purpose).
@@ -251,8 +305,11 @@ pub struct Forced {
 }
 
 /// The final sync of one conversation: one read of its person's schema, then the same sync a pass makes (files,
-/// sessions row, failed turns, sent files).
-async fn final_sync(imp: &Importer, id: Uuid) -> Result<()> {
+/// sessions row, failed turns, sent files). The outer error stops a forced release (the mount, the read, a
+/// conversation not imported or whose sessions row is gone, the lock lost, the conversation released meanwhile);
+/// the inner one is the conversation's own sync error (a late sent file, a vanished main transcript, a name that is
+/// not UTF-8, a write magpie refused), which a forced release reports and releases past.
+async fn final_sync(imp: &Importer, id: Uuid) -> Result<Result<()>> {
     crate::tree::check_mount(&imp.jfs)?;
     let Some(row) = crate::verify::row(imp, id).await? else {
         return Err(Error::Source(format!("{id} was not imported")));
@@ -266,42 +323,55 @@ async fn final_sync(imp: &Importer, id: Uuid) -> Result<()> {
     };
     let known = crate::pass::known_of(imp, id).await?;
     let failed = p.failed.get(&s.session_id).cloned().unwrap_or_default();
-    crate::pass::sync_conversation(imp, &p.person, &p.schema, &p.key, s, &failed, known.as_ref()).await?;
-    Ok(())
+    match crate::pass::sync_conversation(imp, &p.person, &p.schema, &p.key, s, &failed, known.as_ref()).await {
+        Ok(_) => Ok(Ok(())),
+        Err(e @ (Error::LockLost | Error::Released)) => Err(e),
+        Err(e) => Ok(Err(e)),
+    }
 }
 
-/// `release <id> --force` (cutover 7.7 step 3, A2 rehearsal 7): closes the conversation's open tickets (an open
-/// ticket otherwise refuses the fence and the release for ever; an old turn still running is cut off, which the
-/// operator accepts by forcing), verifies it (a mismatch is reported, not a refusal), syncs it once before the fence
-/// (so the sync inside it usually has nothing left to do), fences it, syncs it once more inside the fence and
-/// re-stats every source and fingerprint against what that sync recorded (cutover 7.8): anything that changed
-/// meanwhile lifts the fence and fails the release. Then it releases with `release_reason = forced`, in one
-/// transaction that also checks the one-shot lock. The fence is a lease of [`magpie::limits::FENCE_LEASE`]: a final
-/// sync that outlasts it fails the release with that said (nothing is released; run it again). The old title's
-/// `name_source` is kept as imported.
+/// The conversation's sources now, as fingerprints (the forced release's re-stat when its sync failed).
+async fn fingerprints(imp: &Importer, id: Uuid) -> Result<crate::verify::Fingerprints> {
+    let Some(r) = crate::verify::row(imp, id).await? else {
+        return Err(Error::Source(format!("{id} was not imported")));
+    };
+    Ok(crate::verify::current(imp, id, &r).await?.1)
+}
+
+/// `release <id> --force` (cutover 7.7 step 3, A2 rehearsal 7): verifies the conversation (a mismatch is reported,
+/// not a refusal), syncs it once before the fence (so the sync inside it usually has nothing left to do), closes its
+/// open tickets (an open ticket otherwise refuses the fence and the release for ever; an old turn still running is
+/// cut off, which the operator accepts by forcing), fences it, syncs it once more inside the fence and re-stats every
+/// source and fingerprint (cutover 7.8): anything that changed meanwhile lifts the fence and fails the release. A
+/// sync error of the conversation's own (a late sent file, a main transcript gone, a name that is not UTF-8) is
+/// reported in [`Forced::sync_error`] and released past, as a verification mismatch is: forcing is the way out for a
+/// conversation stuck on one; the re-stat is then against the sources as they were when the fence was taken. Then it
+/// releases with `release_reason = forced`, in one transaction that also checks the one-shot lock. The fence is a
+/// lease of [`magpie::limits::FENCE_LEASE`]: a final sync that outlasts it fails the release with that said (nothing
+/// is released; run it again). The old title's `name_source` is kept as imported.
 ///
 /// Not done here: cutover 7.8's upload-ingestion pass inside the release transaction (WP-52's; until it exists a
 /// native send naming an old asset waits for the synchronous ingest of the import Deployment, A3 on).
 ///
 /// # Errors
-/// [`Error::Source`] when it cannot be fenced or released (not migrating, a ticket taken meanwhile, a source that
-/// changed inside the fence, the fence's lease over before the release); the lock lost; a statement error.
+/// [`Error::Source`] when it cannot be fenced or released (not migrating, its sessions row gone, a ticket taken
+/// meanwhile, a source that changed inside the fence, the fence's lease over before the release); the mount not
+/// there; the lock lost; a statement error.
 #[allow(clippy::too_many_lines)] // verify, sync, fence, sync, re-stat, release, each with its own failure
 pub async fn release_forced(imp: &Importer, id: Uuid) -> Result<Forced> {
     imp.check_lock().await?;
     let pool = &imp.magpie.pool;
-    let at = tickets::now(pool).await?;
-    let expired = tickets::expire(pool, id, at).await?;
     // verified before the fence: the fence is a 3 s lease
     let verdict = crate::verify::verify(imp, id).await;
     let mut out = Forced {
         conversation: id,
-        tickets_expired: expired,
+        tickets_expired: 0,
         verified: false,
         mismatches: Vec::new(),
         pending: Vec::new(),
         reingested: Vec::new(),
         verify_error: None,
+        sync_error: None,
         fence_seconds: 0.0,
         in_fence_seconds: 0.0,
     };
@@ -318,14 +388,21 @@ pub async fn release_forced(imp: &Importer, id: Uuid) -> Result<Forced> {
             out.pending = v.pending;
             out.reingested = v.reingested;
         }
+        Err(e @ Error::LockLost) => return Err(e),
         Err(e) => {
             tracing::warn!(conversation = %id, error = %e, "released by force without a verification");
             out.verify_error = Some(e.to_string());
         }
     }
-    // what the old stack wrote since the verification, synced before the fence
-    final_sync(imp, id).await?;
+    // what the old stack wrote since the verification, synced before the fence; a release that cannot happen (the
+    // mount, the read, the row gone) fails here, before any open ticket is cut off
+    if let Err(e) = final_sync(imp, id).await? {
+        tracing::warn!(conversation = %id, error = %e, "the sync before a forced release failed");
+        out.sync_error = Some(e.to_string());
+    }
     imp.check_lock().await?;
+    let at = tickets::now(pool).await?;
+    out.tickets_expired = tickets::expire(pool, id, at).await?;
     match fence::fence(pool, id).await? {
         fence::Fence::Fenced(_) | fence::Fence::AlreadyFenced => {}
         other => return Err(Error::Source(format!("{id} cannot be fenced: {other:?}"))),
@@ -333,12 +410,37 @@ pub async fn release_forced(imp: &Importer, id: Uuid) -> Result<Forced> {
     let fenced = std::time::Instant::now();
     crate::pause(imp.pause_in_fence).await;
     // inside the fence: whatever the old stack wrote since is synced now, then nothing may move
-    let changes = match final_sync(imp, id).await {
-        Ok(()) => crate::verify::changed_since_sync(imp, id).await,
-        Err(e) => Err(e),
-    };
+    let changes = async {
+        let at_fence = fingerprints(imp, id).await;
+        match final_sync(imp, id).await? {
+            Ok(()) => {
+                out.sync_error = None;
+                crate::verify::changed_since_sync(imp, id).await
+            }
+            Err(e) => {
+                tracing::warn!(conversation = %id, error = %e, "the sync inside a forced release's fence failed");
+                match (at_fence, fingerprints(imp, id).await) {
+                    (Ok(a), Ok(b)) => {
+                        out.sync_error = Some(e.to_string());
+                        Ok(a.changes(&b))
+                    }
+                    // sources that cannot even be stated (a name that is not UTF-8): no re-stat; what the old side
+                    // writes from here on is lost as after any forced release (`forcedWrites`)
+                    (Err(x), _) | (_, Err(x)) => {
+                        out.sync_error = Some(format!("{e} (no re-stat inside the fence: {x})"));
+                        Ok(Vec::new())
+                    }
+                }
+            }
+        }
+    }
+    .await;
     let changes = match changes {
         Ok(c) => c,
+        Err(e @ Error::LockLost) => {
+            let _ = fence::unfence(pool, id).await;
+            return Err(e);
+        }
         Err(e) => vec![format!("the final sync failed: {e}")],
     };
     if !changes.is_empty() {

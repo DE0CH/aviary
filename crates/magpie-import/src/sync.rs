@@ -127,6 +127,8 @@ impl<'a> Writer<'a> {
                         mtime_ns: 0,
                         op_id: op_id(&[&conv, "mkdir", &acc]),
                     };
+                    // the lock checked right before each of magpie's cc writes (their transactions are magpie's own)
+                    self.imp.check_lock().await?;
                     match ops::mkdir(&self.imp.magpie, &self.caller, &b).await {
                         Ok(()) => {}
                         Err(e) if e.is(&magpie_api::errors::ErrorCode::Exists) => {}
@@ -166,6 +168,8 @@ impl<'a> Writer<'a> {
             turn_id: None,
             append: false,
         };
+        // the lock checked right before each of magpie's cc writes (their transactions are magpie's own)
+        self.imp.check_lock().await?;
         let r = ops::write(&self.imp.magpie, &self.caller, &q, data)
             .await
             .map_err(from_magpie)?;
@@ -180,6 +184,8 @@ impl<'a> Writer<'a> {
             mtime_ns: stat.mtime_ns,
             op_id: op_id(&[&conv, "truncate", path, &size.to_string(), &version.to_string()]),
         };
+        // the lock checked right before each of magpie's cc writes (their transactions are magpie's own)
+        self.imp.check_lock().await?;
         let r = ops::truncate(&self.imp.magpie, &self.caller, &b)
             .await
             .map_err(from_magpie)?;
@@ -199,6 +205,8 @@ impl<'a> Writer<'a> {
             path: path.to_owned(),
             op_id: op_id(&[&conv, "unlink", path, &f.version.to_string()]),
         };
+        // the lock checked right before each of magpie's cc writes (their transactions are magpie's own)
+        self.imp.check_lock().await?;
         match ops::unlink(&self.imp.magpie, &self.caller, &b).await {
             Ok(()) => Ok(()),
             Err(e) if e.is(&magpie_api::errors::ErrorCode::NotFound) => Ok(()),
@@ -215,6 +223,7 @@ impl<'a> Writer<'a> {
             to: to.to_owned(),
             op_id: op_id(&[&conv, "rename", from, to, &version.to_string()]),
         };
+        self.imp.check_lock().await?;
         ops::rename(&self.imp.magpie, &self.caller, &b)
             .await
             .map_err(from_magpie)?;

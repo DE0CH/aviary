@@ -537,6 +537,63 @@ async fn a_forced_release_expires_open_tickets_and_fails_whole_inside_its_fence(
 }
 
 #[tokio::test]
+async fn a_forced_release_releases_past_a_lasting_sync_error_and_fails_before_cutting_a_turn_off() {
+    let w = World::new("force_stuck").await;
+    let ka = w.person(ALICE).await;
+    let (u1, _, _, _) = one_conversation(&w, &ka).await;
+    let (u2, _, main2, _) = one_conversation(&w, &ka).await;
+    let (u3, _, _, _) = one_conversation(&w, &ka).await;
+    let folder = w.jfs.0.join("sent").join(u1.to_string()).join("toolu_x");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("a.pdf"), b"%PDF a").unwrap();
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    let db = w.magpie().get().await.unwrap();
+    // u1: a file that appears in its sent folder after the folder's import; u2: its main transcript gone while its
+    // sessions row is there; each a lasting sync error that no pass clears
+    std::fs::write(folder.join("late.pdf"), b"%PDF late").unwrap();
+    std::fs::remove_file(w.claude(&ka).join(&main2)).unwrap();
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert_eq!(r.errors.len(), 2, "{:?}", r.errors);
+    for (id, why) in [(u1, "late.pdf"), (u2, "not on the mount")] {
+        let ticket = Uuid::new_v4();
+        db.execute(
+            "insert into legacy_tickets (ticket, conversation_id, kind) values ($1, $2, 'send')",
+            &[&ticket, &id],
+        )
+        .await
+        .unwrap();
+        let f = control::release_forced(&w.imp, id).await.unwrap();
+        assert!(f.sync_error.as_deref().is_some_and(|e| e.contains(why)), "{f:?}");
+        assert_eq!(f.tickets_expired, 1, "{f:?}");
+        assert_eq!(state(&w, id).await, (false, false, true, Some("forced".to_owned())));
+        // what the sync could not bring over is the forced release's loss, never a mismatch that holds the hand-over
+        let v = verify::verify(&w.imp, id).await.unwrap();
+        assert!(v.mismatches.is_empty(), "{v:?}");
+    }
+    // a release that cannot happen at all (u3's sessions row is gone) fails before its open ticket is expired, so the
+    // old turn running under it is not cut off for nothing
+    let ticket = Uuid::new_v4();
+    db.execute(
+        "insert into legacy_tickets (ticket, conversation_id, kind) values ($1, $2, 'send')",
+        &[&ticket, &u3],
+    )
+    .await
+    .unwrap();
+    w.cloudcli(&format!("delete from cc_{ka}.sessions where session_id = '{u3}'"))
+        .await;
+    let e = control::release_forced(&w.imp, u3).await.unwrap_err().to_string();
+    assert!(e.contains("sessions row is gone"), "{e}");
+    let outcome: Option<String> = db
+        .query_one("select outcome from legacy_tickets where ticket = $1", &[&ticket])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(outcome, None, "the ticket is still open");
+    assert_eq!(state(&w, u3).await, (true, false, false, None));
+}
+
+#[tokio::test]
 async fn sent_folders_import_once_with_files_and_never_for_a_refused_send() {
     let w = World::new("sent_edges").await;
     let ka = w.person(ALICE).await;

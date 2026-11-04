@@ -27,7 +27,7 @@ pub const JFS: &str = "/jfs";
 pub const JUICEFS: &str = "/usr/local/bin/juicefs";
 
 const USAGE: &str = "usage: magpie import plan | run | catch-up | verify [--all | <id>…] | status | holds | hold on|off \
-                     | reset --yes | unfence <id> | release <id> --force \
+                     | reset --yes | unfence <id> | release <id> --force | purge <id>… \
                      | export [--unfenced] [--since <time>] [<id>…] | parity <id>…\n";
 
 fn out(v: &impl Serialize) {
@@ -122,7 +122,7 @@ pub fn main(build: &version::Build, args: &[String]) -> ExitCode {
     let known = matches!(
         (cmd, rest.len()),
         ("plan" | "run" | "catch-up" | "status" | "holds", 0)
-            | ("parity", 1..)
+            | ("parity" | "purge", 1..)
             | ("verify" | "hold" | "reset" | "unfence" | "export", _)
             | ("release", 2)
     );
@@ -301,6 +301,20 @@ async fn run(imp: &Importer, cmd: &str, rest: &[String]) -> ExitCode {
                 Ok(f) => {
                     out(&f);
                     ExitCode::SUCCESS
+                }
+                Err(e) => fail(e),
+            }
+        }
+        "purge" => {
+            let Some(given) = ids(rest) else { return usage() };
+            match crate::control::purge(imp, &given).await {
+                Ok(r) => {
+                    out(&r);
+                    if r.iter().all(|p| p.error.is_none()) {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
+                    }
                 }
                 Err(e) => fail(e),
             }

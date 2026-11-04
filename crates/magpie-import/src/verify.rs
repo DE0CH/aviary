@@ -136,6 +136,8 @@ pub struct Row {
     pub verified: Option<Fingerprints>,
     /// Released by `release --force`.
     pub forced: bool,
+    /// When the last sync recorded it (`last_synced_at`).
+    pub synced_at: time::OffsetDateTime,
 }
 
 /// A conversation's sources as fingerprints (cutover 7.3 `verified_stats`: every source file's stat and every
@@ -207,7 +209,8 @@ pub async fn row(imp: &Importer, id: Uuid) -> Result<Option<Row>> {
         .await?
         .query_opt(
             "select person, user_key, provider_session, files, released_at is not null, source_schema, row_fp,
-                    failed_turns_fp, sent_fp, verified_stats, release_reason is not distinct from 'forced'
+                    failed_turns_fp, sent_fp, verified_stats, release_reason is not distinct from 'forced',
+                    last_synced_at
              from import_sources where conversation_id = $1",
             &[&id],
         )
@@ -239,6 +242,7 @@ pub async fn row(imp: &Importer, id: Uuid) -> Result<Option<Row>> {
         synced,
         verified,
         forced: r.get(10),
+        synced_at: r.get(11),
     }))
 }
 
@@ -396,6 +400,13 @@ pub async fn verify(imp: &Importer, id: Uuid) -> Result<Verdict> {
         return released(id, imp, &r);
     }
     let (sources, now) = current(imp, id, &r).await?;
+    // as in a pass: a main transcript that vanished while its sessions row is there is never unlinked by a re-ingest
+    let main = tree::main_path(&r.psid);
+    if r.files.contains_key(&main) && !sources.contains_key(&main) && !now.row_fp.is_empty() {
+        return Err(Error::Source(format!(
+            "{main} was synced before and is not on the mount now (its sessions row is still there)"
+        )));
+    }
     let pending: Vec<String> = r
         .synced
         .clone()
@@ -460,20 +471,46 @@ pub async fn verify(imp: &Importer, id: Uuid) -> Result<Verdict> {
     let files_json = serde_json::to_value(&files)?;
     let write_files = ok || !reingested.is_empty();
     let pool = &imp.magpie.pool;
-    let n = pool
-        .get()
-        .await?
-        .execute(
-            "update import_sources s set files = case when $5 then $2 else s.files end,
+    let synced_at = r.synced_at;
+    let n = aviary_pg::tx!(pool, |t| -> Result<Option<bool>> {
+        imp.check_lock_in(t).await?;
+        let Some(c) = t
+            .query_opt(
+                "select c.migrating, s.last_synced_at from conversations c
+                   join import_sources s on s.conversation_id = c.id
+                  where c.id = $1 for update of c",
+                &[&id],
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        if !c.get::<_, bool>(0) {
+            return Ok(None);
+        }
+        // a pass synced in between: this verification's read is older than the record, which it must not replace
+        if c.get::<_, time::OffsetDateTime>(1) != synced_at {
+            return Ok(Some(false));
+        }
+        t.execute(
+            "update import_sources set files = case when $5 then $2 else files end,
                     verified_at = case when $3::jsonb is null then null else now() end, verified_stats = $3,
                     last_error = $4
-             from conversations c
-             where s.conversation_id = $1 and c.id = s.conversation_id and c.migrating",
+             where conversation_id = $1",
             &[&id, &files_json, &stats, &msg, &write_files],
         )
         .await?;
-    if n == 0 {
-        return Err(Error::Released);
+        Ok(Some(true))
+    })
+    .await?;
+    match n {
+        None => return Err(Error::Released),
+        Some(false) => {
+            return Err(Error::Source(
+                "a pass synced it during the verification: verify it again".to_owned(),
+            ));
+        }
+        Some(true) => {}
     }
     let notes = sanity(imp, id, &sources, &tree::main_path(&r.psid)).await?;
     for n in &notes {
