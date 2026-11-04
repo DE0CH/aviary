@@ -3,7 +3,7 @@
 //!   the ops port (9090) adds `GET /status` (the status document) to `/metrics`, `/readyz`, `/healthz`;
 //!   between two passes it lets the lock go when a one-shot command waits for it ([`crate::lock::waiter_present`]),
 //!   and bids again at once (the waiter was granted the lock as it was let go, so the bid wins only after it ends);
-//! - `export-server`: the writer sidecar's API on 8080, `POST /v1/ingest-upload` (magpie's synchronous ingest of one
+//! - `export-server`: the writer sidecar's API on 8080 (with its ops routes there: the pod's 9090 is the hand-over's), `POST /v1/ingest-upload` (magpie's synchronous ingest of one
 //!   old asset on a miss, [`magpie::legacy::ingest`]) for the caller magpie (`MAGPIE_IMPORT_ACCEPT_MAGPIE`); and, on
 //!   the pod-local [`EXPORT_ADDR`] only (the import pod's own containers, no token), `POST /v1/export`: the reverse
 //!   export (cutover 14.3) of reverse-fenced conversations for the reverse hand-over ([`crate::reverse`]).
@@ -167,11 +167,11 @@ pub async fn export_server(imp: Importer, ops: ops::Ops) -> ExitCode {
             tracing::error!(error = %e, "the export route ended");
         }
     });
-    if let Err(e) = ops.spawn(ops::ADDR).await {
-        tracing::error!(error = %e, "cannot listen on the ops port");
-        return ExitCode::FAILURE;
-    }
-    let app = Router::new().route(ROUTE, post(ingest_upload)).with_state(state);
+    // the ops routes (/readyz, /healthz, /metrics) on the API port: the hand-over container of the same pod holds 9090
+    let app = Router::new()
+        .route(ROUTE, post(ingest_upload))
+        .with_state(state)
+        .merge(ops.router());
     let listener = match tokio::net::TcpListener::bind(API_ADDR).await {
         Ok(l) => l,
         Err(e) => {
