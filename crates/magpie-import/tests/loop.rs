@@ -390,3 +390,106 @@ async fn a_leader_killed_between_fence_and_release_is_finished_by_the_next() {
     }
     assert_eq!(released(&w, id3).await.as_deref(), Some("idle"));
 }
+
+/// The loop checks released conversations live (DESIGN 9.9's `import_verify_mismatch_total` on the hand-over's own
+/// registry, not only the one-shot `verify`'s): a write the old side makes to a released conversation is counted once
+/// per change, a stat that changed with the same bytes is not a mismatch, and the shared memory is not checked.
+#[tokio::test]
+async fn the_loop_counts_an_old_side_write_to_a_released_conversation_once() {
+    let w = World::new("loop_released").await;
+    w.jarvis("create table sandboxes (id uuid primary key, conversation_id uuid not null, status text not null)")
+        .await;
+    let ka = w.person(ALICE).await;
+    let id = conversation(&w, &ka, "Released").await;
+    let (_fake, kube) = common::old::cluster(&["ui-a"]).await;
+    let mut h = Handover::new(kube.clone(), "sw".into());
+    h.pass(&w.imp).await.unwrap();
+    assert!(handover::allow(&w.imp, &kube, "sw", None).await.unwrap().1);
+    for _ in 0..3 {
+        h.pass(&w.imp).await.unwrap();
+    }
+    assert_eq!(released(&w, id).await.as_deref(), Some("idle"));
+    let p: String = w
+        .magpie()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select provider_session from import_sources where conversation_id = $1",
+            &[&id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let main = format!("projects/-workspace/{p}.jsonl");
+    let before = w.imp.magpie.legacy.verify_mismatches();
+    // nothing written: nothing checked
+    h.pass(&w.imp).await.unwrap();
+    assert_eq!(h.status.read().await.pass.released_changed, 0);
+    // the person's shared memory changes (their legacy conversations rightly write it): not checked
+    w.put(&ka, "projects/-workspace/memory/MEMORY.md", b"- later\n");
+    h.pass(&w.imp).await.unwrap();
+    assert_eq!(h.status.read().await.pass.released_changed, 0);
+    // the old side appends to the released transcript: counted at the next pass, once
+    w.append(&ka, &main, &assistant("z9", "2026-10-22T08:00:00.000Z", "too late"));
+    h.pass(&w.imp).await.unwrap();
+    assert_eq!(h.status.read().await.pass.released_changed, 1);
+    assert_eq!(w.imp.magpie.legacy.verify_mismatches(), before + 1);
+    h.pass(&w.imp).await.unwrap();
+    h.pass(&w.imp).await.unwrap();
+    assert_eq!(
+        w.imp.magpie.legacy.verify_mismatches(),
+        before + 1,
+        "a change counted once"
+    );
+    // a new file in its session folder: the stats change again, checked again (the transcript and the new file)
+    w.put(
+        &ka,
+        &format!("projects/-workspace/{p}/tool-results/late.txt"),
+        b"late\n",
+    );
+    h.pass(&w.imp).await.unwrap();
+    assert_eq!(w.imp.magpie.legacy.verify_mismatches(), before + 3);
+}
+
+/// A released conversation whose file only changed its stat (the same bytes rewritten) is checked and not counted.
+#[tokio::test]
+async fn a_released_conversation_rewritten_with_the_same_bytes_is_no_mismatch() {
+    let w = World::new("loop_released_same").await;
+    w.jarvis("create table sandboxes (id uuid primary key, conversation_id uuid not null, status text not null)")
+        .await;
+    let ka = w.person(ALICE).await;
+    let id = conversation(&w, &ka, "Same").await;
+    let (_fake, kube) = common::old::cluster(&["ui-a"]).await;
+    let mut h = Handover::new(kube.clone(), "sw".into());
+    h.pass(&w.imp).await.unwrap();
+    assert!(handover::allow(&w.imp, &kube, "sw", None).await.unwrap().1);
+    for _ in 0..3 {
+        h.pass(&w.imp).await.unwrap();
+    }
+    assert_eq!(released(&w, id).await.as_deref(), Some("idle"));
+    let p: String = w
+        .magpie()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select provider_session from import_sources where conversation_id = $1",
+            &[&id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let main = format!("projects/-workspace/{p}.jsonl");
+    let before = w.imp.magpie.legacy.verify_mismatches();
+    let same = [
+        user("a1", "2026-10-22T06:22:40.000Z", "write the report"),
+        assistant("a2", "2026-10-22T06:23:00.000Z", "here it is"),
+    ]
+    .concat();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    w.put(&ka, &main, &same);
+    h.pass(&w.imp).await.unwrap();
+    assert_eq!(h.status.read().await.pass.released_changed, 1);
+    assert_eq!(w.imp.magpie.legacy.verify_mismatches(), before);
+}

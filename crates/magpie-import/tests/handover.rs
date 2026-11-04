@@ -343,7 +343,8 @@ async fn a_lost_lock_stops_the_command() {
         .unwrap()
         .query_one(
             "select pid from pg_locks where locktype = 'advisory' and granted and objsubid = 1
-               and ((classid::bigint << 32) | objid::bigint) = hashtext($1)::bigint",
+               and ((classid::bigint << 32) | objid::bigint) = hashtext($1)::bigint
+               and database = (select oid from pg_database where datname = current_database())",
             &[&lock::NAME],
         )
         .await
@@ -397,7 +398,8 @@ async fn a_write_checks_the_lock_inside_its_own_transaction() {
         .unwrap()
         .execute(
             "select pg_terminate_backend(pid) from pg_locks where locktype = 'advisory' and granted and objsubid = 1
-               and ((classid::bigint << 32) | objid::bigint) = hashtext($1)::bigint",
+               and ((classid::bigint << 32) | objid::bigint) = hashtext($1)::bigint
+               and database = (select oid from pg_database where datname = current_database())",
             &[&lock::NAME],
         )
         .await

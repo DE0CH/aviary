@@ -71,7 +71,8 @@ async fn one_leader_a_waiting_one_shot_and_a_handover_on_a_dead_connection() {
         .unwrap()
         .query_one(
             "select pid from pg_locks where locktype = 'advisory' and granted and objsubid = 1
-               and ((classid::bigint << 32) | objid::bigint) = hashtext($1)::bigint",
+               and ((classid::bigint << 32) | objid::bigint) = hashtext($1)::bigint
+               and database = (select oid from pg_database where datname = current_database())",
             &[&lock::NAME],
         )
         .await

@@ -340,6 +340,42 @@ fn is_memory(path: &str) -> bool {
     path == tree::MEMORY || path.starts_with(&format!("{}/", tree::MEMORY))
 }
 
+/// A released conversation's source files as they are recorded (`files`, from the sync inside its release) and as a
+/// stat of them finds them now, by cc path, the person's shared auto-memory left out (their legacy conversations
+/// rightly change it): equal when the old side has written nothing of the conversation since its release. The
+/// hand-over loop's cheap check before [`released_check`] hashes anything.
+///
+/// # Errors
+/// A source folder that cannot be read.
+pub fn released_stats(imp: &Importer, id: Uuid, key: &str, psid: &str, files: &Files) -> Result<(Stats, Stats)> {
+    let recorded = files
+        .iter()
+        .filter(|(p, _)| !is_memory(p))
+        .map(|(p, f)| (p.clone(), (f.size, f.mtime_ns, f.ino)))
+        .collect();
+    let now = tree::sources(&imp.jfs, key, psid, Some(id))?
+        .into_iter()
+        .filter(|(p, _)| !is_memory(p))
+        .map(|(p, s)| (p, stat_of(&s.stat)))
+        .collect();
+    Ok((recorded, now))
+}
+
+/// (size, mtime, inode) by cc path.
+pub type Stats = BTreeMap<String, (u64, i64, u64)>;
+
+/// A released conversation's check (what `verify` runs for it), counting each file the old side wrote after a
+/// hand-over's release in `magpie_import_verify_mismatch_total` on this process's registry.
+///
+/// # Errors
+/// As [`verify`].
+pub async fn released_check(imp: &Importer, id: Uuid) -> Result<Verdict> {
+    let Some(r) = row(imp, id).await? else {
+        return Err(Error::Source(format!("{id} was not imported")));
+    };
+    released(id, imp, &r)
+}
+
 /// A released conversation: the old side wrote nothing of its own after the hand-over. Every recorded file still
 /// has its size and sha256, and no new file appeared in its session folder or as its transcript. The person's
 /// shared auto-memory is left out: their other conversations, still the old stack's, rightly change it. After a

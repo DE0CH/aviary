@@ -152,6 +152,9 @@ pub struct PassInfo {
     pub changed: usize,
     /// Released in it.
     pub released: usize,
+    /// Released conversations whose sources changed since their release, checked (and their old-side writes
+    /// counted) in it.
+    pub released_changed: usize,
     /// Its own error, when it stopped.
     pub error: Option<String>,
 }
@@ -207,6 +210,9 @@ pub struct Handover {
     reads: VecDeque<Read>,
     seen: uploads::Seen,
     last_warm: Option<tokio::time::Instant>,
+    /// Released conversations whose sources differ from their record, by the stats they were last checked at (a
+    /// change is checked, and its mismatches counted, once).
+    released_checked: BTreeMap<Uuid, crate::verify::Stats>,
 }
 
 impl std::fmt::Debug for Handover {
@@ -237,6 +243,7 @@ impl Handover {
             reads: VecDeque::new(),
             seen: uploads::Seen::new(),
             last_warm: None,
+            released_checked: BTreeMap::new(),
         }
     }
 
@@ -383,6 +390,9 @@ impl Handover {
                 }
             }
         }
+        // the released conversations the old side wrote since their release (DESIGN 9.9's
+        // import_verify_mismatch_total, live on this process's registry)
+        info.released_changed = self.check_released(imp).await;
         info.released = released;
         info.ms = started.elapsed().as_millis();
         let mut st = self.status.write().await;
@@ -407,6 +417,71 @@ impl Handover {
             st.gate_problems = c.problems();
         }
         Ok(info)
+    }
+
+    /// Every released conversation (but a forced release, whose later writes are the cut-off turn's, cutover 7.10)
+    /// whose source files' stats differ from what its release recorded, at stats this process has not checked it
+    /// at: the released check (`verify`'s, which hashes the files) runs and counts each file the old side wrote in
+    /// `magpie_import_verify_mismatch_total`. A stat alone is cheap; a file is hashed only after its stat changed, and
+    /// a change is counted once (a later write changes the stats again and is checked again). Answers how many
+    /// conversations were checked.
+    async fn check_released(&mut self, imp: &Importer) -> usize {
+        let rows = match imp.magpie.pool.get().await {
+            Ok(c) => c
+                .query(
+                    "select conversation_id, user_key, provider_session, files from import_sources
+                     where released_at is not null and release_reason is distinct from 'forced'",
+                    &[],
+                )
+                .await
+                .map_err(Error::from),
+            Err(e) => Err(Error::from(e)),
+        };
+        let rows = match rows {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "released conversations not read: none checked");
+                return 0;
+            }
+        };
+        let mut checked = 0;
+        let mut differing = std::collections::BTreeSet::new();
+        for r in &rows {
+            let id: Uuid = r.get(0);
+            let Ok(files) = serde_json::from_value::<crate::sync::Files>(r.get(3)) else {
+                continue;
+            };
+            let psid = r.get::<_, Option<String>>(2).unwrap_or_default();
+            let (recorded, now) = match crate::verify::released_stats(imp, id, r.get(1), &psid, &files) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(conversation = %id, error = %e, "a released conversation's sources not read");
+                    continue;
+                }
+            };
+            if recorded == now {
+                continue;
+            }
+            differing.insert(id);
+            if self.released_checked.get(&id) == Some(&now) {
+                continue;
+            }
+            checked += 1;
+            match crate::verify::released_check(imp, id).await {
+                Ok(v) if v.mismatches.is_empty() => {
+                    tracing::info!(conversation = %id, "a released conversation's sources changed stat, not bytes");
+                }
+                Ok(v) => tracing::error!(conversation = %id, files = ?v.mismatches,
+                                         "the old side wrote a released conversation"),
+                Err(e) => {
+                    tracing::warn!(conversation = %id, error = %e, "a released conversation not checked");
+                    continue;
+                }
+            }
+            self.released_checked.insert(id, now);
+        }
+        self.released_checked.retain(|id, _| differing.contains(id));
+        checked
     }
 
     /// Verifies every open conversation that is synced and stable but not verified as it is now (cutover 7.5: "if
