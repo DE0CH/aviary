@@ -30,7 +30,7 @@ export async function importJarvis(args: readonly string[]): Promise<void> {
   try {
     await migrate(db);
     const results = await run("tools", source, db, [TOOL_CALLS], delta);
-    if (results.some((r) => (r.missing ?? 0) > 0)) throw new Error("source rows read are not in tool_calls (see the log line)");
+    if (results.some((r) => (r.missing ?? 0) > 0)) throw new Error("the source holds rows tool_calls does not (see the log line)");
   } catch (e) {
     logError("tools import-jarvis", e);
     process.exitCode = 1;

@@ -173,6 +173,26 @@ test("egress: a pass longer than one batch copies every row, in order", async ()
   assert.deepEqual(b.rows[0], a.rows[0]);
 });
 
+test("egress: with ids far above LOOKBACK, --delta starts LOOKBACK below the highest copied id and reads only from there", async () => {
+  await pass(EGRESS_LOG, egress, false);
+  const top = Number((await old.query("select max(id) as m from egress_log")).rows[0].m);
+  const base = top + 3 * LOOKBACK;
+  await old.query("select setval('egress_log_id_seq', $1)", [base]);
+  const fresh = [await oldEgress({ sandbox: sbx }), await oldEgress({ sandbox: sbx }), await oldEgress({ sandbox: sbx })];
+  assert.deepEqual(fresh, [base + 1, base + 2, base + 3]);
+  const d1 = await pass(EGRESS_LOG, egress, true);
+  assert.equal(d1.after, top - LOOKBACK);
+  const above = Number((await old.query("select count(*) from egress_log where id > $1", [top - LOOKBACK])).rows[0].count);
+  assert.equal(d1.read, above, "only the ids above the start");
+  assert.equal(d1.copied, 3);
+  // a row committed late with an id between the old top and the new start: not read by --delta, found by a full pass
+  await old.query("insert into egress_log (id, kind, host, decision, sandbox_id) values ($1, 'http', 'h', 'allow', $2)", [top + 5, sbx]);
+  const d2 = await pass(EGRESS_LOG, egress, true);
+  assert.deepEqual([d2.after, d2.read, d2.copied], [base + 3 - LOOKBACK, 3, 0]);
+  const full = await pass(EGRESS_LOG, egress, false);
+  assert.deepEqual([full.copied, full.missing], [1, 0]);
+});
+
 test("egress: without the legacy conversations table, person comes from the sandbox or is null", async () => {
   const name = `ij_old2_${process.pid}`;
   const url = await createDb(name);

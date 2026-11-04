@@ -13,9 +13,15 @@
 // handed out before a neighbour's but committed after it (two replicas inserting at once) is still read by the next
 // pass; the overlap costs nothing (conflicts are skipped). A first run without rows copied is a full pass either way.
 //
-// A full pass (no `--delta`; A6's last runs, cutover 8.2) also counts the source rows it read that the target does
-// not hold (`missing`, logged with the pass; the subcommands exit 1 when any is missing): the lookback is the only
-// guarantee a delta pass has, so the last pass reads everything and checks it.
+// A full pass (no `--delta`; A6's last runs, cutover 8.2) also checks the target against the source, independently of
+// what the pass itself read: `missing` is how many more rows the source's snapshot holds (a separate count of the whole
+// source query) than the target holds with a `source_id` up to the highest one read (a row the target lost or
+// refused, or one a batch skipped; logged with the pass, and the subcommands exit 1 when any is missing). The lookback
+// is the only guarantee a delta pass has, so the last pass reads everything and checks it.
+//
+// The source connection has a client-side query timeout and TCP keepalives on top of the server's statement_timeout:
+// the old database is reached across clusters, and a network drop mid-query would otherwise leave the run waiting
+// forever (and, with the CronJob's concurrencyPolicy Forbid, stop every later run).
 import pg from "pg";
 import { log, logError } from "./log.ts";
 
@@ -51,9 +57,23 @@ export interface CopyResult {
 /** Every value as Postgres text (the copy passes them back as text: no Date or float conversion on the way). */
 const TEXT_TYPES = { getTypeParser: () => (v: string) => v } as unknown as pg.CustomTypesConfig;
 
+/** The server's statement timeout on the source, and the client's own (longer, so the server's error comes first when
+ * the network is up). */
+export const STATEMENT_TIMEOUT_MS = 120_000;
+export const QUERY_TIMEOUT_MS = 150_000;
+
 /** A client of the old database whose values all come back as text. */
 export function sourceClient(url: string): pg.Client {
-  return new pg.Client({ connectionString: url, types: TEXT_TYPES, application_name: "import-jarvis", statement_timeout: 120_000, connectionTimeoutMillis: 10_000 });
+  return new pg.Client({
+    connectionString: url,
+    types: TEXT_TYPES,
+    application_name: "import-jarvis",
+    statement_timeout: STATEMENT_TIMEOUT_MS,
+    query_timeout: QUERY_TIMEOUT_MS,
+    connectionTimeoutMillis: 10_000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
+  });
 }
 
 /** Whether table `name` exists in the source's search path. */
@@ -74,7 +94,6 @@ export async function copy(src: pg.ClientBase, dst: pg.Pool, spec: CopySpec, del
   let last = after;
   let read = 0;
   let copied = 0;
-  const ids: string[] = [];
   for (;;) {
     const { rows } = await src.query<Record<string, string | null>>(sql, [last, BATCH]);
     if (!rows.length) break;
@@ -84,11 +103,11 @@ export async function copy(src: pg.ClientBase, dst: pg.Pool, spec: CopySpec, del
     copied += res.rowCount ?? 0;
     read += rows.length;
     last = Number(rows.at(-1)!.source_id);
-    if (!delta) for (const r of rows) ids.push(r.source_id!);
   }
   if (delta) return { read, copied, after, last };
-  const { rows: held } = await dst.query<{ n: string }>(`select count(*)::text as n from ${spec.target} where source_id = any($1::bigint[])`, [ids]);
-  return { read, copied, after, last, missing: read - Number(held[0]?.n ?? 0) };
+  const { rows: src_n } = await src.query<{ n: string }>(`select count(*)::text as n from (${sql}) s`, [0, "9223372036854775807"]);
+  const { rows: held } = await dst.query<{ n: string }>(`select count(*)::text as n from ${spec.target} where source_id is not null and source_id <= $1`, [last]);
+  return { read, copied, after, last, missing: Math.max(0, Number(src_n[0]?.n ?? 0) - Number(held[0]?.n ?? 0)) };
 }
 
 /** A whole `import-jarvis` run: connects to the old database (`sourceUrl`, read-only), opens one repeatable-read

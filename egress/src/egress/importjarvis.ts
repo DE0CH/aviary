@@ -44,7 +44,7 @@ export async function importJarvis(args: readonly string[]): Promise<void> {
   try {
     await migrate(db);
     const results = await run("egress", source, db, [EGRESS_LOG], delta);
-    if (results.some((r) => (r.missing ?? 0) > 0)) throw new Error("source rows read are not in egress_log (see the log line)");
+    if (results.some((r) => (r.missing ?? 0) > 0)) throw new Error("the source holds rows egress_log does not (see the log line)");
   } catch (e) {
     logError("egress import-jarvis", e);
     process.exitCode = 1;
