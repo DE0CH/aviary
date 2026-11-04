@@ -181,7 +181,15 @@ jobs:
           sudo timeout -k 10 300 bash crates/sandboxd/tests/gateway/adopt.sh target/x86_64-unknown-linux-musl/sandboxd/sandboxd
 
   build:
-    runs-on: ubuntu-24.04
+    # 5.1 for both architectures of the service images (linux/amd64, linux/arm64): each natively on its own runner
+    # (GitHub's arm64 runner for aarch64, no cross compiler), artifacts `dist` (x86_64) and `dist-aarch64`
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: x86_64, runner: ubuntu-24.04, dist: dist}
+          - {arch: aarch64, runner: ubuntu-24.04-arm, dist: dist-aarch64}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     env:
       AVIARY_REVISION: ${{ github.sha }}
@@ -190,23 +198,23 @@ jobs:
       - name: toolchain (rust-toolchain.toml, exactly)
         run: rustup toolchain install && rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - name: musl C compiler (cc-rs builds ring's C with it; .cargo/config.toml sets CC_x86_64_unknown_linux_musl)
+      - name: musl C compiler (cc-rs builds ring's C with it; .cargo/config.toml sets CC_<arch>_unknown_linux_musl)
         run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends musl-tools
       - name: musl canary (rustls/ring, reqwest, tokio-postgres-rustls, AWS SDK client; linked static and run)
-        run: cargo test --locked --target x86_64-unknown-linux-musl -p aviary-tls-canary --lib
+        run: cargo test --locked --target ${{ matrix.arch }}-unknown-linux-musl -p aviary-tls-canary --lib
       - name: musl binaries (rust-lld, static)
         run: |
           export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
-          cargo build --release --locked --target x86_64-unknown-linux-musl --workspace --exclude magpie --exclude magpie-import --exclude sandboxd --bins
+          cargo build --release --locked --target ${{ matrix.arch }}-unknown-linux-musl --workspace --exclude magpie --exclude magpie-import --exclude sandboxd --bins
           mkdir -p dist
-          find target/x86_64-unknown-linux-musl/release -maxdepth 1 -type f -executable -exec cp {} dist/ \;
+          find target/${{ matrix.arch }}-unknown-linux-musl/release -maxdepth 1 -type f -executable -exec cp {} dist/ \;
       - name: sandboxd (static musl, its own profile, crates/sandboxd/docs/MEMORY.md)
         # profile `sandboxd` unwinds on panic (one request's bug closes that connection only); the workspace release
         # profile aborts, so sandboxd is never built with it
         run: |
           export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
-          cargo build --profile sandboxd --locked --target x86_64-unknown-linux-musl -p sandboxd
-          b=target/x86_64-unknown-linux-musl/sandboxd/sandboxd
+          cargo build --profile sandboxd --locked --target ${{ matrix.arch }}-unknown-linux-musl -p sandboxd
+          b=target/${{ matrix.arch }}-unknown-linux-musl/sandboxd/sandboxd
           file "$b" | tee /dev/stderr | grep -q "static"
           "$b" --version
           "$b" budget
@@ -230,16 +238,26 @@ jobs:
         run: cd dist && sha256sum * | tee SHA256SUMS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dist
+          name: ${{ matrix.dist }}
           path: dist/
           if-no-files-found: error
 
   images:
     # platform 6.1 `images`: every image of 5.2 built from `build`'s dist/ with 5.3's labels (images/build.sh,
     # images/sandbox/build.sh), run here, and saved as one tar artifact each (`image-<name>`), which the later jobs
-    # load and `publish` pushes; GHA layer cache scopes per image
+    # load and `publish` pushes; GHA layer cache scopes per image and architecture. The service images (pigeon,
+    # magpie, hermit, sandboxd, aviary-testing) for linux/amd64 and linux/arm64, each built and run natively on its
+    # own runner from that architecture's dist/ (artifacts `image-services`, `image-services-arm64`; publish joins
+    # them into one index per tag). hermit-sandbox is linux/amd64 only (sandboxd's image service resolves and exports
+    # it with no platform; images/sandbox/README.md)
     needs: build
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: amd64, runner: ubuntu-24.04, dist: dist, cache: "", services: image-services}
+          - {arch: arm64, runner: ubuntu-24.04-arm, dist: dist-aarch64, cache: "-arm64", services: image-services-arm64}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     env:
       AVIARY_REVISION: ${{ github.sha }}
@@ -247,7 +265,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: dist
+          name: ${{ matrix.dist }}
           path: dist
       - run: chmod +x dist/*
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -260,7 +278,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/images"
       - name: images/sandboxd (the gateway pod's image)
         env:
-          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=sandboxd --cache-to type=gha,scope=sandboxd
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=sandboxd${{ matrix.cache }} --cache-to type=gha,scope=sandboxd${{ matrix.cache }}
         run: |
           images/build.sh sandboxd dist "sandboxd:$SHA12" "$RUNNER_TEMP/images/sandboxd.tar"
           docker run --rm "sandboxd:$SHA12" --version
@@ -275,7 +293,7 @@ jobs:
           sudo SBX_GATEWAY_IMAGE="sandboxd:$SHA12" timeout -k 10 300 bash crates/sandboxd/tests/gateway/adopt.sh
       - name: images/aviary-testing (the testing binaries)
         env:
-          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=aviary-testing --cache-to type=gha,scope=aviary-testing
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=aviary-testing${{ matrix.cache }} --cache-to type=gha,scope=aviary-testing${{ matrix.cache }}
         run: |
           images/build.sh aviary-testing dist "aviary-testing:$SHA12" "$RUNNER_TEMP/images/aviary-testing.tar"
           docker run --rm "aviary-testing:$SHA12" test-gateway --version
@@ -283,7 +301,7 @@ jobs:
       - name: images/hermit
         # hermit spec 8.5: the binary and the juicefs CLI; the catalogue rules run in the image as YYC's CI runs them
         env:
-          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=hermit --cache-to type=gha,scope=hermit
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=hermit${{ matrix.cache }} --cache-to type=gha,scope=hermit${{ matrix.cache }}
         run: |
           images/build.sh hermit dist "hermit:$SHA12" "$RUNNER_TEMP/images/hermit.tar"
           docker run --rm "hermit:$SHA12" --help
@@ -295,7 +313,7 @@ jobs:
       - name: images/pigeon
         # pigeon spec 3.3: with no secrets it refuses to start (exit 78), naming the variable, never a value
         env:
-          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=pigeon --cache-to type=gha,scope=pigeon
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=pigeon${{ matrix.cache }} --cache-to type=gha,scope=pigeon${{ matrix.cache }}
         run: |
           images/build.sh pigeon dist "pigeon:$SHA12" "$RUNNER_TEMP/images/pigeon.tar"
           docker run --rm "pigeon:$SHA12" --version
@@ -309,7 +327,7 @@ jobs:
       - name: images/magpie
         # the runtime image decodes the HEIC fixture with the release binary: libheif1 and its HEVC plugin are there
         env:
-          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=magpie --cache-to type=gha,scope=magpie
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=magpie${{ matrix.cache }} --cache-to type=gha,scope=magpie${{ matrix.cache }}
         run: |
           images/build.sh magpie dist "magpie:$SHA12" "$RUNNER_TEMP/images/magpie.tar"
           docker run --rm "magpie:$SHA12" --version
@@ -317,16 +335,20 @@ jobs:
           echo "$out"
           test "$out" = "image/heic 640x480"
       - name: images/sandbox (hermit-sandbox)
+        if: matrix.arch == 'amd64'
         env:
           SANDBOX_BUILD_FLAGS: --cache-from type=gha,scope=hermit-sandbox --cache-to type=gha,scope=hermit-sandbox
         run: |
           images/sandbox/build.sh dist "hermit-sandbox:$SHA12" "$GITHUB_SHA"
           docker save -o "$RUNNER_TEMP/images/hermit-sandbox.tar" "hermit-sandbox:$SHA12"
-      - name: the labels (platform 5.3)
+      - name: the labels (platform 5.3) and the architecture
         run: |
-          for i in pigeon magpie hermit sandboxd aviary-testing hermit-sandbox; do
+          images="pigeon magpie hermit sandboxd aviary-testing"
+          if [ "${{ matrix.arch }}" = amd64 ]; then images="$images hermit-sandbox"; fi
+          for i in $images; do
             l=$(docker image inspect -f '{{json .Config.Labels}}' "$i:$SHA12")
             echo "$i $l"
+            test "$(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$i:$SHA12")" = "linux/${{ matrix.arch }}"
             jq -e --arg rev "$GITHUB_SHA" --arg v "$SHA12" '."org.opencontainers.image.revision" == $rev
               and ."org.opencontainers.image.version" == $v
               and ."org.opencontainers.image.source" == "https://github.com/DE0CH/aviary"
@@ -335,6 +357,7 @@ jobs:
           docker image inspect -f '{{index .Config.Labels "dev.de0ch.aviary.provides"}}' "magpie:$SHA12" | jq -e 'has("magpie-person") and has("magpie-sandbox")'
           docker image inspect -f '{{index .Config.Labels "dev.de0ch.aviary.accepts"}}' "hermit:$SHA12" | jq -e 'length > 0'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: matrix.arch == 'amd64'
         with:
           name: image-sandbox
           path: ${{ runner.temp }}/images/hermit-sandbox.tar
@@ -342,7 +365,7 @@ jobs:
           compression-level: 1
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: image-services
+          name: ${{ matrix.services }}
           path: |
             ${{ runner.temp }}/images/pigeon.tar
             ${{ runner.temp }}/images/magpie.tar
@@ -537,12 +560,16 @@ jobs:
         with:
           name: image-sandbox
           path: ${{ runner.temp }}/images
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-services-arm64
+          path: ${{ runner.temp }}/images-arm64
       - name: push the images
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          .github/ci/publish-images.sh "$RUNNER_TEMP/images" "${GITHUB_SHA::12}" "$RUNNER_TEMP/digests.json"
+          .github/ci/publish-images.sh "$RUNNER_TEMP/images" "$RUNNER_TEMP/images-arm64" "${GITHUB_SHA::12}" "$RUNNER_TEMP/digests.json"
       - name: digests for the attestations
         id: digests
         run: |

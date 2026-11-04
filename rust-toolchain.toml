@@ -2,5 +2,6 @@
 # the stable release current at the repository's creation (2026-11-02), recorded exactly
 channel = "1.99.1"
 components = ["rustfmt", "clippy"]
-targets = ["x86_64-unknown-linux-musl"]
+# aarch64: the service images are linux/amd64 and linux/arm64 (ci.yml build and images run on an arm64 runner too)
+targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]
 profile = "minimal"

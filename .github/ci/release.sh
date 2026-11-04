@@ -41,7 +41,7 @@ fi
 {
   git log -1 --format=%s "$sha"
   echo
-  echo "Images (ghcr.io/de0ch/<name>:${sha::12}):"
+  echo "Images (ghcr.io/de0ch/<name>:${sha::12}; pigeon, magpie, hermit, sandboxd and aviary-testing are linux/amd64 + linux/arm64 indexes, hermit-sandbox is linux/amd64):"
   echo
   jq -r 'to_entries[] | "- \(.key)@\(.value)"' "$digests"
   echo

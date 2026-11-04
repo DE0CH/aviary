@@ -51,6 +51,9 @@ driver on the containerd image store refuses it ("conflicts with unpack"). Elsew
 
 ## Where this differs from the specs
 
+- **linux/amd64 only**, while the service images are linux/amd64 and linux/arm64 (repository README). sandboxd's
+  image service (`crates/sandboxd/src/images.rs`) takes the image's identity from `crane digest` and unpacks it with
+  `crane export`, both without `--platform`; an index would need sandboxd to pick the host's platform first.
 - **The image's environment defaults reach the agent through files.** Supervisor 6.2 gives every process it starts
   the image's `PATH`, `LANG`, `LC_ALL` and `HOME` and nothing else of the image's environment, so the old image's
   `NPM_CONFIG_PREFIX`, `PIP_DISABLE_PIP_VERSION_CHECK` and `DEBIAN_FRONTEND` (hermit 17's "env defaults", A5.F5)

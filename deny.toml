@@ -2,7 +2,7 @@
 
 [graph]
 all-features = false
-targets = ["x86_64-unknown-linux-musl", "x86_64-unknown-linux-gnu"]
+targets = ["x86_64-unknown-linux-musl", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-musl", "aarch64-unknown-linux-gnu"]
 
 [advisories]
 # every advisory fails the build (yanked crates too); an exception needs an `ignore` entry with a reason

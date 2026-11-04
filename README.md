@@ -19,12 +19,13 @@ the end-to-end harness, and `testing/paseo-contract` (Node) checks Paseo frames 
 ## Building
 
 The toolchain is pinned in `rust-toolchain.toml`; service binaries are static musl builds linked with rust-lld
-(`cargo build --release --target x86_64-unknown-linux-musl`), except magpie, which links libheif and is built on
+(`cargo build --release --target x86_64-unknown-linux-musl`, and `aarch64-unknown-linux-musl` on an arm64 machine),
+except magpie, which links libheif and is built on
 Debian trixie with `libheif-dev` (`.github/ci/build-magpie.sh`); its image (`images/magpie`) is `debian:trixie-slim`
 with `libheif1` and `libheif-plugin-libde265`, and CI decodes a HEIC photo with it.
 
 The musl build needs a musl C compiler as well as rust-lld: ring (under rustls) compiles C with cc-rs, and
-`.cargo/config.toml` points `CC_x86_64_unknown_linux_musl` at `musl-gcc` (Debian/Ubuntu package `musl-tools`).
+`.cargo/config.toml` points `CC_x86_64_unknown_linux_musl` and `CC_aarch64_unknown_linux_musl` at `musl-gcc` (Debian/Ubuntu package `musl-tools`).
 rust-lld only replaces the linker. `testing/tls-canary` keeps this path tested: CI builds, links and runs its unit
 tests for musl.
 
@@ -49,6 +50,14 @@ addressing and create their own buckets. CI serves S3 with versitygw, pinned by 
 
 ### Where this differs from the platform spec
 
+- The service images (pigeon, magpie, hermit, sandboxd, aviary-testing) are linux/amd64 and linux/arm64, where
+  platform 5.2 says linux/amd64 (YYC's new cluster may get ARM workers). ci.yml's `build` and `images` jobs run once
+  per architecture, each natively on its own runner (GitHub's `ubuntu-24.04-arm` for arm64, no cross compiler or
+  QEMU), and run every image check there; `publish` pushes `<name>:<sha12>-amd64` and `-arm64` and makes
+  `<name>:<sha12>` the index of the two (its digest is the one in the release). The harness (`e2e`), `conformance`,
+  `sandbox-smoke` and `gvisor` run the amd64 images only. hermit-sandbox stays linux/amd64: sandboxd's image service
+  resolves it with `crane digest` and exports it with no platform, so an index would first need sandboxd to choose
+  one. The release's binaries are the x86_64 ones.
 - The S3 test server is versitygw, not MinIO. MinIO publishes nothing that can be pulled: docker.io/minio/minio is
   gone, quay.io/minio/minio refuses anonymous pulls, and dl.min.io answers 410 (checked 2026-11-02).
 - The musl build needs `musl-gcc` for C dependencies. The spec says "no musl-gcc needed", which is true only for

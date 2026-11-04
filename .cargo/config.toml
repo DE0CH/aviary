@@ -2,12 +2,18 @@
 [target.x86_64-unknown-linux-musl]
 linker = "rust-lld"
 
+# the arm64 service images (ci.yml builds on an arm64 runner, natively)
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"
+
 [env]
-# C code in dependencies (ring, under rustls) is compiled by cc-rs, which looks for `x86_64-linux-musl-gcc` by
+# C code in dependencies (ring, under rustls) is compiled by cc-rs, which looks for `<arch>-linux-musl-gcc` by
 # default; Debian/Ubuntu's musl-tools ships the wrapper as `musl-gcc`. Platform 5.1's "no musl-gcc needed" holds for
 # linking only (rust-lld links musl's self-contained CRT); compiling C still needs musl's headers. CI installs
 # musl-tools; so must any machine that builds for musl (docs: README "Building").
 CC_x86_64_unknown_linux_musl = "musl-gcc"
+# on an arm64 machine musl-tools' musl-gcc targets aarch64 (no cross compiler: arm64 builds run natively)
+CC_aarch64_unknown_linux_musl = "musl-gcc"
 
 [build]
 # Reproducible builds (platform 5.1): workspace sources already reach rustc as relative paths and the standard
