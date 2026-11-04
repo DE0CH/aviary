@@ -493,3 +493,49 @@ async fn a_released_conversation_rewritten_with_the_same_bytes_is_no_mismatch() 
     assert_eq!(h.status.read().await.pass.released_changed, 1);
     assert_eq!(w.imp.magpie.legacy.verify_mismatches(), before);
 }
+
+/// The released check stats each recorded file where its record says it is: a released conversation whose recorded
+/// session id does not name its transcript (the old row's provider session missing: the box's smoke conversations)
+/// still has a write to that transcript counted.
+#[tokio::test]
+async fn a_write_to_a_recorded_file_counts_whatever_its_session_id() {
+    let w = World::new("loop_released_src").await;
+    w.jarvis("create table sandboxes (id uuid primary key, conversation_id uuid not null, status text not null)")
+        .await;
+    let ka = w.person(ALICE).await;
+    let id = conversation(&w, &ka, "Elsewhere").await;
+    let (_fake, kube) = common::old::cluster(&["ui-a"]).await;
+    let mut h = Handover::new(kube.clone(), "sw".into());
+    h.pass(&w.imp).await.unwrap();
+    assert!(handover::allow(&w.imp, &kube, "sw", None).await.unwrap().1);
+    for _ in 0..3 {
+        h.pass(&w.imp).await.unwrap();
+    }
+    assert_eq!(released(&w, id).await.as_deref(), Some("idle"));
+    let db = w.magpie().get().await.unwrap();
+    let p: String = db
+        .query_one(
+            "select provider_session from import_sources where conversation_id = $1",
+            &[&id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    db.execute(
+        "update import_sources set provider_session = $2 where conversation_id = $1",
+        &[&id, &Uuid::new_v4().to_string()],
+    )
+    .await
+    .unwrap();
+    let before = w.imp.magpie.legacy.verify_mismatches();
+    // the transcript is where the record says, not where the session id points: a stat difference, the same bytes
+    h.pass(&w.imp).await.unwrap();
+    assert_eq!(w.imp.magpie.legacy.verify_mismatches(), before);
+    w.append(
+        &ka,
+        &format!("projects/-workspace/{p}.jsonl"),
+        &assistant("z9", "2026-10-22T08:00:00.000Z", "too late"),
+    );
+    h.pass(&w.imp).await.unwrap();
+    assert_eq!(w.imp.magpie.legacy.verify_mismatches(), before + 1);
+}

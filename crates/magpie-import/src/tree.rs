@@ -161,7 +161,11 @@ pub fn memory(jfs: &Path, key: &str) -> Result<BTreeMap<String, Source>> {
     Ok(out)
 }
 
-fn stat_opt(p: &Path) -> Result<Option<Stat>> {
+/// The stat of a regular file, `None` when there is none at `p`.
+///
+/// # Errors
+/// A stat that fails for another reason than the file not being there.
+pub fn stat_opt(p: &Path) -> Result<Option<Stat>> {
     match std::fs::symlink_metadata(p) {
         Ok(m) if m.is_file() => Ok(Some(Stat::of(&m))),
         Ok(_) => Ok(None),

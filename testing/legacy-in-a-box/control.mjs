@@ -8,16 +8,18 @@
 //   native-files <tag>       the magpie conversation whose first message holds <tag>: id, owner and its files
 //   old-model <tag>          the old mock model's requests whose prompt holds <tag> (JSON)
 //   new-model <tag>          the new mock model's requests that hold <tag> (JSON)
+//   a1-rollout start|result  the A1 gated ui rollout stand-in (run.sh a1-rollout): started; its summary line once done
 import { execFile } from "node:child_process";
 import http from "node:http";
 
 const [script, port] = process.argv.slice(2);
 const PARAMS = { gate: "person", owner: "conversation", "native-turns": "conversation", sandbox: "conversation",
-  "native-files": "tag", "old-model": "tag", "new-model": "tag" };
+  "native-files": "tag", "old-model": "tag", "new-model": "tag", "a1-rollout": "step" };
 const VALID = {
   conversation: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   person: /^[a-z0-9.+-]+@[a-z0-9.-]+$/,
   tag: /^[0-9a-z][0-9a-z.-]{3,63}$/,
+  step: /^(start|result)$/,
 };
 http.createServer((req, res) => {
   const u = new URL(req.url, "http://x");
@@ -25,7 +27,7 @@ http.createServer((req, res) => {
   const key = PARAMS[name];
   const v = key ? u.searchParams.get(key) : null;
   if (req.method !== "POST" || !key || (v && !VALID[key].test(v))) { res.writeHead(404); return res.end(); }
-  execFile("bash", [script, name, ...(v ? [v] : [])], { timeout: 600000, maxBuffer: 1 << 24 }, (err, stdout, stderr) => {
+  execFile("bash", [script, name, ...(v ? [v] : [])], { timeout: 1200000, maxBuffer: 1 << 24 }, (err, stdout, stderr) => {
     res.writeHead(err ? 500 : 200, { "content-type": "text/plain" });
     res.end(err ? `${stderr}`.slice(-2000) : stdout);
   });

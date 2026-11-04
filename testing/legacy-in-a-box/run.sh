@@ -17,11 +17,10 @@
 #   run.sh gate [person] | owner <id> | native-turns <id> | sandbox <id> | native-files <tag> | old-model <tag> |
 #          new-model <tag>                  the runner's steps and the box's reads the drivers call (control.mjs)
 #   run.sh counters [--check] | seeds | reset   the zero counters; a seeded defect per counter; fresh processes
+#   run.sh a1-rollout [start|result]        the A1 gated ui rollout stand-in (the a1 persona drives it)
 #   run.sh logs <dir> | down
 #
-# Not done yet (this job is nightly/manual only until the whole rig passes): a seeded defect for
-# magpie_import_verify_mismatch_total (a released conversation's mismatch is counted only by the one-shot `magpie
-# import verify`, which nobody scrapes); the A1 gated rollout persona; iOS (out of scope).
+# Not done yet (this job is nightly/manual only until the whole rig passes): iOS (out of scope).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 e2e=$here/../e2e
@@ -379,6 +378,104 @@ new_model() { # new_model <tag>: the new mock model's requests that hold <tag>
     | python3 -c 'import json,sys; t=sys.argv[1]; print(json.dumps([r for r in json.load(sys.stdin) if t in json.dumps(r)]))' "${1:?tag}"
 }
 
+# the A1 gated ui rollout (DESIGN 9.6, DECISIONS E5), a stand-in for Flux applying 08-ui-rollout with the runner's
+# ui-gate: the Deployment paused with maxSurge 2 and a new template (BOX_A1_IMAGE, else the same image with the
+# template changed: one ordinary rollout), then the gate: resume only while no old pod has running work (every
+# CloudCLI child's switch busy route by exec, crates/magpie-import/src/holds.js, what cutover's ui-gate reads; a
+# child that cannot tell counts as busy; connections are never waited on) for BOX_A1_QUIET s (the runner's 10 min,
+# scaled), re-check every 2 s each old pod not yet terminating and pause again when work appears; the running work
+# seen at each old pod's SIGTERM is a1_rollout_cut_total. Prints {"a1RolloutCutTotal", "resumes", "pauses",
+# "firstResumeAt", "doneAt"} (Unix ms).
+old_work() { # old_work <pod>: running work on an old ui pod (sessions over its children); 1000000 when it cannot tell
+  kold -n jarvis exec "$1" -c ui -- node -e "$(cat "$here/../../crates/magpie-import/src/holds.js")" 2>/dev/null \
+    | python3 -c '
+import json, sys
+n, bad = 0, False
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    v = json.loads(line)
+    if "incomplete" in v or not v.get("ok"):
+        bad = True
+    n += len(v.get("sessions", []))
+print(1000000 if bad else n)' || echo 1000000
+}
+
+a1_rollout() {
+  local quiet=${BOX_A1_QUIET:-10} cut=0 resumes=0 pauses=0 first=0 since=0 now p w
+  local -A last=() seen=()
+  local old
+  old=$(kold -n jarvis get pods -l app=ui -o json | jq -r '.items[] | select(.metadata.deletionTimestamp == null) | .metadata.name' | tr '\n' ' ')
+  [ -n "$old" ] || die "no old ui pods"
+  kold -n jarvis patch deploy ui --type merge \
+    -p '{"spec":{"paused":true,"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":2,"maxUnavailable":0}}}}' >/dev/null
+  if [ -n "${BOX_A1_IMAGE:-}" ]; then
+    kold -n jarvis set image deploy/ui "ui=$BOX_A1_IMAGE" >/dev/null
+  else
+    kold -n jarvis patch deploy ui --type merge -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"box/a1\":\"$(date +%s%N)\"}}}}}" >/dev/null
+  fi
+  is_old() { [[ " $old " == *" $1 "* ]]; }
+  local until=$((SECONDS + ${BOX_A1_TIMEOUT:-900}))
+  while :; do
+    [ "$SECONDS" -lt "$until" ] || die "the A1 rollout did not finish in ${BOX_A1_TIMEOUT:-900} s"
+    local d pods left
+    d=$(kold -n jarvis get deploy ui -o json)
+    pods=$(kold -n jarvis get pods -l app=ui -o json)
+    left=$(jq -r '.items[].metadata.name' <<<"$pods" | while read -r p; do if is_old "$p"; then echo "$p"; fi; done | tr '\n' ' ')
+    if [ "$(jq -r '.spec.paused // false' <<<"$d")" = false ] && [ -z "${left// /}" ] \
+      && [ "$(jq -r '(.status.updatedReplicas // 0) == .spec.replicas and (.status.availableReplicas // 0) == .spec.replicas and (.status.replicas // 0) == .spec.replicas' <<<"$d")" = true ]; then
+      break
+    fi
+    now=$(date +%s%3N)
+    if [ "$(jq -r '.spec.paused // false' <<<"$d")" = true ]; then
+      # (1) the old pods (not terminating) with no running work for the quiet time, (2) re-checked, resumed
+      local busy=0
+      for p in $left; do
+        [ "$(jq -r --arg p "$p" '.items[] | select(.metadata.name == $p) | .metadata.deletionTimestamp // ""' <<<"$pods")" = "" ] || continue
+        w=$(old_work "$p"); last[$p]=$w
+        [ "$w" = 0 ] || busy=1
+      done
+      if [ "$busy" = 1 ]; then since=0; sleep 2; continue; fi
+      [ "$since" != 0 ] || since=$SECONDS
+      if [ $((SECONDS - since)) -ge "$quiet" ]; then
+        kold -n jarvis patch deploy ui --type merge -p '{"spec":{"paused":false}}' >/dev/null
+        resumes=$((resumes + 1)); since=0
+        [ "$first" != 0 ] || first=$now
+        log "a1: resumed (old pods: $left)"
+      fi
+      sleep 2; continue
+    fi
+    # (3) rolling: each old pod not yet terminating re-checked; paused again before its SIGTERM when work appears
+    local pause=0
+    for p in $left; do
+      if [ "$(jq -r --arg p "$p" '.items[] | select(.metadata.name == $p) | .metadata.deletionTimestamp // ""' <<<"$pods")" != "" ]; then
+        if [ -z "${seen[$p]:-}" ]; then
+          seen[$p]=1
+          w=${last[$p]:-0}; [ "$w" = 1000000 ] && w=0
+          cut=$((cut + w))
+          log "a1: $p got its SIGTERM with ${last[$p]:-0} running work"
+        fi
+        continue
+      fi
+      w=$(old_work "$p"); last[$p]=$w
+      [ "$w" = 0 ] || pause=1
+    done
+    if [ "$pause" = 1 ]; then
+      kold -n jarvis patch deploy ui --type merge -p '{"spec":{"paused":true}}' >/dev/null
+      pauses=$((pauses + 1))
+      log "a1: paused again (running work on an old pod)"
+    fi
+    sleep 2
+  done
+  # the rollout's own surge and strategy back to the box's (as 09-ui-unpause and the Kustomization's resume would)
+  kold -n jarvis patch deploy ui --type merge \
+    -p '{"spec":{"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":1,"maxUnavailable":0}}}}' >/dev/null
+  label_pods >&2
+  follow_ui_logs
+  echo "{\"a1RolloutCutTotal\": $cut, \"resumes\": $resumes, \"pauses\": $pauses, \"firstResumeAt\": $first, \"doneAt\": $(date +%s%3N)}"
+}
+
 # every old ui pod: the arming undone (between persona runs)
 admit_all() {
   local p
@@ -460,7 +557,7 @@ personas() {
     || { log "the seeded second reconnect was not caught"; fail=1; }
   # every other persona before the gate (hold and warm with their person's own gate), each as a person of its own
   # (view-as: the admin viewing another), then the clean draft, which goes on to the gate for everyone
-  for p in inflight upload attach ask view-as bridge hold warm draft; do
+  for p in a1 inflight upload attach ask view-as bridge hold warm draft; do
     out=$(pick "$p")
     echo "$out" | jq -e '.ok' >/dev/null || { log "persona $p failed"; fail=1; }
   done
@@ -580,6 +677,23 @@ seeds() {
   who=seedu@example.org
   seed 'magpie_unknown_upload_total{legacy="true"}' "an old asset path that resolves nowhere" \
     pigeon_client k1 "$who" create "seed unknown upload" ".claude/cloudcli-assets/missing-$(openssl rand -hex 6).txt"
+  # magpie_import_verify_mismatch_total: the old side writes a conversation magpie owns. The person's own gate
+  # releases a conversation of theirs (the hand-over's conditions: two clean reads, 60 s quiet, its old sandbox gone),
+  # then a line is appended to its transcript on the shared mount; the hand-over loop's released check (a stat,
+  # then the hashes) counts it on its own registry
+  local cv
+  cv=$(legacy_conversation seedv@example.org "seed verify first message")
+  gate seedv@example.org >&2
+  wait_for 1200 "seedv's conversation released" sh -c "[ \"\$('$here/run.sh' owner $cv)\" = owned ]"
+  old_write() { # old_write <conversation>: a line appended to its transcript, as an old child would
+    local src
+    src=$(magpie_sql "select f.value->>'src' from import_sources s, jsonb_each(s.files) f
+      where s.conversation_id = '$1' and f.key like 'projects/%.jsonl' and f.key not like '%/memory/%' limit 1")
+    [ -n "$src" ] || { log "no transcript recorded for $1"; return 1; }
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"written after the release"}]}}' \
+      >> "$jfs${src#/jfs}"
+  }
+  seed magpie_import_verify_mismatch_total "the old side writing a released conversation" old_write "$cv"
   # old_turn_cut_total: an old pod drained (deadline 5 s) while its process runs a long turn
   kold -n jarvis set env deploy/ui JARVIS_UI_DRAIN_SECONDS=5 >/dev/null
   timeout 300 kubectl --kubeconfig "$work/kubeconfig-old" -n jarvis rollout status deploy/ui --timeout=290s >/dev/null
@@ -657,6 +771,20 @@ case ${1:-} in
   owner) shift; owner "$@" ;;
   native-turns) shift; native_turns "$@" ;;
   counters) shift; counters "$@" ;;
+  a1-rollout)
+    # start: the rollout and its gate in the background (it takes minutes, past a control call's HTTP wait); result:
+    # its summary once done, exit 2 while it runs, its error when it failed
+    case ${2:-} in
+      start)
+        rm -f "$work/a1.json" "$work/a1.err" "$work/a1.done"
+        (a1_rollout > "$work/a1.json" 2> "$work/a1.err"; echo $? > "$work/a1.done") </dev/null >/dev/null 2>&1 &
+        echo started ;;
+      result)
+        [ -f "$work/a1.done" ] || exit 2
+        [ "$(cat "$work/a1.done")" = 0 ] || { tail -5 "$work/a1.err" >&2; exit 1; }
+        tail -1 "$work/a1.json" ;;
+      *) a1_rollout ;;
+    esac ;;
   seeds) seeds ;;
   reset) reset ;;
   logs) shift; logs "$@" ;;

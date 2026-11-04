@@ -9,6 +9,7 @@ testing/legacy-in-a-box/run.sh up <release sha12> <ui image>      # both cluster
 testing/legacy-in-a-box/run.sh smoke                               # an old turn through B1, then the bulk import
 testing/legacy-in-a-box/run.sh seeds | reset                       # a seeded defect per zero counter; fresh processes
 testing/legacy-in-a-box/run.sh personas <claudecodeui> <persona build>
+testing/legacy-in-a-box/run.sh a1-rollout [start|result]          # the A1 gated ui rollout stand-in (persona a1)
 testing/legacy-in-a-box/run.sh logs <dir> | down
 ```
 
@@ -38,6 +39,7 @@ counter, each of which must move its counter so that `counters --check` fails na
 | `pigeon_lu_errors_total` | the same: an LU call |
 | `magpie_conversation_migrating_total` | a native write straight to magpie for a legacy conversation (an owner record gone wrong) |
 | `magpie_unknown_upload_total{legacy="true"}` | a create whose attachment is an old asset path with no file anywhere |
+| `magpie_import_verify_mismatch_total` | the old side writes a released conversation: a person's own gate releases it, then a line is appended to its transcript on the shared mount (the hand-over loop's live released check counts it) |
 | `old_turn_cut_total` | an old pod drained (5 s deadline) under a long turn |
 
 (`seed-pigeon.mjs` is the seeds' plain client of pigeon: a Paseo socket and the upload route.) `run.sh reset` then
@@ -46,7 +48,13 @@ their own.
 
 `personas` runs the persona drivers, each as a person of its own on a fresh legacy conversation (DESIGN 9.9):
 `draft` twice with a seeded defect (`lost-draft` must fail "draft kept across the move", the edge's
-`second-reconnect` must fail "one reconnect per move"), then `inflight` (a send in flight at the move), `upload` (an
+`second-reconnect` must fail "one reconnect per move"), then `a1` (the A1 gated ui rollout before T0, DESIGN 9.6 and
+DECISIONS E5: four tabs open on the old ui and a long old turn running when `run.sh a1-rollout` pushes the rollout,
+the Deployment paused with a new template, `BOX_A1_IMAGE` or the same image, as Flux applies `08-ui-rollout`; the
+gate stand-in resumes only while no old pod has running work, read through every child's switch busy route as
+cutover's `ui-gate` reads it, for `BOX_A1_QUIET` s, and pauses again before an old pod's SIGTERM when work appears;
+the turn is not cut and the gate waited for it, `a1_rollout_cut_total` is 0, every tab reconnects at most once and
+is connected after), `inflight` (a send in flight at the move), `upload` (an
 upload after T0 on an unmoved tab, sent on the old socket), `attach` (a file attached at move - 2 s, sent at move + 3
 s: a pigeon-born conversation), `ask` (an AskUserQuestion across the move, Stop from the moved tab), `view-as` (an
 admin's view-as tab), `bridge` (B1's connections reset mid-send: every write lands once, no reconnect), `hold` and
@@ -57,5 +65,4 @@ reconnect, the composer untouched by the replacement) and a native next send. Th
 counter of `testing/switch/zero-counters.txt` is 0, summed over pigeon, magpie and the importer (the API's pod
 proxy), each old ui pod's report and the old ui log. `BOX_ONLY="<persona>…"` runs just those, by hand.
 
-Not done yet: a seeded defect for `magpie_import_verify_mismatch_total` (a released conversation's mismatch is counted
-only by the one-shot `magpie import verify`, whose process nobody scrapes), the A1 gated rollout persona, and iOS.
+Not done yet: iOS.
