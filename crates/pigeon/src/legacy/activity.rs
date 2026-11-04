@@ -137,3 +137,25 @@ async fn activity(State(app): State<App>) -> Response {
 pub fn router(app: App) -> Router {
     Router::new().route(PATH, get(activity)).with_state(app)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_upload_in_progress_is_activity_now() {
+        let a = Activity::default();
+        let u = a.uploading("a@example.org");
+        let r = a.report();
+        let p = &r["persons"]["a@example.org"];
+        assert_eq!(p["uploading"], 1);
+        assert_eq!(p["lastUpload"], r["generatedAt"], "in progress: now");
+        drop(u);
+        let r = a.report();
+        assert_eq!(r["persons"]["a@example.org"]["uploading"], 0);
+        assert!(
+            r["persons"]["a@example.org"]["lastUpload"].is_string(),
+            "its end stamped"
+        );
+    }
+}
