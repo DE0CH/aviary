@@ -1,7 +1,8 @@
 //! `magpie import plan` (cutover 7.9): what an import would copy, read-only. Counts and sizes per schema, the
 //! failed turns, the largest lines, transcripts not on disk, the auto-memory files (copied into each of the person's
 //! conversations, decision 6: reported, never a blocker), and the blockers: a schema the importer cannot map, a
-//! sessions row whose id is not a uuid, an id that is a native magpie conversation's, a line over magpie's cap.
+//! sessions row whose id is not a uuid, an id that is a native magpie conversation's or in two schemas, a line over
+//! magpie's cap.
 
 use std::io::{BufRead as _, BufReader, Read as _};
 
@@ -128,6 +129,12 @@ pub async fn plan(imp: &Importer) -> Result<Plan> {
     for (schema, why) in &snap.problems {
         plan.blockers.push(format!("schema {schema}: {why}"));
     }
+    for (id, schemas) in snap.duplicate_ids() {
+        plan.blockers.push(format!(
+            "conversation {id}: its sessions row is in more than one schema ({})",
+            schemas.join(", ")
+        ));
+    }
     let conn = imp.magpie.pool.get().await?;
     let mut lines: Vec<LongLine> = Vec::new();
     for p in &snap.persons {
@@ -165,7 +172,7 @@ pub async fn plan(imp: &Importer) -> Result<Plan> {
                 plan.blockers
                     .push(format!("conversation {id}: the id is a native conversation's"));
             }
-            let sources = tree::sources(&imp.jfs, &p.key, s.psid())?;
+            let sources = tree::sources(&imp.jfs, &p.key, s.psid(), s.id().ok())?;
             if !sources.contains_key(&tree::main_path(s.psid())) {
                 sp.no_transcript += 1;
             }

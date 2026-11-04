@@ -178,7 +178,7 @@ async fn a_rename_onto_a_path_magpie_already_has_unlinks_the_old_one() {
     // Claude Code moves a to b; an earlier pass created b in magpie and stopped before recording it
     w.put(&ka, &b, &body);
     std::fs::remove_file(w.claude(&ka).join(&a)).unwrap();
-    let srcs = tree::sources(&w.jfs.0, &ka, &p1.to_string()).unwrap();
+    let srcs = tree::sources(&w.jfs.0, &ka, &p1.to_string(), Some(u1)).unwrap();
     let only_b: std::collections::BTreeMap<String, tree::Source> = srcs
         .iter()
         .filter(|(p, _)| **p == b)
@@ -214,7 +214,26 @@ async fn a_released_conversation_ignores_shared_memory_and_sees_new_files() {
     // a file the old side made in the released conversation's session folder after the release is seen
     let late = format!("projects/-workspace/{p1}/tool-results/late.txt");
     w.put(&ka, &late, b"late\n");
+    // after a forced release it is the cut-off turn's write: reported apart, and verification passes
     let v = verify::verify(&w.imp, u1).await.unwrap();
+    assert!(v.ok(), "{v:?}");
+    assert_eq!(v.forced_writes.len(), 1, "{v:?}");
+    assert_eq!(v.forced_writes[0].path, late);
+    // after a hand-over's (idle) release it is a mismatch
+    w.imp
+        .magpie
+        .pool
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            "update import_sources set release_reason = 'idle' where conversation_id = $1",
+            &[&u1],
+        )
+        .await
+        .unwrap();
+    let v = verify::verify(&w.imp, u1).await.unwrap();
+    assert!(!v.ok() && v.forced_writes.is_empty(), "{v:?}");
     assert_eq!(v.mismatches.len(), 1, "{v:?}");
     assert_eq!(v.mismatches[0].path, late);
 }

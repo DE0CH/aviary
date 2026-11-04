@@ -85,6 +85,7 @@ pub async fn create(
     let model = s.model.clone().filter(|m| !m.is_empty());
     let pool = &imp.magpie.pool;
     aviary_pg::tx!(pool, |t| -> Result<Created> {
+        imp.check_lock_in(t).await?;
         if let Some(r) = t
             .query_opt(
                 "select exists (select 1 from import_sources where conversation_id = $1) from conversations
@@ -165,16 +166,20 @@ pub async fn apply_row(imp: &Importer, person: &str, s: &SessionRow) -> Result<b
     let fp = s.fingerprint();
     let pool = &imp.magpie.pool;
     aviary_pg::tx!(pool, |t| -> Result<bool> {
+        imp.check_lock_in(t).await?;
         let Some(r) = t
             .query_opt(
-                "select migrating, title, name_source, deleted_at, model from conversations
-                 where id = $1 and person = $2 for update",
-                &[&id, &person],
+                "select migrating, title, name_source, deleted_at, model, person from conversations
+                 where id = $1 for update",
+                &[&id],
             )
             .await?
         else {
             return Err(Error::Released);
         };
+        if r.get::<_, String>(5) != person {
+            return Err(another_persons(id));
+        }
         if !r.get::<_, bool>(0) {
             return Err(Error::Released);
         }
@@ -245,6 +250,13 @@ pub async fn apply_row(imp: &Importer, person: &str, s: &SessionRow) -> Result<b
     .await
 }
 
+/// The error of a write for one person to another person's conversation (a sessions row id in two schemas, or a
+/// person whose schema was renamed): reported, never taken for a release.
+#[must_use]
+pub fn another_persons(id: Uuid) -> Error {
+    Error::Source(format!("{id} is another person's conversation in magpie: not written"))
+}
+
 /// Records a sync's results on the `import_sources` row (only while the conversation is migrating).
 ///
 /// # Errors
@@ -260,6 +272,7 @@ pub async fn record(
     let files = serde_json::to_value(files)?;
     let pool = &imp.magpie.pool;
     aviary_pg::tx!(pool, |t| -> Result<()> {
+        imp.check_lock_in(t).await?;
         let n = t
             .execute(
                 "update import_sources s set files = $2, failed_turns_fp = $3, sent_fp = $5, last_synced_at = now(),
@@ -326,6 +339,7 @@ pub async fn record_error(imp: &Importer, id: Uuid, error: &str) -> Result<()> {
 pub async fn purge(imp: &Importer, id: Uuid) -> Result<bool> {
     let pool = &imp.magpie.pool;
     aviary_pg::tx!(pool, |t| -> Result<bool> {
+        imp.check_lock_in(t).await?;
         let Some(r) = t
             .query_opt(
                 "select person, migrating from conversations where id = $1 for update",

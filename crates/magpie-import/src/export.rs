@@ -1,9 +1,24 @@
 //! The reverse export (cutover 14.3, `magpie import export [--since <time>] [<id>…]`): magpie's copy of each owned
 //! conversation with events after `since` (or created after it) written back to the old stack, so that a fresh old
-//! child reads what magpie holds. It runs in the fenced state (14.3): a conversation without the reverse fence
-//! (`legacy_fence_at` set on the owned conversation by the reverse hand-over, 14.2, WP-52's) is the export's error and
-//! is not written, unless `--unfenced` says the operator has stopped writes some other way. The export writes nothing
-//! to magpie. It checks the mount first and stops when the leader lock is lost.
+//! child reads what magpie holds. It runs in the fenced state (14.3): a conversation without a live reverse fence
+//! (`legacy_fence_at` set on the owned conversation by the reverse hand-over, 14.2, WP-52's, and younger than its
+//! [`magpie::limits::FENCE_LEASE`]) is the export's error and is not written, unless `--unfenced` says the operator
+//! has stopped writes some other way. The export renews the fence's lease before each file and before the
+//! `cloudcli` writes, so a conversation larger than one lease still exports; a lease that lapsed meanwhile is the
+//! conversation's error. Whatever the fence does, the export reads the conversation's head seq, cc file versions and
+//! row before writing and again after: a conversation that changed in magpie while it was written (a native write the
+//! fence did not hold) is the conversation's error, to be exported again. The only write to magpie is that lease.
+//! It checks the mount first and stops when the leader lock is lost.
+//!
+//! One Claude Code session id, one old-side transcript: a person who continued a share twice (or their own share)
+//! has two conversations with the same `provider_session_id` (magpie does not rewrite it on continue), which the old
+//! side would read from the same `projects/-workspace/<psid>.jsonl`. Only the person's earliest conversation with
+//! that session id (migrating ones included: a legacy one owns the old file) is exported under it; each other one is
+//! the export's error. A permanent deletion leaves a session id that another conversation of the person still uses.
+//!
+//! Each exported conversation's result lists the files written with their stats and sha256 (`recorded`, in
+//! `import_sources.files`' shape), which the reverse hand-over's reopen (14.2 step 5) stores so the importer's next
+//! pass sees them as already synced.
 //!
 //! - Transcript files: every cc file reconstructed through magpie's read path and written to
 //!   `users/<key>/claude/<cc path>` (a temporary file in the same folder, then a rename; mode 0600, uid and gid 1000
@@ -79,6 +94,9 @@ pub struct Conversation {
     pub removed: usize,
     /// Its shares written to the old side, and old share links revoked.
     pub shares: crate::export_more::Shares,
+    /// Every cc file written, as `import_sources.files` records a synced source (the old-side path, its stat after
+    /// the write, its sha256): the reopen's record (14.2 step 5).
+    pub recorded: crate::sync::Files,
 }
 
 fn ts(t: OffsetDateTime) -> String {
@@ -111,20 +129,84 @@ pub async fn targets(imp: &Importer, since: Option<OffsetDateTime>, ids: &[Uuid]
     Ok(rows.iter().map(|r| r.get(0)).collect())
 }
 
-/// Whether the owned conversation `id` is reverse-fenced (`legacy_fence_at` set while not migrating).
-async fn fenced(imp: &Importer, id: Uuid) -> Result<bool> {
+/// Renews the reverse fence of owned conversation `id` when it is live (`legacy_fence_at` set while not migrating,
+/// younger than its lease): whether it was. A lapsed fence is not renewed: a native write may have gone through it.
+async fn renew(imp: &Importer, id: Uuid) -> Result<bool> {
     Ok(imp
         .magpie
         .pool
         .get()
         .await?
+        .execute(
+            "update conversations set legacy_fence_at = clock_timestamp()
+              where id = $1 and not migrating
+                and legacy_fence_at > clock_timestamp() - make_interval(secs => $2)",
+            &[&id, &magpie::limits::FENCE_LEASE.as_secs_f64()],
+        )
+        .await?
+        == 1)
+}
+
+/// Keeps the reverse fence of `id` for the next write (nothing when exporting `--unfenced`).
+async fn keep(imp: &Importer, id: Uuid, fenced: bool) -> Result<()> {
+    if fenced && !renew(imp, id).await? {
+        return Err(Error::Source(
+            "its reverse fence lapsed during the export (a native write may have gone through): export it again"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// What the export reads of a conversation before writing it and again after: its head seq, every cc file's
+/// version, and the row columns the sessions row takes.
+#[derive(Debug, PartialEq, Eq)]
+struct Seen {
+    head_seq: i64,
+    files: Vec<(String, i64)>,
+    row: (Option<String>, Option<String>, Option<OffsetDateTime>, Option<String>),
+}
+
+async fn seen(imp: &Importer, id: Uuid) -> Result<Seen> {
+    let conn = imp.magpie.pool.get().await?;
+    let r = conn
         .query_one(
-            "select exists (select 1 from conversations where id = $1 and not migrating
-                            and legacy_fence_at is not null)",
+            "select head_seq, title, name_source, deleted_at, provider_session_id from conversations where id = $1",
+            &[&id],
+        )
+        .await?;
+    let files = conn
+        .query(
+            "select path, version from cc_files where scope = $1 and kind <> 'dir' order by path",
             &[&id],
         )
         .await?
-        .get(0))
+        .iter()
+        .map(|f| (f.get(0), f.get(1)))
+        .collect();
+    Ok(Seen {
+        head_seq: r.get(0),
+        files,
+        row: (r.get(1), r.get(2), r.get(3), r.get(4)),
+    })
+}
+
+/// The person's conversations whose Claude Code session id is `psid`, earliest first (migrating ones included).
+pub(crate) async fn psid_users(imp: &Importer, person: &str, psid: &str) -> Result<Vec<Uuid>> {
+    Ok(imp
+        .magpie
+        .pool
+        .get()
+        .await?
+        .query(
+            "select id from conversations where person = $1 and coalesce(provider_session_id, id::text) = $2
+             order by created_at, id",
+            &[&person, &psid],
+        )
+        .await?
+        .iter()
+        .map(|r| r.get(0))
+        .collect())
 }
 
 /// Runs the export; `unfenced` exports conversations that are not reverse-fenced too.
@@ -136,14 +218,16 @@ pub async fn export(imp: &Importer, since: Option<OffsetDateTime>, ids: &[Uuid],
     let mut out = Exported::default();
     for id in targets(imp, since, ids).await? {
         imp.check_lock().await?;
-        if !unfenced && !fenced(imp, id).await? {
+        if !unfenced && !renew(imp, id).await? {
             out.errors.push((
                 id.to_string(),
-                "not reverse-fenced: not exported (a native turn may be writing it; --unfenced overrides)".to_owned(),
+                "not reverse-fenced (or its fence lapsed): not exported (a native turn may be writing it; --unfenced \
+                 overrides)"
+                    .to_owned(),
             ));
             continue;
         }
-        match conversation(imp, id, since).await {
+        match conversation(imp, id, since, !unfenced).await {
             Ok(c) => out.conversations.push(c),
             Err(e) => {
                 tracing::warn!(conversation = %id, error = %e, "conversation not exported");
@@ -235,25 +319,43 @@ where
 
 /// Writes magpie's reconstruction of `path` of cc scope `scope` (a conversation or a share snapshot) to `dest`.
 pub(crate) async fn write_scope(imp: &Importer, scope: Uuid, path: &str, dest: &Path) -> Result<u64> {
+    Ok(write_scope_recorded(imp, scope, path, dest).await?.size)
+}
+
+/// [`write_scope`], answering what was written as the importer records a synced source.
+async fn write_scope_recorded(imp: &Importer, scope: Uuid, path: &str, dest: &Path) -> Result<crate::sync::Recorded> {
+    use sha2::Digest as _;
     let q = CcFileQuery {
         path: path.to_owned(),
         offset: None,
         length: None,
     };
     let res = reconstruct::scope_file(imp.magpie.clone(), scope, &q).await?;
-    replace(imp.owner, dest, |mut f| async move {
+    let mut h = sha2::Sha256::new();
+    let hasher = &mut h;
+    let n = replace(imp.owner, dest, |mut f| async move {
         let mut body = res.into_body();
         let mut n = 0u64;
         while let Some(frame) = body.frame().await {
             let frame = frame.map_err(|e| Error::Source(format!("the read of {path} ended early: {e}")))?;
             if let Ok(data) = frame.into_data() {
                 f.write_all(&data)?;
+                hasher.update(&data);
                 n += data.len() as u64;
             }
         }
         Ok((f, n))
     })
-    .await
+    .await?;
+    let stat = crate::tree::restat(dest)?
+        .ok_or_else(|| Error::Source(format!("{} is gone right after its write", dest.display())))?;
+    Ok(crate::sync::Recorded {
+        src: dest.to_string_lossy().into_owned(),
+        size: n,
+        mtime_ns: stat.mtime_ns,
+        ino: stat.ino,
+        sha256: crate::hex(&h.finalize()),
+    })
 }
 
 struct Meta {
@@ -292,10 +394,20 @@ async fn meta(imp: &Importer, id: Uuid) -> Result<Meta> {
     })
 }
 
-async fn conversation(imp: &Importer, id: Uuid, since: Option<OffsetDateTime>) -> Result<Conversation> {
+#[allow(clippy::too_many_lines)] // files, sessions row, failed turns, shares, each fenced
+async fn conversation(imp: &Importer, id: Uuid, since: Option<OffsetDateTime>, fenced: bool) -> Result<Conversation> {
     let m = meta(imp, id).await?;
     let key = aviary_core::log::person_key(&m.person);
     let claude = crate::tree::claude_dir(&imp.jfs, &key);
+    let users = psid_users(imp, &m.person, &m.psid).await?;
+    if let Some(first) = users.first().filter(|f| **f != id) {
+        return Err(Error::Source(format!(
+            "its Claude Code session {} is also conversation {first}'s (a continued share), which the old side keeps \
+             under that session id: not exported",
+            m.psid
+        )));
+    }
+    let before = seen(imp, id).await?;
     let mut out = Conversation {
         conversation: id,
         person_key: key.clone(),
@@ -303,16 +415,22 @@ async fn conversation(imp: &Importer, id: Uuid, since: Option<OffsetDateTime>) -
     };
     let scope = crate::verify::magpie_files(imp, id).await?;
     for path in scope.keys() {
+        keep(imp, id, fenced).await?;
         let dest = destination(&claude, id, path)?;
-        out.bytes += write_scope(imp, id, path, &dest).await?;
+        let rec = write_scope_recorded(imp, id, path, &dest).await?;
+        out.bytes += rec.size;
         out.files += 1;
         if path.starts_with(crate::tree::MEMORY) {
             out.memory += 1;
         }
+        out.recorded.insert(path.clone(), rec);
+        crate::pause(imp.pause_in_fence).await;
     }
+    keep(imp, id, fenced).await?;
     out.removed = remove_stale(imp, id, &claude, &m.psid, &scope).await?;
     let base = imp.jfs.join("sent").join(id.to_string());
     out.sent_files = write_sent(imp, id, since, None, &base).await?.len();
+    keep(imp, id, fenced).await?;
     let schema = format!("cc_{key}");
     let conn = imp.cloudcli.get().await?;
     let has: bool = conn
@@ -378,6 +496,14 @@ async fn conversation(imp: &Importer, id: Uuid, since: Option<OffsetDateTime>) -
         out.failed_turns = failed(imp, &conn, &schema, id, since).await?;
     }
     out.shares = crate::export_more::shares(imp, id, &key).await?;
+    // nothing moved in magpie while the old side was written, and the fence held to the end
+    keep(imp, id, fenced).await?;
+    if seen(imp, id).await? != before {
+        return Err(Error::Source(
+            "it changed in magpie while it was exported (a native write the fence did not hold): export it again"
+                .to_owned(),
+        ));
+    }
     tracing::info!(conversation = %id, files = out.files, row = out.row, "conversation exported");
     Ok(out)
 }

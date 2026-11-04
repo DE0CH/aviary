@@ -466,7 +466,10 @@ async fn conflicts_vanished_rows_forced_release_and_reset() {
     pass::pass(&w.imp, None).await.unwrap();
     assert_eq!(w.versions(forced).await, before);
     let v = verify::verify(&w.imp, forced).await.unwrap();
-    assert!(!v.ok(), "the old side wrote after the release: verify says so");
+    // the old side wrote after a forced release (a cut-off turn): reported apart, and `verify --all` passes
+    assert!(v.ok(), "{v:?}");
+    assert_eq!(v.forced_writes.len(), 1, "{v:?}");
+    assert_eq!(v.forced_writes[0].path, format!("projects/-workspace/{forced}.jsonl"));
 
     // reset removes the migrating imports only
     assert_eq!(control::reset(&w.imp).await.unwrap(), 1);

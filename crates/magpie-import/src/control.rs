@@ -235,16 +235,23 @@ pub struct Forced {
     pub verified: bool,
     /// What verification found different (released anyway, as forced).
     pub mismatches: Vec<crate::verify::Mismatch>,
-    /// What verification found not synced yet (the final sync inside the fence syncs it).
+    /// What verification found not synced yet (the syncs before and inside the fence sync it).
     pub pending: Vec<String>,
+    /// Files verification re-ingested after a first mismatch.
+    pub reingested: Vec<String>,
     /// Verification's own error, when it could not run.
     pub verify_error: Option<String>,
-    /// Fence to release, seconds.
+    /// Fence to release by the database's clock, seconds (what `magpie_fence_seconds` of this process observed:
+    /// a one-shot process's registry, which nothing scrapes, so forced releases are counted here and kept out of the
+    /// A5 gate's histogram on purpose).
     pub fence_seconds: f64,
+    /// The importer's own time from the fence to the release's commit, seconds (the final sync and re-stat inside
+    /// it).
+    pub in_fence_seconds: f64,
 }
 
-/// The final sync of one conversation inside its fence: one read of its person's schema, then the same sync a pass
-/// makes (files, sessions row, failed turns, sent files).
+/// The final sync of one conversation: one read of its person's schema, then the same sync a pass makes (files,
+/// sessions row, failed turns, sent files).
 async fn final_sync(imp: &Importer, id: Uuid) -> Result<()> {
     crate::tree::check_mount(&imp.jfs)?;
     let Some(row) = crate::verify::row(imp, id).await? else {
@@ -265,15 +272,21 @@ async fn final_sync(imp: &Importer, id: Uuid) -> Result<()> {
 
 /// `release <id> --force` (cutover 7.7 step 3, A2 rehearsal 7): closes the conversation's open tickets (an open
 /// ticket otherwise refuses the fence and the release for ever; an old turn still running is cut off, which the
-/// operator accepts by forcing), verifies it (a mismatch is reported, not a refusal), fences it, syncs it once more
-/// inside the fence and re-stats every source and fingerprint against what that sync recorded (cutover 7.8): anything
-/// that changed meanwhile lifts the fence and fails the release. Then it releases with `release_reason = forced`;
-/// the fence time goes on `magpie_fence_seconds` of this process's registry. The old title's `name_source` is kept as
-/// imported.
+/// operator accepts by forcing), verifies it (a mismatch is reported, not a refusal), syncs it once before the fence
+/// (so the sync inside it usually has nothing left to do), fences it, syncs it once more inside the fence and
+/// re-stats every source and fingerprint against what that sync recorded (cutover 7.8): anything that changed
+/// meanwhile lifts the fence and fails the release. Then it releases with `release_reason = forced`, in one
+/// transaction that also checks the one-shot lock. The fence is a lease of [`magpie::limits::FENCE_LEASE`]: a final
+/// sync that outlasts it fails the release with that said (nothing is released; run it again). The old title's
+/// `name_source` is kept as imported.
+///
+/// Not done here: cutover 7.8's upload-ingestion pass inside the release transaction (WP-52's; until it exists a
+/// native send naming an old asset waits for the synchronous ingest of the import Deployment, A3 on).
 ///
 /// # Errors
 /// [`Error::Source`] when it cannot be fenced or released (not migrating, a ticket taken meanwhile, a source that
 /// changed inside the fence, the fence's lease over before the release); the lock lost; a statement error.
+#[allow(clippy::too_many_lines)] // verify, sync, fence, sync, re-stat, release, each with its own failure
 pub async fn release_forced(imp: &Importer, id: Uuid) -> Result<Forced> {
     imp.check_lock().await?;
     let pool = &imp.magpie.pool;
@@ -287,8 +300,10 @@ pub async fn release_forced(imp: &Importer, id: Uuid) -> Result<Forced> {
         verified: false,
         mismatches: Vec::new(),
         pending: Vec::new(),
+        reingested: Vec::new(),
         verify_error: None,
         fence_seconds: 0.0,
+        in_fence_seconds: 0.0,
     };
     match verdict {
         Ok(v) => {
@@ -301,18 +316,23 @@ pub async fn release_forced(imp: &Importer, id: Uuid) -> Result<Forced> {
             out.verified = v.ok();
             out.mismatches = v.mismatches;
             out.pending = v.pending;
+            out.reingested = v.reingested;
         }
         Err(e) => {
             tracing::warn!(conversation = %id, error = %e, "released by force without a verification");
             out.verify_error = Some(e.to_string());
         }
     }
+    // what the old stack wrote since the verification, synced before the fence
+    final_sync(imp, id).await?;
     imp.check_lock().await?;
     match fence::fence(pool, id).await? {
         fence::Fence::Fenced(_) | fence::Fence::AlreadyFenced => {}
         other => return Err(Error::Source(format!("{id} cannot be fenced: {other:?}"))),
     }
-    // inside the fence: whatever the old stack wrote since the verification is synced now, then nothing may move
+    let fenced = std::time::Instant::now();
+    crate::pause(imp.pause_in_fence).await;
+    // inside the fence: whatever the old stack wrote since is synced now, then nothing may move
     let changes = match final_sync(imp, id).await {
         Ok(()) => crate::verify::changed_since_sync(imp, id).await,
         Err(e) => Err(e),
@@ -328,19 +348,45 @@ pub async fn release_forced(imp: &Importer, id: Uuid) -> Result<Forced> {
             changes.join(", ")
         )));
     }
-    if let Err(e) = imp.check_lock().await {
-        let _ = fence::unfence(pool, id).await;
-        return Err(e);
-    }
-    let held = fence::release(pool, id, &fence::Release::default(), "forced", &imp.magpie.legacy).await?;
+    let held = aviary_pg::tx!(pool, |t| -> Result<Result<fence::Released, fence::NotReleased>> {
+        imp.check_lock_in(t).await?;
+        let r = fence::release_in(t, id, &fence::Release::default()).await?;
+        if r.is_ok() {
+            t.execute(
+                "update import_sources set released_at = now(), release_reason = 'forced' where conversation_id = $1",
+                &[&id],
+            )
+            .await?;
+        }
+        Ok(r)
+    })
+    .await;
+    out.in_fence_seconds = fenced.elapsed().as_secs_f64();
     match held {
-        Ok(s) => {
-            out.fence_seconds = s;
+        Ok(Ok(r)) => {
+            out.fence_seconds = r.held;
+            r.record(&imp.magpie.legacy);
             Ok(out)
         }
-        Err(why) => {
+        Ok(Err(fence::NotReleased::NotFenced)) => {
             let _ = fence::unfence(pool, id).await;
-            Err(Error::Source(format!("{id} was not released: {why:?}")))
+            Err(Error::Source(format!(
+                "{id} was not released: the fence's {} s lease ran out after {:.1} s inside it (the final sync and \
+                 re-stat took too long); nothing was released, run it again",
+                magpie::limits::FENCE_LEASE.as_secs(),
+                out.in_fence_seconds
+            )))
+        }
+        Ok(Err(why)) => {
+            let _ = fence::unfence(pool, id).await;
+            Err(Error::Source(format!(
+                "{id} was not released: {why:?} ({:.1} s inside the fence)",
+                out.in_fence_seconds
+            )))
+        }
+        Err(e) => {
+            let _ = fence::unfence(pool, id).await;
+            Err(e)
         }
     }
 }

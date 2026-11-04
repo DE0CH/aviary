@@ -45,6 +45,10 @@ pub struct Verdict {
     pub reingested: Vec<String>,
     /// What is still different.
     pub mismatches: Vec<Mismatch>,
+    /// A conversation released by force (`release_reason = forced`): what the old side wrote after the release (an
+    /// old turn the operator cut off kept writing). Expected and reported apart, so `verify --all` does not fail on
+    /// it and the hand-over is not held; those writes are lost, as the forced release accepted.
+    pub forced_writes: Vec<Mismatch>,
     /// What the sources have that the last pass did not sync yet (a sessions row change, a failed turn, a send):
     /// verification waits for the next pass.
     pub pending: Vec<String>,
@@ -130,6 +134,8 @@ pub struct Row {
     pub released: bool,
     /// What verification recorded (`verified_stats`), when it passed.
     pub verified: Option<Fingerprints>,
+    /// Released by `release --force`.
+    pub forced: bool,
 }
 
 /// A conversation's sources as fingerprints (cutover 7.3 `verified_stats`: every source file's stat and every
@@ -201,7 +207,7 @@ pub async fn row(imp: &Importer, id: Uuid) -> Result<Option<Row>> {
         .await?
         .query_opt(
             "select person, user_key, provider_session, files, released_at is not null, source_schema, row_fp,
-                    failed_turns_fp, sent_fp, verified_stats
+                    failed_turns_fp, sent_fp, verified_stats, release_reason is not distinct from 'forced'
              from import_sources where conversation_id = $1",
             &[&id],
         )
@@ -232,6 +238,7 @@ pub async fn row(imp: &Importer, id: Uuid) -> Result<Option<Row>> {
         schema: r.get(5),
         synced,
         verified,
+        forced: r.get(10),
     }))
 }
 
@@ -252,7 +259,7 @@ pub async fn current(imp: &Importer, id: Uuid, r: &Row) -> Result<(BTreeMap<Stri
         .map(|f| f.iter().map(|f| f.id).collect())
         .unwrap_or_default();
     let (_, sent_fp) = crate::sent::read(&imp.jfs, id)?;
-    let sources = tree::sources(&imp.jfs, &r.key, &r.psid)?;
+    let sources = tree::sources(&imp.jfs, &r.key, &r.psid, Some(id))?;
     let fp = Fingerprints {
         files: sources.iter().map(|(p, s)| (p.clone(), stat_of(&s.stat))).collect(),
         row_fp,
@@ -331,7 +338,8 @@ fn is_memory(path: &str) -> bool {
 
 /// A released conversation: the old side wrote nothing of its own after the hand-over. Every recorded file still
 /// has its size and sha256, and no new file appeared in its session folder or as its transcript. The person's
-/// shared auto-memory is left out: their other conversations, still the old stack's, rightly change it.
+/// shared auto-memory is left out: their other conversations, still the old stack's, rightly change it. After a
+/// forced release the differences are the cut-off turn's writes: [`Verdict::forced_writes`], not mismatches.
 fn released(id: Uuid, imp: &Importer, r: &Row) -> Result<Verdict> {
     let mut mismatches = Vec::new();
     for (path, rec) in r.files.iter().filter(|(p, _)| !is_memory(p)) {
@@ -344,7 +352,7 @@ fn released(id: Uuid, imp: &Importer, r: &Row) -> Result<Verdict> {
             });
         }
     }
-    for (path, src) in tree::sources(&imp.jfs, &r.key, &r.psid)? {
+    for (path, src) in tree::sources(&imp.jfs, &r.key, &r.psid, Some(id))? {
         if !is_memory(&path) && !r.files.contains_key(&path) {
             mismatches.push(Mismatch {
                 path,
@@ -353,12 +361,21 @@ fn released(id: Uuid, imp: &Importer, r: &Row) -> Result<Verdict> {
             });
         }
     }
+    let (mismatches, forced_writes) = if r.forced {
+        if !mismatches.is_empty() {
+            tracing::warn!(conversation = %id, files = ?mismatches, "the old side wrote after a forced release");
+        }
+        (Vec::new(), mismatches)
+    } else {
+        (mismatches, Vec::new())
+    };
     Ok(Verdict {
         conversation: id,
         released: true,
         files: r.files.len(),
         reingested: Vec::new(),
         mismatches,
+        forced_writes,
         pending: Vec::new(),
         notes: Vec::new(),
     })
@@ -468,6 +485,7 @@ pub async fn verify(imp: &Importer, id: Uuid) -> Result<Verdict> {
         files: sources.len(),
         reingested,
         mismatches,
+        forced_writes: Vec::new(),
         pending,
         notes,
     })

@@ -126,6 +126,9 @@ pub struct Importer {
     /// How long a `sent/<conversation>/<toolUseId>/` folder must be unchanged before it is imported (the old hook may
     /// still be writing it): [`sent::QUIET`] in the importer, zero in tests.
     pub sent_quiet: std::time::Duration,
+    /// A pause inside each fence the importer holds (after each file the export writes, before a forced release's
+    /// final sync): zero in the importer; tests make it longer than [`magpie::limits::FENCE_LEASE`].
+    pub pause_in_fence: std::time::Duration,
     /// The uid and gid the export gives the files it writes (Claude Code's in the old sandboxes, [`export::OWNER_ID`]);
     /// a file that cannot be given to it fails the export. `None` leaves them as written (tests, run unprivileged).
     pub owner: Option<u32>,
@@ -141,6 +144,24 @@ impl Importer {
             Some(l) if !l.held().await => Err(Error::LockLost),
             _ => Ok(()),
         }
+    }
+
+    /// [`Importer::check_lock`] inside a write transaction (see [`lock::OneShot::check_in`]).
+    ///
+    /// # Errors
+    /// [`Error::LockLost`]; a statement error.
+    pub async fn check_lock_in(&self, t: &aviary_pg::Tx<'_>) -> Result<()> {
+        match &self.lock {
+            Some(l) => l.check_in(t).await,
+            None => Ok(()),
+        }
+    }
+}
+
+/// Sleeps for `d` (nothing for zero): [`Importer::pause_in_fence`].
+pub(crate) async fn pause(d: std::time::Duration) {
+    if !d.is_zero() {
+        tokio::time::sleep(d).await;
     }
 }
 

@@ -107,6 +107,7 @@ pub async fn connect(build: &version::Build, writes_old_side: bool) -> Result<Im
         juicefs: Some(PathBuf::from(JUICEFS)),
         lock: None,
         sent_quiet: crate::sent::QUIET,
+        pause_in_fence: std::time::Duration::ZERO,
         owner: Some(crate::export::OWNER_ID),
     })
 }

@@ -3,6 +3,13 @@
 //! `subagents/**`, and the person's auto-memory `projects/-workspace/memory/**`, which is copied into each of the
 //! person's conversations (decision 6). The cc path is the path under `~/.claude`, the same as under the person's
 //! `claude/` folder, so `claude --resume` reads the same names.
+//!
+//! A conversation the reverse export wrote back (cutover 14.3) has its own memory in `aviary-memory/<conversation>/`,
+//! which the old stack does not read: once that folder is there, it is the conversation's memory source (cc paths
+//! `projects/-workspace/memory/**` still) instead of the person's shared folder, so a conversation reopened after a
+//! rollback keeps the memory it had on the new side, files made there included, and verification finds each of them
+//! in its source. What old turns write to the shared folder meanwhile goes to the person's other conversations, as
+//! each copy diverges anyway (decision 6). Every other `aviary-memory/` folder is ignored.
 
 use std::collections::BTreeMap;
 use std::io::Read as _;
@@ -65,12 +72,18 @@ pub fn main_path(psid: &str) -> String {
     format!("{PROJECT}/{psid}.jsonl")
 }
 
-/// Every source file of the conversation with Claude Code session `psid`, by cc path; nothing for a folder that is
-/// not there.
+/// The folder the reverse export writes conversation `id`'s memory to.
+#[must_use]
+pub fn exported_memory(jfs: &Path, key: &str, id: uuid::Uuid) -> PathBuf {
+    claude_dir(jfs, key).join("aviary-memory").join(id.to_string())
+}
+
+/// Every source file of conversation `id` (when known) with Claude Code session `psid`, by cc path; nothing for a
+/// folder that is not there. Its memory comes from [`exported_memory`] when that folder is there.
 ///
 /// # Errors
 /// An I/O error other than "not found".
-pub fn sources(jfs: &Path, key: &str, psid: &str) -> Result<BTreeMap<String, Source>> {
+pub fn sources(jfs: &Path, key: &str, psid: &str, id: Option<uuid::Uuid>) -> Result<BTreeMap<String, Source>> {
     let base = claude_dir(jfs, key);
     let mut out = BTreeMap::new();
     let main = main_path(psid);
@@ -86,9 +99,20 @@ pub fn sources(jfs: &Path, key: &str, psid: &str) -> Result<BTreeMap<String, Sou
     for dir in [
         format!("{PROJECT}/{psid}/tool-results"),
         format!("{PROJECT}/{psid}/subagents"),
-        MEMORY.to_owned(),
     ] {
         walk(&base, &dir, &mut out)?;
+    }
+    let own = id.filter(|id| std::fs::symlink_metadata(exported_memory(jfs, key, *id)).is_ok_and(|m| m.is_dir()));
+    match own {
+        Some(id) => {
+            let name = id.to_string();
+            let mut mine = BTreeMap::new();
+            walk(&base.join("aviary-memory"), &name, &mut mine)?;
+            for (rel, src) in mine {
+                out.insert(format!("{MEMORY}{}", &rel[name.len()..]), src);
+            }
+        }
+        None => walk(&base, MEMORY, &mut out)?,
     }
     Ok(out)
 }

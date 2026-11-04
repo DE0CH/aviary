@@ -198,6 +198,7 @@ impl World {
                 juicefs: None,
                 lock: None,
                 sent_quiet: Duration::ZERO,
+                pause_in_fence: Duration::ZERO,
                 owner: None,
             },
             jfs,

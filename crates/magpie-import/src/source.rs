@@ -161,6 +161,24 @@ pub struct ShareRow {
     pub revoked_at: Option<String>,
 }
 
+impl Snapshot {
+    /// Conversation ids whose sessions row is in more than one person's schema (or twice in one), with the schemas:
+    /// neither row is synced (two persons' trees would be written into one conversation), a `plan` blocker.
+    #[must_use]
+    pub fn duplicate_ids(&self) -> BTreeMap<Uuid, Vec<String>> {
+        let mut by: BTreeMap<Uuid, Vec<String>> = BTreeMap::new();
+        for p in &self.persons {
+            for s in &p.sessions {
+                if let Ok(id) = s.id() {
+                    by.entry(id).or_default().push(p.schema.clone());
+                }
+            }
+        }
+        by.retain(|_, v| v.len() > 1);
+        by
+    }
+}
+
 /// Whether `name` is a person's schema (`cc_u` + 24 hex).
 #[must_use]
 pub fn is_person_schema(name: &str) -> bool {

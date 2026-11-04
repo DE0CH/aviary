@@ -4,6 +4,12 @@
 //! caption from the call's input. The event is appended at the next seq; its `toolUseSeq` ties it to the call's tool
 //! row (magpie 7.3 rule 6), which is where the timeline shows it. The fingerprint is the sorted (path, size, mtime)
 //! list of the conversation's folder.
+//!
+//! A folder is imported once, when nothing in it (its files and every folder in it) changed for [`QUIET`]; a folder
+//! with no files is not imported (no event without files). A folder whose call has an error result in the
+//! transcript (the hook blocked the send, but its snapshot was left) is never imported. A file that appears in a
+//! folder after it was imported is the conversation's error, and its `sent_fp` is recorded so verification never
+//! passes on it ([`LATE`]).
 
 use std::collections::BTreeMap;
 use std::os::unix::fs::MetadataExt as _;
@@ -27,7 +33,7 @@ pub struct Snapshot {
     pub files: BTreeMap<String, PathBuf>,
     /// The folder's modification time (when the hook wrote it).
     pub at: OffsetDateTime,
-    /// The newest modification time of the folder and its files.
+    /// The newest modification time of the folder, every folder in it and its files.
     pub latest: std::time::SystemTime,
 }
 
@@ -38,6 +44,10 @@ pub const QUIET: std::time::Duration = std::time::Duration::from_secs(15);
 /// What a recorded `sent_fp` starts with while a folder waits for its quiet period: never equal to a read's
 /// fingerprint, so the next pass looks again and verification does not pass meanwhile.
 pub const WAITING: &str = "waiting:";
+
+/// What a recorded `sent_fp` starts with when an imported folder has files it did not have at its import: never
+/// equal to a read's fingerprint, so verification reports it until an operator decides.
+pub const LATE: &str = "late:";
 
 impl Snapshot {
     /// Whether nothing in the folder changed for `quiet`.
@@ -77,8 +87,8 @@ pub fn read(jfs: &Path, conversation: Uuid) -> Result<(Vec<Snapshot>, String)> {
     dirs.sort_by(|a, b| a.0.cmp(&b.0));
     for (id, m) in dirs {
         let mut files = BTreeMap::new();
-        walk(&base.join(&id), "", &mut files)?;
         let mut latest = m.modified()?;
+        walk(&base.join(&id), "", &mut files, &mut latest)?;
         for (rel, abs) in &files {
             let fm = std::fs::metadata(abs)?;
             latest = latest.max(fm.modified()?);
@@ -103,14 +113,16 @@ pub fn read(jfs: &Path, conversation: Uuid) -> Result<(Vec<Snapshot>, String)> {
     Ok((out, crate::sha_hex(serde_json::to_string(&fp)?.as_bytes())))
 }
 
-fn walk(dir: &Path, rel: &str, out: &mut BTreeMap<String, PathBuf>) -> Result<()> {
+fn walk(dir: &Path, rel: &str, out: &mut BTreeMap<String, PathBuf>, latest: &mut std::time::SystemTime) -> Result<()> {
     for e in std::fs::read_dir(dir)? {
         let e = e?;
         let name = crate::tree::utf8_name(&e, rel)?;
         let child = if rel.is_empty() { name } else { format!("{rel}/{name}") };
         let m = e.metadata()?;
         if m.is_dir() {
-            walk(&e.path(), &child, out)?;
+            // a file written into a subfolder changes that folder's time, not the snapshot folder's
+            *latest = (*latest).max(m.modified()?);
+            walk(&e.path(), &child, out, latest)?;
         } else if m.is_file() {
             out.insert(child, e.path());
         }
@@ -118,24 +130,50 @@ fn walk(dir: &Path, rel: &str, out: &mut BTreeMap<String, PathBuf>) -> Result<()
     Ok(())
 }
 
-/// The `SendUserFile` calls of `id` already imported.
+/// The `SendUserFile` calls of `id` already imported, with the paths each sent.
 ///
 /// # Errors
 /// A statement error.
-pub async fn imported(imp: &Importer, id: Uuid) -> Result<Vec<String>> {
-    Ok(imp
+pub async fn imported(imp: &Importer, id: Uuid) -> Result<BTreeMap<String, std::collections::BTreeSet<String>>> {
+    let mut out: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
+    for r in imp
         .magpie
         .pool
         .get()
         .await?
         .query(
-            "select distinct tool_use_id from sent_files where conversation_id = $1",
+            "select tool_use_id, path from sent_files where conversation_id = $1",
             &[&id],
         )
         .await?
-        .iter()
-        .map(|r| r.get(0))
-        .collect())
+    {
+        out.entry(r.get(0)).or_default().insert(r.get(1));
+    }
+    Ok(out)
+}
+
+/// Whether the transcript (as imported) has an error result for call `tool_use_id`: the send did not happen.
+///
+/// # Errors
+/// A statement error.
+pub async fn failed_call(imp: &Importer, id: Uuid, tool_use_id: &str) -> Result<bool> {
+    Ok(imp
+        .magpie
+        .pool
+        .get()
+        .await?
+        .query_one(
+            "select exists (select 1 from tool_links l join events e
+                              on e.conversation_id = l.conversation_id and e.seq = l.result_seq
+                             where l.conversation_id = $1 and l.tool_use_id = $2
+                               and jsonb_path_exists(e.data,
+                                     '$.message.content[*] ? (@.type == \"tool_result\" && @.tool_use_id == $id
+                                                              && @.is_error == true)',
+                                     jsonb_build_object('id', $2::text)))",
+            &[&id, &tool_use_id],
+        )
+        .await?
+        .get(0))
 }
 
 /// Imports one snapshot into migrating conversation `id` of `person` (nothing when it is there already).
@@ -184,13 +222,16 @@ pub async fn import(imp: &Importer, person: &str, id: Uuid, s: &Snapshot) -> Res
     aviary_pg::tx!(&app.pool, |t| -> Result<()> {
         let Some(r) = t
             .query_opt(
-                "select migrating from conversations where id = $1 and person = $2 for update",
-                &[&id, &person],
+                "select migrating, person from conversations where id = $1 for update",
+                &[&id],
             )
             .await?
         else {
             return Err(Error::Released);
         };
+        if r.get::<_, String>(1) != person {
+            return Err(crate::conv::another_persons(id));
+        }
         if !r.get::<_, bool>(0) {
             return Err(Error::Released);
         }

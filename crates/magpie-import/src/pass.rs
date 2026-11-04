@@ -22,6 +22,11 @@ use crate::{Error, Importer, Result};
 /// Conversations synced at once (cutover 7.6).
 pub const PARALLEL: usize = 8;
 
+/// The most conversations one pass purges on its own: more than this many (and more than half of the open ones)
+/// missing from one read looks like a wrong or partial `cloudcli` read, not people deleting conversations, and the
+/// pass purges none of them (each is an error until the read has them again, or an operator removes them).
+pub const PURGE_MAX: usize = 3;
+
 /// What the importer knows of an imported conversation.
 #[derive(Debug, Clone)]
 pub struct Known {
@@ -35,6 +40,8 @@ pub struct Known {
     pub sent_fp: String,
     /// Released (the importer never writes it again).
     pub released: bool,
+    /// The person's schema it was imported from (`source_schema`).
+    pub schema: String,
 }
 
 /// Every `import_sources` row.
@@ -52,7 +59,7 @@ async fn known_where(imp: &Importer, id: Option<Uuid>) -> Result<HashMap<Uuid, K
         .get()
         .await?
         .query(
-            "select conversation_id, row_fp, files, failed_turns_fp, released_at is not null, sent_fp
+            "select conversation_id, row_fp, files, failed_turns_fp, released_at is not null, sent_fp, source_schema
              from import_sources where $1::uuid is null or conversation_id = $1",
             &[&id],
         )
@@ -67,6 +74,7 @@ async fn known_where(imp: &Importer, id: Option<Uuid>) -> Result<HashMap<Uuid, K
                 failed_fp: r.get(3),
                 released: r.get(4),
                 sent_fp: r.get(5),
+                schema: r.get(6),
             },
         );
     }
@@ -142,6 +150,15 @@ pub async fn pass(imp: &Importer, only: Option<&BTreeSet<Uuid>>) -> Result<Repor
     let mut seen: BTreeSet<Uuid> = BTreeSet::new();
     let mut failed_ids: BTreeSet<Uuid> = BTreeSet::new();
     let mut purged_ids: BTreeSet<Uuid> = BTreeSet::new();
+    let duplicates = snap.duplicate_ids();
+    for (id, schemas) in &duplicates {
+        // neither row is synced: two persons' trees would go into one conversation
+        let msg = format!("its sessions row is in more than one schema ({})", schemas.join(", "));
+        tracing::warn!(conversation = %id, error = %msg, "conversation not synced");
+        let _ = conv::record_error(imp, *id, &msg).await;
+        failed_ids.insert(*id);
+        report.errors.push((id.to_string(), msg));
+    }
     for p in &snap.persons {
         for s in &p.sessions {
             let Ok(id) = s.id() else {
@@ -151,7 +168,7 @@ pub async fn pass(imp: &Importer, only: Option<&BTreeSet<Uuid>>) -> Result<Repor
                 continue;
             };
             seen.insert(id);
-            if only.is_some_and(|o| !o.contains(&id)) {
+            if only.is_some_and(|o| !o.contains(&id)) || duplicates.contains_key(&id) {
                 continue;
             }
             let failed = p.failed.get(&s.session_id).cloned().unwrap_or_default();
@@ -208,12 +225,12 @@ pub async fn pass(imp: &Importer, only: Option<&BTreeSet<Uuid>>) -> Result<Repor
         }
     }
     if only.is_none() && snap.problems.is_empty() {
-        for (id, k) in known.iter() {
-            if k.released || seen.contains(id) {
-                continue;
-            }
+        for (id, why) in purge_refusals(&snap, &known, &seen) {
+            report.errors.push((id, why));
+        }
+        for id in purgeable(&snap, &known, &seen) {
             imp.check_lock().await?;
-            match conv::purge(imp, *id).await {
+            match conv::purge(imp, id).await {
                 Ok(true) => report.purged += 1,
                 Ok(false) => {}
                 Err(e) => {
@@ -245,6 +262,77 @@ pub async fn pass(imp: &Importer, only: Option<&BTreeSet<Uuid>>) -> Result<Repor
     Ok(report)
 }
 
+/// The open conversations missing from the read whose purge the read can be trusted for: their schema was read,
+/// the read has persons, and not too many go at once ([`PURGE_MAX`]).
+fn purgeable(snap: &source::Snapshot, known: &HashMap<Uuid, Known>, seen: &BTreeSet<Uuid>) -> Vec<Uuid> {
+    if purge_refusals(snap, known, seen).iter().any(|(id, _)| id == "purge") {
+        return Vec::new();
+    }
+    let read: BTreeSet<&str> = snap.persons.iter().map(|p| p.schema.as_str()).collect();
+    let mut out: Vec<Uuid> = known
+        .iter()
+        .filter(|(id, k)| !k.released && !seen.contains(*id) && read.contains(k.schema.as_str()))
+        .map(|(id, _)| *id)
+        .collect();
+    out.sort_unstable();
+    out
+}
+
+/// Why open conversations missing from the read are not purged: `("purge", why)` when the read as a whole is not
+/// trusted (no persons at all while conversations are open, or more missing than [`PURGE_MAX`] and half the open
+/// ones), else one error per conversation whose schema is not in the read (a schema gone or renamed is an
+/// operator's call, never a purge).
+fn purge_refusals(
+    snap: &source::Snapshot,
+    known: &HashMap<Uuid, Known>,
+    seen: &BTreeSet<Uuid>,
+) -> Vec<(String, String)> {
+    let open = known.values().filter(|k| !k.released).count();
+    let read: BTreeSet<&str> = snap.persons.iter().map(|p| p.schema.as_str()).collect();
+    let missing: Vec<(&Uuid, &Known)> = known
+        .iter()
+        .filter(|(id, k)| !k.released && !seen.contains(*id))
+        .collect();
+    if missing.is_empty() {
+        return Vec::new();
+    }
+    if snap.persons.is_empty() {
+        return vec![(
+            "purge".to_owned(),
+            format!(
+                "the cloudcli read has no person schemas while {open} imported conversations are open: nothing \
+                 purged (an empty or wrong database?)"
+            ),
+        )];
+    }
+    let mut out = Vec::new();
+    let mut gone = 0usize;
+    for (id, k) in &missing {
+        if read.contains(k.schema.as_str()) {
+            gone += 1;
+        } else {
+            out.push((
+                id.to_string(),
+                format!(
+                    "its schema {} is not in the cloudcli read: not purged (a schema gone or renamed is an \
+                     operator's call)",
+                    k.schema
+                ),
+            ));
+        }
+    }
+    if gone > PURGE_MAX && gone * 2 > open {
+        out.push((
+            "purge".to_owned(),
+            format!(
+                "{gone} of {open} open conversations are missing from the cloudcli read: nothing purged (a wrong or \
+                 partial read?)"
+            ),
+        ));
+    }
+    out
+}
+
 fn stats_changed(sources: &BTreeMap<String, tree::Source>, files: &Files) -> bool {
     sources.len() != files.len()
         || sources.iter().any(|(p, s)| {
@@ -258,6 +346,7 @@ fn stats_changed(sources: &BTreeMap<String, tree::Source>, files: &Files) -> boo
 ///
 /// # Errors
 /// What the sync failed with; [`Error::Released`] when the conversation was released meanwhile.
+#[allow(clippy::too_many_lines)] // files, failed turns, sent folders and the row, in that order
 pub async fn sync_conversation(
     imp: &Importer,
     person: &str,
@@ -272,7 +361,7 @@ pub async fn sync_conversation(
         return Ok(Outcome::Released);
     }
     let psid = s.psid().to_owned();
-    let sources = tree::sources(&imp.jfs, key, &psid)?;
+    let sources = tree::sources(&imp.jfs, key, &psid, Some(id))?;
     let main = tree::main_path(&psid);
     let mut outcome = Outcome::Unchanged;
     let empty = Known {
@@ -281,6 +370,7 @@ pub async fn sync_conversation(
         failed_fp: String::new(),
         released: false,
         sent_fp: String::new(),
+        schema: schema.to_owned(),
     };
     let k = if let Some(k) = known {
         k.clone()
@@ -337,19 +427,36 @@ pub async fn sync_conversation(
         all.insert(f.id);
     }
     let mut changed = wrote || !new_failed.is_empty();
+    let mut late: Vec<String> = Vec::new();
     if sent_changed {
         let done = sent::imported(imp, id).await?;
         let mut waiting = false;
-        for snap in snapshots.iter().filter(|s| !done.contains(&s.tool_use_id)) {
+        for snap in &snapshots {
+            if let Some(paths) = done.get(&snap.tool_use_id) {
+                // imported before: a file it did not have then is never imported on its own
+                late.extend(
+                    snap.files
+                        .keys()
+                        .filter(|p| !paths.contains(*p))
+                        .map(|p| format!("{}/{p}", snap.tool_use_id)),
+                );
+                continue;
+            }
             // a folder the old hook may still be writing waits for a later pass (all of its files at once)
             if !snap.settled(imp.sent_quiet) {
                 waiting = true;
                 continue;
             }
+            // no files (yet): nothing was sent; a send the hook refused left its folder behind
+            if snap.files.is_empty() || sent::failed_call(imp, id, &snap.tool_use_id).await? {
+                continue;
+            }
             sent::import(imp, person, id, snap).await?;
             changed = true;
         }
-        if waiting {
+        if !late.is_empty() {
+            sent_fp = format!("{}{sent_fp}", sent::LATE);
+        } else if waiting {
             // never equal to a read's fingerprint: the next pass looks again, and verification waits
             sent_fp = format!("{}{sent_fp}", sent::WAITING);
         }
@@ -358,6 +465,12 @@ pub async fn sync_conversation(
         changed |= conv::apply_row(imp, person, s).await?;
     }
     conv::record(imp, id, &files, &failed::fingerprint(&all), &sent_fp, changed).await?;
+    if !late.is_empty() {
+        return Err(Error::Source(format!(
+            "files appeared in sent folders after they were imported (not imported): {}",
+            late.join(", ")
+        )));
+    }
     if changed && outcome == Outcome::Unchanged {
         outcome = Outcome::Changed;
     }

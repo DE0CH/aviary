@@ -141,13 +141,16 @@ pub async fn insert(imp: &Importer, person: &str, id: Uuid, f: &FailedTurn) -> R
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let Some(r) = t
             .query_opt(
-                "select migrating from conversations where id = $1 and person = $2 for update",
-                &[&id, &person],
+                "select migrating, person from conversations where id = $1 for update",
+                &[&id],
             )
             .await?
         else {
             return Err(Error::Released);
         };
+        if r.get::<_, String>(1) != person {
+            return Err(crate::conv::another_persons(id));
+        }
         if !r.get::<_, bool>(0) {
             return Err(Error::Released);
         }

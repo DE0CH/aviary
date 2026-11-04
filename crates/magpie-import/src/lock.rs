@@ -52,7 +52,14 @@ pub async fn waiter_present(pool: &Pool) -> Result<bool> {
 #[derive(Debug)]
 pub struct OneShot {
     conn: Option<Conn>,
+    /// The backend that holds it.
+    pid: i32,
 }
+
+/// Whether backend `pid` holds the lock, from inside another connection's transaction.
+const HELD_BY: &str = "select exists (select 1 from pg_locks l
+                        where l.locktype = 'advisory' and l.granted and l.pid = $2 and l.objsubid = 1
+                          and ((l.classid::bigint << 32) | l.objid::bigint) = hashtext($1)::bigint)";
 
 impl OneShot {
     /// Waits for the lock (`pg_advisory_lock`, retried when the statement timeout ends a long wait).
@@ -62,8 +69,16 @@ impl OneShot {
     pub async fn take(pool: &Pool) -> Result<Self> {
         loop {
             let conn = pool.get().await?;
-            match conn.query_one("select pg_advisory_lock(hashtext($1))", &[&NAME]).await {
-                Ok(_) => return Ok(Self { conn: Some(conn) }),
+            match conn
+                .query_one("select pg_advisory_lock(hashtext($1)), pg_backend_pid()", &[&NAME])
+                .await
+            {
+                Ok(r) => {
+                    return Ok(Self {
+                        conn: Some(conn),
+                        pid: r.get(1),
+                    });
+                }
                 Err(e) if e.code() == Some(&aviary_pg::reexports::tokio_postgres::error::SqlState::QUERY_CANCELED) => {
                     tracing::info!("still waiting for the importer's lock");
                 }
@@ -95,12 +110,27 @@ impl OneShot {
         }
     }
 
-    /// Releases the lock.
+    /// Whether the lock is still held, checked inside a write transaction `t` on another connection: the write
+    /// commits only if the lock's backend still held it at that statement, which narrows a loss between
+    /// [`OneShot::held`] and the write to that transaction's own commit. Fails with [`crate::Error::LockLost`].
+    ///
+    /// # Errors
+    /// [`crate::Error::LockLost`]; a statement error.
+    pub async fn check_in(&self, t: &aviary_pg::Tx<'_>) -> Result<()> {
+        if self.conn.is_none() || !t.query_one(HELD_BY, &[&NAME, &self.pid]).await?.get::<_, bool>(0) {
+            return Err(crate::Error::LockLost);
+        }
+        Ok(())
+    }
+
+    /// Releases the lock. If the unlock fails on a connection that still answers, the pool's recycle (its
+    /// `pg_advisory_unlock_all()`, when the connection is next taken) or the end of the connection lets go of it.
     pub async fn release(mut self) {
         if let Some(c) = self.conn.take()
             && let Err(e) = c.query_one("select pg_advisory_unlock(hashtext($1))", &[&NAME]).await
         {
             tracing::warn!(error = %e, "the importer's lock was not released (it goes with the connection)");
+            let _ = c.query_one("select pg_advisory_unlock_all()", &[]).await;
         }
     }
 }

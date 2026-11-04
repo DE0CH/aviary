@@ -54,6 +54,9 @@ pub struct Purged {
     pub row: bool,
     /// Share links revoked.
     pub shares_revoked: usize,
+    /// Another conversation of the person has the same Claude Code session id (a continued share): its transcript
+    /// and session folder were kept.
+    pub kept_shared_session: bool,
 }
 
 const SHARES_DDL: &str = "create schema if not exists cc_shared;
@@ -415,10 +418,19 @@ async fn purge_one(imp: &Importer, t: &Tomb) -> Result<Purged> {
         person_key: key.clone(),
         ..Purged::default()
     };
-    // the conversation's own cc files (never the person's shared memory folder), then its session folder
+    // the conversation's own cc files (never the person's shared memory folder), then its session folder; a session
+    // id another conversation of the person still has (a continued share) keeps its transcript and folder
+    let psid = t.psid.clone().unwrap_or_else(|| id.to_string());
+    let shared = !crate::export::psid_users(imp, &t.person, &psid).await?.is_empty();
+    out.kept_shared_session = shared;
+    let main_rel = crate::tree::main_path(&psid);
+    let session_rel = format!("{}/{psid}/", crate::tree::PROJECT);
     let memory = format!("{}/", crate::tree::MEMORY);
     for p in &t.paths {
         if p == crate::tree::MEMORY || p.starts_with(&memory) {
+            continue;
+        }
+        if shared && (*p == main_rel || p.starts_with(&session_rel)) {
             continue;
         }
         let f = under(&claude, p)?;
@@ -427,8 +439,7 @@ async fn purge_one(imp: &Importer, t: &Tomb) -> Result<Purged> {
             out.removed += 1;
         }
     }
-    let psid = t.psid.clone().unwrap_or_else(|| id.to_string());
-    if !psid.is_empty() && !psid.contains('/') && psid != "." && psid != ".." {
+    if !shared && !psid.is_empty() && !psid.contains('/') && psid != "." && psid != ".." {
         let main = under(&claude, &crate::tree::main_path(&psid))?;
         out.removed += usize::from(remove_tree(&main)?);
         let session = under(&claude, &format!("{}/{psid}", crate::tree::PROJECT))?;
