@@ -35,11 +35,6 @@ configMapGenerator:
   - name: jarvis-config
     namespace: jarvis
     files: [config.json, system-prompt.md]
-  # Claude Code's managed skills (jarvis3 docs/CLAUDE-CODE.md "Skills and sandbox routes"): skills/<skill>.<file>,
-  # mounted in web at /etc/jarvis/skills (config skillsDir)
-  - name: jarvis-skills
-    namespace: jarvis
-    files: [skills/web.SKILL.md, skills/newswatch.SKILL.md, skills/labels.SKILL.md, skills/labels.design-format.md]
   # the access catalogue for yyc-mcp (news-stream/deploy/apps/yyc-mcp.yaml), which checks it on every call; a fixed name
   # so the mounted file changes in place (no restart) when the catalogue does
   - name: yyc-catalogue
