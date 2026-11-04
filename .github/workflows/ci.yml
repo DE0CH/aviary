@@ -3,6 +3,7 @@ name: ci
 
 on:
   push:
+    branches: ['**']   # not tags: publish pushes the release tag aviary-<sha12>
   pull_request:
   workflow_dispatch:
 
@@ -588,6 +589,22 @@ jobs:
         with: {subject-name: ghcr.io/de0ch/hermit-sandbox, subject-digest: "${{ steps.digests.outputs.hermit_sandbox }}", push-to-registry: true}
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with: {subject-name: ghcr.io/de0ch/aviary-testing, subject-digest: "${{ steps.digests.outputs.aviary_testing }}", push-to-registry: true}
+      - name: the tag aviary-<sha12>
+        # pushed with the repo's write deploy key `ci release tags` (secret RELEASE_TAG_KEY): a GITHUB_TOKEN may not
+        # create a ref whose commit's workflow files differ from main's, which is the case for every commit published
+        # after a later one changed .github/workflows ("HTTP 403: Resource not accessible by integration", 2026-11-04)
+        env:
+          RELEASE_TAG_KEY: ${{ secrets.RELEASE_TAG_KEY }}
+        run: |
+          tag=aviary-${GITHUB_SHA::12}
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then echo "tag $tag exists"; exit 0; fi
+          key=$RUNNER_TEMP/release-tag-key
+          install -m 600 /dev/null "$key"
+          printf '%s\n' "$RELEASE_TAG_KEY" > "$key"
+          git tag "$tag" "$GITHUB_SHA"
+          GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+            git push "git@github.com:${GITHUB_REPOSITORY}.git" "refs/tags/$tag"
+          rm -f "$key"
       - name: the release aviary-<sha12>
         env:
           GH_TOKEN: ${{ github.token }}
