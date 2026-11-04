@@ -8,4 +8,9 @@ sudo install -m 755 /tmp/k3d /usr/local/bin/k3d
 curl -sSfL -o /tmp/juicefs.tgz https://github.com/juicedata/juicefs/releases/download/v1.4.1/juicefs-1.4.1-linux-amd64.tar.gz
 echo "01ee09a21a9351a465e09906f113845e1c6a19bea70f530e5e2b2125b2dd3b82  /tmp/juicefs.tgz" | sha256sum -c -
 sudo tar -xzf /tmp/juicefs.tgz -C /usr/local/bin juicefs
+# room on the runner's disk: the images sit in Docker and again in the node's containerd, and the chaos run writes
+# logs for an hour. The preinstalled Android SDK, .NET, GHC and CodeQL bundles are unused here.
+df -h / | tail -1
+sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+df -h / | tail -1
 k3d version && juicefs version && kubectl version --client

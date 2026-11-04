@@ -126,10 +126,14 @@ ENV
 
 cluster() {
   log "cluster"
+  # kubelet's eviction at 1% free: its default (10-15%) tainted a hosted runner's node with disk-pressure once the
+  # images were imported, leaving every Pod Pending (nightly e2e-chaos, 2026-11-03); a test node evicts nothing
   timeout 600 k3d cluster create "$cluster" --image "$k3s_image" --network "$net" --no-lb --wait --timeout 300s \
     --k3s-arg "--flannel-backend=none@server:*" --k3s-arg "--disable-network-policy@server:*" \
     --k3s-arg "--disable=traefik@server:*" --k3s-arg "--cluster-cidr=10.48.0.0/13@server:*" \
     --k3s-arg "--service-cidr=10.43.0.0/16@server:*" \
+    --k3s-arg "--kubelet-arg=eviction-hard=memory.available<100Mi,nodefs.available<1%,imagefs.available<1%@server:*" \
+    --k3s-arg "--kubelet-arg=eviction-minimum-reclaim=nodefs.available=0,imagefs.available=0@server:*" \
     --volume "$mnt:$mnt:rshared@server:0" --kubeconfig-update-default=false >/dev/null
   k3d kubeconfig get "$cluster" > "$KUBECONFIG"
   # Calico: NetworkPolicy, and Pods at the addresses hermit chose (cni.projectcalico.org/ipAddrs)
