@@ -36,8 +36,17 @@ does not change one.
 | timeline rows | the session's history, then the run's live events |
 | `send_agent_message_request`, `workspace.create.request` | `chat.send` (a new session first for a create) |
 | `cancel_agent_request` | `chat.abort` |
+| `agent_permission_request` kind `question` (the question card), `agent_permission_resolved`, the agent's `pendingPermissions` | Claude Code's AskUserQuestion: the run's `permission_request` / `permission_resolved` / `permission_cancelled`, and `chat_subscribed.pendingPermissions` |
+| `agent_permission_response` | `chat.permission-response`, answers re-keyed from the card's `header` to the question's text (Claude Code reads them by text) |
 | `yyc.sandbox_status` (added to the protocol) | the run's `status` frames with `jarvisSandbox` |
 | timeline `user_message` `images` / `attachments` (added to the protocol) | the history's user images (data: URLs from the transcript) and files (`<files_input>`, paths under /workspace/uploads) |
+
+Questions: turns run with `bypassPermissions`, but Claude Code still sends a tool that needs the person
+(AskUserQuestion) to `canUseTool`, which waits with no timeout. The hub keeps each waiting question
+(`paseo-hub.ts` `questions`), every tab gets the card, the first answer wins, and a view-as answer is recorded like a
+message first. Any other tool that asks (ExitPlanMode after the model entered plan mode) is allowed at once: staff are
+never asked for permission. Before 2026-11-04 the bridge dropped these frames, so a turn with a question hung,
+showing nothing, until stopped.
 
 Everything a developer machine has (git, terminals, scripts, plugins, worktrees, providers, voice) answers empty or
 `rpc_error`, and the server_info features leave it out. Add a feature by answering its messages in
