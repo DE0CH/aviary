@@ -34,7 +34,7 @@ browser ─Access─▶ UI pod (router → one CloudCLI server per person; DE0CH
                             ├─ http://magpie/v1/sandbox/** ─▶ magpie   (pair bearer, verified identity)
                             ├─ http://hermit/v1/sandbox/** ─▶ hermit   (pair bearer, verified identity)
                             ├─ http://model/v1/messages ─▶ OpenRouter (key injected, ZDR forced, budget)
-                            ├─ http://tools/mcp ─▶ tools ─▶ Exa / TikHub / Wisers relay / yyc-mcp
+                            ├─ http://tools/v1/tools/<name> ─▶ tools ─▶ Exa / TikHub / Wisers relay / yyc-mcp
                             ├─ self hosts (selfHosts, 127.0.0.1, localhost) /mirror/… ─▶ PyPI / npm mirror
                             └─ anything else ── sandbox allowlist → threat DNS → public internet
 State: Postgres (sandboxes, vm hosts and events, tool_calls, kv); egress's own database `egress` (egress_log,
@@ -325,8 +325,17 @@ decided in this order:
      size), at most 64 MiB of model bodies held at once (a call waits its turn), a body over 64 MiB refused with 413
      `request_too_large` before it is read. No total timeout (Claude Code's own 600 s bounds it); an upstream silent
      120 s ends the call (504 `upstream_timeout` before the answer's head, the stream cut after it).
-   - `tools`: `/mcp` to egress.json's route `tools` (`http://tools`, `Authorization: Bearer $EGRESS_TOKEN_TOOLS`),
+   - `tools`: the REST paths only (decision 15, no MCP): `GET /v1/tools`, `POST /v1/tools/<name>`, `GET
+     /v1/openapi.json` to egress.json's route `tools` (`http://tools`, `Authorization: Bearer $EGRESS_TOKEN_TOOLS`),
      timeout 180 s; tools learns the owner from `Aviary-Sandbox-Person`. One log row per call (kind `tools`).
+2b. **Sandbox routes** (aviary platform 3.11.8, configured routes; egress.json's routes other than `model` and
+   `tools`): an instance's own service the sandbox calls directly by a name (YYC: `labels`, the label store's REST API,
+   `http://labels/api/v1/…`, the `labels` skill). The name is matched like a fixed name (exact, case-insensitive, no
+   port or port 80); only its `allowPaths` prefixes (each `/…/`) on a clean path are routed (else 403 `not_allowed`,
+   `deny:path`), any method; the headers as on a fixed name, then the route's `inject` (YYC: the Access service token
+   `yyc-labels-ai`) and its `identityHeaders` (header → `sandbox`, `conversation` or `person` from the verified token,
+   replacing a caller's copy; YYC: `X-Jarvis-Conversation`, which the label store keys on). An outside upstream goes
+   through the exit like the model route. Timeout and drain as `tools`; one log row per call (kind `route`).
 3. **Self hosts** (`selfHosts` in egress.json, plus `127.0.0.1` and `localhost`; any port; also origin-form requests to
    the proxy): local paths only, the **package mirror** (cache on the pod's volume, LRU at `cacheGiB`):
    `GET /mirror/pypi/simple/...` (pypi.org, links rewritten to `/mirror/pypi/files/...` = files.pythonhosted.org),
@@ -399,16 +408,11 @@ magpie/hermit requests up to 60 s, tools calls up to 180 s; what is left at its 
   :80).
 - The old relay listener (staff's own Claude Code on the model route, `EGRESS_RELAY_PORT`, table `relay_tokens`) is
   not in this egress: awaiting Deyao's decision (aviary refactor DESIGN 10, "Open: the relay").
-- Sandbox routes (an old-stack route with `sandbox: true`, docs/CLAUDE-CODE.md "Skills and sandbox routes"; YYC's
-  label store `labels`, its REST API at `/x/labels/api/v1/` with the Access service token `yyc-labels-ai` injected and
-  `X-Jarvis-Conversation` added) are not in this egress: `egress.json` routes are exactly `model` and `tools`, and
-  the gateway contract has no `/x/<name>` paths. Until aviary refactor WP-61 (a fixed name for the label store with
-  credential injection and the identity header) lands before A3, YYC AI on the new stack has no label store (aviary
-  refactor DESIGN 10, "Sandbox routes").
 
 **Configuration** `/etc/egress/egress.json` (`chat/src/egress/config.ts`): `product` (`name`, `locale` for the budget
 message), `models`, `defaultModel`, `smallModel`, `titleModel`, `titleReasoning`, `contextTokens`, `routes` (exactly
-`model` and `tools`: `{name, upstream, model?, inject, allowPaths?, timeoutSeconds?}`), `selfHosts`,
+`model` and `tools`, then any sandbox routes: `{name, upstream, model?, inject, allowPaths?, timeoutSeconds?,
+identityHeaders?}`; a sandbox route needs `allowPaths`), `selfHosts`,
 `generatedAllowlist`, `defaultAllowedHosts`, `denyHosts`, `blockCidrs`, `maxUploadBytes`, `cacheGiB`, `budget`,
 `exit` (below).
 **Env:** `EGRESS_DATABASE_URL`, `EGRESS_TOKEN_MAGPIE`, `EGRESS_TOKEN_HERMIT`, `EGRESS_ACCEPT_PIGEON`,
@@ -495,9 +499,8 @@ aviary platform spec 17.2 tools: a REST API Claude Code in a sandbox calls with 
 (docs/CLAUDE-CODE.md "Skills and sandbox routes"): `GET /v1/tools` (each tool's name, title, description and
 inputSchema), `POST /v1/tools/<name>` (the JSON body is the arguments; the answer is the tool's text as `text/plain`,
 or its JSON when it has no text, e.g. an upstream API's; bad arguments 400 `bad_request`, the tool's own error 422
-`{error}`, a failure 502 `tool_failed`), `GET /v1/openapi.json` (the same as OpenAPI 3.1). Until aviary's contract
-changes the gateway's tools route from `/mcp` to these paths (aviary refactor, "tools over REST"), the new stack's
-gateway still routes only `POST /mcp`. The old stack runs the same tools behind its own front door
+`{error}`, a failure 502 `tool_failed`), `GET /v1/openapi.json` (the same as OpenAPI 3.1); the new stack's gateway
+routes exactly these paths on `tools` (aviary platform 3.11.3, decision 15). The old stack runs the same tools behind its own front door
 (`src/tools/legacy.ts`, `JARVIS_ROLE=tools`, deploy/chat/tools.yaml): a sandbox's egress token names it and its
 owner (table `sandboxes` in database `jarvis`), the configuration is config.json's `tools`, and every call is a row in
 that database's `tool_calls`.
