@@ -13,7 +13,8 @@ import { randomUUID } from "node:crypto";
 import type { Db } from "./db.ts";
 import { logError, log } from "../common/log.ts";
 
-export type RowKind = "connect" | "http" | "mirror" | "model" | "tools";
+/** `route`: a sandbox route (platform 3.11.8, egress.json's routes beside model and tools) */
+export type RowKind = "connect" | "http" | "mirror" | "model" | "tools" | "route";
 
 export interface EgressRow {
   /** when it happened (set by add() when absent; kept through an outage) */

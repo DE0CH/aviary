@@ -17,8 +17,8 @@ const NOISE = (e = "") => `((${e}kind in ('inject', 'tools') and ${e}status = 40
  *  Code retries it */
 const GLITCH = (e = "") => `(${e}decision = 'allow' and (${e}status = 429 or ${e}status >= 500 or ${e}status is null))`;
 const QUIET = (e = "") => `(${NOISE(e)} or ${GLITCH(e)})`;
-/** model and tools calls (`inject` is the old stack's kind for its tools route, in copied rows) */
-const CALLS = "('model', 'inject', 'tools')";
+/** model, tools and sandbox route calls (`inject` is the old stack's kind for its tools route, in copied rows) */
+const CALLS = "('model', 'inject', 'tools', 'route')";
 const OWNER = (e = "") => `lower(trim(coalesce(${e}person, ${e}owner)))`;
 
 /** An IANA zone name Postgres and Intl both know, else UTC. */

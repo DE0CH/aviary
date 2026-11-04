@@ -6,6 +6,9 @@
 //      credentials and `Aviary-*` headers stripped and the verified `Aviary-Sandbox-*` triple and the callee's bearer
 //      added; `magpie` and `hermit` are built in (`/v1/sandbox/**` only, no log row), `model` and `tools` are the
 //      configured routes (the model route forces zero data retention, checks the model and the budget, logs the cost);
+//      `tools` routes the REST paths only (decision 15: GET /v1/tools, POST /v1/tools/<name>, GET /v1/openapi.json);
+//   2b. a sandbox route (platform 3.11.8: egress.json's other routes, YYC's `labels`): the same host rule, its
+//      `allowPaths` prefixes on a clean path, the same headers plus its own credential and `identityHeaders`;
 //   3. a self host (`selfHosts`, 127.0.0.1, localhost; any port): local paths, the package mirror;
 //   4. anything else: the internet rules (port, allowlist, threat DNS, public addresses, upload cap).
 // Every request but the magpie and hermit calls ends up in egress_log.
@@ -18,7 +21,7 @@ import type { Duplex } from "node:stream";
 import { expandEnv, type ReasoningPlan } from "../common/config.ts";
 import { logError } from "../common/log.ts";
 import { BUDGET_ERROR_TYPE, budgetMessage, type BudgetGate } from "./budget.ts";
-import { allowedModels, modelsAnswer, reasoningPlan, type EgressConfig, type EgressRoute } from "./config.ts";
+import { allowedModels, isSandboxRoute, modelsAnswer, reasoningPlan, type EgressConfig, type EgressRoute } from "./config.ts";
 import { DiskCache } from "./cache.ts";
 import { EgressLog, type EgressRow } from "./egresslog.ts";
 import { HostPolicy } from "./allowlist.ts";
@@ -138,8 +141,16 @@ export function routed(name: FixedName, method: string, pathq: string): boolean 
     case "model":
       return (method === "POST" && (path === "/v1/messages" || path === "/v1/messages/count_tokens")) || (method === "GET" && path === "/v1/aviary/models");
     case "tools":
-      return path === "/mcp";
+      // decision 15: the REST API, no MCP
+      if (method === "GET") return path === "/v1/tools" || path === "/v1/openapi.json";
+      return method === "POST" && /^\/v1\/tools\/[^/]+$/.test(path);
   }
+}
+
+/** Whether a sandbox route routes `path?query` (3.11.8): a clean path under one of its prefixes, any method. */
+export function routedOn(route: EgressRoute, pathq: string): boolean {
+  const path = pathq.split("?")[0]!;
+  return cleanPath(path) && (route.allowPaths ?? []).some((p) => path.startsWith(p));
 }
 
 /** The verified caller of a request. */
@@ -170,6 +181,8 @@ export class Egress {
   readonly #models: string[];
   readonly #reasoning: ReasoningPlan;
   readonly #routes: Record<"model" | "tools", EgressRoute>;
+  /** the sandbox routes by name (3.11.8) */
+  readonly #sandboxRoutes: Map<string, EgressRoute>;
   readonly #internal: Record<"magpie" | "hermit", URL>;
   readonly #agent = new Agent({ keepAlive: true, maxSockets: 256, maxFreeSockets: 64, keepAliveMsecs: 30_000 });
   /** egress.json `exit` (exit.ts): internet connections by name through it; the outside routes' agent */
@@ -201,6 +214,7 @@ export class Egress {
     this.#models = allowedModels(c);
     this.#reasoning = reasoningPlan(c);
     this.#routes = { model: c.routes.find((r) => r.name === "model")!, tools: c.routes.find((r) => r.name === "tools")! };
+    this.#sandboxRoutes = new Map(c.routes.filter(isSandboxRoute).map((r) => [r.name, r]));
     const internal = o.internal ?? { magpie: "http://magpie", hermit: "http://hermit" };
     this.#internal = { magpie: new URL(internal.magpie), hermit: new URL(internal.hermit) };
     this.log = o.log;
@@ -302,7 +316,8 @@ export class Egress {
     const t = parseTarget(raw);
     if (!t) return this.#text(res, 400, "egress: bad request target\n");
     const fixed = t.host === null ? null : fixedName(t.authority);
-    const self = !fixed && (t.host === null || this.#self.has(normHost(t.host)));
+    const named = fixed || t.host === null ? null : this.#sandboxRoute(t.authority);
+    const self = !fixed && !named && (t.host === null || this.#self.has(normHost(t.host)));
     const sent = req.headers["aviary-request"];
     const request = typeof sent === "string" && isRequestId(sent) ? sent : uuidv7();
     // a request is drained like the fixed names until it is known to be something else
@@ -316,7 +331,7 @@ export class Egress {
     // (1) the credential
     const tok = presentedToken(req.headers, self);
     if (tok === "missing") {
-      if (fixed) {
+      if (fixed || named) {
         if (fixed === "magpie" || fixed === "hermit") this.#countFixed(fixed, 407);
         return this.#json(res, 407, "proxy_auth_required", "the proxy needs the sandbox credential", { "proxy-authenticate": PROXY_REALM });
       }
@@ -325,7 +340,7 @@ export class Egress {
     }
     const v = tok === "malformed" ? ({ error: "malformed" } as const) : await this.#o.tokens.verify(tok, req.socket.remoteAddress);
     if ("error" in v) {
-      if (fixed) {
+      if (fixed || named) {
         if (fixed === "magpie" || fixed === "hermit") this.#countFixed(fixed, 403);
         return this.#json(res, 403, "not_allowed", v.error === "not_live" ? "sandbox not live" : "sandbox token not valid");
       }
@@ -334,8 +349,16 @@ export class Egress {
     }
     const caller: Caller = { claims: v.claims, request };
 
-    // (2) a fixed name, (3) a self host, (4) the internet
+    // (2) a fixed name, (2b) a sandbox route, (3) a self host, (4) the internet
     if (fixed) return this.#fixed(fixed, req, res, t, caller, w);
+    if (named) {
+      if (!routedOn(named, t.pathq)) {
+        this.log.add({ ...this.#row("route", named, req, t, caller), decision: "deny:path", status: 403 });
+        return this.#json(res, 403, "not_allowed", `${req.method ?? "GET"} ${t.pathq.split("?")[0]} is not routed on ${named.name}`);
+      }
+      w.kind = "tools";
+      return this.#route(named, req, res, t, caller);
+    }
     if (self) {
       w.kind = "tunnel";
       const path = t.pathq;
@@ -350,7 +373,7 @@ export class Egress {
     const method = req.method ?? "GET";
     if (!routed(name, method, t.pathq)) {
       if (name === "magpie" || name === "hermit") this.#countFixed(name, 403);
-      else this.log.add({ ...this.#row(name === "model" ? "model" : "tools", req, t, caller), decision: "deny:path", status: 403 });
+      else this.log.add({ ...this.#row(name === "model" ? "model" : "tools", this.#routes[name], req, t, caller), decision: "deny:path", status: 403 });
       return this.#json(res, 403, "not_allowed", `${method} ${t.pathq.split("?")[0]} is not routed on ${name}`);
     }
     if (name === "magpie" || name === "hermit") return this.#internalRoute(name, req, res, t, caller);
@@ -363,8 +386,15 @@ export class Egress {
     return this.#route(this.#routes[name], req, res, t, caller);
   }
 
-  #row(kind: "model" | "tools", req: IncomingMessage, t: Target, c: Caller): EgressRow {
-    const up = new URL(this.#routes[kind].upstream);
+  /** The sandbox route an authority names: exact, ASCII case-insensitive, no port or port 80 (as a fixed name). */
+  #sandboxRoute(authority: string): EgressRoute | null {
+    const m = /^([^:]+)(?::(\d+))?$/.exec(authority);
+    if (!m || (m[2] !== undefined && m[2] !== "80")) return null;
+    return this.#sandboxRoutes.get(m[1]!.toLowerCase()) ?? null;
+  }
+
+  #row(kind: "model" | "tools" | "route", route: EgressRoute, req: IncomingMessage, t: Target, c: Caller): EgressRow {
+    const up = new URL(route.upstream);
     return {
       kind,
       method: req.method ?? "GET",
@@ -499,7 +529,7 @@ export class Egress {
     const [rest, query] = splitQuery(t.pathq);
     const up = new URL(route.upstream);
     const isModel = route.model === true;
-    const row = this.#row(isModel ? "model" : "tools", req, t, caller);
+    const row = this.#row(isModel ? "model" : isSandboxRoute(route) ? "route" : "tools", route, req, t, caller);
     if (route.allowPaths?.length && !route.allowPaths.some((p) => rest.startsWith(p))) {
       this.#json(res, 403, "not_allowed", `path ${rest} is not allowed on ${route.name}`);
       return this.#deny(row, "deny:path", 403);
@@ -550,7 +580,14 @@ export class Egress {
       if (isModel) {
         headers = forwardHeaders(req.headers, CALLER_AUTH);
         for (const k of Object.keys(headers)) if (k.startsWith("aviary-")) delete headers[k];
-      } else headers = this.#identityHeaders(req.headers, caller, null);
+      } else {
+        headers = this.#identityHeaders(req.headers, caller, null);
+        // a sandbox route's own names for the verified facts (a caller's copies are replaced)
+        for (const [h, fact] of Object.entries(route.identityHeaders ?? {})) {
+          const c = caller.claims;
+          headers[h.toLowerCase()] = fact === "sandbox" ? c.sandboxId : fact === "conversation" ? c.conversationId : c.person.trim().toLowerCase();
+        }
+      }
       headers = { ...headers, ...injected, host: up.host, "accept-encoding": "identity" };
       if (typeof forcedBody === "object" && forcedBody) {
         delete headers["transfer-encoding"];

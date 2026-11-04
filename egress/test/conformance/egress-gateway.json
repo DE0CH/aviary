@@ -6,8 +6,10 @@
   "routes": [
     {"name": "model", "upstream": "http://upstream-model", "model": true,
      "inject": {"Authorization": "Bearer ${OPENROUTER_API_KEY}"}, "allowPaths": ["/v1/messages"]},
-    {"name": "tools", "upstream": "http://tools", "allowPaths": ["/mcp"],
-     "inject": {"Authorization": "Bearer ${EGRESS_TOKEN_TOOLS}"}, "timeoutSeconds": 180}
+    {"name": "tools", "upstream": "http://tools", "allowPaths": ["/v1/"],
+     "inject": {"Authorization": "Bearer ${EGRESS_TOKEN_TOOLS}"}, "timeoutSeconds": 180},
+    {"name": "conformance-route", "upstream": "http://conformance-route", "allowPaths": ["/api/v1/"],
+     "inject": {"Authorization": "Bearer ${EGRESS_TOKEN_ROUTE}"}, "timeoutSeconds": 180}
   ],
   "selfHosts": ["192.0.2.10", "egress"],
   "generatedAllowlist": false, "defaultAllowedHosts": [], "denyHosts": [],

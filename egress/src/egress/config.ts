@@ -15,9 +15,18 @@ export interface EgressModel {
   reasoning?: ReasoningEffort;
 }
 
-/** A configured route: exactly the fixed names `model` and `tools` (3.11.3). `magpie` and `hermit` are built in. */
+/** Which verified fact an `identityHeaders` header carries. */
+export type IdentityFact = "sandbox" | "conversation" | "person";
+const FACTS: ReadonlySet<string> = new Set(["sandbox", "conversation", "person"]);
+const FIXED_NAMES: ReadonlySet<string> = new Set(["magpie", "hermit", "model", "tools"]);
+/** A sandbox route's name: one lowercase DNS label (gateway-api `routes::valid_name`). */
+const ROUTE_NAME = /^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+/** A configured route: the fixed names `model` and `tools` (3.11.3; `magpie` and `hermit` are built in), and any
+ * number of sandbox routes (platform 3.11.8, a configured name beside the fixed ones: YYC's `labels`). */
 export interface EgressRoute {
-  name: "model" | "tools";
+  name: string;
   upstream: string;
   /** the model route: zero data retention forced, model + budget checked, cost logged as kind "model" */
   model?: boolean;
@@ -27,6 +36,18 @@ export interface EgressRoute {
   allowPaths?: string[];
   /** the upstream may stay silent this long before the request is cut (the tools route: 180) */
   timeoutSeconds?: number;
+  /** sandbox routes only: headers set from the verified token for an upstream that reads its own names (YYC's label
+   * store: `X-Jarvis-Conversation` ← the conversation), beside the `Aviary-Sandbox-*` triple */
+  identityHeaders?: Record<string, IdentityFact>;
+}
+
+/** A sandbox route (not `model` or `tools`). */
+export const isSandboxRoute = (r: EgressRoute): boolean => r.name !== "model" && r.name !== "tools";
+
+/** A path prefix a sandbox route may have: `/…/`, no dot or empty segment, nothing percent-encoded that could leave it. */
+function cleanPrefix(p: string): boolean {
+  if (!p.startsWith("/") || !p.endsWith("/") || p.includes("//") || /%2e|%2f|%5c|\\/i.test(p)) return false;
+  return p.slice(1, -1).split("/").every((s) => s !== "." && s !== "..");
 }
 
 export interface BudgetConfig {
@@ -90,7 +111,13 @@ export function parseEgressConfig(raw: unknown): EgressConfig {
   if (!Array.isArray(c.routes)) throw new Error("egress config: routes must be a list");
   const routes: EgressRoute[] = [];
   for (const r of c.routes as Record<string, any>[]) {
-    if (r?.name !== "model" && r?.name !== "tools") throw new Error(`egress config: route ${JSON.stringify(r?.name)}: only the fixed names model and tools are configured (magpie and hermit are built in)`);
+    const sandbox = r?.name !== "model" && r?.name !== "tools";
+    if (sandbox) {
+      if (typeof r?.name !== "string" || !ROUTE_NAME.test(r.name)) throw new Error(`egress config: route ${JSON.stringify(r?.name)}: a sandbox route's name is one lowercase DNS label`);
+      if (FIXED_NAMES.has(r.name)) throw new Error(`egress config: route ${r.name}: magpie and hermit are built in`);
+      if (!Array.isArray(r.allowPaths) || !r.allowPaths.length || r.allowPaths.some((p: unknown) => typeof p !== "string" || !cleanPrefix(p))) throw new Error(`egress config: routes[${r.name}].allowPaths: a sandbox route needs path prefixes, each /…/ (platform 3.11.8)`);
+      if (r.identityHeaders !== undefined && (typeof r.identityHeaders !== "object" || Object.entries(r.identityHeaders).some(([k, v]) => !HEADER_NAME.test(k) || k.toLowerCase().startsWith("aviary-") || typeof v !== "string" || !FACTS.has(v)))) throw new Error(`egress config: routes[${r.name}].identityHeaders maps header names (not Aviary-*) to sandbox, conversation or person`);
+    } else if (r.identityHeaders !== undefined) throw new Error(`egress config: routes[${r.name}].identityHeaders: sandbox routes only`);
     if (routes.some((x) => x.name === r.name)) throw new Error(`egress config: route ${r.name} twice`);
     need(`routes[${r.name}].upstream`, r.upstream);
     if ((r.name === "model") !== (r.model === true)) throw new Error("egress config: the route named model, and only it, has model: true");
@@ -103,6 +130,7 @@ export function parseEgressConfig(raw: unknown): EgressConfig {
       inject: r.inject ?? {},
       ...(r.allowPaths ? { allowPaths: strings(r.allowPaths, `routes[${r.name}].allowPaths`) } : {}),
       ...(r.timeoutSeconds ? { timeoutSeconds: r.timeoutSeconds } : {}),
+      ...(r.identityHeaders ? { identityHeaders: { ...r.identityHeaders } } : {}),
     });
   }
   for (const n of ["model", "tools"] as const) if (!routes.some((r) => r.name === n)) throw new Error(`egress config: no route ${n}`);

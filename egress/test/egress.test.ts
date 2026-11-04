@@ -22,7 +22,7 @@ import { parseEgressConfig, type EgressConfig } from "../src/egress/config.ts";
 import { EgressLog } from "../src/egress/egresslog.ts";
 import { isRequestId, uuidv7 } from "../src/egress/ids.ts";
 import { AddressGuard } from "../src/egress/netguard.ts";
-import { CostSniffer, denyText, Egress, FIXED_BODY_MAX, parseTarget, routed, type EgressOptions } from "../src/egress/proxy.ts";
+import { CostSniffer, denyText, Egress, FIXED_BODY_MAX, parseTarget, routed, routedOn, type EgressOptions } from "../src/egress/proxy.ts";
 import { DnsRefusal, ThreatResolver } from "../src/egress/threatdns.ts";
 import { exitConnect, ExitHttpsAgent, ExitRefusal, internalHost, parseExit } from "../src/egress/exit.ts";
 import { createServer as createNetServer } from "node:net";
@@ -71,7 +71,9 @@ function config(upstream: string, extra: Record<string, unknown> = {}): EgressCo
     contextTokens: 1048576,
     routes: [
       { name: "model", upstream: `${upstream}/api`, model: true, inject: { Authorization: "Bearer ${REAL_KEY}" }, allowPaths: ["/v1/messages"] },
-      { name: "tools", upstream, inject: { Authorization: "Bearer ${EGRESS_TOKEN_TOOLS}" }, allowPaths: ["/mcp"], timeoutSeconds: 180 },
+      { name: "tools", upstream, inject: { Authorization: "Bearer ${EGRESS_TOKEN_TOOLS}" }, allowPaths: ["/v1/"], timeoutSeconds: 180 },
+      // a sandbox route (platform 3.11.8), as YYC's label store: its own credential and conversation header
+      { name: "labels", upstream: `${upstream}/labels-up`, inject: { "CF-Access-Client-Id": "${LABELS_ID}", "CF-Access-Client-Secret": "${LABELS_SECRET}" }, allowPaths: ["/api/v1/"], identityHeaders: { "X-Jarvis-Conversation": "conversation" }, timeoutSeconds: 180 },
     ],
     selfHosts: ["vip.egress.test"],
     maxUploadBytes: 256 * 1024,
@@ -96,7 +98,7 @@ function options(o: Partial<EgressOptions> & { db: typeof t.db; cacheDir: string
     },
     upstreams: { pypi: `http://127.0.0.1:${upPort}`, pypiFiles: `http://127.0.0.1:${upPort}/files`, npm: `http://127.0.0.1:${upPort}/npm` },
     aptHosts: ["apt.test"],
-    env: { REAL_KEY: "sk-real", EGRESS_TOKEN_TOOLS: TOOLS_BEARER },
+    env: { REAL_KEY: "sk-real", EGRESS_TOKEN_TOOLS: TOOLS_BEARER, LABELS_ID: "labels-id.access", LABELS_SECRET: "labels-secret" },
     internal: { magpie: `http://127.0.0.1:${magpie.port}`, hermit: `http://127.0.0.1:${hermit.port}` },
     ...rest,
   };
@@ -192,9 +194,9 @@ before(async () => {
         res.writeHead(200, { "content-type": "application/json" });
         return res.end(JSON.stringify({ echo: JSON.parse(body || "{}"), usage: { cost: 0.0123 } }));
       }
-      if (p.startsWith("/mcp")) {
+      if (p.startsWith("/v1/tools") || p === "/v1/openapi.json" || p.startsWith("/labels-up/")) {
         res.writeHead(200, { "content-type": "application/json" });
-        return res.end(JSON.stringify({ headers: req.headers, url: p }));
+        return res.end(JSON.stringify({ headers: req.headers, url: p, method: req.method, body }));
       }
       res.writeHead(404).end();
     });
@@ -276,11 +278,19 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ---- configuration ---------------------------------------------------------------------------------------------
 
-test("egress.json: only the fixed names model and tools are routes; smallModel defaults; the allowed models", () => {
+test("egress.json: model and tools, plus sandbox routes with their prefixes; smallModel defaults; the allowed models", () => {
   assert.equal(cfg.smallModel, "vendor/claude-x");
   assert.equal(cfg.product.locale, "en");
   const base = { product: { name: "P" }, models: [{ id: "a/m", label: "M" }], defaultModel: "a/m", contextTokens: 10, routes: cfg.routes };
-  assert.throws(() => parseEgressConfig({ ...base, routes: [...cfg.routes, { name: "sent-files", upstream: "http://x", inject: {} }] }), /only the fixed names/);
+  const route = (r: Record<string, unknown>) => parseEgressConfig({ ...base, routes: [cfg.routes[0], cfg.routes[1], { upstream: "http://x", inject: {}, allowPaths: ["/api/v1/"], ...r }] });
+  assert.deepEqual(route({ name: "sent-files" }).routes[2], { name: "sent-files", upstream: "http://x", inject: {}, allowPaths: ["/api/v1/"] });
+  for (const name of ["Labels", "magpie", "hermit", "a.b", "-x", "x-", ""]) assert.throws(() => route({ name }), /one lowercase DNS label|built in/, name);
+  for (const allowPaths of [undefined, [], ["/api"], ["api/"], ["/a/../b/"], ["/a//b/"], ["/%2e%2e/"]]) assert.throws(() => route({ name: "labels", allowPaths }), /allowPaths/, String(allowPaths));
+  assert.throws(() => route({ name: "labels", identityHeaders: { "X-C": "email" } }), /identityHeaders/);
+  assert.throws(() => route({ name: "labels", identityHeaders: { "Aviary-Sandbox-Id": "sandbox" } }), /identityHeaders/);
+  assert.throws(() => route({ name: "labels", model: true }), /model: true/);
+  assert.throws(() => parseEgressConfig({ ...base, routes: [cfg.routes[0], { ...cfg.routes[1], identityHeaders: { "X-C": "person" } }] }), /sandbox routes only/);
+  assert.throws(() => parseEgressConfig({ ...base, routes: [...cfg.routes, cfg.routes[2]] }), /labels twice/);
   assert.throws(() => parseEgressConfig({ ...base, routes: [cfg.routes[1]] }), /no route model/);
   assert.throws(() => parseEgressConfig({ ...base, routes: [{ ...cfg.routes[0], model: false }, cfg.routes[1]] }), /model: true/);
   assert.throws(() => parseEgressConfig({ ...base, contextTokens: 0 }), /contextTokens/);
@@ -303,7 +313,13 @@ test("targets and fixed names: exact host, no port or port 80; dot and encoded p
   assert.ok(routed("model", "POST", "/v1/messages/count_tokens"));
   assert.ok(routed("model", "GET", "/v1/aviary/models"));
   assert.ok(!routed("model", "GET", "/v1/models"));
-  assert.ok(routed("tools", "POST", "/mcp") && !routed("tools", "POST", "/mcp/x"));
+  // decision 15: tools is REST only
+  assert.ok(routed("tools", "GET", "/v1/tools") && routed("tools", "GET", "/v1/openapi.json"));
+  assert.ok(routed("tools", "POST", "/v1/tools/web_search") && routed("tools", "POST", "/v1/tools/echo?x=1"));
+  for (const [m, p] of [["POST", "/mcp"], ["POST", "/v1/tools"], ["POST", "/v1/tools/"], ["POST", "/v1/tools/a/b"], ["GET", "/v1/tools/echo"], ["DELETE", "/v1/tools/echo"], ["POST", "/v1/tools/%2e%2e"]]) assert.ok(!routed("tools", m!, p!), `${m} ${p}`);
+  const labels = cfg.routes.find((r) => r.name === "labels")!;
+  assert.ok(routedOn(labels, "/api/v1/designs?x=1") && routedOn(labels, "/api/v1/files/lists/a.csv"));
+  for (const p of ["/api/v1", "/api/v2/x", "/admin", "/api/v1/../admin", "/api/v1/%2e%2e/admin", "/api/v1//x"]) assert.ok(!routedOn(labels, p), p);
   assert.ok(isRequestId(uuidv7()) && !isRequestId(uuidv7().toUpperCase()) && !isRequestId(randomUUID()));
 });
 
@@ -715,7 +731,7 @@ test("model route: GET http://model/v1/aviary/models answers the R18 shape from 
 });
 
 test("tools route: the tools pair bearer and the verified person, never the sandbox's credential; one log row", async () => {
-  const r = await http("http://tools/mcp", { method: "POST", headers: { ...pa(), ...FORGED, "content-type": "application/json" }, body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' });
+  const r = await http("http://tools/v1/tools/web_search", { method: "POST", headers: { ...pa(), ...FORGED, "content-type": "application/json" }, body: '{"query":"施政報告"}' });
   assert.equal(r.status, 200);
   const h = JSON.parse(r.body).headers;
   assert.equal(h.authorization, `Bearer ${TOOLS_BEARER}`);
@@ -723,9 +739,45 @@ test("tools route: the tools pair bearer and the verified person, never the sand
   assert.equal(h["aviary-sandbox-id"], sb.claims.sandboxId);
   assert.equal(h["x-api-key"], undefined);
   assert.equal(h["aviary-person"], undefined);
-  assert.equal((await http("http://tools/other", { method: "POST", headers: pa() })).status, 403);
+  assert.equal(JSON.parse(r.body).url, "/v1/tools/web_search");
+  assert.equal(JSON.parse(r.body).body, '{"query":"施政報告"}');
+  assert.equal((await http("http://tools/v1/tools", { headers: pa() })).status, 200);
+  assert.equal((await http("http://tools/mcp", { method: "POST", headers: pa() })).status, 403);
   const t2 = (await rows()).filter((x) => x.kind === "tools");
-  assert.deepEqual(t2.map((x) => [x.status, x.decision, x.person]), [[200, "allow", "staff@example.org"], [403, "deny:path", "staff@example.org"]]);
+  assert.deepEqual(t2.map((x) => [x.status, x.decision, x.person, x.path]), [[200, "allow", "staff@example.org", "/v1/tools/web_search"], [200, "allow", "staff@example.org", "/v1/tools"], [403, "deny:path", "staff@example.org", "/mcp"]]);
+});
+
+test("sandbox route (labels): its credential injected, the conversation header set, the caller's own dropped; only its prefixes; logged as route", async () => {
+  const forged = { ...FORGED, "x-jarvis-conversation": "forged-conversation", "cf-access-client-id": "forged" };
+  const r = await http("http://labels/api/v1/designs/forum?view=preview", { method: "PATCH", headers: { ...pa(), ...forged, "content-type": "application/json" }, body: '{"settings":{"name":"論壇名牌"}}' });
+  assert.equal(r.status, 200);
+  const got = JSON.parse(r.body);
+  assert.equal(got.url, "/labels-up/api/v1/designs/forum?view=preview");
+  assert.equal(got.method, "PATCH");
+  assert.equal(got.body, '{"settings":{"name":"論壇名牌"}}');
+  const h = got.headers;
+  assert.equal(h["cf-access-client-id"], "labels-id.access");
+  assert.equal(h["cf-access-client-secret"], "labels-secret");
+  assert.equal(h["x-jarvis-conversation"], sb.claims.conversationId);
+  assert.equal(h["aviary-sandbox-conversation"], sb.claims.conversationId);
+  assert.equal(h["aviary-sandbox-person"], "staff@example.org");
+  for (const k of ["authorization", "x-api-key", "aviary-person", "aviary-admin"]) assert.equal(h[k], undefined, k);
+  // also by its name with port 80, and case-insensitively
+  assert.equal((await http("http://LABELS:80/api/v1/designs", { headers: pa() })).status, 200);
+  for (const p of ["/admin", "/api/v2/designs", "/api/v1/../admin", "/api/v1/%2e%2e/admin", "/api/v1//designs"]) {
+    const d = await http(`http://labels${p}`, { headers: pa() });
+    assert.equal(d.status, 403, p);
+    assert.equal(JSON.parse(d.body).code, "not_allowed", p);
+  }
+  assert.equal(upHits["/labels-up/admin"], undefined);
+  // another port is not the route: the internet rules (not allowlisted)
+  assert.equal((await http("http://labels:8080/api/v1/designs", { headers: pa() })).status, 403);
+  // no credential: 407 as on a fixed name
+  assert.equal((await http("http://labels/api/v1/designs")).status, 407);
+  const lr = (await rows()).filter((x) => x.kind === "route");
+  assert.deepEqual(lr.map((x) => [x.method, x.status, x.decision]).slice(0, 2), [["PATCH", 200, "allow"], ["GET", 200, "allow"]]);
+  assert.equal(lr.filter((x) => x.decision === "deny:path").length, 5);
+  assert.ok(lr.every((x) => x.host === "127.0.0.1" && x.conversation_id === sb.claims.conversationId));
 });
 
 // ---- the internet -----------------------------------------------------------------------------------------------
@@ -1335,7 +1387,7 @@ test("drain: no new connections, idle ones closed, answers carry Connection: clo
   let t0 = 0;
   const cutAt = (pr: Promise<unknown>) => pr.then(() => "answered", () => Date.now() - t0);
   const fixed = cutAt(http("http://magpie/v1/sandbox/poll?ms=20000", { port: p, headers: pa() }));
-  const tools = cutAt(http("http://tools/mcp", { port: p, method: "POST", headers: { ...pa(), "x-stall": "head", "content-type": "application/json" }, body: "{}" }));
+  const tools = cutAt(http("http://tools/v1/tools/echo", { port: p, method: "POST", headers: { ...pa(), "x-stall": "head", "content-type": "application/json" }, body: "{}" }));
   const model = cutAt(http("http://model/v1/messages", { port: p, method: "POST", headers: { ...pa(), "x-stall": "mid", "content-type": "application/json" }, body: '{"model":"vendor/claude-x"}' }));
   const tun = await connectVia(`allowed.test:${tlsPort}`, basic(sb.token), p);
   assert.equal(tun.status, 200);
