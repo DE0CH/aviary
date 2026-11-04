@@ -1410,7 +1410,7 @@ async function fakeDns(a: Record<string, string>): Promise<{ port: number; queri
   return state;
 }
 
-test("entry point: the first argument picks the role; with none JARVIS_ROLE still picks web, never egress or tools", async () => {
+test("entry point: the first argument picks the role; with none JARVIS_ROLE still picks web or the old stack's tools, never egress", async () => {
   const main = join(import.meta.dirname, "..", "src", "main.ts");
   const runMain = (args: string[], env: Record<string, string>): Promise<{ code: number; err: string }> =>
     new Promise((resolve) => {
@@ -1425,9 +1425,10 @@ test("entry point: the first argument picks the role; with none JARVIS_ROLE stil
   const oldEgress = await runMain([], { JARVIS_ROLE: "egress" });
   assert.equal(oldEgress.code, 2);
   assert.match(oldEgress.err, /JARVIS_ROLE=egress: this image's egress is aviary's sandbox gateway/);
-  const oldTools = await runMain([], { JARVIS_ROLE: "tools" });
-  assert.equal(oldTools.code, 2);
-  assert.match(oldTools.err, /JARVIS_ROLE=tools: this image's tools serve aviary's gateway/);
+  // JARVIS_ROLE=tools: the old stack's tools (tools/legacy.ts), which reads the shared config (missing here) and fails
+  const oldTools = await runMain([], { JARVIS_ROLE: "tools", JARVIS_CONFIG: "/nonexistent/config.json" });
+  assert.notEqual(oldTools.code, 0);
+  assert.match(oldTools.err, /nonexistent\/config\.json/);
   // `args: [tools]` gets as far as its own config (missing here): a start failure naming the file
   const tools = await runMain(["tools"], {});
   assert.equal(tools.code, 2);
