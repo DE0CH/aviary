@@ -161,9 +161,6 @@ export interface ChatConfig {
   /** Thinking level for the title model's tool-less calls (titles, Claude Code's quick calls); absent = its default. */
   titleReasoning?: ReasoningEffort;
   systemPromptFile: string;
-  /** Claude Code's managed skills (docs/CLAUDE-CODE.md, "Skills"): a folder of files named `<skill>.<file>` (a
-   * ConfigMap's keys can't hold "/"), e.g. `labels.SKILL.md`, `labels.design-format.md`; absent = none. */
-  skillsDir?: string;
   sandbox: {
     /** Where sandboxes run (docs/CHAT.md, "Sandbox providers"). */
     provider: "kubernetes" | "e2b" | "vm";
@@ -338,7 +335,6 @@ export function parseConfig(raw: unknown): ChatConfig {
     titleModel: c.titleModel ?? c.defaultModel,
     ...(c.titleReasoning ? { titleReasoning: c.titleReasoning } : {}),
     systemPromptFile: c.systemPromptFile,
-    ...(typeof c.skillsDir === "string" && c.skillsDir ? { skillsDir: c.skillsDir } : {}),
     sandbox: { ...DEFAULTS.sandbox, ...c.sandbox, provider, e2b, vm },
     egress: { ...DEFAULTS.egress, ...c.egress },
     tools: { ...DEFAULTS.tools, ...c.tools },

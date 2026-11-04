@@ -97,25 +97,16 @@ test("Claude Code in a sandbox: egress for the model, the tools route's URL and 
   assert.equal(env.JARVIS_ROUTE_TOOLS_URL, "http://10.201.1.1:3128/x/tools");
   assert.equal(env.JARVIS_EGRESS_TOKEN, "tok");
   assert.equal(env.JARVIS_CLAUDE_MCP, undefined, "no MCP servers: the tools are a REST API the skills explain");
-  assert.equal(env.JARVIS_CLAUDE_SKILLS, undefined, "no skillsDir: no skills");
+  assert.equal(env.JARVIS_CLAUDE_SKILLS, undefined, "skills are the sandbox image's, never the env");
   assert.match(Buffer.from(env.JARVIS_CLAUDE_MD!, "base64").toString(), /# Your computer/);
   assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined, "no contextWindow: Claude Code's own idea");
 });
 
-test("sandbox routes and managed skills: a sandbox route's URL in the env; skillsDir's <skill>.<file> files as skills", async () => {
-  const { mkdtemp, writeFile, mkdir } = await import("node:fs/promises");
-  const { tmpdir } = await import("node:os");
-  const dir = await mkdtemp(`${tmpdir()}/skills-`);
-  await writeFile(`${dir}/labels.SKILL.md`, "---\nname: labels\n---\n標籤");
-  await writeFile(`${dir}/labels.design-format.md`, "format");
-  await writeFile(`${dir}/web.SKILL.md`, "web");
-  await mkdir(`${dir}/..data`);
+test("sandbox routes: a sandbox route's URL in the env", async () => {
   const routes = [{ name: "labels", upstream: "https://labels.example", sandbox: true, identity: true, inject: { "CF-Access-Client-Id": "x" }, allowPaths: ["/api/v1/"] }];
-  const env = await claudeCodeEnv(parseConfig({ ...base, systemPromptFile: "/dev/null", skillsDir: dir, egress: { routes } }), "http://10.201.1.1:3128", "tok");
+  const env = await claudeCodeEnv(parseConfig({ ...base, systemPromptFile: "/dev/null", egress: { routes } }), "http://10.201.1.1:3128", "tok");
   assert.equal(env.JARVIS_ROUTE_LABELS_URL, "http://10.201.1.1:3128/x/labels");
   assert.equal(env.JARVIS_ROUTE_TOOLS_URL, "http://10.201.1.1:3128/x/tools");
-  assert.deepEqual(JSON.parse(Buffer.from(env.JARVIS_CLAUDE_SKILLS!, "base64").toString()),
-    { "labels/SKILL.md": "---\nname: labels\n---\n標籤", "labels/design-format.md": "format", "web/SKILL.md": "web" });
   assert.throws(() => parseConfig({ ...base, egress: { routes: [{ ...routes[0], model: true }] } }), /a sandbox route can't be/);
   assert.throws(() => parseConfig({ ...base, egress: { routes: [{ ...routes[0], name: "Labels" }] } }), /lowercase/);
   assert.throws(() => parseConfig({ ...base, egress: { routes: [{ name: "labels", upstream: "https://x", mcp: true, inject: {} }] } }), /"mcp" is gone/);
