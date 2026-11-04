@@ -1,5 +1,5 @@
 //! Configured routes (platform 3.11.8): names a deployment adds beside the four fixed ones, each to a service of its
-//! own the sandbox calls directly (YYC: `labels`, its label store's REST API), with the deployment's credential
+//! own the sandbox calls directly (a label store's REST API, say), with the deployment's credential
 //! injected. A configured name is recognised like a fixed name (exact host, ASCII case-insensitive, no port or port
 //! 80, never resolved by DNS, never `CONNECT`), after the fixed names and before the self hosts. Only its path
 //! prefixes are routed (the fixed names' clean-path rule applies); the headers are stripped and the identity triple
