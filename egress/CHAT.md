@@ -591,9 +591,14 @@ last one reads every row and checks that each is there.
 - **Env:** `EGRESS_IMPORT_JARVIS_URL` / `TOOLS_IMPORT_JARVIS_URL` (a read-only role on the old database) and the
   service's own `EGRESS_DATABASE_URL` / `TOOLS_DATABASE_URL` (the pass applies the service's migrations first, as the
   service does). Exit 0 after a pass, 1 when it failed (the next run retries), 2 on a missing variable or an argument
-  other than `--delta`, and 1 when a full pass finds a source row it read missing from the target. One log line per
-  table: `{"at":"import-jarvis","table","delta","read","copied","after","last","missing"}` (`missing`: full passes
-  only).
+  other than `--delta`, and 1 when a full pass finds the target short of the source. One log line per table:
+  `{"at":"import-jarvis","table","delta","read","copied","after","last","missing"}` (`missing`: full passes only, the
+  source snapshot's row count, counted apart from the pass's reads, less the target's rows with a `source_id` up to
+  `last`).
+- **Timeouts:** the old database is reached across clusters, so the source connection has, besides the server's
+  `statement_timeout` (120 s), a client-side `query_timeout` (150 s) and TCP keepalives: a network drop mid-query fails
+  the run instead of hanging it (the CronJobs are `concurrencyPolicy: Forbid`; they also get an
+  `activeDeadlineSeconds`, YYC's deploy).
 - **Every column, exactly:** the pass reads in id order inside one repeatable-read, read-only transaction and passes
   every value as Postgres text both ways (timestamps keep their microseconds, numerics their digits). `source_id` is
   the old id; egress's own rows have none. Copied rows have no `row_id` and no `request`; tools rows no `sandbox_id`.
