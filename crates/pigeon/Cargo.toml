@@ -36,6 +36,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 aviary-core = { path = "../aviary-core", features = ["testing"] }
+aviary-conformance = { path = "../../testing/conformance" }
 aviary-fakes = { path = "../../testing/fakes" }
 fake-access = { path = "../../testing/fake-access" }
 

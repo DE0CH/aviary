@@ -23,6 +23,7 @@ hermit-api = { path = "../../crates/hermit-api" }
 http-body-util.workspace = true
 hyper = { workspace = true, features = ["client", "http1"] }
 hyper-util = { workspace = true, features = ["tokio"] }
+magpie-api = { path = "../../crates/magpie-api" }
 reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true

@@ -19,6 +19,15 @@ common: --junit <file> (JUnit XML), --only <check-name prefix> (repeatable)
 exit code 0 = no check failed; one line per check on stdout (PASS / FAIL / SKIP)
 ```
 
+## The tickets suite (a library suite)
+
+`aviary_conformance::tickets` checks the switch window's ticket rules (`magpie_api::legacy`, WP-51): a send's
+reuse under a new take and its one writer, an earlier take's `refused`, `prior` and `settleMs`, the hold, a superseded
+ticket, what closes which kind, the `native` answer. Its hooks reach into the implementation (make a migrating
+conversation, age a ticket, read its stored outcome, release), so it has no command: magpie runs it against Postgres
+(`crates/magpie/tests/legacy.rs`) and pigeon against its in-memory model of magpie (`crates/pigeon/tests/ticket_rules.rs`),
+which the LU contract rig of `crates/pigeon/tests/legacy.rs` runs on.
+
 ## The gateway suite
 
 The suite serves fakes of `magpie`, `hermit`, `tools` and the model upstream on one listener that answers by `Host`

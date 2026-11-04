@@ -1893,3 +1893,78 @@ async fn the_window_state_and_an_uploads_raw_bytes() {
     let theirs = bob.person(BOB).upload_raw(up.upload_id).await.unwrap_err();
     assert_eq!(theirs.api().unwrap().status, 404);
 }
+
+/// magpie passes the shared ticket suite (`aviary_conformance::tickets`) that pigeon's model of it passes too
+/// (`crates/pigeon/tests/ticket_rules.rs`), so the LU contract rig's tickets behave as magpie's do.
+#[tokio::test]
+async fn the_ticket_rules_pass_the_shared_suite() {
+    use aviary_conformance::tickets::{self, Hooks, Options};
+    let db = common::fresh_db("lg_suite").await;
+    let t = common::Tokens::new();
+    let r = Arc::new(common::replica(&db.url, &t).await);
+    let (a, b, c, d) = (r.clone(), r.clone(), r.clone(), r.clone());
+    let n = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let hooks = Hooks {
+        legacy_conversation: Box::new(move || {
+            let (r, n) = (a.clone(), n.clone());
+            Box::pin(async move {
+                let k = n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                migrating(&r, ALICE, &format!("suite-{k}")).await
+            })
+        }),
+        age_ticket: Box::new(move |ticket, by| {
+            let r = b.clone();
+            Box::pin(async move {
+                r.pool()
+                    .get()
+                    .await
+                    .unwrap()
+                    .execute(
+                        "update legacy_tickets set issued_at = issued_at - make_interval(secs => $2) where ticket = $1",
+                        &[&ticket, &by.as_secs_f64()],
+                    )
+                    .await
+                    .unwrap();
+            })
+        }),
+        outcome: Box::new(move |ticket| {
+            let r = c.clone();
+            Box::pin(async move {
+                let o: Option<String> = r
+                    .pool()
+                    .get()
+                    .await
+                    .unwrap()
+                    .query_one("select outcome from legacy_tickets where ticket = $1", &[&ticket])
+                    .await
+                    .unwrap()
+                    .get(0);
+                o.map(|o| serde_json::from_value(serde_json::Value::String(o)).unwrap())
+            })
+        }),
+        release: Box::new(move |conv| {
+            let r = d.clone();
+            Box::pin(async move {
+                r.pool()
+                    .get()
+                    .await
+                    .unwrap()
+                    .execute("update conversations set migrating = false where id = $1", &[&conv])
+                    .await
+                    .unwrap();
+            })
+        }),
+    };
+    let report = aviary_conformance::report::Report::new("tickets", vec![], true);
+    tickets::run(
+        Options {
+            client: r.pigeon(),
+            person: ALICE.into(),
+            hooks,
+        },
+        &report,
+    )
+    .await;
+    assert!(report.passed(), "failures: {:#?}", report.failures());
+    assert_eq!(report.results().len(), 8);
+}

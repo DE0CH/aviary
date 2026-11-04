@@ -893,11 +893,16 @@ impl Server for Model {
         let Some(t) = st.tickets.iter_mut().find(|t| t.id == ticket) else {
             return Err(refusal(ErrorCode::NotFound, "not found"));
         };
-        // magpie's rule (`magpie::legacy::tickets::done`): a `refused` from an earlier take changes nothing
+        // magpie's rules (`magpie::legacy::tickets::done`): a closed ticket, a `refused` from an earlier take and
+        // `delivered` change nothing; an outcome that does not close the kind is 400
         let stale = body.outcome == TicketOutcome::Refused && body.take.is_some_and(|k| k != t.take);
-        if t.outcome.is_none() && t.kind.closes_on(body.outcome) && !stale {
-            t.outcome = Some(body.outcome);
+        if t.outcome.is_some() || stale || body.outcome == TicketOutcome::Delivered {
+            return Ok(());
         }
+        if !t.kind.closes_on(body.outcome) {
+            return Err(refusal(ErrorCode::BadRequest, "the outcome does not close this kind"));
+        }
+        t.outcome = Some(body.outcome);
         Ok(())
     }
 
