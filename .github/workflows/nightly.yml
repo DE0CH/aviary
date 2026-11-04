@@ -97,6 +97,36 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           exit "$code"
 
+  lu-rig:
+    # WP-54: pigeon's legacy upstream against the real old stack (testing/lu-rig): the ui image of the A1 commit
+    # (testing/lu-rig/ui-image.txt) running real Claude Code turns behind its web role's stand-in and a mock model,
+    # on main (the cases are pigeon's tests, built here)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: toolchain (rust-toolchain.toml, exactly)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: build the cases
+        run: cargo test --locked -p pigeon --test lu_rig --no-run
+      - name: up
+        run: timeout 900 testing/lu-rig/run.sh up "$(cat testing/lu-rig/ui-image.txt)"
+      - name: the cases
+        run: timeout 1200 testing/lu-rig/run.sh test
+      - name: logs
+        if: failure()
+        run: testing/lu-rig/run.sh logs "$RUNNER_TEMP/lu-rig"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: lu-rig
+          path: ${{ runner.temp }}/lu-rig/
+          if-no-files-found: warn
+      - name: down
+        if: always()
+        run: testing/lu-rig/run.sh down
+
   e2e-chaos:
     # platform 6.2: the harness for 60 min with two people sending turns continuously while pigeon, magpie, hermit and
     # the gateway roll in random order every 2-5 min and a random supervisor is killed every 10 min (the driver's

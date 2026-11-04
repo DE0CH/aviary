@@ -56,7 +56,7 @@ jobs:
       - name: shellcheck
         run: |
           shopt -s globstar nullglob
-          files=(.github/ci/*.sh fabric/**/*.sh images/*.sh images/sandbox/*.sh testing/e2e/*.sh testing/paseo-contract/**/*.sh crates/hermit/scripts/*.sh)
+          files=(.github/ci/*.sh fabric/**/*.sh images/*.sh images/sandbox/*.sh testing/e2e/*.sh testing/lu-rig/*.sh testing/paseo-contract/**/*.sh crates/hermit/scripts/*.sh)
           shellcheck "${files[@]}"
       - name: fabric/aws/infra.sh against a stand-in aws (every value from the config)
         run: bash fabric/aws/test-infra.sh

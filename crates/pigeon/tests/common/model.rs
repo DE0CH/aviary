@@ -231,7 +231,11 @@ impl Model {
 
     /// A conversation of `person` (emits its upsert).
     pub fn add(&self, person: &str, title: Option<&str>) -> Uuid {
-        let id = Uuid::new_v4();
+        self.add_id(person, Uuid::new_v4(), title)
+    }
+
+    /// [`Model::add`] with the conversation's id (the LU rig: the id the old stack gave it).
+    pub fn add_id(&self, person: &str, id: Uuid, title: Option<&str>) -> Uuid {
         let mut st = self.st();
         st.epochs += 1;
         let epoch = format!("e{}", st.epochs);
@@ -272,7 +276,12 @@ impl Model {
 
     /// A legacy conversation of `person` (as the bulk import makes it).
     pub fn add_legacy(&self, person: &str, title: Option<&str>) -> Uuid {
-        let id = self.add(person, title);
+        self.add_legacy_id(person, Uuid::new_v4(), title)
+    }
+
+    /// [`Model::add_legacy`] with the conversation's id (the LU rig: the old stack's session id).
+    pub fn add_legacy_id(&self, person: &str, id: Uuid, title: Option<&str>) -> Uuid {
+        let id = self.add_id(person, id, title);
         self.set_migrating(id, true);
         id
     }

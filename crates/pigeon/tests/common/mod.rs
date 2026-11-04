@@ -60,6 +60,12 @@ fn tmp(name: &str) -> PathBuf {
 }
 
 fn openssl_key(dir: &Path, name: &str) -> String {
+    // the LU rig (testing/lu-rig): the old ui trusts a key run.sh made, so the harness signs with that one
+    if let Some(k) = aviary_core::env::test_only("AVIARY_TEST_LU_RIG_KEYS").map(|d| Path::new(&d).join(name))
+        && k.exists()
+    {
+        return std::fs::read_to_string(k).unwrap();
+    }
     let p = dir.join(name);
     let out = Command::new("openssl")
         .args([
