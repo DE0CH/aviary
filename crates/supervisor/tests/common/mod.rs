@@ -310,7 +310,8 @@ impl Agent for RecordingAgent {
                         + 1;
                     let spec = SpawnSpec {
                         name: "claude".into(),
-                        argv: vec!["/bin/sleep".into(), "1000".into()],
+                        // outlives every soak (soak_long restarts every 10 min); stop kills its group
+                        argv: vec!["/bin/sleep".into(), "infinity".into()],
                         env: vec![],
                         cwd: None,
                         // SAFETY: getuid/getgid have no memory effects.
