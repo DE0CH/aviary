@@ -362,6 +362,52 @@ async fn a_lost_lock_stops_the_command() {
 }
 
 #[tokio::test]
+async fn a_write_checks_the_lock_inside_its_own_transaction() {
+    let w = World::new("lock_in_tx").await;
+    let ka = w.person(ALICE).await;
+    let (u1, _, _, _) = one_conversation(&w, &ka).await;
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    let held = std::sync::Arc::new(lock::OneShot::take(w.magpie()).await.unwrap());
+    // held: a write transaction that checks it commits
+    let h = &held;
+    aviary_pg::tx!(w.magpie(), |t| -> magpie_import::Result<()> { h.check_in(t).await })
+        .await
+        .unwrap();
+    // let go between the command's check and its write (here by hand): the write's own check refuses it
+    let imp = magpie_import::Importer {
+        lock: Some(held.clone()),
+        ..w.imp.clone()
+    };
+    imp.check_lock().await.unwrap();
+    w.magpie()
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            "select pg_terminate_backend(pid) from pg_locks where locktype = 'advisory' and granted and objsubid = 1
+               and ((classid::bigint << 32) | objid::bigint) = hashtext($1)::bigint",
+            &[&lock::NAME],
+        )
+        .await
+        .unwrap();
+    let e = magpie_import::conv::purge(&imp, u1).await;
+    assert!(matches!(e, Err(Error::LockLost)), "{e:?}");
+    assert_eq!(
+        w.magpie()
+            .get()
+            .await
+            .unwrap()
+            .query_one("select count(*) from conversations where id = $1", &[&u1])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        1,
+        "not purged"
+    );
+}
+
+#[tokio::test]
 async fn the_old_databases_are_read_only_outside_the_export() {
     let w = World::new("read_only").await;
     let ka = w.person(ALICE).await;
@@ -413,4 +459,209 @@ async fn a_cleared_title_becomes_provisional_and_odd_names_are_errors() {
         "{:?}",
         r.errors
     );
+}
+
+/// `(migrating, fence set, released_at set, release_reason)` of `id`.
+async fn state(w: &World, id: Uuid) -> (bool, bool, bool, Option<String>) {
+    let r = w
+        .magpie()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select c.migrating, c.legacy_fence_at is not null, s.released_at is not null, s.release_reason
+             from conversations c join import_sources s on s.conversation_id = c.id where c.id = $1",
+            &[&id],
+        )
+        .await
+        .unwrap();
+    (r.get(0), r.get(1), r.get(2), r.get(3))
+}
+
+#[tokio::test]
+async fn a_forced_release_expires_open_tickets_and_fails_whole_inside_its_fence() {
+    let w = World::new("force_edges").await;
+    let ka = w.person(ALICE).await;
+    let (u1, _, _, _) = one_conversation(&w, &ka).await;
+    let (u2, _, _, _) = one_conversation(&w, &ka).await;
+    let (u3, _, _, _) = one_conversation(&w, &ka).await;
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    let db = w.magpie().get().await.unwrap();
+
+    // an open ticket (an old turn still running under it) would refuse the fence for ever: expired first, then the
+    // release goes; the fence time is the database's, the time inside it the importer's
+    let ticket = Uuid::new_v4();
+    db.execute(
+        "insert into legacy_tickets (ticket, conversation_id, kind) values ($1, $2, 'send')",
+        &[&ticket, &u1],
+    )
+    .await
+    .unwrap();
+    let f = control::release_forced(&w.imp, u1).await.unwrap();
+    assert_eq!(f.tickets_expired, 1, "{f:?}");
+    assert!(f.fence_seconds > 0.0 && f.in_fence_seconds > 0.0, "{f:?}");
+    assert!(f.reingested.is_empty(), "{f:?}");
+    assert_eq!(state(&w, u1).await, (false, false, true, Some("forced".to_owned())));
+    let outcome: Option<String> = db
+        .query_one("select outcome from legacy_tickets where ticket = $1", &[&ticket])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(outcome.as_deref(), Some("expired"));
+
+    // a send's folder still being written: the sync inside the fence leaves it waiting, so the release is refused
+    // and the fence lifted (nothing released, the old side keeps writing it)
+    let careful = magpie_import::Importer {
+        sent_quiet: Duration::from_secs(600),
+        ..w.imp.clone()
+    };
+    let folder = w.jfs.0.join("sent").join(u2.to_string()).join("toolu_w");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("a.pdf"), b"%PDF").unwrap();
+    let e = control::release_forced(&careful, u2).await.unwrap_err().to_string();
+    assert!(e.contains("changed inside the fence"), "{e}");
+    assert_eq!(state(&w, u2).await, (true, false, false, None));
+
+    // a final sync that outlasts the fence's lease: nothing is released, the fence is lifted, and the error says so
+    let slow = magpie_import::Importer {
+        pause_in_fence: magpie::limits::FENCE_LEASE + Duration::from_millis(500),
+        ..w.imp.clone()
+    };
+    let e = control::release_forced(&slow, u3).await.unwrap_err().to_string();
+    assert!(e.contains("lease ran out"), "{e}");
+    assert_eq!(state(&w, u3).await, (true, false, false, None));
+    // run again without the delay: it goes
+    control::release_forced(&w.imp, u3).await.unwrap();
+    assert_eq!(state(&w, u3).await, (false, false, true, Some("forced".to_owned())));
+}
+
+#[tokio::test]
+async fn sent_folders_import_once_with_files_and_never_for_a_refused_send() {
+    let w = World::new("sent_edges").await;
+    let ka = w.person(ALICE).await;
+    let (u1, _, main, _) = one_conversation(&w, &ka).await;
+    // two SendUserFile calls: the first answered, the second refused by the hook (an error result)
+    let call = |uuid: &str, id: &str| {
+        common::line(&serde_json::json!({
+            "type": "assistant", "uuid": uuid, "timestamp": "2026-10-22T06:24:00.000Z",
+            "message": {"id": format!("msg_{uuid}"), "role": "assistant", "model": "claude-test", "content": [
+                {"type": "tool_use", "id": id, "name": "SendUserFile", "input": {"files": ["/workspace/a.pdf"]}}
+            ]}
+        }))
+    };
+    let result = |uuid: &str, id: &str, error: bool| {
+        common::line(&serde_json::json!({
+            "type": "user", "uuid": uuid, "timestamp": "2026-10-22T06:24:01.000Z",
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": id, "content": "done", "is_error": error}
+            ]}
+        }))
+    };
+    w.append(
+        &ka,
+        &main,
+        &[
+            call("s1", "toolu_ok"),
+            result("s2", "toolu_ok", false),
+            call("s3", "toolu_no"),
+            result("s4", "toolu_no", true),
+            call("s5", "toolu_empty"),
+            result("s6", "toolu_empty", false),
+        ]
+        .concat(),
+    );
+    let base = w.jfs.0.join("sent").join(u1.to_string());
+    for d in ["toolu_ok", "toolu_no", "toolu_empty"] {
+        std::fs::create_dir_all(base.join(d)).unwrap();
+    }
+    std::fs::write(base.join("toolu_ok/a.pdf"), b"%PDF a").unwrap();
+    std::fs::write(base.join("toolu_no/a.pdf"), b"%PDF refused").unwrap();
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    let sent = || async {
+        w.magpie()
+            .get()
+            .await
+            .unwrap()
+            .query(
+                "select tool_use_id, path from sent_files where conversation_id = $1 order by 1, 2",
+                &[&u1],
+            )
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| (r.get::<_, String>(0), r.get::<_, String>(1)))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(sent().await, vec![("toolu_ok".to_owned(), "a.pdf".to_owned())]);
+    let events = |w: &World| {
+        let w = w.magpie().clone();
+        async move {
+            w.get()
+                .await
+                .unwrap()
+                .query_one(
+                    "select count(*) from events where conversation_id = $1 and kind = 'files.sent'",
+                    &[&u1],
+                )
+                .await
+                .unwrap()
+                .get::<_, i64>(0)
+        }
+    };
+    assert_eq!(
+        events(&w).await,
+        1,
+        "one event: no event for the refused or the empty folder"
+    );
+    assert!(verify::verify(&w.imp, u1).await.unwrap().ok());
+
+    // the empty folder gets its file later: imported then, once
+    std::fs::write(base.join("toolu_empty/b.pdf"), b"%PDF b").unwrap();
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(events(&w).await, 2);
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(events(&w).await, 2, "imported once");
+
+    // a file that appears in an imported folder: the conversation's error, and verification never passes on it
+    std::fs::write(base.join("toolu_ok/late.pdf"), b"%PDF late").unwrap();
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert_eq!(r.errors.len(), 1, "{:?}", r.errors);
+    assert!(r.errors[0].1.contains("toolu_ok/late.pdf"), "{:?}", r.errors);
+    assert!(!sent().await.iter().any(|(_, p)| p == "late.pdf"));
+    assert!(!verify::verify(&w.imp, u1).await.unwrap().ok());
+}
+
+#[tokio::test]
+async fn a_send_into_a_subfolder_waits_for_the_subfolder_to_be_quiet() {
+    let w = World::new("sent_sub").await;
+    let ka = w.person(ALICE).await;
+    let (u1, _, _, _) = one_conversation(&w, &ka).await;
+    let quiet = magpie_import::Importer {
+        sent_quiet: Duration::from_secs(5),
+        ..w.imp.clone()
+    };
+    let top = w.jfs.0.join("sent").join(u1.to_string()).join("toolu_d");
+    std::fs::create_dir_all(top.join("out")).unwrap();
+    std::fs::write(top.join("out/a.pdf"), b"%PDF a").unwrap();
+    // the folder and its file look old (a clone that kept the source's times); the subfolder was just written
+    let old = std::time::SystemTime::now() - Duration::from_secs(60);
+    for p in [top.clone(), top.join("out/a.pdf")] {
+        std::fs::File::options()
+            .write(p.is_file())
+            .read(true)
+            .open(&p)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+    let (snaps, _) = magpie_import::sent::read(&w.jfs.0, u1).unwrap();
+    assert_eq!(snaps.len(), 1);
+    assert!(!snaps[0].settled(quiet.sent_quiet), "the subfolder's time counts");
+    let r = pass::pass(&quiet, None).await.unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert!(!w.kinds(u1).await.contains(&"files.sent".to_owned()));
 }

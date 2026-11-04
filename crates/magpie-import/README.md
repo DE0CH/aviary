@@ -39,7 +39,7 @@ own library, so an imported conversation is what live writes would have made: cc
 | `tests/export.rs` | 7.12 item 7: import, release, grow the conversation on the new side, export (refused unfenced), the old side's files equal magpie's reconstruction, a stale old-side file deleted, the sessions row and the failed turn match, memory in `aviary-memory/<id>/`, a re-import verifies; a purge on the new side is not re-imported by a pass before the export |
 | `tests/handover.rs` | `release --force`'s final sync inside the fence, `verified_stats`' fingerprints, the re-ingest's record and limbo, a rename onto an existing path, a released conversation's check (shared memory left out, new files seen), the mount check, the sent folders' quiet period, the lost lock, read-only sources, a cleared title, non-UTF-8 names |
 | `tests/holds_js.rs`, `tests/kube.rs` | `holds.js` against fake CloudCLI children (node), the transport against a fake Kubernetes API |
-| `tests/convergence.rs` | the property test of cutover 7.12 item 3 (random source changes, a pass at random points: byte-exact, visible events = the source's lines) |
+| `tests/convergence.rs` | the property test of cutover 7.12 item 3 (random source changes of several line kinds, lines written again as another kind, a pass at random points: byte-exact, visible events (kind, uuid) = magpie's classifier over the source's lines) |
 
 ## Where this differs from the spec
 
@@ -78,19 +78,59 @@ own library, so an imported conversation is what live writes would have made: cc
   `verify::changed_since_verify` and `verify::changed_since_sync` are the release's re-stat (7.8).
 - `release <id> --force` expires the open tickets first, so an old turn still running is cut off: forcing is the
   operator's call (Deyao, 2026-11-03: forcing may disrupt what is running). It then verifies (reported in its JSON,
-  not a refusal), fences, syncs once more inside the fence and re-stats; a change inside the fence lifts it and
-  fails.
-- A `sent/<conversation>/<toolUseId>/` folder is imported once nothing in it changed for 15 s (`sent::QUIET`); until
-  then the recorded `sent_fp` carries `waiting:` so the next pass looks again and verification waits.
+  not a refusal), syncs once before the fence (so the sync inside it usually has nothing to do), fences, syncs once
+  more inside the fence and re-stats; a change inside the fence lifts it and fails. The release is one transaction
+  that also checks the lock; a final sync that outlasted the fence's 3 s lease fails the release with that said
+  (nothing released; run it again). Its JSON has `fenceSeconds` (the database's fence-to-release time) and
+  `inFenceSeconds` (the importer's own). The `magpie_fence_seconds` observation of a one-shot command goes to that
+  process's registry, which nothing scrapes: forced releases are counted in the JSON only and are kept out of the A5
+  gate's histogram (the import Deployment's `:9090`) on purpose. 7.8's upload-ingestion pass inside the release
+  transaction is not run here (WP-52's); until it exists a native send naming an old asset of a conversation
+  released by force waits for the import Deployment's synchronous ingest (A3 on).
+- After a forced release, what the old side writes to the conversation (the cut-off turn going on) is reported in
+  `forcedWrites`, not in `mismatches`: `verify --all` passes on it and the hand-over is not held; those writes are
+  lost, as forcing accepted. After a hand-over's (`idle`) release the same writes are mismatches.
+- A `sent/<conversation>/<toolUseId>/` folder is imported once nothing in it (its files and every folder in it)
+  changed for 15 s (`sent::QUIET`); until then the recorded `sent_fp` carries `waiting:` so the next pass looks again
+  and verification waits. A folder with no files is not imported (no `files.sent` without files) and one whose call
+  has an error result in the transcript (the hook refused the send but left its snapshot) never is. "Imported" is
+  per (call, path): a file that appears in a folder after its import is the conversation's error and its `sent_fp`
+  carries `late:`, so verification never passes on it (an operator decides).
+- A sessions row id in two schemas (or twice in one) is a `plan` blocker and neither row is synced; a write for one
+  person to another person's conversation is the conversation's error, never taken for a release.
+- A pass purges an open conversation missing from the read only when its own schema was read: a schema gone or
+  renamed gives each of its conversations an error. A read with no person schemas while conversations are open, or
+  one missing more than `pass::PURGE_MAX` (3) conversations and more than half the open ones, purges nothing (an
+  error `purge`).
+- Auto-memory of a conversation the reverse export wrote back: once `aviary-memory/<id>/` is there it is that
+  conversation's memory source (cc paths `projects/-workspace/memory/**`) instead of the person's shared folder, so a
+  conversation reopened after a rollback keeps the memory it had on the new side (files made there included) and
+  verification finds each in its source. The spec says the importer ignores `aviary-memory/` (14.3): it still does
+  for every other conversation. What old turns write to the shared folder meanwhile reaches the person's other
+  conversations, as each copy diverges anyway (decision 6).
 - Every pass, `final sync` and export first checks that `/jfs/users` holds something (an empty mount point would read
   as "everything deleted"), and a main transcript that vanished while its sessions row is there is the conversation's
   error, not an unlink. A name that is not UTF-8 is an error, never a skipped file.
 - One-shot commands hold the leader lock on one connection and check it (`pg_locks`, this backend) before each
-  conversation's write; a lost lock stops the command (`Error::LockLost`). The old databases are opened with
+  conversation's write and again inside each write transaction (create, row, record, purge, the forced release), so
+  a lock lost between the check and the write refuses the write; a lost lock stops the command (`Error::LockLost`). The old databases are opened with
   `default_transaction_read_only = on` (`aviary_pg::connect_read_only`) for every command but `export`.
 
 - `export` does not fence: the reverse hand-over (14.2, WP-52) fences (`legacy_fence_at` on the owned conversation),
-  calls it and unfences. A target without that fence is the export's error and is not written, unless `--unfenced`.
+  calls it and unfences. A target without a live fence (set, younger than its 3 s lease) is the export's error and
+  is not written, unless `--unfenced`. The export renews the lease before each file, before the `cloudcli` writes
+  and at the end (a lapse is the conversation's error), and compares the conversation's head seq, cc file versions
+  and row before and after its writes: a change is the conversation's error, to be exported again. magpie's
+  native writes do not yet wait for a reverse fence (WP-52's, 14.2 step 2): until they do, that before-and-after
+  check is what catches a native write during an export. Each exported conversation's result has `recorded`, the
+  files written with their stat and sha256 in `import_sources.files`' shape, for the reopen (14.2 step 5).
+  The CLI's `export` takes the leader lock like every writing command; WP-52's `export-server`, run inside the
+  hand-over leader that holds it, calls `export::export` directly with `lock: None`, or it would wait for itself.
+- One Claude Code session id, one old-side transcript: a person who continued a share twice (or their own) has
+  conversations with the same `provider_session_id` (magpie does not rewrite it on continue, magpie 5 item 5),
+  which the old side would read from one `projects/-workspace/<psid>.jsonl`. Only the person's earliest
+  conversation with that id is exported under it; each other one is the export's error. A permanent deletion keeps
+  the transcript and session folder of a session id another conversation of the person still has.
   Without `--since` it exports every owned conversation. A failed turn is exported when it never reached Claude Code
   (no Claude Code event in the turn: those are the ones the old stack kept in `jarvis_failed_turns`), with the
   Traditional Chinese sentence of its code, once per `error_at` (a turn with no end time is not exported). Old-side

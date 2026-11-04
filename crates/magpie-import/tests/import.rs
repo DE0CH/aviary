@@ -562,3 +562,147 @@ async fn sent_files_and_the_view_as_audit() {
     assert_eq!((r.changed, r.view_as.copied, r.view_as.present), (0, 0, 2));
     assert_eq!(w.kinds(u).await.len(), n);
 }
+
+/// A sessions row of `key` with id `u` and a short transcript.
+async fn session(w: &World, key: &str, u: Uuid) {
+    let p = Uuid::new_v4();
+    w.cloudcli(&format!(
+        "insert into cc_{key}.sessions (session_id, provider_session_id, custom_name, created_at, updated_at)
+           values ('{u}', '{p}', 'c', '2026-10-22 06:22:36', '2026-10-22T07:00:00.000Z');"
+    ))
+    .await;
+    w.put(
+        key,
+        &format!("projects/-workspace/{p}.jsonl"),
+        &[
+            user("a1", "2026-10-22T06:22:40.000Z", "hello"),
+            assistant("a2", "2026-10-22T06:23:00.000Z", "hi"),
+        ]
+        .concat(),
+    );
+}
+
+async fn count(w: &World, ids: &[Uuid]) -> i64 {
+    w.magpie()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select count(*) from conversations where id = any($1)", &[&ids])
+        .await
+        .unwrap()
+        .get(0)
+}
+
+#[tokio::test]
+async fn an_id_in_two_schemas_is_never_written_and_an_untrusted_read_purges_nothing() {
+    let w = World::new("dup_purge").await;
+    let ka = w.person(ALICE).await;
+    let kb = w.person(BOB).await;
+
+    // one session id in both persons' schemas: a plan blocker, and neither row is synced
+    let dup = Uuid::new_v4();
+    session(&w, &ka, dup).await;
+    session(&w, &kb, dup).await;
+    let p = plan::plan(&w.imp).await.unwrap();
+    assert!(
+        p.blockers
+            .iter()
+            .any(|b| b.contains(&dup.to_string()) && b.contains("more than one schema")),
+        "{:?}",
+        p.blockers
+    );
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert!(
+        r.errors
+            .iter()
+            .any(|(id, e)| *id == dup.to_string() && e.contains("more than one schema")),
+        "{:?}",
+        r.errors
+    );
+    assert_eq!(count(&w, &[dup]).await, 0);
+    // Bob's copy goes: Alice's is imported
+    w.cloudcli(&format!("delete from cc_{kb}.sessions where session_id = '{dup}'"))
+        .await;
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    let person: String = w
+        .magpie()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select person from conversations where id = $1", &[&dup])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(person, ALICE);
+
+    // Alice has six conversations in all, Bob one
+    let mut alice = vec![dup];
+    for _ in 0..5 {
+        let u = Uuid::new_v4();
+        session(&w, &ka, u).await;
+        alice.push(u);
+    }
+    let bob = Uuid::new_v4();
+    session(&w, &kb, bob).await;
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert_eq!(count(&w, &alice).await + count(&w, &[bob]).await, 7);
+
+    // Bob's schema is not in the read (renamed): his conversation is an error, never purged
+    w.cloudcli(&format!("alter schema cc_{kb} rename to moved_{kb}")).await;
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert_eq!(r.purged, 0, "{r:?}");
+    assert!(
+        r.errors
+            .iter()
+            .any(|(id, e)| *id == bob.to_string() && e.contains("not in the cloudcli read")),
+        "{:?}",
+        r.errors
+    );
+    assert_eq!(count(&w, &[bob]).await, 1);
+
+    // four of Alice's six rows missing from one read (a partial read): nothing purged
+    w.cloudcli(&format!(
+        "create table public.saved_rows as select * from cc_{ka}.sessions where session_id in ('{}', '{}', '{}', '{}')",
+        alice[2], alice[3], alice[4], alice[5]
+    ))
+    .await;
+    w.cloudcli(&format!(
+        "delete from cc_{ka}.sessions where session_id in (select session_id from public.saved_rows)"
+    ))
+    .await;
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert_eq!(r.purged, 0, "{r:?}");
+    assert!(r.errors.iter().any(|(id, _)| id == "purge"), "{:?}", r.errors);
+    assert_eq!(count(&w, &alice).await, 6);
+
+    // no person schemas at all (an empty or wrong database): nothing purged
+    w.cloudcli(&format!("alter schema cc_{ka} rename to moved_{ka}")).await;
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert_eq!(r.purged, 0, "{r:?}");
+    assert!(
+        r.errors
+            .iter()
+            .any(|(id, e)| id == "purge" && e.contains("no person schemas")),
+        "{:?}",
+        r.errors
+    );
+    assert_eq!(count(&w, &alice).await + count(&w, &[bob]).await, 7);
+
+    // the read is right again and one row is really gone: that one is purged, the rest stay
+    w.cloudcli(&format!(
+        "alter schema moved_{ka} rename to cc_{ka}; alter schema moved_{kb} rename to cc_{kb};"
+    ))
+    .await;
+    w.cloudcli(&format!(
+        "insert into cc_{ka}.sessions select * from public.saved_rows where session_id <> '{}'",
+        alice[5]
+    ))
+    .await;
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert_eq!(r.purged, 1, "{r:?}");
+    assert_eq!(count(&w, &alice).await, 5);
+    assert_eq!(count(&w, &[alice[5]]).await, 0);
+    assert_eq!(count(&w, &[bob]).await, 1);
+}

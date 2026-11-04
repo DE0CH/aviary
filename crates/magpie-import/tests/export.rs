@@ -89,6 +89,8 @@ async fn an_owned_conversation_exports_back_to_the_old_side() {
         "projects/-workspace/memory/MEMORY.md",
         b"- prefers short answers\n- and tables\n",
     );
+    // a memory file made only on the new side
+    put("projects/-workspace/memory/charts.md", b"- bar charts\n");
     let sent = newside
         .jfs
         .join("sent")
@@ -158,7 +160,21 @@ async fn an_owned_conversation_exports_back_to_the_old_side() {
     assert!(!w.claude(&ka).join(&stale).exists());
     assert_eq!(c.conversation, u1);
     assert!(c.row);
-    assert_eq!(c.memory, 1);
+    assert_eq!(c.memory, 2);
+    // what was written, as the reopen records it: every cc file with its stat and sha256
+    assert_eq!(c.recorded.len(), c.files, "{c:?}");
+    let rec = &c.recorded[&main];
+    assert_eq!(rec.src, w.claude(&ka).join(&main).to_string_lossy());
+    assert_eq!(
+        rec.sha256,
+        magpie_import::sha_hex(&std::fs::read(w.claude(&ka).join(&main)).unwrap())
+    );
+    assert_eq!(
+        c.recorded["projects/-workspace/memory/charts.md"].src,
+        w.claude(&ka)
+            .join(format!("aviary-memory/{u1}/charts.md"))
+            .to_string_lossy()
+    );
     assert_eq!(c.failed_turns, 1);
     assert_eq!(c.sent_files, 1);
     assert!(c.shares.written.is_empty() && x.purged.is_empty(), "{x:?}");
@@ -323,6 +339,35 @@ async fn an_owned_conversation_exports_back_to_the_old_side() {
     assert!(r.errors.is_empty(), "{:?}", r.errors);
     let v = verify::verify(&w.imp, u1).await.unwrap();
     assert!(v.ok(), "{v:?}");
+    // reopened, its memory is still what the new side left (read from aviary-memory/<id>/, not the person's shared
+    // folder), the file made there included
+    for (path, want) in [
+        (
+            "projects/-workspace/memory/MEMORY.md",
+            &b"- prefers short answers\n- and tables\n"[..],
+        ),
+        ("projects/-workspace/memory/charts.md", &b"- bar charts\n"[..]),
+    ] {
+        let got = verify::reconstruct(&w.imp, u1, ALICE, path).await.unwrap().unwrap();
+        assert_eq!(
+            got,
+            (magpie_import::sha_hex(want), u64::try_from(want.len()).unwrap()),
+            "{path}"
+        );
+    }
+    // the old side changes the shared folder meanwhile: the reopened conversation's memory does not follow it
+    w.put(&ka, "projects/-workspace/memory/MEMORY.md", b"- something else\n");
+    let r = pass::pass(&w.imp, Some(&only)).await.unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    assert!(verify::verify(&w.imp, u1).await.unwrap().ok());
+    let got = verify::reconstruct(&w.imp, u1, ALICE, "projects/-workspace/memory/MEMORY.md")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        got.0,
+        magpie_import::sha_hex(b"- prefers short answers\n- and tables\n")
+    );
 }
 
 /// A share of `conversation` frozen up to its head, as M16 makes it (`magpie::shares::create` without hermit's clone).
@@ -511,4 +556,181 @@ async fn a_conversation_deleted_for_good_on_the_new_side_is_deleted_on_the_old_s
         .unwrap()
         .get(0);
     assert_eq!(back, 0);
+}
+
+/// A copy of owned conversation `from` as a continue of its share makes it: the same person, the same Claude Code
+/// session id (magpie does not rewrite it, magpie 5 item 5), the transcript's cc files.
+async fn continued(w: &World, from: Uuid) -> Uuid {
+    let id = Uuid::new_v4();
+    aviary_pg::tx!(w.magpie(), |t| -> magpie::error::Result<()> {
+        t.execute(
+            "insert into conversations (id, person, title, name_source, created_at, activity_at, head_seq, row_head,
+                                        provider_session_id, main_transcript, model, origin)
+             select $1, person, title, 'title', clock_timestamp(), clock_timestamp(), 0, 0, provider_session_id,
+                    main_transcript, model, jsonb_build_object('kind', 'continue')
+             from conversations where id = $2",
+            &[&id, &from],
+        )
+        .await?;
+        magpie::shares::copy_scope(t, from, id, None).await?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    id
+}
+
+/// An imported conversation of Alice's, released, with a main transcript and a tool result; `(id, psid, main)`.
+async fn released_one(w: &World, ka: &str) -> (Uuid, Uuid, String) {
+    let (u, p) = (Uuid::new_v4(), Uuid::new_v4());
+    w.cloudcli(&format!(
+        "insert into cc_{ka}.sessions (session_id, provider_session_id, custom_name, name_source, created_at,
+                                       updated_at)
+           values ('{u}', '{p}', 'Report', 'user', '2026-10-22 06:22:36', '2026-10-22T07:00:00.000Z');"
+    ))
+    .await;
+    let main = format!("projects/-workspace/{p}.jsonl");
+    w.put(
+        ka,
+        &main,
+        &[
+            user("a1", "2026-10-22T06:22:40.000Z", "write the report"),
+            assistant("a2", "2026-10-22T06:23:00.000Z", "here it is"),
+        ]
+        .concat(),
+    );
+    w.put(ka, &format!("projects/-workspace/{p}/tool-results/t.txt"), b"out\n");
+    let r = pass::pass(&w.imp, None).await.unwrap();
+    assert!(r.errors.is_empty(), "{:?}", r.errors);
+    control::release_forced(&w.imp, u).await.unwrap();
+    (u, p, main)
+}
+
+#[tokio::test]
+async fn conversations_sharing_a_claude_code_session_export_once_and_a_purge_keeps_the_others_files() {
+    let w = World::new("export_psid").await;
+    let ka = w.person(ALICE).await;
+    let (u1, p1, main) = released_one(&w, &ka).await;
+    let claude = w.claude(&ka);
+    let before = std::fs::read(claude.join(&main)).unwrap();
+    // Alice continues her own share twice: two more conversations with the session id p1
+    let c1 = continued(&w, u1).await;
+    let c2 = continued(&w, u1).await;
+    let x = export::export(&w.imp, None, &[u1, c1, c2], true).await.unwrap();
+    assert_eq!(
+        x.conversations.iter().map(|c| c.conversation).collect::<Vec<_>>(),
+        vec![u1],
+        "{x:?}"
+    );
+    let mut errs: Vec<Uuid> = x.errors.iter().map(|(id, _)| id.parse().unwrap()).collect();
+    errs.sort();
+    let mut want = vec![c1, c2];
+    want.sort();
+    assert_eq!(errs, want, "{x:?}");
+    assert!(x.errors.iter().all(|(_, e)| e.contains(&u1.to_string())), "{x:?}");
+    assert_eq!(std::fs::read(claude.join(&main)).unwrap(), before);
+
+    // one copy deleted for good: its tombstone names p1's files, which u1 and c2 still have
+    aviary_pg::tx!(w.magpie(), |t| -> magpie::error::Result<()> {
+        t.execute("select 1 from conversations where id = $1 for update", &[&c1])
+            .await?;
+        magpie::conversations::delete::purge_locked(t, ALICE, c1, magpie::conversations::delete::ShareRevoke::Deleted)
+            .await
+    })
+    .await
+    .unwrap();
+    let x = export::export(&w.imp, None, &[u1, c1], true).await.unwrap();
+    assert!(x.errors.is_empty(), "{:?}", x.errors);
+    assert_eq!(x.purged.len(), 1, "{x:?}");
+    assert_eq!(x.purged[0].conversation, c1);
+    assert!(x.purged[0].kept_shared_session, "{x:?}");
+    assert_eq!(std::fs::read(claude.join(&main)).unwrap(), before);
+    assert_eq!(
+        std::fs::read(claude.join(format!("projects/-workspace/{p1}/tool-results/t.txt"))).unwrap(),
+        b"out\n"
+    );
+    // the old sessions row of u1 stays (c1 never had one)
+    let n: i64 = w
+        .imp
+        .cloudcli
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            &format!("select count(*) from cc_{ka}.sessions where session_id = $1"),
+            &[&u1.to_string()],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(n, 1);
+}
+
+#[tokio::test]
+async fn an_export_slower_than_its_fence_or_raced_by_a_write_is_the_conversations_error() {
+    let w = World::new("export_lease").await;
+    let ka = w.person(ALICE).await;
+    let (u1, _, _) = released_one(&w, &ka).await;
+    let (u2, _, _) = released_one(&w, &ka).await;
+    let (u3, _, _) = released_one(&w, &ka).await;
+
+    // a live reverse fence, renewed before each file: an export inside the lease goes
+    set(
+        &w,
+        "update conversations set legacy_fence_at = clock_timestamp() where id = $1",
+        u1,
+    )
+    .await;
+    let x = export::export(&w.imp, None, &[u1], false).await.unwrap();
+    assert!(x.errors.is_empty(), "{:?}", x.errors);
+    assert_eq!(x.conversations.len(), 1);
+
+    // a fence that is set but older than its lease: not renewed, not exported
+    set(
+        &w,
+        "update conversations set legacy_fence_at = clock_timestamp() - interval '1 minute' where id = $1",
+        u2,
+    )
+    .await;
+    let x = export::export(&w.imp, None, &[u2], false).await.unwrap();
+    assert!(x.conversations.is_empty(), "{x:?}");
+    assert!(x.errors[0].1.contains("lapsed"), "{x:?}");
+
+    // a write that outlasts the lease: the lapse is seen at the next renewal
+    let slow = magpie_import::Importer {
+        pause_in_fence: magpie::limits::FENCE_LEASE + std::time::Duration::from_millis(500),
+        ..w.imp.clone()
+    };
+    set(
+        &w,
+        "update conversations set legacy_fence_at = clock_timestamp() where id = $1",
+        u2,
+    )
+    .await;
+    let x = export::export(&slow, None, &[u2], false).await.unwrap();
+    assert!(x.conversations.is_empty(), "{x:?}");
+    assert!(x.errors[0].1.contains("lapsed during the export"), "{x:?}");
+
+    // unfenced, a native write while it is written (here a rename): seen after the writes, to be exported again
+    let paused = magpie_import::Importer {
+        pause_in_fence: std::time::Duration::from_millis(800),
+        ..w.imp.clone()
+    };
+    let db = w.magpie().clone();
+    let racer = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        db.get()
+            .await
+            .unwrap()
+            .execute("update conversations set title = 'Raced' where id = $1", &[&u3])
+            .await
+            .unwrap();
+    });
+    let x = export::export(&paused, None, &[u3], true).await.unwrap();
+    racer.await.unwrap();
+    assert!(x.conversations.is_empty(), "{x:?}");
+    assert!(x.errors[0].1.contains("changed in magpie"), "{x:?}");
+    // exported again, it goes
+    let x = export::export(&w.imp, None, &[u3], true).await.unwrap();
+    assert!(x.errors.is_empty(), "{:?}", x.errors);
 }
