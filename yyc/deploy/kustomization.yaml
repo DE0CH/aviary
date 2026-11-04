@@ -39,6 +39,16 @@ configMapGenerator:
     namespace: yyc-ai
     files: [hermit/hermit.json, hermit/system-prompt.md, hermit/sandbox-rules.md, hermit/title-system.md]
   # who may use YYC AI, and admins (hermit 3.4.1): a fixed name, so hermit and tools see a change in place (no roll)
+  # the managed skills (decision 15; hermit's prompt.skills, the descriptor's claude.managedSkills): hermit/skills/<skill>/
+  # <file> as key <skill>.<file>, mounted back at <skill>/<file> by hermit.yaml's items (check_deploy.py item K keeps the
+  # three lists equal); hashed, so a change rolls hermit and new sandboxes get it
+  - name: hermit-skills
+    namespace: yyc-ai
+    files:
+      - labels.SKILL.md=hermit/skills/labels/SKILL.md
+      - labels.design-format.md=hermit/skills/labels/design-format.md
+      - newswatch.SKILL.md=hermit/skills/newswatch/SKILL.md
+      - web.SKILL.md=hermit/skills/web/SKILL.md
   - name: catalogue
     namespace: yyc-ai
     files: [catalogue.json]
