@@ -371,6 +371,10 @@ fn released(id: Uuid, imp: &Importer, r: &Row) -> Result<Verdict> {
         }
         (Vec::new(), mismatches)
     } else {
+        // the old side wrote a conversation magpie owns (import_verify_mismatch_total, DESIGN 9.9)
+        if !mismatches.is_empty() {
+            imp.magpie.legacy.verify_mismatch(mismatches.len());
+        }
         (mismatches, Vec::new())
     };
     Ok(Verdict {
@@ -441,6 +445,10 @@ pub async fn verify(imp: &Importer, id: Uuid) -> Result<Verdict> {
         crate::conv::flush_limbo(imp, id).await?;
         compare(imp, id, &r.person, &sources).await?
     };
+    if !mismatches.is_empty() {
+        // a reconstruction that is still not byte-exact after the re-ingest (import_verify_mismatch_total, DESIGN 9.9)
+        imp.magpie.legacy.verify_mismatch(mismatches.len());
+    }
     let ok = mismatches.is_empty() && pending.is_empty();
     if ok {
         // the record is what verification read: every source with its hash

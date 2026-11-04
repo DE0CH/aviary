@@ -1,7 +1,10 @@
 //! The window's metrics (DESIGN 9.9): `magpie_fence_seconds` (fence to release, p99 <= 0.3 s and max <= 3 s),
 //! `magpie_unknown_upload_total{legacy}` (`legacy="true"` is a zero counter), `magpie_conversation_migrating_total`
 //! (409 `route: "legacy"` answers: only a stale pigeon owner cache gets one, re-routed, never shown) and
-//! `magpie_legacy_path_total` (old asset paths sends carried: A7 waits for 30 days of none).
+//! `magpie_legacy_path_total` (old asset paths sends carried: A7 waits for 30 days of none) and
+//! `magpie_import_verify_mismatch_total` (DESIGN 9.9's `import_verify_mismatch_total`, a zero counter: files whose
+//! reconstruction still differed from the old source after verification re-ingested them; counted by the importer,
+//! which registers these metrics on its own `:9090/metrics`, and never by magpie itself).
 
 use prometheus_client::encoding::EncodeLabelSet;
 use prometheus_client::metrics::counter::Counter;
@@ -21,6 +24,7 @@ pub struct Metrics {
     unknown_upload: Family<Legacy, Counter>,
     migrating: Counter,
     legacy_paths: Counter,
+    verify_mismatch: Counter,
 }
 
 impl Default for Metrics {
@@ -30,6 +34,7 @@ impl Default for Metrics {
             unknown_upload: Family::default(),
             migrating: Counter::default(),
             legacy_paths: Counter::default(),
+            verify_mismatch: Counter::default(),
         }
     }
 }
@@ -65,7 +70,23 @@ impl Metrics {
             "Old asset paths carried by sends (A7 waits for 30 days without one)",
             m.legacy_paths.clone(),
         );
+        registry.register(
+            "import_verify_mismatch",
+            "Files the importer's verification found unequal to the old source after re-ingesting them (zero)",
+            m.verify_mismatch.clone(),
+        );
         m
+    }
+
+    /// `magpie_import_verify_mismatch_total` as counted so far (tests).
+    #[must_use]
+    pub fn verify_mismatches(&self) -> u64 {
+        self.verify_mismatch.get()
+    }
+
+    /// Verification left `files` files unequal to the old source.
+    pub fn verify_mismatch(&self, files: usize) {
+        self.verify_mismatch.inc_by(u64::try_from(files).unwrap_or(u64::MAX));
     }
 
     /// A fence held this long before its release.

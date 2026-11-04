@@ -215,10 +215,16 @@ async fn a_released_conversation_ignores_shared_memory_and_sees_new_files() {
     let late = format!("projects/-workspace/{p1}/tool-results/late.txt");
     w.put(&ka, &late, b"late\n");
     // after a forced release it is the cut-off turn's write: reported apart, and verification passes
+    let before = w.imp.magpie.legacy.verify_mismatches();
     let v = verify::verify(&w.imp, u1).await.unwrap();
     assert!(v.ok(), "{v:?}");
     assert_eq!(v.forced_writes.len(), 1, "{v:?}");
     assert_eq!(v.forced_writes[0].path, late);
+    assert_eq!(
+        w.imp.magpie.legacy.verify_mismatches(),
+        before,
+        "a forced release's writes are not counted"
+    );
     // after a hand-over's (idle) release it is a mismatch
     w.imp
         .magpie
@@ -236,6 +242,11 @@ async fn a_released_conversation_ignores_shared_memory_and_sees_new_files() {
     assert!(!v.ok() && v.forced_writes.is_empty(), "{v:?}");
     assert_eq!(v.mismatches.len(), 1, "{v:?}");
     assert_eq!(v.mismatches[0].path, late);
+    assert_eq!(
+        w.imp.magpie.legacy.verify_mismatches(),
+        before + 1,
+        "import_verify_mismatch_total counts it"
+    );
 }
 
 #[tokio::test]
