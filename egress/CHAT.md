@@ -18,7 +18,7 @@ allowlist with no manual override.
 |---|---|---|
 | `web` | `/internal/cc/*` for the UI pods: the sandbox manager, its janitor and (provider `vm`) the scaler. No public route | 2, rolling, drained |
 | `egress` | The sandbox gateway (aviary's contract): hermit's sandbox tokens checked locally, the fixed names `magpie`, `hermit`, `model` (OpenRouter with forced ZDR and the budget), `tools`; the package mirror; the automatic sandbox allowlist with threat-intel DNS; its own database `egress` | 2, rolling, drained |
-| `tools` | MCP server `tools` (Streamable HTTP, JSON responses) for aviary's gateway: web search/fetch, social search, AnyAPI, upstream MCP tools; read-only tools only; owner from `Aviary-Sandbox-Person`, liveness from hermit; its own database `tools` | 2, rolling, drained |
+| `tools` | REST API (`/v1/tools`) for aviary's gateway: web search/fetch, social search, AnyAPI, upstream REST APIs' tools; read-only tools only; owner from `Aviary-Sandbox-Person`, liveness from hermit; its own database `tools` | 2, rolling, drained |
 
 Plus the sandbox image `ghcr.io/de0ch/jarvis3-sandbox` (Claude Code, Python/Node tools, Docker, the sandbox agent),
 run by our own sandbox hosts (`sandbox.provider: "vm"`: gVisor, AWS burst hosts behind a gateway on a cluster node,
@@ -155,7 +155,7 @@ the operator page's History (`viewAs`, above), and only there.
 - **No secrets in a sandbox.** Its env has only the proxy settings `HTTP_PROXY`/`HTTPS_PROXY`/`http_proxy`/
   `https_proxy` `=http://sbx:<egress token>@<egress>:3128` (`NO_PROXY` empty), the pip/npm mirror settings, its exec
   token (removed before any process starts) and Claude Code's settings (the egress token again as
-  `ANTHROPIC_AUTH_TOKEN`, the model ids, the managed CLAUDE.md and MCP config, and
+  `ANTHROPIC_AUTH_TOKEN`, the model ids, the managed CLAUDE.md and skills, and
   `CLAUDE_CODE_ATTACHMENTS_BY_PATH=1`, which turns on Claude Code's SendUserFile: docs/CLAUDE-CODE.md "Sent files"). The model key stays in egress.
 - Limits per sandbox: `sandbox.cpu` (default "1"), `sandbox.memory` (default "1Gi"); on `vm` a 5 GiB scratch for
   everything outside `/workspace` and a 1 GiB / 1,000-file quota on `/workspace` (docs/CLAUDE-CODE.md).
@@ -399,12 +399,12 @@ magpie/hermit requests up to 60 s, tools calls up to 180 s; what is left at its 
   :80).
 - The old relay listener (staff's own Claude Code on the model route, `EGRESS_RELAY_PORT`, table `relay_tokens`) is
   not in this egress: awaiting Deyao's decision (aviary refactor DESIGN 10, "Open: the relay").
-- Route MCP servers (an old-stack route with `mcp: true`, docs/CLAUDE-CODE.md "Route MCP servers"; YYC's label
-  store `labels`, served at `/x/labels/mcp` with the Access service token `yyc-labels-ai` injected and
+- Sandbox routes (an old-stack route with `sandbox: true`, docs/CLAUDE-CODE.md "Skills and sandbox routes"; YYC's
+  label store `labels`, its REST API at `/x/labels/api/v1/` with the Access service token `yyc-labels-ai` injected and
   `X-Jarvis-Conversation` added) are not in this egress: `egress.json` routes are exactly `model` and `tools`, and
   the gateway contract has no `/x/<name>` paths. Until aviary refactor WP-61 (a fixed name for the label store with
-  credential injection and the identity header, and its entry in the new stack's managed MCP file) lands before A3,
-  YYC AI on the new stack has no label store (aviary refactor DESIGN 10, "Route MCP servers").
+  credential injection and the identity header) lands before A3, YYC AI on the new stack has no label store (aviary
+  refactor DESIGN 10, "Sandbox routes").
 
 **Configuration** `/etc/egress/egress.json` (`chat/src/egress/config.ts`): `product` (`name`, `locale` for the budget
 message), `models`, `defaultModel`, `smallModel`, `titleModel`, `titleReasoning`, `contextTokens`, `routes` (exactly
@@ -476,13 +476,21 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
   token planted in injected content, e.g. for GitHub) is still reachable; the sandbox holds no secrets, staff data in
   the workspace is what such an upload could carry, and the upload cap bounds it.
 - **The agent is told** in its managed CLAUDE.md (`SANDBOX_RULES`, `chat/src/web/claude-code.ts`): only sites on the
-  allowlist are reachable, a refused site cannot be enabled, and web pages are read with the web search and fetch
-  tools (server-side, any public site).
+  allowlist are reachable, a refused site cannot be enabled, and web pages are read with the `web` skill (the tools'
+  web search and fetch, server-side, any public site).
 
-### `tools` (`node src/main.ts tools`; ports 8080 `POST /mcp`, 9090 health; MCP Streamable HTTP, stateless, JSON responses)
+### `tools` (`node src/main.ts tools`; ports 8080 REST, 9090 health)
 
-aviary platform spec 17.2 tools. The MCP server Claude Code in a sandbox sees is named `tools` (tool names
-`mcp__tools__*`); it reaches it as `http://tools/mcp` through the gateway (egress's route `tools`).
+aviary platform spec 17.2 tools: a REST API Claude Code in a sandbox calls with `curl`, as its managed skills say
+(docs/CLAUDE-CODE.md "Skills and sandbox routes"): `GET /v1/tools` (each tool's name, title, description and
+inputSchema), `POST /v1/tools/<name>` (the JSON body is the arguments; the answer is the tool's text as `text/plain`,
+or its JSON when it has no text, e.g. an upstream API's; bad arguments 400 `bad_request`, the tool's own error 422
+`{error}`, a failure 502 `tool_failed`), `GET /v1/openapi.json` (the same as OpenAPI 3.1). Until aviary's contract
+changes the gateway's tools route from `/mcp` to these paths (aviary refactor, "tools over REST"), the new stack's
+gateway still routes only `POST /mcp`. The old stack runs the same tools behind its own front door
+(`src/tools/legacy.ts`, `JARVIS_ROLE=tools`, deploy/chat/tools.yaml): a sandbox's egress token names it and its
+owner (table `sandboxes` in database `jarvis`), the configuration is config.json's `tools`, and every call is a row in
+that database's `tool_calls`.
 
 - **Caller: the gateway only.** `Authorization: Bearer <pair token>`, one of `TOOLS_ACCEPT_GATEWAY` (comma-separated,
   current first; two during a rotation; compared by SHA-256, constant-time). Anything else → 401 `unauthenticated`.
@@ -504,12 +512,13 @@ aviary platform spec 17.2 tools. The MCP server Claude Code in a sandbox sees is
   `chat/src/tools/db.ts` under tools' own advisory lock): conversation, sandbox, person, request, tool, args, ok, ms,
   error, cost. Written without waiting: while the database is away a row is dropped and counted
   (`tools_tool_calls_dropped_total`), the call answers as usual.
-- **Read-only tools only** (in this role: an instance's own service that may be changed is a route MCP server instead,
-  docs/CLAUDE-CODE.md "Route MCP servers"). Nothing here sends, posts, writes or changes anything outside, and nothing asks for or
-  waits on a confirmation. Tools (names lowercase, `snake_case`; annotations set `readOnlyHint`): `web_search`,
-  `web_fetch`, `social_search` (TikHub), the AnyAPI tools (below), plus the **listed** tools of each configured upstream
-  MCP server, exposed as `<prefix>_<tool>` (YYC: prefix `yyc`, the yyc-mcp Worker, whose `wisers_*` tools are YYC's WiseSearch, service token +
-  `X-YYC-User: <owner email>`).
+- **Read-only tools only** (in this role: an instance's own service that may be changed is a sandbox route instead,
+  docs/CLAUDE-CODE.md "Skills and sandbox routes"). Nothing here sends, posts, writes or changes anything outside, and
+  nothing asks for or waits on a confirmation. Tools (names lowercase, `snake_case`): `web_search`, `web_fetch`,
+  `social_search` (TikHub), the AnyAPI tools (below), plus the **listed** tools of each configured upstream REST API,
+  exposed as `<prefix>_<tool>` (YYC: prefix `data`, yyc-mcp's `/api/v1`, whose `wisers_*` tools are YYC's WiseSearch,
+  service token + `X-YYC-User: <owner email>`). An upstream is described by OpenAPI 3.1 at `<url>/openapi.json`, one
+  `POST <url>/<tool>` per tool (JSON in, JSON out); its 4xx `{error}` is the tool's error.
 - **Upstream tools: an explicit read-only allowlist, default deny.** `upstreams[].tools` (tools.json) names the upstream's
   tools (their own names, without the prefix) that may be offered: search/get/list-style tools only. A tool not on
   the list is hidden (a new upstream tool stays hidden until someone adds it), and so is a listed tool the upstream
@@ -545,7 +554,7 @@ aviary platform spec 17.2 tools. The MCP server Claude Code in a sandbox sees is
   ```json
   {"exa": {"keyEnv": "EXA_API_KEY"}, "tikhub": {"keyEnv": "TIKHUB_API", "platforms": ["xiaohongshu", "douyin", "weibo"]},
    "anyapi": {"keyEnv": "ANYAPI_API_KEY"}, "capture": {"url": "http://capture.example/fetch", "tokenEnv": "WEB_FETCH_TOKEN", "name": "YYC"},
-   "upstreams": [{"prefix": "yyc", "url": "http://mcp.example/mcp", "listAs": "<an allowed address>",
+   "upstreams": [{"prefix": "yyc", "url": "http://mcp.example/api/v1", "listAs": "<an allowed address>",
                   "headers": {"Authorization": "Bearer ${YYC_MCP_TOKEN}", "X-YYC-User": "${USER_EMAIL}"},
                   "tools": ["posts_search", "post_get", "streams_list"]}]}
   ```
@@ -681,9 +690,9 @@ the spend to 0; a bigger `limitUsd` raises it) and roll out egress. Check:
              "routes": [{"name": "claude", "upstream": "https://openrouter.ai/api", "model": true,
                          "inject": {"Authorization": "Bearer ${OPENROUTER_API_KEY}"}},
                         {"name": "tools", "upstream": "http://tools.jarvis.svc.cluster.local:8080", "keepAuth": true,
-                         "inject": {}, "allowPaths": ["/mcp"]}], "cacheGiB": 5},
+                         "inject": {}, "allowPaths": ["/v1/"]}], "cacheGiB": 5},
   "tools": {"exa": {"keyEnv": "EXA_API_KEY"}, "tikhub": {"keyEnv": "TIKHUB_API", "platforms": ["xiaohongshu", "douyin", "weibo", "x", "threads", "youtube", "instagram", "reddit"]},
-            "upstreams": [{"prefix": "data", "url": "https://yyc-mcp.yyc-news.workers.dev/mcp",
+            "upstreams": [{"prefix": "data", "url": "http://yyc-mcp.yyc.svc.cluster.local/api/v1",
                            "headers": {"Authorization": "Bearer ${YYC_MCP_TOKEN}", "X-YYC-User": "${USER_EMAIL}"},
                            // read-only tools to offer (default deny; "tools" above): the upstream's own names
                            "tools": ["posts_search", "post_get", "streams_list"]}]},
