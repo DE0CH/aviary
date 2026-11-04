@@ -185,6 +185,52 @@ async fn send(ws: &mut Ws, c: Uuid, cmid: &str, extra: Value) -> Value {
     ws.rpc("send_agent_message_request", m).await.1
 }
 
+/// An ask of an old turn reaches the tab watching the conversation through LU, and so does its end: a question
+/// made after the move is shown, and the one Stop ended leaves the tab (WP-54's ask persona, legacy-in-a-box).
+#[tokio::test]
+async fn an_old_turn_s_ask_and_its_resolution_reach_the_tab() {
+    let e = env().await;
+    let c = e.legacy(STAFF);
+    e.old.st().agents.get_mut(&c).unwrap().running = true;
+    let mut ws = e.ws(STAFF).await;
+    list(&mut ws).await;
+    watch(&mut ws, &[c]).await;
+    let _ = ws
+        .rpc(
+            "fetch_agent_timeline_request",
+            json!({"agentId": c, "direction": "tail", "limit": 50}),
+        )
+        .await;
+    until("the LU subscribed", || {
+        e.old.st().seen.iter().any(|s| s.1.as_deref() == Some(LU_PAIR))
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let request = json!({"id": "ask-1", "provider": "claude", "name": "AskUserQuestion", "kind": "question",
+                         "input": {"questions": [{"question": "go on?", "options": [{"label": "Yes"}]}]}});
+    e.old.push(
+        c,
+        "agent_permission_request",
+        &json!({"agentId": c, "request": request}),
+    );
+    let v = ws
+        .wait_for("the ask", |v| v["message"]["type"] == "agent_permission_request")
+        .await;
+    assert_eq!(v["message"]["payload"]["agentId"], c.to_string());
+    assert_eq!(v["message"]["payload"]["request"]["id"], "ask-1");
+    e.old.push(
+        c,
+        "agent_permission_resolved",
+        &json!({"agentId": c, "requestId": "ask-1", "resolution": {"behavior": "deny", "message": "Stopped"}}),
+    );
+    let v = ws
+        .wait_for("its resolution", |v| {
+            v["message"]["type"] == "agent_permission_resolved"
+        })
+        .await;
+    assert_eq!(v["message"]["payload"]["requestId"], "ask-1");
+}
+
 /// A running old turn streams to its end through LU and Stop ends it; every write is accepted once under a ticket
 /// that closes on the old stack's outcome; the LU carries pigeon's pair token and the person's newest token.
 #[tokio::test]

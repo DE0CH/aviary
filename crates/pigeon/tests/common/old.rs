@@ -264,6 +264,12 @@ impl Old {
         );
     }
 
+    /// A push of the old child about one conversation (an ask, its resolution), to every socket of its person.
+    pub fn push(&self, id: Uuid, kind: &str, payload: &Value) {
+        let person = self.st().agents[&id].person.clone();
+        self.broadcast(&person, id, kind, payload);
+    }
+
     /// The child takes a send (as when one arrives): its user row and `turn_started`, the turn running unless
     /// `auto_end`.
     pub fn take_send(&self, id: Uuid, cmid: &str, text: &str, paths: Vec<String>) {

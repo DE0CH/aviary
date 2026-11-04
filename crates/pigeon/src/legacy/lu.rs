@@ -1,7 +1,7 @@
 //! One legacy upstream socket (switch-final 4.1, DESIGN 9.1): pigeon's WebSocket to the old router's `/paseo-ws`
 //! for one native socket, as its person. Requests go out with a request id of their own and their answer comes
 //! back to the caller; the old child's live frames of the legacy conversations the tab watches (`agent_stream`, the
-//! sandbox chip) go to the tab with the tab's own subscription id. A `client_heartbeat` every 15 s also keeps the old
+//! sandbox chip, an ask and its resolution) go to the tab, `agent_stream` with the tab's own subscription id. A `client_heartbeat` every 15 s also keeps the old
 //! child from its idle stop. The socket ends with its tab, or once it has streamed nothing to the tab and carried no
 //! call for [`crate::Tuning::legacy_lu_idle`] (the old child then idles out, and the old stack's LU count reaches zero
 //! with the tab still open: DESIGN 9.2, A5; the tab's next legacy request opens a new one); one that ends while its tab
@@ -625,6 +625,13 @@ fn inbound(legacy: &Legacy, lu: &Lu, text: &str) {
         }
         k if k == compat::SANDBOX_STATUS => {
             conn.reply(k, &payload);
+        }
+        // an ask of the old turn and its end (answered, or the turn stopped): what the native feed sends for an
+        // owned conversation (7.5.9), in the same shape, to a tab that watches the conversation or lists it; without
+        // the resolution a stopped turn's question stays on the moved tab, and without the request an ask made after
+        // the move is never shown (WP-54's ask persona)
+        "agent_permission_request" | "agent_permission_resolved" if conn.watches(&agent) || conn.lists() => {
+            conn.reply(&kind, &payload);
         }
         _ => {}
     }
