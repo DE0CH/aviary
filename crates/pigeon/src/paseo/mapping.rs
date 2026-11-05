@@ -1111,7 +1111,7 @@ mod tests {
     /// detail, as the old bridge's TypeScript mapper made it (cutover 10.2 R6: what staff see today).
     #[test]
     fn mcp_names_keep_their_server() {
-        for name in ["mcp__yyc__web_search", " mcp__tools__web_search "] {
+        for name in ["mcp__team__web_search", " mcp__tools__web_search "] {
             let item = tool_call_item(
                 &tool(name, json!({"query": "hsi"}), ToolStatus::Completed, Some("r")),
                 Locale::En,
