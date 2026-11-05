@@ -508,7 +508,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 66);
+        assert_eq!(ROUTES.len(), 67);
     }
 
     #[test]

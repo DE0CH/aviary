@@ -405,11 +405,14 @@ async fn files_are_public_and_cached_by_kind() {
     assert_eq!(h.post("/new").send().await.unwrap().status(), 405);
 }
 
-fn signed_in_index() -> String {
+fn named_index() -> String {
     INDEX
         .replace("<title>App</title>", &format!("<title>{PRODUCT}</title>"))
         .replace("content=\"App\"", &format!("content=\"{PRODUCT}\""))
-        .replace("</body>", &format!("{}</body>", pigeon::raw::toggle_script()))
+}
+
+fn signed_in_index() -> String {
+    named_index().replace("</body>", &format!("{}</body>", pigeon::raw::toggle_script()))
 }
 
 #[tokio::test]
@@ -428,7 +431,7 @@ async fn the_shell_answers_every_page_path_signed_in_and_out() {
         "/no/such/page",
         "/healthz",
     ];
-    let signed_out = signed_in_index().replace("</head>", &format!("{}</head>", compat::SIGNED_OUT_META));
+    let signed_out = named_index().replace("</head>", &format!("{}</head>", compat::SIGNED_OUT_META));
     for p in paths {
         for q in ["", "?a=1"] {
             let r = h.get(&format!("{p}{q}")).send().await.unwrap();
