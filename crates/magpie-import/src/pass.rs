@@ -477,6 +477,13 @@ pub async fn sync_conversation(
             sent_fp = format!("{}{sent_fp}", sent::WAITING);
         }
     }
+    // sends made before the old hook kept snapshots: from the workspace file, once their result line is in
+    if wrote || sent_changed {
+        for snap in sent::unsnapshotted(imp, id, &snapshots).await? {
+            sent::import(imp, person, id, &snap).await?;
+            changed = true;
+        }
+    }
     if row_changed {
         changed |= conv::apply_row(imp, person, s).await?;
     }

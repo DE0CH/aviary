@@ -10,6 +10,13 @@
 //! transcript (the hook blocked the send, but its snapshot was left) is never imported. A file that appears in a
 //! folder after it was imported is the conversation's error, and its `sent_fp` is recorded so verification never
 //! passes on it ([`LATE`]).
+//!
+//! A send with no snapshot folder (one made before the old hook existed, 2026-10-22 and earlier) is shown by the old
+//! stack from the call's own result (`toolUseResult.attachments`) and downloaded from the live workspace file
+//! (`openSentFile`'s fallback). Such a call is imported from that same file, `ws/<conversation>/<path>`, as it is at
+//! import ([`unsnapshotted`]): the card names the files, as the old side's does (cutover 10.2 R6). A file no longer
+//! in the workspace is left out (the old side's download of it fails); a call none of whose files is there gets no
+//! event.
 
 use std::collections::BTreeMap;
 use std::os::unix::fs::MetadataExt as _;
@@ -131,6 +138,85 @@ fn walk(dir: &Path, rel: &str, out: &mut BTreeMap<String, PathBuf>, latest: &mut
         }
     }
     Ok(())
+}
+
+/// The sends of `id` that have a completed, non-error `SendUserFile` result in magpie's events but neither a snapshot
+/// folder (`snapshots`) nor an import yet: each as a [`Snapshot`] of the files its result names that are regular files
+/// in the conversation's workspace now, timed at the result line.
+///
+/// # Errors
+/// A statement error; an I/O error other than "not found".
+pub async fn unsnapshotted(imp: &Importer, id: Uuid, snapshots: &[Snapshot]) -> Result<Vec<Snapshot>> {
+    let rows = imp
+        .magpie
+        .pool
+        .get()
+        .await?
+        .query(
+            "select l.tool_use_id, e.data->'toolUseResult'->'attachments', e.at
+               from tool_links l join events e on e.conversation_id = l.conversation_id and e.seq = l.result_seq
+              where l.conversation_id = $1 and l.name = 'SendUserFile' and e.kind = 'cc.user'
+                and not jsonb_path_exists(e.data,
+                      '$.message.content[*] ? (@.type == \"tool_result\" && @.tool_use_id == $id && @.is_error == true)',
+                      jsonb_build_object('id', l.tool_use_id))
+                and not exists (select 1 from sent_files f where f.conversation_id = l.conversation_id
+                                                             and f.tool_use_id = l.tool_use_id)
+              order by l.use_seq",
+            &[&id],
+        )
+        .await?;
+    let ws = imp.jfs.join("ws").join(id.to_string());
+    let mut out = Vec::new();
+    for r in rows {
+        let tool_use_id: String = r.get(0);
+        if !tool_use_id_ok(&tool_use_id) || snapshots.iter().any(|s| s.tool_use_id == tool_use_id) {
+            continue;
+        }
+        let attachments: Option<serde_json::Value> = r.get(1);
+        let files = workspace_files(&ws, attachments.as_ref())?;
+        if files.is_empty() {
+            continue;
+        }
+        out.push(Snapshot {
+            tool_use_id,
+            files,
+            at: r.get(2),
+            latest: std::time::SystemTime::UNIX_EPOCH,
+        });
+    }
+    Ok(out)
+}
+
+/// The files of a `SendUserFile` result's `attachments` (`[{path: "/workspace/…"}]`) that are regular files under
+/// `ws` now: path relative to `/workspace` → the file. Paths outside `/workspace`, with `.`/`..` or empty segments,
+/// symlinks and missing files are left out.
+///
+/// # Errors
+/// An I/O error other than "not found".
+pub fn workspace_files(ws: &Path, attachments: Option<&serde_json::Value>) -> Result<BTreeMap<String, PathBuf>> {
+    let mut out = BTreeMap::new();
+    for a in attachments.and_then(serde_json::Value::as_array).into_iter().flatten() {
+        let Some(rel) = a
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|p| p.strip_prefix("/workspace/"))
+        else {
+            continue;
+        };
+        if rel.split('/').any(|seg| seg.is_empty() || seg == "." || seg == "..") {
+            continue;
+        }
+        let abs = ws.join(rel);
+        match std::fs::symlink_metadata(&abs) {
+            Ok(m) if m.file_type().is_file() => {
+                out.insert(rel.to_owned(), abs);
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(out)
 }
 
 /// The `SendUserFile` calls of `id` already imported, with the paths each sent.
@@ -332,4 +418,36 @@ pub async fn import(imp: &Importer, person: &str, id: Uuid, s: &Snapshot) -> Res
         Ok(())
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn a_results_attachments_name_the_workspace_files_there_now() {
+        let dir = std::env::temp_dir().join(format!("sent-ws-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("outputs")).unwrap();
+        std::fs::write(dir.join("a.pdf"), b"pdf").unwrap();
+        std::fs::write(dir.join("outputs/b.xlsx"), b"x").unwrap();
+        std::os::unix::fs::symlink("/etc/passwd", dir.join("link")).unwrap();
+        let att = serde_json::json!([
+            {"path": "/workspace/a.pdf", "size": 3},
+            {"path": "/workspace/outputs/b.xlsx"},
+            {"path": "/workspace/gone.pdf"},
+            {"path": "/workspace/link"},
+            {"path": "/workspace/../etc/passwd"},
+            {"path": "/workspace/outputs//b.xlsx"},
+            {"path": "/tmp/c.pdf"},
+            {"size": 1}
+        ]);
+        let got = workspace_files(&dir, Some(&att)).unwrap();
+        assert_eq!(got.keys().cloned().collect::<Vec<_>>(), vec!["a.pdf", "outputs/b.xlsx"]);
+        assert_eq!(got["a.pdf"], dir.join("a.pdf"));
+        assert!(workspace_files(&dir, None).unwrap().is_empty());
+        assert!(workspace_files(&dir.join("none"), Some(&att)).unwrap().is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
