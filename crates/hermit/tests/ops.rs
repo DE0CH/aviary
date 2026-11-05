@@ -1303,3 +1303,135 @@ async fn the_runbook_script_speaks_the_admin_routes() {
     let text = std::fs::read_to_string(script).unwrap();
     assert!(text.contains("-K -"));
 }
+
+/// The gateway node runbook (hermit 14.7, `fabric/host/gateway-maintenance.md`) driven against a replica with a fake
+/// node-work command: new sandboxes off, the node work only once no sandbox is busy, sandboxes back on only once the
+/// gateway answers with egress targets; a failed node work is reported; a gateway that never returns leaves them off.
+#[tokio::test]
+async fn the_gateway_maintenance_runbook_holds_the_node_work_and_the_restart() {
+    let w = world("ops_gateway_maintenance").await;
+    let h = &w.h;
+    let r = h.replica("hermit-a").await;
+    let dir = std::env::temp_dir().join(format!("hermit-gw-maint-{}", Uuid::new_v4()));
+    std::fs::create_dir(&dir).unwrap();
+    let (started, release) = (dir.join("started"), dir.join("release"));
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/hermit-admin.sh");
+    let run = |work: &str, extra: &[&str]| {
+        let mut c = tokio::process::Command::new("bash");
+        c.arg(script)
+            .args([
+                "gateway-maintenance",
+                "--node-work",
+                work,
+                "--deadline",
+                "1",
+                "--back",
+                "1",
+                "--settle",
+                "2",
+            ])
+            .args(extra)
+            .env("HERMIT_ADMIN_TOKEN", &h.tokens[&Caller::Admin])
+            .env("HERMIT_ADMIN", ADMIN)
+            .env("HERMIT_URL", &r.url)
+            .env("HERMIT_POLL", "1")
+            .kill_on_drop(true);
+        c
+    };
+    let controls = || async {
+        let row = h
+            .pool()
+            .get()
+            .await
+            .unwrap()
+            .query_one(
+                "select sandboxes_enabled, disabled_reason from controls where id = 1",
+                &[],
+            )
+            .await
+            .unwrap();
+        (row.get::<_, bool>(0), row.get::<_, Option<String>>(1))
+    };
+    let gateway = |up: bool| async move {
+        let ago = if up { 0 } else { 600 };
+        h.sql(&format!(
+            "update hosts set last_seen_at = now() - interval '{ago} seconds' where name = 'hermit-gw'"
+        ))
+        .await;
+        if let Ok(ops) = h.fabric.ops.lock().unwrap().as_mut() {
+            ops.egress_targets = up.then_some(2);
+        }
+    };
+    h.sql(&format!("update sandboxes set busy = true where id = '{}'", w.sb1))
+        .await;
+
+    // a fake node work: says it started, then waits to be released (the node reboot)
+    let work = format!(
+        "touch '{}'; while [ ! -e '{}' ]; do sleep 0.2; done",
+        started.display(),
+        release.display()
+    );
+    let mut child = run(&work, &[]).spawn().unwrap();
+    assert!(
+        eventually(Duration::from_secs(10), || async {
+            controls().await == (false, Some("gateway maintenance".into()))
+        })
+        .await,
+        "step 1: new sandboxes off"
+    );
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(!started.exists(), "step 2: no node work while a sandbox is busy");
+    h.sql(&format!("update sandboxes set busy = false where id = '{}'", w.sb1))
+        .await;
+    let s = started.clone();
+    assert!(
+        eventually(Duration::from_secs(15), move || {
+            let s = s.clone();
+            async move { s.exists() }
+        })
+        .await,
+        "step 3: the node work runs once no sandbox is busy"
+    );
+    // the node is down: the gateway stops answering, egress targets are gone; the node work ends
+    gateway(false).await;
+    std::fs::write(&release, b"").unwrap();
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    assert!(child.try_wait().unwrap().is_none(), "step 4: waits for the gateway");
+    assert_eq!(controls().await.0, false, "still off while the gateway is away");
+    gateway(true).await;
+    let out = tokio::time::timeout(Duration::from_secs(30), child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(controls().await, (true, None), "step 5: new sandboxes on");
+    let err = String::from_utf8_lossy(&out.stderr);
+    for step in ["1/5", "2/5 no busy sandbox", "3/5 node work done", "4/5", "5/5"] {
+        assert!(err.contains(step), "{step} missing in: {err}");
+    }
+
+    // a failed node work is reported (its exit code), and sandboxes still come back with the gateway
+    let out = run("exit 3", &[]).output().await.unwrap();
+    assert_eq!(out.status.code(), Some(3), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("node work FAILED (exit 3)"));
+    assert_eq!(controls().await, (true, None));
+
+    // a gateway that does not come back: sandboxes stay off, exit 1
+    gateway(false).await;
+    let out = run("true", &["--back", "0"]).output().await.unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("stay OFF"));
+    assert_eq!(controls().await, (false, Some("gateway maintenance".into())));
+
+    // no node work given: refused before anything is sent
+    let out = tokio::process::Command::new("bash")
+        .args([script, "gateway-maintenance"])
+        .env("HERMIT_ADMIN_TOKEN", &h.tokens[&Caller::Admin])
+        .env("HERMIT_ADMIN", ADMIN)
+        .env("HERMIT_URL", &r.url)
+        .output()
+        .await
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let _ = std::fs::remove_dir_all(&dir);
+}

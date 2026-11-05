@@ -20,6 +20,18 @@
 #   recycle <sha256:…> [--force]            release every live sandbox on another image (soft unless --force)
 #   purge <email>                           delete a person's data (refused while the catalogue allows them)
 #   events [limit]                          the audit log
+#   gateway-maintenance --node-work CMD [--deadline MIN] [--back MIN] [--settle S]
+#                                           the gateway node runbook (hermit 14.7, fabric/host/gateway-maintenance.md):
+#                                           (1) new sandboxes off ("gateway maintenance"); (2) wait until no sandbox
+#                                           is busy, at most --deadline minutes (default 30), then go on anyway;
+#                                           (3) run CMD with bash, which must block until the node work is done (a
+#                                           failure is reported, the steps after still run); (4) wait until the
+#                                           gateway answers (its host row reachable) with egress targets pushed, for
+#                                           --settle seconds in a row (default 30), at most --back minutes (default
+#                                           30); (5) new sandboxes on. If (4) times out, new sandboxes stay off and
+#                                           the script exits 1 (`enable` once the gateway is back). Exit 0 only when
+#                                           CMD succeeded and sandboxes are on again. HERMIT_POLL: seconds between
+#                                           snapshot reads (default 5).
 set -euo pipefail
 
 : "${HERMIT_ADMIN_TOKEN:?set HERMIT_ADMIN_TOKEN to the admin pair token}"
@@ -77,5 +89,62 @@ case "$verb" in
     ;;
   purge) call POST "/v1/admin/people/$(enc "$1")/purge" "{\"confirm\": $(json "$1")}" ;;
   events) call GET "/v1/admin/events?limit=$(enc "${1:-100}")" ;;
+  gateway-maintenance)
+    work='' deadline=30 back=30 settle=30
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --node-work) work=${2:?--node-work CMD}; shift 2 ;;
+        --deadline) deadline=${2:?minutes}; shift 2 ;;
+        --back) back=${2:?minutes}; shift 2 ;;
+        --settle) settle=${2:?seconds}; shift 2 ;;
+        *) echo "gateway-maintenance: unknown argument $1" >&2; exit 2 ;;
+      esac
+    done
+    [ -n "$work" ] || { echo "gateway-maintenance needs --node-work CMD" >&2; exit 2; }
+    for n in "$deadline" "$back" "$settle" "${HERMIT_POLL:-5}"; do
+      [[ $n =~ ^[0-9]+$ ]] || { echo "gateway-maintenance: '$n' is not a whole number" >&2; exit 2; }
+    done
+    poll=${HERMIT_POLL:-5}
+    log() { echo "gateway-maintenance: $*" >&2; }
+    # the ops snapshot, or nothing when hermit does not answer (a poll goes on)
+    snap() { call GET /ops/snapshot 2>/dev/null || true; }
+    trap 'log "interrupted: new sandboxes may still be OFF; run \`hermit-admin.sh enable\` once the gateway is back"; exit 130' INT TERM
+    # step 1
+    call PUT /v1/admin/sandboxes-enabled '{"enabled": false, "reason": "gateway maintenance"}' >/dev/null
+    log "1/5 new sandboxes off (sandbox_busy disabled)"
+    # step 2: every sandbox not busy, as the snapshot's sandboxes section says (a failed section counts as busy)
+    end=$((SECONDS + deadline * 60))
+    while :; do
+      busy=$(snap | jq -r 'if .sandboxes.list == null then "?" else [.sandboxes.list[] | select(.busy)] | length end' 2>/dev/null || echo "?")
+      [ "$busy" = 0 ] && { log "2/5 no busy sandbox"; break; }
+      [ "$SECONDS" -lt "$end" ] || { log "2/5 deadline of $deadline min reached with ${busy} busy sandbox(es): going on"; break; }
+      sleep "$poll"
+    done
+    # step 3
+    log "3/5 node work: $work"
+    rc=0; bash -c "$work" || rc=$?
+    if [ "$rc" = 0 ]; then log "3/5 node work done"; else log "3/5 node work FAILED (exit $rc)"; fi
+    # step 4: the gateway's host row reachable and egress targets pushed, for $settle seconds in a row
+    end=$((SECONDS + back * 60)) since=
+    while :; do
+      ok=$(snap | jq -r '([.hosts.list[]? | select(.gateway and .reachable)] | length > 0)
+                         and ((.fabricOps.egressTargets // 0) > 0)' 2>/dev/null || echo false)
+      if [ "$ok" = true ]; then
+        since=${since:-$SECONDS}
+        [ $((SECONDS - since)) -lt "$settle" ] || { log "4/5 gateway answering with egress targets for ${settle}s"; break; }
+      else
+        since=
+      fi
+      if [ "$SECONDS" -ge "$end" ]; then
+        log "4/5 the gateway has not answered with egress targets within $back min: new sandboxes stay OFF; run \`hermit-admin.sh enable\` once it is back"
+        exit 1
+      fi
+      sleep "$poll"
+    done
+    # step 5
+    call PUT /v1/admin/sandboxes-enabled '{"enabled": true}' >/dev/null
+    log "5/5 new sandboxes on"
+    exit "$rc"
+    ;;
   *) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 2 ;;
 esac
