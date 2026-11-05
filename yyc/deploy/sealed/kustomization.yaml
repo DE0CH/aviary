@@ -4,6 +4,8 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
+  - hermit-gateway.yaml
+  - hermit.yaml
   - tools-import.yaml
   - egress-import.yaml
   - hermit-import.yaml
