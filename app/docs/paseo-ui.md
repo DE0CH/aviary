@@ -56,7 +56,10 @@ frame and drops one that does not parse, usually with "Response validation faile
 User attachments: a `user_message` row carries the images (`{url, mimeType}`, data: URLs) and files (`uploaded_file`
 attachments, paths relative to /workspace) the user sent, from the history and on the row a send puts on the timeline, so
 a reopened chat shows them as the message did when sent. The app keeps such images as `remote-url` attachments
-(`attachments/types.ts`: the URL is the storage key, nothing is stored locally).
+(`attachments/types.ts`: the URL is the storage key, nothing is stored locally). The app sends a file as its path in
+CloudCLI's assets folder, outside /workspace, and its copy in /workspace/uploads is made only when the turn runs, so the
+row a send puts on the timeline gets its files from Claude Code's echo of the message (`paseo-timeline.ts`
+`fillUserFiles`); an upload's file name is read as UTF-8 (`image-assets.service.ts` `utf8FileName`).
 
 Timelines: the first fetch of a conversation reads its whole history (sessionsService.fetchHistory) into rows; live
 events from the hub's chat socket are appended after that, deduplicated by message id. The user's own message goes on
