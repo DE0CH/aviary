@@ -70,7 +70,7 @@ pre{white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;font:var(-
 (function(){
 "use strict";
 var KEY="{{STORAGE_KEY}}",HEAD=30,TAIL=10,MAXC=6000;
-var id=(location.pathname.match(/\/raw\/([0-9a-fA-F-]{36})/)||[])[1];
+var id=(location.pathname.match(/\/raw\/(?:wks_)?([0-9a-fA-F-]{36})/)||[])[1];
 var token=null;
 try{var h=new URLSearchParams(location.hash.replace(/^#/,"")).get("{{HASH_KEY}}");if(h){sessionStorage.setItem(KEY,h);history.replaceState(null,"",location.pathname+location.search)}token=sessionStorage.getItem(KEY)}catch(e){}
 var back=new URLSearchParams(location.search).get("back");

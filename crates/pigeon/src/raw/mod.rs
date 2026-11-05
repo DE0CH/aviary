@@ -64,11 +64,17 @@ fn not_available() -> Response {
     )
 }
 
+/// A conversation id as the raw page's address carries it: the bare uuid, or the app's workspace form `wks_<uuid>`
+/// (the address an admin copies from a view-as tab's path).
+fn conversation_id(s: &str) -> Option<uuid::Uuid> {
+    uuid::Uuid::parse_str(s.strip_prefix("wks_").unwrap_or(s)).ok()
+}
+
 /// `GET /raw/<id>`: the page, for an admin's cookie.
 pub async fn serve_page(app: &App, headers: &HeaderMap, path: &str) -> Response {
     let ok_id = path
         .strip_prefix(PAGE_PREFIX)
-        .is_some_and(|id| uuid::Uuid::parse_str(id.trim_end_matches('/')).is_ok());
+        .is_some_and(|id| conversation_id(id.trim_end_matches('/')).is_some());
     if !ok_id {
         return page(app, Page::NotAvailable, None);
     }
@@ -95,7 +101,7 @@ pub async fn transcript(app: &App, id: &Identity, conversation: &str, query: Opt
     if !matches!(id, Identity::ViewAs(_)) {
         return not_available();
     }
-    let Ok(cid) = uuid::Uuid::parse_str(conversation) else {
+    let Some(cid) = conversation_id(conversation) else {
         return not_available();
     };
     let Some(calls) = person_calls(&app.0.magpie, id) else {
@@ -144,5 +150,14 @@ mod tests {
         }
         assert!(page_html().contains(compat::SESSIONS));
         assert!(toggle_script().contains(compat::VIEW_AS_STORAGE));
+    }
+
+    #[test]
+    fn the_address_takes_the_bare_uuid_or_the_workspace_form() {
+        let id = "68abe986-9abb-4157-9ac4-e074670c70db";
+        assert_eq!(conversation_id(id).map(|u| u.to_string()).as_deref(), Some(id));
+        assert_eq!(conversation_id(&format!("wks_{id}")).map(|u| u.to_string()).as_deref(), Some(id));
+        assert!(conversation_id("wks_nope").is_none());
+        assert!(conversation_id("xyz_68abe986-9abb-4157-9ac4-e074670c70db").is_none());
     }
 }
