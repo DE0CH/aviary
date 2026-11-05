@@ -383,6 +383,13 @@ impl HostNet {
             // hub, not through flannel's WireGuard (its peers drop a source outside the node's pod range)
             let pods = cfg.pod_cidr.as_str();
             sh(&["ip", "route", "replace", pods, "via", gw, "dev", pif.as_str(), "table", GATEWAY_TABLE])?;
+            // and replies to the private network (other nodes' pods arrive masqueraded to their node's private
+            // address) leave over it too: on Talos the main table's /16 is suppressed for wg0 (rule
+            // GATEWAY_LOCAL_PRIO), so they fell through to KubeSpan's rule (32500), whose peers drop a source outside
+            // the node's own addresses: hosts answered pings and TLS from no pod, so no AWS host ever came up
+            // (2026-11-05)
+            let ctl = cfg.control_cidr.as_str();
+            sh(&["ip", "route", "replace", ctl, "via", gw, "dev", pif.as_str(), "table", GATEWAY_TABLE])?;
             let mut out3 = [0u8; 4096];
             let rules = run(&["ip", "rule", "show"], &mut out3, 10_000)?;
             // (rule GATEWAY_RULE_PRIO), except routes more specific than /16 in the main table, e.g. this node's own pod
@@ -447,7 +454,7 @@ impl HostNet {
         };
         if cfg.gateway {
             let pods = cfg.pod_cidr.as_str();
-            !has(cfg.sandbox_cidr.as_str(), "") || !has_tbl(pods)
+            !has(cfg.sandbox_cidr.as_str(), "") || !has_tbl(pods) || !has_tbl(cfg.control_cidr.as_str())
         } else if cfg.hub {
             !has(cfg.sandbox_cidr.as_str(), "")
         } else {
@@ -742,8 +749,11 @@ mod tests {
     fn missing_routes() {
         let g =
             HostConfig::parse(br#"{"hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","privateGateway":"10.97.0.1","podCidr":"10.96.0.0/16","name":"g","role":"hub","gateway":true,"wgAddress":"10.99.0.1"}"#).ok().unwrap();
-        let ok = "10.98.0.0/16 dev wg0 scope link src 10.97.0.6 \n10.98.0.0/15 via 10.97.0.1 dev enp7s0 \n10.96.0.0/16 via 10.97.0.1 dev enp7s0 table 51822 \n";
+        let ok = "10.98.0.0/16 dev wg0 scope link src 10.97.0.6 \n10.98.0.0/15 via 10.97.0.1 dev enp7s0 \n10.96.0.0/16 via 10.97.0.1 dev enp7s0 table 51822 \n10.97.0.0/16 via 10.97.0.1 dev enp7s0 table 51822 \n";
         assert!(!HostNet::routes_missing(&g, ok));
+        // without the private network in wg0's table, replies to other nodes (masqueraded pods) took KubeSpan
+        let no_ctl = "10.98.0.0/16 dev wg0 scope link src 10.97.0.6 \n10.96.0.0/16 via 10.97.0.1 dev enp7s0 table 51822 \n";
+        assert!(HostNet::routes_missing(&g, no_ctl));
         // what the gateway node had after systemd-networkd restarted: only the Hetzner network's /15
         assert!(HostNet::routes_missing(
             &g,
