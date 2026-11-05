@@ -1335,6 +1335,8 @@ async fn the_gateway_maintenance_runbook_holds_the_node_work_and_the_restart() {
             .env("HERMIT_ADMIN", ADMIN)
             .env("HERMIT_URL", &r.url)
             .env("HERMIT_POLL", "1")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
         c
     };
