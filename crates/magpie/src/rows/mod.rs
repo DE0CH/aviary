@@ -282,7 +282,34 @@ pub async fn project(tx: &Tx<'_>, ev: &Stored) -> Result<()> {
             .await?;
         }
         EventBody::CcUser(line) if !derive::sidechain(line, &meta) => {
-            if let Some(n) = &meta.task_notification {
+            // rule 2a
+            let compaction = match (&meta.compaction, meta.compact_summary) {
+                (Some(c), _) => Some(derive::compaction(line, c)),
+                (None, Some(true)) => derive::compact_summary(line, ev.event.text.as_deref()),
+                _ => None,
+            };
+            if meta.compaction.is_some() || meta.compact_summary == Some(true) {
+                if let Some(item) = compaction {
+                    let message_id = match &item {
+                        RowItem::Assistant(a) => Some(a.message_id.clone()),
+                        _ => None,
+                    };
+                    w.insert(
+                        tx,
+                        NewRow {
+                            item,
+                            at,
+                            turn_id,
+                            sources: vec![ev.seq],
+                            tool_use_id: None,
+                            message_id,
+                            block_index: Some(0),
+                            is_prompt: false,
+                        },
+                    )
+                    .await?;
+                }
+            } else if let Some(n) = &meta.task_notification {
                 // rule 3
                 update_tool(tx, &mut w, ev, &n.tool_use_id, &body, &meta).await?;
             } else if meta.ask_answer == Some(true) {

@@ -368,12 +368,13 @@ async fn claude_code_2_1_304_produces_no_duplicate_and_no_missing_event() {
 }
 
 /// The classification of the fixture's final transcript: its `cc.user` and `cc.assistant` lines that are not
-/// prompts, and its prompts (each a person turn's echo here).
-const PINNED_USER: i64 = 2;
+/// prompts, and its prompts (each a person turn's echo here). The compaction's boundary is a `cc.user` event and the
+/// two "No response requested." placeholders are internal (cutover 10.2 R6: the old stack's history).
+const PINNED_USER: i64 = 3;
 /// See [`PINNED_USER`].
 const PINNED_PROMPTS: i64 = 5;
 /// See [`PINNED_USER`].
-const PINNED_ASSISTANT: i64 = 5;
+const PINNED_ASSISTANT: i64 = 3;
 
 async fn super_events(pool: &aviary_pg::Pool, conv: uuid::Uuid) -> i64 {
     pool.get()

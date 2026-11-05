@@ -375,6 +375,26 @@ pub struct EventMeta {
     /// Imported events only: the attachments shown with the prompt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachments: Option<Vec<RowFile>>,
+    /// A compaction's marker (Claude Code's `system` `compact_boundary` line): shown as one assistant row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<Compaction>,
+    /// Claude Code's compaction summary (an `isCompactSummary` user line): shown as an assistant row, not a prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_summary: Option<bool>,
+}
+
+/// `meta.compaction`: the facts of a `compact_boundary` line's `compactMetadata` (0 when absent).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Compaction {
+    /// `manual` or `auto`.
+    pub trigger: String,
+    /// Context tokens before.
+    pub pre_tokens: u64,
+    /// Context tokens after.
+    pub post_tokens: u64,
+    /// How long it took.
+    pub duration_ms: u64,
 }
 
 /// `meta.taskNotification`.

@@ -606,7 +606,7 @@ async fn compaction_and_set_aside() {
     // compaction: a temp file with a boundary, a summary, two kept lines; renamed over the main transcript
     let tmp = format!("projects/-workspace/{}.jsonl.compact.tmp.ab12", common::cc::SID);
     let compacted = [
-        line(&json!({"type": "system", "subtype": "compact_boundary"})),
+        line(&json!({"type": "system", "subtype": "compact_boundary", "uuid": "b1"})),
         line(&json!({"type": "user", "uuid": "s1", "isCompactSummary": true, "message": {"content": "summary"}})),
         prompt("p2", "three"),
         assistant("a2", "four"),
@@ -620,8 +620,8 @@ async fn compaction_and_set_aside() {
     let names: Vec<_> = after.iter().map(|e| e.2.clone().unwrap()).collect();
     assert_eq!(
         names,
-        vec!["p2", "a2", "s1"],
-        "kept lines keep their events, dropped ones are retracted at once"
+        vec!["p2", "a2", "b1", "s1"],
+        "kept lines keep their events, dropped ones are retracted at once (the boundary and the summary are events)"
     );
     assert_eq!(after[0].0, before[2].0);
     assert_eq!(after[1].0, before[3].0);
@@ -635,14 +635,14 @@ async fn compaction_and_set_aside() {
     let v = visible(&sql, conv).await;
     assert_eq!(
         v.len(),
-        4,
+        5,
         "no duplicate: the fresh file's lines take the moved lines' events"
     );
-    assert_eq!(&v[..3], &after[..]);
+    assert_eq!(&v[..4], &after[..]);
     assert_eq!(s.read(&aside).await.unwrap(), compacted);
     // the set-aside file is an ordinary lines file: it can be removed
     s.unlink(&aside).await.unwrap();
-    assert_eq!(visible(&sql, conv).await.len(), 4);
+    assert_eq!(visible(&sql, conv).await.len(), 5);
 
     // away and back onto the main path
     let away = format!("projects/-workspace/{}.jsonl.bak", common::cc::SID);
@@ -658,10 +658,10 @@ async fn compaction_and_set_aside() {
     let v = visible(&sql, conv).await;
     assert_eq!(
         v.len(),
-        5,
+        6,
         "the lines it had keep their events; the one written away is classified on return"
     );
-    assert_eq!(v[4].2.as_deref(), Some("p9"));
+    assert_eq!(v[5].2.as_deref(), Some("p9"));
 }
 
 #[tokio::test]
@@ -848,8 +848,9 @@ async fn a_persons_prompt_echo_is_never_a_prompt_again() {
 
     // a compaction that keeps both prompts: the temp file renamed over the transcript classifies neither again
     let tmp = format!("projects/-workspace/{}.jsonl.compact.tmp.e1", common::cc::SID);
+    // (a system line Claude Code writes that makes no event: the boundary itself is an event, compaction_and_set_aside)
     let compacted = [
-        line(&json!({"type": "system", "subtype": "compact_boundary"})),
+        line(&json!({"type": "system", "subtype": "turn_duration"})),
         all.clone(),
     ]
     .concat();

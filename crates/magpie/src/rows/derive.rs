@@ -173,6 +173,83 @@ pub fn prompt(line: &Value, meta: &EventMeta, text: Option<&str>) -> RowItem {
     })
 }
 
+/// Tokens as Claude Code writes them (`725k`, `1.2M`), as the old stack's `formatTokenCount` does in JavaScript:
+/// `(t / 1e6).toFixed(1)` (one decimal of the double's exact value, a tie rounded up) and `Math.round(t / 1000)`.
+fn token_count(t: u64) -> String {
+    #[allow(clippy::cast_precision_loss)] // token counts are far below 2^52
+    let f = t as f64;
+    if t >= 1_000_000 {
+        // the double's exact decimal digits (at most 52 after the point): round up iff the second is 5 or more
+        let exact = format!("{:.60}", f / 1_000_000.0);
+        let (int, frac) = exact.split_once('.').unwrap_or((exact.as_str(), "0"));
+        let digit = |i: usize| u64::from(frac.as_bytes().get(i).map_or(0, |b| b - b'0'));
+        let tenths = int.parse::<u64>().unwrap_or(0) * 10 + digit(0) + u64::from(digit(1) >= 5);
+        format!("{}.{}M", tenths / 10, tenths % 10)
+    } else if t >= 1_000 {
+        format!("{}k", (f / 1_000.0).round())
+    } else {
+        t.to_string()
+    }
+}
+
+/// A duration as Claude Code writes one (`2m 22s`), as the old stack's `formatDuration`.
+fn duration(ms: u64) -> String {
+    let s = (ms + 500) / 1_000;
+    if s < 60 {
+        format!("{s}s")
+    } else {
+        format!("{}m {}s", s / 60, s % 60)
+    }
+}
+
+/// Rule 2a: a compaction's marker (`meta.compaction`) → an `assistant` row with the old stack's sentence
+/// (`Compacted auto · 155k → 12k tokens · 1m 3s`); `messageId` = the line's `uuid`.
+#[must_use]
+pub fn compaction(line: &Value, c: &magpie_api::events::Compaction) -> RowItem {
+    let mut said = vec!["Compacted".to_owned(), c.trigger.clone()];
+    if c.pre_tokens > 0 {
+        said.push(if c.post_tokens > 0 {
+            format!("{} → {} tokens", token_count(c.pre_tokens), token_count(c.post_tokens))
+        } else {
+            format!("{} tokens", token_count(c.pre_tokens))
+        });
+    }
+    if c.duration_ms > 0 {
+        said.push(duration(c.duration_ms));
+    }
+    RowItem::Assistant(AssistantItem {
+        message_id: line.get("uuid").and_then(Value::as_str).unwrap_or_default().to_owned(),
+        block_index: 0,
+        error: None,
+        text: said.join(" · "),
+    })
+}
+
+/// Rule 2a: Claude Code's compaction summary (`meta.compactSummary`) → an `assistant` row with its text, as the old
+/// stack showed it; none when the text is blank.
+#[must_use]
+pub fn compact_summary(line: &Value, text: Option<&str>) -> Option<RowItem> {
+    let text = text.map_or_else(
+        || {
+            content(line)
+                .iter()
+                .filter(|b| block_type(b) == "text")
+                .filter_map(|b| b.get("text").and_then(text_of))
+                .collect::<Vec<_>>()
+                .join("\n")
+        },
+        str::to_owned,
+    );
+    (!text.trim().is_empty()).then(|| {
+        RowItem::Assistant(AssistantItem {
+            message_id: line.get("uuid").and_then(Value::as_str).unwrap_or_default().to_owned(),
+            block_index: 0,
+            error: None,
+            text,
+        })
+    })
+}
+
 /// One row of an assistant line's block (rule 4).
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlockRow {
@@ -184,8 +261,9 @@ pub struct BlockRow {
     pub tool_use_id: Option<String>,
 }
 
-/// Rule 4: the rows of an assistant line whose first block has index `first` within its message. Empty text and
-/// thinking blocks, `redacted_thinking` and unknown block types make no row.
+/// Rule 4: the rows of an assistant line whose first block has index `first` within its message. Text and thinking
+/// blocks that are empty or only whitespace (Claude Code's `"\n\n"` before a tool call; the old stack's history left
+/// them out), `redacted_thinking` and unknown block types make no row.
 #[must_use]
 pub fn assistant(line: &Value, meta: &EventMeta, first: u32) -> Vec<BlockRow> {
     let Some(mid) = message_id(line) else {
@@ -197,7 +275,7 @@ pub fn assistant(line: &Value, meta: &EventMeta, first: u32) -> Vec<BlockRow> {
         match block_type(b) {
             "text" => {
                 let text = b.get("text").and_then(text_of).unwrap_or_default();
-                if text.is_empty() {
+                if text.trim().is_empty() {
                     continue;
                 }
                 out.push(BlockRow {
@@ -213,7 +291,7 @@ pub fn assistant(line: &Value, meta: &EventMeta, first: u32) -> Vec<BlockRow> {
             }
             "thinking" => {
                 let text = b.get("thinking").and_then(text_of).unwrap_or_default();
-                if text.is_empty() {
+                if text.trim().is_empty() {
                     continue;
                 }
                 out.push(BlockRow {
@@ -596,6 +674,73 @@ mod tests {
         let rows = assistant(&line, &EventMeta::default(), 3);
         assert_eq!(rows.iter().map(|r| r.block_index).collect::<Vec<_>>(), vec![5, 6]);
         assert_eq!(block_count(&line), 4);
+    }
+
+    /// Claude Code's `"\n\n"` text block before a tool call, and a blank thinking block, make no row: the old
+    /// stack's history left them out (cutover 10.2 R6).
+    #[test]
+    fn whitespace_only_blocks_make_no_row() {
+        let line = json!({"type": "assistant", "message": {"id": "m", "content": [
+            {"type": "text", "text": "\n\n"}, {"type": "thinking", "thinking": " \n"},
+            {"type": "tool_use", "id": "t", "name": "Bash"}, {"type": "text", "text": "\nok"}]}});
+        let rows = assistant(&line, &EventMeta::default(), 0);
+        assert_eq!(rows.iter().map(|r| r.block_index).collect::<Vec<_>>(), vec![2, 3]);
+        let RowItem::Assistant(a) = &rows[1].item else {
+            panic!("not an assistant row")
+        };
+        assert_eq!(a.text, "\nok");
+    }
+
+    /// The old stack's compaction rows (`claude-sessions.provider.ts`: `formatTokenCount`, `formatDuration`).
+    #[test]
+    fn a_compaction_reads_as_the_old_stack_wrote_it() {
+        let c = |trigger: &str, pre: u64, post: u64, ms: u64| magpie_api::events::Compaction {
+            trigger: trigger.into(),
+            pre_tokens: pre,
+            post_tokens: post,
+            duration_ms: ms,
+        };
+        let line = json!({"type": "system", "subtype": "compact_boundary", "uuid": "cb1"});
+        let text = |c| match compaction(&line, &c) {
+            RowItem::Assistant(a) => {
+                assert_eq!((a.message_id.as_str(), a.block_index), ("cb1", 0));
+                a.text
+            }
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            text(c("auto", 155_234, 12_100, 63_400)),
+            "Compacted · auto · 155k → 12k tokens · 1m 3s"
+        );
+        assert_eq!(
+            text(c("manual", 1_250_000, 0, 4_499)),
+            "Compacted · manual · 1.3M tokens · 4s"
+        );
+        assert_eq!(text(c("auto", 999, 0, 0)), "Compacted · auto · 999 tokens");
+        assert_eq!(text(c("auto", 0, 0, 120_000)), "Compacted · auto · 2m 0s");
+        assert_eq!(text(c("auto", 0, 0, 0)), "Compacted · auto");
+        // JavaScript's toFixed on the double: 1.15 is 1.1499…, 1.25 a true tie (up), 999,999,999 is 1000.0
+        for (t, want) in [
+            (1_150_000, "1.1M"),
+            (1_050_000, "1.1M"),
+            (2_350_000, "2.4M"),
+            (1_000_000, "1.0M"),
+            (999_999_999, "1000.0M"),
+            (1_500, "2k"),
+            (1_499, "1k"),
+        ] {
+            assert_eq!(token_count(t), want, "{t}");
+        }
+        let summary = json!({"type": "user", "uuid": "s1", "isCompactSummary": true,
+            "message": {"content": "This session is being continued…"}});
+        let Some(RowItem::Assistant(a)) = compact_summary(&summary, None) else {
+            panic!("no row")
+        };
+        assert_eq!(
+            (a.message_id.as_str(), a.text.as_str()),
+            ("s1", "This session is being continued…")
+        );
+        assert!(compact_summary(&summary, Some(" \n")).is_none());
     }
 
     fn launch() -> ToolItem {

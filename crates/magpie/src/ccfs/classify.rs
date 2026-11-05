@@ -12,9 +12,16 @@
 //! predecessor left open with a synthetic result ("[Tool call interrupted: the session ended …]") and a synthetic
 //! assistant line ("No response requested.", model `<synthetic>`) before the supervisor's message; both are internal,
 //! and the message, the person's answers, is [`Class::Answer`]: the questions' result, not a prompt.
+//!
+//! What the old stack's history never showed is internal here too (cutover 10.2 R6, the old side's
+//! `claude-sessions.provider.ts`): Claude Code's "No response requested." placeholder reply (model `<synthetic>`) in
+//! any turn, and user text lines that start with one of [`INTERNAL_PREFIXES`] (an interruption banner, a reminder,
+//! a caveat, a skill body). A compaction is shown as the old stack showed it: its `compact_boundary` line is a
+//! `cc.user` event with `meta.compaction` (one assistant row, magpie 7.3 rule 2a), and its summary line has
+//! `meta.compactSummary` (an assistant row with the summary).
 
 use magpie_api::errors::{DataCode, ErrorInfo};
-use magpie_api::events::{EventMeta, TaskNotification};
+use magpie_api::events::{Compaction, EventMeta, TaskNotification};
 use serde_json::Value;
 
 /// `cc.assistant`.
@@ -96,6 +103,15 @@ fn content_text(content: Option<&Value>) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("\n"))
 }
 
+/// User text that is not a person's message: the old stack's history left these lines out (its
+/// `INTERNAL_CONTENT_PREFIXES`), so they are internal.
+pub const INTERNAL_PREFIXES: [&str; 4] = [
+    "<system-reminder>",
+    "Caveat:",
+    "[Request interrupted",
+    "Base directory for this skill:",
+];
+
 fn blocks(content: Option<&Value>) -> impl Iterator<Item = &Value> {
     content.and_then(Value::as_array).into_iter().flatten()
 }
@@ -107,9 +123,10 @@ pub fn classify(data: Option<&Value>, cx: Context) -> Class {
         return Class::Internal;
     };
     match s(d, "type") {
-        Some("assistant") if cx.answering && synthetic(d) => Class::Internal,
+        Some("assistant") if (cx.answering && synthetic(d)) || no_response(d) => Class::Internal,
         Some("assistant") => assistant(d),
         Some("user") if !truthy(d, "isMeta") => user(d, cx),
+        Some("system") if s(d, "subtype") == Some("compact_boundary") => compaction(d),
         Some("custom-title") => s(d, "customTitle").map_or(Class::Internal, |t| Class::Title(t.to_owned())),
         Some("ai-title") => s(d, "aiTitle").map_or(Class::Internal, |t| Class::Title(t.to_owned())),
         _ => Class::Internal,
@@ -216,7 +233,11 @@ fn user(d: &Value, cx: Context) -> Class {
         return event(meta, false, Vec::new());
     }
     if truthy(d, "isCompactSummary") {
-        return event(EventMeta::default(), false, Vec::new());
+        let meta = EventMeta {
+            compact_summary: Some(true),
+            ..EventMeta::default()
+        };
+        return event(meta, false, Vec::new());
     }
     if cx.answering {
         let meta = EventMeta {
@@ -230,11 +251,73 @@ fn user(d: &Value, cx: Context) -> Class {
     if cx.echo_pending {
         return Class::Echo;
     }
+    // after the echo: a person's own message is matched whatever it starts with
+    if text
+        .as_deref()
+        .is_some_and(|t| INTERNAL_PREFIXES.iter().any(|p| t.starts_with(p)))
+    {
+        return Class::Internal;
+    }
     let meta = EventMeta {
         prompt: Some(true),
         ..EventMeta::default()
     };
     event(meta, true, Vec::new())
+}
+
+/// A `compact_boundary` line: a `cc.user` event with its facts (`compactMetadata` on disk, `compact_metadata` live).
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // the counts are finite and positive
+fn compaction(d: &Value) -> Class {
+    let m = d.get("compactMetadata").or_else(|| d.get("compact_metadata"));
+    let n = |a: &str, b: &str| {
+        m.and_then(|m| m.get(a).or_else(|| m.get(b)))
+            .and_then(Value::as_f64)
+            .filter(|f| f.is_finite() && *f > 0.0)
+            .map_or(0, |f| f as u64)
+    };
+    let trigger = if m.and_then(|m| s(m, "trigger")) == Some("manual") {
+        "manual"
+    } else {
+        "auto"
+    };
+    let meta = EventMeta {
+        compaction: Some(Compaction {
+            trigger: trigger.to_owned(),
+            pre_tokens: n("preTokens", "pre_tokens"),
+            post_tokens: n("postTokens", "post_tokens"),
+            duration_ms: n("durationMs", "duration_ms"),
+        }),
+        ..EventMeta::default()
+    };
+    Class::Event(Box::new(Event {
+        kind: USER,
+        meta,
+        text: None,
+        is_prompt: false,
+        uuid: s(d, "uuid").map(str::to_owned),
+        tool_uses: Vec::new(),
+        results: Vec::new(),
+        model: None,
+    }))
+}
+
+/// Claude Code's "No response requested." placeholder (its `NO_RESPONSE_REQUESTED`, model `<synthetic>`): the reply
+/// it writes when it resumes a conversation whose last turn ended without one. Nobody wrote it; the old stack never
+/// showed it.
+fn no_response(d: &Value) -> bool {
+    let message = d.get("message");
+    if message.and_then(|m| s(m, "model")) != Some("<synthetic>") {
+        return false;
+    }
+    let content = message.and_then(|m| m.get("content"));
+    let text = content.and_then(Value::as_str).or_else(|| {
+        let a = content?.as_array()?;
+        match a.as_slice() {
+            [b] if s(b, "type") == Some("text") => s(b, "text"),
+            _ => None,
+        }
+    });
+    text == Some("No response requested.")
 }
 
 /// Claude Code's own assistant line with no model call behind it (`message.model` `<synthetic>`, no tool call).
@@ -484,13 +567,78 @@ mod tests {
         let summary = json!({"type": "user", "isCompactSummary": true, "message": {"content": "summary"}});
         let e = event(classify(Some(&summary), ECHO));
         assert!(!e.is_prompt);
+        assert_eq!(e.meta.compact_summary, Some(true));
+    }
+
+    /// What the old stack's history left out is internal (cutover 10.2 R6).
+    #[test]
+    fn lines_the_old_history_never_showed() {
+        for text in [
+            "[Request interrupted by user]",
+            "[Request interrupted by user for tool use]",
+            "<system-reminder>\nx\n</system-reminder>",
+            "Caveat: The messages below were generated by the user while running local commands.",
+            "Base directory for this skill: /etc/claude-code/skills/pdf",
+        ] {
+            let line = json!({"type": "user", "message": {"content": [{"type": "text", "text": text}]}});
+            assert_eq!(classify(Some(&line), Context::default()), Class::Internal, "{text}");
+            let line = json!({"type": "user", "message": {"content": text}});
+            assert_eq!(classify(Some(&line), Context::default()), Class::Internal, "{text}");
+        }
+        // only at the start, as the old side reads it
+        let line = json!({"type": "user", "message": {"content": "see [Request interrupted by user]"}});
+        assert!(matches!(classify(Some(&line), Context::default()), Class::Event(_)));
+        // the placeholder in any turn, as a string or one text block; another synthetic reply stays
+        for content in [
+            json!("No response requested."),
+            json!([{"type": "text", "text": "No response requested."}]),
+        ] {
+            let reply = json!({"type": "assistant", "message": {"model": "<synthetic>", "content": content}});
+            assert_eq!(classify(Some(&reply), Context::default()), Class::Internal);
+        }
+        let limit = json!({"type": "assistant", "message": {"model": "<synthetic>",
+            "content": [{"type": "text", "text": "Claude AI usage limit reached"}]}});
+        assert!(matches!(classify(Some(&limit), Context::default()), Class::Event(_)));
+        let real = json!({"type": "assistant", "message": {"model": "claude-sonnet-4-5",
+            "content": [{"type": "text", "text": "No response requested."}]}});
+        assert!(matches!(classify(Some(&real), Context::default()), Class::Event(_)));
+    }
+
+    #[test]
+    fn a_compaction_boundary_is_an_event() {
+        let d = json!({"type": "system", "subtype": "compact_boundary", "uuid": "cb1",
+            "compactMetadata": {"trigger": "auto", "preTokens": 155_234, "postTokens": 12_100, "durationMs": 63_400}});
+        let e = event(classify(Some(&d), Context::default()));
+        assert_eq!(e.kind, USER);
+        assert!(!e.is_prompt);
+        assert_eq!(e.uuid.as_deref(), Some("cb1"));
+        assert_eq!(
+            e.meta.compaction,
+            Some(Compaction {
+                trigger: "auto".into(),
+                pre_tokens: 155_234,
+                post_tokens: 12_100,
+                duration_ms: 63_400
+            })
+        );
+        let bare = json!({"type": "system", "subtype": "compact_boundary", "compact_metadata": {"trigger": "manual"}});
+        let e = event(classify(Some(&bare), Context::default()));
+        assert_eq!(
+            e.meta.compaction,
+            Some(Compaction {
+                trigger: "manual".into(),
+                pre_tokens: 0,
+                post_tokens: 0,
+                duration_ms: 0
+            })
+        );
     }
 
     #[test]
     fn internal_lines_and_titles() {
         for d in [
             json!({"type": "attachment"}),
-            json!({"type": "system", "subtype": "compact_boundary"}),
+            json!({"type": "system", "subtype": "status"}),
             json!({"type": "queue-operation"}),
             json!({"type": "last-prompt"}),
             json!(["not", "an", "object"]),
