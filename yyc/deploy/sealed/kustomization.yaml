@@ -3,4 +3,12 @@
 # it.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: []
+resources:
+  - tools-import.yaml
+  - egress-import.yaml
+  - hermit-import.yaml
+  - tools.yaml
+  - egress.yaml
+  - hermit-juicefs.yaml
+  - magpie.yaml
+  - pigeon.yaml
