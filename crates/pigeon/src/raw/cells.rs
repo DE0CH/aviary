@@ -204,9 +204,13 @@ fn blocks(ord: i64, at: Option<&str>, o: &Map<String, Value>, assistant: bool) -
                 match t {
                     "text" => out.push(text_cell(b.get("text").and_then(Value::as_str).unwrap_or(""))),
                     "thinking" => {
-                        let th = b.get("thinking").and_then(Value::as_str).unwrap_or("");
-                        let th = if th.is_empty() { "[thinking not stored]" } else { th };
-                        out.push(Cell::new(ord, at, "thinking", th.to_owned()));
+                        let thought = b.get("thinking").and_then(Value::as_str).unwrap_or("");
+                        let thought = if thought.is_empty() {
+                            "[thinking not stored]"
+                        } else {
+                            thought
+                        };
+                        out.push(Cell::new(ord, at, "thinking", thought.to_owned()));
                     }
                     "redacted_thinking" => out.push(Cell::new(ord, at, "thinking", "[redacted]".to_owned())),
                     "tool_use" | "server_tool_use" => {

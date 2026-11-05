@@ -107,10 +107,10 @@ pub async fn transcript(app: &App, id: &Identity, conversation: &str, query: Opt
     };
     match calls.transcript(cid, &q).await {
         Ok(p) => {
-            let cells: Vec<_> = p.lines.iter().flat_map(|l| cells::of_line(l.ord, &l.line)).collect();
+            let shown: Vec<_> = p.lines.iter().flat_map(|l| cells::of_line(l.ord, &l.line)).collect();
             let mut r = json(
                 StatusCode::OK,
-                &json!({"path": p.path, "cells": cells, "next": p.next, "more": p.more, "running": p.running}),
+                &json!({"path": p.path, "cells": shown, "next": p.next, "more": p.more, "running": p.running}),
             );
             r.headers_mut()
                 .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));

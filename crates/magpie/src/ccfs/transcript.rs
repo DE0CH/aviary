@@ -104,11 +104,11 @@ pub async fn page(app: &Magpie, person: &Person, id: Uuid, q: &TranscriptQuery) 
         }
     }
     drop(conn);
-    let text: Vec<Sha> = shas.into_iter().filter(|s| !media.contains_key(s)).collect();
-    let mut bytes = if text.is_empty() {
+    let text_shas: Vec<Sha> = shas.into_iter().filter(|s| !media.contains_key(s)).collect();
+    let mut bytes = if text_shas.is_empty() {
         HashMap::new()
     } else {
-        blob_bytes(app, &text).await?
+        blob_bytes(app, &text_shas).await?
     };
     bytes.extend(media);
     let mut out = Vec::with_capacity(lines.len());
