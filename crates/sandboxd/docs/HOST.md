@@ -78,8 +78,15 @@ reached over the node's IPv6; the egress VIP translation; the image source for b
   sandboxd's API and image ports on the node itself, the egress VIP only translated, and SYNs forwarded from wg0 have
   their MSS clamped to `gatewayMss` (1280: the hops behind the gateway, e.g. a 1320-byte pod MTU, may be smaller than
   wg0's 1420). The node's pods, kube-proxy and its CNI keep their own rules and tables (table 51822 and rule priorities
-  99/100 are sandboxd's; no fwmark). Sysctls set: `ip_forward`, and `rp_filter` loose (2) on wg0 and on the private
+  1000/1001 are sandboxd's; no fwmark). Sysctls set: `ip_forward`, and `rp_filter` loose (2) on wg0 and on the private
   interface, where egress pods' replies arrive from pod addresses the node itself routes elsewhere; nothing else.
+- **Rule priorities** (2026-11-05): `iif wg0 lookup main suppress_prefixlength 16` at 1000 and `iif wg0 lookup
+  51822` at 1001. Both come after the rule for the local table (0 on a plain host; 100 where Cilium moves it, as on
+  Talos, whose nodes list `9: fwmark 0x200/0xf00 lookup 2004`, `100: lookup local`, `32500: fwmark 0x40/0x60 lookup
+  180` (KubeSpan), `32766: lookup main`), so what comes in on wg0 for the node's own addresses (the API on
+  `wgAddress`) is delivered, not routed back out wg0 by the main table's route for `hostCidr`; and before KubeSpan's
+  and the main table's. Cilium's own rules sit at 1-112. A start finds these two rules at another priority (an older
+  sandboxd's 99/100) and moves them.
 - **Sandbox sources through a cluster node** (fixed 2026-10-21): a CNI may masquerade every non-pod source going to a
   pod (flannel's FLANNEL-POSTRTG did), so egress would see the node's address. The gateway therefore sends what
   arrives on wg0 to pods over the private network (`ip rule iif wg0 lookup 51822`) and pins the source with an

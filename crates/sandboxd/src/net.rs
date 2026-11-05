@@ -209,6 +209,45 @@ pub fn host_rules(
 pub const GATEWAY_TABLE: &str = "51822";
 const GATEWAY_RULE_MARK: &str = "iif wg0 lookup 51822";
 const GATEWAY_LOCAL_MARK: &str = "iif wg0 lookup main suppress_prefixlength 16";
+/// The two rules' priorities: after the local table's rule (0 on a plain host, 100 where Cilium moves it, as on
+/// Talos: wg0's traffic to the node's own addresses must be delivered, not routed) and before everything else a node
+/// has (Cilium 1-112, KubeSpan 32500, main 32766); the local-routes rule first.
+pub const GATEWAY_LOCAL_PRIO: &str = "1000";
+pub const GATEWAY_RULE_PRIO: &str = "1001";
+
+/// The priorities of the rules `ip rule show` lists as exactly `from all <sel>` (a `[detached]` mark aside).
+fn rule_prios<'a>(rules: &'a str, sel: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+    rules.lines().filter_map(move |l| {
+        let (prio, rest) = l.split_once(':')?;
+        let rest = rest.trim().strip_prefix("from all ")?;
+        let rest = rest.strip_suffix("[detached]").unwrap_or(rest).trim_end();
+        (rest == sel).then_some(prio.trim())
+    })
+}
+
+/// Makes `ip rule <sel>` sit at `prio` only: a copy at another priority (an older sandboxd's) is deleted.
+fn ensure_rule(rules: &str, sel_text: &str, sel: &[&str], prio: &str) -> Res<()> {
+    let mut have = false;
+    for p in rule_prios(rules, sel_text) {
+        if p == prio {
+            have = true;
+            continue;
+        }
+        let mut argv: [&str; 16] = [""; 16];
+        argv[..3].copy_from_slice(&["ip", "rule", "del"]);
+        argv[3..3 + sel.len()].copy_from_slice(sel);
+        argv[3 + sel.len()..5 + sel.len()].copy_from_slice(&["priority", p]);
+        sh(&argv[..5 + sel.len()])?;
+    }
+    if !have {
+        let mut argv: [&str; 16] = [""; 16];
+        argv[..3].copy_from_slice(&["ip", "rule", "add"]);
+        argv[3..3 + sel.len()].copy_from_slice(sel);
+        argv[3 + sel.len()..5 + sel.len()].copy_from_slice(&["priority", prio]);
+        sh(&argv[..5 + sel.len()])?;
+    }
+    Ok(())
+}
 
 pub const MAX_TARGETS: usize = 64;
 pub const MAX_PEERS: usize = 32;
@@ -346,26 +385,16 @@ impl HostNet {
             sh(&["ip", "route", "replace", pods, "via", gw, "dev", pif.as_str(), "table", GATEWAY_TABLE])?;
             let mut out3 = [0u8; 4096];
             let rules = run(&["ip", "rule", "show"], &mut out3, 10_000)?;
-            if !rules.out_str().contains(GATEWAY_RULE_MARK) {
-                sh(&["ip", "rule", "add", "iif", "wg0", "lookup", GATEWAY_TABLE, "priority", "100"])?;
-            }
-            // ... except routes more specific than /16 in the main table, e.g. this node's own pod /24 on cni0 (an
-            // egress pod here must not go out to the private network and back)
-            if !rules.out_str().contains(GATEWAY_LOCAL_MARK) {
-                sh(&[
-                    "ip",
-                    "rule",
-                    "add",
-                    "iif",
-                    "wg0",
-                    "lookup",
-                    "main",
-                    "suppress_prefixlength",
-                    "16",
-                    "priority",
-                    "99",
-                ])?;
-            }
+            // (rule GATEWAY_RULE_PRIO), except routes more specific than /16 in the main table, e.g. this node's own pod
+            // /24 on cni0 (an egress pod here must not go out to the private network and back; GATEWAY_LOCAL_PRIO)
+            let local = ["iif", "wg0", "lookup", "main", "suppress_prefixlength", "16"];
+            ensure_rule(rules.out_str(), GATEWAY_LOCAL_MARK, &local, GATEWAY_LOCAL_PRIO)?;
+            ensure_rule(
+                rules.out_str(),
+                GATEWAY_RULE_MARK,
+                &["iif", "wg0", "lookup", GATEWAY_TABLE],
+                GATEWAY_RULE_PRIO,
+            )?;
             // loose reverse-path checks on its own interfaces: replies from egress pods arrive on the private
             // interface from pod addresses the node itself routes elsewhere (a CNI's own devices)
             let mut a: Str<64> = Str::new();
@@ -688,6 +717,26 @@ pub fn set_peers(cfg: &HostConfig, peers: &[Peer], scratch: &mut [u8]) -> Res<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wg0_rule_priorities() {
+        // a Talos node's rules as `ip rule show` lists them (yyc-talos-w1, 2026-11-05: Cilium's proxy rule at 9 and
+        // the local table moved to 100, KubeSpan's at 32500) plus an older sandboxd's two rules and a near miss
+        let talos = "9:\tfrom all fwmark 0x200/0xf00 lookup 2004 \n100:\tfrom all lookup local \n32500:\tfrom all fwmark 0x40/0x60 lookup 180 \n32766:\tfrom all lookup main \n32767:\tfrom all lookup default \n";
+        let r = format!(
+            "{talos}99:\tfrom all iif wg0 lookup main suppress_prefixlength 16 [detached] \n100:\tfrom all iif wg0 lookup 51822 \n200:\tfrom all iif wg0 lookup 518220 \n"
+        );
+        let mut p = rule_prios(&r, GATEWAY_RULE_MARK);
+        assert_eq!((p.next(), p.next()), (Some("100"), None));
+        let mut p = rule_prios(&r, GATEWAY_LOCAL_MARK);
+        assert_eq!((p.next(), p.next()), (Some("99"), None));
+        // after the local rule and Cilium's (up to 112), before KubeSpan's and main, on no priority Talos uses
+        let (l, g): (u32, u32) = (GATEWAY_LOCAL_PRIO.parse().unwrap(), GATEWAY_RULE_PRIO.parse().unwrap());
+        assert!(112 < l && l < g && g < 32500);
+        for prio in [GATEWAY_LOCAL_PRIO, GATEWAY_RULE_PRIO] {
+            assert!(!talos.lines().any(|x| x.split(':').next() == Some(prio)));
+        }
+    }
 
     #[test]
     fn missing_routes() {

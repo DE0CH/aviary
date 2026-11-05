@@ -17,6 +17,9 @@
 #   2. a start with a host.json missing a field (podCidr) exits non-zero and leaves all of it as it is, under traffic
 #   3. the MSS of SYNs forwarded from wg0 is clamped to gatewayMss (1280)
 #   4. a wg0 that is gone (a node reboot) is made again with the saved peer set, with no PUT from hermit
+#   5. on a node with Talos's rules (the local table's rule at 100, as Cilium moves it; KubeSpan's at 32500) and an
+#      older sandboxd's two wg0 rules at 99/100: the first start leaves sandboxd's rules at 1000/1001 only, and the
+#      host reaches the API on the gateway's own wgAddress over wg0
 #
 # Usage: adopt.sh <sandboxd binary>
 #        SBX_GATEWAY_IMAGE=<image> adopt.sh: sandboxd from the gateway image (images/sandboxd: its own ip, wg, nft,
@@ -71,6 +74,14 @@ nsx spod ip route add 10.98.0.0/16 via 10.97.0.6
 # a strict reverse-path check where the defaults would apply (sandboxd sets wg0 and priv0 loose itself)
 nsx sgw sysctl -qw net.ipv4.conf.all.rp_filter=1 net.ipv4.conf.default.rp_filter=1
 nsx sgw sysctl -qw net.ipv4.conf.priv0.rp_filter=1
+# Talos's rules (yyc-talos-w1, 2026-11-05: Cilium's proxy rule, local moved from 0 to 100, KubeSpan) and an older
+# sandboxd's wg0 rules at 99/100 (check 5)
+nsx sgw ip rule add priority 9 fwmark 0x200/0xf00 lookup 2004
+nsx sgw ip rule add priority 100 lookup local
+nsx sgw ip rule del priority 0 lookup local
+nsx sgw ip rule add priority 32500 fwmark 0x40/0x60 lookup 180
+nsx sgw ip rule add priority 99 iif wg0 lookup main suppress_prefixlength 16
+nsx sgw ip rule add priority 100 iif wg0 lookup 51822
 
 # ---- PKI, keys, host.json ------------------------------------------------------------------------------------------
 bash "$here/../../../../fabric/host/make-certs.sh" "$T/pki" >/dev/null
@@ -214,6 +225,11 @@ nsx shost ping -q -c1 -W1 -I 10.98.0.5 10.96.0.5 >/dev/null || fail "no path hos
 [ "$(nsx sgw sysctl -n net.ipv4.conf.wg0.rp_filter)/$(nsx sgw sysctl -n net.ipv4.conf.priv0.rp_filter)" = 2/2 ] \
   || fail "rp_filter not loose on wg0 and priv0"
 ok "first start: peers and egress pushed, host -> gateway -> pod works, rp_filter loose on wg0 and priv0"
+rules=$(nsx sgw ip -4 rule show | sed 's/[[:space:]]*$//')
+want=$'9:\tfrom all fwmark 0x200/0xf00 lookup 2004\n100:\tfrom all lookup local\n1000:\tfrom all iif wg0 lookup main suppress_prefixlength 16\n1001:\tfrom all iif wg0 lookup 51822\n32500:\tfrom all fwmark 0x40/0x60 lookup 180\n32766:\tfrom all lookup main\n32767:\tfrom all lookup default'
+[ "$rules" = "$want" ] || fail "ip rules after the first start: $rules"
+nsx shost bash -c 'exec 3<>/dev/tcp/10.99.0.1/7443' 2>/dev/null || fail "the host does not reach the API on 10.99.0.1:7443 over wg0"
+ok "Talos's rules: sandboxd's at 1000/1001 only (moved from 99/100), the local rule at 100 kept; host -> wgAddress:7443 over wg0"
 before=$(snapshot); hs=$(handshake)
 [ -n "$hs" ] && [ "$hs" != 0 ] || fail "no handshake with the host"
 
