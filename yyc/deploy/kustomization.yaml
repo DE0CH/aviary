@@ -28,6 +28,10 @@ resources:
   - jobs/import-plan.yaml
   # A2 step 3: the bulk import, run then verify --all (cutover 7.9)
   - jobs/import-run.yaml
+  # A2 step 4: the running-set read through the old API (B7), once a second for 25 min
+  - jobs/import-holds.yaml
+  # A2 rehearsal 6: magpie's side of render parity
+  - jobs/import-parity.yaml
 # one aviary commit for pigeon, magpie, hermit and sandboxd (check item 4); sandboxd's tag is hermit.json's
 # fabric.sandboxd; the sandbox image is pinned by digest in hermit/hermit.json
 images:
