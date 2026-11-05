@@ -1121,7 +1121,7 @@ mod tests {
             assert_eq!(item["detail"]["type"], "unknown");
         }
         let bare = tool_call_item(
-            &tool("web_search", json!({"query": "hsi"}), ToolStatus::Completed, Some("r")),
+            &tool("search", json!({"query": "hsi"}), ToolStatus::Completed, Some("r")),
             Locale::En,
         )
         .unwrap();
