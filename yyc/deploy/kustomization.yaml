@@ -21,6 +21,9 @@ resources:
   - bridges.yaml
   # the switch's importers (spec-platform 9.12): CronJobs suspended until A2; deleted in the teardown
   - jobs
+  # A2's one-off Jobs (cutover 10.2), listed here so jobs/kustomization.yaml stays as the runner's patches 05 and 50
+  # expect it: hermit 15.4's ownership fix-up before the first hermit-import (A6 runs it again under a new name)
+  - jobs/jfs-owner.yaml
 # one aviary commit for pigeon, magpie, hermit and sandboxd (check item 4); sandboxd's tag is hermit.json's
 # fabric.sandboxd; the sandbox image is pinned by digest in hermit/hermit.json
 images:
