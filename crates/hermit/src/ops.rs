@@ -241,7 +241,9 @@ pub struct OpenRouter {
 
 impl std::fmt::Debug for OpenRouter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpenRouter").field("url", &self.url).finish_non_exhaustive()
+        f.debug_struct("OpenRouter")
+            .field("url", &self.url)
+            .finish_non_exhaustive()
     }
 }
 
