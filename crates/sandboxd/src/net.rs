@@ -136,6 +136,44 @@ fn iface_from_route(out: &str) -> Option<Str<32>> {
     Str::from(rest.split_whitespace().next()?)
 }
 
+/// gateway: this node's own pod range as the main table routes it, `(dst, via, dev)` (`via` empty for a link route):
+/// the widest main-table route inside `pods` (narrower than it, wider than one address) that holds one of this
+/// node's own addresses (`addrs`: `ip -o -4 addr show`), i.e. flannel's `10.244.3.0/24 dev cni0` or Cilium's
+/// `10.210.7.0/24 via 10.210.7.207 dev cilium_host` (whose other nodes' /24s look the same but hold no local address).
+/// wg0's traffic to it stays on the node: the private network does not route a node's own pod range back to it.
+pub fn own_pod_route<'a>(addrs: &str, routes: &'a str, pods: &str) -> Option<(&'a str, &'a str, &'a str)> {
+    let pod_bits: u32 = pods.split_once('/')?.1.parse().ok()?;
+    let local = addrs
+        .lines()
+        .filter_map(|l| l.split_once(" inet ")?.1.split('/').next())
+        .filter(|a| crate::util::in_cidr(a, pods));
+    let mut best: Option<(u32, (&str, &str, &str))> = None;
+    for l in routes.lines() {
+        let Some(dst) = l.split_whitespace().next() else { continue };
+        let Some((net, bits)) = dst.split_once('/') else { continue };
+        let Ok(bits) = bits.parse::<u32>() else { continue };
+        if !crate::util::looks_like_cidr(dst) || bits <= pod_bits || bits >= 32 || !crate::util::in_cidr(net, pods) {
+            continue;
+        }
+        if !local.clone().any(|a| crate::util::in_cidr(a, dst)) || best.is_some_and(|(b, _)| b >= bits) {
+            continue;
+        }
+        let (mut via, mut dev) = ("", "");
+        let mut w = l.split_whitespace();
+        while let Some(t) = w.next() {
+            match t {
+                "via" => via = w.next().unwrap_or(""),
+                "dev" => dev = w.next().unwrap_or(""),
+                _ => {}
+            }
+        }
+        if !dev.is_empty() {
+            best = Some((bits, (dst, via, dev)));
+        }
+    }
+    best.map(|(_, r)| r)
+}
+
 /// Host rules: forwarding only between wg0, the private network (hub) and sandbox veths; the hub's egress table.
 /// A gateway (a shared k3s node) only fences wg0's own traffic and leaves everything else on the machine alone.
 pub fn host_rules(
@@ -213,6 +251,10 @@ const GATEWAY_LOCAL_MARK: &str = "iif wg0 lookup main suppress_prefixlength 16";
 /// Talos: wg0's traffic to the node's own addresses must be delivered, not routed) and before everything else a node
 /// has (Cilium 1-112, KubeSpan 32500, main 32766); the local-routes rule first.
 pub const GATEWAY_LOCAL_PRIO: &str = "1000";
+/// wg0's traffic to pods (`to <podCidr>`) looks up GATEWAY_TABLE before the local-routes rule: Cilium puts every
+/// node's pod /24 in the main table (via cilium_host, into its VXLAN, where the receiving node's policy sees a node,
+/// not the sandbox: egress-in admits 10.203.0.0/16 only), so sandboxes reached no egress pod (2026-11-05)
+pub const GATEWAY_PODS_PRIO: &str = "999";
 pub const GATEWAY_RULE_PRIO: &str = "1001";
 
 /// The priorities of the rules `ip rule show` lists as exactly `from all <sel>` (a `[detached]` mark aside).
@@ -390,11 +432,33 @@ impl HostNet {
             // (2026-11-05)
             let ctl = cfg.control_cidr.as_str();
             sh(&["ip", "route", "replace", ctl, "via", gw, "dev", pif.as_str(), "table", GATEWAY_TABLE])?;
+            // except this node's own pods, which stay on the node (the private network does not hairpin them)
+            {
+                let mut a = [0u8; 4096];
+                let mut r = [0u8; 8192];
+                let addrs = run(&["ip", "-o", "-4", "addr", "show"], &mut a, 10_000)?;
+                let routes = run(&["ip", "-4", "route", "show", "table", "main"], &mut r, 10_000)?;
+                match own_pod_route(addrs.out_str(), routes.out_str(), pods) {
+                    Some((dst, "", dev)) => {
+                        sh(&["ip", "route", "replace", dst, "dev", dev, "table", GATEWAY_TABLE])?;
+                    }
+                    Some((dst, via, dev)) => {
+                        sh(&["ip", "route", "replace", dst, "via", via, "dev", dev, "table", GATEWAY_TABLE])?;
+                    }
+                    None => {
+                        crate::util::Log::error("no own pod range: this node's pods are unreachable from wg0").emit();
+                    }
+                }
+            }
             let mut out3 = [0u8; 4096];
             let rules = run(&["ip", "rule", "show"], &mut out3, 10_000)?;
             // (rule GATEWAY_RULE_PRIO), except routes more specific than /16 in the main table, e.g. this node's own pod
             // /24 on cni0 (an egress pod here must not go out to the private network and back; GATEWAY_LOCAL_PRIO)
             let local = ["iif", "wg0", "lookup", "main", "suppress_prefixlength", "16"];
+            let mut pods_mark: Str<96> = Str::new();
+            let _ = write!(pods_mark, "to {pods} iif wg0 lookup {GATEWAY_TABLE}");
+            let to_pods = ["to", pods, "iif", "wg0", "lookup", GATEWAY_TABLE];
+            ensure_rule(rules.out_str(), pods_mark.as_str(), &to_pods, GATEWAY_PODS_PRIO)?;
             ensure_rule(rules.out_str(), GATEWAY_LOCAL_MARK, &local, GATEWAY_LOCAL_PRIO)?;
             ensure_rule(
                 rules.out_str(),
@@ -739,10 +803,27 @@ mod tests {
         assert_eq!((p.next(), p.next()), (Some("99"), None));
         // after the local rule and Cilium's (up to 112), before KubeSpan's and main, on no priority Talos uses
         let (l, g): (u32, u32) = (GATEWAY_LOCAL_PRIO.parse().unwrap(), GATEWAY_RULE_PRIO.parse().unwrap());
-        assert!(112 < l && l < g && g < 32500);
-        for prio in [GATEWAY_LOCAL_PRIO, GATEWAY_RULE_PRIO] {
+        let pp: u32 = GATEWAY_PODS_PRIO.parse().unwrap();
+        assert!(112 < pp && pp < l && l < g && g < 32500);
+        for prio in [GATEWAY_PODS_PRIO, GATEWAY_LOCAL_PRIO, GATEWAY_RULE_PRIO] {
             assert!(!talos.lines().any(|x| x.split(':').next() == Some(prio)));
         }
+    }
+
+    #[test]
+    fn own_pod_range() {
+        // yyc-talos-gw1 (2026-11-05): Cilium routes every node's /24 the same way; cilium_host holds 10.210.7.207
+        let addrs = "1: lo    inet 127.0.0.1/8 scope host lo\n9: eth1    inet 10.0.0.7/32 metric 1024 scope global eth1\n13: cilium_host    inet 10.210.7.207/32 scope global cilium_host\n37: wg0    inet 10.202.0.1/24 scope global wg0\n";
+        let routes = "default via 172.16.0.1 dev warp0 proto static metric 1024 \n10.0.0.0/16 via 10.0.0.1 dev eth1 src 10.0.0.7 metric 1024 \n10.202.0.0/24 dev wg0 proto kernel scope link src 10.202.0.1 \n10.210.3.0/24 via 10.210.7.207 dev cilium_host proto kernel src 10.210.7.207 mtu 1270 \n10.210.7.0/24 via 10.210.7.207 dev cilium_host proto kernel src 10.210.7.207 \n10.210.7.207 dev cilium_host proto kernel scope link \n10.210.8.0/24 via 10.210.7.207 dev cilium_host proto kernel src 10.210.7.207 mtu 1270 \n";
+        assert_eq!(
+            own_pod_route(addrs, routes, "10.210.0.0/16"),
+            Some(("10.210.7.0/24", "10.210.7.207", "cilium_host"))
+        );
+        // flannel: the node's /24 on cni0, the others on flannel.1
+        let addrs = "5: cni0    inet 10.244.3.1/24 brd 10.244.3.255 scope global cni0\n";
+        let routes = "10.244.0.0/24 via 10.244.0.0 dev flannel.1 onlink \n10.244.3.0/24 dev cni0 proto kernel scope link src 10.244.3.1 \n";
+        assert_eq!(own_pod_route(addrs, routes, "10.244.0.0/16"), Some(("10.244.3.0/24", "", "cni0")));
+        assert_eq!(own_pod_route("", routes, "10.244.0.0/16"), None);
     }
 
     #[test]
