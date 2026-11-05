@@ -385,4 +385,14 @@ symlinked root refused by the hook (`sent_files::tests::only_regular_files_are_o
   The spike runs the agent with `HOME=/home/node` (the container image's user) rather than the sandbox's
   `/home/sandbox`; `--setting-sources=` and the managed settings path do not depend on `HOME`. It is a recorded
   live check (the task record), not part of CI.
+- Decision 17's resume check ran on 2026-11-05 with the real Claude Code 2.1.304 (`spikes/ask-resume/run.sh`, its
+  output in `spikes/ask-resume/results.txt`: the argv of 6.1 with `AskUserQuestion` allowed, a model stand-in that
+  asks a question). Closing stdin while the question is open makes Claude Code fail it itself ("Tool permission stream
+  closed before response received") and call the model again; SIGTERM (or SIGKILL) leaves the transcript ending at
+  the question's `tool_use`. A resumed Claude Code ignores a late `control_response` for the old `request_id` (no
+  output, no model call), closes the open `tool_use` with a synthetic "[Tool call interrupted …]" result and a
+  synthetic "No response requested." line when the next user message comes, and reduces a user message holding a
+  `tool_result` for the question to "(no content)". So a parked turn's generation ends by SIGTERM with stdin open, and
+  its answer is the resumed turn's next user message (`prompt::answers`). A recorded live check, not part of CI; the
+  driver tests' fake `claude` copies the stdin-close behaviour.
 - The soak's synthetic turns with 1 MiB lines (WP-21 deviation 6) and `nightly.yml` (WP-28).

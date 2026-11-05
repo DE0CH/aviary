@@ -342,6 +342,7 @@ async fn turn(State(w): State<Arc<World>>, Json(t): Json<TurnRequest>) -> Json<V
                 provider_session_id: t.resume,
             },
             sent_at: magpie_api::Timestamp::now(),
+            answers: Vec::new(),
         }),
     );
     Json(json!({ "turnId": turn_id, "cmdSeq": seq }))

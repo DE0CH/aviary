@@ -223,7 +223,8 @@ pub async fn reacquire(tx: &Tx<'_>, person: &str, c: &Conv, turn: &Turn, driver:
     }
     tx.execute(
         "update turns set state = 'preparing', sandbox_id = null, ready_at = null,
-                deadline = least(now() + make_interval(secs => $2), created_at + make_interval(secs => $5)),
+                deadline = least(now() + make_interval(secs => $2),
+                               coalesce(resumed_at, created_at) + make_interval(secs => $5)),
                 driver = case when $3::text is not null then $3 when driver_until > now() then driver end,
                 driver_until = case when $3::text is not null then now() + make_interval(secs => $4)
                                     when driver_until > now() then driver_until end
@@ -273,6 +274,7 @@ async fn show_preparing(tx: &Tx<'_>, person: &str, c: &Conv, conversation: Uuid,
 struct Claimed {
     conversation: Uuid,
     person: String,
+    /// Admitted at (a parked turn: when its answers admitted it again).
     created_at: OffsetDateTime,
     /// `turns.deadline` at the claim (a re-acquire moves it; [`deadline_passes`] follows the row).
     deadline: OffsetDateTime,
@@ -289,8 +291,8 @@ async fn claim(d: &Driver, turn: Uuid) -> Result<Option<Claimed>> {
              where t.id = $1 and c.id = t.conversation_id and t.state in ('admitted', 'preparing')
                and not c.migrating and t.origin <> 'import'
                and (t.driver is null or t.driver_until is null or t.driver_until < now())
-             returning t.conversation_id, c.person, t.created_at,
-                       coalesce(t.deadline, t.created_at + make_interval(secs => $4))",
+             returning t.conversation_id, c.person, coalesce(t.resumed_at, t.created_at),
+                       coalesce(t.deadline, coalesce(t.resumed_at, t.created_at) + make_interval(secs => $4))",
             &[&turn, &d.pod, &secs(limits::DRIVER_CLAIM), &secs(limits::ADMIT_TIMEOUT)],
         )
         .await?;

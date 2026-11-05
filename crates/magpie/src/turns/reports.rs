@@ -64,7 +64,7 @@ async fn running(tx: &Tx<'_>, c: &Locked, caller: &Sandbox, turn: &Turn, r: &Tur
         .await?;
     }
     tx.execute(
-        "update turns set state = 'running', started_at = $2, ready_at = coalesce(ready_at, now()),
+        "update turns set state = 'running', started_at = coalesce(started_at, $2), ready_at = coalesce(ready_at, now()),
                 sandbox_id = coalesce(sandbox_id, $3), driver = null, driver_until = null
          where id = $1",
         &[&turn.id, &r.at.0, &caller.sandbox],
@@ -156,8 +156,12 @@ pub async fn turn_state(pool: &Pool, caller: &Sandbox, turn_id: Uuid, r: TurnSta
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let c = caller::lock(t, caller).await?;
         let turn = load(t, c.id, turn_id).await?.ok_or_else(Error::not_found)?;
+        if r.state == ReportedState::Parked {
+            // the sandbox goes while the turn waits only on its questions (DECISIONS 17)
+            return super::parked::park(t, &c.person, &turn, &r).await;
+        }
         let outcome = match r.state {
-            ReportedState::Running => None,
+            ReportedState::Running | ReportedState::Parked => None,
             ReportedState::Completed => Some(TurnOutcome::Completed),
             ReportedState::Failed => Some(TurnOutcome::Failed),
             ReportedState::Canceled => Some(TurnOutcome::Canceled),

@@ -332,6 +332,35 @@ pub struct StartTurn {
     pub resume: Resume,
     /// When the person sent it.
     pub sent_at: Timestamp,
+    /// A parked turn's resumption (DECISIONS 17): the person's answers to the questions it waited on, delivered as
+    /// the turn's next message instead of `text` (a resumed Claude Code no longer takes an answer to a question
+    /// its predecessor asked; supervisor 7.6). Empty for every other turn.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub answers: Vec<ParkedAnswer>,
+}
+
+/// One answer of a parked turn's `start_turn`: the question as it was asked, and the person's answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParkedAnswer {
+    /// The ask.
+    pub ask_id: String,
+    /// `AskUserQuestion`, `ExitPlanMode` or another tool that asked.
+    pub tool_name: String,
+    /// The tool call the question was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    /// The tool input as asked.
+    #[serde(default)]
+    pub input: Map<String, Value>,
+    /// Allow or deny.
+    pub allow: bool,
+    /// The tool input with the person's answer (`AskUserQuestion`: `answers`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_input: Option<Map<String, Value>>,
+    /// The deny message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// A file of `start_turn`.
@@ -472,6 +501,9 @@ pub enum ReportedState {
     Failed,
     /// Ended by a cancel.
     Canceled,
+    /// The turn waits only on its open asks and its sandbox goes (DECISIONS 17): it is neither ended nor failed;
+    /// the asks stay open and the person's answer resumes it in a new sandbox.
+    Parked,
 }
 
 /// `POST /v1/sandbox/turns/{turnId}/state` → 204; 409 `bad_transition` (with `state`) / `transcript_pending`.

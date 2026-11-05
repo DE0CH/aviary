@@ -136,7 +136,7 @@ fn expected(m: &Model) -> Vec<(String, Option<String>)> {
         .iter()
         .filter_map(|l| {
             let v: serde_json::Value = serde_json::from_slice(l).unwrap();
-            match magpie::ccfs::classify::classify(Some(&v), magpie::ccfs::classify::Context { echo_pending: false }) {
+            match magpie::ccfs::classify::classify(Some(&v), magpie::ccfs::classify::Context::default()) {
                 magpie::ccfs::classify::Class::Event(e) => Some((e.kind.to_owned(), e.uuid.clone())),
                 _ => None,
             }

@@ -110,7 +110,7 @@ pub async fn end(tx: &Tx<'_>, person: &str, turn: &Turn, ending: Ending) -> Resu
         .map(|e| e.detail.clone().unwrap_or_else(|| e.message.clone()));
     tx.execute(
         "update turns set state = $2, ended_at = now(), end_seq = $3, error_code = $4, error_detail = $5,
-                usage = coalesce($6, usage), duration_ms = coalesce($7, duration_ms), deadline = null,
+                usage = coalesce($6, usage), duration_ms = coalesce(coalesce(parked_ms, 0) + $7, duration_ms, parked_ms), deadline = null,
                 driver = null, driver_until = null
          where id = $1",
         &[

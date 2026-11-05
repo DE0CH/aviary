@@ -644,6 +644,20 @@ async fn finish(imp: &Importer, o: &OpenRow, seen: &mut uploads::Seen, fenced: s
         tracing::info!(conversation = %o.id, changes = ?changes, "changed inside the fence: unfenced");
         return Ok(false);
     }
+    // its parked questions go with it (DECISIONS 17); an answered one waits for its turn on the old stack
+    let questions = match crate::questions::read(&imp.cloudcli, &o.schema, o.id).await {
+        Ok(q) if q.iter().any(|q| q.answer.is_some()) => {
+            let _ = fence::unfence(pool, o.id).await;
+            tracing::info!(conversation = %o.id, "an answered question waits for its turn: unfenced");
+            return Ok(false);
+        }
+        Ok(q) => q,
+        Err(e) => {
+            let _ = fence::unfence(pool, o.id).await;
+            tracing::warn!(conversation = %o.id, error = %e, "its open questions could not be read: unfenced");
+            return Ok(false);
+        }
+    };
     let id = o.id;
     let held = aviary_pg::tx!(pool, |t| -> Result<Result<fence::Released, fence::NotReleased>> {
         imp.check_lock_in(t).await?;
@@ -662,6 +676,7 @@ async fn finish(imp: &Importer, o: &OpenRow, seen: &mut uploads::Seen, fenced: s
                 &[&id],
             )
             .await?;
+            crate::questions::carry(t, &o.person, id, &questions).await?;
         }
         Ok(out)
     })

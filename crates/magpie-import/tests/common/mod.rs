@@ -142,6 +142,17 @@ CREATE TABLE jarvis_failed_turns (
     error TEXT COLLATE "C" NOT NULL,
     error_at TEXT COLLATE "C" NOT NULL
 );
+CREATE TABLE jarvis_open_questions (
+    request_id TEXT COLLATE "C" NOT NULL PRIMARY KEY,
+    session_id TEXT COLLATE "C" NOT NULL,
+    provider_session_id TEXT COLLATE "C",
+    tool_name TEXT COLLATE "C" NOT NULL,
+    tool_use_id TEXT COLLATE "C",
+    input TEXT COLLATE "C" NOT NULL,
+    run_options TEXT COLLATE "C" NOT NULL,
+    asked_at TEXT COLLATE "C" NOT NULL,
+    answer TEXT COLLATE "C"
+);
 "#;
 
 /// The old chat stack's audit table the importer reads (database `jarvis`).

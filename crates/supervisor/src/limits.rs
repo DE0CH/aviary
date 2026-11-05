@@ -93,7 +93,9 @@ pub const HOLD_SILENCE: Duration = Duration::from_mins(30);
 pub const WAKEUP_SLACK: Duration = Duration::from_mins(2);
 pub const SUPERSEDE_WAIT: Duration = Duration::from_secs(5);
 pub const CANCEL_HOLD_WAIT: Duration = Duration::from_secs(10);
-pub const ASK_TIMEOUT: Duration = Duration::from_mins(30);
+/// A safety limit only: a question that waits never holds a sandbox (its turn is parked, DECISIONS 17), so the wait
+/// is the person's; after this long the question is answered as timed out and the model may ask again.
+pub const ASK_TIMEOUT: Duration = Duration::from_hours(7 * 24);
 /// Crash loop: [`CRASH_LOOP_EXITS`] exits within [`CRASH_LOOP_WINDOW`] refuse new starts for [`CRASH_LOOP_PAUSE`].
 pub const CRASH_LOOP_EXITS: usize = 3;
 pub const CRASH_LOOP_WINDOW: Duration = Duration::from_secs(60);

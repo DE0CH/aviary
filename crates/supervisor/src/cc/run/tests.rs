@@ -6,7 +6,9 @@
 //! `say:X`, `echo` (the whole text and the image count), `fail`, `hang` (until an interrupt), `deaf` (ignores
 //! interrupts), `crash:N`, `bg:ID` (a background Bash task), `bgdone:ID:MS` (one that completes after MS and wakes
 //! the agent), `wake:MS` (an agent turn after MS), `slowwake:MS` (an agent turn after MS whose result comes 1.5 s
-//! later), `ask` (an `AskUserQuestion` that needs a person).
+//! later), `ask` (an `AskUserQuestion` that needs a person: its `tool_use`, then the `can_use_tool`), `askbash` (the
+//! same beside a Bash call still running). Like Claude Code 2.1.304, the fake answers an open question itself when
+//! its stdin closes ("Tool permission stream closed before response received") and calls the model again.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
@@ -177,7 +179,14 @@ impl Fake {
                     self.timers
                         .push((std::time::Instant::now() + Duration::from_millis(ms), format!("{cmd}:")));
                 }
-                "ask" => {
+                "ask" | "askbash" => {
+                    let mut tools = vec![json!({"type": "tool_use", "id": "toolu_ask", "name": "AskUserQuestion",
+                                                "input": {"questions": [{"question": "Which?"}]}})];
+                    if cmd == "askbash" {
+                        tools.push(json!({"type": "tool_use", "id": "toolu_bash", "name": "Bash",
+                                          "input": {"command": "sleep 600"}}));
+                    }
+                    self.assistant("a question", &tools);
                     self.system(json!({"type": "control_request", "request_id": "ask-1", "request": {
                         "subtype": "can_use_tool", "tool_name": "AskUserQuestion", "requires_user_interaction": true,
                         "tool_use_id": "toolu_ask", "input": {"questions": [{"question": "Which?"}]}}}));
@@ -295,6 +304,10 @@ impl Fake {
         }
         let r = &v["response"]["response"];
         self.note(&format!("answer {}", r["toolUseID"].as_str().unwrap_or("-")));
+        let result = json!({"type": "user", "uuid": Uuid::new_v4().to_string(), "parent_tool_use_id": null,
+                            "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_ask",
+                                                                     "content": "answered"}]}});
+        out_line(&mut self.out, &result);
         let text = format!(
             "answered {} {}",
             r["behavior"].as_str().unwrap_or(""),
@@ -375,6 +388,16 @@ fn fake_claude() {
             }
             Ok(None) => {
                 fake.note("eof");
+                if fake.waiting == Some("answer") {
+                    // Claude Code 2.1.304: the open question fails and the model is called again
+                    fake.note("eof while asking: the question failed and the model was called again");
+                    let v = json!({"type": "user", "uuid": Uuid::new_v4().to_string(), "parent_tool_use_id": null,
+                                   "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_ask", "is_error": true,
+                                   "content": "Tool permission request failed: AbortError: Tool permission stream closed before response received"}]}});
+                    out_line(&mut fake.out, &v);
+                    fake.assistant("No response requested.", &[]);
+                    fake.result(true, "done");
+                }
                 std::process::exit(0);
             }
             Err(_) => {}
@@ -613,6 +636,7 @@ impl World {
                     provider_session_id: resume,
                 },
                 sent_at: magpie_api::Timestamp::now(),
+                answers: Vec::new(),
             }),
         );
         (id, seq)
@@ -1231,6 +1255,7 @@ async fn a_restart_replays_a_written_prompt_exactly_once() {
                     provider_session_id: None,
                 },
                 sent_at: magpie_api::Timestamp::now(),
+                answers: Vec::new(),
             };
             let line = prompt::user_line(
                 &prompt::content(prompt::text(&s.text, &[], &[]), &[]),
@@ -2277,8 +2302,224 @@ async fn sent_files_refuse_oversized_files_at_once_and_wait_out_a_migration() {
 
 #[test]
 fn an_unanswered_ask_is_closed_with_the_timeout_answer() {
+    // a long safety limit: a question that waits never holds a sandbox (DECISIONS 17)
     assert_eq!(
         super::ask_timeout_answer(),
-        "User has not answered in 30 minutes, the session has timed out, ask again if needed."
+        "User has not answered in 7 days, the session has timed out, ask again if needed."
     );
+    assert_eq!(super::span(Duration::from_mins(30)), "30 minutes");
+    assert_eq!(super::span(Duration::from_hours(1)), "1 hour");
+}
+
+// ---- DECISIONS 17: a question nobody answers never holds a sandbox ----
+
+fn idle_release() -> supervisor_api::control::ReleaseRequest {
+    supervisor_api::control::ReleaseRequest {
+        reason: hermit_api::sandbox::ReleaseReason::Idle,
+        code: hermit_api::sandbox::ReleaseCallCode::SandboxReleased,
+        force: false,
+        deadline_ms: 30_000,
+    }
+}
+
+async fn asked(w: &World) -> String {
+    until("the ask", || !w.magpie.script().calls_to("ask_open").is_empty()).await;
+    w.magpie.script().calls_to("ask_open")[0].body.clone().unwrap()["askId"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+async fn state_seen(w: &World, turn: Uuid, state: &str) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(40);
+    loop {
+        if let Some(b) = w.states(turn).into_iter().find(|b| b["state"] == state) {
+            return b;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "turn {turn} not {state}: {:?}\nfake:\n{}",
+            w.state_names(turn),
+            texts(w)
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// The release of a run that waits only on its question parks the turn (reported `parked`, never ended, the ask
+/// never resolved), ends Claude Code without closing its stdin (which would make it fail the question and call the
+/// model), and the person's answer later resumes the same turn in a new sandbox: `--resume`, the answer as the
+/// turn's next message, worded as `AskUserQuestion`'s own result, and the turn completes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_question_nobody_answers_is_parked_and_its_answer_resumes_the_turn_in_a_new_sandbox() {
+    let w = world().await;
+    let first = w.attach(None, crate::start::Reattach::Nothing).await;
+    let (t, _) = w.turn("ask;say:after");
+    let ask = asked(&w).await;
+    let d = first.driver.clone();
+    until("asking", || d.status().borrow().state == ActivityState::Asking).await;
+    let s = first.driver.status().borrow().clone();
+    assert!(!s.busy() && s.busy_for_pause(), "{s:?}");
+    assert!(s.idle_since.is_some(), "idle for hermit from the question on");
+    assert_eq!(s.turn_id, Some(t));
+    assert_eq!(
+        first.lifecycle.release(idle_release()).await,
+        supervisor_api::control::Outcome::Done
+    );
+    let parked = state_seen(&w, t, "parked").await;
+    assert!(parked["durationMs"].is_u64(), "{parked}");
+    assert_eq!(w.state_names(t), vec!["running", "parked"], "neither ended nor failed");
+    assert!(
+        w.magpie.script().calls_to("ask_resolved").is_empty(),
+        "the ask stays open in magpie"
+    );
+    let log = texts(&w);
+    assert!(!log.contains("eof"), "stdin was closed: {log}");
+    drop(first);
+
+    // the person answers: magpie gets a new sandbox (a fresh local disk, the same /workspace), whose supervisor
+    // resumes the conversation
+    let _ = std::fs::remove_dir_all(w.dir.join("gens"));
+    let _ = std::fs::remove_dir_all(w.dir.join("state"));
+    let second = w.attach(None, crate::start::Reattach::Nothing).await;
+    let mut given = serde_json::Map::new();
+    given.insert("questions".into(), json!([{"question": "Which?"}]));
+    given.insert("answers".into(), json!({"Which?": "this one"}));
+    let input = given.clone();
+    w.magpie.push_command(
+        w.cid,
+        Some(t),
+        CommandBody::StartTurn(StartTurn {
+            text: String::new(),
+            files: vec![],
+            images: vec![],
+            resume: Resume {
+                provider_session_id: Some(w.cid.to_string()),
+            },
+            sent_at: magpie_api::Timestamp::now(),
+            answers: vec![magpie_api::sandbox::ParkedAnswer {
+                ask_id: ask,
+                tool_name: "AskUserQuestion".into(),
+                tool_use_id: Some("toolu_ask".into()),
+                input,
+                allow: true,
+                updated_input: Some(given),
+                message: None,
+            }],
+        }),
+    );
+    assert_eq!(state_seen(&w, t, "completed").await["state"], "completed");
+    assert_eq!(w.state_names(t), vec!["running", "parked", "running", "completed"]);
+    let spawns = w.spawns();
+    assert!(
+        spawns.last().unwrap().contains(&format!("--resume {}", w.cid)),
+        "{spawns:?}"
+    );
+    let prompts = w.prompts();
+    assert!(
+        prompts
+            .last()
+            .unwrap()
+            .starts_with("prompt The user answered: \"Which?\"=\"this one\"."),
+        "{prompts:?}"
+    );
+    w.idle(&second).await;
+}
+
+/// A question beside a tool call that still runs, or beside a background task, is not a wait on the person alone:
+/// the run stays busy and an unforced release is refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_question_beside_a_running_tool_or_a_background_task_keeps_its_sandbox() {
+    for script in ["askbash", "bg:t1;ask"] {
+        let w = world().await;
+        let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+        let (t, _) = w.turn(script);
+        asked(&w).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let s = sup.driver.status().borrow().clone();
+        assert_eq!(s.state, ActivityState::Running, "{script}: {s:?}");
+        assert!(s.busy(), "{script}");
+        assert!(
+            matches!(
+                sup.lifecycle.release(idle_release()).await,
+                supervisor_api::control::Outcome::Busy(_)
+            ),
+            "{script}"
+        );
+        assert_eq!(w.state_names(t), vec!["running"], "{script}");
+        assert_eq!(sup.lifecycle.phase(), crate::lifecycle::Phase::Serving);
+    }
+}
+
+/// The time a question waits is no working time: the turn's reported duration leaves it out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_time_a_question_waits_is_not_the_turns_working_time() {
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let started = Instant::now();
+    let (t, _) = w.turn("ask;say:after");
+    let ask = asked(&w).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let a = w.magpie.push_command(
+        w.cid,
+        None,
+        CommandBody::AnswerAsk(AnswerAsk {
+            ask_id: ask,
+            allow: true,
+            updated_input: Some(serde_json::Map::new()),
+            message: None,
+        }),
+    );
+    w.acked(a).await;
+    let end = w.ended(t).await;
+    let wall = started.elapsed();
+    let worked = Duration::from_millis(end["durationMs"].as_u64().unwrap());
+    assert!(wall >= Duration::from_secs(3));
+    assert!(
+        worked + Duration::from_millis(2_500) < wall,
+        "worked {worked:?} of {wall:?}"
+    );
+    w.idle(&sup).await;
+}
+
+fn open_ask(st: &mut St, turn: Uuid) {
+    st.asks.push(Ask {
+        ask_id: "a1".into(),
+        cli_request_id: "ask-1".into(),
+        tool_name: "AskUserQuestion".into(),
+        tool_use_id: Some("toolu_ask".into()),
+        since: now(),
+        since_mono: Instant::now(),
+        lane: Some(turn),
+    });
+    st.sync_asks();
+}
+
+/// The silence ceiling and the turn's working time stand still while a question is open and go on after it.
+#[tokio::test(start_paused = true)]
+async fn no_turn_timer_runs_while_a_question_is_open() {
+    let mut st = St::new();
+    let id = Uuid::now_v7();
+    st.turn = Some(Turn::new(id, TurnOrigin::Person));
+    st.run = RunKind::Running;
+    st.last_output_mono = Instant::now();
+    tokio::time::advance(Duration::from_mins(10)).await;
+    open_ask(&mut st, id);
+    tokio::time::advance(Duration::from_hours(2)).await;
+    let turn = st.turn.clone().unwrap();
+    assert_eq!(
+        st.worked(&turn),
+        Duration::from_mins(10),
+        "the open question's wait is not counted"
+    );
+    st.asks.clear();
+    st.sync_asks();
+    tokio::time::advance(Duration::from_mins(1)).await;
+    assert_eq!(
+        Instant::now().duration_since(st.last_output_mono),
+        Duration::from_mins(11)
+    );
+    let turn = st.turn.clone().unwrap();
+    assert_eq!(st.worked(&turn), Duration::from_mins(11));
+    assert_eq!(turn.ask_wait, Duration::from_hours(2));
 }

@@ -82,6 +82,15 @@ pub struct TurnRef {
     pub started_at: Timestamp,
     /// `person` or `agent`.
     pub origin: TurnOrigin,
+    /// How long the turn's answered questions waited for the person (DECISIONS 17): working time is
+    /// `now - startedAt - askWaitMs` while no question is open, and stands still while one is.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub ask_wait_ms: u64,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if signature
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 /// The most recent ended turn.

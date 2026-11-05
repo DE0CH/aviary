@@ -263,8 +263,12 @@ pub enum ActivityState {
     Running,
     /// An interrupt in progress.
     Stopping,
-    /// Background tasks or an open ask after the turn.
+    /// Background tasks after the turn.
     Held,
+    /// The run waits only on a person's answer to an open question (`AskUserQuestion`, `ExitPlanMode`): no tool or
+    /// background task runs. Not busy: the wait counts as idle, and a release parks the turn (supervisor 7.6,
+    /// DECISIONS 17).
+    Asking,
     Idle,
     /// The release sequence has finished: hermit may destroy the sandbox.
     Released,
@@ -277,12 +281,14 @@ wire_enum!(ActivityState {
     Running => "running",
     Stopping => "stopping",
     Held => "held",
+    Asking => "asking",
     Idle => "idle",
     Released => "released",
 });
 
 impl ActivityState {
-    /// `starting`, `running`, `stopping`, `held` and an unknown state are busy; `idle` and `released` are not.
+    /// `starting`, `running`, `stopping`, `held` and an unknown state are busy; `asking`, `idle` and `released` are
+    /// not.
     #[must_use]
     pub fn is_busy(self) -> bool {
         matches!(
@@ -452,6 +458,7 @@ mod tests {
             (S::Running, true),
             (S::Stopping, true),
             (S::Held, true),
+            (S::Asking, false),
             (S::Idle, false),
             (S::Released, false),
             (S::Unknown, true),

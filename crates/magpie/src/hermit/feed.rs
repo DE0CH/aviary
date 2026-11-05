@@ -159,7 +159,8 @@ async fn gone(
     )
     .await?;
     if let Some(turn) = active(tx, conversation).await?.filter(|t| !t.state.is_ended()) {
-        if turn.sandbox != Some(sandbox) {
+        // a parked turn has no sandbox: the one that went is the one it let go (DECISIONS 17)
+        if turn.state == crate::turns::State::Parked || turn.sandbox != Some(sandbox) {
             return Ok(());
         }
         let (_, acked) = start_turn_status(tx, &turn).await?;

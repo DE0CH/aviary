@@ -83,6 +83,8 @@ pub struct RunPart {
     /// The queued turn's interrupt, as the turn's, and whether its message is with the writer.
     pub queued_interrupt_elapsed_ms: Option<u64>,
     pub queued_handed: Option<bool>,
+    /// The main thread's tool calls without a result yet (an `asking` run's open calls are all its questions).
+    pub open_tools: Vec<String>,
 }
 
 impl Default for RunPart {
@@ -98,6 +100,7 @@ impl Default for RunPart {
             last_uuid: None,
             queued_turn_id: None,
             handed: None,
+            open_tools: Vec::new(),
             queued_interrupt_elapsed_ms: None,
             queued_handed: None,
         }

@@ -3,7 +3,7 @@
 //! deadlines and the watchdog ([`sweeper`]), titles ([`titles`]) and the one way a turn ends ([`end`]).
 //!
 //! The state machine (magpie 8.1): `admitted` → (`preparing`) → `starting` → `running` → (`stopping`) → `completed`
-//! | `failed` | `canceled`. Every transition runs in one transaction under the conversation row lock
+//! | `failed` | `canceled`; `running` → `parked` → (the person's answers) `admitted` again (DECISIONS 17). Every transition runs in one transaction under the conversation row lock
 //! ([`crate::conversations::lock`] or [`caller::lock`]), which serialises the writers of a conversation; the turn's
 //! row is only read and written after that lock. The conversation's `run_state` follows its active turn.
 
@@ -13,6 +13,7 @@ pub mod cancel;
 pub mod commands;
 pub mod driver;
 pub mod end;
+pub mod parked;
 pub mod reports;
 pub mod sweeper;
 pub mod titles;
@@ -101,6 +102,9 @@ pub enum State {
     Running,
     /// A cancel was sent to the supervisor.
     Stopping,
+    /// Its sandbox went while it waited only on its open questions (DECISIONS 17): no sandbox, no deadline; the
+    /// person's answers re-admit it ([`parked`]), a cancel ends it.
+    Parked,
     /// Ended: the reply finished.
     Completed,
     /// Ended: failed (with a code).
@@ -119,6 +123,7 @@ impl State {
             "starting" => State::Starting,
             "running" => State::Running,
             "stopping" => State::Stopping,
+            "parked" => State::Parked,
             "completed" => State::Completed,
             "canceled" => State::Canceled,
             _ => State::Failed,
@@ -134,6 +139,7 @@ impl State {
             State::Starting => "starting",
             State::Running => "running",
             State::Stopping => "stopping",
+            State::Parked => "parked",
             State::Completed => "completed",
             State::Failed => "failed",
             State::Canceled => "canceled",

@@ -285,6 +285,12 @@ pub async fn project(tx: &Tx<'_>, ev: &Stored) -> Result<()> {
             if let Some(n) = &meta.task_notification {
                 // rule 3
                 update_tool(tx, &mut w, ev, &n.tool_use_id, &body, &meta).await?;
+            } else if meta.ask_answer == Some(true) {
+                // rule 5 for a parked turn's answers (DECISIONS 17): the questions' result, no prompt row
+                let ids: Vec<String> = meta.results.iter().flatten().map(|r| r.tool_use_id.clone()).collect();
+                for id in ids {
+                    update_tool(tx, &mut w, ev, &id, &body, &meta).await?;
+                }
             } else {
                 let results = derive::tool_results(line);
                 if results.is_empty() {

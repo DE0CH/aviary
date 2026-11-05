@@ -88,7 +88,13 @@ pub async fn answer_ask(app: &Magpie, ctx: Ctx, id: Uuid, ask_id: String, body: 
         async {
             let person = Person::from_ctx(&ctx)?;
             let (ask_id, body) = (&ask_id, &body);
-            legacy::fence::native(app, id, || cancel::answer(&app.pool, &person, id, ask_id, body.clone())).await
+            let resumed =
+                legacy::fence::native(app, id, || cancel::answer(&app.pool, &person, id, ask_id, body.clone())).await?;
+            // a parked turn's last answer admitted it again (DECISIONS 17): its driver gets it a sandbox
+            if let Some(turn) = resumed {
+                driver::spawn(Driver::of(app), turn);
+            }
+            Ok(())
         }
         .await,
     )

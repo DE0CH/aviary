@@ -2713,3 +2713,193 @@ async fn a_drivers_answer_never_records_another_sandbox_over_the_feeds() {
     record(y, SandboxState::Starting, 1, Seen::Answer).await;
     assert_eq!(recorded().await.2, Some(2), "an older version of y is ignored");
 }
+
+// ---- DECISIONS 17: a question nobody answers never holds a sandbox ----
+
+fn ask_report(id: &str, tool_use: &str) -> AskReport {
+    AskReport {
+        ask_id: id.into(),
+        tool_name: "AskUserQuestion".into(),
+        tool_use_id: Some(tool_use.into()),
+        input: serde_json::from_value(json!({"questions": [{"question": "Which?"}]})).unwrap(),
+    }
+}
+
+#[allow(clippy::needless_pass_by_value)] // json! literals
+fn allow(answers: serde_json::Value) -> AgentPermissionResponse {
+    AgentPermissionResponse {
+        behavior: Behavior::Allow,
+        selected_action_id: None,
+        updated_input: Some(serde_json::from_value(json!({"answers": answers})).unwrap()),
+        updated_permissions: None,
+        message: None,
+        interrupt: None,
+    }
+}
+
+fn parked(ms: u64) -> TurnStateReport {
+    let mut r = report(ReportedState::Parked);
+    r.duration_ms = Some(ms);
+    r
+}
+
+/// The turn is neither ended nor failed when its sandbox goes; the question stays on the person's screen; the
+/// answer is recorded at once and admits the turn again, whose `start_turn` (in a new sandbox) resumes the session
+/// with the answer; the turn then completes, its working time the two parts without the wait.
+#[tokio::test]
+async fn a_parked_turn_keeps_its_question_and_its_answer_resumes_it_in_a_new_sandbox() {
+    let w = World::new("turn_parked", Some(Duration::ZERO)).await;
+    let conv = w.conversation().await;
+    let turn = w.send(conv, "m1", "ask me").await;
+    assert!(w.state_is(turn, "starting").await);
+    let sup = w.supervisor(conv).await;
+    let first = sup.sandbox;
+    sup.run(turn).await;
+    sup.calls().ask_open(&ask_report("ask-1", "toolu_9")).await.unwrap();
+    sup.calls().turn_state(turn, &parked(1_200)).await.unwrap();
+    sup.calls().turn_state(turn, &parked(1_200)).await.unwrap();
+    assert_eq!(w.turn(turn).await.0, "parked");
+    // the sandbox goes (hermit's idle release): the feed leaves the parked turn alone
+    w.fake().end(conv, ReleaseReason::Idle, "idle");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(w.turn(turn).await.0, "parked", "neither ended nor failed");
+    let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
+    assert_eq!(c.asks.len(), 1, "the question is still on screen");
+    assert_eq!(c.turn.as_ref().map(|t| t.id), Some(turn));
+    assert_eq!(c.run.state, RunState::Running);
+    // no deadline runs while it waits: the sweeper finds nothing
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    sweeper::pass(&driver(&w.a)).await.unwrap();
+    assert_eq!(w.turn(turn).await.0, "parked");
+    let answer = allow(json!({"Which?": "B"}));
+    w.a.pigeon()
+        .person(ALICE)
+        .answer_ask(conv, "ask-1", &answer)
+        .await
+        .unwrap();
+    let e =
+        w.a.pigeon()
+            .person(ALICE)
+            .answer_ask(conv, "ask-1", &answer)
+            .await
+            .unwrap_err();
+    assert_eq!(code(&e), ErrorCode::AlreadyResolved);
+    // a new sandbox, whose supervisor gets the resumption
+    assert!(w.state_is(turn, "starting").await);
+    let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
+    assert!(c.asks.is_empty());
+    let wait = c.turn.as_ref().unwrap().ask_wait_ms;
+    assert!(wait >= 2_500, "the wait is counted apart: {wait}");
+    let sup2 = w.supervisor(conv).await;
+    assert_ne!(sup2.sandbox, first);
+    let cmds = sup2.poll(0, 5_000).await;
+    let (seq, start) = cmds
+        .commands
+        .iter()
+        .find_map(|c| match &c.body {
+            CommandBody::StartTurn(s) if c.turn_id == Some(turn) && !s.answers.is_empty() => {
+                Some((c.cmd_seq, s.clone()))
+            }
+            _ => None,
+        })
+        .expect("the resumption's start_turn");
+    assert_eq!(
+        start.resume.provider_session_id.as_deref(),
+        Some("279aabf0-1111-4222-8333-444455556666")
+    );
+    assert_eq!(start.answers.len(), 1);
+    let a = &start.answers[0];
+    assert_eq!(
+        (a.ask_id.as_str(), a.tool_use_id.as_deref(), a.allow),
+        ("ask-1", Some("toolu_9"), true)
+    );
+    assert_eq!(a.updated_input, answer.updated_input);
+    assert_eq!(a.input["questions"][0]["question"], "Which?");
+    sup2.ack(
+        seq,
+        AckResult {
+            delivered: Some(true),
+            ..AckResult::default()
+        },
+    )
+    .await;
+    sup2.report(turn, ReportedState::Running).await.unwrap();
+    let mut done = report(ReportedState::Completed);
+    done.duration_ms = Some(800);
+    sup2.calls().turn_state(turn, &done).await.unwrap();
+    assert_eq!(w.turn(turn).await.0, "completed");
+    let ms: Option<i64> = w
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select duration_ms from turns where id = $1", &[&turn])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(ms, Some(2_000), "the working time of both parts, the wait left out");
+    let kinds = w.kinds(conv).await;
+    assert_eq!(kinds.iter().filter(|k| *k == "turn.ended").count(), 1);
+    assert_eq!(kinds.iter().filter(|k| *k == "ask.resolved").count(), 1);
+}
+
+/// A cancel of a parked turn ends it at once and closes its question.
+#[tokio::test]
+async fn a_parked_turn_is_canceled_at_once() {
+    let w = World::new("turn_parked_cancel", Some(Duration::ZERO)).await;
+    let conv = w.conversation().await;
+    let turn = w.send(conv, "m1", "ask me").await;
+    assert!(w.state_is(turn, "starting").await);
+    let sup = w.supervisor(conv).await;
+    sup.run(turn).await;
+    sup.calls().ask_open(&ask_report("ask-1", "toolu_9")).await.unwrap();
+    sup.calls().turn_state(turn, &parked(10)).await.unwrap();
+    let r = w.a.pigeon().person(ALICE).cancel_turn(conv).await.unwrap();
+    assert_eq!(r.turn_id, Some(turn));
+    assert_eq!(w.turn(turn).await.0, "canceled");
+    let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
+    assert!(c.asks.is_empty() && c.turn.is_none());
+    assert_eq!(c.run.state, RunState::Idle);
+}
+
+/// An answer queued for the supervisor while it was already letting the question go is the person's answer all
+/// the same: the `parked` report finds it and the turn resumes at once.
+#[tokio::test]
+async fn an_answer_that_crossed_the_park_resumes_the_turn() {
+    let w = World::new("turn_parked_race", Some(Duration::ZERO)).await;
+    let conv = w.conversation().await;
+    let turn = w.send(conv, "m1", "ask me").await;
+    assert!(w.state_is(turn, "starting").await);
+    let sup = w.supervisor(conv).await;
+    sup.run(turn).await;
+    sup.calls().ask_open(&ask_report("ask-1", "toolu_9")).await.unwrap();
+    w.a.pigeon()
+        .person(ALICE)
+        .answer_ask(conv, "ask-1", &allow(json!({"Which?": "A"})))
+        .await
+        .unwrap();
+    sup.calls().turn_state(turn, &parked(10)).await.unwrap();
+    let (state, _, _) = w.turn(turn).await;
+    assert!(
+        ["admitted", "preparing", "starting"].contains(&state.as_str()),
+        "{state}"
+    );
+    let pending: i64 = w
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select count(*) from commands where conversation_id = $1 and type = 'answer_ask' and canceled_at is null",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        pending, 0,
+        "the answer goes with the resumption, not to the old supervisor"
+    );
+    let kinds = w.kinds(conv).await;
+    assert!(kinds.contains(&"ask.resolved".to_owned()));
+}

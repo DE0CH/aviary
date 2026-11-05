@@ -408,6 +408,41 @@ fn uuid_of(data: Option<&Value>) -> Option<&str> {
     data.and_then(|d| d.get("uuid")).and_then(Value::as_str)
 }
 
+/// [`class_of`], with a resumed parked turn's answer line made the event of its questions' result ([`answer_of`]).
+async fn class_in(tx: &Tx<'_>, op: &mut Op<'_>, sha: &Sha, data: Option<&Value>) -> Result<Class> {
+    match class_of(tx, op, sha, data).await? {
+        Class::Answer(e) => answer_of(tx, op, *e).await,
+        c => Ok(c),
+    }
+}
+
+/// A resumed parked turn's answer line (DECISIONS 17) as the result of the calls the person answered
+/// (`turns.answer_tool_uses`, cleared: the next prompt of the turn is an ordinary line again).
+async fn answer_of(tx: &Tx<'_>, op: &mut Op<'_>, mut e: classify::Event) -> Result<Class> {
+    let Some(t) = op.turn.as_mut() else {
+        return Ok(Class::Event(Box::new(e)));
+    };
+    let ids: Vec<String> = tx
+        .query_one(
+            "update turns t set answer_tool_uses = null from (select answer_tool_uses from turns where id = $1) old
+             where t.id = $1 returning coalesce(old.answer_tool_uses, '{}')",
+            &[&t.id],
+        )
+        .await?
+        .get(0);
+    t.answering = false;
+    e.meta.results = Some(
+        ids.iter()
+            .map(|id| magpie_api::events::ToolResultLink {
+                tool_use_id: id.clone(),
+                tool_use_seq: None,
+            })
+            .collect(),
+    );
+    e.results = ids;
+    Ok(Class::Event(Box::new(e)))
+}
+
 /// The class of a main-transcript line with sha256 `sha` and event data `data`.
 ///
 /// A line once classified as the echo of a person's prompt is remembered by its sha256 and its uuid for the
@@ -417,7 +452,14 @@ fn uuid_of(data: Option<&Value>) -> Option<&str> {
 /// the uuid of a retracted line is a line written again, never the echo of the turn now running (6.5).
 async fn class_of(tx: &Tx<'_>, op: &Op<'_>, sha: &Sha, data: Option<&Value>) -> Result<Class> {
     let pending = op.turn.is_some_and(|t| t.echo_pending);
-    let class = classify::classify(data, Context { echo_pending: pending });
+    let answering = op.turn.is_some_and(|t| t.answering);
+    let class = classify::classify(
+        data,
+        Context {
+            echo_pending: pending,
+            answering,
+        },
+    );
     let prompt_like = match &class {
         Class::Echo => true,
         Class::Event(e) => e.is_prompt,
@@ -427,7 +469,13 @@ async fn class_of(tx: &Tx<'_>, op: &Op<'_>, sha: &Sha, data: Option<&Value>) -> 
         return Ok(Class::Internal);
     }
     if class == Class::Echo && was_retracted(tx, op.conv.id, uuid_of(data), data).await? {
-        return Ok(classify::classify(data, Context { echo_pending: false }));
+        return Ok(classify::classify(
+            data,
+            Context {
+                echo_pending: false,
+                answering,
+            },
+        ));
     }
     Ok(class)
 }
@@ -443,8 +491,8 @@ async fn apply(
     w: Option<&mut Writer>,
 ) -> Result<Option<i64>> {
     let data = event_data(stub, spans, meta);
-    match class_of(tx, op, sha, data.as_ref()).await? {
-        Class::Internal => Ok(None),
+    match class_in(tx, op, sha, data.as_ref()).await? {
+        Class::Internal | Class::Answer(_) => Ok(None),
         Class::Echo => {
             if let Some(t) = op.turn.as_mut() {
                 tx.execute("update turns set echo_matched = true where id = $1", &[&t.id])

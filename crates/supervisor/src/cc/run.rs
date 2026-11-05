@@ -146,6 +146,9 @@ enum Why {
     Oom,
     /// A release.
     Release,
+    /// A release of a run that waited only on its questions (DECISIONS 17): its turn is parked, and the generation
+    /// ends by SIGTERM with stdin left open (a closed stdin makes Claude Code fail the question and call the model).
+    Park,
     /// An idle-point end (configuration change, stdout rotation, another session).
     Graceful,
     /// Initialisation did not complete.
@@ -174,6 +177,8 @@ struct Turn {
     /// uuids of the main-thread messages stdout showed during the turn (8.2).
     uuids: Vec<String>,
     usage: Option<magpie_api::sandbox::Usage>,
+    /// How long its questions waited for the person (not working time: DECISIONS 17).
+    ask_wait: Duration,
     /// The person's message is with the writer (a turn is installed before its message is handed over, so stdout
     /// can never open an agent turn for its answer; an interrupt meanwhile is written right after the message).
     handed: bool,
@@ -189,6 +194,7 @@ impl Turn {
             interrupt_mono: None,
             uuids: Vec::new(),
             usage: None,
+            ask_wait: Duration::ZERO,
             handed: true,
         }
     }
@@ -287,6 +293,13 @@ struct St {
     last_gen: u32,
     tracker: Tracker,
     asks: Vec<Ask>,
+    /// Since when a question has been open (the monotonic and the wall clock): no turn timer runs meanwhile.
+    asks_since: Option<(Instant, OffsetDateTime)>,
+    /// The main thread's tool calls without a result yet: a run whose open calls are all its questions waits only
+    /// on the person (`asking`).
+    open_tools: HashSet<String>,
+    /// A parked turn whose `parked` report magpie has not answered: the heartbeat still names it.
+    parking: Option<Uuid>,
     delivered: BTreeMap<u64, Delivered>,
     cmd_after: u64,
     last_turn: Option<LastTurn>,
@@ -324,6 +337,9 @@ impl St {
             last_gen: 0,
             tracker: Tracker::default(),
             asks: Vec::new(),
+            asks_since: None,
+            open_tools: HashSet::new(),
+            parking: None,
             delivered: BTreeMap::new(),
             cmd_after: 0,
             last_turn: None,
@@ -349,9 +365,64 @@ impl St {
         self.release.is_some() || self.quiesced || turn.is_some_and(|t| self.cancel_starting == Some(t))
     }
 
+    /// The run waits only on the person: questions are open, no tool call but theirs runs, no background task,
+    /// nothing queued or being stopped (DECISIONS 17).
+    fn asking(&self) -> bool {
+        !self.asks.is_empty()
+            && self.run == RunKind::Running
+            && self.starting.is_none()
+            && self.queued.is_none()
+            && self.live.is_some()
+            && self.tracker.is_empty()
+            && self
+                .turn
+                .as_ref()
+                .is_some_and(|t| t.interrupt_sent.is_none() && self.asks.iter().all(|a| a.lane == Some(t.id)))
+            && self
+                .open_tools
+                .iter()
+                .all(|id| self.asks.iter().any(|a| a.tool_use_id.as_deref() == Some(id.as_str())))
+    }
+
+    /// Keeps the question clock: when the last open question closes, its wait is added to the turn's (not working
+    /// time) and the silence ceiling's clock moves past it, so neither counts the time the person took.
+    fn sync_asks(&mut self) {
+        match (self.asks.is_empty(), self.asks_since) {
+            (false, None) => {
+                let mono = self
+                    .asks
+                    .iter()
+                    .map(|a| a.since_mono)
+                    .min()
+                    .unwrap_or_else(Instant::now);
+                let wall = self.asks.iter().map(|a| a.since).min().unwrap_or_else(now);
+                self.asks_since = Some((mono, wall));
+            }
+            (true, Some((opened, _))) => {
+                self.asks_since = None;
+                if let Some(t) = self.turn.as_mut() {
+                    t.ask_wait += opened.elapsed();
+                }
+                // the silence counted is what came before the question
+                let counted = opened.max(self.last_output_mono).duration_since(self.last_output_mono);
+                self.last_output_mono = Instant::now().checked_sub(counted).unwrap_or(self.last_output_mono);
+            }
+            _ => {}
+        }
+    }
+
+    /// The turn's working time so far: its time less the time its questions waited.
+    fn worked(&self, turn: &Turn) -> Duration {
+        let open = self.asks_since.map_or(Duration::ZERO, |(o, _)| o.elapsed());
+        turn.started.elapsed().saturating_sub(turn.ask_wait + open)
+    }
+
     fn status(&self) -> RunStatus {
+        let asking = self.asking();
         let state = if self.starting.is_some() && self.run == RunKind::Idle {
             ActivityState::Starting
+        } else if asking {
+            ActivityState::Asking
         } else {
             self.run.activity()
         };
@@ -362,7 +433,12 @@ impl St {
             tasks: u32::try_from(self.tracker.len()).unwrap_or(u32::MAX),
             asks: u32::try_from(self.asks.len()).unwrap_or(u32::MAX),
             last_output_at: Some(self.last_output.into()),
-            idle_since: self.idle_since.map(Into::into),
+            // waiting for a person is idle time for hermit, counted from the question
+            idle_since: if asking {
+                self.asks_since.map(|(_, wall)| wall.into())
+            } else {
+                self.idle_since.map(Into::into)
+            },
         }
     }
 
@@ -737,6 +813,7 @@ impl Driver {
         let r = {
             let mut st = lock(&self.st);
             let (r, change) = f(&mut st, &mut fx);
+            st.sync_asks();
             self.save(&st, change);
             let s = st.status();
             self.status.send_if_modified(|old| {
@@ -783,6 +860,7 @@ impl Driver {
                 handed: t.map(|t| t.handed),
                 queued_interrupt_elapsed_ms: st.queued.as_ref().and_then(|q| q.interrupt_mono).map(elapsed_ms),
                 queued_handed: st.queued.as_ref().map(|q| q.handed),
+                open_tools: st.open_tools.iter().cloned().collect(),
             };
             s.last_turn.clone_from(&st.last_turn);
             s.tasks = st.tracker.saved();
@@ -895,7 +973,8 @@ impl Driver {
             Outcome::Failed(e) => (ReportedState::Failed, Some(e.clone()), TurnOutcome::Failed),
             Outcome::Canceled => (ReportedState::Canceled, None, TurnOutcome::Canceled),
         };
-        let ms = u64::try_from(turn.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        st.open_tools.clear();
+        let ms = u64::try_from(st.worked(&turn).as_millis()).unwrap_or(u64::MAX);
         tracing::info!(turn = %turn.id, origin = origin_str(turn.origin), outcome = ?out, ms, held, "turn ended");
         let report = TurnStateReport {
             state,
@@ -1066,6 +1145,7 @@ impl Driver {
                 uuid,
                 main,
                 tool_uses,
+                tool_results,
                 task_notification,
                 ..
             } => {
@@ -1076,6 +1156,10 @@ impl Driver {
                     let t = now();
                     for tu in &tool_uses {
                         st.tracker.on_tool_use(tu, t);
+                        st.open_tools.insert(tu.id.clone());
+                    }
+                    for id in &tool_results {
+                        st.open_tools.remove(id);
                     }
                     if let (Some(u), Some(turn)) = (uuid, st.turn.as_mut())
                         && !turn.uuids.contains(&u)
@@ -1227,6 +1311,7 @@ impl Driver {
                 self.end_turn_now(st, fx, o, false, code);
             }
             st.tracker.clear();
+            st.open_tools.clear();
             st.pending_inputs = 0;
             for a in st.asks.drain(..) {
                 fx.push(a.resolved(AskOutcome::Canceled));
@@ -1276,6 +1361,7 @@ impl Driver {
                 Self::hold_check(st, fx, "tasks done");
             }
             if st.run == RunKind::Held
+                && st.asks.is_empty()
                 && mono.duration_since(st.last_output_mono) > HOLD_SILENCE
                 && !st.tracker.until_ahead(t)
             {
@@ -1615,16 +1701,21 @@ impl Driver {
     async fn end_generation(&self, why: Why, deadline: Instant) {
         let g = self.with(Change::State, |st, _| {
             st.live.as_mut().map(|g| {
-                g.why.get_or_insert(why);
-                (g.n, g.pid)
+                let why = g.why.get_or_insert(why);
+                (g.n, g.pid, matches!(why, Why::Park))
             })
         });
-        let Some((n, pid)) = g else { return };
+        let Some((n, pid, parked)) = g else { return };
         let gone = move |s: &St| s.live.as_ref().is_none_or(|g| g.n != n);
-        let _ = self.keeper_call(move |k| k.close_stdin(pid)).await;
-        let first = (Instant::now() + STDIN_CLOSE_GRACE).min(deadline.checked_sub(KILL_AFTER_TERM).unwrap_or(deadline));
-        if self.wait_until(Some(first), gone).await {
-            return;
+        // a parked turn's generation keeps its stdin: closed, Claude Code would answer the open question itself
+        // ("permission stream closed") and call the model again (supervisor 7.6)
+        if !parked {
+            let _ = self.keeper_call(move |k| k.close_stdin(pid)).await;
+            let first =
+                (Instant::now() + STDIN_CLOSE_GRACE).min(deadline.checked_sub(KILL_AFTER_TERM).unwrap_or(deadline));
+            if self.wait_until(Some(first), gone).await {
+                return;
+            }
         }
         let _ = self.keeper_call(move |k| k.signal(-pid, libc::SIGTERM)).await;
         let second = (Instant::now() + KILL_AFTER_TERM).min(deadline);
@@ -2020,7 +2111,13 @@ impl Driver {
                 name: i.workspace_path.rsplit('/').next().map(str::to_owned),
             })
             .collect();
-        let text = prompt::text(&s.text, &files, &shown);
+        // a parked turn's resumption: its answers are the message (a resumed Claude Code no longer takes an answer to
+        // its predecessor's question, supervisor 7.6)
+        let text = if s.answers.is_empty() {
+            prompt::text(&s.text, &files, &shown)
+        } else {
+            prompt::answers(&s.answers)
+        };
         Ok(prompt::user_line(&prompt::content(text, &images), &s.sent_at.to_wire()))
     }
 
@@ -2505,9 +2602,13 @@ impl Driver {
         // a turn whose end report is still on its way (waiting for its lines, 8.2, or for magpie) is still the turn:
         // magpie must neither take it for one the sandbox forgot nor end it before its last row (magpie 8.5)
         let ending = st.ending.first().filter(|_| st.turn.is_none());
+        // a parked turn whose report is on its way is still the turn, so magpie never takes it for one the sandbox
+        // forgot (DECISIONS 17)
+        let parking = st.parking.filter(|_| st.turn.is_none() && ending.is_none());
         Heartbeat {
-            turn_id: st.turn.as_ref().map(|t| t.id).or(ending.map(|e| e.id)),
+            turn_id: st.turn.as_ref().map(|t| t.id).or(ending.map(|e| e.id)).or(parking),
             state: match (ending, st.run) {
+                _ if parking.is_some() => HeartbeatState::Running,
                 (Some(e), _) if e.stopping => HeartbeatState::Stopping,
                 (Some(_), _) | (None, RunKind::Running | RunKind::Starting) => HeartbeatState::Running,
                 (None, RunKind::Stopping) => HeartbeatState::Stopping,
@@ -2656,6 +2757,7 @@ impl Driver {
                 st.turn = turn;
                 st.queued = queued;
                 st.pending_inputs = prior.run.pending_inputs;
+                st.open_tools = prior.run.open_tools.iter().cloned().collect();
                 st.tracker = Tracker::from_saved(&prior.tasks);
                 st.asks = prior
                     .asks
@@ -3028,6 +3130,61 @@ impl Agent for Driver {
         });
     }
 
+    fn park(&self, reason: &str) -> bool {
+        let me = self.me.clone();
+        self.with(Change::State, |st, fx| {
+            if !st.asking() {
+                return false;
+            }
+            let Some(turn) = st.turn.take() else {
+                return false;
+            };
+            let worked = st.worked(&turn);
+            let asks: Vec<String> = st.asks.drain(..).map(|a| a.ask_id).collect();
+            // the wait goes on in magpie, which keeps the questions; nothing of it is this run's any more
+            st.asks_since = None;
+            st.open_tools.clear();
+            st.pending_inputs = 0;
+            st.release = Some(reason.to_owned());
+            if let Some(g) = st.live.as_mut() {
+                g.why = Some(Why::Park);
+            }
+            st.parking = Some(turn.id);
+            tracing::info!(turn = %turn.id, asks = ?asks, ms = worked.as_millis(), reason, "turn parked: it waits only on its questions, the sandbox goes");
+            let report = TurnStateReport {
+                state: ReportedState::Parked,
+                at: wire(now()),
+                provider_session_id: None,
+                transcript_path: None,
+                exit_code: None,
+                error: None,
+                held: None,
+                tasks: None,
+                last_uuid: None,
+                usage: turn.usage,
+                duration_ms: Some(u64::try_from(worked.as_millis()).unwrap_or(u64::MAX)),
+            };
+            let id = turn.id;
+            fx.push(Fx::Report(Item::State {
+                turn: id,
+                report,
+                wait: Wait::Nothing,
+                done: Some(Box::new(move |_| {
+                    if let Some(d) = me.upgrade() {
+                        d.with(Change::State, |st, _| {
+                            if st.parking == Some(id) {
+                                st.parking = None;
+                            }
+                        });
+                    }
+                })),
+            }));
+            fx.push(Fx::SetTurn(None));
+            st.set_run(RunKind::Idle);
+            true
+        })
+    }
+
     fn tasks(&self) -> Vec<Value> {
         lock(&self.st)
             .tracker
@@ -3060,11 +3217,27 @@ impl Agent for Driver {
 #[cfg(test)]
 mod tests;
 
-/// What the model is told when nobody answered its question within [`ASK_TIMEOUT`] (Deyao, 2026-11-05): the ask is
-/// closed so the sandbox can be released or paused, and the model may ask again.
+/// What the model is told when nobody answered its question within [`ASK_TIMEOUT`] (Deyao, 2026-11-05): a safety
+/// limit only, since a question that waits never holds a sandbox (its turn is parked, DECISIONS 17); the model may
+/// ask again.
 fn ask_timeout_answer() -> String {
     format!(
-        "User has not answered in {} minutes, the session has timed out, ask again if needed.",
-        ASK_TIMEOUT.as_secs() / 60
+        "User has not answered in {}, the session has timed out, ask again if needed.",
+        span(ASK_TIMEOUT)
     )
+}
+
+/// A duration in its largest whole unit: "7 days", "30 minutes", "1 hour".
+fn span(d: Duration) -> String {
+    let s = d.as_secs();
+    let (n, unit) = if s >= 86_400 && s.is_multiple_of(86_400) {
+        (s / 86_400, "day")
+    } else if s >= 3_600 && s.is_multiple_of(3_600) {
+        (s / 3_600, "hour")
+    } else if s >= 60 && s.is_multiple_of(60) {
+        (s / 60, "minute")
+    } else {
+        (s, "second")
+    };
+    format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
 }

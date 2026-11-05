@@ -365,6 +365,10 @@ pub struct EventMeta {
     /// A sidechain line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sidechain: Option<bool>,
+    /// The person's answers to a parked turn's questions (DECISIONS 17): the line the resumed turn starts with is
+    /// the result of the `results` calls (the questions), not a prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask_answer: Option<bool>,
     /// Imported events only: the text shown instead of the line's (magpie 19.3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_text: Option<String>,

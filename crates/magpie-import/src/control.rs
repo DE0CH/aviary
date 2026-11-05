@@ -462,6 +462,25 @@ pub async fn release_forced(imp: &Importer, id: Uuid) -> Result<Forced> {
             changes.join(", ")
         )));
     }
+    // its parked questions go with it, answered ones with their answer (DECISIONS 17)
+    let (person, schema): (String, String) = {
+        let r = pool
+            .get()
+            .await?
+            .query_one(
+                "select person, source_schema from import_sources where conversation_id = $1",
+                &[&id],
+            )
+            .await?;
+        (r.get(0), r.get(1))
+    };
+    let questions = match crate::questions::read(&imp.cloudcli, &schema, id).await {
+        Ok(q) => q,
+        Err(e) => {
+            let _ = fence::unfence(pool, id).await;
+            return Err(e);
+        }
+    };
     let held = aviary_pg::tx!(pool, |t| -> Result<Result<fence::Released, fence::NotReleased>> {
         imp.check_lock_in(t).await?;
         let r = fence::release_in(t, id, &fence::Release::default()).await?;
@@ -471,6 +490,7 @@ pub async fn release_forced(imp: &Importer, id: Uuid) -> Result<Forced> {
                 &[&id],
             )
             .await?;
+            crate::questions::carry(t, &person, id, &questions).await?;
         }
         Ok(r)
     })

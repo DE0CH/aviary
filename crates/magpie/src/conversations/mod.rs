@@ -169,6 +169,7 @@ pub fn conversation_from_row(row: &Row) -> Result<Conversation> {
         id,
         started_at: ts(row.get("t_at")),
         origin: turn_origin(row.get("t_origin")),
+        ask_wait_ms: 0,
     });
     let last_turn = match row.get::<_, Option<Uuid>>("l_id") {
         None => None,
@@ -234,7 +235,7 @@ pub fn conversation_from_row(row: &Row) -> Result<Conversation> {
 }
 
 /// Fills `asks` of the conversations that have a turn: the `ask.pending` events not followed by their
-/// `ask.resolved`.
+/// `ask.resolved`; and the turn's `askWaitMs`, the time its answered questions waited (DECISIONS 17).
 ///
 /// # Errors
 /// When a statement fails.
@@ -270,9 +271,14 @@ pub async fn attach_asks(db: &impl Db, convs: &mut [Conversation]) -> Result<()>
             created_at: ts(r.get(2)),
         });
     }
+    let turns: Vec<Uuid> = convs.iter().filter_map(|c| c.turn.as_ref().map(|t| t.id)).collect();
+    let waits = crate::turns::parked::ask_waits(db, &ids, &turns).await?;
     for c in convs {
         if let Some(asks) = by_conv.remove(&c.id) {
             c.asks = asks;
+        }
+        if let Some(t) = c.turn.as_mut() {
+            t.ask_wait_ms = waits.get(&t.id).copied().unwrap_or(0);
         }
     }
     Ok(())

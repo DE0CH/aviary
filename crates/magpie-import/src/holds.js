@@ -3,9 +3,13 @@
 // SERVER_PORT and JARVIS_CC_OWNER, jarvis/router.mjs) is asked what keeps it busy, the call the router's switch module
 // makes before a restart: GET http://127.0.0.1:<SERVER_PORT>/api/jarvis/switch/busy with x-jarvis-user:
 // <JARVIS_CC_OWNER> (claudecodeui jarvis-switch.routes.ts, in the A1 image) -> {running, processes, preparing,
-// pending}, each a list of app session ids: chat runs and tracked background work, Claude Code processes held open,
-// sandboxes being made, Paseo messages not yet completed. One JSON line per child: {"schema", "port", "ok",
-// "sessions": [every id of the four lists]}. A child that does not answer 200 with the four lists of strings within 5 s
+// pending, asking}: the first four lists of app session ids (chat runs and tracked background work, Claude Code
+// processes held open, sandboxes being made, Paseo messages not yet completed), `asking` the questions waiting for the
+// person after their turn let the sandbox go (DECISIONS 17; claudecodeui fd1b3ed5: {sessionId, requestId, toolName,
+// toolUseId, askedAt, answered}). An unanswered question holds nothing (the importer carries it over, questions.rs); an
+// answered one waits for its turn to start, so its session counts as running. One JSON line per child: {"schema",
+// "port", "ok", "sessions": [every id of the four lists and of the answered questions]}. An image without `asking`
+// (before fd1b3ed5) has no parked questions; an `asking` of another shape is ok: false. A child that does not answer 200 with the four lists of strings within 5 s
 // is ok: false (the importer then treats every conversation of that schema as busy), so an image without the route
 // (before A1) releases nothing.
 // A process whose environment cannot be read for another reason than having exited (EACCES, hidepid) may be a child:
@@ -59,7 +63,11 @@ function ask(c) {
           const lists = ['running', 'processes', 'preparing', 'pending'].map((k) => j && j[k]);
           // a changed route shape must never read as "idle"
           if (!lists.every((l) => Array.isArray(l) && l.every((e) => typeof e === 'string' && e))) return finish(false, []);
-          finish(true, [...new Set(lists.flat())]);
+          const asking = j.asking === undefined ? [] : j.asking;
+          if (!Array.isArray(asking) || !asking.every((q) => q && typeof q.sessionId === 'string' && q.sessionId
+              && typeof q.answered === 'boolean')) return finish(false, []);
+          const answered = asking.filter((q) => q.answered).map((q) => q.sessionId);
+          finish(true, [...new Set(lists.flat().concat(answered))]);
         } catch (e) { finish(false, []); }
       });
       res.on('error', () => finish(false, []));

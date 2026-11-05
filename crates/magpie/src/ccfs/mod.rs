@@ -216,6 +216,8 @@ pub struct Turn {
     pub id: Uuid,
     /// A person-origin turn whose `user.sent` echo is not matched yet (6.5).
     pub echo_pending: bool,
+    /// A resumed parked turn whose answer line is not seen yet (DECISIONS 17).
+    pub answering: bool,
 }
 
 /// One state-changing operation in its transaction.
@@ -370,7 +372,8 @@ impl Op<'_> {
         for candidate in [turn, self.conv.active_turn].into_iter().flatten() {
             if let Some(row) = tx
                 .query_opt(
-                    "select origin, echo_matched from turns where id = $1 and conversation_id = $2",
+                    "select origin, echo_matched, answer_tool_uses is not null from turns
+                     where id = $1 and conversation_id = $2",
                     &[&candidate, &self.conv.id],
                 )
                 .await?
@@ -380,6 +383,7 @@ impl Op<'_> {
                 self.turn = Some(Turn {
                     id: candidate,
                     echo_pending: origin == "person" && !matched,
+                    answering: row.get(2),
                 });
                 return Ok(());
             }

@@ -68,6 +68,8 @@ pub enum Out {
         /// `parent_tool_use_id` is null: a main-thread message (written to the main transcript).
         main: bool,
         tool_uses: Vec<ToolUse>,
+        /// The `tool_use_id` of each `tool_result` block (a user message): the calls that finished.
+        tool_results: Vec<String>,
         /// The `<task-notification>…</task-notification>` text of a user message (a wake-up for a background task).
         task_notification: Option<String>,
     },
@@ -117,9 +119,10 @@ struct Block {
     id: Option<String>,
     name: Option<String>,
     input: Option<Value>,
+    tool_use_id: Option<String>,
 }
 
-/// `message.content`: a string (skipped) or blocks (only `tool_use` blocks kept).
+/// `message.content`: a string (skipped) or blocks (only `tool_use` and `tool_result` blocks kept).
 #[derive(Default)]
 struct Content(Vec<Block>);
 
@@ -140,7 +143,7 @@ impl<'de> Deserialize<'de> for Content {
             fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Content, A::Error> {
                 let mut out = Vec::new();
                 while let Some(b) = seq.next_element::<Block>()? {
-                    if b.kind.as_deref() == Some("tool_use") {
+                    if matches!(b.kind.as_deref(), Some("tool_use" | "tool_result")) {
                         out.push(b);
                     }
                 }
@@ -222,25 +225,31 @@ pub fn parse(line: &[u8]) -> Out {
         return Out::Unparsed;
     };
     match e.kind.as_str() {
-        "assistant" | "user" => Out::Message {
-            assistant: e.kind == "assistant",
-            uuid: e.uuid,
-            main: e.parent_tool_use_id.is_none(),
-            tool_uses: e
+        "assistant" | "user" => {
+            let (uses, results): (Vec<Block>, Vec<Block>) = e
                 .message
                 .map(|m| m.content.0)
                 .unwrap_or_default()
                 .into_iter()
-                .filter_map(|b| {
-                    Some(ToolUse {
-                        id: b.id?,
-                        name: b.name?,
-                        input: b.input.unwrap_or(Value::Null),
+                .partition(|b| b.kind.as_deref() == Some("tool_use"));
+            Out::Message {
+                assistant: e.kind == "assistant",
+                uuid: e.uuid,
+                main: e.parent_tool_use_id.is_none(),
+                tool_uses: uses
+                    .into_iter()
+                    .filter_map(|b| {
+                        Some(ToolUse {
+                            id: b.id?,
+                            name: b.name?,
+                            input: b.input.unwrap_or(Value::Null),
+                        })
                     })
-                })
-                .collect(),
-            task_notification: if e.kind == "user" { notification(line) } else { None },
-        },
+                    .collect(),
+                tool_results: results.into_iter().filter_map(|b| b.tool_use_id).collect(),
+                task_notification: if e.kind == "user" { notification(line) } else { None },
+            }
+        }
         "stream_event" => Out::StreamEvent,
         "keep_alive" => Out::KeepAlive,
         "result" => Out::Result(ResultMsg {
@@ -488,12 +497,13 @@ mod tests {
             uuid,
             main,
             tool_uses,
+            tool_results,
             task_notification,
         } = a
         else {
             panic!("{a:?}")
         };
-        assert!(assistant && main && task_notification.is_none());
+        assert!(assistant && main && task_notification.is_none() && tool_results.is_empty());
         assert_eq!(uuid.as_deref(), Some("u1"));
         assert_eq!(tool_uses[0].name, "ScheduleWakeup");
         assert_eq!(tool_uses[0].input["delaySeconds"], 60);
@@ -508,7 +518,9 @@ mod tests {
             r#"{{"type":"user","uuid":"u4","message":{{"content":[{{"type":"tool_result","tool_use_id":"t","content":[{{"type":"image","source":{{"type":"base64","media_type":"image/png","data":"{}"}}}}]}}]}}}}"#,
             "A".repeat(100_000)
         );
-        assert!(matches!(parse(big.as_bytes()), Out::Message { tool_uses, .. } if tool_uses.is_empty()));
+        assert!(
+            matches!(parse(big.as_bytes()), Out::Message { tool_uses, tool_results, .. } if tool_uses.is_empty() && tool_results == ["t"])
+        );
     }
 
     #[test]

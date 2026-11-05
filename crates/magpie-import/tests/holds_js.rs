@@ -2,9 +2,10 @@
 //! and the gate are the hand-over's): every child of the old router is asked with its owner, a child that answers
 //! 500 or not at all within 5 s is `ok: false`, a process without the router's child environment is not asked, and
 //! a child's own processes (which inherit its environment) do not ask it twice, and a list entry without a string
-//! `sessionId` (a changed route shape) is `ok: false`, never "runs nothing".
+//! `sessionId` (a changed route shape) is `ok: false`, never "runs nothing". Of the parked questions (`asking`,
+//! DECISIONS 17) only an answered one makes its conversation running.
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
 use std::io::{BufRead as _, BufReader};
 use std::process::{Child, Command, Stdio};
@@ -21,6 +22,16 @@ http.createServer((req, res) => {
   if (mode === 'noid') {
     res.setHeader('content-type', 'application/json');
     return res.end(JSON.stringify({ running: [{ id: 'x' }], processes: [], preparing: [], pending: [] }));
+  }
+  if (mode === 'asking' || mode === 'badasking') {
+    // DECISIONS 17: parked questions; only the answered one waits for its turn (running)
+    res.setHeader('content-type', 'application/json');
+    const asking = mode === 'badasking' ? [{ requestId: 'r' }] : [
+      { sessionId: '33333333-3333-3333-3333-333333333333', requestId: 'r1', toolName: 'AskUserQuestion',
+        toolUseId: 'toolu_1', askedAt: '2026-11-05T07:00:00.000Z', answered: false },
+      { sessionId: '44444444-4444-4444-4444-444444444444', requestId: 'r2', toolName: 'AskUserQuestion',
+        toolUseId: 'toolu_2', askedAt: '2026-11-05T07:00:00.000Z', answered: true }];
+    return res.end(JSON.stringify({ running: [], processes: [], preparing: [], pending: [], asking }));
   }
   if (mode === 'nolist') {
     res.setHeader('content-type', 'application/json');
@@ -81,6 +92,7 @@ fn spawn(env: &[(&str, String)]) -> Child {
 #[test]
 fn holds_js_asks_every_child_once_and_fails_closed() {
     let (pa, pb, pc, pd, pe, pf) = (port(), port(), port(), port(), port(), port());
+    let (pg, ph) = (port(), port());
     let mut kids = Kids(Vec::new());
     kids.0.push(spawn(&[
         ("DATABASE_SCHEMA", "cc_ua".into()),
@@ -118,6 +130,18 @@ fn holds_js_asks_every_child_once_and_fails_closed() {
         ("JARVIS_CC_OWNER", "f@example.com".into()),
         ("FAKE_MODE", "nolist".into()),
     ]));
+    kids.0.push(spawn(&[
+        ("DATABASE_SCHEMA", "cc_ug".into()),
+        ("SERVER_PORT", pg.to_string()),
+        ("JARVIS_CC_OWNER", "g@example.com".into()),
+        ("FAKE_MODE", "asking".into()),
+    ]));
+    kids.0.push(spawn(&[
+        ("DATABASE_SCHEMA", "cc_uh".into()),
+        ("SERVER_PORT", ph.to_string()),
+        ("JARVIS_CC_OWNER", "h@example.com".into()),
+        ("FAKE_MODE", "badasking".into()),
+    ]));
     // not a router child: no owner
     kids.0.push(spawn(&[
         ("DATABASE_SCHEMA", "cc_ud".into()),
@@ -150,7 +174,7 @@ fn holds_js_asks_every_child_once_and_fails_closed() {
     let lines = lines.join("\n");
     let mut children = holds::parse(&lines).unwrap();
     // other tests' processes on this machine are not ours
-    children.retain(|c| [pa, pb, pc, pd, pe, pf].contains(&c.port));
+    children.retain(|c| [pa, pb, pc, pd, pe, pf, pg, ph].contains(&c.port));
     children.sort_by_key(|c| c.schema.clone());
     let got: Vec<(String, bool, Vec<String>)> = children.into_iter().map(|c| (c.schema, c.ok, c.sessions)).collect();
     assert_eq!(
@@ -168,6 +192,13 @@ fn holds_js_asks_every_child_once_and_fails_closed() {
             ("cc_uc".to_owned(), false, vec![]),
             ("cc_ue".to_owned(), false, vec![]),
             ("cc_uf".to_owned(), false, vec![]),
+            // an unanswered parked question holds nothing (it is carried over); an answered one is running
+            (
+                "cc_ug".to_owned(),
+                true,
+                vec!["44444444-4444-4444-4444-444444444444".to_owned()]
+            ),
+            ("cc_uh".to_owned(), false, vec![]),
         ]
     );
 }

@@ -7,6 +7,11 @@
 //!
 //! One reading beyond the table: a `type: "user"` line with `isCompactSummary` (Claude Code's compaction summary) is a
 //! `cc.user` event but not a prompt (it is no message a person sent) and never the echo of one.
+//!
+//! A resumed parked turn (DECISIONS 17, [`Context::answering`]): Claude Code 2.1.304 closes the questions its
+//! predecessor left open with a synthetic result ("[Tool call interrupted: the session ended …]") and a synthetic
+//! assistant line ("No response requested.", model `<synthetic>`) before the supervisor's message; both are internal,
+//! and the message, the person's answers, is [`Class::Answer`]: the questions' result, not a prompt.
 
 use magpie_api::errors::{DataCode, ErrorInfo};
 use magpie_api::events::{EventMeta, TaskNotification};
@@ -22,6 +27,8 @@ pub const USER: &str = "cc.user";
 pub struct Context {
     /// The line's turn is a person-origin turn whose `user.sent` echo is not matched yet.
     pub echo_pending: bool,
+    /// The line's turn is a resumed parked turn whose answer line is not seen yet.
+    pub answering: bool,
 }
 
 /// An event a line becomes.
@@ -52,6 +59,8 @@ pub enum Class {
     Event(Box<Event>),
     /// The echo of the turn's `user.sent` (internal; the turn's echo is now matched).
     Echo,
+    /// A resumed parked turn's answer line: a `cc.user` event (`meta.askAnswer`) whose results the caller names.
+    Answer(Box<Event>),
     /// A `custom-title` / `ai-title` record (internal): the title it names.
     Title(String),
     /// Anything else (internal).
@@ -98,6 +107,7 @@ pub fn classify(data: Option<&Value>, cx: Context) -> Class {
         return Class::Internal;
     };
     match s(d, "type") {
+        Some("assistant") if cx.answering && synthetic(d) => Class::Internal,
         Some("assistant") => assistant(d),
         Some("user") if !truthy(d, "isMeta") => user(d, cx),
         Some("custom-title") => s(d, "customTitle").map_or(Class::Internal, |t| Class::Title(t.to_owned())),
@@ -175,6 +185,10 @@ fn user(d: &Value, cx: Context) -> Class {
             model: None,
         }))
     };
+    if has_results && cx.answering && interrupted(content) {
+        // the resumed Claude Code closing the parked question itself: the person's answer is the result
+        return Class::Internal;
+    }
     if has_results {
         // toolUseSeq is filled by the caller from tool_links
         let meta = EventMeta {
@@ -204,6 +218,15 @@ fn user(d: &Value, cx: Context) -> Class {
     if truthy(d, "isCompactSummary") {
         return event(EventMeta::default(), false, Vec::new());
     }
+    if cx.answering {
+        let meta = EventMeta {
+            ask_answer: Some(true),
+            ..EventMeta::default()
+        };
+        if let Class::Event(e) = event(meta, false, Vec::new()) {
+            return Class::Answer(e);
+        }
+    }
     if cx.echo_pending {
         return Class::Echo;
     }
@@ -212,6 +235,24 @@ fn user(d: &Value, cx: Context) -> Class {
         ..EventMeta::default()
     };
     event(meta, true, Vec::new())
+}
+
+/// Claude Code's own assistant line with no model call behind it (`message.model` `<synthetic>`, no tool call).
+fn synthetic(d: &Value) -> bool {
+    let message = d.get("message");
+    message.and_then(|m| s(m, "model")) == Some("<synthetic>")
+        && !blocks(message.and_then(|m| m.get("content"))).any(|b| s(b, "type") == Some("tool_use"))
+}
+
+/// Every `tool_result` of the line is Claude Code's "[Tool call interrupted …]" for a call a session left open.
+fn interrupted(content: Option<&Value>) -> bool {
+    blocks(content)
+        .filter(|b| s(b, "type") == Some("tool_result"))
+        .all(|b| {
+            let c = b.get("content");
+            let text = c.and_then(text_of).map(str::to_owned).or_else(|| content_text(c));
+            text.is_some_and(|t| t.trim_start().starts_with("[Tool call interrupted"))
+        })
 }
 
 /// The text between `<name>` and `</name>`, trimmed.
@@ -369,17 +410,57 @@ mod tests {
         assert!(api_error("Not an error").is_none());
     }
 
+    /// The lines Claude Code 2.1.304 wrote when a session whose `AskUserQuestion` was open is resumed and given the
+    /// person's answer (crates/supervisor/spikes/ask-resume): the synthetic close and reply are internal, the
+    /// answer is the question's result.
+    #[test]
+    fn a_resumed_parked_turns_lines() {
+        let answering = Context {
+            echo_pending: false,
+            answering: true,
+        };
+        let closed = json!({"type": "user", "message": {"role": "user", "content": [{"type": "tool_result",
+            "content": "[Tool call interrupted: the session ended before this call's result was recorded, so its outcome is unknown. Check whether it took effect before relying on it or running it again.]",
+            "is_error": true, "tool_use_id": "toolu_ask17"}]}});
+        assert_eq!(classify(Some(&closed), answering), Class::Internal);
+        assert!(
+            matches!(classify(Some(&closed), Context::default()), Class::Event(_)),
+            "only while answering"
+        );
+        let reply = json!({"type": "assistant", "message": {"model": "<synthetic>", "role": "assistant",
+            "content": [{"type": "text", "text": "No response requested."}]}});
+        assert_eq!(classify(Some(&reply), answering), Class::Internal);
+        let answer = json!({"type": "user", "message": {"role": "user",
+            "content": "Your questions have been answered: \"Which colour?\"=\"Blue\". You can now continue with these answers in mind."}});
+        let Class::Answer(e) = classify(Some(&answer), answering) else {
+            panic!("not an answer")
+        };
+        assert_eq!(e.meta.ask_answer, Some(true));
+        assert!(!e.is_prompt && e.meta.prompt.is_none());
+        // a real model reply and a real tool result of the resumed turn are events as ever
+        let real = json!({"type": "assistant", "message": {"model": "claude-sonnet-4-5", "content": [{"type": "text", "text": "done"}]}});
+        assert!(matches!(classify(Some(&real), answering), Class::Event(_)));
+        let result = json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok"}]}});
+        assert!(matches!(classify(Some(&result), answering), Class::Event(_)));
+    }
+
+    /// A person's turn whose echo is not matched yet.
+    const ECHO: Context = Context {
+        echo_pending: true,
+        answering: false,
+    };
+
     #[test]
     fn user_lines() {
         let results =
             json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_1"}]}});
-        let e = event(classify(Some(&results), Context { echo_pending: true }));
+        let e = event(classify(Some(&results), ECHO));
         assert_eq!(e.results, vec!["toolu_1".to_owned()]);
         assert!(!e.is_prompt);
 
         let note = json!({"type": "user", "message": {"content":
             "<task-notification>\n<task-id>b7</task-id>\n<tool-use-id>toolu_01Bg</tool-use-id>\n<status>completed</status>\n<summary>Build finished.</summary>\n</task-notification>"}});
-        let e = event(classify(Some(&note), Context { echo_pending: true }));
+        let e = event(classify(Some(&note), ECHO));
         assert_eq!(
             e.meta.task_notification,
             Some(TaskNotification {
@@ -391,7 +472,7 @@ mod tests {
         );
 
         let prompt = json!({"type": "user", "message": {"content": [{"type": "text", "text": "hello"}]}});
-        assert_eq!(classify(Some(&prompt), Context { echo_pending: true }), Class::Echo);
+        assert_eq!(classify(Some(&prompt), ECHO), Class::Echo);
         let e = event(classify(Some(&prompt), Context::default()));
         assert!(e.is_prompt);
         assert_eq!(e.meta.prompt, Some(true));
@@ -401,7 +482,7 @@ mod tests {
         assert_eq!(classify(Some(&meta), Context::default()), Class::Internal);
 
         let summary = json!({"type": "user", "isCompactSummary": true, "message": {"content": "summary"}});
-        let e = event(classify(Some(&summary), Context { echo_pending: true }));
+        let e = event(classify(Some(&summary), ECHO));
         assert!(!e.is_prompt);
     }
 

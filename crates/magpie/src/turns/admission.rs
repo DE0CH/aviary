@@ -456,6 +456,7 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
             provider_session_id: conv.get(0),
         },
         sent_at: Timestamp(now),
+        answers: Vec::new(),
     };
     let cmd = command(
         tx,

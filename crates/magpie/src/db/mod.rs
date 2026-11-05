@@ -11,7 +11,7 @@ use aviary_pg::{Conn, LockKey, Migration, Row, ToSql, Tx};
 /// # Errors
 /// When the embedded list is malformed (a bad file name): a start failure.
 pub fn migrations() -> Result<Vec<Migration>, aviary_pg::Error> {
-    aviary_pg::migrations!(dir = "src/db/migrations"; "0001_init.sql", "0002_retention_indexes.sql", "0003_view_as_order.sql", "0004_ccfs.sql", "0005_timeline.sql", "0006_shares.sql", "0007_admin.sql", "0008_timeline_derivation.sql", "0009_cc_limbo.sql", "0010_shares_frozen.sql", "0011_cc_echoes.sql", "0012_admin_read_index.sql", "0013_window.sql", "0014_uploads_legacy_path_index.sql", "0015_ticket_supersede.sql", "0016_cc_echo_uuids.sql", "0017_blob_reverify.sql", "0018_window_rollback.sql", "0019_import_purged.sql", "0020_ticket_take.sql", "0021_legacy_import_verified.sql", "0022_ticket_claim_take.sql", "0023_import_gate_persons.sql", "0024_import_released_checked.sql")
+    aviary_pg::migrations!(dir = "src/db/migrations"; "0001_init.sql", "0002_retention_indexes.sql", "0003_view_as_order.sql", "0004_ccfs.sql", "0005_timeline.sql", "0006_shares.sql", "0007_admin.sql", "0008_timeline_derivation.sql", "0009_cc_limbo.sql", "0010_shares_frozen.sql", "0011_cc_echoes.sql", "0012_admin_read_index.sql", "0013_window.sql", "0014_uploads_legacy_path_index.sql", "0015_ticket_supersede.sql", "0016_cc_echo_uuids.sql", "0017_blob_reverify.sql", "0018_window_rollback.sql", "0019_import_purged.sql", "0020_ticket_take.sql", "0021_legacy_import_verified.sql", "0022_ticket_claim_take.sql", "0023_import_gate_persons.sql", "0024_import_released_checked.sql", "0025_parked_turns.sql")
 }
 
 /// The migrations' advisory lock (magpie 4).

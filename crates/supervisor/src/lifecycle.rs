@@ -48,7 +48,8 @@ pub struct RunStatus {
     pub origin: Option<TurnOrigin>,
     /// Open background tasks.
     pub tasks: u32,
-    /// Open asks (a pending ask keeps the sandbox from an unforced release or pause).
+    /// Open asks. A run that waits only on them is `asking` (not busy: a release parks the turn, DECISIONS 17); a
+    /// pending ask still keeps the sandbox from a pause.
     pub asks: u32,
     pub last_output_at: Option<hermit_api::Timestamp>,
     /// Since when the run has been idle.
@@ -69,9 +70,16 @@ impl RunStatus {
         }
     }
 
-    /// Busy for the lifecycle: a busy state (15.3) or an open ask.
+    /// Busy for a release: a busy state (15.3), or an open ask beside other work. A run that waits only on its
+    /// questions (`asking`) is not: the release parks its turn ([`Agent::park`]).
     #[must_use]
     pub fn busy(&self) -> bool {
+        self.state.is_busy() || (self.asks > 0 && self.state != ActivityState::Asking)
+    }
+
+    /// Busy for a pause: [`RunStatus::busy`] or any open ask.
+    #[must_use]
+    pub fn busy_for_pause(&self) -> bool {
         self.state.is_busy() || self.asks > 0
     }
 
@@ -139,6 +147,14 @@ pub trait Agent: Send + Sync + 'static {
     fn resume(&self) -> BoxFuture<'_, ()>;
     /// The memory guard killed Claude Code's main process: end the running turn with `run.oom`.
     fn oom_killed(&self);
+    /// A release of a run that waits only on its open questions (`asking`, DECISIONS 17): report the turn
+    /// `parked` to magpie (neither ended nor failed; its asks stay open there), take it and its asks out of the run,
+    /// and mark the generation so the release's stop ends it without closing stdin (a closed stdin makes Claude
+    /// Code fail the question and call the model again). `false`, nothing changed, when the run no longer waits only
+    /// on questions (an answer arrived meanwhile).
+    fn park(&self, _reason: &str) -> bool {
+        false
+    }
     /// `attach` has taken over the previous supervisor's run state (`run.json`'s turns and generation): from then on
     /// `end_turn` and `stop` end them. Until then a release ends them through the start sequence's
     /// [`Lifecycle::on_leftovers`] hook.
@@ -558,13 +574,13 @@ impl Lifecycle {
         }
     }
 
-    /// Closes admission unless busy and not forced; busy: the run it saw. Busy is the agent's run, or before the
-    /// agent attached, the turn a previous supervisor left running.
-    fn close_admission_if(&self, force: bool) -> Result<(), RunSummary> {
+    /// Closes admission unless busy and not forced; busy: the run it saw. Busy is the agent's run (for a pause,
+    /// an open ask too), or before the agent attached, the turn a previous supervisor left running.
+    fn close_admission_if(&self, force: bool, pause: bool) -> Result<(), RunSummary> {
         let mut open = self.admission.lock().unwrap_or_else(PoisonError::into_inner);
         let status = self.agent.status().borrow().clone();
         if !force {
-            if status.busy() {
+            if if pause { status.busy_for_pause() } else { status.busy() } {
                 return Err(status.summary());
             }
             let prior = *self.prior_run.lock().unwrap_or_else(PoisonError::into_inner);
@@ -589,14 +605,25 @@ impl Lifecycle {
         if self.phase() == Phase::Released {
             return Outcome::Done;
         }
-        let status = match self.close_admission_if(req.force) {
+        let mut status = match self.close_admission_if(req.force, false) {
             Ok(()) => self.agent.status().borrow().clone(),
             Err(busy) => {
                 tracing::info!(reason = %req.reason, state = %busy.state.as_str(), "lifecycle release refused: busy");
                 return Outcome::Busy(busy);
             }
         };
-        tracing::info!(reason = %req.reason, force = req.force, "lifecycle release");
+        // a run that waits only on its questions parks its turn (DECISIONS 17): forced or not, nothing is cut
+        let parked = status.state == ActivityState::Asking && self.agent.park(req.reason.as_str());
+        if status.state == ActivityState::Asking && !parked {
+            // an answer arrived between the check and the park: the turn works again
+            status = self.agent.status().borrow().clone();
+            if !req.force && status.busy() {
+                self.reopen_admission();
+                tracing::info!(reason = %req.reason, "lifecycle release refused: the question was just answered");
+                return Outcome::Busy(status.summary());
+            }
+        }
+        tracing::info!(reason = %req.reason, force = req.force, parked, "lifecycle release");
         let times = ReleaseTimes::new(Instant::now(), req.deadline_ms);
         self.phase.send_replace(Phase::Releasing);
         // an exec or dockerd spawn in progress finishes (so the leftovers below find its process); none starts after
@@ -615,7 +642,7 @@ impl Lifecycle {
             tracing::warn!("release: the attach did not give way in time");
         }
         let agent = async {
-            if req.force && status.state.is_busy() {
+            if !parked && req.force && (status.state.is_busy() || status.asks > 0) {
                 self.agent
                     .end_turn(req.reason.as_str().to_owned(), times.interrupt_by)
                     .await;
@@ -676,7 +703,7 @@ impl Lifecycle {
                 if let Some(o) = self.pause_during_release() {
                     return o;
                 }
-                if let Err(busy) = self.close_admission_if(req.force) {
+                if let Err(busy) = self.close_admission_if(req.force, true) {
                     return Outcome::Busy(busy);
                 }
                 self.agent.quiesce().await;
@@ -879,6 +906,8 @@ pub(crate) mod tests {
         pub slow: AtomicBool,
         /// How long `attach` takes.
         pub attach_ms: AtomicU32,
+        /// What `park` finds: the run still waits only on its questions (else an answer arrived meanwhile).
+        pub park_ok: AtomicBool,
     }
 
     impl FakeAgent {
@@ -888,7 +917,16 @@ pub(crate) mod tests {
                 log: Mutex::new(Vec::new()),
                 slow: AtomicBool::new(false),
                 attach_ms: AtomicU32::new(0),
+                park_ok: AtomicBool::new(true),
             })
+        }
+        /// A run that waits only on `asks` open questions.
+        pub fn asking(&self, asks: u32) {
+            self.status.send_modify(|s| {
+                s.state = ActivityState::Asking;
+                s.turn_id = Some(Uuid::now_v7());
+                s.asks = asks;
+            });
         }
         pub fn set(&self, state: ActivityState) {
             self.status.send_modify(|s| {
@@ -960,6 +998,23 @@ pub(crate) mod tests {
         }
         fn oom_killed(&self) {
             self.note("oom");
+        }
+        fn park(&self, reason: &str) -> bool {
+            self.note(format!("park {reason}"));
+            if !self.park_ok.load(Ordering::SeqCst) {
+                // the answer came first: the turn runs again
+                self.status.send_modify(|s| {
+                    s.state = ActivityState::Running;
+                    s.asks = 0;
+                });
+                return false;
+            }
+            self.status.send_modify(|s| {
+                s.state = ActivityState::Idle;
+                s.turn_id = None;
+                s.asks = 0;
+            });
+            true
         }
     }
 
@@ -1266,13 +1321,53 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn an_open_ask_counts_as_busy() {
+    async fn an_open_ask_beside_other_work_counts_as_busy() {
         let agent = FakeAgent::new();
         let l = Lifecycle::new(agent.clone(), Arc::new(FakeFs::default()));
         ready(&l);
         agent.status.send_modify(|s| s.asks = 1);
         assert!(matches!(l.release(release(false)).await, Outcome::Busy(_)));
         assert!(matches!(l.prepare(pause(false)).await, Outcome::Busy(_)));
+        agent.set(ActivityState::Running);
+        assert!(matches!(l.release(release(false)).await, Outcome::Busy(_)));
+        assert!(agent.log().is_empty(), "nothing parked: {:?}", agent.log());
+    }
+
+    #[tokio::test]
+    async fn a_run_that_waits_only_on_a_question_is_released_and_its_turn_parked() {
+        let agent = FakeAgent::new();
+        let fs = Arc::new(FakeFs::default());
+        let l = Lifecycle::new(agent.clone(), fs.clone());
+        ready(&l);
+        agent.asking(1);
+        // not idle for a pause (decision 17 uses none), idle for a release
+        assert!(matches!(l.prepare(pause(false)).await, Outcome::Busy(_)));
+        assert_eq!(l.release(release(false)).await, Outcome::Done);
+        assert_eq!(agent.log(), vec!["park idle", "stop"], "parked, never ended");
+        assert_eq!(l.phase(), Phase::Released);
+        assert!(fs.unmounted.load(Ordering::SeqCst));
+        // a forced release parks it too (the hard lifetime, a drain): the question survives the sandbox
+        let agent = FakeAgent::new();
+        let l = Lifecycle::new(agent.clone(), Arc::new(FakeFs::default()));
+        ready(&l);
+        agent.asking(2);
+        assert_eq!(l.release(release(true)).await, Outcome::Done);
+        assert_eq!(agent.log(), vec!["park deleted", "stop"]);
+    }
+
+    #[tokio::test]
+    async fn a_question_answered_while_its_release_begins_keeps_the_sandbox() {
+        let agent = FakeAgent::new();
+        let l = Lifecycle::new(agent.clone(), Arc::new(FakeFs::default()));
+        ready(&l);
+        agent.asking(1);
+        agent.park_ok.store(false, Ordering::SeqCst);
+        match l.release(release(false)).await {
+            Outcome::Busy(run) => assert_eq!(run.state, ActivityState::Running),
+            Outcome::Done => panic!("released a turn that works again"),
+        }
+        assert_eq!(l.phase(), Phase::Serving);
+        assert!(l.admit(|| {}), "admission reopened");
     }
 
     #[tokio::test]

@@ -1,0 +1,67 @@
+2.1.304 (Claude Code)
+== end of phase 1: stdin; answer in phase 2: control
+phase 1: can_use_tool {"tool_name": "AskUserQuestion", "tool_use_id": "toolu_ask17", "requires_user_interaction": true}
+phase 1: ended by stdin: exited on stdin close, exit 0; model requests so far: 2
+phase 1: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')]), ('user', None, [('tool_result', 'Tool permission request failed: AbortError: Tool permission stream closed before response received')]), ('assistant', 'claude-sonnet-4-5', [('text', 'done')])]
+phase 2 control: output within 15 s of the late answer: None
+phase 2 control: result None model requests: 2
+phase 2 control: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')]), ('user', None, [('tool_result', 'Tool permission request failed: AbortError: Tool permission stream closed before response received')]), ('assistant', 'claude-sonnet-4-5', [('text', 'done')])]
+phase 2 control: the last model request's last two messages: [{"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_ask17", "name": "AskUserQuestion", "input": {"questions": [{"question": "Which colour?", "header": "Colour", "multiSelect": false, "options": [{"label": "Red", "description": "red"}, {"label": "Blue", "description": "blue"}]}]}}]}, {"role": "user", "content": [{"type": "tool_result", "content": "Tool permission request failed: AbortError: Tool permission stream closed before response received\n\n<system-reminder>\n<total_tokens>14999994 tokens left</total_tokens>\n</system-reminder>", "is_error": true, "tool_use_id": "toolu_ask17"}]}]
+== end of phase 1: stdin; answer in phase 2: message
+phase 1: can_use_tool {"tool_name": "AskUserQuestion", "tool_use_id": "toolu_ask17", "requires_user_interaction": true}
+phase 1: ended by stdin: exited on stdin close, exit 0; model requests so far: 2
+phase 1: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')]), ('user', None, [('tool_result', 'Tool permission request failed: AbortError: Tool permission stream closed before response received')]), ('assistant', 'claude-sonnet-4-5', [('text', 'done')])]
+phase 2 message: result {"subtype": "success", "is_error": false} model requests: 3
+phase 2 message: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')]), ('user', None, [('tool_result', 'Tool permission request failed: AbortError: Tool permission stream closed before response received')]), ('assistant', 'claude-sonnet-4-5', [('text', 'done')]), ('assistant', '<synthetic>', [('text', 'No response requested.')]), ('user', None, 'Your questions have been answered: "Which colour?"="Blue". You can now continue with these answers in mind.'), ('assistant', 'claude-sonnet-4-5', [('text', 'done')])]
+phase 2 message: the last model request's last two messages: [{"role": "assistant", "content": [{"type": "text", "text": "No response requested."}]}, {"role": "user", "content": [{"type": "text", "text": "Your questions have been answered: \"Which colour?\"=\"Blue\". You can now continue with these answers in mind."}]}]
+== end of phase 1: stdin; answer in phase 2: tool_result
+phase 1: can_use_tool {"tool_name": "AskUserQuestion", "tool_use_id": "toolu_ask17", "requires_user_interaction": true}
+phase 1: ended by stdin: exited on stdin close, exit 0; model requests so far: 2
+phase 1: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')]), ('user', None, [('tool_result', 'Tool permission request failed: AbortError: Tool permission stream closed before response received')]), ('assistant', 'claude-sonnet-4-5', [('text', 'done')])]
+phase 2 tool_result: result {"subtype": "success", "is_error": false} model requests: 3
+phase 2 tool_result: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')]), ('user', None, [('tool_result', 'Tool permission request failed: AbortError: Tool permission stream closed before response received')]), ('assistant', 'claude-sonnet-4-5', [('text', 'done')]), ('assistant', '<synthetic>', [('text', 'No response requested.')]), ('user', None, [('tool_result', 'Your questions have been answered: "Which colour?"="Blue".')]), ('assistant', 'claude-sonnet-4-5', [('text', 'done')])]
+phase 2 tool_result: the last model request's last two messages: [{"role": "assistant", "content": [{"type": "text", "text": "No response requested."}]}, {"role": "user", "content": [{"type": "text", "text": "(no content)"}]}]
+== end of phase 1: term; answer in phase 2: control
+phase 1: can_use_tool {"tool_name": "AskUserQuestion", "tool_use_id": "toolu_ask17", "requires_user_interaction": true}
+phase 1: ended by term: exited on SIGTERM, exit 143; model requests so far: 1
+phase 1: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')])]
+phase 2 control: output within 15 s of the late answer: None
+phase 2 control: result None model requests: 1
+phase 2 control: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')])]
+phase 2 control: the last model request's last two messages: [{"role": "user", "content": [{"type": "text", "text": "ask me a colour"}]}]
+== end of phase 1: term; answer in phase 2: message
+phase 1: can_use_tool {"tool_name": "AskUserQuestion", "tool_use_id": "toolu_ask17", "requires_user_interaction": true}
+phase 1: ended by term: exited on SIGTERM, exit 143; model requests so far: 1
+phase 1: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')])]
+phase 2 message: result {"subtype": "success", "is_error": false} model requests: 2
+phase 2 message: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')]), ('user', None, [('tool_result', "[Tool call interrupted: the session ended before this call's result was recorded, so its outcome is ")]), ('assistant', '<synthetic>', [('text', 'No response requested.')]), ('user', None, 'Your questions have been answered: "Which colour?"="Blue". You can now continue with these answers in mind.'), ('assistant', 'claude-sonnet-4-5', [('text', 'done')])]
+phase 2 message: the last model request's last two messages: [{"role": "assistant", "content": [{"type": "text", "text": "No response requested."}]}, {"role": "user", "content": [{"type": "text", "text": "Your questions have been answered: \"Which colour?\"=\"Blue\". You can now continue with these answers in mind."}]}]
+== end of phase 1: term; answer in phase 2: tool_result
+phase 1: can_use_tool {"tool_name": "AskUserQuestion", "tool_use_id": "toolu_ask17", "requires_user_interaction": true}
+phase 1: ended by term: exited on SIGTERM, exit 143; model requests so far: 1
+phase 1: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')])]
+phase 2 tool_result: result {"subtype": "success", "is_error": false} model requests: 2
+phase 2 tool_result: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')]), ('user', None, [('tool_result', "[Tool call interrupted: the session ended before this call's result was recorded, so its outcome is ")]), ('assistant', '<synthetic>', [('text', 'No response requested.')]), ('user', None, [('tool_result', 'Your questions have been answered: "Which colour?"="Blue".')]), ('assistant', 'claude-sonnet-4-5', [('text', 'done')])]
+phase 2 tool_result: the last model request's last two messages: [{"role": "assistant", "content": [{"type": "text", "text": "No response requested."}]}, {"role": "user", "content": [{"type": "text", "text": "(no content)"}]}]
+== end of phase 1: kill; answer in phase 2: control
+phase 1: can_use_tool {"tool_name": "AskUserQuestion", "tool_use_id": "toolu_ask17", "requires_user_interaction": true}
+phase 1: ended by kill: SIGKILL, exit -9; model requests so far: 1
+phase 1: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')])]
+phase 2 control: output within 15 s of the late answer: None
+phase 2 control: result None model requests: 1
+phase 2 control: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')])]
+phase 2 control: the last model request's last two messages: [{"role": "user", "content": [{"type": "text", "text": "ask me a colour"}]}]
+== end of phase 1: kill; answer in phase 2: message
+phase 1: can_use_tool {"tool_name": "AskUserQuestion", "tool_use_id": "toolu_ask17", "requires_user_interaction": true}
+phase 1: ended by kill: SIGKILL, exit -9; model requests so far: 1
+phase 1: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')])]
+phase 2 message: result {"subtype": "success", "is_error": false} model requests: 2
+phase 2 message: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')]), ('user', None, [('tool_result', "[Tool call interrupted: the session ended before this call's result was recorded, so its outcome is ")]), ('assistant', '<synthetic>', [('text', 'No response requested.')]), ('user', None, 'Your questions have been answered: "Which colour?"="Blue". You can now continue with these answers in mind.'), ('assistant', 'claude-sonnet-4-5', [('text', 'done')])]
+phase 2 message: the last model request's last two messages: [{"role": "assistant", "content": [{"type": "text", "text": "No response requested."}]}, {"role": "user", "content": [{"type": "text", "text": "Your questions have been answered: \"Which colour?\"=\"Blue\". You can now continue with these answers in mind."}]}]
+== end of phase 1: kill; answer in phase 2: tool_result
+phase 1: can_use_tool {"tool_name": "AskUserQuestion", "tool_use_id": "toolu_ask17", "requires_user_interaction": true}
+phase 1: ended by kill: SIGKILL, exit -9; model requests so far: 1
+phase 1: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')])]
+phase 2 tool_result: result {"subtype": "success", "is_error": false} model requests: 2
+phase 2 tool_result: transcript: [('user', None, 'ask me a colour'), ('assistant', 'claude-sonnet-4-5', [('tool_use', 'AskUserQuestion')]), ('user', None, [('tool_result', "[Tool call interrupted: the session ended before this call's result was recorded, so its outcome is ")]), ('assistant', '<synthetic>', [('text', 'No response requested.')]), ('user', None, [('tool_result', 'Your questions have been answered: "Which colour?"="Blue".')]), ('assistant', 'claude-sonnet-4-5', [('text', 'done')])]
+phase 2 tool_result: the last model request's last two messages: [{"role": "assistant", "content": [{"type": "text", "text": "No response requested."}]}, {"role": "user", "content": [{"type": "text", "text": "(no content)"}]}]

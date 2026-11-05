@@ -133,6 +133,17 @@ pub fn permission_request(ask: &magpie_api::conversations::Ask) -> Value {
     Value::Object(m)
 }
 
+/// The `startedAt` the working-time counter runs from (7.7, DECISIONS 17): the turn's start moved on by the time its
+/// answered questions waited, and none while a question is open, so the counter stands still while the person
+/// decides and goes on from where it was after the answer.
+fn working_since(c: &Conversation, t: &magpie_api::conversations::TurnRef) -> Option<magpie_api::Timestamp> {
+    if !c.asks.is_empty() {
+        return None;
+    }
+    let wait = time::Duration::milliseconds(i64::try_from(t.ask_wait_ms).unwrap_or(i64::MAX));
+    Some(magpie_api::Timestamp(t.started_at.0.saturating_add(wait)))
+}
+
 /// `AgentSnapshot(c)` (7.7).
 #[must_use]
 pub fn agent_snapshot(c: &Conversation, v: &View<'_>) -> Value {
@@ -146,7 +157,7 @@ pub fn agent_snapshot(c: &Conversation, v: &View<'_>) -> Value {
         "runtimeInfo": {"provider": PROVIDER, "sessionId": c.claude_session_id, "model": v.model, "modeId": null},
         "createdAt": c.created_at, "updatedAt": c.updated_at, "lastUserMessageAt": last_user,
         "status": if running { "running" } else { "idle" },
-        "activeTurn": c.turn.as_ref().map(|t| json!({"turnId": t.id, "startedAt": t.started_at})),
+        "activeTurn": c.turn.as_ref().map(|t| json!({"turnId": t.id, "startedAt": working_since(c, t)})),
         "capabilities": {"supportsStreaming": true, "supportsSessionPersistence": true, "supportsSessionListing": false,
             "supportsDynamicModes": false, "supportsMcpServers": false, "supportsReasoningStream": true,
             "supportsToolInvocations": true, "supportsRewindConversation": false, "supportsRewindFiles": false,
@@ -983,6 +994,34 @@ impl RowProjector for PaseoProjector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// DECISIONS 17: the working-time counter stands still while a question is open and leaves out the time
+    /// answered questions waited.
+    #[test]
+    fn the_working_time_leaves_out_the_questions_waits() {
+        let mut c: Conversation = serde_json::from_value(json!({
+            "id": uuid::Uuid::nil(), "title": null, "titleSource": null, "createdAt": "2026-11-05T08:00:00Z",
+            "updatedAt": "2026-11-05T08:00:00Z", "lastUserMessageAt": null, "deletedAt": null, "purgeAt": null,
+            "claudeSessionId": null, "lastTurn": null, "sandbox": null, "model": null, "contextTokens": null,
+            "turn": {"id": uuid::Uuid::nil(), "startedAt": "2026-11-05T08:00:00Z", "origin": "person", "askWaitMs": 90000},
+            "run": {"state": "running", "background": []}, "origin": {"kind": "new"}}))
+        .unwrap();
+        let t = c.turn.clone().unwrap();
+        assert_eq!(
+            serde_json::to_value(working_since(&c, &t)).unwrap(),
+            json!("2026-11-05T08:01:30.000Z")
+        );
+        c.asks.push(magpie_api::conversations::Ask {
+            id: "ask-1".into(),
+            tool_name: "AskUserQuestion".into(),
+            tool_use_id: Some("toolu_1".into()),
+            input: Map::new(),
+            title: None,
+            description: None,
+            created_at: t.started_at,
+        });
+        assert_eq!(working_since(&c, &t), None, "no counter while the question is open");
+    }
 
     fn tool(name: &str, input: Value, status: ToolStatus, result: Option<&str>) -> ToolItem {
         ToolItem {

@@ -291,7 +291,7 @@ route (401 `unauthenticated` otherwise, 503 `unavailable` with `retry-after: 1` 
 | `GET /v1/state` | diagnostic run, generation, lease, FUSE, memory and supervisor facts |
 | `POST /v1/lifecycle/prepare {kind: pause\|snapshot\|migrate, force, deadlineMs}` | 200 `{ready: true}`; `pause` while busy and not forced: 409 `sandbox_busy` with `run {state, turnId, tasks}` |
 | `POST /v1/lifecycle/resumed {kind: pause\|migrate, at}` | 204 |
-| `POST /v1/lifecycle/release {reason: ReleaseReason, code, force, deadlineMs}` | 200 `{released: true}` once Claude Code is stopped and every accepted write is stored; not forced while a turn, task or ask is open: 409 `sandbox_busy` with `run`, nothing done |
+| `POST /v1/lifecycle/release {reason: ReleaseReason, code, force, deadlineMs}` | 200 `{released: true}` once Claude Code is stopped and every accepted write is stored; not forced while a turn, task or ask beside other work is open: 409 `sandbox_busy` with `run`, nothing done; a run that waits only on its questions (`asking`) is released and its turn parked (DECISIONS 17) |
 | `POST /v1/exec {argv, cwd, stdin, timeoutMs, env}` | `{exitCode, signal, stdout, stderr, truncated}` (base64; uid 1000, ≤ 60 s) |
 
 `busy` is true in `starting`, `running`, `stopping` and `held`; false in `idle` and `released`.

@@ -161,7 +161,7 @@ fn err(code: DataCode, message: &str) -> ErrorInfo {
 async fn last_life(tx: &aviary_pg::Tx<'_>, turn: Uuid) -> Result<OffsetDateTime> {
     let row = tx
         .query_one(
-            "select greatest(coalesce(t.started_at, t.created_at), c.heartbeat_at,
+            "select greatest(coalesce(t.started_at, t.created_at), t.resumed_at, c.heartbeat_at,
                              (select available_since from availability where id))
              from turns t join conversations c on c.id = t.conversation_id where t.id = $1",
             &[&turn],
@@ -300,7 +300,8 @@ async fn expire(d: &Driver, conversation: Uuid, turn_id: Uuid, claimed: OffsetDa
                 }
                 Ok((Some(turn), true))
             }
-            State::Completed | State::Failed | State::Canceled => Ok((None, false)),
+            // a parked turn has no deadline (DECISIONS 17): only one set before it parked can be found here
+            State::Parked | State::Completed | State::Failed | State::Canceled => Ok((None, false)),
         }
     })
     .await?;

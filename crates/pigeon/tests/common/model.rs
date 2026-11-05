@@ -396,6 +396,7 @@ impl Model {
             id: turn,
             started_at: now(),
             origin,
+            ask_wait_ms: 0,
         });
         c.conv.run.state = RunState::Running;
         let person = c.person.clone();

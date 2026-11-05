@@ -943,7 +943,13 @@ impl FakeMagpie {
             let changed = self.commands_changed.notified();
             let found = self.with_conv(ctx, true, |c, _| {
                 let head = c.commands.last().map_or(0, |l| l.cmd_seq);
-                let cmds: Vec<Command> = c.commands.iter().filter(|x| x.cmd_seq > q.after).cloned().collect();
+                // as magpie 8.4: neither canceled nor acknowledged
+                let cmds: Vec<Command> = c
+                    .commands
+                    .iter()
+                    .filter(|x| x.cmd_seq > q.after && !c.acks.contains_key(&x.cmd_seq))
+                    .cloned()
+                    .collect();
                 Ok(CommandsResponse { commands: cmds, head })
             })?;
             if !found.commands.is_empty() || tokio::time::Instant::now() >= deadline {
@@ -954,7 +960,12 @@ impl FakeMagpie {
                 return self.with_conv(ctx, true, |c, _| {
                     let head = c.commands.last().map_or(0, |l| l.cmd_seq);
                     Ok(CommandsResponse {
-                        commands: c.commands.iter().filter(|x| x.cmd_seq > q.after).cloned().collect(),
+                        commands: c
+                            .commands
+                            .iter()
+                            .filter(|x| x.cmd_seq > q.after && !c.acks.contains_key(&x.cmd_seq))
+                            .cloned()
+                            .collect(),
                         head,
                     })
                 });

@@ -548,3 +548,107 @@ async fn a_write_to_a_recorded_file_counts_whatever_its_session_id() {
     h.pass(&w.imp).await.unwrap();
     assert_eq!(w.imp.magpie.legacy.verify_mismatches(), before + 1);
 }
+
+/// DECISIONS 17 (the old stack's parked questions, claudecodeui fd1b3ed5): a conversation whose question waits
+/// unanswered in `jarvis_open_questions` (its transcript ends with that `tool_use` dangling, its old sandbox gone)
+/// is handed over with its question: a parked turn whose open ask is keyed by the `tool_use_id`, and the person's
+/// answer on the new stack admits it again with a `start_turn` that resumes the session and carries the answer. An
+/// answered question whose turn has not run keeps its conversation legacy.
+#[tokio::test]
+async fn a_parked_old_question_is_carried_over_and_an_answered_one_waits() {
+    let w = World::new("loop_questions").await;
+    w.jarvis("create table sandboxes (id uuid primary key, conversation_id uuid not null, status text not null)")
+        .await;
+    let ka = w.person(ALICE).await;
+    let schema = format!("cc_{ka}");
+    let asking = conversation(&w, &ka, "Asking").await;
+    let answered = conversation(&w, &ka, "Answered").await;
+    let input = r#"{"questions":[{"question":"Which?","header":"Which","multiSelect":false,"options":[{"label":"A","description":"a"},{"label":"B","description":"b"}]}]}"#;
+    w.cloudcli(&format!(
+        "insert into {schema}.jarvis_open_questions
+           (request_id, session_id, tool_name, tool_use_id, input, run_options, asked_at, answer) values
+           ('req-1', '{asking}', 'AskUserQuestion', 'toolu_q1', '{input}', '{{}}', '2026-10-22T07:10:00.000Z', null),
+           ('req-2', '{answered}', 'AskUserQuestion', 'toolu_q2', '{input}', '{{}}', '2026-10-22T07:10:00.000Z',
+            '{{\"allow\":true,\"updatedInput\":{{\"answers\":{{\"Which?\":\"B\"}}}}}}')"
+    ))
+    .await;
+    let fake: Fake = Arc::new(Mutex::new(Old::default()));
+    {
+        let mut o = fake.lock().unwrap();
+        o.pods = vec![("ui-a".into(), false)];
+        // the busy route lists neither: an unanswered question holds nothing, and the answered one is left out here
+        // so that the importer's own check of the table is what keeps it
+        o.children.insert("ui-a".into(), vec![(schema.clone(), true, vec![])]);
+        o.reports.insert("ui-a".into(), (0, 0));
+    }
+    let base = serve(fake.clone()).await;
+    let kube = Kube::new(&base, "t0ken", None).unwrap();
+    let mut h = Handover::new(kube.clone(), "sw".into());
+    h.pass(&w.imp).await.unwrap();
+    assert!(handover::allow(&w.imp, &kube, "sw", None).await.unwrap().1);
+    for _ in 0..3 {
+        h.pass(&w.imp).await.unwrap();
+    }
+    assert_eq!(released(&w, asking).await.as_deref(), Some("idle"));
+    assert_eq!(
+        released(&w, answered).await,
+        None,
+        "an answered question waits for its turn"
+    );
+
+    // the question is magpie's now: open, on the parked turn, keyed by its tool_use_id
+    let db = w.magpie().get().await.unwrap();
+    let c = db
+        .query_one(
+            "select c.run_state, t.state, t.id from conversations c join turns t on t.id = c.active_turn
+             where c.id = $1",
+            &[&asking],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (c.get::<_, String>(0).as_str(), c.get::<_, String>(1).as_str()),
+        ("running", "parked")
+    );
+    let turn: Uuid = c.get(2);
+    let ask = db
+        .query_one(
+            "select data from events where conversation_id = $1 and kind = 'ask.pending'",
+            &[&asking],
+        )
+        .await
+        .unwrap()
+        .get::<_, serde_json::Value>(0);
+    assert_eq!(ask["askId"], "req-1");
+    assert_eq!(ask["toolUseId"], "toolu_q1");
+    assert_eq!(ask["input"]["questions"][0]["question"], "Which?");
+
+    // the person answers on the new stack: the turn is admitted again with the answer
+    let person = magpie::conversations::Person {
+        email: ALICE.into(),
+        viewer: None,
+    };
+    let answer = magpie_api::turns::AgentPermissionResponse {
+        behavior: magpie_api::turns::Behavior::Allow,
+        selected_action_id: None,
+        updated_input: Some(serde_json::from_str(r#"{"answers":{"Which?":"A"}}"#).unwrap()),
+        updated_permissions: None,
+        message: None,
+        interrupt: None,
+    };
+    let resumed = magpie::turns::cancel::answer(&w.imp.magpie.pool, &person, asking, "req-1", answer)
+        .await
+        .unwrap();
+    assert_eq!(resumed, Some(turn));
+    let start = db
+        .query_one(
+            "select payload from commands where conversation_id = $1 and type = 'start_turn' and turn_id = $2",
+            &[&asking, &turn],
+        )
+        .await
+        .unwrap()
+        .get::<_, serde_json::Value>(0);
+    assert_eq!(start["answers"][0]["toolUseId"], "toolu_q1");
+    assert_eq!(start["answers"][0]["updatedInput"]["answers"]["Which?"], "A");
+    assert!(start["resume"]["providerSessionId"].is_string(), "{start}");
+}

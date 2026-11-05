@@ -51,6 +51,13 @@ pub async fn cancel(pool: &Pool, person: &Person, id: Uuid) -> Result<CancelResp
                 turn_id: Some(turn.id),
             });
         }
+        if turn.state == State::Parked {
+            // no sandbox runs it: its questions close and it ends at once (DECISIONS 17)
+            super::parked::cancel(t, &person.email, &turn).await?;
+            return Ok(CancelResponse {
+                turn_id: Some(turn.id),
+            });
+        }
         // the start_turn row's lock orders this decision with a command poll that delivers it at the same moment
         let (delivered, _) = lock_start_turn(t, &turn).await?;
         if !delivered {
@@ -84,24 +91,32 @@ fn already_resolved() -> Error {
     Error::code(ErrorCode::AlreadyResolved, "the ask is already answered")
 }
 
-/// M11: queues `answer_ask` for the supervisor; `ask.resolved` follows its report.
+/// M11: queues `answer_ask` for the supervisor; `ask.resolved` follows its report. The ask of a parked turn
+/// (DECISIONS 17) is answered here, and its last answer admits the turn again: its id is returned, for its driver.
 ///
 /// # Errors
 /// 403 `view_as_read_only`, 404 (no such ask), 409 `already_resolved` / `conversation_migrating`; a statement error.
-pub async fn answer(pool: &Pool, person: &Person, id: Uuid, ask_id: &str, resp: AgentPermissionResponse) -> Result<()> {
+pub async fn answer(
+    pool: &Pool,
+    person: &Person,
+    id: Uuid,
+    ask_id: &str,
+    resp: AgentPermissionResponse,
+) -> Result<Option<Uuid>> {
     person.refuse_view_as()?;
-    aviary_pg::tx!(pool, |t| -> Result<()> {
+    aviary_pg::tx!(pool, |t| -> Result<Option<Uuid>> {
         let c = lock(t, &person.email, id).await?;
         c.refuse_migrating()?;
-        let pending = t
+        let Some(pending) = t
             .query_opt(
-                "select 1 from events where conversation_id = $1 and kind = 'ask.pending' and data->>'askId' = $2",
+                "select turn_id from events where conversation_id = $1 and kind = 'ask.pending' and data->>'askId' = $2",
                 &[&id, &ask_id],
             )
-            .await?;
-        if pending.is_none() {
+            .await?
+        else {
             return Err(Error::not_found());
-        }
+        };
+        let ask_turn: Option<Uuid> = pending.get(0);
         let done = t
             .query_opt(
                 "select 1 from events where conversation_id = $1 and kind = 'ask.resolved' and data->>'askId' = $2
@@ -115,6 +130,13 @@ pub async fn answer(pool: &Pool, person: &Person, id: Uuid, ask_id: &str, resp: 
         if done.is_some() {
             return Err(already_resolved());
         }
+        if let Some(turn) = active(t, id)
+            .await?
+            .filter(|a| a.state == State::Parked && Some(a.id) == ask_turn)
+        {
+            let resumed = super::parked::answer(t, &person.email, &turn, ask_id, resp.clone()).await?;
+            return Ok(resumed.then_some(turn.id));
+        }
         let allow = resp.behavior == Behavior::Allow;
         let cmd = AnswerAsk {
             ask_id: ask_id.to_owned(),
@@ -127,7 +149,7 @@ pub async fn answer(pool: &Pool, person: &Person, id: Uuid, ask_id: &str, resp: 
             o.insert("resolution".to_owned(), serde_json::to_value(&resp)?);
         }
         command(t, id, "answer_ask", None, &payload).await?;
-        Ok(())
+        Ok(None)
     })
     .await
 }

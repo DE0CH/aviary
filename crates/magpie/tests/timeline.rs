@@ -1194,3 +1194,44 @@ async fn prompts_and_search() {
         assert_eq!(e.code(), Some(&ErrorCode::BadRequest));
     }
 }
+
+/// DECISIONS 17: a resumed parked turn's answer line (`meta.askAnswer`) is the result of the question it answers:
+/// the `AskUserQuestion` row completes with the person's answer, and no prompt row is made.
+#[tokio::test]
+async fn a_parked_questions_answer_line_completes_its_row_and_makes_no_prompt() {
+    let db = common::fresh_db("ask_answer").await;
+    let t = common::Tokens::new();
+    let a = common::replica(&db.url, &t).await;
+    let pigeon = a.pigeon();
+    let id = ev::conversation(&pigeon, ALICE).await;
+    let pool = a.pool();
+    let turn = Uuid::new_v4();
+    ev::append(
+        pool,
+        ALICE,
+        id,
+        vec![
+            ev::turn_started(turn),
+            ev::in_turn(
+                ev::assistant("m1", json!([ev::tool_use("toolu_ask", "AskUserQuestion")])),
+                turn,
+            ),
+        ],
+    )
+    .await;
+    let text = "Your questions have been answered: \"Which?\"=\"B\". You can now continue with these answers in mind.";
+    let mut answer = ev::with_meta(
+        ev::ev(
+            "cc.user",
+            json!({"type": "user", "uuid": Uuid::new_v4(), "message": {"role": "user", "content": text}}),
+        ),
+        json!({"askAnswer": true, "results": [{"toolUseId": "toolu_ask", "toolUseSeq": null}]}),
+    );
+    answer.text = Some(text.to_owned());
+    ev::append1(pool, ALICE, id, ev::in_turn(answer, turn)).await;
+    let p = pigeon.person(ALICE).timeline(id, &ev::tail(10)).await.unwrap();
+    assert_eq!(p.rows.len(), 1, "no prompt row: {:?}", items(&p));
+    let row = tool(&p.rows[0]);
+    assert_eq!(row.status, ToolStatus::Completed);
+    assert_eq!(row.result.as_ref().map(|r| r.text.as_str()), Some(text));
+}

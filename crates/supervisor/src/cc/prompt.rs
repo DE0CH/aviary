@@ -105,6 +105,97 @@ pub fn user_line(content: &Value, sent_at: &str) -> Vec<u8> {
     v
 }
 
+/// The message that resumes a parked turn (DECISIONS 17): each answer worded as Claude Code 2.1.304 words the
+/// tool's own result (`AskUserQuestion`'s `mapToolResultToToolResultBlockParam`, `ExitPlanMode`'s approval), so
+/// the model reads the person's answer as it would have read the tool's result. The resumed Claude Code has
+/// already closed the question itself ("[Tool call interrupted …]", supervisor 7.6), so this is the turn's next
+/// user message.
+#[must_use]
+pub fn answers(list: &[magpie_api::sandbox::ParkedAnswer]) -> String {
+    list.iter().map(answer).collect::<Vec<_>>().join("\n\n")
+}
+
+fn answer(a: &magpie_api::sandbox::ParkedAnswer) -> String {
+    if !a.allow {
+        return a
+            .message
+            .clone()
+            .filter(|m| !m.trim().is_empty())
+            .unwrap_or_else(|| "The person declined.".to_owned());
+    }
+    let input = a.updated_input.as_ref().unwrap_or(&a.input);
+    match a.tool_name.as_str() {
+        "AskUserQuestion" => questions(&a.input, input),
+        "ExitPlanMode" => {
+            let plan = input.get("plan").and_then(Value::as_str).unwrap_or("").trim();
+            if plan.is_empty() {
+                "User has approved exiting plan mode. You can now proceed.".to_owned()
+            } else {
+                format!(
+                    "User has approved your plan. You can now start coding. Start with updating your todo list if applicable\n\n## Approved Plan:\n{plan}"
+                )
+            }
+        }
+        tool => format!(
+            "The user allowed the {tool} call. It did not run: the session ended before the answer arrived, so call it again."
+        ),
+    }
+}
+
+/// `AskUserQuestion`'s result for `answers` (`updatedInput.answers`, question → answer) of `asked`'s questions.
+fn questions(asked: &serde_json::Map<String, Value>, given: &serde_json::Map<String, Value>) -> String {
+    let empty = Vec::new();
+    let qs = asked
+        .get("questions")
+        .or_else(|| given.get("questions"))
+        .and_then(Value::as_array)
+        .unwrap_or(&empty);
+    let answers = given.get("answers").and_then(Value::as_object);
+    let answer_of = |q: &str| -> Option<String> {
+        match answers?.get(q)? {
+            Value::String(s) if !s.is_empty() => Some(s.clone()),
+            Value::Array(v) if !v.is_empty() => Some(v.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")),
+            _ => None,
+        }
+    };
+    let mut parts = Vec::new();
+    let mut chosen = true;
+    for q in qs {
+        let Some(text) = q.get("question").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(a) = answer_of(text) else { continue };
+        let labels: Vec<&str> = q
+            .get("options")
+            .and_then(Value::as_array)
+            .map(|o| {
+                o.iter()
+                    .filter_map(|x| x.get("label").and_then(Value::as_str))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let multi = q.get("multiSelect").and_then(Value::as_bool).unwrap_or(false);
+        let is_label = labels.contains(&a.as_str()) || (multi && a.split(", ").all(|p| labels.contains(&p)));
+        chosen &= is_label;
+        parts.push(format!("\"{text}\"=\"{a}\""));
+    }
+    let response = given.get("response").and_then(Value::as_str).map_or("", str::trim);
+    if !response.is_empty() {
+        return format!("The user responded: {response}");
+    }
+    if parts.is_empty() {
+        return "The user did not answer the questions.".to_owned();
+    }
+    let d = parts.join(", ");
+    if chosen {
+        format!("Your questions have been answered: {d}. You can now continue with these answers in mind.")
+    } else {
+        format!(
+            "The user answered: {d}. Read the answers carefully \u{2014} they may request clarification, changes, or that you not proceed \u{2014} and follow what they actually say."
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,5 +243,65 @@ mod tests {
         assert_eq!(c[0], json!({"type": "text", "text": "t"}));
         assert_eq!(c[1]["source"]["media_type"], "image/png");
         assert_eq!(c[1]["source"]["data"], "AQID");
+    }
+
+    #[allow(clippy::needless_pass_by_value)] // json! literals
+    fn parked(
+        tool: &str,
+        input: Value,
+        allow: bool,
+        updated: Option<Value>,
+        message: Option<&str>,
+    ) -> magpie_api::sandbox::ParkedAnswer {
+        magpie_api::sandbox::ParkedAnswer {
+            ask_id: "a1".into(),
+            tool_name: tool.into(),
+            tool_use_id: Some("toolu_1".into()),
+            input: input.as_object().cloned().unwrap_or_default(),
+            allow,
+            updated_input: updated.and_then(|u| u.as_object().cloned()),
+            message: message.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_parked_answer_reads_as_the_tools_own_result() {
+        let asked = json!({"questions": [{"question": "Which colour?", "header": "Colour", "multiSelect": false,
+            "options": [{"label": "Red", "description": "r"}, {"label": "Blue", "description": "b"}]}]});
+        let mut given = asked.clone();
+        given["answers"] = json!({"Which colour?": "Blue"});
+        assert_eq!(
+            answers(&[parked(
+                "AskUserQuestion",
+                asked.clone(),
+                true,
+                Some(given.clone()),
+                None
+            )]),
+            "Your questions have been answered: \"Which colour?\"=\"Blue\". You can now continue with these answers in mind."
+        );
+        given["answers"] = json!({"Which colour?": "green, please"});
+        assert!(
+            answers(&[parked("AskUserQuestion", asked.clone(), true, Some(given), None)])
+                .starts_with("The user answered: \"Which colour?\"=\"green, please\". Read the answers carefully")
+        );
+        assert_eq!(
+            answers(&[parked(
+                "AskUserQuestion",
+                asked.clone(),
+                true,
+                Some(asked.clone()),
+                None
+            )]),
+            "The user did not answer the questions."
+        );
+        assert_eq!(
+            answers(&[parked("AskUserQuestion", asked, false, None, Some("not now"))]),
+            "not now"
+        );
+        assert!(
+            answers(&[parked("ExitPlanMode", json!({"plan": "1. do it"}), true, None, None)])
+                .starts_with("User has approved your plan. You can now start coding.")
+        );
     }
 }

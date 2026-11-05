@@ -1,6 +1,6 @@
 //! Running sets (cutover 6.3): which old conversations are running, read inside the old ui pods. The importer runs
 //! [`SCRIPT`] (`holds.js`) in every `app=ui` pod's container `ui` (Terminating pods included) as `node -e`; the script
-//! asks every `CloudCLI` child of the old router what keeps it busy (the switch module's `/api/jarvis/switch/busy`: running, held processes, preparing, pending) and prints one JSON line per child. A schema
+//! asks every `CloudCLI` child of the old router what keeps it busy (the switch module's `/api/jarvis/switch/busy`: running, held processes, preparing, pending, and the answered parked questions of `asking`, whose turns have yet to run: DECISIONS 17) and prints one JSON line per child. A schema
 //! with a child that did not answer is unknown, and every conversation of it counts as running (fail-closed); a
 //! pod whose read failed as a whole makes the read unusable ([`RunningSet::complete`] false).
 

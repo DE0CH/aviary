@@ -493,6 +493,14 @@ pub fn apply(t: &mut ToolItem, body: &EventBody, meta: &EventMeta) -> bool {
                 }
                 return false;
             }
+            if meta.ask_answer == Some(true) {
+                // a parked turn's answers: the line's text is the questions' result (DECISIONS 17)
+                if meta.results.iter().flatten().any(|r| r.tool_use_id == t.call_id) {
+                    apply_result(t, &serde_json::json!({"type": "tool_result", "content": content(line)}));
+                    return true;
+                }
+                return false;
+            }
             let mut hit = false;
             for (id, block) in tool_results(line) {
                 if id == t.call_id {
