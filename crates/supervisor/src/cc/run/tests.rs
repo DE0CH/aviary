@@ -2274,3 +2274,11 @@ async fn sent_files_refuse_oversized_files_at_once_and_wait_out_a_migration() {
     assert_eq!(r, crate::sent_files::HookOutcome::Sent(1));
     assert_eq!(w.magpie.script().calls_to("sent_files").len(), 2, "retried once");
 }
+
+#[test]
+fn an_unanswered_ask_is_closed_with_the_timeout_answer() {
+    assert_eq!(
+        super::ask_timeout_answer(),
+        "User has not answered in 30 minutes, the session has timed out, ask again if needed."
+    );
+}

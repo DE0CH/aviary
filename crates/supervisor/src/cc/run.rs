@@ -1266,7 +1266,7 @@ impl Driver {
                 st.asks.retain(|x| x.ask_id != a.ask_id);
                 fx.push(Fx::Stdin(control::deny(
                     &a.cli_request_id,
-                    "No answer was given.",
+                    &ask_timeout_answer(),
                     a.tool_use_id.as_deref(),
                 )));
                 fx.push(a.resolved(AskOutcome::Canceled));
@@ -3059,3 +3059,12 @@ impl Agent for Driver {
 
 #[cfg(test)]
 mod tests;
+
+/// What the model is told when nobody answered its question within [`ASK_TIMEOUT`] (Deyao, 2026-11-05): the ask is
+/// closed so the sandbox can be released or paused, and the model may ask again.
+fn ask_timeout_answer() -> String {
+    format!(
+        "User has not answered in {} minutes, the session has timed out, ask again if needed.",
+        ASK_TIMEOUT.as_secs() / 60
+    )
+}
