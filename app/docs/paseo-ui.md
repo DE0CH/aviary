@@ -42,9 +42,18 @@ does not change one.
 | timeline `user_message` `images` / `attachments` (added to the protocol) | the history's user images (data: URLs from the transcript) and files (`<files_input>`, paths under /workspace/uploads) |
 
 Questions: turns run with `bypassPermissions`, but Claude Code still sends a tool that needs the person
-(AskUserQuestion) to `canUseTool`, which waits with no timeout. The hub keeps each waiting question
+(AskUserQuestion) to `canUseTool`. The hub keeps each waiting question
 (`paseo-hub.ts` `questions`), every tab gets the card, the first answer wins, and a view-as answer is recorded like a
-message first. Any other tool that asks (ExitPlanMode after the model entered plan mode) is allowed at once: staff are
+message first. A question never holds the sandbox and never times out for the person (DE0CH/YYC
+yyc-ai/refactor/DECISIONS.md 17): once the turn waits only on it (the model's reply ended, no other tool call open, no
+background work), the runtime parks it (`claude-runtime.provider.js`): the turn ends (`complete` with
+`awaitingAnswer`, so no working time runs), Claude Code gets a SIGTERM and the sandbox idles out like any idle one,
+and the question is kept in this process and its database (`jarvis-open-questions.ts`, table `jarvis_open_questions`),
+so the card stays, also after a reload or a restart of this process. The last answer starts a turn that resumes the
+conversation and gives Claude Code the answer as its message, in the words of the tool's own result: a resumed Claude
+Code (2.1.304) closes a tool call made before it restarted as interrupted and takes no answer for it. History shows
+that answer on the question's card (`paseo-timeline.ts`). A message sent instead withdraws the question; a question
+is closed after the 7-day safety limit (`CLAUDE_INTERACTIVE_TOOL_TIMEOUT_MS`). Any other tool that asks (ExitPlanMode after the model entered plan mode) is allowed at once: staff are
 never asked for permission. Before 2026-11-04 the bridge dropped these frames, so a turn with a question hung,
 showing nothing, until stopped.
 
