@@ -1,7 +1,13 @@
 //! The raw view's read (`GET /v1/conversations/{id}/transcript`): the main transcript's lines in file order, long
 //! text put back whole, media as a placeholder, paged by `after`; only while an admin views as the owner.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::missing_panics_doc)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::missing_panics_doc,
+    clippy::too_many_lines,
+    clippy::many_single_char_names
+)]
 
 mod common;
 
@@ -128,6 +134,6 @@ async fn the_transcript_is_read_whole_in_order_only_while_viewing_as() {
         )
         .await
         .unwrap();
-    assert!(none.lines.is_empty());
+    assert_eq!(none.lines.len(), 0);
     assert_eq!(none.next, tail.next);
 }
