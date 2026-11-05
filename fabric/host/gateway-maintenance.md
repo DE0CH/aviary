@@ -32,14 +32,16 @@ Reach hermit first (e.g. `kubectl -n <namespace> port-forward svc/hermit 18080:8
 
 1. `PUT /v1/admin/sandboxes-enabled {"enabled": false, "reason": "gateway maintenance"}`: new starts answer
    `sandbox_busy` (`disabled`) at once; running sandboxes are untouched.
-2. Poll `GET /ops/snapshot` until no sandbox is busy (`sandboxes.list[].busy` all false; a failed section counts as
-   busy), at most `--deadline` minutes (default 30); then go on anyway and say how many were busy.
+2. Poll `GET /ops/snapshot` (only snapshots built after step 1; hermit caches one for 4 s) until no sandbox is busy
+   (`sandboxes.list[].busy` all false; a failed section counts as busy), at most `--deadline` minutes (default 30);
+   then go on anyway and say how many were busy.
 3. Run `<command>` with bash. **It must block until the node work is finished** (a dispatch that returns at once
    would let step 5 re-enable sandboxes before the node goes down) and exit non-zero when it failed. A failure is
    reported; steps 4 and 5 still run, since the node may be back either way.
-4. Poll the snapshot until the gateway's host row is reachable (`hosts.list[]` with `gateway: true, reachable: true`,
-   i.e. hermit has its heartbeat) and egress targets are pushed (`fabricOps.egressTargets > 0`), both for `--settle`
-   seconds in a row (default 30), at most `--back` minutes (default 30). If that never happens, new sandboxes stay
+4. Poll the snapshot (only snapshots built after the node work ended) until the gateway's host row is reachable
+   (`hosts.list[]` with `gateway: true, reachable: true`, i.e. hermit has its heartbeat) and egress targets are pushed
+   (`fabricOps.egressTargets > 0`), both for `--settle` seconds in a row (default 30), at most `--back` minutes
+   (default 30). If that never happens, new sandboxes stay
    **off** and the script exits 1: fix the gateway (`kubectl -n yyc-ai-fabric get pod -o wide`, the node's state),
    then `hermit-admin.sh enable`.
 5. `PUT /v1/admin/sandboxes-enabled {"enabled": true}`.

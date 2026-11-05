@@ -112,10 +112,13 @@ case "$verb" in
     # step 1
     call PUT /v1/admin/sandboxes-enabled '{"enabled": false, "reason": "gateway maintenance"}' >/dev/null
     log "1/5 new sandboxes off (sandbox_busy disabled)"
-    # step 2: every sandbox not busy, as the snapshot's sandboxes section says (a failed section counts as busy)
+    # step 2: every sandbox not busy, as the snapshot's sandboxes section says (a failed section counts as busy; only
+    # snapshots built after step 1, as in step 4)
+    off_at=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
     end=$((SECONDS + deadline * 60))
     while :; do
-      busy=$(snap | jq -r 'if .sandboxes.list == null then "?" else [.sandboxes.list[] | select(.busy)] | length end' 2>/dev/null || echo "?")
+      busy=$(snap | jq -r --arg t "$off_at" 'if (.at // "") <= $t or .sandboxes.list == null then "?"
+                                             else [.sandboxes.list[] | select(.busy)] | length end' 2>/dev/null || echo "?")
       [ "$busy" = 0 ] && { log "2/5 no busy sandbox"; break; }
       [ "$SECONDS" -lt "$end" ] || { log "2/5 deadline of $deadline min reached with ${busy} busy sandbox(es): going on"; break; }
       sleep "$poll"
@@ -124,10 +127,14 @@ case "$verb" in
     log "3/5 node work: $work"
     rc=0; bash -c "$work" || rc=$?
     if [ "$rc" = 0 ]; then log "3/5 node work done"; else log "3/5 node work FAILED (exit $rc)"; fi
-    # step 4: the gateway's host row reachable and egress targets pushed, for $settle seconds in a row
+    # step 4: the gateway's host row reachable and egress targets pushed, for $settle seconds in a row, read only from
+    # snapshots built after the node work ended (hermit caches one for a few seconds: an older one says nothing about
+    # the node's return; `at` is RFC 3339 UTC with milliseconds, so the strings compare in time order)
+    done_at=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
     end=$((SECONDS + back * 60)) since=
     while :; do
-      ok=$(snap | jq -r '([.hosts.list[]? | select(.gateway and .reachable)] | length > 0)
+      ok=$(snap | jq -r --arg t "$done_at" '(.at // "") > $t
+                         and ([.hosts.list[]? | select(.gateway and .reachable)] | length > 0)
                          and ((.fabricOps.egressTargets // 0) > 0)' 2>/dev/null || echo false)
       if [ "$ok" = true ]; then
         since=${since:-$SECONDS}

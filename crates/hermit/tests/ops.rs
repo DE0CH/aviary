@@ -1397,7 +1397,7 @@ async fn the_gateway_maintenance_runbook_holds_the_node_work_and_the_restart() {
     std::fs::write(&release, b"").unwrap();
     tokio::time::sleep(Duration::from_secs(8)).await;
     assert!(child.try_wait().unwrap().is_none(), "step 4: waits for the gateway");
-    assert_eq!(controls().await.0, false, "still off while the gateway is away");
+    assert!(!controls().await.0, "still off while the gateway is away");
     gateway(true).await;
     let out = tokio::time::timeout(Duration::from_secs(30), child.wait_with_output())
         .await
