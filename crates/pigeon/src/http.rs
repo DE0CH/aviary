@@ -669,7 +669,10 @@ async fn public(app: &App, req: Request, path: &str) -> (&'static str, Response)
         return ("method", page(app, Page::ReadOnly, None));
     }
     if path.starts_with(crate::raw::PAGE_PREFIX) {
-        return ("raw", crate::raw::serve(app, req.headers(), path, req.uri().query()).await);
+        return (
+            "raw",
+            crate::raw::serve(app, req.headers(), path, req.uri().query()).await,
+        );
     }
     let last = path.rsplit('/').next().unwrap_or("");
     if last.contains('.') {

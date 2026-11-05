@@ -255,7 +255,10 @@ mod tests {
             assert!(!t.contains("{{"), "a placeholder left");
         }
         assert!(page_html().contains("/lines"), "the page reads the lines route");
-        assert!(!page_html().contains(compat::VIEW_AS_QUERY), "and needs no view-as token");
+        assert!(
+            !page_html().contains(compat::VIEW_AS_QUERY),
+            "and needs no view-as token"
+        );
         assert!(toggle_script().contains(compat::VIEW_AS_STORAGE));
     }
 
@@ -263,7 +266,10 @@ mod tests {
     fn the_address_takes_the_bare_uuid_or_the_workspace_form() {
         let id = "68abe986-9abb-4157-9ac4-e074670c70db";
         assert_eq!(conversation_id(id).map(|u| u.to_string()).as_deref(), Some(id));
-        assert_eq!(conversation_id(&format!("wks_{id}")).map(|u| u.to_string()).as_deref(), Some(id));
+        assert_eq!(
+            conversation_id(&format!("wks_{id}")).map(|u| u.to_string()).as_deref(),
+            Some(id)
+        );
         assert!(conversation_id("wks_nope").is_none());
         assert!(conversation_id("xyz_68abe986-9abb-4157-9ac4-e074670c70db").is_none());
     }
