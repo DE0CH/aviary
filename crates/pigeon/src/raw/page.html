@@ -10,6 +10,7 @@
 --t13:13px;--t15:15px;--t18:18px;--mono:ui-monospace,"SF Mono",Menlo,Consolas,"Noto Sans Mono CJK HK","Noto Sans HK",monospace;color-scheme:light}
 @media (prefers-color-scheme:dark){:root{--ground:#111315;--panel:#1a1d20;--ink:#e8eaec;--muted:#9ea6ae;--rule:#33393f;--st-bad:#ff4d5a;--st-info:#5aa9ff;color-scheme:dark}}
 *{box-sizing:border-box;margin:0;padding:0;border-radius:0}
+[hidden]{display:none!important}
 body{background:var(--ground);color:var(--ink);font:var(--t15)/1.5 system-ui,"Noto Sans HK","PingFang HK",sans-serif;font-variant-numeric:tabular-nums}
 header{position:sticky;top:0;z-index:2;background:var(--panel);border-bottom:1px solid var(--rule)}
 .bar{max-width:1200px;margin:0 auto;padding:0 16px;display:flex;flex-wrap:wrap;align-items:center;gap:0 16px;min-height:56px}
@@ -46,7 +47,7 @@ pre{white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;font:var(-
 .more:hover{background:var(--ground)}
 .day{padding:6px 12px;font-size:var(--t13);font-weight:600;border-bottom:1px solid var(--rule);background:var(--ground)}
 .empty{padding:24px 16px;color:var(--muted)}
-@media (max-width:700px){.row{grid-template-columns:auto minmax(0,1fr)}.row .t{grid-column:1;padding-right:0}.row .k{grid-column:2}.row .x{grid-column:1/-1;padding-top:0}.k b{display:inline;margin-right:8px}}
+@media (max-width:700px){header{position:static}.bar{gap:0 12px}.ctl{width:100%;display:grid;grid-template-columns:repeat(4,auto)}.ctl a,.ctl button{padding:0 10px;font-size:var(--t13)}.status{margin-left:0;padding-bottom:8px}.row{grid-template-columns:auto minmax(0,1fr)}.row .t{grid-column:1;padding-right:0}.row .k{grid-column:2}.row .x{grid-column:1/-1;padding-top:0}.k b{display:inline;margin-right:8px}}
 </style>
 </head>
 <body>
@@ -55,7 +56,7 @@ pre{white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;font:var(-
 <h1>Raw transcript</h1>
 <span class="who" id="who"></span>
 <div class="ctl">
-<a id="back" href="/">Normal view</a>
+<a id="back" href="/">Normal</a>
 <button id="outs" aria-pressed="true">Outputs</button>
 <button id="quiet" aria-pressed="false">Bookkeeping</button>
 <button id="follow" aria-pressed="true">Follow</button>
