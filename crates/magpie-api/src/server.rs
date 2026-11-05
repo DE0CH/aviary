@@ -44,11 +44,11 @@ use crate::ops::{
     WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
 use crate::routes::{
-    self, ADMIN_CONVERSATION, ADMIN_CONVERSATIONS, ADMIN_EVENTS, ADMIN_TIMELINE, ASK_ANSWER, BLOB, CANCEL, CHANGES,
-    CONVERSATION, CONVERSATION_DELETE, CONVERSATION_RESTORE, CONVERSATION_SHARES, CONVERSATIONS, CREATION, FILES,
-    FILES_RAW, HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS, LEGACY_TICKET_CLAIM,
-    LEGACY_TICKET_DONE, LEGACY_TICKETS, LEGACY_WINDOW, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS, PROMPTS,
-    SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME,
+    self, ADMIN_CONVERSATION, ADMIN_CONVERSATIONS, ADMIN_EVENTS, ADMIN_TIMELINE, ADMIN_TRANSCRIPT, ASK_ANSWER, BLOB,
+    CANCEL, CHANGES, CONVERSATION, CONVERSATION_DELETE, CONVERSATION_RESTORE, CONVERSATION_SHARES, CONVERSATIONS,
+    CREATION, FILES, FILES_RAW, HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS,
+    LEGACY_TICKET_CLAIM, LEGACY_TICKET_DONE, LEGACY_TICKETS, LEGACY_WINDOW, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS,
+    PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME,
     SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE,
     SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SENT_FILES,
     SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS, SEARCH, SHARE,
@@ -743,6 +743,16 @@ pub trait Server: Send + Sync + 'static {
         async move { Err(not_implemented("admin_timeline")) }
     }
 
+    /// Route `admin_transcript`.
+    fn admin_transcript(
+        &self,
+        ctx: Ctx,
+        id: Uuid,
+        query: TranscriptQuery,
+    ) -> impl Future<Output = Result<TranscriptPage, ApiError>> + Send {
+        async move { Err(not_implemented("admin_transcript")) }
+    }
+
     /// Route `legacy_ticket` (the switch window).
     fn legacy_ticket(
         &self,
@@ -1170,6 +1180,15 @@ async fn h_admin_timeline<S: Server>(
     reply("admin_timeline", s.admin_timeline(ctx, id, query).await)
 }
 
+async fn h_admin_transcript<S: Server>(
+    State(s): State<Arc<S>>,
+    ctx: Ctx,
+    P(id): P<Uuid>,
+    Q(query): Q<TranscriptQuery>,
+) -> Response {
+    reply("admin_transcript", s.admin_transcript(ctx, id, query).await)
+}
+
 /// Serve `server` on every route of the contract (fallback: 404 `not_found` as the envelope).
 pub fn router<S: Server>(server: Arc<S>) -> Router {
     Router::new()
@@ -1242,6 +1261,7 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
         .route(ADMIN_CONVERSATION, get(h_admin_conversation::<S>))
         .route(ADMIN_EVENTS, get(h_admin_events::<S>))
         .route(ADMIN_TIMELINE, get(h_admin_timeline::<S>))
+        .route(ADMIN_TRANSCRIPT, get(h_admin_transcript::<S>))
         .fallback(|| async { ApiError::not_found("no such route").into_response() })
         .with_state(server)
 }

@@ -99,6 +99,7 @@ fn check_route(id: &str, f: &serde_json::Value) {
         "admin_conversation" => check::<NoQuery, NoBody, Json<AdminConversation>>(id, f),
         "admin_events" => check::<Json<EventsQuery>, NoBody, Json<EventsPage>>(id, f),
         "admin_timeline" => check::<Json<TimelineQuery>, NoBody, Json<TimelinePage>>(id, f),
+        "admin_transcript" => check::<Json<TranscriptQuery>, NoBody, Json<TranscriptPage>>(id, f),
         other => panic!("no typed check for route {other}"),
     }
 }

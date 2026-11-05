@@ -478,6 +478,12 @@ pub struct TranscriptPage {
     pub more: bool,
     /// A turn is running.
     pub running: bool,
+    /// The conversation's owner (the admin route only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person: Option<String>,
+    /// The conversation's title, `None` when untitled (the admin route only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 /// One transcript line.

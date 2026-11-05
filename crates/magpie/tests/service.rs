@@ -235,7 +235,7 @@ async fn headers_a_caller_may_not_set_are_ignored() {
             let seen: Vec<String> = res.json().await.unwrap();
             let mut want: Vec<String> = aviary_core::http::headers::ALWAYS_ALLOWED
                 .iter()
-                .chain(magpie::auth::allowed_headers(c))
+                .chain(magpie::auth::allowed_on(c, r))
                 .map(|n| n.as_str().to_owned())
                 .collect();
             want.sort();
@@ -259,6 +259,14 @@ async fn headers_a_caller_may_not_set_are_ignored() {
             .iter()
             .any(|n| n.starts_with("aviary-sandbox") || *n == "aviary-admin")
     );
+    // pigeon names the admin on an admin route (the raw view), and nothing else there
+    let raw = routes::by_id("admin_transcript").unwrap();
+    assert!(raw.callers.contains(&Caller::Pigeon));
+    let on: Vec<&str> = magpie::auth::allowed_on(Caller::Pigeon, raw)
+        .iter()
+        .map(axum::http::HeaderName::as_str)
+        .collect();
+    assert_eq!(on, ["aviary-admin"]);
     server.abort();
 
     // and through the real service: a forged Aviary-Viewer from a caller that may not set it leaves no trace

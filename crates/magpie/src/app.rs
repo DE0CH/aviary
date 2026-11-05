@@ -549,6 +549,10 @@ impl Server for Magpie {
         http::admin::timeline(self, ctx, id, query).await
     }
 
+    async fn admin_transcript(&self, ctx: Ctx, id: Uuid, query: TranscriptQuery) -> Answer<TranscriptPage> {
+        http::admin::transcript(self, ctx, id, query).await
+    }
+
     async fn legacy_ticket(&self, ctx: Ctx, id: Uuid, body: TicketRequest) -> Answer<TicketResponse> {
         http::legacy::ticket(self, ctx, id, body).await
     }

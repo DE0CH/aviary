@@ -2,7 +2,7 @@
 
 use magpie_api::events::{EventsPage, EventsQuery};
 use magpie_api::ops::{AdminConversation, AdminConversationList, AdminListQuery};
-use magpie_api::rows::{TimelinePage, TimelineQuery};
+use magpie_api::rows::{TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery};
 use magpie_api::server::Ctx;
 use uuid::Uuid;
 
@@ -28,4 +28,9 @@ pub async fn events(app: &Magpie, ctx: Ctx, id: Uuid, q: EventsQuery) -> Answer<
 /// `GET /v1/admin/conversations/{id}/timeline`.
 pub async fn timeline(app: &Magpie, ctx: Ctx, id: Uuid, q: TimelineQuery) -> Answer<TimelinePage> {
     answer(admin::timeline(&app.pool, &ctx, id, &q).await)
+}
+
+/// `GET /v1/admin/conversations/{id}/transcript` (the raw view without view-as).
+pub async fn transcript(app: &Magpie, ctx: Ctx, id: Uuid, q: TranscriptQuery) -> Answer<TranscriptPage> {
+    answer(crate::ccfs::transcript::admin_page(app, &ctx, id, &q).await)
 }

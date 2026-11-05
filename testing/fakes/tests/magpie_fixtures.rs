@@ -432,6 +432,11 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .admin_timeline(param_uuid(&f, "id"), &query::<TimelineQuery>(&f))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
+        "admin_transcript" => c
+            .service(Some(ADMIN))
+            .admin_transcript(param_uuid(&f, "id"), &query::<TranscriptQuery>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
         other => panic!("no client call for route {other}"),
     }
 }

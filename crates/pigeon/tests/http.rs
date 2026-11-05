@@ -1042,8 +1042,7 @@ async fn the_raw_view_is_admin_only_and_reads_the_transcript_as_cells_only_while
     let h = Harness::start().await;
     let cid = uuid::Uuid::new_v4();
     let page = format!("/raw/{cid}");
-    // the page: an admin's cookie only
-    assert_eq!(h.get(&page).send().await.unwrap().status(), 401);
+    // the page: an admin only (signed out: through the sign-in route, below)
     let staff = format!("CF_Authorization={}", h.token(STAFF));
     let r = h.get(&page).header("cookie", &staff).send().await.unwrap();
     assert_eq!(r.status(), 403);
@@ -1098,6 +1097,87 @@ async fn the_raw_view_is_admin_only_and_reads_the_transcript_as_cells_only_while
     assert_eq!(call.header("aviary-person"), Some(STAFF));
     assert_eq!(call.header("aviary-viewer"), Some(ADMIN));
     assert_eq!(call.query.unwrap()["after"], 3);
+}
+
+#[tokio::test]
+async fn the_raw_view_works_standalone_with_the_admins_own_sign_in() {
+    let h = Harness::start().await;
+    let cid = uuid::Uuid::new_v4();
+    let page = format!("/raw/wks_{cid}");
+    // signed out: once through the Access-covered sign-in route and back, marked; marked and still signed out: 401
+    let r = h.get(&page).send().await.unwrap();
+    assert_eq!(r.status(), 302);
+    let to = r.headers()["location"].to_str().unwrap().to_owned();
+    assert_eq!(to, format!("{}?next=%2Fraw%2F{cid}%3Fsignin%3D1", compat::SIGNIN));
+    let admin_cookie = format!("CF_Authorization={}", h.token(ADMIN));
+    let r = h.get(&to).header("cookie", &admin_cookie).send().await.unwrap();
+    assert_eq!(r.status(), 302);
+    assert_eq!(r.headers()["location"], format!("/raw/{cid}?signin=1").as_str());
+    let r = h.get(&format!("/raw/{cid}?signin=1")).send().await.unwrap();
+    assert_eq!(r.status(), 401);
+    // an admin by the Access assertion alone (no cookie, no view-as token, no visit to the app): the page
+    let r = h.get_as(&page, ADMIN).await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.text().await.unwrap(), pigeon::raw::page_html());
+    // a non-admin by the assertion: the admins-only page
+    let r = h.get_as(&page, STAFF).await;
+    assert_eq!(r.status(), 403);
+    assert!(r.text().await.unwrap().contains("Admins only"));
+
+    // the lines: magpie's admin route, naming the admin, no person
+    h.magpie.fake.script().always(
+        "admin_transcript",
+        Reply::ok(json!({
+            "path": "projects/-workspace/s.jsonl",
+            "lines": [
+                {"ord": 4, "line": r#"{"type":"user","timestamp":"2026-11-05T03:12:09.120Z","message":{"content":"hello"}}"#}
+            ],
+            "next": 4, "more": false, "running": false,
+            "person": STAFF, "title": "港珠澳大橋新聞"
+        })),
+    );
+    let lines = format!("/raw/{cid}/lines");
+    // signed out, a non-admin: refused, magpie not called
+    let r = h.get(&lines).send().await.unwrap();
+    assert_eq!(code(r).await, (401, "NOT_SIGNED_IN".into()));
+    let r = h.get_as(&lines, STAFF).await;
+    assert_eq!(code(r).await, (403, "ADMINS_ONLY".into()));
+    // a view-as token does not make a non-admin an admin here
+    let vt = h.view_token(ADMIN, STAFF, now() + 600);
+    let with_token = format!("{lines}?{}={vt}", compat::VIEW_AS_QUERY);
+    let r = h.get_as(&with_token, STAFF2).await;
+    assert_eq!(r.status(), 403);
+    assert!(h.magpie.fake.script().calls_to("admin_transcript").is_empty());
+    // an admin by the assertion, without a cookie
+    let r = h.get_as(&format!("/raw/wks_{cid}/lines?after=3"), ADMIN).await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["cache-control"], "no-store");
+    let v = body_json(r).await;
+    assert_eq!(v["person"], STAFF);
+    assert_eq!(v["title"], "港珠澳大橋新聞");
+    assert_eq!(v["next"], 4);
+    assert_eq!(v["cells"][0]["kind"], "user");
+    assert_eq!(v["cells"][0]["text"], "hello");
+    let call = h.magpie.fake.script().calls_to("admin_transcript").pop().unwrap();
+    assert_eq!(call.header("aviary-admin"), Some(ADMIN));
+    assert_eq!(call.header("aviary-person"), None);
+    assert_eq!(call.header("aviary-viewer"), None);
+    assert_eq!(call.query.unwrap()["after"], 3);
+    // an admin by the cookie
+    let r = h.get(&lines).header("cookie", &admin_cookie).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    // an unknown conversation: 404
+    h.magpie
+        .fake
+        .script()
+        .once("admin_transcript", Reply::error(404, "not_found", "not found"));
+    let r = h.get_as(&lines, ADMIN).await;
+    assert_eq!(code(r).await, (404, "NOT_FOUND".into()));
+    // not a conversation address: 404, magpie not called
+    let n = h.magpie.fake.script().calls_to("admin_transcript").len();
+    let r = h.get_as("/raw/not-a-uuid/lines", ADMIN).await;
+    assert_eq!(r.status(), 404);
+    assert_eq!(h.magpie.fake.script().calls_to("admin_transcript").len(), n);
 }
 
 // ---- Ops (spec 5.11) ----

@@ -428,6 +428,10 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   (migration `0012_admin_read_index.sql` builds a plain index concurrently), so no audit row is ever deleted and a
   replica on older code never meets a conflict during a rolling update. Migration `0010_shares_frozen.sql` was
   edited before any deployment (nothing of wave 1 is deployed) to drop its duplicate-deleting step and unique index.
+- `GET /v1/admin/conversations/{id}/transcript` (Deyao, 2026-11-05: pigeon's raw page works with the admin's own
+  sign-in, no view-as): the raw view's lines of any conversation with its owner and title, audited like the other
+  admin reads (`admin_read`). Its callers are pigeon and admin; on an admin route pigeon may set only `Aviary-Admin`
+  (`auth::allowed_on`), the admin it verified.
 - A person purge goes ahead only on hermit's 200 `allowed: false`; any other answer from hermit, a 404 included
   (hermit answers 200 for every well-formed address), is 503 and purges nothing.
 - A person purge also deletes the leaver's unattached uploads, and answers 409 `conversation_migrating` (after

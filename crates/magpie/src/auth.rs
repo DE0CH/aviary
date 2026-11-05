@@ -5,8 +5,9 @@
 //! missing token answers 401 `unauthenticated` (whatever the method), a caller the route does not list 403
 //! `wrong_caller`, `HEAD` is checked as the route's `GET`, and any other method the table lacks answers 405 here. Then every
 //! `Aviary-*` header the caller may not set is removed (platform 3.5), so a handler can trust what is left:
-//! pigeon sets the person, viewer and upload headers, the gateway the sandbox identity and the lease, admin
-//! `Aviary-Admin`, hermit none. A person route without `Aviary-Person` answers 400 `bad_request`.
+//! pigeon sets the person, viewer and upload headers (on an admin route only `Aviary-Admin`), the gateway the sandbox
+//! identity and the lease, admin `Aviary-Admin`, hermit none. A person route without `Aviary-Person` answers 400
+//! `bad_request`.
 
 use aviary_core::auth::{Caller, Callers};
 use aviary_core::http::ApiError;
@@ -29,6 +30,19 @@ pub fn callers_from_env() -> Callers {
     Callers::from_env("MAGPIE", &CALLERS)
 }
 
+static ADMIN: [HeaderName; 1] = [AVIARY_ADMIN];
+
+/// The `Aviary-*` headers `caller` may set on `route`: its [`allowed_headers`], except that on an admin route pigeon
+/// sets only `Aviary-Admin` (the admin it verified: the raw view, Deyao 2026-11-05).
+#[must_use]
+pub fn allowed_on(caller: Caller, route: &Route) -> &'static [HeaderName] {
+    if caller == Caller::Pigeon && route.admin {
+        &ADMIN
+    } else {
+        allowed_headers(caller)
+    }
+}
+
 /// The `Aviary-*` headers (beyond `Aviary-Request` and `Aviary-Protocol`) `caller` may set.
 #[must_use]
 pub fn allowed_headers(caller: Caller) -> &'static [HeaderName] {
@@ -45,7 +59,6 @@ pub fn allowed_headers(caller: Caller) -> &'static [HeaderName] {
         AVIARY_SANDBOX_PERSON,
         AVIARY_LEASE,
     ];
-    static ADMIN: [HeaderName; 1] = [AVIARY_ADMIN];
     match caller {
         Caller::Pigeon => &PIGEON,
         Caller::Gateway => &GATEWAY,
@@ -87,7 +100,7 @@ pub async fn check(State(callers): State<Callers>, mut req: Request, next: Next)
     if !route.callers.contains(&caller) {
         return ApiError::wrong_caller(caller).into_response();
     }
-    strip_aviary(req.headers_mut(), allowed_headers(caller));
+    strip_aviary(req.headers_mut(), allowed_on(caller, route));
     if route.person && caller == Caller::Pigeon {
         let has_person = req
             .headers()

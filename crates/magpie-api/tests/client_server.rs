@@ -647,6 +647,17 @@ impl Server for FixtureServer {
         self.answer_json("admin_timeline")
     }
 
+    async fn admin_transcript(&self, ctx: Ctx, id: Uuid, query: TranscriptQuery) -> Result<TranscriptPage, ApiError> {
+        self.received(
+            "admin_transcript",
+            &ctx,
+            &json!({"id": id.to_string()}),
+            Some(serde_json::to_value(&query).unwrap()),
+            None,
+        );
+        self.answer_json("admin_transcript")
+    }
+
     async fn legacy_ticket(&self, ctx: Ctx, id: Uuid, body: TicketRequest) -> Result<TicketResponse, ApiError> {
         self.received(
             "legacy_ticket",
@@ -1047,6 +1058,11 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
         "admin_timeline" => c
             .service(Some(ADMIN))
             .admin_timeline(param_uuid(&f, "id"), &query::<TimelineQuery>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "admin_transcript" => c
+            .service(Some(ADMIN))
+            .admin_transcript(param_uuid(&f, "id"), &query::<TranscriptQuery>(&f))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
         other => panic!("no client call for route {other}"),

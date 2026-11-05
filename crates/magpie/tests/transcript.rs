@@ -1,5 +1,7 @@
 //! The raw view's read (`GET /v1/conversations/{id}/transcript`): the main transcript's lines in file order, long
-//! text put back whole, media as a placeholder, paged by `after`; only while an admin views as the owner.
+//! text put back whole, media as a placeholder, paged by `after`; only while an admin views as the owner. And the
+//! admin route (`GET /v1/admin/conversations/{id}/transcript`, pigeon's standalone raw page): any conversation, with
+//! its owner and title, audited in the view-as log.
 
 #![allow(
     clippy::unwrap_used,
@@ -14,6 +16,7 @@ mod common;
 use base64::Engine as _;
 use common::cc::{Sandbox, code, main_path, set_main};
 use magpie_api::errors::ErrorCode;
+use magpie_api::ops::{ViewAsEvent, ViewAsLogQuery};
 use magpie_api::rows::TranscriptQuery;
 use serde_json::{Value, json};
 
@@ -136,4 +139,81 @@ async fn the_transcript_is_read_whole_in_order_only_while_viewing_as() {
         .unwrap();
     assert_eq!(none.lines.len(), 0);
     assert_eq!(none.next, tail.next);
+}
+
+#[tokio::test]
+async fn an_admin_reads_any_transcript_without_view_as_and_the_read_is_audited() {
+    let db = common::fresh_db("raw_transcript_admin").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let s = Sandbox::leased(&r, ALICE).await;
+    s.mkdirs("projects/-workspace").await;
+    set_main(r.pool(), s.conversation, &main_path()).await;
+    let lines = [
+        json!({"type": "user", "uuid": "u1", "message": {"role": "user", "content": "hello"}}),
+        json!({"type": "assistant", "uuid": "a1", "message": {"id": "m1", "model": "m-1",
+               "content": [{"type": "text", "text": "hi"}]}}),
+    ];
+    let bytes: Vec<u8> = lines.iter().flat_map(line).collect();
+    s.write(&main_path(), 0, &bytes).await.unwrap();
+    let cid = s.conversation;
+    let admin = "root@example.com";
+    let all = TranscriptQuery::default();
+
+    // pigeon, naming the admin: every line, the owner, the title (none yet)
+    let pigeon = r.pigeon();
+    let calls = pigeon.service(Some(admin));
+    let p = calls.admin_transcript(cid, &all).await.unwrap();
+    assert_eq!(p.lines.len(), 2);
+    assert_eq!(p.person.as_deref(), Some(ALICE));
+    assert_eq!(p.path.as_deref(), Some(main_path().as_str()));
+    let parsed: Vec<Value> = p.lines.iter().map(|l| serde_json::from_str(&l.line).unwrap()).collect();
+    assert_eq!(parsed[0], lines[0]);
+    // paging as on the view-as route
+    let rest = calls
+        .admin_transcript(
+            cid,
+            &TranscriptQuery {
+                after: Some(p.lines[0].ord),
+                limit: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(rest.lines.len(), 1);
+    // the ops tools too
+    let ops = r.admin();
+    let by_ops = ops.service(Some(admin)).admin_transcript(cid, &all).await.unwrap();
+    assert_eq!(by_ops.lines.len(), 2);
+
+    // an unknown conversation: 404
+    let e = calls.admin_transcript(uuid::Uuid::new_v4(), &all).await.unwrap_err();
+    assert_eq!(code(&e), ErrorCode::NotFound.as_str());
+    // no admin named: refused (400), nothing read
+    let e = pigeon.service(None).admin_transcript(cid, &all).await.unwrap_err();
+    assert_eq!(code(&e), ErrorCode::BadRequest.as_str());
+    // hermit may not call it
+    let e = r
+        .hermit()
+        .service(Some(admin))
+        .admin_transcript(cid, &all)
+        .await
+        .unwrap_err();
+    assert_eq!(code(&e), "wrong_caller");
+
+    // the audit: one admin_read row for this admin, conversation and day, however many reads
+    let log = r
+        .hermit()
+        .service(None)
+        .ops_view_as(&ViewAsLogQuery::default())
+        .await
+        .unwrap();
+    let reads: Vec<_> = log
+        .view_as
+        .iter()
+        .filter(|e| e.event == ViewAsEvent::AdminRead)
+        .collect();
+    assert_eq!(reads.len(), 1, "{reads:?}");
+    assert_eq!((reads[0].admin.as_str(), reads[0].user.as_str()), (admin, ALICE));
+    assert_eq!(reads[0].conversation_id, Some(cid));
 }

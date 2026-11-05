@@ -1554,6 +1554,10 @@ impl Server for FakeMagpie {
         scripted!(self, "admin_timeline", ctx, id(id_), ser(&query), None, typed)
     }
 
+    async fn admin_transcript(&self, ctx: Ctx, id_: Uuid, query: TranscriptQuery) -> Result<TranscriptPage, ApiError> {
+        scripted!(self, "admin_transcript", ctx, id(id_), ser(&query), None, typed)
+    }
+
     async fn legacy_ticket(&self, ctx: Ctx, id_: Uuid, body: TicketRequest) -> Result<TicketResponse, ApiError> {
         scripted!(self, "legacy_ticket", ctx, id(id_), None, ser(&body), typed)
     }

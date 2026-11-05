@@ -69,21 +69,19 @@ pre{white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;font:var(-
 <script>
 (function(){
 "use strict";
-var KEY="{{STORAGE_KEY}}",HEAD=30,TAIL=10,MAXC=6000;
+var HEAD=30,TAIL=10,MAXC=6000;
 var id=(location.pathname.match(/\/raw\/(?:wks_)?([0-9a-fA-F-]{36})/)||[])[1];
-var token=null;
-try{var h=new URLSearchParams(location.hash.replace(/^#/,"")).get("{{HASH_KEY}}");if(h){sessionStorage.setItem(KEY,h);history.replaceState(null,"",location.pathname+location.search)}token=sessionStorage.getItem(KEY)}catch(e){}
-var back=new URLSearchParams(location.search).get("back");
+var qs=new URLSearchParams(location.search);
+if(qs.has("signin")){qs.delete("signin");try{history.replaceState(null,"",location.pathname+(qs.toString()?"?"+qs:"")+location.hash)}catch(e){}}
+var back=qs.get("back");
 if(back&&/^\/[^\/]/.test(back))document.getElementById("back").href=back;else document.getElementById("back").href="/";
 var m=document.getElementById("m"),st=document.getElementById("st"),status=document.getElementById("status");
 var next=null,tools={},lastDay="",timer=null,opts={outs:true,quiet:false,follow:true};
 try{var saved=JSON.parse(localStorage.getItem("raw-view-opts")||"null");if(saved){opts.outs=!!saved.outs;opts.quiet=!!saved.quiet;opts.follow=saved.follow!==false}}catch(e){}
-function claims(t){try{return JSON.parse(atob(t.split(".")[0].replace(/-/g,"+").replace(/_/g,"/")))}catch(e){return null}}
-var c=token&&claims(token);
-document.getElementById("who").textContent=c?"Viewing as "+c.u:"";
+var who=document.getElementById("who"),named=false;
+function name(p){if(named||!p.person)return;named=true;who.textContent=p.person+" \u00b7 "+(p.title||"Untitled");document.title="Raw transcript \u00b7 "+(p.title||p.person)}
 function setStatus(cls,text){status.className="status"+(cls?" "+cls:"");st.textContent=text}
 if(!id){setStatus("bad","Not a conversation address");empty("This address names no conversation.");return}
-if(!token){setStatus("bad","No view-as token");empty("This page works in a View as tab only. Open View as from the Ops page, open the conversation, then Raw transcript.");return}
 function empty(t){var e=document.getElementById("empty");if(e)e.textContent=t}
 var dtf=new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Hong_Kong",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
 var dayf=new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Hong_Kong",weekday:"short",day:"numeric",month:"short",year:"numeric"});
@@ -120,14 +118,15 @@ toggle("outs");toggle("quiet");toggle("follow");
 var fails=0;
 function load(){
   clearTimeout(timer);
-  var u="{{SESSIONS}}"+id+"/transcript?{{VIEW_AS_QUERY}}="+encodeURIComponent(token)+(next!=null?"&after="+next:"");
+  var u="/raw/"+id+"/lines"+(next!=null?"?after="+next:"");
   fetch(u,{credentials:"same-origin",cache:"no-store"}).then(function(res){
-    if(res.status===403){throw {stop:true,msg:"View as ended or refused. Open View as again from the Ops page."}}
-    if(res.status===404){throw {stop:true,msg:"Conversation not found for this person."}}
+    if(res.status===401){throw {stop:true,msg:"Signed out. Reload the page to sign in."}}
+    if(res.status===403){throw {stop:true,msg:"Admins only."}}
+    if(res.status===404){throw {stop:true,msg:"Conversation not found."}}
     if(!res.ok)throw {msg:"Unavailable ("+res.status+")"};
     return res.json();
   }).then(function(p){
-    fails=0;var e=document.getElementById("empty");
+    fails=0;name(p);var e=document.getElementById("empty");
     var atEnd=(innerHeight+scrollY)>=document.body.scrollHeight-40;
     if(e&&(p.cells.length||!p.more))e.remove();
     p.cells.forEach(add);

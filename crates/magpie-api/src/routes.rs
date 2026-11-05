@@ -198,12 +198,16 @@ pub const ADMIN_CONVERSATION: &str = "/v1/admin/conversations/{id}";
 pub const ADMIN_EVENTS: &str = "/v1/admin/conversations/{id}/events";
 /// `GET` admin timeline page.
 pub const ADMIN_TIMELINE: &str = "/v1/admin/conversations/{id}/timeline";
+/// `GET` the raw view's transcript lines for an admin (pigeon's raw page, or the ops tools), any conversation.
+pub const ADMIN_TRANSCRIPT: &str = "/v1/admin/conversations/{id}/transcript";
 
 const PIGEON: &[Caller] = &[Caller::Pigeon];
 const GATEWAY: &[Caller] = &[Caller::Gateway];
 const HERMIT: &[Caller] = &[Caller::Hermit];
 const OPS: &[Caller] = &[Caller::Hermit, Caller::Admin];
 const ADMIN: &[Caller] = &[Caller::Admin];
+/// pigeon on behalf of a signed-in admin (it sets `Aviary-Admin` to the admin's verified email), or the ops tools.
+const PIGEON_ADMIN: &[Caller] = &[Caller::Pigeon, Caller::Admin];
 
 const fn person(id: &'static str, m: &'static str, method: Method, path: &'static str, ok: &'static [u16]) -> Route {
     Route {
@@ -377,6 +381,7 @@ pub const ROUTES: &[Route] = &[
     service("admin_conversation", Get, ADMIN_CONVERSATION, ADMIN, &[200], true),
     service("admin_events", Get, ADMIN_EVENTS, ADMIN, &[200], true),
     service("admin_timeline", Get, ADMIN_TIMELINE, ADMIN, &[200], true),
+    service("admin_transcript", Get, ADMIN_TRANSCRIPT, PIGEON_ADMIN, &[200], true),
 ];
 
 /// The route with this id.

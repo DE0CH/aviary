@@ -1017,4 +1017,9 @@ impl ServiceCalls<'_> {
     pub async fn admin_timeline(&self, id: Uuid, q: &TimelineQuery) -> Result<TimelinePage, ClientError> {
         self.get("admin_timeline", &[&id.to_string()], Some(q)).await
     }
+
+    /// Admin: the raw view's transcript lines of any conversation, with its owner and title (audited).
+    pub async fn admin_transcript(&self, id: Uuid, q: &TranscriptQuery) -> Result<TranscriptPage, ClientError> {
+        self.get("admin_transcript", &[&id.to_string()], Some(q)).await
+    }
 }

@@ -1,14 +1,21 @@
 //! The raw view (Deyao, 2026-11-05: "a more raw outputs like the transcript view or the subagent view, in addition to
 //! the normal ui"): beside the normal conversation of a view-as tab, every line of the Claude Code transcript in
 //! order, each as a typed cell (user, assistant, thinking, tool call, tool result, system, compaction, interrupt…)
-//! with its time and its content as text. Admin only and read-only: the data route answers only a view-as identity
-//! (an admin's own Access sign-in plus a valid view token, spec 6.2, checked on every request), the page only an
-//! admin's cookie. English, as everything only Deyao sees.
+//! with its time and its content as text. Admin only and read-only. English, as everything only Deyao sees.
 //!
-//! - `GET /raw/<conversation id>`: the page (no data in it; it reads the tab's view-as token from `sessionStorage`,
-//!   where the app keeps it, and polls the data route: every 2 s while a turn runs, every 10 s otherwise).
-//! - `GET <compat::SESSIONS><id>/transcript?after=<ord>&<compat::VIEW_AS_QUERY>=…`: one page of cells, from magpie's
-//!   `GET /v1/conversations/{id}/transcript` (the main transcript's lines; long text whole, media as a placeholder).
+//! Standalone (Deyao, 2026-11-05: "just work standalone just with the admin identity"): the page and its data need
+//! only the admin's own Cloudflare Access sign-in (the assertion header, the `CF_Authorization` cookie or the app's
+//! header), checked on every request; no view-as token, no prior visit to the app.
+//!
+//! - `GET /raw/<conversation id>` (the bare uuid or `wks_<uuid>`): the page (no data in it; it polls the lines
+//!   route: every 2 s while a turn runs, every 10 s otherwise). Signed out, it sends the browser once through the
+//!   Access-covered sign-in route and back (`?signin=1` marks the return, so it never loops); a signed-in non-admin
+//!   gets the admins-only page.
+//! - `GET /raw/<id>/lines?after=<ord>`: one page of cells with the owner and title, from magpie's
+//!   `GET /v1/admin/conversations/{id}/transcript` (pigeon names the admin in `Aviary-Admin`; magpie records the
+//!   admin's first read per conversation and day in the view-as log).
+//! - `GET <compat::SESSIONS><id>/transcript?after=<ord>&<compat::VIEW_AS_QUERY>=…`: the same cells for a view-as
+//!   identity, from magpie's `GET /v1/conversations/{id}/transcript`.
 //! - The shell carries a small script ([`toggle_script`]) that shows a "Raw transcript" button in a view-as tab whose
 //!   address names a conversation; nothing shows in a normal tab.
 
@@ -21,7 +28,7 @@ use magpie_api::rows::TranscriptQuery;
 use serde_json::json;
 
 use crate::App;
-use crate::http::{Page, api_error, json, page, person_calls, query_param};
+use crate::http::{Page, api_error, json, page, person_calls, query_param, redirect};
 use crate::identity::{Identity, Sources};
 use crate::paseo::compat;
 
@@ -70,19 +77,71 @@ fn conversation_id(s: &str) -> Option<uuid::Uuid> {
     uuid::Uuid::parse_str(s.strip_prefix("wks_").unwrap_or(s)).ok()
 }
 
-/// `GET /raw/<id>`: the page, for an admin's cookie.
-pub async fn serve_page(app: &App, headers: &HeaderMap, path: &str) -> Response {
-    let ok_id = path
-        .strip_prefix(PAGE_PREFIX)
-        .is_some_and(|id| conversation_id(id.trim_end_matches('/')).is_some());
-    if !ok_id {
-        return page(app, Page::NotAvailable, None);
+/// The lines route's suffix after the conversation id.
+const LINES: &str = "/lines";
+
+/// What a `/raw/…` path names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Target {
+    /// The page of this conversation.
+    Page(uuid::Uuid),
+    /// Its lines.
+    Lines(uuid::Uuid),
+}
+
+fn target(path: &str) -> Option<Target> {
+    let rest = path.strip_prefix(PAGE_PREFIX)?;
+    if let Some(id) = rest.strip_suffix(LINES) {
+        return conversation_id(id).map(Target::Lines);
     }
-    match app.0.identity.resolve(headers, Sources::CookieOnly, None).await {
-        Identity::Person(p) if p.is_admin() => {}
-        Identity::Person(_) | Identity::NotAllowed(_) => return page(app, Page::AdminsOnly, None),
-        Identity::Unavailable => return page(app, Page::Unavailable, None),
-        _ => return page(app, Page::SignedOut, None),
+    conversation_id(rest.trim_end_matches('/')).map(Target::Page)
+}
+
+/// The admin a request comes from (its own Access sign-in from any source; no view-as), or why not.
+enum Caller {
+    Admin(String),
+    SignedOut,
+    NotAdmin,
+    Unavailable,
+}
+
+async fn caller(app: &App, headers: &HeaderMap) -> Caller {
+    match app.0.identity.resolve(headers, Sources::All, None).await {
+        Identity::Person(p) if p.is_admin() => Caller::Admin(p.email),
+        Identity::Person(_) | Identity::NotAllowed(_) => Caller::NotAdmin,
+        Identity::Unavailable => Caller::Unavailable,
+        _ => Caller::SignedOut,
+    }
+}
+
+/// The marker on the address the sign-in route sends the browser back to.
+const SIGNED_IN_MARK: &str = "signin";
+
+/// The sign-in route (Access-covered at the edge) with `next` back to this page, marked.
+fn signin_location(id: uuid::Uuid) -> String {
+    // the next path holds only `/`, `?`, `=`, letters, digits and `-`: those three are escaped
+    format!("{}?next=%2Fraw%2F{id}%3F{SIGNED_IN_MARK}%3D1", compat::SIGNIN)
+}
+
+/// `GET /raw/<id>` and `GET /raw/<id>/lines`.
+pub async fn serve(app: &App, headers: &HeaderMap, path: &str, query: Option<&str>) -> Response {
+    match target(path) {
+        None => page(app, Page::NotAvailable, None),
+        Some(Target::Page(id)) => serve_page(app, headers, id, query).await,
+        Some(Target::Lines(id)) => lines(app, headers, id, query).await,
+    }
+}
+
+/// The page, for an admin.
+async fn serve_page(app: &App, headers: &HeaderMap, id: uuid::Uuid, query: Option<&str>) -> Response {
+    match caller(app, headers).await {
+        Caller::Admin(_) => {}
+        Caller::NotAdmin => return page(app, Page::AdminsOnly, None),
+        Caller::Unavailable => return page(app, Page::Unavailable, None),
+        Caller::SignedOut if query_param(query, SIGNED_IN_MARK).is_some() => {
+            return page(app, Page::SignedOut, None);
+        }
+        Caller::SignedOut => return redirect(StatusCode::FOUND, &signin_location(id), true),
     }
     let mut r = (StatusCode::OK, page_html()).into_response();
     let h = r.headers_mut();
@@ -96,6 +155,64 @@ pub async fn serve_page(app: &App, headers: &HeaderMap, path: &str) -> Response 
     r
 }
 
+fn no_store(mut r: Response) -> Response {
+    r.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    r
+}
+
+fn busy() -> Response {
+    let mut r = api_error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "UNAVAILABLE",
+        "The service is busy. Try again shortly.",
+    );
+    r.headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from_static("5"));
+    r
+}
+
+fn query_of(query: Option<&str>) -> TranscriptQuery {
+    TranscriptQuery {
+        after: query_param(query, "after").and_then(|a| a.parse().ok()),
+        limit: query_param(query, "limit").and_then(|a| a.parse().ok()),
+    }
+}
+
+/// `GET /raw/<id>/lines`: a page of cells with the owner and title, for an admin (magpie's admin route).
+async fn lines(app: &App, headers: &HeaderMap, cid: uuid::Uuid, query: Option<&str>) -> Response {
+    let admin = match caller(app, headers).await {
+        Caller::Admin(a) => a,
+        Caller::NotAdmin => {
+            return api_error(StatusCode::FORBIDDEN, "ADMINS_ONLY", "Only an admin can read this.");
+        }
+        Caller::Unavailable => return busy(),
+        Caller::SignedOut => return api_error(StatusCode::UNAUTHORIZED, "NOT_SIGNED_IN", "Not signed in."),
+    };
+    let calls = app.0.magpie.service(Some(&admin));
+    let calls = match aviary_core::http::current_request_id() {
+        Some(rid) => calls.with_request_id(rid.to_string()),
+        None => calls,
+    };
+    match calls.admin_transcript(cid, &query_of(query)).await {
+        Ok(p) => {
+            let shown: Vec<_> = p.lines.iter().flat_map(|l| cells::of_line(l.ord, &l.line)).collect();
+            no_store(json(
+                StatusCode::OK,
+                &json!({"path": p.path, "cells": shown, "next": p.next, "more": p.more, "running": p.running,
+                        "person": p.person, "title": p.title}),
+            ))
+        }
+        Err(e) if e.code() == Some(&ErrorCode::NotFound) => {
+            no_store(api_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Conversation not found."))
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "raw transcript (admin): magpie failed");
+            busy()
+        }
+    }
+}
+
 /// `GET …/sessions/{id}/transcript`: a page of cells, only for a view-as identity.
 pub async fn transcript(app: &App, id: &Identity, conversation: &str, query: Option<&str>) -> Response {
     if !matches!(id, Identity::ViewAs(_)) {
@@ -107,11 +224,7 @@ pub async fn transcript(app: &App, id: &Identity, conversation: &str, query: Opt
     let Some(calls) = person_calls(&app.0.magpie, id) else {
         return not_available();
     };
-    let q = TranscriptQuery {
-        after: query_param(query, "after").and_then(|a| a.parse().ok()),
-        limit: query_param(query, "limit").and_then(|a| a.parse().ok()),
-    };
-    match calls.transcript(cid, &q).await {
+    match calls.transcript(cid, &query_of(query)).await {
         Ok(p) => {
             let shown: Vec<_> = p.lines.iter().flat_map(|l| cells::of_line(l.ord, &l.line)).collect();
             let mut r = json(
@@ -127,14 +240,7 @@ pub async fn transcript(app: &App, id: &Identity, conversation: &str, query: Opt
         }
         Err(e) => {
             tracing::warn!(error = %e, "raw transcript: magpie failed");
-            let mut r = api_error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "UNAVAILABLE",
-                "The service is busy. Try again shortly.",
-            );
-            r.headers_mut()
-                .insert(header::RETRY_AFTER, HeaderValue::from_static("5"));
-            r
+            busy()
         }
     }
 }
@@ -148,7 +254,8 @@ mod tests {
         for t in [page_html(), toggle_script()] {
             assert!(!t.contains("{{"), "a placeholder left");
         }
-        assert!(page_html().contains(compat::SESSIONS));
+        assert!(page_html().contains("/lines"), "the page reads the lines route");
+        assert!(!page_html().contains(compat::VIEW_AS_QUERY), "and needs no view-as token");
         assert!(toggle_script().contains(compat::VIEW_AS_STORAGE));
     }
 
@@ -159,5 +266,22 @@ mod tests {
         assert_eq!(conversation_id(&format!("wks_{id}")).map(|u| u.to_string()).as_deref(), Some(id));
         assert!(conversation_id("wks_nope").is_none());
         assert!(conversation_id("xyz_68abe986-9abb-4157-9ac4-e074670c70db").is_none());
+    }
+
+    #[test]
+    fn the_paths_name_the_page_or_its_lines() {
+        let id = "68abe986-9abb-4157-9ac4-e074670c70db";
+        let u = uuid::Uuid::parse_str(id).unwrap();
+        assert_eq!(target(&format!("/raw/{id}")), Some(Target::Page(u)));
+        assert_eq!(target(&format!("/raw/wks_{id}/")), Some(Target::Page(u)));
+        assert_eq!(target(&format!("/raw/wks_{id}/lines")), Some(Target::Lines(u)));
+        assert_eq!(target(&format!("/raw/{id}/other")), None);
+        assert_eq!(target("/raw/"), None);
+        // the sign-in route's next is a safe same-origin path back to the page, marked
+        let loc = signin_location(u);
+        let query = loc.split_once('?').map(|x| x.1);
+        let next = crate::http::query_param(query, "next").unwrap();
+        assert_eq!(next, format!("/raw/{id}?signin=1"));
+        assert!(crate::signin::safe_next(&next));
     }
 }
