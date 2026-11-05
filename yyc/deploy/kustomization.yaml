@@ -23,7 +23,7 @@ resources:
   - jobs
   # A2's one-off Jobs (cutover 10.2), listed here so jobs/kustomization.yaml stays as the runner's patches 05 and 50
   # expect it. Done and taken out of the render (a re-pin cannot change a finished Job's image): jobs/jfs-owner.yaml
-  # (A2 step 1; A6 runs it again under a new name) and jobs/import-holds.yaml (step 4)
+  # (A2 step 1, with its Retain PV and PVC; A6 runs it again under a new name) and jobs/import-holds.yaml (step 4)
   # A2 step 2: the importer's plan (cutover 7.9; preflight reads it again, config.json planJob)
   - jobs/import-plan.yaml
   # A2 step 3 and rehearsal 6 again: reset, the bulk import, verify --all, then magpie's side of render parity
