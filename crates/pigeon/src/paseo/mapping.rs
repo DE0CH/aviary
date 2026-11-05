@@ -740,21 +740,6 @@ fn detail_name(kind: ToolKind, name: &str) -> &str {
     }
 }
 
-/// An MCP tool's name without its server (`mcp__<server>__<tool>` → `<tool>`), so a tool renders the same whichever
-/// server name its history was written under (spec 7.8: imported history under the old server name and new `mcp__tools__*` calls). Any other
-/// name is returned as is.
-#[must_use]
-pub fn tool_name(name: &str) -> &str {
-    let trimmed = name.trim();
-    let Some(rest) = trimmed.strip_prefix("mcp__") else {
-        return trimmed;
-    };
-    match rest.split_once("__") {
-        Some((server, tool)) if !server.is_empty() && !tool.is_empty() => tool,
-        _ => trimmed,
-    }
-}
-
 fn status_name(s: ToolStatus) -> &'static str {
     match s {
         ToolStatus::Running => "running",
@@ -793,7 +778,9 @@ pub fn tool_call_item(t: &ToolItem, locale: Locale) -> Option<Value> {
         }
     });
     let output = shown.as_deref();
-    let trimmed = tool_name(&t.name);
+    // the name as Claude Code wrote it, trimmed (the mapper's `raw.name.trim()`): an MCP tool keeps its
+    // `mcp__<server>__` prefix, as the old stack showed it (cutover 10.2 R6)
+    let trimmed = t.name.trim();
     if trimmed == "ExitPlanMode"
         && let Some(plan) = t.input.get("plan").and_then(Value::as_str)
     {
@@ -1120,33 +1107,25 @@ mod tests {
         );
     }
 
+    /// The mapper's name is the call's own (trimmed): an MCP tool keeps its server prefix and is an `unknown`
+    /// detail, as the old bridge's TypeScript mapper made it (cutover 10.2 R6: what staff see today).
     #[test]
-    fn mcp_names_render_the_same_for_any_server() {
-        let old = tool_call_item(
-            &tool(
-                "mcp__old__search",
-                json!({"query": "hsi"}),
-                ToolStatus::Completed,
-                Some("r"),
-            ),
+    fn mcp_names_keep_their_server() {
+        for name in ["mcp__yyc__web_search", " mcp__tools__web_search "] {
+            let item = tool_call_item(
+                &tool(name, json!({"query": "hsi"}), ToolStatus::Completed, Some("r")),
+                Locale::En,
+            )
+            .unwrap();
+            assert_eq!(item["name"], name.trim());
+            assert_eq!(item["detail"]["type"], "unknown");
+        }
+        let bare = tool_call_item(
+            &tool("web_search", json!({"query": "hsi"}), ToolStatus::Completed, Some("r")),
             Locale::En,
         )
         .unwrap();
-        let new = tool_call_item(
-            &tool(
-                "mcp__tools__search",
-                json!({"query": "hsi"}),
-                ToolStatus::Completed,
-                Some("r"),
-            ),
-            Locale::En,
-        )
-        .unwrap();
-        assert_eq!(old, new);
-        assert_eq!(old["name"], "search");
-        assert_eq!(old["detail"]["type"], "search");
-        assert_eq!(tool_name("mcp__a__b__c"), "b__c");
-        assert_eq!(tool_name("mcp__"), "mcp__");
+        assert_eq!(bare["detail"]["type"], "search");
     }
 
     #[test]

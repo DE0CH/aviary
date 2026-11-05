@@ -3,9 +3,8 @@
 //! made from imported-conversation-like transcripts) is rebuilt from the transcript the recorder fed the bridge (the
 //! `tool_use` name and input as written, the `tool_result` text and error flag:
 //! `testing/paseo-contract/record/cloudcli-bridge-488a7736.tools.json`) as the magpie row it becomes and projected by
-//! pigeon: the item equals the bridge's, except MCP tools, which pigeon names without
-//! their server so that history written under the old server name and `mcp__tools__*` calls render the same
-//! (spec 7.8, 18.1).
+//! pigeon: the item equals the bridge's, MCP tools included (named `mcp__<server>__<tool>` as written, as the old
+//! bridge named them: cutover 10.2 R6, what staff see today).
 //!
 //! The second test projects conversation A's whole history the same way, row by row through `PaseoProjector` (the
 //! projection pigeon serves): the user row with an image and a file, the reasoning row, every tool row across its two
@@ -22,7 +21,7 @@ use magpie_api::rows::{
     AssistantItem, ErrorItem, ReasoningItem, Row, RowFile, RowImage, RowItem, ToolItem, ToolResult, ToolStatus,
     UserItem,
 };
-use pigeon::paseo::mapping::{PaseoProjector, tool_call_item, tool_name};
+use pigeon::paseo::mapping::{PaseoProjector, tool_call_item};
 use pigeon::paseo::strings::Locale;
 use pigeon::paseo::{ProjectCtx, RowProjector};
 use serde_json::{Value, json};
@@ -166,16 +165,9 @@ fn tool_calls_render_as_the_bridge_rendered_them() {
             o.remove("metadata");
         }
         ids.insert(id.to_owned());
-        if tool_name(name) == name {
-            assert_eq!(ours, theirs, "{name}");
-            kinds.insert(theirs["detail"]["type"].as_str().unwrap().to_owned());
-            compared += 1;
-        } else {
-            // an MCP tool: named and mapped by its tool part, whatever the server
-            assert_eq!(ours["name"], tool_name(name));
-            assert_eq!(ours["status"], theirs["status"]);
-            assert_eq!(ours["callId"], theirs["callId"]);
-        }
+        assert_eq!(ours, theirs, "{name}");
+        kinds.insert(theirs["detail"]["type"].as_str().unwrap().to_owned());
+        compared += 1;
     }
     assert!(compared >= 15, "{compared}");
     // every call of the transcript was rendered and compared
@@ -183,11 +175,12 @@ fn tool_calls_render_as_the_bridge_rendered_them() {
     // the detail kinds the bridge produced for these transcripts (the others, edit/fetch/plan/plain_text and the
     // rest of the ported mapper, are its unit tests in src/paseo/mapping.rs)
     assert!(kinds.len() >= 4, "{kinds:?}");
-    // an imported call under the old server name and a new `mcp__tools__search` render the same (spec 18.1)
+    // an imported call under the old server name and a new `mcp__tools__search` keep their own names, as the bridge
+    // showed them
     let render = |id: &str| tool_call_item(&row_of(&transcript[id], ToolStatus::Completed), Locale::En).unwrap();
     let (a, b) = (render("t-search"), render("t-search2"));
-    assert_eq!(a["detail"], b["detail"]);
-    assert_eq!(a["name"], b["name"]);
+    assert_eq!(a["name"], transcript["t-search"]["name"]);
+    assert_eq!(b["name"], transcript["t-search2"]["name"]);
 }
 
 /// Conversation A's entries as the bridge served them (its `fetch_agent_timeline_response` pages), by seq.
@@ -364,14 +357,6 @@ fn every_history_row_projects_as_the_bridge_served_it() {
                 // SendUserFile's card: the bridge's came from its own snapshot (see the first test)
                 ours["item"].as_object_mut().unwrap().remove("metadata");
                 theirs["item"].as_object_mut().unwrap().remove("metadata");
-                let name = theirs["item"]["name"].as_str().unwrap().to_owned();
-                if tool_name(&name) != name {
-                    // an MCP tool, named by its tool part (the first test)
-                    ours["item"]["name"].take();
-                    theirs["item"]["name"].take();
-                    ours["item"]["detail"].take();
-                    theirs["item"]["detail"].take();
-                }
             }
             _ => {}
         }
