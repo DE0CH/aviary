@@ -226,10 +226,13 @@ nsx shost ping -q -c1 -W1 -I 10.98.0.5 10.96.0.5 >/dev/null || fail "no path hos
   || fail "rp_filter not loose on wg0 and priv0"
 ok "first start: peers and egress pushed, host -> gateway -> pod works, rp_filter loose on wg0 and priv0"
 rules=$(nsx sgw ip -4 rule show | sed 's/[[:space:]]*$//')
-want=$'9:\tfrom all fwmark 0x200/0xf00 lookup 2004\n100:\tfrom all lookup local\n1000:\tfrom all iif wg0 lookup main suppress_prefixlength 16\n1001:\tfrom all iif wg0 lookup 51822\n32500:\tfrom all fwmark 0x40/0x60 lookup 180\n32766:\tfrom all lookup main\n32767:\tfrom all lookup default'
+want=$'9:\tfrom all fwmark 0x200/0xf00 lookup 2004\n100:\tfrom all lookup local\n999:\tfrom all to 10.96.0.0/16 iif wg0 lookup 51822\n1000:\tfrom all iif wg0 lookup main suppress_prefixlength 16\n1001:\tfrom all iif wg0 lookup 51822\n32500:\tfrom all fwmark 0x40/0x60 lookup 180\n32766:\tfrom all lookup main\n32767:\tfrom all lookup default'
 [ "$rules" = "$want" ] || fail "ip rules after the first start: $rules"
+# replies to the private network leave over it, not by KubeSpan's rule (main's /16 is suppressed for wg0)
+nsx sgw ip -4 route show table 51822 | grep -q '^10.97.0.0/16 via 10.97.0.1 dev priv0' \
+  || fail "controlCidr not in table 51822: $(nsx sgw ip -4 route show table 51822)"
 nsx shost bash -c 'exec 3<>/dev/tcp/10.99.0.1/7443' 2>/dev/null || fail "the host does not reach the API on 10.99.0.1:7443 over wg0"
-ok "Talos's rules: sandboxd's at 1000/1001 only (moved from 99/100), the local rule at 100 kept; host -> wgAddress:7443 over wg0"
+ok "Talos's rules: sandboxd's at 999/1000/1001 only (moved from 99/100), the local rule at 100 kept; host -> wgAddress:7443 over wg0"
 before=$(snapshot); hs=$(handshake)
 [ -n "$hs" ] && [ "$hs" != 0 ] || fail "no handshake with the host"
 

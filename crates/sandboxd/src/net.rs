@@ -833,7 +833,8 @@ mod tests {
         let ok = "10.98.0.0/16 dev wg0 scope link src 10.97.0.6 \n10.98.0.0/15 via 10.97.0.1 dev enp7s0 \n10.96.0.0/16 via 10.97.0.1 dev enp7s0 table 51822 \n10.97.0.0/16 via 10.97.0.1 dev enp7s0 table 51822 \n";
         assert!(!HostNet::routes_missing(&g, ok));
         // without the private network in wg0's table, replies to other nodes (masqueraded pods) took KubeSpan
-        let no_ctl = "10.98.0.0/16 dev wg0 scope link src 10.97.0.6 \n10.96.0.0/16 via 10.97.0.1 dev enp7s0 table 51822 \n";
+        let no_ctl =
+            "10.98.0.0/16 dev wg0 scope link src 10.97.0.6 \n10.96.0.0/16 via 10.97.0.1 dev enp7s0 table 51822 \n";
         assert!(HostNet::routes_missing(&g, no_ctl));
         // what the gateway node had after systemd-networkd restarted: only the Hetzner network's /15
         assert!(HostNet::routes_missing(
