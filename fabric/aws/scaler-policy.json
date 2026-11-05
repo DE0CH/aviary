@@ -21,10 +21,18 @@
         "arn:aws:ec2:REGION:ACCOUNT:network-interface/*",
         "arn:aws:ec2:REGION:ACCOUNT:subnet/*",
         "arn:aws:ec2:REGION:ACCOUNT:security-group/*",
-        "arn:aws:ec2:REGION::image/*",
-        "arn:aws:ec2:REGION:ACCOUNT:launch-template/LT_ID"
+        "arn:aws:ec2:REGION::image/*"
       ],
-      "Condition": {"ArnLike": {"ec2:LaunchTemplate": "arn:aws:ec2:REGION:ACCOUNT:launch-template/LT_ID"}}
+      "Condition": {
+        "ArnLike": {"ec2:LaunchTemplate": "arn:aws:ec2:REGION:ACCOUNT:launch-template/LT_ID"},
+        "Bool": {"ec2:IsLaunchTemplateResource": "true"}
+      }
+    },
+    {
+      "Sid": "TheTemplateItself",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:REGION:ACCOUNT:launch-template/LT_ID"
     },
     {
       "Sid": "TagOnlyAtLaunch",

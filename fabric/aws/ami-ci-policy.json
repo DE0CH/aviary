@@ -1,17 +1,16 @@
 {
   "Version": "2012-10-17",
   "Statement": [
-    {"Effect": "Allow", "Action": ["ec2:Describe*", "sts:GetCallerIdentity"], "Resource": "*"},
-    {"Effect": "Allow", "Action": "ssm:GetParameter", "Resource": "arn:aws:ssm:*::parameter/aws/service/canonical/ubuntu/*"},
-    {"Effect": "Allow", "Action": ["ec2:ImportKeyPair", "ec2:DeleteKeyPair"], "Resource": "arn:aws:ec2:*:*:key-pair/TEMPLATE-ami-*"},
-    {"Effect": "Allow", "Action": ["ec2:AuthorizeSecurityGroupIngress", "ec2:RevokeSecurityGroupIngress"], "Resource": "arn:aws:ec2:*:*:security-group/*", "Condition": {"StringEquals": {"ec2:ResourceTag/app": "TAG_APP"}}},
-    {"Effect": "Allow", "Action": "ec2:RunInstances", "Resource": "arn:aws:ec2:*:*:instance/*", "Condition": {"StringEquals": {"aws:RequestTag/app": "TAG_APP-build", "ec2:InstanceType": "t3.large"}}},
-    {"Effect": "Allow", "Action": "ec2:RunInstances", "Resource": ["arn:aws:ec2:*::image/*", "arn:aws:ec2:*:*:subnet/*", "arn:aws:ec2:*:*:security-group/*", "arn:aws:ec2:*:*:network-interface/*", "arn:aws:ec2:*:*:volume/*", "arn:aws:ec2:*:*:key-pair/TEMPLATE-ami-*"]},
+    {"Effect": "Allow", "Action": ["ec2:DescribeImages", "ec2:DescribeInstances", "ec2:DescribeLaunchTemplates", "ec2:DescribeLaunchTemplateVersions", "ec2:DescribeSecurityGroups"], "Resource": "*"},
+    {"Effect": "Allow", "Action": "ssm:GetParameter", "Resource": "arn:aws:ssm:REGION::parameter/aws/service/canonical/ubuntu/*"},
+    {"Effect": "Allow", "Action": ["ec2:ImportKeyPair", "ec2:DeleteKeyPair"], "Resource": "arn:aws:ec2:REGION:*:key-pair/TEMPLATE-ami-*"},
+    {"Effect": "Allow", "Action": ["ec2:AuthorizeSecurityGroupIngress", "ec2:RevokeSecurityGroupIngress", "ec2:RunInstances"], "Resource": "arn:aws:ec2:REGION:*:security-group/*", "Condition": {"StringEquals": {"ec2:ResourceTag/app": "TAG_APP"}}},
+    {"Effect": "Allow", "Action": "ec2:RunInstances", "Resource": "arn:aws:ec2:REGION:*:instance/*", "Condition": {"StringEquals": {"aws:RequestTag/app": "TAG_APP-build", "ec2:InstanceType": "t3.large"}}},
+    {"Effect": "Allow", "Action": "ec2:RunInstances", "Resource": ["arn:aws:ec2:REGION::image/*", "arn:aws:ec2:REGION:*:subnet/*", "arn:aws:ec2:REGION:*:network-interface/*", "arn:aws:ec2:REGION:*:volume/*", "arn:aws:ec2:REGION:*:key-pair/TEMPLATE-ami-*"]},
     {"Effect": "Allow", "Action": "ec2:CreateTags", "Resource": "*", "Condition": {"StringEquals": {"ec2:CreateAction": ["RunInstances", "CreateImage"]}}},
-    {"Effect": "Allow", "Action": ["ec2:StopInstances", "ec2:TerminateInstances"], "Resource": "arn:aws:ec2:*:*:instance/*", "Condition": {"StringEquals": {"ec2:ResourceTag/app": "TAG_APP-build"}}},
-    {"Effect": "Allow", "Action": "ec2:CreateImage", "Resource": "arn:aws:ec2:*:*:instance/*", "Condition": {"StringEquals": {"ec2:ResourceTag/app": "TAG_APP-build"}}},
-    {"Effect": "Allow", "Action": "ec2:CreateImage", "Resource": "arn:aws:ec2:*::*"},
-    {"Effect": "Allow", "Action": ["ec2:CreateLaunchTemplateVersion", "ec2:ModifyLaunchTemplate", "ec2:DeleteLaunchTemplateVersions"], "Resource": "arn:aws:ec2:*:*:launch-template/LT_ID"},
-    {"Effect": "Allow", "Action": ["ec2:DeregisterImage", "ec2:DeleteSnapshot"], "Resource": "arn:aws:ec2:*::*", "Condition": {"StringEquals": {"ec2:ResourceTag/app": "TAG_APP"}}}
+    {"Effect": "Allow", "Action": ["ec2:StopInstances", "ec2:TerminateInstances", "ec2:CreateImage"], "Resource": "arn:aws:ec2:REGION:*:instance/*", "Condition": {"StringEquals": {"ec2:ResourceTag/app": "TAG_APP-build"}}},
+    {"Effect": "Allow", "Action": "ec2:CreateImage", "Resource": ["arn:aws:ec2:REGION::image/*", "arn:aws:ec2:REGION::snapshot/*"]},
+    {"Effect": "Allow", "Action": ["ec2:CreateLaunchTemplateVersion", "ec2:ModifyLaunchTemplate", "ec2:DeleteLaunchTemplateVersions"], "Resource": "arn:aws:ec2:REGION:*:launch-template/LT_ID"},
+    {"Effect": "Allow", "Action": ["ec2:DeregisterImage", "ec2:DeleteSnapshot"], "Resource": ["arn:aws:ec2:REGION::image/*", "arn:aws:ec2:REGION::snapshot/*"], "Condition": {"StringEquals": {"ec2:ResourceTag/app": "TAG_APP"}}}
   ]
 }

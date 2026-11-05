@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Offline test of infra.sh: a stand-in `aws` records every call and answers from canned values, so the test checks
 # that every deployment value comes from the --config file (region, subnet, template, tags, the three pins) and that
-# the IAM policies are filled in and stay under IAM's inline policy size. Needs bash and jq. Usage: test-infra.sh
+# the IAM policies are filled in and stay under IAM's policy size limits. Needs bash and jq. Usage: test-infra.sh
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
@@ -24,6 +24,8 @@ case $args in
   *" describe-images "*"Key=='sandboxd'"*) echo aviary-0123456789ab ;;
   *" describe-images "*"Key=='runsc'"*) echo precopy-20261021.2 ;;
   *" iam get-user "*) exit 0 ;;
+  *" iam get-policy "*) [ -n "${POLICY_EXISTS:-}" ] || exit 254 ;;
+  *" iam list-policy-versions "*) echo v1 ;;
   *) : ;;
 esac
 EOF
@@ -85,16 +87,24 @@ if grep -qE 'REGION|ACCOUNT|LT_ID|TAG_APP|TEMPLATE' <<< "$pol"; then fail "place
 echo "ok  iam: hermit-scaler's policy filled in ($(wc -c <<< "$pol") bytes)"
 
 run ci-iam > /dev/null
-pol=$(grep -F "put-user-policy --user-name hermit-ami-ci" "$AWS_LOG" | sed 's/.*--policy-document //')
+pol=$(grep -F "create-policy --policy-name hermit-ami-ci" "$AWS_LOG" | sed -e 's/.*--policy-document //' -e 's/ --tags .*//')
 jq -e . <<< "$pol" > /dev/null || fail "ci policy is not JSON"
+has "iam attach-user-policy --user-name hermit-ami-ci --policy-arn arn:aws:iam::123456789012:policy/hermit-ami-ci"
+grep -q '"arn:aws:ec2:xx-test-1:\*:instance/\*"' <<< "$pol" || fail "ci policy not pinned to the config's region"
 if grep -qE 'REGION|ACCOUNT|LT_ID|TAG_APP|TEMPLATE' <<< "$pol"; then fail "placeholders left: $pol"; fi
 grep -q 'key-pair/test-host-ami-\*' <<< "$pol" || fail "ci policy key pair prefix"
 grep -q '"test-host-build"' <<< "$pol" || fail "ci policy builder tag"
-# a deployment naming its template and app tag with 24 characters each must still fit IAM's 2048-character inline limit
+# a deployment naming its template and app tag with 24 characters each must still fit IAM's managed policy limit
 long=$(printf 'x%.0s' $(seq 24))
-size=$(sed -e "s/LT_ID/lt-0123456789abcdef0/g" -e "s/TAG_APP/$long/g" -e "s/TEMPLATE/$long/g" "$here/ami-ci-policy.json" | jq -c . | wc -c)
-[ "$size" -le 2048 ] || fail "ci policy is $size characters with 24-character names"
-echo "ok  ci-iam: hermit-ami-ci's policy filled in, $size characters with 24-character names (limit 2048)"
+size=$(sed -e "s/LT_ID/lt-0123456789abcdef0/g" -e "s/TAG_APP/$long/g" -e "s/TEMPLATE/$long/g" -e "s/REGION/ap-southeast-3/g" "$here/ami-ci-policy.json" | jq -c . | wc -c)
+[ "$size" -le 6144 ] || fail "ci policy is $size characters with 24-character names"
+echo "ok  ci-iam: hermit-ami-ci's managed policy filled in and attached, $size characters with 24-character names (limit 6144)"
+# a second run replaces the policy's default version (old versions deleted first), no second policy
+: > "$AWS_LOG"; POLICY_EXISTS=1 bash "$here/infra.sh" --config "$t/hermit.json" ci-iam > /dev/null
+has "iam delete-policy-version --policy-arn arn:aws:iam::123456789012:policy/hermit-ami-ci --version-id v1"
+has "iam create-policy-version --policy-arn arn:aws:iam::123456789012:policy/hermit-ami-ci"
+! grep -qF "create-policy --policy-name" "$AWS_LOG" || fail "ci-iam created a second policy"
+echo "ok  ci-iam again: a new default version, the old one deleted"
 
 # a config value that is not a plain name never reaches a policy (no sed injection, no widened ARN)
 jq '.fabric.aws.launchTemplate = "a/*"' "$t/hermit.json" > "$t/bad.json"

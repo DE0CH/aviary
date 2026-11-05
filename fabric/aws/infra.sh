@@ -36,9 +36,11 @@
 #                                      tag app=<tags.app>), tags at launch, TerminateInstances of app=<tags.app>
 #                                      instances, DescribeInstances (scaler-policy.json). Prints nothing secret;
 #                                      `iam-key` makes an access key and writes it to $KEY_OUT (mode 600), never stdout.
-#   infra.sh --config F ci-iam         IAM user hermit-ami-ci for the AMI workflow (ami-ci-policy.json: a tagged
-#                                      t3.large builder, its key pair and SSH rule, the image, this template, pruning
-#                                      tagged AMIs); `ci-iam-key` writes a new access key to $KEY_OUT (mode 600)
+#   infra.sh --config F ci-iam         IAM user hermit-ami-ci for the AMI workflow, with the managed policy of the same
+#                                      name (ami-ci-policy.json: in the config's region only, a tagged t3.large
+#                                      builder in the template's SG, its key pair and SSH rule, the image, this
+#                                      template, pruning tagged AMIs); `ci-iam-key` writes a new access key to
+#                                      $KEY_OUT (mode 600)
 #   infra.sh --config F prune-amis     deregisters every AMI tagged app=<tags.app> but the template's (and snapshots)
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -230,10 +232,21 @@ iam)
 ci-iam)
   acct=$(aws sts get-caller-identity --query Account --output text)
   lt=$(aws ec2 describe-launch-templates --launch-template-names "$NAME" --query 'LaunchTemplates[0].LaunchTemplateId' --output text)
-  pol=$(policy ami-ci-policy.json "$acct" "$lt" | jq -c .)   # inline user policies: 2048 characters at most
+  # a customer managed policy (6144 characters; an inline one allows 2048, too few for the region-pinned ARNs)
+  pol=$(policy ami-ci-policy.json "$acct" "$lt" | jq -c .)
+  arn="arn:aws:iam::$acct:policy/$CI_USER"
   aws iam get-user --user-name "$CI_USER" >/dev/null 2>&1 || aws iam create-user --user-name "$CI_USER" --tags "Key=app,Value=$APP" >/dev/null
-  aws iam put-user-policy --user-name "$CI_USER" --policy-name hermit-ami --policy-document "$pol"
-  echo "user $CI_USER: inline policy hermit-ami (template $lt)"
+  if aws iam get-policy --policy-arn "$arn" >/dev/null 2>&1; then
+    # IAM keeps at most 5 versions: the old non-default ones go first (git holds the history)
+    for v in $(aws iam list-policy-versions --policy-arn "$arn" --query 'Versions[?!IsDefaultVersion].VersionId' --output text); do
+      aws iam delete-policy-version --policy-arn "$arn" --version-id "$v"
+    done
+    aws iam create-policy-version --policy-arn "$arn" --policy-document "$pol" --set-as-default >/dev/null
+  else
+    aws iam create-policy --policy-name "$CI_USER" --policy-document "$pol" --tags "Key=app,Value=$APP" >/dev/null
+  fi
+  aws iam attach-user-policy --user-name "$CI_USER" --policy-arn "$arn"
+  echo "user $CI_USER: managed policy $arn (template $lt)"
   ;;
 ci-iam-key|iam-key)
   : "${KEY_OUT:?file to write the new access key to}"
