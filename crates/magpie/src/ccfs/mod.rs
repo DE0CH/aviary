@@ -26,6 +26,7 @@ pub mod ops;
 pub mod pages;
 pub mod reconstruct;
 pub mod scan;
+pub mod transcript;
 
 use std::collections::{BTreeMap, HashMap};
 

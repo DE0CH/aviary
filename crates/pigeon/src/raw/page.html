@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Raw transcript</title>
+<style>
+:root{--ground:#eef0f2;--panel:#fff;--ink:#14171a;--muted:#59626b;--rule:#d3d8dd;--st-bad:#c8102e;--st-info:#005eb8;
+--t13:13px;--t15:15px;--t18:18px;--mono:ui-monospace,"SF Mono",Menlo,Consolas,"Noto Sans Mono CJK HK","Noto Sans HK",monospace;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--ground:#111315;--panel:#1a1d20;--ink:#e8eaec;--muted:#9ea6ae;--rule:#33393f;--st-bad:#ff4d5a;--st-info:#5aa9ff;color-scheme:dark}}
+*{box-sizing:border-box;margin:0;padding:0;border-radius:0}
+body{background:var(--ground);color:var(--ink);font:var(--t15)/1.5 system-ui,"Noto Sans HK","PingFang HK",sans-serif;font-variant-numeric:tabular-nums}
+header{position:sticky;top:0;z-index:2;background:var(--panel);border-bottom:1px solid var(--rule)}
+.bar{max-width:1200px;margin:0 auto;padding:0 16px;display:flex;flex-wrap:wrap;align-items:center;gap:0 16px;min-height:56px}
+h1{font-size:var(--t18);font-weight:700}
+.who{color:var(--muted);font-size:var(--t13)}
+.ctl{display:flex;flex-wrap:wrap;align-items:stretch;border:1px solid var(--rule);margin:6px 0}
+.ctl>*+*{border-left:1px solid var(--rule)}
+.ctl a,.ctl button{display:flex;align-items:center;min-height:44px;padding:0 14px;font:inherit;color:var(--ink);background:var(--panel);border:0;text-decoration:none;cursor:pointer}
+.ctl button[aria-pressed=true]{background:var(--ink);color:var(--panel)}
+.ctl a:hover,.ctl button[aria-pressed=false]:hover{background:var(--ground)}
+:focus-visible{outline:3px solid var(--st-info);outline-offset:2px}
+.status{margin-left:auto;color:var(--muted);font-size:var(--t13);display:flex;align-items:center;gap:8px}
+.pip{width:12px;height:12px;border:2px solid var(--muted)}
+.status.live .pip{background:var(--st-info);border-color:var(--st-info)}
+.status.live{color:var(--ink)}
+.status.bad .pip{background:var(--st-bad);border-color:var(--st-bad)}
+.note{max-width:1200px;margin:0 auto;padding:6px 16px;font-size:var(--t13);color:var(--muted);border-top:1px solid var(--rule)}
+main{max-width:1200px;margin:8px auto;background:var(--panel)}
+.row{display:grid;grid-template-columns:76px 132px minmax(0,1fr);border-bottom:1px solid var(--rule);border-left:3px solid transparent}
+.row>*{padding:8px 12px}
+.t{color:var(--muted);font-size:var(--t13);white-space:nowrap}
+.k{font-size:var(--t13);color:var(--muted)}
+.k b{display:block;color:var(--ink);font-weight:600}
+.row.user .k b,.row.interrupt .k b{font-weight:800}
+.row.err{border-left-color:var(--st-bad)}
+.row.err .k b{color:var(--st-bad)}
+.x{min-width:0}
+pre{white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;font:var(--t13)/1.5 var(--mono)}
+.row.user pre,.row.assistant pre{font-size:var(--t15)}
+.row.thinking pre,.row.quiet pre,.row.meta pre{color:var(--muted)}
+.m{margin-top:4px;color:var(--muted);font-size:var(--t13);font-family:var(--mono)}
+.gap{color:var(--muted);font:var(--t13)/1.5 var(--mono);padding:4px 0}
+.more{margin-top:6px;min-height:44px;padding:0 14px;font:inherit;font-size:var(--t13);background:var(--panel);color:var(--ink);border:1px solid var(--rule);cursor:pointer}
+.more:hover{background:var(--ground)}
+.day{padding:6px 12px;font-size:var(--t13);font-weight:600;border-bottom:1px solid var(--rule);background:var(--ground)}
+.empty{padding:24px 16px;color:var(--muted)}
+@media (max-width:700px){.row{grid-template-columns:auto minmax(0,1fr)}.row .t{grid-column:1;padding-right:0}.row .k{grid-column:2}.row .x{grid-column:1/-1;padding-top:0}.k b{display:inline;margin-right:8px}}
+</style>
+</head>
+<body>
+<header>
+<div class="bar">
+<h1>Raw transcript</h1>
+<span class="who" id="who"></span>
+<div class="ctl">
+<a id="back" href="/">Normal view</a>
+<button id="outs" aria-pressed="true">Outputs</button>
+<button id="quiet" aria-pressed="false">Bookkeeping</button>
+<button id="follow" aria-pressed="true">Follow</button>
+</div>
+<span class="status" id="status"><span class="pip"></span><span id="st">Loading</span></span>
+</div>
+<div class="note">Visible only to you (admin). Read-only: every line of the Claude Code transcript, in order. Times are Hong Kong time.</div>
+</header>
+<main id="m"><div class="empty" id="empty">Loading.</div></main>
+<script>
+(function(){
+"use strict";
+var KEY="{{STORAGE_KEY}}",HEAD=30,TAIL=10,MAXC=6000;
+var id=(location.pathname.match(/\/raw\/([0-9a-fA-F-]{36})/)||[])[1];
+var token=null;
+try{var h=new URLSearchParams(location.hash.replace(/^#/,"")).get("{{HASH_KEY}}");if(h){sessionStorage.setItem(KEY,h);history.replaceState(null,"",location.pathname+location.search)}token=sessionStorage.getItem(KEY)}catch(e){}
+var back=new URLSearchParams(location.search).get("back");
+if(back&&/^\/[^\/]/.test(back))document.getElementById("back").href=back;else document.getElementById("back").href="/";
+var m=document.getElementById("m"),st=document.getElementById("st"),status=document.getElementById("status");
+var next=null,tools={},lastDay="",timer=null,opts={outs:true,quiet:false,follow:true};
+try{var saved=JSON.parse(localStorage.getItem("raw-view-opts")||"null");if(saved){opts.outs=!!saved.outs;opts.quiet=!!saved.quiet;opts.follow=saved.follow!==false}}catch(e){}
+function claims(t){try{return JSON.parse(atob(t.split(".")[0].replace(/-/g,"+").replace(/_/g,"/")))}catch(e){return null}}
+var c=token&&claims(token);
+document.getElementById("who").textContent=c?"Viewing as "+c.u:"";
+function setStatus(cls,text){status.className="status"+(cls?" "+cls:"");st.textContent=text}
+if(!id){setStatus("bad","Not a conversation address");empty("This address names no conversation.");return}
+if(!token){setStatus("bad","No view-as token");empty("This page works in a View as tab only. Open View as from the Ops page, open the conversation, then Raw transcript.");return}
+function empty(t){var e=document.getElementById("empty");if(e)e.textContent=t}
+var dtf=new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Hong_Kong",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
+var dayf=new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Hong_Kong",weekday:"short",day:"numeric",month:"short",year:"numeric"});
+function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
+function body(text){
+  var box=el("div","x");var lines=text.split("\n");
+  var long=lines.length>HEAD+TAIL+5||text.length>MAXC;
+  if(!long){box.appendChild(el("pre","",text));return box}
+  var short;
+  if(lines.length>HEAD+TAIL+5){short=[el("pre","",lines.slice(0,HEAD).join("\n")),el("div","gap","["+(lines.length-HEAD-TAIL)+" lines hidden]"),el("pre","",lines.slice(-TAIL).join("\n"))]}
+  else{short=[el("pre","",text.slice(0,MAXC*0.7)),el("div","gap","["+(text.length-MAXC)+" characters hidden]"),el("pre","",text.slice(-MAXC*0.3))]}
+  var wrap=el("div");short.forEach(function(n){wrap.appendChild(n)});box.appendChild(wrap);
+  var b=el("button","more","Show all ("+lines.length+" lines)");var open=false;
+  b.onclick=function(){open=!open;wrap.textContent="";if(open){wrap.appendChild(el("pre","",text))}else{short.forEach(function(n){wrap.appendChild(n)})}b.textContent=open?"Show less":"Show all ("+lines.length+" lines)"};
+  box.appendChild(b);return box;
+}
+function visible(r){return (opts.outs||!r.classList.contains("result"))&&(opts.quiet||!r.classList.contains("quiet"))}
+function add(cell){
+  var d=cell.at?new Date(cell.at):null,ok=d&&!isNaN(d);
+  if(ok){var day=dayf.format(d);if(day!==lastDay){lastDay=day;m.appendChild(el("div","day",day))}}
+  var kind=cell.kind,cls="row "+kind.replace(/[^a-z]/g,"");
+  if(kind==="tool result")cls+=" result";if(cell.quiet)cls+=" quiet";if(cell.error)cls+=" err";
+  var r=el("div",cls);r.appendChild(el("div","t",ok?dtf.format(d):""));
+  var k=el("div","k");var label=kind;
+  if(kind==="tool call"&&cell.toolId&&cell.title)tools[cell.toolId]=cell.title;
+  var title=cell.title||(kind==="tool result"&&cell.toolId&&tools[cell.toolId])||"";
+  k.appendChild(el("b","",label+(cell.error?" (error)":"")));if(title)k.appendChild(el("span","",title));
+  r.appendChild(k);var x=body(cell.text||"");if(cell.meta)x.appendChild(el("div","m",cell.meta));r.appendChild(x);
+  if(!visible(r))r.hidden=true;m.appendChild(r);
+}
+function refilter(){Array.prototype.forEach.call(m.querySelectorAll(".row"),function(r){r.hidden=!visible(r)})}
+function toggle(name){var b=document.getElementById(name);b.onclick=function(){opts[name]=!opts[name];b.setAttribute("aria-pressed",String(opts[name]));try{localStorage.setItem("raw-view-opts",JSON.stringify(opts))}catch(e){}refilter();if(name==="follow"&&opts.follow)scrollTo(0,document.body.scrollHeight)};b.setAttribute("aria-pressed",String(opts[name]))}
+toggle("outs");toggle("quiet");toggle("follow");
+var fails=0;
+function load(){
+  clearTimeout(timer);
+  var u="{{SESSIONS}}"+id+"/transcript?{{VIEW_AS_QUERY}}="+encodeURIComponent(token)+(next!=null?"&after="+next:"");
+  fetch(u,{credentials:"same-origin",cache:"no-store"}).then(function(res){
+    if(res.status===403){throw {stop:true,msg:"View as ended or refused. Open View as again from the Ops page."}}
+    if(res.status===404){throw {stop:true,msg:"Conversation not found for this person."}}
+    if(!res.ok)throw {msg:"Unavailable ("+res.status+")"};
+    return res.json();
+  }).then(function(p){
+    fails=0;var e=document.getElementById("empty");
+    var atEnd=(innerHeight+scrollY)>=document.body.scrollHeight-40;
+    if(e&&(p.cells.length||!p.more))e.remove();
+    p.cells.forEach(add);
+    if(!m.querySelector(".row")&&!p.more){m.appendChild(el("div","empty","No transcript lines yet."))}
+    if(p.next!=null)next=p.next;
+    if(opts.follow&&p.cells.length&&(atEnd||!document.querySelector(".row:not([hidden])")))scrollTo(0,document.body.scrollHeight);
+    var now=dtf.format(new Date());
+    if(p.running)setStatus("live","Turn running, updated "+now);else setStatus("","Idle, updated "+now);
+    timer=setTimeout(load,p.more?0:(p.running?2000:10000));
+  }).catch(function(err){
+    if(err&&err.stop){setStatus("bad",err.msg);empty(err.msg);return}
+    fails++;setStatus("bad",(err&&err.msg)||"Connection lost, retrying");
+    timer=setTimeout(load,Math.min(30000,2000*fails));
+  });
+}
+load();
+})();
+</script>
+</body>
+</html>

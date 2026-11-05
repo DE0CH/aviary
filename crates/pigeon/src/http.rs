@@ -381,6 +381,7 @@ enum ApiRoute {
     Models,
     Upload,
     FilesRaw(String),
+    Transcript(String),
     Blob(String),
     SessionShares(String),
     Share(String),
@@ -419,6 +420,12 @@ impl ApiRoute {
             {
                 return Self::FilesRaw(id.to_owned());
             }
+            if let Some(id) = rest.strip_suffix("/transcript")
+                && !id.contains('/')
+                && get
+            {
+                return Self::Transcript(id.to_owned());
+            }
             if let Some(id) = rest.strip_suffix("/shares")
                 && !id.contains('/')
                 && (get || post)
@@ -456,6 +463,7 @@ impl ApiRoute {
             Self::Models => "models",
             Self::Upload => "upload",
             Self::FilesRaw(_) => "files_raw",
+            Self::Transcript(_) => "transcript",
             Self::Blob(_) => "blob",
             Self::SessionShares(_) => "shares",
             Self::Share(_) => "share",
@@ -640,6 +648,7 @@ async fn api(app: &App, req: Request, path: &str, upgrade: bool) -> (&'static st
         ApiRoute::Models => models(app).await,
         ApiRoute::Upload => uploads::upload(app, Request::from_parts(parts, body), &id).await,
         ApiRoute::FilesRaw(cid) => blobs::files_raw(app, &parts, &id, &cid, query.as_deref()).await,
+        ApiRoute::Transcript(cid) => crate::raw::transcript(app, &id, &cid, query.as_deref()).await,
         ApiRoute::Blob(blob) => blobs::blob(app, &parts, &blob, query.as_deref()).await,
         ApiRoute::SessionShares(cid) => shares::conversation_shares(app, &parts, &id, &cid).await,
         ApiRoute::Share(sid) => shares::share(app, &parts, &id, &sid).await,
@@ -658,6 +667,9 @@ async fn public(app: &App, req: Request, path: &str) -> (&'static str, Response)
     let method = req.method();
     if *method != Method::GET && *method != Method::HEAD {
         return ("method", page(app, Page::ReadOnly, None));
+    }
+    if path.starts_with(crate::raw::PAGE_PREFIX) {
+        return ("raw", crate::raw::serve_page(app, req.headers(), path).await);
     }
     let last = path.rsplit('/').next().unwrap_or("");
     if last.contains('.') {

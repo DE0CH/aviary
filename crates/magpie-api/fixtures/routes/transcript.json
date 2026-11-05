@@ -1,0 +1,38 @@
+{
+  "route": "transcript",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "query": {
+    "after": 3,
+    "limit": 200
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "path": "projects/-workspace/5f0e8a1c-2b3d-4e5f-8a9b-0c1d2e3f4a5b.jsonl",
+        "lines": [
+          {
+            "ord": 4,
+            "line": "{\"type\":\"user\",\"timestamp\":\"2026-11-05T03:12:09.120Z\",\"message\":{\"role\":\"user\",\"content\":\"港珠澳大橋今日有冇新聞？\"}}"
+          },
+          {
+            "ord": 5,
+            "line": "{\"type\":\"assistant\",\"timestamp\":\"2026-11-05T03:12:12.004Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_01\",\"name\":\"Bash\",\"input\":{\"command\":\"ls\"}}]}}"
+          }
+        ],
+        "next": 5,
+        "more": false,
+        "running": true
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

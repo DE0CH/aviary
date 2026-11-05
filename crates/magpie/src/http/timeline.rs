@@ -2,7 +2,9 @@
 //! included), allowed while viewing as.
 
 use magpie_api::live::LiveState;
-use magpie_api::rows::{PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery};
+use magpie_api::rows::{
+    PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery,
+};
 use magpie_api::server::Ctx;
 use uuid::Uuid;
 
@@ -42,4 +44,9 @@ pub async fn search(app: &Magpie, ctx: Ctx, id: Uuid, q: SearchQuery) -> Answer<
         }
         .await,
     )
+}
+
+/// The raw view's transcript lines (only while viewing as).
+pub async fn transcript(app: &Magpie, ctx: Ctx, id: Uuid, q: TranscriptQuery) -> Answer<TranscriptPage> {
+    answer(async { crate::ccfs::transcript::page(app, &Person::from_ctx(&ctx)?, id, &q).await }.await)
 }

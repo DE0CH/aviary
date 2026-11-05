@@ -36,7 +36,9 @@ use crate::ops::{
     WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
 use crate::routes::{self, Route, Surface};
-use crate::rows::{PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery};
+use crate::rows::{
+    PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery,
+};
 use crate::sandbox::{
     AckRequest, AgentTurnRequest, AskReport, AskResolvedReport, CcFileQuery, CcMkdir, CcPathOp, CcRename, CcSetattr,
     CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery, CommandsQuery, CommandsResponse, Heartbeat,
@@ -541,6 +543,11 @@ impl PersonCalls<'_> {
     /// Search within the conversation.
     pub async fn search(&self, id: Uuid, q: &SearchQuery) -> Result<SearchResponse, ClientError> {
         self.get("search", &[&id.to_string()], Some(q)).await
+    }
+
+    /// The main transcript's lines (the raw view; only while viewing as).
+    pub async fn transcript(&self, id: Uuid, q: &TranscriptQuery) -> Result<TranscriptPage, ClientError> {
+        self.get("transcript", &[&id.to_string()], Some(q)).await
     }
 
     /// M11.

@@ -171,6 +171,17 @@ impl Server for FixtureServer {
         self.answer_json("search")
     }
 
+    async fn transcript(&self, ctx: Ctx, id: Uuid, query: TranscriptQuery) -> Result<TranscriptPage, ApiError> {
+        self.received(
+            "transcript",
+            &ctx,
+            &json!({"id": id.to_string()}),
+            Some(serde_json::to_value(&query).unwrap()),
+            None,
+        );
+        self.answer_json("transcript")
+    }
+
     async fn answer_ask(
         &self,
         ctx: Ctx,
@@ -769,6 +780,11 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
         "search" => c
             .person(PERSON)
             .search(param_uuid(&f, "id"), &query::<SearchQuery>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "transcript" => c
+            .person(PERSON)
+            .transcript(param_uuid(&f, "id"), &query::<TranscriptQuery>(&f))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
         "answer_ask" => c

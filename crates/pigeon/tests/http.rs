@@ -409,6 +409,7 @@ fn signed_in_index() -> String {
     INDEX
         .replace("<title>App</title>", &format!("<title>{PRODUCT}</title>"))
         .replace("content=\"App\"", &format!("content=\"{PRODUCT}\""))
+        .replace("</body>", &format!("{}</body>", pigeon::raw::toggle_script()))
 }
 
 #[tokio::test]
@@ -1029,6 +1030,71 @@ async fn view_as_is_read_only_on_rest_except_warm_and_uploads() {
     let r = h.as_token(h.get(&format!("/ops/?{q}")), &admin).send().await.unwrap();
     assert_eq!(r.status(), 403);
     assert!(h.hermit.fake.script().calls_to("ops_page").is_empty());
+}
+
+// ---- The raw view (Deyao, 2026-11-05) ----
+
+#[tokio::test]
+async fn the_raw_view_is_admin_only_and_reads_the_transcript_as_cells_only_while_viewing_as() {
+    let h = Harness::start().await;
+    let cid = uuid::Uuid::new_v4();
+    let page = format!("/raw/{cid}");
+    // the page: an admin's cookie only
+    assert_eq!(h.get(&page).send().await.unwrap().status(), 401);
+    let staff = format!("CF_Authorization={}", h.token(STAFF));
+    let r = h.get(&page).header("cookie", &staff).send().await.unwrap();
+    assert_eq!(r.status(), 403);
+    let admin_cookie = format!("CF_Authorization={}", h.token(ADMIN));
+    let r = h.get(&page).header("cookie", &admin_cookie).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["cache-control"], "no-store");
+    assert_eq!(r.text().await.unwrap(), pigeon::raw::page_html());
+    let r = h
+        .get("/raw/not-a-uuid")
+        .header("cookie", &admin_cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+    // the data: a view-as identity only; magpie is not called otherwise
+    h.magpie.fake.script().always(
+        "transcript",
+        Reply::ok(json!({
+            "path": "projects/-workspace/s.jsonl",
+            "lines": [
+                {"ord": 4, "line": r#"{"type":"user","timestamp":"2026-11-05T03:12:09.120Z","message":{"content":"hello"}}"#},
+                {"ord": 5, "line": r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#}
+            ],
+            "next": 5, "more": false, "running": true
+        })),
+    );
+    let data = format!("{}{cid}/transcript", compat::SESSIONS);
+    for who in [ADMIN, STAFF] {
+        let r = h.get_as(&data, who).await;
+        assert_eq!(code(r).await, (404, "NOT_AVAILABLE".into()), "{who} not viewing as");
+    }
+    assert!(h.magpie.fake.script().calls_to("transcript").is_empty());
+    let vt = h.view_token(ADMIN, STAFF, now() + 600);
+    let r = h
+        .get_as(&format!("{data}?after=3&{}={vt}", compat::VIEW_AS_QUERY), STAFF2)
+        .await;
+    assert_eq!(code(r).await.1, "VIEW_AS_REFUSED");
+    let r = h
+        .get_as(&format!("{data}?after=3&{}={vt}", compat::VIEW_AS_QUERY), ADMIN)
+        .await;
+    assert_eq!(r.status(), 200);
+    let v = body_json(r).await;
+    assert_eq!(v["next"], 5);
+    assert_eq!(v["running"], true);
+    assert_eq!(v["cells"][0]["kind"], "user");
+    assert_eq!(v["cells"][0]["text"], "hello");
+    assert_eq!(v["cells"][1]["kind"], "tool call");
+    assert_eq!(v["cells"][1]["title"], "Bash");
+    assert_eq!(v["cells"][1]["text"], "command: ls");
+    let call = h.magpie.fake.script().calls_to("transcript").pop().unwrap();
+    assert_eq!(call.header("aviary-person"), Some(STAFF));
+    assert_eq!(call.header("aviary-viewer"), Some(ADMIN));
+    assert_eq!(call.query.unwrap()["after"], 3);
 }
 
 // ---- Ops (spec 5.11) ----

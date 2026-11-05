@@ -452,6 +452,44 @@ pub struct SearchQuery {
     pub limit: Option<u32>,
 }
 
+/// `GET /v1/conversations/{id}/transcript` query: the raw view's page of the main transcript (view-as only).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptQuery {
+    /// Lines after this `ord` (from `next`); absent: from the first line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<i64>,
+    /// Default 200, at most 500.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// A page of the main transcript's lines, in file order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptPage {
+    /// The main transcript's path (`projects/-workspace/<sid>.jsonl`); `None` when the conversation has none yet.
+    pub path: Option<String>,
+    /// The lines, each reconstructed (long text put back; base64 media replaced by `[media <mime> <size> bytes]`).
+    pub lines: Vec<TranscriptLine>,
+    /// The `ord` to ask `after` next (the last line's, or the query's `after` when no line came).
+    pub next: Option<i64>,
+    /// More lines are stored past this page.
+    pub more: bool,
+    /// A turn is running.
+    pub running: bool,
+}
+
+/// One transcript line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptLine {
+    /// Its order in the file.
+    pub ord: i64,
+    /// The line without its final newline (a JSON object, as Claude Code wrote it).
+    pub line: String,
+}
+
 /// Search response.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -52,9 +52,11 @@ use crate::routes::{
     SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE,
     SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SENT_FILES,
     SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS, SEARCH, SHARE,
-    SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TURNS, UPLOAD_LEGACY_PATH, UPLOAD_RAW, UPLOADS, VIEW_AS,
+    SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOAD_RAW, UPLOADS, VIEW_AS,
 };
-use crate::rows::{PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery};
+use crate::rows::{
+    PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery,
+};
 use crate::sandbox::{
     AckRequest, AgentTurnRequest, AskReport, AskResolvedReport, CcFileQuery, CcMkdir, CcPathOp, CcRename, CcSetattr,
     CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery, CommandsQuery, CommandsResponse, Heartbeat,
@@ -387,6 +389,16 @@ pub trait Server: Send + Sync + 'static {
         query: SearchQuery,
     ) -> impl Future<Output = Result<SearchResponse, ApiError>> + Send {
         async move { Err(not_implemented("search")) }
+    }
+
+    /// Route `transcript`.
+    fn transcript(
+        &self,
+        ctx: Ctx,
+        id: Uuid,
+        query: TranscriptQuery,
+    ) -> impl Future<Output = Result<TranscriptPage, ApiError>> + Send {
+        async move { Err(not_implemented("transcript")) }
     }
 
     /// Route `answer_ask`.
@@ -897,6 +909,15 @@ async fn h_search<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, P(id): P<Uuid>, 
     reply("search", s.search(ctx, id, query).await)
 }
 
+async fn h_transcript<S: Server>(
+    State(s): State<Arc<S>>,
+    ctx: Ctx,
+    P(id): P<Uuid>,
+    Q(query): Q<TranscriptQuery>,
+) -> Response {
+    reply("transcript", s.transcript(ctx, id, query).await)
+}
+
 async fn h_answer_ask<S: Server>(
     State(s): State<Arc<S>>,
     ctx: Ctx,
@@ -1171,6 +1192,7 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
         .route(LIVE, get(h_live::<S>))
         .route(PROMPTS, get(h_prompts::<S>))
         .route(SEARCH, get(h_search::<S>))
+        .route(TRANSCRIPT, get(h_transcript::<S>))
         .route(ASK_ANSWER, post(h_answer_ask::<S>))
         .route(CHANGES, get(h_changes::<S>))
         .route(UPLOADS, post(h_upload::<S>))

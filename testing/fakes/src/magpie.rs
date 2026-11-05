@@ -74,7 +74,9 @@ use magpie_api::ops::{
     PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest,
     WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
-use magpie_api::rows::{PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery};
+use magpie_api::rows::{
+    PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery,
+};
 use magpie_api::sandbox::{
     AckRequest, AckResult, AgentTurnRequest, AskReport, AskResolvedReport, CC_FILE_MAX_BYTES, CC_QUOTA_BYTES,
     CC_WRITE_MAX_BYTES, CcEntry, CcFileQuery, CcKind, CcMkdir, CcPathOp, CcRename, CcSetattr, CcSizeVersion, CcTree,
@@ -1239,6 +1241,10 @@ impl Server for FakeMagpie {
 
     async fn search(&self, ctx: Ctx, id_: Uuid, query: SearchQuery) -> Result<SearchResponse, ApiError> {
         scripted!(self, "search", ctx, id(id_), ser(&query), None, typed)
+    }
+
+    async fn transcript(&self, ctx: Ctx, id_: Uuid, query: TranscriptQuery) -> Result<TranscriptPage, ApiError> {
+        scripted!(self, "transcript", ctx, id(id_), ser(&query), None, typed)
     }
 
     async fn answer_ask(

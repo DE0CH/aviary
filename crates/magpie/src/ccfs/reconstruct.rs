@@ -89,7 +89,7 @@ pub async fn tree(app: &Magpie, caller: &Caller) -> Result<CcTree> {
 }
 
 /// The bytes of blobs `shas`: staged, else from the bucket (no connection held while the bucket is called).
-async fn blob_bytes(app: &Magpie, shas: &[Sha]) -> Result<HashMap<Sha, Bytes>> {
+pub(crate) async fn blob_bytes(app: &Magpie, shas: &[Sha]) -> Result<HashMap<Sha, Bytes>> {
     let mut got: HashMap<Sha, Bytes> = blobs::staging::read(&app.pool.get().await?, shas)
         .await?
         .into_iter()

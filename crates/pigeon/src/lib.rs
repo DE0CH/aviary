@@ -23,6 +23,7 @@ pub mod legacy;
 pub mod metrics;
 pub mod ops;
 pub mod paseo;
+pub mod raw;
 pub mod server;
 pub mod shares;
 pub mod shell;

@@ -94,6 +94,8 @@ pub const LIVE: &str = "/v1/conversations/{id}/live";
 pub const PROMPTS: &str = "/v1/conversations/{id}/prompts";
 /// `GET` search.
 pub const SEARCH: &str = "/v1/conversations/{id}/search";
+/// The raw view's transcript lines (view-as only).
+pub const TRANSCRIPT: &str = "/v1/conversations/{id}/transcript";
 /// `POST` ask answer (M11).
 pub const ASK_ANSWER: &str = "/v1/conversations/{id}/asks/{askId}/answer";
 /// `GET` change feed (M12).
@@ -289,6 +291,7 @@ pub const ROUTES: &[Route] = &[
     pigeon_extra("live", Get, LIVE, &[200, 204]),
     person("prompts", "M10", Get, PROMPTS, &[200]),
     pigeon_extra("search", Get, SEARCH, &[200]),
+    pigeon_extra("transcript", Get, TRANSCRIPT, &[200]),
     person("answer_ask", "M11", Post, ASK_ANSWER, &[202]),
     person("changes", "M12", Get, CHANGES, &[200]),
     person("upload", "M13", Post, UPLOADS, &[201]),

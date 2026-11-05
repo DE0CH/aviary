@@ -46,6 +46,7 @@ fn check_route(id: &str, f: &serde_json::Value) {
         "live" => check::<NoQuery, NoBody, OptionJson<LiveState>>(id, f),
         "prompts" => check::<NoQuery, NoBody, Json<PromptsResponse>>(id, f),
         "search" => check::<Json<SearchQuery>, NoBody, Json<SearchResponse>>(id, f),
+        "transcript" => check::<Json<TranscriptQuery>, NoBody, Json<TranscriptPage>>(id, f),
         "answer_ask" => check::<NoQuery, Json<AgentPermissionResponse>, Json<Empty>>(id, f),
         "changes" => check::<Json<ChangesQuery>, NoBody, Json<ChangesResponse>>(id, f),
         "upload" => check::<NoQuery, RawBody, Json<UploadResponse>>(id, f),

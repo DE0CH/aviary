@@ -28,7 +28,9 @@ use magpie_api::ops::{
     PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest,
     WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
-use magpie_api::rows::{PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery};
+use magpie_api::rows::{
+    PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery,
+};
 use magpie_api::sandbox::{
     AckRequest, AgentTurnRequest, AskReport, AskResolvedReport, CcFileQuery, CcMkdir, CcPathOp, CcRename, CcSetattr,
     CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery, CommandsQuery, CommandsResponse, Heartbeat,
@@ -349,6 +351,10 @@ impl Server for Magpie {
 
     async fn search(&self, ctx: Ctx, id: Uuid, query: SearchQuery) -> Answer<SearchResponse> {
         http::timeline::search(self, ctx, id, query).await
+    }
+
+    async fn transcript(&self, ctx: Ctx, id: Uuid, query: TranscriptQuery) -> Answer<TranscriptPage> {
+        http::timeline::transcript(self, ctx, id, query).await
     }
 
     async fn live_frames(&self, ctx: Ctx, turn_id: Uuid, body: LiveFramesRequest) -> Answer<()> {

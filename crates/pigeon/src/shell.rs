@@ -1,6 +1,7 @@
 //! The app shell (spec 5.2.2): `index.html` for every page path, signed in or not, changed only by the product
-//! name in `<title>` and the app-title meta and, when nobody is signed in, the signed-out meta before `</head>`.
-//! Every other byte is served as built (the early message box and its inline script included).
+//! name in `<title>` and the app-title meta and, when nobody is signed in, the signed-out meta before `</head>`;
+//! when signed in, the raw view's button script before `</body>` (`raw::toggle_script`: it shows only in a view-as
+//! tab). Every other byte is served as built (the early message box and its inline script included).
 
 use std::sync::{Arc, Mutex};
 
@@ -89,6 +90,15 @@ fn signed_out(html: &str) -> String {
     }
 }
 
+/// Inserts the raw view's button script before the last `</body>`.
+fn raw_toggle(html: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    match lower.rfind("</body>") {
+        Some(i) => format!("{}{}{}", &html[..i], crate::raw::toggle_script(), &html[i..]),
+        None => html.to_owned(),
+    }
+}
+
 /// The two variants of `index` for `product`: (signed in, signed out).
 #[must_use]
 pub fn render(index: &[u8], product: &str) -> (Vec<u8>, Vec<u8>) {
@@ -96,7 +106,7 @@ pub fn render(index: &[u8], product: &str) -> (Vec<u8>, Vec<u8>) {
     let name = escape(product);
     let named = set_app_title(&set_title(&html, &name), &name);
     let out = signed_out(&named);
-    (named.into_bytes(), out.into_bytes())
+    (raw_toggle(&named).into_bytes(), out.into_bytes())
 }
 
 impl Shell {
@@ -161,14 +171,17 @@ mod tests {
         <body><textarea id=\"early\"></textarea><script src=\"/_expo/static/js/a.js\"></script></body></html>";
 
     #[test]
-    fn only_the_three_substitutions() {
+    fn only_the_substitutions() {
         let (inn, out) = render(INDEX.as_bytes(), "Team <AI>");
         let inn = String::from_utf8(inn).unwrap();
         let out = String::from_utf8(out).unwrap();
         let expected_in = INDEX
             .replace("<title>App</title>", "<title>Team &lt;AI&gt;</title>")
             .replace("content=\"App\"", "content=\"Team &lt;AI&gt;\"");
-        assert_eq!(inn, expected_in);
+        assert_eq!(
+            inn,
+            expected_in.replace("</body>", &format!("{}</body>", crate::raw::toggle_script()))
+        );
         assert_eq!(
             out,
             expected_in.replace("</head>", &format!("{}</head>", compat::SIGNED_OUT_META))
@@ -177,7 +190,7 @@ mod tests {
 
     #[test]
     fn a_shell_without_the_tags_is_unchanged() {
-        let (inn, _) = render(b"<html><body>x</body></html>", "P");
-        assert_eq!(inn, b"<html><body>x</body></html>");
+        let (inn, _) = render(b"<html><p>x</p></html>", "P");
+        assert_eq!(inn, b"<html><p>x</p></html>");
     }
 }

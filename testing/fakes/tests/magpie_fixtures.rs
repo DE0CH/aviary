@@ -165,6 +165,11 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .search(param_uuid(&f, "id"), &query::<SearchQuery>(&f))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
+        "transcript" => c
+            .person(PERSON)
+            .transcript(param_uuid(&f, "id"), &query::<TranscriptQuery>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
         "answer_ask" => c
             .person(PERSON)
             .answer_ask(
