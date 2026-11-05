@@ -16,7 +16,7 @@ pub const AGENT_UID: u32 = 1000;
 pub const AGENT_GID: u32 = 1000;
 /// Claude Code's `oom_score_adj` (5.2).
 pub const CLAUDE_OOM_SCORE_ADJ: i32 = 100;
-/// Plan mode is never offered to the model (Deyao, 2026-11-05). AskUserQuestion is: a question nobody answers parks the
+/// Plan mode is never offered to the model (Deyao, 2026-11-05). `AskUserQuestion` is: a question nobody answers parks the
 /// turn and frees the sandbox (DECISIONS 17), so it no longer hangs a turn (A11.F11).
 pub const DISALLOWED_TOOLS: &str = "EnterPlanMode,ExitPlanMode";
 
