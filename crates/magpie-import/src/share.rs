@@ -100,8 +100,11 @@ fn listing(dir: &Path, rel: &str, out: &mut Vec<String>) -> Result<()> {
 /// # Errors
 /// An I/O error other than "not found"; a name that is not UTF-8.
 pub fn fingerprint(jfs: &Path, s: &ShareRow, present: bool) -> Result<String> {
-    let mut files = Vec::new();
-    listing(&folder(jfs, s), "", &mut files)?;
+    let files = crate::retry_eintr(|| {
+        let mut files = Vec::new();
+        listing(&folder(jfs, s), "", &mut files)?;
+        Ok(files)
+    })?;
     let v = serde_json::json!({"row": s, "files": files, "present": present});
     Ok(crate::sha_hex(v.to_string().as_bytes()))
 }
@@ -283,11 +286,11 @@ async fn one(imp: &Importer, s: &ShareRow, conversation: Option<Uuid>, fp: &str,
     let workspace = magpie::shares::workspace_of(&s.id);
     // the frozen transcript, read before any transaction (a live share only)
     let frozen = if revoked.is_none() {
-        match std::fs::read(folder(&imp.jfs, s).join("transcript.jsonl")) {
-            Ok(b) => Some(b),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return Err(e.into()),
-        }
+        crate::retry_eintr(|| match std::fs::read(folder(&imp.jfs, s).join("transcript.jsonl")) {
+            Ok(b) => Ok(Some(b)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        })?
     } else {
         None
     };

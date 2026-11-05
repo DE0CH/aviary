@@ -90,6 +90,10 @@ pub fn exported_memory(jfs: &Path, key: &str, id: uuid::Uuid) -> PathBuf {
 /// # Errors
 /// An I/O error other than "not found".
 pub fn sources(jfs: &Path, key: &str, psid: &str, id: Option<uuid::Uuid>) -> Result<BTreeMap<String, Source>> {
+    crate::retry_eintr(|| sources_once(jfs, key, psid, id))
+}
+
+fn sources_once(jfs: &Path, key: &str, psid: &str, id: Option<uuid::Uuid>) -> Result<BTreeMap<String, Source>> {
     let base = claude_dir(jfs, key);
     let mut out = BTreeMap::new();
     let main = main_path(psid);
@@ -293,6 +297,10 @@ pub fn hash_prefix(abs: &Path, len: u64) -> Result<(String, u64)> {
 /// # Errors
 /// An I/O error other than "not found".
 pub fn workspace_uploads(jfs: &Path, conversation: uuid::Uuid) -> Result<BTreeMap<String, u64>> {
+    crate::retry_eintr(|| workspace_uploads_once(jfs, conversation))
+}
+
+fn workspace_uploads_once(jfs: &Path, conversation: uuid::Uuid) -> Result<BTreeMap<String, u64>> {
     let dir = jfs.join("ws").join(conversation.to_string()).join("uploads");
     let mut out = BTreeMap::new();
     let entries = match std::fs::read_dir(&dir) {

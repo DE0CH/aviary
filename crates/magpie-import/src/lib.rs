@@ -95,6 +95,25 @@ pub enum Error {
     LockLost,
 }
 
+/// How many times a read of the `JuiceFS` mount is made again after an interrupted system call.
+pub const EINTR_TRIES: usize = 20;
+
+/// `f` again while it fails with an interrupted system call (`EINTR`, which the `JuiceFS` FUSE mount returns now and
+/// then: a share pass failed on it, 2026-11-05), at most [`EINTR_TRIES`] times. `f` is a whole read (a listing, a
+/// fingerprint, a file), so a retry never keeps half of an interrupted one.
+///
+/// # Errors
+/// `f`'s error once it is not `EINTR`, or the last `EINTR`.
+pub fn retry_eintr<T>(mut f: impl FnMut() -> Result<T>) -> Result<T> {
+    for _ in 1..EINTR_TRIES {
+        match f() {
+            Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            r => return r,
+        }
+    }
+    f()
+}
+
 impl From<serde_json::Error> for Error {
     fn from(e: serde_json::Error) -> Self {
         Error::Source(format!("json: {e}"))
@@ -194,4 +213,39 @@ pub fn hex(bytes: &[u8]) -> String {
 pub fn sha_hex(bytes: &[u8]) -> String {
     use sha2::Digest as _;
     hex(&sha2::Sha256::digest(bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn eintr() -> Error {
+        Error::Io(std::io::Error::from(std::io::ErrorKind::Interrupted))
+    }
+
+    #[test]
+    fn an_interrupted_read_is_made_again() {
+        let mut calls = 0;
+        let got = retry_eintr(|| {
+            calls += 1;
+            if calls < 3 { Err(eintr()) } else { Ok(calls) }
+        });
+        assert_eq!(got.ok(), Some(3));
+        // another error is not retried
+        let mut calls = 0;
+        let got: Result<()> = retry_eintr(|| {
+            calls += 1;
+            Err(Error::Io(std::io::Error::from(std::io::ErrorKind::PermissionDenied)))
+        });
+        assert!(matches!(got, Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::PermissionDenied));
+        assert_eq!(calls, 1);
+        // a mount that keeps interrupting fails after EINTR_TRIES reads
+        let mut calls = 0;
+        let got: Result<()> = retry_eintr(|| {
+            calls += 1;
+            Err(eintr())
+        });
+        assert!(matches!(got, Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::Interrupted));
+        assert_eq!(calls, EINTR_TRIES);
+    }
 }

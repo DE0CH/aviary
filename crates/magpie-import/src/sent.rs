@@ -73,6 +73,10 @@ fn tool_use_id_ok(id: &str) -> bool {
 /// # Errors
 /// An I/O error other than "not found".
 pub fn read(jfs: &Path, conversation: Uuid) -> Result<(Vec<Snapshot>, String)> {
+    crate::retry_eintr(|| read_once(jfs, conversation))
+}
+
+fn read_once(jfs: &Path, conversation: Uuid) -> Result<(Vec<Snapshot>, String)> {
     let base = jfs.join("sent").join(conversation.to_string());
     let mut out = Vec::new();
     let mut fp: Vec<(String, u64, i64)> = Vec::new();
@@ -173,7 +177,7 @@ pub async fn unsnapshotted(imp: &Importer, id: Uuid, snapshots: &[Snapshot]) -> 
             continue;
         }
         let attachments: Option<serde_json::Value> = r.get(1);
-        let files = workspace_files(&ws, attachments.as_ref())?;
+        let files = crate::retry_eintr(|| workspace_files(&ws, attachments.as_ref()))?;
         if files.is_empty() {
             continue;
         }
