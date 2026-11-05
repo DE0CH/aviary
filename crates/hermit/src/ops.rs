@@ -131,6 +131,8 @@ pub struct Upstreams {
     pub egress: String,
     pub egress_token: String,
     pub cluster: Arc<dyn Cluster>,
+    /// The balance of the models' `OpenRouter` key (`HERMIT_OPENROUTER_KEY`); `None` when not configured.
+    pub openrouter: Option<Arc<OpenRouter>>,
 }
 
 impl std::fmt::Debug for Upstreams {
@@ -167,7 +169,17 @@ impl Upstreams {
             egress: egress_url.trim_end_matches('/').to_owned(),
             egress_token,
             cluster,
+            openrouter: None,
         }
+    }
+
+    /// With the `OpenRouter` balance read with `key` (none when `None` or empty).
+    #[must_use]
+    pub fn with_openrouter(mut self, key: Option<String>) -> Self {
+        self.openrouter = key
+            .filter(|k| !k.trim().is_empty())
+            .map(|k| Arc::new(OpenRouter::new(k.trim().to_owned(), OPENROUTER_KEY_URL)));
+        self
     }
 
     /// egress's `GET /v1/ops/summary?tz=&recentMinutes=` (platform 15.3), as egress sends it: `budget` and `egress`
@@ -207,6 +219,96 @@ impl Upstreams {
             egress: v["egress"].take(),
             recent,
         })
+    }
+}
+
+/// `OpenRouter`'s own figures for one key (`GET /api/v1/key`).
+pub const OPENROUTER_KEY_URL: &str = "https://openrouter.ai/api/v1/key";
+/// The balance is read again after this long (a failed read after [`OPENROUTER_RETRY`]).
+pub const OPENROUTER_EVERY: Duration = Duration::from_secs(300);
+/// A failed read is tried again after this long.
+pub const OPENROUTER_RETRY: Duration = Duration::from_secs(60);
+
+/// The `OpenRouter` balance of the key the deployment's model calls use (the snapshot's `openrouter`; Deyao,
+/// 2026-11-05): the key's limit, what is left of it, when it resets and its usage, as `OpenRouter` reports them. Read
+/// at most every [`OPENROUTER_EVERY`] by whichever snapshot needs it; between reads, and after a failed read (with
+/// its `error`), the last figures with the time they were read.
+pub struct OpenRouter {
+    key: String,
+    url: String,
+    last: tokio::sync::Mutex<Option<(Instant, Value)>>,
+}
+
+impl std::fmt::Debug for OpenRouter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenRouter").field("url", &self.url).finish_non_exhaustive()
+    }
+}
+
+impl OpenRouter {
+    #[must_use]
+    pub fn new(key: String, url: &str) -> Self {
+        Self {
+            key,
+            url: url.to_owned(),
+            last: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// The figures: the cached ones while fresh, else a new read (one at a time).
+    pub async fn balance(&self) -> Value {
+        let mut last = self.last.lock().await;
+        if let Some((at, v)) = last.as_ref() {
+            let fresh = if v.get("error").is_some() {
+                OPENROUTER_RETRY
+            } else {
+                OPENROUTER_EVERY
+            };
+            if at.elapsed() < fresh {
+                return v.clone();
+            }
+        }
+        let v = match self.read().await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, "openrouter balance not read");
+                let mut v = last.as_ref().map_or_else(|| serde_json::json!({}), |(_, v)| v.clone());
+                v["error"] = Value::String(e.chars().take(300).collect());
+                v
+            }
+        };
+        *last = Some((Instant::now(), v.clone()));
+        v
+    }
+
+    async fn read(&self) -> Result<Value, String> {
+        let res = http()
+            .get(&self.url)
+            .bearer_auth(&self.key)
+            .send()
+            .await
+            .map_err(|e| format!("OpenRouter unreachable: {e}"))?;
+        let status = res.status();
+        if !status.is_success() {
+            return Err(format!("OpenRouter: HTTP {status}"));
+        }
+        let body: Value = res.json().await.map_err(|e| format!("OpenRouter: bad body: {e}"))?;
+        let k = &body["data"];
+        if !k.is_object() {
+            return Err("OpenRouter: bad body: no data".into());
+        }
+        Ok(serde_json::json!({
+            "at": hermit_api::Timestamp::now(),
+            "limitUsd": k["limit"],
+            "remainingUsd": k["limit_remaining"],
+            "limitReset": k["limit_reset"],
+            "resetsAt": k["effective_budget"]["resets_at"],
+            "usageTodayUsd": k["usage_daily"],
+            "usageWeekUsd": k["usage_weekly"],
+            "usageMonthUsd": k["usage_monthly"],
+            "usageTotalUsd": k["usage"],
+            "source": "OpenRouter GET /api/v1/key",
+        }))
     }
 }
 
@@ -343,6 +445,54 @@ mod tests {
         assert_eq!(safe_zone(Some(""), hk), hk);
         assert_eq!(safe_zone(Some("Mars/Olympus"), hk), hk);
         assert_eq!(safe_zone(None, hk), hk);
+    }
+
+    #[tokio::test]
+    async fn the_openrouter_balance_is_read_then_cached() {
+        use axum::response::IntoResponse as _;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let h = hits.clone();
+        let app = axum::Router::new().route(
+            "/api/v1/key",
+            axum::routing::get(move |headers: axum::http::HeaderMap| {
+                let h = h.clone();
+                async move {
+                    h.fetch_add(1, Ordering::SeqCst);
+                    if headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) != Some("Bearer k") {
+                        return axum::http::StatusCode::UNAUTHORIZED.into_response();
+                    }
+                    axum::Json(serde_json::json!({"data": {
+                        "label": "sk-or-v1-abc...", "limit": 50, "limit_remaining": 46.5, "limit_reset": "monthly",
+                        "usage": 31.5, "usage_daily": 1.25, "usage_weekly": 3.75, "usage_monthly": 3.5,
+                        "effective_budget": {"resets_at": "2026-12-01T00:00:00.000Z"}}}))
+                    .into_response()
+                }
+            }),
+        );
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(l, app).await;
+        });
+        let o = OpenRouter::new("k".into(), &format!("http://{addr}/api/v1/key"));
+        let v = o.balance().await;
+        assert!(v.get("error").is_none(), "{v}");
+        assert_eq!(v["limitUsd"], 50);
+        assert_eq!(v["remainingUsd"], 46.5);
+        assert_eq!(v["limitReset"], "monthly");
+        assert_eq!(v["resetsAt"], "2026-12-01T00:00:00.000Z");
+        assert_eq!(v["usageTodayUsd"], 1.25);
+        assert_eq!(v["usageMonthUsd"], 3.5);
+        assert!(v["at"].is_string());
+        assert!(v.get("label").is_none(), "the key's own label is never shown");
+        assert_eq!(o.balance().await, v, "cached");
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        let bad = OpenRouter::new("wrong".into(), &format!("http://{addr}/api/v1/key"));
+        let v = bad.balance().await;
+        assert_eq!(v["error"], "OpenRouter: HTTP 401 Unauthorized");
+        assert!(v.get("remainingUsd").is_none());
     }
 
     #[tokio::test]

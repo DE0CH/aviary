@@ -73,6 +73,9 @@ code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywher
 form.va{margin:0 0 0 auto}
 form.va button{font:600 12px system-ui,sans-serif;padding:3px 10px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
 form.va button:hover{border-color:var(--fg)}
+#va-ask{display:none;margin:12px 16px 0;padding:10px 14px;border:1px solid var(--fg);border-radius:10px;background:var(--card);align-items:center;gap:8px 12px;flex-wrap:wrap}
+#va-ask.on{display:flex}
+#va-ask form.va{margin:0}
 </style>
 </head>
 <body class="tab-now">
@@ -80,6 +83,7 @@ form.va button:hover{border-color:var(--fg)}
   <div class="top"><h1>{{TITLE}}</h1><span class="pill s-none" id="verdict">loading…</span><span class="meta" id="meta"></span><span class="meta bad" id="stale">· not updating</span></div>
   <nav class="tabs"><button id="t-now" class="on" onclick="tab('now')">Now</button><button id="t-history" onclick="tab('history')">History (log)</button></nav>
 </header>
+<div id="va-ask"></div>
 <main>
   <div class="col" id="now"><div class="colhead"><h2>Now</h2><span>the current state, refreshed every 10 s</span></div><div class="col" id="now-body"></div></div>
   <div class="col" id="history"><div class="colhead"><h2>History</h2><span>a log: newest first, <span id="tzname"></span> time</span></div><div class="col" id="history-body"></div></div>
@@ -207,6 +211,19 @@ function renderNow(d){
   }
   out.push(card("Model budget", "shared by everyone; per day, person and model: History", bb, E.budget));
 
+  // 6b. the OpenRouter balance of the models' key (OpenRouter's own figures, read every 5 min)
+  var o = d.openrouter, orb = "";
+  if (o && o.at) {
+    var ofrac = o.limitUsd > 0 ? (o.limitUsd - o.remainingUsd) / o.limitUsd : 0, opct = Math.min(100, Math.max(0, ofrac * 100));
+    if (o.limitUsd != null) {
+      orb += '<div class="kpis">' + kpi(usd(o.remainingUsd), "left of USD " + o.limitUsd + (o.limitReset ? " (" + esc(o.limitReset) + ")" : "")) + kpi(usd(o.usageMonthUsd), "used this month") + kpi(usd(o.usageTodayUsd), "today") + "</div>";
+      orb += '<div class="bar' + (o.remainingUsd <= 0 ? " over" : ofrac >= 0.8 ? " watch" : "") + '"><i style="width:' + opct.toFixed(1) + '%"></i></div>';
+    } else orb += '<div class="kpis">' + kpi(usd(o.usageMonthUsd), "used this month (no key limit)") + kpi(usd(o.usageTodayUsd), "today") + "</div>";
+    orb += '<div class="f">' + (o.resetsAt ? "resets " + when(o.resetsAt) + " · " : "") + "this week " + usd(o.usageWeekUsd) + " · all time " + usd(o.usageTotalUsd) + " · read " + when(o.at) + " · " + esc(o.source || "") + "</div>";
+  } else if (o) orb += '<div class="empty">Not read yet.</div>';
+  else orb += '<div class="empty">No OpenRouter key configured (HERMIT_OPENROUTER_KEY).</div>';
+  out.push(card("OpenRouter balance", "the models' key, OpenRouter's own figures", orb, o && o.error));
+
   // 7. the operator's switches and each hermit replica's workspace store
   var c = d.controls, ob = "";
   if (c) {
@@ -311,6 +328,16 @@ function load(){
   }).then(function(d){ last = Date.now(); render(d); document.getElementById("stale").className = "meta bad"; })
     .catch(function(){ if (Date.now() - last > 30000) document.getElementById("stale").className = "meta bad on"; });
 }
+// #view-as=<email> (the live dashboard's View as list): that person's View as button, pressed here so the start stays a
+// same-origin form (pigeon refuses any other)
+(function(){
+  var m = /^#view-as=(.+)$/.exec(location.hash), u = "";
+  try { u = m ? decodeURIComponent(m[1]).trim().toLowerCase() : ""; } catch (e) {}
+  if (!u || u.indexOf("@") < 1) return;
+  var el = document.getElementById("va-ask");
+  el.innerHTML = '<span class="main">View ' + esc(PRODUCT) + " as " + who(u) + '</span><form class="va" method="post" action="/api/jarvis/view-as" target="_blank"><input type="hidden" name="user" value="' + esc(u) + '"><button type="submit">View as</button></form><span class="f">opens in a new tab; recorded in History</span>';
+  el.className = "on";
+})();
 load();
 setInterval(function(){ if (!document.hidden) load(); }, 10000);
 document.addEventListener("visibilitychange", function(){ if (!document.hidden) load(); });

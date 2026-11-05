@@ -144,6 +144,7 @@ pub async fn build(core: &Arc<Core>, tz: &str) -> Value {
         controls,
         replicas,
         fabric_ops,
+        openrouter,
     ) = tokio::join!(
         section(&errors, "service", service(core)),
         section(&errors, "hosts", hosts_section(core)),
@@ -176,6 +177,14 @@ pub async fn build(core: &Arc<Core>, tz: &str) -> Value {
         section(&errors, "controls", controls_section(core)),
         section(&errors, "replicas", replicas_section(core)),
         section(&errors, "fabricOps", core.providers.fabric.ops()),
+        // its own `error` when unread: a balance that can't be read is shown on its card, not a status finding
+        async {
+            if let Some(o) = &up.openrouter {
+                o.balance().await
+            } else {
+                Value::Null
+            }
+        },
     );
     let mut errors = errors.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
 
@@ -306,6 +315,7 @@ pub async fn build(core: &Arc<Core>, tz: &str) -> Value {
         "scaler": scaler,
         "recent": recent,
         "budget": budget,
+        "openrouter": openrouter,
         // history
         "hostsGone": hosts_gone,
         "events": events,

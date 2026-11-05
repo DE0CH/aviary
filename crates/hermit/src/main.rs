@@ -416,7 +416,8 @@ async fn serve() -> ExitCode {
                 &format!("http://{}", config.file.fabric.egress_service),
                 egress_token.clone(),
                 Arc::new(hermit::ops::InCluster::new(namespace.clone())),
-            ),
+            )
+            .with_openrouter(env::try_required("HERMIT_OPENROUTER_KEY").ok()),
         };
         match App::start(options).await {
             Ok(app) => break Arc::new(app),
