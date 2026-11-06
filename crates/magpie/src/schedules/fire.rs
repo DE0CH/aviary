@@ -49,6 +49,7 @@ pub fn message(describe: &str, prompt: &str) -> String {
 }
 
 /// Starts the firing loop: a pass every `every` ([`EVERY`] in production) while this replica leads.
+#[must_use]
 pub fn spawn(leader: Arc<Leader>, driver: Driver, every: Duration) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(every);

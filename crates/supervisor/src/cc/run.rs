@@ -2555,7 +2555,7 @@ impl Driver {
                 },
             );
         }
-        let line = prompt::user_line(&Value::String(text.to_owned()), &rfc3339(now()));
+        let message = prompt::user_line(&Value::String(text.to_owned()), &rfc3339(now()));
         let lane = self.with(Change::State, |st, fx| {
             let t = st.turn.as_ref()?;
             let running = turn_id == Some(t.id)
@@ -2574,7 +2574,7 @@ impl Driver {
                     ..Delivered::default()
                 },
             );
-            fx.push(Fx::Stdin(line));
+            fx.push(Fx::Stdin(message));
             Some(t.id)
         });
         match lane {

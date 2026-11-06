@@ -2542,14 +2542,14 @@ async fn a_message_sent_into_a_running_turn_is_written_at_once() {
     );
     assert_eq!(w.acked(other).await.delivered, Some(false));
     // for the running turn: written to Claude Code at once, while the turn still waits
-    let m = w.magpie.push_command(
+    let sent = w.magpie.push_command(
         w.cid,
         Some(t),
         CommandBody::SendMessage(SendMessage {
             text: "say:scheduled".into(),
         }),
     );
-    assert_eq!(w.acked(m).await.delivered, Some(true));
+    assert_eq!(w.acked(sent).await.delivered, Some(true));
     until("the message on Claude Code's stdin", || {
         w.fake_log().iter().filter(|l| l.as_str() == "stdin user").count() == 2
     })

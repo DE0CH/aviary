@@ -26,13 +26,13 @@ use crate::error::{Error, Result};
 use crate::turns::caller::Sandbox;
 
 /// The shortest time between two fires of a repeating rule.
-pub const MIN_GAP: Duration = Duration::from_secs(15 * 60);
+pub const MIN_GAP: Duration = Duration::from_mins(15);
 /// Schedules a person may have that are not done or deleted.
 pub const MAX_LIVE: i64 = 25;
 /// A prompt's length, characters.
 pub const PROMPT_MAX_CHARS: usize = 8000;
 /// How late a fire may still go out after the service was down (Deyao, 2026-11-06: later, it is skipped).
-pub const LATE_LIMIT: Duration = Duration::from_secs(10 * 60);
+pub const LATE_LIMIT: Duration = Duration::from_mins(10);
 /// Runs shown per schedule.
 pub const RUNS_SHOWN: i64 = 10;
 /// How far ahead a one-off may be set.
@@ -453,7 +453,7 @@ pub async fn update(pool: &Pool, ctx: &Ctx, id: &str, req: &UpdateSchedule) -> R
         };
         let tz = req.tz.clone().unwrap_or_else(|| row.tz.clone());
         if rule_changed && state == "done" {
-            state = "active".to_owned();
+            "active".clone_into(&mut state);
         }
         let mut next = None;
         let mut s = None;

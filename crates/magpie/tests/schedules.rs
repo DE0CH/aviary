@@ -8,6 +8,8 @@
     clippy::expect_used,
     clippy::too_many_lines,
     clippy::missing_panics_doc,
+    clippy::many_single_char_names,
+    clippy::similar_names,
     dead_code
 )]
 

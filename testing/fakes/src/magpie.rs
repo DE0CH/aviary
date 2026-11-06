@@ -84,6 +84,7 @@ use magpie_api::sandbox::{
     LeaseResponse, ReportedState, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport,
     TurnStateReport,
 };
+use magpie_api::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
 use magpie_api::server::{Ctx, Server};
 use magpie_api::shares::{ContinueResponse, ShareRef, ShareView, SharesList};
 use magpie_api::turns::{AgentPermissionResponse, CancelResponse, SendRequest, SendResponse};
@@ -1556,6 +1557,62 @@ impl Server for FakeMagpie {
 
     async fn admin_transcript(&self, ctx: Ctx, id_: Uuid, query: TranscriptQuery) -> Result<TranscriptPage, ApiError> {
         scripted!(self, "admin_transcript", ctx, id(id_), ser(&query), None, typed)
+    }
+
+    async fn list_schedules(&self, ctx: Ctx) -> Result<SchedulesList, ApiError> {
+        scripted!(self, "list_schedules", ctx, json!({}), None, None, typed)
+    }
+
+    async fn create_schedule(&self, ctx: Ctx, body: CreateSchedule) -> Result<Schedule, ApiError> {
+        scripted!(self, "create_schedule", ctx, json!({}), None, ser(&body), typed)
+    }
+
+    async fn get_schedule(&self, ctx: Ctx, schedule_id: String) -> Result<Schedule, ApiError> {
+        scripted!(
+            self,
+            "get_schedule",
+            ctx,
+            json!({"scheduleId": schedule_id}),
+            None,
+            None,
+            typed
+        )
+    }
+
+    async fn update_schedule(&self, ctx: Ctx, schedule_id: String, body: UpdateSchedule) -> Result<Schedule, ApiError> {
+        scripted!(
+            self,
+            "update_schedule",
+            ctx,
+            json!({"scheduleId": schedule_id}),
+            None,
+            ser(&body),
+            typed
+        )
+    }
+
+    async fn delete_schedule(&self, ctx: Ctx, schedule_id: String) -> Result<(), ApiError> {
+        scripted!(
+            self,
+            "delete_schedule",
+            ctx,
+            json!({"scheduleId": schedule_id}),
+            None,
+            None,
+            unit
+        )
+    }
+
+    async fn conversation_schedules(&self, ctx: Ctx, id_: Uuid) -> Result<SchedulesList, ApiError> {
+        scripted!(self, "conversation_schedules", ctx, id(id_), None, None, typed)
+    }
+
+    async fn admin_schedules(&self, ctx: Ctx) -> Result<AdminSchedules, ApiError> {
+        scripted!(self, "admin_schedules", ctx, json!({}), None, None, typed)
+    }
+
+    async fn admin_schedules_pause(&self, ctx: Ctx, body: PauseAll) -> Result<AdminSchedules, ApiError> {
+        scripted!(self, "admin_schedules_pause", ctx, json!({}), None, ser(&body), typed)
     }
 
     async fn legacy_ticket(&self, ctx: Ctx, id_: Uuid, body: TicketRequest) -> Result<TicketResponse, ApiError> {
