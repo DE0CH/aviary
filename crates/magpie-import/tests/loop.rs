@@ -681,7 +681,11 @@ async fn old_schedule(w: &World, tag: &str, c: Uuid, ago: &str) {
 async fn schedule_state(
     w: &World,
     tag: &str,
-) -> (String, Option<time::OffsetDateTime>, Option<Option<time::OffsetDateTime>>) {
+) -> (
+    String,
+    Option<time::OffsetDateTime>,
+    Option<Option<time::OffsetDateTime>>,
+) {
     let old = w
         .imp
         .cloudcli
@@ -755,8 +759,11 @@ async fn old_schedules_move_at_the_release_and_a_fire_keeps_the_conversation_leg
     let pool = w.imp.cloudcli.clone();
     let fire = tokio::spawn(async move {
         aviary_pg::tx!(&pool, |t| {
-            t.query("select id from cc_shared.schedules where id = 'sch_firing' for update", &[])
-                .await?;
+            t.query(
+                "select id from cc_shared.schedules where id = 'sch_firing' for update",
+                &[],
+            )
+            .await?;
             let _ = locked_tx.send(());
             tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
             t.execute(
@@ -792,7 +799,10 @@ async fn old_schedules_move_at_the_release_and_a_fire_keeps_the_conversation_leg
         .get()
         .await
         .unwrap()
-        .query_one("select count(*) from schedule_runs where schedule_id = 'sch_quiet'", &[])
+        .query_one(
+            "select count(*) from schedule_runs where schedule_id = 'sch_quiet'",
+            &[],
+        )
         .await
         .unwrap()
         .get(0);
@@ -812,7 +822,8 @@ async fn old_schedules_move_at_the_release_and_a_fire_keeps_the_conversation_leg
     );
 
     // once the fires are past the quiet period a later pass carries them, with the fire's next time and run
-    w.cloudcli("update cc_shared.schedule_runs set at = at - interval '2 minutes'").await;
+    w.cloudcli("update cc_shared.schedule_runs set at = at - interval '2 minutes'")
+        .await;
     for _ in 0..2 {
         h.pass(&imp).await.unwrap();
     }
@@ -822,5 +833,9 @@ async fn old_schedules_move_at_the_release_and_a_fire_keeps_the_conversation_leg
         assert_eq!(state, "moved", "{tag}");
     }
     let (_, _, new) = schedule_state(&w, "firing").await;
-    assert_eq!(new, Some(next_after_fire), "magpie fires the next time after the old fire, never that one again");
+    assert_eq!(
+        new,
+        Some(next_after_fire),
+        "magpie fires the next time after the old fire, never that one again"
+    );
 }

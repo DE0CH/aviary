@@ -20,8 +20,8 @@ use uuid::Uuid;
 
 use crate::gate;
 use crate::holds::RunningSet;
-use crate::schedules::Abort;
 use crate::kube::{self, Kube};
+use crate::schedules::Abort;
 use crate::uploads;
 use crate::{Error, Importer, Result};
 
@@ -665,7 +665,10 @@ async fn finish(imp: &Importer, o: &OpenRow, seen: &mut uploads::Seen, fenced: s
     let questions = &questions;
     let committed: std::sync::Mutex<Option<fence::Released>> = std::sync::Mutex::new(None);
     let committed_ref = &committed;
-    let held = aviary_pg::tx!(&imp.cloudcli_schedules, |old| -> std::result::Result<fence::Released, Abort> {
+    let held = aviary_pg::tx!(&imp.cloudcli_schedules, |old| -> std::result::Result<
+        fence::Released,
+        Abort,
+    > {
         let claimed = crate::schedules::claim(old, id).await?;
         if claimed.fired_within(QUIET) {
             return Err(Abort::Fired);

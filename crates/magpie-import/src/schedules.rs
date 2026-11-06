@@ -106,7 +106,8 @@ pub async fn claim(old: &Tx<'_>, id: Uuid) -> std::result::Result<Claimed, Abort
             now,
         });
     }
-    old.batch_execute(&format!("set local lock_timeout = '{LOCK_WAIT}'")).await?;
+    old.batch_execute(&format!("set local lock_timeout = '{LOCK_WAIT}'"))
+        .await?;
     let busy = |e: aviary_pg::Error| {
         if e.code() == Some(&aviary_pg::reexports::tokio_postgres::error::SqlState::LOCK_NOT_AVAILABLE) {
             Abort::Fired

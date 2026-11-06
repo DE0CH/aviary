@@ -488,7 +488,10 @@ pub async fn release_forced(imp: &Importer, id: Uuid) -> Result<Forced> {
     let person = &person;
     let committed: std::sync::Mutex<Option<fence::Released>> = std::sync::Mutex::new(None);
     let committed_ref = &committed;
-    let held = aviary_pg::tx!(&imp.cloudcli_schedules, |old| -> std::result::Result<fence::Released, Abort> {
+    let held = aviary_pg::tx!(&imp.cloudcli_schedules, |old| -> std::result::Result<
+        fence::Released,
+        Abort,
+    > {
         let claimed = crate::schedules::claim(old, id).await?;
         let schedules = &claimed.schedules;
         let r = aviary_pg::tx!(pool, |t| -> Result<Result<fence::Released, fence::NotReleased>> {
