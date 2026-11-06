@@ -33,7 +33,7 @@ images:
   - {name: sandboxd, newName: ghcr.io/de0ch/sandboxd, newTag: "33cc61aed240"}
   # the app bundle (DE0CH/claudecodeui pigeon-app.yml); from A1 to A5 only a pigeon-app-fix/* build may replace it
   # (DESIGN 9.6, cutover freeze-check)
-  - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "18569070823c"}
+  - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "29d74efa687f"}
   # egress and tools (DE0CH/jarvis3 chat.yml); the ZDR guard reads this tag (yyc-ai/tests/test_zdr.py)
   - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "92aa7c62d2bf"}
 configMapGenerator:
