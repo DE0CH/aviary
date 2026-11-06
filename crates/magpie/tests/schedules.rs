@@ -10,6 +10,7 @@
     clippy::missing_panics_doc,
     clippy::many_single_char_names,
     clippy::similar_names,
+    clippy::assert_is_empty,
     dead_code
 )]
 
@@ -464,8 +465,8 @@ async fn late_fires_go_out_within_10_minutes_and_are_skipped_after() {
         .create_schedule(&cron("b", "0 10 * * *"))
         .await
         .unwrap();
-    w.due(&within.id, Duration::from_secs(9 * 60)).await;
-    w.due(&after.id, Duration::from_secs(11 * 60)).await;
+    w.due(&within.id, Duration::from_mins(9)).await;
+    w.due(&after.id, Duration::from_mins(11)).await;
     assert_eq!(w.pass().await, 2);
     assert_eq!(w.runs(&within.id).await[0].0, "sent");
     assert_eq!(w.runs(&after.id).await[0].0, "skipped_late");
