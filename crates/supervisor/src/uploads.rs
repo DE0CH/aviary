@@ -135,19 +135,32 @@ fn reason(e: &std::io::Error) -> String {
     }
 }
 
-/// Runs `f` with this thread's filesystem ids set to `uid`/`gid` (only effective as root), then restores them.
-fn as_agent<T>(uid: u32, gid: u32, f: impl FnOnce() -> T) -> T {
-    // SAFETY: setfsuid/setfsgid change this thread's filesystem ids only; no memory effects.
-    #[allow(unsafe_code)]
-    let (pu, pg) = unsafe { (libc::setfsuid(uid), libc::setfsgid(gid)) };
-    let r = f();
-    // SAFETY: as above, restoring the previous ids.
-    #[allow(unsafe_code)]
-    unsafe {
-        libc::setfsgid(u32::try_from(pg).unwrap_or(0));
-        libc::setfsuid(u32::try_from(pu).unwrap_or(0));
-    }
-    r
+/// Runs the filesystem call `f` as the agent (`uid`/`gid`) on a thread of its own and returns its result, or the
+/// errno it set, read on that thread right after it. The thread switches its effective ids with raw
+/// `setresgid`/`setresuid` system calls, which change only the calling thread (glibc's wrappers would change every
+/// thread of the process), keeping the saved id root's, and it ends with them. gVisor has no `setfsuid`/`setfsgid`
+/// (ENOSYS, measured in a sandbox 2026-11-06): the fsuid switch this replaces did nothing there, the call ran with the
+/// supervisor's ids, and the calls restoring the fsuid overwrote errno, so a turn with an upload failed "Function not
+/// implemented (os error 38)" whatever the call's own error was.
+fn as_agent(uid: u32, gid: u32, f: impl FnOnce() -> libc::c_int + Send) -> std::io::Result<libc::c_int> {
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            let keep: libc::c_long = -1;
+            // SAFETY: setresgid/setresuid on this thread only (raw system calls); no memory effects.
+            #[allow(unsafe_code)]
+            let switched = unsafe {
+                libc::syscall(libc::SYS_setresgid, keep, libc::c_long::from(gid), keep) == 0
+                    && libc::syscall(libc::SYS_setresuid, keep, libc::c_long::from(uid), keep) == 0
+            };
+            if !switched {
+                return Err(errno());
+            }
+            let r = f();
+            if r < 0 { Err(errno()) } else { Ok(r) }
+        })
+        .join()
+        .unwrap_or_else(|_| Err(std::io::Error::other("the agent's filesystem call panicked")))
+    })
 }
 
 fn cstr(s: &str) -> std::io::Result<CString> {
@@ -198,11 +211,10 @@ impl Uploads {
                         libc::mkdir(c.as_ptr(), 0o755)
                     }
                 });
-                if r != 0 {
-                    let e = errno();
-                    if e.raw_os_error() != Some(libc::EEXIST) {
-                        return Err(reason(&e));
-                    }
+                if let Err(e) = r
+                    && e.raw_os_error() != Some(libc::EEXIST)
+                {
+                    return Err(reason(&e));
                 }
             }
         }
@@ -243,10 +255,7 @@ impl Uploads {
                     0o644,
                 )
             }
-        });
-        if fd < 0 {
-            return Err(errno());
-        }
+        })?;
         // SAFETY: a new fd owned by nothing else.
         #[allow(unsafe_code)]
         Ok(unsafe { std::fs::File::from_raw_fd(fd) })
@@ -254,14 +263,14 @@ impl Uploads {
 
     fn rename(&self, dir: &OwnedFd, from: &str, to: &str) -> std::io::Result<()> {
         let (f, t) = (cstr(from)?, cstr(to)?);
-        let r = as_agent(self.uid, self.gid, || {
+        as_agent(self.uid, self.gid, || {
             // SAFETY: a valid dirfd and C strings.
             #[allow(unsafe_code)]
             unsafe {
                 libc::renameat(dir.as_raw_fd(), f.as_ptr(), dir.as_raw_fd(), t.as_ptr())
             }
-        });
-        if r == 0 { Ok(()) } else { Err(errno()) }
+        })
+        .map(|_| ())
     }
 
     fn unlink(dir: &OwnedFd, name: &str) {
