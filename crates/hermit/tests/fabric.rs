@@ -881,7 +881,13 @@ async fn burst_placement_packing_and_release() {
     let pulled = format!("image {digest} ref {}", rig.h.config.file.sandbox.image);
     assert!(eventually(|| async { rig.fleet.sim(GATEWAY).calls().contains(&pulled) }).await);
     let _ = pass(&g, &r).await;
-    let asked = rig.fleet.sim(GATEWAY).calls().iter().filter(|c| c.starts_with("image ")).count();
+    let asked = rig
+        .fleet
+        .sim(GATEWAY)
+        .calls()
+        .iter()
+        .filter(|c| c.starts_with("image "))
+        .count();
     assert_eq!(asked, 1, "the gateway is asked once per digest");
 
     // placement: the AWS host, the first sandbox address; the gateway routes its /32 there
