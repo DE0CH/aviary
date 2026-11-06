@@ -626,6 +626,7 @@ async fn release(imp: &Importer, o: &OpenRow, seen: &mut uploads::Seen) -> Resul
 /// provisional title kept as the title model's so it is never retitled). Anything that changed, failed or ran past
 /// the fence's lease lifts the fence and leaves the conversation legacy (`Ok(false)` or an error); nothing is synced
 /// or cut inside the fence.
+#[allow(clippy::too_many_lines)] // cutover 7.8's steps in order, the old schedules' transaction around magpie's
 async fn finish(imp: &Importer, o: &OpenRow, seen: &mut uploads::Seen, fenced: std::time::Instant) -> Result<bool> {
     let pool = &imp.magpie.pool;
     let inside = async {
