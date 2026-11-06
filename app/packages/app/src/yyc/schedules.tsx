@@ -73,19 +73,22 @@ export function ScheduleChip({ sessionId }: { sessionId: string | null }) {
   const { data } = useConversationSchedules(sessionId);
   const open = useSchedulesPanel((s) => (sessionId ? s.openFor === sessionId : false));
   const toggle = useSchedulesPanel((s) => s.toggle);
-  const count = (data ?? []).filter(isLive).length;
-  if (!sessionId || count === 0) return null;
+  const all = data ?? [];
+  const count = all.filter(isLive).length;
+  // a one-off that fired stays in the panel for a day (its run): the chip stays too, without a count
+  if (!sessionId || all.length === 0) return null;
+  const label = count > 0 ? `${count} 個排程` : "排程";
   return (
     <Pressable
       testID="schedules-chip"
       accessibilityRole="button"
       accessibilityState={{ expanded: open }}
-      accessibilityLabel={`${count} 個排程`}
+      accessibilityLabel={label}
       onPress={() => toggle(sessionId)}
       style={[styles.chip, open ? styles.chipOpen : null]}
     >
       <ThemedClock size={13} uniProps={mutedColor} />
-      <Text style={styles.chipText}>{count} 個排程</Text>
+      <Text style={styles.chipText}>{label}</Text>
     </Pressable>
   );
 }
