@@ -39,6 +39,12 @@ export interface BuildAgentStreamRenderModelInput {
   platform: "web" | "native";
   isMobileBreakpoint: boolean;
   historyStart?: number;
+  /**
+   * The stream the turn timing walks, before the presentation folds a completed turn's steps into its summary
+   * line: a folded AskUserQuestion still carries its answer time, so the wait stays out of 「工作了 …」 (YYC
+   * DECISIONS 17). Defaults to the rendered tail and the head.
+   */
+  timing?: { tail: StreamItem[]; head: StreamItem[] };
 }
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
@@ -184,8 +190,8 @@ export function buildAgentStreamRenderModel(
   const turnTiming = deriveStreamTurnTiming({
     isTurnActive: input.isTurnActive,
     activeTurnStartedAt: input.activeTurnStartedAt,
-    tail: renderedTail,
-    head: input.head,
+    tail: input.timing?.tail ?? renderedTail,
+    head: input.timing?.head ?? input.head,
   });
 
   return {

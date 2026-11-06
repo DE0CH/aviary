@@ -76,6 +76,45 @@ describe("buildAgentStreamRenderModel", () => {
     });
   });
 
+  it("leaves a folded question's wait out of the turn timing (YYC DECISIONS 17)", () => {
+    // live 2026-11-06 (c5dcf08a): the presentation folds the answered AskUserQuestion into the turn's summary line,
+    // so a timing over the rendered tail never saw it and showed the 31-minute wait as 工作了 33m 10s
+    const at = (clock: string) => new Date(`2026-11-06T${clock}Z`);
+    const user: StreamItem = { kind: "user_message", id: "u", text: "u", timestamp: at("16:50:45.968") };
+    const asked: StreamItem = { kind: "assistant_message", id: "a0", text: "a0", timestamp: at("16:51:35.969") };
+    const question: StreamItem = {
+      kind: "tool_call",
+      id: "q",
+      timestamp: at("16:51:35.999"),
+      payload: {
+        source: "agent",
+        data: {
+          provider: "claude",
+          callId: "q",
+          name: "AskUserQuestion",
+          status: "completed",
+          error: null,
+          detail: { type: "unknown", input: null, output: null },
+          metadata: { answeredAt: "2026-11-06T17:22:32.169Z" },
+        },
+      },
+    };
+    const reply: StreamItem = { kind: "assistant_message", id: "a1", text: "a1", timestamp: at("17:23:56.759") };
+
+    const model = buildAgentStreamRenderModel({
+      isTurnActive: false,
+      activeTurnStartedAt: null,
+      tail: [user, reply],
+      head: [],
+      platform: "web",
+      isMobileBreakpoint: false,
+      timing: { tail: [user, asked, question, reply], head: [] },
+    });
+
+    // 16:50:45.968 to 17:23:56.759, less the wait from 16:51:35.999 to 17:22:32.169
+    expect(model.turnTiming.byAssistantId.get("a1")?.durationMs).toBe(1_990_791 - 1_856_170);
+  });
+
   it("keeps the mounted boundary stable when a transformer filters an earlier item", () => {
     const tail = [
       userMessage("filtered", 1),

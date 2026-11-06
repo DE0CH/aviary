@@ -542,10 +542,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         platform: isWeb ? "web" : "native",
         isMobileBreakpoint: isMobile,
         historyStart: historyWindowStart,
+        // the unfolded stream: a completed turn's question waits live on its folded tool calls
+        timing: { tail: effectiveStreamItems, head: effectiveStreamHead ?? EMPTY_STREAM_HEAD },
       });
     }, [
       isMobile,
       isTurnActive,
+      effectiveStreamItems,
+      effectiveStreamHead,
       presentation.head,
       presentation.tail,
       effectiveTurnPresentation.startedAt,
