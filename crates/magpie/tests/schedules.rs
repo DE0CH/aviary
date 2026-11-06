@@ -441,7 +441,13 @@ async fn a_fire_in_an_idle_conversation_is_a_new_turn_with_the_wrapped_prompt() 
 async fn outcomes(w: &World, conv: Uuid, id: &str) -> Vec<String> {
     let panel = w.a.pigeon().person(ALICE).conversation_schedules(conv).await.unwrap();
     let mine = w.ai(conv, ALICE).sandbox(None).get_schedule(id).await.unwrap();
-    let a: Vec<String> = panel.schedules[0].runs.clone().unwrap().into_iter().map(|r| r.outcome).collect();
+    let a: Vec<String> = panel.schedules[0]
+        .runs
+        .clone()
+        .unwrap()
+        .into_iter()
+        .map(|r| r.outcome)
+        .collect();
     let b: Vec<String> = mine.runs.unwrap().into_iter().map(|r| r.outcome).collect();
     assert_eq!(a, b, "the panel and the AI read the same");
     a
@@ -452,7 +458,10 @@ async fn set_turn(w: &World, turn: Uuid, state: &str) {
         .get()
         .await
         .unwrap()
-        .execute("update turns set state = $2, ended_at = now() where id = $1", &[&turn, &state])
+        .execute(
+            "update turns set state = $2, ended_at = now() where id = $1",
+            &[&turn, &state],
+        )
         .await
         .unwrap();
 }
@@ -482,11 +491,17 @@ async fn a_run_reads_answered_once_its_turn_completed_and_unanswered_once_it_fai
         s.id, s.id, s.id
     ))
     .await;
-    assert_eq!(outcomes(&w, conv, &s.id).await, ["answered", "answered_mid_turn", "answered_mid_turn", "sent"]);
+    assert_eq!(
+        outcomes(&w, conv, &s.id).await,
+        ["answered", "answered_mid_turn", "answered_mid_turn", "sent"]
+    );
     // the stored outcome stays what the fire wrote: the answer is read from the turn
     assert_eq!(w.runs(&s.id).await.last().unwrap().0, "sent");
     set_turn(&w, turn, "failed").await;
-    assert_eq!(outcomes(&w, conv, &s.id).await, ["unanswered", "unanswered", "answered_mid_turn", "sent"]);
+    assert_eq!(
+        outcomes(&w, conv, &s.id).await,
+        ["unanswered", "unanswered", "answered_mid_turn", "sent"]
+    );
     set_turn(&w, turn, "canceled").await;
     assert_eq!(outcomes(&w, conv, &s.id).await[0], "unanswered");
 }
