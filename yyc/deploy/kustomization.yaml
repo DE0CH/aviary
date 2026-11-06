@@ -27,10 +27,10 @@ resources:
 # one aviary commit for pigeon, magpie, hermit and sandboxd (check item 4); sandboxd's tag is hermit.json's
 # fabric.sandboxd; the sandbox image is pinned by digest in hermit/hermit.json
 images:
-  - {name: pigeon, newName: ghcr.io/de0ch/pigeon, newTag: "b217c864da3c"}
-  - {name: magpie, newName: ghcr.io/de0ch/magpie, newTag: "b217c864da3c"}
-  - {name: hermit, newName: ghcr.io/de0ch/hermit, newTag: "b217c864da3c"}
-  - {name: sandboxd, newName: ghcr.io/de0ch/sandboxd, newTag: "b217c864da3c"}
+  - {name: pigeon, newName: ghcr.io/de0ch/pigeon, newTag: "0adaa9d4d7ae"}
+  - {name: magpie, newName: ghcr.io/de0ch/magpie, newTag: "0adaa9d4d7ae"}
+  - {name: hermit, newName: ghcr.io/de0ch/hermit, newTag: "0adaa9d4d7ae"}
+  - {name: sandboxd, newName: ghcr.io/de0ch/sandboxd, newTag: "0adaa9d4d7ae"}
   # the app bundle (DE0CH/claudecodeui pigeon-app.yml); from A1 to A5 only a pigeon-app-fix/* build may replace it
   # (DESIGN 9.6, cutover freeze-check)
   - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "e69a55f82d9f"}
