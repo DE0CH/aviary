@@ -130,7 +130,8 @@ async fn pass_apart(
 ) -> Result<(Handover, crate::Result<crate::handover::PassInfo>), tokio::task::JoinError> {
     let rt = tokio::runtime::Handle::current();
     if rt.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
-        let r = h.pass(&imp).await;
+        // boxed: the pass's future inline here overflows the layout query depth of `cli`'s block
+        let r = Box::pin(h.pass(&imp)).await;
         return Ok((h, r));
     }
     tokio::task::spawn_blocking(move || {
