@@ -1,3 +1,4 @@
+import { isScheduleCallDetail } from "@/yyc/schedules-text";
 import { getStreamItemMessageId, type StreamItem, type ToolCallItem } from "@/types/stream";
 import { summarizeToolCalls, type OverviewSummary } from "@/tool-calls/detail-level/overview/model";
 
@@ -52,7 +53,7 @@ function isSentFileCall(item: StreamItem): boolean {
   return (
     item.kind === "tool_call" &&
     item.payload.source === "agent" &&
-    item.payload.data.name === "SendUserFile"
+    (item.payload.data.name === "SendUserFile" || isScheduleCallDetail(item.payload.data.detail))
   );
 }
 
@@ -89,7 +90,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
       output.push(...tail.slice(runStart, runEnd));
       return;
     }
-    // Files Claude sent stay in the chat under the reply when the turn folds (docs/paseo-ui.md)
+    // Files Claude sent and its schedules cards stay in the chat under the reply when the turn folds (docs/paseo-ui.md)
     const before = tail.slice(runStart, replyIndex);
     const pinned = before.filter(isSentFileCall);
     const folded = pinned.length > 0 ? before.filter((item) => !isSentFileCall(item)) : before;

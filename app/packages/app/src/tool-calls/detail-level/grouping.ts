@@ -1,3 +1,4 @@
+import { isScheduleCallDetail } from "@/yyc/schedules-text";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { StreamItem, ToolCallItem } from "@/types/stream";
 
@@ -69,6 +70,8 @@ export function isGroupableToolCall(item: StreamItem): item is ToolCallItem {
   const descriptor = describeToolCall(item);
   const name = descriptor.name.trim().toLowerCase();
   // SendUserFile's cards are what the reply hands over (docs/paseo-ui.md): never folded into a group
+  // nor the schedules call that set one (its card, yyc/schedules.tsx)
+  if (isScheduleCallDetail(descriptor.detail)) return false;
   return descriptor.detail.type !== "plan" && name !== "speak" && name !== "senduserfile";
 }
 

@@ -48,6 +48,30 @@ function collapse(tail: StreamItem[], options: Partial<CollapseTurnsInput> = {})
 const ids = (items: StreamItem[]) => items.map((item) => item.id);
 
 describe("collapseTurns", () => {
+  it("keeps the AI's schedules call (its card) under the reply when the turn folds", () => {
+    const armed: ToolCallItem = {
+      ...shell("s1"),
+      payload: {
+        source: "agent",
+        data: {
+          provider: "claude",
+          callId: "s1",
+          name: "Bash",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "shell",
+            command: 'B=$JARVIS_ROUTE_SCHEDULES_URL/schedules\nS -X POST "$B" -d \'{"at": "2026-11-06T14:42:00+08:00"}\'',
+            output: '{"id":"sch_1","kind":"once","prompt":"p","tz":"Asia/Hong_Kong","describe":"11月6日 14:42","next":null,"state":"done"}',
+          },
+        },
+      },
+    };
+    const result = collapse([user("u1"), shell("c1"), armed, reply("final")]);
+    expect(ids(result.tail)).toEqual(["u1", "final", "s1"]);
+    expect(result.turnsByHostId.get("u1")?.summary.tools).toEqual(expect.objectContaining({ commandCount: 1 }));
+  });
+
   it("folds a finished turn's work into its user message and keeps the reply", () => {
     const result = collapse([
       user("u1"),

@@ -38,6 +38,17 @@ export function parseScheduledMessage(text: string | null | undefined): { rule: 
 }
 
 /** What a schedules API call did, read from the AI's shell call and its output; null when it is not one (yet). */
+/**
+ * Whether a tool call's detail is the AI's schedules call that sets, changes or cancels one (its card shows): such a
+ * call is never folded into a group or a turn's summary, like SendUserFile's cards (agent-stream/turn-collapse).
+ */
+export function isScheduleCallDetail(detail: unknown): boolean {
+  if (!detail || typeof detail !== "object") return false;
+  const d = detail as { type?: unknown; command?: unknown; output?: unknown };
+  if (d.type !== "shell") return false;
+  return readScheduleCall(d.command as string | null, d.output as string | null) !== null;
+}
+
 export function readScheduleCall(
   command: string | null | undefined,
   output: string | null | undefined,

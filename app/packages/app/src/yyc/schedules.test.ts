@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextLabel, parseScheduledMessage, readScheduleCall, shortLabel } from "./schedules-text";
+import { isScheduleCallDetail, nextLabel, parseScheduledMessage, readScheduleCall, shortLabel } from "./schedules-text";
 
 describe("schedules in the chat", () => {
   it("reads a fired schedule's message", () => {
@@ -28,6 +28,16 @@ describe("schedules in the chat", () => {
     expect(readScheduleCall('B=http://magpie/v1/sandbox/schedules; curl -sS "$B"', `{"schedules": []}`)).toBeNull();
     expect(readScheduleCall(newStack, undefined)).toBeNull();
     expect(readScheduleCall("ls -la", answer)).toBeNull();
+  });
+
+  it("tells a schedules call that sets one (never folded into a group) from other commands", () => {
+    const command = 'B=http://magpie/v1/sandbox/schedules\nS -X POST "$B" -d \'{"at": "x"}\'';
+    const output = '{"id":"sch_1","kind":"once","prompt":"p","tz":"Asia/Hong_Kong","describe":"d","next":null,"state":"done"}';
+    expect(isScheduleCallDetail({ type: "shell", command, output })).toBe(true);
+    expect(isScheduleCallDetail({ type: "shell", command })).toBe(false);
+    expect(isScheduleCallDetail({ type: "shell", command: "ls", output })).toBe(false);
+    expect(isScheduleCallDetail({ type: "read", filePath: "/x" })).toBe(false);
+    expect(isScheduleCallDetail(null)).toBe(false);
   });
 
   it("puts times in words", () => {
