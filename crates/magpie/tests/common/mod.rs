@@ -138,6 +138,7 @@ pub fn fast() -> Intervals {
         limbo: Duration::from_millis(200),
         upload: Duration::from_millis(100),
         blob_gc: Duration::from_millis(200),
+        schedules: Duration::from_millis(200),
         requery: magpie::limits::REQUERY,
     }
 }
@@ -152,6 +153,7 @@ pub fn idle() -> Intervals {
         limbo: Duration::from_secs(3600),
         upload: Duration::from_secs(3600),
         blob_gc: Duration::from_secs(3600),
+        schedules: Duration::from_secs(3600),
         requery: magpie::limits::REQUERY,
     }
 }

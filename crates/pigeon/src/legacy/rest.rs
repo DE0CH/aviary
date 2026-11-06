@@ -407,6 +407,21 @@ impl Legacy {
         found
     }
 
+    /// A legacy conversation's schedules (the app's panel) from the old child, which fires them until the release
+    /// carries them to magpie. `None` when magpie owns the conversation (the caller serves it).
+    pub async fn schedules(&self, app: &App, req: &Parts, id: &Identity, conversation: Uuid) -> Option<Response> {
+        match self.rest_owner(app, id, conversation).await {
+            Ok(true) => {}
+            Ok(false) => return None,
+            Err(Unknown) => return Some(retry_later()),
+        }
+        let who = self.who(id)?;
+        Some(rest_answer(
+            self.send(self.request(Method::GET, req.uri.path(), &who), Duration::from_secs(30))
+                .await,
+        ))
+    }
+
     /// A legacy conversation's file (`files/raw`): the old child's answer, streamed, with the range headers passed.
     /// An owner that cannot be read answers 503 (retryable), not magpie's copy.
     pub async fn files_raw(&self, app: &App, req: &Parts, id: &Identity, conversation: Uuid) -> Option<Response> {

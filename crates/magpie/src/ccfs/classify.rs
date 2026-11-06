@@ -127,6 +127,7 @@ pub fn classify(data: Option<&Value>, cx: Context) -> Class {
         Some("assistant") => assistant(d),
         Some("user") if !truthy(d, "isMeta") => user(d, cx),
         Some("system") if s(d, "subtype") == Some("compact_boundary") => compaction(d),
+        Some("attachment") => queued(d),
         Some("custom-title") => s(d, "customTitle").map_or(Class::Internal, |t| Class::Title(t.to_owned())),
         Some("ai-title") => s(d, "aiTitle").map_or(Class::Internal, |t| Class::Title(t.to_owned())),
         _ => Class::Internal,
@@ -263,6 +264,38 @@ fn user(d: &Value, cx: Context) -> Class {
         ..EventMeta::default()
     };
     event(meta, true, Vec::new())
+}
+
+/// A message Claude Code took in while a turn ran (its `queued_command` attachment, `commandMode` `prompt`): a
+/// schedule's message delivered mid-turn (`src/schedules/fire.rs`). Claude Code adds it to the next tool result or
+/// the next request rather than writing a `user` line, so this line is where the message shows on the timeline: a
+/// prompt of the turn, like a `user` line after the echo. Any other attachment is internal.
+fn queued(d: &Value) -> Class {
+    let Some(a) = d.get("attachment").filter(|a| s(a, "type") == Some("queued_command")) else {
+        return Class::Internal;
+    };
+    if s(a, "commandMode").is_some_and(|m| m != "prompt") {
+        return Class::Internal;
+    }
+    let Some(text) = a.get("prompt").and_then(text_of).map(str::to_owned) else {
+        return Class::Internal;
+    };
+    if text.trim().is_empty() || INTERNAL_PREFIXES.iter().any(|p| text.starts_with(p)) {
+        return Class::Internal;
+    }
+    Class::Event(Box::new(Event {
+        kind: USER,
+        meta: EventMeta {
+            prompt: Some(true),
+            ..EventMeta::default()
+        },
+        text: Some(text),
+        is_prompt: true,
+        uuid: s(d, "uuid").map(str::to_owned),
+        tool_uses: Vec::new(),
+        results: Vec::new(),
+        model: None,
+    }))
 }
 
 /// A `compact_boundary` line: a `cc.user` event with its facts (`compactMetadata` on disk, `compact_metadata` live).
@@ -650,6 +683,24 @@ mod tests {
         assert_eq!(classify(Some(&t), Context::default()), Class::Title("Q3".into()));
         let t = json!({"type": "ai-title", "aiTitle": "AI"});
         assert_eq!(classify(Some(&t), Context::default()), Class::Title("AI".into()));
+    }
+
+    #[test]
+    fn a_message_taken_in_mid_turn_is_a_prompt() {
+        let d = json!({"type": "attachment", "uuid": "u9", "attachment": {"type": "queued_command",
+            "prompt": "<scheduled-message rule=\"每天 09:00\">x</scheduled-message>", "commandMode": "prompt"}});
+        let e = event(classify(Some(&d), Context::default()));
+        assert_eq!(e.kind, USER);
+        assert!(e.is_prompt);
+        assert_eq!(e.uuid.as_deref(), Some("u9"));
+        assert!(e.text.as_deref().is_some_and(|t| t.starts_with("<scheduled-message")));
+        for other in [
+            json!({"type": "attachment", "attachment": {"type": "queued_command", "prompt": "x",
+                "commandMode": "task-notification"}}),
+            json!({"type": "attachment", "attachment": {"type": "date", "date": "2026-11-06"}}),
+        ] {
+            assert_eq!(classify(Some(&other), Context::default()), Class::Internal, "{other}");
+        }
     }
 
     #[test]

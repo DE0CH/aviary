@@ -17,8 +17,10 @@ pub const AGENT_GID: u32 = 1000;
 /// Claude Code's `oom_score_adj` (5.2).
 pub const CLAUDE_OOM_SCORE_ADJ: i32 = 100;
 /// Plan mode is never offered to the model (Deyao, 2026-11-05). `AskUserQuestion` is: a question nobody answers parks the
-/// turn and frees the sandbox (DECISIONS 17), so it no longer hangs a turn (A11.F11).
-pub const DISALLOWED_TOOLS: &str = "EnterPlanMode,ExitPlanMode";
+/// turn and frees the sandbox (DECISIONS 17), so it no longer hangs a turn (A11.F11). Nor are Claude Code's own
+/// timers (`CronCreate`, `CronList`, `CronDelete`, `ScheduleWakeup`; Deyao, 2026-11-06): they live in the Claude Code
+/// process and vanish when an idle sandbox is released; the AI arms magpie's schedules through the managed skill.
+pub const DISALLOWED_TOOLS: &str = "EnterPlanMode,ExitPlanMode,CronCreate,CronList,CronDelete,ScheduleWakeup";
 
 /// Which session a generation runs.
 #[derive(Clone, Debug, PartialEq, Eq)]

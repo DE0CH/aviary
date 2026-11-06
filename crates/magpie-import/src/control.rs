@@ -481,6 +481,13 @@ pub async fn release_forced(imp: &Importer, id: Uuid) -> Result<Forced> {
             return Err(e);
         }
     };
+    let schedules = match crate::schedules::read(&imp.cloudcli, id).await {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = fence::unfence(pool, id).await;
+            return Err(e);
+        }
+    };
     let held = aviary_pg::tx!(pool, |t| -> Result<Result<fence::Released, fence::NotReleased>> {
         imp.check_lock_in(t).await?;
         let r = fence::release_in(t, id, &fence::Release::default()).await?;
@@ -491,6 +498,7 @@ pub async fn release_forced(imp: &Importer, id: Uuid) -> Result<Forced> {
             )
             .await?;
             crate::questions::carry(t, &person, id, &questions).await?;
+            crate::schedules::carry(t, &person, id, &schedules).await?;
         }
         Ok(r)
     })
@@ -498,6 +506,7 @@ pub async fn release_forced(imp: &Importer, id: Uuid) -> Result<Forced> {
     out.in_fence_seconds = fenced.elapsed().as_secs_f64();
     match held {
         Ok(Ok(r)) => {
+            crate::schedules::mark_moved(&imp.cloudcli, id).await;
             out.fence_seconds = r.held;
             r.record(&imp.magpie.legacy);
             Ok(out)

@@ -24,7 +24,8 @@ use aviary_fakes::hermit::{FakeHermit, HermitConfig};
 use aviary_fakes::magpie::FakeMagpie;
 use hermit_api::sandbox::PutSandboxRequest;
 use magpie_api::sandbox::{
-    AnswerAsk, CommandBody, KillCommand, KillReason, Resume, StartFile, StartImage, StartTurn, TitleCommand,
+    AnswerAsk, CommandBody, KillCommand, KillReason, Resume, SendMessage, StartFile, StartImage, StartTurn,
+    TitleCommand,
 };
 use serde_json::{Value, json};
 use tokio::time::Instant;
@@ -2522,4 +2523,64 @@ async fn no_turn_timer_runs_while_a_question_is_open() {
     let turn = st.turn.clone().unwrap();
     assert_eq!(st.worked(&turn), Duration::from_mins(11));
     assert_eq!(turn.ask_wait, Duration::from_hours(2));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_message_sent_into_a_running_turn_is_written_at_once() {
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let (t, _) = w.turn("ask;say:after");
+    let calls = w.magpie.clone();
+    until("the ask", || !calls.script().calls_to("ask_open").is_empty()).await;
+    // for a turn that is not the running one: not delivered (magpie sends it as a new turn)
+    let other = w.magpie.push_command(
+        w.cid,
+        Some(Uuid::now_v7()),
+        CommandBody::SendMessage(SendMessage {
+            text: "say:nope".into(),
+        }),
+    );
+    assert_eq!(w.acked(other).await.delivered, Some(false));
+    // for the running turn: written to Claude Code at once, while the turn still waits
+    let m = w.magpie.push_command(
+        w.cid,
+        Some(t),
+        CommandBody::SendMessage(SendMessage {
+            text: "say:scheduled".into(),
+        }),
+    );
+    assert_eq!(w.acked(m).await.delivered, Some(true));
+    until("the message on Claude Code's stdin", || {
+        w.fake_log().iter().filter(|l| l.as_str() == "stdin user").count() == 2
+    })
+    .await;
+    assert!(
+        w.states(t).iter().all(|s| s["state"] == "running"),
+        "the turn still runs"
+    );
+    // this fake leaves it for after the turn's result, as Claude Code does when the model stops before a tool
+    // result: the turn ends with its own result, and the message is answered in a run of its own (an agent turn)
+    let id = calls.script().calls_to("ask_open")[0].body.clone().unwrap()["askId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let a = w.magpie.push_command(
+        w.cid,
+        None,
+        CommandBody::AnswerAsk(AnswerAsk {
+            ask_id: id,
+            allow: true,
+            updated_input: None,
+            message: None,
+        }),
+    );
+    w.acked(a).await;
+    assert_eq!(w.ended(t).await["state"], "completed");
+    until("the message's own run", || {
+        w.prompts().iter().any(|p| p == "prompt say:scheduled")
+    })
+    .await;
+    until("an agent turn", || !calls.script().calls_to("agent_turn").is_empty()).await;
+    w.idle(&sup).await;
+    assert!(!w.prompts().iter().any(|p| p == "prompt say:nope"));
 }

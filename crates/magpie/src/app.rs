@@ -37,6 +37,7 @@ use magpie_api::sandbox::{
     LeaseResponse, TasksReport, TurnStateReport,
 };
 use magpie_api::sandbox::{SentFilesCommitted, SentFilesRequest, SentFilesResponse};
+use magpie_api::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
 use magpie_api::server::{Ctx, Server};
 use magpie_api::shares::{ContinueResponse, ShareRef, ShareView, SharesList};
 use magpie_api::turns::{AgentPermissionResponse, CancelResponse, SendRequest, SendResponse};
@@ -239,6 +240,11 @@ impl Service {
                 draining: draining.clone(),
             };
             jobs.push(turns::sweeper::start(driver.clone()));
+            jobs.push(crate::schedules::fire::spawn(
+                jobs.leader(),
+                driver.clone(),
+                intervals.schedules,
+            ));
             jobs.push(crate::hermit::feed::spawn(jobs.leader(), driver));
             jobs
         });
@@ -551,6 +557,38 @@ impl Server for Magpie {
 
     async fn admin_transcript(&self, ctx: Ctx, id: Uuid, query: TranscriptQuery) -> Answer<TranscriptPage> {
         http::admin::transcript(self, ctx, id, query).await
+    }
+
+    async fn list_schedules(&self, ctx: Ctx) -> Answer<SchedulesList> {
+        http::schedules::list(self, ctx).await
+    }
+
+    async fn create_schedule(&self, ctx: Ctx, body: CreateSchedule) -> Answer<Schedule> {
+        http::schedules::create(self, ctx, &body).await
+    }
+
+    async fn get_schedule(&self, ctx: Ctx, schedule_id: String) -> Answer<Schedule> {
+        http::schedules::get(self, ctx, &schedule_id).await
+    }
+
+    async fn update_schedule(&self, ctx: Ctx, schedule_id: String, body: UpdateSchedule) -> Answer<Schedule> {
+        http::schedules::update(self, ctx, &schedule_id, &body).await
+    }
+
+    async fn delete_schedule(&self, ctx: Ctx, schedule_id: String) -> Answer<()> {
+        http::schedules::delete(self, ctx, &schedule_id).await
+    }
+
+    async fn conversation_schedules(&self, ctx: Ctx, id: Uuid) -> Answer<SchedulesList> {
+        http::schedules::of_conversation(self, ctx, id).await
+    }
+
+    async fn admin_schedules(&self, ctx: Ctx) -> Answer<AdminSchedules> {
+        http::schedules::admin(self, ctx).await
+    }
+
+    async fn admin_schedules_pause(&self, ctx: Ctx, body: PauseAll) -> Answer<AdminSchedules> {
+        http::schedules::admin_pause(self, ctx, &body).await
     }
 
     async fn legacy_ticket(&self, ctx: Ctx, id: Uuid, body: TicketRequest) -> Answer<TicketResponse> {

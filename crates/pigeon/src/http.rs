@@ -241,7 +241,7 @@ pub enum Page {
     NotAvailable,
 }
 
-fn escape(s: &str) -> String {
+pub(crate) fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -384,6 +384,7 @@ enum ApiRoute {
     Transcript(String),
     Blob(String),
     SessionShares(String),
+    SessionSchedules(String),
     Share(String),
     ShareFiles(String),
     ShareContinue(String),
@@ -432,6 +433,12 @@ impl ApiRoute {
             {
                 return Self::SessionShares(id.to_owned());
             }
+            if let Some(id) = rest.strip_suffix("/schedules")
+                && !id.contains('/')
+                && get
+            {
+                return Self::SessionSchedules(id.to_owned());
+            }
         }
         if let Some(rest) = path.strip_prefix(compat::SHARES) {
             if let Some(id) = rest.strip_suffix("/files/raw")
@@ -466,6 +473,7 @@ impl ApiRoute {
             Self::Transcript(_) => "transcript",
             Self::Blob(_) => "blob",
             Self::SessionShares(_) => "shares",
+            Self::SessionSchedules(_) => "schedules",
             Self::Share(_) => "share",
             Self::ShareFiles(_) => "share_files",
             Self::ShareContinue(_) => "share_continue",
@@ -651,6 +659,7 @@ async fn api(app: &App, req: Request, path: &str, upgrade: bool) -> (&'static st
         ApiRoute::Transcript(cid) => crate::raw::transcript(app, &id, &cid, query.as_deref()).await,
         ApiRoute::Blob(blob) => blobs::blob(app, &parts, &blob, query.as_deref()).await,
         ApiRoute::SessionShares(cid) => shares::conversation_shares(app, &parts, &id, &cid).await,
+        ApiRoute::SessionSchedules(cid) => crate::schedules::conversation(app, &parts, &id, &cid).await,
         ApiRoute::Share(sid) => shares::share(app, &parts, &id, &sid).await,
         ApiRoute::ShareFiles(sid) => shares::share_files(app, &parts, &id, &sid, query.as_deref()).await,
         ApiRoute::ShareContinue(sid) => shares::continue_share(app, &parts, &id, &sid).await,
@@ -1031,5 +1040,13 @@ mod tests {
         assert_eq!(r(Method::GET, "/api/blobs/b1"), ApiRoute::Blob("b1".into()));
         assert_eq!(r(Method::GET, "/api/blobs/b1/x"), ApiRoute::Unknown);
         assert_eq!(r(Method::GET, "/api/unknown"), ApiRoute::Unknown);
+        assert_eq!(
+            r(Method::GET, &format!("{}c1/schedules", compat::SESSIONS)),
+            ApiRoute::SessionSchedules("c1".into())
+        );
+        assert_eq!(
+            r(Method::POST, &format!("{}c1/schedules", compat::SESSIONS)),
+            ApiRoute::Unknown
+        );
     }
 }

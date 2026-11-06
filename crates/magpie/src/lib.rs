@@ -25,6 +25,7 @@ pub mod limits;
 pub mod live;
 pub mod rows;
 pub mod sandbox;
+pub mod schedules;
 pub mod shares;
 pub mod stats;
 pub mod turns;

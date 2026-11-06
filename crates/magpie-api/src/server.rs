@@ -44,13 +44,14 @@ use crate::ops::{
     WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
 use crate::routes::{
-    self, ADMIN_CONVERSATION, ADMIN_CONVERSATIONS, ADMIN_EVENTS, ADMIN_TIMELINE, ADMIN_TRANSCRIPT, ASK_ANSWER, BLOB,
-    CANCEL, CHANGES, CONVERSATION, CONVERSATION_DELETE, CONVERSATION_RESTORE, CONVERSATION_SHARES, CONVERSATIONS,
-    CREATION, FILES, FILES_RAW, HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS,
-    LEGACY_TICKET_CLAIM, LEGACY_TICKET_DONE, LEGACY_TICKETS, LEGACY_WINDOW, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS,
-    PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME,
-    SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE,
-    SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SENT_FILES,
+    self, ADMIN_CONVERSATION, ADMIN_CONVERSATIONS, ADMIN_EVENTS, ADMIN_SCHEDULES, ADMIN_SCHEDULES_PAUSE,
+    ADMIN_TIMELINE, ADMIN_TRANSCRIPT, ASK_ANSWER, BLOB, CANCEL, CHANGES, CONVERSATION, CONVERSATION_DELETE,
+    CONVERSATION_RESTORE, CONVERSATION_SCHEDULES, CONVERSATION_SHARES, CONVERSATIONS, CREATION, FILES, FILES_RAW,
+    HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS, LEGACY_TICKET_CLAIM, LEGACY_TICKET_DONE,
+    LEGACY_TICKETS, LEGACY_WINDOW, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS, PROMPTS, SANDBOX_ASK_RESOLVED,
+    SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME, SANDBOX_CC_RMDIR,
+    SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE, SANDBOX_COMMAND_ACK,
+    SANDBOX_COMMANDS, SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES, SANDBOX_SENT_FILES,
     SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS, SEARCH, SHARE,
     SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOAD_RAW, UPLOADS, VIEW_AS,
 };
@@ -62,6 +63,7 @@ use crate::sandbox::{
     CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery, CommandsQuery, CommandsResponse, Heartbeat,
     LeaseResponse, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport, TurnStateReport,
 };
+use crate::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
 use crate::shares::{ContinueResponse, ShareRef, ShareView, SharesList};
 use crate::turns::{AgentPermissionResponse, CancelResponse, SendRequest, SendResponse};
 use crate::uploads::{BlobQuery, SandboxBlobQuery, UploadKind, UploadMeta, UploadResponse};
@@ -753,6 +755,63 @@ pub trait Server: Send + Sync + 'static {
         async move { Err(not_implemented("admin_transcript")) }
     }
 
+    /// Route `list_schedules`.
+    fn list_schedules(&self, ctx: Ctx) -> impl Future<Output = Result<SchedulesList, ApiError>> + Send {
+        async move { Err(not_implemented("list_schedules")) }
+    }
+
+    /// Route `create_schedule`.
+    fn create_schedule(
+        &self,
+        ctx: Ctx,
+        body: CreateSchedule,
+    ) -> impl Future<Output = Result<Schedule, ApiError>> + Send {
+        async move { Err(not_implemented("create_schedule")) }
+    }
+
+    /// Route `get_schedule`.
+    fn get_schedule(&self, ctx: Ctx, schedule_id: String) -> impl Future<Output = Result<Schedule, ApiError>> + Send {
+        async move { Err(not_implemented("get_schedule")) }
+    }
+
+    /// Route `update_schedule`.
+    fn update_schedule(
+        &self,
+        ctx: Ctx,
+        schedule_id: String,
+        body: UpdateSchedule,
+    ) -> impl Future<Output = Result<Schedule, ApiError>> + Send {
+        async move { Err(not_implemented("update_schedule")) }
+    }
+
+    /// Route `delete_schedule`.
+    fn delete_schedule(&self, ctx: Ctx, schedule_id: String) -> impl Future<Output = Result<(), ApiError>> + Send {
+        async move { Err(not_implemented("delete_schedule")) }
+    }
+
+    /// Route `conversation_schedules`.
+    fn conversation_schedules(
+        &self,
+        ctx: Ctx,
+        id: Uuid,
+    ) -> impl Future<Output = Result<SchedulesList, ApiError>> + Send {
+        async move { Err(not_implemented("conversation_schedules")) }
+    }
+
+    /// Route `admin_schedules`.
+    fn admin_schedules(&self, ctx: Ctx) -> impl Future<Output = Result<AdminSchedules, ApiError>> + Send {
+        async move { Err(not_implemented("admin_schedules")) }
+    }
+
+    /// Route `admin_schedules_pause`.
+    fn admin_schedules_pause(
+        &self,
+        ctx: Ctx,
+        body: PauseAll,
+    ) -> impl Future<Output = Result<AdminSchedules, ApiError>> + Send {
+        async move { Err(not_implemented("admin_schedules_pause")) }
+    }
+
     /// Route `legacy_ticket` (the switch window).
     fn legacy_ticket(
         &self,
@@ -1150,6 +1209,43 @@ async fn h_ops_view_as<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, Q(query): Q
     reply("ops_view_as", s.ops_view_as(ctx, query).await)
 }
 
+async fn h_list_schedules<S: Server>(State(s): State<Arc<S>>, ctx: Ctx) -> Response {
+    reply("list_schedules", s.list_schedules(ctx).await)
+}
+
+async fn h_create_schedule<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, J(body): J<CreateSchedule>) -> Response {
+    reply("create_schedule", s.create_schedule(ctx, body).await)
+}
+
+async fn h_get_schedule<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, P(schedule_id): P<String>) -> Response {
+    reply("get_schedule", s.get_schedule(ctx, schedule_id).await)
+}
+
+async fn h_update_schedule<S: Server>(
+    State(s): State<Arc<S>>,
+    ctx: Ctx,
+    P(schedule_id): P<String>,
+    J(body): J<UpdateSchedule>,
+) -> Response {
+    reply("update_schedule", s.update_schedule(ctx, schedule_id, body).await)
+}
+
+async fn h_delete_schedule<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, P(schedule_id): P<String>) -> Response {
+    reply_empty(s.delete_schedule(ctx, schedule_id).await)
+}
+
+async fn h_conversation_schedules<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, P(id): P<Uuid>) -> Response {
+    reply("conversation_schedules", s.conversation_schedules(ctx, id).await)
+}
+
+async fn h_admin_schedules<S: Server>(State(s): State<Arc<S>>, ctx: Ctx) -> Response {
+    reply("admin_schedules", s.admin_schedules(ctx).await)
+}
+
+async fn h_admin_schedules_pause<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, J(body): J<PauseAll>) -> Response {
+    reply("admin_schedules_pause", s.admin_schedules_pause(ctx, body).await)
+}
+
 async fn h_ops_stats<S: Server>(State(s): State<Arc<S>>, ctx: Ctx) -> Response {
     reply("ops_stats", s.ops_stats(ctx).await)
 }
@@ -1251,6 +1347,19 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
         .route(SANDBOX_BLOB, get(h_sandbox_blob_get::<S>).put(h_sandbox_blob_put::<S>))
         .route(SANDBOX_SENT_FILES, post(h_sent_files::<S>))
         .route(SANDBOX_SENT_FILES_COMMIT, post(h_sent_files_commit::<S>))
+        .route(
+            SANDBOX_SCHEDULES,
+            get(h_list_schedules::<S>).post(h_create_schedule::<S>),
+        )
+        .route(
+            SANDBOX_SCHEDULE,
+            get(h_get_schedule::<S>)
+                .patch(h_update_schedule::<S>)
+                .delete(h_delete_schedule::<S>),
+        )
+        .route(CONVERSATION_SCHEDULES, get(h_conversation_schedules::<S>))
+        .route(ADMIN_SCHEDULES, get(h_admin_schedules::<S>))
+        .route(ADMIN_SCHEDULES_PAUSE, put(h_admin_schedules_pause::<S>))
         .route(HERMIT_PERSON_PURGE, post(h_person_purge::<S>))
         .route(HERMIT_WORKSPACES_EXISTS, post(h_workspaces_exists::<S>))
         .route(HERMIT_LEGACY_IMPORT, get(h_legacy_import::<S>))

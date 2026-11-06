@@ -265,6 +265,11 @@ pub enum CommandBody {
     AnswerAsk(AnswerAsk),
     /// Stop every background task (a cancel while held).
     StopTasks(crate::Empty),
+    /// A message for the running turn (a schedule's fire while the conversation works): written to Claude Code at
+    /// once, which takes it in at its next tool result or when the model stops. Acked `delivered: true` when it was
+    /// written to the turn's generation, `delivered: false` when that turn no longer runs (magpie then sends it as a
+    /// new turn).
+    SendMessage(SendMessage),
     /// A type this build does not know (its payload is dropped; it cannot be written back).
     #[serde(skip_serializing)]
     Unknown,
@@ -292,13 +297,22 @@ impl<'de> Deserialize<'de> for CommandBody {
             "kill" => CommandBody::Kill(payload(raw.payload)?),
             "answer_ask" => CommandBody::AnswerAsk(payload(raw.payload)?),
             "stop_tasks" => CommandBody::StopTasks(payload(raw.payload)?),
+            "send_message" => CommandBody::SendMessage(payload(raw.payload)?),
             _ => CommandBody::Unknown,
         })
     }
 }
 
 /// Every command type this build knows.
-pub const COMMAND_TYPES: &[&str] = &["start_turn", "title", "interrupt", "kill", "answer_ask", "stop_tasks"];
+pub const COMMAND_TYPES: &[&str] = &[
+    "start_turn",
+    "title",
+    "interrupt",
+    "kill",
+    "answer_ask",
+    "stop_tasks",
+    "send_message",
+];
 
 impl CommandBody {
     /// The type string, `None` for [`CommandBody::Unknown`].
@@ -311,9 +325,18 @@ impl CommandBody {
             CommandBody::Kill(_) => "kill",
             CommandBody::AnswerAsk(_) => "answer_ask",
             CommandBody::StopTasks(_) => "stop_tasks",
+            CommandBody::SendMessage(_) => "send_message",
             CommandBody::Unknown => return None,
         })
     }
+}
+
+/// `send_message`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendMessage {
+    /// The message, as Claude Code gets it.
+    pub text: String,
 }
 
 /// `start_turn`.

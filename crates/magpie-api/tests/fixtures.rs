@@ -25,6 +25,7 @@ use magpie_api::live::*;
 use magpie_api::ops::*;
 use magpie_api::rows::*;
 use magpie_api::sandbox::*;
+use magpie_api::schedules::*;
 use magpie_api::shares::*;
 use magpie_api::turns::*;
 use magpie_api::uploads::*;
@@ -100,6 +101,14 @@ fn check_route(id: &str, f: &serde_json::Value) {
         "admin_events" => check::<Json<EventsQuery>, NoBody, Json<EventsPage>>(id, f),
         "admin_timeline" => check::<Json<TimelineQuery>, NoBody, Json<TimelinePage>>(id, f),
         "admin_transcript" => check::<Json<TranscriptQuery>, NoBody, Json<TranscriptPage>>(id, f),
+        "list_schedules" => check::<NoQuery, NoBody, Json<SchedulesList>>(id, f),
+        "create_schedule" => check::<NoQuery, Json<CreateSchedule>, Json<Schedule>>(id, f),
+        "get_schedule" => check::<NoQuery, NoBody, Json<Schedule>>(id, f),
+        "update_schedule" => check::<NoQuery, Json<UpdateSchedule>, Json<Schedule>>(id, f),
+        "delete_schedule" => check::<NoQuery, NoBody, NoContent>(id, f),
+        "conversation_schedules" => check::<NoQuery, NoBody, Json<SchedulesList>>(id, f),
+        "admin_schedules" => check::<NoQuery, NoBody, Json<AdminSchedules>>(id, f),
+        "admin_schedules_pause" => check::<NoQuery, Json<PauseAll>, Json<AdminSchedules>>(id, f),
         other => panic!("no typed check for route {other}"),
     }
 }

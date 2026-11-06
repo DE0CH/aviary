@@ -177,6 +177,16 @@ pub const SANDBOX_BLOB: &str = "/v1/sandbox/blobs/{sha}";
 pub const SANDBOX_SENT_FILES: &str = "/v1/sandbox/sent-files";
 /// `POST` sent-file commit.
 pub const SANDBOX_SENT_FILES_COMMIT: &str = "/v1/sandbox/sent-files/{toolUseId}/commit";
+/// `GET` the person's schedules, `POST` arm one (the AI, [`crate::schedules`]).
+pub const SANDBOX_SCHEDULES: &str = "/v1/sandbox/schedules";
+/// `GET` one with its last runs, `PATCH` change, `DELETE` remove (the AI).
+pub const SANDBOX_SCHEDULE: &str = "/v1/sandbox/schedules/{scheduleId}";
+/// `GET` a conversation's schedules with their last runs (the app's panel).
+pub const CONVERSATION_SCHEDULES: &str = "/v1/conversations/{id}/schedules";
+/// `GET` everyone's schedules and the pause-all switch (admin).
+pub const ADMIN_SCHEDULES: &str = "/v1/admin/schedules";
+/// `PUT` the pause-all switch (admin).
+pub const ADMIN_SCHEDULES_PAUSE: &str = "/v1/admin/schedules/pause";
 
 /// `POST` person purge (hermit).
 pub const HERMIT_PERSON_PURGE: &str = "/v1/hermit/persons/{person}/purge";
@@ -301,6 +311,7 @@ pub const ROUTES: &[Route] = &[
     person("upload", "M13", Post, UPLOADS, &[201]),
     person("files_raw", "M14", Get, FILES_RAW, &[200, 206]),
     pigeon_extra("files_panel", Get, FILES, &[200]),
+    pigeon_extra("conversation_schedules", Get, CONVERSATION_SCHEDULES, &[200]),
     Route {
         id: "blob",
         m: Some("M15"),
@@ -362,6 +373,12 @@ pub const ROUTES: &[Route] = &[
     sandbox("sandbox_blob_put", Put, SANDBOX_BLOB, &[201, 200], true),
     sandbox("sent_files", Post, SANDBOX_SENT_FILES, &[200], true),
     sandbox("sent_files_commit", Post, SANDBOX_SENT_FILES_COMMIT, &[200], true),
+    // schedules: Claude Code itself calls these with curl (no lease: it is not the supervisor)
+    sandbox("list_schedules", Get, SANDBOX_SCHEDULES, &[200], false),
+    sandbox("create_schedule", Post, SANDBOX_SCHEDULES, &[201], false),
+    sandbox("get_schedule", Get, SANDBOX_SCHEDULE, &[200], false),
+    sandbox("update_schedule", Patch, SANDBOX_SCHEDULE, &[200], false),
+    sandbox("delete_schedule", Delete, SANDBOX_SCHEDULE, &[204], false),
     // 16.3 hermit
     service("person_purge", Post, HERMIT_PERSON_PURGE, HERMIT, &[202], false),
     service(
@@ -382,6 +399,15 @@ pub const ROUTES: &[Route] = &[
     service("admin_events", Get, ADMIN_EVENTS, ADMIN, &[200], true),
     service("admin_timeline", Get, ADMIN_TIMELINE, ADMIN, &[200], true),
     service("admin_transcript", Get, ADMIN_TRANSCRIPT, PIGEON_ADMIN, &[200], true),
+    service("admin_schedules", Get, ADMIN_SCHEDULES, PIGEON_ADMIN, &[200], true),
+    service(
+        "admin_schedules_pause",
+        Put,
+        ADMIN_SCHEDULES_PAUSE,
+        PIGEON_ADMIN,
+        &[200],
+        true,
+    ),
 ];
 
 /// The route with this id.
@@ -513,7 +539,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 68);
+        assert_eq!(ROUTES.len(), 76);
     }
 
     #[test]

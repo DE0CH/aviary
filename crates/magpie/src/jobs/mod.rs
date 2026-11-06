@@ -215,6 +215,8 @@ pub struct Intervals {
     pub upload: Duration,
     /// The blob GC.
     pub blob_gc: Duration,
+    /// Firing due schedules ([`crate::schedules::fire`]).
+    pub schedules: Duration,
     /// A held poll's re-query without a notification ([`limits::REQUERY`]; tests lengthen it to show a wake-up came
     /// from a notification or a reconnect).
     pub requery: Duration,
@@ -230,6 +232,7 @@ impl Default for Intervals {
             limbo: limits::LIMBO_SWEEP_EVERY,
             upload: limits::UPLOAD_EVERY,
             blob_gc: limits::BLOB_GC_EVERY,
+            schedules: crate::schedules::fire::EVERY,
             requery: limits::REQUERY,
         }
     }

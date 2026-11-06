@@ -658,6 +658,15 @@ async fn finish(imp: &Importer, o: &OpenRow, seen: &mut uploads::Seen, fenced: s
             return Ok(false);
         }
     };
+    // its schedules go with it (the old rows are marked moved once the release committed)
+    let schedules = match crate::schedules::read(&imp.cloudcli, o.id).await {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = fence::unfence(pool, o.id).await;
+            tracing::warn!(conversation = %o.id, error = %e, "its schedules could not be read: unfenced");
+            return Ok(false);
+        }
+    };
     let id = o.id;
     let held = aviary_pg::tx!(pool, |t| -> Result<Result<fence::Released, fence::NotReleased>> {
         imp.check_lock_in(t).await?;
@@ -677,12 +686,14 @@ async fn finish(imp: &Importer, o: &OpenRow, seen: &mut uploads::Seen, fenced: s
             )
             .await?;
             crate::questions::carry(t, &o.person, id, &questions).await?;
+            crate::schedules::carry(t, &o.person, id, &schedules).await?;
         }
         Ok(out)
     })
     .await;
     match held {
         Ok(Ok(r)) => {
+            crate::schedules::mark_moved(&imp.cloudcli, id).await;
             r.record(&imp.magpie.legacy);
             tracing::info!(conversation = %o.id, held_s = r.held, in_fence_ms = fenced.elapsed().as_millis(), "released");
             Ok(true)

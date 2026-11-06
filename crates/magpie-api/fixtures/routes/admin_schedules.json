@@ -1,0 +1,51 @@
+{
+  "route": "admin_schedules",
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "pausedAll": false,
+        "schedules": [
+          {
+            "id": "sch_4f1c2a9e7b3d4c5e8a6f0b1c2d3e4f5a",
+            "conversationId": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a",
+            "kind": "cron",
+            "prompt": "整理昨天關於林定國的新聞，列出來源。",
+            "cron": "30 8 * * 1-5",
+            "tz": "Asia/Hong_Kong",
+            "describe": "每個工作日 08:30",
+            "next": "2026-11-09T08:30:00+08:00",
+            "state": "active",
+            "createdBy": "staff@example.com",
+            "createdAt": "2026-11-06T09:12:00+08:00",
+            "runs": [
+              {
+                "due": "2026-11-06T08:30:00+08:00",
+                "at": "2026-11-06T08:30:01+08:00",
+                "outcome": "sent"
+              },
+              {
+                "due": "2026-11-05T08:30:00+08:00",
+                "at": "2026-11-05T08:30:02+08:00",
+                "outcome": "sent_mid_turn"
+              },
+              {
+                "due": "2026-11-03T08:30:00+08:00",
+                "at": "2026-11-03T08:52:10+08:00",
+                "outcome": "skipped_late"
+              }
+            ],
+            "conversationTitle": "每日新聞摘要"
+          }
+        ]
+      }
+    },
+    {
+      "status": 403,
+      "body": {
+        "code": "wrong_caller",
+        "message": "this caller may not use this route"
+      }
+    }
+  ]
+}

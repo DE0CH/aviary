@@ -31,6 +31,7 @@ use magpie_api::live::*;
 use magpie_api::ops::*;
 use magpie_api::rows::*;
 use magpie_api::sandbox::*;
+use magpie_api::schedules::*;
 use magpie_api::server::{Ctx, Server, router};
 use magpie_api::shares::*;
 use magpie_api::turns::*;
@@ -707,6 +708,70 @@ impl Server for FixtureServer {
         self.answer_json("legacy_window")
     }
 
+    async fn list_schedules(&self, ctx: Ctx) -> Result<SchedulesList, ApiError> {
+        self.received("list_schedules", &ctx, &json!({}), None, None);
+        self.answer_json("list_schedules")
+    }
+
+    async fn create_schedule(&self, ctx: Ctx, body: CreateSchedule) -> Result<Schedule, ApiError> {
+        self.received(
+            "create_schedule",
+            &ctx,
+            &json!({}),
+            None,
+            Some(serde_json::to_value(&body).unwrap()),
+        );
+        self.answer_json("create_schedule")
+    }
+
+    async fn get_schedule(&self, ctx: Ctx, schedule_id: String) -> Result<Schedule, ApiError> {
+        self.received("get_schedule", &ctx, &json!({"scheduleId": schedule_id}), None, None);
+        self.answer_json("get_schedule")
+    }
+
+    async fn update_schedule(&self, ctx: Ctx, schedule_id: String, body: UpdateSchedule) -> Result<Schedule, ApiError> {
+        self.received(
+            "update_schedule",
+            &ctx,
+            &json!({"scheduleId": schedule_id}),
+            None,
+            Some(serde_json::to_value(&body).unwrap()),
+        );
+        self.answer_json("update_schedule")
+    }
+
+    async fn delete_schedule(&self, ctx: Ctx, schedule_id: String) -> Result<(), ApiError> {
+        self.received("delete_schedule", &ctx, &json!({"scheduleId": schedule_id}), None, None);
+        self.answer_empty("delete_schedule")
+    }
+
+    async fn conversation_schedules(&self, ctx: Ctx, id: Uuid) -> Result<SchedulesList, ApiError> {
+        self.received(
+            "conversation_schedules",
+            &ctx,
+            &json!({"id": id.to_string()}),
+            None,
+            None,
+        );
+        self.answer_json("conversation_schedules")
+    }
+
+    async fn admin_schedules(&self, ctx: Ctx) -> Result<AdminSchedules, ApiError> {
+        self.received("admin_schedules", &ctx, &json!({}), None, None);
+        self.answer_json("admin_schedules")
+    }
+
+    async fn admin_schedules_pause(&self, ctx: Ctx, body: PauseAll) -> Result<AdminSchedules, ApiError> {
+        self.received(
+            "admin_schedules_pause",
+            &ctx,
+            &json!({}),
+            None,
+            Some(serde_json::to_value(&body).unwrap()),
+        );
+        self.answer_json("admin_schedules_pause")
+    }
+
     async fn upload_raw(&self, ctx: Ctx, upload_id: Uuid) -> Result<Response, ApiError> {
         self.received(
             "upload_raw",
@@ -1063,6 +1128,46 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
         "admin_transcript" => c
             .service(Some(ADMIN))
             .admin_transcript(param_uuid(&f, "id"), &query::<TranscriptQuery>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "list_schedules" => c
+            .sandbox(Some(LEASE))
+            .list_schedules()
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "create_schedule" => c
+            .sandbox(Some(LEASE))
+            .create_schedule(&request::<CreateSchedule>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "get_schedule" => c
+            .sandbox(Some(LEASE))
+            .get_schedule(&param_str(&f, "scheduleId"))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "update_schedule" => c
+            .sandbox(Some(LEASE))
+            .update_schedule(&param_str(&f, "scheduleId"), &request::<UpdateSchedule>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "delete_schedule" => c
+            .sandbox(Some(LEASE))
+            .delete_schedule(&param_str(&f, "scheduleId"))
+            .await
+            .map(|()| Value::Null),
+        "conversation_schedules" => c
+            .person(PERSON)
+            .conversation_schedules(param_uuid(&f, "id"))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "admin_schedules" => c
+            .service(Some(ADMIN))
+            .admin_schedules()
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "admin_schedules_pause" => c
+            .service(Some(ADMIN))
+            .admin_schedules_pause(&request::<PauseAll>(&f))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
         other => panic!("no client call for route {other}"),

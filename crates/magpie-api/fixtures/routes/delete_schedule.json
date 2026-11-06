@@ -1,0 +1,18 @@
+{
+  "route": "delete_schedule",
+  "params": {
+    "scheduleId": "sch_4f1c2a9e7b3d4c5e8a6f0b1c2d3e4f5a"
+  },
+  "responses": [
+    {
+      "status": 204
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

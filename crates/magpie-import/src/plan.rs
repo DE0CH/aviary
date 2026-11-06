@@ -78,6 +78,8 @@ pub struct Plan {
     pub largest_lines: Vec<LongLine>,
     /// Shares.
     pub shares: SharesPlan,
+    /// Old schedules not done, deleted or moved (`cc_shared.schedules`): each goes with its conversation's release.
+    pub schedules: usize,
     /// What stops an import (exit 1).
     pub blockers: Vec<String>,
 }
@@ -117,6 +119,26 @@ fn longest_line(abs: &std::path::Path, size: u64) -> Result<u64> {
     Ok(best.max(cur))
 }
 
+/// The old schedules a release will carry (active or paused; none before the table exists).
+async fn live_schedules(pool: &aviary_pg::Pool) -> Result<usize> {
+    let c = pool.get().await?;
+    let exists: bool = c
+        .query_one("select to_regclass('cc_shared.schedules') is not null", &[])
+        .await?
+        .get(0);
+    if !exists {
+        return Ok(0);
+    }
+    let n: i64 = c
+        .query_one(
+            "select count(*) from cc_shared.schedules where state in ('active', 'paused')",
+            &[],
+        )
+        .await?
+        .get(0);
+    Ok(usize::try_from(n).unwrap_or(0))
+}
+
 /// Builds the plan.
 ///
 /// # Errors
@@ -125,7 +147,10 @@ fn longest_line(abs: &std::path::Path, size: u64) -> Result<u64> {
 pub async fn plan(imp: &Importer) -> Result<Plan> {
     let snap = source::read(&imp.cloudcli).await?;
     let known = crate::pass::known(imp).await?;
-    let mut plan = Plan::default();
+    let mut plan = Plan {
+        schedules: live_schedules(&imp.cloudcli).await?,
+        ..Plan::default()
+    };
     for (schema, why) in &snap.problems {
         plan.blockers.push(format!("schema {schema}: {why}"));
     }

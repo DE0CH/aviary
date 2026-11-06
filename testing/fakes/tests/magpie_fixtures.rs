@@ -22,6 +22,7 @@ use magpie_api::live::*;
 use magpie_api::ops::*;
 use magpie_api::rows::*;
 use magpie_api::sandbox::*;
+use magpie_api::schedules::*;
 use magpie_api::turns::*;
 use magpie_api::uploads::*;
 use serde::de::DeserializeOwned;
@@ -435,6 +436,46 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
         "admin_transcript" => c
             .service(Some(ADMIN))
             .admin_transcript(param_uuid(&f, "id"), &query::<TranscriptQuery>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "list_schedules" => c
+            .sandbox(Some(LEASE))
+            .list_schedules()
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "create_schedule" => c
+            .sandbox(Some(LEASE))
+            .create_schedule(&request::<CreateSchedule>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "get_schedule" => c
+            .sandbox(Some(LEASE))
+            .get_schedule(&param_str(&f, "scheduleId"))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "update_schedule" => c
+            .sandbox(Some(LEASE))
+            .update_schedule(&param_str(&f, "scheduleId"), &request::<UpdateSchedule>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "delete_schedule" => c
+            .sandbox(Some(LEASE))
+            .delete_schedule(&param_str(&f, "scheduleId"))
+            .await
+            .map(|()| Value::Null),
+        "conversation_schedules" => c
+            .person(PERSON)
+            .conversation_schedules(param_uuid(&f, "id"))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "admin_schedules" => c
+            .service(Some(ADMIN))
+            .admin_schedules()
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "admin_schedules_pause" => c
+            .service(Some(ADMIN))
+            .admin_schedules_pause(&request::<PauseAll>(&f))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
         other => panic!("no client call for route {other}"),

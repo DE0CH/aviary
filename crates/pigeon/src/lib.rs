@@ -24,6 +24,7 @@ pub mod metrics;
 pub mod ops;
 pub mod paseo;
 pub mod raw;
+pub mod schedules;
 pub mod server;
 pub mod shares;
 pub mod shell;

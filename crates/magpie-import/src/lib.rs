@@ -17,6 +17,7 @@
 //! - [`share`]: `cc_shared.shares` as magpie shares with the same ids (cutover 7.4.4).
 //! - [`viewas`]: `jarvis.ops_events` view-as rows as magpie's `view_as_log`.
 //! - [`questions`]: the old stack's parked questions (`jarvis_open_questions`) carried over at the release.
+//! - [`schedules`]: the old stack's schedules (`cc_shared.schedules`) carried over at the release.
 //! - [`parity`]: magpie's rows through pigeon's projection, normalised for the render-parity rehearsal.
 //! - [`pass`]: one pass (`run`, `catch-up`): every conversation whose fingerprints changed, 8 at a time.
 //! - [`verify`]: byte-exact verification through magpie's read path (cutover 7.7).
@@ -50,6 +51,7 @@ pub mod pass;
 pub mod plan;
 pub mod questions;
 pub mod reverse;
+pub mod schedules;
 pub mod sent;
 pub mod server;
 pub mod share;

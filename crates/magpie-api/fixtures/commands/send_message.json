@@ -1,0 +1,8 @@
+{
+  "cmdSeq": 47,
+  "turnId": "0190f6c2-0000-7000-8000-00000000a001",
+  "type": "send_message",
+  "payload": {
+    "text": "<scheduled-message rule=\"每個工作日 08:30\">整理昨天關於林定國的新聞，列出來源。</scheduled-message>"
+  }
+}

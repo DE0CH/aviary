@@ -44,6 +44,7 @@ use crate::sandbox::{
     CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery, CommandsQuery, CommandsResponse, Heartbeat,
     LeaseResponse, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport, TurnStateReport,
 };
+use crate::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
 use crate::shares::{ContinueResponse, ShareRef, ShareView, SharesList};
 use crate::turns::{AgentPermissionResponse, CancelResponse, SendRequest, SendResponse};
 use crate::uploads::{BlobQuery, SandboxBlobQuery, UploadKind, UploadResponse};
@@ -641,6 +642,11 @@ impl PersonCalls<'_> {
         self.get("files_panel", &[&id.to_string()], NO_QUERY).await
     }
 
+    /// The conversation's schedules with their last runs (the app's panel).
+    pub async fn conversation_schedules(&self, id: Uuid) -> Result<SchedulesList, ClientError> {
+        self.get("conversation_schedules", &[&id.to_string()], NO_QUERY).await
+    }
+
     /// M16 list.
     pub async fn list_shares(&self, id: Uuid) -> Result<SharesList, ClientError> {
         self.get("list_shares", &[&id.to_string()], NO_QUERY).await
@@ -933,6 +939,45 @@ impl SandboxCalls<'_> {
     pub async fn sent_files_commit(&self, tool_use_id: &str) -> Result<SentFilesCommitted, ClientError> {
         self.post("sent_files_commit", &[tool_use_id], &Empty {}).await
     }
+
+    /// The person's schedules (every conversation).
+    pub async fn list_schedules(&self) -> Result<SchedulesList, ClientError> {
+        self.client
+            .exec_json(&self.scope, route("list_schedules"), &[], NO_QUERY, Body::None)
+            .await
+    }
+
+    /// Arm a schedule in the sandbox's conversation.
+    pub async fn create_schedule(&self, req: &CreateSchedule) -> Result<Schedule, ClientError> {
+        self.post("create_schedule", &[], req).await
+    }
+
+    /// One schedule with its last runs.
+    pub async fn get_schedule(&self, schedule_id: &str) -> Result<Schedule, ClientError> {
+        self.client
+            .exec_json(&self.scope, route("get_schedule"), &[schedule_id], NO_QUERY, Body::None)
+            .await
+    }
+
+    /// Change a schedule.
+    pub async fn update_schedule(&self, schedule_id: &str, req: &UpdateSchedule) -> Result<Schedule, ClientError> {
+        self.post("update_schedule", &[schedule_id], req).await
+    }
+
+    /// Remove a schedule.
+    pub async fn delete_schedule(&self, schedule_id: &str) -> Result<(), ClientError> {
+        self.client
+            .exec(
+                &self.scope,
+                route("delete_schedule"),
+                &[schedule_id],
+                NO_QUERY,
+                Body::None,
+                None,
+            )
+            .await
+            .map(drop)
+    }
 }
 
 /// hermit's, the ops tools' and the admin tooling's calls (16.3, 16.4). Made by [`Client::service`].
@@ -1021,5 +1066,17 @@ impl ServiceCalls<'_> {
     /// Admin: the raw view's transcript lines of any conversation, with its owner and title (audited).
     pub async fn admin_transcript(&self, id: Uuid, q: &TranscriptQuery) -> Result<TranscriptPage, ClientError> {
         self.get("admin_transcript", &[&id.to_string()], Some(q)).await
+    }
+
+    /// Admin: everyone's schedules with their last runs, and the pause-all switch.
+    pub async fn admin_schedules(&self) -> Result<AdminSchedules, ClientError> {
+        self.get("admin_schedules", &[], NO_QUERY).await
+    }
+
+    /// Admin: set the pause-all switch.
+    pub async fn admin_schedules_pause(&self, req: &PauseAll) -> Result<AdminSchedules, ClientError> {
+        self.client
+            .exec_json(&self.scope, route("admin_schedules_pause"), &[], NO_QUERY, json(req)?)
+            .await
     }
 }

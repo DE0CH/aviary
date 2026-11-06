@@ -380,7 +380,22 @@ pub async fn released_check(imp: &Importer, id: Uuid) -> Result<Verdict> {
     let Some(r) = row(imp, id).await? else {
         return Err(Error::Source(format!("{id} was not imported")));
     };
-    released(id, imp, &r)
+    let mut v = released(id, imp, &r)?;
+    with_schedules(imp, id, &mut v).await?;
+    Ok(v)
+}
+
+/// A released conversation's schedules (`crate::schedules`): each old row magpie does not have, or that is not
+/// marked moved on the old side, is a mismatch named `schedule:<id>`.
+async fn with_schedules(imp: &Importer, id: Uuid, v: &mut Verdict) -> Result<()> {
+    for path in crate::schedules::mismatches(imp, id).await? {
+        v.mismatches.push(Mismatch {
+            path,
+            source_size: None,
+            magpie_size: None,
+        });
+    }
+    Ok(())
 }
 
 /// A released conversation: the old side wrote nothing of its own after the hand-over. Every recorded file still
@@ -444,7 +459,9 @@ pub async fn verify(imp: &Importer, id: Uuid) -> Result<Verdict> {
         return Err(Error::Source(format!("{id} was not imported")));
     };
     if r.released {
-        return released(id, imp, &r);
+        let mut v = released(id, imp, &r)?;
+        with_schedules(imp, id, &mut v).await?;
+        return Ok(v);
     }
     let (sources, now) = current(imp, id, &r).await?;
     // as in a pass: a main transcript that vanished while its sessions row is there is never unlinked by a re-ingest

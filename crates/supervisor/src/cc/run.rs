@@ -1930,6 +1930,7 @@ impl Driver {
                     },
                 );
             }
+            CommandBody::SendMessage(m) => self.send_message(seq, c.turn_id, &m.text).await,
             CommandBody::Unknown => self.ack(seq, err_ack("unsupported")),
         }
     }
@@ -2529,6 +2530,73 @@ impl Driver {
             self.kill_gen(n, Why::Kill { watchdog }).await;
         }
         self.ack_in(target.map(|(id, _)| id).or(turn_id), seq, AckResult::default());
+    }
+
+    /// `send_message` (a schedule's fire while a turn runs, the person's or an agent turn): the message is written to
+    /// the turn's generation at once, and Claude Code takes it in at its next tool result or when the model stops, as
+    /// a message typed mid-turn.
+    /// It never counts as a pending input: taken in mid-turn it is answered by the turn's own `result`; left for after
+    /// that `result`, Claude Code answers it in a run of its own, which opens an agent turn as any output with no
+    /// pending input does. Acked `delivered: false` when `turn_id` is not the running turn (magpie then
+    /// sends it as a new turn); a repeat of a written one (a restarted supervisor) is acked again, never rewritten.
+    async fn send_message(&self, seq: u64, turn_id: Option<Uuid>, text: &str) {
+        // after the turn's own start_turn, which holds the lane while it writes the person's message
+        let _lane = self.turn_lane.lock().await;
+        let already = lock(&self.st)
+            .delivered
+            .get(&seq)
+            .is_some_and(|d| d.state == "injected");
+        if already {
+            return self.ack(
+                seq,
+                AckResult {
+                    delivered: Some(true),
+                    ..AckResult::default()
+                },
+            );
+        }
+        let line = prompt::user_line(&Value::String(text.to_owned()), &rfc3339(now()));
+        let lane = self.with(Change::State, |st, fx| {
+            let t = st.turn.as_ref()?;
+            let running = turn_id == Some(t.id)
+                && t.handed
+                && t.interrupt_sent.is_none()
+                && st.live.is_some()
+                && st.release.is_none();
+            if !running {
+                return None;
+            }
+            st.delivered.insert(
+                seq,
+                Delivered {
+                    state: "injected".into(),
+                    turn_id: Some(t.id.to_string()),
+                    ..Delivered::default()
+                },
+            );
+            fx.push(Fx::Stdin(line));
+            Some(t.id)
+        });
+        match lane {
+            Some(l) => {
+                tracing::info!(turn = %l, "a scheduled message was written into the running turn");
+                self.ack_in(
+                    Some(l),
+                    seq,
+                    AckResult {
+                        delivered: Some(true),
+                        ..AckResult::default()
+                    },
+                );
+            }
+            None => self.ack(
+                seq,
+                AckResult {
+                    delivered: Some(false),
+                    ..AckResult::default()
+                },
+            ),
+        }
     }
 
     fn answer_ask(&self, seq: u64, a: &AnswerAsk) {

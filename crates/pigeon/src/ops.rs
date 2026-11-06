@@ -42,6 +42,10 @@ pub async fn handle(app: &App, req: Request, path: &str) -> Response {
             return page(app, Page::AdminsOnly, None);
         }
     };
+    // the schedules page and its pause-all switch (the one write under /ops, a same-origin form)
+    if path == crate::schedules::ADMIN_PATH || path.starts_with("/ops/schedules/") {
+        return crate::schedules::admin(app, req, path, &admin).await;
+    }
     let method = req.method().clone();
     if method != Method::GET && method != Method::HEAD {
         return page(app, Page::ReadOnly, None);

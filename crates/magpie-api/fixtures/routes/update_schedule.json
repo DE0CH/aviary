@@ -1,0 +1,34 @@
+{
+  "route": "update_schedule",
+  "params": {
+    "scheduleId": "sch_4f1c2a9e7b3d4c5e8a6f0b1c2d3e4f5a"
+  },
+  "request": {
+    "paused": true
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "id": "sch_4f1c2a9e7b3d4c5e8a6f0b1c2d3e4f5a",
+        "conversationId": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a",
+        "kind": "cron",
+        "prompt": "整理昨天關於林定國的新聞，列出來源。",
+        "cron": "30 8 * * 1-5",
+        "tz": "Asia/Hong_Kong",
+        "describe": "每個工作日 08:30",
+        "next": null,
+        "state": "paused",
+        "createdBy": "staff@example.com",
+        "createdAt": "2026-11-06T09:12:00+08:00"
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}
