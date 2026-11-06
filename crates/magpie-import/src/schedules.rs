@@ -193,10 +193,14 @@ impl Claimed {
     }
 }
 
-/// The outcomes magpie keeps (an old outcome it does not know is kept as `failed` with the old word as the detail).
-const OUTCOMES: [&str; 6] = [
+/// The outcomes magpie keeps (an old outcome it does not know is kept as `failed` with the old word as the detail):
+/// the answered states are the old process's record of the answer (magpie has no turn of the run to read it from).
+const OUTCOMES: [&str; 9] = [
     "sent",
     "sent_mid_turn",
+    "answered",
+    "answered_mid_turn",
+    "unanswered",
     "skipped_late",
     "skipped_paused",
     "skipped_deleted",
@@ -342,21 +346,10 @@ mod tests {
 
     #[test]
     fn the_carried_outcomes_are_magpies() {
-        // magpie's schedule_runs check (migration 0026) has these and the mid-turn delivery's own states
+        // magpie's schedule_runs check (its latest form, migration 0027) has every one
+        let check = include_str!("../../magpie/src/db/migrations/0027_schedule_answers.sql");
         for o in OUTCOMES {
-            assert!(
-                [
-                    "sent",
-                    "pending",
-                    "sent_mid_turn",
-                    "redeliver",
-                    "skipped_late",
-                    "skipped_paused",
-                    "skipped_deleted",
-                    "failed"
-                ]
-                .contains(&o)
-            );
+            assert!(check.contains(&format!("'{o}'")), "{o}");
         }
     }
 }

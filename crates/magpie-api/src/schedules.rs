@@ -60,8 +60,9 @@ pub struct ScheduleRun {
     pub due: String,
     /// When it was handled, local with its offset.
     pub at: String,
-    /// `sent` (a new turn), `sent_mid_turn` (taken into the running turn), `pending` (being delivered),
-    /// `skipped_late` (the service was down for more than 10 minutes), `skipped_paused` (all schedules were paused),
+    /// `answered` (a new turn, completed), `answered_mid_turn` (taken into the running turn, which completed),
+    /// `sent` / `sent_mid_turn` (delivered, the turn not ended yet), `unanswered` (delivered, the turn failed or was
+    /// canceled), `pending` (being delivered), `redeliver` (to be delivered again), `skipped_late` (the service was down for more than 10 minutes), `skipped_paused` (all schedules were paused),
     /// `skipped_deleted` (the conversation is in Recently deleted) or `failed`.
     pub outcome: String,
     /// Why, for `failed`.

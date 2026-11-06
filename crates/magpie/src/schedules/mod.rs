@@ -241,12 +241,22 @@ async fn runs(db: &impl Db, ids: &[String], zones: &[(String, chrono_tz::Tz)]) -
     if ids.is_empty() {
         return Ok(Vec::new());
     }
+    // a delivered run reads as answered once its turn completed (the panel's 已回覆), unanswered once it failed or was
+    // canceled; until then it is `sent` / `sent_mid_turn` (migration 0027; a carried-over run has no turn and keeps
+    // what the old stack recorded)
     let rows = db
         .query(
-            "select schedule_id, due_at, at, outcome, detail from (
-               select r.*, row_number() over (partition by schedule_id order by due_at desc) as n
-               from schedule_runs r where schedule_id = any($1)) x
-             where n <= $2 order by schedule_id, due_at desc",
+            "select x.schedule_id, x.due_at, x.at,
+                    case when x.outcome in ('sent', 'sent_mid_turn') and t.state = 'completed'
+                           then case x.outcome when 'sent' then 'answered' else 'answered_mid_turn' end
+                         when x.outcome in ('sent', 'sent_mid_turn') and t.state in ('failed', 'canceled')
+                           then 'unanswered'
+                         else x.outcome end,
+                    x.detail
+             from (select r.*, row_number() over (partition by schedule_id order by due_at desc) as n
+                   from schedule_runs r where schedule_id = any($1)) x
+             left join turns t on t.id = x.turn_id
+             where x.n <= $2 order by x.schedule_id, x.due_at desc",
             &[&ids, &RUNS_SHOWN],
         )
         .await?;

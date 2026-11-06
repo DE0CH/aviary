@@ -434,7 +434,61 @@ async fn a_fire_in_an_idle_conversation_is_a_new_turn_with_the_wrapped_prompt() 
     let panel = w.a.pigeon().person(ALICE).conversation_schedules(conv).await.unwrap();
     let r = panel.schedules[0].runs.clone().unwrap();
     assert_eq!(r.len(), 1);
-    assert_eq!(r[0].outcome, "sent");
+    assert_eq!(r[0].outcome, "sent", "delivered, not answered yet");
+}
+
+/// The outcome of each run of schedule `id` (newest first) as the panel shows it; the AI's read agrees.
+async fn outcomes(w: &World, conv: Uuid, id: &str) -> Vec<String> {
+    let panel = w.a.pigeon().person(ALICE).conversation_schedules(conv).await.unwrap();
+    let mine = w.ai(conv, ALICE).sandbox(None).get_schedule(id).await.unwrap();
+    let a: Vec<String> = panel.schedules[0].runs.clone().unwrap().into_iter().map(|r| r.outcome).collect();
+    let b: Vec<String> = mine.runs.unwrap().into_iter().map(|r| r.outcome).collect();
+    assert_eq!(a, b, "the panel and the AI read the same");
+    a
+}
+
+async fn set_turn(w: &World, turn: Uuid, state: &str) {
+    w.pool()
+        .get()
+        .await
+        .unwrap()
+        .execute("update turns set state = $2, ended_at = now() where id = $1", &[&turn, &state])
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_run_reads_answered_once_its_turn_completed_and_unanswered_once_it_failed() {
+    let w = World::new("sched_answered").await;
+    let conv = w.conversation(ALICE).await;
+    let s = w
+        .ai(conv, ALICE)
+        .sandbox(None)
+        .create_schedule(&cron("整理新聞", "30 8 * * 1-5"))
+        .await
+        .unwrap();
+    w.due(&s.id, Duration::from_secs(5)).await;
+    assert_eq!(w.pass().await, 1);
+    let turn = w.runs(&s.id).await[0].1.unwrap();
+    assert_eq!(outcomes(&w, conv, &s.id).await, ["sent"]);
+    set_turn(&w, turn, "completed").await;
+    assert_eq!(outcomes(&w, conv, &s.id).await, ["answered"]);
+    // a message taken into a running turn that completed; a carried-over run (no turn) keeps what the old stack wrote
+    w.sql(&format!(
+        "insert into schedule_runs (schedule_id, due_at, outcome, conversation_id, turn_id)
+           values ('{}', now() - interval '1 day', 'sent_mid_turn', '{conv}', '{turn}'),
+                  ('{}', now() - interval '2 days', 'answered_mid_turn', '{conv}', null),
+                  ('{}', now() - interval '3 days', 'sent', '{conv}', null)",
+        s.id, s.id, s.id
+    ))
+    .await;
+    assert_eq!(outcomes(&w, conv, &s.id).await, ["answered", "answered_mid_turn", "answered_mid_turn", "sent"]);
+    // the stored outcome stays what the fire wrote: the answer is read from the turn
+    assert_eq!(w.runs(&s.id).await.last().unwrap().0, "sent");
+    set_turn(&w, turn, "failed").await;
+    assert_eq!(outcomes(&w, conv, &s.id).await, ["unanswered", "unanswered", "answered_mid_turn", "sent"]);
+    set_turn(&w, turn, "canceled").await;
+    assert_eq!(outcomes(&w, conv, &s.id).await[0], "unanswered");
 }
 
 #[tokio::test]

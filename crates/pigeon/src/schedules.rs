@@ -111,8 +111,11 @@ fn text_page(status: StatusCode, message: &str) -> Response {
 #[must_use]
 pub fn outcome_words(o: &str) -> &'static str {
     match o {
-        "sent" => "sent (a new turn)",
-        "sent_mid_turn" => "sent into the running turn",
+        "answered" => "answered (a new turn)",
+        "answered_mid_turn" => "answered (sent into the running turn)",
+        "unanswered" => "sent, not answered (the turn failed or was stopped)",
+        "sent" => "sent (a new turn), not answered yet",
+        "sent_mid_turn" => "sent into the running turn, not answered yet",
         "pending" => "being delivered into the running turn",
         "redeliver" => "to be sent again (the turn ended first)",
         "skipped_late" => "skipped: the service was down for more than 10 minutes",
