@@ -436,6 +436,7 @@ async fn heartbeat(
     let mut status = h.status;
     let mut retire_by = h.retire_by.clone();
     if h.is_gateway() {
+        images::warm_gateway(g, h, &core.cfg.file.sandbox.image, &core.cfg.image_digest);
         return (info, status, retire_by);
     }
     // a booting host is active once sandboxd answers and its JuiceFS mount is there

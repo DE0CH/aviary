@@ -162,7 +162,10 @@ impl Server for HostSim {
     }
     async fn ensure_image(&self, req: EnsureImage) -> Answer<ImageDigest> {
         let d = req.digest.unwrap_or_default();
-        self.saw(format!("image {d}"));
+        match req.reference {
+            Some(r) => self.saw(format!("image {d} ref {r}")),
+            None => self.saw(format!("image {d}")),
+        }
         self.images.lock().unwrap().push(d.clone());
         Ok(ImageDigest { digest: d })
     }
@@ -874,6 +877,12 @@ async fn burst_placement_packing_and_release() {
     let digest = rig.h.config.image_digest.trim_start_matches("sha256:").to_owned();
     assert!(eventually(|| async { rig.fleet.sim(&a).calls().contains(&format!("image {digest}")) }).await);
     assert_eq!(rig.events("active").await.len(), 1);
+    // the gateway, the image server of hosts without registry access, pulls the configured image (by its ref), once
+    let pulled = format!("image {digest} ref {}", rig.h.config.file.sandbox.image);
+    assert!(eventually(|| async { rig.fleet.sim(GATEWAY).calls().contains(&pulled) }).await);
+    let _ = pass(&g, &r).await;
+    let asked = rig.fleet.sim(GATEWAY).calls().iter().filter(|c| c.starts_with("image ")).count();
+    assert_eq!(asked, 1, "the gateway is asked once per digest");
 
     // placement: the AWS host, the first sandbox address; the gateway routes its /32 there
     let Place::Placed(pl) = g.place(s0, 2 * GIB).await.unwrap() else {

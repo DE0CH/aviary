@@ -34,7 +34,7 @@ hermit spec sections 3-12, 19, 20, 23 and 24.1-24.2 (WP-18, the core) and 13 (WP
 | `fabric::migrate` | 13.10: the resumable `migrate` task and its takeover |
 | `fabric::network` | 13.8: gateway and mesh peers, the egress targets from the `EndpointSlices` watch |
 | `fabric::ec2` | 13.5, 14.4: `RunInstances`/`TerminateInstances`/`DescribeInstances` (`aws-sdk-ec2`), `WireGuard` keys |
-| `fabric::images` | 13.14: the warm-up of a host that just became active |
+| `fabric::images` | 13.14: the warm-up of a host that just became active; the gateway pulls the configured image (it serves hosts without registry access only images it holds) |
 | `server`, `app` | the `hermit_api::Server` implementation; start, loops, drain (20.2), kill |
 | `legacy` | 15.4, 22.3 (cutover 8.1): `import-jarvis`, `jfs-owner`, `legacy-cleanup`, deleted after the switch |
 | `fabric/aws/legacy-down.sh` | 22.3 step 5: the old fabric's teardown, every name from the deployment's legacy file |

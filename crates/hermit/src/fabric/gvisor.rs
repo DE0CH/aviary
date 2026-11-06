@@ -88,6 +88,9 @@ pub struct Gvisor {
     pub(crate) last_reconcile: Mutex<Option<tokio::time::Instant>>,
     /// Migrations the scaler just started on this replica (the task runs from step 2; a takeover asks the target).
     pub(crate) fresh_migrations: Mutex<HashSet<Uuid>>,
+    /// The sandbox image digest the gateway holds or is pulling ([`super::images::warm_gateway`]); `None` until then
+    /// and again after a failed pull, so the next pass asks again.
+    pub(crate) gateway_image: Arc<Mutex<Option<String>>>,
 }
 
 impl std::fmt::Debug for Gvisor {
@@ -110,6 +113,7 @@ impl Gvisor {
             gateway_lost_reported: AtomicBool::new(false),
             last_reconcile: Mutex::new(None),
             fresh_migrations: Mutex::default(),
+            gateway_image: Arc::default(),
         }
     }
 
