@@ -147,6 +147,26 @@ arrives.
 - **Branding**: YYC's teal as the accent, its logo and icons, Hong Kong Chinese fonts first (`styles/theme.ts`); the
   server writes the instance's product name into the page title.
 
+## Schedules (Deyao, 2026-11-06)
+
+YYC AI arms a message to be posted into the conversation once or on a repeating rule, through a REST API its managed
+skill `schedules` teaches (old stack: the router's `jarvis/schedules.mjs` behind egress's `schedules` route; new stack:
+magpie's `/v1/sandbox/schedules`). The same app shows both, without buttons (changes go through the chat):
+
+- the API call (a `curl` the AI runs) as a card, 「已設定排程：每個工作日 08:30」 and the next time
+  (`yyc/schedules.tsx` ScheduleToolCard, read by `yyc/schedules-text.ts` readScheduleCall);
+- a fired message, `<scheduled-message rule="…">prompt</scheduled-message>`, as a 排程訊息 bubble under a divider
+  (ScheduledMessage);
+- 「n 個排程」 in the conversation's header, opening a panel beside the chat (full screen with a back arrow on a phone)
+  from `GET /api/jarvis/sessions/<id>/schedules` (the router answers it on the old stack, pigeon on the new).
+
+The router fires them (every replica for the persons it serves, each due row claimed once): a new turn when the
+conversation is idle (the Paseo hub's send when a tab is open, else a detached run), written into the running turn when
+one runs (`injectClaudeSDKMessage`: Claude Code takes it in at its next tool result or when the model stops; a message
+it took in shows in the history from Claude Code's `queued_command` attachment). Claude Code's own CronCreate, CronList,
+CronDelete and ScheduleWakeup are disallowed in Jarvis mode. The admin page is `/ops/schedules` (English, admins only:
+everyone's schedules, their runs, the pause-all switch).
+
 ## Loading
 
 Deyao's order (2026-10-29): a message box people can type in at once, then the connection, then the reply's display
