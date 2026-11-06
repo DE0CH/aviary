@@ -476,21 +476,29 @@ async fn a_run_reads_answered_once_its_turn_completed_and_unanswered_once_it_fai
         .create_schedule(&cron("整理新聞", "30 8 * * 1-5"))
         .await
         .unwrap();
-    w.due(&s.id, Duration::from_secs(5)).await;
-    assert_eq!(w.pass().await, 1);
-    let turn = w.runs(&s.id).await[0].1.unwrap();
-    assert_eq!(outcomes(&w, conv, &s.id).await, ["sent"]);
-    set_turn(&w, turn, "completed").await;
-    assert_eq!(outcomes(&w, conv, &s.id).await, ["answered"]);
-    // a message taken into a running turn that completed; a carried-over run (no turn) keeps what the old stack wrote
+    // a turn row of its own (no driver, no deadline), so only this test moves its state
+    let turn = Uuid::new_v4();
     w.sql(&format!(
-        "insert into schedule_runs (schedule_id, due_at, outcome, conversation_id, turn_id)
-           values ('{}', now() - interval '1 day', 'sent_mid_turn', '{conv}', '{turn}'),
-                  ('{}', now() - interval '2 days', 'answered_mid_turn', '{conv}', null),
-                  ('{}', now() - interval '3 days', 'sent', '{conv}', null)",
-        s.id, s.id, s.id
+        "insert into turns (id, conversation_id, origin, state) values ('{turn}', '{conv}', 'person', 'running')"
     ))
     .await;
+    // a new turn and a message taken into a running turn, both on that turn; a carried-over run (no turn) keeps
+    // what the old stack wrote
+    w.sql(&format!(
+        "insert into schedule_runs (schedule_id, due_at, outcome, conversation_id, turn_id)
+           values ('{0}', now() - interval '1 hour', 'sent', '{conv}', '{turn}'),
+                  ('{0}', now() - interval '1 day', 'sent_mid_turn', '{conv}', '{turn}'),
+                  ('{0}', now() - interval '2 days', 'answered_mid_turn', '{conv}', null),
+                  ('{0}', now() - interval '3 days', 'sent', '{conv}', null)",
+        s.id
+    ))
+    .await;
+    assert_eq!(
+        outcomes(&w, conv, &s.id).await,
+        ["sent", "sent_mid_turn", "answered_mid_turn", "sent"],
+        "delivered, not answered yet"
+    );
+    set_turn(&w, turn, "completed").await;
     assert_eq!(
         outcomes(&w, conv, &s.id).await,
         ["answered", "answered_mid_turn", "answered_mid_turn", "sent"]
