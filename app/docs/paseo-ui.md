@@ -173,6 +173,8 @@ A run's outcome in the panel: 已回覆 once the conversation answered the fired
 was stopped (`unanswered`), and the skips (服務暫停，已略過 …). On the old stack the process records it: the delivery
 marks the run as waiting (claude-runtime's `awaitScheduleAnswer`) and the conversation's next `result` settles it into
 `cc_shared.schedule_runs` (jarvis-schedules.routes.ts `recordScheduleAnswers`); magpie reads it from the run's turn.
+A conversation deleted for good takes its schedules with it (marked `deleted`: jarvis-conversations.ts
+`deleteSchedulesOf`; magpie's go with their conversation).
 
 ## Loading
 
