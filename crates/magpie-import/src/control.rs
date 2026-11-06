@@ -6,6 +6,7 @@ use serde::Serialize;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use crate::schedules::Abort;
 use crate::{Error, Importer, Result};
 
 /// One open conversation in the status document.
@@ -481,37 +482,64 @@ pub async fn release_forced(imp: &Importer, id: Uuid) -> Result<Forced> {
             return Err(e);
         }
     };
-    let schedules = match crate::schedules::read(&imp.cloudcli, id).await {
-        Ok(s) => s,
-        Err(e) => {
-            let _ = fence::unfence(pool, id).await;
-            return Err(e);
+    // its schedules go with it, taken on the old database around magpie's release (schedules::claim); a forced
+    // release does not wait for the quiet period after a fire, only for a fire in flight
+    let questions = &questions;
+    let person = &person;
+    let committed: std::sync::Mutex<Option<fence::Released>> = std::sync::Mutex::new(None);
+    let committed_ref = &committed;
+    let held = aviary_pg::tx!(&imp.cloudcli_schedules, |old| -> std::result::Result<fence::Released, Abort> {
+        let claimed = crate::schedules::claim(old, id).await?;
+        let schedules = &claimed.schedules;
+        let r = aviary_pg::tx!(pool, |t| -> Result<Result<fence::Released, fence::NotReleased>> {
+            imp.check_lock_in(t).await?;
+            let r = fence::release_in(t, id, &fence::Release::default()).await?;
+            if r.is_ok() {
+                t.execute(
+                    "update import_sources set released_at = now(), release_reason = 'forced'
+                     where conversation_id = $1",
+                    &[&id],
+                )
+                .await?;
+                crate::questions::carry(t, person, id, questions).await?;
+                crate::schedules::carry(t, person, id, schedules).await?;
+            }
+            Ok(r)
+        })
+        .await
+        .map_err(Abort::Failed)?;
+        match r {
+            Ok(r) => {
+                *committed_ref.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(r);
+                Ok(r)
+            }
+            Err(why) => Err(Abort::NotReleased(why)),
         }
-    };
-    let held = aviary_pg::tx!(pool, |t| -> Result<Result<fence::Released, fence::NotReleased>> {
-        imp.check_lock_in(t).await?;
-        let r = fence::release_in(t, id, &fence::Release::default()).await?;
-        if r.is_ok() {
-            t.execute(
-                "update import_sources set released_at = now(), release_reason = 'forced' where conversation_id = $1",
-                &[&id],
-            )
-            .await?;
-            crate::questions::carry(t, &person, id, &questions).await?;
-            crate::schedules::carry(t, &person, id, &schedules).await?;
-        }
-        Ok(r)
     })
     .await;
     out.in_fence_seconds = fenced.elapsed().as_secs_f64();
-    match held {
-        Ok(Ok(r)) => {
-            crate::schedules::mark_moved(&imp.cloudcli, id).await;
+    let magpie_released = *committed.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    match (held, magpie_released) {
+        (Ok(r), _) => {
             out.fence_seconds = r.held;
             r.record(&imp.magpie.legacy);
             Ok(out)
         }
-        Ok(Err(fence::NotReleased::NotFenced)) => {
+        (Err(e), Some(r)) => {
+            // magpie released it; the old database's commit failed, so its rows are marked moved apart
+            tracing::warn!(conversation = %id, error = ?e, "released, but the old schedules' commit failed");
+            crate::schedules::mark_moved(&imp.cloudcli_schedules, id).await;
+            out.fence_seconds = r.held;
+            r.record(&imp.magpie.legacy);
+            Ok(out)
+        }
+        (Err(Abort::Fired), None) => {
+            let _ = fence::unfence(pool, id).await;
+            Err(Error::Source(format!(
+                "{id} was not released: the old router is firing one of its schedules; run it again"
+            )))
+        }
+        (Err(Abort::NotReleased(fence::NotReleased::NotFenced)), None) => {
             let _ = fence::unfence(pool, id).await;
             Err(Error::Source(format!(
                 "{id} was not released: the fence's {} s lease ran out after {:.1} s inside it (the final sync and \
@@ -520,14 +548,14 @@ pub async fn release_forced(imp: &Importer, id: Uuid) -> Result<Forced> {
                 out.in_fence_seconds
             )))
         }
-        Ok(Err(why)) => {
+        (Err(Abort::NotReleased(why)), None) => {
             let _ = fence::unfence(pool, id).await;
             Err(Error::Source(format!(
                 "{id} was not released: {why:?} ({:.1} s inside the fence)",
                 out.in_fence_seconds
             )))
         }
-        Err(e) => {
+        (Err(Abort::Failed(e)), None) => {
             let _ = fence::unfence(pool, id).await;
             Err(e)
         }

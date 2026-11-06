@@ -1,12 +1,22 @@
 //! Schedules of the old stack (claudecodeui `jarvis/schedules.mjs`; Deyao, 2026-11-06: nobody loses one when moved).
-//! A conversation's rows of `cc_shared.schedules` and `cc_shared.schedule_runs` go with it at its release, in the
-//! release's transaction ([`carry`]), with the same ids, rule, reading, next time, state and runs, so magpie fires
-//! them from then on (a time the hand-over passed is fired within 10 minutes or recorded skipped, as after any
-//! outage). Then the old rows become `moved` ([`mark_moved`]), so the old router never fires them again. Until its
-//! release a conversation's schedules are the old stack's: it fires them, and pigeon reads them from the old child.
-//! [`mismatches`] is the verification of a released conversation: every old row it had is magpie's.
+//! A conversation's rows of `cc_shared.schedules` and `cc_shared.schedule_runs` go with it at its release, with the
+//! same ids, rule, reading, next time, state and runs, so magpie fires them from then on (a time the hand-over passed
+//! is fired within 10 minutes or recorded skipped, as after any outage). Until its release a conversation's schedules
+//! are the old stack's: it fires them, and pigeon reads them from the old child.
+//!
+//! The hand-over of the rows is one step with no window in which both stacks, or neither, may fire one ([`claim`]):
+//! a transaction on the old database takes the rows (`for update`, so it waits for a fire the old router is making:
+//! that one claims its row the same way and moves `next_at` on in its own transaction), marks them `moved` and stays
+//! open around magpie's release transaction, which carries what it read ([`carry`]). magpie's commit is followed by
+//! the old one's; a release that does not happen rolls the old one back and the rows are the old stack's as before.
+//! A schedule the old router fired less than the quiet period ago means the conversation is in use (its message may
+//! be starting a turn the release's checks did not see): the release is left for a later pass ([`Abort::Fired`]).
+//! Only an old commit that fails after magpie's committed leaves the rows to [`mark_moved`] (retried; [`mismatches`],
+//! the verification of a released conversation, reports a row still not `moved`). The old database is written on
+//! [`crate::Importer::cloudcli_schedules`], the one writable connection of the hand-over (every other is read-only).
 
-use aviary_pg::{Pool, Tx};
+use aviary_pg::{Pool, Row, Tx};
+use magpie::legacy::fence;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -54,52 +64,132 @@ async fn exists(pool: &Pool) -> Result<bool> {
         .get(0))
 }
 
-/// The old schedules of conversation `id` (none before the table exists).
+/// Why a release that took the old schedules did not happen: the old database's transaction rolls back, so they stay
+/// the old stack's.
+#[derive(Debug)]
+pub enum Abort {
+    /// The old router fired one of them less than the quiet period ago, or is firing one now (its row stayed locked
+    /// past the lock timeout): the conversation is in use.
+    Fired,
+    /// magpie's release refused.
+    NotReleased(fence::NotReleased),
+    /// A statement failed.
+    Failed(crate::Error),
+}
+
+impl From<aviary_pg::Error> for Abort {
+    fn from(e: aviary_pg::Error) -> Self {
+        Self::Failed(e.into())
+    }
+}
+
+/// How long [`claim`] waits for a row the old router holds (a fire delivering its message).
+pub const LOCK_WAIT: &str = "10s";
+
+/// The old schedules of conversation `id`, taken for its release in `old`, a transaction on the old database that
+/// stays open until magpie's release transaction has ended: each row locked (waiting for a fire in flight), its runs
+/// read, and marked `moved` (so the old router fires none of them again once `old` commits). `last_fire` is the
+/// newest run's time and `now` the old database's clock.
 ///
 /// # Errors
-/// A statement error.
-pub async fn read(pool: &Pool, id: Uuid) -> Result<Vec<OldSchedule>> {
-    if !exists(pool).await? {
-        return Ok(Vec::new());
-    }
-    let c = pool.get().await?;
-    let rows = c
-        .query(
-            "select id, person, kind, prompt, at, cron, tz, until, describe, next_at, state, created_at, created_by
-             from cc_shared.schedules where conversation_id = $1 and state <> 'moved' order by created_at, id",
-            &[&id.to_string()],
-        )
-        .await?;
-    let mut out = Vec::new();
-    for r in rows {
-        let sid: String = r.get(0);
-        let runs: Vec<(OffsetDateTime, OffsetDateTime, String, Option<String>)> = c
-            .query(
-                "select due_at, at, outcome, detail from cc_shared.schedule_runs where schedule_id = $1 order by due_at",
-                &[&sid],
-            )
-            .await?
-            .iter()
-            .map(|x| (x.get(0), x.get(1), x.get(2), x.get(3)))
-            .collect();
-        out.push(OldSchedule {
-            id: sid,
-            person: r.get(1),
-            kind: r.get(2),
-            prompt: r.get(3),
-            at: r.get(4),
-            cron: r.get(5),
-            tz: r.get(6),
-            until: r.get(7),
-            describe: r.get(8),
-            next_at: r.get(9),
-            state: r.get(10),
-            created_at: r.get(11),
-            created_by: r.get(12),
-            runs,
+/// [`Abort::Fired`] when a row stayed locked past [`LOCK_WAIT`]; [`Abort::Failed`] for any other statement error.
+pub async fn claim(old: &Tx<'_>, id: Uuid) -> std::result::Result<Claimed, Abort> {
+    let now: OffsetDateTime = old.query_one("select now()", &[]).await?.get(0);
+    let exists: bool = old
+        .query_one("select to_regclass('cc_shared.schedules') is not null", &[])
+        .await?
+        .get(0);
+    if !exists {
+        return Ok(Claimed {
+            schedules: Vec::new(),
+            last_fire: None,
+            now,
         });
     }
-    Ok(out)
+    old.batch_execute(&format!("set local lock_timeout = '{LOCK_WAIT}'")).await?;
+    let busy = |e: aviary_pg::Error| {
+        if e.code() == Some(&aviary_pg::reexports::tokio_postgres::error::SqlState::LOCK_NOT_AVAILABLE) {
+            Abort::Fired
+        } else {
+            Abort::from(e)
+        }
+    };
+    let conversation = id.to_string();
+    let rows = old
+        .query(
+            "select id, person, kind, prompt, at, cron, tz, until, describe, next_at, state, created_at, created_by
+             from cc_shared.schedules where conversation_id = $1 and state <> 'moved' order by created_at, id
+             for update",
+            &[&conversation],
+        )
+        .await
+        .map_err(busy)?;
+    let ids: Vec<String> = rows.iter().map(|r| r.get(0)).collect();
+    let runs = old
+        .query(
+            "select schedule_id, due_at, at, outcome, detail from cc_shared.schedule_runs
+             where schedule_id = any($1) order by schedule_id, due_at for update",
+            &[&ids],
+        )
+        .await
+        .map_err(busy)?;
+    old.execute(
+        "update cc_shared.schedules set state = 'moved', next_at = null, updated_at = now()
+         where conversation_id = $1 and state <> 'moved'",
+        &[&conversation],
+    )
+    .await?;
+    let last_fire = runs.iter().map(|r| r.get::<_, OffsetDateTime>(2)).max();
+    let schedules = rows.iter().map(|r| schedule_of(r, &runs)).collect();
+    Ok(Claimed {
+        schedules,
+        last_fire,
+        now,
+    })
+}
+
+/// One row of `cc_shared.schedules` with its runs (rows of `schedule_id, due_at, at, outcome, detail`).
+fn schedule_of(r: &Row, runs: &[Row]) -> OldSchedule {
+    let id: String = r.get(0);
+    OldSchedule {
+        runs: runs
+            .iter()
+            .filter(|x| x.get::<_, String>(0) == id)
+            .map(|x| (x.get(1), x.get(2), x.get(3), x.get(4)))
+            .collect(),
+        id,
+        person: r.get(1),
+        kind: r.get(2),
+        prompt: r.get(3),
+        at: r.get(4),
+        cron: r.get(5),
+        tz: r.get(6),
+        until: r.get(7),
+        describe: r.get(8),
+        next_at: r.get(9),
+        state: r.get(10),
+        created_at: r.get(11),
+        created_by: r.get(12),
+    }
+}
+
+/// What [`claim`] took.
+#[derive(Debug, Clone)]
+pub struct Claimed {
+    /// The rows, as they were before `moved`.
+    pub schedules: Vec<OldSchedule>,
+    /// The newest run of any of them (a fire), by the old database's clock.
+    pub last_fire: Option<OffsetDateTime>,
+    /// The old database's clock at the claim.
+    pub now: OffsetDateTime,
+}
+
+impl Claimed {
+    /// One of them fired less than `quiet` ago.
+    #[must_use]
+    pub fn fired_within(&self, quiet: time::Duration) -> bool {
+        self.last_fire.is_some_and(|t| self.now - t < quiet)
+    }
 }
 
 /// The outcomes magpie keeps (an old outcome it does not know is kept as `failed` with the old word as the detail).
@@ -112,8 +202,8 @@ const OUTCOMES: [&str; 6] = [
     "failed",
 ];
 
-/// Writes `schedules` of conversation `id` (owner `person`) into magpie, in the release's transaction: the same
-/// rows, replaced if a previous attempt wrote them; runs added once each.
+/// Writes `schedules` of conversation `id` (owner `person`, as [`claim`] took them) into magpie, in the release's
+/// transaction: the same rows, replaced if a previous attempt wrote them; runs added once each.
 ///
 /// # Errors
 /// A statement error.
@@ -170,28 +260,39 @@ pub async fn carry(t: &Tx<'_>, person: &str, id: Uuid, schedules: &[OldSchedule]
     Ok(())
 }
 
-/// Marks conversation `id`'s old schedules `moved` (after its release committed): the old router fires none of them
-/// again. A failure is logged; the next release attempt or the operator runs it again ([`mismatches`] reports it).
+/// Marks conversation `id`'s old schedules `moved` on `pool` (writable), for a release whose old commit failed after
+/// magpie's had committed ([`claim`]): retried 5 times over about 30 s; a failure is logged and [`mismatches`] reports
+/// the rows.
 pub async fn mark_moved(pool: &Pool, id: Uuid) {
-    let r = async {
-        if !exists(pool).await? {
-            return Ok::<u64, crate::Error>(0);
+    let mut wait = std::time::Duration::from_secs(2);
+    for attempt in 1..=5 {
+        let r = async {
+            if !exists(pool).await? {
+                return Ok::<u64, crate::Error>(0);
+            }
+            Ok(pool
+                .get()
+                .await?
+                .execute(
+                    "update cc_shared.schedules set state = 'moved', next_at = null, updated_at = now()
+                     where conversation_id = $1 and state <> 'moved'",
+                    &[&id.to_string()],
+                )
+                .await?)
         }
-        Ok(pool
-            .get()
-            .await?
-            .execute(
-                "update cc_shared.schedules set state = 'moved', next_at = null, updated_at = now()
-                 where conversation_id = $1 and state <> 'moved'",
-                &[&id.to_string()],
-            )
-            .await?)
-    }
-    .await;
-    match r {
-        Ok(0) => {}
-        Ok(n) => tracing::info!(conversation = %id, schedules = n, "old schedules marked moved"),
-        Err(e) => tracing::warn!(conversation = %id, error = %e, "old schedules not marked moved"),
+        .await;
+        match r {
+            Ok(n) => {
+                tracing::info!(conversation = %id, schedules = n, "old schedules marked moved");
+                return;
+            }
+            Err(e) if attempt < 5 => {
+                tracing::warn!(conversation = %id, error = %e, attempt, "old schedules not marked moved; retrying");
+                tokio::time::sleep(wait).await;
+                wait *= 2;
+            }
+            Err(e) => tracing::error!(conversation = %id, error = %e, "old schedules not marked moved"),
+        }
     }
 }
 

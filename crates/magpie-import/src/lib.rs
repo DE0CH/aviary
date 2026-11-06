@@ -148,6 +148,9 @@ pub struct Importer {
     pub magpie: Arc<Magpie>,
     /// Database `cloudcli`, read-only.
     pub cloudcli: Pool,
+    /// Database `cloudcli`, writable, used only to take a releasing conversation's old schedules
+    /// ([`schedules::claim`]: `cc_shared.schedules` and `schedule_runs`).
+    pub cloudcli_schedules: Pool,
     /// Database `jarvis` (the view-as audit), read-only.
     pub jarvis: Pool,
     /// The `JuiceFS` mount (`/jfs`), read-only.

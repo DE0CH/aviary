@@ -205,6 +205,7 @@ impl World {
         Self {
             imp: Importer {
                 magpie: Arc::clone(&service.app),
+                cloudcli_schedules: cloudcli.clone(),
                 cloudcli,
                 jarvis,
                 jfs: jfs.0.clone(),

@@ -106,6 +106,14 @@ pub async fn connect_with(
         )
     }
     .map_err(|e| e.to_string())?;
+    // the old schedules' hand-over writes them (schedules::claim); nothing else is written on this pool
+    let cloudcli_schedules = aviary_pg::connect(
+        &env::required("MAGPIE_IMPORT_CLOUDCLI_URL"),
+        "magpie-import-schedules",
+        2,
+        Duration::from_secs(120),
+    )
+    .map_err(|e| e.to_string())?;
     let jarvis = aviary_pg::connect_read_only(
         &env::required("MAGPIE_IMPORT_JARVIS_URL"),
         "magpie-import",
@@ -116,6 +124,7 @@ pub async fn connect_with(
     let imp = Importer {
         magpie: service.app.clone(),
         cloudcli,
+        cloudcli_schedules,
         jarvis,
         jfs: PathBuf::from(JFS),
         juicefs: Some(PathBuf::from(JUICEFS)),

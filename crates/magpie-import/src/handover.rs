@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 use crate::gate;
 use crate::holds::RunningSet;
+use crate::schedules::Abort;
 use crate::kube::{self, Kube};
 use crate::uploads;
 use crate::{Error, Importer, Result};
@@ -658,52 +659,76 @@ async fn finish(imp: &Importer, o: &OpenRow, seen: &mut uploads::Seen, fenced: s
             return Ok(false);
         }
     };
-    // its schedules go with it (the old rows are marked moved once the release committed)
-    let schedules = match crate::schedules::read(&imp.cloudcli, o.id).await {
-        Ok(s) => s,
-        Err(e) => {
-            let _ = fence::unfence(pool, o.id).await;
-            tracing::warn!(conversation = %o.id, error = %e, "its schedules could not be read: unfenced");
-            return Ok(false);
-        }
-    };
+    // its schedules go with it: taken on the old database around magpie's release (schedules::claim), so no fire is
+    // made by both stacks or by neither
     let id = o.id;
-    let held = aviary_pg::tx!(pool, |t| -> Result<Result<fence::Released, fence::NotReleased>> {
-        imp.check_lock_in(t).await?;
-        let provisional: bool = t
-            .query_one("select name_source is null from conversations where id = $1", &[&id])
-            .await?
-            .get(0);
-        let r = fence::Release {
-            model: None,
-            name_source: provisional.then_some(NameSource::Title),
-        };
-        let out = fence::release_in(t, id, &r).await?;
-        if out.is_ok() {
-            t.execute(
-                "update import_sources set released_at = now(), release_reason = 'idle' where conversation_id = $1",
-                &[&id],
-            )
-            .await?;
-            crate::questions::carry(t, &o.person, id, &questions).await?;
-            crate::schedules::carry(t, &o.person, id, &schedules).await?;
+    let questions = &questions;
+    let committed: std::sync::Mutex<Option<fence::Released>> = std::sync::Mutex::new(None);
+    let committed_ref = &committed;
+    let held = aviary_pg::tx!(&imp.cloudcli_schedules, |old| -> std::result::Result<fence::Released, Abort> {
+        let claimed = crate::schedules::claim(old, id).await?;
+        if claimed.fired_within(QUIET) {
+            return Err(Abort::Fired);
         }
-        Ok(out)
+        let schedules = &claimed.schedules;
+        let r = aviary_pg::tx!(pool, |t| -> Result<Result<fence::Released, fence::NotReleased>> {
+            imp.check_lock_in(t).await?;
+            let provisional: bool = t
+                .query_one("select name_source is null from conversations where id = $1", &[&id])
+                .await?
+                .get(0);
+            let r = fence::Release {
+                model: None,
+                name_source: provisional.then_some(NameSource::Title),
+            };
+            let out = fence::release_in(t, id, &r).await?;
+            if out.is_ok() {
+                t.execute(
+                    "update import_sources set released_at = now(), release_reason = 'idle' where conversation_id = $1",
+                    &[&id],
+                )
+                .await?;
+                crate::questions::carry(t, &o.person, id, questions).await?;
+                crate::schedules::carry(t, &o.person, id, schedules).await?;
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(Abort::Failed)?;
+        match r {
+            Ok(r) => {
+                *committed_ref.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(r);
+                Ok(r)
+            }
+            Err(why) => Err(Abort::NotReleased(why)),
+        }
     })
     .await;
-    match held {
-        Ok(Ok(r)) => {
-            crate::schedules::mark_moved(&imp.cloudcli, id).await;
+    let magpie_released = *committed.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    match (held, magpie_released) {
+        (Ok(r), _) => {
             r.record(&imp.magpie.legacy);
             tracing::info!(conversation = %o.id, held_s = r.held, in_fence_ms = fenced.elapsed().as_millis(), "released");
             Ok(true)
         }
-        Ok(Err(why)) => {
+        (Err(e), Some(r)) => {
+            // magpie released it; the old database's commit failed, so its rows are marked moved apart
+            tracing::warn!(conversation = %o.id, error = ?e, "released, but the old schedules' commit failed");
+            crate::schedules::mark_moved(&imp.cloudcli_schedules, id).await;
+            r.record(&imp.magpie.legacy);
+            Ok(true)
+        }
+        (Err(Abort::Fired), None) => {
+            let _ = fence::unfence(pool, o.id).await;
+            tracing::info!(conversation = %o.id, "a schedule of it fired within the quiet period: unfenced");
+            Ok(false)
+        }
+        (Err(Abort::NotReleased(why)), None) => {
             let _ = fence::unfence(pool, o.id).await;
             tracing::warn!(conversation = %o.id, why = ?why, "the release found it changed: unfenced");
             Ok(false)
         }
-        Err(e) => {
+        (Err(Abort::Failed(e)), None) => {
             let _ = fence::unfence(pool, o.id).await;
             Err(e)
         }

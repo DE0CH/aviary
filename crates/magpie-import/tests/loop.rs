@@ -652,3 +652,175 @@ async fn a_parked_old_question_is_carried_over_and_an_answered_one_waits() {
     assert_eq!(start["answers"][0]["updatedInput"]["answers"]["Which?"], "A");
     assert!(start["resume"]["providerSessionId"].is_string(), "{start}");
 }
+
+/// The old router's schedule tables (claudecodeui `jarvis/schedules.mjs`).
+const OLD_SCHEDULES: &str = "
+create schema if not exists cc_shared;
+create table cc_shared.schedules (id text primary key, person text not null, conversation_id text not null,
+  kind text not null, prompt text not null, at timestamptz, cron text, tz text not null, until timestamptz,
+  describe text not null, next_at timestamptz, state text not null, created_at timestamptz not null default now(),
+  created_by text not null, updated_at timestamptz not null default now(), deleted_at timestamptz);
+create table cc_shared.schedule_runs (schedule_id text not null, due_at timestamptz not null,
+  at timestamptz not null default now(), outcome text not null, conversation_id text not null, detail text,
+  primary key (schedule_id, due_at));";
+
+/// One active repeating schedule of conversation `c` (`sch_<tag>`, next fire in an hour) with one run, `ago` before.
+async fn old_schedule(w: &World, tag: &str, c: Uuid, ago: &str) {
+    w.cloudcli(&format!(
+        "insert into cc_shared.schedules (id, person, conversation_id, kind, prompt, cron, tz, describe, next_at, state,
+                                          created_by)
+           values ('sch_{tag}', '{ALICE}', '{c}', 'cron', 'report', '0 9 * * *', 'Asia/Hong_Kong', '每日 09:00',
+                   date_trunc('second', now()) + interval '1 hour', 'active', '{ALICE}');
+         insert into cc_shared.schedule_runs (schedule_id, due_at, at, outcome, conversation_id)
+           values ('sch_{tag}', now() - interval '{ago}', now() - interval '{ago}', 'sent', '{c}');"
+    ))
+    .await;
+}
+
+/// The old row's state and next time; magpie's copy's next time (`None`: magpie has no row).
+async fn schedule_state(
+    w: &World,
+    tag: &str,
+) -> (String, Option<time::OffsetDateTime>, Option<Option<time::OffsetDateTime>>) {
+    let old = w
+        .imp
+        .cloudcli
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select state, next_at from cc_shared.schedules where id = $1",
+            &[&format!("sch_{tag}")],
+        )
+        .await
+        .unwrap();
+    let new = w
+        .magpie()
+        .get()
+        .await
+        .unwrap()
+        .query_opt("select next_at from schedules where id = $1", &[&format!("sch_{tag}")])
+        .await
+        .unwrap()
+        .map(|r| r.get(0));
+    (old.get(0), old.get(1), new)
+}
+
+/// A conversation's old schedules move at its release with no fire made by both stacks or by neither (2026-11-06):
+/// the hand-over process, whose other connections to the old database are read-only, takes the rows on its one
+/// writable connection around magpie's release (marked `moved` there, carried with the same next time); a schedule
+/// the old router fired within the quiet period, or is firing at that moment (its row locked), keeps the
+/// conversation legacy with the rows active and the fire's next time, and a later pass carries that next time.
+#[tokio::test]
+async fn old_schedules_move_at_the_release_and_a_fire_keeps_the_conversation_legacy() {
+    let w = World::new("loop_schedules").await;
+    w.jarvis("create table sandboxes (id uuid primary key, conversation_id uuid not null, status text not null)")
+        .await;
+    w.cloudcli(OLD_SCHEDULES).await;
+    let ka = w.person(ALICE).await;
+    let schema = format!("cc_{ka}");
+    let quiet = conversation(&w, &ka, "Quiet").await;
+    let fired = conversation(&w, &ka, "Fired").await;
+    let firing = conversation(&w, &ka, "Firing").await;
+    old_schedule(&w, "quiet", quiet, "1 day").await;
+    old_schedule(&w, "fired", fired, "20 seconds").await;
+    old_schedule(&w, "firing", firing, "1 day").await;
+    // the hand-over process's own connections: the old database read-only but for the schedules' one
+    let imp = magpie_import::Importer {
+        cloudcli: aviary_pg::connect_read_only(
+            &w.cloudcli_db.url,
+            "magpie-import-ro",
+            2,
+            std::time::Duration::from_secs(30),
+        )
+        .unwrap(),
+        ..w.imp.clone()
+    };
+    let fake: Fake = Arc::new(Mutex::new(Old::default()));
+    {
+        let mut o = fake.lock().unwrap();
+        o.pods = vec![("ui-a".into(), false)];
+        o.children.insert("ui-a".into(), vec![(schema.clone(), true, vec![])]);
+        o.reports.insert("ui-a".into(), (0, 0));
+    }
+    let base = serve(fake.clone()).await;
+    let kube = Kube::new(&base, "t0ken", None).unwrap();
+    let mut h = Handover::new(kube.clone(), "sw".into());
+    h.pass(&imp).await.unwrap();
+    let (_, firing_next, _) = schedule_state(&w, "firing").await;
+
+    // the old router is firing `firing`'s schedule (its row locked) when the release takes the rows: the claim waits
+    // for it, sees its run and leaves the conversation legacy
+    let (locked_tx, locked) = tokio::sync::oneshot::channel();
+    let pool = w.imp.cloudcli.clone();
+    let fire = tokio::spawn(async move {
+        aviary_pg::tx!(&pool, |t| {
+            t.query("select id from cc_shared.schedules where id = 'sch_firing' for update", &[])
+                .await?;
+            let _ = locked_tx.send(());
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            t.execute(
+                "insert into cc_shared.schedule_runs (schedule_id, due_at, outcome, conversation_id)
+                 select id, next_at, 'sent', conversation_id from cc_shared.schedules where id = 'sch_firing'",
+                &[],
+            )
+            .await?;
+            t.execute(
+                "update cc_shared.schedules set next_at = next_at + interval '1 day' where id = 'sch_firing'",
+                &[],
+            )
+            .await?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    });
+    locked.await.unwrap();
+    assert!(handover::allow(&imp, &kube, "sw", None).await.unwrap().1);
+    for _ in 0..3 {
+        h.pass(&imp).await.unwrap();
+    }
+    fire.await.unwrap();
+
+    // quiet: released; its schedule is magpie's with the same next time and the old row will never fire again
+    assert_eq!(released(&w, quiet).await.as_deref(), Some("idle"));
+    let (state, next, new) = schedule_state(&w, "quiet").await;
+    assert_eq!((state.as_str(), next), ("moved", None));
+    assert!(new.flatten().is_some(), "carried with its next time");
+    let runs: i64 = w
+        .magpie()
+        .get()
+        .await
+        .unwrap()
+        .query_one("select count(*) from schedule_runs where schedule_id = 'sch_quiet'", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(runs, 1);
+
+    // fired 20 s ago, and firing during the release: both legacy, rows active, nothing in magpie
+    for (id, tag) in [(fired, "fired"), (firing, "firing")] {
+        assert_eq!(released(&w, id).await, None, "{tag}");
+        let (state, _, new) = schedule_state(&w, tag).await;
+        assert_eq!((state.as_str(), new), ("active", None), "{tag}");
+    }
+    let (_, next_after_fire, _) = schedule_state(&w, "firing").await;
+    assert_eq!(
+        next_after_fire,
+        firing_next.map(|t| t + time::Duration::days(1)),
+        "the fire moved it on"
+    );
+
+    // once the fires are past the quiet period a later pass carries them, with the fire's next time and run
+    w.cloudcli("update cc_shared.schedule_runs set at = at - interval '2 minutes'").await;
+    for _ in 0..2 {
+        h.pass(&imp).await.unwrap();
+    }
+    for (id, tag) in [(fired, "fired"), (firing, "firing")] {
+        assert_eq!(released(&w, id).await.as_deref(), Some("idle"), "{tag}");
+        let (state, _, _) = schedule_state(&w, tag).await;
+        assert_eq!(state, "moved", "{tag}");
+    }
+    let (_, _, new) = schedule_state(&w, "firing").await;
+    assert_eq!(new, Some(next_after_fire), "magpie fires the next time after the old fire, never that one again");
+}
