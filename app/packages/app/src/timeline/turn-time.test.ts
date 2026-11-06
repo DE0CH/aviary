@@ -218,4 +218,113 @@ describe("deriveStreamTurnTiming", () => {
       durationMs: 3000,
     });
   });
+
+  describe("question waits (YYC DECISIONS 17)", () => {
+    const t = (clock: string) => new Date(`2026-11-06T${clock}.000Z`);
+    function question(
+      id: string,
+      timestamp: Date,
+      opts: { name?: string; status?: "running" | "completed" | "failed" | "canceled"; answeredAt?: string; turnId?: string } = {},
+    ): StreamItem {
+      return {
+        kind: "tool_call",
+        id,
+        timestamp,
+        ...(opts.turnId ? { turnId: opts.turnId } : {}),
+        payload: {
+          source: "agent",
+          data: {
+            provider: "claude",
+            callId: id,
+            name: opts.name ?? "AskUserQuestion",
+            status: opts.status ?? "completed",
+            error: null,
+            detail: { type: "unknown", input: null, output: null },
+            ...(opts.answeredAt ? { metadata: { answeredAt: opts.answeredAt } } : {}),
+          },
+        },
+      };
+    }
+    const derive = (items: StreamItem[]) =>
+      deriveStreamTurnTiming({ isTurnActive: false, activeTurnStartedAt: null, tail: items, head: [] });
+
+    it("leaves the wait for an answer out of the working time (answeredAt)", () => {
+      // R1 C: asked 13:36:10, answered 42 minutes later, the reply 20 s after the answer
+      const timing = derive([
+        user("u", t("05:36:00")),
+        question("q", t("05:36:10"), { answeredAt: "2026-11-06T06:18:37.000Z" }),
+        assistant("a", t("06:18:57")),
+      ]);
+      assert.equal(timing.byAssistantId.get("a")?.durationMs, 30_000);
+    });
+
+    it("counts each answered question of the turn, and a plan approval too", () => {
+      const timing = derive([
+        user("u", t("01:00:00")),
+        question("q1", t("01:00:05"), { answeredAt: "2026-11-06T01:10:05.000Z" }),
+        assistant("a1", t("01:10:07")),
+        question("q2", t("01:10:10"), { name: "plan_approval", answeredAt: "2026-11-06T02:00:00.000Z" }),
+        assistant("a2", t("02:00:03")),
+      ]);
+      // 5 s + 2 s + 3 s + 3 s of work
+      assert.equal(timing.byAssistantId.get("a2")?.durationMs, 13_000);
+    });
+
+    it("an answered question without an answer time waits until the turn's next item", () => {
+      const timing = derive([
+        user("u", t("03:00:00")),
+        assistant("a0", t("03:00:04")),
+        question("q", t("03:00:06")),
+        assistant("a", t("03:45:00")),
+      ]);
+      assert.equal(timing.byAssistantId.get("a")?.durationMs, 6_000);
+    });
+
+    it("a question still open, or one that is not a question, takes nothing off", () => {
+      const open = derive([
+        user("u", t("04:00:00")),
+        question("q", t("04:00:02"), { status: "running" }),
+        assistant("a", t("04:00:09")),
+      ]);
+      assert.equal(open.byAssistantId.get("a")?.durationMs, 9_000);
+      const bash = derive([
+        user("u", t("04:00:00")),
+        question("b", t("04:00:02"), { name: "Bash" }),
+        assistant("a", t("04:05:00")),
+      ]);
+      assert.equal(bash.byAssistantId.get("a")?.durationMs, 300_000);
+    });
+
+    it("a wait never counts past the turn's last item, nor into the next turn", () => {
+      const timing = derive([
+        user("u1", t("05:00:00")),
+        assistant("a1", t("05:00:04")),
+        question("q", t("05:00:06"), { status: "canceled", answeredAt: "2026-11-06T06:00:00.000Z" }),
+        user("u2", t("05:30:00")),
+        assistant("a2", t("05:30:05")),
+      ]);
+      assert.equal(timing.byAssistantId.get("a1")?.durationMs, 6_000);
+      assert.equal(timing.byAssistantId.get("a2")?.durationMs, 5_000);
+    });
+
+    it("a turn resumed under the same turn id after its question keeps one footer without the wait", () => {
+      const timing = derive([
+        { ...user("u", t("06:00:00")), turnId: "T" },
+        question("q", t("06:00:03"), { turnId: "T", answeredAt: "2026-11-06T07:00:00.000Z" }),
+        { ...assistant("a", t("07:00:10")), turnId: "T" },
+      ]);
+      assert.equal(timing.byAssistantId.get("a")?.durationMs, 13_000);
+    });
+
+    it("the head walked from the tail's open turn carries the wait", () => {
+      const tail = [user("u", t("08:00:00")), question("q", t("08:00:02"), { answeredAt: "2026-11-06T08:30:00.000Z" })];
+      const timing = deriveStreamTurnTiming({
+        isTurnActive: false,
+        activeTurnStartedAt: null,
+        tail,
+        head: [assistant("a", t("08:30:04"))],
+      });
+      assert.equal(timing.byAssistantId.get("a")?.durationMs, 6_000);
+    });
+  });
 });
