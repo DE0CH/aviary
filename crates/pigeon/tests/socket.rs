@@ -925,13 +925,11 @@ async fn rename_delete_restore_and_asks() {
     )
     .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
-    let st = e.m.st();
-    let (_, ask2, r) = st.answers.iter().find(|a| a.1 == "ask-2").unwrap();
-    assert_eq!(ask2, "ask-2");
+    let answers = e.m.st().answers.clone();
+    let (_, _, r) = answers.iter().find(|a| a.1 == "ask-2").unwrap();
     let input = r.updated_input.as_ref().unwrap();
     assert_eq!(input["answers"], json!({"Do you prefer Red or Blue?": "Blue"}));
     assert_eq!(input["questions"], asked["questions"]);
-    drop(st);
     e.m.change(
         d,
         ChangeBody::AskResolved(magpie_api::changes::AskResolvedChange {
