@@ -154,7 +154,8 @@ skill `schedules` teaches (old stack: the router's `jarvis/schedules.mjs` behind
 magpie's `/v1/sandbox/schedules`). The same app shows both, without buttons (changes go through the chat):
 
 - the API call (a `curl` the AI runs) as a card, 「已設定排程：每個工作日 08:30」 and the next time
-  (`yyc/schedules.tsx` ScheduleToolCard, read by `yyc/schedules-text.ts` readScheduleCall);
+  (`yyc/schedules.tsx` ScheduleToolCard, read by `yyc/schedules-text.ts` readScheduleCall from the call's output);
+  like SendUserFile's cards it is never folded into a group or a finished turn's summary (isScheduleCallDetail);
 - a fired message, `<scheduled-message rule="…">prompt</scheduled-message>`, as a 排程訊息 bubble under a divider
   (ScheduledMessage);
 - 「n 個排程」 in the conversation's header, opening a panel beside the chat (full screen with a back arrow on a phone)
