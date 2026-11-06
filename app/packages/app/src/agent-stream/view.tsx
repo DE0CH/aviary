@@ -1,4 +1,5 @@
 import { openConversationFile, readSendUserFileCaption, readSentFiles, SentFilesCards, useConversationFileUrl } from "@/yyc/sent-files";
+import { parseScheduledMessage, readScheduleCall, ScheduledMessage, ScheduleToolCard } from "@/yyc/schedules";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -697,7 +698,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const renderUserMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "user_message" }>) => {
         const collapsedTurn = getCollapsedTurn(item.id);
-        const message = (
+        // a schedule's message (yyc/schedules.tsx): marked as the schedule's, not the person's
+        const scheduled = parseScheduledMessage(item.text);
+        const message = scheduled ? (
+          <ScheduledMessage rule={scheduled.rule} prompt={scheduled.prompt} timestamp={item.timestamp.getTime()} />
+        ) : (
           <UserMessage
             serverId={resolvedServerId}
             agentId={agentId}
@@ -794,6 +799,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
         if (payload.source === "agent") {
           const data = payload.data;
+
+          // the AI's schedules API call (yyc/schedules.tsx): a card with what was set, once its answer is in
+          if (data.detail.type === "shell") {
+            const call = readScheduleCall(data.detail.command, data.detail.output);
+            if (call) return <ScheduleToolCard sessionId={agentId} call={call} />;
+          }
 
           if (data.name === "SendUserFile") {
             return (

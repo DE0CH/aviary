@@ -8,6 +8,8 @@ import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import type { LayoutChangeEvent } from "react-native";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
+import { ScheduleChip, SchedulesPanel } from "@/yyc/schedules";
+import { sessionIdOfWorkspace } from "@/yyc/api";
 import { ExplorerFrame } from "./explorer-sidebar/frame";
 import { WorkspaceTabDragScope } from "@/components/workspace-tab-drag-scope";
 import {
@@ -3168,6 +3170,8 @@ function WorkspaceScreenContent({
   const headerRight = useMemo(
     () => (
       <View style={styles.headerRight}>
+        {/* the conversation's schedules (yyc/schedules.tsx) */}
+        <ScheduleChip sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} />
         <PluginHeaderButtons serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
         {workspaceDescriptor && workspaceDescriptor.scripts.length > 0 ? (
           <WorkspaceScriptsButton
@@ -3335,6 +3339,7 @@ function WorkspaceScreenContent({
           explorerToggleLabel={explorerSidebarToggleLabel}
           explorerToggleAccessibilityState={explorerSidebarToggleAccessibilityState}
         >
+          <ScheduleChip sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} />
           <WorkspaceHeaderMenuMobile
             normalizedServerId={normalizedServerId}
             normalizedWorkspaceId={normalizedWorkspaceId}
@@ -3689,6 +3694,7 @@ function WorkspaceScreenContent({
             >
               {workspaceCenterColumn}
               {sharedExplorer}
+              <SchedulesPanel sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} compact={isMobile} />
             </WorkspaceTabDragScope>
           </FloatingPanelPortalHostNameProvider>
           <FloatingPanelPortalHost name={workspaceFloatingPanelPortalHostName} />
