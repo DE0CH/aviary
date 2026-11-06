@@ -118,22 +118,40 @@ pub async fn handover(imp: Importer, ops: ops::Ops) -> ExitCode {
     }
 }
 
-/// Runs one pass on a blocking-pool thread (`Handle::block_on` there), so the pass's synchronous work (the `JuiceFS`
-/// tree walks, reads and hashes through FUSE, a 57 s pass on 2026-11-06) never holds a runtime worker. The pod's
-/// one CPU gives the runtime one worker; a pass on it starved the leader connection's 1 s check, the listener's
-/// 5 s ping and new pool connections, and the leader lost the lock about every 10 min ("leader: connection check
-/// timed out"). The pass's futures still run on this runtime's drivers (timers, sockets, spawned connection
-/// tasks), which the free worker keeps polling. A `current_thread` runtime (no free worker) runs the pass inline.
+/// The passes' own runtime ([`crate::pass::PARALLEL`] workers, built once, never dropped), apart from the process's.
+/// A pass and the sync tasks it spawns (its `JoinSet`) do synchronous work: the `JuiceFS` tree walks, reads and
+/// hashes through FUSE, seconds at a time. On the process's runtime (one worker: the pod has one CPU) that work
+/// starved the leader connection's 1 s check, the listener's 5 s ping, new pool connections and the ops port: a
+/// probe from the pod's network namespace saw `/healthz` answer after 9.5 s once a minute while magpie-pg answered in
+/// 47 ms, and the leader lost the lock about every 10 min ("leader: connection check timed out", 2026-11-06). `None`
+/// when it cannot be built (the pass then runs on the process's runtime, as before).
+fn pass_runtime() -> Option<&'static tokio::runtime::Runtime> {
+    static RT: std::sync::OnceLock<Option<tokio::runtime::Runtime>> = std::sync::OnceLock::new();
+    RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(crate::pass::PARALLEL)
+            .thread_name("import-pass")
+            .enable_all()
+            .build()
+            .map_err(|e| tracing::error!(error = %e, "the passes' runtime was not built: passes share the process's"))
+            .ok()
+    })
+    .as_ref()
+}
+
+/// Runs one pass on [`pass_runtime`]: `block_on` on a blocking-pool thread, so the tasks the pass spawns land on the
+/// passes' runtime and none of its work holds the process's worker. A `current_thread` runtime (tests) or no passes'
+/// runtime runs the pass inline.
 async fn pass_apart(
     mut h: Handover,
     imp: Arc<Importer>,
 ) -> Result<(Handover, crate::Result<crate::handover::PassInfo>), tokio::task::JoinError> {
-    let rt = tokio::runtime::Handle::current();
-    if rt.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
+    let inline = tokio::runtime::Handle::current().runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread;
+    let Some(rt) = pass_runtime().filter(|_| !inline) else {
         // boxed: the pass's future inline here overflows the layout query depth of `cli`'s block
         let r = Box::pin(h.pass(&imp)).await;
         return Ok((h, r));
-    }
+    };
     tokio::task::spawn_blocking(move || {
         let r = rt.block_on(h.pass(&imp));
         (h, r)
