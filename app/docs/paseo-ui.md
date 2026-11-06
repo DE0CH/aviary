@@ -166,7 +166,13 @@ conversation is idle (the Paseo hub's send when a tab is open, else a detached r
 one runs (`injectClaudeSDKMessage`: Claude Code takes it in at its next tool result or when the model stops; a message
 it took in shows in the history from Claude Code's `queued_command` attachment). Claude Code's own CronCreate, CronList,
 CronDelete and ScheduleWakeup are disallowed in Jarvis mode. The admin page is `/ops/schedules` (English, admins only:
-everyone's schedules, their runs, the pause-all switch).
+everyone's schedules with their conversation's title, their runs, the pause-all switch).
+
+A run's outcome in the panel: 已回覆 once the conversation answered the fired message (`answered`,
+`answered_mid_turn`), 已送出，等待回覆 until then (`sent`, `sent_mid_turn`), 已送出，未有回覆 when that turn failed or
+was stopped (`unanswered`), and the skips (服務暫停，已略過 …). On the old stack the process records it: the delivery
+marks the run as waiting (claude-runtime's `awaitScheduleAnswer`) and the conversation's next `result` settles it into
+`cc_shared.schedule_runs` (jarvis-schedules.routes.ts `recordScheduleAnswers`); magpie reads it from the run's turn.
 
 ## Loading
 
