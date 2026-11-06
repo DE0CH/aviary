@@ -68,6 +68,9 @@ pigeon fronts the conversations the old stack still owns (DESIGN 9.2-9.5). `App:
 person every 2 s at most (`GET /v1/legacy/window`).
 - **Ownership** is what magpie last said per conversation (`migrating`), learnt from every list answer, conversation
   read and person change, and looked up for a conversation pigeon has not read while the person has legacy ones.
+  One magpie answers 404 then is the old stack's (made on the old path since the importer's last pass: everything
+  made natively is in magpie from its first answer), served through LU like any legacy one, so its tab streams and
+  its release sends its replacement (`pigeon_legacy_unknown_total`; rehearsal R1, 2026-11-06).
   Each entry keeps the instant it holds as of (a read's send time; a change's or ticket answer's arrival): an older
   observation changes nothing, and one that says the owner changed is acted on only once a fresh conversation read
   confirms it (a list answered late, or a change that lags a ticket's answer, never flips the owner back). A ticket's
@@ -140,8 +143,8 @@ person every 2 s at most (`GET /v1/legacy/window`).
   look-back, so the runner treats that as "activity unknown" and moves nobody.
 - **Counters** (DESIGN 9.9; registry prefix `pigeon`): `pigeon_switch_write_refused_total`, `pigeon_lu_errors_total`,
   `pigeon_lu_503_total`, `pigeon_lu_401_total` (DESIGN's `lu_401_total`), `pigeon_upload_tee_failed_total`,
-  `pigeon_legacy_replacements_total`, `pigeon_legacy_release_unread_total`, `pigeon_lu_reopened_total`, the gauge
-  `pigeon_lu_sockets`.
+  `pigeon_legacy_replacements_total`, `pigeon_legacy_release_unread_total`, `pigeon_lu_reopened_total`,
+  `pigeon_legacy_unknown_total`, the gauge `pigeon_lu_sockets`.
 - **Tests**: `tests/legacy.rs` against the LU contract rig (`tests/common/old.rs`, a fake old router speaking the
   bridge's protocol for what pigeon relays, with the old child's busy state, and the window's routes in
   `tests/common/model.rs`, whose tickets follow magpie's reuse, supersede and hold rules): a running old turn streams

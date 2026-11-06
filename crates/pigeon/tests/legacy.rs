@@ -487,6 +487,78 @@ async fn one_replacement_per_subscribed_socket_at_release_and_none_before() {
     assert!(e.old.agent(c).sends.is_empty());
 }
 
+/// A conversation made on the old path since the importer's last pass (rehearsal R1, 2026-11-06: created under a
+/// minute before the move): magpie answers 404 while the person has legacy conversations, so it is the old stack's.
+/// A tab that subscribed before pigeon knew gets one replacement in the old child's epoch and the LU feed; the old
+/// turn streams to it; a send waits for the import and reaches the old child once; the release repaints the tab once.
+#[tokio::test]
+async fn a_conversation_magpie_does_not_know_yet_is_the_old_stack_s_until_its_release() {
+    let e = env().await;
+    let _known = e.legacy(STAFF);
+    let c = Uuid::new_v4();
+    e.old.add(c, STAFF);
+    e.old.st().agents.get_mut(&c).unwrap().running = true;
+    let mut ws = e.ws(STAFF).await;
+    list(&mut ws).await;
+    // the moved tab resubscribes first, then reads its timeline
+    let sub = watch(&mut ws, &[c]).await;
+    let (_, page) = ws
+        .rpc(
+            "fetch_agent_timeline_request",
+            json!({"agentId": c, "direction": "tail", "limit": 50}),
+        )
+        .await;
+    let old_epoch = e.old.agent(c).epoch;
+    assert_eq!(page["epoch"], old_epoch, "served by the old child: {page}");
+    let r = ws.next_session("agent.timeline.replacement").await;
+    assert_eq!(r["agentId"], c.to_string());
+    assert_eq!(r["epoch"], old_epoch, "{r}");
+    assert_eq!(e.metric("pigeon_legacy_unknown_total"), 1.0);
+    until("the LU subscribed", || {
+        e.old.st().seen.iter().any(|s| s.1.as_deref() == Some(LU_PAIR))
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let seq = e
+        .old
+        .stream_row(c, json!({"type": "assistant_message", "text": "還在做"}));
+    let v = ws.wait_for("the old row", |v| is_stream(v, c)).await;
+    assert_eq!(v["message"]["payload"]["subscriptionId"], sub);
+    assert_eq!(v["message"]["payload"]["seq"], seq);
+    // the turn ends; a send before the import waits for it (magpie's ticket needs the row) and goes once
+    e.old.end_turn(c);
+    let m = e.m.clone();
+    let import = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        m.add_legacy_id(STAFF, c, Some("舊對話"));
+    });
+    let r = send(&mut ws, c, "m-1", json!({})).await;
+    import.await.unwrap();
+    assert_eq!(r["accepted"], true, "{r}");
+    let a = e.old.agent(c);
+    assert_eq!(a.sends.len(), 1);
+    assert_eq!(a.sends[0].0, "m-1");
+    assert_eq!(e.m.calls_to("send_turn"), 0);
+    e.m.wait_tickets(|t| t.iter().any(|t| t.outcome == Some(TicketOutcome::Started)))
+        .await;
+    e.old.end_turn(c);
+    // the release: one replacement in magpie's epoch
+    let before = ws
+        .drain_for(Duration::from_millis(300))
+        .await
+        .into_iter()
+        .filter(|v| v["message"]["type"] == "agent.timeline.replacement")
+        .count();
+    assert_eq!(before, 0, "none between the owner being learnt and the release");
+    assert!(e.m.try_release(c));
+    let epoch = e.m.epoch(c);
+    let r = ws.next_session("agent.timeline.replacement").await;
+    assert_eq!(r["agentId"], c.to_string());
+    assert_eq!(r["epoch"], epoch, "{r}");
+    assert_eq!(e.metric("pigeon_switch_write_refused_total"), 0.0);
+    assert_eq!(e.metric("pigeon_lu_errors_total"), 0.0);
+}
+
 /// A send whose ticket finds the conversation released (the fence won) is a native send; one written to a
 /// conversation pigeon read as owned that magpie answers 409 `route: "legacy"` goes through LU (the re-route).
 #[tokio::test]

@@ -1065,12 +1065,13 @@ impl Handler {
         );
     }
 
-    /// 7.5.9: the answer goes to magpie as is; the protocol has no reply.
+    /// 7.5.9: the answer goes to magpie with its answers keyed as Claude Code reads them ([`answers_by_question`]);
+    /// the protocol has no reply.
     async fn answer(&self) {
         let (Some(id), Some(ask)) = (self.agent_id(), str_field(&self.m, "requestId")) else {
             return;
         };
-        let Some(response) = self
+        let Some(mut response) = self
             .m
             .get("response")
             .and_then(|r| serde_json::from_value::<AgentPermissionResponse>(r.clone()).ok())
@@ -1078,6 +1079,9 @@ impl Handler {
             tracing::warn!("ask answer without a response");
             return;
         };
+        if let Some(input) = response.updated_input.as_mut() {
+            answers_by_question(input);
+        }
         if let Err(e) = self.calls().answer_ask(id, ask, &response).await {
             let f = fail(e);
             if self.rerouted(&f).await {
@@ -1116,6 +1120,49 @@ impl Handler {
     }
 }
 
+/// The app's question card keys each `AskUserQuestion` answer by the question's `header`
+/// (`buildQuestionFormAnswers`); Claude Code, the supervisor's answer message and the old stack (claudecodeui
+/// `answersByQuestionText`) read them by the question's text. A key that is a header of the input's `questions` (and
+/// not also a question's text) becomes that question's text; other keys stay. Rehearsal R1 (2026-11-06): an answer
+/// "Blue" keyed `Color choice` reached the agent as "The user did not answer the questions."
+pub fn answers_by_question(input: &mut Map<String, Value>) {
+    let Some(Value::Object(answers)) = input.get("answers") else {
+        return;
+    };
+    let questions = input
+        .get("questions")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let mut out = Map::new();
+    // a key that already is a question's text first: a header given beside it does not replace its answer
+    for (k, v) in answers {
+        if question_text(questions, k) == Some(k.as_str()) {
+            out.insert(k.clone(), v.clone());
+        }
+    }
+    for (k, v) in answers {
+        let key = question_text(questions, k).unwrap_or(k.as_str());
+        if !out.contains_key(key) {
+            out.insert(key.to_owned(), v.clone());
+        }
+    }
+    input.insert("answers".to_owned(), Value::Object(out));
+}
+
+/// The text of the question `key` names: the question whose text it is, else the first whose header it is.
+fn question_text<'a>(questions: &'a [Value], key: &str) -> Option<&'a str> {
+    let text = |q: &'a Value| q.get("question").and_then(Value::as_str);
+    questions
+        .iter()
+        .find_map(|q| text(q).filter(|t| *t == key))
+        .or_else(|| {
+            questions
+                .iter()
+                .find(|q| q.get("header").and_then(Value::as_str) == Some(key))
+                .and_then(text)
+        })
+}
+
 /// A base64 text decoded 1 MiB at a time (7.5.4: never a second full copy of the image).
 fn decode_slices(
     data: String,
@@ -1139,4 +1186,44 @@ fn decode_slices(
 #[must_use]
 pub fn frame(kind: &str, payload: &Value) -> String {
     session(kind, payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn answers_keyed_by_header_are_keyed_by_the_question_s_text() {
+        // the app's card as it answered rehearsal R1's question
+        let mut input = json!({
+            "questions": [
+                {"question": "Do you prefer Red or Blue?", "header": "Color choice", "multiSelect": false,
+                 "options": [{"label": "Red"}, {"label": "Blue"}]},
+                {"question": "Why?", "header": "Reason", "options": []},
+            ],
+            "answers": {"Color choice": "Blue", "Why?": "calm", "elsewhere": "x"},
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+        answers_by_question(&mut input);
+        assert_eq!(
+            input["answers"],
+            json!({"Do you prefer Red or Blue?": "Blue", "Why?": "calm", "elsewhere": "x"})
+        );
+        // a text and its header both given: the text's answer stands
+        let mut both = json!({"questions": [{"question": "Q?", "header": "H"}], "answers": {"H": "a", "Q?": "b"}})
+            .as_object()
+            .cloned()
+            .unwrap();
+        answers_by_question(&mut both);
+        assert_eq!(both["answers"], json!({"Q?": "b"}));
+        // no answers, or answers with no questions: unchanged
+        let mut plain = json!({"plan": "1."}).as_object().cloned().unwrap();
+        answers_by_question(&mut plain);
+        assert_eq!(Value::Object(plain), json!({"plan": "1."}));
+        let mut bare = json!({"answers": {"Which?": "A"}}).as_object().cloned().unwrap();
+        answers_by_question(&mut bare);
+        assert_eq!(bare["answers"], json!({"Which?": "A"}));
+    }
 }

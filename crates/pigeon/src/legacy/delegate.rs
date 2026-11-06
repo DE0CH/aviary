@@ -92,6 +92,13 @@ const COPY_READ_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long after an LU drop pigeon waits before it asks for the reopened LU (past a blip, as `lu_ended` does).
 const LU_REOPEN_WAIT: Duration = Duration::from_millis(400);
 
+/// How long a write to a conversation magpie does not know yet (made on the old path since the importer's last pass,
+/// a pass every 5 s) waits for its import before it is answered not found.
+const UNKNOWN_IMPORT_WAIT: Duration = Duration::from_secs(30);
+
+/// Between its ticket calls meanwhile.
+const UNKNOWN_IMPORT_RETRY: Duration = Duration::from_secs(1);
+
 /// The legacy delegate installed for every legacy conversation.
 pub(crate) struct LegacyDelegate(pub(crate) Legacy);
 
@@ -283,18 +290,35 @@ impl Legacy {
             route: "legacy_ticket",
             error: "pigeon is not started".into(),
         })?;
-        let sent = Instant::now();
-        let t = conn
-            .calls(&app.0.magpie_turns)
-            .legacy_ticket(
-                c,
-                &TicketRequest {
-                    kind,
-                    client_message_id: cmid,
-                },
-            )
-            .await?;
-        Ok((t, sent))
+        let until = Instant::now() + UNKNOWN_IMPORT_WAIT;
+        loop {
+            let sent = Instant::now();
+            match conn
+                .calls(&app.0.magpie_turns)
+                .legacy_ticket(
+                    c,
+                    &TicketRequest {
+                        kind,
+                        client_message_id: cmid.clone(),
+                    },
+                )
+                .await
+            {
+                Ok(t) => return Ok((t, sent)),
+                // a conversation pigeon took as the old stack's because magpie did not know it yet
+                // ([`Legacy::unknown_to_magpie`]) gets its ticket once the importer's next pass has imported it
+                Err(e)
+                    if e.api().is_some_and(|r| r.status == 404)
+                        && self.is_legacy(&conn.person, &c) == Some(true)
+                        && Instant::now() + UNKNOWN_IMPORT_RETRY < until
+                        && !conn.is_closing() =>
+                {
+                    tracing::info!(conversation = %c, "ticket: magpie does not know the conversation yet; waiting");
+                    tokio::time::sleep(UNKNOWN_IMPORT_RETRY).await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     /// Reports a ticket's outcome under its take (retried in the background: until it lands the importer keeps the

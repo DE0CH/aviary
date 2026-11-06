@@ -173,6 +173,9 @@ pub struct Metrics {
     /// `pigeon_legacy_release_unread_total`: releases whose magpie epoch could not be read (the watching sockets
     /// were closed 1012 to resubscribe instead).
     pub release_unread: Counter,
+    /// `pigeon_legacy_unknown_total`: conversations magpie did not know (404) while their person had legacy ones,
+    /// taken as the old stack's (made on the old path since the importer's last pass).
+    pub unknown_legacy: Counter,
 }
 
 impl Metrics {
@@ -187,6 +190,7 @@ impl Metrics {
             lu_sockets: Gauge::default(),
             lu_reopened: Counter::default(),
             release_unread: Counter::default(),
+            unknown_legacy: Counter::default(),
         };
         r.register(
             "switch_write_refused",
@@ -224,6 +228,11 @@ impl Metrics {
             "legacy_release_unread",
             "Releases whose new epoch could not be read: the watching tabs were closed to resubscribe (zero)",
             m.release_unread.clone(),
+        );
+        r.register(
+            "legacy_unknown",
+            "Conversations magpie did not know while their person had legacy ones, served by the old stack",
+            m.unknown_legacy.clone(),
         );
         m
     }
@@ -548,9 +557,31 @@ impl Legacy {
                 self.observe(&conn.person, &c, Seen::Read(sent));
                 Ok(())
             }
-            // not the person's (or gone): magpie's own answer is the right one
+            Err(e) if e.api().is_some_and(|r| r.status == 404) => {
+                self.unknown_to_magpie(&conn.person, conversation, sent);
+                Ok(())
+            }
+            // not the person's: magpie's own answer is the right one
             Err(e) if e.api().is_some_and(|r| r.status < 500 && r.status != 429) => Ok(()),
             Err(_) => Err(Unknown),
+        }
+    }
+
+    /// A conversation magpie does not know (404) while the person has legacy conversations is the old stack's: one
+    /// made on the old path since the importer's last pass (rehearsal R1, 2026-11-06: a conversation created under a
+    /// minute before the move was served natively, its tab got magpie's 404, no stream, and no replacement at its
+    /// release). Every conversation pigeon or magpie makes natively is in magpie from its first answer, so the old
+    /// child is the one to answer for it (its own not-found for an id it has no conversation of). The importer's
+    /// row later says legacy too, and its release is a release like any other.
+    fn unknown_to_magpie(&self, person: &str, conversation: Uuid, sent: Instant) {
+        tracing::info!(conversation = %conversation, "not in magpie while legacy ones are: the old stack's");
+        self.0.metrics.unknown_legacy.inc();
+        let before = self.is_legacy(person, &conversation);
+        self.set_owner(person, conversation, true, Some(false), Seen::Read(sent));
+        if before.is_none() {
+            // a socket that subscribed before the owner was known got the native feed (magpie's 404): it moves to
+            // the old child's epoch and the LU feed, as at a reverse hand-over
+            self.reversed(person, conversation);
         }
     }
 

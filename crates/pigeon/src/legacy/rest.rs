@@ -87,6 +87,10 @@ impl Legacy {
                 self.observe(person, &c, Seen::Read(sent));
                 Ok(c.migrating)
             }
+            Err(e) if e.api().is_some_and(|r| r.status == 404) => {
+                self.unknown_to_magpie(person, conversation, sent);
+                Ok(true)
+            }
             // not the person's: magpie's own answer is the right one
             Err(e) if e.api().is_some_and(|r| r.status < 500 && r.status != 429) => Ok(false),
             Err(_) => Err(Unknown),
@@ -125,7 +129,11 @@ impl Legacy {
                 Ok(t) => t,
                 Err(e) => {
                     tracing::warn!(error = %e, "ticket not taken");
-                    self.0.metrics.write_refused.inc();
+                    // magpie's 404: a conversation it does not know yet ([`Legacy::unknown_to_magpie`]) or not the
+                    // person's, not a write the switch refused
+                    if !e.api().is_some_and(|r| r.status == 404) {
+                        self.0.metrics.write_refused.inc();
+                    }
                     return Ticketed::Done(Err(CallError::Unreachable));
                 }
             };

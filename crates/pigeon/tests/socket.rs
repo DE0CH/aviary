@@ -909,6 +909,29 @@ async fn rename_delete_restore_and_asks() {
     .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(e.m.st().answers[0].1, "ask-1");
+    assert_eq!(
+        e.m.st().answers[0].2.updated_input.as_ref().unwrap()["answers"],
+        json!({"Which?": "A"})
+    );
+    // the app's card keys an answer by the question's header: magpie gets it by the question's text, as Claude Code
+    // and the supervisor's answer message read it (rehearsal R1, 2026-11-06)
+    let asked = json!({"questions": [{"question": "Do you prefer Red or Blue?", "header": "Color choice",
+        "multiSelect": false, "options": [{"label": "Red", "description": "r"}, {"label": "Blue", "description": "b"}]}]});
+    let mut given = asked.clone();
+    given["answers"] = json!({"Color choice": "Blue"});
+    ws.session(
+        json!({"type": "agent_permission_response", "agentId": d, "requestId": "ask-2",
+                      "response": {"behavior": "allow", "updatedInput": given}}),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let st = e.m.st();
+    let (_, ask2, r) = st.answers.iter().find(|a| a.1 == "ask-2").unwrap();
+    assert_eq!(ask2, "ask-2");
+    let input = r.updated_input.as_ref().unwrap();
+    assert_eq!(input["answers"], json!({"Do you prefer Red or Blue?": "Blue"}));
+    assert_eq!(input["questions"], asked["questions"]);
+    drop(st);
     e.m.change(
         d,
         ChangeBody::AskResolved(magpie_api::changes::AskResolvedChange {
