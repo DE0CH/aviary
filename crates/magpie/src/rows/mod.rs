@@ -249,6 +249,36 @@ async fn update_tool(
     Ok(())
 }
 
+/// `ask.resolved` of `ask_id`: the tool row of the call that asked (its `ask.pending`'s `tool_use_id`) gets
+/// `answeredAt` = the event's time, once; the event becomes one of the row's sources, so a rebuild keeps it.
+async fn answered(tx: &Tx<'_>, w: &mut Writer, ev: &Stored, ask_id: &str) -> Result<()> {
+    let Some(r) = tx
+        .query_opt(
+            "select data->>'toolUseId' from events
+             where conversation_id = $1 and kind = 'ask.pending' and data->>'askId' = $2
+             order by seq limit 1",
+            &[&w.conversation, &ask_id],
+        )
+        .await?
+    else {
+        return Ok(());
+    };
+    let Some(tool_use_id) = r.get::<_, Option<String>>(0) else {
+        return Ok(());
+    };
+    let Some(mut row) = tool_row(tx, w.conversation, &tool_use_id).await? else {
+        return Ok(());
+    };
+    if row.item.answered_at.is_some() {
+        return Ok(());
+    }
+    row.item.answered_at = Some(magpie_api::Timestamp(ev.event.at));
+    if !row.sources.contains(&ev.seq) {
+        row.sources.push(ev.seq);
+    }
+    w.update(tx, row.row_id, &row.item, &row.sources).await
+}
+
 /// Projects one stored event into the conversation's rows (rules 1-10 of magpie 7.3).
 ///
 /// # Errors
@@ -406,6 +436,9 @@ pub async fn project(tx: &Tx<'_>, ev: &Stored) -> Result<()> {
                 .await?;
             }
         }
+        // an answered (or canceled) question: its tool row records when, so the shown working time leaves the wait
+        // out (DECISIONS 17)
+        EventBody::AskResolved(r) => answered(tx, &mut w, ev, &r.ask_id).await?,
         // rule 9
         EventBody::Retract(r) => {
             let seqs = r.seqs.iter().filter_map(|s| i64::try_from(*s).ok()).collect();
@@ -781,7 +814,7 @@ async fn rebuild_tool(
     let surviving: Vec<i64> = sources.iter().copied().filter(|s| !gone.contains(s)).collect();
     let rows = tx
         .query(
-            "select seq, kind, data, meta from events where conversation_id = $1 and seq = any($2)",
+            "select seq, kind, data, meta, at from events where conversation_id = $1 and seq = any($2)",
             &[&conversation, &surviving],
         )
         .await?;
@@ -809,7 +842,13 @@ async fn rebuild_tool(
                 kept.push(*s);
             }
             Some(t) => {
-                if derive::apply(t, &body, &meta) {
+                if let EventBody::AskResolved(_) = &body {
+                    // `answered` made it a source: the question's answer time
+                    if t.answered_at.is_none() {
+                        t.answered_at = Some(magpie_api::Timestamp(r.get::<_, OffsetDateTime>(4)));
+                    }
+                    kept.push(*s);
+                } else if derive::apply(t, &body, &meta) {
                     kept.push(*s);
                 }
             }

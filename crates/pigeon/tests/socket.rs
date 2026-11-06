@@ -81,6 +81,7 @@ fn tool(call: &str, name: &str, input: Value) -> RowItem {
         sent_files: None,
         task: None,
         error: None,
+        answered_at: None,
     })
 }
 

@@ -770,6 +770,13 @@ pub fn tool_call_item(t: &ToolItem, locale: Locale) -> Option<Value> {
         m.insert("sentFiles".into(), Value::Array(files));
         m
     });
+    if let Some(at) = &t.answered_at {
+        // when the person answered the question this call asked: the app leaves the wait out of the turn's working
+        // time (DECISIONS 17)
+        metadata
+            .get_or_insert_with(Map::new)
+            .insert("answeredAt".into(), json!(at));
+    }
     let shown = t.result.as_ref().map(|r| {
         if r.truncated {
             format!("{}\n{}", r.text, locale.output_truncated())
@@ -1010,6 +1017,46 @@ mod tests {
         assert_eq!(working_since(&c, &t), None, "no counter while the question is open");
     }
 
+    /// DECISIONS 17: an answered question's tool call says when it was answered (`metadata.answeredAt`), for the
+    /// app's completed-turn working time; an unanswered one says nothing.
+    #[test]
+    fn an_answered_question_carries_its_answer_time() {
+        let input = json!({"questions": [{"question": "Red or Blue?", "header": "Colour", "multiSelect": false,
+            "options": [{"label": "Red", "description": ""}, {"label": "Blue", "description": ""}]}]});
+        let mut t = tool("AskUserQuestion", input, ToolStatus::Running, None);
+        let open = tool_call_item(&t, Locale::En).unwrap();
+        assert!(open.get("metadata").is_none(), "{open}");
+        t.status = ToolStatus::Completed;
+        t.result = tool(
+            "AskUserQuestion",
+            json!({}),
+            ToolStatus::Completed,
+            Some("The user answered: Blue"),
+        )
+        .result;
+        t.answered_at = Some(serde_json::from_value(json!("2026-11-05T08:42:57.000Z")).unwrap());
+        let done = tool_call_item(&t, Locale::En).unwrap();
+        assert_eq!(
+            done["metadata"]["answeredAt"],
+            json!("2026-11-05T08:42:57.000Z"),
+            "{done}"
+        );
+        let mut plan = tool(
+            "ExitPlanMode",
+            json!({"plan": "1. do it"}),
+            ToolStatus::Completed,
+            Some("User has approved your plan."),
+        );
+        plan.answered_at = t.answered_at;
+        let plan = tool_call_item(&plan, Locale::En).unwrap();
+        assert_eq!(
+            plan["metadata"]["answeredAt"],
+            json!("2026-11-05T08:42:57.000Z"),
+            "{plan}"
+        );
+        assert_eq!(plan["metadata"]["approved"], json!(true), "{plan}");
+    }
+
     fn tool(name: &str, input: Value, status: ToolStatus, result: Option<&str>) -> ToolItem {
         ToolItem {
             call_id: "toolu_1".into(),
@@ -1029,6 +1076,7 @@ mod tests {
             sent_files: None,
             task: None,
             error: None,
+            answered_at: None,
         }
     }
 

@@ -294,6 +294,10 @@ pub struct ToolItem {
     /// Why it failed (a failed turn).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorInfo>,
+    /// When the person answered the question this call asked (`AskUserQuestion`, `ExitPlanMode`): its
+    /// `ask.resolved`. The time from the call to this is waiting, not working (DECISIONS 17).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answered_at: Option<crate::Timestamp>,
 }
 
 /// A tool result's preview.

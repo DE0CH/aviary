@@ -323,6 +323,7 @@ pub fn assistant(line: &Value, meta: &EventMeta, first: u32) -> Vec<BlockRow> {
                         sent_files: None,
                         task: None,
                         error: None,
+                        answered_at: None,
                     }),
                     tool_use_id: Some(id.to_owned()),
                 });
@@ -619,6 +620,7 @@ pub fn tool_from_line(line: &Value, call_id: &str, block_index: u32) -> Option<T
         sent_files: None,
         task: None,
         error: None,
+        answered_at: None,
     })
 }
 

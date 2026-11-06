@@ -1235,3 +1235,85 @@ async fn a_parked_questions_answer_line_completes_its_row_and_makes_no_prompt() 
     assert_eq!(row.status, ToolStatus::Completed);
     assert_eq!(row.result.as_ref().map(|r| r.text.as_str()), Some(text));
 }
+
+/// DECISIONS 17: an answered question's tool row records when it was answered (`answeredAt`, the `ask.resolved`'s
+/// time, once), so the app leaves the wait out of the turn's working time; a rebuild (rule 9) keeps it; a question
+/// still open has none.
+#[tokio::test]
+async fn an_answered_questions_row_records_when_it_was_answered() {
+    let db = common::fresh_db("ask_answered_at").await;
+    let t = common::Tokens::new();
+    let a = common::replica(&db.url, &t).await;
+    let pigeon = a.pigeon();
+    let alice = pigeon.person(ALICE);
+    let id = ev::conversation(&pigeon, ALICE).await;
+    let pool = a.pool();
+    let turn = Uuid::new_v4();
+    let asked = time::OffsetDateTime::now_utc() - time::Duration::minutes(42);
+    let mut ask_line = ev::assistant("m1", json!([ev::tool_use("toolu_ask", "AskUserQuestion")]));
+    ask_line.at = asked;
+    let mut pending = ev::ev(
+        "ask.pending",
+        json!({"askId": "ask-1", "toolName": "AskUserQuestion", "toolUseId": "toolu_ask",
+               "input": {"questions": [{"question": "Which?"}]}}),
+    );
+    pending.at = asked;
+    let seqs = ev::append(
+        pool,
+        ALICE,
+        id,
+        vec![
+            ev::turn_started(turn),
+            ev::in_turn(ask_line, turn),
+            ev::in_turn(pending, turn),
+            ev::in_turn(ev::assistant("m2", json!([ev::tool_use("tu_other", "Bash")])), turn),
+        ],
+    )
+    .await;
+    let p = alice.timeline(id, &ev::tail(10)).await.unwrap();
+    assert_eq!(tool(&p.rows[0]).answered_at, None, "open: no answer time");
+    let answered = time::OffsetDateTime::now_utc().replace_millisecond(0).unwrap();
+    let resolution = json!({"behavior": "allow", "updatedInput": {"answers": {"Which?": "B"}}});
+    let mut resolved = ev::ev("ask.resolved", json!({"askId": "ask-1", "resolution": resolution}));
+    resolved.at = answered;
+    let resolved_seq = ev::append1(pool, ALICE, id, ev::in_turn(resolved, turn)).await;
+    let p = alice.timeline(id, &ev::tail(10)).await.unwrap();
+    let q = tool(&p.rows[0]);
+    assert_eq!(q.answered_at.map(|t| t.0), Some(answered));
+    assert!(p.rows[0].updated, "a new version of the question's row");
+    assert_eq!(tool(&p.rows[1]).answered_at, None, "another call is untouched");
+    // a repeated resolution (never expected) keeps the first time
+    let mut again = ev::ev("ask.resolved", json!({"askId": "ask-1", "resolution": resolution}));
+    again.at = answered + time::Duration::minutes(1);
+    ev::append1(pool, ALICE, id, ev::in_turn(again, turn)).await;
+    // the result lands, then leaves (rule 9 rebuilds the row from its surviving sources): the answer time stays
+    let result = ev::append1(
+        pool,
+        ALICE,
+        id,
+        ev::in_turn(ev::results(&[("toolu_ask", "B", false)]), turn),
+    )
+    .await;
+    let p = alice.timeline(id, &ev::tail(10)).await.unwrap();
+    assert_eq!(tool(&p.rows[0]).status, ToolStatus::Completed);
+    assert_eq!(tool(&p.rows[0]).answered_at.map(|t| t.0), Some(answered));
+    ev::append1(pool, ALICE, id, ev::retract(&[result])).await;
+    let p = alice.timeline(id, &ev::tail(10)).await.unwrap();
+    let q = tool(&p.rows[0]);
+    assert_eq!(
+        (q.status, q.answered_at.map(|t| t.0)),
+        (ToolStatus::Running, Some(answered))
+    );
+    assert!(
+        p.rows[0].seqs.len() >= 3,
+        "{:?} (resolved at seq {resolved_seq}, line {})",
+        p.rows[0].seqs,
+        seqs[1]
+    );
+    // on the wire: `answeredAt`, RFC 3339 with milliseconds
+    let wire = serde_json::to_value(&p.rows[0].item).unwrap();
+    assert!(
+        wire["answeredAt"].as_str().is_some_and(|s| s.ends_with(".000Z")),
+        "{wire}"
+    );
+}
