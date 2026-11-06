@@ -131,7 +131,7 @@ impl Legacy {
                     tracing::warn!(error = %e, "ticket not taken");
                     // magpie's 404: a conversation it does not know yet ([`Legacy::unknown_to_magpie`]) or not the
                     // person's, not a write the switch refused
-                    if !e.api().is_some_and(|r| r.status == 404) {
+                    if e.api().is_none_or(|r| r.status != 404) {
                         self.0.metrics.write_refused.inc();
                     }
                     return Ticketed::Done(Err(CallError::Unreachable));
