@@ -3,7 +3,7 @@
 //!
 //! - **Idle conversation:** the message is admitted as a turn exactly as a typed one is (magpie 8.2, the person's
 //!   turn, the sandbox started by the driver as for any send), with the client message id
-//!   `schedule:<id>:<due>` (run outcome `sent`).
+//!   `schedule:<id>:<due, Unix microseconds>` (run outcome `sent`).
 //! - **A turn is running:** the message goes to that turn's supervisor at once as a `send_message` command, which
 //!   writes it to Claude Code's stdin; Claude Code takes it in at its next tool result or when the model stops, as
 //!   it does a message typed mid-turn (outcome `pending`, then `sent_mid_turn` once the supervisor acks it
@@ -161,7 +161,7 @@ async fn deliver(t: &Tx<'_>, row: &Row, due: OffsetDateTime) -> Result<Delivery>
         viewer: None,
     };
     let req = SendRequest {
-        client_message_id: format!("schedule:{}:{}", row.id, due.unix_timestamp()),
+        client_message_id: format!("schedule:{}:{}", row.id, due.unix_timestamp_nanos() / 1000),
         text,
         images: Vec::new(),
         files: Vec::new(),
