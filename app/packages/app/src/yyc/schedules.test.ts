@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isScheduleCallDetail, nextLabel, parseScheduledMessage, readScheduleCall, shortLabel } from "./schedules-text";
+import { isScheduleCallDetail, nextLabel, OUTCOME_WORDS, parseScheduledMessage, readScheduleCall, shortLabel } from "./schedules-text";
 
 describe("schedules in the chat", () => {
   it("reads a fired schedule's message", () => {
@@ -44,5 +44,13 @@ describe("schedules in the chat", () => {
     expect(shortLabel("2026-11-06T08:30:00+08:00")).toBe("11月6日 08:30");
     expect(nextLabel(null, "Asia/Hong_Kong")).toBe("沒有");
     expect(nextLabel("2099-01-05T15:00:00+08:00", "Asia/Hong_Kong")).toBe("1月5日（星期一）15:00");
+  });
+
+  it("reads a run as the mock does: 已回覆 once answered, sent and not yet answered apart, skipped", () => {
+    expect(OUTCOME_WORDS.answered).toBe("已回覆");
+    expect(OUTCOME_WORDS.answered_mid_turn).toBe("已回覆（當時對話正在工作）");
+    expect(OUTCOME_WORDS.sent).toBe("已送出，等待回覆");
+    expect(OUTCOME_WORDS.unanswered).toBe("已送出，未有回覆");
+    expect(OUTCOME_WORDS.skipped_late).toBe("服務暫停，已略過");
   });
 });

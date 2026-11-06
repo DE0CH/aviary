@@ -141,9 +141,17 @@ export const ZONE_WORDS: Record<string, string> = {
   "America/New_York": "紐約時間", UTC: "UTC", "Etc/UTC": "UTC",
 };
 
+/**
+ * A run's outcome in the panel (the approved mock: 已回覆 once YYC AI has answered the fired message). `answered` and
+ * `answered_mid_turn` are a `sent` / `sent_mid_turn` run whose turn completed (magpie reads it from the turn, the old
+ * stack's process records it when the turn's result comes); `unanswered` is one whose turn failed or was stopped.
+ */
 export const OUTCOME_WORDS: Record<string, string> = {
-  sent: "已送出",
-  sent_mid_turn: "已送出（當時對話正在工作）",
+  answered: "已回覆",
+  answered_mid_turn: "已回覆（當時對話正在工作）",
+  sent: "已送出，等待回覆",
+  sent_mid_turn: "已送出（當時對話正在工作），等待回覆",
+  unanswered: "已送出，未有回覆",
   pending: "送出中（對話正在工作）",
   redeliver: "稍後送出",
   skipped_late: "服務暫停，已略過",
