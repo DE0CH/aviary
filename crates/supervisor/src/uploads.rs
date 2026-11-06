@@ -138,7 +138,7 @@ fn reason(e: &std::io::Error) -> String {
 /// Runs the filesystem call `f` as the agent (`uid`/`gid`) on a thread of its own and returns its result, or the
 /// errno it set, read on that thread right after it. The thread switches its effective ids with raw
 /// `setresgid`/`setresuid` system calls, which change only the calling thread (glibc's wrappers would change every
-/// thread of the process), keeping the saved id root's, and it ends with them. gVisor has no `setfsuid`/`setfsgid`
+/// thread of the process), keeping the saved id root's, and it ends with them. the sandbox runtime has no `setfsuid`/`setfsgid`
 /// (ENOSYS, measured in a sandbox 2026-11-06): the fsuid switch this replaces did nothing there, the call ran with the
 /// supervisor's ids, and the calls restoring the fsuid overwrote errno, so a turn with an upload failed "Function not
 /// implemented (os error 38)" whatever the call's own error was.
