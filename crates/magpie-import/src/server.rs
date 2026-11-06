@@ -80,7 +80,16 @@ pub async fn handover(imp: Importer, ops: ops::Ops) -> ExitCode {
     loop {
         let next = tokio::time::Instant::now() + crate::handover::CADENCE;
         if leader.confirm().await {
-            match h.pass(&imp).await {
+            let outcome;
+            (h, outcome) = match pass_apart(h, imp.clone()).await {
+                Ok(x) => x,
+                Err(e) => {
+                    tracing::error!(error = %e, "the pass's thread ended");
+                    leader.release().await;
+                    return ExitCode::FAILURE;
+                }
+            };
+            match outcome {
                 Ok(p) => tracing::debug!(ms = p.ms, changed = p.changed, released = p.released, "pass"),
                 Err(e) => {
                     tracing::warn!(error = %e, "the pass stopped");
@@ -107,6 +116,28 @@ pub async fn handover(imp: Importer, ops: ops::Ops) -> ExitCode {
             }
         }
     }
+}
+
+/// Runs one pass on a blocking-pool thread (`Handle::block_on` there), so the pass's synchronous work (the JuiceFS
+/// tree walks, reads and hashes through FUSE, a 57 s pass on 2026-11-06) never holds a runtime worker. The pod's
+/// one CPU gives the runtime one worker; a pass on it starved the leader connection's 1 s check, the listener's
+/// 5 s ping and new pool connections, and the leader lost the lock about every 10 min ("leader: connection check
+/// timed out"). The pass's futures still run on this runtime's drivers (timers, sockets, spawned connection
+/// tasks), which the free worker keeps polling. A `current_thread` runtime (no free worker) runs the pass inline.
+async fn pass_apart(
+    mut h: Handover,
+    imp: Arc<Importer>,
+) -> Result<(Handover, crate::Result<crate::handover::PassInfo>), tokio::task::JoinError> {
+    let rt = tokio::runtime::Handle::current();
+    if rt.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
+        let r = h.pass(&imp).await;
+        return Ok((h, r));
+    }
+    tokio::task::spawn_blocking(move || {
+        let r = rt.block_on(h.pass(&imp));
+        (h, r)
+    })
+    .await
 }
 
 #[derive(Clone)]
