@@ -1312,8 +1312,9 @@ async fn an_answered_questions_row_records_when_it_was_answered() {
     );
     // on the wire: `answeredAt`, RFC 3339 with milliseconds
     let wire = serde_json::to_value(&p.rows[0].item).unwrap();
-    assert!(
-        wire["answeredAt"].as_str().is_some_and(|s| s.ends_with(".000Z")),
+    assert_eq!(
+        wire["answeredAt"],
+        serde_json::to_value(magpie_api::Timestamp(answered)).unwrap(),
         "{wire}"
     );
 }
