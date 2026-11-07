@@ -101,9 +101,14 @@ step_aws() {
   lts=$(aq ec2 describe-launch-templates --query 'LaunchTemplates[].[LaunchTemplateId,LaunchTemplateName]' --output text)
   while read -r ltid ltname; do
     if [ -z "$ltid" ] || [ "$ltid" = None ] || [ "$ltname" = "$lt" ]; then continue; fi
-    vers=$(aq ec2 describe-launch-template-versions --launch-template-id "$ltid" --resolve-alias \
-      --query 'LaunchTemplateVersions[].LaunchTemplateData.ImageId' --output text)
-    for ami in $vers; do used="$used$ami($ltname) "; done
+    # AWS resolves an SSM alias only when one version is described, so each version is asked for on its own
+    nums=$(aq ec2 describe-launch-template-versions --launch-template-id "$ltid" \
+      --query 'LaunchTemplateVersions[].VersionNumber' --output text)
+    for n in $nums; do
+      ami=$(aq ec2 describe-launch-template-versions --launch-template-id "$ltid" --versions "$n" --resolve-alias \
+        --query 'LaunchTemplateVersions[].LaunchTemplateData.ImageId' --output text)
+      for a in $ami; do used="$used$a($ltname) "; done
+    done
   done <<< "$lts"
   others=$(aq ec2 describe-instances --filters Name=instance-state-name,Values=pending,running,stopping,stopped \
     --query 'Reservations[].Instances[].{id: InstanceId, image: ImageId, tags: Tags}' --output json)

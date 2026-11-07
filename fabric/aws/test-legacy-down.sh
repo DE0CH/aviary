@@ -30,6 +30,7 @@ case "$tool" in
       *" describe-launch-templates "*"--launch-template-names"*)
         [ -z "\${NO_TEMPLATE:-}" ] || { echo "An error occurred (InvalidLaunchTemplateName.NotFoundException)" >&2; exit 254; } ;;
       *" describe-launch-templates "*) printf 'lt-0old\told-template\nlt-0new\tnew-template\n' ;;
+      *" describe-launch-template-versions "*"VersionNumber"*) echo "1" ;;
       *" describe-launch-template-versions "*"lt-0new"*) echo "ami-0new \${NEW_ALSO:-}" ;;
       *" describe-launch-template-versions "*) echo "ami-0old" ;;
       *" describe-images "*"--owners self"*)
@@ -119,7 +120,7 @@ has "ec2 terminate-instances --instance-ids i-01 i-02"
 has "ec2 wait instance-terminated --instance-ids i-01 i-02"
 has "ec2 delete-launch-template --launch-template-name old-template"
 has "ec2 describe-images --owners self --filters Name=tag:app,Values=old-host"
-has "describe-launch-template-versions --launch-template-id lt-0new --resolve-alias"
+has "describe-launch-template-versions --launch-template-id lt-0new --versions 1 --resolve-alias"
 has "ec2 create-tags --resources snap-01 --tags Key=legacy-down-of,Value=ami-0old"
 has "ec2 deregister-image --image-id ami-0old"
 has "ec2 delete-snapshot --snapshot-id snap-01"
