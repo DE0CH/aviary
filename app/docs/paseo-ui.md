@@ -1,6 +1,7 @@
 # The Paseo UI
 
-The browser UI of this fork (YYC AI, and a Jarvis 4 session's `cloudcli` harness) and the YYC AI iOS app are the Paseo app
+The browser UI of this fork (a Jarvis 4 session's `cloudcli` harness, and YYC AI's web app, which DE0CH/aviary's pigeon
+serves from the `pigeon-app` image) and the YYC AI iOS app are the Paseo app
 (getpaseo/paseo, Apache-2.0), copied into `paseo/` at upstream commit e3bbed3 and changed into a chat app. It is not
 kept in sync with upstream (Deyao, 2026-10-26): change it as this fork's own code. CloudCLI's server and state stay
 as they were; the app reaches them through a bridge that speaks Paseo's protocol.
@@ -10,12 +11,12 @@ browser (paseo/packages/app, served from dist/)
    │  /paseo-ws: Paseo's WebSocket protocol (paseo/packages/protocol messages.ts)
    │  /api/...:  CloudCLI REST for what the protocol has no message for (uploads, files, sharing, warming, /me)
    ▼
-CloudCLI server, one process per person (unchanged)
+CloudCLI server (Jarvis mode: a Jarvis 4 session's one user)
    server/modules/paseo/paseo-connection.ts   one per browser socket: answers the protocol
    server/modules/paseo/paseo-hub.ts          one per process: a CloudCLI chat client of its own (handleChatConnection),
                                               the conversations' timelines, run status, list changes
    server/modules/paseo/paseo-timeline.ts     CloudCLI messages → Paseo timeline rows (seq, epoch, pages)
-   └─ sessionsService, chatRunRegistry, the provider runtime, Postgres, the sandbox (as before)
+   └─ sessionsService, chatRunRegistry, the provider runtime, Postgres (as before)
 ```
 
 The Jarvis 4 Chat app (DE0CH/pwa-shell-ios) keeps talking CloudCLI's own `/ws` and REST; the bridge adds a path, it
@@ -43,13 +44,13 @@ does not change one.
 
 Questions: turns run with `bypassPermissions`, but Claude Code still sends a tool that needs the person
 (AskUserQuestion) to `canUseTool`. The hub keeps each waiting question
-(`paseo-hub.ts` `questions`), every tab gets the card, the first answer wins, and a view-as answer is recorded like a
-message first. A question never holds the sandbox and never times out for the person (DE0CH/YYC
-yyc-ai/refactor/DECISIONS.md 17): once the turn waits only on it (the model's reply ended, no other tool call open, no
-background work), the runtime parks it (`claude-runtime.provider.js`): the turn ends (`complete` with
-`awaitingAnswer`, so no working time runs), Claude Code gets a SIGTERM and the sandbox idles out like any idle one,
-and the question is kept in this process and its database (`jarvis-open-questions.ts`, table `jarvis_open_questions`),
-so the card stays, also after a reload or a restart of this process. The last answer starts a turn that resumes the
+(`paseo-hub.ts` `questions`), every tab gets the card, and the first answer wins. A question never times out for the
+person (DE0CH/YYC yyc-ai/refactor/DECISIONS.md 17). With parking on (`parkQuestions`, off by default in this server:
+the stop needs a Claude Code process the server spawned itself), once the turn waits only on it (the model's reply
+ended, no other tool call open, no background work), the runtime parks it (`claude-runtime.provider.js`): the turn
+ends (`complete` with `awaitingAnswer`, so no working time runs), Claude Code gets a SIGTERM, and the question is kept
+in this process and its database (`jarvis-open-questions.ts`, table `jarvis_open_questions`), so the card stays, also
+after a reload or a restart of this process. The last answer starts a turn that resumes the
 conversation and gives Claude Code the answer as its message, in the words of the tool's own result: a resumed Claude
 Code (2.1.304) closes a tool call made before it restarted as interrupted and takes no answer for it. History shows
 that answer on the question's card (`paseo-timeline.ts`). A message sent instead withdraws the question; a question
@@ -82,13 +83,12 @@ arrives.
 - **Connection**: the page connects back to its own origin (`runtime/host-runtime.ts`
   `readPageOriginConnectionHint`) on `/paseo-ws` (`protocol/src/daemon-endpoints.ts`); no host setup, no pairing. When
   the server cannot be reached, `app/welcome.tsx` says so and offers a retry.
-- **Signed out (web)**: only `/api`, `/paseo-ws`, `/ws`, `/ops` (and `/__jarvis`) are behind Cloudflare Access; the
-  router (`jarvis/router.mjs`, "Signed out") serves a visitor without a valid Access token the built app from `dist/`
-  and nothing else, its `index.html` marked `<meta name="yyc-signed-out" content="1">`. `yyc/access-gate.tsx` then
-  renders `yyc/signed-out-shell.tsx` instead of the app: the new-chat layout with the composer disabled and 「登入」
-  buttons, with no host runtime, socket or API call. 「登入」 opens `/api/jarvis/signin?next=<page>` (behind Access:
-  Access's login, then the router's 302 back to the page, now signed in). The Access app's paths, cloudflared's
-  access-required rule and the router's `SIGNED_IN_PATHS` are one list (DE0CH/YYC tofu `access.tf` `staff_ai_paths`).
+- **Signed out (web, YYC AI)**: only some paths are behind Cloudflare Access (DE0CH/YYC tofu `access.tf`
+  `staff_ai_paths`); a visitor without a valid Access token gets the built app and nothing else, its `index.html`
+  marked `<meta name="yyc-signed-out" content="1">`. `yyc/access-gate.tsx` then renders `yyc/signed-out-shell.tsx`
+  instead of the app: the new-chat layout with the composer disabled and 「登入」 buttons, with no host runtime, socket
+  or API call. 「登入」 opens `/api/jarvis/signin?next=<page>` (behind Access: Access's login, then a 302 back to the
+  page, now signed in).
 - **Language**: zh-HK (generated from Paseo's zh-CN with OpenCC, HK vocabulary) and English only; any Chinese or
   unknown system locale gets zh-HK. YYC's own wording is an override layer, `i18n/resources/yyc.ts`; new strings of
   this fork live under `conversation.*` in `en.ts`/`zh-HK.ts`.
@@ -125,33 +125,29 @@ arrives.
   own `AgentStreamView` read only, its files read through the share via `ConversationFilesContext`), the conversation menu
   (`screens/workspace/conversation-menu-items.tsx`).
 - **Sent files keep their version** (Deyao, 2026-10-28): each file card carries its SendUserFile call's id
-  (`sent` on the tool call's `sentFiles`, paseo-timeline.ts) and downloads with `files/raw?…&sent=<id>`, which reads
-  the copy-on-write snapshot the router made before the send (`/jfs/sent/<conversation>/<id>/…`; router.mjs "Sent
-  files", DE0CH/jarvis3 docs/CLAUDE-CODE.md "Sent files"), so a later rewrite or delete in /workspace doesn't change
-  or break it. Cards from before snapshots, and paths named in replies, read the live file. Shares, 「繼續對話」 and forks
-  carry the snapshots; deleting a conversation removes them (`jarvis-clone.ts` clones with `juicefs clone`).
-- **View as** (Deyao, 2026-10-28; router.mjs "View as", DE0CH/jarvis3 docs/CHAT.md "View as"): the operator page's
+  (`sent` on the tool call's `sentFiles`, paseo-timeline.ts) and downloads with `files/raw?…&sent=<id>`, so a server
+  that keeps a snapshot of each send can serve the file as it was sent (this server, in Jarvis mode, reads the live
+  file).
+- **View as** (Deyao, 2026-10-28; YYC AI only, served by pigeon): the operator page's
   「View as」 opens the app in a new tab at `/#jarvis-view-as=<token>`. `yyc/view-as.ts` keeps the token in that tab's
   sessionStorage (the admin's other tabs stay themselves) and adds it as `?jarvis_view_as=` to every `apiUrl` (REST,
   file links) and the web socket (`runtime/websocket-factory.web.ts`, also used by the startup connection check in
-  `utils/test-daemon-connection.ts`, whose client can become the live one); the router serves the person's own process
-  as them, so the list, conversations, files and shares are theirs. The tab keeps the person's replica cache in an
+  `utils/test-daemon-connection.ts`, whose client can become the live one); the server answers as the person, so the
+  list, conversations, files and shares are theirs. The tab keeps the person's replica cache in an
   IndexedDB of its own (`paseo-replica-row-store.view-as.<email>`) and their last conversation under its own key, so it
   never starts from the admin's cached list nor writes into it. The tab is read-only: the message box shows its text
   without an input, the composer's send (button, Enter, queue) and the new-conversation entries (sidebar 新對話
   dimmed, the palette item, the shortcut) do nothing, and typing warms nothing. `yyc/view-as-box.tsx` above the composer is the one box only the admin sees (English, "Visible
   only to you"): whose view it is, and the override switch (off on every load; the box turns red while on) that lets
-  the admin send and start conversations as the person. The bridge (`paseo-connection.ts`, viewer from the router's
-  `X-Jarvis-Viewer`) records each such send in Ops History before sending (`server/modules/jarvis/jarvis-view-as.ts`;
-  no record, no send) and refuses renames, deletes and restores on that socket. The messages look like the person's own.
+  the admin send and start conversations as the person. The messages look like the person's own.
 - **Branding**: YYC's teal as the accent, its logo and icons, Hong Kong Chinese fonts first (`styles/theme.ts`); the
   server writes the instance's product name into the page title.
 
 ## Schedules (Deyao, 2026-11-06)
 
 YYC AI arms a message to be posted into the conversation once or on a repeating rule, through a REST API its managed
-skill `schedules` teaches (old stack: the router's `jarvis/schedules.mjs` behind egress's `schedules` route; new stack:
-magpie's `/v1/sandbox/schedules`). The same app shows both, without buttons (changes go through the chat):
+skill `schedules` teaches (magpie's `/v1/sandbox/schedules`, DE0CH/aviary). The app shows them without buttons (changes
+go through the chat):
 
 - the API call (a `curl` the AI runs) as a card, 「已設定排程：每個工作日 08:30」 and the next time
   (`yyc/schedules.tsx` ScheduleToolCard, read by `yyc/schedules-text.ts` readScheduleCall from the call's output);
@@ -159,22 +155,15 @@ magpie's `/v1/sandbox/schedules`). The same app shows both, without buttons (cha
 - a fired message, `<scheduled-message rule="…">prompt</scheduled-message>`, as a 排程訊息 bubble under a divider
   (ScheduledMessage);
 - 「n 個排程」 in the conversation's header, opening a panel beside the chat (full screen with a back arrow on a phone)
-  from `GET /api/jarvis/sessions/<id>/schedules` (the router answers it on the old stack, pigeon on the new).
+  from `GET /api/jarvis/sessions/<id>/schedules` (pigeon answers it).
 
-The router fires them (every replica for the persons it serves, each due row claimed once): a new turn when the
-conversation is idle (the Paseo hub's send when a tab is open, else a detached run), written into the running turn when
-one runs (`injectClaudeSDKMessage`: Claude Code takes it in at its next tool result or when the model stops; a message
-it took in shows in the history from Claude Code's `queued_command` attachment). Claude Code's own CronCreate, CronList,
-CronDelete and ScheduleWakeup are disallowed in Jarvis mode. The admin page is `/ops/schedules` (English, admins only:
-everyone's schedules with their conversation's title, their runs, the pause-all switch).
+Claude Code's own CronCreate, CronList, CronDelete and ScheduleWakeup are disallowed in Jarvis mode
+(`JARVIS_DISALLOWED_TOOLS`). A message written into a running turn (`injectClaudeSDKMessage`: Claude Code takes it in at
+its next tool result or when the model stops) shows in the history from Claude Code's `queued_command` attachment.
 
 A run's outcome in the panel: 已回覆 once the conversation answered the fired message (`answered`,
 `answered_mid_turn`), 已送出，等待回覆 until then (`sent`, `sent_mid_turn`), 已送出，未有回覆 when that turn failed or
-was stopped (`unanswered`), and the skips (服務暫停，已略過 …). On the old stack the process records it: the delivery
-marks the run as waiting (claude-runtime's `awaitScheduleAnswer`) and the conversation's next `result` settles it into
-`cc_shared.schedule_runs` (jarvis-schedules.routes.ts `recordScheduleAnswers`); magpie reads it from the run's turn.
-A conversation deleted for good takes its schedules with it (marked `deleted`: jarvis-conversations.ts
-`deleteSchedulesOf`; magpie's go with their conversation).
+was stopped (`unanswered`), and the skips (服務暫停，已略過 …).
 
 ## Loading
 
@@ -363,7 +352,7 @@ to ship; it no longer builds yyc-ai). What differs from the web build:
 
 - **Server**: the build secret `YYC_SITE` becomes `extra.yycSite` (`app.config.js`, `yyc/site.ts`). The repo is
   public, so the address appears nowhere in it or in CI logs.
-- **Sign-in**: Cloudflare Access before anything connects (`yyc/access-gate.tsx`). The router's
+- **Sign-in**: Cloudflare Access before anything connects (`yyc/access-gate.tsx`). The server's
   `/api/jarvis/app-signin` hands the Access token back on the app's scheme; it is kept in the Keychain
   (`yyc/access-token.ts`) and sent as `cf-access-token` and the `CF_Authorization` cookie on REST and the socket
   (`runtime/websocket-factory.ts`). An expired token sends the app back to the sign-in screen.
