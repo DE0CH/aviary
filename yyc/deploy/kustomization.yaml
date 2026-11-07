@@ -28,8 +28,7 @@ images:
   - {name: magpie, newName: ghcr.io/de0ch/magpie, newTag: "16f917f9d1b1"}
   - {name: hermit, newName: ghcr.io/de0ch/hermit, newTag: "16f917f9d1b1"}
   - {name: sandboxd, newName: ghcr.io/de0ch/sandboxd, newTag: "16f917f9d1b1"}
-  # the app bundle (DE0CH/claudecodeui pigeon-app.yml); from A1 to A5 only a pigeon-app-fix/* build may replace it
-  # (DESIGN 9.6, cutover freeze-check)
+  # the app bundle (DE0CH/claudecodeui pigeon-app.yml)
   - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "3247b4c881aa"}
   # egress and tools (DE0CH/jarvis3 chat.yml); the ZDR guard reads this tag (yyc-ai/tests/test_zdr.py)
   - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "92aa7c62d2bf"}
