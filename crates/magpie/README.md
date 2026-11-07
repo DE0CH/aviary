@@ -14,7 +14,7 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 | `src/auth.rs` | callers from `MAGPIE_ACCEPT_*`, the route layer that checks them against `magpie_api::routes::ROUTES` |
 | `src/limits.rs` | every limit and timeout (magpie 17) |
 | `src/error.rs` | the one error type; Postgres unreachable answers 503 `unavailable` with `retry-after` |
-| `src/db/` | the migrations (`0001_init.sql`: every table of magpie 4 and the importer's of cutover 7.3, which the A6 contraction drops but for the legacy-path set; `0005_timeline.sql`: the projection's lookups; `0008_timeline_derivation.sql`: `rows.derivation`, `line_pos`, the live delta index) and `Db` |
+| `src/db/` | the migrations (`0001_init.sql`: every table of magpie 4 and the importer's of cutover 7.3, which `0028_a6_contraction.sql` drops but for the legacy-path set; `0005_timeline.sql`: the projection's lookups; `0008_timeline_derivation.sql`: `rows.derivation`, `line_pos`, the live delta index) and `Db` |
 | `src/conversations/` | the Conversation object, the person row, the row lock; create, list, rename, delete, restore, purge |
 | `src/events/` | `events::append` (seq allocation), which calls the projection |
 | `src/rows/` | the timeline projection (magpie 7.3): `project` (rules 1-10, row seqs, the epoch), `derive` (what each event makes of a row, pure), `read` (M9 pages and the long-poll, M10, search) |
@@ -437,8 +437,8 @@ reads and their once-a-day audit. `tests/legacy_paths.rs`: the legacy-path set (
 - The switch window's tickets, fence, running mirror, window state, `upload_raw` and synchronous ingest, with
   `conversations.migrating` and `legacy_fence_at` and the tables `legacy_tickets`, `import_sources`,
   `import_shares`, `import_control`, `import_gate_persons` and `import_purged`, went in the A6 contraction
-  (cutover 10.5 step 7). The code stopped reading them first; migration `0028_a6_contraction.sql` drops them in the
-  release after it, so replicas of the release before never meet a schema without them during a rolling update. What stays until A7 (cutover 10.7) is the
+  (cutover 10.5 step 7). The code stopped reading them first (20029144); migration `0028_a6_contraction.sql`
+  drops them in the release after it, so no replica that still read them meets a schema without them. What stays until A7 (cutover 10.7) is the
   legacy-path set: `import_uploads`, `uploads.legacy_path`, the tee's record route `upload_legacy_path`, and
   their resolution in M3/M7. `legacy_import_verified` stays for hermit's `legacy-cleanup` (P6).
 - Old asset paths are held in canonical form, the file name inside the person's old asset folder
