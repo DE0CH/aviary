@@ -55,7 +55,9 @@ impl Aws {
     /// A client for `region` with static credentials.
     #[must_use]
     pub fn new(region: &str, access_key_id: &str, secret_access_key: &str) -> Self {
+        use aws_sdk_ec2::config::timeout::TimeoutConfig;
         use aws_sdk_ec2::config::{BehaviorVersion, Credentials, Region};
+        use std::time::Duration;
         use aws_smithy_http_client::tls;
         let http = aws_smithy_http_client::Builder::new()
             .tls_provider(tls::Provider::Rustls(tls::rustls_provider::CryptoMode::Ring))
@@ -65,6 +67,14 @@ impl Aws {
             .region(Region::new(region.to_owned()))
             .credentials_provider(Credentials::new(access_key_id, secret_access_key, None, None, "hermit"))
             .http_client(http)
+            // a stalled reply (a slow NAT path, 2026-11-07) must fail like any error, never hold the scaler's pass
+            .timeout_config(
+                TimeoutConfig::builder()
+                    .connect_timeout(Duration::from_millis(3100))
+                    .operation_attempt_timeout(Duration::from_secs(20))
+                    .operation_timeout(Duration::from_secs(60))
+                    .build(),
+            )
             .build();
         Self {
             client: aws_sdk_ec2::Client::from_conf(conf),
