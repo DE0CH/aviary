@@ -203,7 +203,10 @@ mod tests {
     fn a_nul_anywhere_in_an_event_becomes_a_replacement_character() {
         let mut v = json!({"result": {"text": "ELF\u{0}\u{0}x", "k\u{0}": ["a\u{0}", 1]}, "ok": "clean"});
         denul_value(&mut v);
-        assert_eq!(v, json!({"result": {"text": "ELF\u{FFFD}\u{FFFD}x", "k\u{FFFD}": ["a\u{FFFD}", 1]}, "ok": "clean"}));
+        assert_eq!(
+            v,
+            json!({"result": {"text": "ELF\u{FFFD}\u{FFFD}x", "k\u{FFFD}": ["a\u{FFFD}", 1]}, "ok": "clean"})
+        );
         assert_eq!(denul("a\u{0}b"), "a\u{FFFD}b");
         assert!(matches!(denul("clean"), std::borrow::Cow::Borrowed(_)));
     }
