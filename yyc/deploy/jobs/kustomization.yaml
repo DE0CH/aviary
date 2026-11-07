@@ -6,5 +6,3 @@ kind: Kustomization
 resources:
   - network.yaml
   - cronjobs.yaml
-  # the hand-over Deployment (cutover start-handover until import-done)
-  - magpie-import.yaml
