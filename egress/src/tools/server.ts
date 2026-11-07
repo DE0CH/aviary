@@ -3,7 +3,7 @@
 //   POST /v1/tools/<name>        run one: the JSON body is its arguments; the answer is the tool's JSON (structured
 //                                tools) or its text (text/plain); a tool's own error is 422 {error}, bad arguments 400
 //   GET  /v1/openapi.json        the same as OpenAPI 3.1
-// Claude Code in a sandbox calls it with curl, as its managed skills say (docs/CLAUDE-CODE.md "Skills"). Every call
+// Claude Code in a sandbox calls it with curl, as its managed skills say (docs/CHAT.md "tools"). Every call
 // carries the gateway's pair bearer (one of TOOLS_ACCEPT_GATEWAY) and the sandbox the gateway verified
 // (`Aviary-Sandbox-Id`, `-Conversation`, `-Person`, `Aviary-Request`; platform 3.11.3); the person must be in the
 // staff catalogue and hermit must say the sandbox is live and starting or ready (liveness.ts). Every tools/call is a

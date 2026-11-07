@@ -1620,29 +1620,22 @@ async function fakeDns(a: Record<string, string>): Promise<{ port: number; queri
   return state;
 }
 
-test("entry point: the first argument picks the role; with none JARVIS_ROLE still picks web or the old stack's tools, never egress", async () => {
+test("entry point: the first argument picks the role (egress or tools); anything else refuses to start", async () => {
   const main = join(import.meta.dirname, "..", "src", "main.ts");
-  const runMain = (args: string[], env: Record<string, string>): Promise<{ code: number; err: string }> =>
+  const runMain = (args: string[]): Promise<{ code: number; err: string }> =>
     new Promise((resolve) => {
-      const { JARVIS_ROLE: _r, ...base } = process.env;
-      execFile(process.execPath, ["--disable-warning=ExperimentalWarning", main, ...args], { env: { ...base, ...env }, timeout: 20_000 }, (e, _o, err) =>
+      execFile(process.execPath, ["--disable-warning=ExperimentalWarning", main, ...args], { env: process.env, timeout: 20_000 }, (e, _o, err) =>
         resolve({ code: e ? ((e as { code?: number }).code ?? 1) : 0, err: String(err) }),
       );
     });
-  const none = await runMain([], {});
+  const none = await runMain([]);
   assert.equal(none.code, 2);
-  assert.match(none.err, /first argument must be web, egress or tools/);
-  const oldEgress = await runMain([], { JARVIS_ROLE: "egress" });
-  assert.equal(oldEgress.code, 2);
-  assert.match(oldEgress.err, /JARVIS_ROLE=egress: this image's egress is aviary's sandbox gateway/);
-  // JARVIS_ROLE=tools: the old stack's tools (tools/legacy.ts), which reads the shared config (missing here) and fails
-  const oldTools = await runMain([], { JARVIS_ROLE: "tools", JARVIS_CONFIG: "/nonexistent/config.json" });
-  assert.notEqual(oldTools.code, 0);
-  assert.match(oldTools.err, /nonexistent\/config\.json/);
+  assert.match(none.err, /first argument must be egress or tools/);
+  const web = await runMain(["web"]);
+  assert.equal(web.code, 2);
+  assert.match(web.err, /first argument must be egress or tools \(got "web"\)/);
   // `args: [tools]` gets as far as its own config (missing here): a start failure naming the file
-  const tools = await runMain(["tools"], {});
+  const tools = await runMain(["tools"]);
   assert.equal(tools.code, 2);
   assert.match(tools.err, /tools start.*\/etc\/tools\/tools\.json/);
-  const bad = await runMain(["nope"], { JARVIS_ROLE: "tools" });
-  assert.equal(bad.code, 2, "an argument wins over JARVIS_ROLE");
 });

@@ -1,5 +1,5 @@
-# The chat runtime image (docs/CHAT.md): roles web (sandbox manager for the CloudCLI UI, janitor, scaler), egress (the
-# sandbox gateway) and tools (MCP), picked by the first argument (Kubernetes `args: [egress]`). Build context: chat/.
+# The chat runtime image (docs/CHAT.md): egress (the sandbox gateway) and tools (REST), picked by the first argument
+# (Kubernetes `args: [egress]`). Build context: chat/.
 
 FROM node:22-trixie-slim
 RUN apt-get update \
@@ -17,11 +17,10 @@ ARG CHAT_COMMIT=unknown
 # RFC 3339 build time (egress's /version builtAt); empty = null
 ARG CHAT_BUILT_AT=
 LABEL org.opencontainers.image.source="https://github.com/DE0CH/jarvis3" \
-      org.opencontainers.image.description="Jarvis 3 chat runtime (web, egress, tools)" \
+      org.opencontainers.image.description="Jarvis 3 chat runtime (egress, tools)" \
       jarvis3.chat-commit="${CHAT_COMMIT}"
 ENV NODE_ENV=production \
     PORT=8080 \
-    JARVIS_CONFIG=/etc/jarvis/config.json \
     CHAT_COMMIT=${CHAT_COMMIT} \
     CHAT_BUILT_AT=${CHAT_BUILT_AT}
 USER 1000:1000
