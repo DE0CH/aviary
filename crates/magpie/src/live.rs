@@ -92,6 +92,7 @@ pub async fn receive(pool: &Pool, ctx: &Ctx, turn: Uuid, frames: &[LiveFrame]) -
             let after_row_seq = (f.op == FrameOp::Start).then_some(row_head);
             let at = f.at.map_or_else(time::OffsetDateTime::now_utc, |a| a.0);
             let op = op_str(f.op);
+            let text: Option<String> = f.text.as_deref().map(|t| crate::events::denul(t).into_owned());
             let block = f.block.map(block_str);
             let inserted = t
                 .execute(
@@ -116,7 +117,7 @@ pub async fn receive(pool: &Pool, ctx: &Ctx, turn: Uuid, frames: &[LiveFrame]) -
                         &block,
                         &f.name,
                         &offset,
-                        &f.text,
+                        &text,
                         &status,
                         &after_row_seq,
                         &at,

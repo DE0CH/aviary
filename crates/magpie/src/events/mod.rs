@@ -98,6 +98,42 @@ pub struct Stored {
     pub event: NewEvent,
 }
 
+/// Postgres refuses NUL in `text` and `\u0000` in `jsonb` (SQLSTATE 22021, 22P05): a tool's output with a NUL
+/// byte (`head` of a binary) would fail every write of its turn. Each NUL becomes U+FFFD, as a terminal shows it.
+#[must_use]
+pub fn denul(s: &str) -> std::borrow::Cow<'_, str> {
+    if s.contains('\0') {
+        std::borrow::Cow::Owned(s.replace('\0', "\u{FFFD}"))
+    } else {
+        std::borrow::Cow::Borrowed(s)
+    }
+}
+
+/// [`denul`] on every string (keys too) inside `v`.
+pub fn denul_value(v: &mut Value) {
+    match v {
+        Value::String(s) if s.contains('\0') => *s = s.replace('\0', "\u{FFFD}"),
+        Value::Array(a) => a.iter_mut().for_each(denul_value),
+        Value::Object(o) if o.keys().any(|k| k.contains('\0')) || o.values().any(has_nul) => {
+            let old = std::mem::take(o);
+            for (k, mut x) in old {
+                denul_value(&mut x);
+                o.insert(denul(&k).into_owned(), x);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn has_nul(v: &Value) -> bool {
+    match v {
+        Value::String(s) => s.contains('\0'),
+        Value::Array(a) => a.iter().any(has_nul),
+        Value::Object(o) => o.iter().any(|(k, x)| k.contains('\0') || has_nul(x)),
+        _ => false,
+    }
+}
+
 /// Cuts `s` to at most `max` bytes on a character boundary.
 #[must_use]
 pub fn cut(s: &str, max: usize) -> &str {
@@ -115,7 +151,14 @@ pub fn cut(s: &str, max: usize) -> &str {
 ///
 /// # Errors
 /// When a statement fails or the conversation row is gone.
-pub async fn append(tx: &Tx<'_>, conversation: Uuid, event: NewEvent) -> Result<i64> {
+pub async fn append(tx: &Tx<'_>, conversation: Uuid, mut event: NewEvent) -> Result<i64> {
+    denul_value(&mut event.data);
+    if let Some(m) = event.meta.as_mut() {
+        denul_value(m);
+    }
+    if let Some(t) = event.text.as_mut().filter(|t| t.contains('\0')) {
+        *t = denul(t).into_owned();
+    }
     let row = tx
         .query_opt(
             "update conversations set head_seq = head_seq + 1 where id = $1 returning head_seq",
@@ -149,4 +192,19 @@ pub async fn append(tx: &Tx<'_>, conversation: Uuid, event: NewEvent) -> Result<
     };
     crate::rows::project(tx, &stored).await?;
     Ok(seq)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_nul_anywhere_in_an_event_becomes_a_replacement_character() {
+        let mut v = json!({"result": {"text": "ELF\u{0}\u{0}x", "k\u{0}": ["a\u{0}", 1]}, "ok": "clean"});
+        denul_value(&mut v);
+        assert_eq!(v, json!({"result": {"text": "ELF\u{FFFD}\u{FFFD}x", "k\u{FFFD}": ["a\u{FFFD}", 1]}, "ok": "clean"}));
+        assert_eq!(denul("a\u{0}b"), "a\u{FFFD}b");
+        assert!(matches!(denul("clean"), std::borrow::Cow::Borrowed(_)));
+    }
 }

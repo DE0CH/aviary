@@ -96,7 +96,8 @@ impl Writer {
             .item
             .kind()
             .ok_or_else(|| Error::Internal("a row of an unknown kind".into()))?;
-        let item = serde_json::to_value(&r.item)?;
+        let mut item = serde_json::to_value(&r.item)?;
+        crate::events::denul_value(&mut item);
         tx.execute(
             "insert into rows (conversation_id, row_id, seq_end, kind, at, turn_id, item, source_seqs, tool_use_id,
                                message_id, block_index, is_prompt, seqs, derivation)
