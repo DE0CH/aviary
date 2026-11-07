@@ -2,8 +2,7 @@
 
 The Paseo web app as an image for pigeon, DE0CH/aviary's front service. `.github/workflows/pigeon-app.yml` builds
 `ghcr.io/de0ch/pigeon-app:<commit 12>` on every push to main that touches the app (`paseo/**`, `public/sw.js`, the build
-scripts) or, while `jarvis-image.yml` builds the ui image, what the ui image ships beyond it (`jarvis/**`, `server/**`,
-`shared/**`, `public/**`, `package.json`, `package-lock.json`). The image is `FROM scratch`: the files sit under `/app`,
+scripts). The image is `FROM scratch`: the files sit under `/app`,
 plus a static `/cp` (busybox's cp). pigeon's initContainer runs `/cp -a /app/. /srv/app/` into the emptyDir that pigeon serves. DE0CH/YYC pins the tag by hand,
 next to pigeon's own tag. The workflow deploys nothing.
 
@@ -18,10 +17,8 @@ build is deployed. So each image holds:
   the last 30 days (pigeon spec 17.1), merged in from the previous image (`:main`). A served build that `:main` no
   longer holds (a rollback to a pruned build) is restored from its own image `pigeon-app:<tag>`;
 - the hashed files of **every** `yyc-ai-ui` image served within the 720 h Access session lifetime. That list is the ui
-  pin history in DE0CH/YYC's git log (`pins.mjs`). While `jarvis-image.yml` still exists, the ui image of the same
-  commit is added too. At A1 that is the image YYC is about to pin, and pigeon-app stays at that commit until A5
-  (below, "The A1-A5 freeze"). The
-  files are copied out of the images themselves (`fetch-seeds.mjs`), so builds do not need to be deterministic. When
+  pin history in DE0CH/YYC's git log (`pins.mjs`); the ui image is no longer built (its workflow left with the old
+  stack, A6). The files are copied out of the images themselves (`fetch-seeds.mjs`), so builds do not need to be deterministic. When
   a tag was re-pushed (a re-run of jarvis-image), the files of its earlier digest stay too.
 
 A seed leaves when its image has not been served for 720 h, and an earlier build when it is none of the above: a tab
@@ -158,8 +155,8 @@ Y) into the image YYC then pins:
 From A1 to A5, YYC keeps `pigeon-app` at the A1 commit. Only a fix that changes nothing but pigeon-app may ship in
 that window (DESIGN 9.6).
 
-- **The A1 build exists.** The A1 commit (WP-56's switch module in `jarvis/router.mjs`) touches no app path, so the
-  paths filter includes the ui image's own inputs while `jarvis-image.yml` exists: the A1 commit gets its pigeon-app
+- **The A1 build exists.** The A1 commit (WP-56's switch module in the old router) touches no app path, so the
+  paths filter included the ui image's own inputs while the ui image was built: the A1 commit gets its pigeon-app
   build, which waits for that commit's ui image and seeds it. A `workflow_dispatch` builds the head of main at that
   moment, which need not be the A1 commit, so it is not the way to build A1. If the A1 commit's image job was cancelled
   (the middle of three quick pushes, "The workflow" above), re-run the A1 commit's pigeon-app run (Actions, that run,
