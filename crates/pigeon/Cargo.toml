@@ -24,7 +24,6 @@ ring.workspace = true
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-socket2.workspace = true
 subtle.workspace = true
 time.workspace = true
 tokio.workspace = true
@@ -36,7 +35,6 @@ uuid.workspace = true
 
 [dev-dependencies]
 aviary-core = { path = "../aviary-core", features = ["testing"] }
-aviary-conformance = { path = "../../testing/conformance" }
 aviary-fakes = { path = "../../testing/fakes" }
 fake-access = { path = "../../testing/fake-access" }
 

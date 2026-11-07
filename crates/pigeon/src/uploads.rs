@@ -42,7 +42,7 @@ pub fn sanitise_name(raw: &str) -> String {
     if out.is_empty() { "file".into() } else { out }
 }
 
-pub(crate) fn error(app: &App, status: StatusCode, name: &str) -> Response {
+fn error(app: &App, status: StatusCode, name: &str) -> Response {
     let zh = app.0.identity.is_zh();
     let text = match (status, zh) {
         // the declared-length guard answers before the name is read: a sentence without it
@@ -60,36 +60,9 @@ pub(crate) fn error(app: &App, status: StatusCode, name: &str) -> Response {
     json(status, &json!({"error": text}))
 }
 
-/// The answer to a file over the old route's cap while any conversation is legacy (DESIGN 9.5).
-pub(crate) fn too_large_old(app: &App, name: &str) -> Response {
-    let text = match (app.0.identity.is_zh(), name.is_empty()) {
-        (true, true) => "檔案太大（上限 30MB）。".to_owned(),
-        (false, true) => "The file is too large (max 30MB).".to_owned(),
-        (true, false) => format!("「{name}」太大（上限 30MB）。"),
-        (false, false) => format!("\"{name}\" is too large (max 30MB)."),
-    };
-    json(StatusCode::PAYLOAD_TOO_LARGE, &json!({"error": text}))
-}
-
-/// Handles the upload. In the switch window (DESIGN 9.5) the old route's cap applies while any conversation is
-/// legacy, and from T0 to the gate the file is teed into the old child ([`crate::legacy::uploads::tee`]).
-#[allow(clippy::too_many_lines)] // one request's steps in order: the window, the body, magpie's answer
+/// Handles the upload.
+#[allow(clippy::too_many_lines)] // one request's steps in order: the body, magpie's answer
 pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
-    let mut max_file = MAX_FILE;
-    // the move's input: an upload counts as activity from its start to its end (DESIGN 9.3, "is not attaching")
-    let _uploading = id.subject().map(|p| app.legacy().0.activity.uploading(p));
-    if let Some(person) = id.subject() {
-        match app.legacy().window(person).await {
-            Ok(w) if w.tees_uploads() => return crate::legacy::uploads::tee(app, req, id).await,
-            Ok(w) if w.any_legacy => max_file = crate::legacy::OLD_FILE_MAX,
-            Ok(_) => {}
-            Err(e) => {
-                // whether the old child must get a copy is unknown: no upload rather than a path it may not know
-                tracing::warn!(error = %e, "upload: the switch window's state not read");
-                return error(app, StatusCode::BAD_GATEWAY, "");
-            }
-        }
-    }
     let headers = req.headers().clone();
     let declared = headers
         .get(header::CONTENT_LENGTH)
@@ -133,7 +106,7 @@ pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
     let stream = futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|c| (c, rx)) });
     let upstream = calls_upload(calls, &name, &content_type, reqwest::Body::wrap_stream(stream));
     tokio::pin!(upstream);
-    let feeding = feed(field, parts, tx, idle, max_file);
+    let feeding = feed(field, parts, tx, idle);
     tokio::pin!(feeding);
     // the feed and magpie's answer run together; magpie answers early only when it refuses or fails
     let ended = tokio::select! {
@@ -157,12 +130,6 @@ pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
             (total, sent)
         }
         Fed::Client(status, broken) => {
-            if status == StatusCode::PAYLOAD_TOO_LARGE && max_file < MAX_FILE {
-                if broken {
-                    let _ = tokio::time::timeout(UPLOAD_FIRST_BYTE, &mut upstream).await;
-                }
-                return close(too_large_old(app, &name));
-            }
             if broken {
                 // the upstream body ended in an error: let magpie see it (it stores nothing)
                 let _ = tokio::time::timeout(UPLOAD_FIRST_BYTE, &mut upstream).await;
@@ -219,14 +186,13 @@ async fn feed(
     mut parts: multer::Multipart<'static>,
     tx: mpsc::Sender<Result<Bytes, std::io::Error>>,
     idle: Duration,
-    max_file: u64,
 ) -> Fed {
     let mut total: u64 = 0;
     let refused = loop {
         match tokio::time::timeout(idle, field.chunk()).await {
             Ok(Ok(Some(chunk))) => {
                 total += chunk.len() as u64;
-                if total > max_file {
+                if total > MAX_FILE {
                     break StatusCode::PAYLOAD_TOO_LARGE;
                 }
                 match tokio::time::timeout(idle, tx.send(Ok(chunk))).await {
@@ -259,7 +225,7 @@ async fn feed(
 }
 
 /// Reads the multipart body after the file part: `None` when it ends with no other `files` part, else the refusal.
-pub(crate) async fn rest(parts: &mut multer::Multipart<'static>, idle: Duration) -> Option<StatusCode> {
+async fn rest(parts: &mut multer::Multipart<'static>, idle: Duration) -> Option<StatusCode> {
     loop {
         match tokio::time::timeout(idle, parts.next_field()).await {
             Ok(Ok(None)) => return None,
@@ -284,13 +250,13 @@ pub(crate) async fn rest(parts: &mut multer::Multipart<'static>, idle: Duration)
 }
 
 /// An answer that closes its connection: the client's body was not read to its end.
-pub(crate) fn close(mut r: Response) -> Response {
+fn close(mut r: Response) -> Response {
     r.headers_mut()
         .insert(header::CONNECTION, HeaderValue::from_static("close"));
     r
 }
 
-pub(crate) async fn calls_upload(
+async fn calls_upload(
     calls: magpie_api::client::PersonCalls<'_>,
     name: &str,
     content_type: &str,

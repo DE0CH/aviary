@@ -3100,7 +3100,6 @@ dependencies = [
 name = "pigeon"
 version = "0.0.0"
 dependencies = [
- "aviary-conformance",
  "aviary-core",
  "aviary-fakes",
  "axum",
@@ -3120,7 +3119,6 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "socket2",
  "subtle",
  "time",
  "tokio",

@@ -93,8 +93,7 @@ secret_files() { # secret_files <name> KEY=PATH…
 {
   secret_env pigeon-env \
     "PIGEON_TOKEN_MAGPIE=$pigeon_magpie" "PIGEON_TOKEN_HERMIT=$pigeon_hermit" "PIGEON_TOKEN_MODEL=$pigeon_model" \
-    "PIGEON_VIEW_AS_KEYS=$(b64url32)" "PIGEON_BLOB_KEYS=$(b64url32)" \
-    "PIGEON_TOKEN_UI=$(tok)" "PIGEON_LEGACY_VIEW_AS_KEY=$(b64url32)"
+    "PIGEON_VIEW_AS_KEYS=$(b64url32)" "PIGEON_BLOB_KEYS=$(b64url32)"
   secret_env magpie-env \
     "MAGPIE_DATABASE_URL=$(pg_url magpie)" \
     "MAGPIE_S3_ENDPOINT=http://$s3:9000" "MAGPIE_S3_REGION=us-east-1" "MAGPIE_S3_BUCKET=magpie" \

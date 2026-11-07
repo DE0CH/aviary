@@ -45,20 +45,10 @@ async fn run() -> ExitCode {
         }
     };
     let ops = ops::Ops::new(build, registry);
-    // the ops port also serves the switch window's `GET /internal/switch/activity` (the edge never reaches it)
-    let ops_listener = match tokio::net::TcpListener::bind(ops::ADDR).await {
-        Ok(l) => l,
-        Err(e) => {
-            tracing::error!(error = %e, "ops port not bound");
-            return ExitCode::FAILURE;
-        }
-    };
-    let ops_router = ops.router().merge(app.internal_router());
-    tokio::spawn(async move {
-        if let Err(e) = axum::serve(ops_listener, ops_router).await {
-            tracing::error!(error = %e, "ops server ended");
-        }
-    });
+    if let Err(e) = ops.spawn(ops::ADDR).await {
+        tracing::error!(error = %e, "ops port not bound");
+        return ExitCode::FAILURE;
+    }
     app.start(ops.readiness());
     let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, PORT));
     let listener = match tokio::net::TcpListener::bind(addr).await {

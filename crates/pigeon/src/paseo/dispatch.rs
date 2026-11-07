@@ -11,7 +11,7 @@ use std::sync::Arc;
 use base64::Engine as _;
 use magpie_api::client::{ClientError, PersonCalls};
 use magpie_api::conversations::{Conversation, CreateRequest, ListQuery, ListState, RenameRequest};
-use magpie_api::errors::{ErrorCode, Refusal, RouteHint};
+use magpie_api::errors::{ErrorCode, Refusal};
 use magpie_api::rows::{TIMELINE_DEFAULT, TIMELINE_MAX, TimelineQuery};
 use magpie_api::turns::{AgentPermissionResponse, FileRef, ImageRef, SendRequest};
 use magpie_api::uploads::UploadKind;
@@ -71,7 +71,7 @@ pub fn view_parts(app: &App) -> (String, Locale, Option<String>) {
 }
 
 /// The kinds that name one conversation (by `agentId` or `workspaceId`), which a delegate may own.
-pub(crate) fn conversation_of(kind: &str, m: &Value) -> Option<Uuid> {
+fn conversation_of(kind: &str, m: &Value) -> Option<Uuid> {
     let id = match kind {
         "fetch_agent_request"
         | "fetch_agent_timeline_request"
@@ -129,22 +129,6 @@ fn view_as_refused(kind: &str) -> bool {
             | "delete_agent_request"
             | "agent_permission_response"
     )
-}
-
-/// A conversation-scoped request served from magpie whoever owns it (the legacy delegate's `native` route: a
-/// ticket answered that magpie owns the conversation now).
-pub(crate) async fn native(app: &App, hub: &Hub, conn: &Arc<Conn>, kind: String, m: Value) {
-    let rid = str_field(&m, "requestId").unwrap_or("").to_owned();
-    Handler {
-        app: app.clone(),
-        hub: hub.clone(),
-        conn: conn.clone(),
-        kind,
-        rid,
-        m,
-    }
-    .run_native()
-    .await;
 }
 
 /// Dispatches one session message (7.3).
@@ -288,45 +272,13 @@ impl Handler {
         str_field(&self.m, "agentId").and_then(|s| Uuid::parse_str(s).ok())
     }
 
-    /// A native write magpie answered 409 `conversation_migrating` with `route: "legacy"`: the old stack owns the
-    /// conversation, and the request goes to the legacy delegate instead (the switch window's re-route, never shown
-    /// to the tab). `true` when it went there (and was answered).
-    async fn rerouted(&self, f: &Fail) -> bool {
-        let Fail::Refused(r) = f else { return false };
-        if r.code != ErrorCode::ConversationMigrating || r.route != Some(RouteHint::Legacy) {
-            return false;
-        }
-        let Some(c) = conversation_of(&self.kind, &self.m) else {
-            return false;
-        };
-        self.app.legacy().mark(&self.conn.person, c, true);
-        match self.hub.delegate(&self.conn.person, &c) {
-            Some(d) => {
-                d.request(self.conn.clone(), self.kind.clone(), self.m.clone()).await;
-                true
-            }
-            None => false,
-        }
-    }
-
     async fn run(self) {
-        if let Some(c) = conversation_of(&self.kind, &self.m) {
-            // the switch window: a conversation pigeon has not read is looked up while the person has legacy ones; a
-            // read whose owner cannot be told answers a retryable error rather than magpie's copy of what may be a
-            // legacy conversation (a write goes natively: magpie's 409 re-routes it)
-            if self.app.legacy().resolve(&self.conn, c).await.is_err() && !crate::legacy::is_write(&self.kind) {
-                return self.rpc_failed(self.locale().unreachable());
-            }
-            if let Some(d) = self.hub.delegate(&self.conn.person, &c) {
-                d.request(self.conn.clone(), self.kind.clone(), self.m.clone()).await;
-                return;
-            }
+        if let Some(c) = conversation_of(&self.kind, &self.m)
+            && let Some(d) = self.hub.delegate(&self.conn.person, &c)
+        {
+            d.request(self.conn.clone(), self.kind.clone(), self.m.clone()).await;
+            return;
         }
-        self.run_native().await;
-    }
-
-    /// The request served from magpie, whoever [`Hub::delegate`] names.
-    async fn run_native(self) {
         match self.kind.as_str() {
             "fetch_workspaces_request" => self.fetch_list(ListKind::Workspaces).await,
             "fetch_agents_request" => self.fetch_list(ListKind::Agents).await,
@@ -405,20 +357,10 @@ impl Handler {
                     .iter()
                     .map(|c| json!({"agent": agent_snapshot(c, &view), "project": project_placement(c, &view)}))
                     .collect();
-                // the switch window: a legacy conversation carries the old stack's state over magpie's
-                // (`legacy::view`)
-                let legacy: HashSet<Uuid> = list
-                    .conversations
-                    .iter()
-                    .filter(|c| c.migrating)
-                    .map(|c| c.id)
-                    .collect();
-                crate::legacy::view::send_list(
-                    &self.conn,
+                self.reply(
                     "fetch_agents_response",
-                    json!({"requestId": self.rid, "subscriptionId": sub, "entries": entries, "pageInfo": page_info,
-                           "sync": sync}),
-                    &|c| legacy.contains(c),
+                    &json!({"requestId": self.rid, "subscriptionId": sub, "entries": entries, "pageInfo": page_info,
+                            "sync": sync}),
                 );
             }
         }
@@ -441,12 +383,7 @@ impl Handler {
     }
 
     async fn conversation(&self, id: Uuid) -> Result<Conversation, Fail> {
-        let sent = std::time::Instant::now();
-        let c = self.calls().get_conversation(id).await.map_err(fail)?;
-        self.app
-            .legacy()
-            .observe(&self.conn.person, &c, crate::legacy::Seen::Read(sent));
-        Ok(c)
+        self.calls().get_conversation(id).await.map_err(fail)
     }
 
     async fn fetch_agent(&self) {
@@ -720,9 +657,6 @@ impl Handler {
             Ok(_) => self.reply("send_agent_message_response", &answer(true, None)),
             Err(e) => {
                 let f = fail(e);
-                if self.rerouted(&f).await {
-                    return;
-                }
                 self.reply("send_agent_message_response", &answer(false, Some(self.send_error(&f))));
             }
         }
@@ -731,20 +665,6 @@ impl Handler {
     /// 7.5.5.
     #[allow(clippy::too_many_lines)] // the create's steps and both answers, in order
     async fn create(&self) {
-        // a rollback before the gate (DESIGN 9.10 step 1): creates go through the legacy upstream, born legacy
-        if self
-            .app
-            .legacy()
-            .window(&self.conn.person)
-            .await
-            .is_ok_and(|w| w.creates_legacy())
-        {
-            return self
-                .app
-                .legacy()
-                .create(self.conn.clone(), self.rid.clone(), self.m.clone())
-                .await;
-        }
         let key = str_field(&self.m, "idempotencyKey")
             .filter(|k| !k.is_empty())
             .map_or_else(|| Uuid::new_v4().to_string(), str::to_owned);
@@ -887,7 +807,6 @@ impl Handler {
         let error = match self.calls().cancel_turn(id).await.map_err(fail) {
             Ok(_) => None,
             Err(Fail::NotFound) => Some(strings::NOT_FOUND.to_owned()),
-            Err(f) if self.rerouted(&f).await => return,
             Err(_) => Some(o.locale.unreachable().to_owned()),
         };
         let snapshot = match self.conversation(id).await {
@@ -900,8 +819,7 @@ impl Handler {
         );
     }
 
-    /// `Err` when the rename went to the legacy delegate (which answered).
-    async fn rename(&self, id: Uuid, title: &str) -> Result<Option<String>, ()> {
+    async fn rename(&self, id: Uuid, title: &str) -> Option<String> {
         let title: String = title
             .chars()
             .take(magpie_api::conversations::RENAME_MAX_CHARS)
@@ -912,13 +830,10 @@ impl Handler {
             .await
             .map_err(fail)
         {
-            Ok(_) => Ok(None),
-            Err(Fail::NotFound) => Ok(Some(strings::NOT_FOUND.to_owned())),
-            Err(Fail::Refused(r)) if r.code == ErrorCode::EmptyTitle => {
-                Ok(Some(self.locale().empty_title().to_owned()))
-            }
-            Err(f) if self.rerouted(&f).await => Err(()),
-            Err(_) => Ok(Some(self.locale().unreachable().to_owned())),
+            Ok(_) => None,
+            Err(Fail::NotFound) => Some(strings::NOT_FOUND.to_owned()),
+            Err(Fail::Refused(r)) if r.code == ErrorCode::EmptyTitle => Some(self.locale().empty_title().to_owned()),
+            Err(_) => Some(self.locale().unreachable().to_owned()),
         }
     }
 
@@ -930,10 +845,7 @@ impl Handler {
         } else {
             match self.agent_id() {
                 None => Some(strings::NOT_FOUND.to_owned()),
-                Some(id) => match self.rename(id, &title).await {
-                    Ok(e) => e,
-                    Err(()) => return,
-                },
+                Some(id) => self.rename(id, &title).await,
             }
         };
         self.reply(
@@ -949,10 +861,7 @@ impl Handler {
         let error = match id {
             None => Some(strings::NOT_FOUND.to_owned()),
             Some(_) if title.is_empty() => Some(self.locale().empty_title().to_owned()),
-            Some(id) => match self.rename(id, &title).await {
-                Ok(e) => e,
-                Err(()) => return,
-            },
+            Some(id) => self.rename(id, &title).await,
         };
         let shown: Option<String> = error.is_none().then(|| {
             title
@@ -990,11 +899,6 @@ impl Handler {
             None => Err(Fail::NotFound),
             Some(id) => self.calls().delete_conversation(id).await.map_err(fail),
         };
-        if let Err(f) = &result
-            && self.rerouted(f).await
-        {
-            return;
-        }
         if self.kind == "archive_workspace_request" {
             let ws = str_field(&self.m, "workspaceId").unwrap_or("");
             let (at, error) = match &result {
@@ -1026,11 +930,6 @@ impl Handler {
             Ok(_) => self.calls().delete_conversation(id).await.map(drop).map_err(fail),
             Err(f) => Err(f),
         };
-        if let Err(f) = &result
-            && self.rerouted(f).await
-        {
-            return;
-        }
         match result {
             Ok(()) => self.reply("agent_deleted", &json!({"requestId": self.rid, "agentId": id})),
             Err(f) => self.rpc_failed(&self.fail_sentence(&f)),
@@ -1051,12 +950,8 @@ impl Handler {
                 );
             }
             if let Err(e) = self.calls().restore_conversation(id).await {
-                let f = fail(e);
-                if self.rerouted(&f).await {
-                    return;
-                }
-                tracing::warn!(error = ?f, "restore failed");
-                return self.rpc_failed(&self.fail_sentence(&f));
+                tracing::warn!(error = %e, "restore failed");
+                return self.rpc_failed(&self.fail_sentence(&fail(e)));
             }
         }
         self.reply(
@@ -1083,11 +978,7 @@ impl Handler {
             answers_by_question(input);
         }
         if let Err(e) = self.calls().answer_ask(id, ask, &response).await {
-            let f = fail(e);
-            if self.rerouted(&f).await {
-                return;
-            }
-            tracing::warn!(error = ?f, "ask answer failed");
+            tracing::warn!(error = %e, "ask answer failed");
         }
     }
 

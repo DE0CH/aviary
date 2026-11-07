@@ -5,7 +5,6 @@
 use std::fmt::Write as _;
 
 use axum::extract::Request;
-use axum::http::request::Parts;
 use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use magpie_api::errors::ErrorCode;
@@ -20,9 +19,8 @@ pub const ADMIN_PATH: &str = "/ops/schedules";
 /// The pause-all switch's form target.
 pub const PAUSE_PATH: &str = "/ops/schedules/pause";
 
-/// `GET <sessions>/{id}/schedules`: `{"schedules": [...]}`, each with its last runs (the switch window: a
-/// legacy conversation's from the old child).
-pub async fn conversation(app: &App, req: &Parts, id: &Identity, conversation: &str) -> Response {
+/// `GET <sessions>/{id}/schedules`: `{"schedules": [...]}`, each with its last runs.
+pub async fn conversation(app: &App, id: &Identity, conversation: &str) -> Response {
     let not_found = || api_error(StatusCode::NOT_FOUND, "SESSION_NOT_FOUND", "Conversation not found.");
     let Ok(cid) = uuid::Uuid::parse_str(conversation) else {
         return not_found();
@@ -30,9 +28,6 @@ pub async fn conversation(app: &App, req: &Parts, id: &Identity, conversation: &
     let Some(calls) = person_calls(&app.0.magpie, id) else {
         return not_found();
     };
-    if let Some(r) = app.legacy().schedules(app, req, id, cid).await {
-        return r;
-    }
     match calls.conversation_schedules(cid).await {
         Ok(list) => json(StatusCode::OK, &serde_json::to_value(&list).unwrap_or_default()),
         Err(e) if e.code() == Some(&ErrorCode::NotFound) => not_found(),

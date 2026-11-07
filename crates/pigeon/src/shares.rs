@@ -57,24 +57,9 @@ pub async fn conversation_shares(app: &App, req: &Parts, id: &Identity, conversa
     let Some(calls) = person_calls(&app.0.magpie, id) else {
         return not_found();
     };
-    // the switch window: a legacy conversation's links are the old child's
-    if let Some(r) = app.legacy().shares(app, req, id, cid).await {
-        return r;
-    }
     if req.method == Method::POST {
         return match calls.create_share(cid).await {
             Ok(s) => json(StatusCode::CREATED, &link(&s.id, s.created_at)),
-            // the switch window: magpie says the old stack owns it (pigeon's view was stale, or unread): the create
-            // goes to the old child under a ticket (the re-route, never shown to the tab)
-            Err(e)
-                if e.code() == Some(&ErrorCode::ConversationMigrating)
-                    && e.api().and_then(|r| r.route) == Some(magpie_api::errors::RouteHint::Legacy) =>
-            {
-                match app.legacy().share_rerouted(app, req, id, cid).await {
-                    Some(r) => r,
-                    None => failed(&e),
-                }
-            }
             Err(e) => failed(&e),
         };
     }
@@ -96,25 +81,7 @@ pub async fn share(app: &App, req: &Parts, id: &Identity, share_id: &str) -> Res
         return not_found();
     };
     if req.method == Method::DELETE {
-        let r = calls.revoke_share(share_id).await;
-        // the switch window: a legacy conversation's link is revoked in the old child (magpie names the
-        // conversation in its 409), as is one made through the legacy upstream that magpie has not copied yet
-        let legacy = match &r {
-            Err(e) if e.code() == Some(&ErrorCode::ConversationMigrating) => Some(
-                e.api()
-                    .and_then(|x| x.extra.get("conversationId"))
-                    .and_then(Value::as_str)
-                    .and_then(|s| uuid::Uuid::parse_str(s).ok()),
-            ),
-            Err(e) if e.code() == Some(&ErrorCode::NotFound) => Some(None),
-            _ => None,
-        };
-        if let Some(conversation) = legacy
-            && let Some(resp) = app.legacy().revoke(app, req, id, share_id, conversation).await
-        {
-            return resp;
-        }
-        return match r {
+        return match calls.revoke_share(share_id).await {
             Ok(()) => {
                 let mut r = Response::new(Body::empty());
                 *r.status_mut() = StatusCode::NO_CONTENT;

@@ -205,10 +205,6 @@ pub async fn files_raw(app: &App, req: &Parts, id: &Identity, conversation: &str
     let Some(calls) = person_calls(&app.0.magpie_transfer, id) else {
         return unreachable_upstream();
     };
-    // the switch window: a legacy conversation's files are the old child's
-    if let Some(r) = app.legacy().files_raw(app, req, id, cid).await {
-        return r;
-    }
     let guard = app.0.transfers.guard();
     match tokio::time::timeout(FIRST_BYTE, calls.files_raw_relay(cid, &q, &forwarded(&req.headers))).await {
         Ok(Ok(res)) => relay(res, guard, None),

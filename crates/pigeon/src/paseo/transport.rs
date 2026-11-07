@@ -67,8 +67,6 @@ pub struct Viewer {
     pub admin: String,
     /// The view session.
     pub session: String,
-    /// When the view ends (the token's `e`), seconds: the legacy upstream signs the same claims for the old router.
-    pub exp: i64,
 }
 
 #[derive(Debug)]
@@ -119,8 +117,6 @@ pub struct Conn {
     /// The drain's waits for its 1012 ([`Conn::close_for_drain`]): the in-flight request wait and the transfer
     /// deadline.
     drain_close: Mutex<Option<(Duration, tokio::time::Instant)>>,
-    /// The switch window: the legacy conversations' agent state on this socket (`legacy::view`).
-    pub(crate) legacy_agents: crate::legacy::view::Agents,
 }
 
 impl std::fmt::Debug for Conn {
@@ -564,7 +560,6 @@ fn person_of(id: &Identity) -> Option<(String, Option<Viewer>, i64)> {
             Some(Viewer {
                 admin: v.admin.email.clone(),
                 session: v.session.clone(),
-                exp: v.exp,
             }),
             v.exp.min(v.admin.exp),
         )),
@@ -612,7 +607,6 @@ async fn run(app: App, hub: Hub, socket: WebSocket, id: Identity, frames: Option
         parked: Mutex::new(None),
         park_bound: app.0.tuning.transfer_bound,
         drain_close: Mutex::new(None),
-        legacy_agents: crate::legacy::view::Agents::default(),
     });
     hub.register(&conn);
     app.0.metrics.socket_opened(conn.viewer.is_some());
@@ -972,7 +966,6 @@ impl Conn {
             parked: Mutex::new(None),
             park_bound: Duration::from_secs(300),
             drain_close: Mutex::new(None),
-            legacy_agents: crate::legacy::view::Agents::default(),
         });
         (conn, (rx, close_rx))
     }

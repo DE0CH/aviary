@@ -92,7 +92,7 @@ step_aws() {
   [ "$keep" != '{}' ] || { echo "aws.keepTags (the new fabric's tags) is empty: refusing to tell its images apart" >&2; exit 1; }
 
   # before any change: the AMIs to deregister must be the old fabric's alone
-  local images amis lts used=' ' ltid ltname vers ami others
+  local images amis lts used=' ' ltid ltname nums n ami others
   images=$(aq ec2 describe-images --owners self --filters "${amif[@]}" --query 'Images[].{id: ImageId, tags: Tags}' --output json)
   amis=$(jq -r '.[]?.id' <<< "$images")
   local kept

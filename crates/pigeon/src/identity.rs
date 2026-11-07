@@ -369,8 +369,6 @@ struct IdInner {
     access_origin: Arc<dyn Fn(&str) -> String + Send + Sync>,
     tuning: Tuning,
     view_as_keys: KeyList,
-    /// The switch window's book of the newest verified token per person, and the old view-as key (WP-50).
-    switch: crate::legacy::tokens::Book,
     metrics: Metrics,
     facts: RwLock<Option<Arc<Deployment>>>,
     /// Per team (only teams the facts name get an entry).
@@ -398,7 +396,6 @@ impl Identities {
         tuning: Tuning,
         view_as_keys: KeyList,
         metrics: Metrics,
-        switch: crate::legacy::tokens::Book,
     ) -> Self {
         let tokens = moka::future::Cache::builder()
             .max_capacity(TOKEN_CACHE_ENTRIES)
@@ -419,7 +416,6 @@ impl Identities {
             tuning,
             view_as_keys,
             metrics,
-            switch,
             facts: RwLock::new(None),
             teams: Mutex::new(HashMap::new()),
             tokens,
@@ -827,8 +823,6 @@ impl Identities {
             given_name: v.given_name,
             name: v.name,
         };
-        // the legacy upstream opens with the newest token pigeon verified for the person (DESIGN 9.5)
-        self.0.switch.saw(&person.email, &person.token, person.exp);
         let Some(raw) = view_as else {
             return Identity::Person(person);
         };
@@ -837,12 +831,7 @@ impl Identities {
 
     /// Spec 6.2's checks for a caller carrying a view-as token.
     async fn view_as(&self, caller: Person, raw: &str) -> Identity {
-        let claims = match viewas::verify(&self.0.view_as_keys, raw, now_secs()) {
-            Some(c) => Some(c),
-            // a token the old router signed, honoured while any conversation is legacy (spec 6.2, DESIGN 9.5)
-            None => self.0.switch.old_view_as(raw, &caller.email).await,
-        };
-        let Some(claims) = claims else {
+        let Some(claims) = viewas::verify(&self.0.view_as_keys, raw, now_secs()) else {
             tracing::warn!(person = %aviary_core::log::person_key(&caller.email), "view-as refused: bad token");
             return Identity::ViewAsRefused;
         };

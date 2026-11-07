@@ -459,14 +459,14 @@ impl Hub {
     ) -> Result<ListResponse, Fail> {
         let viewer = conn.viewer.as_ref().map(|v| (v.admin.clone(), v.session.clone()));
         let key = (conn.person.clone(), viewer, cursor.clone(), limit);
-        let (asked, cell) = {
+        let cell = {
             let mut st = self.st();
             st.lists.retain(|_, (at, _)| at.elapsed() < LIST_CACHE);
-            let (at, cell) = st
-                .lists
+            st.lists
                 .entry(key.clone())
-                .or_insert_with(|| (Instant::now(), Arc::new(OnceCell::new())));
-            (*at, cell.clone())
+                .or_insert_with(|| (Instant::now(), Arc::new(OnceCell::new())))
+                .1
+                .clone()
         };
         let r = cell
             .get_or_init(|| async {
@@ -480,11 +480,6 @@ impl Hub {
             })
             .await
             .clone();
-        if let Ok(list) = &r {
-            // as of the shared call's start (an answer that started before a release says what is no longer so)
-            app.legacy()
-                .observe_all(&conn.person, &list.conversations, crate::legacy::Seen::Read(asked));
-        }
         if r.is_err() {
             // callers already waiting on this cell share the failure; later ones call again
             let mut st = self.st();

@@ -659,7 +659,7 @@ async fn api(app: &App, req: Request, path: &str, upgrade: bool) -> (&'static st
         ApiRoute::Transcript(cid) => crate::raw::transcript(app, &id, &cid, query.as_deref()).await,
         ApiRoute::Blob(blob) => blobs::blob(app, &parts, &blob, query.as_deref()).await,
         ApiRoute::SessionShares(cid) => shares::conversation_shares(app, &parts, &id, &cid).await,
-        ApiRoute::SessionSchedules(cid) => crate::schedules::conversation(app, &parts, &id, &cid).await,
+        ApiRoute::SessionSchedules(cid) => crate::schedules::conversation(app, &id, &cid).await,
         ApiRoute::Share(sid) => shares::share(app, &parts, &id, &sid).await,
         ApiRoute::ShareFiles(sid) => shares::share_files(app, &parts, &id, &sid, query.as_deref()).await,
         ApiRoute::ShareContinue(sid) => shares::continue_share(app, &parts, &id, &sid).await,
@@ -766,18 +766,9 @@ async fn warm(app: &App, body: Body, id: &Identity) -> Response {
     let Some(person) = id.subject().map(str::to_owned) else {
         return ok;
     };
-    // the move's input (DESIGN 9.3): who is typing
-    app.legacy().0.activity.warm(&person);
-    let raw = small_body(body, SMALL_BODY).await;
-    let Ok(conversation) = warm_target(raw.as_deref()) else {
+    let Ok(conversation) = warm_target(small_body(body, SMALL_BODY).await.as_deref()) else {
         return ok;
     };
-    // a legacy conversation before the gate: the old stack's warm, under a ticket
-    if let (Some(c), Some(raw)) = (conversation, raw.clone())
-        && app.legacy().warm(app, id, c, raw).await
-    {
-        return ok;
-    }
     if app.0.warm.take(&person, conversation) {
         let hermit = app.0.hermit.clone();
         tokio::spawn(async move {
