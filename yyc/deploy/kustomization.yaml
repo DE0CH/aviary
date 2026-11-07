@@ -33,6 +33,12 @@ images:
   # egress and tools (DE0CH/jarvis3 chat.yml); the ZDR guard reads this tag (yyc-ai/tests/test_zdr.py)
   - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "92aa7c62d2bf"}
 configMapGenerator:
+  # yyc-mcp's access catalogue (news-stream/deploy/apps/yyc-mcp.yaml checks it on every call): catalogue.json under the
+  # old key config.json, a fixed name so the mounted file changes in place (DESIGN 15.4; on yyc-talos since T4b)
+  - name: yyc-catalogue
+    namespace: yyc
+    files: [config.json=catalogue.json]
+    options: {disableNameSuffixHash: true}
   # hermit's YYC configuration (hermit spec 9): hashed, so a change rolls hermit
   - name: hermit-config
     namespace: yyc-ai
