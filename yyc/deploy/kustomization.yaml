@@ -28,7 +28,7 @@ resources:
 # fabric.sandboxd; the sandbox image is pinned by digest in hermit/hermit.json
 images:
   - {name: pigeon, newName: ghcr.io/de0ch/pigeon, newTag: "10e2a1f0ae0b"}
-  - {name: magpie, newName: ghcr.io/de0ch/magpie, newTag: "10e2a1f0ae0b"}
+  - {name: magpie, newName: ghcr.io/de0ch/magpie, newTag: "16f917f9d1b1"}
   - {name: hermit, newName: ghcr.io/de0ch/hermit, newTag: "10e2a1f0ae0b"}
   - {name: sandboxd, newName: ghcr.io/de0ch/sandboxd, newTag: "10e2a1f0ae0b"}
   # the app bundle (DE0CH/claudecodeui pigeon-app.yml); from A1 to A5 only a pigeon-app-fix/* build may replace it
