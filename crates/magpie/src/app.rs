@@ -19,9 +19,7 @@ use magpie_api::changes::{ChangesQuery, ChangesResponse};
 use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse, ListQuery, ListResponse, RenameRequest};
 use magpie_api::events::{EventsPage, EventsQuery};
 use magpie_api::files::{FilesPanel, RawFileQuery};
-use magpie_api::legacy::{
-    LegacyPathRequest, TicketClaim, TicketClaimed, TicketDone, TicketRequest, TicketResponse, WindowState,
-};
+use magpie_api::legacy::LegacyPathRequest;
 use magpie_api::live::{LiveFramesRequest, LiveState};
 use magpie_api::ops::{
     AdminConversation, AdminConversationList, AdminListQuery, LegacyImportStatus, OpsStats, PeopleQuery,
@@ -69,12 +67,7 @@ pub struct Config {
     pub pod: String,
     /// The bucket (`MAGPIE_S3_*`).
     pub bucket: BucketConfig,
-    /// The import Deployment's base URL for the switch window's synchronous ingest: the fixed endpoint name
-    /// `http://magpie-import` ([`crate::legacy::ingest::URL`]), another address only in tests.
-    pub import_url: String,
-    /// `MAGPIE_TOKEN_IMPORT`.
-    pub import_token: String,
-    /// The switch window's metrics (registered on the ops registry by the binary).
+    /// The legacy-path set's metrics (registered on the ops registry by the binary).
     pub legacy_metrics: crate::legacy::Metrics,
 }
 
@@ -95,10 +88,8 @@ pub struct Magpie {
     this: std::sync::Weak<Magpie>,
     /// The blob store (bucket, read cache, decode permits).
     pub blobs: Arc<Blobs>,
-    /// The switch window's metrics.
+    /// The legacy-path set's metrics.
     pub legacy: crate::legacy::Metrics,
-    /// The import Deployment, for the synchronous ingest of an old asset.
-    pub ingest: crate::legacy::ingest::Ingest,
 }
 
 impl Magpie {
@@ -171,26 +162,6 @@ impl Service {
         draining: Draining,
         intervals: jobs::Intervals,
     ) -> Result<Self, StartError> {
-        Self::start_inner(cfg, readiness, draining, intervals, true).await
-    }
-
-    /// magpie's library without its jobs (no leader lock, purge, outbox, driver or hermit feed): the importer's
-    /// process (`magpie import …`, cutover 7.1), which writes through the same functions as a replica and serves no
-    /// API. Waits for the migrations a replica applies (it applies them itself when it is first).
-    ///
-    /// # Errors
-    /// As [`Service::start`].
-    pub async fn start_library(cfg: Config, readiness: &Readiness, draining: Draining) -> Result<Self, StartError> {
-        Self::start_inner(cfg, readiness, draining, jobs::Intervals::default(), false).await
-    }
-
-    async fn start_inner(
-        cfg: Config,
-        readiness: &Readiness,
-        draining: Draining,
-        intervals: jobs::Intervals,
-        run_jobs: bool,
-    ) -> Result<Self, StartError> {
         let migrations_gate = readiness.gate("migrations");
         let listen_gate = readiness.gate("listen");
         let pool = aviary_pg::connect(
@@ -225,13 +196,12 @@ impl Service {
         let http = aviary_core::http::client_builder(&aviary_core::version::Build::new("magpie"), None)
             .build()
             .map_err(|e| StartError(aviary_pg::Error::Config(format!("http client: {e}"))))?;
-        let ingest = crate::legacy::ingest::Ingest::new(http.clone(), cfg.import_url.clone(), cfg.import_token.clone());
         let hermit = hermit_api::client::Client::new(http, cfg.hermit_url.clone()).bearer(cfg.hermit_token.clone());
         let blobs = Arc::new(Blobs::new(&cfg.bucket, &cfg.database_url).map_err(|e| match e {
             crate::error::Error::Db(d) => StartError(d),
             other => StartError(aviary_pg::Error::Config(other.to_string())),
         })?);
-        let jobs = run_jobs.then(|| {
+        let jobs = {
             let mut jobs = Jobs::start_with(&pool, outbox::Hermit(hermit.clone()), blobs.clone(), intervals);
             let driver = Driver {
                 pool: pool.clone(),
@@ -246,8 +216,8 @@ impl Service {
                 intervals.schedules,
             ));
             jobs.push(crate::hermit::feed::spawn(jobs.leader(), driver));
-            jobs
-        });
+            Some(jobs)
+        };
         Ok(Self {
             app: Arc::new_cyclic(|this| Magpie {
                 pool,
@@ -258,7 +228,6 @@ impl Service {
                 this: this.clone(),
                 blobs,
                 legacy: cfg.legacy_metrics,
-                ingest,
             }),
             callers: cfg.callers,
             jobs,
@@ -591,27 +560,7 @@ impl Server for Magpie {
         http::schedules::admin_pause(self, ctx, &body).await
     }
 
-    async fn legacy_ticket(&self, ctx: Ctx, id: Uuid, body: TicketRequest) -> Answer<TicketResponse> {
-        http::legacy::ticket(self, ctx, id, body).await
-    }
-
-    async fn legacy_ticket_done(&self, ctx: Ctx, ticket: Uuid, body: TicketDone) -> Answer<()> {
-        http::legacy::ticket_done(self, ctx, ticket, body).await
-    }
-
-    async fn legacy_ticket_claim(&self, ctx: Ctx, ticket: Uuid, body: TicketClaim) -> Answer<TicketClaimed> {
-        http::legacy::ticket_claim(self, ctx, ticket, body).await
-    }
-
     async fn upload_legacy_path(&self, ctx: Ctx, upload_id: Uuid, body: LegacyPathRequest) -> Answer<()> {
         http::legacy::upload_legacy_path(self, ctx, upload_id, body).await
-    }
-
-    async fn legacy_window(&self, ctx: Ctx) -> Answer<WindowState> {
-        http::legacy::window(self, ctx).await
-    }
-
-    async fn upload_raw(&self, ctx: Ctx, upload_id: Uuid) -> Answer<Response> {
-        http::legacy::upload_raw(self, ctx, upload_id).await
     }
 }

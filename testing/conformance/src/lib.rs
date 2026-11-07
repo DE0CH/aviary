@@ -4,8 +4,6 @@
 //! - [`gateway`]: platform 8.2, against a sandbox gateway, with the suite's own fakes of magpie, hermit, tools and
 //!   the model upstream served on one listener that answers by `Host` ([`fakes`]).
 //! - [`model`]: platform 8.3, the models route and the Messages API the deployment's model route serves.
-//! - [`tickets`]: the switch window's ticket rules (WP-51), against magpie and against pigeon's model of magpie
-//!   (a library suite: its hooks reach into the implementation, so it has no command).
 //!
 //! Every suite writes one line per check to stdout and the whole run as JUnit XML ([`report`]); the process exits 0
 //! only when no check failed.
@@ -19,4 +17,3 @@ pub mod hermit;
 pub mod model;
 pub mod proxy;
 pub mod report;
-pub mod tickets;

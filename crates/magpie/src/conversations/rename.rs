@@ -15,8 +15,7 @@ use crate::limits;
 /// M5.
 ///
 /// # Errors
-/// 400 `empty_title` / `title_too_long`, 403 `view_as_read_only`, 404, 409 `conversation_migrating`; a statement
-/// error.
+/// 400 `empty_title` / `title_too_long`, 403 `view_as_read_only`, 404; a statement error.
 pub async fn rename(pool: &Pool, person: &Person, id: Uuid, req: RenameRequest) -> Result<Conversation> {
     person.refuse_view_as()?;
     let title = req.title.trim().to_owned();
@@ -27,8 +26,7 @@ pub async fn rename(pool: &Pool, person: &Person, id: Uuid, req: RenameRequest) 
         return Err(Error::code(ErrorCode::TitleTooLong, "the title is over 200 characters"));
     }
     aviary_pg::tx!(pool, |t| -> Result<()> {
-        let c = lock(t, &person.email, id).await?;
-        c.refuse_migrating()?;
+        lock(t, &person.email, id).await?;
         t.execute(
             "update conversations set title = $2, name_source = 'user' where id = $1",
             &[&id, &title],

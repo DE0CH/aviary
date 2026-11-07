@@ -26,7 +26,7 @@ pub async fn create(app: &Magpie, ctx: Ctx, mut body: CreateRequest) -> Answer<A
         async {
             let person = Person::from_ctx(&ctx)?;
             create::validate(&body)?;
-            // the switch window's old asset paths in the first message (until A7), as M7's; a repeat admits nothing
+            // old asset paths in the first message (the legacy-path set, until A7), as M7's; a repeat admits nothing
             if legacy::paths::has_legacy_path(&person, &body.message)
                 && !create::exists(&app.pool, &person, &body.idempotency_key).await?
             {
@@ -48,44 +48,20 @@ pub async fn create(app: &Magpie, ctx: Ctx, mut body: CreateRequest) -> Answer<A
 
 /// M5.
 pub async fn rename(app: &Magpie, ctx: Ctx, id: Uuid, body: RenameRequest) -> Answer<Conversation> {
-    answer(
-        async {
-            let (person, body) = (Person::from_ctx(&ctx)?, &body);
-            legacy::fence::native(app, id, || rename::rename(&app.pool, &person, id, body.clone())).await
-        }
-        .await,
-    )
+    answer(async { rename::rename(&app.pool, &Person::from_ctx(&ctx)?, id, body).await }.await)
 }
 
 /// M6 delete.
 pub async fn delete(app: &Magpie, ctx: Ctx, id: Uuid) -> Answer<Conversation> {
-    answer(
-        async {
-            let person = Person::from_ctx(&ctx)?;
-            legacy::fence::native(app, id, || delete::delete(&app.pool, &person, id)).await
-        }
-        .await,
-    )
+    answer(async { delete::delete(&app.pool, &Person::from_ctx(&ctx)?, id).await }.await)
 }
 
 /// M6 restore.
 pub async fn restore(app: &Magpie, ctx: Ctx, id: Uuid) -> Answer<Conversation> {
-    answer(
-        async {
-            let person = Person::from_ctx(&ctx)?;
-            legacy::fence::native(app, id, || delete::restore(&app.pool, &person, id)).await
-        }
-        .await,
-    )
+    answer(async { delete::restore(&app.pool, &Person::from_ctx(&ctx)?, id).await }.await)
 }
 
 /// M6 delete for good.
 pub async fn purge(app: &Magpie, ctx: Ctx, id: Uuid) -> Answer<()> {
-    answer(
-        async {
-            let person = Person::from_ctx(&ctx)?;
-            legacy::fence::native(app, id, || delete::purge(&app.pool, &person, id)).await
-        }
-        .await,
-    )
+    answer(async { delete::purge(&app.pool, &Person::from_ctx(&ctx)?, id).await }.await)
 }

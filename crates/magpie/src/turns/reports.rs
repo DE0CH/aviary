@@ -151,7 +151,7 @@ fn tasks_of(r: &TurnStateReport) -> Option<Vec<BackgroundTask>> {
 /// `POST /v1/sandbox/turns/{turnId}/state`.
 ///
 /// # Errors
-/// 404, 409 `bad_transition` / `transcript_pending` / `lease_lost` / `conversation_migrating`; a statement error.
+/// 404, 409 `bad_transition` / `transcript_pending` / `lease_lost`; a statement error.
 pub async fn turn_state(pool: &Pool, caller: &Sandbox, turn_id: Uuid, r: TurnStateReport) -> Result<()> {
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let c = caller::lock(t, caller).await?;
@@ -284,7 +284,7 @@ fn terminal(s: TaskState) -> bool {
 /// `POST /v1/sandbox/tasks`: `task.status` events (a repeated `id` is skipped) and the conversation's `background`.
 ///
 /// # Errors
-/// 404, 409 `lease_lost` / `conversation_migrating`; a statement error.
+/// 404, 409 `lease_lost`; a statement error.
 pub async fn tasks(pool: &Pool, caller: &Sandbox, r: TasksReport) -> Result<()> {
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let c = caller::lock(t, caller).await?;
@@ -361,7 +361,7 @@ async fn ask_event(tx: &Tx<'_>, conversation: Uuid, kind: &str, ask_id: &str) ->
 /// `POST /v1/sandbox/asks`: `ask.pending`, change `ask`. Idempotent per `askId`.
 ///
 /// # Errors
-/// 404, 409 `lease_lost` / `conversation_migrating`; a statement error.
+/// 404, 409 `lease_lost`; a statement error.
 pub async fn ask_open(pool: &Pool, caller: &Sandbox, r: AskReport) -> Result<()> {
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let c = caller::lock(t, caller).await?;
@@ -398,7 +398,7 @@ pub async fn ask_open(pool: &Pool, caller: &Sandbox, r: AskReport) -> Result<()>
 /// change `ask_resolved`. Idempotent per `askId`.
 ///
 /// # Errors
-/// 404 for an ask never opened; 409 `lease_lost` / `conversation_migrating`; a statement error.
+/// 404 for an ask never opened; 409 `lease_lost`; a statement error.
 pub async fn ask_resolved(pool: &Pool, caller: &Sandbox, ask_id: &str, r: AskResolvedReport) -> Result<()> {
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let c = caller::lock(t, caller).await?;
@@ -514,7 +514,7 @@ async fn reconcile_active(t: &Tx<'_>, c: &Locked, caller: &Sandbox, hb: &Heartbe
 /// `POST /v1/sandbox/heartbeat`: `heartbeat_at`, a running turn's deadline, and the reconciliation of magpie 8.5.
 ///
 /// # Errors
-/// 404, 409 `lease_lost` / `conversation_migrating`; a statement error.
+/// 404, 409 `lease_lost`; a statement error.
 pub async fn heartbeat(pool: &Pool, caller: &Sandbox, hb: Heartbeat) -> Result<()> {
     tracing::debug!(
         conversation = %caller.conversation,

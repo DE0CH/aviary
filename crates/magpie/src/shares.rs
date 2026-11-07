@@ -63,7 +63,7 @@ pub fn local_part(email: &str) -> &str {
 /// Copies cc scope `from` into `to` (files, lines, pages; a scope is a conversation or a share snapshot). With
 /// `cut = Some(turn)` every lines file (the main transcript, a subagent's, any other) is cut at its first line of
 /// `turn` by `ord`: that line and every later one are left out, and the file ends where that line began. Byte files
-/// carry no turn and are copied whole. Also the importer's freeze of an imported share (cutover 7.4.4).
+/// carry no turn and are copied whole.
 ///
 /// # Errors
 /// When a statement fails.
@@ -142,7 +142,7 @@ pub async fn copy_refs(t: &Tx<'_>, from: Uuid, to: Uuid, owner_kind: &str) -> Re
 }
 
 /// Removes a share's frozen data (its snapshot scope, rows and blob references) and queues its workspace's
-/// deletion; the share row stays (audit). Also the importer's revoke of an imported share (cutover 7.4.4).
+/// deletion; the share row stays (audit).
 ///
 /// # Errors
 /// When a statement fails.
@@ -294,31 +294,12 @@ async fn has_reply(db: &impl Db, conversation: Uuid, upto: i64) -> Result<()> {
 /// M16 `POST /v1/conversations/{id}/shares`: freezes the conversation up to its last finished turn.
 ///
 /// # Errors
-/// 403 `view_as_read_only`, 404, 409 `nothing_to_share` / `conversation_migrating`, 500 `share_failed` when hermit
+/// 403 `view_as_read_only`, 404, 409 `nothing_to_share`, 500 `share_failed` when hermit
 /// cannot clone the workspace; a statement error.
 pub async fn create(app: &Magpie, person: &Person, conversation: Uuid) -> Result<ShareRef> {
     person.refuse_view_as()?;
     let conn = app.pool.get().await?;
-    let c = crate::conversations::load_owned(&conn, &person.email, conversation).await?;
-    if c.migrating {
-        let mut r = magpie_api::errors::Refusal::legacy_route();
-        r.retry_after_ms = Some(crate::limits::MIGRATING_RETRY_AFTER_MS);
-        return Err(r.into());
-    }
-    // a reverse hand-over's fence (cutover 14.2): wait before hermit clones anything (the lock below checks it again)
-    let fenced: bool = conn
-        .query_one(
-            &format!(
-                "select {} from conversations where id = $1",
-                crate::legacy::fence::REVERSE_FENCED_SQL
-            ),
-            &[&conversation],
-        )
-        .await?
-        .get(0);
-    if fenced {
-        return Err(magpie_api::errors::Refusal::migrating(crate::limits::MIGRATING_RETRY_AFTER_MS).into());
-    }
+    crate::conversations::load_owned(&conn, &person.email, conversation).await?;
     let f = freeze_point(&conn, conversation).await?;
     has_reply(&conn, conversation, f.upto).await?;
     drop(conn);
@@ -335,8 +316,7 @@ pub async fn create(app: &Magpie, person: &Person, conversation: Uuid) -> Result
     let owner_name = local_part(&person.email).to_owned();
     let idr = &id;
     let r = aviary_pg::tx!(&app.pool, |t| -> Result<OffsetDateTime> {
-        let l = lock(t, &person.email, conversation).await?;
-        l.refuse_migrating()?;
+        lock(t, &person.email, conversation).await?;
         // the freeze point again, under the lock (a turn may have started meanwhile), and its reply checked again
         let f = freeze_point(t, conversation).await?;
         has_reply(t, conversation, f.upto).await?;
@@ -407,37 +387,13 @@ pub async fn list(db: &impl Db, person: &Person, conversation: Uuid) -> Result<S
 /// M16 `DELETE /v1/shares/{shareId}`: the owner revokes a live link.
 ///
 /// # Errors
-/// 403 `view_as_read_only`; 404 for anyone else's, an unknown or a revoked link; 409 `conversation_migrating`; a
-/// statement error.
+/// 403 `view_as_read_only`; 404 for anyone else's, an unknown or a revoked link; a statement error.
 pub async fn revoke(app: &Magpie, person: &Person, share_id: &str) -> Result<()> {
     person.refuse_view_as()?;
     if !valid_id(share_id) {
         return Err(Error::not_found());
     }
     aviary_pg::tx!(&app.pool, |t| -> Result<()> {
-        // a migrating conversation's shares are the old stack's (revoked through pigeon's legacy upstream)
-        if let Some(c) = t
-            .query_opt(
-                "select s.conversation_id from shares s where s.id = $1 and s.owner = $2",
-                &[&share_id, &person.email],
-            )
-            .await?
-        {
-            let id: Uuid = c.get(0);
-            let l = crate::conversations::lock(t, &person.email, id).await?;
-            if l.fenced {
-                // a reverse hand-over holds it (cutover 14.2): the revoke waits in its call
-                return Err(magpie_api::errors::Refusal::migrating(crate::limits::MIGRATING_RETRY_AFTER_MS).into());
-            }
-            if l.migrating {
-                // pigeon's ticket for the revoke through its legacy upstream names the conversation
-                let mut r = magpie_api::errors::Refusal::legacy_route();
-                r.retry_after_ms = Some(crate::limits::MIGRATING_RETRY_AFTER_MS);
-                r.extra
-                    .insert("conversationId".to_owned(), serde_json::Value::String(id.to_string()));
-                return Err(r.into());
-            }
-        }
         let row = t
             .query_opt(
                 "update shares set revoked_at = now(), revoke_reason = 'owner'
@@ -453,25 +409,6 @@ pub async fn revoke(app: &Magpie, person: &Person, share_id: &str) -> Result<()>
     .await?;
     tracing::info!("share revoked");
     Ok(())
-}
-
-/// The conversation of the person's share `share_id` (for the fenced wait of a revoke, cutover 6.4).
-///
-/// # Errors
-/// When the statement fails.
-pub async fn conversation_of(pool: &aviary_pg::Pool, person: &Person, share_id: &str) -> Result<Option<Uuid>> {
-    if !valid_id(share_id) {
-        return Ok(None);
-    }
-    Ok(pool
-        .get()
-        .await?
-        .query_opt(
-            "select conversation_id from shares where id = $1 and owner = $2",
-            &[&share_id, &person.email],
-        )
-        .await?
-        .map(|r| r.get(0)))
 }
 
 /// A live share as a reader sees it: 404 for a revoked share, one whose source is in Recently deleted or was purged.

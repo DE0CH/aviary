@@ -4,7 +4,7 @@
 //! applies it again (every effect is idempotent) and never skips one.
 //!
 //! For each event: the conversation's recorded sandbox (`hermit_sandbox`, `hermit_state`, `hermit_version`) when it
-//! is newer (unknown and migrating conversations are ignored); for `gone`: the lease of that sandbox is cleared, a
+//! is newer (unknown conversations are ignored); for `gone`: the lease of that sandbox is cleared, a
 //! turn of that sandbox ends (`sandbox.lost`; `sandbox.busy` / `sandbox.failed` for a start that failed) or, when
 //! its `start_turn` was never acknowledged, goes back to preparing for a new sandbox, and a held conversation goes
 //! idle. A 410 `cursor_expired` re-reads the sandbox of every conversation with an active turn or a lease and
@@ -136,9 +136,6 @@ pub async fn apply(tx: &Tx<'_>, ev: &SandboxEvent) -> Result<()> {
     let Some(c) = lock_id(tx, ev.conversation_id).await? else {
         return Ok(());
     };
-    if c.migrating {
-        return Ok(());
-    }
     record_sandbox(tx, ev.conversation_id, ev.sandbox_id, ev.state, ev.version, Seen::Feed).await?;
     if ev.state != SandboxState::Gone {
         return Ok(());
@@ -209,7 +206,7 @@ pub async fn recover(d: &Driver) -> Result<()> {
         .query(
             "select c.id, c.person, array_remove(array[t.sandbox_id, c.lease_sandbox, c.hermit_sandbox], null)
              from conversations c left join turns t on t.id = c.active_turn
-             where (c.active_turn is not null or c.lease_id is not null) and not c.migrating",
+             where c.active_turn is not null or c.lease_id is not null",
             &[],
         )
         .await?;
@@ -265,9 +262,7 @@ pub async fn recover(d: &Driver) -> Result<()> {
             for ev in &events {
                 // a sandbox hermit no longer names is gone, whatever the record says
                 if ev.seq == 0 && ev.state == SandboxState::Gone {
-                    if let Some(c) = lock_id(t, ev.conversation_id).await?
-                        && !c.migrating
-                    {
+                    if let Some(c) = lock_id(t, ev.conversation_id).await? {
                         gone(t, &c, ev.conversation_id, ev.sandbox_id, ev).await?;
                     }
                 } else {

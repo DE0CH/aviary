@@ -23,12 +23,11 @@ use crate::jobs::outbox::{self, Item};
 /// M6 `POST …/delete`: into Recently deleted (idempotent).
 ///
 /// # Errors
-/// 403 `view_as_read_only`, 404, 409 `conversation_migrating`; a statement error.
+/// 403 `view_as_read_only`, 404; a statement error.
 pub async fn delete(pool: &Pool, person: &Person, id: Uuid) -> Result<Conversation> {
     person.refuse_view_as()?;
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let c = lock(t, &person.email, id).await?;
-        c.refuse_migrating()?;
         if c.deleted_at.is_some() {
             return Ok(());
         }
@@ -53,12 +52,11 @@ pub async fn delete(pool: &Pool, person: &Person, id: Uuid) -> Result<Conversati
 /// M6 `POST …/restore`: out of Recently deleted (idempotent).
 ///
 /// # Errors
-/// 403 `view_as_read_only`, 404, 409 `conversation_migrating`; a statement error.
+/// 403 `view_as_read_only`, 404; a statement error.
 pub async fn restore(pool: &Pool, person: &Person, id: Uuid) -> Result<Conversation> {
     person.refuse_view_as()?;
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let c = lock(t, &person.email, id).await?;
-        c.refuse_migrating()?;
         if c.deleted_at.is_none() {
             return Ok(());
         }
@@ -76,12 +74,11 @@ pub async fn restore(pool: &Pool, person: &Person, id: Uuid) -> Result<Conversat
 /// M6 `DELETE …`: purge a conversation that is in Recently deleted.
 ///
 /// # Errors
-/// 403 `view_as_read_only`, 404, 409 `not_deleted` / `conversation_migrating`; a statement error.
+/// 403 `view_as_read_only`, 404, 409 `not_deleted`; a statement error.
 pub async fn purge(pool: &Pool, person: &Person, id: Uuid) -> Result<()> {
     person.refuse_view_as()?;
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let c = lock(t, &person.email, id).await?;
-        c.refuse_migrating()?;
         if c.deleted_at.is_none() {
             return Err(Error::code(
                 ErrorCode::NotDeleted,
@@ -116,20 +113,6 @@ impl ShareRevoke {
 /// # Errors
 /// When a statement fails.
 pub async fn purge_locked(tx: &Tx<'_>, person: &str, conversation: Uuid, why: ShareRevoke) -> Result<()> {
-    purge_rows(tx, person, conversation, why, true).await
-}
-
-/// [`purge_locked`] without any hermit call: the importer's removal of a migrating conversation (a sessions row
-/// that vanished, `magpie import reset`, cutover 7.4.1 and 7.9). Its workspace and its shares' frozen workspaces
-/// belong to the old stack until the release, so nothing deletes them here and no sandbox is released.
-///
-/// # Errors
-/// When a statement fails.
-pub async fn forget_locked(tx: &Tx<'_>, person: &str, conversation: Uuid) -> Result<()> {
-    purge_rows(tx, person, conversation, ShareRevoke::Deleted, false).await
-}
-
-async fn purge_rows(tx: &Tx<'_>, person: &str, conversation: Uuid, why: ShareRevoke, hermit: bool) -> Result<()> {
     // 1. its shares: revoke the live ones, remove every frozen snapshot, queue each frozen workspace's deletion
     let shares = tx
         .query(
@@ -148,22 +131,15 @@ async fn purge_rows(tx: &Tx<'_>, person: &str, conversation: Uuid, why: ShareRev
         drop_scope(tx, snapshot).await?;
         tx.execute("delete from share_rows where share_id = $1", &[&share_id])
             .await?;
-        if hermit {
-            outbox::enqueue(
-                tx,
-                &Item::DeleteWorkspace {
-                    workspace_id: workspace,
-                },
-            )
-            .await?;
-        }
+        outbox::enqueue(
+            tx,
+            &Item::DeleteWorkspace {
+                workspace_id: workspace,
+            },
+        )
+        .await?;
     }
-    // 2. in the switch window, the tombstone the reverse export reads (cutover 14.3; not for the importer's forget,
-    //    whose conversation the old stack deleted itself)
-    if hermit {
-        tombstone(tx, person, conversation).await?;
-    }
-    // 3. the conversation (cascades: events, rows, row_seqs, turns, commands, tool links, uploads, sent files,
+    // 2. the conversation (cascades: events, rows, row_seqs, turns, commands, tool links, uploads, sent files,
     //    sent staging, report ids), its uploads' blob refs, its cc scope, its live frames
     tx.execute(
         "delete from blob_refs where owner_kind = 'upload'
@@ -176,7 +152,7 @@ async fn purge_rows(tx: &Tx<'_>, person: &str, conversation: Uuid, why: ShareRev
         .await?;
     tx.execute("delete from conversations where id = $1", &[&conversation])
         .await?;
-    // 4. the person's counter and change; held polls of the conversation wake (and answer 404)
+    // 3. the person's counter and change; held polls of the conversation wake (and answer 404)
     tx.execute(
         "update persons set purged_conversations = purged_conversations + 1 where person = $1",
         &[&person],
@@ -195,11 +171,7 @@ async fn purge_rows(tx: &Tx<'_>, person: &str, conversation: Uuid, why: ShareRev
     fanout::notify(tx, fanout::ROWS, &key, 0).await?;
     fanout::notify(tx, fanout::COMMANDS, &key, 0).await?;
     fanout::notify(tx, fanout::LIVE, &key, 0).await?;
-    if !hermit {
-        tracing::info!(conversation = %conversation, "imported conversation removed");
-        return Ok(());
-    }
-    // 5. hermit: release the sandbox, delete the workspace (a conversation's workspace id is its id, hermit 3.8)
+    // 4. hermit: release the sandbox, delete the workspace (a conversation's workspace id is its id, hermit 3.8)
     outbox::enqueue(
         tx,
         &Item::ReleaseSandbox {
@@ -219,29 +191,6 @@ async fn purge_rows(tx: &Tx<'_>, person: &str, conversation: Uuid, why: ShareRev
     Ok(())
 }
 
-/// Records a purged conversation in `import_purged` while that table exists (the switch window; A6 drops it): its
-/// Claude Code session id and cc paths, which the reverse export needs to delete its old-side copy.
-async fn tombstone(tx: &Tx<'_>, person: &str, conversation: Uuid) -> Result<()> {
-    let window: bool = tx
-        .query_one("select to_regclass('import_purged') is not null", &[])
-        .await?
-        .get(0);
-    if !window {
-        return Ok(());
-    }
-    tx.execute(
-        "insert into import_purged (conversation_id, person, provider_session_id, cc_paths)
-         select c.id, $2, c.provider_session_id,
-                coalesce((select array_agg(f.path order by f.path) from cc_files f where f.scope = c.id), '{}')
-         from conversations c where c.id = $1
-         on conflict (conversation_id) do update set person = excluded.person,
-             provider_session_id = excluded.provider_session_id, cc_paths = excluded.cc_paths, purged_at = now()",
-        &[&conversation, &person],
-    )
-    .await?;
-    Ok(())
-}
-
 /// Removes a cc scope (a conversation's or a share snapshot's): its files (lines and pages cascade), limbo,
 /// operation ids and blob refs.
 async fn drop_scope(tx: &Tx<'_>, scope: Uuid) -> Result<()> {
@@ -256,7 +205,7 @@ async fn drop_scope(tx: &Tx<'_>, scope: Uuid) -> Result<()> {
 }
 
 /// The 30-day purge (magpie 15): conversations in Recently deleted for 30 days, at most `batch` per pass, each in
-/// its own transaction; migrating conversations are skipped (cutover 6.4). How many were purged.
+/// its own transaction. How many were purged.
 ///
 /// # Errors
 /// When a statement fails.
@@ -266,7 +215,7 @@ pub async fn purge_due(pool: &Pool, batch: i64) -> Result<usize> {
         .await?
         .query(
             "select id from conversations
-             where deleted_at <= now() - interval '30 days' and not migrating
+             where deleted_at <= now() - interval '30 days'
              order by deleted_at limit $1",
             &[&batch],
         )
@@ -275,11 +224,11 @@ pub async fn purge_due(pool: &Pool, batch: i64) -> Result<usize> {
     for r in rows {
         let id: Uuid = r.get(0);
         let purged = aviary_pg::tx!(pool, |t| -> Result<bool> {
-            // re-checked under the lock: a restore or the importer may have come first
+            // re-checked under the lock: a restore may have come first
             let Some(row) = t
                 .query_opt(
                     "select person from conversations
-                     where id = $1 and deleted_at <= now() - interval '30 days' and not migrating
+                     where id = $1 and deleted_at <= now() - interval '30 days'
                      for update",
                     &[&id],
                 )

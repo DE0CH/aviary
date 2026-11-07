@@ -118,20 +118,8 @@ pub const SHARE_FILES_RAW: &str = "/v1/shares/{shareId}/files/raw";
 pub const SHARE_CONTINUE: &str = "/v1/shares/{shareId}/continue";
 /// `POST` record view-as (M17).
 pub const VIEW_AS: &str = "/v1/view-as";
-/// `POST` take a ticket for a legacy write (the switch window, [`crate::legacy`]).
-pub const LEGACY_TICKETS: &str = "/v1/conversations/{id}/legacy/tickets";
-/// `POST` a ticket's outcome (the switch window).
-pub const LEGACY_TICKET_DONE: &str = "/v1/legacy/tickets/{ticket}/done";
-/// `POST` claim a send's write under a ticket (the switch window).
-pub const LEGACY_TICKET_CLAIM: &str = "/v1/legacy/tickets/{ticket}/claim";
-/// `PUT` a teed upload's old asset path (until A7).
+/// `PUT` a teed upload's old asset path (the legacy-path set, until A7: [`crate::legacy`]).
 pub const UPLOAD_LEGACY_PATH: &str = "/v1/uploads/{uploadId}/legacy-path";
-/// `GET` the switch window's state for pigeon ([`crate::legacy::WindowState`]).
-pub const LEGACY_WINDOW: &str = "/v1/legacy/window";
-/// `GET` an upload's stored bytes (200, `Content-Type` its type; 404 for an upload that is not the person's): what
-/// pigeon copies into the old child for a send of magpie-only files to a legacy conversation (DESIGN 9.5,
-/// copy-at-send). Deleted with the tickets in A6.
-pub const UPLOAD_RAW: &str = "/v1/uploads/{uploadId}/raw";
 
 /// `POST` lease.
 pub const SANDBOX_LEASE: &str = "/v1/sandbox/lease";
@@ -342,13 +330,8 @@ pub const ROUTES: &[Route] = &[
         admin: false,
         surface: Surface::Person,
     },
-    // the switch window (DESIGN 9; cutover 6.4): tickets until A6, the legacy-path record until A7
-    pigeon_extra("legacy_ticket", Post, LEGACY_TICKETS, &[200]),
-    pigeon_extra("legacy_ticket_done", Post, LEGACY_TICKET_DONE, &[204]),
-    pigeon_extra("legacy_ticket_claim", Post, LEGACY_TICKET_CLAIM, &[200]),
+    // the legacy-path record (DESIGN 9.5), until A7
     pigeon_extra("upload_legacy_path", Put, UPLOAD_LEGACY_PATH, &[204]),
-    pigeon_extra("legacy_window", Get, LEGACY_WINDOW, &[200]),
-    pigeon_extra("upload_raw", Get, UPLOAD_RAW, &[200]),
     // 16.2 the supervisor through the gateway
     sandbox("lease", Post, SANDBOX_LEASE, &[200], false),
     sandbox("cc_tree", Get, SANDBOX_CC_TREE, &[200], false),
@@ -539,7 +522,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 76);
+        assert_eq!(ROUTES.len(), 71);
     }
 
     #[test]

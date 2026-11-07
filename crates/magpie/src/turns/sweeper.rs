@@ -93,9 +93,9 @@ pub async fn pass(d: &Driver) -> Result<usize> {
     let conn = d.pool.get().await?;
     let unclaimed = conn
         .query(
-            "select t.id from turns t join conversations c on c.id = t.conversation_id
+            "select t.id from turns t
              where t.state in ('admitted', 'preparing') and (t.driver_until is null or t.driver_until < now())
-               and not c.migrating and t.origin <> 'import'
+               and t.origin <> 'import'
              order by t.created_at limit $1",
             &[&limits::SWEEP_BATCH],
         )
@@ -103,9 +103,9 @@ pub async fn pass(d: &Driver) -> Result<usize> {
     let expired = conn
         .query(
             "update turns t set deadline = now() + make_interval(secs => $2)
-             from (select t.id from turns t join conversations c on c.id = t.conversation_id
+             from (select t.id from turns t
                    where t.state not in ('completed', 'failed', 'canceled') and t.deadline < now()
-                     and not c.migrating and t.origin <> 'import'
+                     and t.origin <> 'import'
                    order by t.deadline limit $1
                    for update of t skip locked) due
              where t.id = due.id
@@ -210,7 +210,7 @@ async fn expire(d: &Driver, conversation: Uuid, turn_id: Uuid, claimed: OffsetDa
             return Ok((None, false));
         };
         // a transition since the claim set its own deadline
-        if c.migrating || turn.state.is_ended() || turn.deadline != Some(claimed) {
+        if turn.state.is_ended() || turn.deadline != Some(claimed) {
             return Ok((None, false));
         }
         match turn.state {

@@ -29,7 +29,7 @@ b64() { base64 -w0 < "$1"; }
 
 # --- pair tokens (platform 3.7: <CALLER>_TOKEN_<CALLEE> = <CALLEE>_ACCEPT_<CALLER>)
 pigeon_magpie=$(tok); pigeon_hermit=$(tok); pigeon_model=$(tok)
-magpie_hermit=$(tok); magpie_import=$(tok)
+magpie_hermit=$(tok)
 hermit_magpie=$(tok); hermit_egress=$(tok)
 gateway_magpie=$(tok); gateway_hermit=$(tok); gateway_tools=$(tok); model_key=$(tok)
 admin_magpie=$(tok); admin_hermit=$(tok); monitor_hermit=$(tok); tools_hermit=$(tok)
@@ -100,7 +100,7 @@ secret_files() { # secret_files <name> KEY=PATH…
     "MAGPIE_S3_ACCESS_KEY_ID=$S3_ACCESS_KEY" "MAGPIE_S3_SECRET_ACCESS_KEY=$S3_SECRET_KEY" \
     "MAGPIE_ACCEPT_PIGEON=$pigeon_magpie" "MAGPIE_ACCEPT_GATEWAY=$gateway_magpie" \
     "MAGPIE_ACCEPT_HERMIT=$hermit_magpie" "MAGPIE_ACCEPT_ADMIN=$admin_magpie" \
-    "MAGPIE_TOKEN_HERMIT=$magpie_hermit" "MAGPIE_TOKEN_IMPORT=$magpie_import"
+    "MAGPIE_TOKEN_HERMIT=$magpie_hermit"
   secret_env hermit-env \
     "HERMIT_DATABASE_URL=$(pg_url hermit)" "HERMIT_TOKEN_KEYS=1:$(b64url32)" \
     "HERMIT_ACCEPT_PIGEON=$pigeon_hermit" "HERMIT_ACCEPT_MAGPIE=$magpie_hermit" \

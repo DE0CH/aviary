@@ -531,13 +531,7 @@ async fn apply(
                 }
                 m.replaces = r.and_then(|(s, _)| u64::try_from(s).ok());
             }
-            let mut at = OffsetDateTime::now_utc();
-            if let Some(imp) = &op.import {
-                import_display(imp, e.text.as_deref().filter(|_| e.is_prompt), &mut m);
-                if let Some(t) = record_time(data.as_ref()) {
-                    at = t;
-                }
-            }
+            let at = OffsetDateTime::now_utc();
             let meta_json = serde_json::to_value(&m)?;
             let meta_json = meta_json
                 .as_object()
@@ -585,49 +579,6 @@ async fn apply(
             Ok(Some(seq))
         }
     }
-}
-
-/// magpie 19.3 on an imported prompt: `meta.displayText` when a fix changed the text, `meta.attachments` for the
-/// files its blocks named (a file not in the conversation's workspace is `missing`). A prompt whose text is a blob
-/// (16 KiB or more) shows its preview as a live one does, unfixed.
-fn import_display(imp: &super::Importer, prompt: Option<&str>, m: &mut magpie_api::events::EventMeta) {
-    let Some(text) = prompt else {
-        return;
-    };
-    let f = super::display::fix(text);
-    if !f.changed(text) {
-        return;
-    }
-    if f.text != text {
-        m.display_text = Some(f.text.clone());
-    }
-    if f.files.is_empty() {
-        return;
-    }
-    let files = f
-        .files
-        .iter()
-        .map(|n| {
-            let last = n.path.rsplit('/').next().unwrap_or(&n.path).to_owned();
-            let rel = super::display::workspace_relative(&n.path);
-            let size = rel.and_then(|r| imp.workspace_files.get(r)).copied();
-            magpie_api::rows::RowFile {
-                path: rel.map_or_else(|| format!("uploads/{last}"), str::to_owned),
-                name: n.name.clone().unwrap_or(last),
-                mime_type: String::new(),
-                size: size.unwrap_or(0),
-                missing: size.is_none().then_some(true),
-            }
-        })
-        .collect();
-    m.attachments = Some(files);
-}
-
-/// An imported line's own time (Claude Code's `timestamp`, RFC 3339), so an imported timeline shows when things
-/// happened rather than when they were copied.
-fn record_time(data: Option<&Value>) -> Option<OffsetDateTime> {
-    let s = data?.get("timestamp")?.as_str()?;
-    OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()
 }
 
 /// Where the line a new line replaces is.
@@ -1148,7 +1099,7 @@ pub async fn promote(tx: &Tx<'_>, op: &mut Op<'_>, file: i64) -> Result<()> {
     Ok(())
 }
 
-/// Sets the main transcript path (the supervisor's `running` report, magpie 8.5; the importer), promoting the lines
+/// Sets the main transcript path (the supervisor's `running` report, magpie 8.5), promoting the lines
 /// already written there in the same transaction (6.2). The conversation is locked by the caller and its
 /// `provider_session_id` is set: `path` must be `projects/-workspace/<provider_session_id>.jsonl`. When the main path
 /// changes, the file at the old one becomes an ordinary lines file, as a rename away from the main path does: its
@@ -1207,8 +1158,6 @@ pub async fn set_main_transcript(tx: &Tx<'_>, conversation: Uuid, path: &str) ->
             title: row.get(4),
             name_source: row.get(5),
             model: row.get(6),
-            migrating: false,
-            fenced: false,
             lease_id: None,
             lease_sandbox: None,
         },
@@ -1216,7 +1165,6 @@ pub async fn set_main_transcript(tx: &Tx<'_>, conversation: Uuid, path: &str) ->
         turn: None,
         blobs: blobs::Bytes::with(&pre),
         upserted: false,
-        import: None,
     };
     promote(tx, &mut op, f.id).await
 }

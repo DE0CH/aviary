@@ -659,39 +659,6 @@ impl Server for FixtureServer {
         self.answer_json("admin_transcript")
     }
 
-    async fn legacy_ticket(&self, ctx: Ctx, id: Uuid, body: TicketRequest) -> Result<TicketResponse, ApiError> {
-        self.received(
-            "legacy_ticket",
-            &ctx,
-            &json!({"id": id.to_string()}),
-            None,
-            Some(serde_json::to_value(&body).unwrap()),
-        );
-        self.answer_json("legacy_ticket")
-    }
-
-    async fn legacy_ticket_done(&self, ctx: Ctx, ticket: Uuid, body: TicketDone) -> Result<(), ApiError> {
-        self.received(
-            "legacy_ticket_done",
-            &ctx,
-            &json!({"ticket": ticket.to_string()}),
-            None,
-            Some(serde_json::to_value(&body).unwrap()),
-        );
-        self.answer_empty("legacy_ticket_done")
-    }
-
-    async fn legacy_ticket_claim(&self, ctx: Ctx, ticket: Uuid, body: TicketClaim) -> Result<TicketClaimed, ApiError> {
-        self.received(
-            "legacy_ticket_claim",
-            &ctx,
-            &json!({"ticket": ticket.to_string()}),
-            None,
-            Some(serde_json::to_value(&body).unwrap()),
-        );
-        self.answer_json("legacy_ticket_claim")
-    }
-
     async fn upload_legacy_path(&self, ctx: Ctx, upload_id: Uuid, body: LegacyPathRequest) -> Result<(), ApiError> {
         self.received(
             "upload_legacy_path",
@@ -701,11 +668,6 @@ impl Server for FixtureServer {
             Some(serde_json::to_value(&body).unwrap()),
         );
         self.answer_empty("upload_legacy_path")
-    }
-
-    async fn legacy_window(&self, ctx: Ctx) -> Result<WindowState, ApiError> {
-        self.received("legacy_window", &ctx, &json!({}), None, None);
-        self.answer_json("legacy_window")
     }
 
     async fn list_schedules(&self, ctx: Ctx) -> Result<SchedulesList, ApiError> {
@@ -770,17 +732,6 @@ impl Server for FixtureServer {
             Some(serde_json::to_value(&body).unwrap()),
         );
         self.answer_json("admin_schedules_pause")
-    }
-
-    async fn upload_raw(&self, ctx: Ctx, upload_id: Uuid) -> Result<Response, ApiError> {
-        self.received(
-            "upload_raw",
-            &ctx,
-            &json!({"uploadId": upload_id.to_string()}),
-            None,
-            None,
-        );
-        self.answer_raw("upload_raw")
     }
 }
 
@@ -935,32 +886,11 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
         "view_as" => c.view_as(&request::<ViewAsRequest>(&f)).await.map(|()| Value::Null),
-        "legacy_ticket" => c
-            .person(PERSON)
-            .legacy_ticket(param_uuid(&f, "id"), &request::<TicketRequest>(&f))
-            .await
-            .map(|v| serde_json::to_value(v).unwrap()),
-        "legacy_ticket_done" => c
-            .person(PERSON)
-            .legacy_ticket_done(param_uuid(&f, "ticket"), &request::<TicketDone>(&f))
-            .await
-            .map(|()| Value::Null),
-        "legacy_ticket_claim" => c
-            .person(PERSON)
-            .legacy_ticket_claim(param_uuid(&f, "ticket"), &request::<TicketClaim>(&f))
-            .await
-            .map(|v| serde_json::to_value(v).unwrap()),
         "upload_legacy_path" => c
             .person(PERSON)
             .upload_legacy_path(param_uuid(&f, "uploadId"), &request::<LegacyPathRequest>(&f))
             .await
             .map(|()| Value::Null),
-        "legacy_window" => c
-            .person(PERSON)
-            .legacy_window()
-            .await
-            .map(|v| serde_json::to_value(v).unwrap()),
-        "upload_raw" => raw_value(c.person(PERSON).upload_raw(param_uuid(&f, "uploadId")).await).await,
         "lease" => c
             .sandbox(Some(LEASE))
             .lease()

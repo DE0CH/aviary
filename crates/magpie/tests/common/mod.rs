@@ -238,18 +238,6 @@ pub async fn replica_full(
     iv: Intervals,
     bucket: BucketConfig,
 ) -> Replica {
-    replica_import(db_url, tokens, hermit_url, iv, bucket, "http://127.0.0.1:1").await
-}
-
-/// Starts a replica on `db_url` with `bucket` and the import Deployment's synchronous ingest at `import_url`.
-pub async fn replica_import(
-    db_url: &str,
-    tokens: &Tokens,
-    hermit_url: &str,
-    iv: Intervals,
-    bucket: BucketConfig,
-    import_url: &str,
-) -> Replica {
     init_logs();
     let readiness = Readiness::detached();
     let drain = Drain::new(readiness.clone());
@@ -260,8 +248,6 @@ pub async fn replica_import(
         hermit_token: "test-magpie-hermit".to_owned(),
         pod: format!("magpie-test-{}", Uuid::new_v4().simple()),
         bucket,
-        import_url: import_url.to_owned(),
-        import_token: "test-magpie-import".to_owned(),
         legacy_metrics: magpie::legacy::Metrics::default(),
     };
     let service = Service::start_with(cfg, &readiness, drain.draining(), iv)
@@ -447,7 +433,7 @@ pub fn pg_addr(url: &str) -> SocketAddr {
     hostport.parse().unwrap()
 }
 
-/// An admin pool on a test database (statements the API does not offer: set `migrating`, age rows).
+/// An admin pool on a test database (statements the API does not offer: age rows).
 pub fn sql(url: &str) -> aviary_pg::Pool {
     aviary_pg::connect(url, "magpie-test-sql", 2, Duration::from_secs(15)).unwrap()
 }

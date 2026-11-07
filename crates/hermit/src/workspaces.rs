@@ -298,15 +298,6 @@ fn parse_size(s: &str) -> Option<u64> {
 }
 
 /// The `JuiceFS` workspace store of one replica.
-/// What [`JuiceFs::import_clone`] did.
-#[derive(Debug)]
-pub enum Imported {
-    /// The tree was cloned into place.
-    Cloned(Workspace),
-    /// The target was there already (its stand-in creation time); its quota is ensured.
-    Present(Timestamp),
-}
-
 pub struct JuiceFs {
     /// The mount (`/jfs`); workspaces are `ws/<id>` under it.
     root: PathBuf,
@@ -736,43 +727,6 @@ impl JuiceFs {
         self.set_quota(wid).await?;
         let created = self.created_at(wid).await?.unwrap_or_else(Timestamp::now);
         self.workspace(wid, created, false).await
-    }
-
-    /// The import's clone of an old share's frozen folder (hermit 22.3 step 3, cutover 8.1): `from` (a path under the
-    /// mount, such as `users/<key>/shares/<id>/ws`) to `ws/<wid>`, then the quota. [`Imported::Present`] when
-    /// `ws/<wid>` is already there (made by an earlier pass): the import is idempotent and never replaces a workspace,
-    /// and still ensures the quota (a pass cut short between the rename and the quota left none).
-    ///
-    /// # Errors
-    /// The store is unavailable, `from` is not a directory, the clone failed, or the quota was not set.
-    pub async fn import_clone(&self, wid: Uuid, from: &Path) -> Result<Imported, WorkspaceError> {
-        self.check().await?;
-        if let Some(at) = self.created_at(wid).await? {
-            self.set_quota(wid).await?;
-            return Ok(Imported::Present(at));
-        }
-        let src = self.root.join(from);
-        let s = src.clone();
-        let is_dir = self
-            .blocking("stat of a clone source", FS_TIMEOUT, move || {
-                std::fs::symlink_metadata(&s)
-            })
-            .await?
-            .is_ok_and(|m| m.is_dir());
-        if !is_dir {
-            return Err(unavailable(format!("{} is not a directory", from.display())));
-        }
-        match self.clone_dir(wid, src).await {
-            Ok(w) => Ok(Imported::Cloned(w)),
-            Err(WorkspaceError::Api(e)) if e.code() == codes::EXISTS => match self.created_at(wid).await? {
-                Some(at) => {
-                    self.set_quota(wid).await?;
-                    Ok(Imported::Present(at))
-                }
-                None => Err(unavailable(format!("ws/{wid} existed and is gone"))),
-            },
-            Err(e) => Err(e),
-        }
     }
 
     /// Sets the quota when absent or different (every ensure, A18.F2-F3).

@@ -1,1 +1,0 @@
-ghcr.io/de0ch/yyc-ai-ui:5c76b7d3cc75

@@ -201,10 +201,8 @@ async fn due_one(pool: &Pool) -> Result<Option<Option<Uuid>>> {
             .query_opt(
                 &format!(
                     "select {COLUMNS} from schedules s join conversations c on c.id = s.conversation_id
-                     where s.state = 'active' and s.next_at <= now() and not c.migrating
-                       and not {}
-                     order by s.next_at limit 1 for update of s skip locked",
-                    crate::legacy::fence::REVERSE_FENCED_SQL
+                     where s.state = 'active' and s.next_at <= now()
+                     order by s.next_at limit 1 for update of s skip locked"
                 ),
                 &[],
             )
@@ -250,12 +248,9 @@ async fn redeliver_one(pool: &Pool) -> Result<Option<Option<Uuid>>> {
     aviary_pg::tx!(pool, |t| -> Result<Option<Option<Uuid>>> {
         let Some(r) = t
             .query_opt(
-                &format!(
-                    "select r.schedule_id, r.due_at from schedule_runs r join conversations c on c.id = r.conversation_id
-                     where r.outcome = 'redeliver' and not c.migrating and not {}
-                     order by r.due_at limit 1 for update of r skip locked",
-                    crate::legacy::fence::REVERSE_FENCED_SQL
-                ),
+                "select r.schedule_id, r.due_at from schedule_runs r join conversations c on c.id = r.conversation_id
+                 where r.outcome = 'redeliver'
+                 order by r.due_at limit 1 for update of r skip locked",
                 &[],
             )
             .await?
@@ -285,7 +280,11 @@ async fn redeliver_one(pool: &Pool) -> Result<Option<Option<Uuid>>> {
         .await?;
         tracing::info!(schedule = %id, outcome = d.outcome, "schedule delivered again");
         // a `redeliver` again (busy without a turn row) waits for the next pass rather than spinning in this one
-        Ok(if d.outcome == "redeliver" { None } else { Some(d.new_turn) })
+        Ok(if d.outcome == "redeliver" {
+            None
+        } else {
+            Some(d.new_turn)
+        })
     })
     .await
 }

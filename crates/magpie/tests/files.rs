@@ -271,16 +271,6 @@ async fn sent_files_are_validated_and_need_the_lease_and_their_blobs() {
     assert_eq!((st, v), (200, json!({"missing": [hex(b"x")]})));
     let (st, _) = post(&r, c, Some(lease), "/v1/sandbox/sent-files/c/commit", &json!({})).await;
     assert_eq!(st, 400);
-    // migrating: refused
-    r.pool()
-        .get()
-        .await
-        .unwrap()
-        .execute("update conversations set migrating = true where id = $1", &[&c])
-        .await
-        .unwrap();
-    let (st, v) = post(&r, c, Some(lease), p, &req("c", vec![file("/workspace/a", 1)])).await;
-    assert_eq!((st, code(&v).as_str()), (409, "conversation_migrating"));
 }
 
 #[tokio::test]

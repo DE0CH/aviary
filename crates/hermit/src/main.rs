@@ -1,7 +1,6 @@
 //! `hermit`: `serve` (the replica), `catalogue-check <file>` (the catalogue rules alone, for YYC's CI),
 //! `--version` (the build and its protocol numbers, which the image's labels are made from, platform 5.3), and the
-//! switch's one-shot commands `import-jarvis [--delta | --final]`, `jfs-owner`, `legacy-cleanup [--confirm]`
-//! (`hermit::legacy`).
+//! switch's one-shot commands `jfs-owner` and `legacy-cleanup [--confirm]` (`hermit::legacy`).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -43,18 +42,6 @@ enum Command {
     Serve,
     /// Check a catalogue file against the rules hermit applies (hermit 3.4.1).
     CatalogueCheck { file: PathBuf },
-    /// The switch's copy of the old stack's sandbox history and share workspaces (hermit 22.3 step 3, cutover 8.1;
-    /// `CronJob` `hermit-import`). Env: `HERMIT_DATABASE_URL`, `HERMIT_IMPORT_JARVIS_URL` and
-    /// `HERMIT_IMPORT_CLOUDCLI_URL` (read-only), the `JuiceFS` pair.
-    ImportJarvis {
-        /// Only what can be new since the last run.
-        #[arg(long, conflicts_with = "final_pass")]
-        delta: bool,
-        /// A6's last run, after the old stack is gone: a full pass that also imports what the old fabric left
-        /// unfinished.
-        #[arg(long = "final")]
-        final_pass: bool,
-    },
     /// Everything under `/jfs/ws` to uid/gid 1000 (hermit 15.4; Job `hermit-jfs-owner`, as root, unsquashed mount).
     JfsOwner {
         #[arg(long, default_value = MOUNT)]
@@ -86,7 +73,7 @@ fn main() -> ExitCode {
     let Some(command) = args.command else {
         let _ = std::io::Write::write_all(
             &mut std::io::stderr(),
-            b"usage: hermit serve | catalogue-check <file> | import-jarvis [--delta | --final] | jfs-owner | legacy-cleanup [--confirm] [--drop-share <id>]... | --version\n",
+            b"usage: hermit serve | catalogue-check <file> | jfs-owner | legacy-cleanup [--confirm] [--drop-share <id>]... | --version\n",
         );
         return ExitCode::from(2);
     };
@@ -118,7 +105,6 @@ fn main() -> ExitCode {
             };
             rt.block_on(serve())
         }
-        Command::ImportJarvis { delta, final_pass } => one_shot("import-jarvis", import_jarvis(delta, final_pass)),
         Command::JfsOwner { root } => one_shot("jfs-owner", jfs_owner(root)),
         Command::LegacyCleanup { confirm, drop_share } => {
             one_shot("legacy-cleanup", legacy_cleanup(confirm, drop_share))
@@ -135,75 +121,11 @@ fn one_shot(name: &str, f: impl std::future::Future<Output = ExitCode>) -> ExitC
     rt.block_on(f)
 }
 
-/// The workspace store of a one-shot command: hermit.json's quota, the `JuiceFS` pair from the env.
-fn store() -> Result<JuiceFs, ExitCode> {
-    let config = Config::load(std::path::Path::new(CONFIG_PATH)).map_err(|e| {
-        tracing::error!(error = %e, "hermit.json refused");
-        ExitCode::from(2)
-    })?;
-    let cli = Arc::new(JuiceCli::new(
-        env::required("HERMIT_JUICEFS_META_URL"),
-        env::required("HERMIT_JUICEFS_META_PASSWORD"),
-    ));
-    let ws = &config.file.sandbox.workspace;
-    Ok(JuiceFs::new(MOUNT, cli, ws.quota_gib, ws.quota_inodes))
-}
-
 fn pool(var: &str, name: &str) -> Result<aviary_pg::Pool, ExitCode> {
     aviary_pg::connect(&env::required(var), name, 2, Duration::from_secs(120)).map_err(|e| {
         tracing::error!(name = var, error = %e, "invalid database url");
         ExitCode::from(2)
     })
-}
-
-/// How long a one-shot command waits for its store's background work (an unfinished clone's removal, a late
-/// rename's quota) before it exits.
-const SETTLE: Duration = Duration::from_secs(60);
-
-async fn import_jarvis(delta: bool, final_pass: bool) -> ExitCode {
-    let (hermit, source, cloudcli) = match (
-        pool("HERMIT_DATABASE_URL", "hermit:import-jarvis"),
-        pool("HERMIT_IMPORT_JARVIS_URL", "hermit:import-jarvis"),
-        pool("HERMIT_IMPORT_CLOUDCLI_URL", "hermit:import-jarvis"),
-    ) {
-        (Ok(h), Ok(s), Ok(c)) => (h, s, c),
-        (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return e,
-    };
-    let fs = match store() {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let opts = hermit::legacy::ImportOptions {
-        delta,
-        final_pass,
-        ..hermit::legacy::ImportOptions::default()
-    };
-    let shares = hermit::legacy::ShareSource {
-        cloudcli: &cloudcli,
-        store: &fs,
-    };
-    let res = hermit::legacy::import_jarvis(&hermit, &source, Some(shares), std::path::Path::new(MOUNT), opts).await;
-    let left = fs.settle(SETTLE).await;
-    if left > 0 {
-        tracing::warn!(
-            tasks = left,
-            "import-jarvis exits with clean-ups still running (hermit's sweep finishes them)"
-        );
-    }
-    match res {
-        Ok(r) => {
-            tracing::info!(report = %serde_json::to_string(&r).unwrap_or_default(), "import-jarvis done");
-            if r.complete() {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::FAILURE
-            }
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "import-jarvis failed (the next run retries)");
-            ExitCode::FAILURE
-        }
-    }
 }
 
 async fn jfs_owner(root: PathBuf) -> ExitCode {

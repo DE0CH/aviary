@@ -173,5 +173,5 @@ timeline pollers running) reach 1 000 sockets in 10.0 s: latency p50 16.6 / 19.4
   `PaseoProjector` and compared, envelope and item, with the entry the bridge served at the same seq. pigeon's own
   differences are asserted as such: image URLs are signed blob URLs with a thumbnail (5.9), the error row is pigeon's
   sentence for magpie's code (7.9), and adjacent seqs form one `sourceSeqRanges` range (the same coverage). Real
-  imported transcripts are not compared here: their rows come from the importer (`crates/magpie-import`, WP-29, not
-  built yet), and render parity over the imported set is cutover 10.2 item 6 (WP-41).
+  imported transcripts are not compared here: their rows came from the importer (WP-29, deleted in A6), and render
+  parity over the imported set was cutover 10.2 item 6 (WP-41).

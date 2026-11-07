@@ -17,7 +17,6 @@
 //! [`set_resync`] (`cc.write_stuck`).
 
 pub mod classify;
-pub mod display;
 pub mod extract;
 pub mod lease;
 pub mod limbo;
@@ -28,10 +27,10 @@ pub mod reconstruct;
 pub mod scan;
 pub mod transcript;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use aviary_pg::Tx;
-use magpie_api::errors::{ErrorCode, Refusal};
+use magpie_api::errors::ErrorCode;
 use magpie_api::server::Ctx;
 use serde_json::Value;
 use uuid::Uuid;
@@ -53,20 +52,6 @@ pub struct Caller {
     pub person: String,
     /// `Aviary-Lease`, when sent.
     pub lease: Option<String>,
-    /// The importer writing a migrating conversation (cutover 7.1), never a sandbox.
-    pub importer: Option<Importer>,
-}
-
-/// The importer as a cc writer (cutover 7.1, 7.4.2): its operations run magpie 6.6/6.10's transaction minus the
-/// lease check, plus the `migrating` check (a conversation the release made native answers 409 `lease_lost`, which
-/// the importer reads as "no longer mine", cutover 6.2 items 1-2), and the lines it writes get magpie 19.3's display
-/// fixes and their own record time.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Importer {
-    /// The files of the conversation's workspace a prompt can name (`uploads/<name>`, relative to `/workspace`) and
-    /// their sizes, read by the importer before the write: an attachment of an imported prompt that is not here is
-    /// `missing`.
-    pub workspace_files: BTreeMap<String, u64>,
 }
 
 impl Caller {
@@ -87,20 +72,7 @@ impl Caller {
             conversation: parse(&s.conversation, "Aviary-Sandbox-Conversation")?,
             person: s.person.clone(),
             lease: ctx.lease.clone(),
-            importer: None,
         })
-    }
-
-    /// The importer writing `conversation` of `person` (cutover 7.1).
-    #[must_use]
-    pub fn importer(conversation: Uuid, person: &str, importer: Importer) -> Self {
-        Self {
-            sandbox: Uuid::nil(),
-            conversation,
-            person: person.to_owned(),
-            lease: None,
-            importer: Some(importer),
-        }
     }
 }
 
@@ -202,10 +174,6 @@ pub struct Conv {
     pub name_source: Option<String>,
     /// The model of the latest assistant line.
     pub model: Option<String>,
-    /// The importer holds it.
-    pub migrating: bool,
-    /// A reverse hand-over has fenced it (owned, cutover 14.2).
-    pub fenced: bool,
     lease_id: Option<Uuid>,
     lease_sandbox: Option<Uuid>,
 }
@@ -234,8 +202,6 @@ pub struct Op<'p> {
     pub blobs: blobs::Bytes<'p>,
     /// `conversation_upserted` already emitted in this transaction.
     pub upserted: bool,
-    /// The importer is the writer.
-    pub import: Option<Importer>,
 }
 
 /// Locks the caller's conversation row (magpie 4: the conversation first).
@@ -245,12 +211,8 @@ pub struct Op<'p> {
 pub async fn lock(tx: &Tx<'_>, caller: &Caller) -> Result<Conv> {
     let row = tx
         .query_opt(
-            &format!(
-                "select person, main_transcript, active_turn, cc_bytes, title, name_source, model, migrating, lease_id,
-                        lease_sandbox, {}
-                 from conversations where id = $1 for update",
-                crate::legacy::fence::REVERSE_FENCED_SQL
-            ),
+            "select person, main_transcript, active_turn, cc_bytes, title, name_source, model, lease_id, lease_sandbox
+             from conversations where id = $1 for update",
             &[&caller.conversation],
         )
         .await?
@@ -268,10 +230,8 @@ pub async fn lock(tx: &Tx<'_>, caller: &Caller) -> Result<Conv> {
         title: row.get(4),
         name_source: row.get(5),
         model: row.get(6),
-        migrating: row.get(7),
-        fenced: row.get(10),
-        lease_id: row.get(8),
-        lease_sandbox: row.get(9),
+        lease_id: row.get(7),
+        lease_sandbox: row.get(8),
     })
 }
 
@@ -292,18 +252,6 @@ impl Conv {
         }
     }
 
-    /// 409 `conversation_migrating` while the importer holds the conversation, or a reverse hand-over has fenced it
-    /// (cutover 14.2: no lease is granted and nothing is written until it ends).
-    ///
-    /// # Errors
-    /// That refusal.
-    pub fn refuse_migrating(&self) -> Result<()> {
-        if self.migrating || self.fenced {
-            return Err(Refusal::migrating(limits::MIGRATING_RETRY_AFTER_MS).into());
-        }
-        Ok(())
-    }
-
     /// Whether `path` is the main transcript.
     #[must_use]
     pub fn is_main(&self, path: &str) -> bool {
@@ -320,12 +268,11 @@ pub enum Begun<'p> {
     Go(Box<Op<'p>>),
 }
 
-/// Starts an operation: lock, migrating, lease, `opId` (magpie 6.10, in that order). For the importer: lock, and the
-/// conversation must be migrating (else 409 `lease_lost`: the release made it native, cutover 6.2), no lease.
+/// Starts an operation: lock, lease, `opId` (magpie 6.10, in that order).
 #[allow(clippy::implicit_hasher)] // the fetched bytes are always this map
 ///
 /// # Errors
-/// 404, 409 `conversation_migrating` / `lease_lost`; a statement error.
+/// 404, 409 `lease_lost`; a statement error.
 pub async fn begin<'p>(
     tx: &Tx<'_>,
     caller: &Caller,
@@ -333,17 +280,7 @@ pub async fn begin<'p>(
     pre: &'p HashMap<Sha, axum::body::Bytes>,
 ) -> Result<Begun<'p>> {
     let conv = lock(tx, caller).await?;
-    if caller.importer.is_some() {
-        if !conv.migrating {
-            return Err(Error::code(
-                ErrorCode::LeaseLost,
-                "the conversation is no longer migrating: the importer does not write it",
-            ));
-        }
-    } else {
-        conv.refuse_migrating()?;
-        conv.check_lease(caller)?;
-    }
+    conv.check_lease(caller)?;
     if let Some(row) = tx
         .query_opt(
             "select result from cc_ops where scope = $1 and op_id = $2",
@@ -359,7 +296,6 @@ pub async fn begin<'p>(
         turn: None,
         blobs: blobs::Bytes::with(pre),
         upserted: false,
-        import: caller.importer.clone(),
     })))
 }
 

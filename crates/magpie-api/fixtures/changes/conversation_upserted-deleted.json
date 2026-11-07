@@ -22,7 +22,6 @@
     },
     "sandbox": null,
     "asks": [],
-    "migrating": false,
     "run": {
       "state": "idle",
       "background": []

@@ -528,7 +528,6 @@ mod tests {
             code,
             message: String::new(),
             retry_after_ms: None,
-            route: None,
             extra: serde_json::Map::new(),
         })
     }

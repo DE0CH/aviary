@@ -21,14 +21,6 @@
       }
     },
     {
-      "status": 409,
-      "body": {
-        "code": "conversation_migrating",
-        "message": "conversation is being moved",
-        "retryAfterMs": 2000
-      }
-    },
-    {
       "status": 503,
       "body": {
         "code": "unavailable",

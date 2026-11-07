@@ -24,11 +24,10 @@ use crate::limits;
 /// M8.
 ///
 /// # Errors
-/// 404, 409 `conversation_migrating`; a statement error.
+/// 404; a statement error.
 pub async fn cancel(pool: &Pool, person: &Person, id: Uuid) -> Result<CancelResponse> {
     aviary_pg::tx!(pool, |t| -> Result<CancelResponse> {
-        let c = lock(t, &person.email, id).await?;
-        c.refuse_migrating()?;
+        lock(t, &person.email, id).await?;
         if let Some(v) = &person.viewer {
             t.execute(
                 "insert into view_as_log (admin, person, session, event, conversation_id) values ($1, $2, $3, 'cancel', $4)",
@@ -95,7 +94,7 @@ fn already_resolved() -> Error {
 /// (DECISIONS 17) is answered here, and its last answer admits the turn again: its id is returned, for its driver.
 ///
 /// # Errors
-/// 403 `view_as_read_only`, 404 (no such ask), 409 `already_resolved` / `conversation_migrating`; a statement error.
+/// 403 `view_as_read_only`, 404 (no such ask), 409 `already_resolved`; a statement error.
 pub async fn answer(
     pool: &Pool,
     person: &Person,
@@ -105,8 +104,7 @@ pub async fn answer(
 ) -> Result<Option<Uuid>> {
     person.refuse_view_as()?;
     aviary_pg::tx!(pool, |t| -> Result<Option<Uuid>> {
-        let c = lock(t, &person.email, id).await?;
-        c.refuse_migrating()?;
+        lock(t, &person.email, id).await?;
         let Some(pending) = t
             .query_opt(
                 "select turn_id from events where conversation_id = $1 and kind = 'ask.pending' and data->>'askId' = $2",

@@ -1,5 +1,5 @@
-//! Conversations (magpie 9, 20): list, create (idempotent), creation lookup, rename, delete, restore, delete for
-//! good, and the 409 of a migrating conversation.
+//! Conversations (magpie 9, 20): list, create (idempotent), creation lookup, rename, delete, restore and delete for
+//! good.
 
 #![allow(
     clippy::unwrap_used,
@@ -14,7 +14,7 @@ mod common;
 
 use magpie_api::changes::{After, ChangeBody, ChangesQuery, RemovedReason};
 use magpie_api::conversations::{CreateRequest, ListQuery, ListState, RenameRequest, TitleSource};
-use magpie_api::errors::{ErrorCode, RouteHint};
+use magpie_api::errors::ErrorCode;
 use magpie_api::turns::SendRequest;
 use uuid::Uuid;
 
@@ -507,65 +507,6 @@ async fn delete_restore_and_delete_for_good() {
     // a purge of what is gone: 404
     let e = alice.purge_conversation(id).await.unwrap_err();
     assert_eq!(code(&e), ErrorCode::NotFound);
-}
-
-#[tokio::test]
-async fn a_migrating_conversation_refuses_every_person_mutation_with_the_legacy_route() {
-    let db = common::fresh_db("migrating").await;
-    let t = common::Tokens::new();
-    let a = common::replica(&db.url, &t).await;
-    let sql = common::sql(&db.url);
-    let pigeon = a.pigeon();
-    let alice = pigeon.person(ALICE);
-    let id = alice
-        .create_conversation(&empty("k"))
-        .await
-        .unwrap()
-        .get()
-        .conversation
-        .id;
-    sql.get()
-        .await
-        .unwrap()
-        .execute("update conversations set migrating = true where id = $1", &[&id])
-        .await
-        .unwrap();
-    // reads are normal
-    assert!(alice.get_conversation(id).await.unwrap().migrating);
-    let check = |e: magpie_api::client::ClientError| {
-        let r = e.api().expect("an API answer").clone();
-        assert_eq!(r.status, 409);
-        assert_eq!(r.code, ErrorCode::ConversationMigrating);
-        assert_eq!(r.route, Some(RouteHint::Legacy));
-        assert!(r.retry_after_ms.is_some());
-    };
-    check(
-        alice
-            .rename_conversation(id, &RenameRequest { title: "x".into() })
-            .await
-            .unwrap_err(),
-    );
-    check(alice.delete_conversation(id).await.unwrap_err());
-    check(alice.restore_conversation(id).await.unwrap_err());
-    sql.get()
-        .await
-        .unwrap()
-        .execute("update conversations set deleted_at = now() where id = $1", &[&id])
-        .await
-        .unwrap();
-    check(alice.purge_conversation(id).await.unwrap_err());
-    // and the 30-day purge skips it
-    sql.get()
-        .await
-        .unwrap()
-        .execute(
-            "update conversations set deleted_at = now() - interval '31 days' where id = $1",
-            &[&id],
-        )
-        .await
-        .unwrap();
-    assert_eq!(magpie::conversations::delete::purge_due(a.pool(), 20).await.unwrap(), 0);
-    assert!(alice.get_conversation(id).await.is_ok());
 }
 
 #[tokio::test]

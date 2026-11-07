@@ -180,9 +180,8 @@ pub async fn file(app: Arc<Magpie>, caller: &Caller, q: &CcFileQuery) -> Result<
     scope_file(app, caller.conversation, q).await
 }
 
-/// A file of any cc scope, a share snapshot's included, with no caller check: the importer's reverse export of a
-/// share made on the new side (cutover 14.3), which writes the snapshot's Claude Code files back to the old stack.
-/// The same bytes and headers as [`file`].
+/// A file of any cc scope, a share snapshot's included, with no caller check: what [`file`] serves once the caller is
+/// checked.
 ///
 /// # Errors
 /// 400 `bad_path`, 404; 500 / 503 for the first batch.

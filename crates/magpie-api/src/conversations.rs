@@ -47,9 +47,6 @@ pub struct Conversation {
     /// The open asks (at most one today).
     #[serde(default)]
     pub asks: Vec<Ask>,
-    /// The switch's importer owns it.
-    #[serde(default)]
-    pub migrating: bool,
     /// Run state and background tasks.
     pub run: RunInfo,
     /// The model of the last assistant line.

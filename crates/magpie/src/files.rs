@@ -539,7 +539,7 @@ struct StagedFile {
 /// `POST /v1/sandbox/sent-files` (lease): phase 1 of a snapshot; the blobs magpie does not have yet.
 ///
 /// # Errors
-/// 400 (`bad_request`, `bad_path`), 404, 409 `lease_lost` / `conversation_migrating`, 413; a statement error.
+/// 400 (`bad_request`, `bad_path`), 404, 409 `lease_lost`, 413; a statement error.
 pub async fn sent_files(
     app: &Magpie,
     ctx: &Ctx,
@@ -626,8 +626,7 @@ pub async fn sent_files(
 /// rule 6), and drops the staging row. A repeat answers the first commit.
 ///
 /// # Errors
-/// 400 when a blob of the send has not been put, 404 without a phase 1, 409 `lease_lost` /
-/// `conversation_migrating`; a statement error.
+/// 400 when a blob of the send has not been put, 404 without a phase 1, 409 `lease_lost`; a statement error.
 #[allow(clippy::too_many_lines)] // one transaction, in the order magpie 11.2 lists
 pub async fn sent_files_commit(
     app: &Magpie,

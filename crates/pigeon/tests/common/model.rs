@@ -22,10 +22,6 @@ use magpie_api::conversations::{
     OriginKind, RenameRequest, RunInfo, RunState, SandboxPhase, TitleSource, TurnRef,
 };
 use magpie_api::errors::{ErrorCode, ErrorInfo, Refusal};
-use magpie_api::legacy::{
-    LegacyPathRequest, PriorSend, Superseded, TicketClaim, TicketClaimed, TicketDone, TicketKind, TicketOutcome,
-    TicketRequest, TicketResponse, TicketRoute, WindowState,
-};
 use magpie_api::rows::{Prompt, PromptsResponse, Row, RowItem, TimelinePage, TimelineQuery, UserItem};
 use magpie_api::server::{Ctx, Server};
 use magpie_api::turns::{
@@ -61,57 +57,8 @@ pub struct State {
     /// Held answers per route: the call waits until released.
     pub hold: HashMap<&'static str, Arc<Notify>>,
     pub epochs: u64,
-    /// The switch window (WP-50): `import_control.handover_allowed_at` and `rollback_at`.
-    pub gate: Option<Timestamp>,
-    pub rollback: Option<Timestamp>,
-    /// Every ticket taken: (ticket, conversation, kind, clientMessageId, outcome).
-    pub tickets: Vec<Ticket>,
-    /// Conversations whose next ticket call with no open ticket of theirs finds them released (the fence won):
-    /// `native`, and owned from then.
-    pub release_at_ticket: std::collections::HashSet<Uuid>,
-    /// The next ticket answer's `holdMs` (else what is left of the hold).
-    pub hold_ms_next: Option<u64>,
-    /// A ticket call of this kind for this conversation with no open ticket of it finds it released (the fence won),
-    /// after this many tickets of that kind went through.
-    pub release_on_kind: Option<(Uuid, TicketKind, usize)>,
     /// A native turn ends as soon as it starts (the fuzz).
     pub auto_end: bool,
-    /// List answers say this about these conversations' owner (a snapshot read before a release).
-    pub stale_list: HashMap<Uuid, bool>,
-    /// Upload bytes by id (`upload_raw`), and the recorded old paths.
-    pub upload_bytes: HashMap<Uuid, (String, axum::body::Bytes)>,
-    pub legacy_paths: Vec<(Uuid, String)>,
-}
-
-/// A ticket the model issued.
-#[derive(Debug, Clone)]
-pub struct Ticket {
-    pub id: Uuid,
-    pub conversation: Uuid,
-    pub kind: TicketKind,
-    pub cmid: Option<String>,
-    pub outcome: Option<TicketOutcome>,
-    /// When it was issued (a test ages a ticket by moving this back, as magpie's own tests move `issued_at`).
-    pub issued: std::time::Instant,
-    /// A repeat past the reuse age superseded it (it stays open until its outcome).
-    pub superseded: bool,
-    /// Its latest hand-out, and when a write was last claimed under it.
-    pub take: Uuid,
-    pub claimed: Option<std::time::Instant>,
-    /// Every claim answered `claimed`.
-    pub claims: usize,
-    /// The take of the last claim (magpie's `claim_take`).
-    pub claim_take: Option<Uuid>,
-    /// Closed `expired` by the importer's settled expiry ([`Model::expire_settled`]).
-    pub expired: bool,
-}
-
-impl Ticket {
-    /// Neither an outcome nor expired.
-    #[must_use]
-    pub fn open(&self) -> bool {
-        self.outcome.is_none() && !self.expired
-    }
 }
 
 #[derive(Clone, Default)]
@@ -215,7 +162,6 @@ impl Model {
             last_turn: None,
             sandbox: None,
             asks: Vec::new(),
-            migrating: false,
             run: RunInfo {
                 state: RunState::Idle,
                 background: Vec::new(),
@@ -234,7 +180,7 @@ impl Model {
         self.add_id(person, Uuid::new_v4(), title)
     }
 
-    /// [`Model::add`] with the conversation's id (the LU rig: the id the old stack gave it).
+    /// [`Model::add`] with the conversation's id.
     pub fn add_id(&self, person: &str, id: Uuid, title: Option<&str>) -> Uuid {
         let mut st = self.st();
         st.epochs += 1;
@@ -254,73 +200,6 @@ impl Model {
         drop(st);
         self.bump();
         id
-    }
-
-    /// A legacy conversation's writes answer 409 `route: "legacy"` (magpie's migrating table).
-    fn not_legacy(&self, id: Uuid) -> Result<(), ApiError> {
-        if self.st().convs.get(&id).is_some_and(|c| c.conv.migrating) {
-            return Err(Refusal::legacy_route().into());
-        }
-        Ok(())
-    }
-
-    /// Sets a conversation's owner (`true`: the old stack's) with its list change, as the importer's release or
-    /// reverse hand-over does.
-    pub fn set_migrating(&self, id: Uuid, migrating: bool) {
-        let mut st = self.st();
-        st.convs.get_mut(&id).unwrap().conv.migrating = migrating;
-        Self::upsert(&mut st, id);
-        drop(st);
-        self.bump();
-    }
-
-    /// A legacy conversation of `person` (as the bulk import makes it).
-    pub fn add_legacy(&self, person: &str, title: Option<&str>) -> Uuid {
-        self.add_legacy_id(person, Uuid::new_v4(), title)
-    }
-
-    /// [`Model::add_legacy`] with the conversation's id (the LU rig: the old stack's session id).
-    pub fn add_legacy_id(&self, person: &str, id: Uuid, title: Option<&str>) -> Uuid {
-        let id = self.add_id(person, id, title);
-        self.set_migrating(id, true);
-        id
-    }
-
-    /// A reverse hand-over (a rollback): only with no native turn running (else `false`, nothing changes).
-    pub fn try_reverse(&self, id: Uuid) -> bool {
-        let mut st = self.st();
-        let c = st.convs.get_mut(&id).unwrap();
-        if c.conv.migrating || c.conv.turn.is_some() {
-            return false;
-        }
-        c.conv.migrating = true;
-        Self::upsert(&mut st, id);
-        drop(st);
-        self.bump();
-        true
-    }
-
-    /// The importer's release: only with no open ticket (else `false`, nothing changes).
-    pub fn try_release(&self, id: Uuid) -> bool {
-        let mut st = self.st();
-        if st.tickets.iter().any(|t| t.conversation == id && t.open()) {
-            return false;
-        }
-        st.convs.get_mut(&id).unwrap().conv.migrating = false;
-        Self::upsert(&mut st, id);
-        drop(st);
-        self.bump();
-        true
-    }
-
-    /// The tickets of a conversation.
-    pub fn tickets_of(&self, id: Uuid) -> Vec<Ticket> {
-        self.st()
-            .tickets
-            .iter()
-            .filter(|t| t.conversation == id)
-            .cloned()
-            .collect()
     }
 
     pub fn with_conv<R>(&self, id: Uuid, f: impl FnOnce(&mut Conv) -> R) -> R {
@@ -565,18 +444,7 @@ impl Server for Model {
         });
         let start: usize = query.cursor.as_deref().map_or(0, |c| c.parse().unwrap());
         let limit = query.limit.unwrap_or(200) as usize;
-        let page: Vec<Conversation> = all
-            .iter()
-            .skip(start)
-            .take(limit)
-            .map(|c| {
-                let mut conv = c.conv.clone();
-                if let Some(m) = st.stale_list.get(&conv.id) {
-                    conv.migrating = *m;
-                }
-                conv
-            })
-            .collect();
+        let page: Vec<Conversation> = all.iter().skip(start).take(limit).map(|c| c.conv.clone()).collect();
         let next = (start + limit < all.len()).then(|| (start + limit).to_string());
         Ok(ListResponse {
             conversations: page,
@@ -645,7 +513,6 @@ impl Server for Model {
         self.record("rename_conversation", &ctx)?;
         Self::read_only(&ctx)?;
         self.mine(&ctx, id)?;
-        self.not_legacy(id)?;
         if body.title.trim().is_empty() {
             return Err(refusal(ErrorCode::EmptyTitle, "empty"));
         }
@@ -660,7 +527,6 @@ impl Server for Model {
         self.record("delete_conversation", &ctx)?;
         Self::read_only(&ctx)?;
         self.mine(&ctx, id)?;
-        self.not_legacy(id)?;
         self.edit(id, |c| c.deleted_at = Some(now()));
         Ok(self.st().convs[&id].conv.clone())
     }
@@ -669,7 +535,6 @@ impl Server for Model {
         self.record("restore_conversation", &ctx)?;
         Self::read_only(&ctx)?;
         self.mine(&ctx, id)?;
-        self.not_legacy(id)?;
         self.edit(id, |c| c.deleted_at = None);
         Ok(self.st().convs[&id].conv.clone())
     }
@@ -678,7 +543,6 @@ impl Server for Model {
         self.record("purge_conversation", &ctx)?;
         Self::read_only(&ctx)?;
         self.mine(&ctx, id)?;
-        self.not_legacy(id)?;
         let mut st = self.st();
         let c = st.convs.remove(&id).unwrap();
         Self::push_change(
@@ -698,7 +562,6 @@ impl Server for Model {
         self.record("send_turn", &ctx)?;
         self.held("send_turn").await;
         self.mine(&ctx, id)?;
-        self.not_legacy(id)?;
         let mut st = self.st();
         st.sent.push((id, body.clone()));
         let c = st.convs.get_mut(&id).unwrap();
@@ -750,7 +613,6 @@ impl Server for Model {
     async fn cancel_turn(&self, ctx: Ctx, id: Uuid) -> Result<CancelResponse, ApiError> {
         self.record("cancel_turn", &ctx)?;
         self.mine(&ctx, id)?;
-        self.not_legacy(id)?;
         let turn = self.st().convs[&id].conv.turn.as_ref().map(|t| t.id);
         if turn.is_some() {
             self.end_turn(id, TurnPhase::Canceled, None);
@@ -869,9 +731,6 @@ impl Server for Model {
         let bytes = axum::body::to_bytes(body, 200 << 20).await.unwrap();
         self.st().uploads.push((meta.content_type.clone(), bytes.len()));
         let id = Uuid::new_v4();
-        self.st()
-            .upload_bytes
-            .insert(id, (meta.content_type.clone(), bytes.clone()));
         Ok(UploadResponse {
             upload_id: id,
             path: format!("uploads/{id}/{}", meta.name),
@@ -886,7 +745,6 @@ impl Server for Model {
     async fn create_share(&self, ctx: Ctx, id: Uuid) -> Result<magpie_api::shares::ShareRef, ApiError> {
         self.record("create_share", &ctx)?;
         self.mine(&ctx, id)?;
-        self.not_legacy(id)?;
         Ok(magpie_api::shares::ShareRef {
             id: format!("native{}", Uuid::new_v4().simple()),
             created_at: now(),
@@ -896,349 +754,6 @@ impl Server for Model {
     async fn revoke_share(&self, ctx: Ctx, _share_id: String) -> Result<(), ApiError> {
         self.record("revoke_share", &ctx)?;
         Err(refusal(ErrorCode::NotFound, "not found"))
-    }
-
-    async fn legacy_window(&self, ctx: Ctx) -> Result<WindowState, ApiError> {
-        self.record("legacy_window", &ctx)?;
-        Ok(self.window(&ctx))
-    }
-
-    async fn legacy_ticket(&self, ctx: Ctx, id: Uuid, body: TicketRequest) -> Result<TicketResponse, ApiError> {
-        self.record("legacy_ticket", &ctx)?;
-        self.held("legacy_ticket").await;
-        self.ticket(&ctx, id, &body)
-    }
-
-    async fn legacy_ticket_done(&self, ctx: Ctx, ticket: Uuid, body: TicketDone) -> Result<(), ApiError> {
-        self.record("legacy_ticket_done", &ctx)?;
-        self.held("legacy_ticket_done").await;
-        let mut st = self.st();
-        let Some(t) = st.tickets.iter_mut().find(|t| t.id == ticket) else {
-            return Err(refusal(ErrorCode::NotFound, "not found"));
-        };
-        // magpie's rules (`magpie::legacy::tickets::done`): a closed ticket, a `refused` from an earlier take or from
-        // a take other than the standing claim's, and `delivered` change nothing; an outcome that does not close the
-        // kind is 400
-        let stale = body.outcome == TicketOutcome::Refused
-            && body
-                .take
-                .is_some_and(|k| k != t.take || t.claim_take.is_some_and(|c| c != k));
-        if !t.open() || stale || body.outcome == TicketOutcome::Delivered {
-            return Ok(());
-        }
-        if !t.kind.closes_on(body.outcome) {
-            return Err(refusal(ErrorCode::BadRequest, "the outcome does not close this kind"));
-        }
-        t.outcome = Some(body.outcome);
-        Ok(())
-    }
-
-    async fn legacy_ticket_claim(&self, ctx: Ctx, ticket: Uuid, body: TicketClaim) -> Result<TicketClaimed, ApiError> {
-        self.record("legacy_ticket_claim", &ctx)?;
-        self.held("legacy_ticket_claim").await;
-        let mut st = self.st();
-        let Some(t) = st.tickets.iter().find(|t| t.id == ticket).cloned() else {
-            return Err(refusal(ErrorCode::NotFound, "not found"));
-        };
-        // magpie's rule (`magpie::legacy::tickets::claim`)
-        let accepted = t.cmid.is_some()
-            && st.tickets.iter().any(|o| {
-                o.id != t.id
-                    && o.conversation == t.conversation
-                    && o.cmid == t.cmid
-                    && matches!(
-                        o.outcome,
-                        Some(TicketOutcome::Started | TicketOutcome::Completed | TicketOutcome::Failed)
-                    )
-            });
-        if !t.open() || t.issued.elapsed() >= magpie_api::legacy::TICKET_HOLD_MAX || accepted {
-            return Ok(TicketClaimed {
-                claimed: false,
-                held_elsewhere: false,
-            });
-        }
-        if t.take != body.take {
-            return Ok(TicketClaimed {
-                claimed: false,
-                held_elsewhere: true,
-            });
-        }
-        let t = st.tickets.iter_mut().find(|t| t.id == ticket).unwrap();
-        t.claimed = Some(std::time::Instant::now());
-        t.claim_take = Some(body.take);
-        t.claims += 1;
-        Ok(TicketClaimed {
-            claimed: true,
-            held_elsewhere: false,
-        })
-    }
-
-    async fn upload_legacy_path(&self, ctx: Ctx, upload_id: Uuid, body: LegacyPathRequest) -> Result<(), ApiError> {
-        self.record("upload_legacy_path", &ctx)?;
-        self.st().legacy_paths.push((upload_id, body.legacy_path));
-        Ok(())
-    }
-
-    async fn upload_raw(&self, ctx: Ctx, upload_id: Uuid) -> Result<axum::response::Response, ApiError> {
-        self.record("upload_raw", &ctx)?;
-        self.held("upload_raw").await;
-        let Some((mime, bytes)) = self.st().upload_bytes.get(&upload_id).cloned() else {
-            return Err(refusal(ErrorCode::NotFound, "not found"));
-        };
-        Ok(axum::response::Response::builder()
-            .header("content-type", mime)
-            .body(Body::from(bytes))
-            .unwrap())
-    }
-}
-
-impl Model {
-    fn window(&self, ctx: &Ctx) -> WindowState {
-        let st = self.st();
-        let person = ctx.person.clone().unwrap_or_default();
-        WindowState {
-            handover_allowed_at: st.gate,
-            rollback_at: st.rollback,
-            any_legacy: st.convs.values().any(|c| c.conv.migrating),
-            person_legacy: st
-                .convs
-                .values()
-                .filter(|c| c.person == person && c.conv.migrating)
-                .count() as u64,
-        }
-    }
-
-    fn ticket(&self, ctx: &Ctx, id: Uuid, body: &TicketRequest) -> Result<TicketResponse, ApiError> {
-        let mut st = self.st();
-        match st.convs.get(&id) {
-            Some(c) if Some(&c.person) == ctx.person.as_ref() => {}
-            _ => return Err(refusal(ErrorCode::NotFound, "not found")),
-        }
-        if body.client_message_id.is_some() && body.kind != TicketKind::Send {
-            return Err(refusal(ErrorCode::BadRequest, "only a send carries a clientMessageId"));
-        }
-        // the importer's release (a fence) needs no open ticket of the conversation, as `try_release`: a trigger
-        // that meets one waits for a later ticket call
-        let open = st.tickets.iter().any(|t| t.conversation == id && t.open());
-        let mut on_kind = false;
-        if let Some((c, k, after)) = st.release_on_kind
-            && c == id
-            && k == body.kind
-            && !open
-        {
-            if after == 0 {
-                st.release_on_kind = None;
-                on_kind = true;
-            } else {
-                st.release_on_kind = Some((c, k, after - 1));
-            }
-        }
-        if (!open && st.release_at_ticket.remove(&id)) || on_kind {
-            st.convs.get_mut(&id).unwrap().conv.migrating = false;
-            Self::upsert(&mut st, id);
-        }
-        if !st.convs[&id].conv.migrating {
-            drop(st);
-            self.bump();
-            return Ok(TicketResponse {
-                route: TicketRoute::Native,
-                ticket: None,
-                issued_at: None,
-                hold_ms: None,
-                supersedes: None,
-                reused: false,
-                take: None,
-                settle_ms: None,
-                prior: None,
-            });
-        }
-        // magpie's rules (`magpie::legacy::tickets::issue_in`): a send's repeat gets its open ticket back under a new
-        // take while that is younger than the reuse age, with what is left of the hold and of a claimed write's
-        // settle time; past it the open one is superseded (left open) and a new ticket names it with what is left of
-        // the settle time; a send's answer names its prior ticket
-        let hold_max = magpie_api::legacy::TICKET_HOLD_MAX;
-        let take = Uuid::new_v4();
-        let mut supersedes = None;
-        let mut reuse = None;
-        if let Some(cmid) = &body.client_message_id
-            && let Some(open) = st
-                .tickets
-                .iter_mut()
-                .rev()
-                .find(|t| t.conversation == id && t.cmid.as_ref() == Some(cmid) && t.open() && !t.superseded)
-        {
-            let age = open.issued.elapsed();
-            if age < magpie_api::legacy::TICKET_REUSE_MAX {
-                open.take = take;
-                let claim_settle = open.claimed.map_or(0, |at| {
-                    ms(magpie_api::legacy::TICKET_CLAIM_SETTLE.saturating_sub(at.elapsed()))
-                });
-                reuse = Some((open.id, ms(hold_max.saturating_sub(age)), claim_settle));
-            } else {
-                open.superseded = true;
-                supersedes = Some(Superseded {
-                    ticket: open.id,
-                    settle_ms: ms(magpie_api::legacy::TICKET_SETTLE_MAX.saturating_sub(age)),
-                });
-            }
-        }
-        let (ticket, hold_ms, claim_settle) = if let Some((ticket, hold_ms, claim_settle)) = reuse {
-            (ticket, st.hold_ms_next.take().unwrap_or(hold_ms), claim_settle)
-        } else {
-            let t = Ticket {
-                id: Uuid::new_v4(),
-                conversation: id,
-                kind: body.kind,
-                cmid: body.client_message_id.clone(),
-                outcome: None,
-                issued: std::time::Instant::now(),
-                superseded: false,
-                take,
-                claimed: None,
-                claims: 0,
-                claim_take: None,
-                expired: false,
-            };
-            let ticket = t.id;
-            st.tickets.push(t);
-            (ticket, st.hold_ms_next.take().unwrap_or_else(|| ms(hold_max)), 0)
-        };
-        let (prior, prior_settle) = match &body.client_message_id {
-            None => (None, 0),
-            Some(cmid) => {
-                let others: Vec<&Ticket> = st
-                    .tickets
-                    .iter()
-                    .filter(|t| {
-                        t.conversation == id
-                            && t.cmid.as_ref() == Some(cmid)
-                            && t.id != ticket
-                            && Some(t.id) != supersedes.as_ref().map(|s: &Superseded| s.ticket)
-                    })
-                    .collect();
-                let accepted = others.iter().rev().find(|t| {
-                    matches!(
-                        t.outcome,
-                        Some(TicketOutcome::Started | TicketOutcome::Completed | TicketOutcome::Failed)
-                    )
-                });
-                let open = others.iter().rev().find(|t| t.outcome.is_none());
-                let settle = others
-                    .iter()
-                    .filter(|t| t.open())
-                    .map(|t| ms(magpie_api::legacy::TICKET_SETTLE_MAX.saturating_sub(t.issued.elapsed())))
-                    .max()
-                    .unwrap_or(0);
-                let prior = match (accepted, open) {
-                    (Some(t), _) => Some(PriorSend {
-                        ticket: t.id,
-                        accepted: true,
-                    }),
-                    (None, Some(t)) => Some(PriorSend {
-                        ticket: t.id,
-                        accepted: false,
-                    }),
-                    (None, None) => None,
-                };
-                (prior, settle)
-            }
-        };
-        let reused = reuse.is_some();
-        Ok(TicketResponse {
-            route: TicketRoute::Legacy,
-            ticket: Some(ticket),
-            issued_at: Some(now()),
-            hold_ms: Some(hold_ms),
-            supersedes,
-            reused,
-            take: Some(take),
-            settle_ms: (reused || prior.is_some()).then_some(claim_settle.max(prior_settle)),
-            prior,
-        })
-    }
-}
-
-fn ms(d: Duration) -> u64 {
-    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
-}
-
-impl Model {
-    /// Moves a ticket's issue time back by `by` (a ticket that has been open that long).
-    pub fn age_ticket(&self, ticket: Uuid, by: Duration) {
-        let mut st = self.st();
-        let t = st.tickets.iter_mut().find(|t| t.id == ticket).unwrap();
-        t.issued = t.issued.checked_sub(by).unwrap();
-    }
-
-    /// An open send ticket of `cmid` issued `age` ago, as an earlier request whose outcome never arrived left it.
-    pub fn open_send_ticket(&self, conversation: Uuid, cmid: &str, age: Duration) -> Uuid {
-        let t = Ticket {
-            id: Uuid::new_v4(),
-            conversation,
-            kind: TicketKind::Send,
-            cmid: Some(cmid.to_owned()),
-            outcome: None,
-            issued: std::time::Instant::now().checked_sub(age).unwrap(),
-            superseded: false,
-            take: Uuid::new_v4(),
-            claimed: None,
-            claims: 0,
-            claim_take: None,
-            expired: false,
-        };
-        let id = t.id;
-        self.st().tickets.push(t);
-        id
-    }
-
-    /// The importer's settled expiry (`magpie::legacy::tickets::expire_settled`) after an old-child read that starts
-    /// now and shows nothing in flight: every open ticket of `conversation` issued more than `TICKET_SETTLE_MAX` ago
-    /// (superseded ones included) closes `expired`. The tickets it closed.
-    pub fn expire_settled(&self, conversation: Uuid) -> Vec<Uuid> {
-        let mut st = self.st();
-        let mut closed = Vec::new();
-        for t in st
-            .tickets
-            .iter_mut()
-            .filter(|t| t.conversation == conversation && t.open())
-        {
-            if t.issued.elapsed() > magpie_api::legacy::TICKET_SETTLE_MAX {
-                t.expired = true;
-                closed.push(t.id);
-            }
-        }
-        drop(st);
-        if !closed.is_empty() {
-            self.bump();
-        }
-        closed
-    }
-
-    /// The ticket's latest take claims a write now (an earlier request, on a replica gone since, that wrote).
-    pub fn claim_by_holder(&self, ticket: Uuid) {
-        let mut st = self.st();
-        let t = st.tickets.iter_mut().find(|t| t.id == ticket).unwrap();
-        t.claimed = Some(std::time::Instant::now());
-        t.claim_take = Some(t.take);
-        t.claims += 1;
-    }
-
-    /// Moves a ticket's last claim back by `by` (a write claimed that long ago).
-    pub fn age_claim(&self, ticket: Uuid, by: Duration) {
-        let mut st = self.st();
-        let t = st.tickets.iter_mut().find(|t| t.id == ticket).unwrap();
-        t.claimed = t.claimed.map(|at| at.checked_sub(by).unwrap());
-    }
-
-    /// Waits until the ticket list satisfies `pred` (outcomes are reported in the background).
-    pub async fn wait_tickets(&self, pred: impl Fn(&[Ticket]) -> bool) {
-        for _ in 0..500 {
-            if pred(&self.st().tickets) {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        panic!("tickets never matched: {:?}", self.st().tickets);
     }
 }
 

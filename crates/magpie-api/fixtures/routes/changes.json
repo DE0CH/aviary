@@ -69,7 +69,6 @@
                   "createdAt": "2026-11-02T03:46:12.345Z"
                 }
               ],
-              "migrating": false,
               "run": {
                 "state": "running",
                 "background": []
@@ -105,7 +104,6 @@
               },
               "sandbox": null,
               "asks": [],
-              "migrating": false,
               "run": {
                 "state": "idle",
                 "background": []

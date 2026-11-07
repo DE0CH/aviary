@@ -28,7 +28,7 @@ pub const SENT_TOTAL_MAX_BYTES: u64 = 256 << 20;
 /// entry (`NAME_MAX`). magpie also keeps names to 200 characters.
 pub const WORKSPACE_NAME_MAX_BYTES: usize = 255;
 
-/// `POST /v1/sandbox/lease` → 200 (body `{}`); 409 `not_current_sandbox` / `conversation_migrating`; 503.
+/// `POST /v1/sandbox/lease` → 200 (body `{}`); 409 `not_current_sandbox`; 503.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LeaseResponse {

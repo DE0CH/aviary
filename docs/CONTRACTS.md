@@ -440,8 +440,8 @@ platform R3) differ, or a detail was open:
 - `ErrorInfo` is `{code, message, status?, detail?, retryAfterS?}` (pigeon's `status` for model errors, magpie 8.3's
   retry time for `sandbox.busy`); an assistant row may carry `error` (the model error tag, pigeon 14.1.18).
 - `Ask.toolUseId` is nullable (magpie 7.2) and an ask may carry `title` and `description` (pigeon).
-- 409 `conversation_migrating` carries `retryAfterMs`, and `route: "legacy"` in the switch window (platform R37);
-  409 `bad_transition` carries the turn's `state` as a type-specific field.
+- 409 `conversation_migrating` carries `retryAfterMs` (magpie answers it no more since the A6 contraction; the
+  supervisor still reads it as a retry); 409 `bad_transition` carries the turn's `state` as a type-specific field.
 - Routes that answer nothing but must be JSON answer `{}`: M11 (202), M17 (201), `POST /v1/sandbox/asks` (201), agent
   turns (201, 200 for a repeat) and blob PUTs (201, 200 when stored already).
 - `GET /v1/ops/view-as?before=` is an RFC 3339 time (platform 15.3; magpie 13 said an id). The admin list is
@@ -452,7 +452,8 @@ platform R3) differ, or a detail was open:
   an ask's `input` and `updatedInput`, and the Messages API `response` of a title ack (`tests/shapes.rs`).
 - A live `status` frame carries `attempt` and `retryInMs` (supervisor 8.3) beside `status`; `mtimeNs` is a signed
   64-bit integer; the `gen` field of a heartbeat is `generation` in Rust.
-- The switch window's routes (tickets, fence, `import_uploads`) are WP-51's and are added to this crate with it.
+- The switch window's routes (WP-51) went in the A6 contraction but for `upload_legacy_path`, which stays with the
+  legacy-path set until A7.
 
 For Postgres (`aviary-pg`), where platform 4.3 names a mechanism the crate changes:
 

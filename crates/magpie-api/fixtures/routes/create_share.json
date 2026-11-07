@@ -32,14 +32,6 @@
         "code": "view_as_read_only",
         "message": "not allowed while viewing as the person"
       }
-    },
-    {
-      "status": 409,
-      "body": {
-        "code": "conversation_migrating",
-        "message": "conversation is being moved",
-        "retryAfterMs": 2000
-      }
     }
   ]
 }

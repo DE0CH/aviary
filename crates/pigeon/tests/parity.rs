@@ -11,8 +11,8 @@
 //! seqs, the assistant rows and the error row, each compared, envelope and item, with the entry the bridge served at
 //! the same seq. The differences that are pigeon's by design are listed in the test (image URLs, the error sentence).
 //! Real imported conversations (Claude Code transcripts such as `crates/magpie/tests/fixtures/claude-code-*`) are
-//! not compared here: their rows come from magpie's importer (`crates/magpie-import`, WP-29), and render parity over
-//! the imported set is cutover 10.2 item 6 (WP-41), which compares the two stacks' renders of the same conversations.
+//! not compared here: their rows came from magpie's importer (WP-29, deleted in A6), and render parity over the
+//! imported set was cutover 10.2 item 6 (WP-41), which compared the two stacks' renders of the same conversations.
 #![allow(clippy::unwrap_used, clippy::too_many_lines)] // tests
 
 use std::collections::BTreeMap;

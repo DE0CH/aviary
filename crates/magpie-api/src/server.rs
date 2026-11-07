@@ -34,9 +34,7 @@ use crate::conversations::{Conversation, CreateRequest, CreateResponse, ListQuer
 use crate::errors::{ErrorCode, Refusal};
 use crate::events::{EventsPage, EventsQuery};
 use crate::files::{FilesPanel, RawFileQuery};
-use crate::legacy::{
-    LegacyPathRequest, TicketClaim, TicketClaimed, TicketDone, TicketRequest, TicketResponse, WindowState,
-};
+use crate::legacy::LegacyPathRequest;
 use crate::live::{LiveFramesRequest, LiveState};
 use crate::ops::{
     AdminConversation, AdminConversationList, AdminListQuery, LegacyImportStatus, OpsStats, PeopleQuery,
@@ -47,13 +45,12 @@ use crate::routes::{
     self, ADMIN_CONVERSATION, ADMIN_CONVERSATIONS, ADMIN_EVENTS, ADMIN_SCHEDULES, ADMIN_SCHEDULES_PAUSE,
     ADMIN_TIMELINE, ADMIN_TRANSCRIPT, ASK_ANSWER, BLOB, CANCEL, CHANGES, CONVERSATION, CONVERSATION_DELETE,
     CONVERSATION_RESTORE, CONVERSATION_SCHEDULES, CONVERSATION_SHARES, CONVERSATIONS, CREATION, FILES, FILES_RAW,
-    HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS, LEGACY_TICKET_CLAIM, LEGACY_TICKET_DONE,
-    LEGACY_TICKETS, LEGACY_WINDOW, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS, PROMPTS, SANDBOX_ASK_RESOLVED,
-    SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME, SANDBOX_CC_RMDIR,
-    SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE, SANDBOX_COMMAND_ACK,
-    SANDBOX_COMMANDS, SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES, SANDBOX_SENT_FILES,
-    SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS, SEARCH, SHARE,
-    SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOAD_RAW, UPLOADS, VIEW_AS,
+    HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS,
+    PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME,
+    SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE,
+    SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES,
+    SANDBOX_SENT_FILES, SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS,
+    SEARCH, SHARE, SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
 };
 use crate::rows::{
     PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery,
@@ -812,36 +809,6 @@ pub trait Server: Send + Sync + 'static {
         async move { Err(not_implemented("admin_schedules_pause")) }
     }
 
-    /// Route `legacy_ticket` (the switch window).
-    fn legacy_ticket(
-        &self,
-        ctx: Ctx,
-        id: Uuid,
-        body: TicketRequest,
-    ) -> impl Future<Output = Result<TicketResponse, ApiError>> + Send {
-        async move { Err(not_implemented("legacy_ticket")) }
-    }
-
-    /// Route `legacy_ticket_done` (the switch window).
-    fn legacy_ticket_done(
-        &self,
-        ctx: Ctx,
-        ticket: Uuid,
-        body: TicketDone,
-    ) -> impl Future<Output = Result<(), ApiError>> + Send {
-        async move { Err(not_implemented("legacy_ticket_done")) }
-    }
-
-    /// Route `legacy_ticket_claim` (the switch window).
-    fn legacy_ticket_claim(
-        &self,
-        ctx: Ctx,
-        ticket: Uuid,
-        body: TicketClaim,
-    ) -> impl Future<Output = Result<TicketClaimed, ApiError>> + Send {
-        async move { Err(not_implemented("legacy_ticket_claim")) }
-    }
-
     /// Route `upload_legacy_path` (until A7).
     fn upload_legacy_path(
         &self,
@@ -851,43 +818,6 @@ pub trait Server: Send + Sync + 'static {
     ) -> impl Future<Output = Result<(), ApiError>> + Send {
         async move { Err(not_implemented("upload_legacy_path")) }
     }
-
-    /// Route `legacy_window` (the switch window).
-    fn legacy_window(&self, ctx: Ctx) -> impl Future<Output = Result<WindowState, ApiError>> + Send {
-        async move { Err(not_implemented("legacy_window")) }
-    }
-
-    /// Route `upload_raw` (the switch window).
-    fn upload_raw(&self, ctx: Ctx, upload_id: Uuid) -> impl Future<Output = Result<Response, ApiError>> + Send {
-        async move { Err(not_implemented("upload_raw")) }
-    }
-}
-
-async fn h_legacy_ticket<S: Server>(
-    State(s): State<Arc<S>>,
-    ctx: Ctx,
-    P(id): P<Uuid>,
-    J(body): J<TicketRequest>,
-) -> Response {
-    reply("legacy_ticket", s.legacy_ticket(ctx, id, body).await)
-}
-
-async fn h_legacy_ticket_done<S: Server>(
-    State(s): State<Arc<S>>,
-    ctx: Ctx,
-    P(ticket): P<Uuid>,
-    J(body): J<TicketDone>,
-) -> Response {
-    reply_empty(s.legacy_ticket_done(ctx, ticket, body).await)
-}
-
-async fn h_legacy_ticket_claim<S: Server>(
-    State(s): State<Arc<S>>,
-    ctx: Ctx,
-    P(ticket): P<Uuid>,
-    J(body): J<TicketClaim>,
-) -> Response {
-    reply("legacy_ticket_claim", s.legacy_ticket_claim(ctx, ticket, body).await)
 }
 
 async fn h_upload_legacy_path<S: Server>(
@@ -897,14 +827,6 @@ async fn h_upload_legacy_path<S: Server>(
     J(body): J<LegacyPathRequest>,
 ) -> Response {
     reply_empty(s.upload_legacy_path(ctx, upload_id, body).await)
-}
-
-async fn h_legacy_window<S: Server>(State(s): State<Arc<S>>, ctx: Ctx) -> Response {
-    reply("legacy_window", s.legacy_window(ctx).await)
-}
-
-async fn h_upload_raw<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, P(upload_id): P<Uuid>) -> Response {
-    reply_raw(s.upload_raw(ctx, upload_id).await)
 }
 
 async fn h_list_conversations<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, Q(query): Q<ListQuery>) -> Response {
@@ -1319,12 +1241,7 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
         .route(SHARE_FILES_RAW, get(h_share_files_raw::<S>))
         .route(SHARE_CONTINUE, post(h_continue_share::<S>))
         .route(VIEW_AS, post(h_view_as::<S>))
-        .route(LEGACY_TICKETS, post(h_legacy_ticket::<S>))
-        .route(LEGACY_TICKET_DONE, post(h_legacy_ticket_done::<S>))
-        .route(LEGACY_TICKET_CLAIM, post(h_legacy_ticket_claim::<S>))
         .route(UPLOAD_LEGACY_PATH, put(h_upload_legacy_path::<S>))
-        .route(LEGACY_WINDOW, get(h_legacy_window::<S>))
-        .route(UPLOAD_RAW, get(h_upload_raw::<S>))
         .route(SANDBOX_LEASE, post(h_lease::<S>))
         .route(SANDBOX_CC_TREE, get(h_cc_tree::<S>))
         .route(SANDBOX_CC_FILE, get(h_cc_file::<S>))

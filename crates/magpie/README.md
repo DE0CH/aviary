@@ -8,13 +8,13 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 
 | Path | What |
 |---|---|
-| `../magpie-import/src/main.rs` | the `magpie` binary: start (env, ops port 9090, migrations, LISTEN, jobs, API on 8080) and drain, and `magpie import …`. It lives in `crates/magpie-import` for the switch window (that crate links this one, and a package cannot depend on one that depends on it); it moves back here, without the `import` arm, when the importer is deleted (cutover 10.5 step 8) |
+| `src/main.rs` | the `magpie` binary: start (env, ops port 9090, migrations, LISTEN, jobs, API on 8080) and drain |
 | `src/admin.rs` | hermit's routes (a leaver's purge, `workspaces/exists`, `legacy-import`: whether the switch's import is recorded complete) and the admin reads with their audit |
 | `src/app.rs` | `Service` (start and the drain's last steps), `Magpie` (shared state), the `Server` impl, the router |
 | `src/auth.rs` | callers from `MAGPIE_ACCEPT_*`, the route layer that checks them against `magpie_api::routes::ROUTES` |
 | `src/limits.rs` | every limit and timeout (magpie 17) |
 | `src/error.rs` | the one error type; Postgres unreachable answers 503 `unavailable` with `retry-after` |
-| `src/db/` | the migrations (`0001_init.sql`: every table of magpie 4 and the importer's of cutover 7.3; `0005_timeline.sql`: the projection's lookups; `0008_timeline_derivation.sql`: `rows.derivation`, `line_pos`, the live delta index) and `Db` |
+| `src/db/` | the migrations (`0001_init.sql`: every table of magpie 4 and the importer's of cutover 7.3, which `0028_a6_contraction.sql` drops but for the legacy-path set; `0005_timeline.sql`: the projection's lookups; `0008_timeline_derivation.sql`: `rows.derivation`, `line_pos`, the live delta index) and `Db` |
 | `src/conversations/` | the Conversation object, the person row, the row lock; create, list, rename, delete, restore, purge |
 | `src/events/` | `events::append` (seq allocation), which calls the projection |
 | `src/rows/` | the timeline projection (magpie 7.3): `project` (rules 1-10, row seqs, the epoch), `derive` (what each event makes of a row, pure), `read` (M9 pages and the long-poll, M10, search) |
@@ -33,15 +33,14 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 | `src/http/` | the handlers, one module per route group (no SQL) |
 | `src/turns/` | turns (magpie 8): admission (M7, M3's first message), the driver (hermit's get-or-start and long-poll), the command queue and acks, the supervisor's reports and heartbeat reconciliation, cancel (M8) and ask answers (M11), titles, the sweeper (deadlines, watchdog, lapsed claims, availability tick), and `end::end`, the one way a turn ends |
 | `src/hermit/` | the hermit sandbox-events feed follower (magpie 8.7, R8), run by the job leader |
-| `src/ccfs/display.rs` | magpie 19.3's display fixes of imported prompts (the old sandbox-reset note, pasted-content wrappers, the `<image_uploads>`/`<files_input>` blocks as attachments), applied by `ccfs::lines` to lines the importer writes (`ccfs::Caller::importer`, whose writes need `migrating` instead of the lease); deleted with the importer |
-| `src/legacy/` | the switch window (WP-51; DESIGN 9.2-9.5, cutover 6.4 and 7.8): `window` (pigeon's view of the window and an upload's bytes), `tickets` (taken before every legacy write, closed only on an outcome), `fence` (the importer's fence, release and unfence, the 3 s lease, the fenced wait of native mutations), `mirror` (the running mirror's `run_state`), `paths` (old asset paths resolved through `uploads.legacy_path`, `import_uploads` and `ingest`'s synchronous ingest, a fresh upload copy per send), `metrics`; `a6_contraction.sql` (the A6 schema change, tested). Deleted in A6 except `paths`, which goes in A7 |
+| `src/legacy/` | the legacy-path set until A7 (DESIGN 9.5, cutover 10.7): `paths` (old asset paths resolved through `uploads.legacy_path` and `import_uploads`, a fresh upload copy per send), `metrics` (`magpie_legacy_path_total`, `magpie_unknown_upload_total`). The rest of the switch window (WP-51: tickets, the fence, the running mirror, the synchronous ingest, pigeon's window state) went in the A6 contraction (cutover 10.5 step 7) |
 
 ## The internal seam
 
 The packages after the core build on these, all inside one `aviary_pg::tx!` transaction:
 
 - `conversations::lock(tx, person, id)` locks the conversation row first (one lock order: conversation, then
-  person); `Locked::refuse_migrating()` answers 409 `conversation_migrating` with `route: "legacy"`.
+  person).
 - `events::append(tx, conversation, NewEvent) -> seq` allocates the next seq and calls `rows::project(tx, &stored)`.
 - `changes::emit(tx, person, conversation, &ChangeBody)` / `changes::upserted(…)` append to the person's feed and
   notify `magpie_changes`.
@@ -95,15 +94,12 @@ sent-file snapshot, its validation and lease, the files panel, downloads of a se
 workspace files through fake-hermit. `tests/shares.rs`: the freeze leaves a running turn out, the view equals the
 timeline at the freeze, the frozen workspace is a clone, soft delete hides a link and restore brings it back,
 continue, revoke, purge, view-as, a failed clone. `tests/admin.rs`: a leaver's purge, `workspaces/exists`, `legacy-import`, the admin
-reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with libheif's `heif-enc`.
+reads and their once-a-day audit. `tests/legacy_paths.rs`: the legacy-path set (A7). `tests/fixtures/` holds a small HEIC made with libheif's `heif-enc`.
 
 ## Deviations from the spec text
 
 - `POST /v1/conversations/{id}/delete` answers the Conversation, as `magpie-api` (the contract) has it, not
   `{deletedAt}` (magpie 9.6).
-- A migrating conversation's mutations answer 409 `conversation_migrating` with `route: "legacy"` and
-  `retryAfterMs` (DESIGN 12 D14, cutover 6.4); while it is fenced they wait for the release first (`legacy::fence::
-  native`, at most what is left of the fence's 3 s lease) and then run natively.
 - The applied migrations are recorded in aviary-pg's `_migrations`, not `schema_migrations` (platform 4.3).
 - `0001_init.sql` adds the index `events_asks` (the open ask of `Conversation.asks` is read from the ask events).
 - The replica name comes from the downward API's `POD_NAME` (aviary-core's `log::init_in_pod` reads it), not a
@@ -246,7 +242,7 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   - `title` is queued only while no `title` command is pending.
   - The heartbeat's extra fields (`gen`, `supervisor`, `cc`) are logged; the admin reads that show them are WP-15's.
   - Old asset paths in `files[].path` (the switch window's legacy uploads) are resolved by `legacy::paths` before
-    the admission (WP-51).
+    the admission (WP-51, until A7).
   - The end report's `transcript_pending` check reads the conversation's `cc.*` events and the last 2,000 lines of
     its main transcript (`cc_lines` stubs, which keep each line's `uuid`).
   - The sandbox routes check the lease as the cc routes do: the current `lease_id`, held by the calling sandbox.
@@ -434,119 +430,30 @@ reads and their once-a-day audit. `tests/fixtures/` holds a small HEIC made with
   (`auth::allowed_on`), the admin it verified.
 - A person purge goes ahead only on hermit's 200 `allowed: false`; any other answer from hermit, a 404 included
   (hermit answers 200 for every well-formed address), is 503 and purges nothing.
-- A person purge also deletes the leaver's unattached uploads, and answers 409 `conversation_migrating` (after
-  purging the rest) while the importer holds one of their conversations; a repeat finishes it.
+- A person purge also deletes the leaver's unattached uploads.
 
-### The switch window (WP-51)
+### The legacy-path set (WP-51, until A7)
 
-- Tickets, the fence and the legacy-path record are four pigeon routes in `magpie-api` (`legacy_ticket`,
-  `legacy_ticket_done`, `legacy_ticket_claim`, `upload_legacy_path`), with two more for pigeon's legacy upstream (WP-50): `legacy_window`
-  (`GET /v1/legacy/window`: the gate `import_control.handover_allowed_at`, the rollback mark
-  `import_control.rollback_at` of DESIGN 9.10 step 1, added by migration 0018, whether anything is legacy and how
-  much is the person's) and `upload_raw` (`GET /v1/uploads/{uploadId}/raw`: the person's upload bytes, for the
-  copy-at-send of DESIGN 9.5); the fence, release, unfence, running mirror and `import_uploads`
-  writes are library functions the importer (`crates/magpie-import`, linked into `magpie import …`) calls on the
-  same database, so they need no route.
-- A ticket's outcome is one of `started`, `completed`, `failed` (a send), `applied` (anything else) or `refused`;
-  `delivered` is recorded (`legacy_tickets.delivered_at`) and closes nothing (switch-final C5.1). A closed ticket
-  notifies `magpie_legacy` (`<conversation>:0`) for the importer's wake on dirty.
-- Design gap (recorded): nothing in the specs closes a ticket whose outcome never arrives. pigeon can die or roll
-  out between the ticket and its report, or retry a ticket call that timed out after it committed; the open ticket
-  then refuses every fence and release, `release --force` included (cutover 7.7, 7.9), for ever, against
-  switch-final 8.1 ("after its last ticket was done or expired") and DESIGN 9.2 (fail-closed inputs only delay a
-  release). The closest correct thing: (1) a send's ticket call carries the send's `clientMessageId` (only a send's
-  may: 400 for any other kind, so a send's upload tickets, one per attached file, are each their own and the first
-  file's `applied` never closes a ticket another copy still writes under) and is idempotent per
-  `(conversation, clientMessageId)` while that ticket is open and younger than `magpie_api::legacy::TICKET_REUSE_MAX`
-  (30 s; `legacy_tickets_open_send_cmid`), so a retry gets the first ticket with at least 30 s of its hold left; a
-  repeat past that age supersedes the old ticket (`superseded_at`: it stays open, a write started under it may still
-  be in flight) and gets a new one whose answer names it (`supersedes: {ticket, settleMs}`), so a retried send is
-  never stuck behind a ticket pigeon may no longer write under; (2) every ticket answer carries `issuedAt` and
-  `holdMs`, what is left of `TICKET_HOLD_MAX` (60 s) on the database clock, and pigeon starts no legacy write under a
-  ticket later than `holdMs` after it sent the ticket call (its monotonic clock: no skew between pigeon and the
-  database moves the bound) and aborts a ticketed legacy write that has no answer within `TICKET_WRITE_TIMEOUT`
-  (20 s) (a contract for WP-50); (3) `legacy::tickets::expire(pool, id, issued_before)` closes the open tickets
-  (superseded ones included) issued before a bound with outcome `expired` and wakes the importer. The importer
-  (WP-52) calls `legacy::tickets::expire_settled(pool, id, read_started)`, with `read_started` from
-  `legacy::tickets::now` (the database clock) taken right before an old-child read (running list and
-  `pendingUserMessages`/`preparing`) that showed nothing for the conversation; it expires what was issued more than
-  `TICKET_SETTLE_MAX` (90 s = the hold, the write timeout and 10 s for bytes sent just before an abort) before that:
-  any write under those tickets had then either reached the old child, and would have shown in the read until it
-  settled, or never will. The quiet period and two running-set reads still follow. `release <id> --force` (WP-29)
-  calls `expire` with `tickets::now` after the operator's inspection, then fences and releases. A late outcome on an
-  expired ticket keeps `expired`. Tested in `tests/legacy.rs`
-  (`a_stranded_ticket_expires_and_a_retried_ticket_call_reuses_the_open_one`).
-- A reused ticket has two holders (a tab's resend on another replica while the first request still holds it).
-  Migration 0020 gives each hand-out a take of its own (`legacy_tickets.take`, the latest) and records a send's
-  claimed write (`claimed_at`): `legacy_ticket_claim` answers `claimed` only for the latest take of an open ticket
-  within its hold whose send no other ticket closed accepted (pigeon starts the write at once after it), a `refused`
-  from an older take changes nothing (that holder wrote nothing), and the reuse answer's `settleMs` is what is left
-  of `TICKET_CLAIM_SETTLE` (30 s) after the claim. A send's ticket answer names `prior`: an earlier ticket of the
-  same `(conversation, clientMessageId)` that closed `started`/`completed`/`failed` (`accepted`: pigeon sends
-  nothing) or that expired or is open and superseded (pigeon reads the old child after `settleMs`). Tested in
-  `tests/legacy.rs` (`a_reused_ticket_has_one_writer_and_a_send_names_its_prior`).
-- The old stack does not de-duplicate a send by `clientMessageId`: CloudCLI's paseo hub (DE0CH/claudecodeui
-  `server/modules/paseo/paseo-hub.ts` `send`, called from `paseo-connection.ts` `send_agent_message_request`)
-  refuses a send only while a turn runs and otherwise delivers a second `chat.send`, a second turn. So a send whose
-  repeat got a new ticket with `supersedes` is not simply sent again: pigeon waits `settleMs` from when it sent that
-  ticket call, reads the old child (running list, `pendingUserMessages`, and the timeline for a user message with
-  the send's `clientMessageId`, which the hub's rows carry as `clientMessageId` and id `paseo-user-<id>`), and sends under the new ticket only when the first send is absent; when it is
-  there, it reports the new ticket `started` or `completed` from what the old child shows and answers the send as
-  accepted (a carried note for WP-50). Until the importer's expiry exists (WP-52), a superseded ticket whose outcome
-  never comes holds its conversation legacy; WP-52's hand-over pass calls `expire_settled` for every migrating
-  conversation on every pass, which covers superseded tickets (their `done_at` is null).
-- A fence is a lease: `conversations.legacy_fence_at` older than 3 s holds nothing, cannot be released, and is
-  cleared by the next writer that finds it (a ticket call, a waiting mutation). The lease and the fence's held time
-  (`magpie_fence_seconds`) are judged by `clock_timestamp()`, not the transaction's start, so the importer's work
-  earlier in its release transaction counts; it calls `release_in` last, after the upload-ingestion pass, so writers
-  queued in the fence wait on the row lock only for the release itself. `release_in` answers a `fence::Released`
-  (`#[must_use]`) that the caller records on `magpie_fence_seconds` with `Released::record` after its commit, so a
-  rolled-back release is never counted; every release runs in the import Deployment (`magpie import handover` and
-  its one-shot commands), which registers `magpie::legacy::Metrics` on its own `:9090/metrics` registry (WP-29,
-  WP-52), and that is where DESIGN 9.9's and cutover 10.3's A5 gate on the histogram reads it (magpie serve's
-  `/metrics` registers the same family but never observes it). A draining replica, whose held polls answer
-  at once, still waits out a fence's remaining lease (polling every 50 ms), so a fenced write becomes native at the
-  release rather than 409 `route: "legacy"`. The release refuses a lapsed fence
-  and an open ticket, and stores the old child's model and the mapped `name_source` (`coalesce`: `None` keeps the
-  imported value).
+- The switch window's tickets, fence, running mirror, window state, `upload_raw` and synchronous ingest, with
+  `conversations.migrating` and `legacy_fence_at` and the tables `legacy_tickets`, `import_sources`,
+  `import_shares`, `import_control`, `import_gate_persons` and `import_purged`, went in the A6 contraction
+  (cutover 10.5 step 7, migration `0028_a6_contraction.sql`). What stays until A7 (cutover 10.7) is the
+  legacy-path set: `import_uploads`, `uploads.legacy_path`, the tee's record route `upload_legacy_path`, and
+  their resolution in M3/M7. `legacy_import_verified` stays for hermit's `legacy-cleanup` (P6).
 - Old asset paths are held in canonical form, the file name inside the person's old asset folder
   (`magpie_api::legacy::legacy_asset_name`: the path ends in `.claude/cloudcli-assets/<name>`, and the folder above
   `.claude`, when there is one, must be the person's key), so `import_uploads` is keyed by `(person, legacy_path)`
   rather than by the absolute path (whose prefix is the old pods' home root).
-- The synchronous ingest calls `POST http://magpie-import/v1/ingest-upload` (`{person, legacyPath}` → 200 ingested,
-  404 no such file) with `MAGPIE_TOKEN_IMPORT` (required at start like every token: platform 3.7's pair table and
-  the magpie Deployment carry it, and the import side accepts it as `MAGPIE_IMPORT_ACCEPT_MAGPIE`). A send's misses
-  are ingested concurrently under one 5 s deadline for the whole send (magpie 8.2). An unreachable or late import
-  answers the send 503 `unavailable` (retryable) rather than 400 `unknown_upload`, which is kept for a path that
-  resolves nowhere. Every miss is ingested until the A6 release removes the ingest (DESIGN 9.5, magpie 8.2; no
-  shortcut on `import_control.all_owned_at`, which a reverse hand-over would leave stale and which the A6
-  contraction drops); nothing in the resolution reads a table the contraction drops, so the A6 release only removes
-  the ingest call, after which a miss is `unknown_upload` (tested on the contracted schema). Before the import
-  Deployment and its Service exist (A3; in A2 the importer runs as Jobs, including the A2 rehearsal R1) a miss is
-  503: retryable, and pigeon's retry resolves once the periodic ingestion pass has recorded the file (recorded
-  deviation from cutover's "synchronous ingest on a miss" before T0; no composer holds an untracked old path then,
-  since the tee records every upload from T0).
-- A native send (M7) to an unfenced legacy conversation skips the resolution, so its 409 `route: "legacy"` comes
-  back at once with no ingest and no copies. The owner is read again on the attempt after a fence, so a send that
-  found the conversation legacy, was fenced before its admission and then became native resolves its old paths on
-  that attempt (an attempt that resolved keeps its copies for the next). The same old path twice in one send is
-  one copy, so one attachment. An attempt that resolved and is then refused (`turn_running`, `conversation_deleted`,
-  a lifted fence's 409, a 503 retried by pigeon) leaves its unattached copies, which retention collects after
-  `UNATTACHED_UPLOAD` like any upload (they carry no `legacy_path`); making the copy inside the admission
-  transaction would avoid them and is not done (the copies hold refs to blobs that already exist, no new bytes).
-- Migrations `0013_window.sql` and `0010_shares_frozen.sql` were edited in place after they reached `main` (nothing
-  was deployed); a database built from an earlier commit (for 0013, from 0822f0ad) fails aviary-pg's checksum
-  check and must be recreated. Every migration is frozen from now on: further changes go in new migrations (0015
-  added the superseded ticket). 0015 replaces 0013's reuse rule: 0013's header still describes a repeated ticket
-  call returning the open ticket through `legacy_tickets_open_cmid`, which 0015 drops for
-  `legacy_tickets_open_send_cmid` (sends only, not superseded), and 0015's own header names `TICKET_HOLD_MAX` as the
-  reuse age, which is now `TICKET_REUSE_MAX` (30 s, enforced in `legacy::tickets::take`, not in the index). Neither
-  header can change (checksums); this note and `legacy::tickets` are the current rule.
+- A send's old asset paths are resolved before its admission, except for a repeat (which admits nothing). The
+  same old path twice in one send is one copy, so one attachment. A send that resolved and is then refused
+  (`turn_running`, `conversation_deleted`) leaves its unattached copies, which retention collects after
+  `UNATTACHED_UPLOAD` like any upload (they carry no `legacy_path`). A path that resolves nowhere is 400
+  `unknown_upload`.
+- Migrations are frozen once they reach `main` (aviary-pg checks their checksums), so the headers of 0013-0024
+  still describe the switch window as it was; 0028 is what is left of it.
 - The tee's record (`PUT …/legacy-path`) is an unattached copy of the upload carrying `legacy_path`, not the upload
   itself: pigeon may still attach the upload by its magpie id (DESIGN 9.5), and purging that conversation then
   deletes the upload row but not the record.
 - Retention keeps unattached uploads that carry `legacy_path` or are in `import_uploads` until A7; every send
   attaches a fresh copy, which retention treats as any other upload. `uploads_legacy_path` is built concurrently by
   its own no-transaction migration (0014), since `uploads` is populated and written by every upload.
-- A share revoke of a migrating conversation answers 409 `conversation_migrating` (cutover 6.4's table lists it;
-  the revoke route checked nothing before).

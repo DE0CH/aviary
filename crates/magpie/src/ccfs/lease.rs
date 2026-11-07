@@ -53,14 +53,14 @@ async fn ask_hermit(app: &Magpie, conversation: Uuid) -> Result<Option<(Uuid, St
 /// `POST /v1/sandbox/lease`.
 ///
 /// # Errors
-/// 404, 409 `not_current_sandbox` / `conversation_migrating`, 503 `unavailable`; a statement error.
+/// 404, 409 `not_current_sandbox`, 503 `unavailable`; a statement error.
 pub async fn lease(app: &Magpie, caller: &Caller) -> Result<LeaseResponse> {
     let row = app
         .pool
         .get()
         .await?
         .query_opt(
-            "select person, migrating, hermit_sandbox, hermit_state, hermit_version from conversations where id = $1",
+            "select person, hermit_sandbox, hermit_state, hermit_version from conversations where id = $1",
             &[&caller.conversation],
         )
         .await?
@@ -69,12 +69,9 @@ pub async fn lease(app: &Magpie, caller: &Caller) -> Result<LeaseResponse> {
     if person != caller.person {
         return Err(Error::not_found());
     }
-    if row.get::<_, bool>(1) {
-        return Err(magpie_api::errors::Refusal::migrating(limits::MIGRATING_RETRY_AFTER_MS).into());
-    }
-    let recorded: Option<Uuid> = row.get(2);
-    let state: Option<String> = row.get(3);
-    let asked_at: (Option<Uuid>, Option<i64>) = (recorded, row.get(4));
+    let recorded: Option<Uuid> = row.get(1);
+    let state: Option<String> = row.get(2);
+    let asked_at: (Option<Uuid>, Option<i64>) = (recorded, row.get(3));
     // the feed's record first; hermit's own answer (outside any transaction) only when it does not name the caller
     let hermit = if recorded == Some(caller.sandbox) && live(state.as_deref()) {
         None
@@ -93,8 +90,7 @@ pub async fn lease(app: &Magpie, caller: &Caller) -> Result<LeaseResponse> {
         }
     };
     let grant = aviary_pg::tx!(&app.pool, |t| -> Result<LeaseResponse> {
-        let conv = lock(t, caller).await?;
-        conv.refuse_migrating()?;
+        lock(t, caller).await?;
         // re-read under the lock: the feed may have recorded something since the read above
         let row = t
             .query_one(

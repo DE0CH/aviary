@@ -1,10 +1,9 @@
-//! The switch's one-off commands on a real `JuiceFS` volume (hermit 15.4, 22.3; cutover 8.1): the `juicefs` 1.4.1 CLI
-//! of hermit's image and two FUSE mounts of one volume (SQLite metadata, a local bucket), one squashed to 1000:1000 as
-//! hermit's own mount is and one not, as Job `hermit-jfs-owner`'s is. `import-jarvis` clones a committed share's
-//! frozen folder from `users/<key>/shares/<id>/ws` into `ws/<uuidv5>` through the squashed mount (`juicefs clone`, the
-//! `RENAME_NOREPLACE` into place, the quota), skips a share with no committed row and one revoked, and finds the
-//! target on the next pass; `jfs-owner` `lchown`s every entry over FUSE without following a symlink;
-//! `legacy-cleanup` removes `users/` with `juicefs rmr` and an old empty folder, and keeps the clone magpie names.
+//! The switch's one-off commands on a real `JuiceFS` volume (hermit 15.4, 22.3): the `juicefs` 1.4.1 CLI of hermit's
+//! image and two FUSE mounts of one volume (SQLite metadata, a local bucket), one squashed to 1000:1000 as hermit's own
+//! mount is and one not, as Job `hermit-jfs-owner`'s is. A committed share's frozen folder is cloned into
+//! `ws/<uuidv5>` as `import-jarvis` left it (that command went in A6); `jfs-owner` `lchown`s every entry over FUSE
+//! without following a symlink; `legacy-cleanup` removes `users/` with `juicefs rmr` and an old empty folder, and keeps
+//! the clone magpie names.
 //!
 //! Runs only as root with `AVIARY_TEST_JUICEFS=1` and `juicefs` in `/usr/local/bin` (ci.yml's test job, under sudo;
 //! every wait here is bounded and the mounts are unmounted when the test ends, also on a panic).
@@ -21,8 +20,8 @@ use std::time::Duration;
 
 use common::fresh_db;
 use hermit::fabric::Fut;
-use hermit::legacy::{self, Cleanup, ImportOptions, Referenced, ShareSource, share_workspace};
-use hermit::workspaces::{JfsCli, JuiceCli, JuiceFs};
+use hermit::legacy::{self, Cleanup, Referenced, share_workspace};
+use hermit::workspaces::JuiceCli;
 use uuid::Uuid;
 
 const JUICEFS: &str = "/usr/local/bin/juicefs";
@@ -183,91 +182,31 @@ async fn the_commands_on_a_real_juicefs_volume() {
     assert_eq!((first.error_count, first.changed), (0, 2), "{first:?}");
     age(&v.plain.join("ws").join(empty.to_string()));
 
-    let (h, o, c) = (
-        fresh_db("jfs_h").await,
-        fresh_db("jfs_o").await,
-        fresh_db("jfs_c").await,
-    );
-    let (hp, op, cp) = (pool(&h.url), pool(&o.url), pool(&c.url));
+    let h = fresh_db("jfs_h").await;
+    let hp = pool(&h.url);
     hermit::db::migrate(&hp).await.unwrap();
-    op.get()
-        .await
-        .unwrap()
-        .batch_execute(include_str!("fixtures/jarvis-legacy.sql"))
-        .await
-        .unwrap();
-    cp.get()
-        .await
-        .unwrap()
-        .batch_execute(&format!(
-            "create schema cc_shared;
-             create table cc_shared.shares (id text primary key, owner text not null, owner_name text not null,
-               session_id text not null, title text not null, dir text not null, files jsonb not null default '[]',
-               created_at timestamptz not null default now(), revoked_at timestamptz);
-             insert into cc_shared.shares (id, owner, owner_name, session_id, title, dir, revoked_at) values
-               ('liveShare0000000000000', 'a@example.com', 'a', 's', 't', '/jfs/users/{key}/shares/liveShare0000000000000', null),
-               ('revoked000000000000000', 'a@example.com', 'a', 's', 't', '/jfs/users/{key}/shares/revoked000000000000000', now())"
-        ))
-        .await
-        .unwrap();
-
-    let cli = Arc::new(JuiceCli::new(v.meta.clone(), String::new()));
-    let fs = JuiceFs::new(&v.squashed, cli.clone(), 1, 10_000);
-    let src = ShareSource {
-        cloudcli: &cp,
-        store: &fs,
-    };
-    let r = legacy::import_jarvis(&hp, &op, Some(src), &v.squashed, ImportOptions::default())
-        .await
-        .unwrap();
-    assert_eq!(fs.settle(Duration::from_secs(30)).await, 0);
-    assert!(r.complete(), "{r:?}");
-    let s = r.shares.clone().unwrap();
-    assert_eq!((s.cloned, s.revoked), (1, 1), "{s:?}");
-    assert_eq!(s.uncommitted, ["noRowYet00000000000000"]);
+    // what import-jarvis left (until A6): the committed live share cloned into its uuidv5, the revoked one recorded
     let wid = share_workspace("liveShare0000000000000");
     let clone = v.plain.join("ws").join(wid.to_string());
-    assert_eq!(
-        std::fs::read_to_string(clone.join("out/deep/report.md")).unwrap(),
-        "liveShare0000000000000"
-    );
-    assert_eq!(
-        std::fs::read_link(clone.join("link")).unwrap(),
-        PathBuf::from("/etc/hostname"),
-        "a symlink is cloned as a link"
-    );
-    for id in ["noRowYet00000000000000", "revoked000000000000000"] {
-        assert!(
-            !v.plain.join("ws").join(share_workspace(id).to_string()).exists(),
-            "{id}"
-        );
-    }
-    let q = cli.quota_get(&format!("/ws/{wid}")).await.unwrap().unwrap();
-    assert_eq!((q.capacity_bytes, q.inodes), (1 << 30, 10_000), "the clone's quota");
-    let leftovers: Vec<_> = std::fs::read_dir(v.plain.join("ws"))
+    let ok = Command::new("cp")
+        .arg("-a")
+        .arg(share("liveShare0000000000000"))
+        .arg(&clone)
+        .status()
+        .unwrap();
+    assert!(ok.success());
+    hp.get()
+        .await
         .unwrap()
-        .filter_map(|e| e.ok()?.file_name().into_string().ok())
-        .filter(|n| n.starts_with('.'))
-        .collect();
-    assert!(leftovers.is_empty(), "{leftovers:?}");
-    // the next pass finds the target (RENAME_NOREPLACE never replaces it) and still ensures its quota
-    cli.quota_delete(&format!("/ws/{wid}")).await.unwrap();
-    let again = legacy::import_jarvis(
-        &hp,
-        &op,
-        Some(src),
-        &v.squashed,
-        ImportOptions {
-            delta: true,
-            ..ImportOptions::default()
-        },
-    )
-    .await
-    .unwrap()
-    .shares
-    .unwrap();
-    assert_eq!((again.cloned, again.skipped), (0, 1), "{again:?}");
-    assert!(cli.quota_get(&format!("/ws/{wid}")).await.unwrap().is_some());
+        .execute(
+            "insert into legacy_shares (id, workspace, revoked, cloned_at) values
+               ('liveShare0000000000000', $1, false, now()), ('revoked000000000000000', $2, true, null)",
+            &[&wid, &share_workspace("revoked000000000000000")],
+        )
+        .await
+        .unwrap();
+    hermit::db::workspace_created(&hp, wid, hermit_api::Timestamp::now(), true).await;
+    let cli = Arc::new(JuiceCli::new(v.meta.clone(), String::new()));
 
     // A6's second jfs-owner run over the plain mount: every entry under ws/ to 1000:1000, the link itself and not its
     // target

@@ -59,7 +59,8 @@ open_enum! {
         ViewAsNotRecorded = "view_as_not_recorded",
         /// 403 (cc unlink): the main transcript cannot be removed (EPERM).
         Protected = "protected",
-        /// 409: the conversation is owned by the switch (carries `retryAfterMs`, and `route: "legacy"` in the window).
+        /// 409: the conversation was owned by the switch's importer (with `retryAfterMs`). magpie has not answered it
+        /// since the A6 contraction (cutover 10.5 step 7); the supervisor still reads it as a retry.
         ConversationMigrating = "conversation_migrating",
         /// 409 (M7).
         ConversationDeleted = "conversation_deleted",
@@ -162,13 +163,9 @@ pub struct Refusal {
     pub code: ErrorCode,
     /// English, for logs.
     pub message: String,
-    /// `conversation_migrating`: when to try again (2000, or 5000 while an old turn runs).
+    /// When to try again, milliseconds (`conversation_migrating`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after_ms: Option<u64>,
-    /// `conversation_migrating` during the switch window: `"legacy"`, the conversation's writes go through pigeon's
-    /// legacy upstream (platform R37).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub route: Option<RouteHint>,
     /// Type-specific fields beyond these (`state` of `bad_transition`: the turn's current state), and fields a
     /// newer magpie adds, kept as received.
     #[serde(flatten)]
@@ -189,7 +186,6 @@ impl Refusal {
             code,
             message: message.into(),
             retry_after_ms: None,
-            route: None,
             extra: Map::new(),
         }
     }
@@ -198,25 +194,6 @@ impl Refusal {
     #[must_use]
     pub fn not_found() -> Self {
         Self::new(ErrorCode::NotFound, "not found")
-    }
-
-    /// 409 `conversation_migrating` with `retryAfterMs`.
-    #[must_use]
-    pub fn migrating(retry_after_ms: u64) -> Self {
-        let mut e = Self::new(ErrorCode::ConversationMigrating, "conversation is being moved");
-        e.retry_after_ms = Some(retry_after_ms);
-        e
-    }
-
-    /// 409 `conversation_migrating` with `route: "legacy"` (the switch window's re-route answer, platform R37).
-    #[must_use]
-    pub fn legacy_route() -> Self {
-        let mut e = Self::new(
-            ErrorCode::ConversationMigrating,
-            "conversation is owned by the old stack",
-        );
-        e.route = Some(RouteHint::Legacy);
-        e
     }
 
     /// 409 `bad_transition` with the turn's current state.
@@ -241,17 +218,6 @@ impl Refusal {
     }
 }
 
-/// Where pigeon must send a conversation's writes (`route` of `conversation_migrating`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum RouteHint {
-    /// Through the legacy upstream (the switch window).
-    Legacy,
-    /// A value this build does not know.
-    #[serde(other)]
-    Unknown,
-}
-
 impl From<Refusal> for aviary_core::http::ApiError {
     fn from(r: Refusal) -> Self {
         let status =
@@ -259,9 +225,6 @@ impl From<Refusal> for aviary_core::http::ApiError {
         let mut e = aviary_core::http::ApiError::new(status, r.code.as_str(), r.message);
         if let Some(ms) = r.retry_after_ms {
             e = e.with("retryAfterMs", ms);
-        }
-        if let Some(route) = r.route {
-            e = e.with("route", serde_json::to_value(route).unwrap_or(Value::Null));
         }
         for (k, v) in r.extra {
             e = e.with(&k, v);
@@ -405,14 +368,14 @@ mod tests {
         let e = Refusal::bad_transition("running");
         let back: Refusal = serde_json::from_value(serde_json::to_value(&e).unwrap()).unwrap();
         assert_eq!(back.current_state(), Some("running"));
-        let odd: Refusal =
-            serde_json::from_str(r#"{"code":"conversation_migrating","message":"m","route":"elsewhere"}"#).unwrap();
-        assert_eq!(odd.route, Some(RouteHint::Unknown));
+        let odd: Refusal = serde_json::from_str(r#"{"code":"brand_new","message":"m","route":"elsewhere"}"#).unwrap();
+        assert_eq!(odd.extra.get("route"), Some(&Value::from("elsewhere")));
     }
 
     #[test]
     fn a_refusal_becomes_the_core_answer_unchanged() {
-        let mut r = Refusal::migrating(2000);
+        let mut r = Refusal::new(ErrorCode::ConversationMigrating, "conversation is being moved");
+        r.retry_after_ms = Some(2000);
         r.retry_after = Some(2);
         r.extra.insert("hint".into(), Value::from(1));
         let core = aviary_core::http::ApiError::from(r.clone());
@@ -425,12 +388,11 @@ mod tests {
 
     #[test]
     fn the_envelope_is_flat() {
-        let e = Refusal::legacy_route();
+        let e = Refusal::bad_transition("running");
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(
             v,
-            serde_json::json!({"code": "conversation_migrating",
-                               "message": "conversation is owned by the old stack", "route": "legacy"})
+            serde_json::json!({"code": "bad_transition", "message": "the turn is running", "state": "running"})
         );
     }
 }

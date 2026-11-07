@@ -1,14 +1,14 @@
 //! The legacy-path set (DESIGN 9.5, magpie 8.2 step 4, switch-final 10.1 and 23 C15), until A7: a composer loaded
-//! before the switch, or fed by the T0→gate upload tee, holds old asset paths, and any of them must work on whichever
-//! path receives the send. In a native send (M3's first message, M7) each `files[].path` that is an old asset path of
-//! the person is resolved, before the admission's transaction, through `uploads.legacy_path` (the tee), then
-//! `import_uploads` (the importer's ingestion), then a synchronous ingest by the import Deployment, and replaced by
-//! the path of a **fresh copy** of that upload (a new unattached upload with its own blob refs to the same blobs),
-//! since the old stack reuses one asset path any number of times. Only when all three miss: 400 `unknown_upload`.
+//! before the switch, or fed by the T0→gate upload tee, holds old asset paths, and any of them must work. In a send
+//! (M3's first message, M7) each `files[].path` that is an old asset path of the person is resolved, before the
+//! admission's transaction, through `uploads.legacy_path` (the tee), then `import_uploads` (the importer's
+//! ingestion), and replaced by the path of a **fresh copy** of that upload (a new unattached upload with its own blob
+//! refs to the same blobs), since the old stack reused one asset path any number of times. When both miss: 400
+//! `unknown_upload` (the import Deployment's synchronous ingest went in A6).
 
 use std::collections::HashMap;
 
-use aviary_pg::{Pool, Tx};
+use aviary_pg::Pool;
 use magpie_api::errors::ErrorCode;
 use magpie_api::legacy::legacy_asset_name;
 use magpie_api::turns::SendRequest;
@@ -18,7 +18,6 @@ use crate::app::Magpie;
 use crate::conversations::Person;
 use crate::db::Db;
 use crate::error::{Error, Result};
-use crate::limits;
 
 /// `PUT /v1/uploads/{uploadId}/legacy-path`: records the old path pigeon's tee got back for the person's upload. The
 /// record is a copy of the upload of its own (same bytes and facts, its own blob refs, never attached), so attaching
@@ -53,24 +52,6 @@ pub async fn record(pool: &Pool, person: &Person, upload: Uuid, legacy_path: &st
             e
         }
     })?;
-    Ok(())
-}
-
-/// The importer's ingestion of one old asset, in its transaction: `upload` (an unattached upload of `person` holding
-/// the bytes, made by the importer through magpie's upload path) is what `legacy_path` (the canonical name) resolves
-/// to from now on.
-///
-/// # Errors
-/// When a statement fails.
-pub async fn import_upload(t: &Tx<'_>, person: &str, legacy_path: &str, upload: Uuid, sha256: &[u8]) -> Result<()> {
-    t.execute(
-        "insert into import_uploads (person, legacy_path, upload_id, sha256) values ($1, $2, $3, $4)
-         on conflict (person, legacy_path) do update
-           set upload_id = excluded.upload_id, sha256 = excluded.sha256, imported_at = now()
-           where import_uploads.sha256 <> excluded.sha256",
-        &[&person, &legacy_path, &upload, &sha256],
-    )
-    .await?;
     Ok(())
 }
 
@@ -149,13 +130,10 @@ fn unknown() -> Error {
 /// Resolves every old asset path of `m.files` (see the module), rewriting it to the fresh copy's
 /// `uploads/<id>/<name>` path. Paths that are not old asset paths are left to the admission. The same old path twice
 /// in one send becomes one copy, so it is one attachment, as the same upload id twice is (the admission de-duplicates
-/// by upload id). The misses are ingested concurrently under one deadline ([`limits::INGEST_TIMEOUT`], magpie 8.2's
-/// 5 s for the whole send), on every miss until the A6 release removes the ingest (DESIGN 9.5): nothing here reads a
-/// table the A6 contraction drops, so after it only the ingest call goes, and a miss is `unknown_upload`.
+/// by upload id).
 ///
 /// # Errors
-/// 400 `unknown_upload` when an old path resolves nowhere, 503 when the synchronous ingest cannot be reached or does
-/// not answer in time; a statement error.
+/// 400 `unknown_upload` when an old path resolves nowhere; a statement error.
 pub async fn resolve(app: &Magpie, person: &Person, m: &mut SendRequest) -> Result<()> {
     let key = aviary_core::log::person_key(&person.email);
     let mut names: Vec<String> = Vec::new();
@@ -179,20 +157,6 @@ pub async fn resolve(app: &Magpie, person: &Person, m: &mut SendRequest) -> Resu
             app.legacy.legacy_path();
             if let Some(src) = lookup(&conn, &person.email, name).await? {
                 found.insert(name.clone(), src);
-            }
-        }
-    }
-    let misses: Vec<&String> = names.iter().filter(|n| !found.contains_key(*n)).collect();
-    if !misses.is_empty() {
-        let calls = futures_util::future::join_all(misses.iter().map(|n| app.ingest.ingest(&person.email, n)));
-        let answers = tokio::time::timeout(limits::INGEST_TIMEOUT, calls).await.map_err(|_| {
-            tracing::warn!(person = %key, "the synchronous ingest did not answer in time");
-            super::ingest::unavailable()
-        })?;
-        let conn = app.pool.get().await?;
-        for (name, ingested) in misses.iter().zip(answers) {
-            if ingested? && let Some(src) = lookup(&conn, &person.email, name).await? {
-                found.insert((*name).clone(), src);
             }
         }
     }

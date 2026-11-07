@@ -14,7 +14,7 @@ use magpie_api::conversations::{
     Ask, BackgroundTask, Conversation, LastTurn, Origin, OriginKind, RunInfo, RunState, SandboxPhase, TitleSource,
     TurnRef,
 };
-use magpie_api::errors::{DataCode, ErrorCode, ErrorInfo, Refusal};
+use magpie_api::errors::{DataCode, ErrorCode, ErrorInfo};
 use magpie_api::events::AskPending;
 use magpie_api::server::{Ctx, Viewer};
 use magpie_api::turns::{TurnOrigin, TurnOutcome};
@@ -120,7 +120,7 @@ pub async fn person_row(db: &impl Db, person: &str) -> Result<PersonRow> {
 /// The columns of [`conversation_from_row`], over `conversations c` with its active and last turn.
 pub const SELECT: &str = "select c.id, c.title, c.name_source, c.created_at, c.activity_at, c.last_user_message_at,
     c.deleted_at, c.provider_session_id, c.run_state, c.background, c.sandbox_phase, c.model, c.context_tokens,
-    c.migrating, c.origin, c.person,
+    c.origin, c.person,
     t.id as t_id, t.created_at as t_at, t.origin as t_origin,
     l.id as l_id, l.state as l_state, l.ended_at as l_ended, l.created_at as l_created, l.error_code as l_code,
     l.error_detail as l_detail
@@ -221,7 +221,6 @@ pub fn conversation_from_row(row: &Row) -> Result<Conversation> {
         last_turn,
         sandbox,
         asks: Vec::new(),
-        migrating: row.get("migrating"),
         run: RunInfo {
             state: run_state(row.get("run_state")),
             background,
@@ -339,10 +338,6 @@ pub struct Locked {
     pub person: String,
     /// In Recently deleted since.
     pub deleted_at: Option<OffsetDateTime>,
-    /// The importer holds it.
-    pub migrating: bool,
-    /// A reverse hand-over has fenced it (owned, cutover 14.2): its writes wait ([`crate::legacy::fence::native`]).
-    pub fenced: bool,
 }
 
 /// Locks the person's conversation row (`select … for update`, magpie 4: always the conversation before the
@@ -353,10 +348,7 @@ pub struct Locked {
 pub async fn lock(db: &impl Db, person: &str, id: Uuid) -> Result<Locked> {
     let row = db
         .query_opt(
-            &format!(
-                "select person, deleted_at, migrating, {} from conversations where id = $1 for update",
-                crate::legacy::fence::REVERSE_FENCED_SQL
-            ),
+            "select person, deleted_at from conversations where id = $1 for update",
             &[&id],
         )
         .await?
@@ -369,29 +361,5 @@ pub async fn lock(db: &impl Db, person: &str, id: Uuid) -> Result<Locked> {
         id,
         person: owner,
         deleted_at: row.get(1),
-        migrating: row.get(2),
-        fenced: row.get(3),
     })
-}
-
-impl Locked {
-    /// 409 `conversation_migrating` `route: "legacy"` for a migrating conversation (cutover 6.4, DESIGN 12 D14):
-    /// its writes belong to the old stack until the importer releases it. A fenced conversation's wait for the
-    /// release is the window routes' (WP-51). An owned conversation under a reverse fence (cutover 14.2) answers 409
-    /// `conversation_migrating` without a route: the window routes wait for its end, then run natively or follow the
-    /// reopen's 409 `route: "legacy"`.
-    ///
-    /// # Errors
-    /// That refusal.
-    pub fn refuse_migrating(&self) -> Result<()> {
-        if self.migrating {
-            let mut r = Refusal::legacy_route();
-            r.retry_after_ms = Some(limits::MIGRATING_RETRY_AFTER_MS);
-            return Err(r.into());
-        }
-        if self.fenced {
-            return Err(Refusal::migrating(limits::MIGRATING_RETRY_AFTER_MS).into());
-        }
-        Ok(())
-    }
 }

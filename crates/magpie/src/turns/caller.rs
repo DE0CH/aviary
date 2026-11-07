@@ -1,13 +1,12 @@
 //! The supervisor behind a gateway call (magpie 3.3): the identity the gateway sets (`Aviary-Sandbox-*`), and the
 //! lease every state change and the command poll must carry (`Aviary-Lease`, magpie 6.9).
 
-use magpie_api::errors::{ErrorCode, Refusal};
+use magpie_api::errors::ErrorCode;
 use magpie_api::server::Ctx;
 use uuid::Uuid;
 
 use crate::db::Db;
 use crate::error::{Error, Result};
-use crate::limits;
 
 /// The sandbox behind a gateway call.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,15 +57,14 @@ pub struct Locked {
 }
 
 /// Locks the caller's conversation (`select … for update`) and checks it: 404 when it does not exist or is not the
-/// caller's person's, 409 `conversation_migrating` while the importer holds it, 409 `lease_lost` when `Aviary-Lease`
-/// is not the conversation's current lease.
+/// caller's person's, 409 `lease_lost` when `Aviary-Lease` is not the conversation's current lease.
 ///
 /// # Errors
 /// Those refusals, or a statement error.
 pub async fn lock(db: &impl Db, caller: &Sandbox) -> Result<Locked> {
     let row = db
         .query_opt(
-            "select person, migrating, lease_id, lease_sandbox, active_turn, run_state from conversations
+            "select person, lease_id, lease_sandbox, active_turn, run_state from conversations
              where id = $1 for update",
             &[&caller.conversation],
         )
@@ -76,13 +74,12 @@ pub async fn lock(db: &impl Db, caller: &Sandbox) -> Result<Locked> {
     Ok(Locked {
         id: caller.conversation,
         person: row.get(0),
-        active_turn: row.get(4),
-        run_state: row.get(5),
+        active_turn: row.get(3),
+        run_state: row.get(4),
     })
 }
 
-/// The checks of [`lock`] without the lock (the command poll's look), on a row of `person, migrating, lease_id,
-/// lease_sandbox`: the lease must be the current one, held by the calling sandbox (as the cc routes check it).
+/// The checks of [`lock`] without the lock (the command poll's look), on a row of `person, lease_id, lease_sandbox`: the lease must be the current one, held by the calling sandbox (as the cc routes check it).
 ///
 /// # Errors
 /// As [`lock`].
@@ -91,11 +88,8 @@ pub fn check(row: &aviary_pg::Row, caller: &Sandbox) -> Result<()> {
     if person != caller.person {
         return Err(Error::not_found());
     }
-    if row.get::<_, bool>(1) {
-        return Err(Refusal::migrating(limits::MIGRATING_RETRY_AFTER_MS).into());
-    }
-    let lease: Option<Uuid> = row.get(2);
-    let holder: Option<Uuid> = row.get(3);
+    let lease: Option<Uuid> = row.get(1);
+    let holder: Option<Uuid> = row.get(2);
     if lease.is_none() || lease != caller.lease || holder != Some(caller.sandbox) {
         return Err(Error::code(
             ErrorCode::LeaseLost,

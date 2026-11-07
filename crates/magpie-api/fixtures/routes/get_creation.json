@@ -25,7 +25,6 @@
           "lastTurn": null,
           "sandbox": null,
           "asks": [],
-          "migrating": false,
           "run": {
             "state": "admitted",
             "background": []

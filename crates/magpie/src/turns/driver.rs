@@ -96,8 +96,6 @@ pub struct Conv {
     pub person: String,
     /// In Recently deleted.
     pub deleted: bool,
-    /// The importer holds it.
-    pub migrating: bool,
     /// `sandbox_phase`.
     pub sandbox_phase: Option<String>,
 }
@@ -109,15 +107,14 @@ pub struct Conv {
 pub async fn lock_id(tx: &Tx<'_>, id: Uuid) -> Result<Option<Conv>> {
     let row = tx
         .query_opt(
-            "select person, deleted_at is not null, migrating, sandbox_phase from conversations where id = $1 for update",
+            "select person, deleted_at is not null, sandbox_phase from conversations where id = $1 for update",
             &[&id],
         )
         .await?;
     Ok(row.map(|r| Conv {
         person: r.get(0),
         deleted: r.get(1),
-        migrating: r.get(2),
-        sandbox_phase: r.get(3),
+        sandbox_phase: r.get(2),
     }))
 }
 
@@ -289,7 +286,7 @@ async fn claim(d: &Driver, turn: Uuid) -> Result<Option<Claimed>> {
             "update turns t set driver = $2, driver_until = now() + make_interval(secs => $3)
              from conversations c
              where t.id = $1 and c.id = t.conversation_id and t.state in ('admitted', 'preparing')
-               and not c.migrating and t.origin <> 'import'
+               and t.origin <> 'import'
                and (t.driver is null or t.driver_until is null or t.driver_until < now())
              returning t.conversation_id, c.person, coalesce(t.resumed_at, t.created_at),
                        coalesce(t.deadline, coalesce(t.resumed_at, t.created_at) + make_interval(secs => $4))",

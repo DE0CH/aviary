@@ -65,9 +65,7 @@ use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse, Lis
 use magpie_api::errors::{ErrorCode, Refusal};
 use magpie_api::events::{EventsPage, EventsQuery};
 use magpie_api::files::{FilesPanel, RawFileQuery};
-use magpie_api::legacy::{
-    LegacyPathRequest, TicketClaim, TicketClaimed, TicketDone, TicketRequest, TicketResponse, WindowState,
-};
+use magpie_api::legacy::LegacyPathRequest;
 use magpie_api::live::{LiveFramesRequest, LiveState};
 use magpie_api::ops::{
     AdminConversation, AdminConversationList, AdminListQuery, LegacyImportStatus, OpsStats, PeopleQuery,
@@ -1615,34 +1613,6 @@ impl Server for FakeMagpie {
         scripted!(self, "admin_schedules_pause", ctx, json!({}), None, ser(&body), typed)
     }
 
-    async fn legacy_ticket(&self, ctx: Ctx, id_: Uuid, body: TicketRequest) -> Result<TicketResponse, ApiError> {
-        scripted!(self, "legacy_ticket", ctx, id(id_), None, ser(&body), typed)
-    }
-
-    async fn legacy_ticket_done(&self, ctx: Ctx, ticket: Uuid, body: TicketDone) -> Result<(), ApiError> {
-        scripted!(
-            self,
-            "legacy_ticket_done",
-            ctx,
-            json!({"ticket": ticket.to_string()}),
-            None,
-            ser(&body),
-            unit
-        )
-    }
-
-    async fn legacy_ticket_claim(&self, ctx: Ctx, ticket: Uuid, body: TicketClaim) -> Result<TicketClaimed, ApiError> {
-        scripted!(
-            self,
-            "legacy_ticket_claim",
-            ctx,
-            json!({"ticket": ticket.to_string()}),
-            None,
-            ser(&body),
-            typed
-        )
-    }
-
     async fn upload_legacy_path(&self, ctx: Ctx, upload_id: Uuid, body: LegacyPathRequest) -> Result<(), ApiError> {
         scripted!(
             self,
@@ -1652,26 +1622,6 @@ impl Server for FakeMagpie {
             None,
             ser(&body),
             unit
-        )
-    }
-
-    async fn legacy_window(&self, ctx: Ctx) -> Result<WindowState, ApiError> {
-        // unscripted: a deployment outside the switch window (nothing legacy), which every pigeon upload reads
-        match self.record("legacy_window", &ctx, json!({}), None, None, None) {
-            Some(r) => typed(&r, "legacy_window"),
-            None => Ok(WindowState::closed()),
-        }
-    }
-
-    async fn upload_raw(&self, ctx: Ctx, upload_id: Uuid) -> Result<Response, ApiError> {
-        scripted!(
-            self,
-            "upload_raw",
-            ctx,
-            json!({"uploadId": upload_id.to_string()}),
-            None,
-            None,
-            raw
         )
     }
 }

@@ -54,14 +54,6 @@
       }
     },
     {
-      "status": 409,
-      "body": {
-        "code": "conversation_migrating",
-        "message": "conversation is owned by the old stack",
-        "route": "legacy"
-      }
-    },
-    {
       "status": 400,
       "body": {
         "code": "unknown_upload",

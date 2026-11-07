@@ -16,8 +16,8 @@ use magpie_api::server::Ctx;
 use uuid::Uuid;
 
 use crate::app::Magpie;
+use crate::conversations;
 use crate::conversations::delete::{ShareRevoke, purge_locked};
-use crate::conversations::{self, Locked};
 use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::{rows, viewas};
@@ -25,13 +25,12 @@ use crate::{rows, viewas};
 /// `POST /v1/hermit/persons/{person}/purge` (caller hermit; decision 7: an operator's purge of a leaver): refused
 /// with 409 `person_allowed` while hermit still allows the person (asked again here), otherwise every conversation
 /// of the person purged as magpie 9.6 (shares revoked `offboarded`) and their unattached uploads deleted.
-/// Idempotent; a conversation the importer holds is left for a later call (409 `conversation_migrating`). Each
-/// conversation is purged in its own short transaction; a leaver with many conversations takes about 10-50 ms per
-/// conversation (a few hundred take seconds), well inside hermit's call timeout, and a retry after a timeout carries
-/// on where the last call stopped.
+/// Idempotent. Each conversation is purged in its own short transaction; a leaver with many conversations takes
+/// about 10-50 ms per conversation (a few hundred take seconds), well inside hermit's call timeout, and a retry after
+/// a timeout carries on where the last call stopped.
 ///
 /// # Errors
-/// 409 `person_allowed` / `conversation_migrating`; 503 when hermit cannot be reached; a statement error.
+/// 409 `person_allowed`; 503 when hermit cannot be reached; a statement error.
 pub async fn purge_person(app: &Magpie, person: &str) -> Result<PersonPurgeResponse> {
     let person = person.trim().to_lowercase();
     match app.hermit.person(&person).await {
@@ -59,29 +58,19 @@ pub async fn purge_person(app: &Magpie, person: &str) -> Result<PersonPurgeRespo
         .map(|r| r.get(0))
         .collect();
     let mut n = 0u64;
-    let mut held = false;
     for id in ids {
         let p = &person;
-        let done = aviary_pg::tx!(&app.pool, |t| -> Result<bool> {
+        let purged = aviary_pg::tx!(&app.pool, |t| -> Result<bool> {
             // gone meanwhile (a purge of its own): skipped; any other error fails the purge
-            let l = match conversations::lock(t, p, id).await {
-                Ok(l) => l,
-                Err(e) if e.is(&ErrorCode::NotFound) => return Ok(false),
-                Err(e) => return Err(e),
-            };
-            let Locked { migrating, fenced, .. } = l;
-            if migrating || fenced {
-                return Err(migrating_refusal());
+            if let Err(e) = conversations::lock(t, p, id).await {
+                return if e.is(&ErrorCode::NotFound) { Ok(false) } else { Err(e) };
             }
             purge_locked(t, p, id, ShareRevoke::Offboarded).await?;
             Ok(true)
         })
-        .await;
-        match done {
-            Ok(true) => n += 1,
-            Ok(false) => {}
-            Err(e) if e.is(&ErrorCode::ConversationMigrating) => held = true,
-            Err(e) => return Err(e),
+        .await?;
+        if purged {
+            n += 1;
         }
     }
     let p = &person;
@@ -100,17 +89,8 @@ pub async fn purge_person(app: &Magpie, person: &str) -> Result<PersonPurgeRespo
         Ok(())
     })
     .await?;
-    if held {
-        return Err(migrating_refusal());
-    }
     tracing::info!(person_key = %aviary_core::log::person_key(&person), conversations = n, "person purged");
     Ok(PersonPurgeResponse { conversations: n })
-}
-
-fn migrating_refusal() -> Error {
-    let mut r = magpie_api::errors::Refusal::legacy_route();
-    r.retry_after_ms = Some(crate::limits::MIGRATING_RETRY_AFTER_MS);
-    r.into()
 }
 
 /// `POST /v1/hermit/workspaces/exists`: the ids among `ids` that magpie still references — every conversation not
@@ -138,9 +118,8 @@ pub async fn workspaces_exist(db: &impl Db, req: &WorkspacesExistsRequest) -> Re
 }
 
 /// `GET /v1/hermit/legacy-import`: the record of the last clean `magpie import verify --all` with every conversation
-/// owned (`legacy_import_verified`, written by the importer), and, while the importer's tables still exist (until A6),
-/// whether the import changed since: a conversation imported or changed after it, or one not released any more (a
-/// reverse hand-over), makes it stale.
+/// owned (`legacy_import_verified`, written by the importer until A6). The importer's tables went in A6, so the record
+/// is what hermit's `legacy-cleanup` (P6) reads.
 ///
 /// # Errors
 /// A statement error.
@@ -157,35 +136,11 @@ pub async fn legacy_import(db: &impl Db) -> Result<LegacyImportStatus> {
         });
     };
     let verified_at: time::OffsetDateTime = rec.get(0);
-    let conversations = u64::try_from(rec.get::<_, i64>(1)).unwrap_or(0);
-    let has_sources: bool = db
-        .query_one("select to_regclass('import_sources') is not null", &[])
-        .await?
-        .get(0);
-    let mut why = None;
-    if has_sources {
-        let r = db
-            .query_one(
-                "select count(*), count(*) filter (where released_at is null),
-                        count(*) filter (where greatest(last_change_at, first_imported_at) > $1)
-                   from import_sources",
-                &[&verified_at],
-            )
-            .await?;
-        let (n, open, changed) = (r.get::<_, i64>(0), r.get::<_, i64>(1), r.get::<_, i64>(2));
-        if open > 0 {
-            why = Some(format!("{open} imported conversations are not released to magpie"));
-        } else if changed > 0 {
-            why = Some(format!("{changed} imported conversations changed after the verify"));
-        } else if u64::try_from(n).unwrap_or(0) != conversations {
-            why = Some(format!("{n} conversations are imported, {conversations} were verified"));
-        }
-    }
     Ok(LegacyImportStatus {
-        complete: why.is_none(),
+        complete: true,
         verified_at: Some(Timestamp(verified_at)),
-        conversations,
-        why,
+        conversations: u64::try_from(rec.get::<_, i64>(1)).unwrap_or(0),
+        why: None,
     })
 }
 

@@ -326,15 +326,6 @@ async fn the_lease() {
     .unwrap();
     assert!(b.take_lease().await.unwrap().resync);
     assert!(!b.take_lease().await.unwrap().resync);
-    // migrating
-    sql.get()
-        .await
-        .unwrap()
-        .execute("update conversations set migrating = true where id = $1", &[&conv])
-        .await
-        .unwrap();
-    assert_eq!(code(&b.take_lease().await.unwrap_err()), "conversation_migrating");
-    assert_eq!(code(&b.mkdir("x").await.unwrap_err()), "conversation_migrating");
 }
 
 #[tokio::test]

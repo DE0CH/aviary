@@ -346,8 +346,6 @@ async fn readiness_waits_for_migrations_and_listen() {
         hermit_token: "x".into(),
         pod: "p".into(),
         bucket: common::bucket_config("unused"),
-        import_url: "http://127.0.0.1:1".into(),
-        import_token: "x".into(),
         legacy_metrics: magpie::legacy::Metrics::default(),
     };
     let start = {
@@ -397,16 +395,27 @@ async fn replicas_starting_together_apply_the_migrations_once() {
     for r in [&a, &b, &c] {
         assert!(r.readiness.is_ready());
     }
-    // the importer's control row and tables are there (cutover 7.3)
-    let ctl: i64 = common::sql(&db.url)
+    // the A6 contraction dropped the window's tables and columns; the legacy-path set is there until A7
+    let left: Vec<String> = common::sql(&db.url)
         .get()
         .await
         .unwrap()
-        .query_one("select count(*) from import_control", &[])
+        .query(
+            "select table_name::text from information_schema.tables
+             where table_name in ('legacy_tickets', 'import_sources', 'import_shares', 'import_control',
+                                  'import_gate_persons', 'import_purged', 'import_uploads')
+             union all
+             select column_name::text from information_schema.columns
+             where table_name in ('conversations', 'uploads') and column_name in ('migrating', 'legacy_fence_at', 'legacy_path')
+             order by 1",
+            &[],
+        )
         .await
         .unwrap()
-        .get(0);
-    assert_eq!(ctl, 1);
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(left, ["import_uploads", "legacy_path"]);
 }
 
 #[tokio::test]

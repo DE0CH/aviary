@@ -202,7 +202,6 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "magpie-api",
  "mock-model",
  "prometheus-client",
  "reqwest",
@@ -2657,7 +2656,6 @@ dependencies = [
 name = "magpie"
 version = "0.0.0"
 dependencies = [
- "aviary-conformance",
  "aviary-core",
  "aviary-fakes",
  "aviary-pg",
@@ -2707,37 +2705,6 @@ dependencies = [
  "serde_json",
  "time",
  "tokio",
- "uuid",
-]
-
-[[package]]
-name = "magpie-import"
-version = "0.0.0"
-dependencies = [
- "aviary-core",
- "aviary-pg",
- "axum",
- "base64 0.23.1",
- "futures-util",
- "hermit-api",
- "http-body-util",
- "magpie",
- "magpie-api",
- "pigeon",
- "prometheus-client",
- "proptest",
- "reqwest",
- "rustls",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "time",
- "tokio",
- "tokio-rustls",
- "tokio-tungstenite 0.29.0",
- "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 

@@ -36,13 +36,13 @@ async fn look(app: Read<'_>, caller: &Sandbox, after: i64) -> Result<(Vec<Comman
     let conn = app.pool.get().await?;
     let row = conn
         .query_opt(
-            "select person, migrating, lease_id, lease_sandbox, cmd_head from conversations where id = $1",
+            "select person, lease_id, lease_sandbox, cmd_head from conversations where id = $1",
             &[&caller.conversation],
         )
         .await?
         .ok_or_else(Error::not_found)?;
     caller::check(&row, caller)?;
-    let head = u64::try_from(row.get::<_, i64>(4)).unwrap_or(0);
+    let head = u64::try_from(row.get::<_, i64>(3)).unwrap_or(0);
     conn.execute(
         "update commands set canceled_at = now()
          where conversation_id = $1 and type = 'kill' and acked_at is null and canceled_at is null
@@ -85,7 +85,7 @@ async fn look(app: Read<'_>, caller: &Sandbox, after: i64) -> Result<(Vec<Comman
 /// `GET /v1/sandbox/commands`.
 ///
 /// # Errors
-/// 400 for a `waitMs` over 25,000; 404, 409 `lease_lost` / `conversation_migrating`; a statement error.
+/// 400 for a `waitMs` over 25,000; 404, 409 `lease_lost`; a statement error.
 pub async fn poll(app: Read<'_>, caller: &Sandbox, q: CommandsQuery) -> Result<CommandsResponse> {
     let wait = q.wait_ms.unwrap_or(0);
     if wait > 25_000 {
@@ -123,7 +123,7 @@ pub async fn poll(app: Read<'_>, caller: &Sandbox, q: CommandsQuery) -> Result<C
 /// `POST /v1/sandbox/commands/{cmdSeq}/ack`. A repeated ack is answered 204 and changes nothing.
 ///
 /// # Errors
-/// 404 for an unknown command; 409 `lease_lost` / `conversation_migrating`; a statement error.
+/// 404 for an unknown command; 409 `lease_lost`; a statement error.
 pub async fn ack(pool: &aviary_pg::Pool, caller: &Sandbox, cmd_seq: u64, req: AckRequest) -> Result<()> {
     let seq = i64::try_from(cmd_seq).map_err(|_| Error::not_found())?;
     let result = serde_json::to_value(&req.result)?;

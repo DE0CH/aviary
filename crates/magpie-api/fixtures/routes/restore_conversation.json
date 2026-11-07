@@ -26,7 +26,6 @@
         },
         "sandbox": null,
         "asks": [],
-        "migrating": false,
         "run": {
           "state": "held",
           "background": [
@@ -58,14 +57,6 @@
       "body": {
         "code": "not_found",
         "message": "not found"
-      }
-    },
-    {
-      "status": 409,
-      "body": {
-        "code": "conversation_migrating",
-        "message": "conversation is being moved",
-        "retryAfterMs": 2000
       }
     }
   ]

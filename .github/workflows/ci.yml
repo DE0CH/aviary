@@ -57,12 +57,10 @@ jobs:
       - name: shellcheck
         run: |
           shopt -s globstar nullglob
-          files=(.github/ci/*.sh fabric/**/*.sh images/*.sh images/sandbox/*.sh testing/e2e/*.sh testing/lu-rig/*.sh testing/legacy-in-a-box/*.sh testing/paseo-contract/**/*.sh crates/hermit/scripts/*.sh)
+          files=(.github/ci/*.sh fabric/**/*.sh images/*.sh images/sandbox/*.sh testing/e2e/*.sh testing/paseo-contract/**/*.sh crates/hermit/scripts/*.sh)
           shellcheck "${files[@]}"
       - name: fabric/aws/infra.sh against a stand-in aws (every value from the config)
         run: bash fabric/aws/test-infra.sh
-      - name: fabric/aws/legacy-down.sh against stand-ins (dry run reads only; failed queries stop it; no shared AMI; the right host; never a path with a mount under it)
-        run: bash fabric/aws/test-legacy-down.sh
 
   test:
     runs-on: ubuntu-24.04
@@ -206,7 +204,7 @@ jobs:
       - name: musl binaries (rust-lld, static)
         run: |
           export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
-          cargo build --release --locked --target ${{ matrix.arch }}-unknown-linux-musl --workspace --exclude magpie --exclude magpie-import --exclude sandboxd --bins
+          cargo build --release --locked --target ${{ matrix.arch }}-unknown-linux-musl --workspace --exclude magpie --exclude sandboxd --bins
           mkdir -p dist
           find target/${{ matrix.arch }}-unknown-linux-musl/release -maxdepth 1 -type f -executable -exec cp {} dist/ \;
       - name: sandboxd (static musl, its own profile, crates/sandboxd/docs/MEMORY.md)

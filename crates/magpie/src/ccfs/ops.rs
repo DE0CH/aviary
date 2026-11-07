@@ -37,7 +37,7 @@ fn not_found(what: &str) -> Error {
 ///
 /// # Errors
 /// 400 `bad_path` / `bad_request`, 404, 409 `offset_beyond_eof` / `offset_mismatch` (an append whose offset is not
-/// the size) / `lease_lost` / `conversation_migrating`, 413, 503, 507; a statement error.
+/// the size) / `lease_lost`, 413, 503, 507; a statement error.
 pub async fn write(app: &Magpie, caller: &Caller, q: &CcWriteQuery, data: &[u8]) -> Result<CcSizeVersion> {
     check_path(&q.path)?;
     if data.len() > limits::CC_WRITE_MAX {

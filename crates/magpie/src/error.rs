@@ -11,7 +11,7 @@ use crate::limits;
 /// What a magpie operation can fail with.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// An answer of the contract (`not_found`, `conversation_migrating`, …).
+    /// An answer of the contract (`not_found`, `lease_lost`, …).
     #[error("{0}")]
     Refused(Refusal),
     /// Postgres.

@@ -74,12 +74,11 @@ impl Sent {
 /// M7.
 ///
 /// # Errors
-/// 404, 409 `conversation_migrating` / `conversation_deleted` / `turn_running`, 400, 413; a statement error.
+/// 404, 409 `conversation_deleted` / `turn_running`, 400, 413; a statement error.
 pub async fn send(pool: &Pool, person: &Person, id: Uuid, req: SendRequest) -> Result<Sent> {
     validate(&req)?;
     let answer = aviary_pg::tx!(pool, |t| -> Result<Admitted<SendResponse>> {
         let c = lock(t, &person.email, id).await?;
-        c.refuse_migrating()?;
         if c.deleted_at.is_some() {
             return Err(Error::code(
                 ErrorCode::ConversationDeleted,

@@ -54,7 +54,6 @@ fn pigeon_14_1_shapes() {
             "lastTurn",
             "sandbox",
             "asks",
-            "migrating",
         ],
         "Conversation",
     );
@@ -134,12 +133,6 @@ fn pigeon_14_1_shapes() {
     );
     // M6 delete answers the Conversation (with deletedAt and purgeAt), pigeon 14.1
     has_keys(&body("delete_conversation", 200), &["id", "deletedAt", "purgeAt"], "M6");
-    // the migration refusal carries retryAfterMs, and route in the switch window (R37)
-    has_keys(
-        &body("rename_conversation", 409),
-        &["code", "message", "retryAfterMs"],
-        "409 migrating",
-    );
     has_keys(&body("send_turn", 409).clone(), &["code", "message"], "409");
 }
 

@@ -41,7 +41,6 @@ webp.workspace = true
 
 [dev-dependencies]
 aviary-core = { path = "../aviary-core", features = ["testing"] }
-aviary-conformance = { path = "../../testing/conformance" }
 aviary-fakes = { path = "../../testing/fakes" }
 proptest.workspace = true
 reqwest.workspace = true
