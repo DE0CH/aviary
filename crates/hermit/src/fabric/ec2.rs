@@ -57,8 +57,8 @@ impl Aws {
     pub fn new(region: &str, access_key_id: &str, secret_access_key: &str) -> Self {
         use aws_sdk_ec2::config::timeout::TimeoutConfig;
         use aws_sdk_ec2::config::{BehaviorVersion, Credentials, Region};
-        use std::time::Duration;
         use aws_smithy_http_client::tls;
+        use std::time::Duration;
         let http = aws_smithy_http_client::Builder::new()
             .tls_provider(tls::Provider::Rustls(tls::rustls_provider::CryptoMode::Ring))
             .build_https();
