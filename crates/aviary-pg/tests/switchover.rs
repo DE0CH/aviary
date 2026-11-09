@@ -30,7 +30,9 @@ impl Proxy {
         let (d, c) = (down.clone(), conns.clone());
         tokio::spawn(async move {
             loop {
-                let Ok((mut inbound, _)) = listener.accept().await else { return };
+                let Ok((mut inbound, _)) = listener.accept().await else {
+                    return;
+                };
                 if d.load(Ordering::SeqCst) {
                     drop(inbound); // refused: the connection ends at once
                     continue;
@@ -63,7 +65,11 @@ impl Proxy {
         let (scheme, rest) = url.split_once("://").unwrap();
         let (auth, after) = rest.rsplit_once('@').map_or(("", rest), |(a, b)| (a, b));
         let path = &after[after.find('/').unwrap()..];
-        let at = if auth.is_empty() { String::new() } else { format!("{auth}@") };
+        let at = if auth.is_empty() {
+            String::new()
+        } else {
+            format!("{auth}@")
+        };
         format!("{scheme}://{at}127.0.0.1:{}{path}", self.port)
     }
 }
@@ -73,7 +79,11 @@ fn target(url: &str) -> String {
     let rest = url.split_once("://").unwrap().1;
     let after = rest.rsplit_once('@').map_or(rest, |(_, b)| b);
     let hostport = &after[..after.find('/').unwrap()];
-    if hostport.contains(':') { hostport.to_owned() } else { format!("{hostport}:5432") }
+    if hostport.contains(':') {
+        hostport.to_owned()
+    } else {
+        format!("{hostport}:5432")
+    }
 }
 
 async fn setup(test: &str) -> (common::TestDb, Proxy, aviary_pg::Pool) {
@@ -91,7 +101,14 @@ async fn setup(test: &str) -> (common::TestDb, Proxy, aviary_pg::Pool) {
 }
 
 async fn count(db: &str) -> i64 {
-    common::pool(db, "check").get().await.unwrap().query_one("select count(*) from t", &[]).await.unwrap().get(0)
+    common::pool(db, "check")
+        .get()
+        .await
+        .unwrap()
+        .query_one("select count(*) from t", &[])
+        .await
+        .unwrap()
+        .get(0)
 }
 
 /// A transaction started while the database is away waits for it, and commits once.
@@ -112,8 +129,14 @@ async fn a_transaction_during_the_gap_waits_and_commits_once() {
     })
     .await
     .unwrap();
-    assert!(started.elapsed() >= Duration::from_secs(3), "it ran before the database was back");
-    assert!(started.elapsed() < Duration::from_secs(8), "it waited long after the database was back");
+    assert!(
+        started.elapsed() >= Duration::from_secs(3),
+        "it ran before the database was back"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(8),
+        "it waited long after the database was back"
+    );
     let _proxy = restore.await.unwrap();
     assert_eq!(count(&db).await, 1);
 }

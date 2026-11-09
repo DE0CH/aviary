@@ -657,7 +657,11 @@ async fn step_gone(d: &Driver, conversation: Uuid, turn: Uuid, s: &Sandbox) -> R
         }
         Ok(true)
     })?;
-    Ok(if again_flag.load(std::sync::atomic::Ordering::Relaxed) { Next::Put(0) } else { Next::Done })
+    Ok(if again_flag.load(std::sync::atomic::Ordering::Relaxed) {
+        Next::Put(0)
+    } else {
+        Next::Done
+    })
 }
 
 /// The deadline passed: `sandbox.timeout`, unless the row says otherwise (a re-acquire that moved it, or an end).

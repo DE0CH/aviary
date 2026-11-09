@@ -104,4 +104,3 @@ pub(crate) fn transient_db(e: &tokio_postgres::Error) -> bool {
     .iter()
     .any(|k| s.starts_with(k))
 }
-

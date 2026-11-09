@@ -21,9 +21,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use deadpool_postgres::Object;
 
+use tokio_postgres::Row;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::types::ToSql;
-use tokio_postgres::Row;
 
 use crate::stmt::{self, StmtGuard, statement};
 use crate::{Error, Pool};
