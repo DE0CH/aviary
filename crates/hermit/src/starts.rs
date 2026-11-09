@@ -170,7 +170,7 @@ impl Start {
             if sets.is_empty() { "" } else { ", " }
         );
         // borrowed: the transaction may run more than once (aviary_pg::tx!)
-        let (params, owner, sql) = (&params, &owner, &sql);
+        let (params, owner, sql, phase_s) = (&params, &owner, &sql, &phase_s);
         let row = aviary_pg::tx!(&self.core.pool, |t| -> Result<Option<SandboxRow>, aviary_pg::Error> {
             let mut p: Vec<&(dyn aviary_pg::ToSql + Sync)> = vec![&id, &owner, &phase_s];
             for x in params {

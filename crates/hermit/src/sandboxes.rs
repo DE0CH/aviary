@@ -940,7 +940,8 @@ pub async fn destroy_and_record(
     let note = end.note.map(|n| db::clip(n, 200));
     let (cid, person, host) = (row.conversation_id, row.person.clone(), row.host.clone());
     // borrowed: the transaction may run more than once (aviary_pg::tx!)
-    let (start, owner, note, msg, person, host) = (&start, &owner, &note, &msg, &person, &host);
+    let (start, owner, note, msg, person, host, reason_s, code_s) =
+        (&start, &owner, &note, &msg, &person, &host, &reason_s, &code_s);
     let gone = aviary_pg::tx!(&core.pool, |t| -> Result<Option<SandboxRow>, aviary_pg::Error> {
         let n = t
             .execute(
