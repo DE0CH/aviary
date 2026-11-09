@@ -61,6 +61,18 @@ export interface FetchedPage {
 }
 
 /**
+ * A Location header as the server meant it. Node reads header bytes as Latin-1, so a raw UTF-8 path (星島's
+ * stheadline.com redirects to `/3635149/港產…`) arrives as mojibake; percent-encoding that gives another URL, which the
+ * server redirects again, until "too many redirects". Bytes that form valid UTF-8 are read as UTF-8; anything else
+ * stays as Node read it.
+ */
+export function locationHeader(raw: string): string {
+  if (!/[\x80-\xff]/.test(raw) || /[^\x00-\xff]/.test(raw)) return raw;
+  const utf8 = Buffer.from(raw, "latin1").toString("utf8");
+  return utf8.includes("�") ? raw : utf8;
+}
+
+/**
  * GET a public http(s) URL: at most `maxBytes` of body, `timeoutMs` overall, up to 5 redirects. `resolve` is the
  * address check (tests replace it to reach a local fake).
  */
@@ -112,7 +124,7 @@ export async function safeGet(
     const status = res.statusCode ?? 0;
     if (status >= 300 && status < 400 && res.headers.location) {
       res.resume();
-      u = new URL(res.headers.location, u);
+      u = new URL(locationHeader(res.headers.location), u);
       continue;
     }
     const chunks: Buffer[] = [];
