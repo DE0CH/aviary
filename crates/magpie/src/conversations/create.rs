@@ -85,7 +85,7 @@ async fn first_turn(db: &impl Db, conversation: Uuid) -> Result<Option<TurnStart
 pub async fn create(pool: &Pool, person: &Person, req: CreateRequest) -> Result<Admitted<CreateResponse>> {
     validate(&req)?;
     let req = &req; // borrowed: the transaction may run more than once (aviary_pg::tx!)
-    let (new, id) = aviary_pg::tx!(pool, |t| -> Result<(bool, Uuid)> { create_tx(t, person, &req).await }).await?;
+    let (new, id) = aviary_pg::tx!(pool, |t| -> Result<(bool, Uuid)> { create_tx(t, person, req).await }).await?;
     let conn = pool.get().await?;
     let conversation = load_owned(&conn, &person.email, id).await?;
     let turn = first_turn(&conn, id).await?;

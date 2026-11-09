@@ -76,6 +76,8 @@ async fn ensure_gateway(core: &Core) -> Result<(), FabricError> {
     let ip: IpAddr =
         gateway_ip(&g.url).ok_or_else(|| FabricError(format!("fabric.gateway.url {} has no address", g.url)))?;
     let (name, url) = (g.name.clone(), g.url.clone());
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (name, url) = (&name, &url);
     aviary_pg::tx!(&core.pool, |t| -> Result<(), aviary_pg::Error> {
         t.execute(
             "update hosts set status = 'gone', gone_at = now(), gone_reason = 'replaced by ' || $1
@@ -168,9 +170,10 @@ pub async fn ops(core: &Core) -> Result<crate::fabric::FabricOps, FabricError> {
     let sizing = Gvisor::sizing(&core.cfg);
     let dead = secs(core.cfg.file.fabric.host_dead_seconds);
     let cfg = core.cfg.clone();
+    let cfg = &cfg; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     let plan = aviary_pg::tx!(&core.pool, |t| -> Result<Plan, aviary_pg::Error> {
         let rules = placement::rules_in(t, sizing, dead).await?;
-        plan_in(t, &cfg, &rules, false).await
+        plan_in(t, cfg, &rules, false).await
     })
     .await?;
     let hosts = hosts::live(&core.pool).await?;
@@ -920,6 +923,8 @@ pub async fn launch(g: &Gvisor, core: &Core, reason: &str, transient: bool) -> R
     let max_hosts = f.aws.max_hosts;
     let host_cidr = f.host_cidr.clone();
     let gateway = f.gateway.name.clone();
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (cfg, host_cidr, gateway) = (&cfg, &host_cidr, &gateway);
     let decided = aviary_pg::tx!(&core.pool, |t| -> Result<
         (Launch, Vec<Planned>, Plan, String),
         FabricError,
@@ -930,7 +935,7 @@ pub async fn launch(g: &Gvisor, core: &Core, reason: &str, transient: bool) -> R
         )
         .await?;
         let rules = placement::rules_in(t, sizing, dead).await?;
-        let plan = plan_in(t, &cfg, &rules, transient).await?;
+        let plan = plan_in(t, cfg, &rules, transient).await?;
         if plan.want <= 0 {
             return Ok((Launch::Planned, Vec::new(), plan, String::new()));
         }
@@ -951,7 +956,7 @@ pub async fn launch(g: &Gvisor, core: &Core, reason: &str, transient: bool) -> R
         }
         let Some(gw_key) = hosts
             .iter()
-            .find(|h| h.name == gateway)
+            .find(|h| h.name == *gateway)
             .and_then(|h| h.wg_public_key.clone())
         else {
             // before the gateway's first heartbeat: the next pass launches (the waiting start counts)
@@ -960,7 +965,7 @@ pub async fn launch(g: &Gvisor, core: &Core, reason: &str, transient: bool) -> R
         let mut used: BTreeSet<IpAddr> = hosts.iter().map(|h| h.wg_ip).collect();
         let mut planned = Vec::new();
         for _ in 0..n {
-            let ip = placement::free_address(&host_cidr, &used, 10, Some(251))
+            let ip = placement::free_address(host_cidr, &used, 10, Some(251))
                 .ok_or_else(|| FabricError("no free host address".into()))?;
             let ip = IpAddr::V4(ip);
             used.insert(ip);
@@ -1361,6 +1366,8 @@ pub async fn start_migration(
     let dead = secs(core.cfg.file.fabric.host_dead_seconds);
     let (from_s, to_s, reason_s) = (from.to_owned(), to.to_owned(), reason.to_owned());
     let c = core.clone();
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (from_s, to_s, reason_s, c) = (&from_s, &to_s, &reason_s, &c);
     let took = aviary_pg::tx!(&core.pool, |t| -> Result<bool, aviary_pg::Error> {
         t.execute(
             "select pg_advisory_xact_lock($1::int4, $2::int4)",
@@ -1382,8 +1389,8 @@ pub async fn start_migration(
         let room = placement::slots_in(t, &rules)
             .await?
             .iter()
-            .any(|s| s.host.name == to_s && s.free >= need);
-        if !room || !tasks::take_in(t, &c, id, Kind::Migrate).await? {
+            .any(|s| s.host.name == *to_s && s.free >= need);
+        if !room || !tasks::take_in(t, c, id, Kind::Migrate).await? {
             return Ok(false);
         }
         t.execute(

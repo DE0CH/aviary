@@ -144,6 +144,8 @@ pub async fn patch_host(core: &Arc<Core>, ctx: &Ctx, name: &str, body: &HostPatc
     let data = serde_json::to_value(body).unwrap_or_default();
     let (name_s, who_s) = (name.to_owned(), who.clone());
     let cap = body.max_sandboxes;
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (data, name_s, who_s) = (&data, &name_s, &who_s);
     let found = aviary_pg::tx!(&core.pool, |t| -> Result<bool, aviary_pg::Error> {
         let Some(row) = t
             .query_opt(
@@ -174,7 +176,7 @@ pub async fn patch_host(core: &Arc<Core>, ctx: &Ctx, name: &str, body: &HostPatc
             )
             .await?;
         }
-        audit_in(t, &who_s, "host.patch", Some(&name_s), &data).await?;
+        audit_in(t, who_s, "host.patch", Some(name_s), data).await?;
         Ok(true)
     })
     .await
@@ -216,6 +218,8 @@ pub async fn sandboxes_enabled(core: &Arc<Core>, ctx: &Ctx, body: &SandboxesEnab
     let data = serde_json::to_value(body).unwrap_or_default();
     let (enabled, reason) = (body.enabled, body.reason.clone().map(|r| crate::db::clip(&r, 200)));
     let who_s = who.clone();
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (data, reason, who_s) = (&data, &reason, &who_s);
     aviary_pg::tx!(&core.pool, |t| -> Result<(), aviary_pg::Error> {
         t.execute(
             "update controls set sandboxes_enabled = $1, disabled_reason = case when $1 then null else $2 end,
@@ -223,7 +227,7 @@ pub async fn sandboxes_enabled(core: &Arc<Core>, ctx: &Ctx, body: &SandboxesEnab
             &[&enabled, &reason, &who_s],
         )
         .await?;
-        audit_in(t, &who_s, "sandboxes.enabled", None, &data).await
+        audit_in(t, who_s, "sandboxes.enabled", None, data).await
     })
     .await
     .or_503()?;
@@ -242,6 +246,7 @@ pub async fn fresh_host(core: &Arc<Core>, ctx: &Ctx, body: FreshHost) -> Result<
     }
     let ttl = i64::from(body.ttl_minutes);
     let who_s = who.clone();
+    let who_s = &who_s; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     aviary_pg::tx!(&core.pool, |t| -> Result<(), aviary_pg::Error> {
         t.execute(
             "update controls set fresh_host_until = now() + $1::bigint * interval '1 minute', fresh_host_set_at = now(),
@@ -249,7 +254,7 @@ pub async fn fresh_host(core: &Arc<Core>, ctx: &Ctx, body: FreshHost) -> Result<
             &[&ttl, &who_s],
         )
         .await?;
-        audit_in(t, &who_s, "fresh_host", None, &json!({ "ttlMinutes": ttl })).await
+        audit_in(t, who_s, "fresh_host", None, &json!({ "ttlMinutes": ttl })).await
     })
     .await
     .or_503()?;
@@ -356,16 +361,18 @@ pub async fn release(core: &Arc<Core>, ctx: &Ctx, id: Uuid, body: &AdminRelease)
     }
     let (c, note) = (core.clone(), body.note.clone());
     // the audit row and the pending release commit together
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (who, c, note) = (&who, &c, &note);
     let took = aviary_pg::tx!(&core.pool, |t| -> Result<bool, aviary_pg::Error> {
         audit_in(
             t,
-            &who,
+            who,
             "sandbox.release",
             Some(&id.to_string()),
             &json!({ "note": note }),
         )
         .await?;
-        sandboxes::request_in(t, &c, id, ReleaseReason::Operator, true, note.clone()).await
+        sandboxes::request_in(t, c, id, ReleaseReason::Operator, true, note.clone()).await
     })
     .await
     .or_503()?;
@@ -431,6 +438,8 @@ pub async fn recycle(core: &Arc<Core>, ctx: &Ctx, body: &Recycle) -> Result<Valu
     }
     let (c, image, force) = (core.clone(), body.except_image.clone(), !body.only_idle);
     // the audit row and every pending release commit together
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (who, c, image) = (&who, &c, &image);
     let (ids, took) = aviary_pg::tx!(&core.pool, |t| -> Result<(Vec<Uuid>, Vec<Uuid>), aviary_pg::Error> {
         let ids: Vec<Uuid> = t
             .query(
@@ -446,7 +455,7 @@ pub async fn recycle(core: &Arc<Core>, ctx: &Ctx, body: &Recycle) -> Result<Valu
             .collect();
         audit_in(
             t,
-            &who,
+            who,
             "recycle",
             None,
             &json!({ "exceptImage": image, "onlyIdle": !force, "sandboxes": ids.len() }),
@@ -454,7 +463,7 @@ pub async fn recycle(core: &Arc<Core>, ctx: &Ctx, body: &Recycle) -> Result<Valu
         .await?;
         let mut took = Vec::new();
         for id in &ids {
-            if sandboxes::request_in(t, &c, *id, ReleaseReason::Recycle, force, None).await? {
+            if sandboxes::request_in(t, c, *id, ReleaseReason::Recycle, force, None).await? {
                 took.push(*id);
             }
         }
@@ -495,6 +504,8 @@ pub async fn purge(core: &Arc<Core>, ctx: &Ctx, email: &str, body: &PurgeRequest
     let person_key = aviary_core::log::person_key(&person);
     // the intent row and the person's forced releases commit together, before magpie is asked
     let (c, who_s, person_s) = (core.clone(), who.clone(), person.clone());
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (c, who_s, person_s) = (&c, &who_s, &person_s);
     let (ev, took) = aviary_pg::tx!(&core.pool, |t| -> Result<(i64, Vec<Uuid>), aviary_pg::Error> {
         let live: Vec<Uuid> = t
             .query(
@@ -505,7 +516,7 @@ pub async fn purge(core: &Arc<Core>, ctx: &Ctx, email: &str, body: &PurgeRequest
             .iter()
             .filter_map(|r| r.try_get(0).ok())
             .collect();
-        let data = json!({ "personKey": aviary_core::log::person_key(&person_s), "sandboxes": live.len(),
+        let data = json!({ "personKey": aviary_core::log::person_key(person_s), "sandboxes": live.len(),
                            "outcome": "pending" });
         let ev: i64 = t
             .query_one(
@@ -517,7 +528,7 @@ pub async fn purge(core: &Arc<Core>, ctx: &Ctx, email: &str, body: &PurgeRequest
             .try_get(0)?;
         let mut took = Vec::new();
         for id in &live {
-            if sandboxes::request_in(t, &c, *id, ReleaseReason::Offboarded, true, Some("purge".into())).await? {
+            if sandboxes::request_in(t, c, *id, ReleaseReason::Offboarded, true, Some("purge".into())).await? {
                 took.push(*id);
             }
         }

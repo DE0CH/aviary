@@ -159,7 +159,7 @@ pub async fn turn_state(pool: &Pool, caller: &Sandbox, turn_id: Uuid, r: TurnSta
         let turn = load(t, c.id, turn_id).await?.ok_or_else(Error::not_found)?;
         if r.state == ReportedState::Parked {
             // the sandbox goes while the turn waits only on its questions (DECISIONS 17)
-            return super::parked::park(t, &c.person, &turn, &r).await;
+            return super::parked::park(t, &c.person, &turn, r).await;
         }
         let outcome = match r.state {
             ReportedState::Running | ReportedState::Parked => None,
@@ -179,8 +179,8 @@ pub async fn turn_state(pool: &Pool, caller: &Sandbox, turn_id: Uuid, r: TurnSta
         let Some(outcome) = outcome else {
             return match turn.state {
                 // a replay, or the real report after the heartbeat reconciled the turn running: its facts still count
-                State::Running | State::Stopping => session_facts(t, c.id, &r).await,
-                _ => running(t, &c, caller, &turn, &r).await,
+                State::Running | State::Stopping => session_facts(t, c.id, r).await,
+                _ => running(t, &c, caller, &turn, r).await,
             };
         };
         if turn.state.is_waiting() || turn.state == State::Starting {
@@ -189,7 +189,7 @@ pub async fn turn_state(pool: &Pool, caller: &Sandbox, turn_id: Uuid, r: TurnSta
                 return Err(bad_transition(turn.state));
             }
         }
-        session_facts(t, c.id, &r).await?;
+        session_facts(t, c.id, r).await?;
         if let Some(uuid) = r.last_uuid.as_deref()
             && !line_stored(t, c.id, r.transcript_path.as_deref(), uuid).await?
         {
@@ -213,7 +213,7 @@ pub async fn turn_state(pool: &Pool, caller: &Sandbox, turn_id: Uuid, r: TurnSta
         let ending = Ending {
             outcome,
             error,
-            held: tasks_of(&r),
+            held: tasks_of(r),
             usage: r.usage.map(serde_json::to_value).transpose()?,
             duration_ms: r.duration_ms.and_then(|d| i64::try_from(d).ok()),
             kill: None,
@@ -551,7 +551,7 @@ pub async fn heartbeat(pool: &Pool, caller: &Sandbox, hb: Heartbeat) -> Result<(
         )
         .await?;
         if let Some(turn) = active(t, c.id).await?.filter(|a| !a.state.is_ended()) {
-            return reconcile_active(t, &c, caller, &hb, &turn).await;
+            return reconcile_active(t, &c, caller, hb, &turn).await;
         }
         // 3: a turn Claude Code started whose report never landed
         if let Some(id) = hb.turn_id {

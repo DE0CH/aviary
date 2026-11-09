@@ -169,12 +169,14 @@ impl Start {
             "update sandboxes set phase = $3{}{sets} where id = $1 and status = 'starting' and task = 'start' and task_owner = $2",
             if sets.is_empty() { "" } else { ", " }
         );
+        // borrowed: the transaction may run more than once (aviary_pg::tx!)
+        let (params, owner, sql) = (&params, &owner, &sql);
         let row = aviary_pg::tx!(&self.core.pool, |t| -> Result<Option<SandboxRow>, aviary_pg::Error> {
             let mut p: Vec<&(dyn aviary_pg::ToSql + Sync)> = vec![&id, &owner, &phase_s];
-            for x in &params {
+            for x in params {
                 p.push(x.as_sql());
             }
-            if t.execute(&sql, &p).await? == 0 {
+            if t.execute(sql, &p).await? == 0 {
                 return Ok(None);
             }
             Ok(Some(bump(t, id).await?))
@@ -196,6 +198,7 @@ impl Start {
         }
         let max = i64::from(self.core.cfg.sandbox().max_active);
         let (id, owner) = (self.id(), self.claim.owner.clone());
+        let owner = &owner; // borrowed: the transaction may run more than once (aviary_pg::tx!)
         let claimed = aviary_pg::tx!(&self.core.pool, |t| -> Result<Option<SandboxRow>, aviary_pg::Error> {
             t.execute(
                 "select pg_advisory_xact_lock($1::int4, $2::int4)",
@@ -594,6 +597,8 @@ impl Start {
         let created = row.created_at;
         let host = row.host.clone();
         let (cid, person) = (row.conversation_id, row.person.clone());
+        // borrowed: the transaction may run more than once (aviary_pg::tx!)
+        let (owner, version, boot, host, person) = (&owner, &version, &boot, &host, &person);
         let ready = aviary_pg::tx!(&self.core.pool, |t| -> Result<Option<SandboxRow>, aviary_pg::Error> {
             let n = t
                 .execute(

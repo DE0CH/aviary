@@ -157,6 +157,7 @@ pub async fn place(
     memory: u64,
 ) -> Result<Place, FabricError> {
     let cidr = sandbox_cidr.to_owned();
+    let cidr = &cidr; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     aviary_pg::tx!(pool, |t| -> Result<Place, FabricError> {
         t.execute(
             "select pg_advisory_xact_lock($1::int4, $2::int4)",
@@ -191,7 +192,7 @@ pub async fn place(
             .filter_map(|r| r.try_get(0).ok())
             .collect();
         let ip = IpAddr::V4(
-            free_address(&cidr, &used, 10, None).ok_or_else(|| FabricError("no free sandbox address".into()))?,
+            free_address(cidr, &used, 10, None).ok_or_else(|| FabricError("no free sandbox address".into()))?,
         );
         let n = t
             .execute(

@@ -364,7 +364,7 @@ pub async fn create(pool: &Pool, ctx: &Ctx, req: &CreateSchedule) -> Result<Sche
         )
         .await?;
         tracing::info!(schedule = %id, conversation = %who.conversation, kind = s.kind, "schedule armed");
-        let row = one(t, &id, &who.person).await?.ok_or_else(Error::not_found)?;
+        let row = one(t, id, &who.person).await?.ok_or_else(Error::not_found)?;
         Ok(row.api(None, false))
     })
     .await

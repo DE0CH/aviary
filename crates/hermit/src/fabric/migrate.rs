@@ -404,6 +404,8 @@ async fn commit(
         kind.to_owned(),
         row.host.clone(),
     );
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (data, owner, to_s, kind_s) = (&data, &owner, &to_s, &kind_s);
     let moved = aviary_pg::tx!(&core.pool, |t| -> Result<Option<SandboxRow>, aviary_pg::Error> {
         let n = t
             .execute(
@@ -445,6 +447,8 @@ async fn clear_intent(
     data: serde_json::Value,
 ) -> Result<(), FabricError> {
     let (id, owner, kind_s, host) = (row.id, claim.owner.clone(), kind.to_owned(), row.host.clone());
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (data, owner, kind_s, host) = (&data, &owner, &kind_s, &host);
     let n = aviary_pg::tx!(&core.pool, |t| -> Result<u64, aviary_pg::Error> {
         let n = t
             .execute(

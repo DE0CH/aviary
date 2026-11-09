@@ -213,7 +213,7 @@ pub async fn put_sandbox_blob(app: &Magpie, ctx: &Ctx, hex: &str, body: Body) ->
     let held = &lock;
     let facts = &facts; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     let r = aviary_pg::tx!(&app.pool, |t| -> Result<()> {
-        blobs::record_stored(t, &facts).await?;
+        blobs::record_stored(t, facts).await?;
         held.check(t).await
     })
     .await;

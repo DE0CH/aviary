@@ -190,13 +190,15 @@ async fn put_once(core: &Arc<Core>, cid: Uuid, person: &str) -> Result<PutStep, 
     // the image this start creates is fixed here, whichever replica drives it (migration 0004)
     let (image, image_ref) = (cfg.image_digest.clone(), s.image.clone());
     let c = core.clone();
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (pod, owner, image, image_ref, c) = (&pod, &owner, &image, &image_ref, &c);
     let res = aviary_pg::tx!(&core.pool, |t| -> Result<PutStep, PutError> {
         let live = t
             .query_opt("select * from sandboxes where conversation_id = $1 and status <> 'gone' for update", &[&cid])
             .await?;
         if let Some(r) = live {
             let row = SandboxRow::from_row(&r)?;
-            if row.person != owner {
+            if row.person != *owner {
                 return Err(PutError::Mismatch);
             }
             let pending = row.release_pending.as_ref().map(ReleaseKind::of);
@@ -227,7 +229,7 @@ async fn put_once(core: &Arc<Core>, cid: Uuid, person: &str) -> Result<PutStep, 
                     let row = SandboxRow::from_row(&r)?;
                     if mark && row.status == SandboxState::Ready {
                         // a sent release no task runs: this PUT runs it (the supervisor is asked again)
-                        let took = !release_task && tasks::take_in(t, &c, row.id, Kind::Release).await?;
+                        let took = !release_task && tasks::take_in(t, c, row.id, Kind::Release).await?;
                         return Ok(PutStep::WaitRelease(row.id, took));
                     }
                     let sbx = row.to_sandbox();
@@ -389,8 +391,10 @@ pub async fn request(
     note: Option<String>,
 ) -> Result<(), aviary_pg::Error> {
     let c = core.clone();
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (note, c) = (&note, &c);
     let took = aviary_pg::tx!(&core.pool, |t| -> Result<bool, aviary_pg::Error> {
-        request_in(t, &c, id, reason, force, note.clone()).await
+        request_in(t, c, id, reason, force, note.clone()).await
     })
     .await?;
     if took {
@@ -598,6 +602,8 @@ async fn mark_sent(core: &Core, claim: &Claim, p: &Pending) -> Result<Option<Pen
         return Ok(None);
     }
     let (id, owner, kind, mine) = (claim.id, claim.owner.clone(), claim.kind.as_str(), p.clone());
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (owner, mine) = (&owner, &mine);
     let now = aviary_pg::tx!(&core.pool, |t| -> Result<Option<Option<Pending>>, aviary_pg::Error> {
         let Some(r) = t
             .query_opt(
@@ -610,7 +616,7 @@ async fn mark_sent(core: &Core, claim: &Claim, p: &Pending) -> Result<Option<Pen
         };
         let v: Option<serde_json::Value> = r.try_get(0)?;
         let now: Option<Pending> = v.and_then(|v| serde_json::from_value(v).ok());
-        let Some(mut q) = now.filter(|q| q.same_ask(&mine) && (q.sent || !q.cancelled)) else {
+        let Some(mut q) = now.filter(|q| q.same_ask(mine) && (q.sent || !q.cancelled)) else {
             return Ok(Some(None));
         };
         if !q.sent {
@@ -636,6 +642,8 @@ async fn mark_sent(core: &Core, claim: &Claim, p: &Pending) -> Result<Option<Pen
 /// A soft release a `PUT` cancelled before it was sent: cleared with the claim.
 async fn drop_cancelled(core: &Core, claim: &Claim, p: &Pending) -> Result<Pass, aviary_pg::Error> {
     let (id, owner, kind, mine) = (claim.id, claim.owner.clone(), claim.kind.as_str(), p.clone());
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (owner, mine) = (&owner, &mine);
     let done = aviary_pg::tx!(&core.pool, |t| -> Result<Option<bool>, aviary_pg::Error> {
         let Some(r) = t
             .query_opt(
@@ -648,10 +656,7 @@ async fn drop_cancelled(core: &Core, claim: &Claim, p: &Pending) -> Result<Pass,
         };
         let v: Option<serde_json::Value> = r.try_get(0)?;
         let now: Option<Pending> = v.and_then(|v| serde_json::from_value(v).ok());
-        if !now
-            .as_ref()
-            .is_some_and(|q| q.same_ask(&mine) && q.cancelled && !q.sent)
-        {
+        if !now.as_ref().is_some_and(|q| q.same_ask(mine) && q.cancelled && !q.sent) {
             // it changed meanwhile: run what the row carries now
             return Ok(Some(false));
         }
@@ -791,6 +796,8 @@ async fn refused(
     let kept = (p.reason == ReleaseReason::Requested).then(|| serde_json::to_value(&kept).unwrap_or_default());
     let data = serde_json::json!({"reason": p.reason.as_str(), "state": state});
     let (id, owner, host, mine, reason) = (row.id, claim.owner.clone(), row.host.clone(), p.clone(), p.reason);
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (kept, data, owner, host, mine) = (&kept, &data, &owner, &host, &mine);
     let pass = aviary_pg::tx!(&core.pool, |t| -> Result<Pass, aviary_pg::Error> {
         let Some(r) = t
             .query_opt(
@@ -806,7 +813,7 @@ async fn refused(
         if now.as_ref().is_some_and(|q| ReleaseKind::of(q) != ReleaseKind::Soft) {
             return Ok(Pass::Again);
         }
-        let next = if now.as_ref().is_some_and(|q| q.same_ask(&mine)) {
+        let next = if now.as_ref().is_some_and(|q| q.same_ask(mine)) {
             if now.as_ref().is_some_and(|q| q.cancelled) {
                 None
             } else {
@@ -839,6 +846,8 @@ async fn set_releasing(core: &Core, claim: &Claim, row: &SandboxRow) -> Result<S
     let deadline = Timestamp::from_unix_millis(Timestamp::now().unix_millis() + ms(core.timings.release_deadline))
         .unwrap_or_else(Timestamp::now);
     let deadline = serde_json::to_value(deadline).unwrap_or_default();
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (owner, deadline) = (&owner, &deadline);
     let updated = aviary_pg::tx!(&core.pool, |t| -> Result<Option<SandboxRow>, aviary_pg::Error> {
         let n = t
             .execute(
@@ -930,6 +939,8 @@ pub async fn destroy_and_record(
     let (reason_s, code_s, msg) = (txt(reason), txt(code), db::message(end.message));
     let note = end.note.map(|n| db::clip(n, 200));
     let (cid, person, host) = (row.conversation_id, row.person.clone(), row.host.clone());
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (start, owner, note, msg, person, host) = (&start, &owner, &note, &msg, &person, &host);
     let gone = aviary_pg::tx!(&core.pool, |t| -> Result<Option<SandboxRow>, aviary_pg::Error> {
         let n = t
             .execute(
@@ -943,7 +954,7 @@ pub async fn destroy_and_record(
         if n == 0 {
             return Ok(None);
         }
-        if let Some(f) = &start {
+        if let Some(f) = start {
             t.execute(
                 "insert into sandbox_starts (ok, ms, sandbox_id, conversation_id, person, host, reason, error)
                  values (false, $1, $2, $3, $4, $5, $6, $7)",

@@ -108,7 +108,7 @@ pub async fn send(pool: &Pool, person: &Person, id: Uuid, req: SendRequest) -> R
             return Err(Error::code(ErrorCode::TurnRunning, "a turn is already running"));
         }
         ensure_person(t, &person.email).await?;
-        let turn = admit(t, id, person, &req).await?;
+        let turn = admit(t, id, person, req).await?;
         Ok(Admitted::New(SendResponse { turn }))
     })
     .await?;

@@ -189,10 +189,11 @@ pub async fn conversation(client: &magpie_api::client::Client, person: &str) -> 
 /// Appends `events` in one transaction, as a writer does; their seqs.
 pub async fn append(pool: &aviary_pg::Pool, person: &str, conversation: Uuid, events: Vec<NewEvent>) -> Vec<i64> {
     let person = person.to_owned();
+    let (person, events) = (&person, &events); // borrowed: the transaction may run more than once
     aviary_pg::tx!(pool, |t| -> magpie::error::Result<Vec<i64>> {
-        magpie::conversations::lock(t, &person, conversation).await?;
+        magpie::conversations::lock(t, person, conversation).await?;
         let mut seqs = Vec::new();
-        for e in events {
+        for e in events.iter().cloned() {
             seqs.push(magpie::events::append(t, conversation, e).await?);
         }
         Ok(seqs)

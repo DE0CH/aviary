@@ -446,7 +446,7 @@ pub async fn search(
                     current = Some(ev);
                 }
                 let item: RowItem = serde_json::from_value(r.get(3))?;
-                let count = occurrences(derive::row_text(&item).unwrap_or_default(), &q);
+                let count = occurrences(derive::row_text(&item).unwrap_or_default(), q);
                 if count > 0 {
                     locations.push(SearchLocation {
                         seq: u(r.get(1)),

@@ -174,6 +174,8 @@ pub async fn activity(core: &Arc<Core>, ctx: &Ctx, body: &ActivityReport) -> Res
         .filter(|e| e.kind == ActivityEventKind::MemoryKill)
         .map(|e| serde_json::json!({"pid": e.pid, "comm": e.comm, "rss": e.rss, "at": e.at}))
         .collect();
+    // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (turn, boot, version, kills) = (&turn, &boot, &version, &kills);
     let row = aviary_pg::tx!(
         &core.pool,
         |t| -> Result<Option<(SandboxRow, bool)>, aviary_pg::Error> {
@@ -205,7 +207,7 @@ pub async fn activity(core: &Arc<Core>, ctx: &Ctx, body: &ActivityReport) -> Res
                 )
                 .await?;
             let mut row = SandboxRow::from_row(&r)?;
-            for k in &kills {
+            for k in kills {
                 t.execute(
                     "insert into host_events (kind, host, sandbox_id, data) values ('memory-kill', $1, $2, $3)",
                     &[&row.host, &id, k],

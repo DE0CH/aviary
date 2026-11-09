@@ -349,6 +349,7 @@ async fn lost_frames_and_gaps_reset_and_the_cleanup_sweeps_ended_turns() {
     // another replica's pass holds one frame: this pass skips it and does not wait (skip locked)
     let turn = w.turn;
     let pool = w.a.pool().clone();
+    let pool = &pool; // borrowed: the transaction may run more than once
     let swept = aviary_pg::tx!(&w.sql, |t| -> magpie::error::Result<(u64, Duration)> {
         t.execute(
             "select 1 from live_frames where turn_id = $1 and n = 4 for update",
@@ -356,7 +357,7 @@ async fn lost_frames_and_gaps_reset_and_the_cleanup_sweeps_ended_turns() {
         )
         .await?;
         let started = Instant::now();
-        let n = magpie::live::cleanup(&pool).await?;
+        let n = magpie::live::cleanup(pool).await?;
         Ok((n, started.elapsed()))
     })
     .await

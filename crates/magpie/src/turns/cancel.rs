@@ -145,7 +145,7 @@ pub async fn answer(
         };
         let mut payload = serde_json::to_value(&cmd)?;
         if let Some(o) = payload.as_object_mut() {
-            o.insert("resolution".to_owned(), serde_json::to_value(&resp)?);
+            o.insert("resolution".to_owned(), serde_json::to_value(resp)?);
         }
         command(t, id, "answer_ask", None, &payload).await?;
         Ok(None)
