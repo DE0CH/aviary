@@ -180,7 +180,7 @@ pub async fn calls<Io>(
     pool: &aviary_pg::Pool,
     c: &Clients,
     h1: &tokio::sync::Mutex<hyper::client::conn::http1::SendRequest<String>>,
-    io: Io,
+    io: &Io,
 ) -> Result<(), aviary_pg::Error>
 where
     Io: hyper::rt::Read + hyper::rt::Write + Unpin + Send + Clone + 'static,
