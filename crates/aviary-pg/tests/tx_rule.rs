@@ -179,11 +179,11 @@ pub struct Clients {
 pub async fn calls<Io>(
     pool: &aviary_pg::Pool,
     c: &Clients,
-    h1: &mut hyper::client::conn::http1::SendRequest<String>,
+    h1: &tokio::sync::Mutex<hyper::client::conn::http1::SendRequest<String>>,
     io: Io,
 ) -> Result<(), aviary_pg::Error>
 where
-    Io: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
+    Io: hyper::rt::Read + hyper::rt::Write + Unpin + Send + Clone + 'static,
 {
     $TX_OPEN
         let _ = c.http.post("http://hermit/v1/things").send().await;
@@ -202,8 +202,8 @@ where
         let _ = c.s3.list_objects_v2().bucket("b").into_paginator().send().next().await;
         $EC2_CALLS
         let _ = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-        let _ = hyper::client::conn::http1::handshake::<_, String>(io).await;
-        let _ = h1.send_request(hyper::Request::new(String::new())).await;
+        let _ = hyper::client::conn::http1::handshake::<_, String>(io.clone()).await;
+        let _ = h1.lock().await.send_request(hyper::Request::new(String::new())).await;
         let _ = tokio::net::TcpStream::connect("hermit:80").await;
         Ok(())
     $TX_CLOSE
@@ -305,9 +305,15 @@ impl From<aviary_pg::Error> for Mine {
 /// When anything fails.
 pub async fn record(pool: &aviary_pg::Pool, http: &reqwest::Client) -> Result<String, Mine> {
     let resp = http.get("http://magpie/v1/x").send().await.map_err(|_| Mine)?;
+    // tx! may run its closure more than once: the response is taken out of a cell
+    let resp = std::sync::Mutex::new(Some(resp));
+    let resp = &resp;
     aviary_pg::tx!(pool, |t| -> Result<String, Mine> {
         t.execute("select 1", &[]).await?;
-        resp.text().await.map_err(|_| Mine)
+        let Some(r) = resp.lock().ok().and_then(|mut g| g.take()) else {
+            return Err(Mine);
+        };
+        r.text().await.map_err(|_| Mine)
     })
     .await
 }
