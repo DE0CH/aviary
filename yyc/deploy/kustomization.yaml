@@ -29,7 +29,7 @@ images:
   # the app bundle (DE0CH/claudecodeui pigeon-app.yml)
   - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "3247b4c881aa"}
   # egress and tools (DE0CH/jarvis3 chat.yml); the ZDR guard reads this tag (yyc-ai/tests/test_zdr.py)
-  - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "9beb4b47124d"}
+  - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "15a6c24419fb"}
 configMapGenerator:
   # yyc-mcp's access catalogue (news-stream/deploy/apps/yyc-mcp.yaml checks it on every call): catalogue.json under the
   # old key config.json, a fixed name so the mounted file changes in place (DESIGN 15.4; on yyc-talos since T4b)
