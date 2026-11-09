@@ -406,6 +406,8 @@ pub async fn search(
     };
     let pattern = like_pattern(q);
     let q = q.to_owned();
+    let pattern = &pattern; // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let q = &q;
     aviary_pg::tx!(pool, |t| -> Result<SearchResponse> {
         db::snapshot(t).await?;
         let h = head(t, conversation, person).await?;

@@ -25,6 +25,7 @@ pub async fn rename(pool: &Pool, person: &Person, id: Uuid, req: RenameRequest) 
     if title.chars().count() > limits::RENAME_MAX_CHARS {
         return Err(Error::code(ErrorCode::TitleTooLong, "the title is over 200 characters"));
     }
+    let title = &title; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     aviary_pg::tx!(pool, |t| -> Result<()> {
         lock(t, &person.email, id).await?;
         t.execute(

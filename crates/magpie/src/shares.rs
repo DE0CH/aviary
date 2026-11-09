@@ -315,6 +315,7 @@ pub async fn create(app: &Magpie, person: &Person, conversation: Uuid) -> Result
     let snapshot = Uuid::new_v4();
     let owner_name = local_part(&person.email).to_owned();
     let idr = &id;
+    let owner_name = &owner_name; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     let r = aviary_pg::tx!(&app.pool, |t| -> Result<OffsetDateTime> {
         lock(t, &person.email, conversation).await?;
         // the freeze point again, under the lock (a turn may have started meanwhile), and its reply checked again

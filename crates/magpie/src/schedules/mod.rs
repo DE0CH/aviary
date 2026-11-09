@@ -324,6 +324,9 @@ pub async fn create(pool: &Pool, ctx: &Ctx, req: &CreateSchedule) -> Result<Sche
         s.until.map(instant).transpose()?,
         instant(s.next)?,
     );
+    let who = &who; // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let id = &id;
+    let s = &s;
     aviary_pg::tx!(pool, |t| -> Result<Schedule> {
         let c = crate::conversations::lock(t, &who.person, who.conversation).await?;
         if c.deleted_at.is_some() {
@@ -424,6 +427,7 @@ pub async fn update(pool: &Pool, ctx: &Ctx, id: &str, req: &UpdateSchedule) -> R
         check_prompt(p)?;
     }
     let now = OffsetDateTime::now_utc().unix_timestamp();
+    let who = &who; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     aviary_pg::tx!(pool, |t| -> Result<Schedule> {
         let row = t
             .query_opt(

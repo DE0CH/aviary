@@ -641,21 +641,23 @@ pub async fn mark_ready(tx: &Tx<'_>, c: &Conv, turn: &Turn, s: &Sandbox) -> Resu
 }
 
 async fn step_gone(d: &Driver, conversation: Uuid, turn: Uuid, s: &Sandbox) -> Result<Next> {
-    let mut again = false;
-    let again_ref = &mut again;
+    // a flag, not a `&mut`: the transaction may run more than once (aviary_pg::tx!), each run deciding afresh
+    let again_flag = std::sync::atomic::AtomicBool::new(false);
+    let again = &again_flag;
     waiting_step!(d, conversation, turn, |t, c, tr| {
+        again.store(false, std::sync::atomic::Ordering::Relaxed);
         record_sandbox(t, conversation, s.id, s.state, s.version, Seen::Answer).await?;
         let (_, acked) = start_turn_status(t, &tr).await?;
         match gone_verdict(&tr, acked, c.deleted, s.release.as_ref()) {
             Gone::Fail(e) => end::end(t, &c.person, &tr, Ending::failed(e)).await?,
             Gone::Reacquire => {
                 reacquire(t, &c.person, &c, &tr, Some(&d.pod)).await?;
-                *again_ref = true;
+                again.store(true, std::sync::atomic::Ordering::Relaxed);
             }
         }
         Ok(true)
     })?;
-    Ok(if again { Next::Put(0) } else { Next::Done })
+    Ok(if again_flag.load(std::sync::atomic::Ordering::Relaxed) { Next::Put(0) } else { Next::Done })
 }
 
 /// The deadline passed: `sandbox.timeout`, unless the row says otherwise (a re-acquire that moved it, or an end).
@@ -678,6 +680,7 @@ async fn step_timeout(d: &Driver, conversation: Uuid, turn: Uuid) -> Result<()> 
 }
 
 async fn step_fail(d: &Driver, conversation: Uuid, turn: Uuid, e: ErrorInfo) -> Result<()> {
+    let e = &e; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     waiting_step!(d, conversation, turn, |t, c, tr| {
         end::end(t, &c.person, &tr, Ending::failed(e.clone())).await?;
         Ok(true)

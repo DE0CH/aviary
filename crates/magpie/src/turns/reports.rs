@@ -153,6 +153,7 @@ fn tasks_of(r: &TurnStateReport) -> Option<Vec<BackgroundTask>> {
 /// # Errors
 /// 404, 409 `bad_transition` / `transcript_pending` / `lease_lost`; a statement error.
 pub async fn turn_state(pool: &Pool, caller: &Sandbox, turn_id: Uuid, r: TurnStateReport) -> Result<()> {
+    let r = &r; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let c = caller::lock(t, caller).await?;
         let turn = load(t, c.id, turn_id).await?.ok_or_else(Error::not_found)?;
@@ -286,6 +287,7 @@ fn terminal(s: TaskState) -> bool {
 /// # Errors
 /// 404, 409 `lease_lost`; a statement error.
 pub async fn tasks(pool: &Pool, caller: &Sandbox, r: TasksReport) -> Result<()> {
+    let r = &r; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let c = caller::lock(t, caller).await?;
         let row = t
@@ -363,6 +365,7 @@ async fn ask_event(tx: &Tx<'_>, conversation: Uuid, kind: &str, ask_id: &str) ->
 /// # Errors
 /// 404, 409 `lease_lost`; a statement error.
 pub async fn ask_open(pool: &Pool, caller: &Sandbox, r: AskReport) -> Result<()> {
+    let r = &r; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let c = caller::lock(t, caller).await?;
         if ask_event(t, c.id, "ask.pending", &r.ask_id).await? {
@@ -539,6 +542,7 @@ pub async fn heartbeat(pool: &Pool, caller: &Sandbox, hb: Heartbeat) -> Result<(
     }
     // what the admin reads show (magpie 13)
     let facts = &serde_json::json!({"gen": hb.generation, "supervisor": hb.supervisor, "cc": hb.cc});
+    let hb = &hb; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let c = caller::lock(t, caller).await?;
         t.execute(

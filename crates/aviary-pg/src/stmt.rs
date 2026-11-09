@@ -50,6 +50,8 @@ pub(crate) struct StmtGuard<'a> {
     doubt: &'a AtomicBool,
     pub(crate) first: bool,
     pub(crate) retried: bool,
+    /// The tries left while the database is away ([`crate::retry`]).
+    pub(crate) patience: crate::retry::Patience,
     done: bool,
 }
 
@@ -59,6 +61,7 @@ impl<'a> StmtGuard<'a> {
             doubt,
             first,
             retried: false,
+            patience: crate::retry::Patience::default(),
             done: false,
         }
     }
@@ -77,13 +80,20 @@ impl Drop for StmtGuard<'_> {
     }
 }
 
-/// The body of one statement method: prepare (cached), run, and on a stale statement ask `$self.recover` whether
-/// to try once more.
+/// The body of one statement method: prepare (cached) and run on `$self.stmt_client()`, and on an error ask
+/// `$self.recover` whether to try once more (a stale statement; for a [`crate::Conn`] also a lost connection, which it
+/// replaces).
 macro_rules! statement {
     ($self:ident, $guard:ident, $sql:ident, $params:ident, $method:ident) => {{
         loop {
-            let st = $self.prepare($sql).await?;
-            match $self.client()?.$method(&st, $params).await {
+            let outcome = {
+                let client = $self.stmt_client().await?;
+                match client.prepare_cached($sql).await {
+                    Ok(st) => client.$method(&st, $params).await,
+                    Err(e) => Err(e),
+                }
+            };
+            match outcome {
                 Ok(v) => return Ok($guard.ok(v)),
                 Err(e) => $self.recover(&mut $guard, e).await?,
             }

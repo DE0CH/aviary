@@ -211,6 +211,7 @@ pub async fn put_sandbox_blob(app: &Magpie, ctx: &Ctx, hex: &str, body: Body) ->
     let facts = raw_facts(sha, &bytes, None);
     let (_, lock) = app.blobs.put_bytes(&app.pool, bytes).await?;
     let held = &lock;
+    let facts = &facts; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     let r = aviary_pg::tx!(&app.pool, |t| -> Result<()> {
         blobs::record_stored(t, &facts).await?;
         held.check(t).await
@@ -577,6 +578,8 @@ pub async fn sent_files(
         .filter_map(|f| blobs::from_hex(&f.sha256).map(|s| s.to_vec()))
         .collect();
     let (tool_use_id, caption) = (&req.tool_use_id, &req.caption);
+    let files = &files; // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let shas = &shas;
     let missing = aviary_pg::tx!(&app.pool, |t| -> Result<Vec<String>> {
         let conv = sandbox::conversation(t, ctx, true).await?;
         let done = t

@@ -23,7 +23,7 @@ use deadpool_postgres::Object;
 
 use tokio_postgres::error::SqlState;
 use tokio_postgres::types::ToSql;
-use tokio_postgres::{Row, Statement};
+use tokio_postgres::Row;
 
 use crate::stmt::{self, StmtGuard, statement};
 use crate::{Error, Pool};
@@ -50,6 +50,8 @@ pub struct Tx<'env> {
     started: AtomicU32,
     /// A statement failed or was cancelled: the transaction may be aborted.
     doubt: AtomicBool,
+    /// The connection was lost (the database away for a moment): [`__run_tx`] runs the closure again.
+    lost: AtomicBool,
     _env: PhantomData<&'env ()>,
 }
 
@@ -73,8 +75,16 @@ impl Tx<'_> {
         self.client.as_ref().ok_or(Error::Closed)
     }
 
-    async fn prepare(&self, sql: &str) -> Result<Statement, Error> {
-        Ok(self.client()?.prepare_cached(sql).await?)
+    #[allow(clippy::unused_async, clippy::unused_async_trait_impl)] // the shape `statement!` expects (Conn's awaits)
+    async fn stmt_client(&self) -> Result<&Object, Error> {
+        self.client()
+    }
+
+    /// Notes a lost connection, so the whole transaction runs again ([`crate::retry`]).
+    fn note(&self, e: &tokio_postgres::Error) {
+        if crate::error::transient_db(e) {
+            self.lost.store(true, Ordering::SeqCst);
+        }
     }
 
     fn guard(&self, sql: &str) -> Result<StmtGuard<'_>, Error> {
@@ -86,6 +96,7 @@ impl Tx<'_> {
     /// On a stale cached statement: clear the pool's caches; when nothing else ran in this transaction, restart it
     /// and retry once (`Ok`). Otherwise the statement's error.
     async fn recover(&self, g: &mut StmtGuard<'_>, e: tokio_postgres::Error) -> Result<(), Error> {
+        self.note(&e);
         if !stmt::is_stale(&e) {
             return Err(e.into());
         }
@@ -143,7 +154,10 @@ impl Tx<'_> {
     /// When a statement fails, or [`Error::TransactionControl`] when one is `begin`, `commit` or the like.
     pub async fn batch_execute(&self, sql: &str) -> Result<(), Error> {
         let g = self.guard(sql)?;
-        self.client()?.batch_execute(sql).await?;
+        if let Err(e) = self.client()?.batch_execute(sql).await {
+            self.note(&e);
+            return Err(e.into());
+        }
         g.ok(Ok(()))
     }
 
@@ -169,19 +183,26 @@ impl Tx<'_> {
     /// Commits. When a statement failed or was cancelled, first asks the server whether the transaction is aborted
     /// (`COMMIT` of an aborted transaction rolls back and reports no error): then it rolls back and answers
     /// [`Error::RolledBack`].
-    async fn commit(self) -> Result<(), Error> {
+    ///
+    /// The error comes with whether the transaction may run again: the connection was lost before `COMMIT` was sent
+    /// (nothing was committed). Once `COMMIT` is sent its outcome is unknown when the connection goes, so never.
+    async fn commit(self) -> Result<(), (Error, bool)> {
         if self.doubt.load(Ordering::SeqCst) {
-            match self.client()?.simple_query("select 1").await {
+            let lost = self.lost.load(Ordering::SeqCst);
+            match self.client().map_err(|e| (e, lost))?.simple_query("select 1").await {
                 Ok(_) => {}
                 Err(e) if e.code() == Some(&SqlState::IN_FAILED_SQL_TRANSACTION) => {
-                    self.finish("rollback").await?;
-                    return Err(Error::RolledBack);
+                    self.finish("rollback").await.map_err(|e| (e, false))?;
+                    return Err((Error::RolledBack, lost));
                 }
                 // the connection is in an unknown state: Drop closes it
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    let again = lost || crate::error::transient_db(&e);
+                    return Err((e.into(), again));
+                }
             }
         }
-        self.finish("commit").await
+        self.finish("commit").await.map_err(|e| (e, false))
     }
 }
 
@@ -190,14 +211,16 @@ impl Tx<'_> {
 #[doc(hidden)]
 pub fn __tx_fn<'env, T, E, F>(f: F) -> F
 where
-    F: for<'a> FnOnce(&'a Tx<'env>) -> TxFuture<'a, T, E>,
+    F: for<'a> Fn(&'a Tx<'env>) -> TxFuture<'a, T, E>,
 {
     f
 }
 
 /// Runs `f` in one transaction on a pooled connection: commits when it returns `Ok`, rolls back when it returns
-/// `Err`; a panic or a dropped future closes the connection (the server rolls back). Used by [`tx!`](crate::tx!)
-/// only.
+/// `Err`; a panic or a dropped future closes the connection (the server rolls back). When the connection was lost
+/// before `COMMIT` was sent (the database away for a moment, [`crate::retry`]), `f` runs again from the start on a new
+/// connection, so it must only touch the database (the clippy rule above) and its captures are borrowed. Used by
+/// [`tx!`](crate::tx!) only.
 ///
 /// # Errors
 /// `f`'s error, or [`Error`] (converted) when no connection could be had, `BEGIN` failed, `COMMIT` failed, or a
@@ -205,10 +228,32 @@ where
 #[doc(hidden)]
 pub async fn __run_tx<'env, T, E, F>(pool: &Pool, f: F) -> Result<T, E>
 where
-    F: for<'a> FnOnce(&'a Tx<'env>) -> TxFuture<'a, T, E>,
+    F: for<'a> Fn(&'a Tx<'env>) -> TxFuture<'a, T, E>,
     E: From<Error>,
 {
-    let client = pool.deadpool().get().await.map_err(Error::from)?;
+    let mut patience = crate::retry::Patience::default();
+    loop {
+        let (res, again) = run_tx_once(pool, &f).await;
+        match res {
+            Err(e) if again && patience.again("transaction", &Error::Closed) => {
+                drop(e);
+                tokio::time::sleep(crate::retry::RETRY_GAP).await;
+            }
+            res => return res,
+        }
+    }
+}
+
+/// One try of [`__run_tx`]: its result, and whether it may run again (the connection was lost before `COMMIT`).
+async fn run_tx_once<'env, T, E, F>(pool: &Pool, f: &F) -> (Result<T, E>, bool)
+where
+    F: for<'a> Fn(&'a Tx<'env>) -> TxFuture<'a, T, E>,
+    E: From<Error>,
+{
+    let client = match crate::retry::get(pool.deadpool()).await {
+        Ok(c) => c,
+        Err(e) => return (Err(e.into()), false), // crate::retry::get waited already
+    };
     // the Tx owns the connection before `begin` is sent: a future cancelled while `begin` is in flight (a timeout,
     // a select!, a dropped handler) closes the connection rather than handing it back with the BEGIN still queued
     let tx = Tx {
@@ -216,19 +261,30 @@ where
         pool: pool.deadpool().clone(),
         started: AtomicU32::new(0),
         doubt: AtomicBool::new(false),
+        lost: AtomicBool::new(false),
         _env: PhantomData,
     };
-    tx.client()?.batch_execute("begin").await.map_err(Error::from)?;
+    let begun = match tx.client() {
+        Ok(c) => c.batch_execute("begin").await,
+        Err(e) => return (Err(e.into()), false),
+    };
+    if let Err(e) = begun {
+        let again = crate::error::transient_db(&e);
+        return (Err(Error::from(e).into()), again);
+    }
     match f(&tx).await {
-        Ok(v) => {
-            tx.commit().await?;
-            Ok(v)
-        }
+        Ok(v) => match tx.commit().await {
+            Ok(()) => (Ok(v), false),
+            Err((e, again)) => (Err(e.into()), again),
+        },
         Err(e) => {
-            if let Err(rb) = tx.finish("rollback").await {
+            let again = tx.lost.load(Ordering::SeqCst);
+            if let Err(rb) = tx.finish("rollback").await
+                && !again
+            {
                 tracing::warn!(error = %rb, "rollback failed (the connection is discarded)");
             }
-            Err(e)
+            (Err(e), again)
         }
     }
 }

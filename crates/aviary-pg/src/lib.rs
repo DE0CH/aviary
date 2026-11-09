@@ -20,6 +20,8 @@
 //!   `transaction()`). A `tx!` whose closure ignored a statement error answers [`Error::RolledBack`], never a commit
 //!   that did not happen.
 //! - [`Pool::get`] gives a [`Conn`] for statements outside a transaction.
+//! - While the database is away for a moment (a planned switchover), connections are waited for and cut statements
+//!   and transactions run again ([`retry`]).
 
 mod error;
 mod leader;
@@ -27,6 +29,7 @@ mod listen;
 mod lock;
 mod migrate;
 mod pool;
+pub mod retry;
 mod sql;
 mod stmt;
 mod tx;

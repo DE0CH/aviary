@@ -127,6 +127,8 @@ pub async fn poll(app: Read<'_>, caller: &Sandbox, q: CommandsQuery) -> Result<C
 pub async fn ack(pool: &aviary_pg::Pool, caller: &Sandbox, cmd_seq: u64, req: AckRequest) -> Result<()> {
     let seq = i64::try_from(cmd_seq).map_err(|_| Error::not_found())?;
     let result = serde_json::to_value(&req.result)?;
+    let result = &result; // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let req = &req;
     aviary_pg::tx!(pool, |t| -> Result<()> {
         let c = caller::lock(t, caller).await?;
         let row = t

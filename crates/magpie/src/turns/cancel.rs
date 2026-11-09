@@ -103,6 +103,7 @@ pub async fn answer(
     resp: AgentPermissionResponse,
 ) -> Result<Option<Uuid>> {
     person.refuse_view_as()?;
+    let resp = &resp; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     aviary_pg::tx!(pool, |t| -> Result<Option<Uuid>> {
         lock(t, &person.email, id).await?;
         let Some(pending) = t

@@ -68,3 +68,40 @@ impl Error {
         }
     }
 }
+
+impl Error {
+    /// The database is away for a moment (a planned switchover, a restart, a primary just demoted to a standby): the
+    /// same work can run again shortly on a new connection ([`crate::retry`]).
+    #[must_use]
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Self::Db(e) | Self::Pool(deadpool_postgres::PoolError::Backend(e)) => transient_db(e),
+            Self::Pool(deadpool_postgres::PoolError::Timeout(_)) | Self::Closed => true,
+            _ => false,
+        }
+    }
+}
+
+/// A lost or refused connection: the server's (SQLSTATE class 08; 57P01 admin shutdown, 57P02 crash shutdown, 57P03
+/// cannot connect now; 25006, a write that reached a primary just demoted) or the client's own (tokio-postgres's
+/// connection kinds carry no SQLSTATE: their messages are fixed strings).
+pub(crate) fn transient_db(e: &tokio_postgres::Error) -> bool {
+    if let Some(code) = e.code() {
+        let c = code.code();
+        return c.starts_with("08") || matches!(c, "57P01" | "57P02" | "57P03" | "25006");
+    }
+    if e.is_closed() {
+        return true;
+    }
+    let s = e.to_string();
+    [
+        "error communicating with the server",
+        "error connecting to server",
+        "timeout waiting for server",
+        "error performing TLS handshake",
+        "unexpected message from server",
+    ]
+    .iter()
+    .any(|k| s.starts_with(k))
+}
+

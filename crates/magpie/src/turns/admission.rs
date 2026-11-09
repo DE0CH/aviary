@@ -77,6 +77,7 @@ impl Sent {
 /// 404, 409 `conversation_deleted` / `turn_running`, 400, 413; a statement error.
 pub async fn send(pool: &Pool, person: &Person, id: Uuid, req: SendRequest) -> Result<Sent> {
     validate(&req)?;
+    let req = &req; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     let answer = aviary_pg::tx!(pool, |t| -> Result<Admitted<SendResponse>> {
         let c = lock(t, &person.email, id).await?;
         if c.deleted_at.is_some() {

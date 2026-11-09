@@ -105,6 +105,7 @@ pub async fn list(pool: &Pool, person: &Person, q: ListQuery) -> Result<ListResp
         after_id,
         search: search.as_deref(),
     };
+    let page = &page; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     aviary_pg::tx!(pool, |t| -> Result<ListResponse> {
         crate::db::snapshot(t).await?;
         page.read(t).await

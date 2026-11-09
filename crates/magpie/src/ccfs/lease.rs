@@ -89,6 +89,7 @@ pub async fn lease(app: &Magpie, caller: &Caller) -> Result<LeaseResponse> {
             }
         }
     };
+    let hermit = &hermit; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     let grant = aviary_pg::tx!(&app.pool, |t| -> Result<LeaseResponse> {
         lock(t, caller).await?;
         // re-read under the lock: the feed may have recorded something since the read above

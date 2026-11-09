@@ -310,6 +310,7 @@ async fn expire(d: &Driver, conversation: Uuid, turn_id: Uuid, claimed: OffsetDa
         return Ok(acted);
     };
     let verdict = ask_hermit(d, conversation, turn.sandbox).await;
+    let verdict = &verdict; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     aviary_pg::tx!(&d.pool, |t| -> Result<bool> {
         let Some(c) = lock_id(t, conversation).await? else {
             return Ok(false);
@@ -334,7 +335,7 @@ async fn expire(d: &Driver, conversation: Uuid, turn_id: Uuid, claimed: OffsetDa
                 let e = err(DataCode::SandboxLost, "the sandbox is gone");
                 end::end(t, &c.person, &turn, Ending::failed(e)).await?;
             }
-            Hermit::Alive(active) if now - active <= limits::HERMIT_ALIVE_WITHIN => {
+            Hermit::Alive(active) if now - *active <= limits::HERMIT_ALIVE_WITHIN => {
                 if now - silent_since > limits::SILENCE_MAX {
                     let e = err(
                         DataCode::SandboxUnreachable,

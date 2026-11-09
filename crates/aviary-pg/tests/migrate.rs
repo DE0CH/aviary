@@ -390,9 +390,14 @@ async fn a_migration_waiting_for_a_lock_gives_way_and_is_retried() {
     let holder = common::pool(&db, "holder");
     let (locked_tx, locked_rx) = tokio::sync::oneshot::channel();
     let hold = tokio::spawn(async move {
+        // a tx! may run more than once: its closure borrows, and the one-shot sender is taken once
+        let locked_tx = std::sync::Mutex::new(Some(locked_tx));
+        let locked_tx = &locked_tx;
         aviary_pg::tx!(&holder, |t| {
             t.execute("select count(*) from l", &[]).await?;
-            let _ = locked_tx.send(());
+            if let Some(s) = locked_tx.lock().unwrap().take() {
+                let _ = s.send(());
+            }
             tokio::time::sleep(std::time::Duration::from_millis(6500)).await;
             Ok(())
         })

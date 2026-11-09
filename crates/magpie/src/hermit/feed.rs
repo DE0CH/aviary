@@ -114,6 +114,7 @@ pub async fn step(d: &Driver) -> Result<()> {
         return Ok(());
     };
     let last = i64::try_from(last).unwrap_or(i64::MAX);
+    let page = &page; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     aviary_pg::tx!(&d.pool, |t| -> Result<()> {
         for ev in &page.events {
             apply(t, ev).await?;
@@ -258,8 +259,9 @@ pub async fn recover(d: &Driver) -> Result<()> {
                 continue;
             }
         };
+        let events = &events; // borrowed: the transaction may run more than once (aviary_pg::tx!)
         aviary_pg::tx!(&d.pool, |t| -> Result<()> {
-            for ev in &events {
+            for ev in events {
                 // a sandbox hermit no longer names is gone, whatever the record says
                 if ev.seq == 0 && ev.state == SandboxState::Gone {
                     if let Some(c) = lock_id(t, ev.conversation_id).await? {

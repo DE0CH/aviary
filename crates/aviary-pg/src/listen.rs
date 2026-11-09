@@ -26,9 +26,10 @@ use tokio_postgres::{AsyncMessage, Notification};
 
 use crate::{Error, Pool};
 
-/// Reconnect backoff: 0.5 s doubling to 5 s (platform 4.3), reset once a connection is listening.
+/// Reconnect backoff: 0.5 s doubling to 1 s (platform 4.3; at most 1 s, so a switchover's few seconds without the
+/// database delay the wake-up after it by no more), reset once a connection is listening.
 const BACKOFF_FIRST: Duration = Duration::from_millis(500);
-const BACKOFF_MAX: Duration = Duration::from_secs(5);
+const BACKOFF_MAX: Duration = Duration::from_secs(1);
 /// A quiet connection is checked this often (bounded by the same), so a half-open socket is noticed before TCP
 /// keepalives would.
 const PING: Duration = Duration::from_secs(10);

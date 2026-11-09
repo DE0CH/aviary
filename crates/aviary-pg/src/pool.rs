@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 use tokio_postgres::config::SslMode;
 use tokio_postgres::tls::MakeTlsConnect;
 use tokio_postgres::types::ToSql;
-use tokio_postgres::{Client, Row, Socket, Statement};
+use tokio_postgres::{Client, Row, Socket};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 use crate::Error;
@@ -184,10 +184,11 @@ impl Pool {
     /// work; a transaction is [`crate::tx!`].
     ///
     /// # Errors
-    /// [`Error::Pool`] when none is free within 5 s, a new one cannot be opened, or the pool is closed.
+    /// [`Error::Pool`] when none is free within 5 s, the pool is closed, or the database stays away for
+    /// [`crate::retry::RETRY_FOR`].
     pub async fn get(&self) -> Result<Conn, Error> {
         Ok(Conn {
-            client: self.inner.get().await?,
+            client: tokio::sync::Mutex::new(crate::retry::get(&self.inner).await?),
             pool: self.inner.clone(),
             doubt: AtomicBool::new(false),
         })
@@ -232,7 +233,8 @@ impl Pool {
 /// pool, which resets the connection before its next user (`RECYCLE_SQL`). Statements are prepared once per connection and cached; a stale cached statement clears the
 /// pool's caches and is retried once (`crate::stmt`).
 pub struct Conn {
-    client: Object,
+    /// Replaced by a new pooled connection when the database dropped this one ([`crate::retry`]).
+    client: tokio::sync::Mutex<Object>,
     pool: deadpool_postgres::Pool,
     /// Unused here (a statement outside a transaction aborts nothing); [`StmtGuard`] wants one.
     doubt: AtomicBool,
@@ -245,13 +247,9 @@ impl fmt::Debug for Conn {
 }
 
 impl Conn {
-    #[allow(clippy::unnecessary_wraps)] // the shape `statement!` expects
-    fn client(&self) -> Result<&Object, Error> {
-        Ok(&self.client)
-    }
-
-    async fn prepare(&self, sql: &str) -> Result<Statement, Error> {
-        Ok(self.client.prepare_cached(sql).await?)
+    #[allow(clippy::unnecessary_wraps)] // the shape `statement!` expects (Tx's can fail)
+    async fn stmt_client(&self) -> Result<tokio::sync::MutexGuard<'_, Object>, Error> {
+        Ok(self.client.lock().await)
     }
 
     fn guard(&self, sql: &str) -> Result<StmtGuard<'_>, Error> {
@@ -259,9 +257,21 @@ impl Conn {
         Ok(StmtGuard::new(&self.doubt, true))
     }
 
-    /// On a stale cached statement: clear the pool's caches and retry once (the failed statement did nothing).
-    #[allow(clippy::unused_async, clippy::unused_async_trait_impl)] // the shape `statement!` expects (Tx's awaits)
+    /// On a stale cached statement: clear the pool's caches and retry once (the failed statement did nothing). On a
+    /// lost connection (the database away for a moment, [`crate::retry`]): a new pooled connection, and the
+    /// statement again.
     async fn recover(&self, g: &mut StmtGuard<'_>, e: tokio_postgres::Error) -> Result<(), Error> {
+        if crate::error::transient_db(&e) {
+            let err = Error::Db(e);
+            if !g.patience.again("statement", &err) {
+                return Err(err);
+            }
+            tokio::time::sleep(crate::retry::RETRY_GAP).await;
+            let fresh = crate::retry::get(&self.pool).await?;
+            let old = std::mem::replace(&mut *self.client.lock().await, fresh);
+            drop(Object::take(old)); // the dead connection never goes back to the pool
+            return Ok(());
+        }
         if !stmt::is_stale(&e) || g.retried {
             return Err(e.into());
         }
@@ -312,9 +322,14 @@ impl Conn {
     /// # Errors
     /// When a statement fails, or [`Error::TransactionControl`] when one controls the transaction.
     pub async fn batch_execute(&self, sql: &str) -> Result<(), Error> {
-        let g = self.guard(sql)?;
-        self.client.batch_execute(sql).await?;
-        g.ok(Ok(()))
+        let mut g = self.guard(sql)?;
+        loop {
+            let outcome = self.client.lock().await.batch_execute(sql).await;
+            match outcome {
+                Ok(()) => return g.ok(Ok(())),
+                Err(e) => self.recover(&mut g, e).await?,
+            }
+        }
     }
 }
 
