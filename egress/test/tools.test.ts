@@ -381,9 +381,9 @@ test("liveness: hermit refusing tools' bearer (401/403) is a configuration fault
   assert.equal(liveness.authFault, false, "cleared by the next answer");
 });
 
-test("tool_calls: a database outage drops the row and never delays the call", async () => {
+test("tool_calls: a database that stays away drops the row after the retries and never delays the call", async () => {
   const dead = connect("postgres://tools:x@127.0.0.1:1/tools");
-  const deadLog = new CallLog(dead);
+  const deadLog = new CallLog(dead, { forMs: 300, everyMs: 50 });
   const other = await startServer({ calls: deadLog });
   try {
     const s = sandbox();
@@ -397,6 +397,30 @@ test("tool_calls: a database outage drops the row and never delays the call", as
   } finally {
     await other.srv.drain(1000);
     await dead.end();
+  }
+});
+
+test("tool_calls: a row written while the database is away for a moment (a switchover) lands once it is back", async () => {
+  const { PgRelay } = await import("./egress-db.ts");
+  const u = new URL(t.url);
+  const relay = new PgRelay(u.hostname, Number(u.port || 5432));
+  u.port = String(await relay.listen());
+  u.hostname = "127.0.0.1";
+  const db = connect(u.toString());
+  const log = new CallLog(db, { forMs: 10_000, everyMs: 50 });
+  try {
+    const s = sandbox();
+    const request = randomUUID();
+    relay.cut();
+    log.write({ conversationId: s.conversationId, sandboxId: s.id, person: s.person, request, tool: "web_fetch", args: {}, ok: true, ms: 1, error: null, costUsd: null });
+    setTimeout(() => relay.restore(), 1500);
+    await log.flush();
+    assert.equal(log.dropped, 0);
+    const { rows } = await t.db.query("select count(*)::int as n from tool_calls where request = $1", [request]);
+    assert.equal(rows[0].n, 1);
+  } finally {
+    relay.close();
+    await db.end().catch(() => {});
   }
 });
 

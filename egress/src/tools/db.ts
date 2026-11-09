@@ -1,9 +1,12 @@
 // tools' own database `tools` (aviary platform spec 17.2 tools item 5; TOOLS_DATABASE_URL): `tool_calls`, with
 // migrations of this table only, under tools' own advisory lock. Never edit a shipped migration: add the next one.
 //
-// A database outage never stops a call: a row that cannot be written is dropped and counted (platform 11, A6.F30),
-// and nothing waits on the write (queries time out in seconds).
-import { createHash } from "node:crypto";
+// A database outage never stops a call, and nothing waits on the write (queries time out in seconds). A row whose
+// insert fails for any reason but its data (a switchover's few seconds without the database; Deyao, 2026-11-09: zero
+// downtime) is tried again every RETRY_MS for up to RETRY_FOR_MS, then dropped and counted (platform 11, A6.F30). Each
+// row carries a row_id made once (unique index, on conflict do nothing), so a retry after an insert whose outcome was
+// unknown never writes it twice.
+import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
 import { log, logError } from "../common/log.ts";
 
@@ -28,7 +31,23 @@ create index tool_calls_conv on tool_calls (conversation_id, at);
 alter table tool_calls add column source_id bigint;
 create unique index tool_calls_source_id on tool_calls (source_id);
 `,
+  // each row's own id, made once by the writer and kept through its retries (CallLog): a retried insert whose first
+  // try's outcome was unknown is not written twice. Null on older rows (a unique index allows any number of nulls).
+  `
+alter table tool_calls add column row_id uuid;
+create unique index tool_calls_row_id on tool_calls (row_id);
+`,
 ];
+
+/** How long and how often CallLog tries a row again while the database is away. */
+export const RETRY_FOR_MS = 30_000;
+export const RETRY_MS = 200;
+
+/** Postgres refused the data itself (data exception 22, integrity 23): retrying the same row can never succeed. */
+export function isDataError(e: unknown): boolean {
+  const code = (e as { code?: unknown })?.code;
+  return typeof code === "string" && /^2[23][0-9A-Z]{3}$/.test(code);
+}
 
 export function connect(url: string): Db {
   const pool = new pg.Pool({
@@ -96,21 +115,40 @@ export interface CallRow {
   costUsd: number | null;
 }
 
-/** The tool_calls writer: fire and forget; a failed insert is logged and counted, never retried or waited on. */
+/** The tool_calls writer: fire and forget, never waited on by a call; a failed insert is tried again while the
+ * database is away (RETRY_FOR_MS), then logged and counted as dropped. */
 export class CallLog {
   readonly #db: Db;
   readonly #pending = new Set<Promise<void>>();
+  readonly #retry: { forMs: number; everyMs: number };
   dropped = 0;
-  constructor(db: Db) {
+  constructor(db: Db, retry: { forMs: number; everyMs: number } = { forMs: RETRY_FOR_MS, everyMs: RETRY_MS }) {
     this.#db = db;
+    this.#retry = retry;
   }
 
   write(r: CallRow): void {
-    const p = this.#db
-      .query(
-        `insert into tool_calls (conversation_id, sandbox_id, user_email, request, tool, args, ok, ms, error, cost_usd) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [r.conversationId, r.sandboxId, r.person, r.request, r.tool, JSON.stringify(r.args), r.ok, r.ms, r.error, r.costUsd],
-      )
+    const retry = this.#retry;
+    const rowId = randomUUID();
+    const insert = () =>
+      this.#db.query(
+        `insert into tool_calls (conversation_id, sandbox_id, user_email, request, tool, args, ok, ms, error, cost_usd, row_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) on conflict (row_id) do nothing`,
+        [r.conversationId, r.sandboxId, r.person, r.request, r.tool, JSON.stringify(r.args), r.ok, r.ms, r.error, r.costUsd, rowId],
+      );
+    const end = Date.now() + retry.forMs;
+    const attempt = async (): Promise<void> => {
+      for (;;) {
+        try {
+          await insert();
+          return;
+        } catch (e) {
+          // a data error never succeeds; a pool ended at exit never comes back
+          if (isDataError(e) || /after calling end on the pool/.test(String((e as Error)?.message)) || Date.now() >= end) throw e;
+          await new Promise((res) => setTimeout(res, retry.everyMs));
+        }
+      }
+    };
+    const p = attempt()
       .then(
         () => {},
         (e) => {
