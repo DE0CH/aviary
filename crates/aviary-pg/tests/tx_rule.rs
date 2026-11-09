@@ -183,7 +183,7 @@ pub async fn calls<Io>(
     io: &Io,
 ) -> Result<(), aviary_pg::Error>
 where
-    Io: hyper::rt::Read + hyper::rt::Write + Unpin + Send + Clone + 'static,
+    Io: hyper::rt::Read + hyper::rt::Write + Unpin + Send + Sync + Clone + 'static,
 {
     $TX_OPEN
         let _ = c.http.post("http://hermit/v1/things").send().await;
