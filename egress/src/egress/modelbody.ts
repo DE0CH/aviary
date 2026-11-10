@@ -4,7 +4,7 @@
 // times its size, which once took egress past its memory limit. Instead one strict pass over the bytes validates the
 // JSON and finds the top-level members; the output is slices of the original Buffer plus the few rewritten members,
 // so a request costs about its own size in memory.
-import type { ReasoningPlan } from "../common/config.ts";
+import type { ModelPlan } from "../common/config.ts";
 
 /** OpenRouter provider options every model request carries (docs: guides/features/zdr "Per-Request ZDR Enforcement",
  * guides/routing/provider-selection): only Zero Data Retention endpoints, none that collect data. Set over whatever the
@@ -27,10 +27,11 @@ interface Member {
   end: number; // just past the value
 }
 
-/** The body with FORCED_PROVIDER merged into `provider` and the model's thinking level from `plan` applied; null when
+/** The body with FORCED_PROVIDER merged into `provider`, the model's pinned providers from `plan` set as OpenRouter's
+ * `order` + `only` with no fallback (over the caller's), and its thinking level applied; null when
  * the body is not one valid JSON object (RFC 8259, UTF-8). Duplicate keys resolve as JSON.parse does (the last wins);
  * every occurrence of a rewritten key is dropped. */
-export function forceZdr(raw: Buffer, plan?: ReasoningPlan): ModelBody | null {
+export function forceZdr(raw: Buffer, plan?: ModelPlan): ModelBody | null {
   const members = topLevelMembers(raw);
   if (!members) return null;
   const last = (k: string) => members.findLast((m) => m.key === k);
@@ -39,7 +40,12 @@ export function forceZdr(raw: Buffer, plan?: ReasoningPlan): ModelBody | null {
   const modelM = last("model");
   const model = value(modelM);
   const p = value(last("provider"));
-  const provider = { ...(p && typeof p === "object" && !Array.isArray(p) ? p : {}), ...FORCED_PROVIDER };
+  const pinned = typeof model === "string" ? entryOf(plan, model)?.providers : undefined;
+  const provider = {
+    ...(p && typeof p === "object" && !Array.isArray(p) ? p : {}),
+    ...(pinned ? { order: pinned, only: pinned, allow_fallbacks: false } : {}),
+    ...FORCED_PROVIDER,
+  };
   const drop = new Set(["provider"]);
   const add: Record<string, unknown> = { provider };
 
@@ -68,11 +74,16 @@ export function forceZdr(raw: Buffer, plan?: ReasoningPlan): ModelBody | null {
 }
 
 /** The thinking level for a request: chat turns carry tools, titles and Claude Code's quick calls don't. */
-function planned(plan: ReasoningPlan | undefined, model: string, withTools: boolean): string | undefined {
+function planned(plan: ModelPlan | undefined, model: string, withTools: boolean): string | undefined {
+  const entry = entryOf(plan, model);
+  return withTools ? entry?.withTools : entry?.withoutTools;
+}
+
+/** A model's plan entry, by its full id or, as clients may send it, without the provider prefix. */
+function entryOf(plan: ModelPlan | undefined, model: string): ModelPlan[string] | undefined {
   if (!plan) return undefined;
   const bare = (m: string) => m.slice(m.lastIndexOf("/") + 1);
-  const entry = plan[model] ?? Object.entries(plan).find(([id]) => bare(id) === model)?.[1];
-  return withTools ? entry?.withTools : entry?.withoutTools;
+  return plan[model] ?? Object.entries(plan).find(([id]) => bare(id) === model)?.[1];
 }
 
 /** Whether a member's value is a non-empty array. */

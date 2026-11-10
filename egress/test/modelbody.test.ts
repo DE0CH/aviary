@@ -22,11 +22,11 @@ function reference(raw: string, plan?: Parameters<typeof forceZdr>[1]): Record<s
   if (!b || typeof b !== "object" || Array.isArray(b)) return null;
   const o = b as Record<string, unknown>;
   const p = o.provider && typeof o.provider === "object" && !Array.isArray(o.provider) ? o.provider : {};
-  o.provider = { ...p, ...FORCED_PROVIDER };
+  const bare = (m: string) => m.slice(m.lastIndexOf("/") + 1);
+  const entry = plan && typeof o.model === "string" ? (plan[o.model] ?? Object.entries(plan).find(([id]) => bare(id) === o.model)?.[1]) : undefined;
+  const pin = entry?.providers ? { order: entry.providers, only: entry.providers, allow_fallbacks: false } : {};
+  o.provider = { ...p, ...pin, ...FORCED_PROVIDER };
   if (plan && typeof o.model === "string") {
-    const bare = (m: string) => m.slice(m.lastIndexOf("/") + 1);
-    const model = o.model;
-    const entry = plan[model] ?? Object.entries(plan).find(([id]) => bare(id) === model)?.[1];
     const effort = Array.isArray(o.tools) && o.tools.length ? entry?.withTools : entry?.withoutTools;
     if (effort === "none") {
       o.thinking = { type: "disabled" };
@@ -36,7 +36,15 @@ function reference(raw: string, plan?: Parameters<typeof forceZdr>[1]): Record<s
   return o;
 }
 
-const PLAN = { "deepseek/deepseek-v4.1-flash-1017": { withTools: "high" as const, withoutTools: "none" as const } };
+const PLAN = { "deepseek/deepseek-v4.1-flash-1017": { withTools: "high" as const, withoutTools: "none" as const, providers: ["deepinfra/fp8", "morph/fp8"] } };
+
+test("forceZdr: a model's pinned providers become order + only with no fallback, over the caller's", () => {
+  const pin = { order: ["deepinfra/fp8", "morph/fp8"], only: ["deepinfra/fp8", "morph/fp8"], allow_fallbacks: false };
+  const body = { model: "deepseek/deepseek-v4.1-flash-1017", provider: { only: ["open-inference/fp4"], allow_fallbacks: true, sort: "price", zdr: false } };
+  assert.deepEqual(out(JSON.stringify(body), PLAN)!.provider, { sort: "price", ...pin, ...FORCED_PROVIDER });
+  assert.deepEqual(out('{"model":"deepseek-v4.1-flash-1017"}', PLAN)!.provider, { ...pin, ...FORCED_PROVIDER }, "the bare id too");
+  assert.deepEqual(out('{"model":"z-ai/glm-5.3","provider":{"only":["x"]}}', PLAN)!.provider, { only: ["x"], ...FORCED_PROVIDER }, "an unpinned model is left to OpenRouter");
+});
 
 test("forceZdr: provider options merged over the caller's, non-objects refused", () => {
   for (const bad of ["[]", "{", "", "null", "1", '"x"', "{} {}", '{"a":1,}', "{'a':1}", '{"a":01}', '{"a":1.}', '{"a":"\\x"}', '{"a":"\t"}'])

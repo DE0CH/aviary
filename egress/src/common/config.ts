@@ -5,8 +5,9 @@
 /** OpenRouter's reasoning levels; "none" turns thinking off. */
 export type ReasoningEffort = "none" | "low" | "medium" | "high" | "max";
 
-/** How egress sets thinking per model: `withTools` for chat turns, `withoutTools` for tool-less calls. */
-export type ReasoningPlan = Record<string, { withTools?: ReasoningEffort; withoutTools?: ReasoningEffort }>;
+/** What egress sets per model: thinking (`withTools` for chat turns, `withoutTools` for tool-less calls) and the
+ * OpenRouter providers its requests may use, in order (`providers`: endpoint slugs such as "deepinfra/fp8"). */
+export type ModelPlan = Record<string, { withTools?: ReasoningEffort; withoutTools?: ReasoningEffort; providers?: string[] }>;
 
 /** Expand ${VAR} from `vars` (default process.env); an unset variable is an error, never an empty string. */
 export function expandEnv(s: string, vars: Record<string, string | undefined> = process.env): string {

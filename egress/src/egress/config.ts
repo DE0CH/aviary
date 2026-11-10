@@ -3,7 +3,7 @@
 // where it is used (expandEnv) and checked once at start.
 import { parseExit, type ExitConfig } from "./exit.ts";
 import { readFileSync } from "node:fs";
-import { expandEnv, type ReasoningEffort, type ReasoningPlan } from "../common/config.ts";
+import { expandEnv, type ReasoningEffort, type ModelPlan } from "../common/config.ts";
 
 export const EGRESS_CONFIG_PATH = "/etc/egress/egress.json";
 const REASONING: ReadonlySet<string> = new Set(["none", "low", "medium", "high", "max"]);
@@ -13,6 +13,11 @@ export interface EgressModel {
   label: string;
   /** Thinking level for this model's chat turns (requests that carry tools); absent = the model's own default. */
   reasoning?: ReasoningEffort;
+  /** OpenRouter endpoints (provider slugs, e.g. "deepinfra/fp8") this model's requests may use, in order of preference;
+   * absent = OpenRouter picks among every ZDR endpoint. Pinned because endpoints differ in how they render a
+   * conversation: one dropped part of long tool-and-image histories and the model took its own tool results for the
+   * user's words (2026-11-10). */
+  providers?: string[];
 }
 
 /** Which verified fact an `identityHeaders` header carries. */
@@ -104,6 +109,8 @@ export function parseEgressConfig(raw: unknown): EgressConfig {
     need("models[].id", m?.id);
     need(`models[${m.id}].label`, m.label);
     if (m.reasoning !== undefined && !REASONING.has(m.reasoning)) throw new Error(`egress config: models[${m.id}].reasoning must be one of ${[...REASONING].join(", ")}`);
+    if (m.providers !== undefined && (!Array.isArray(m.providers) || !m.providers.length || !m.providers.every((p) => typeof p === "string" && /^[a-z0-9][a-z0-9./-]*$/.test(p))))
+      throw new Error(`egress config: models[${m.id}].providers must be a non-empty list of OpenRouter provider slugs`);
   }
   if (!c.models.some((m: EgressModel) => m.id === c.defaultModel)) throw new Error("egress config: defaultModel must be one of models");
   if (c.titleReasoning !== undefined && !REASONING.has(c.titleReasoning)) throw new Error(`egress config: titleReasoning must be one of ${[...REASONING].join(", ")}`);
@@ -149,7 +156,7 @@ export function parseEgressConfig(raw: unknown): EgressConfig {
   };
   return {
     product: { name: c.product.name, locale: typeof c.product.locale === "string" && c.product.locale ? c.product.locale : "en" },
-    models: c.models.map((m: EgressModel) => ({ id: m.id, label: m.label, ...(m.reasoning ? { reasoning: m.reasoning } : {}) })),
+    models: c.models.map((m: EgressModel) => ({ id: m.id, label: m.label, ...(m.reasoning ? { reasoning: m.reasoning } : {}), ...(m.providers ? { providers: [...m.providers] } : {}) })),
     defaultModel: c.defaultModel,
     smallModel: typeof c.smallModel === "string" && c.smallModel ? c.smallModel : c.defaultModel,
     titleModel: typeof c.titleModel === "string" && c.titleModel ? c.titleModel : c.defaultModel,
@@ -177,10 +184,12 @@ export function allowedModels(c: EgressConfig): string[] {
   return [...new Set([...c.models.map((m) => m.id), c.defaultModel, c.smallModel, c.titleModel])];
 }
 
-/** Thinking per model: `withTools` for chat turns, `withoutTools` for tool-less calls (titles). */
-export function reasoningPlan(c: EgressConfig): ReasoningPlan {
-  const plan: ReasoningPlan = {};
+/** Per model: thinking (`withTools` for chat turns, `withoutTools` for tool-less calls such as titles) and the pinned
+ * providers. */
+export function modelPlan(c: EgressConfig): ModelPlan {
+  const plan: ModelPlan = {};
   for (const m of c.models) if (m.reasoning) plan[m.id] = { ...plan[m.id], withTools: m.reasoning };
+  for (const m of c.models) if (m.providers) plan[m.id] = { ...plan[m.id], providers: [...m.providers] };
   if (c.titleReasoning) plan[c.titleModel] = { ...plan[c.titleModel], withoutTools: c.titleReasoning };
   return plan;
 }

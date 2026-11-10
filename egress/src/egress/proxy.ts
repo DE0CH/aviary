@@ -18,10 +18,10 @@ import { connect as netConnect, type Socket } from "node:net";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import type { Duplex } from "node:stream";
-import { expandEnv, type ReasoningPlan } from "../common/config.ts";
+import { expandEnv, type ModelPlan } from "../common/config.ts";
 import { logError } from "../common/log.ts";
 import { BUDGET_ERROR_TYPE, budgetMessage, type BudgetGate } from "./budget.ts";
-import { allowedModels, isSandboxRoute, modelsAnswer, reasoningPlan, type EgressConfig, type EgressRoute } from "./config.ts";
+import { allowedModels, isSandboxRoute, modelsAnswer, modelPlan, type EgressConfig, type EgressRoute } from "./config.ts";
 import { DiskCache } from "./cache.ts";
 import { EgressLog, type EgressRow } from "./egresslog.ts";
 import { HostPolicy } from "./allowlist.ts";
@@ -179,7 +179,7 @@ export class Egress {
   readonly #sockets = new Set<Duplex>();
   readonly #bodies: BodyBudget;
   readonly #models: string[];
-  readonly #reasoning: ReasoningPlan;
+  readonly #modelPlan: ModelPlan;
   readonly #routes: Record<"model" | "tools", EgressRoute>;
   /** the sandbox routes by name (3.11.8) */
   readonly #sandboxRoutes: Map<string, EgressRoute>;
@@ -212,7 +212,7 @@ export class Egress {
     this.#self = new Set([...c.selfHosts, "127.0.0.1", "localhost"].map(normHost));
     this.#apt = new Set((o.aptHosts ?? ["deb.debian.org", "security.debian.org"]).map(normHost));
     this.#models = allowedModels(c);
-    this.#reasoning = reasoningPlan(c);
+    this.#modelPlan = modelPlan(c);
     this.#routes = { model: c.routes.find((r) => r.name === "model")!, tools: c.routes.find((r) => r.name === "tools")! };
     this.#sandboxRoutes = new Map(c.routes.filter(isSandboxRoute).map((r) => [r.name, r]));
     const internal = o.internal ?? { magpie: "http://magpie", hermit: "http://hermit" };
@@ -558,7 +558,7 @@ export class Egress {
         release = await this.#bodies.take(declared ?? FIXED_BODY_MAX);
         // forcedBody is the one reference to the body: it is dropped once the body is sent (below), before the budget
         // is given back, while the response may stream for minutes
-        forcedBody = await readModelBody(req, this.#reasoning);
+        forcedBody = await readModelBody(req, this.#modelPlan);
         if (forcedBody === "too-large") {
           this.#modelError(res, 413, "request_too_large", `egress: a model request body is limited to ${FIXED_BODY_MAX} bytes`);
           return this.#deny(row, "deny:upload", 413);
@@ -1073,7 +1073,7 @@ export class Egress {
 
 /** A model request's body read and rewritten (modelbody.ts), in a frame of its own so that nothing but the result
  * keeps the raw bytes alive. */
-async function readModelBody(req: IncomingMessage, plan: ReasoningPlan | undefined): Promise<ModelBody | "too-large" | "invalid"> {
+async function readModelBody(req: IncomingMessage, plan: ModelPlan | undefined): Promise<ModelBody | "too-large" | "invalid"> {
   const raw = await readBody(req, FIXED_BODY_MAX);
   if (raw === null) return "too-large";
   return forceZdr(raw, plan) ?? "invalid";

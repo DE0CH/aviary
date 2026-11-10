@@ -292,6 +292,9 @@ test("egress.json: model and tools, plus sandbox routes with their prefixes; sma
   assert.throws(() => parseEgressConfig({ ...base, routes: [cfg.routes[0], { ...cfg.routes[1], identityHeaders: { "X-C": "person" } }] }), /sandbox routes only/);
   assert.throws(() => parseEgressConfig({ ...base, routes: [...cfg.routes, cfg.routes[2]] }), /labels twice/);
   assert.throws(() => parseEgressConfig({ ...base, routes: [cfg.routes[1]] }), /no route model/);
+  const pinned = (providers: unknown) => parseEgressConfig({ ...base, models: [{ id: "a/m", label: "M", providers }] });
+  assert.deepEqual(pinned(["deepinfra/fp8", "morph/fp8"]).models[0]!.providers, ["deepinfra/fp8", "morph/fp8"]);
+  for (const bad of [[], "deepinfra", [""], ["DeepInfra"], [1]]) assert.throws(() => pinned(bad), /providers/, JSON.stringify(bad));
   assert.throws(() => parseEgressConfig({ ...base, routes: [{ ...cfg.routes[0], model: false }, cfg.routes[1]] }), /model: true/);
   assert.throws(() => parseEgressConfig({ ...base, contextTokens: 0 }), /contextTokens/);
   assert.throws(() => parseEgressConfig({ ...base, budget: { limitUsd: -1, since: "2026-10-21T00:00:00Z" } }), /limitUsd/);
