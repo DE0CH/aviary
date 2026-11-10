@@ -74,7 +74,9 @@ decided in this order:
      $OPENROUTER_API_KEY` and **forces zero data retention into every request body** (`provider.zdr: true`,
      `provider.data_collection: "deny"`, set over whatever the caller sent; a body that is not one valid JSON object
      is refused with 400, `deny:body`; no config turns this off: `forceZdr` in `chat/src/egress/modelbody.ts`, called
-     from `proxy.ts`), applies the configured thinking level, refuses a model outside `models[].id`, `defaultModel`,
+     from `proxy.ts`), pins a model's providers when `models[].providers` lists them (OpenRouter endpoint slugs such
+     as `deepinfra/fp8`, set as `provider.order` + `provider.only` with `allow_fallbacks: false`, over the caller's;
+     endpoints differ in how they render a long tool-and-image conversation), applies the configured thinking level, refuses a model outside `models[].id`, `defaultModel`,
      `smallModel`, `titleModel` (400 `deny:model`) and every call once the budget is used up (402 `budget_exceeded`,
      `deny:budget`), streams the answer back and logs its `usage.cost` (kind `model`). No `Aviary-*` header (no staff
      identity) reaches OpenRouter. **Memory:** a request carries the whole conversation, base64 images included; the
