@@ -8,14 +8,14 @@ an image of this repo. It is a second runtime next to the task runtime in `serve
 **What it is (Deyao, 2026-10-21): a read-only data-analysis tool, not an assistant that acts.** It searches, reads
 and analyses (news, social posts, the instance's own data, uploaded files, a sandbox for code and data work); it never
 sends, posts or changes anything outside. So nobody is ever asked anything: every tool is read-only (outward actions
-such as sending mail are not offered at all), and the sandbox's internet access is decided automatically by an
-allowlist with no manual override.
+such as sending mail are not offered at all), and the sandbox's internet access is decided automatically by a
+deny list with no manual override.
 
 ## Components (one image `ghcr.io/de0ch/jarvis3-chat`, role chosen by the first argument: `args: [egress]`)
 
 | Role | What | Replicas |
 |---|---|---|
-| `egress` | The sandbox gateway (aviary's contract): hermit's sandbox tokens checked locally, the fixed names `magpie`, `hermit`, `model` (OpenRouter with forced ZDR and the budget), `tools`; the package mirror; the automatic sandbox allowlist with threat-intel DNS; its own database `egress` | 2, rolling, drained |
+| `egress` | The sandbox gateway (aviary's contract): hermit's sandbox tokens checked locally, the fixed names `magpie`, `hermit`, `model` (OpenRouter with forced ZDR and the budget), `tools`; the package mirror; the automatic sandbox deny list with threat-intel DNS; its own database `egress` | 2, rolling, drained |
 | `tools` | REST API (`/v1/tools`) for aviary's gateway: web search/fetch, social search, AnyAPI, upstream REST APIs' tools; read-only tools only; owner from `Aviary-Sandbox-Person`, liveness from hermit; its own database `tools` | 2, rolling, drained |
 
 Any other first argument (or none) refuses to start (exit 2).
@@ -29,7 +29,7 @@ egress :3128 (hermit's sbx token checked locally, liveness from hermit)
   ├─ http://model/v1/messages ─▶ OpenRouter (key injected, ZDR forced, budget)
   ├─ http://tools/v1/tools/<name> ─▶ tools ─▶ Exa / TikHub / Wisers relay / yyc-mcp
   ├─ self hosts (selfHosts, 127.0.0.1, localhost) /mirror/… ─▶ PyPI / npm mirror
-  └─ anything else ── sandbox allowlist → threat DNS → public internet
+  └─ anything else ── sandbox deny list → threat DNS → public internet
 State: egress's own database `egress` (egress_log, budget_state, token_keys); tools' own database `tools` (tool_calls).
 ```
 
@@ -101,10 +101,10 @@ decided in this order:
    `GET /mirror/npm/...` (registry.npmjs.org, tarball URLs rewritten to `http://<the request's Host>/mirror/npm/…`);
    immutable artefacts cached, index pages for 5 minutes. Anything else: 404. A self host never reaches the internet
    checks, so the VIP is never refused as a private address.
-4. **The internet**: ports 80 and 443 (`deny:port`), the sandbox allowlist (below; `deny:host`, `deny:denylist`,
+4. **The internet**: ports 80 and 443 (`deny:port`), the sandbox internet rules (below; `deny:denylist`,
    `deny:config`), the threat-intel resolvers (`deny:threat`, `deny:nxdomain`, `deny:dns`), public addresses only
    (`deny:address`; private, loopback, link-local, cluster and `blockCidrs` ranges refused after resolution). A refusal
-   is a 403 with a plain-text body: "egress: <host> is not on the sandbox's internet allowlist, and it cannot be enabled
+   is a 403 with a plain-text body: "egress: <host> is blocked for the sandbox (a file-sharing, upload, anonymiser or similar service), and it cannot be enabled
    from the chat. … To read a web page, use the web_fetch and web_search tools instead of the sandbox." Plain-HTTP
    GETs to `deb.debian.org`/`security.debian.org` are cached (apt). **The upload cap** (`maxUploadBytes`, 8 MiB) counts
    only internet traffic, a CONNECT tunnel's or a forward request's client-to-upstream bytes (`deny:upload`, the
@@ -121,7 +121,7 @@ the same answer sandboxes get at `http://model/v1/aviary/models`; `GET /v1/ops/s
 admin): spend and the budget, refusals and errors (aviary platform spec 15.3; owners are emails);
 `GET /v1/admin/egress-log?conversation=&since=&limit=` (admin): one conversation's rows.
 
-**Health (9090):** `/healthz`; `/readyz` 503 until migrations are verified, the allowlist is loaded and tokens can be
+**Health (9090):** `/healthz`; `/readyz` 503 until migrations are verified, the host lists are loaded and tokens can be
 verified (hermit's key set fetched once, or, while hermit is away at this start, the set stored in `token_keys`), and
 while draining (not when Postgres or hermit fail later); `/version` (`builtAt` from the image's `CHAT_BUILT_AT`);
 `/metrics` (the counters above, `egress_log_buffered`, `egress_log_dropped_total{kind}`,
@@ -181,63 +181,49 @@ identityHeaders?}`; a sandbox route needs `allowPaths`), `selfHosts`,
 `ghcr.io/de0ch/aviary-testing` at the aviary commit in `chat/aviary.ref`, which must have a release) on the chat image built once by the `chat-image` job; `images` pushes that same image (its id
 checked), only when the tests and both suites pass.
 
-### The sandbox allowlist (`chat/egress-allowlist/`, `chat/src/egress/allowlist.ts`, `threatdns.ts`)
+### The sandbox internet rules (`chat/egress-allowlist/`, `chat/src/egress/allowlist.ts`, `threatdns.ts`)
 
 Which hosts a sandbox may reach is decided automatically; there is no per-conversation grant and no staff override.
+**Every host passes except those the deny list names** (Deyao, 2026-11-10: fewer false refusals; until then only
+about 48,700 listed sites passed).
 
-- **Matching.** Entries are `host` (that name only) or `.domain` (the domain and every name under it). A host passes
-  when its most specific allow entry is more specific than its most specific deny entry (an exact entry beats a
-  suffix entry of the same name; equally specific → deny). So `.google.com` lets `www.google.com` through while
-  `.drive.google.com` refuses Drive, and the exact `raw.githubusercontent.com` passes under the denied
+- **Matching.** Entries are `host` (that name only) or `.domain` (the domain and every name under it). A host is
+  refused (`deny:denylist`) when a deny entry names it, unless an allow entry is more specific than its most specific
+  deny entry (an exact entry beats a suffix entry of the same name; equally specific → deny). So `.drive.google.com`
+  refuses Drive while `www.google.com` passes, and the exact `raw.githubusercontent.com` passes under the denied
   `.githubusercontent.com`. Config `egress.denyHosts` wins over everything (`deny:config`).
-- **Allow = generated `allow.txt` + config `egress.defaultAllowedHosts`.** `allow.txt` is built by
-  `chat/egress-allowlist/generate.py` (Python standard library) from:
-  - `sources/dev.txt`: package registries, code hosts, toolchains, container registries, distro mirrors, merged from
-    two lists made for AI coding sandboxes: OpenAI Codex cloud's "Common dependencies" preset
-    (https://developers.openai.com/codex/cloud/agent-internet) and Claude Code on the web's "Default allowed domains"
-    (https://code.claude.com/docs/en/cloud-environments), plus the hosts `docker pull` really uses (traced:
-    `registry-1.docker.io`, `auth.docker.io`, `index.docker.io`, `production.cloudflare.docker.com`,
-    `production.cloudfront.docker.com`, Docker's R2 bucket host; `ghcr.io`, `pkg-containers.githubusercontent.com`).
-    Left out of both: catch-alls that contain upload services (`google.com`, `microsoft.com`, `azure.com`,
-    `*.amazonaws.com`, `*.googleapis.com` storage, `*.r2.cloudflarestorage.com`, `gist.github.com`, telemetry intake).
-    Domain names are facts; both sources are public documentation.
-  - `sources/yyc.txt`: a short curated list of the news and data sources YYC staff use (HK/Macao/mainland government
-    and statistics sites under `.gov.hk`, `.gov.mo`, `.gov.cn`, `data.gov.hk`, `censtatd.gov.hk`, `info.gov.hk`; HK,
-    mainland and international news outlets; World Bank, IMF, OECD, UN, Wikipedia), from the hosts YYC's news-stream
-    collects from.
-  - **A ranked set: the top 50,000 registrable domains by the Tranco method** (Dowdall rule over popularity lists,
-    Le Pochat et al., NDSS 2019, https://tranco-list.eu) computed over the providers whose terms allow any use: the
-    Chrome UX Report (CC BY-SA 4.0, via github.com/zakird/crux-top-lists), the Majestic Million (CC BY 3.0) and the
-    Cisco Umbrella top 1M (free of charge). The published Tranco list itself is not used: it also folds in Cloudflare
-    Radar (CC BY-NC 4.0, non-commercial) and Farsight. Registrable domains by the Public Suffix List's ICANN section
-    (MPL 2.0). Newly registered domains never make the ranked set.
-  - **Minus risky categories** from the UT1 web classification (Université Toulouse Capitole, CC BY-SA 4.0,
-    https://dsi.ut-capitole.fr/blacklists/): malware, phishing, cryptojacking, ddos, dialer, stalkerware, hacking,
-    warez, adult, mixed_adult, filehosting, webhosting, redirector (also its strict/strong variants), shortener, proxy,
-    vpn, residential-proxies, doh, dynamic-dns, webmail, chat, remote-control. A listed ranked domain is dropped; a
-    listed subdomain of a kept domain goes on the deny list (adult: drop only).
-- **Deny = generated `deny.txt`:** `sources/deny.txt` (curated: pastebins and code-sharing with anonymous upload,
-  anonymous file drops and file sharing incl. Google Drive/Docs/Forms and Apps Script, public object storage,
-  request catchers and webhooks incl. Discord/Slack/Telegram bot APIs, tunnels, anyone-runs-a-server hosting,
-  form builders, webmail) + the UT1 subdomains above + every Public Suffix List **private-section** suffix under an
-  allowed domain (user-content platforms where anyone gets a subdomain: `.workers.dev`, `.github.io`,
-  `.herokuapp.com`, …). Upload to a place that takes it without an account of its own is the main exfiltration
-  path a prompt-injected command could use, so these are refused even though they are popular.
-- **Size and version (2026-10-21):** allow 48,664 entries (105 dev + 78 YYC curated; ranked: 48,856 kept of 50,000
-  after 1,144 dropped by category, less the 269 the deny list names exactly, e.g. `.pastebin.com`, `.amazonaws.com`,
-  CDN/platform domains such as `.akamaized.net`, `.azurewebsites.net`), deny 14,653. Each file's header carries `# version: <date> <digest>` and the sources;
-  egress logs the version at start.
+- **Deny = generated `deny.txt`**, built by `chat/egress-allowlist/generate.py` (Python standard library) from:
+  - `sources/deny.txt` (curated: pastebins and code-sharing with anonymous upload, anonymous file drops and file
+    sharing incl. Google Drive/Docs/Forms and Apps Script, public object storage (`.amazonaws.com`,
+    `.storage.googleapis.com`, `.r2.cloudflarestorage.com`, …), request catchers and webhooks incl. Discord/Slack/
+    Telegram bot APIs, tunnels, anyone-runs-a-server hosting, form builders, webmail);
+  - every domain in these categories of the UT1 web classification (Université Toulouse Capitole, CC BY-SA 4.0,
+    https://dsi.ut-capitole.fr/blacklists/): ddos, dialer, stalkerware, hacking, warez, filehosting, webhosting,
+    redirector (also its strict/strong variants; it holds the open web proxies), shortener, proxy, vpn,
+    residential-proxies, doh, dynamic-dns, webmail, chat, remote-control. Malware, phishing and cryptojacking are left
+    to the threat-intel DNS below (fresher, and 240,000 entries the list would carry); adult is not denied (no
+    exfiltration risk);
+  - every Public Suffix List **private-section** suffix (MPL 2.0): user-content platforms where anyone gets a
+    subdomain (`.workers.dev`, `.github.io`, `.blogspot.com`, `.cloudfront.net`, `.herokuapp.com`, …).
+  Upload to a place that takes it without an account of its own is the main exfiltration path a prompt-injected
+  command could use, so these are refused even though they are popular. The upload cap (8 MiB) applies to every host.
+- **Allow = generated `allow.txt` + config `egress.defaultAllowedHosts`:** exceptions to the deny list only.
+  `allow.txt` is the curated `sources/dev.txt` (package registries, code hosts, toolchains, container registries,
+  distro mirrors, from OpenAI Codex cloud's "Common dependencies" preset and Claude Code on the web's "Default allowed
+  domains", plus the hosts `docker pull` really uses) and `sources/yyc.txt` (the news and data sources YYC staff use).
+- **Size and version (2026-11-10):** deny 129,250 entries (curated 194, UT1 128,245, platforms 3,458), allow 183.
+  Each file's header carries `# version: <date> <digest>` and the sources; egress logs the version at start.
 - **Refresh:** workflow `egress-allowlist` (Mondays) runs `generate.py`, commits to main only when an entry changed,
   and dispatches the `chat` workflow so the images carry the new lists; an instance takes them with its next jarvis3
-  pin bump. Change the curated sets in `sources/` and run `python3 -I chat/egress-allowlist/generate.py` (about a
-  minute and 100 MB of downloads; `--cache DIR` keeps them).
+  pin bump. Change the curated sets in `sources/` and run `python3 -I chat/egress-allowlist/generate.py` (seconds and
+  10 MB of downloads; `--cache DIR` keeps them).
 - **Threat-intel DNS on every connection:** egress resolves sandbox destinations through Cloudflare's malware-blocking
   resolvers (1.1.1.2, 1.0.0.2: a blocked name answers 0.0.0.0/::) with Quad9 (9.9.9.9: NXDOMAIN for a blocked name)
   as fallback, over plain DNS from the egress pod. 0.0.0.0/:: → `deny:threat`; NXDOMAIN/no address → `deny:nxdomain`;
   no resolver answering → `deny:dns` (fail closed). Answers are cached for their TTL (30 s – 5 min). The connection
   goes to exactly the checked address, after the private-address check.
 - **The exit (`exit` in egress.json, optional; `chat/src/egress/exit.ts`):** `{"socks": "host:port", "sandboxProfile":
-  "sandbox"}`. With it, egress resolves no internet name and checks no address itself: after the port and allowlist
+  "sandbox"}`. With it, egress resolves no internet name and checks no address itself: after the port and deny list
   checks it hands the connection to that SOCKS5 server by name (CONNECT tunnels and plain-HTTP forwards, SOCKS5
   username = `sandboxProfile`), and the server resolves through malware-blocking DNS, refuses non-public addresses and
   connects. Its refusals are logged as the same decisions: reply `0x80` → `deny:threat`, `0x04` → `deny:nxdomain`,
@@ -248,8 +234,8 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
 - **Residual risk, accepted:** an allowed site that takes uploads with credentials the attacker supplies (an API
   token planted in injected content, e.g. for GitHub) is still reachable; the sandbox holds no secrets, staff data in
   the workspace is what such an upload could carry, and the upload cap bounds it.
-- **The agent is told** in its managed CLAUDE.md (the instance's prompt; YYC: hermit's configuration): only sites on
-  the allowlist are reachable, a refused site cannot be enabled, and web pages are read with the `web` skill (the
+- **The agent is told** in its managed CLAUDE.md (the instance's prompt; YYC: hermit's configuration): most sites are
+  reachable, file-sharing, upload and similar services are blocked, a refused site cannot be enabled, and web pages are read with the `web` skill (the
   tools' web search and fetch, server-side, any public site).
 
 ### `tools` (`node src/main.ts tools`; ports 8080 REST, 9090 health)
