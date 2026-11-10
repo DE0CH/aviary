@@ -1,8 +1,9 @@
-// The sandbox allowlist (docs/CHAT.md, "The sandbox allowlist"): which hosts a sandbox may reach, decided
-// automatically with no per-conversation or staff override. Entries are `host` (that name only) or `.domain` (the
-// domain and every name under it). A host passes when its most specific allow entry is more specific than its most
-// specific deny entry (so `.google.com` allows www.google.com while `.drive.google.com` denies Drive, and an equally
-// specific deny wins); config `egress.denyHosts` wins over everything.
+// The sandbox internet rules (docs/CHAT.md, "The sandbox internet rules"): which hosts a sandbox may reach, decided
+// automatically with no per-conversation or staff override. Every host passes except those the deny list names
+// (Deyao, 2026-11-10: fewer false refusals). Entries are `host` (that name only) or `.domain` (the domain and every
+// name under it). A denied host still passes when an allow entry is more specific than its most specific deny entry
+// (so the exact raw.githubusercontent.com passes under the denied `.githubusercontent.com`, and an equally specific
+// deny wins); config `egress.denyHosts` wins over everything.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { normHost } from "./netguard.ts";
@@ -59,7 +60,7 @@ function versionOf(text: string): string {
 
 export type HostVerdict =
   | { allow: true }
-  | { allow: false; reason: "deny:host" | "deny:denylist" | "deny:config" };
+  | { allow: false; reason: "deny:denylist" | "deny:config" };
 
 export class HostPolicy {
   readonly allow: HostRules;
@@ -92,9 +93,9 @@ export class HostPolicy {
 
   check(host: string): HostVerdict {
     if (this.configDeny.match(host) > 0) return { allow: false, reason: "deny:config" };
-    const a = this.allow.match(host);
+    // every host passes unless a deny entry at least as specific as its best allow entry names it (Deyao, 2026-11-10)
     const d = this.deny.match(host);
-    if (a > d) return { allow: true };
-    return { allow: false, reason: d > 0 ? "deny:denylist" : "deny:host" };
+    if (d === 0 || this.allow.match(host) > d) return { allow: true };
+    return { allow: false, reason: "deny:denylist" };
   }
 }

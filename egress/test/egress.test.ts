@@ -59,6 +59,7 @@ const RESOLVE: Record<string, string[]> = {
   "paste.ranked.test": ["127.0.0.1"],
   "nope.ranked.test": ["127.0.0.1"],
   "unknown.test": ["127.0.0.1"],
+  "unlisted.test": ["127.0.0.1"],
   "evil.test": ["10.0.0.5", "fd00::1"],
 };
 
@@ -87,7 +88,7 @@ function options(o: Partial<EgressOptions> & { db: typeof t.db; cacheDir: string
     config: cfg,
     log: new EgressLog(db),
     tokens,
-    policy: new HostPolicy({ allow: ["allowed.test", "evil.test", ".apt.test", ".ranked.test", "malware.test"], deny: [".paste.ranked.test"], configDeny: ["nope.ranked.test"] }),
+    policy: new HostPolicy({ allow: ["allowed.test", "evil.test", ".apt.test", ".ranked.test", "malware.test"], deny: [".paste.ranked.test", "other.test", "unknown.test"], configDeny: ["nope.ranked.test"] }),
     pairTokens: { magpie: MAGPIE_BEARER, hermit: HERMIT_BEARER },
     cacheBytes: 50 * 1024 * 1024,
     guard: new AddressGuard([], ["127.0.0.1/32"]),
@@ -785,7 +786,7 @@ test("sandbox route (labels): its credential injected, the conversation header s
 
 // ---- the internet -----------------------------------------------------------------------------------------------
 
-test("CONNECT: identity, allowlist, ports and addresses are enforced", async () => {
+test("CONNECT: identity, deny list, ports and addresses are enforced", async () => {
   assert.equal((await connectVia(`allowed.test:${tlsPort}`)).status, 407);
   assert.equal((await connectVia(`allowed.test:${tlsPort}`, basic("wrong"))).status, 403);
   const denied = await connectVia(`other.test:${tlsPort}`, basic(sb.token));
@@ -820,16 +821,19 @@ test("CONNECT: an allowed host gets a TLS tunnel, and the call is logged with by
   assert.equal(r.at(-1).conversation_id, sb.claims.conversationId);
   assert.ok(Number(r.at(-1).bytes_up) > 0 && Number(r.at(-1).bytes_down) > 0);
   const denials = (await rows()).filter((x) => x.kind === "connect" && x.decision.startsWith("deny:")).map((x) => x.decision);
-  for (const d of ["deny:auth", "deny:host", "deny:port", "deny:address"]) assert.ok(denials.includes(d), d);
+  for (const d of ["deny:auth", "deny:denylist", "deny:port", "deny:address"]) assert.ok(denials.includes(d), d);
 });
 
-test("the sandbox allowlist through the proxy: suffix allow, deny list, config deny, threat DNS, all logged", async () => {
+test("the sandbox internet rules through the proxy: unlisted passes, deny list, config deny, threat DNS, all logged", async () => {
   const ok = await connectVia(`www.ranked.test:${tlsPort}`, basic(sb.token));
   assert.equal(ok.status, 200);
   ok.sock.destroy();
+  const unlisted = await connectVia(`unlisted.test:${tlsPort}`, basic(sb.token));
+  assert.equal(unlisted.status, 200, "a host no list names passes");
+  unlisted.sock.destroy();
   const paste = await connectVia(`paste.ranked.test:${tlsPort}`, basic(sb.token));
   assert.equal(paste.status, 403);
-  assert.match(paste.head, /not on the sandbox's internet allowlist/);
+  assert.match(paste.head, /is blocked for the sandbox/);
   assert.equal((await connectVia(`nope.ranked.test:${tlsPort}`, basic(sb.token))).status, 403);
   const mal = await connectVia(`malware.test:${tlsPort}`, basic(sb.token));
   assert.equal(mal.status, 403);
@@ -842,7 +846,8 @@ test("the sandbox allowlist through the proxy: suffix allow, deny list, config d
   assert.deepEqual(decision("paste.ranked.test"), ["deny:denylist"]);
   assert.deepEqual(decision("nope.ranked.test"), ["deny:config"]);
   assert.deepEqual(decision("malware.test"), ["deny:threat"]);
-  assert.deepEqual(decision("unknown.test"), ["deny:host"]);
+  assert.deepEqual(decision("unknown.test"), ["deny:denylist"]);
+  assert.deepEqual(decision("unlisted.test"), ["allow"]);
 });
 
 test("absolute-URI HTTP is forwarded; apt-style GETs are cached", async () => {
@@ -943,7 +948,7 @@ test("exit: tunnels and plain HTTP go out by name with the sandbox profile; its 
     const gone = await connectVia(`www.ranked.test:${tlsPort}`, basic(sb.token), p);
     assert.equal(gone.status, 403);
     assert.match(gone.head, /does not exist/);
-    // the allowlist still decides first: an unlisted host never reaches the exit
+    // the deny list still decides first: a denied host never reaches the exit
     assert.equal((await connectVia(`other.test:${tlsPort}`, basic(sb.token), p)).status, 403);
     const h = await http(`http://allowed.test:${upPort}/plain`, { headers: pa(), port: p });
     assert.equal(h.status, 200);
@@ -1548,23 +1553,24 @@ test("allowlist: exact and suffix entries, most specific wins, an equal deny win
   assert.deepEqual(p.check("evil.githubusercontent.com"), { allow: false, reason: "deny:denylist" });
   assert.deepEqual(p.check("a.tie.test"), { allow: false, reason: "deny:denylist" }, "equally specific: deny wins");
   assert.deepEqual(p.check("data.gov.hk"), { allow: false, reason: "deny:config" });
-  assert.deepEqual(p.check("unknown.example"), { allow: false, reason: "deny:host" });
+  assert.deepEqual(p.check("unknown.example"), { allow: true }, "a host no list names passes");
 });
 
 test("allowlist: the generated lists shipped with the image", () => {
   const p = HostPolicy.load({ defaultAllowedHosts: ["extra.example"], denyHosts: ["www.bbc.com"], generated: true });
-  assert.ok(p.allow.size > 40_000 && p.deny.size > 1000, `${p.allow.size} / ${p.deny.size}`);
+  assert.ok(p.allow.size > 100 && p.deny.size > 100_000, `${p.allow.size} / ${p.deny.size}`);
   assert.match(p.version, /^\d{4}-\d{2}-\d{2} [0-9a-f]{16}$/);
   const allowed = ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "deb.debian.org", "github.com", "raw.githubusercontent.com",
     "registry-1.docker.io", "auth.docker.io", "production.cloudflare.docker.com", "ghcr.io", "pkg-containers.githubusercontent.com",
-    "www.scmp.com", "news.rthk.hk", "data.gov.hk", "www.censtatd.gov.hk", "www.info.gov.hk", "www.reuters.com", "extra.example"];
+    "www.scmp.com", "news.rthk.hk", "data.gov.hk", "www.censtatd.gov.hk", "www.info.gov.hk", "www.reuters.com", "extra.example",
+    "random-unknown-zz9q.com", "www.acnnewswire.com", "images.weserv.nl"];
   for (const h of allowed) assert.deepEqual(p.check(h), { allow: true }, h);
   const denied = ["pastebin.com", "transfer.sh", "webhook.site", "drive.google.com", "docs.google.com", "mega.nz", "dropbox.com",
-    "foo.workers.dev", "x.ngrok-free.app", "s3.amazonaws.com", "bit.ly", "gist.github.com", "discord.com", "random-unknown-zz9q.com", "www.bbc.com"];
+    "foo.workers.dev", "x.ngrok-free.app", "s3.amazonaws.com", "bit.ly", "gist.github.com", "discord.com", "corsproxy.io", "foo.blogspot.com", "www.bbc.com"];
   for (const h of denied) assert.equal(p.check(h).allow, false, h);
   assert.equal(p.check("www.bbc.com").allow === false && (p.check("www.bbc.com") as { reason: string }).reason, "deny:config");
   const off = HostPolicy.load({ defaultAllowedHosts: ["pypi.org"], denyHosts: [], generated: false });
-  assert.equal(off.check("github.com").allow, false);
+  assert.equal(off.check("github.com").allow, true);
   assert.equal(off.check("pypi.org").allow, true);
 });
 

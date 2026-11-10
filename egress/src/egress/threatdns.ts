@@ -1,4 +1,4 @@
-// Threat-intel DNS for every sandbox connection (docs/CHAT.md, "The sandbox allowlist"): names are resolved through
+// Threat-intel DNS for every sandbox connection (docs/CHAT.md, "The sandbox internet rules"): names are resolved through
 // malware-blocking resolvers, Cloudflare for Families "security" (1.1.1.2, 1.0.0.2: a blocked name answers 0.0.0.0 /
 // ::) with Quad9 (9.9.9.9: a blocked name answers NXDOMAIN) when Cloudflare does not answer. A blocked or nonexistent
 // name is refused; a resolver failure is refused too (fail closed). Answers are cached for their TTL (30 s to 5 min).

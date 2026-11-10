@@ -10,7 +10,7 @@
 //   2b. a sandbox route (platform 3.11.8: egress.json's other routes, YYC's `labels`): the same host rule, its
 //      `allowPaths` prefixes on a clean path, the same headers plus its own credential and `identityHeaders`;
 //   3. a self host (`selfHosts`, 127.0.0.1, localhost; any port): local paths, the package mirror;
-//   4. anything else: the internet rules (port, allowlist, threat DNS, public addresses, upload cap).
+//   4. anything else: the internet rules (port, deny list, threat DNS, public addresses, upload cap).
 // Every request but the magpie and hermit calls ends up in egress_log.
 import { Agent, createServer, request as httpRequest, type IncomingMessage, type OutgoingHttpHeaders, type Server, type ServerResponse } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -90,9 +90,8 @@ const INDEX_MAX_AGE = 5 * 60_000;
 
 /** What a sandbox (and so the agent) reads when a host is refused: plain, final, no one to ask. */
 export const denyText = (host: string): string =>
-  `egress: ${host} is not on the sandbox's internet allowlist, and it cannot be enabled from the chat. The sandbox reaches ` +
-  "package registries, code hosts and widely used public sites only. To read a web page, use the web_fetch and " +
-  "web_search tools instead of the sandbox.\n";
+  `egress: ${host} is blocked for the sandbox (a file-sharing, upload, anonymiser or similar service), and it cannot be ` +
+  "enabled from the chat. To read a web page, use the web_fetch and web_search tools instead of the sandbox.\n";
 
 /** A request's target: the absolute-form authority split up, or (origin form, `host` null) a request to the proxy. */
 interface Target {
