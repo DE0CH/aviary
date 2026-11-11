@@ -25,6 +25,7 @@ spec:
         - name: hermit
           image: ghcr.io/de0ch/hermit-jarvis:sha-7e1b9907a363@sha256:27fa6385c0fcc0b7c46cf028af4faa002e84633d7da40bbbf9dc8cc7943e953a
           envFrom: [{ secretRef: { name: chat-hermit } }]
+          env: [{ name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }]
           ports: [{ containerPort: 8080 }, { containerPort: 8081 }, { containerPort: 8082 }, { containerPort: 9090 }]
           lifecycle: { preStop: { sleep: { seconds: 5 } } }
           startupProbe: { httpGet: { path: /healthz, port: 9090 }, periodSeconds: 2, failureThreshold: 150 }

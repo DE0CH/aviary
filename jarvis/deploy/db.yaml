@@ -37,7 +37,7 @@ spec:
   storage: { size: 10Gi, storageClass: local-path }
   resources:
     requests: { cpu: 100m, memory: 512Mi }
-    limits: { memory: 512Mi }
+    limits: { cpu: 500m, memory: 512Mi }  # the tenant's quota wants a cpu limit on every container (initdb too)
   affinity:
     nodeSelector: { jarvis4/pool: services }
     enablePodAntiAffinity: true
