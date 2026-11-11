@@ -18,8 +18,8 @@ pub const RESUME_DEADLINE: Duration = Duration::from_secs(10 * 60);
 
 /// The models these sessions offer (the session's model is picked in the Jarvis 4 app; the list is what pigeon shows).
 pub const MODELS: &[(&str, &str)] = &[
+    ("claude-fable-5-2", "Fable 5.2"),
     ("claude-opus-5-5", "Opus 5.5"),
-    ("claude-fable-5-1", "Fable 5.1"),
 ];
 /// Claude Code's small model and the title model.
 pub const SMALL_MODEL: &str = "claude-haiku-5-5";
