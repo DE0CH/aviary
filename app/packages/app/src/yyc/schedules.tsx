@@ -66,9 +66,8 @@ const ThemedX = withUnistyles(X);
 const ThemedBack = withUnistyles(ChevronLeft);
 const mutedColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const foregroundColor = (theme: Theme) => ({ color: theme.colors.foreground });
-// the 排程訊息 blue: 600 on light; on dark the lighter 300 (600 is too dark to read there), as the app's dark info colour
-const scheduleBlue = (theme: Theme) => (theme.colorScheme === "dark" ? theme.colors.palette.blue[300] : theme.colors.palette.blue[600]);
-const accentColor = (theme: Theme) => ({ color: scheduleBlue(theme) });
+// the 排程訊息 colours are theme tokens (styles/theme.ts): a colorScheme check here never sees dark on web
+const accentColor = (theme: Theme) => ({ color: theme.colors.scheduleAccent });
 
 /** 「n 個排程」 in the conversation's header (nothing when it has none); opens the panel. */
 export function ScheduleChip({ sessionId }: { sessionId: string | null }) {
@@ -449,10 +448,9 @@ const styles = StyleSheet.create((theme) => ({
   firedBubble: {
     maxWidth: "100%",
     flexShrink: 1,
-    // dark: the person's own bubble surface (components/message.tsx) with a blue edge, not a saturated blue box
-    backgroundColor: theme.colorScheme === "dark" ? theme.colors.surface3 : theme.colors.palette.blue[50],
+    backgroundColor: theme.colors.scheduleBubble,
     borderWidth: 1,
-    borderColor: theme.colorScheme === "dark" ? "rgba(147,197,253,0.45)" : theme.colors.palette.blue[200],
+    borderColor: theme.colors.scheduleBubbleBorder,
     borderRadius: theme.borderRadius["2xl"],
     borderTopRightRadius: theme.borderRadius.sm,
     paddingHorizontal: theme.spacing[4],
@@ -465,7 +463,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
   },
   firedLabel: {
-    color: scheduleBlue(theme),
+    color: theme.colors.scheduleAccent,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
   },

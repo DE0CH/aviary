@@ -306,6 +306,12 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
     ...lightStatusTints,
     ...lightStatusDotColors,
 
+    // YYC AI's 排程訊息 bubble (yyc/schedules.tsx): tokens, not a colorScheme check in the stylesheet (on web every
+    // theme value is a CSS variable and the stylesheet is built once, so such a check never sees dark)
+    scheduleBubble: "#eff6ff",
+    scheduleBubbleBorder: "#bfdbfe",
+    scheduleAccent: "#2563eb",
+
     terminal: {
       background: tint.surface0,
       foreground: tint.foreground,
@@ -438,6 +444,11 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
     ...darkStatusColors,
     ...darkStatusTints,
     ...darkStatusDotColors,
+
+    // the person's own bubble surface (components/message.tsx) with a light blue edge; blue 600 is unreadable on dark
+    scheduleBubble: tint.surface3,
+    scheduleBubbleBorder: "rgba(147,197,253,0.45)",
+    scheduleAccent: "#93c5fd",
 
     terminal: {
       background: tint.surface0,
