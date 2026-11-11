@@ -20,7 +20,7 @@ spec:
       initContainers:
         # the app bundle (pigeon 17.1): the pigeon-app image's files, copied into the emptyDir pigeon serves
         - name: app
-          image: ghcr.io/de0ch/pigeon-app:848fb1adfe1b@sha256:adb520d682457d52a492ce75f89acb71a158b4acfb7476f99e6888e5affc5066
+          image: ghcr.io/de0ch/pigeon-app:d57cb165dcd8@sha256:9528a6e332baed12db388311268b9375980e8f25901fe81298fcee44f1bd1236
           command: [/cp, -a, /app/., /srv/app/]
           volumeMounts: [{ name: app, mountPath: /srv/app }]
           resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
