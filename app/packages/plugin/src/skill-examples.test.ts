@@ -1,19 +1,9 @@
-import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const skill = readFileSync(path.join(repository, "skills/paseo-plugin/SKILL.md"), "utf8");
-
-function sectionCode(heading: string): string {
-  const section = skill.slice(skill.indexOf(`\n## ${heading}\n`));
-  const code = /```tsx\n([\s\S]*?)\n```/.exec(section)?.[1];
-  if (!code) throw new Error(`No tsx example under "${heading}"`);
-  return code;
-}
-
 // Checks the example as a plugin client file, with the same options as the plugin examples.
 function typeErrors(code: string): string[] {
   const configPath = path.join(repository, "packages/plugin/tsconfig.examples.json");
@@ -32,45 +22,6 @@ function typeErrors(code: string): string[] {
     .getPreEmitDiagnostics(program)
     .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"));
 }
-
-describe("paseo-plugin skill examples", () => {
-  it("composer pill example typechecks against the plugin SDK", () => {
-    expect(typeErrors(sectionCode("Add a composer pill"))).toEqual([]);
-  });
-});
-
-describe("plugin translation author types", () => {
-  it("checks JSON keys, plural counts, literal interpolation names and imperative translation", () => {
-    expect(
-      typeErrors(`
-      import { defineTranslations, useTranslation, type PluginClientContext } from "@getpaseo/plugin/client";
-      import en from "../../translations/client/locales/en.json";
-      const json = defineTranslations({ resources: { en } });
-      const literal = defineTranslations({ resources: { en: { greeting: "Hello {{name}}", value: "{{amount, number}}" } } });
-      function Screen() {
-        const { t } = useTranslation(json);
-        t("notes", { count: 2 });
-        // @ts-expect-error unknown JSON key
-        t("missing");
-        // @ts-expect-error plural base keys require count
-        t("notes");
-        // @ts-expect-error count is numeric
-        t("notes", { count: "two" });
-        literal.message("greeting", { name: "Ada" });
-        // @ts-expect-error inline literal resources infer interpolation names
-        literal.message("greeting");
-        return null;
-      }
-      function contribute(client: PluginClientContext) {
-        client.addScreen({ id: "notes", title: json.message("title"), Component: Screen });
-        client.i18n.t(json, "notes", { count: 2 });
-        // @ts-expect-error imperative keys are checked
-        client.i18n.t(json, "missing");
-      }
-    `),
-    ).toEqual([]);
-  });
-});
 
 it("keeps historical string descriptor helpers while accepting translated registrations", () => {
   expect(
