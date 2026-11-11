@@ -19,8 +19,8 @@ CloudCLI server (Jarvis mode: a Jarvis 4 session's one user)
    └─ sessionsService, chatRunRegistry, the provider runtime, Postgres (as before)
 ```
 
-The Jarvis 4 Chat app (DE0CH/pwa-shell-ios) keeps talking CloudCLI's own `/ws` and REST; the bridge adds a path, it
-does not change one.
+This CloudCLI server and its Jarvis mode serve no deployment any more: YYC AI's app talks to aviary's pigeon, and so
+does Jarvis 4's (its aviary harness, chat.deyaochen.com; DE0CH/jarvis4 aviary/README.md).
 
 ## How the app sees CloudCLI
 
@@ -124,6 +124,10 @@ arrives.
   rows built by the same `SessionTimeline`, the page hydrates them like a conversation's history and renders the chat's
   own `AgentStreamView` read only, its files read through the share via `ConversationFilesContext`), the conversation menu
   (`screens/workspace/conversation-menu-items.tsx`).
+- **No New chat where the deployment starts conversations** (Deyao, 2026-11-11): `/api/jarvis/me` `newConversations:
+  false` (pigeon, from hermit's `conversations.peopleCreate`; Jarvis 4, whose sessions start in the Jarvis 4 app) greys
+  out the sidebar's 新對話, drops it from the palette and the shortcut, and `/new` says where conversations start
+  (`me.ts` `useNewConversationsAvailable`, `new-workspace-screen.tsx`).
 - **Sent files keep their version** (Deyao, 2026-10-28): each file card carries its SendUserFile call's id
   (`sent` on the tool call's `sentFiles`, paseo-timeline.ts) and downloads with `files/raw?…&sent=<id>`, so a server
   that keeps a snapshot of each send can serve the file as it was sent (this server, in Jarvis mode, reads the live
