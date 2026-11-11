@@ -4,7 +4,7 @@
 # layout, which `docker load` and `k3d image import` read) for ci.yml's `images` artifact.
 #
 #   images/build.sh <image> <dist dir> <tag> [<tar out>]
-#     <image>: pigeon | magpie | hermit | sandboxd | aviary-testing (hermit-sandbox: images/sandbox/build.sh)
+#     <image>: pigeon | magpie | hermit | herald | sandboxd | aviary-testing (hermit-sandbox: images/sandbox/build.sh)
 #
 # The revision is AVIARY_REVISION (CI sets it) or the checkout's HEAD; the version label is its first 12 hex. The
 # provides/accepts labels come from the built binary's own `--version` line (`<name> <sha12> protocols=<json>`), run
@@ -23,6 +23,7 @@ case $image in
   pigeon) files=(pigeon); bin=pigeon ;;
   magpie) files=(magpie); bin=magpie ;;
   hermit) files=(hermit); bin=hermit ;;
+  herald) files=(herald); bin=herald ;;
   sandboxd) files=(sandboxd); bin= ;;
   aviary-testing) files=(aviary-conformance test-gateway mock-model fake-tools fake-access fake-sandboxd aviary-e2e); bin= ;;
   *) echo "build.sh: unknown image $image" >&2; exit 2 ;;

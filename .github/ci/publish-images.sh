@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ci.yml `publish` (platform 6.1): pushes the images job's tars as ghcr.io/de0ch/<name>:<sha12> (never `latest`) and
-# writes {"<name>": "sha256:…"} of the pushed tags. The service images (pigeon, magpie, hermit, sandboxd,
+# writes {"<name>": "sha256:…"} of the pushed tags. The service images (pigeon, magpie, hermit, herald, sandboxd,
 # aviary-testing) are linux/amd64 and linux/arm64: each architecture's image is pushed as <sha12>-amd64 and
 # <sha12>-arm64, and <sha12> is the index of the two (`docker buildx imagetools create`), so a node of either
 # architecture pulls its own; the digest recorded is the index's. hermit-sandbox is linux/amd64 only, pushed as
@@ -25,7 +25,7 @@ push() { # push <local image> <remote>: prints the pushed manifest's digest
   [ -n "$digest" ] || { echo "publish-images: no digest for $2" >&2; exit 1; }
   echo "$digest"
 }
-for name in pigeon magpie hermit sandboxd aviary-testing hermit-sandbox; do
+for name in pigeon magpie hermit herald sandboxd aviary-testing hermit-sandbox; do
   remote=ghcr.io/de0ch/$name:$sha12
   if digest=$(docker buildx imagetools inspect "$remote" --format '{{json .Manifest.Digest}}' 2>/dev/null | jq -r .); then
     echo "$remote exists ($digest): not pushed again"

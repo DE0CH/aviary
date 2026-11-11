@@ -323,6 +323,20 @@ jobs:
           echo "$out"
           test "$code" = 78
           grep -q '"name":"PIGEON_TOKEN_MAGPIE"' <<< "$out"
+      - name: images/herald
+        # with no secrets it refuses to start (exit 78), naming the variable, never a value
+        env:
+          IMAGE_BUILD_FLAGS: --cache-from type=gha,scope=herald${{ matrix.cache }} --cache-to type=gha,scope=herald${{ matrix.cache }}
+        run: |
+          images/build.sh herald dist "herald:$SHA12" "$RUNNER_TEMP/images/herald.tar"
+          docker run --rm "herald:$SHA12" --version
+          set +e
+          out=$(docker run --rm --read-only -e POD_NAME=ci "herald:$SHA12" 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          test "$code" = 78
+          grep -q '"name":"HERALD_ACCEPT_GATEWAY"' <<< "$out"
       - name: images/magpie
         # the runtime image decodes the HEIC fixture with the release binary: libheif1 and its HEVC plugin are there
         env:
@@ -342,7 +356,7 @@ jobs:
           docker save -o "$RUNNER_TEMP/images/hermit-sandbox.tar" "hermit-sandbox:$SHA12"
       - name: the labels (platform 5.3) and the architecture
         run: |
-          images="pigeon magpie hermit sandboxd aviary-testing"
+          images="pigeon magpie hermit herald sandboxd aviary-testing"
           if [ "${{ matrix.arch }}" = amd64 ]; then images="$images hermit-sandbox"; fi
           for i in $images; do
             l=$(docker image inspect -f '{{json .Config.Labels}}' "$i:$SHA12")
@@ -369,6 +383,7 @@ jobs:
             ${{ runner.temp }}/images/pigeon.tar
             ${{ runner.temp }}/images/magpie.tar
             ${{ runner.temp }}/images/hermit.tar
+            ${{ runner.temp }}/images/herald.tar
             ${{ runner.temp }}/images/sandboxd.tar
             ${{ runner.temp }}/images/aviary-testing.tar
           if-no-files-found: error
@@ -572,7 +587,7 @@ jobs:
       - name: digests for the attestations
         id: digests
         run: |
-          for i in pigeon magpie hermit sandboxd hermit-sandbox aviary-testing; do
+          for i in pigeon magpie hermit herald sandboxd hermit-sandbox aviary-testing; do
             echo "${i//-/_}=$(jq -r --arg i "$i" '.[$i]' "$RUNNER_TEMP/digests.json")" >> "$GITHUB_OUTPUT"
           done
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -581,6 +596,8 @@ jobs:
         with: {subject-name: ghcr.io/de0ch/magpie, subject-digest: "${{ steps.digests.outputs.magpie }}", push-to-registry: true}
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with: {subject-name: ghcr.io/de0ch/hermit, subject-digest: "${{ steps.digests.outputs.hermit }}", push-to-registry: true}
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with: {subject-name: ghcr.io/de0ch/herald, subject-digest: "${{ steps.digests.outputs.herald }}", push-to-registry: true}
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with: {subject-name: ghcr.io/de0ch/sandboxd, subject-digest: "${{ steps.digests.outputs.sandboxd }}", push-to-registry: true}
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2

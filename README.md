@@ -8,6 +8,7 @@ pigeon, magpie, hermit and the sandbox supervisor: an AI chat runtime with Claud
 | magpie | `crates/magpie` | the store of record: conversations, events, turns, files and uploads (Postgres + a bucket) |
 | hermit | `crates/hermit` | sandbox lifecycle behind the hermit contract; this crate is one deployment's implementation |
 | supervisor | `crates/supervisor` | runs inside each sandbox: drives Claude Code, carries its transcript to magpie |
+| herald | `crates/herald` | Telegram notification channels a conversation creates and posts to ([its README](crates/herald/README.md)) |
 
 Shared crates: `aviary-core` (the service runtime), `aviary-pg` (Postgres), and the contract crates `magpie-api`,
 `hermit-api`, `supervisor-api`, `gateway-api`, `sandboxd-api` (the only coupling between services). `sandboxd` is the
