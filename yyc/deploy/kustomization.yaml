@@ -27,7 +27,7 @@ images:
   - {name: hermit, newName: ghcr.io/de0ch/hermit, newTag: "ee9b9f111461"}
   - {name: sandboxd, newName: ghcr.io/de0ch/sandboxd, newTag: "ee9b9f111461"}
   # the app bundle (DE0CH/claudecodeui pigeon-app.yml)
-  - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "3247b4c881aa"}
+  - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "daf292f604df"}
   # egress and tools (DE0CH/jarvis3 chat.yml); the ZDR guard reads this tag (yyc-ai/tests/test_zdr.py)
   - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "9cd8b4f940d5"}
 configMapGenerator:
