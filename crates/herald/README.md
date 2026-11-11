@@ -20,9 +20,14 @@ The caller is the sandbox gateway (pair token `HERALD_ACCEPT_GATEWAY`), which se
 | `POST /v1/channels` `{"title": "…", "description": "…"}` | 201 `{"channel", "title", "inviteLink"}`. The title gets `HERALD_TITLE_PREFIX` and a space in front; at most 128 characters in all; the description at most 255. |
 | `GET /v1/channels/{channel}` | 200 `{"channel", "title", "inviteLink"}` as the bot sees the channel now |
 | `POST /v1/channels/{channel}/messages` `{"text": "…", "format": "plain"\|"html", "silent": false}` | 201 `{"messageId"}`. At most 4096 characters; `html` is Telegram's HTML subset; `silent` posts without a notification sound. Link previews are off. |
+| `POST /v1/channels/{channel}/files`, `multipart/form-data`: optional parts `caption`, `format` (`plain`\|`html`, for the caption), `silent` (`true`\|`false`), `as` (`document`\|`photo`), then the part `file` (with a file name) | 201 `{"messageId"}`. One file per request. `document` (the default) keeps the file byte for byte, up to 50 MB; `photo` shows an image in the channel, up to 10 MB, recompressed by Telegram. A caption at most 1024 characters. The file name loses `/`, `\`, `"` and control characters. |
+
+A file is streamed to Telegram as it arrives, one chunk in flight, never held whole (the pods have 64 Mi). So the
+other parts must come before `file`: a part after it, an empty file or a file over the limit breaks the upload to
+Telegram off (nothing is posted) and answers 400 or 413. The upload to Telegram may take up to 5 minutes.
 
 404 = not this conversation's channel, or the channel was deleted / the bot removed from it. 429 with `Retry-After`
-= Telegram's flood wait (channel creation is limited per account). 400 = the request, or Telegram refused it (the
+= Telegram's flood wait (channel creation is limited per account). 413 = a file over its limit. 400 = the request, or Telegram refused it (the
 message names Telegram's reason). 503 = Telegram unreachable.
 
 ## Configuration

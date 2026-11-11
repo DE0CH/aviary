@@ -131,7 +131,8 @@ async fn serve() -> ExitCode {
     });
     ops.readiness().started();
     tracing::info!("herald serving");
-    drain.hook("in-flight requests", Duration::from_secs(40), || async move {
+    // a file upload to Telegram may take 300 s (telegram::UPLOAD_TIMEOUT); the grace period is 330 s
+    drain.hook("in-flight requests", Duration::from_secs(310), || async move {
         let _ = server.await;
     });
     drain::exit(drain.run(&mut signals).await)

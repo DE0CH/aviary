@@ -8,7 +8,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use herald::app::{AppState, router};
 use herald::handle::Key;
-use herald::telegram::{BoxFuture, Created, Error, Format, Info, Telegram};
+use herald::telegram::{Attachment, BoxFuture, Chunks, Created, Error, Format, Info, Kind, Telegram};
 use http_body_util::BodyExt as _;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -20,6 +20,10 @@ struct Fake {
     created: Mutex<Vec<(String, String)>>,
     posts: Mutex<Vec<(i64, String, Format, bool)>>,
     flood: Mutex<Option<u64>>,
+    /// Files whose body arrived whole: what was asked and the bytes.
+    files: Mutex<Vec<(i64, Attachment, Vec<u8>)>>,
+    /// Bodies that ended in an error (herald broke the upload off): nothing was posted.
+    broken: Mutex<usize>,
 }
 
 impl Telegram for Fake {
@@ -60,6 +64,24 @@ impl Telegram for Fake {
             let mut p = self.posts.lock().unwrap();
             p.push((chat_id, text.to_owned(), format, silent));
             Ok(i64::try_from(p.len()).unwrap())
+        })
+    }
+
+    fn send_file(&self, chat_id: i64, file: Attachment, mut body: Chunks) -> BoxFuture<'_, Result<i64, Error>> {
+        Box::pin(async move {
+            let mut bytes = Vec::new();
+            while let Some(chunk) = body.recv().await {
+                match chunk {
+                    Ok(c) => bytes.extend_from_slice(&c),
+                    Err(e) => {
+                        *self.broken.lock().unwrap() += 1;
+                        return Err(Error::Unavailable(e.to_string()));
+                    }
+                }
+            }
+            let mut f = self.files.lock().unwrap();
+            f.push((chat_id, file, bytes));
+            Ok(100 + i64::try_from(f.len()).unwrap())
         })
     }
 }
@@ -109,6 +131,7 @@ async fn every_route_needs_the_gateway_token() {
         ("POST", "/v1/channels"),
         ("GET", "/v1/channels/x"),
         ("POST", "/v1/channels/x/messages"),
+        ("POST", "/v1/channels/x/files"),
     ] {
         let req = Request::builder().method(m).uri(p).body(Body::empty()).unwrap();
         let res = app.clone().oneshot(req).await.unwrap();
@@ -230,4 +253,242 @@ async fn limits_and_telegram_refusals_answer_clearly() {
     *fake.flood.lock().unwrap() = Some(42);
     let (s, _) = call(&app, "POST", "/v1/channels", Some("c"), Some(json!({"title": "t2"}))).await;
     assert_eq!(s, StatusCode::TOO_MANY_REQUESTS);
+}
+
+const BOUNDARY: &str = "XyZ-test-boundary-42";
+
+/// A multipart body: text fields and file parts (`name`, file name, content type, bytes), in order.
+enum Part<'a> {
+    Text(&'a str, &'a str),
+    File(&'a str, &'a str, &'a str, &'a [u8]),
+}
+
+fn multipart(parts: &[Part<'_>]) -> Vec<u8> {
+    let mut b = Vec::new();
+    for p in parts {
+        b.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
+        match p {
+            Part::Text(name, value) => {
+                b.extend_from_slice(
+                    format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}").as_bytes(),
+                );
+            }
+            Part::File(name, file, ct, bytes) => {
+                b.extend_from_slice(
+                    format!("Content-Disposition: form-data; name=\"{name}\"; filename=\"{file}\"\r\nContent-Type: {ct}\r\n\r\n")
+                        .as_bytes(),
+                );
+                b.extend_from_slice(bytes);
+            }
+        }
+        b.extend_from_slice(b"\r\n");
+    }
+    b.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
+    b
+}
+
+async fn upload(app: &axum::Router, channel: &str, conv: &str, body: Vec<u8>) -> (StatusCode, Value) {
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/v1/channels/{channel}/files"))
+        .header("authorization", format!("Bearer {TOKEN}"))
+        .header("aviary-sandbox-conversation", conv)
+        .header("content-type", format!("multipart/form-data; boundary={BOUNDARY}"))
+        .body(Body::from(body))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+async fn channel_for(app: &axum::Router, conv: &str) -> String {
+    let (_, v) = call(app, "POST", "/v1/channels", Some(conv), Some(json!({"title": "files"}))).await;
+    v["channel"].as_str().unwrap().to_owned()
+}
+
+#[tokio::test]
+async fn a_file_is_posted_whole_with_its_caption() {
+    let fake = Arc::new(Fake::default());
+    let app = app(&fake);
+    let ch = channel_for(&app, "conv-a").await;
+    // larger than the JSON routes' 64 KiB limit, and bytes that are not UTF-8
+    let pdf: Vec<u8> = (0..300_000u32).map(|i| u8::try_from(i % 251).unwrap()).collect();
+    let (s, v) = upload(
+        &app,
+        &ch,
+        "conv-a",
+        multipart(&[
+            Part::Text("caption", "<b>每日報告</b>"),
+            Part::Text("format", "html"),
+            Part::Text("silent", "true"),
+            Part::File("file", "報告 2026-11-11.pdf", "application/pdf", &pdf),
+        ]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    assert_eq!(v["messageId"], 101);
+    let files = fake.files.lock().unwrap();
+    let (chat, att, bytes) = &files[0];
+    assert_eq!(*chat, -1_000_000_000_001);
+    assert_eq!(att.kind, Kind::Document);
+    assert_eq!(att.name, "報告 2026-11-11.pdf");
+    assert_eq!(att.content_type, "application/pdf");
+    assert_eq!(att.caption.as_deref(), Some("<b>每日報告</b>"));
+    assert_eq!(att.format, Format::Html);
+    assert!(att.silent);
+    assert_eq!(bytes, &pdf);
+}
+
+#[tokio::test]
+async fn an_image_can_go_as_a_photo() {
+    let fake = Arc::new(Fake::default());
+    let app = app(&fake);
+    let ch = channel_for(&app, "c").await;
+    let (s, v) = upload(
+        &app,
+        &ch,
+        "c",
+        multipart(&[
+            Part::Text("as", "photo"),
+            Part::File("file", "chart.png", "image/png", b"\x89PNG"),
+        ]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let files = fake.files.lock().unwrap();
+    assert_eq!(files[0].1.kind, Kind::Photo);
+    assert_eq!(files[0].1.caption, None);
+    assert_eq!(files[0].1.format, Format::Plain);
+    assert!(!files[0].1.silent);
+}
+
+#[tokio::test]
+async fn file_names_cannot_break_the_upload() {
+    let fake = Arc::new(Fake::default());
+    let app = app(&fake);
+    let ch = channel_for(&app, "c").await;
+    let (s, _) = upload(
+        &app,
+        &ch,
+        "c",
+        multipart(&[Part::File("file", "../a\\b\"c.txt", "text/plain", b"x")]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    let name = fake.files.lock().unwrap()[0].1.name.clone();
+    assert!(!name.contains(['/', '\\', '"']), "{name}");
+}
+
+#[tokio::test]
+async fn bad_uploads_are_refused_and_nothing_is_posted() {
+    let fake = Arc::new(Fake::default());
+    let app = app(&fake);
+    let ch = channel_for(&app, "c").await;
+    let file = Part::File("file", "a.txt", "text/plain", b"hello");
+    for (why, body, want) in [
+        (
+            "no file",
+            multipart(&[Part::Text("caption", "x")]),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "unknown field",
+            multipart(&[
+                Part::Text("owner", "me"),
+                Part::File("file", "a.txt", "text/plain", b"x"),
+            ]),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "bad format",
+            multipart(&[
+                Part::Text("format", "markdown"),
+                Part::File("file", "a.txt", "text/plain", b"x"),
+            ]),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "bad as",
+            multipart(&[
+                Part::Text("as", "sticker"),
+                Part::File("file", "a.txt", "text/plain", b"x"),
+            ]),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "long caption",
+            multipart(&[
+                Part::Text("caption", &"字".repeat(1025)),
+                Part::File("file", "a.txt", "text/plain", b"x"),
+            ]),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "empty file",
+            multipart(&[Part::File("file", "a.txt", "text/plain", b"")]),
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        let (s, v) = upload(&app, &ch, "c", body).await;
+        assert_eq!(s, want, "{why}: {v}");
+        assert!(v["message"].is_string(), "{why}: {v}");
+    }
+    // a field after the file: the upload to Telegram is broken off, so nothing is posted
+    let (s, v) = upload(&app, &ch, "c", multipart(&[file, Part::Text("caption", "late")])).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    assert!(v["message"].as_str().unwrap().contains("before"), "{v}");
+    // two files
+    let (s, _) = upload(
+        &app,
+        &ch,
+        "c",
+        multipart(&[
+            Part::File("file", "a.txt", "text/plain", b"a"),
+            Part::File("file", "b.txt", "text/plain", b"b"),
+        ]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    // a photo over Telegram's 10 MB
+    let big = vec![0u8; 10 * 1024 * 1024 + 1];
+    let (s, v) = upload(
+        &app,
+        &ch,
+        "c",
+        multipart(&[
+            Part::Text("as", "photo"),
+            Part::File("file", "big.jpg", "image/jpeg", &big),
+        ]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::PAYLOAD_TOO_LARGE, "{v}");
+    // another conversation's channel
+    let (s, _) = upload(
+        &app,
+        &ch,
+        "other",
+        multipart(&[Part::File("file", "a.txt", "text/plain", b"x")]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    assert!(fake.files.lock().unwrap().is_empty());
+    assert_eq!(*fake.broken.lock().unwrap(), 4); // the empty file, the late field, two files, the big photo
+}
+
+#[tokio::test]
+async fn a_document_over_50_mb_is_refused() {
+    let fake = Arc::new(Fake::default());
+    let app = app(&fake);
+    let ch = channel_for(&app, "c").await;
+    let big = vec![7u8; 50 * 1024 * 1024 + 1];
+    let (s, v) = upload(
+        &app,
+        &ch,
+        "c",
+        multipart(&[Part::File("file", "big.bin", "application/octet-stream", &big)]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::PAYLOAD_TOO_LARGE, "{v}");
+    assert!(fake.files.lock().unwrap().is_empty());
 }

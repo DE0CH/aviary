@@ -10,8 +10,12 @@ publish.workspace = true
 aviary-core = { path = "../aviary-core" }
 axum.workspace = true
 base64.workspace = true
+# a file's bytes, streamed from the caller to the Bot API (already in the graph through axum and reqwest)
+futures-util.workspace = true
 # MTProto as the account that creates the channels: the memory session (no sqlite), SOCKS5 to the cluster's way out
 grammers-client = { version = "=0.11.0", default-features = false, features = ["proxy"] }
+# the caller's multipart file upload, read as a stream (pigeon reads its uploads the same way)
+multer.workspace = true
 grammers-session = { version = "=0.11.0", default-features = false, features = ["serde"] }
 reqwest = { workspace = true, features = ["socks"] }
 ring.workspace = true
