@@ -39,10 +39,10 @@ describe("formatAmount", () => {
     expect(formatResetLabel(twoHoursFromNow, false, NOW)).toBe("resets 2h");
     expect(formatRunsOutLabel(twoHoursFromNow, NOW)).toBe("runs out 2h");
 
-    await i18n.changeLanguage("ja");
-    expect(formatResetLabel(twoHoursFromNow, false, NOW)).toBe("2時間後にリセット");
-    expect(formatRunsOutLabel(twoHoursFromNow, NOW)).toBe("2時間後に上限に到達");
-    expect(formatAgo(threeDaysAgo, NOW)).toBe("3日前");
+    await i18n.changeLanguage("zh-HK");
+    expect(formatResetLabel(twoHoursFromNow, false, NOW)).toBe("將在 2小時後重置");
+    expect(formatRunsOutLabel(twoHoursFromNow, NOW)).toBe("將在 2小時後用盡");
+    expect(formatAgo(threeDaysAgo, NOW)).toBe("3天前");
   });
 
   it("formats percentages with locale-specific spacing", () => {
@@ -50,25 +50,14 @@ describe("formatAmount", () => {
   });
 
   it("formats relative-time counts with the active locale", async () => {
-    await i18n.changeLanguage("fr");
+    await i18n.changeLanguage("zh-HK");
     const days = 1_234;
     const daysFromNow = new Date(NOW + days * 24 * 60 * 60 * 1000).toISOString();
     const daysAgo = new Date(NOW - days * 24 * 60 * 60 * 1000).toISOString();
 
-    expect(formatResetLabel(daysFromNow, false, NOW)).toBe("se réinitialise dans 1\u202f234 j");
-    expect(formatRunsOutLabel(daysFromNow, NOW)).toBe("s’épuise dans 1\u202f234 j");
-    expect(formatAgo(daysAgo, NOW)).toBe("il y a 1\u202f234 j");
-  });
-
-  it("selects Arabic plural forms for relative durations", async () => {
-    await i18n.changeLanguage("ar");
-    const twoHoursFromNow = new Date(NOW + 2 * 60 * 60 * 1000).toISOString();
-    const threeHoursFromNow = new Date(NOW + 3 * 60 * 60 * 1000).toISOString();
-    const twoDaysAgo = new Date(NOW - 2 * 24 * 60 * 60 * 1000).toISOString();
-
-    expect(formatResetLabel(twoHoursFromNow, false, NOW)).toBe("تتم إعادة التعيين خلال ساعتين");
-    expect(formatRunsOutLabel(threeHoursFromNow, NOW)).toBe("ينفد خلال 3 ساعات");
-    expect(formatAgo(twoDaysAgo, NOW)).toBe("قبل يومين");
+    expect(formatResetLabel(daysFromNow, false, NOW)).toBe("將在 1,234天後重置");
+    expect(formatRunsOutLabel(daysFromNow, NOW)).toBe("將在 1,234天後用盡");
+    expect(formatAgo(daysAgo, NOW)).toBe("1,234天前");
   });
 
   it("uses locale-aware compact notation for token balances", () => {
@@ -77,19 +66,19 @@ describe("formatAmount", () => {
   });
 
   it("localizes known provider-usage labels and preserves provider-specific labels", async () => {
-    await i18n.changeLanguage("ko");
+    await i18n.changeLanguage("zh-HK");
 
-    expect(formatProviderUsageLabel("session", "Session")).toBe("세션");
-    expect(formatProviderUsageLabel("five_hour", "Session")).toBe("세션");
+    expect(formatProviderUsageLabel("session", "Session")).toBe("會話");
+    expect(formatProviderUsageLabel("five_hour", "Session")).toBe("會話");
     expect(formatProviderUsageLabel("five_hour", "5-hour limit")).toBe("5-hour limit");
-    expect(formatProviderUsageLabel("monthly", "Monthly")).toBe("월간");
+    expect(formatProviderUsageLabel("monthly", "Monthly")).toBe("每月");
     expect(formatProviderUsageLabel("code_review:weekly", "Code review · Weekly")).toBe(
-      "코드 검토 · 주간",
+      "程式碼審查 · 每週",
     );
     expect(formatProviderUsageLabel("code_review:five_hour", "Code review · 5-hour")).toBe(
-      "코드 검토 · 5-hour",
+      "程式碼審查 · 5-hour",
     );
-    expect(formatProviderUsageLabel("credits", "Credits")).toBe("크레딧");
+    expect(formatProviderUsageLabel("credits", "Credits")).toBe("積分");
     expect(formatProviderUsageLabel("custom_limit", "Custom limit")).toBe("Custom limit");
   });
 });
@@ -105,10 +94,10 @@ it("says that a usage window percentage is consumed", () => {
   expect(formatDisplayPct(70, "used")).toBe("70% used");
   expect(formatDisplayPct(30, "remaining")).toBe("30% left");
 });
-it("translates the usage refresh control into Japanese", async () => {
+it("translates the usage refresh control into Traditional Chinese (Hong Kong)", async () => {
   try {
-    await i18n.changeLanguage("ja");
-    expect(i18n.t("providerUsage.refresh")).toBe("更新");
+    await i18n.changeLanguage("zh-HK");
+    expect(i18n.t("providerUsage.refresh")).toBe("重新整理");
   } finally {
     await i18n.changeLanguage("en");
   }
@@ -116,9 +105,9 @@ it("translates the usage refresh control into Japanese", async () => {
 
 it("translates the neighboring usage percentage settings", async () => {
   try {
-    await i18n.changeLanguage("ja");
-    expect(i18n.t("providerUsage.displayUsed")).toBe("使用済み");
-    expect(i18n.t("providerUsage.displayRemaining")).toBe("残り");
+    await i18n.changeLanguage("zh-HK");
+    expect(i18n.t("providerUsage.displayUsed")).toBe("已使用");
+    expect(i18n.t("providerUsage.displayRemaining")).toBe("剩餘");
   } finally {
     await i18n.changeLanguage("en");
   }

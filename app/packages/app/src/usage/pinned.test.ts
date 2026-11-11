@@ -278,7 +278,7 @@ it("keeps unavailable and error reports out of the sidebar summary even with ret
 
 it("localizes pinned labels and meanings while preserving custom window names", async () => {
   const { i18n } = await import("@/i18n/i18next");
-  await i18n.changeLanguage("ja");
+  await i18n.changeLanguage("zh-HK");
   try {
     const entries = [
       report({
@@ -291,11 +291,11 @@ it("localizes pinned labels and meanings while preserving custom window names", 
       }),
     ];
     expect(windows(entries, preferences(null)).map((w) => [w.label, w.shortLabel])).toEqual([
-      ["Test セッション 70% 使用済み", "セッション"],
-      ["Test My allowance 20% 使用済み", "My allowance"],
+      ["Test 會話 已使用 70%", "會話"],
+      ["Test My allowance 已使用 20%", "My allowance"],
     ]);
     expect(windows(entries, preferences(null, "remaining"))[0].label).toBe(
-      "Test セッション 残り 30%",
+      "Test 會話 剩餘 30%",
     );
   } finally {
     await i18n.changeLanguage("en");

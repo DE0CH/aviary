@@ -796,7 +796,7 @@ describe("git-actions-policy", () => {
   });
 
   it("uses the active language for policy-owned action labels and unavailable messages", async () => {
-    await i18n.changeLanguage("zh-CN");
+    await i18n.changeLanguage("zh-HK");
     const actions = buildGitActions(
       createInput({
         hasRemote: true,
@@ -813,8 +813,8 @@ describe("git-actions-policy", () => {
       successLabel: "已 pull",
     });
     expect(actions.secondary.find((entry) => entry.id === "pr")).toMatchObject({
-      label: "创建 PR",
-      unavailableMessage: "无法创建 PR，因为此分支还没有新的 commit",
+      label: "建立 PR",
+      unavailableMessage: "無法建立 PR，因為此分支還沒有新的 commit",
     });
   });
 

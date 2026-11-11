@@ -183,7 +183,7 @@ describe("desktop-permissions", () => {
   });
 
   it("uses the active app language for local status details", async () => {
-    await i18n.changeLanguage("zh-CN");
+    await i18n.changeLanguage("zh-HK");
     try {
       const permissions = createDesktopPermissions(
         fakeEnvironment({
@@ -199,8 +199,8 @@ describe("desktop-permissions", () => {
 
       const snapshot = await permissions.getDesktopPermissionSnapshot();
 
-      expect(snapshot.notifications.detail).toBe("系统已允许通知。");
-      expect(snapshot.microphone.detail).toBe("麦克风权限尚未授予。");
+      expect(snapshot.notifications.detail).toBe("系統已允許通知。");
+      expect(snapshot.microphone.detail).toBe("麥克風權限尚未授予。");
     } finally {
       await i18n.changeLanguage("en");
     }

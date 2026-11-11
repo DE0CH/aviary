@@ -46,8 +46,8 @@ it("translates mounted usage rows when the language changes", async () => {
   expect(container.textContent).toContain("Session70% used");
   expect(container.textContent).toContain("Credits");
   await act(async () => {
-    await i18n.changeLanguage("ja");
+    await i18n.changeLanguage("zh-HK");
   });
-  expect(container.textContent).toContain("セッション70% 使用済み");
-  expect(container.textContent).toContain("クレジット");
+  expect(container.textContent).toContain("會話已使用 70%");
+  expect(container.textContent).toContain("積分");
 });

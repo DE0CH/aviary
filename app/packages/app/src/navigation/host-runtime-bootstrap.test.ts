@@ -325,14 +325,14 @@ describe("resolveStartupRoute", () => {
     ).toEqual({ kind: "render" });
   });
 
-  it("sends removed host routes to global project selection instead of welcome", () => {
+  it("sends removed host routes to a new conversation (/new) instead of welcome", () => {
     expect(
       resolveStartupRoute({
         ...baseHostInput,
         route: { kind: "host", serverId: "server-removed" },
         hosts: [{ serverId: "server-next" }],
       }),
-    ).toEqual({ kind: "redirect", href: "/open-project" });
+    ).toEqual({ kind: "redirect", href: "/new" });
   });
 
   it("waits on a host route with no saved host until the boot probe answers or gives up", () => {
@@ -384,34 +384,34 @@ describe("resolveHostIndexRoute", () => {
     ).toEqual("/h/server-saved/workspace/workspace-a");
   });
 
-  it("opens global project selection when the remembered workspace is proven missing", () => {
+  it("opens a new conversation (/new) when the remembered workspace is proven missing", () => {
     expect(
       resolveHostIndexRoute({
         serverId: "server-saved",
         workspaceSelection: { serverId: "server-saved", workspaceId: "workspace-a" },
         workspaceSelectionStatus: "missing",
       }),
-    ).toEqual("/open-project");
+    ).toEqual("/new");
   });
 
-  it("opens global project selection when the remembered workspace belongs to another host", () => {
+  it("opens a new conversation (/new) when the remembered workspace belongs to another host", () => {
     expect(
       resolveHostIndexRoute({
         serverId: "server-saved",
         workspaceSelection: { serverId: "server-other", workspaceId: "workspace-a" },
         workspaceSelectionStatus: "exists",
       }),
-    ).toEqual("/open-project");
+    ).toEqual("/new");
   });
 
-  it("opens global project selection when no workspace is remembered", () => {
+  it("opens a new conversation (/new) when no workspace is remembered", () => {
     expect(
       resolveHostIndexRoute({
         serverId: "server-saved",
         workspaceSelection: null,
         workspaceSelectionStatus: "unknown",
       }),
-    ).toEqual("/open-project");
+    ).toEqual("/new");
   });
 });
 

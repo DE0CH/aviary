@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
 import {
@@ -7015,10 +7014,8 @@ test.each([
           id: "claude",
           sourceId: "claude",
           sourceLabel: "Claude",
-          icon: readFileSync(
-            new URL("../../../plugins/claude-usage-source/icon.svg", import.meta.url),
-            "utf8",
-          ),
+          // the client's own copy (paseo/plugins/, upstream's source of it, is not part of this fork)
+          icon: expect.stringMatching(/^<svg [^>]*viewBox="0 0 24 24"/),
           account: {},
           fetchedAt: "2026-09-30T00:00:00.000Z",
           report,

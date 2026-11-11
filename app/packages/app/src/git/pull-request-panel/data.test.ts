@@ -782,37 +782,37 @@ describe("formatAge", () => {
 
 // Fixed translators do not select a language, so request their resources first.
 beforeAll(async () => {
-  await i18n.loadLanguages("fr");
+  await i18n.loadLanguages("zh-HK");
 });
 
 const english = i18n.getFixedT("en");
-const french = i18n.getFixedT("fr");
+const chinese = i18n.getFixedT("zh-HK");
 
 describe("getStateLabelKey", () => {
   it.each([
-    ["open", "Open", "Ouverte"],
-    ["draft", "Draft", "Brouillon"],
-    ["merged", "Merged", "Fusionnée"],
-    ["closed", "Closed", "Fermée"],
-  ] as const)("labels %s as %s, and %s in French", (state, englishLabel, frenchLabel) => {
+    ["open", "Open", "開放"],
+    ["draft", "Draft", "草稿"],
+    ["merged", "Merged", "已合併"],
+    ["closed", "Closed", "已關閉"],
+  ] as const)("labels %s as %s, and %s in Traditional Chinese (Hong Kong)", (state, englishLabel, chineseLabel) => {
     expect(english(getStateLabelKey(state))).toBe(englishLabel);
-    expect(french(getStateLabelKey(state))).toBe(frenchLabel);
+    expect(chinese(getStateLabelKey(state))).toBe(chineseLabel);
   });
 });
 
 describe("getActivityVerbKey", () => {
   it.each([
-    [{ kind: "comment" }, "Commented", "A commenté"],
-    [{ kind: "review", reviewState: "approved" }, "Approved", "A approuvé"],
+    [{ kind: "comment" }, "Commented", "已評論"],
+    [{ kind: "review", reviewState: "approved" }, "Approved", "已批准"],
     [
       { kind: "review", reviewState: "changes_requested" },
       "Requested changes",
-      "A demandé des modifications",
+      "請求修改",
     ],
-    [{ kind: "review", reviewState: "commented" }, "Reviewed", "A relu"],
-    [{ kind: "review" }, "Reviewed", "A relu"],
-  ] as const)("labels %o as %s, and %s in French", (item, englishVerb, frenchVerb) => {
+    [{ kind: "review", reviewState: "commented" }, "Reviewed", "已審查"],
+    [{ kind: "review" }, "Reviewed", "已審查"],
+  ] as const)("labels %o as %s, and %s in Traditional Chinese (Hong Kong)", (item, englishVerb, chineseVerb) => {
     expect(english(getActivityVerbKey(item))).toBe(englishVerb);
-    expect(french(getActivityVerbKey(item))).toBe(frenchVerb);
+    expect(chinese(getActivityVerbKey(item))).toBe(chineseVerb);
   });
 });

@@ -152,6 +152,12 @@ function findUntranslatedConnectionErrors(): string[] {
 }
 
 describe("translation resources", () => {
+  it("writes Hong Kong terms in zh-HK, not OpenCC's mainland-to-Taiwan artefacts", () => {
+    const strings = flattenStrings(withOverrides(zhHK, zhHKOverrides));
+    const artefacts = Object.entries(strings).filter(([, text]) => text.includes("許可權"));
+    expect(artefacts).toEqual([]);
+  });
+
   it("keeps all supported language keys in sync with English", () => {
     const englishKeys = canonicalKeys(en);
     expect(canonicalKeys(zhHK)).toEqual(englishKeys);

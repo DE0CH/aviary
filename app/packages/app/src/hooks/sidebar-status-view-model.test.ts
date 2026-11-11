@@ -234,14 +234,14 @@ describe("buildStatusShortcutIndex", () => {
 
 describe("getStatusBucketLabel", () => {
   it("reads in the active app language", async () => {
-    await i18n.changeLanguage("fr");
+    await i18n.changeLanguage("zh-HK");
     try {
       expect(STATUS_BUCKET_ORDER.map((bucket) => getStatusBucketLabel(bucket, i18n.t))).toEqual([
-        "Attend une réponse",
-        "Échec",
-        "À relire",
-        "En cours",
-        "Terminé",
+        "需要輸入",
+        "失敗",
+        "待檢視",
+        "執行中",
+        "已完成",
       ]);
     } finally {
       await i18n.changeLanguage("en");

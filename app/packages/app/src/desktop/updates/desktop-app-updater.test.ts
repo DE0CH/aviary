@@ -463,7 +463,7 @@ describe("formatStatusText", () => {
   });
 
   it("uses the active app language for local status wrappers", async () => {
-    await i18n.changeLanguage("zh-CN");
+    await i18n.changeLanguage("zh-HK");
     try {
       expect(
         formatStatusText({
@@ -474,7 +474,7 @@ describe("formatStatusText", () => {
           formatVersion,
           formatLastCheckedAt,
         }),
-      ).toBe("正在检查 app 更新...");
+      ).toBe("正在檢查 app 更新...");
       expect(
         formatStatusText({
           status: "available",
@@ -484,7 +484,7 @@ describe("formatStatusText", () => {
           formatVersion,
           formatLastCheckedAt,
         }),
-      ).toBe("更新已就绪：v1.2.3");
+      ).toBe("更新已就緒：v1.2.3");
     } finally {
       await i18n.changeLanguage("en");
     }

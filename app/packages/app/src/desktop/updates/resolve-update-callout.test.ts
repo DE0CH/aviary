@@ -107,14 +107,14 @@ describe("resolveUpdateCalloutDescriptor", () => {
   });
 
   it("uses the active app language for local callout chrome", async () => {
-    await i18n.changeLanguage("zh-CN");
+    await i18n.changeLanguage("zh-HK");
     try {
       const descriptor = resolveUpdateCalloutDescriptor(input());
 
       expect(descriptor?.title).toBe("有可用更新");
       expect(descriptor?.actions).toEqual([
-        { role: "changelog", label: "更新内容" },
-        { role: "install", label: "安装并重启", variant: "primary", disabled: false },
+        { role: "changelog", label: "更新內容" },
+        { role: "install", label: "安裝並重啟", variant: "primary", disabled: false },
       ]);
     } finally {
       await i18n.changeLanguage("en");

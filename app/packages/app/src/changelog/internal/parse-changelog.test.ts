@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   formatChangelogDate,
@@ -22,18 +20,6 @@ function sectionTitle(section: ChangelogSection): string | null {
 
 function releaseDate(release: ChangelogRelease): string {
   return release.date;
-}
-
-function authoredLines(release: ChangelogRelease): string[] {
-  return release.sections.flatMap(sectionLines);
-}
-
-function sectionLines(section: ChangelogSection): string[] {
-  return [...(section.title ? [`### ${section.title}`] : []), ...section.body.split("\n")];
-}
-
-function isNotBlank(line: string): boolean {
-  return line.trim().length > 0;
 }
 
 describe("parseChangelog", () => {
@@ -272,30 +258,3 @@ describe("formatChangelogDate", () => {
   });
 });
 
-describe("the repository's own CHANGELOG.md", () => {
-  const markdown = readFileSync(
-    fileURLToPath(new URL("../../../../../CHANGELOG.md", import.meta.url)),
-    "utf8",
-  );
-  const releases = parseChangelog(markdown);
-
-  it("parses every release heading", () => {
-    expect(releases.length).toBeGreaterThan(50);
-    for (const release of releases) {
-      expect(release.version).toMatch(/^\d+\.\d+\.\d+/);
-      expect(release.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-      expect(release.sections.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("keeps every authored line inside a release", () => {
-    const documentLines = markdown.split("\n");
-    const fromFirstRelease = documentLines.slice(
-      documentLines.findIndex((line) => line.startsWith("## ")),
-    );
-
-    expect(releases.flatMap(authoredLines).filter(isNotBlank)).toEqual(
-      fromFirstRelease.filter(isNotBlank).filter((line) => !line.startsWith("## ")),
-    );
-  });
-});

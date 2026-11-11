@@ -45,7 +45,7 @@ describe("buildDraftPanelDescriptor", () => {
   });
 
   it("uses the active language for draft descriptor chrome", async () => {
-    await i18n.changeLanguage("zh-CN");
+    await i18n.changeLanguage("zh-HK");
     const idleDescriptor = buildDraftPanelDescriptor({
       isCreating: false,
       icon: TestIcon,
@@ -62,7 +62,7 @@ describe("buildDraftPanelDescriptor", () => {
     });
     expect(creatingDescriptor).toMatchObject({
       label: "新建 Agent",
-      subtitle: "正在创建 Agent",
+      subtitle: "正在建立 Agent",
     });
     await i18n.changeLanguage("en");
   });

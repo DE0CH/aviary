@@ -19,9 +19,9 @@ describe("getCompactionMarkerLabel", () => {
   });
 
   it("renders labels in the active app language", async () => {
-    await i18n.changeLanguage("zh-CN");
+    await i18n.changeLanguage("zh-HK");
     try {
-      expect(getCompactionMarkerLabel({ status: "loading" })).toBe("正在压缩...");
+      expect(getCompactionMarkerLabel({ status: "loading" })).toBe("正在壓縮...");
     } finally {
       await i18n.changeLanguage("en");
     }
