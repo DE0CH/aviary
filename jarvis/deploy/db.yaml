@@ -62,6 +62,9 @@ kind: ObjectStore
 metadata: { name: chat-db-store, namespace: services }
 spec:
   retentionPolicy: 30d
+  # the Barman sidecar in each instance pod (the tenant's quota refuses a container without memory/cpu limits)
+  instanceSidecarConfiguration:
+    resources: { requests: { cpu: 20m, memory: 64Mi }, limits: { cpu: 500m, memory: 256Mi } }
   configuration:
     destinationPath: s3://deyao-chat-db/
     endpointURL: https://fsn1.your-objectstorage.com
