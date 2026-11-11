@@ -1354,6 +1354,7 @@ export const en = {
   newWorkspace: {
     title: "New workspace",
     create: "Create",
+    closed: "New workspaces are not started here.",
     isolation: {
       local: "Local",
       worktree: "New worktree",

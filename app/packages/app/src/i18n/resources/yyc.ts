@@ -80,6 +80,7 @@ export const enOverrides: TranslationOverrides = {
   newWorkspace: {
     title: "How can I help?",
     create: "Send",
+    closed: "Conversations start in Jarvis 4: a new session with the aviary harness is a new conversation here.",
   },
   sidebar: {
     actions: { newWorkspace: "New chat" },
@@ -187,6 +188,7 @@ export const zhHKOverrides: TranslationOverrides = {
   newWorkspace: {
     title: "有什麼可以幫你？",
     create: "傳送",
+    closed: "對話在 Jarvis 4 開始：以 aviary 開一個新會話，就是這裡的一個新對話。",
   },
   sidebar: {
     actions: { newWorkspace: "新對話" },

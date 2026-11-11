@@ -1332,6 +1332,7 @@ export const zhHK: TranslationResources = {
     },
   },
   newWorkspace: {
+    closed: "這裡不能開始新工作區。",
     title: "新建 workspace",
     create: "建立",
     isolation: {

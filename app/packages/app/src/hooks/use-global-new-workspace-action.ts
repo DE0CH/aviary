@@ -9,6 +9,7 @@ import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspac
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { viewAsReadOnly } from "@/yyc/view-as";
+import { newConversationsAvailable } from "@/yyc/me";
 
 const WORKSPACE_NEW_ACTIONS: readonly KeyboardActionId[] = ["workspace.new"];
 
@@ -28,8 +29,9 @@ export function useGlobalNewWorkspaceAction() {
     if (hosts.length === 0) {
       return false;
     }
-    // a read-only view-as tab starts no conversation (yyc/view-as.ts)
-    if (viewAsReadOnly()) return true;
+    // a read-only view-as tab starts no conversation (yyc/view-as.ts), nor does a deployment that starts every
+    // conversation itself (Jarvis 4; yyc/me.ts)
+    if (viewAsReadOnly() || !newConversationsAvailable()) return true;
     router.navigate(
       (serverId
         ? buildNewWorkspaceRoute(

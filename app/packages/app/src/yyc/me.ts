@@ -5,20 +5,32 @@ interface Me {
   firstName: string | null;
   /** Sharing exists (sandbox mode); a Jarvis 4 session's local mode has none. */
   sharing: boolean;
+  /**
+   * People start conversations here. False on a deployment that starts every conversation itself (Jarvis 4: each
+   * session started in the Jarvis 4 app is one conversation; hermit's `conversations.peopleCreate`): no New chat.
+   */
+  newConversations: boolean;
 }
+
+const DEFAULT_ME: Me = { firstName: null, sharing: true, newConversations: true };
+let loadedMe: Me | null = null;
 
 let mePromise: Promise<Me> | null = null;
 
 /** GET /api/jarvis/me (the router answers it in sandbox mode, the server in local mode), loaded once. */
 function loadMe(): Promise<Me> {
   mePromise ??= Promise.race([
-    api<{ firstName?: unknown; sharing?: unknown }>("/api/jarvis/me")
-      .then((body) => ({
-        firstName: typeof body?.firstName === "string" ? body.firstName : null,
-        sharing: body?.sharing !== false,
-      }))
-      .catch(() => ({ firstName: null, sharing: true })),
-    new Promise<Me>((resolve) => setTimeout(() => resolve({ firstName: null, sharing: true }), 3000)),
+    api<{ firstName?: unknown; sharing?: unknown; newConversations?: unknown }>("/api/jarvis/me")
+      .then((body) => {
+        loadedMe = {
+          firstName: typeof body?.firstName === "string" ? body.firstName : null,
+          sharing: body?.sharing !== false,
+          newConversations: body?.newConversations !== false,
+        };
+        return loadedMe;
+      })
+      .catch(() => DEFAULT_ME),
+    new Promise<Me>((resolve) => setTimeout(() => resolve(DEFAULT_ME), 3000)),
   ]);
   return mePromise;
 }
@@ -40,6 +52,27 @@ export function useSharingAvailable(): boolean {
     };
   }, []);
   return sharing;
+}
+
+/** Whether people start conversations here: true until the server says otherwise (yyc/me.ts `newConversations`). */
+export function useNewConversationsAvailable(): boolean {
+  const [available, setAvailable] = useState(loadedMe?.newConversations ?? true);
+  useEffect(() => {
+    let live = true;
+    void loadMe().then((me) => {
+      if (live) setAvailable(me.newConversations);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return available;
+}
+
+/** The same, read outside React (a keyboard action): true until `/api/jarvis/me` has answered otherwise. */
+export function newConversationsAvailable(): boolean {
+  void loadMe();
+  return loadedMe?.newConversations ?? true;
 }
 
 /** undefined until the answer is in (the greeting stays blank meanwhile, so it never swaps), then the name or null. */

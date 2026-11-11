@@ -19,6 +19,7 @@ import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { useViewAsReadOnly } from "@/yyc/view-as";
+import { useNewConversationsAvailable } from "@/yyc/me";
 import {
   buildNewWorkspaceRoute,
   buildSessionsRoute,
@@ -84,6 +85,8 @@ const SidebarNewWorkspaceRow = memo(function SidebarNewWorkspaceRow({
   const { t } = useTranslation();
   const shortcutKeys = useShortcutKeys(builtinSidebarNavShortcutAction("new-workspace"));
   const viewAsReadOnly = useViewAsReadOnly();
+  // a deployment that starts every conversation itself (Jarvis 4) offers no new one (yyc/me.ts)
+  const newConversations = useNewConversationsAvailable();
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const activeWorkspaceServerId = activeWorkspaceSelection?.serverId ?? null;
   const activeWorkspaceId = activeWorkspaceSelection?.workspaceId ?? null;
@@ -122,7 +125,7 @@ const SidebarNewWorkspaceRow = memo(function SidebarNewWorkspaceRow({
       testID="sidebar-global-new-workspace"
       variant="compact"
       shortcutKeys={shortcutKeys}
-      disabled={viewAsReadOnly}
+      disabled={viewAsReadOnly || !newConversations}
     />
   );
 });

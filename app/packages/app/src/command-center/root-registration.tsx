@@ -9,6 +9,7 @@ import { buildSessionsRoute, buildSettingsRoute } from "@/utils/host-routes";
 import type { CommandCenterContribution, CommandCenterIconProps } from "./contributions";
 import { useCommandCenterActions } from "./provider";
 import { useViewAsReadOnly } from "@/yyc/view-as";
+import { useNewConversationsAvailable } from "@/yyc/me";
 
 const ThemedPlus = withUnistyles(Plus, (theme) => ({ color: theme.colors.foregroundMuted }));
 const ThemedTrash = withUnistyles(Trash2, (theme) => ({ color: theme.colors.foregroundMuted }));
@@ -41,6 +42,8 @@ export function CommandCenterRootActions() {
   const sessionsRoute = useMemo<Href>(() => buildSessionsRoute(), []);
   // a read-only view-as tab offers no new conversation (yyc/view-as.ts)
   const viewAsReadOnly = useViewAsReadOnly();
+  // nor does a deployment that starts every conversation itself (Jarvis 4; yyc/me.ts)
+  const newConversations = useNewConversationsAvailable();
   const actions = useMemo<CommandCenterContribution[]>(
     () => [
       {
@@ -100,8 +103,11 @@ export function CommandCenterRootActions() {
     [keyboardActionDispatcher, sessionsRoute, settingsRoute, t],
   );
   const offered = useMemo(
-    () => (viewAsReadOnly ? actions.filter((action) => action.id !== "new-workspace") : actions),
-    [actions, viewAsReadOnly],
+    () =>
+      viewAsReadOnly || !newConversations
+        ? actions.filter((action) => action.id !== "new-workspace")
+        : actions,
+    [actions, viewAsReadOnly, newConversations],
   );
 
   useCommandCenterActions({ sourceId: "root", enabled: true, actions: offered });

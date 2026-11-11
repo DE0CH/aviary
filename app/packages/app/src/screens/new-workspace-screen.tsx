@@ -1,5 +1,5 @@
 import { greeting, greetingLocale, GREETING_DRAW } from "@/yyc/greeting";
-import { useFirstName } from "@/yyc/me";
+import { useFirstName, useNewConversationsAvailable } from "@/yyc/me";
 import type {
   CreateAgentRequestOptions,
   CreateWorkspaceRequestOptions,
@@ -822,7 +822,29 @@ function useNewWorkspaceInitialContext({
   };
 }
 
-export function NewWorkspaceScreen({
+/**
+ * The new-conversation screen, or, on a deployment that starts every conversation itself (Jarvis 4: hermit's
+ * `conversations.peopleCreate` false, yyc/me.ts), a line saying where conversations start: the composer would only be
+ * refused there.
+ */
+export function NewWorkspaceScreen(props: NewWorkspaceScreenProps) {
+  const newConversations = useNewConversationsAvailable();
+  return newConversations ? <NewWorkspaceComposerScreen {...props} /> : <NewConversationsClosed />;
+}
+
+function NewConversationsClosed() {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.container} testID="new-workspace-closed">
+      <MenuHeader />
+      <View style={styles.closedContent}>
+        <Text style={styles.closedText}>{t("newWorkspace.closed")}</Text>
+      </View>
+    </View>
+  );
+}
+
+function NewWorkspaceComposerScreen({
   serverId,
   sourceDirectory: sourceDirectoryProp,
   projectId,
@@ -1387,6 +1409,18 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     backgroundColor: theme.colors.surface0,
     userSelect: "none",
+  },
+  closedContent: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: theme.spacing[6],
+  },
+  closedText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.base,
+    textAlign: "center",
+    maxWidth: 420,
   },
   content: {
     position: "relative",
