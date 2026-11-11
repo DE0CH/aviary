@@ -1,0 +1,6 @@
+# Jarvis 4's chat (DE0CH/jarvis4 aviary/README.md): aviary's pigeon and magpie (the same builds as YYC AI), Jarvis 4's
+# hermit-jarvis, their Postgres chat-db. https://chat.deyaochen.com (pigeon) and https://chat-gw.deyaochen.com (the
+# session machines' gateway listener), both through the tunnel `services` (k8s/edge) behind Access (infra/cloudflare.py).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [db.yaml, magpie.yaml, pigeon.yaml, hermit.yaml, network.yaml]

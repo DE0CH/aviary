@@ -1,0 +1,62 @@
+# hermit-jarvis (DE0CH/jarvis4 aviary/): the hermit contract on Jarvis 4's aviary sessions (a session is a
+# conversation, a machine boot a sandbox), the central half of the sandbox gateway (chat-gw.deyaochen.com, behind the
+# Access app "Jarvis 4 chat gateway": the service token aviary-gateway of the sessions' store `aviary`), and pigeon's
+# models route. It reaches Jarvis 4's router only as a paired device (Access app "Jarvis 4 devices"). Env: Secret
+# chat-hermit. Image: jarvis4's aviary.yml, pinned here by .github/workflows/chat-pin.yml.
+#   :8080 the hermit contract (Service hermit)   :8081 the gateway listener (Service hermit-gw, cloudflared only)
+#   :8082 the models route (Service model)       :9090 ops
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: hermit, namespace: services }
+spec:
+  replicas: 2
+  minReadySeconds: 5
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
+  selector: { matchLabels: { app: hermit } }
+  template:
+    metadata: { labels: { app: hermit }, annotations: { services/secrets-rev-chat-hermit: "fcac9ea269a9" } }
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector: { jarvis4/pool: services }
+      # long-polls answer within 25 s; a forward of a sandbox's call gets 60 s (src/bin/hermit-jarvis.rs drain)
+      terminationGracePeriodSeconds: 75
+      containers:
+        - name: hermit
+          image: ghcr.io/de0ch/hermit-jarvis:sha-7e1b9907a363@sha256:27fa6385c0fcc0b7c46cf028af4faa002e84633d7da40bbbf9dc8cc7943e953a
+          envFrom: [{ secretRef: { name: chat-hermit } }]
+          ports: [{ containerPort: 8080 }, { containerPort: 8081 }, { containerPort: 8082 }, { containerPort: 9090 }]
+          lifecycle: { preStop: { sleep: { seconds: 5 } } }
+          startupProbe: { httpGet: { path: /healthz, port: 9090 }, periodSeconds: 2, failureThreshold: 150 }
+          livenessProbe: { httpGet: { path: /healthz, port: 9090 }, periodSeconds: 10, failureThreshold: 6 }
+          readinessProbe: { httpGet: { path: /readyz, port: 9090 }, periodSeconds: 2, failureThreshold: 2 }
+          resources: { requests: { cpu: 30m, memory: 64Mi }, limits: { cpu: 500m, memory: 256Mi } }
+          securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: hermit, namespace: services }
+spec:
+  selector: { app: hermit }
+  ports: [{ name: http, port: 80, targetPort: 8080 }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: hermit-gw, namespace: services }
+spec:
+  selector: { app: hermit }
+  ports: [{ name: http, port: 80, targetPort: 8081 }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: model, namespace: services }
+spec:
+  selector: { app: hermit }
+  ports: [{ name: http, port: 80, targetPort: 8082 }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: hermit, namespace: services }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: hermit } }

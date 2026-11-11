@@ -1,0 +1,83 @@
+# chat-db: magpie's and hermit-jarvis's Postgres (CloudNativePG, the cluster's operator; the tenant's Role for it is
+# DE0CH/jarvis4 k8s/cluster/tenants/services.yaml). Two instances on the services node pool, a lost primary loses no
+# committed write (one synchronous standby when it is up); every WAL segment and a daily base backup go to
+# s3://deyao-chat-db (Hetzner Object Storage fsn1, Secret chat-db-s3), 30 days. Roles magpie and hermit own their
+# databases (passwords: Secrets chat-db-magpie, chat-db-hermit; the same values in the services' *_DATABASE_URL).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: { name: chat-db, namespace: services }
+spec:
+  instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-202609281634-minimal-trixie@sha256:4467d4cf7e502fbc29800b75d755ede477a765b25a506a58a0842a57a4bf42c9
+  primaryUpdateStrategy: unsupervised
+  primaryUpdateMethod: switchover
+  bootstrap:
+    initdb:
+      database: magpie
+      owner: magpie
+      secret: { name: chat-db-magpie }
+      dataChecksums: true
+  managed:
+    roles:
+      - { name: magpie, ensure: present, login: true, passwordSecret: { name: chat-db-magpie } }
+      - { name: hermit, ensure: present, login: true, passwordSecret: { name: chat-db-hermit } }
+  postgresql:
+    parameters:
+      shared_buffers: 128MB
+      effective_cache_size: 384MB
+      work_mem: 4MB
+      maintenance_work_mem: 32MB
+      max_connections: "100"
+      max_wal_size: 1GB
+      min_wal_size: 128MB
+      wal_compression: "on"
+      archive_timeout: 5min
+      idle_in_transaction_session_timeout: 60s
+    synchronous: { method: any, number: 1, dataDurability: preferred }
+  storage: { size: 10Gi, storageClass: local-path }
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { memory: 512Mi }
+  affinity:
+    nodeSelector: { jarvis4/pool: services }
+    enablePodAntiAffinity: true
+    podAntiAffinityType: preferred
+    topologyKey: kubernetes.io/hostname
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters: { barmanObjectName: chat-db-store }
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata: { name: chat-db-hermit, namespace: services }
+spec:
+  cluster: { name: chat-db }
+  name: hermit
+  owner: hermit
+  ensure: present
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata: { name: chat-db-store, namespace: services }
+spec:
+  retentionPolicy: 30d
+  configuration:
+    destinationPath: s3://deyao-chat-db/
+    endpointURL: https://fsn1.your-objectstorage.com
+    s3Credentials:
+      accessKeyId: { name: chat-db-s3, key: ACCESS_KEY_ID }
+      secretAccessKey: { name: chat-db-s3, key: SECRET_ACCESS_KEY }
+    wal: { compression: gzip }
+    data: { compression: gzip }
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata: { name: chat-db-daily, namespace: services }
+spec:
+  cluster: { name: chat-db }
+  schedule: "0 30 19 * * *"  # 03:30 HKT daily (six fields: seconds first)
+  immediate: true            # the first base backup as soon as the Cluster is up
+  backupOwnerReference: self
+  method: plugin
+  pluginConfiguration: { name: barman-cloud.cloudnative-pg.io }

@@ -1,0 +1,48 @@
+# magpie (DE0CH/aviary crates/magpie): the store of record of Jarvis 4's chat: conversations, events, Claude Code's
+# state (the sessions' ~/.claude over FUSE), blobs in s3://deyao-chat-magpie. The same build as YYC AI's (dogfooding:
+# aviary's main, pinned here by .github/workflows/chat-pin.yml). Env: Secret chat-magpie (infra/chat-keys.py,
+# infra/secrets.py chat-magpie). Callers: pigeon, the gateway (hermit-jarvis's gateway listener), hermit-jarvis.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: magpie, namespace: services }
+spec:
+  replicas: 2
+  minReadySeconds: 5
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
+  selector: { matchLabels: { app: magpie } }
+  template:
+    metadata: { labels: { app: magpie }, annotations: { services/secrets-rev-chat-magpie: "e8af83734bdb" } }
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector: { jarvis4/pool: services }
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: magpie
+          image: ghcr.io/de0ch/magpie:871d602034db@sha256:5ed59b090dc3a53dddb29dbf0bb7d39773f780f71f07414b4815b4baeaa75237
+          args: [serve]
+          envFrom: [{ secretRef: { name: chat-magpie } }]
+          env: [{ name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }]
+          ports: [{ containerPort: 8080 }, { containerPort: 9090 }]
+          lifecycle: { preStop: { sleep: { seconds: 5 } } }
+          startupProbe: { httpGet: { path: /healthz, port: 9090 }, periodSeconds: 2, failureThreshold: 150 }
+          livenessProbe: { httpGet: { path: /healthz, port: 9090 }, periodSeconds: 10, failureThreshold: 6 }
+          readinessProbe: { httpGet: { path: /readyz, port: 9090 }, periodSeconds: 2, failureThreshold: 2 }
+          resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { cpu: "1", memory: 512Mi } }
+          securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: { sizeLimit: 1Gi } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: magpie, namespace: services }
+spec:
+  selector: { app: magpie }
+  ports: [{ name: http, port: 80, targetPort: 8080 }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: magpie, namespace: services }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: magpie } }

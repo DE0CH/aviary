@@ -1,0 +1,55 @@
+# pigeon (DE0CH/aviary crates/pigeon): Jarvis 4's chat web app at https://chat.deyaochen.com behind the Access app
+# "Jarvis 4 chat" (Deyao's email): the Paseo app (ghcr.io/de0ch/pigeon-app, DE0CH/claudecodeui; the same build as YYC
+# AI's) and its protocol, stateless. Its people and product come from hermit-jarvis (Deyao alone; "Jarvis 4", English;
+# New chat off: sessions start in the Jarvis 4 app). Env: Secret chat-pigeon.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: pigeon, namespace: services }
+spec:
+  replicas: 2
+  minReadySeconds: 5
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
+  selector: { matchLabels: { app: pigeon } }
+  template:
+    metadata: { labels: { app: pigeon }, annotations: { services/secrets-rev-chat-pigeon: "ce64243dcfb8" } }
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector: { jarvis4/pool: services }
+      terminationGracePeriodSeconds: 60
+      initContainers:
+        # the app bundle (pigeon 17.1): the pigeon-app image's files, copied into the emptyDir pigeon serves
+        - name: app
+          image: ghcr.io/de0ch/pigeon-app:848fb1adfe1b@sha256:adb520d682457d52a492ce75f89acb71a158b4acfb7476f99e6888e5affc5066
+          command: [/cp, -a, /app/., /srv/app/]
+          volumeMounts: [{ name: app, mountPath: /srv/app }]
+          resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
+          securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: pigeon
+          image: ghcr.io/de0ch/pigeon:871d602034db@sha256:c6b66c4369b73cb9ead8b87e5f14a75316570f692c03cef0ce5995b3f7e75b60
+          envFrom: [{ secretRef: { name: chat-pigeon } }]
+          env: [{ name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }]
+          ports: [{ containerPort: 8080 }, { containerPort: 9090 }]
+          lifecycle: { preStop: { sleep: { seconds: 5 } } }
+          startupProbe: { httpGet: { path: /healthz, port: 9090 }, periodSeconds: 2, failureThreshold: 150 }
+          livenessProbe: { httpGet: { path: /healthz, port: 9090 }, periodSeconds: 10, failureThreshold: 6 }
+          readinessProbe: { httpGet: { path: /readyz, port: 9090 }, periodSeconds: 2, failureThreshold: 2 }
+          resources: { requests: { cpu: 30m, memory: 64Mi }, limits: { cpu: 500m, memory: 256Mi } }
+          securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
+          volumeMounts: [{ name: app, mountPath: /srv/app, readOnly: true }]
+      volumes: [{ name: app, emptyDir: { sizeLimit: 512Mi } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: pigeon, namespace: services }
+spec:
+  selector: { app: pigeon }
+  ports: [{ name: http, port: 80, targetPort: 8080 }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: pigeon, namespace: services }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: pigeon } }

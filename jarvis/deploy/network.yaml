@@ -1,0 +1,87 @@
+# Who talks to whom in the chat (DE0CH/jarvis4 aviary/README.md). Ingress: cloudflared → pigeon (chat.deyaochen.com)
+# and → hermit-jarvis's gateway listener (chat-gw.deyaochen.com); pigeon → magpie, hermit, model; the gateway listener →
+# magpie and its own hermit API; magpie ↔ hermit; both → chat-db. Egress to the internet only on 443: magpie to its
+# bucket, hermit-jarvis to Jarvis 4's router (jarvis4.deyaochen.com through Cloudflare).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: pigeon, namespace: services }
+spec:
+  podSelector: { matchLabels: { app: pigeon } }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: cloudflared } } }]
+      ports: [{ port: 8080 }]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+    - to: [{ podSelector: { matchLabels: { app: magpie } } }]
+      ports: [{ port: 8080 }]
+    - to: [{ podSelector: { matchLabels: { app: hermit } } }]
+      ports: [{ port: 8080 }, { port: 8082 }]
+    # Cloudflare Access's signing keys (pigeon verifies the Access token itself)
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16] } }]
+      ports: [{ port: 443, protocol: TCP }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: magpie, namespace: services }
+spec:
+  podSelector: { matchLabels: { app: magpie } }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: pigeon } } }, { podSelector: { matchLabels: { app: hermit } } }]
+      ports: [{ port: 8080 }]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+    - to: [{ podSelector: { matchLabels: { app: hermit } } }]
+      ports: [{ port: 8080 }]
+    - to: [{ podSelector: { matchLabels: { cnpg.io/cluster: chat-db } } }]
+      ports: [{ port: 5432 }]
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16] } }]
+      ports: [{ port: 443, protocol: TCP }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: hermit, namespace: services }
+spec:
+  podSelector: { matchLabels: { app: hermit } }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: cloudflared } } }]
+      ports: [{ port: 8081 }]
+    - from: [{ podSelector: { matchLabels: { app: pigeon } } }]
+      ports: [{ port: 8080 }, { port: 8082 }]
+    - from: [{ podSelector: { matchLabels: { app: magpie } } }]
+      ports: [{ port: 8080 }]
+    # the gateway listener forwards a sandbox's hermit calls to its own API on another replica too
+    - from: [{ podSelector: { matchLabels: { app: hermit } } }]
+      ports: [{ port: 8080 }]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }, podSelector: { matchLabels: { k8s-app: kube-dns } } }]
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+    - to: [{ podSelector: { matchLabels: { app: magpie } } }]
+      ports: [{ port: 8080 }]
+    - to: [{ podSelector: { matchLabels: { app: hermit } } }]
+      ports: [{ port: 8080 }]
+    - to: [{ podSelector: { matchLabels: { cnpg.io/cluster: chat-db } } }]
+      ports: [{ port: 5432 }]
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16] } }]
+      ports: [{ port: 443, protocol: TCP }]
+---
+# chat-db: its clients, its own instances (replication) and the operator (cnpg-system) reach it; its egress stays open
+# (the operator's API calls, the Barman uploads)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: chat-db, namespace: services }
+spec:
+  podSelector: { matchLabels: { cnpg.io/cluster: chat-db } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: magpie } }
+        - podSelector: { matchLabels: { app: hermit } }
+        - podSelector: { matchLabels: { cnpg.io/cluster: chat-db } }
+      ports: [{ port: 5432 }]
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: cnpg-system } } }]
+      ports: [{ port: 8000 }, { port: 5432 }]
