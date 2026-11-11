@@ -28,7 +28,7 @@ images:
   - {name: hermit, newName: ghcr.io/de0ch/hermit, newTag: "ee9b9f111461"}
   - {name: sandboxd, newName: ghcr.io/de0ch/sandboxd, newTag: "ee9b9f111461"}
   # herald (aviary crates/herald): its own aviary commit, released with the others' CI
-  - {name: herald, newName: ghcr.io/de0ch/herald, newTag: "771cc695d9f0"}
+  - {name: herald, newName: ghcr.io/de0ch/herald, newTag: "7112fb613ee8"}
   # the app bundle (DE0CH/claudecodeui pigeon-app.yml)
   - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "a0bc8475e860"}
   # egress and tools (DE0CH/jarvis3 chat.yml); the ZDR guard reads this tag (yyc-ai/tests/test_zdr.py)
