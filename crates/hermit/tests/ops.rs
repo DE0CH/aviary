@@ -659,6 +659,9 @@ async fn only_admins_get_the_page_the_monitor_only_the_snapshot() {
     assert!(html.contains("History (log)"));
     assert!(html.contains("action=\"/api/jarvis/view-as\" target=\"_blank\""));
     assert!(html.contains(">View as<"));
+    // View as on the Now tab: every user now, each with their button (Deyao, 2026-11-11); no #view-as link handler
+    assert!(html.contains("card(\"View as\", \"open \""));
+    assert!(!html.contains("#view-as="));
     assert!(!html.contains("{{"), "every placeholder filled");
     // HEAD is GET without the body
     let res = pigeon
