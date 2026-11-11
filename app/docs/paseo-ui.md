@@ -389,8 +389,10 @@ Store Connect key) and uploads to TestFlight. Its secrets: `YYC_SITE`, `ASC_KEY_
 ## Tests
 
 - Server: `server/modules/paseo/tests/` (tsx --test), in `npm test`.
-- App: `.github/workflows/paseo-ui.yml` typechecks the app and runs the tests of the changed areas. Paseo's other
-  tests still mention its removed locales and features and are not run.
+- App: `.github/workflows/paseo-ui.yml` typechecks the app and runs every suite of `paseo/packages` (the app's unit
+  and browser projects, protocol, client, relay, highlight, plugin) and the bridge's, on every push touching them;
+  `pigeon-app.yml` and `yyc-ios.yml` call it and build only after it passes. YYC AI is test-first: a change starts with
+  a test that fails without it. Language tests use zh-HK, the fork's second language (`fr`/`ja`/… are not shipped).
 - Protocol replies: capture a session's frames with a browser (Playwright `page.on('websocket')`) and parse each
   server frame with `WSOutboundMessageSchema` from `paseo/packages/protocol/dist/messages.js`; zero failures is the
   bar for a bridge change.
