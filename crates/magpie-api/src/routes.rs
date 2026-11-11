@@ -178,6 +178,10 @@ pub const ADMIN_SCHEDULES_PAUSE: &str = "/v1/admin/schedules/pause";
 
 /// `POST` person purge (hermit).
 pub const HERMIT_PERSON_PURGE: &str = "/v1/hermit/persons/{person}/purge";
+/// A conversation the deployment starts for a person (hermit's, where `conversations.peopleCreate` is false).
+pub const HERMIT_CONVERSATIONS: &str = "/v1/hermit/conversations";
+/// A turn the deployment sends into such a conversation as its person.
+pub const HERMIT_CONVERSATION_TURNS: &str = "/v1/hermit/conversations/{id}/turns";
 /// `POST` workspace references (hermit).
 pub const HERMIT_WORKSPACES_EXISTS: &str = "/v1/hermit/workspaces/exists";
 /// `GET` whether the switch's import is complete (hermit's `legacy-cleanup`).
@@ -365,6 +369,22 @@ pub const ROUTES: &[Route] = &[
     // 16.3 hermit
     service("person_purge", Post, HERMIT_PERSON_PURGE, HERMIT, &[202], false),
     service(
+        "hermit_create_conversation",
+        Post,
+        HERMIT_CONVERSATIONS,
+        HERMIT,
+        &[201, 200],
+        false,
+    ),
+    service(
+        "hermit_send_turn",
+        Post,
+        HERMIT_CONVERSATION_TURNS,
+        HERMIT,
+        &[202, 200],
+        false,
+    ),
+    service(
         "workspaces_exists",
         Post,
         HERMIT_WORKSPACES_EXISTS,
@@ -522,7 +542,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 71);
+        assert_eq!(ROUTES.len(), 73);
     }
 
     #[test]

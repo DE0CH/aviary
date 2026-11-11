@@ -337,3 +337,97 @@ async fn admin_reads_are_audited_once_a_day() {
     want.sort();
     assert_eq!(listed, want);
 }
+
+#[tokio::test]
+async fn the_deployment_starts_a_persons_conversation_and_sends_its_turns() {
+    use magpie_api::ops::{HermitCreateRequest, HermitSendRequest};
+    use magpie_api::turns::SendRequest;
+    let hermit = FakeHermit::unguarded(HermitConfig::default());
+    let running = hermit.serve().await.unwrap();
+    let db = common::fresh_db("hstart").await;
+    let t = common::Tokens::new();
+    let r = common::replica_with(&db.url, &t, &running.url(), common::idle()).await;
+    let msg = |id: &str, text: &str| SendRequest {
+        client_message_id: id.into(),
+        text: text.into(),
+        images: vec![],
+        files: vec![],
+    };
+    let create = HermitCreateRequest {
+        // hermit's spelling is normalised as pigeon's is
+        person: "  Staff@Example.org ".into(),
+        idempotency_key: "session:s1".into(),
+        message: msg("first", "the session's first prompt"),
+    };
+    let made = r
+        .hermit()
+        .service(None)
+        .hermit_create_conversation(&create)
+        .await
+        .unwrap();
+    assert!(made.is_new());
+    let c = made.into_inner();
+    let id = c.conversation.id;
+    assert!(c.turn.is_some(), "the first prompt is a turn");
+    // the same key is the same conversation, for ever
+    let again = r
+        .hermit()
+        .service(None)
+        .hermit_create_conversation(&create)
+        .await
+        .unwrap();
+    assert!(!again.is_new());
+    assert_eq!(again.into_inner().conversation.id, id);
+    // it is the person's own: their list and their app see it
+    let seen = r.pigeon().person(STAFF).get_conversation(id).await.unwrap();
+    assert_eq!(seen.id, id);
+
+    // a turn while the first one runs: 409 turn_running, as M7
+    let e = r
+        .hermit()
+        .service(None)
+        .hermit_send_turn(
+            id,
+            &HermitSendRequest {
+                person: STAFF.into(),
+                message: msg("w1", "a scheduled wakeup"),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e.code(), Some(&ErrorCode::TurnRunning));
+    // another person's conversation is not found
+    let e = r
+        .hermit()
+        .service(None)
+        .hermit_send_turn(
+            id,
+            &HermitSendRequest {
+                person: LEAVER.into(),
+                message: msg("w2", "x"),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e.code(), Some(&ErrorCode::NotFound));
+    // not an email
+    let e = r
+        .hermit()
+        .service(None)
+        .hermit_create_conversation(&HermitCreateRequest {
+            person: "nobody".into(),
+            idempotency_key: "k".into(),
+            message: msg("m", "x"),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(e.code(), Some(&ErrorCode::BadRequest));
+    // pigeon may not use hermit's routes
+    let e = r
+        .pigeon()
+        .service(None)
+        .hermit_create_conversation(&create)
+        .await
+        .unwrap_err();
+    assert_eq!(e.code(), Some(&ErrorCode::WrongCaller));
+}

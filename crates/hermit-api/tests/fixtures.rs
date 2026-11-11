@@ -53,6 +53,7 @@ macro_rules! fixtures {
 fixtures! {
     "deployment" => Deployment,
     "deployment-no-app" => Deployment,
+    "deployment-hermit-starts" => Deployment,
     "person-staff" => Person,
     "person-admin" => Person,
     "person-not-allowed" => Person,
@@ -79,6 +80,7 @@ fixtures! {
     "token-liveness" => TokenLiveness,
     "token-liveness-gone" => TokenLiveness,
     "sandbox-self" => SandboxSelf,
+    "sandbox-self-project" => SandboxSelf,
     "secret-keys" => SecretKeys,
     "secret-keys-granted" => SecretKeys,
     "secret-value" => SecretValue,
@@ -159,6 +161,10 @@ fn no_underscore_in_any_key() {
 
 #[test]
 fn the_descriptor_etag_is_its_hash() {
+    for name in ["sandbox-self", "sandbox-self-project"] {
+        let d: SandboxSelf = round_trip(name);
+        assert_eq!(d.etag, d.compute_etag(), "{name}");
+    }
     let d: SandboxSelf = round_trip("sandbox-self");
     assert_eq!(d.etag, d.compute_etag());
     let mut changed = d.clone();

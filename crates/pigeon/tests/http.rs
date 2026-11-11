@@ -676,7 +676,10 @@ async fn me_gives_the_first_name() {
     let h = Harness::start().await;
     let r = h.get_as(me(), STAFF).await;
     assert_eq!(r.headers()["cache-control"], "no-store");
-    assert_eq!(body_json(r).await, json!({"firstName": "Tai", "sharing": true}));
+    assert_eq!(
+        body_json(r).await,
+        json!({"firstName": "Tai", "sharing": true, "newConversations": true})
+    );
     // no name claim: Access's get-identity answers (fake-access answers from the token's own name)
     let t1 = &h.teams[0];
     let bare = t1
@@ -693,6 +696,10 @@ async fn me_gives_the_first_name() {
     let v = body_json(h.as_token(h.get(me()), &bare).send().await.unwrap()).await;
     assert_eq!(v["sharing"], true);
     assert_eq!(v["firstName"], serde_json::Value::Null);
+    // a deployment that starts every conversation itself: the app offers no new one
+    h.set_facts(|d| d.conversations.people_create = false).await;
+    let v = body_json(h.get_as(me(), STAFF).await).await;
+    assert_eq!(v["newConversations"], false);
 }
 
 // ---- Models and warm (spec 5.5-5.6) ----

@@ -37,20 +37,21 @@ use crate::files::{FilesPanel, RawFileQuery};
 use crate::legacy::LegacyPathRequest;
 use crate::live::{LiveFramesRequest, LiveState};
 use crate::ops::{
-    AdminConversation, AdminConversationList, AdminListQuery, LegacyImportStatus, OpsStats, PeopleQuery,
-    PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest,
-    WorkspacesExistsRequest, WorkspacesExistsResponse,
+    AdminConversation, AdminConversationList, AdminListQuery, HermitCreateRequest, HermitSendRequest,
+    LegacyImportStatus, OpsStats, PeopleQuery, PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog,
+    ViewAsLogQuery, ViewAsRequest, WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
 use crate::routes::{
     self, ADMIN_CONVERSATION, ADMIN_CONVERSATIONS, ADMIN_EVENTS, ADMIN_SCHEDULES, ADMIN_SCHEDULES_PAUSE,
     ADMIN_TIMELINE, ADMIN_TRANSCRIPT, ASK_ANSWER, BLOB, CANCEL, CHANGES, CONVERSATION, CONVERSATION_DELETE,
     CONVERSATION_RESTORE, CONVERSATION_SCHEDULES, CONVERSATION_SHARES, CONVERSATIONS, CREATION, FILES, FILES_RAW,
-    HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS,
-    PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME,
-    SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE,
-    SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES,
-    SANDBOX_SENT_FILES, SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS,
-    SEARCH, SHARE, SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
+    HERMIT_CONVERSATION_TURNS, HERMIT_CONVERSATIONS, HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE,
+    HERMIT_WORKSPACES_EXISTS, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS, PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS,
+    SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME, SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR,
+    SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE, SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS,
+    SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES, SANDBOX_SENT_FILES,
+    SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS, SEARCH, SHARE,
+    SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
 };
 use crate::rows::{
     PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery,
@@ -661,6 +662,25 @@ pub trait Server: Send + Sync + 'static {
         async move { Err(not_implemented("sent_files_commit")) }
     }
 
+    /// Route `hermit_create_conversation`.
+    fn hermit_create_conversation(
+        &self,
+        ctx: Ctx,
+        body: HermitCreateRequest,
+    ) -> impl Future<Output = Result<Admitted<CreateResponse>, ApiError>> + Send {
+        async move { Err(not_implemented("hermit_create_conversation")) }
+    }
+
+    /// Route `hermit_send_turn`.
+    fn hermit_send_turn(
+        &self,
+        ctx: Ctx,
+        id: Uuid,
+        body: HermitSendRequest,
+    ) -> impl Future<Output = Result<Admitted<SendResponse>, ApiError>> + Send {
+        async move { Err(not_implemented("hermit_send_turn")) }
+    }
+
     /// Route `person_purge`.
     fn person_purge(
         &self,
@@ -1102,6 +1122,26 @@ async fn h_sent_files_commit<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, P(too
     reply("sent_files_commit", s.sent_files_commit(ctx, tool_use_id).await)
 }
 
+async fn h_hermit_create_conversation<S: Server>(
+    State(s): State<Arc<S>>,
+    ctx: Ctx,
+    J(body): J<HermitCreateRequest>,
+) -> Response {
+    reply_admitted(
+        "hermit_create_conversation",
+        s.hermit_create_conversation(ctx, body).await,
+    )
+}
+
+async fn h_hermit_send_turn<S: Server>(
+    State(s): State<Arc<S>>,
+    ctx: Ctx,
+    P(id): P<Uuid>,
+    J(body): J<HermitSendRequest>,
+) -> Response {
+    reply_admitted("hermit_send_turn", s.hermit_send_turn(ctx, id, body).await)
+}
+
 async fn h_person_purge<S: Server>(
     State(s): State<Arc<S>>,
     ctx: Ctx,
@@ -1278,6 +1318,8 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
         .route(ADMIN_SCHEDULES, get(h_admin_schedules::<S>))
         .route(ADMIN_SCHEDULES_PAUSE, put(h_admin_schedules_pause::<S>))
         .route(HERMIT_PERSON_PURGE, post(h_person_purge::<S>))
+        .route(HERMIT_CONVERSATIONS, post(h_hermit_create_conversation::<S>))
+        .route(HERMIT_CONVERSATION_TURNS, post(h_hermit_send_turn::<S>))
         .route(HERMIT_WORKSPACES_EXISTS, post(h_workspaces_exists::<S>))
         .route(HERMIT_LEGACY_IMPORT, get(h_legacy_import::<S>))
         .route(OPS_PEOPLE, get(h_ops_people::<S>))

@@ -1,0 +1,56 @@
+{
+  "route": "hermit_send_turn",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "request": {
+    "person": "owner@example.com",
+    "message": {
+      "clientMessageId": "jarvis-wakeup-0190f6c2",
+      "text": "Scheduled wakeup: check whether the deploy finished.",
+      "images": [],
+      "files": []
+    }
+  },
+  "responses": [
+    {
+      "status": 202,
+      "body": {
+        "turn": {
+          "id": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+          "startedAt": "2026-11-02T03:46:10.120Z"
+        }
+      }
+    },
+    {
+      "status": 200,
+      "body": {
+        "turn": {
+          "id": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+          "startedAt": "2026-11-02T03:46:10.120Z"
+        }
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "turn_running",
+        "message": "a turn is running"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "conversation_deleted",
+        "message": "the conversation is in Recently deleted"
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

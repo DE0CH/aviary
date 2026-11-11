@@ -156,6 +156,13 @@ pub struct Claude {
     /// `/etc/claude-code/.claude/skills/<skill>/<file>`; every key passes [`valid_skill_path`]. Absent = none.
     #[serde(default)]
     pub managed_skills: BTreeMap<String, String>,
+    /// Claude Code also loads the workspace's own project settings: `/workspace/CLAUDE.md`, `/workspace/.claude/`
+    /// (skills, `settings.json` with its hooks), as when it is started inside a repository
+    /// (`--setting-sources=project`, and the managed settings without `allowManagedHooksOnly`). Absent = false: only
+    /// the managed files reach Claude Code (`--setting-sources=`). Not serialised when false, so a descriptor that
+    /// does not use it is byte for byte what it was before the field existed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub project_settings: bool,
 }
 
 /// A managed skill file's key: `<skill>/<file>`, each part `[A-Za-z0-9][A-Za-z0-9._-]{0,127}` (no dot segments, no

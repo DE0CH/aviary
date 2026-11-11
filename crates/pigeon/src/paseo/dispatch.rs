@@ -702,6 +702,13 @@ impl Handler {
                 &json!({"requestId": self.rid, "workspace": null, "setupTerminalId": null, "error": error}),
             );
         };
+        // the deployment starts every conversation itself (hermit's `conversations.peopleCreate` false)
+        if !self.app.identities().people_create() {
+            return failed(
+                locale.create_closed().to_owned(),
+                Some("conversations_closed".to_owned()),
+            );
+        }
         let images = match self.upload_images(pick("images")).await {
             Ok(i) => i,
             Err(e) => return failed(e, None),

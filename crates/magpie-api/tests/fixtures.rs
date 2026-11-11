@@ -86,6 +86,8 @@ fn check_route(id: &str, f: &serde_json::Value) {
         "sent_files" => check::<NoQuery, Json<SentFilesRequest>, Json<SentFilesResponse>>(id, f),
         "sent_files_commit" => check::<NoQuery, Json<Empty>, Json<SentFilesCommitted>>(id, f),
         "person_purge" => check::<NoQuery, Json<PersonPurgeRequest>, Json<PersonPurgeResponse>>(id, f),
+        "hermit_create_conversation" => check::<NoQuery, Json<HermitCreateRequest>, Json<CreateResponse>>(id, f),
+        "hermit_send_turn" => check::<NoQuery, Json<HermitSendRequest>, Json<SendResponse>>(id, f),
         "workspaces_exists" => check::<NoQuery, Json<WorkspacesExistsRequest>, Json<WorkspacesExistsResponse>>(id, f),
         "legacy_import" => check::<NoQuery, NoBody, Json<LegacyImportStatus>>(id, f),
         "ops_people" => check::<Json<PeopleQuery>, NoBody, Json<PeopleResponse>>(id, f),

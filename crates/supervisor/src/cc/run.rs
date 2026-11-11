@@ -1502,6 +1502,7 @@ impl Driver {
         let stderr = dir.join("stderr.log");
         let spec = self.cfg.launch.spec(
             session,
+            descriptor.claude.project_settings,
             env,
             stdout.to_string_lossy().into_owned(),
             stderr.to_string_lossy().into_owned(),

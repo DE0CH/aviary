@@ -45,6 +45,32 @@ pub struct PersonPurgeResponse {
     pub conversations: u64,
 }
 
+/// `POST /v1/hermit/conversations` → 201 (200 for a repeat): M3 for `person`, made by the deployment itself (a
+/// deployment whose people start no conversations, hermit's `conversations.peopleCreate` false). Idempotent for ever
+/// by (person, `idempotencyKey`), as M3. The answer is M3's.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HermitCreateRequest {
+    /// The conversation's person.
+    pub person: String,
+    /// Unique per person: a repeat returns the same conversation and turn.
+    pub idempotency_key: String,
+    /// The first message; admitted when its text or attachments are non-empty.
+    pub message: crate::turns::SendRequest,
+}
+
+/// `POST /v1/hermit/conversations/{id}/turns` → 202 (200 for a repeat): M7 as the conversation's person, sent by the
+/// deployment (its scheduled prompts, messages from outside the app). 404 when the conversation is not `person`'s;
+/// 409 `turn_running` while a turn runs, as M7. The answer is M7's.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HermitSendRequest {
+    /// The conversation's person.
+    pub person: String,
+    /// The turn's message.
+    pub message: crate::turns::SendRequest,
+}
+
 /// At most this many ids per `workspaces/exists` call.
 pub const WORKSPACES_EXISTS_MAX: usize = 1_000;
 

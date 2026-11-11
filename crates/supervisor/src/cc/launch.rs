@@ -41,9 +41,10 @@ impl Session {
     }
 }
 
-/// The argv of 6.1 (`bin` is [`CLAUDE_BIN`] in a sandbox).
+/// The argv of 6.1 (`bin` is [`CLAUDE_BIN`] in a sandbox). `project_settings` is the descriptor's
+/// `claude.projectSettings`: the workspace's own settings are loaded (`--setting-sources=project`) instead of none.
 #[must_use]
-pub fn argv(bin: &str, session: &Session) -> Vec<String> {
+pub fn argv(bin: &str, session: &Session, project_settings: bool) -> Vec<String> {
     let mut a: Vec<String> = [
         bin,
         "--output-format",
@@ -55,7 +56,11 @@ pub fn argv(bin: &str, session: &Session) -> Vec<String> {
         "stdio",
         "--permission-mode",
         "bypassPermissions",
-        "--setting-sources=",
+        if project_settings {
+            "--setting-sources=project"
+        } else {
+            "--setting-sources="
+        },
         "--disallowedTools",
         DISALLOWED_TOOLS,
     ]
@@ -139,6 +144,7 @@ impl Launch {
     pub fn spec(
         &self,
         session: &Session,
+        project_settings: bool,
         env: Vec<String>,
         stdout: String,
         stderr: String,
@@ -146,7 +152,7 @@ impl Launch {
     ) -> SpawnSpec {
         SpawnSpec {
             name: "claude".into(),
-            argv: argv(&self.bin, session),
+            argv: argv(&self.bin, session, project_settings),
             env,
             cwd: Some(self.cwd.clone()),
             uid: self.uid,
@@ -171,7 +177,7 @@ mod tests {
 
     #[test]
     fn argv_is_the_spec_s() {
-        let a = argv(CLAUDE_BIN, &Session::New("c1".into()));
+        let a = argv(CLAUDE_BIN, &Session::New("c1".into()), false);
         assert_eq!(a[0], CLAUDE_BIN);
         assert!(a.windows(2).any(|w| w == ["--permission-mode", "bypassPermissions"]));
         assert!(a.iter().any(|x| x == "--setting-sources="));
@@ -185,8 +191,11 @@ mod tests {
         ] {
             assert!(!a.iter().any(|x| x == absent), "{absent}");
         }
-        let r = argv(CLAUDE_BIN, &Session::Resume("s9".into()));
+        let r = argv(CLAUDE_BIN, &Session::Resume("s9".into()), false);
         assert_eq!(r[r.len() - 2..], ["--resume".to_owned(), "s9".to_owned()]);
+        let p = argv(CLAUDE_BIN, &Session::New("c1".into()), true);
+        assert!(p.iter().any(|x| x == "--setting-sources=project"));
+        assert!(!p.iter().any(|x| x == "--setting-sources="));
     }
 
     #[test]

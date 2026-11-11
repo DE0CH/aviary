@@ -102,7 +102,11 @@ pub fn app_signin(app: &App, req: &Parts, id: &Identity) -> Response {
 /// `GET …/me` (5.4): the greeting's first name, and who is being viewed in view-as.
 pub async fn me(app: &App, id: &Identity) -> Response {
     let body: Value = match id {
-        Identity::Person(p) => json!({"firstName": app.0.identity.first_name(p).await, "sharing": true}),
+        Identity::Person(p) => json!({
+            "firstName": app.0.identity.first_name(p).await,
+            "sharing": true,
+            "newConversations": app.0.identity.people_create(),
+        }),
         Identity::ViewAs(v) => {
             let expires = time::OffsetDateTime::from_unix_timestamp(v.exp)
                 .map(|t| magpie_api::Timestamp(t).to_wire())
@@ -110,6 +114,7 @@ pub async fn me(app: &App, id: &Identity) -> Response {
             json!({
                 "firstName": app.0.identity.cached_first_name(&v.person).await,
                 "sharing": true,
+                "newConversations": app.0.identity.people_create(),
                 "viewAs": {"user": v.person, "expiresAt": expires},
             })
         }

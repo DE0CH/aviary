@@ -29,9 +29,9 @@ use crate::headers::{
 use crate::legacy::LegacyPathRequest;
 use crate::live::{LiveFramesRequest, LiveState};
 use crate::ops::{
-    AdminConversation, AdminConversationList, AdminListQuery, LegacyImportStatus, OpsStats, PeopleQuery,
-    PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest,
-    WorkspacesExistsRequest, WorkspacesExistsResponse,
+    AdminConversation, AdminConversationList, AdminListQuery, HermitCreateRequest, HermitSendRequest,
+    LegacyImportStatus, OpsStats, PeopleQuery, PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog,
+    ViewAsLogQuery, ViewAsRequest, WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
 use crate::routes::{self, Route, Surface};
 use crate::rows::{
@@ -961,6 +961,39 @@ impl ServiceCalls<'_> {
     ) -> Result<T, ClientError> {
         self.client
             .exec_json(&self.scope, route(id), params, q, Body::None)
+            .await
+    }
+
+    /// A conversation the deployment starts for a person (caller hermit).
+    pub async fn hermit_create_conversation(
+        &self,
+        req: &HermitCreateRequest,
+    ) -> Result<Admitted<CreateResponse>, ClientError> {
+        self.client
+            .exec_admitted(
+                &self.scope,
+                route("hermit_create_conversation"),
+                &[],
+                NO_QUERY,
+                json(req)?,
+            )
+            .await
+    }
+
+    /// A turn the deployment sends into a conversation as its person (caller hermit).
+    pub async fn hermit_send_turn(
+        &self,
+        id: Uuid,
+        req: &HermitSendRequest,
+    ) -> Result<Admitted<SendResponse>, ClientError> {
+        self.client
+            .exec_admitted(
+                &self.scope,
+                route("hermit_send_turn"),
+                &[&id.to_string()],
+                NO_QUERY,
+                json(req)?,
+            )
             .await
     }
 

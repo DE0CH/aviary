@@ -835,6 +835,24 @@ async fn sends_creates_and_cancels() {
 }
 
 #[tokio::test]
+async fn a_deployment_that_starts_conversations_refuses_a_persons_create() {
+    let e = env().await;
+    e.h.set_facts(|d| d.conversations.people_create = false).await;
+    let mut ws = e.ws(STAFF).await;
+    let (k, r) = ws
+        .rpc(
+            "workspace.create.request",
+            json!({"idempotencyKey": "key-c", "source": {"kind": "directory", "path": "/workspace", "projectId": "prj_conversations"},
+                   "agent": {"initialPrompt": "start", "config": {"provider": "claude", "cwd": "/workspace"}}}),
+        )
+        .await;
+    assert_eq!(k, "workspace.create.response");
+    assert_eq!(r["workspace"], Value::Null);
+    assert_eq!(r["error"], "這裡不能開始新對話。");
+    assert_eq!(e.m.calls_to("create_conversation"), 0, "magpie is never asked");
+}
+
+#[tokio::test]
 async fn rename_delete_restore_and_asks() {
     let e = env().await;
     let c = e.m.add(STAFF, Some("old"));

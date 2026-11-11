@@ -1,0 +1,103 @@
+{
+  "route": "hermit_create_conversation",
+  "request": {
+    "person": "owner@example.com",
+    "idempotencyKey": "session:s9c0ec40852b22d23",
+    "message": {
+      "clientMessageId": "jarvis-first-prompt",
+      "text": "Check the build of jarvis4 main and fix what fails.",
+      "images": [],
+      "files": []
+    }
+  },
+  "responses": [
+    {
+      "status": 201,
+      "body": {
+        "conversation": {
+          "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a",
+          "title": "幫我整理今日有關港珠澳大橋嘅新聞…",
+          "titleSource": "provisional",
+          "createdAt": "2026-11-02T03:46:10.120Z",
+          "updatedAt": "2026-11-02T03:46:10.120Z",
+          "lastUserMessageAt": "2026-11-02T03:46:10.120Z",
+          "deletedAt": null,
+          "purgeAt": null,
+          "claudeSessionId": null,
+          "turn": {
+            "id": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+            "startedAt": "2026-11-02T03:46:10.120Z",
+            "origin": "person"
+          },
+          "lastTurn": null,
+          "sandbox": null,
+          "asks": [],
+          "run": {
+            "state": "admitted",
+            "background": []
+          },
+          "model": null,
+          "contextTokens": null,
+          "origin": {
+            "kind": "new"
+          }
+        },
+        "turn": {
+          "id": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+          "startedAt": "2026-11-02T03:46:10.120Z"
+        }
+      }
+    },
+    {
+      "status": 200,
+      "body": {
+        "conversation": {
+          "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a",
+          "title": "幫我整理今日有關港珠澳大橋嘅新聞…",
+          "titleSource": "provisional",
+          "createdAt": "2026-11-02T03:46:10.120Z",
+          "updatedAt": "2026-11-02T03:46:10.120Z",
+          "lastUserMessageAt": "2026-11-02T03:46:10.120Z",
+          "deletedAt": null,
+          "purgeAt": null,
+          "claudeSessionId": null,
+          "turn": {
+            "id": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+            "startedAt": "2026-11-02T03:46:10.120Z",
+            "origin": "person"
+          },
+          "lastTurn": null,
+          "sandbox": null,
+          "asks": [],
+          "run": {
+            "state": "admitted",
+            "background": []
+          },
+          "model": null,
+          "contextTokens": null,
+          "origin": {
+            "kind": "new"
+          }
+        },
+        "turn": {
+          "id": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+          "startedAt": "2026-11-02T03:46:10.120Z"
+        }
+      }
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "bad_request",
+        "message": "person is not an email"
+      }
+    },
+    {
+      "status": 413,
+      "body": {
+        "code": "too_large",
+        "message": "the text is over 1 MiB"
+      }
+    }
+  ]
+}

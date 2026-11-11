@@ -1,0 +1,54 @@
+{
+  "sandbox": {
+    "id": "0190f6c2-5b1e-7a3c-9d4e-1f2a3b4c5d6e",
+    "conversationId": "0190f6c2-4a0d-7b2c-8e1f-0a1b2c3d4e5f",
+    "person": "staff@example.org",
+    "createdAt": "2026-11-02T04:05:06.789Z",
+    "expiresAt": "2026-11-02T12:05:06.789Z",
+    "image": "sha256:3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f"
+  },
+  "control": {
+    "port": 7070,
+    "tokenSha256": [
+      "9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f"
+    ]
+  },
+  "claude": {
+    "managedClaudeMd": "You are the deployment's assistant.\n\nThe workspace holds 1 GiB and 1000 files.",
+    "managedSkills": {
+      "echo/SKILL.md": "---\nname: echo\ndescription: Echo a text back through the deployment's tools API. Use it when asked to call the echo tool.\n---\n\n# Echo\n\n```sh\ncurl -sS -H 'Content-Type: application/json' http://tools/v1/tools/echo -d '{\"text\": \"hello\"}'\n```\n\n`GET http://tools/v1/tools` lists every tool with its arguments.\n"
+    },
+    "projectSettings": true
+  },
+  "title": {
+    "system": "Write a short title for this conversation."
+  },
+  "env": {
+    "PIP_INDEX_URL": "http://sbx:hst1.1.AAAA.BBBB@192.0.2.1:3128/mirror/pypi/simple",
+    "PIP_TRUSTED_HOST": "192.0.2.1",
+    "npm_config_registry": "http://sbx:hst1.1.AAAA.BBBB@192.0.2.1:3128/mirror/npm/"
+  },
+  "envPrivate": [],
+  "resources": {
+    "memoryBytes": 1073741824,
+    "cpus": 1,
+    "pids": 4096,
+    "tmpBytes": 5368709120,
+    "openFiles": 65536,
+    "workspace": {
+      "path": "/workspace",
+      "quotaBytes": 1073741824,
+      "quotaInodes": 1000
+    }
+  },
+  "lifecycle": {
+    "activityEverySeconds": 15,
+    "idleMinutes": 30,
+    "maxLifetimeHours": 8,
+    "lifetimeGraceMinutes": 60
+  },
+  "secrets": {
+    "keys": []
+  },
+  "etag": "\"38523dcfc4b748dbd18d6d5f1f9e366e\""
+}

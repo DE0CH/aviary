@@ -25,6 +25,19 @@ pub const MANAGED_SETTINGS: &str = r#"{
 }
 "#;
 
+/// `managed-settings.json` when the descriptor's `claude.projectSettings` is true: the same file without
+/// `allowManagedHooksOnly`, so the workspace's own hooks run beside the managed one.
+pub const MANAGED_SETTINGS_PROJECT: &str = r#"{
+  "cleanupPeriodDays": 36500,
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "SendUserFile",
+       "hooks": [{"type": "command", "command": "/usr/local/bin/supervisor hook send-user-file", "timeout": 120}]}
+    ]
+  }
+}
+"#;
+
 /// The managed skills' folder under the managed directory.
 pub const SKILLS: &str = ".claude/skills";
 
@@ -35,7 +48,12 @@ pub const SKILLS: &str = ".claude/skills";
 pub fn write(dir: &Path, claude: &hermit_api::sandbox_surface::Claude) -> std::io::Result<()> {
     mkdir(dir)?;
     put(dir, "CLAUDE.md", claude.managed_claude_md.as_bytes())?;
-    put(dir, "managed-settings.json", MANAGED_SETTINGS.as_bytes())?;
+    let settings = if claude.project_settings {
+        MANAGED_SETTINGS_PROJECT
+    } else {
+        MANAGED_SETTINGS
+    };
+    put(dir, "managed-settings.json", settings.as_bytes())?;
     // decision 15: no MCP servers (a file left by an older supervisor would bring one back)
     match std::fs::remove_file(dir.join("managed-mcp.json")) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
@@ -122,6 +140,7 @@ mod tests {
     fn claude(md: &str, skills: &[(&str, &str)]) -> Claude {
         Claude {
             managed_claude_md: md.to_owned(),
+            project_settings: false,
             managed_skills: skills
                 .iter()
                 .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))

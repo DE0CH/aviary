@@ -1,6 +1,6 @@
 //! H1 `GET /v1/deployment` (hermit 3.3): served from memory (`hermit.json`), never touches Postgres.
 
-use hermit_api::deployment::{AccessApp, Deployment, Product, SignIn};
+use hermit_api::deployment::{AccessApp, Conversations, Deployment, Product, SignIn};
 
 use crate::config::Config;
 
@@ -25,5 +25,7 @@ pub fn of(cfg: &Config) -> Deployment {
                 .collect(),
             app_scheme: f.sign_in.app_scheme.clone(),
         },
+        // YYC's staff start their own conversations
+        conversations: Conversations::default(),
     }
 }

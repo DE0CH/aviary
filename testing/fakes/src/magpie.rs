@@ -68,9 +68,9 @@ use magpie_api::files::{FilesPanel, RawFileQuery};
 use magpie_api::legacy::LegacyPathRequest;
 use magpie_api::live::{LiveFramesRequest, LiveState};
 use magpie_api::ops::{
-    AdminConversation, AdminConversationList, AdminListQuery, LegacyImportStatus, OpsStats, PeopleQuery,
-    PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest,
-    WorkspacesExistsRequest, WorkspacesExistsResponse,
+    AdminConversation, AdminConversationList, AdminListQuery, HermitCreateRequest, HermitSendRequest,
+    LegacyImportStatus, OpsStats, PeopleQuery, PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog,
+    ViewAsLogQuery, ViewAsRequest, WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
 use magpie_api::rows::{
     PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery,
@@ -1493,6 +1493,31 @@ impl Server for FakeMagpie {
             Some(r) => r.typed("sent_files_commit"),
             None => self.model_sent_files_commit(&ctx, &tool_use_id),
         }
+    }
+
+    async fn hermit_create_conversation(
+        &self,
+        ctx: Ctx,
+        body: HermitCreateRequest,
+    ) -> Result<Admitted<CreateResponse>, ApiError> {
+        scripted!(
+            self,
+            "hermit_create_conversation",
+            ctx,
+            json!({}),
+            None,
+            ser(&body),
+            admitted
+        )
+    }
+
+    async fn hermit_send_turn(
+        &self,
+        ctx: Ctx,
+        id_: Uuid,
+        body: HermitSendRequest,
+    ) -> Result<Admitted<SendResponse>, ApiError> {
+        scripted!(self, "hermit_send_turn", ctx, id(id_), None, ser(&body), admitted)
     }
 
     async fn person_purge(

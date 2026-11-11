@@ -437,6 +437,13 @@ impl Identities {
             .is_some_and(|f| f.product.locale.to_ascii_lowercase().starts_with("zh"))
     }
 
+    /// Whether people start conversations (hermit's `conversations.peopleCreate`; true before the facts load, as the
+    /// default is).
+    #[must_use]
+    pub fn people_create(&self) -> bool {
+        self.facts().is_none_or(|f| f.conversations.people_create)
+    }
+
     /// The product name ("" before the facts load).
     #[must_use]
     pub fn product_name(&self) -> String {

@@ -22,9 +22,9 @@ use magpie_api::files::{FilesPanel, RawFileQuery};
 use magpie_api::legacy::LegacyPathRequest;
 use magpie_api::live::{LiveFramesRequest, LiveState};
 use magpie_api::ops::{
-    AdminConversation, AdminConversationList, AdminListQuery, LegacyImportStatus, OpsStats, PeopleQuery,
-    PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog, ViewAsLogQuery, ViewAsRequest,
-    WorkspacesExistsRequest, WorkspacesExistsResponse,
+    AdminConversation, AdminConversationList, AdminListQuery, HermitCreateRequest, HermitSendRequest,
+    LegacyImportStatus, OpsStats, PeopleQuery, PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog,
+    ViewAsLogQuery, ViewAsRequest, WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
 use magpie_api::rows::{
     PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery,
@@ -494,6 +494,18 @@ impl Server for Magpie {
 
     async fn continue_share(&self, ctx: Ctx, share_id: String) -> Answer<ContinueResponse> {
         http::shares::continue_share(self, ctx, share_id).await
+    }
+
+    async fn hermit_create_conversation(
+        &self,
+        ctx: Ctx,
+        body: HermitCreateRequest,
+    ) -> Answer<Admitted<CreateResponse>> {
+        http::hermit::create_conversation(self, ctx, body).await
+    }
+
+    async fn hermit_send_turn(&self, ctx: Ctx, id: Uuid, body: HermitSendRequest) -> Answer<Admitted<SendResponse>> {
+        http::hermit::send_turn(self, ctx, id, body).await
     }
 
     async fn person_purge(&self, ctx: Ctx, person: String, body: PersonPurgeRequest) -> Answer<PersonPurgeResponse> {

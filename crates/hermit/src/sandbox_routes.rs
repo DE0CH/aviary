@@ -78,6 +78,8 @@ pub fn descriptor(core: &Core, e: &Entry) -> Option<SandboxSelf> {
         claude: Claude {
             managed_claude_md: cfg.managed_claude_md.clone(),
             managed_skills: cfg.managed_skills.clone(),
+            // YYC loads only the managed files (Deyao, 2026-11-11)
+            project_settings: false,
         },
         title: Title {
             system: cfg.title_system.clone(),

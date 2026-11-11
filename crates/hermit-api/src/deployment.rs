@@ -1,4 +1,5 @@
-//! H1 `GET /v1/deployment` (hermit 3.3): served from memory, under 4 KiB, no capability flags.
+//! H1 `GET /v1/deployment` (hermit 3.3): served from memory, under 4 KiB. The facts of the deployment: the product,
+//! sign-in, and who starts conversations.
 
 use serde::{Deserialize, Serialize};
 
@@ -7,6 +8,37 @@ use serde::{Deserialize, Serialize};
 pub struct Deployment {
     pub product: Product,
     pub sign_in: SignIn,
+    /// Absent = the default (people start conversations).
+    #[serde(default, skip_serializing_if = "Conversations::is_default")]
+    pub conversations: Conversations,
+}
+
+/// Who starts conversations.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Conversations {
+    /// People start conversations in the app (YYC). False: the deployment starts every conversation itself (Jarvis 4:
+    /// a session started in its own app is one conversation, made through magpie's hermit route), so pigeon refuses
+    /// a person's new conversation and tells the app (`GET /api/jarvis/me` `newConversations`), which offers none.
+    #[serde(default = "yes")]
+    pub people_create: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for Conversations {
+    fn default() -> Self {
+        Self { people_create: true }
+    }
+}
+
+impl Conversations {
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

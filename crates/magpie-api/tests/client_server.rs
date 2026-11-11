@@ -547,6 +547,37 @@ impl Server for FixtureServer {
         self.answer_json("sent_files_commit")
     }
 
+    async fn hermit_create_conversation(
+        &self,
+        ctx: Ctx,
+        body: HermitCreateRequest,
+    ) -> Result<Admitted<CreateResponse>, ApiError> {
+        self.received(
+            "hermit_create_conversation",
+            &ctx,
+            &json!({}),
+            None,
+            Some(serde_json::to_value(&body).unwrap()),
+        );
+        self.answer_admitted("hermit_create_conversation")
+    }
+
+    async fn hermit_send_turn(
+        &self,
+        ctx: Ctx,
+        id: Uuid,
+        body: HermitSendRequest,
+    ) -> Result<Admitted<SendResponse>, ApiError> {
+        self.received(
+            "hermit_send_turn",
+            &ctx,
+            &json!({"id": id.to_string()}),
+            None,
+            Some(serde_json::to_value(&body).unwrap()),
+        );
+        self.answer_admitted("hermit_send_turn")
+    }
+
     async fn person_purge(
         &self,
         ctx: Ctx,
@@ -1005,6 +1036,16 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .sent_files_commit(&param_str(&f, "toolUseId"))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
+        "hermit_create_conversation" => c
+            .service(Some(ADMIN))
+            .hermit_create_conversation(&request::<HermitCreateRequest>(&f))
+            .await
+            .map(|a| json!({"new": a.is_new(), "body": a.into_inner()})),
+        "hermit_send_turn" => c
+            .service(Some(ADMIN))
+            .hermit_send_turn(param_uuid(&f, "id"), &request::<HermitSendRequest>(&f))
+            .await
+            .map(|a| json!({"new": a.is_new(), "body": a.into_inner()})),
         "person_purge" => c
             .service(Some(ADMIN))
             .person_purge(&param_str(&f, "person"), &request::<PersonPurgeRequest>(&f))
