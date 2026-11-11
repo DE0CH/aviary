@@ -27,7 +27,7 @@ spec:
           securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: pigeon
-          image: ghcr.io/de0ch/pigeon:871d602034db@sha256:c6b66c4369b73cb9ead8b87e5f14a75316570f692c03cef0ce5995b3f7e75b60
+          image: ghcr.io/de0ch/pigeon:7112fb613ee8@sha256:3c45940cd6f3104a65bc41b3e15dda7019f6b0ed5d93151042d4fddf8e3cff62
           envFrom: [{ secretRef: { name: chat-pigeon } }]
           env: [{ name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }]
           ports: [{ containerPort: 8080 }, { containerPort: 9090 }]
