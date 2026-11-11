@@ -362,6 +362,16 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .sent_files_commit(&param_str(&f, "toolUseId"))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
+        "hermit_create_conversation" => c
+            .service(Some(ADMIN))
+            .hermit_create_conversation(&request::<HermitCreateRequest>(&f))
+            .await
+            .map(|a| json!({"new": a.is_new(), "body": a.into_inner()})),
+        "hermit_send_turn" => c
+            .service(Some(ADMIN))
+            .hermit_send_turn(param_uuid(&f, "id"), &request::<HermitSendRequest>(&f))
+            .await
+            .map(|a| json!({"new": a.is_new(), "body": a.into_inner()})),
         "person_purge" => c
             .service(Some(ADMIN))
             .person_purge(&param_str(&f, "person"), &request::<PersonPurgeRequest>(&f))

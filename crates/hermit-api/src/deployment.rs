@@ -17,9 +17,9 @@ pub struct Deployment {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Conversations {
-    /// People start conversations in the app (YYC). False: the deployment starts every conversation itself (Jarvis 4:
-    /// a session started in its own app is one conversation, made through magpie's hermit route), so pigeon refuses
-    /// a person's new conversation and tells the app (`GET /api/jarvis/me` `newConversations`), which offers none.
+    /// People start conversations in the app. False: the deployment starts every conversation itself (a session
+    /// started elsewhere is one conversation, made through magpie's hermit route), so pigeon refuses a person's new
+    /// conversation and tells the app (`GET /api/jarvis/me` `newConversations`), which offers none.
     #[serde(default = "yes")]
     pub people_create: bool,
 }
