@@ -60,6 +60,8 @@ pub struct Config {
     pub boot_file: PathBuf,
     pub image: String,
     pub env: BTreeMap<String, String>,
+    /// Where model calls go: [`ANTHROPIC`], or `AVIARY_MODEL_URL` (the e2e's stand-in model, infra/e2e-aviary.sh).
+    pub model_url: String,
 }
 
 struct State {
@@ -419,7 +421,9 @@ async fn model(state: &State, pq: &str, req: Request<Incoming>) -> Response<Body
             "no Claude login on this machine",
         );
     };
-    let mut r = state.http.request(method, format!("{ANTHROPIC}{pq}"));
+    let mut r = state
+        .http
+        .request(method, format!("{}{pq}", state.cfg.model_url));
     let mut betas: Vec<String> = Vec::new();
     for (k, v) in req.headers() {
         let n = k.as_str();

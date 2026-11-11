@@ -27,6 +27,14 @@ async fn main() -> anyhow::Result<()> {
         credentials: PathBuf::from(env::required("HOME")).join(".claude/.credentials.json"),
         boot_file: PathBuf::from(env::required("AVIARY_BOOT_FILE")),
         image: env::required("AVIARY_IMAGE"),
+        // the e2e's stand-in model (a key of its `aviary` store); Anthropic otherwise
+        model_url: std::env::var("AVIARY_MODEL_URL")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .map_or_else(
+                || machine::ANTHROPIC.to_owned(),
+                |v| v.trim_end_matches('/').to_owned(),
+            ),
         env: jarvis_aviary::wire::BOOT_ENV_NAMES
             .iter()
             .filter_map(|k| {
