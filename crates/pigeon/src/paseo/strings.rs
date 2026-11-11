@@ -72,13 +72,14 @@ impl Locale {
         self.pick("名稱不能留空。", "The name can't be empty.")
     }
 
-    /// magpie could not write the view-as audit row (6.4).
-    #[must_use]
     /// A person's new conversation where the deployment starts every conversation itself.
+    #[must_use]
     pub fn create_closed(self) -> &'static str {
         self.pick("這裡不能開始新對話。", "New conversations are not started here.")
     }
 
+    /// magpie could not write the view-as audit row (6.4).
+    #[must_use]
     pub fn view_as_not_recorded(self) -> &'static str {
         self.pick(
             "未能傳送：未能寫入代看記錄，請再試一次。",
