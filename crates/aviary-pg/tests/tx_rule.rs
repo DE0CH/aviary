@@ -39,7 +39,11 @@ fn tx_conf_dir() -> PathBuf {
         let dir = scratch_base().join("conf");
         fs::create_dir_all(&dir).unwrap();
         let conf = aviary_source_rules::tx_rule::tx_rule_conf(&repo_root(), metadata()).unwrap();
-        fs::write(dir.join("clippy.toml"), conf).unwrap();
+        // nextest runs each test in its own process, each writing this file: write aside and rename, so a reader
+        // never sees it half written (a truncated read once failed CI)
+        let tmp = dir.join(format!("clippy.toml.{}", std::process::id()));
+        fs::write(&tmp, conf).unwrap();
+        fs::rename(&tmp, dir.join("clippy.toml")).unwrap();
         dir
     })
     .clone()
