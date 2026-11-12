@@ -1156,7 +1156,11 @@ async fn e7(h: &Harness) -> anyhow::Result<()> {
     let mut seen: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
     let note = |seen: &mut std::collections::BTreeMap<String, u64>, v: &Value| {
         let p = &v["message"]["payload"];
-        if v["message"]["type"] == "agent_stream" && p["agentId"] == id.as_str() && p["event"]["type"] == "timeline" {
+        if v["message"]["type"] == "agent_stream"
+            && p["agentId"] == id.as_str()
+            && p["event"]["type"] == "timeline"
+            && p["seq"].is_u64()
+        {
             let seq = p["seq"].as_u64().unwrap_or(0);
             let e = seen.entry(row_key(&p["event"]["item"])).or_insert(0);
             *e = (*e).max(seq);
@@ -2246,7 +2250,8 @@ impl Feed {
                     self.last = 0;
                     self.load(&tail);
                 }
-                Some("agent_stream") if p["event"]["type"] == "timeline" => {
+                // a push without a seq is live text (the reply as it is written), not a row
+                Some("agent_stream") if p["event"]["type"] == "timeline" && p["seq"].is_u64() => {
                     let seq = p["seq"].as_u64().unwrap_or(0);
                     let key = row_key(&p["event"]["item"]);
                     if let Some(t) = p["event"]["item"]["text"].as_str() {

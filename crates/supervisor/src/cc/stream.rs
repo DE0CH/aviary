@@ -783,6 +783,31 @@ mod tests {
     }
 
     #[test]
+    fn an_initialize_answer_names_the_slash_commands() {
+        // an initialize answer names Claude Code's slash commands: a skill's paragraph is cut to its first line
+        let Out::ControlResponse { commands, .. } = parse(
+            br#"{"type":"control_response","response":{"subtype":"success","request_id":"init-1","response":{"commands":[{"name":"compact","description":"Clear conversation history but keep a summary in context","argumentHint":"<optional instructions>","builtin":true},{"name":"dataviz","description":"Use this skill for any chart.\nRead it first."},{"name":"","description":"no name"},{"description":"no name either"}],"models":[]}}}"#,
+        ) else {
+            panic!()
+        };
+        let commands = commands.unwrap();
+        assert_eq!(
+            commands
+                .iter()
+                .map(|c| (c.name.as_str(), c.description.as_str(), c.argument_hint.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    "compact",
+                    "Clear conversation history but keep a summary in context",
+                    "<optional instructions>"
+                ),
+                ("dataviz", "Use this skill for any chart.", ""),
+            ]
+        );
+    }
+
+    #[test]
     fn system_result_control() {
         assert_eq!(
             parse(br#"{"type":"system","subtype":"init","session_id":"s","model":"m","tools":[]}"#),
@@ -816,27 +841,6 @@ mod tests {
                 error: None,
                 commands: None,
             }
-        );
-        // an initialize answer names Claude Code's slash commands: a skill's paragraph is cut to its first line
-        let Out::ControlResponse { commands, .. } = parse(
-            br#"{"type":"control_response","response":{"subtype":"success","request_id":"init-1","response":{"commands":[{"name":"compact","description":"Clear conversation history but keep a summary in context","argumentHint":"<optional instructions>","builtin":true},{"name":"dataviz","description":"Use this skill for any chart.\nRead it first."},{"name":"","description":"no name"},{"description":"no name either"}],"models":[]}}}"#,
-        ) else {
-            panic!()
-        };
-        let commands = commands.unwrap();
-        assert_eq!(
-            commands
-                .iter()
-                .map(|c| (c.name.as_str(), c.description.as_str(), c.argument_hint.as_str()))
-                .collect::<Vec<_>>(),
-            [
-                (
-                    "compact",
-                    "Clear conversation history but keep a summary in context",
-                    "<optional instructions>"
-                ),
-                ("dataviz", "Use this skill for any chart.", ""),
-            ]
         );
         assert_eq!(parse(br#"{"type":"keep_alive"}"#), Out::KeepAlive);
         // the model's answer as it comes (Claude Code 2.1.322 with --include-partial-messages)
