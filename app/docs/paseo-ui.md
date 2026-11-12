@@ -106,8 +106,11 @@ arrives.
   new chat, search, settings, the sidebar, stop and the composer's keys (`keyboard/keyboard-shortcuts.ts`
   `chatAppBindings`). 搜尋 is a conversation search: the palette offers 新對話, 最近刪除 and 設定, lists each
   conversation once and searches no files (`command-center/root-registration.tsx`, `SHOW_WORKSPACE_COMMANDS`,
-  `SHOW_AGENT_CONTROL_COMMANDS`, `SEARCH_FILES`). Settings: 一般 is the language only, sending during a reply always
-  queues (CloudCLI refuses a message while a reply runs; `composer/index.tsx` `CHAT_SEND_BEHAVIOR`); 外觀 is 淺色 /
+  `SHOW_AGENT_CONTROL_COMMANDS`, `SEARCH_FILES`). Settings: 一般 is the language only; what sending during a reply
+  does is fixed (`composer/input/state.ts` `chatSendBehavior`): a text message goes out at once and joins the running
+  turn (pigeon's `midTurn`; the server writes it into the turn and Claude Code takes it in after its next tool
+  result), one with attachments waits in the composer's queue until the reply ends or "Send now" stops the reply for
+  it; 外觀 is 淺色 /
   深色 / 系統, the two text sizes and the content width (`SHOW_DEVELOPER_APPEARANCE`: no code fonts, syntax theme, diff
   preview, CSS font stack, brand or plugin themes).
 - **One sidebar row**: the items at the top of the sidebar (新對話 / 最近刪除 / 搜尋), the conversation rows and the
