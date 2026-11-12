@@ -71,10 +71,11 @@ impl Server for App {
                 }],
                 app_scheme: None,
             },
-            // sessions start only in the Jarvis 4 app (Deyao, 2026-11-11)
+            // sessions start only in the Jarvis 4 app (Deyao, 2026-11-11); in a conversation, the composer's menu
+            // picks its model and thinking level from then on (Deyao, 2026-11-12: as on YYC AI)
             conversations: Conversations {
                 people_create: false,
-                people_pick_model: false,
+                people_pick_model: true,
             },
         })
     }

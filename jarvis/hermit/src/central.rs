@@ -495,6 +495,10 @@ pub fn models() -> gateway_api::models::Models {
                 id: (*id).to_owned(),
                 label: (*label).to_owned(),
                 reasoning: None,
+                thinking: crate::app::THINKING
+                    .iter()
+                    .map(|l| (*l).to_owned())
+                    .collect(),
             })
             .collect(),
     }
@@ -520,4 +524,23 @@ pub fn http() -> anyhow::Result<reqwest::Client> {
         .pool_idle_timeout(Duration::from_secs(90))
         .user_agent(concat!("hermit-jarvis/", env!("CARGO_PKG_VERSION")))
         .build()?)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_model_offers_the_thinking_levels_and_names_none_as_its_own() {
+        let m = super::models();
+        assert_eq!(m.default, crate::app::MODELS[0].0);
+        assert_eq!(m.models.len(), crate::app::MODELS.len());
+        for model in &m.models {
+            // thinking off, then Claude Code's effort levels, lowest first
+            assert_eq!(
+                model.thinking,
+                ["none", "low", "medium", "high", "xhigh", "max"]
+            );
+            // none named: with nothing picked, Claude Code keeps its own default for the model
+            assert_eq!(model.reasoning, None);
+        }
+    }
 }

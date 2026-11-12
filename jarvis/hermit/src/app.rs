@@ -16,11 +16,15 @@ pub const LIFETIME: Duration = Duration::from_secs(30 * 24 * 3600);
 /// A resume that has not booted the machine in this long ends the waiting sandbox (`start_timed_out`).
 pub const RESUME_DEADLINE: Duration = Duration::from_secs(10 * 60);
 
-/// The models these sessions offer (the session's model is picked in the Jarvis 4 app; the list is what pigeon shows).
+/// The models these sessions offer: a session starts on the model picked in the Jarvis 4 app, and its conversation's
+/// menu in the chat picks among these from then on (the list is what pigeon shows).
 pub const MODELS: &[(&str, &str)] = &[
     ("claude-fable-5-2", "Fable 5.2"),
     ("claude-opus-5-5", "Opus 5.5"),
 ];
+/// The thinking levels a person may choose for each of [`MODELS`], lowest first: thinking off, then Claude Code's
+/// effort levels. None is named as a model's own: with nothing chosen, Claude Code keeps its default for the model.
+pub const THINKING: &[&str] = &["none", "low", "medium", "high", "xhigh", "max"];
 /// Claude Code's small model and the title model.
 pub const SMALL_MODEL: &str = "claude-haiku-5-5";
 

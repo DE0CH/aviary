@@ -78,7 +78,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "aviary-core"
 version = "0.0.0"
-source = "git+https://github.com/DE0CH/aviary?rev=080cec6c7a328acaba048778cbb44183ffa65275#080cec6c7a328acaba048778cbb44183ffa65275"
+source = "git+https://github.com/DE0CH/aviary?rev=7329067e9fe93b6640cade4d2273e7a56b0c43f9#7329067e9fe93b6640cade4d2273e7a56b0c43f9"
 dependencies = [
  "axum",
  "prometheus-client",
@@ -99,7 +99,7 @@ dependencies = [
 [[package]]
 name = "aviary-fakes"
 version = "0.0.0"
-source = "git+https://github.com/DE0CH/aviary?rev=080cec6c7a328acaba048778cbb44183ffa65275#080cec6c7a328acaba048778cbb44183ffa65275"
+source = "git+https://github.com/DE0CH/aviary?rev=7329067e9fe93b6640cade4d2273e7a56b0c43f9#7329067e9fe93b6640cade4d2273e7a56b0c43f9"
 dependencies = [
  "aviary-core",
  "axum",
@@ -120,7 +120,7 @@ dependencies = [
 [[package]]
 name = "aviary-pg"
 version = "0.0.0"
-source = "git+https://github.com/DE0CH/aviary?rev=080cec6c7a328acaba048778cbb44183ffa65275#080cec6c7a328acaba048778cbb44183ffa65275"
+source = "git+https://github.com/DE0CH/aviary?rev=7329067e9fe93b6640cade4d2273e7a56b0c43f9#7329067e9fe93b6640cade4d2273e7a56b0c43f9"
 dependencies = [
  "deadpool-postgres",
  "rustls",
@@ -586,7 +586,7 @@ dependencies = [
 [[package]]
 name = "gateway-api"
 version = "0.0.0"
-source = "git+https://github.com/DE0CH/aviary?rev=080cec6c7a328acaba048778cbb44183ffa65275#080cec6c7a328acaba048778cbb44183ffa65275"
+source = "git+https://github.com/DE0CH/aviary?rev=7329067e9fe93b6640cade4d2273e7a56b0c43f9#7329067e9fe93b6640cade4d2273e7a56b0c43f9"
 dependencies = [
  "base64 0.23.1",
  "hermit-api",
@@ -656,7 +656,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 [[package]]
 name = "hermit-api"
 version = "0.0.0"
-source = "git+https://github.com/DE0CH/aviary?rev=080cec6c7a328acaba048778cbb44183ffa65275#080cec6c7a328acaba048778cbb44183ffa65275"
+source = "git+https://github.com/DE0CH/aviary?rev=7329067e9fe93b6640cade4d2273e7a56b0c43f9#7329067e9fe93b6640cade4d2273e7a56b0c43f9"
 dependencies = [
  "aviary-core",
  "axum",
@@ -1066,7 +1066,7 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 [[package]]
 name = "magpie-api"
 version = "0.0.0"
-source = "git+https://github.com/DE0CH/aviary?rev=080cec6c7a328acaba048778cbb44183ffa65275#080cec6c7a328acaba048778cbb44183ffa65275"
+source = "git+https://github.com/DE0CH/aviary?rev=7329067e9fe93b6640cade4d2273e7a56b0c43f9#7329067e9fe93b6640cade4d2273e7a56b0c43f9"
 dependencies = [
  "aviary-core",
  "axum",
@@ -1730,7 +1730,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "supervisor-api"
 version = "0.0.0"
-source = "git+https://github.com/DE0CH/aviary?rev=080cec6c7a328acaba048778cbb44183ffa65275#080cec6c7a328acaba048778cbb44183ffa65275"
+source = "git+https://github.com/DE0CH/aviary?rev=7329067e9fe93b6640cade4d2273e7a56b0c43f9#7329067e9fe93b6640cade4d2273e7a56b0c43f9"
 dependencies = [
  "aviary-core",
  "axum",
