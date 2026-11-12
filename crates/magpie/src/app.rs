@@ -593,6 +593,10 @@ impl Server for Magpie {
         )
     }
 
+    async fn conversation_commands(&self, ctx: Ctx, id: Uuid) -> Answer<magpie_api::sandbox::CommandsList> {
+        http::conversations::commands(self, ctx, id).await
+    }
+
     async fn conversation_schedules(&self, ctx: Ctx, id: Uuid) -> Answer<SchedulesList> {
         http::schedules::of_conversation(self, ctx, id).await
     }

@@ -131,6 +131,7 @@ fn is_upstream(kind: &str) -> bool {
             | "refresh_agent_request"
             | "agent_permission_response"
             | "get_providers_snapshot_request"
+            | "list_commands_request"
             | "project.list.request"
     )
 }
@@ -320,6 +321,7 @@ impl Handler {
             "refresh_agent_request" => self.refresh().await,
             "agent_permission_response" => self.answer().await,
             "get_providers_snapshot_request" => self.providers().await,
+            "list_commands_request" => self.commands().await,
             "project.list.request" => self.project_list().await,
             _ => {}
         }
@@ -1054,6 +1056,30 @@ impl Handler {
             Fail::Kept => self.locale().delete_closed().to_owned(),
             _ => self.locale().unreachable().to_owned(),
         }
+    }
+
+    /// The message box's `/` completion: the slash commands the conversation's Claude Code names (magpie keeps its
+    /// last list). A draft (no conversation yet) and a conversation that has not run have none.
+    async fn commands(&self) {
+        let agent = str_field(&self.m, "agentId").unwrap_or("").to_owned();
+        let (commands, error) = match self.agent_id() {
+            None => (Vec::new(), Value::Null),
+            Some(id) => match self.calls().conversation_commands(id).await.map_err(fail) {
+                Ok(list) => (list.commands, Value::Null),
+                Err(f) => (Vec::new(), json!(self.fail_sentence(&f))),
+            },
+        };
+        let commands: Vec<Value> = commands
+            .iter()
+            .map(|c| {
+                json!({"name": c.name, "description": c.description, "argumentHint": c.argument_hint,
+                       "kind": "command"})
+            })
+            .collect();
+        self.reply(
+            "list_commands_response",
+            &json!({"agentId": agent, "commands": commands, "error": error, "requestId": self.rid}),
+        );
     }
 
     /// 7.5.8: a soft delete into Recently deleted.

@@ -310,6 +310,7 @@ fn report(state: ReportedState) -> TurnStateReport {
         last_uuid: None,
         usage: None,
         duration_ms: None,
+        commands: None,
     }
 }
 
@@ -2308,6 +2309,55 @@ async fn a_starting_turn_waits_out_an_outage_after_ready() {
     let sup = w.supervisor(conv).await;
     sup.run(turn).await;
     assert_eq!(w.turn(turn).await.0, "running");
+}
+
+/// The app's `/` completion (Deyao, 2026-11-12): a `running` report may carry the slash commands the conversation's
+/// Claude Code named; magpie keeps the newest list and gives it to the conversation's person only.
+#[tokio::test]
+async fn a_running_report_carries_the_slash_commands_the_person_reads() {
+    use magpie_api::sandbox::SlashCommand;
+    let w = World::new("turn_commands", Some(Duration::ZERO)).await;
+    let conv = w.conversation().await;
+    let pigeon = w.a.pigeon();
+    let alice = pigeon.person(ALICE);
+    assert!(
+        alice.conversation_commands(conv).await.unwrap().commands.is_empty(),
+        "none before its Claude Code ran"
+    );
+    let turn = w.send(conv, "m1", "hi").await;
+    let sup = w.supervisor(conv).await;
+    sup.take(turn).await;
+    let command = |name: &str, description: &str| SlashCommand {
+        name: name.into(),
+        description: description.into(),
+        argument_hint: String::new(),
+    };
+    let mut running = report(ReportedState::Running);
+    running.provider_session_id = Some("279aabf0-1111-4222-8333-444455556666".into());
+    running.transcript_path = Some("projects/-workspace/279aabf0-1111-4222-8333-444455556666.jsonl".into());
+    running.commands = Some(vec![
+        command("compact", "Keep a summary"),
+        command("retire-session", &"x".repeat(1000)),
+        command("", "no name"),
+    ]);
+    sup.calls().turn_state(turn, &running).await.unwrap();
+    let list = alice.conversation_commands(conv).await.unwrap().commands;
+    assert_eq!(
+        list.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+        ["compact", "retire-session"]
+    );
+    assert_eq!(list[1].description.chars().count(), 300, "a long description is cut");
+    // a report that names none leaves the list; the conversation is not someone else's to read
+    let mut again = report(ReportedState::Running);
+    again.provider_session_id = running.provider_session_id.clone();
+    sup.calls().turn_state(turn, &again).await.unwrap();
+    assert_eq!(alice.conversation_commands(conv).await.unwrap().commands.len(), 2);
+    let e = pigeon
+        .person("bob@example.org")
+        .conversation_commands(conv)
+        .await
+        .unwrap_err();
+    assert_eq!(e.code(), Some(&ErrorCode::NotFound));
 }
 
 #[tokio::test]

@@ -654,6 +654,11 @@ impl PersonCalls<'_> {
             .await
     }
 
+    /// The slash commands the conversation's Claude Code names.
+    pub async fn conversation_commands(&self, id: Uuid) -> Result<crate::sandbox::CommandsList, ClientError> {
+        self.get("conversation_commands", &[&id.to_string()], NO_QUERY).await
+    }
+
     pub async fn conversation_schedules(&self, id: Uuid) -> Result<SchedulesList, ClientError> {
         self.get("conversation_schedules", &[&id.to_string()], NO_QUERY).await
     }

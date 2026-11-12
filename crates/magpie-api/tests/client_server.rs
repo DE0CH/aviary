@@ -781,6 +781,17 @@ impl Server for FixtureServer {
         self.answer_json("withdraw_pending")
     }
 
+    async fn conversation_commands(&self, ctx: Ctx, id: Uuid) -> Result<magpie_api::sandbox::CommandsList, ApiError> {
+        self.received(
+            "conversation_commands",
+            &ctx,
+            &json!({"id": id.to_string()}),
+            None,
+            None,
+        );
+        self.answer_json("conversation_commands")
+    }
+
     async fn conversation_schedules(&self, ctx: Ctx, id: Uuid) -> Result<SchedulesList, ApiError> {
         self.received(
             "conversation_schedules",
@@ -1187,6 +1198,11 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .delete_schedule(&param_str(&f, "scheduleId"))
             .await
             .map(|()| Value::Null),
+        "conversation_commands" => c
+            .person(PERSON)
+            .conversation_commands(param_uuid(&f, "id"))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
         "conversation_schedules" => c
             .person(PERSON)
             .conversation_schedules(param_uuid(&f, "id"))

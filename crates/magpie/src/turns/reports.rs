@@ -95,6 +95,27 @@ async fn session_facts(tx: &Tx<'_>, conversation: Uuid, r: &TurnStateReport) -> 
         )
         .await?;
     }
+    if let Some(commands) = &r.commands {
+        let kept: Vec<_> = commands
+            .iter()
+            .filter(|c| !c.name.is_empty() && c.name.chars().count() <= 200)
+            .take(magpie_api::sandbox::COMMANDS_MAX)
+            .map(|c| magpie_api::sandbox::SlashCommand {
+                name: c.name.clone(),
+                description: c
+                    .description
+                    .chars()
+                    .take(magpie_api::sandbox::COMMAND_DESCRIPTION_MAX)
+                    .collect(),
+                argument_hint: c.argument_hint.chars().take(200).collect(),
+            })
+            .collect();
+        tx.execute(
+            "update conversations set commands = $2 where id = $1 and commands is distinct from $2",
+            &[&conversation, &serde_json::to_value(&kept)?],
+        )
+        .await?;
+    }
     if let Some(path) = &r.transcript_path {
         crate::ccfs::lines::set_main_transcript(tx, conversation, path).await?;
     }
@@ -500,6 +521,7 @@ async fn reconcile_active(t: &Tx<'_>, c: &Locked, caller: &Sandbox, hb: &Heartbe
             last_uuid: None,
             usage: None,
             duration_ms: None,
+            commands: None,
         };
         tracing::info!(turn = %turn.id, "heartbeat reconciled: running");
         return running(t, c, caller, turn, &r).await;

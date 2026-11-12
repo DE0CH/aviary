@@ -43,16 +43,16 @@ use crate::ops::{
 };
 use crate::routes::{
     self, ADMIN_CONVERSATION, ADMIN_CONVERSATIONS, ADMIN_EVENTS, ADMIN_SCHEDULES, ADMIN_SCHEDULES_PAUSE,
-    ADMIN_TIMELINE, ADMIN_TRANSCRIPT, ASK_ANSWER, BLOB, CANCEL, CHANGES, CONVERSATION, CONVERSATION_DELETE,
-    CONVERSATION_PENDING, CONVERSATION_RESTORE, CONVERSATION_SCHEDULES, CONVERSATION_SHARES, CONVERSATIONS, CREATION,
-    FILES, FILES_RAW, HERMIT_CONVERSATION, HERMIT_CONVERSATION_CLOSED, HERMIT_CONVERSATION_DELETE,
-    HERMIT_CONVERSATION_TURNS, HERMIT_CONVERSATIONS, HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE,
-    HERMIT_WORKSPACES_EXISTS, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS, PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS,
-    SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME, SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR,
-    SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE, SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS,
-    SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES, SANDBOX_SENT_FILES,
-    SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS, SEARCH, SHARE,
-    SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
+    ADMIN_TIMELINE, ADMIN_TRANSCRIPT, ASK_ANSWER, BLOB, CANCEL, CHANGES, CONVERSATION, CONVERSATION_COMMANDS,
+    CONVERSATION_DELETE, CONVERSATION_PENDING, CONVERSATION_RESTORE, CONVERSATION_SCHEDULES, CONVERSATION_SHARES,
+    CONVERSATIONS, CREATION, FILES, FILES_RAW, HERMIT_CONVERSATION, HERMIT_CONVERSATION_CLOSED,
+    HERMIT_CONVERSATION_DELETE, HERMIT_CONVERSATION_TURNS, HERMIT_CONVERSATIONS, HERMIT_LEGACY_IMPORT,
+    HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS, PROMPTS,
+    SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME,
+    SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE,
+    SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES,
+    SANDBOX_SENT_FILES, SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS,
+    SEARCH, SHARE, SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
 };
 use crate::rows::{
     PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery,
@@ -841,6 +841,15 @@ pub trait Server: Send + Sync + 'static {
         async move { Err(not_implemented("withdraw_pending")) }
     }
 
+    /// Route `conversation_commands`.
+    fn conversation_commands(
+        &self,
+        ctx: Ctx,
+        id: Uuid,
+    ) -> impl Future<Output = Result<crate::sandbox::CommandsList, ApiError>> + Send {
+        async move { Err(not_implemented("conversation_commands")) }
+    }
+
     /// Route `conversation_schedules`.
     fn conversation_schedules(
         &self,
@@ -1267,6 +1276,10 @@ async fn h_withdraw_pending<S: Server>(
     reply("withdraw_pending", s.withdraw_pending(ctx, id, client_message_id).await)
 }
 
+async fn h_conversation_commands<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, P(id): P<Uuid>) -> Response {
+    reply("conversation_commands", s.conversation_commands(ctx, id).await)
+}
+
 async fn h_conversation_schedules<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, P(id): P<Uuid>) -> Response {
     reply("conversation_schedules", s.conversation_schedules(ctx, id).await)
 }
@@ -1386,6 +1399,7 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
                 .delete(h_delete_schedule::<S>),
         )
         .route(CONVERSATION_SCHEDULES, get(h_conversation_schedules::<S>))
+        .route(CONVERSATION_COMMANDS, get(h_conversation_commands::<S>))
         .route(CONVERSATION_PENDING, delete(h_withdraw_pending::<S>))
         .route(ADMIN_SCHEDULES, get(h_admin_schedules::<S>))
         .route(ADMIN_SCHEDULES_PAUSE, put(h_admin_schedules_pause::<S>))

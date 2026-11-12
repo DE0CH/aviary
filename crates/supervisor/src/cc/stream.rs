@@ -174,6 +174,8 @@ pub enum Out {
         request_id: String,
         ok: bool,
         error: Option<String>,
+        /// The slash commands an `initialize` answer names (`response.commands`); `None` on any other answer.
+        commands: Option<Vec<magpie_api::sandbox::SlashCommand>>,
     },
     ControlCancel {
         request_id: String,
@@ -408,6 +410,35 @@ fn usage(v: &Value) -> magpie_api::sandbox::Usage {
     }
 }
 
+/// The commands of an `initialize` answer, as magpie keeps them: named ones, at most
+/// [`magpie_api::sandbox::COMMANDS_MAX`], each description cut to its first line and
+/// [`magpie_api::sandbox::COMMAND_DESCRIPTION_MAX`] characters (a skill's is a paragraph).
+fn slash_commands(list: &[Value]) -> Vec<magpie_api::sandbox::SlashCommand> {
+    use magpie_api::sandbox::{COMMAND_DESCRIPTION_MAX, COMMANDS_MAX, SlashCommand};
+    let text = |c: &Value, k: &str| c.get(k).and_then(Value::as_str).unwrap_or("").trim().to_owned();
+    list.iter()
+        .filter_map(|c| {
+            let name = text(c, "name");
+            if name.is_empty() || name.chars().count() > 200 {
+                return None;
+            }
+            let description = text(c, "description");
+            Some(SlashCommand {
+                name,
+                description: description
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(COMMAND_DESCRIPTION_MAX)
+                    .collect(),
+                argument_hint: text(c, "argumentHint").chars().take(200).collect(),
+            })
+        })
+        .take(COMMANDS_MAX)
+        .collect()
+}
+
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
@@ -489,6 +520,11 @@ pub fn parse(line: &[u8]) -> Out {
                 request_id: s("request_id").unwrap_or_default(),
                 ok: s("subtype").as_deref() == Some("success"),
                 error: s("error"),
+                commands: r
+                    .get("response")
+                    .and_then(|x| x.get("commands"))
+                    .and_then(Value::as_array)
+                    .map(|a| slash_commands(a)),
             }
         }
         "control_cancel_request" => Out::ControlCancel {
@@ -775,8 +811,30 @@ mod tests {
             Out::ControlResponse {
                 request_id: "init-1".into(),
                 ok: true,
-                error: None
+                error: None,
+                commands: None,
             }
+        );
+        // an initialize answer names Claude Code's slash commands: a skill's paragraph is cut to its first line
+        let Out::ControlResponse { commands, .. } = parse(
+            br#"{"type":"control_response","response":{"subtype":"success","request_id":"init-1","response":{"commands":[{"name":"compact","description":"Clear conversation history but keep a summary in context","argumentHint":"<optional instructions>","builtin":true},{"name":"dataviz","description":"Use this skill for any chart.\nRead it first."},{"name":"","description":"no name"},{"description":"no name either"}],"models":[]}}}"#,
+        ) else {
+            panic!()
+        };
+        let commands = commands.unwrap();
+        assert_eq!(
+            commands
+                .iter()
+                .map(|c| (c.name.as_str(), c.description.as_str(), c.argument_hint.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    "compact",
+                    "Clear conversation history but keep a summary in context",
+                    "<optional instructions>"
+                ),
+                ("dataviz", "Use this skill for any chart.", ""),
+            ]
         );
         assert_eq!(parse(br#"{"type":"keep_alive"}"#), Out::KeepAlive);
         // the model's answer as it comes (Claude Code 2.1.322 with --include-partial-messages)

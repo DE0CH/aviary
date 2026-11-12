@@ -1,0 +1,32 @@
+{
+  "route": "conversation_commands",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "commands": [
+          {
+            "name": "compact",
+            "description": "Clear conversation history but keep a summary in context",
+            "argumentHint": "<optional custom summarization instructions>"
+          },
+          {
+            "name": "retire-session",
+            "description": "Finish the session: write the record and end it",
+            "argumentHint": ""
+          }
+        ]
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

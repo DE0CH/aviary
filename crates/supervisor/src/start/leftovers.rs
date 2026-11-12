@@ -229,5 +229,6 @@ fn lost(reason: &str) -> TurnStateReport {
         last_uuid: None,
         usage: None,
         duration_ms: None,
+        commands: None,
     }
 }

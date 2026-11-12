@@ -1974,6 +1974,51 @@ async fn fan_out_latency_guard() {
     drop(idle);
 }
 
+/// The message box completes and lists slash commands after `/` (Deyao, 2026-11-12): the list is the one the
+/// conversation's Claude Code named.
+#[tokio::test]
+async fn the_slash_commands_of_a_conversation_are_listed() {
+    let e = env().await;
+    let mut ws = e.ws(STAFF).await;
+    let id = e.m.add(STAFF, Some("commands"));
+    // a conversation that has not run names none
+    let (k, r) = ws.rpc("list_commands_request", json!({"agentId": id})).await;
+    assert_eq!(k, "list_commands_response");
+    assert_eq!(
+        (r["agentId"].clone(), r["commands"].clone(), r["error"].clone()),
+        (json!(id), json!([]), Value::Null)
+    );
+    e.m.set_commands(
+        id,
+        &[
+            ("compact", "Keep a summary", "<instructions>"),
+            ("retire-session", "End the session.", ""),
+        ],
+    );
+    let (_, r) = ws.rpc("list_commands_request", json!({"agentId": id})).await;
+    assert_eq!(
+        r["commands"],
+        json!([
+            {"name": "compact", "description": "Keep a summary", "argumentHint": "<instructions>", "kind": "command"},
+            {"name": "retire-session", "description": "End the session.", "argumentHint": "", "kind": "command"}])
+    );
+    // a draft has no conversation yet: no commands, and magpie is not asked
+    let before = e.m.calls_to("conversation_commands");
+    let (_, r) = ws
+        .rpc(
+            "list_commands_request",
+            json!({"agentId": "", "draftConfig": {"provider": "claude", "cwd": "/workspace"}}),
+        )
+        .await;
+    assert_eq!((r["commands"].clone(), r["error"].clone()), (json!([]), Value::Null));
+    assert_eq!(e.m.calls_to("conversation_commands"), before);
+    // someone else's conversation is not found
+    let other = e.m.add(STAFF2, Some("theirs"));
+    let (_, r) = ws.rpc("list_commands_request", json!({"agentId": other})).await;
+    assert_eq!(r["commands"], json!([]));
+    assert!(r["error"].is_string());
+}
+
 #[tokio::test]
 async fn a_conversations_thinking_level_is_picked_checked_and_stored() {
     let e = env().await;

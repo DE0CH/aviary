@@ -234,6 +234,9 @@ struct Gen {
     picked: bool,
     /// The thinking level it was last switched to ([`Driver::apply_thinking`]).
     thinking: Thinking,
+    /// The slash commands its `initialize` answer named, until a turn's `running` report has carried them to magpie
+    /// (the app's `/` completion). A re-attached generation has none: magpie keeps the list it was told.
+    commands: Option<Vec<magpie_api::sandbox::SlashCommand>>,
 }
 
 impl Gen {
@@ -1124,6 +1127,7 @@ impl Driver {
             last_uuid: if wait { turn.uuids.last().cloned() } else { None },
             usage: turn.usage,
             duration_ms: Some(ms),
+            commands: None,
         };
         let ending = Ending {
             id: turn.id,
@@ -1381,7 +1385,15 @@ impl Driver {
                     ));
                 }
             },
-            Out::ControlResponse { request_id, ok, error } => {
+            Out::ControlResponse {
+                request_id,
+                ok,
+                error,
+                commands,
+            } => {
+                if let (Some(c), Some(g)) = (commands, st.live.as_mut()) {
+                    g.commands = Some(c);
+                }
                 if let Some(w) = st.control_waiters.remove(&request_id) {
                     let _ = w.send(if ok { Ok(()) } else { Err(error.unwrap_or_default()) });
                 }
@@ -1796,6 +1808,7 @@ impl Driver {
                 model: models.default.clone(),
                 picked,
                 thinking: Thinking::Unknown,
+                commands: None,
             });
             st.control_waiters.insert(init_id.clone(), init_tx);
         });
@@ -2686,7 +2699,15 @@ impl Driver {
                 }
                 tracing::info!(turn = %turn_id, origin = "person", "turn started");
                 fx.push(Fx::MainTranscript(format!("projects/-workspace/{sid}.jsonl")));
-                fx.push(Fx::Report(Item::state(turn_id, running_report(&sid))));
+                // the generation's slash commands ride its first turn's report
+                let commands = st.live.as_mut().and_then(|g| g.commands.take());
+                fx.push(Fx::Report(Item::state(
+                    turn_id,
+                    TurnStateReport {
+                        commands,
+                        ..running_report(&sid)
+                    },
+                )));
             }
             Prepared::Write
         });
@@ -3164,6 +3185,7 @@ impl Driver {
                     model: g.model.clone(),
                     picked: g.picked,
                     thinking: Thinking::Unknown,
+                    commands: None,
                 });
                 // the model the conversation was on (the next start_turn says it again)
                 st.model = g.picked.then(|| g.model.clone());
@@ -3285,6 +3307,7 @@ fn end_report(state: ReportedState, err: Option<ReportError>) -> TurnStateReport
         last_uuid: None,
         usage: None,
         duration_ms: None,
+        commands: None,
     }
 }
 
@@ -3591,6 +3614,7 @@ impl Agent for Driver {
                 last_uuid: None,
                 usage: turn.usage,
                 duration_ms: Some(u64::try_from(worked.as_millis()).unwrap_or(u64::MAX)),
+                commands: None,
             };
             let id = turn.id;
             fx.push(Fx::Report(Item::State {

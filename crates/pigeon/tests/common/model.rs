@@ -49,6 +49,8 @@ pub struct State {
     pub changes: HashMap<String, Vec<Change>>,
     pub heads: HashMap<String, u64>,
     pub creations: HashMap<(String, String), CreateResponse>,
+    /// The slash commands each conversation's Claude Code named.
+    pub commands: HashMap<Uuid, Vec<magpie_api::sandbox::SlashCommand>>,
     /// One-shot refusals by route.
     pub refuse: HashMap<&'static str, VecDeque<Refusal>>,
     /// Every call: (route, person, viewer).
@@ -182,6 +184,19 @@ impl Model {
     }
 
     /// A conversation of `person` (emits its upsert).
+    /// The slash commands `id`'s Claude Code named: `(name, description, argument hint)`.
+    pub fn set_commands(&self, id: Uuid, commands: &[(&str, &str, &str)]) {
+        let list = commands
+            .iter()
+            .map(|(n, d, a)| magpie_api::sandbox::SlashCommand {
+                name: (*n).to_owned(),
+                description: (*d).to_owned(),
+                argument_hint: (*a).to_owned(),
+            })
+            .collect();
+        self.st().commands.insert(id, list);
+    }
+
     pub fn add(&self, person: &str, title: Option<&str>) -> Uuid {
         self.add_id(person, Uuid::new_v4(), title)
     }
@@ -470,6 +485,14 @@ impl Server for Model {
         self.record("get_conversation", &ctx)?;
         self.mine(&ctx, id)?;
         Ok(self.st().convs[&id].conv.clone())
+    }
+
+    async fn conversation_commands(&self, ctx: Ctx, id: Uuid) -> Result<magpie_api::sandbox::CommandsList, ApiError> {
+        self.record("conversation_commands", &ctx)?;
+        self.mine(&ctx, id)?;
+        Ok(magpie_api::sandbox::CommandsList {
+            commands: self.st().commands.get(&id).cloned().unwrap_or_default(),
+        })
     }
 
     async fn create_conversation(&self, ctx: Ctx, body: CreateRequest) -> Result<Admitted<CreateResponse>, ApiError> {

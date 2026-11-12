@@ -310,8 +310,17 @@ impl Fake {
                                        "response": {"subtype": "error", "request_id": id, "error": "refused"}}));
                     return;
                 }
+                // `.fake-commands`: the answer names slash commands, as Claude Code's does
+                let facts = if Path::new(".fake-commands").exists() {
+                    json!({"commands": [
+                        {"name": "compact", "description": "Keep a summary", "argumentHint": "<instructions>",
+                         "builtin": true},
+                        {"name": "retire-session", "description": "End the session.\nA second line.", "argumentHint": ""}]})
+                } else {
+                    json!({})
+                };
                 self.system(json!({"type": "control_response",
-                                   "response": {"subtype": "success", "request_id": id, "response": {}}}));
+                                   "response": {"subtype": "success", "request_id": id, "response": facts}}));
             }
             "interrupt" => {
                 if self.waiting == Some("never") {
@@ -1869,6 +1878,34 @@ async fn a_turn_being_prepared_survives_an_outage_and_can_be_stopped() {
     assert_eq!(w.prompts().len(), prompts);
     assert_eq!(w.spawns().len(), spawns);
     assert!(sup.driver.claude_pid().is_none());
+}
+
+/// The app completes slash commands after `/`: the first turn of a Claude Code carries the commands its
+/// `initialize` answer named to magpie, once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_generations_slash_commands_ride_its_first_running_report() {
+    let w = world().await;
+    std::fs::write(w.ws.join(".fake-commands"), b"").unwrap();
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let (first, _) = w.turn("say:one");
+    w.ended(first).await;
+    w.idle(&sup).await;
+    let running = |t| {
+        w.states(t)
+            .into_iter()
+            .find(|s| s["state"] == "running")
+            .expect("a running report")
+    };
+    assert_eq!(
+        running(first)["commands"],
+        json!([
+            {"name": "compact", "description": "Keep a summary", "argumentHint": "<instructions>"},
+            {"name": "retire-session", "description": "End the session.", "argumentHint": ""}])
+    );
+    // the same Claude Code's next turn says nothing new
+    let (second, _) = w.turn("say:two");
+    w.ended(second).await;
+    assert!(running(second).get("commands").is_none());
 }
 
 /// 7.9: initialisations Claude Code refuses count as a crash loop: the next turn is refused without a spawn.

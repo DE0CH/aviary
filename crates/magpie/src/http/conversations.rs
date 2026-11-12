@@ -20,6 +20,29 @@ pub async fn get(app: &Magpie, ctx: Ctx, id: Uuid) -> Answer<Conversation> {
     answer(async { list::get(&app.pool, &Person::from_ctx(&ctx)?, id).await }.await)
 }
 
+/// `GET /v1/conversations/{id}/commands`: the slash commands its Claude Code last named (404 for another's).
+pub async fn commands(app: &Magpie, ctx: Ctx, id: Uuid) -> Answer<magpie_api::sandbox::CommandsList> {
+    answer(
+        async {
+            let person = Person::from_ctx(&ctx)?;
+            let conn = app.pool.get().await?;
+            let row = conn
+                .query_opt(
+                    "select commands from conversations where id = $1 and person = $2",
+                    &[&id, &person.email],
+                )
+                .await?
+                .ok_or_else(crate::error::Error::not_found)?;
+            let commands = match row.get::<_, Option<serde_json::Value>>(0) {
+                Some(v) => serde_json::from_value(v)?,
+                None => Vec::new(),
+            };
+            Ok(magpie_api::sandbox::CommandsList { commands })
+        }
+        .await,
+    )
+}
+
 /// M3 (and the first turn's driver on this replica, when the create admitted one).
 pub async fn create(app: &Magpie, ctx: Ctx, mut body: CreateRequest) -> Answer<Admitted<CreateResponse>> {
     answer(

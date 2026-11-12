@@ -572,6 +572,10 @@ pub struct TurnStateReport {
     /// Informational duration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// `running`: the slash commands this Claude Code names, when the supervisor has not reported them for it yet
+    /// (at most [`COMMANDS_MAX`]); magpie keeps the newest list for [`CommandsList`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commands: Option<Vec<SlashCommand>>,
 }
 
 /// An error the supervisor reports (its codes are [`crate::errors::DataCode`] values).
@@ -582,6 +586,35 @@ pub struct ReportError {
     pub code: crate::errors::DataCode,
     /// English, for logs.
     pub message: String,
+}
+
+/// At most this many commands in a report or a list.
+pub const COMMANDS_MAX: usize = 300;
+/// A command's description is cut to this many characters.
+pub const COMMAND_DESCRIPTION_MAX: usize = 300;
+
+/// One slash command of a conversation's Claude Code (its `initialize` answer): a built-in command, a project
+/// command or a skill. The app's message box completes them after `/`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlashCommand {
+    /// Without the slash.
+    pub name: String,
+    /// One line (at most [`COMMAND_DESCRIPTION_MAX`] characters).
+    #[serde(default)]
+    pub description: String,
+    /// What it takes after its name, or empty.
+    #[serde(default)]
+    pub argument_hint: String,
+}
+
+/// `GET /v1/conversations/{id}/commands` → the slash commands its Claude Code last named (empty before its first
+/// turn ran).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandsList {
+    /// By name.
+    pub commands: Vec<SlashCommand>,
 }
 
 /// A background task in a report.

@@ -1656,6 +1656,10 @@ impl Server for FakeMagpie {
         scripted!(self, "withdraw_pending", ctx, params, None, None, typed)
     }
 
+    async fn conversation_commands(&self, ctx: Ctx, id_: Uuid) -> Result<magpie_api::sandbox::CommandsList, ApiError> {
+        scripted!(self, "conversation_commands", ctx, id(id_), None, None, typed)
+    }
+
     async fn conversation_schedules(&self, ctx: Ctx, id_: Uuid) -> Result<SchedulesList, ApiError> {
         scripted!(self, "conversation_schedules", ctx, id(id_), None, None, typed)
     }

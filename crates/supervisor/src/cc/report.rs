@@ -699,6 +699,7 @@ mod tests {
             last_uuid: None,
             usage: None,
             duration_ms: None,
+            commands: None,
         };
         r.push(Item::AgentTurn(AgentTurnRequest {
             turn_id: turn,
@@ -798,6 +799,7 @@ mod tests {
             last_uuid: None,
             usage: None,
             duration_ms: None,
+            commands: None,
         };
         let agent = Uuid::now_v7();
         r.push(Item::AgentTurn(AgentTurnRequest {

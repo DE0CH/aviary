@@ -171,6 +171,8 @@ pub const SANDBOX_SCHEDULES: &str = "/v1/sandbox/schedules";
 pub const SANDBOX_SCHEDULE: &str = "/v1/sandbox/schedules/{scheduleId}";
 /// `GET` a conversation's schedules with their last runs (the app's panel).
 pub const CONVERSATION_SCHEDULES: &str = "/v1/conversations/{id}/schedules";
+/// `GET` the slash commands the conversation's Claude Code names (the app's `/` completion).
+pub const CONVERSATION_COMMANDS: &str = "/v1/conversations/{id}/commands";
 /// `DELETE` a message that waits for the running turn to end (`pendingMessages` with `held`): taken back.
 pub const CONVERSATION_PENDING: &str = "/v1/conversations/{id}/pending/{clientMessageId}";
 /// `GET` everyone's schedules and the pause-all switch (admin).
@@ -312,6 +314,7 @@ pub const ROUTES: &[Route] = &[
     person("files_raw", "M14", Get, FILES_RAW, &[200, 206]),
     pigeon_extra("files_panel", Get, FILES, &[200]),
     pigeon_extra("conversation_schedules", Get, CONVERSATION_SCHEDULES, &[200]),
+    pigeon_extra("conversation_commands", Get, CONVERSATION_COMMANDS, &[200]),
     pigeon_extra("withdraw_pending", Delete, CONVERSATION_PENDING, &[200]),
     Route {
         id: "blob",
@@ -568,7 +571,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 77);
+        assert_eq!(ROUTES.len(), 78);
     }
 
     #[test]
