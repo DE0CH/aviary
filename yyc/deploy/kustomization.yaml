@@ -51,6 +51,7 @@ configMapGenerator:
   - name: hermit-skills
     namespace: yyc-ai
     files:
+      - feishu-files.SKILL.md=hermit/skills/feishu-files/SKILL.md
       - labels.SKILL.md=hermit/skills/labels/SKILL.md
       - newswatch.SKILL.md=hermit/skills/newswatch/SKILL.md
       - schedules.SKILL.md=hermit/skills/schedules/SKILL.md
