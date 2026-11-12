@@ -47,7 +47,7 @@ async fn the_tasks_of_a_conversation_are_listed_and_one_is_stopped() {
     let id = ev::conversation(&pigeon, ALICE).await;
     let pool = a.pool();
     let turn = Uuid::new_v4();
-    assert!(alice.conversation_tasks(id).await.unwrap().tasks.is_empty());
+    assert_eq!(alice.conversation_tasks(id).await.unwrap().tasks, []);
 
     // a command in the background that ends, and a subagent that still runs
     ev::append(
@@ -99,6 +99,19 @@ async fn the_tasks_of_a_conversation_are_listed_and_one_is_stopped() {
         ],
     )
     .await;
+    // which tool launched each call (magpie records it as it reads Claude Code's transcript)
+    for (call, name, seq) in [("call-bash", "Bash", 1_i64), ("call-agent", "Agent", 2)] {
+        pool.get()
+            .await
+            .unwrap()
+            .execute(
+                "insert into tool_links (conversation_id, tool_use_id, use_seq, name) values ($1, $2, $3, $4)
+                 on conflict do nothing",
+                &[&id, &call, &seq, &name],
+            )
+            .await
+            .unwrap();
+    }
     let tasks = alice.conversation_tasks(id).await.unwrap().tasks;
     assert_eq!(
         tasks.iter().map(|t| t.task_id.as_str()).collect::<Vec<_>>(),
