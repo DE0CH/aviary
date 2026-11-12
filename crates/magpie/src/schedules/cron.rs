@@ -79,7 +79,9 @@ fn field(s: &str, lo: u32, hi: u32, names: &[&str], first: u32) -> Result<(u64, 
         let mut v = a;
         while v <= b {
             mask |= 1 << v;
-            v += step;
+            // a step past the range ends the field (never wraps around to values below `a`)
+            let Some(next) = v.checked_add(step) else { break };
+            v = next;
         }
     }
     Ok((mask, s.starts_with('*')))
@@ -360,7 +362,9 @@ fn num(s: &str, what: &str) -> Result<u32, String> {
 pub fn parse_time(s: &str, tz: Tz) -> Result<i64, String> {
     let bad = || format!("`{s}` is not a time like 2026-11-07T09:00+08:00");
     let s = s.trim();
-    if s.len() < 16 {
+    // ASCII only: what follows cuts at byte offsets, and a time in words (`2026年11月7日 09:00`) must be refused,
+    // not cut inside a character (a panic ends the process)
+    if s.len() < 16 || !s.is_ascii() {
         return Err(bad());
     }
     let (date, rest) = s.split_at(10);
@@ -519,6 +523,15 @@ mod tests {
     }
 
     #[test]
+    fn a_step_past_the_range_names_only_its_start() {
+        // `5/4294967295`: the step must not wrap around into values below the start
+        let r = parse("5/4294967295 8 * * *").unwrap();
+        assert_eq!(bits(r.minutes, 0, 59), [5]);
+        let r = parse("*/4294967295 8 * * *").unwrap();
+        assert_eq!(bits(r.minutes, 0, 59), [0]);
+    }
+
+    #[test]
     fn times() {
         assert_eq!(t("2026-11-07T09:00+08:00"), t("2026-11-07T01:00:00Z"));
         assert_eq!(t("2026-11-07 09:00"), t("2026-11-07T09:00:00+08:00"));
@@ -529,6 +542,17 @@ mod tests {
             "2026-13-07T09:00",
             "2026-11-07T25:00",
             "2026-11-07T09:00+8",
+        ] {
+            assert!(parse_time(bad, HK).is_err(), "{bad}");
+        }
+        // a time in words (the AI writes 年月日, full-width digits or an odd offset): refused, never a panic,
+        // which would end the process (the release profile aborts on one)
+        for bad in [
+            "2026年11月7日 09:00",
+            "2026年11月7日上午九時正",
+            "２０２６-11-07T09:00",
+            "2026-11-07T09:00+a\u{e9}1",
+            "2026-11-07T09:00+\u{e9}",
         ] {
             assert!(parse_time(bad, HK).is_err(), "{bad}");
         }
