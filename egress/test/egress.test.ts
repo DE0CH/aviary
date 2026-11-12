@@ -79,6 +79,8 @@ function config(upstream: string, extra: Record<string, unknown> = {}): EgressCo
       { name: "tools", upstream, inject: { Authorization: "Bearer ${EGRESS_TOKEN_TOOLS}" }, allowPaths: ["/v1/"], timeoutSeconds: 180 },
       // a sandbox route (platform 3.11.8), as YYC's label store: its own credential and conversation header
       { name: "labels", upstream: `${upstream}/labels-up`, inject: { "CF-Access-Client-Id": "${LABELS_ID}", "CF-Access-Client-Secret": "${LABELS_SECRET}" }, allowPaths: ["/api/v1/"], identityHeaders: { "X-Jarvis-Conversation": "conversation" }, timeoutSeconds: 180 },
+      // a sandbox route to an outside service (YYC's `code`: a private GitHub repo, read-only): no staff identity
+      { name: "code", upstream: `${upstream}/code-up`, inject: { Authorization: "Basic ${CODE_BASIC}" }, allowPaths: ["/DE0CH/YYC/"], identity: false, timeoutSeconds: 600 },
     ],
     selfHosts: ["vip.egress.test"],
     maxUploadBytes: 256 * 1024,
@@ -103,7 +105,7 @@ function options(o: Partial<EgressOptions> & { db: typeof t.db; cacheDir: string
     },
     upstreams: { pypi: `http://127.0.0.1:${upPort}`, pypiFiles: `http://127.0.0.1:${upPort}/files`, npm: `http://127.0.0.1:${upPort}/npm` },
     aptHosts: ["apt.test"],
-    env: { REAL_KEY: "sk-real", EGRESS_TOKEN_TOOLS: TOOLS_BEARER, LABELS_ID: "labels-id.access", LABELS_SECRET: "labels-secret" },
+    env: { REAL_KEY: "sk-real", EGRESS_TOKEN_TOOLS: TOOLS_BEARER, LABELS_ID: "labels-id.access", LABELS_SECRET: "labels-secret", CODE_BASIC: "eDpyZWFkb25seQ==" },
     internal: { magpie: `http://127.0.0.1:${magpie.port}`, hermit: `http://127.0.0.1:${hermit.port}` },
     ...rest,
   };
@@ -216,7 +218,7 @@ before(async () => {
         res.writeHead(200, { "content-type": "application/json" });
         return res.end(JSON.stringify({ echo: JSON.parse(body || "{}"), usage: { cost: 0.0123 } }));
       }
-      if (p.startsWith("/v1/tools") || p === "/v1/openapi.json" || p.startsWith("/labels-up/")) {
+      if (p.startsWith("/v1/tools") || p === "/v1/openapi.json" || p.startsWith("/labels-up/") || p.startsWith("/code-up/")) {
         res.writeHead(200, { "content-type": "application/json" });
         return res.end(JSON.stringify({ headers: req.headers, url: p, method: req.method, body }));
       }
@@ -311,6 +313,11 @@ test("egress.json: model and tools, plus sandbox routes with their prefixes; sma
   assert.throws(() => route({ name: "labels", identityHeaders: { "X-C": "email" } }), /identityHeaders/);
   assert.throws(() => route({ name: "labels", identityHeaders: { "Aviary-Sandbox-Id": "sandbox" } }), /identityHeaders/);
   assert.throws(() => route({ name: "labels", model: true }), /model: true/);
+  assert.throws(() => route({ name: "labels", identity: "no" }), /identity/);
+  assert.throws(() => route({ name: "labels", identity: false, identityHeaders: { "X-C": "person" } }), /identity/);
+  assert.throws(() => parseEgressConfig({ ...base, routes: [cfg.routes[0], { ...cfg.routes[1], identity: false }] }), /sandbox routes only/);
+  assert.equal(cfg.routes.find((r) => r.name === "code")!.identity, false);
+  assert.equal(cfg.routes.find((r) => r.name === "labels")!.identity, undefined);
   assert.throws(() => parseEgressConfig({ ...base, routes: [cfg.routes[0], { ...cfg.routes[1], identityHeaders: { "X-C": "person" } }] }), /sandbox routes only/);
   assert.throws(() => parseEgressConfig({ ...base, routes: [...cfg.routes, cfg.routes[2]] }), /labels twice/);
   assert.throws(() => parseEgressConfig({ ...base, routes: [cfg.routes[1]] }), /no route model/);
@@ -893,6 +900,27 @@ test("sandbox route (labels): its credential injected, the conversation header s
   assert.deepEqual(lr.map((x) => [x.method, x.status, x.decision]).slice(0, 2), [["PATCH", 200, "allow"], ["GET", 200, "allow"]]);
   assert.equal(lr.filter((x) => x.decision === "deny:path").length, 5);
   assert.ok(lr.every((x) => x.host === "127.0.0.1" && x.conversation_id === sb.claims.conversationId));
+});
+
+test("sandbox route without identity (code): its credential injected, no Aviary-* header or caller credential reaches the upstream; git's paths pass", async () => {
+  const forged = { ...FORGED, "aviary-sandbox-person": "forged@example.org", authorization: "Basic Zm9yZ2VkOmZvcmdlZA==" };
+  const r = await http("http://code/DE0CH/YYC/info/refs?service=git-upload-pack", { headers: { ...pa(), ...forged, "git-protocol": "version=2" } });
+  assert.equal(r.status, 200);
+  const got = JSON.parse(r.body);
+  assert.equal(got.url, "/code-up/DE0CH/YYC/info/refs?service=git-upload-pack");
+  assert.equal(got.headers.authorization, "Basic eDpyZWFkb25seQ==");
+  assert.equal(got.headers["git-protocol"], "version=2");
+  assert.deepEqual(Object.keys(got.headers).filter((k) => k.startsWith("aviary-")), []);
+  assert.ok(!JSON.stringify(got.headers).includes("staff@example.org") && !JSON.stringify(got.headers).includes(sb.claims.conversationId));
+  const p = await http("http://code/DE0CH/YYC/git-upload-pack", { method: "POST", headers: { ...pa(), "content-type": "application/x-git-upload-pack-request" }, body: "0011command=fetch0000" });
+  assert.equal(p.status, 200);
+  assert.equal(JSON.parse(p.body).body, "0011command=fetch0000");
+  // another repository is not on the route
+  const d = await http("http://code/DE0CH/other/info/refs?service=git-upload-pack", { headers: pa() });
+  assert.equal(d.status, 403);
+  // the log still names who asked
+  const lr = (await rows()).filter((x) => x.kind === "route" && String(x.path).startsWith("/DE0CH/"));
+  assert.deepEqual(lr.map((x) => [x.method, x.status, x.decision, x.person]), [["GET", 200, "allow", "staff@example.org"], ["POST", 200, "allow", "staff@example.org"], ["GET", 403, "deny:path", "staff@example.org"]]);
 });
 
 // ---- the internet -----------------------------------------------------------------------------------------------

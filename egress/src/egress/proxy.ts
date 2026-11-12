@@ -555,9 +555,10 @@ export class Egress {
         return this.#deny(row, "deny:upload", 413);
       }
     }
-    // the model upstream is outside: no Aviary-* header (staff identity) reaches it; tools gets the verified identity
+    // the model upstream is outside, as a route with `identity: false`: no Aviary-* header (staff identity) reaches it;
+    // tools and the other sandbox routes get the verified identity
     let headers: OutgoingHttpHeaders;
-    if (isModel) {
+    if (isModel || route.identity === false) {
       headers = forwardHeaders(req.headers, CALLER_AUTH);
       for (const k of Object.keys(headers)) if (k.startsWith("aviary-")) delete headers[k];
     } else {

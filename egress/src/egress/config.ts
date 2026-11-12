@@ -44,6 +44,9 @@ export interface EgressRoute {
   /** sandbox routes only: headers set from the verified token for an upstream that reads its own names (YYC's label
    * store: `X-Jarvis-Conversation` ← the conversation), beside the `Aviary-Sandbox-*` triple */
   identityHeaders?: Record<string, IdentityFact>;
+  /** sandbox routes only: `false` for an upstream outside YYC (a private GitHub repository, read-only): it gets no
+   * `Aviary-*` header at all, so no staff identity leaves; the route's log row still names who asked */
+  identity?: false;
 }
 
 /** A sandbox route (not `model` or `tools`). */
@@ -124,7 +127,9 @@ export function parseEgressConfig(raw: unknown): EgressConfig {
       if (FIXED_NAMES.has(r.name)) throw new Error(`egress config: route ${r.name}: magpie and hermit are built in`);
       if (!Array.isArray(r.allowPaths) || !r.allowPaths.length || r.allowPaths.some((p: unknown) => typeof p !== "string" || !cleanPrefix(p))) throw new Error(`egress config: routes[${r.name}].allowPaths: a sandbox route needs path prefixes, each /…/ (platform 3.11.8)`);
       if (r.identityHeaders !== undefined && (typeof r.identityHeaders !== "object" || Object.entries(r.identityHeaders).some(([k, v]) => !HEADER_NAME.test(k) || k.toLowerCase().startsWith("aviary-") || typeof v !== "string" || !FACTS.has(v)))) throw new Error(`egress config: routes[${r.name}].identityHeaders maps header names (not Aviary-*) to sandbox, conversation or person`);
-    } else if (r.identityHeaders !== undefined) throw new Error(`egress config: routes[${r.name}].identityHeaders: sandbox routes only`);
+      if (r.identity !== undefined && r.identity !== false) throw new Error(`egress config: routes[${r.name}].identity is false or absent`);
+      if (r.identity === false && r.identityHeaders !== undefined) throw new Error(`egress config: routes[${r.name}]: identity: false takes no identityHeaders`);
+    } else if (r.identityHeaders !== undefined || r.identity !== undefined) throw new Error(`egress config: routes[${r.name}].identityHeaders and identity: sandbox routes only`);
     if (routes.some((x) => x.name === r.name)) throw new Error(`egress config: route ${r.name} twice`);
     need(`routes[${r.name}].upstream`, r.upstream);
     if ((r.name === "model") !== (r.model === true)) throw new Error("egress config: the route named model, and only it, has model: true");
@@ -138,6 +143,7 @@ export function parseEgressConfig(raw: unknown): EgressConfig {
       ...(r.allowPaths ? { allowPaths: strings(r.allowPaths, `routes[${r.name}].allowPaths`) } : {}),
       ...(r.timeoutSeconds ? { timeoutSeconds: r.timeoutSeconds } : {}),
       ...(r.identityHeaders ? { identityHeaders: { ...r.identityHeaders } } : {}),
+      ...(r.identity === false ? { identity: false as const } : {}),
     });
   }
   for (const n of ["model", "tools"] as const) if (!routes.some((r) => r.name === n)) throw new Error(`egress config: no route ${n}`);
