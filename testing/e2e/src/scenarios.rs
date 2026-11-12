@@ -550,10 +550,17 @@ async fn cc(h: &Harness) -> anyhow::Result<()> {
                         .any(|p| p == t || t.starts_with(&format!("<command-name>{p}</command-name>")))
                 })
         };
+        // a slash command's own lines are internal to magpie (its `INTERNAL_PREFIXES`): no event
+        let is_command = |l: &Value| {
+            l["type"] == "user"
+                && l["message"]["content"]
+                    .as_str()
+                    .is_some_and(|t| t.starts_with("<command-name>") || t.starts_with("<local-command-stdout>"))
+        };
         let missing: Vec<String> = lines
             .iter()
             .filter(|l| matches!(l["type"].as_str(), Some("user" | "assistant")))
-            .filter(|l| l["isSidechain"] != true && l["isMeta"] != true && !is_echo(l))
+            .filter(|l| l["isSidechain"] != true && l["isMeta"] != true && !is_echo(l) && !is_command(l))
             .filter_map(|l| l["uuid"].as_str())
             .filter(|u| !seen.contains_key(*u))
             .map(str::to_owned)
