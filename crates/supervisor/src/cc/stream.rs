@@ -410,6 +410,21 @@ fn usage(v: &Value) -> magpie_api::sandbox::Usage {
     }
 }
 
+/// A `control_response` line: whose answer it is, whether it succeeded, and what an `initialize` answer names.
+fn control_response(r: &Value) -> Out {
+    let s = |k: &str| r.get(k).and_then(Value::as_str).map(str::to_owned);
+    Out::ControlResponse {
+        request_id: s("request_id").unwrap_or_default(),
+        ok: s("subtype").as_deref() == Some("success"),
+        error: s("error"),
+        commands: r
+            .get("response")
+            .and_then(|x| x.get("commands"))
+            .and_then(Value::as_array)
+            .map(|a| slash_commands(a)),
+    }
+}
+
 /// The commands of an `initialize` answer, as magpie keeps them: named ones, at most
 /// [`magpie_api::sandbox::COMMANDS_MAX`], each description cut to its first line and
 /// [`magpie_api::sandbox::COMMAND_DESCRIPTION_MAX`] characters (a skill's is a paragraph).
@@ -513,20 +528,7 @@ pub fn parse(line: &[u8]) -> Out {
                 request: e.request.unwrap_or(Value::Null),
             }
         }
-        "control_response" => {
-            let r = e.response.unwrap_or(Value::Null);
-            let s = |k: &str| r.get(k).and_then(Value::as_str).map(str::to_owned);
-            Out::ControlResponse {
-                request_id: s("request_id").unwrap_or_default(),
-                ok: s("subtype").as_deref() == Some("success"),
-                error: s("error"),
-                commands: r
-                    .get("response")
-                    .and_then(|x| x.get("commands"))
-                    .and_then(Value::as_array)
-                    .map(|a| slash_commands(a)),
-            }
-        }
+        "control_response" => control_response(&e.response.unwrap_or(Value::Null)),
         "control_cancel_request" => Out::ControlCancel {
             request_id: e.request_id.unwrap_or_default(),
         },
