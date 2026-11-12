@@ -1,0 +1,69 @@
+import type { AgentModelDefinition } from "@getpaseo/protocol/agent-types";
+
+/** The thinking levels in order, lowest first: `none` is thinking off, the rest are effort levels. */
+export const LEVEL_ORDER = ["none", "low", "medium", "high", "xhigh", "max"] as const;
+
+export interface MenuModel {
+  id: string;
+  label: string;
+  /** The levels this model has, in LEVEL_ORDER. */
+  levels: string[];
+  /** The level a conversation starts on. */
+  defaultLevel: string | null;
+  isDefault: boolean;
+}
+
+export interface MenuState {
+  models: MenuModel[];
+  /** The chosen model: the one named, else the default, else the first. */
+  model: MenuModel | null;
+  /**
+   * The positions of the thinking row: every level any model of the list has. The row is the same for every model,
+   * so choosing a model never moves a level; a level the chosen model lacks is disabled in place.
+   */
+  row: string[];
+  /** The level in effect: the one named if the model has it, else the model's own. */
+  level: string | null;
+}
+
+function rank(level: string): number {
+  const index = (LEVEL_ORDER as readonly string[]).indexOf(level);
+  return index === -1 ? LEVEL_ORDER.length : index;
+}
+
+export function menuModels(models: readonly AgentModelDefinition[] | null | undefined): MenuModel[] {
+  return (models ?? []).map((model) => {
+    const levels = (model.thinkingOptions ?? []).map((option) => option.id);
+    levels.sort((a, b) => rank(a) - rank(b));
+    const own =
+      model.defaultThinkingOptionId ?? model.thinkingOptions?.find((option) => option.isDefault)?.id ?? null;
+    return {
+      id: model.id,
+      label: model.label || model.id,
+      levels,
+      defaultLevel: own !== null && levels.includes(own) ? own : null,
+      isDefault: model.isDefault === true,
+    };
+  });
+}
+
+export function menuState(
+  models: MenuModel[],
+  selectedModelId: string | null | undefined,
+  selectedLevel: string | null | undefined,
+): MenuState {
+  const model =
+    models.find((entry) => entry.id === selectedModelId) ?? models.find((entry) => entry.isDefault) ?? models[0] ?? null;
+  const row = [...new Set(models.flatMap((entry) => entry.levels))].sort((a, b) => rank(a) - rank(b));
+  let level: string | null = null;
+  if (model && model.levels.length > 0) {
+    level = selectedLevel && model.levels.includes(selectedLevel) ? selectedLevel : model.defaultLevel;
+  }
+  return { models, model, row, level };
+}
+
+/** What a new conversation starts on: the default model at its own level. */
+export function menuDefaults(models: MenuModel[]): { modelId: string | null; level: string | null } {
+  const state = menuState(models, null, null);
+  return { modelId: state.model?.id ?? null, level: state.level };
+}

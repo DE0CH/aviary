@@ -117,7 +117,7 @@ import {
 } from "@/attachments/service";
 import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
-import { YycModelLabel } from "@/yyc/model-label";
+import { YycModelMenu } from "@/yyc/model-menu";
 import { useMidTurnAvailable } from "@/yyc/me";
 import { chatSendBehavior, resolveActiveSendBehavior } from "./input/state";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
@@ -325,7 +325,10 @@ interface RenderLeftContentArgs {
 
 function renderLeftContent(args: RenderLeftContentArgs): ReactElement | null {
   const { agentControls, agentId, serverId, focusInput, isCompactLayout } = args;
-  if (args.showModelLabel) return <YycModelLabel />;
+  if (args.showModelLabel) {
+    const draft = resolveAgentControlsMode(agentControls) === "draft" ? agentControls : undefined;
+    return <YycModelMenu serverId={serverId} agentId={agentId} draft={draft} />;
+  }
   if (!args.showAgentControls) return null;
   if (resolveAgentControlsMode(agentControls) === "draft" && agentControls) {
     return <DraftAgentControls {...agentControls} isCompactLayout={isCompactLayout} />;

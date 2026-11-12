@@ -15,6 +15,11 @@ interface Me {
    * False (a server from before that): such a message waits in the composer's queue until the reply ends.
    */
   midTurn: boolean;
+  /**
+   * People pick each conversation's model and thinking level (pigeon's `modelPick`; hermit's
+   * `conversations.peoplePickModel`). False: the model menu shows the choice and changes nothing.
+   */
+  modelPick: boolean;
 }
 
 const DEFAULT_ME: Me = {
@@ -22,6 +27,7 @@ const DEFAULT_ME: Me = {
   sharing: true,
   newConversations: true,
   midTurn: false,
+  modelPick: false,
 };
 let loadedMe: Me | null = null;
 
@@ -35,6 +41,7 @@ function loadMe(): Promise<Me> {
       sharing?: unknown;
       newConversations?: unknown;
       midTurn?: unknown;
+      modelPick?: unknown;
     }>("/api/jarvis/me")
       .then((body) => {
         loadedMe = {
@@ -42,6 +49,7 @@ function loadMe(): Promise<Me> {
           sharing: body?.sharing !== false,
           newConversations: body?.newConversations !== false,
           midTurn: body?.midTurn === true,
+          modelPick: body?.modelPick === true,
         };
         return loadedMe;
       })
@@ -68,6 +76,21 @@ export function useSharingAvailable(): boolean {
     };
   }, []);
   return sharing;
+}
+
+/** Whether people pick a conversation's model and thinking level: false until the server says so (`modelPick`). */
+export function useModelPickAvailable(): boolean {
+  const [available, setAvailable] = useState(loadedMe?.modelPick ?? false);
+  useEffect(() => {
+    let live = true;
+    void loadMe().then((me) => {
+      if (live) setAvailable(me.modelPick);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return available;
 }
 
 /** Whether people start conversations here: true until the server says otherwise (yyc/me.ts `newConversations`). */

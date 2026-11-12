@@ -3167,8 +3167,20 @@ export const en = {
       download: "Download {{name}}",
     },
     model: {
-      infoLabel: "About the model",
-      info: "Your admin sets the model. Choosing one here isn't available yet.",
+      title: "Model",
+      menuLabel: "Model and thinking: {{model}}",
+      infoLabel: "About the models",
+      info: "For more models, ask your admin.",
+      thinking: "Thinking",
+      thinkingUnavailable: "Not for this model",
+      level: {
+        none: "None",
+        low: "Light",
+        medium: "Medium",
+        high: "Standard",
+        xhigh: "Extended",
+        max: "Deep",
+      },
     },
     preparing: {
       title: "Preparing the workspace…",

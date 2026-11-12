@@ -3113,8 +3113,20 @@ export const zhHK: TranslationResources = {
       download: "下載 {{name}}",
     },
     model: {
+      title: "模型",
+      menuLabel: "模型與思考：{{model}}",
       infoLabel: "關於模型",
-      info: "模型由管理員設定，暫時未能在這裏自行更換。",
+      info: "如需更多模型，請聯絡管理員。",
+      thinking: "思考",
+      thinkingUnavailable: "此模型不適用",
+      level: {
+        none: "無",
+        low: "輕量",
+        medium: "中等",
+        high: "標準",
+        xhigh: "加強",
+        max: "深入",
+      },
     },
     preparing: {
       title: "正在準備工作環境…",

@@ -16,7 +16,7 @@ export interface ComposerInputModePresentation {
   showVoice: boolean;
   showAutocomplete: boolean;
   showAgentControls: boolean;
-  /** YYC AI: the model's name, read-only, where the model chip would be (yyc/model-label.tsx). */
+  /** YYC AI: the model and thinking menu, where the model chip would be (yyc/model-menu.tsx). */
   showModelLabel: boolean;
   /** Argv is read character by character, so it gets the terminal's own font. */
   isMonospace: boolean;
