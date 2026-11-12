@@ -494,13 +494,17 @@ pub fn models() -> gateway_api::models::Models {
         models: crate::app::MODELS
             .iter()
             .filter_map(|(id, label)| {
-                serde_json::from_value(serde_json::json!({
+                let mut m = serde_json::json!({
                     "id": id,
                     "label": label,
                     "reasoning": null,
                     "thinking": crate::app::thinking(id),
-                }))
-                .ok()
+                });
+                if let Some((_, tokens)) = crate::app::CONTEXT_TOKENS.iter().find(|(i, _)| i == id)
+                {
+                    m["contextTokens"] = serde_json::json!(tokens);
+                }
+                serde_json::from_value(m).ok()
             })
             .collect(),
     }
@@ -549,7 +553,10 @@ mod tests {
             // none named: with nothing picked, Claude Code keeps its own default for the model
             assert_eq!(model.reasoning, None);
         }
-        // GLM 5.3 through OpenRouter is on the menu beside the Claude models (Deyao, 2026-11-12)
+        // GLM 5.3 through OpenRouter is on the menu beside the Claude models (Deyao, 2026-11-12), at its own 1M
+        // window (Claude Code takes it as 200k otherwise); the Claude models name none
         assert!(m.models.iter().any(|x| x.id == "z-ai/glm-5.3"));
+        assert_eq!(m.context_of("z-ai/glm-5.3"), 1_000_000);
+        assert_eq!(m.context_of("claude-fable-5-2"), 0);
     }
 }

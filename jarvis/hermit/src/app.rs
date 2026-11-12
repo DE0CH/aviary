@@ -35,6 +35,10 @@ pub const OPENROUTER_THINKING: &[&str] = &["low", "medium", "high", "xhigh", "ma
 /// stay as the fallback): the model's maker, at full fp8 weights.
 pub const OPENROUTER_PROVIDERS: &[(&str, &[&str])] = &[("z-ai/glm-5.3", &["z-ai/fp8"])];
 
+/// The context window of a model that is not Claude Code's own for it (the models route's per-model
+/// `contextTokens`; the supervisor runs Claude Code at it): Claude Code takes a model it does not know as 200k.
+pub const CONTEXT_TOKENS: &[(&str, u64)] = &[("z-ai/glm-5.3", 1_000_000)];
+
 /// Whether a model id is OpenRouter's (`maker/model`); a Claude id has no `/`.
 #[must_use]
 pub fn openrouter(model: &str) -> bool {

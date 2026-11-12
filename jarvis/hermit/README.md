@@ -35,8 +35,9 @@ Jarvis 4 session machine (harness aviary)                                     â”
   model's hosts (`OPENROUTER_PROVIDERS`: z.ai's own fp8 host first, OpenRouter's others as the fallback),
   `output_config.effort` â†’ `reasoning.effort`, and a `thinking: {type: "disabled"}` is dropped (GLM 5.3's hosts answer
   it 400 "Reasoning is mandatory for this endpoint", so its menu has no "none"). OpenRouter has no `count_tokens`
-  (404; Claude Code estimates). The models route's `contextTokens` is one number for every model and stays 0, so
-  Claude Code takes GLM 5.3 as a 200k model (it compacts at about 170k of the model's 1M).
+  (404; Claude Code estimates). GLM 5.3 names its own context window on the models route (`CONTEXT_TOKENS`: 1M;
+  the supervisor sets `CLAUDE_CODE_MAX_CONTEXT_TOKENS` for the model a conversation runs), since Claude Code takes a
+  model it does not know as 200k; the Claude models name none.
   Anthropic takes a subscription login's call only when its system prompt begins with Claude Code's identity line,
   so aviary-gateway puts that line first on a call that is not Claude Code's own (the supervisor's title call:
   `machine.rs` `with_identity`).
