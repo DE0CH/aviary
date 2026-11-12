@@ -61,6 +61,8 @@ pub enum Wait {
 }
 
 /// One report.
+// a state report is the big one (it may carry a generation's slash commands); a lane holds a handful of items
+#[allow(clippy::large_enum_variant)]
 pub enum Item {
     /// `POST /v1/sandbox/turns/{turnId}/state`, after `wait`.
     State {
