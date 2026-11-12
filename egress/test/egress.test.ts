@@ -22,7 +22,7 @@ import { parseEgressConfig, type EgressConfig } from "../src/egress/config.ts";
 import { EgressLog } from "../src/egress/egresslog.ts";
 import { isRequestId, uuidv7 } from "../src/egress/ids.ts";
 import { AddressGuard } from "../src/egress/netguard.ts";
-import { CostSniffer, denyText, Egress, FIXED_BODY_MAX, parseTarget, routed, routedOn, type EgressOptions } from "../src/egress/proxy.ts";
+import { CostSniffer, denyText, Egress, FIXED_BODY_MAX, MODEL_BODY_MAX, parseTarget, routed, routedOn, type EgressOptions } from "../src/egress/proxy.ts";
 import { DnsRefusal, ThreatResolver } from "../src/egress/threatdns.ts";
 import { exitConnect, ExitHttpsAgent, ExitRefusal, internalHost, parseExit } from "../src/egress/exit.ts";
 import { createServer as createNetServer } from "node:net";
@@ -44,6 +44,8 @@ let port: number;
 let up: Server;
 let upPort: number;
 const upHits: Record<string, number> = {};
+/** Requests whose whole body reached the stub upstream, by path. */
+const upDone: Record<string, number> = {};
 /** stalled upstream answers (x-stall) whose connection is still open */
 let upStalled = 0;
 let upLastHeaders: IncomingMessage["headers"] = {};
@@ -140,8 +142,21 @@ before(async () => {
     upHits[p] = (upHits[p] ?? 0) + 1;
     upLastHeaders = req.headers;
     let body = "";
-    req.on("data", (c) => (body += c));
+    // x-count: a body too large to keep is counted, with its last bytes kept
+    const count = req.headers["x-count"] === "1";
+    let counted = 0;
+    let tail = Buffer.alloc(0);
+    req.on("data", (c: Buffer) => {
+      if (!count) return void (body += c);
+      counted += c.length;
+      tail = Buffer.concat([tail, c]).subarray(-400);
+    });
     req.on("end", () => {
+      upDone[p] = (upDone[p] ?? 0) + 1;
+      if (count) {
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ bytes: counted, tail: tail.toString("latin1"), chunked: req.headers["transfer-encoding"] === "chunked", usage: { cost: 0.0123 } }));
+      }
       // x-stall plays an upstream that goes quiet: "head" never answers, "mid" sends the head and one event then
       // nothing, "drip" sends an event every 200 ms for 1.5 s then ends, "end:<ms>" sends the head and ends after ms
       const stall = String(req.headers["x-stall"] ?? "");
@@ -728,10 +743,100 @@ test("model route: a body of many MB passes rewritten, one too large is refused 
     s.on("error", reject);
     s.on("data", (d) => (buf += d.toString("latin1")));
     s.on("close", () => resolve(buf));
-    s.write(`POST http://model/v1/messages HTTP/1.1\r\nHost: model\r\nProxy-Authorization: ${basic(sb.token)}\r\nContent-Type: application/json\r\nContent-Length: ${70 * 1024 * 1024}\r\n\r\n{"model":`);
+    s.write(`POST http://model/v1/messages HTTP/1.1\r\nHost: model\r\nProxy-Authorization: ${basic(sb.token)}\r\nContent-Type: application/json\r\nContent-Length: ${MODEL_BODY_MAX + 1}\r\n\r\n{"model":`);
   });
   assert.match(head, /^HTTP\/1\.1 413 /);
-  assert.match(head, /limited to 67108864 bytes/);
+  assert.match(head, /limited to 1073741824 bytes/);
+});
+
+/** A model request whose body is written piece by piece (never held whole by the test either). */
+function streamed(pieces: Iterable<Buffer>, headers: Record<string, string> = {}): Promise<Res & { peakRss: number }> {
+  return new Promise((resolve, reject) => {
+    let peakRss = 0;
+    const iv = setInterval(() => (peakRss = Math.max(peakRss, process.memoryUsage().rss)), 20);
+    const r = request({ host: "127.0.0.1", port, path: "http://model/v1/messages", method: "POST", headers: { ...pa(), "content-type": "application/json", ...headers } }, (res) => {
+      let body = "";
+      res.on("data", (c) => (body += c));
+      res.on("error", reject);
+      res.on("end", () => (clearInterval(iv), resolve({ status: res.statusCode ?? 0, headers: res.headers, body, reused: r.reusedSocket, peakRss })));
+    });
+    r.on("error", (e) => (clearInterval(iv), reject(e)));
+    const it = pieces[Symbol.iterator]();
+    const pump = () => {
+      for (let n = it.next(); !n.done; n = it.next()) if (!r.write(n.value)) return void r.once("drain", pump);
+      r.end();
+    };
+    pump();
+  });
+}
+
+test("model route: a body larger than egress's memory streams through; egress never holds it", async () => {
+  // 400 MB of images against a pod limit of 256 Mi: the body goes on as it arrives, the settings are rewritten at its end
+  const image = Buffer.from(`{"type":"image","source":{"type":"base64","media_type":"image/png","data":"${"A".repeat(1024 * 1024 - 80)}"}},`);
+  const n = 400;
+  function* pieces(): Generator<Buffer> {
+    yield Buffer.from('{"model":"vendor/claude-x","provider":{"zdr":false},"thinking":{"type":"enabled"},"messages":[{"role":"user","content":[');
+    for (let i = 0; i < n; i++) yield image;
+    yield Buffer.from('{"type":"text","text":"hi"}]}],"tools":[{"name":"t"}]}');
+  }
+  globalThis.gc?.();
+  const before = process.memoryUsage().rss;
+  const r = await streamed(pieces(), { "x-count": "1" });
+  assert.equal(r.status, 200);
+  const got = JSON.parse(r.body);
+  assert.ok(got.bytes > n * image.length && got.bytes < n * image.length + 1000, `${got.bytes} bytes reached the upstream`);
+  assert.equal(got.chunked, true, "the rewritten body has no known length: it goes out chunked");
+  assert.match(got.tail, /"tools":\[\{"name":"t"\}\],"model":"vendor\/claude-x","thinking":\{"type":"enabled"\},"provider":\{"zdr":true,"data_collection":"deny"\},"reasoning":\{"effort":"high"\}\}$/);
+  const grew = (r.peakRss - before) / 1048576;
+  assert.ok(grew < 150, `the test process (client, egress and upstream) grew ${grew.toFixed(0)} MB while 400 MB passed`);
+  const row = (await rows()).filter((x) => x.kind === "model").at(-1)!;
+  assert.equal(Number(row.bytes_up), got.bytes);
+  assert.equal(row.model, "vendor/claude-x");
+});
+
+test("model route: a refusal while the body streams (model, invalid JSON) leaves the upstream without a request", async () => {
+  const done = () => upDone["/api/v1/messages"] ?? 0;
+  const before = done();
+  const big = Buffer.from(`"${"A".repeat(1024 * 1024)}",`);
+  // the model is known from the first bytes: refused before the upstream is opened, the rest of the body dropped
+  function* notOffered(): Generator<Buffer> {
+    yield Buffer.from('{"model":"vendor/other","messages":[');
+    for (let i = 0; i < 20; i++) yield big;
+    yield Buffer.from('"end"]}');
+  }
+  const opened = upHits["/api/v1/messages"] ?? 0;
+  const a = await streamed(notOffered());
+  assert.equal(a.status, 400);
+  assert.match(JSON.parse(a.body).error.message, /not offered/);
+  assert.equal(upHits["/api/v1/messages"] ?? 0, opened, "the upstream was never contacted");
+  // a model after the conversation: the upstream was opened, and is dropped before the body's end
+  function* late(): Generator<Buffer> {
+    yield Buffer.from('{"messages":[');
+    for (let i = 0; i < 20; i++) yield big;
+    yield Buffer.from('"end"],"model":"vendor/other"}');
+  }
+  const b = await streamed(late());
+  assert.equal(b.status, 400);
+  assert.match(JSON.parse(b.body).error.message, /not offered/);
+  // a duplicate model can't get past the check made on the first
+  const c = await http("http://model/v1/messages", { method: "POST", headers: pa(), body: '{"model":"vendor/claude-x","model":"vendor/other"}' });
+  assert.equal(c.status, 400);
+  // JSON that goes wrong 20 MB in
+  function* broken(): Generator<Buffer> {
+    yield Buffer.from('{"model":"vendor/claude-x","messages":[');
+    for (let i = 0; i < 20; i++) yield big;
+    yield Buffer.from('"end"]');
+  }
+  const d = await streamed(broken());
+  assert.equal(d.status, 400);
+  assert.match(JSON.parse(d.body).error.message, /must be a JSON object/);
+  await sleep(100);
+  assert.equal(done(), before, "no request was completed at the upstream");
+  const denied = (await rows()).filter((x) => x.kind === "model").slice(-4).map((x) => [x.decision, x.status]);
+  assert.deepEqual(denied, [["deny:model", 400], ["deny:model", 400], ["deny:model", 400], ["deny:body", 400]]);
+  // and the route still works
+  const ok = await http("http://model/v1/messages", { method: "POST", headers: pa(), body: '{"model":"vendor/claude-x"}' });
+  assert.equal(ok.status, 200);
 });
 
 test("model route: GET http://model/v1/aviary/models answers the R18 shape from egress.json", async () => {

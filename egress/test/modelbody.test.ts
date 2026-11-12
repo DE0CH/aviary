@@ -1,18 +1,34 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { BodyBudget, FORCED_PROVIDER, forceZdr, topLevelMembers } from "../src/egress/modelbody.ts";
+import { FORCED_PROVIDER, HELD_MAX, InvalidBody, ModelBodyRewriter } from "../src/egress/modelbody.ts";
+import type { ModelPlan } from "../src/common/config.ts";
 
-const out = (raw: string | Buffer, plan?: Parameters<typeof forceZdr>[1]) => {
-  const r = forceZdr(Buffer.isBuffer(raw) ? raw : Buffer.from(raw), plan);
-  if (!r) return null;
-  const whole = Buffer.concat(r.parts);
-  assert.equal(whole.length, r.length);
-  return JSON.parse(whole.toString("utf8")) as Record<string, unknown>;
+/** The body through the streaming rewriter in chunks of `chunk` bytes (0: all at once); null when it is refused. */
+function rewrite(raw: Buffer, plan?: ModelPlan, chunk = 0): { model: unknown; body: Buffer } | null {
+  const rw = new ModelBodyRewriter(plan);
+  const parts: Buffer[] = [];
+  try {
+    for (let i = 0; i < raw.length; i += chunk || raw.length) parts.push(...rw.push(raw.subarray(i, i + (chunk || raw.length))));
+    parts.push(rw.end());
+  } catch (e) {
+    if (e instanceof InvalidBody) return null;
+    throw e;
+  }
+  return { model: rw.model, body: Buffer.concat(parts) };
+}
+
+/** The rewritten body as an object; the same whatever the chunking (all at once, byte by byte, 7 bytes at a time). */
+const out = (raw: string | Buffer, plan?: ModelPlan) => {
+  const b = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+  const [whole, ...rest] = [0, 1, 7].map((c) => rewrite(b, plan, c));
+  for (const r of rest) assert.deepEqual(r && { model: r.model, body: r.body.toString("latin1") }, whole && { model: whole.model, body: whole.body.toString("latin1") }, "chunking changes nothing");
+  return whole ? (JSON.parse(whole.body.toString("utf8")) as Record<string, unknown>) : null;
 };
+const refused = (raw: string | Buffer) => out(raw) === null;
 
 /** What the rewrite must equal: the body through JSON.parse, provider merged, thinking applied (the old object-based
- * forceZdr, kept here as the reference). */
-function reference(raw: string, plan?: Parameters<typeof forceZdr>[1]): Record<string, unknown> | null {
+ * rewrite, kept here as the reference). */
+function reference(raw: string, plan?: ModelPlan): Record<string, unknown> | null {
   let b: unknown;
   try {
     b = JSON.parse(raw);
@@ -38,7 +54,7 @@ function reference(raw: string, plan?: Parameters<typeof forceZdr>[1]): Record<s
 
 const PLAN = { "deepseek/deepseek-v4.1-flash-1017": { withTools: "high" as const, withoutTools: "none" as const, providers: ["deepinfra/fp8", "morph/fp8"] } };
 
-test("forceZdr: a model's pinned providers become order + only with no fallback, over the caller's", () => {
+test("rewrite: a model's pinned providers become order + only with no fallback, over the caller's", () => {
   const pin = { order: ["deepinfra/fp8", "morph/fp8"], only: ["deepinfra/fp8", "morph/fp8"], allow_fallbacks: false };
   const body = { model: "deepseek/deepseek-v4.1-flash-1017", provider: { only: ["open-inference/fp4"], allow_fallbacks: true, sort: "price", zdr: false } };
   assert.deepEqual(out(JSON.stringify(body), PLAN)!.provider, { sort: "price", ...pin, ...FORCED_PROVIDER });
@@ -46,27 +62,27 @@ test("forceZdr: a model's pinned providers become order + only with no fallback,
   assert.deepEqual(out('{"model":"z-ai/glm-5.3","provider":{"only":["x"]}}', PLAN)!.provider, { only: ["x"], ...FORCED_PROVIDER }, "an unpinned model is left to OpenRouter");
 });
 
-test("forceZdr: provider options merged over the caller's, non-objects refused", () => {
+test("rewrite: provider options merged over the caller's, non-objects refused", () => {
   for (const bad of ["[]", "{", "", "null", "1", '"x"', "{} {}", '{"a":1,}', "{'a':1}", '{"a":01}', '{"a":1.}', '{"a":"\\x"}', '{"a":"\t"}'])
-    assert.equal(forceZdr(Buffer.from(bad)), null, `${JSON.stringify(bad)} must be refused`);
+    assert.ok(refused(bad), `${JSON.stringify(bad)} must be refused`);
   assert.deepEqual(out('{"model":"m","provider":{"zdr":false,"only":["x"]}}'), { model: "m", provider: { zdr: true, data_collection: "deny", only: ["x"] } });
   assert.deepEqual(out("{}"), { provider: FORCED_PROVIDER });
   assert.deepEqual(out(' \n{ "provider" : "anything" } \r\n'), { provider: FORCED_PROVIDER });
   assert.deepEqual(FORCED_PROVIDER, { zdr: true, data_collection: "deny" });
 });
 
-test("forceZdr: duplicate and escaped keys can't smuggle a provider past it", () => {
+test("rewrite: duplicate and escaped keys can't smuggle a provider past it", () => {
   // JSON.parse keeps the last duplicate; every occurrence is dropped and the merged one appended
   assert.deepEqual(out('{"provider":{"zdr":true},"provider":{"zdr":false,"order":["a"]}}'), { provider: { zdr: true, data_collection: "deny", order: ["a"] } });
   const esc = '{"\\u0070rovider":{"zdr":false},"provider":{"data_collection":"allow"},"pro\\u0076ider":{"only":["b"]}}';
   assert.deepEqual(out(esc), { provider: { zdr: true, data_collection: "deny", only: ["b"] } });
-  const r = forceZdr(Buffer.from(esc))!;
-  assert.equal((Buffer.concat(r.parts).toString().match(/provider|\\u0070|\\u0076/g) ?? []).length, 1);
+  const r = rewrite(Buffer.from(esc))!;
+  assert.equal((r.body.toString().match(/provider|\\u0070|\\u0076/g) ?? []).length, 1);
   // a nested "provider" is data, not the option
   assert.deepEqual(out('{"messages":[{"provider":{"zdr":false}}]}'), { messages: [{ provider: { zdr: false } }], provider: FORCED_PROVIDER });
 });
 
-test("forceZdr: the model's thinking level, by whether the request carries tools", () => {
+test("rewrite: the model's thinking level, by whether the request carries tools", () => {
   const run = (body: object) => out(JSON.stringify(body), PLAN)!;
   const chat = run({ model: "deepseek/deepseek-v4.1-flash-1017", tools: [{ name: "Bash" }], thinking: { type: "enabled", budget_tokens: 9 } });
   assert.deepEqual(chat.reasoning, { effort: "high" });
@@ -81,21 +97,25 @@ test("forceZdr: the model's thinking level, by whether the request carries tools
   const other = run({ model: "anthropic/claude-sonnet-5.5", tools: [{ name: "x" }] });
   assert.equal(other.reasoning, undefined);
   assert.equal(other.thinking, undefined);
-  assert.equal(forceZdr(Buffer.from('{"model":"m"}'))!.model, "m");
-  assert.equal(forceZdr(Buffer.from('{"a":1}'))!.model, undefined);
-  assert.deepEqual(forceZdr(Buffer.from('{"model":["x"]}'))!.model, ["x"]);
+  assert.equal(rewrite(Buffer.from('{"model":"m"}'))!.model, "m");
+  assert.equal(rewrite(Buffer.from('{"a":1}'))!.model, undefined);
+  assert.deepEqual(rewrite(Buffer.from('{"model":["x"]}'))!.model, ["x"]);
+  // the last of duplicate members counts, wherever the members stand
+  assert.deepEqual(run({ tools: [{ name: "x" }], thinking: { type: "enabled" }, messages: [], model: "deepseek/deepseek-v4.1-flash-1017" }).reasoning, { effort: "high" });
+  assert.equal(out('{"model":"a","x":1,"model":"b"}')!.model, "b");
+  assert.deepEqual(out('{"model":"deepseek/deepseek-v4.1-flash-1017","tools":[{"name":"x"}],"tools":[]}', PLAN)!.thinking, { type: "disabled" });
 });
 
-test("forceZdr: UTF-8 is checked, so no reader can disagree about where a string ends", () => {
+test("rewrite: UTF-8 is checked, so no reader can disagree about where a string ends", () => {
   const ok = Buffer.from('{"t":"特首新聞摘要 😀 é"}');
   assert.deepEqual(out(ok), { t: "特首新聞摘要 😀 é", provider: FORCED_PROVIDER });
   const bad = (bytes: number[]) => Buffer.concat([Buffer.from('{"t":"'), Buffer.from(bytes), Buffer.from('"}')]);
   for (const seq of [[0xc0, 0x80], [0xc1, 0xbf], [0xe0, 0x80, 0x80], [0xed, 0xa0, 0x80], [0xf0, 0x80, 0x80, 0x80], [0xf4, 0x90, 0x80, 0x80], [0xf5, 0x80, 0x80, 0x80], [0x80], [0xe4, 0xb8], [0xc3, 0x22]])
-    assert.equal(forceZdr(bad(seq)), null, `bytes ${seq.map((x) => x.toString(16))} must be refused`);
-  assert.equal(forceZdr(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("{}")])), null, "a BOM is refused, as JSON.parse refuses it");
+    assert.ok(refused(bad(seq)), `bytes ${seq.map((x) => x.toString(16))} must be refused`);
+  assert.ok(refused(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("{}")])), "a BOM is refused, as JSON.parse refuses it");
 });
 
-test("forceZdr: accepts exactly what JSON.parse accepts and rewrites to the same object (fuzzed)", () => {
+test("rewrite: accepts exactly what JSON.parse accepts and rewrites to the same object (fuzzed)", () => {
   let seed = 12345;
   const rnd = (n: number) => {
     seed = (seed * 1103515245 + 12345) % 2 ** 31;
@@ -132,44 +152,38 @@ test("forceZdr: accepts exactly what JSON.parse accepts and rewrites to the same
   assert.ok(valid > 2000, `${valid} valid documents in the corpus`);
 });
 
-test("forceZdr: a large body costs about its own size: the output is slices of the input", () => {
+test("rewrite: a large body passes as views of its chunks; only the small settings members are held", () => {
   const image = "iVBORw0KGgo" + "A".repeat(20 * 1024 * 1024);
-  const raw = Buffer.from(JSON.stringify({ model: "m", messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: image } }] }], tools: [{ name: "Read" }] }));
+  const raw = Buffer.from(JSON.stringify({ model: "deepseek/deepseek-v4.1-flash-1017", messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: image } }] }], tools: [{ name: "Read" }], thinking: { type: "enabled" } }));
+  const rw = new ModelBodyRewriter(PLAN);
   const t0 = process.hrtime.bigint();
-  const r = forceZdr(raw, PLAN)!;
+  let outBytes = 0;
+  let copied = 0;
+  for (let i = 0; i < raw.length; i += 65536) {
+    for (const p of rw.push(raw.subarray(i, i + 65536))) {
+      outBytes += p.length;
+      if (p.buffer !== raw.buffer) copied += p.length;
+    }
+    if (i === 0) assert.equal(rw.model, "deepseek/deepseek-v4.1-flash-1017", "the model is known from the first chunk, before the conversation");
+  }
+  const tail = rw.end();
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.ok(r.length - raw.length < 200);
-  const big = r.parts.find((p) => p.length > 1024 * 1024)!;
-  assert.equal(big.buffer, raw.buffer, "the large member is a view of the request's own Buffer, not a copy");
+  assert.ok(copied < 64, `${copied} bytes of the passed members were copied`);
+  assert.ok(tail.length < 400, "the tail is the held members and the forced ones");
+  assert.ok(Math.abs(outBytes + tail.length - raw.length) < 300);
+  assert.deepEqual(JSON.parse(tail.toString().replace(/^,/, "{")), { model: "deepseek/deepseek-v4.1-flash-1017", thinking: { type: "enabled" }, provider: { order: ["deepinfra/fp8", "morph/fp8"], only: ["deepinfra/fp8", "morph/fp8"], allow_fallbacks: false, ...FORCED_PROVIDER }, reasoning: { effort: "high" } });
   assert.ok(ms < 2000, `scan took ${ms} ms`);
+});
+
+test("rewrite: a held member past its limit is refused, a long key is passed on", () => {
+  assert.ok(refused(`{"provider":{"x":"${"a".repeat(HELD_MAX)}"}}`));
+  assert.ok(!refused(`{"thinking":{"x":"${"a".repeat(HELD_MAX - 100)}"},"thinking":{"x":"${"a".repeat(HELD_MAX - 100)}"}}`), "a replaced duplicate no longer counts");
+  const long = "k".repeat(5000);
+  assert.deepEqual(out(`{"a":1,"${long}":2,"model":"m"}`), { a: 1, [long]: 2, model: "m", provider: FORCED_PROVIDER });
 });
 
 test("the scanner: deep nesting needs no stack", () => {
   const depth = 200_000;
-  const doc = '{"a":' + "[".repeat(depth) + "]".repeat(depth) + "}";
-  assert.equal(topLevelMembers(Buffer.from(doc))?.length, 1);
-  assert.equal(topLevelMembers(Buffer.from('{"a":' + "[".repeat(depth) + "]".repeat(depth - 1) + "}")), null);
-});
-
-test("BodyBudget: bytes are handed out first come first served, a too-big request runs alone", async () => {
-  const b = new BodyBudget(100);
-  const r1 = await b.take(60);
-  const order: string[] = [];
-  const p2 = b.take(50).then((r) => (order.push("50"), r));
-  const p3 = b.take(10).then((r) => (order.push("10"), r)); // fits now, but waits its turn behind 50
-  await new Promise((r) => setTimeout(r, 10));
-  assert.deepEqual([...order], []);
-  assert.deepEqual(b.state, { taken: 60, waiting: 2 });
-  r1();
-  r1(); // a second call returns nothing more
-  const [r2, r3] = await Promise.all([p2, p3]);
-  assert.deepEqual([...order], ["50", "10"]);
-  assert.deepEqual(b.state, { taken: 60, waiting: 0 });
-  const p4 = b.take(1000).then((r) => (order.push("1000"), r));
-  r2();
-  r3();
-  const r4 = await p4;
-  assert.deepEqual(b.state, { taken: 100, waiting: 0 });
-  r4();
-  assert.deepEqual(b.state, { taken: 0, waiting: 0 });
+  assert.ok(rewrite(Buffer.from('{"a":' + "[".repeat(depth) + "]".repeat(depth) + "}")));
+  assert.equal(rewrite(Buffer.from('{"a":' + "[".repeat(depth) + "]".repeat(depth - 1) + "}")), null);
 });
