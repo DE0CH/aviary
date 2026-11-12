@@ -471,6 +471,38 @@ async fn a_socket_joining_mid_turn_sees_the_next_rows_and_catches_up_by_its_own_
     assert_eq!(p["entries"].as_array().unwrap().len(), 2);
 }
 
+/// The app's order when a page that watches one conversation opens another (a new chat): the new set first, then
+/// a release of the subscription it held before. That release ends the earlier subscription only: the socket goes
+/// on watching the new set, so the new conversation's first reply arrives live.
+#[tokio::test]
+async fn releasing_the_previous_timeline_subscription_keeps_the_new_one() {
+    let e = env().await;
+    let open = e.m.add(STAFF, Some("open already"));
+    let mut ws = e.ws(STAFF).await;
+    let first = watch(&mut ws, &[open]).await;
+    let new = e.m.add(STAFF, Some("new chat"));
+    let second = watch(&mut ws, &[open, new]).await;
+    assert_ne!(first, second, "each set_subscription is a subscription of its own");
+    let (k, p) = ws
+        .rpc("subscription.release.request", json!({"subscriptionId": first}))
+        .await;
+    assert_eq!(k, "subscription.release.response");
+    assert_eq!(p["subscriptionId"], first);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    e.m.row(new, None, assistant("the first reply"));
+    let v = ws.wait_for("the new conversation's row", |v| is_stream(v, new)).await;
+    assert_eq!(v["message"]["payload"]["subscriptionId"], second);
+    e.m.row(open, None, assistant("and the one open before"));
+    ws.wait_for("the earlier conversation's row", |v| is_stream(v, open))
+        .await;
+    // a release of the subscription the socket holds now empties it
+    ws.rpc("subscription.release.request", json!({"subscriptionId": second}))
+        .await;
+    e.m.row(new, None, assistant("unwatched"));
+    let after = ws.drain_for(Duration::from_millis(400)).await;
+    assert!(!after.iter().any(|v| is_stream(v, new)), "{after:?}");
+}
+
 #[tokio::test]
 async fn list_changes_join_without_loss_or_duplicate() {
     let e = env().await;

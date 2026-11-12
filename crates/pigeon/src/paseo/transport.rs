@@ -348,10 +348,21 @@ impl Conn {
         self.delivered.fetch_add(1, Ordering::SeqCst);
     }
 
-    /// The socket's stable timeline subscription id.
+    /// The id of the socket's timeline subscription: the one its latest `agent.timeline.set_subscription.request`
+    /// was answered with.
     #[must_use]
     pub fn timeline_sub(&self) -> String {
         self.st().timeline_sub.clone()
+    }
+
+    /// A new timeline subscription (7.5.3): every `agent.timeline.set_subscription.request` is a subscription of
+    /// its own, with its own id. The app asks for the new set and then releases the subscription it held before;
+    /// under one id per socket that release emptied the new set too, and a page that opened a second conversation
+    /// got no live rows.
+    pub(crate) fn renew_timeline_sub(&self) -> String {
+        let id = Uuid::new_v4().to_string();
+        self.st().timeline_sub.clone_from(&id);
+        id
     }
 
     /// The conversations this socket watches.
@@ -434,7 +445,8 @@ impl Conn {
         }
     }
 
-    /// `subscription.release.request` (7.5.1): clears the subscription with that id.
+    /// `subscription.release.request` (7.5.1): clears the subscription with that id. The timeline subscription is
+    /// cleared only by its current id: the id of an earlier `set_subscription` releases nothing.
     pub(crate) fn release(&self, hub: &Hub, conn: &Arc<Conn>, id: &str) {
         let timeline = {
             let mut st = self.st();

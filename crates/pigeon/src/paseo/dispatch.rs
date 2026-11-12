@@ -210,10 +210,11 @@ fn set_timeline(hub: &Hub, conn: &Arc<Conn>, m: &Value, rid: &str) {
             ids.push(s.to_owned());
         }
     }
+    let sub = conn.renew_timeline_sub();
     hub.set_timeline(conn, &set);
     conn.reply(
         "agent.timeline.set_subscription.response",
-        &json!({"requestId": rid, "agentIds": ids, "subscriptionId": conn.timeline_sub()}),
+        &json!({"requestId": rid, "agentIds": ids, "subscriptionId": sub}),
     );
 }
 
