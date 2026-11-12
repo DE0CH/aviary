@@ -732,7 +732,7 @@ mod tests {
         };
         assert_eq!(
             (a.message_id.as_str(), a.text.as_str()),
-            ("b1", "Compacted manual · 22k → 4k tokens · 11s")
+            ("b1", "Compacted · manual · 22k → 4k tokens · 11s")
         );
         let summary = json!({"type": "user", "uuid": "s1", "isCompactSummary": true,
             "message": {"content": "This session is being continued…"}});
