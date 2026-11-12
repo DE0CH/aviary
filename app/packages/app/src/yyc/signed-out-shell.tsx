@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect } from "react";
+import { useProductName } from "@/yyc/product";
 import { releaseEarlyInput } from "@/yyc/early-input";
 import { Image, Text, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -37,6 +38,7 @@ function signIn() {
  */
 export function SignedOutShell() {
   const { t } = useTranslation();
+  const product = useProductName();
   const { theme, rt } = useUnistyles();
   const compact = isCompactBreakpoint(rt.breakpoint);
   const muted = theme.colors.foregroundMuted;
@@ -55,7 +57,7 @@ export function SignedOutShell() {
       {compact ? (
         <View style={styles.compactHeader}>
           <Image source={YYC_LOGO} style={styles.headerLogo} accessibilityIgnoresInvertColors />
-          <Text style={styles.headerTitle}>YYC AI</Text>
+          <Text style={styles.headerTitle}>{product}</Text>
           <View style={styles.flex} />
           {signInButton("yyc-signed-out-header-sign-in")}
         </View>

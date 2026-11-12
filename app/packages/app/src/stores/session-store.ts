@@ -34,6 +34,7 @@ import type {
   AgentPersistenceHandle,
 } from "@getpaseo/protocol/agent-types";
 import type {
+  AgentPendingMessage,
   ServerInfoStatusPayload,
   ProjectPlacementPayload,
   ServerCapabilities,
@@ -83,6 +84,10 @@ export interface Agent {
   currentModeId: string | null;
   availableModes: AgentMode[];
   pendingPermissions: AgentPermissionRequest[];
+  /** The conversation's queue as the server keeps it (yyc/server-queue.ts); absent when the server keeps none. */
+  pendingMessages?: AgentPendingMessage[];
+  /** Why the conversation takes no message now (the deployment closed it); the message box shows it. */
+  closed?: string | null;
   persistence: AgentPersistenceHandle | null;
   runtimeInfo?: AgentRuntimeInfo;
   lastUsage?: AgentUsage;

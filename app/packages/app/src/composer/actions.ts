@@ -226,7 +226,20 @@ export interface DispatchComposerAgentMessageInput {
   submission: MessageSubmissionWriter;
   activeTurnBehavior?: ActiveTurnBehavior;
   activeTurnId?: string;
+  /** The message's id, when the caller keeps track of it (a message sent into the server's queue). */
+  clientMessageId?: string;
 }
+
+/**
+ * For a message that goes into the server's queue (yyc/server-queue.ts): nothing is put into the conversation by
+ * the app. The message shows in the queue above the message box, and in the conversation when the server's row
+ * for it comes.
+ */
+export const queuedMessageSubmissionWriter: MessageSubmissionWriter = {
+  begin: () => {},
+  accept: () => {},
+  reject: () => "rejected",
+};
 
 export async function dispatchComposerAgentMessage(
   input: DispatchComposerAgentMessageInput,
@@ -234,7 +247,7 @@ export async function dispatchComposerAgentMessage(
   const wirePayload = splitComposerAttachmentsForSubmit(input.attachments, {
     format: input.attachmentSubmitFormat,
   });
-  const clientMessageId = generateMessageId();
+  const clientMessageId = input.clientMessageId ?? generateMessageId();
   const userMessage = createUserMessage({
     clientMessageId,
     text: input.text,

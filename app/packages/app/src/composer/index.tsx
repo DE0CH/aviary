@@ -77,6 +77,7 @@ import { focusWithRetries } from "@/utils/web-focus";
 import {
   cancelComposerAgent,
   dispatchComposerAgentMessage,
+  queuedMessageSubmissionWriter,
   editQueuedComposerMessage,
   findForgeItemByOption,
   isAttachmentSelectedForForgeItem,
@@ -119,6 +120,14 @@ import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import { YycModelMenu } from "@/yyc/model-menu-lazy";
 import { useMidTurnAvailable } from "@/yyc/me";
+import {
+  SENDING_SHOWN_MS,
+  serverQueueItems,
+  withdrawQueuedMessage,
+  type SentMidTurn,
+  type ServerQueueItem,
+} from "@/yyc/server-queue";
+import { generateMessageId } from "@/types/stream";
 import { chatSendBehavior, resolveActiveSendBehavior } from "./input/state";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
@@ -402,6 +411,11 @@ function renderAttachmentTray(args: RenderAttachmentTrayArgs): ReactElement | nu
 }
 
 interface RenderQueueTrackArgs {
+  /** The server's queue of the conversation (yyc/server-queue.ts); empty on a server that keeps none. */
+  serverQueue: readonly ServerQueueItem[];
+  handleTakeBack: (id: string) => void;
+  handleStopForQueue: () => void;
+  takeBackLabel: string;
   queuedMessages: readonly QueuedMessage[];
   handleEditQueuedMessage: (id: string) => void;
   handleSendQueuedNow: (id: string) => Promise<void>;
@@ -412,9 +426,19 @@ interface RenderQueueTrackArgs {
 function renderQueueTrack(args: RenderQueueTrackArgs): ReactElement | null {
   const { queuedMessages, handleEditQueuedMessage, handleSendQueuedNow, editLabel, sendNowLabel } =
     args;
-  if (queuedMessages.length === 0) return null;
+  if (queuedMessages.length === 0 && args.serverQueue.length === 0) return null;
   return (
     <View style={styles.queueTrack}>
+      {args.serverQueue.map((item) => (
+        <ServerQueuedRow
+          key={item.id}
+          item={item}
+          onTakeBack={args.handleTakeBack}
+          onSendNow={args.handleStopForQueue}
+          takeBackLabel={args.takeBackLabel}
+          sendNowLabel={sendNowLabel}
+        />
+      ))}
       {queuedMessages.map((item) => (
         <QueuedMessageRow
           key={item.id}
@@ -689,6 +713,53 @@ function resolveMessageInputPassthroughAction(
     default:
       return null;
   }
+}
+
+interface ServerQueuedRowProps {
+  item: ServerQueueItem;
+  onTakeBack: (id: string) => void;
+  onSendNow: () => void;
+  takeBackLabel: string;
+  sendNowLabel: string;
+}
+
+/**
+ * A message of the server's queue: its text, "send now" (the reply stops, so the queue's first message runs), and
+ * for one the server holds until the reply ends, taking it back.
+ */
+function ServerQueuedRow({ item, onTakeBack, onSendNow, takeBackLabel, sendNowLabel }: ServerQueuedRowProps) {
+  const handleTakeBack = useCallback(() => {
+    onTakeBack(item.id);
+  }, [onTakeBack, item.id]);
+  return (
+    <View style={styles.queueItem} testID="server-queue-item">
+      <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
+        {item.text}
+      </Text>
+      <View style={styles.queueActions}>
+        {item.held ? (
+          <Pressable
+            onPress={handleTakeBack}
+            style={styles.queueActionButton}
+            accessibilityLabel={takeBackLabel}
+            accessibilityRole="button"
+            testID="server-queue-take-back"
+          >
+            <ThemedPencil size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
+          </Pressable>
+        ) : null}
+        <Pressable
+          onPress={onSendNow}
+          style={[styles.queueActionButton, styles.queueSendButton]}
+          accessibilityLabel={sendNowLabel}
+          accessibilityRole="button"
+          testID="server-queue-send-now"
+        >
+          <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
+        </Pressable>
+      </View>
+    </View>
+  );
 }
 
 interface QueuedMessageRowProps {
@@ -1488,6 +1559,10 @@ function ComposerContentImpl({
     | null
   >(null);
   const onSubmitMessageRef = useRef(onSubmitMessage);
+  // read by the send path, which is defined before these are known
+  const midTurnRef = useRef(false);
+  const isAgentRunningRef = useRef(false);
+  const sentMidTurnRef = useRef<(entry: SentMidTurn) => void>(() => {});
 
   const addImages = useCallback(
     (images: ImageAttachment[]) => {
@@ -1546,7 +1621,7 @@ function ComposerContentImpl({
       if (!sendAgentMessageRef.current) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      // "steer": sent during a reply, the message belongs to that turn (it is shown in it at once)
+      // "steer": the server takes a message sent during a reply (into the reply, or into its queue)
       await sendAgentMessageRef.current(agentIdRef.current, text, submitAttachments, "steer");
     },
     [cwd, onMessageSent, t],
@@ -1566,6 +1641,18 @@ function ComposerContentImpl({
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
+      // a message sent while a reply runs, to a server that keeps the queue: it shows in the queue above the
+      // message box (the server's list), not in the conversation, until the server's row for it comes
+      const queued = midTurnRef.current && isAgentRunningRef.current;
+      const clientMessageId = generateMessageId();
+      if (queued) {
+        sentMidTurnRef.current({
+          id: clientMessageId,
+          text,
+          attachments: sendAttachments.length,
+          sentAtMs: Date.now(),
+        });
+      }
       await dispatchComposerAgentMessage({
         client,
         agentId: targetAgentId,
@@ -1575,7 +1662,8 @@ function ComposerContentImpl({
           supportsForgeAttachments: supportsForgeSearch,
         }),
         encodeImages,
-        submission: createMessageSubmissionWriter(serverId),
+        clientMessageId,
+        submission: queued ? queuedMessageSubmissionWriter : createMessageSubmissionWriter(serverId),
         activeTurnBehavior,
         activeTurnId:
           activeTurnBehavior === "steer"
@@ -1612,8 +1700,37 @@ function ComposerContentImpl({
   });
   const midTurn = useMidTurnAvailable();
   const activeSendBehavior = resolveActiveSendBehavior(
-    chatSendBehavior(selectedAttachments.length > 0, midTurn),
+    chatSendBehavior(midTurn),
     hasPendingPermission,
+  );
+  useEffect(() => {
+    midTurnRef.current = midTurn;
+    isAgentRunningRef.current = isAgentRunning;
+  }, [isAgentRunning, midTurn]);
+  // the server's queue of this conversation, and what this page has just sent into it
+  const serverQueue = useSessionStore(
+    (state) => state.sessions[serverId]?.agents.get(agentId)?.pendingMessages,
+  );
+  const [sentMidTurn, setSentMidTurn] = useState<SentMidTurn[]>([]);
+  const [queueClock, setQueueClock] = useState(() => Date.now());
+  useEffect(() => {
+    sentMidTurnRef.current = (entry) => {
+      setSentMidTurn((prev) => [
+        ...prev.filter((m) => Date.now() - m.sentAtMs < SENDING_SHOWN_MS),
+        entry,
+      ]);
+      setQueueClock(Date.now());
+    };
+  }, []);
+  useEffect(() => {
+    if (sentMidTurn.length === 0) return undefined;
+    // once: when the newest of them stops being listed
+    const timer = setTimeout(() => setQueueClock(Date.now()), SENDING_SHOWN_MS);
+    return () => clearTimeout(timer);
+  }, [sentMidTurn]);
+  const serverQueueList = useMemo(
+    () => serverQueueItems(serverQueue, sentMidTurn, queueClock),
+    [queueClock, sentMidTurn, serverQueue],
   );
   // a refused send's message says how things stood then ("still replying"): it goes when the reply ends or starts
   useEffect(() => {
@@ -1947,6 +2064,22 @@ function ComposerContentImpl({
       setSelectedAttachments(result.attachments);
     },
     [agentId, queueWriter, replaceUserInput, setSelectedAttachments],
+  );
+
+  // a message the server holds until the reply ends: taken back, and its text put into the message box again
+  const handleTakeBack = useCallback(
+    (id: string) => {
+      const item = serverQueueList.find((m) => m.id === id);
+      if (!item) return;
+      void withdrawQueuedMessage(agentId, id)
+        .then(() => {
+          replaceUserInput(item.text);
+        })
+        .catch((error) => {
+          setSendError(error instanceof Error ? error.message : t("composer.errors.failedToSend"));
+        });
+    },
+    [agentId, replaceUserInput, serverQueueList, t],
   );
 
   const handleSendQueuedNow = useCallback(
@@ -2361,13 +2494,25 @@ function ComposerContentImpl({
   const queueList = useMemo(
     () =>
       renderQueueTrack({
+        serverQueue: serverQueueList,
+        handleTakeBack,
+        handleStopForQueue: handleCancelAgent,
+        takeBackLabel: t("composer.attachments.editQueuedMessage"),
         queuedMessages,
         handleEditQueuedMessage,
         handleSendQueuedNow,
         editLabel: t("composer.attachments.editQueuedMessage"),
         sendNowLabel: t("composer.attachments.sendQueuedMessageNow"),
       }),
-    [handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
+    [
+      handleCancelAgent,
+      handleEditQueuedMessage,
+      handleSendQueuedNow,
+      handleTakeBack,
+      queuedMessages,
+      serverQueueList,
+      t,
+    ],
   );
 
   const autocompleteConfiguration = useMemo(
@@ -2395,6 +2540,10 @@ function ComposerContentImpl({
   const isSubmitLoadingVisible =
     isProcessing || isSubmitLoading || isUploadingFile || pendingNativeImagePastes > 0;
   const isViewAsReadOnly = useViewAsReadOnly();
+  // the deployment closed the conversation to messages (its session is paused elsewhere): the box says why and takes
+  // nothing until it opens again
+  const closedReason =
+    useSessionStore((state) => state.sessions[serverId]?.agents.get(agentId)?.closed) ?? null;
   // Send waits for the reply display (Deyao, 2026-10-29; loading/stages.ts): nothing goes out before its reply can
   // render. Every composer (new chat, conversation, setup) and so the early box's Enter, which goes through this gate.
   const replyDisplayReady = useReplyDisplayReady();
@@ -2404,7 +2553,8 @@ function ComposerContentImpl({
     isSubmitUnavailable ||
     !replyDisplayReady ||
     (waitForForgeAutoAttachOnSubmit && isForgeResolving) ||
-    isViewAsReadOnly;
+    isViewAsReadOnly ||
+    closedReason !== null;
 
   // Disable drops while submitting/uploading: the submit path clears and restores attachments,
   // so a drop in that window would be lost or land on a locked draft. `disabled` hides the
@@ -2503,7 +2653,7 @@ function ComposerContentImpl({
                   onPasteImages={handleNativePasteImages}
                   client={client}
                   isReadyForDictation={isDictationReady}
-                  placeholder={messagePlaceholder}
+                  placeholder={closedReason ?? messagePlaceholder}
                   autoFocus={messageInputAutoFocus}
                   autoFocusKey={`${serverId}:${agentId}:${autoFocusKey ?? ""}`}
                   disabled={isSubmitLoading}
@@ -2524,7 +2674,7 @@ function ComposerContentImpl({
                   inputWrapperStyle={inputWrapperStyle}
                   attachmentSlot={attachmentTray}
                   inputMode={inputMode}
-                  readOnly={readOnly || isViewAsReadOnly}
+                  readOnly={readOnly || isViewAsReadOnly || closedReason !== null}
                   textReplacement={textReplacement}
                   submitLabel={submitLabel}
                 />

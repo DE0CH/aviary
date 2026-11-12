@@ -36,6 +36,22 @@ function createSnapshot(
 }
 
 describe("normalizeAgentSnapshot", () => {
+  it("carries the server's queue and why a conversation is closed", () => {
+    const open = normalizeAgentSnapshot(createSnapshot(), "server-1");
+    expect(open.closed).toBeNull();
+    expect(open.pendingMessages).toBeUndefined();
+    const closed = normalizeAgentSnapshot(
+      {
+        ...createSnapshot(),
+        closed: "This session is paused.",
+        pendingMessages: [{ messageId: "m2", text: "also this", held: false }],
+      },
+      "server-1",
+    );
+    expect(closed.closed).toBe("This session is paused.");
+    expect(closed.pendingMessages).toEqual([{ messageId: "m2", text: "also this", held: false }]);
+  });
+
   it("round-trips identified active turns through the canonical snapshot boundary", () => {
     const snapshot = createSnapshot({
       status: "running",

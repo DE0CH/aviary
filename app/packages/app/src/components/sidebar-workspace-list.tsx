@@ -1,4 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { useConversationDeleteAvailable } from "@/yyc/me";
 import {
   View,
   Text,
@@ -1200,6 +1201,8 @@ function WorkspaceRowWithMenu({
     onSetHiding: setIsHidingWorkspace,
   });
 
+  // a deployment that ends every conversation itself (Jarvis 4) offers no delete (yyc/me.ts)
+  const conversationDelete = useConversationDeleteAvailable();
   const handleArchive = useCallback(() => {
     if (isArchiving) {
       return;
@@ -1278,7 +1281,7 @@ function WorkspaceRowWithMenu({
         archiveLabel={t("sidebar.workspace.actions.archive")}
         archiveStatus={isArchiving ? "pending" : "idle"}
         archivePendingLabel={t("sidebar.workspace.actions.archiving")}
-        onArchive={handleArchive}
+        onArchive={conversationDelete ? handleArchive : undefined}
         onCopyBranchName={canCopyBranchName ? handleCopyBranchName : undefined}
         onCopyPath={handleCopyPath}
         onRename={handleOpenRename}

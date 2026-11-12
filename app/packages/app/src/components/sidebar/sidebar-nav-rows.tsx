@@ -19,7 +19,7 @@ import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { useViewAsReadOnly } from "@/yyc/view-as";
-import { useNewConversationsAvailable } from "@/yyc/me";
+import { useConversationDeleteAvailable, useNewConversationsAvailable } from "@/yyc/me";
 import {
   buildNewWorkspaceRoute,
   buildSessionsRoute,
@@ -133,11 +133,14 @@ const SidebarNewWorkspaceRow = memo(function SidebarNewWorkspaceRow({
 function SidebarHistoryRow({ onBeforeNavigate }: SidebarNavRowProps) {
   const { t } = useTranslation();
   const pathname = usePathname();
+  // a deployment that ends every conversation itself (Jarvis 4) keeps no Recently deleted (yyc/me.ts)
+  const conversationDelete = useConversationDeleteAvailable();
   const handlePress = useCallback(() => {
     onBeforeNavigate?.();
     router.push(buildSessionsRoute());
   }, [onBeforeNavigate]);
 
+  if (!conversationDelete) return null;
   return (
     <SidebarHeaderRow
       icon={Trash2}

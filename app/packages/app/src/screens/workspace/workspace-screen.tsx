@@ -1,3 +1,4 @@
+import { useProductName } from "@/yyc/product";
 import { useHostFeature } from "@/runtime/host-features";
 import {
   AssistantFileLinkResolverProvider,
@@ -9,6 +10,7 @@ import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import type { LayoutChangeEvent } from "react-native";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
 import { ScheduleChip, SchedulesPanel } from "@/yyc/schedules";
+import { ActivityChip, ActivityPanel } from "@/yyc/activity";
 import { sessionIdOfWorkspace } from "@/yyc/api";
 import { ExplorerFrame } from "./explorer-sidebar/frame";
 import { WorkspaceTabDragScope } from "@/components/workspace-tab-drag-scope";
@@ -2903,12 +2905,13 @@ function WorkspaceScreenContent({
     () => !isMobile && !canRenderDesktopPaneSplits,
     [isMobile, canRenderDesktopPaneSplits],
   );
+  const product = useProductName();
   useEffect(() => {
     if (!isRouteFocused || isNative || typeof document === "undefined" || activeTabDescriptor) {
       return;
     }
-    document.title = "YYC AI";
-  }, [activeTabDescriptor, isRouteFocused]);
+    document.title = product;
+  }, [activeTabDescriptor, isRouteFocused, product]);
   const buildPaneContentModel = useCallback(
     (input: {
       tab: WorkspaceTabDescriptor;
@@ -3170,6 +3173,8 @@ function WorkspaceScreenContent({
   const headerRight = useMemo(
     () => (
       <View style={styles.headerRight}>
+        {/* what the conversation runs beside its reply (yyc/activity.tsx) */}
+        <ActivityChip sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} />
         {/* the conversation's schedules (yyc/schedules.tsx) */}
         <ScheduleChip sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} />
         <PluginHeaderButtons serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
@@ -3339,6 +3344,7 @@ function WorkspaceScreenContent({
           explorerToggleLabel={explorerSidebarToggleLabel}
           explorerToggleAccessibilityState={explorerSidebarToggleAccessibilityState}
         >
+          <ActivityChip sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} />
           <ScheduleChip sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} />
           <WorkspaceHeaderMenuMobile
             normalizedServerId={normalizedServerId}
@@ -3695,6 +3701,7 @@ function WorkspaceScreenContent({
               {workspaceCenterColumn}
               {sharedExplorer}
               <SchedulesPanel sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} compact={isMobile} />
+              <ActivityPanel sessionId={sessionIdOfWorkspace(normalizedWorkspaceId)} compact={isMobile} />
             </WorkspaceTabDragScope>
           </FloatingPanelPortalHostNameProvider>
           <FloatingPanelPortalHost name={workspaceFloatingPanelPortalHostName} />

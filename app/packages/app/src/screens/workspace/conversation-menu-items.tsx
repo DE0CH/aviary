@@ -5,7 +5,7 @@ import { withUnistyles } from "react-native-unistyles";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { openConversationDialog } from "@/yyc/conversation-dialog-store";
-import { useSharingAvailable } from "@/yyc/me";
+import { useConversationDeleteAvailable, useSharingAvailable } from "@/yyc/me";
 import type { Theme } from "@/styles/theme";
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -30,6 +30,8 @@ export function ConversationMenuItems() {
   const { t } = useTranslation();
   const selection = useActiveWorkspaceSelection();
   const sharing = useSharingAvailable();
+  // a deployment that ends every conversation itself (Jarvis 4) offers no delete (yyc/me.ts)
+  const conversationDelete = useConversationDeleteAvailable();
   const open = useCallback(
     (kind: "rename" | "share" | "delete") => {
       if (selection) openConversationDialog({ kind, serverId: selection.serverId, workspaceId: selection.workspaceId });
@@ -47,15 +49,19 @@ export function ConversationMenuItems() {
           {t("conversation.menu.share")}
         </DropdownMenuItem>
       ) : null}
-      <DropdownMenuSeparator />
-      <DropdownMenuItem
-        testID="conversation-menu-delete"
-        leading={DELETE_ICON}
-        destructive
-        onSelect={() => open("delete")}
-      >
-        {t("conversation.menu.delete")}
-      </DropdownMenuItem>
+      {conversationDelete ? (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            testID="conversation-menu-delete"
+            leading={DELETE_ICON}
+            destructive
+            onSelect={() => open("delete")}
+          >
+            {t("conversation.menu.delete")}
+          </DropdownMenuItem>
+        </>
+      ) : null}
     </>
   );
 }

@@ -194,14 +194,9 @@ describe("dictation transcript behavior", () => {
 });
 
 describe("composer send behavior", () => {
-  it("sends a text message into the running reply, and queues one with attachments", () => {
-    // the server writes a text message into the running turn (Claude Code takes it in after its next tool result);
-    // it refuses one with attachments, which waits for the reply to end
-    expect(chatSendBehavior(false, true)).toBe("steer");
-    expect(chatSendBehavior(true, true)).toBe("queue");
-    // a server from before that refuses every message during a reply: all of them wait
-    expect(chatSendBehavior(false, false)).toBe("queue");
-    expect(chatSendBehavior(true, false)).toBe("queue");
+  it("sends at once where the server keeps the queue, and queues in the app elsewhere", () => {
+    expect(chatSendBehavior(true)).toBe("steer");
+    expect(chatSendBehavior(false)).toBe("queue");
   });
 
   it("sends immediately when queue mode cannot advance past a permission", () => {

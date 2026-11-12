@@ -864,6 +864,20 @@ const AgentActiveTurnPayloadSchema = z.object({
   startedAt: z.string().nullable(),
 });
 
+/**
+ * YYC AI (aviary's pigeon): one message of a conversation's queue, sent while a reply ran and not in the conversation
+ * yet. `held`: it waits for the reply to end (it has attachments) and can still be taken back.
+ */
+export const AgentPendingMessageSchema = z.object({
+  messageId: z.string(),
+  text: z.string(),
+  attachments: z.number().int().nonnegative().optional(),
+  sentAt: z.string().optional(),
+  held: z.boolean().optional(),
+});
+
+export type AgentPendingMessage = z.infer<typeof AgentPendingMessageSchema>;
+
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -882,6 +896,11 @@ export const AgentSnapshotPayloadSchema = z.object({
   currentModeId: z.string().nullable(),
   availableModes: z.array(AgentModeSchema),
   pendingPermissions: z.array(AgentPermissionRequestPayloadSchema),
+  // YYC AI: the conversation's queue, kept by the server (absent on a server that keeps none)
+  pendingMessages: z.array(AgentPendingMessageSchema).optional(),
+  // YYC AI: set while the deployment has closed the conversation to messages (its session is paused elsewhere): the
+  // sentence shown in the message box, which takes nothing meanwhile
+  closed: z.string().nullable().optional(),
   persistence: AgentPersistenceHandleSchema.nullable(),
   runtimeInfo: AgentRuntimeInfoSchema.optional(),
   lastUsage: AgentUsageSchema.optional(),

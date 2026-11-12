@@ -119,6 +119,8 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     currentModeId: snapshot.currentModeId,
     availableModes: snapshot.availableModes ?? [],
     pendingPermissions: snapshot.pendingPermissions ?? [],
+    pendingMessages: snapshot.pendingMessages,
+    closed: snapshot.closed ?? null,
     persistence: snapshot.persistence ?? null,
     runtimeInfo: snapshot.runtimeInfo,
     lastUsage: snapshot.lastUsage,

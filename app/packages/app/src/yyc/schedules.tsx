@@ -13,6 +13,7 @@
  * everyone (staff pages are in Chinese, CLAUDE.md "Staff preference").
  */
 import React, { useEffect } from "react";
+import { useProductName, withProductName } from "@/yyc/product";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronLeft, Clock, X } from "lucide-react-native";
@@ -146,6 +147,7 @@ export function SchedulesPanel({ sessionId, compact }: { sessionId: string | nul
   const close = useSchedulesPanel((s) => s.close);
   const { data } = useConversationSchedules(open ? sessionId : null);
   const name = useFirstName();
+  const product = useProductName();
   useEffect(() => {
     // a conversation left with its panel open: closed, so the next one starts without it
     return () => {
@@ -174,7 +176,7 @@ export function SchedulesPanel({ sessionId, compact }: { sessionId: string | nul
         {schedules.map((s) => (
           <ScheduleSection key={s.id} s={s} name={name ?? null} />
         ))}
-        <Text style={styles.footer}>在對話中告訴 YYC AI 即可修改或取消。</Text>
+        <Text style={styles.footer}>{withProductName("在對話中告訴 YYC AI 即可修改或取消。", product)}</Text>
       </ScrollView>
     </View>
   );
