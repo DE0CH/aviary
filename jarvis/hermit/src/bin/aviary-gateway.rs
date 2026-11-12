@@ -2,7 +2,8 @@
 //! session-image/base/harness-aviary.sh as the session user.
 //!
 //! Env: `AVIARY_GW_URL`, `AVIARY_GW_ACCESS_ID`, `AVIARY_GW_ACCESS_SECRET` (store `aviary`), `SESSION_ID`,
-//! `SESSION_MODEL` (`aviary/<Claude model id>`), `AVIARY_IMAGE` (`sha256:…`), `AVIARY_BOOT_FILE`; the descriptor's
+//! `SESSION_MODEL` (`aviary/<model id>`), `OPENROUTER_API` (store `openrouter`: an OpenRouter model's calls),
+//! `AVIARY_IMAGE` (`sha256:…`), `AVIARY_BOOT_FILE`; the descriptor's
 //! Jarvis values from the machine's own env (src/wire.rs `BOOT_ENV_NAMES`).
 
 use std::collections::BTreeMap;
@@ -35,6 +36,17 @@ async fn main() -> anyhow::Result<()> {
                 || machine::ANTHROPIC.to_owned(),
                 |v| v.trim_end_matches('/').to_owned(),
             ),
+        // the e2e's stand-in for OpenRouter; OpenRouter otherwise
+        openrouter_url: std::env::var("AVIARY_OPENROUTER_URL")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .map_or_else(
+                || machine::OPENROUTER.to_owned(),
+                |v| v.trim_end_matches('/').to_owned(),
+            ),
+        openrouter_key: std::env::var("OPENROUTER_API")
+            .ok()
+            .filter(|v| !v.is_empty()),
         env: jarvis_aviary::wire::BOOT_ENV_NAMES
             .iter()
             .filter_map(|k| {

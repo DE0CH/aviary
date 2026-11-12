@@ -4,10 +4,12 @@
 //!
 //! - `http://magpie/…`, `http://hermit/…` (absolute form): to `<gateway URL>/magpie/…` / `/hermit/…` with the token
 //!   and the Access service token.
-//! - `http://model/…`: `GET /v1/aviary/models` from the session's model; `POST /v1/messages[/count_tokens]` to
-//!   Anthropic with the session's CURRENT Claude login, read from `~/.claude/.credentials.json` per request (as
-//!   api-proxy.js does: the router refreshes it, an account switch takes effect at the next request) and the OAuth beta
-//!   that Claude Code sends only with its own OAuth login (the supervisor gives it a placeholder API token).
+//! - `http://model/…`: `GET /v1/aviary/models` from the session's model; `POST /v1/messages[/count_tokens]` by the
+//!   body's `model`. A Claude model: to Anthropic with the session's CURRENT Claude login, read from
+//!   `~/.claude/.credentials.json` per request (as api-proxy.js does: the router refreshes it, an account switch takes
+//!   effect at the next request) and the OAuth beta that Claude Code sends only with its own OAuth login (the
+//!   supervisor gives it a placeholder API token). An OpenRouter model (`maker/model`, app.rs): to OpenRouter's
+//!   Messages API with `OPENROUTER_API` (store `openrouter`), the body as [`for_openrouter`] makes it.
 //! - `http://tools/…`: none in Jarvis 4 (404).
 //! - anything else, and `CONNECT host:port`: the internet, directly (a session machine's egress is open).
 //! - origin-form `POST /jarvis/deliver` (from harness-send on this machine): Jarvis's prompt into the conversation.
@@ -42,6 +44,8 @@ type Body = BoxBody<Bytes, std::io::Error>;
 pub const LISTEN: &str = "127.0.0.1:3128";
 /// Anthropic's API.
 pub const ANTHROPIC: &str = "https://api.anthropic.com";
+/// OpenRouter's API (its Messages API is `/v1/messages` under it).
+pub const OPENROUTER: &str = "https://openrouter.ai/api";
 /// The beta Claude Code adds for an OAuth (subscription) login.
 pub const OAUTH_BETA: &str = "oauth-2025-04-20";
 
@@ -62,6 +66,10 @@ pub struct Config {
     pub env: BTreeMap<String, String>,
     /// Where model calls go: [`ANTHROPIC`], or `AVIARY_MODEL_URL` (the e2e's stand-in model, infra/e2e-aviary.sh).
     pub model_url: String,
+    /// Where an OpenRouter model's calls go: [`OPENROUTER`], or `AVIARY_OPENROUTER_URL` (the e2e's stand-in).
+    pub openrouter_url: String,
+    /// `OPENROUTER_API` (store `openrouter`); without it an OpenRouter model's call is refused.
+    pub openrouter_key: Option<String>,
 }
 
 struct State {
@@ -217,6 +225,11 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         title: std::sync::Mutex::new(None),
     });
     tokio::spawn(health_loop(state.clone()));
+    serve(listener, state).await
+}
+
+/// The proxy's accept loop.
+async fn serve(listener: TcpListener, state: Arc<State>) -> anyhow::Result<()> {
     loop {
         let (stream, _) = match listener.accept().await {
             Ok(x) => x,
@@ -420,6 +433,17 @@ async fn model(state: &State, pq: &str, req: Request<Incoming>) -> Response<Body
         m.default.clone_from(&state.cfg.model);
         return full(StatusCode::OK, serde_json::to_value(m).unwrap_or_default());
     }
+    let (parts, incoming) = req.into_parts();
+    let Ok(body) = incoming
+        .collect()
+        .await
+        .map(http_body_util::Collected::to_bytes)
+    else {
+        return refuse(StatusCode::BAD_REQUEST, "bad_request", "no body");
+    };
+    if model_of(&body).is_some_and(|m| crate::app::openrouter(&m)) {
+        return openrouter(state, method, pq, &parts.headers, &body).await;
+    }
     let Some(token) = claude_token(&state.cfg.credentials) else {
         return refuse(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -428,23 +452,16 @@ async fn model(state: &State, pq: &str, req: Request<Incoming>) -> Response<Body
         );
     };
     // a call that is not Claude Code's own (the supervisor's title call) gets Claude Code's first system line, without
-    // which Anthropic refuses a subscription login (429 `rate_limit_error`); Claude Code's own bodies go on as a stream
-    let (parts, incoming) = req.into_parts();
+    // which Anthropic refuses a subscription login (429 `rate_limit_error`); Claude Code's own bodies go on as they are
     let own_call = parts
         .headers
         .get(header::USER_AGENT)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|ua| ua.starts_with("claude-cli/"));
     let body = if own_call {
-        stream_of(incoming)
+        reqwest::Body::from(body)
     } else {
-        match incoming.collect().await {
-            Ok(b) => {
-                let b = b.to_bytes();
-                reqwest::Body::from(with_identity(&b).map_or(b, Bytes::from))
-            }
-            Err(_) => return refuse(StatusCode::BAD_REQUEST, "bad_request", "no body"),
-        }
+        reqwest::Body::from(with_identity(&body).map_or(body, Bytes::from))
     };
     let mut r = state
         .http
@@ -476,6 +493,82 @@ async fn model(state: &State, pq: &str, req: Request<Incoming>) -> Response<Body
         .header("anthropic-beta", betas.join(","))
         .body(body);
     relay(r.send().await).await
+}
+
+/// A Messages body's `model`.
+fn model_of(body: &[u8]) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct OnlyModel {
+        model: Option<String>,
+    }
+    serde_json::from_slice::<OnlyModel>(body).ok()?.model
+}
+
+/// An OpenRouter model's call: to OpenRouter's Messages API with the machine's key. Nothing of the session's Claude
+/// login goes there (the caller's credentials are dropped as on the Anthropic path).
+async fn openrouter(
+    state: &State,
+    method: Method,
+    pq: &str,
+    headers: &hyper::HeaderMap,
+    body: &Bytes,
+) -> Response<Body> {
+    let Some(key) = state.cfg.openrouter_key.as_deref() else {
+        return refuse(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "no OpenRouter key on this machine (OPENROUTER_API, store openrouter)",
+        );
+    };
+    let body = for_openrouter(body).map_or_else(|| body.clone(), Bytes::from);
+    let mut r = state
+        .http
+        .request(method, format!("{}{pq}", state.cfg.openrouter_url));
+    for (k, v) in headers {
+        let n = k.as_str();
+        if hop(n) || n == "authorization" || n == "x-api-key" || n == "content-length" {
+            continue;
+        }
+        r = r.header(k, v);
+    }
+    r = r
+        .header(header::AUTHORIZATION, format!("Bearer {key}"))
+        .body(body);
+    relay(r.send().await).await
+}
+
+/// A Messages body as OpenRouter gets it: the model's hosts first (`provider.order`, app.rs), Claude Code's effort
+/// level as OpenRouter's `reasoning.effort`, and no `thinking: {type: "disabled"}` (the model's hosts refuse a call
+/// that switches thinking off; it then thinks at its own level). `None` when the body is not a JSON object.
+#[must_use]
+pub fn for_openrouter(body: &[u8]) -> Option<Vec<u8>> {
+    let mut v: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let o = v.as_object_mut()?;
+    let model = o.get("model").and_then(|m| m.as_str()).unwrap_or_default();
+    if let Some((_, hosts)) = crate::app::OPENROUTER_PROVIDERS
+        .iter()
+        .find(|(id, _)| *id == model)
+    {
+        o.insert("provider".to_owned(), json!({"order": hosts}));
+    }
+    let disabled = o
+        .get("thinking")
+        .and_then(|t| t.get("type"))
+        .and_then(|t| t.as_str())
+        == Some("disabled");
+    if disabled {
+        o.remove("thinking");
+    }
+    let effort = o
+        .get("output_config")
+        .and_then(|c| c.get("effort"))
+        .and_then(|e| e.as_str())
+        .filter(|e| crate::app::OPENROUTER_THINKING.contains(e))
+        .map(str::to_owned);
+    if let Some(effort) = effort {
+        o.insert("reasoning".to_owned(), json!({"effort": effort}));
+    }
+    serde_json::to_vec(&v).ok()
 }
 
 /// The first line of Claude Code's system prompt: Anthropic takes a subscription (OAuth) login's Messages call only
@@ -696,5 +789,184 @@ mod tests {
         }
         assert_eq!(with_identity(b"not json"), None);
         assert_eq!(with_identity(b"[1]"), None);
+    }
+
+    /// GLM 5.3 on the chat's menu (Deyao, 2026-11-12): its calls go to OpenRouter, a Claude model's to Anthropic.
+    #[test]
+    fn a_call_is_openrouters_by_its_model() {
+        let of =
+            |m: &str| model_of(&serde_json::to_vec(&json!({"model": m, "messages": []})).unwrap());
+        assert!(crate::app::openrouter(&of("z-ai/glm-5.3").unwrap()));
+        assert!(!crate::app::openrouter(&of("claude-fable-5-2").unwrap()));
+        assert!(!crate::app::openrouter(&of("claude-haiku-5-5").unwrap()));
+        assert_eq!(model_of(b"{}"), None);
+        assert_eq!(model_of(b"not json"), None);
+    }
+
+    #[test]
+    fn an_openrouter_body_names_the_hosts_and_the_effort_and_never_switches_thinking_off() {
+        let to = |b: serde_json::Value| -> serde_json::Value {
+            serde_json::from_slice(&for_openrouter(&serde_json::to_vec(&b).unwrap()).unwrap())
+                .unwrap()
+        };
+        // a turn at an effort level: the hosts in order, the level as OpenRouter's, the rest as it came
+        let turn = json!({"model": "z-ai/glm-5.3", "max_tokens": 64, "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "xhigh"}, "messages": [{"role": "user", "content": "hi"}]});
+        let out = to(turn.clone());
+        assert_eq!(out["provider"], json!({"order": ["z-ai/fp8"]}));
+        assert_eq!(out["reasoning"], json!({"effort": "xhigh"}));
+        assert_eq!(out["thinking"], turn["thinking"]);
+        assert_eq!(out["messages"], turn["messages"]);
+        assert_eq!(out["model"], "z-ai/glm-5.3");
+        // thinking switched off (the hosts answer that 400): the member goes, no level is named
+        let off =
+            to(json!({"model": "z-ai/glm-5.3", "thinking": {"type": "disabled"}, "messages": []}));
+        assert_eq!(off.get("thinking"), None);
+        assert_eq!(off.get("reasoning"), None);
+        // a model with no hosts named gets no `provider`
+        assert_eq!(
+            to(json!({"model": "other/model", "messages": []})).get("provider"),
+            None
+        );
+        assert_eq!(for_openrouter(b"not json"), None);
+        assert_eq!(for_openrouter(b"[1]"), None);
+    }
+
+    /// What a stand-in upstream saw: (authorization, anthropic-beta, body).
+    type Seen = Arc<std::sync::Mutex<Vec<(String, String, serde_json::Value)>>>;
+
+    /// A stand-in upstream on a free port: records each `POST /v1/messages` and answers a small message.
+    async fn upstream() -> (String, Seen) {
+        let seen: Seen = Arc::default();
+        let s = seen.clone();
+        let app = axum::Router::new().route(
+            "/v1/messages",
+            axum::routing::post(move |h: axum::http::HeaderMap, b: Bytes| {
+                let s = s.clone();
+                async move {
+                    let get = |n: &str| {
+                        h.get(n)
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or_default()
+                            .to_owned()
+                    };
+                    s.lock().unwrap().push((
+                        get("authorization"),
+                        get("anthropic-beta"),
+                        serde_json::from_slice(&b).unwrap(),
+                    ));
+                    axum::Json(
+                        json!({"type": "message", "content": [{"type": "text", "text": "ok"}]}),
+                    )
+                }
+            }),
+        );
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(l, app).await });
+        (url, seen)
+    }
+
+    /// The gateway's proxy on a free port over two stand-ins (Anthropic, OpenRouter), and a client that uses it as
+    /// its proxy, as Claude Code does.
+    async fn gateway(openrouter_key: Option<&str>) -> (reqwest::Client, Seen, Seen) {
+        let (anthropic, seen_a) = upstream().await;
+        let (openrouter, seen_o) = upstream().await;
+        let dir = std::env::temp_dir().join(format!("aviary-gw-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let credentials = dir.join("credentials.json");
+        std::fs::write(
+            &credentials,
+            r#"{"claudeAiOauth": {"accessToken": "claude-login"}}"#,
+        )
+        .unwrap();
+        let state = Arc::new(State {
+            cfg: Config {
+                gateway_url: "http://127.0.0.1:1".to_owned(),
+                access_id: String::new(),
+                access_secret: String::new(),
+                session: "s".to_owned(),
+                model: "z-ai/glm-5.3".to_owned(),
+                credentials,
+                boot_file: dir.join("boot.env"),
+                image: String::new(),
+                env: BTreeMap::new(),
+                model_url: anthropic,
+                openrouter_url: openrouter,
+                openrouter_key: openrouter_key.map(str::to_owned),
+            },
+            boot: BootReply {
+                sandbox_id: uuid::Uuid::new_v4(),
+                conversation_id: uuid::Uuid::new_v4(),
+                token: "hst1.test".to_owned(),
+                control_token: "hct_test".to_owned(),
+            },
+            http: http_client().unwrap(),
+            health: std::sync::Mutex::new(None),
+            title: std::sync::Mutex::new(None),
+        });
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(serve(l, state));
+        let client = reqwest::Client::builder()
+            .tls_backend_preconfigured(aviary_core::http::tls_config())
+            .proxy(reqwest::Proxy::http(proxy).unwrap())
+            .build()
+            .unwrap();
+        (client, seen_a, seen_o)
+    }
+
+    async fn call(client: &reqwest::Client, body: &serde_json::Value) -> reqwest::StatusCode {
+        client
+            .post("http://model/v1/messages")
+            .header("user-agent", "claude-cli/2.1.0 (external, cli)")
+            .header("x-api-key", "placeholder")
+            .header("anthropic-beta", "claude-code-20250219")
+            .json(body)
+            .send()
+            .await
+            .unwrap()
+            .status()
+    }
+
+    /// GLM 5.3 on the chat's menu (Deyao, 2026-11-12): a turn on it reaches OpenRouter with the machine's key and
+    /// the body OpenRouter needs; a Claude model's turn still reaches Anthropic with the session's login, untouched.
+    #[tokio::test]
+    async fn a_turn_goes_to_openrouter_or_anthropic_by_its_model() {
+        let (client, seen_a, seen_o) = gateway(Some("or-key")).await;
+        let glm = json!({"model": "z-ai/glm-5.3", "max_tokens": 64, "thinking": {"type": "disabled"},
+            "output_config": {"effort": "high"}, "messages": [{"role": "user", "content": "hi"}]});
+        assert_eq!(call(&client, &glm).await, StatusCode::OK);
+        let claude = json!({"model": "claude-fable-5-2", "max_tokens": 64,
+            "system": "You are Claude Code, Anthropic's official CLI for Claude.",
+            "messages": [{"role": "user", "content": "hi"}]});
+        assert_eq!(call(&client, &claude).await, StatusCode::OK);
+
+        let o = seen_o.lock().unwrap().clone();
+        assert_eq!(o.len(), 1);
+        assert_eq!(o[0].0, "Bearer or-key");
+        assert_eq!(o[0].2["model"], "z-ai/glm-5.3");
+        assert_eq!(o[0].2["provider"], json!({"order": ["z-ai/fp8"]}));
+        assert_eq!(o[0].2["reasoning"], json!({"effort": "high"}));
+        assert_eq!(o[0].2.get("thinking"), None);
+        assert_eq!(o[0].2["messages"], glm["messages"]);
+
+        let a = seen_a.lock().unwrap().clone();
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].0, "Bearer claude-login");
+        assert!(a[0].1.split(',').any(|b| b == OAUTH_BETA));
+        assert!(a[0].1.split(',').any(|b| b == "claude-code-20250219"));
+        assert_eq!(a[0].2, claude);
+    }
+
+    /// A machine without the store `openrouter` (a session made before the model was offered): the turn is refused
+    /// here, and nothing of it reaches Anthropic.
+    #[tokio::test]
+    async fn an_openrouter_turn_without_the_key_is_refused() {
+        let (client, seen_a, seen_o) = gateway(None).await;
+        let glm = json!({"model": "z-ai/glm-5.3", "messages": []});
+        assert_eq!(call(&client, &glm).await, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(seen_a.lock().unwrap().is_empty());
+        assert!(seen_o.lock().unwrap().is_empty());
     }
 }

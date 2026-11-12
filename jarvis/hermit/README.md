@@ -14,7 +14,8 @@ chat.deyaochen.com (Access "Jarvis 4 chat", Deyao)                     DE0CH/ser
                  │   └── chat-gw.deyaochen.com (Access "Jarvis 4 chat gateway", token aviary-gateway)
 Jarvis 4 session machine (harness aviary)                                     │
   aviary-gateway 127.0.0.1:3128 ──── magpie/hermit, boot, health, deliveries ─┘
-      ├─ model ─▶ api.anthropic.com with the session's current Claude login
+      ├─ model ─▶ api.anthropic.com with the session's current Claude login (a Claude model)
+      │          openrouter.ai with OPENROUTER_API (an OpenRouter model: GLM 5.3)
       └─ internet (CONNECT, absolute-form HTTP)
   supervisor-keeper (PID 1 of its own PID + mount namespace: aviary-sandbox) ─▶ supervisor ─▶ Claude Code in /workspace
 ```
@@ -25,7 +26,17 @@ Jarvis 4 session machine (harness aviary)                                     �
   `/v1/deployment` `conversations.peopleCreate: false` → pigeon's `/api/jarvis/me` `newConversations: false`).
 - Claude Code loads the session's workspace CLAUDE.md, skills and settings itself (the descriptor's
   `claude.projectSettings`: `--setting-sources=project`); YYC AI's hermit leaves it off.
-- The model is the session's Claude subscription account.
+- The models (`src/app.rs` `MODELS`; the Jarvis 4 app's picker is `router/harness.go`): the Claude models on the
+  session's Claude subscription account, and GLM 5.3 on OpenRouter (Deyao, 2026-11-12). aviary-gateway routes each
+  Messages call by its `model`: an id with a `/` (`z-ai/glm-5.3`) goes to OpenRouter's Messages API
+  (`https://openrouter.ai/api/v1/messages`) with `OPENROUTER_API` (store `openrouter`, which the harness's policy
+  brings; the key stays with the gateway), everything else (Claude Code's small model and the title call included) to
+  Anthropic. For OpenRouter the gateway rewrites the body (`machine.rs` `for_openrouter`): `provider.order` = the
+  model's hosts (`OPENROUTER_PROVIDERS`: z.ai's own fp8 host first, OpenRouter's others as the fallback),
+  `output_config.effort` → `reasoning.effort`, and a `thinking: {type: "disabled"}` is dropped (GLM 5.3's hosts answer
+  it 400 "Reasoning is mandatory for this endpoint", so its menu has no "none"). OpenRouter has no `count_tokens`
+  (404; Claude Code estimates). The models route's `contextTokens` is one number for every model and stays 0, so
+  Claude Code takes GLM 5.3 as a 200k model (it compacts at about 170k of the model's 1M).
   Anthropic takes a subscription login's call only when its system prompt begins with Claude Code's identity line,
   so aviary-gateway puts that line first on a call that is not Claude Code's own (the supervisor's title call:
   `machine.rs` `with_identity`).
@@ -131,5 +142,9 @@ destroyed with its volume at the end (or on Ctrl-C).
 - The session image under test is `ghcr.io/de0ch/jarvis4-session:latest` (`E2E_SESSION_IMAGE` for another): a
   harness change is tested once images.yml has built it. hermit-jarvis is always this tree's.
 - `E2E_ONLY=chat` brings up only the chat stack and keeps it (debugging hermit-jarvis against a real magpie).
-- The test store `aviary` names the run's chat front (`AVIARY_GW_URL`) and the stand-in model (`AVIARY_MODEL_URL`):
-  the same keys a production store leaves unset (chat-gw.deyaochen.com, api.anthropic.com).
+- The test store `aviary` names the run's chat front (`AVIARY_GW_URL`) and the stand-in models (`AVIARY_MODEL_URL`,
+  `AVIARY_OPENROUTER_URL` with its `OPENROUTER_API`): the same keys a production store leaves unset
+  (chat-gw.deyaochen.com, api.anthropic.com, openrouter.ai).
+- `E2E_MODEL=aviary/z-ai/glm-5.3` runs the session on an OpenRouter model: the agent's turns must reach the stand-in
+  OpenRouter (its key, the hosts named, thinking never switched off), the title call the Claude stand-in; a turn at
+  the wrong one fails the run.
