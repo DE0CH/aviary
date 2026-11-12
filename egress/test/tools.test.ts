@@ -674,6 +674,16 @@ test("web_fetch: Exa text first, then the page itself; private addresses refused
   // Exa has nothing: the fake server itself is fetched (deps.resolve sends every host to 127.0.0.1)
   const direct = await call("web_fetch", { url: `${fakes.url.replace("127.0.0.1", "page.example")}/nothing-here` });
   assert.match(textOf(direct), /HTTP 404/);
+  // a file, not a page: the answer sends the agent to its computer, which reaches most sites (no "widely used
+  // public sites only", the rule before 2026-11-10)
+  const file = textOf(await call("web_fetch", { url: `${fakes.url.replace("127.0.0.1", "page.example")}/report.pdf` }));
+  assert.match(file, /application\/pdf file \(13 bytes\), not a page\. Download it on your computer with curl/);
+  assert.doesNotMatch(file, /widely used public sites/);
+  // a page in Big5 (the header says so) or GBK (only its <meta> says so) is read in its own encoding
+  const page = (path: string, extra = {}) => call("web_fetch", { url: `${fakes.url.replace("127.0.0.1", "page.example")}${path}`, ...extra });
+  assert.match(textOf(await page("/big5")), /^Title: 香港新聞\n[^]*香港新聞$/);
+  assert.match(textOf(await page("/gbk")), /北京新闻$/);
+  assert.match(textOf(await page("/gbk", { raw_html: true })), /<p>北京新闻<\/p>/);
   fakes.exaHasText = true;
   const saved = deps.resolve;
   delete deps.resolve; // the real check

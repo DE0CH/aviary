@@ -149,6 +149,23 @@ export async function safeGet(
   throw new Error("too many redirects");
 }
 
+/**
+ * A page's bytes as text, in the page's own encoding: the charset of its Content-Type header, else the one its HTML
+ * names in a `<meta>` within the first 4 KiB (Big5 and GBK pages of older Hong Kong, Taiwan and mainland sites), else
+ * UTF-8. An encoding this runtime doesn't know is read as UTF-8.
+ */
+export function decodePage(body: Buffer, contentType: string): string {
+  const named = /charset\s*=\s*["']?([\w.:-]+)/i.exec(contentType)?.[1] ?? /<meta[^>]+charset\s*=\s*["']?([\w.:-]+)/i.exec(body.subarray(0, 4096).toString("latin1"))?.[1];
+  if (named && !/^utf-?8$/i.test(named)) {
+    try {
+      return new TextDecoder(named).decode(body);
+    } catch {
+      /* not an encoding TextDecoder has: UTF-8 below */
+    }
+  }
+  return body.toString("utf8");
+}
+
 /** Readable text of an HTML page: scripts, styles and tags dropped, block elements as line breaks, entities decoded. */
 export function htmlToText(html: string): { title: string; text: string } {
   const title = decodeEntities((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1] ?? "").trim());

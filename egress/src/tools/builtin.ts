@@ -1,7 +1,7 @@
 // The tools server's own tools (docs/CHAT.md, "tools"): all read-only (search and read; nothing that sends, posts or
 // changes anything outside). Descriptions are what the model reads: written for a Hong Kong news / PR assistant,
 // saying when to use each and what comes back.
-import { BlockedAddress, htmlToText, safeGet } from "./netguard.ts";
+import { BlockedAddress, decodePage, htmlToText, safeGet } from "./netguard.ts";
 import { ANYAPI_SKU, anyapiDescribe, anyapiResult, anyapiRun, anyapiSearch, exaContents, exaSearch, PLATFORMS, tikhubSearch, type AnyapiRun, type AnyapiShape } from "./providers.ts";
 import { int, str, text, ToolInputError, type Deps, type ToolDef, type ToolResult } from "./types.ts";
 
@@ -175,11 +175,11 @@ export const webFetch: ToolDef = {
         ...(ctx.deps.fetchPorts ? { ports: ctx.deps.fetchPorts } : {}),
       });
       const ct = page.contentType.toLowerCase();
-      const body = page.body.toString("utf8");
+      const body = decodePage(page.body, page.contentType);
       if (page.status >= 400) return text(`The page answered HTTP ${page.status}.${body ? `\n\n${cut(htmlToText(body).text).slice(0, 2000)}` : ""}`, true);
       if (args.raw_html || !(ct.includes("html") || ct.includes("xml"))) {
         if (!ct.startsWith("text/") && !ct.includes("json") && !ct.includes("xml") && !ct.includes("html"))
-          return text(`The URL is a ${ct || "binary"} file (${page.body.length} bytes), not a page. Download it in the sandbox with bash (curl) to work with it (the sandbox reaches widely used public sites only).`, true);
+          return text(`The URL is a ${ct || "binary"} file (${page.body.length} bytes), not a page. Download it on your computer with curl to work with it.`, true);
         return { content: [{ type: "text", text: `URL: ${page.url}\nContent-Type: ${ct}\n\n${cut(body)}` }], ...(costUsd !== undefined ? { costUsd } : {}) };
       }
       const t = htmlToText(body);

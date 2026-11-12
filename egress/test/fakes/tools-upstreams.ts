@@ -38,6 +38,20 @@ export async function startFakes(): Promise<Fakes> {
       res.writeHead(status, { "content-type": "application/json", ...h });
       res.end(JSON.stringify(o));
     };
+    // ---- a page that is a file (web_fetch's own reader)
+    if (u.pathname === "/report.pdf") {
+      res.writeHead(200, { "content-type": "application/pdf" });
+      return void res.end("%PDF-1.7 fake");
+    }
+    // ---- pages not in UTF-8: Big5 named in the header, GBK named only in the page's <meta>
+    if (u.pathname === "/big5") {
+      res.writeHead(200, { "content-type": "text/html; charset=Big5" });
+      return void res.end(Buffer.concat([Buffer.from("<html><title>"), Buffer.from("adbbb4e4b773bb44", "hex"), Buffer.from("</title><body><p>"), Buffer.from("adbbb4e4b773bb44", "hex"), Buffer.from("</p></body></html>")]));
+    }
+    if (u.pathname === "/gbk") {
+      res.writeHead(200, { "content-type": "text/html" });
+      return void res.end(Buffer.concat([Buffer.from('<html><head><meta http-equiv="Content-Type" content="text/html; charset=gb2312"></head><body><p>'), Buffer.from("b1b1bea9d0c2cec5", "hex"), Buffer.from("</p></body></html>")]));
+    }
     // ---- Exa
     if (u.pathname === "/exa/search") {
       if (req.headers["x-api-key"] !== "exa-key") return json(401, { error: "bad key" });
