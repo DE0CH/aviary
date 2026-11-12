@@ -39,6 +39,8 @@ pub struct Conv {
     pub rows: Vec<Row>,
     pub next_seq: u64,
     pub sends: HashMap<String, SendResponse>,
+    /// The running turn's live text, every open block whole (magpie's `LiveState` with `reset`).
+    pub live: Option<magpie_api::live::LiveState>,
 }
 
 #[derive(Default)]
@@ -195,6 +197,7 @@ impl Model {
                 rows: Vec::new(),
                 next_seq: 1,
                 sends: HashMap::new(),
+                live: None,
             },
         );
         Self::upsert(&mut st, id);
@@ -409,7 +412,10 @@ impl Model {
             has_older,
             has_newer,
             rows,
-            live: None,
+            // as magpie: with `after`, and only when there is more than the caller has (the blocks whole)
+            live: c.live.clone().filter(|l| {
+                q.after.is_some() && (q.live_turn != Some(l.turn_id) || q.live_after.is_none_or(|n| l.n > n))
+            }),
         }
     }
 }
@@ -640,7 +646,7 @@ impl Server for Model {
                     return Err(refusal(ErrorCode::NotFound, "gone"));
                 };
                 let page = Self::page(c, &query);
-                if query.after.is_none() || !page.rows.is_empty() || wait.is_zero() {
+                if query.after.is_none() || !page.rows.is_empty() || page.live.is_some() || wait.is_zero() {
                     return Ok(page);
                 }
             }

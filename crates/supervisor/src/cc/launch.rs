@@ -50,6 +50,8 @@ pub fn argv(bin: &str, session: &Session, project_settings: bool) -> Vec<String>
         "--output-format",
         "stream-json",
         "--verbose",
+        // the model's answer as it comes (`stream_event`), for the live frames (8.3)
+        "--include-partial-messages",
         "--input-format",
         "stream-json",
         "--permission-prompt-tool",
@@ -183,12 +185,8 @@ mod tests {
         assert!(a.iter().any(|x| x == "--setting-sources="));
         assert!(a.windows(2).any(|w| w == ["--disallowedTools", DISALLOWED_TOOLS]));
         assert_eq!(a[a.len() - 2..], ["--session-id".to_owned(), "c1".to_owned()]);
-        for absent in [
-            "--model",
-            "--mcp-config",
-            "--include-partial-messages",
-            "--resume-session-at",
-        ] {
+        assert!(a.iter().any(|x| x == "--include-partial-messages"));
+        for absent in ["--model", "--mcp-config", "--resume-session-at"] {
             assert!(!a.iter().any(|x| x == absent), "{absent}");
         }
         let r = argv(CLAUDE_BIN, &Session::Resume("s9".into()), false);

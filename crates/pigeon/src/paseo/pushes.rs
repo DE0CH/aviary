@@ -27,6 +27,21 @@ pub fn timeline_row(agent: &Uuid, row: &Value, epoch: &str) -> Value {
            "seq": row.get("seqEnd").cloned().unwrap_or(Value::Null), "epoch": epoch})
 }
 
+/// `agent_stream` of live text (magpie 7.5): a chunk of the answer or of the thinking the running turn is writing,
+/// without `subscriptionId`. It has no `seq` (it is no row: the block's row comes when the block is complete), and
+/// the app appends it to the message (`messageId`) or the thought it is showing.
+#[must_use]
+pub fn live_text(agent: &Uuid, turn: &Uuid, message_id: &str, thinking: bool, text: &str) -> Value {
+    let item = if thinking {
+        json!({"type": "reasoning", "text": text})
+    } else {
+        json!({"type": "assistant_message", "text": text, "messageId": message_id})
+    };
+    json!({"agentId": agent,
+           "event": {"type": "timeline", "provider": PROVIDER, "item": item, "turnId": turn},
+           "timestamp": super::messages::now_iso()})
+}
+
 /// `agent_stream` of a turn boundary (7.6.2), without `subscriptionId`.
 #[must_use]
 pub fn turn_event(agent: &Uuid, phase: TurnPhase, turn: &Uuid, error: Option<&ErrorInfo>, locale: Locale) -> Value {

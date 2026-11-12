@@ -59,6 +59,11 @@ The seams in `feeds` (built for the switch window, WP-50, whose legacy upstream 
 
 ## Deviations (recorded)
 
+- **Live text** (Deyao, 2026-11-12; spec 8.2 projected rows only): the timeline poller asks magpie for the running
+  turn's live state with every long-poll (`liveAfter`, `liveTurn`) and sends the text added to each open text or
+  thinking block as an `agent_stream` timeline event without `seq` or `epoch` (`pushes::live_text`), which the app
+  appends to the message it shows. The block's row then goes to each socket with only the text that socket has not
+  had (its `seq` moves the cursor as ever); a socket that joined while the block was open gets it from its start.
 - **The model picker** (Deyao, 2026-11-12): where hermit's deployment facts say `conversations.peoplePickModel`,
   the `me` route (5.4) says `modelPick: true` and `set_agent_model_request` sets the conversation's model (magpie M5
   `model`) after checking the id against the models route's list (`null` picks the list's default); an agent's

@@ -828,6 +828,117 @@ fn texts(w: &World) -> String {
 
 // ---- the tests ----
 
+/// Live frames (8.3) from Claude Code's `stream_event`s: a block's start, its text at its byte offset, its end, each
+/// under the message the thread is streaming; the main thread and a subagent's do not mix.
+#[test]
+fn stream_events_become_live_frames() {
+    use magpie_api::live::{BlockType, FrameOp};
+    let ev = |parent: Option<&str>, step: Step| Partial {
+        parent_tool_use_id: parent.map(str::to_owned),
+        step,
+    };
+    let mut out = PartialOut::default();
+    // nothing before the message is known
+    assert!(
+        out.frame(ev(
+            None,
+            Step::Text {
+                index: 0,
+                text: "x".into()
+            }
+        ))
+        .is_none()
+    );
+    assert!(out.frame(ev(None, Step::Message { id: "msg_1".into() })).is_none());
+    let start = out
+        .frame(ev(
+            None,
+            Step::Start {
+                index: 0,
+                block: BlockType::Text,
+                name: None,
+            },
+        ))
+        .unwrap();
+    assert_eq!(
+        (start.op, start.message_id.as_deref(), start.index, start.block),
+        (FrameOp::Start, Some("msg_1"), Some(0), Some(BlockType::Text))
+    );
+    let a = out
+        .frame(ev(
+            None,
+            Step::Text {
+                index: 0,
+                text: "你好".into(),
+            },
+        ))
+        .unwrap();
+    assert_eq!(
+        (a.op, a.offset, a.text.as_deref()),
+        (FrameOp::Delta, Some(0), Some("你好"))
+    );
+    // a subagent's message meanwhile, under its own call
+    assert!(
+        out.frame(ev(Some("toolu_a"), Step::Message { id: "msg_sub".into() }))
+            .is_none()
+    );
+    let sub = out
+        .frame(ev(
+            Some("toolu_a"),
+            Step::Start {
+                index: 0,
+                block: BlockType::ToolUse,
+                name: Some("Bash".into()),
+            },
+        ))
+        .unwrap();
+    assert_eq!(
+        (
+            sub.message_id.as_deref(),
+            sub.name.as_deref(),
+            sub.parent_tool_use_id.as_deref()
+        ),
+        (Some("msg_sub"), Some("Bash"), Some("toolu_a"))
+    );
+    // the main thread goes on where it was: offsets are bytes
+    let b = out
+        .frame(ev(
+            None,
+            Step::Text {
+                index: 0,
+                text: ", world".into(),
+            },
+        ))
+        .unwrap();
+    assert_eq!(
+        (b.message_id.as_deref(), b.offset, b.text.as_deref()),
+        (Some("msg_1"), Some(6), Some(", world"))
+    );
+    let stop = out.frame(ev(None, Step::Stop { index: 0 })).unwrap();
+    assert_eq!((stop.op, stop.index), (FrameOp::Stop, Some(0)));
+    assert!(out.frame(ev(None, Step::Other)).is_none());
+    // the next message starts its blocks from 0 again
+    out.frame(ev(None, Step::Message { id: "msg_2".into() }));
+    out.frame(ev(
+        None,
+        Step::Start {
+            index: 0,
+            block: BlockType::Thinking,
+            name: None,
+        },
+    ));
+    let c = out
+        .frame(ev(
+            None,
+            Step::Text {
+                index: 0,
+                text: "hm".into(),
+            },
+        ))
+        .unwrap();
+    assert_eq!((c.message_id.as_deref(), c.offset), (Some("msg_2"), Some(0)));
+}
+
 /// The conversation's picked model (`start_turn.model`): a generation that runs another model ends before the turn,
 /// which resumes the conversation on a new one started on the pick; the same pick again keeps the generation; with
 /// none picked the next turn is back on the models route's default.

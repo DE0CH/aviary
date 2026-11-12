@@ -50,7 +50,7 @@ use crate::boot::BootEnv;
 use crate::cc::control::{self, Answer};
 use crate::cc::launch::{self, Launch, Session};
 use crate::cc::report::{Item, Reporter, Wait};
-use crate::cc::stream::{Line, Out, ResultMsg, Tail, TaskKind, TaskMsg};
+use crate::cc::stream::{Line, Out, Partial, ResultMsg, Step, Tail, TaskKind, TaskMsg};
 use crate::cc::tasks::{Change as TaskChange, Tracker};
 use crate::cc::{Transcript, managed, prompt};
 use crate::hermit::Hermit;
@@ -244,6 +244,64 @@ impl Gen {
     }
 }
 
+/// The messages being streamed (`stream_event`), one per thread (the main one, and each subagent's by its `Agent`
+/// call): what a live frame needs beside the event itself (8.3).
+#[derive(Default)]
+struct PartialOut {
+    threads: HashMap<Option<String>, PartialMessage>,
+}
+
+#[derive(Default)]
+struct PartialMessage {
+    id: String,
+    /// The bytes of text so far in each block.
+    lens: HashMap<u32, u64>,
+}
+
+impl PartialOut {
+    /// The live frame of a `stream_event`, if it makes one (a block's start, its text, its end).
+    fn frame(&mut self, p: Partial) -> Option<magpie_api::live::LiveFrame> {
+        use magpie_api::live::FrameOp;
+        let Partial {
+            parent_tool_use_id,
+            step,
+        } = p;
+        if let Step::Message { id } = step {
+            self.threads.insert(
+                parent_tool_use_id,
+                PartialMessage {
+                    id,
+                    lens: HashMap::new(),
+                },
+            );
+            return None;
+        }
+        let m = self.threads.get_mut(&parent_tool_use_id)?;
+        let mut f = crate::cc::report::blank_frame();
+        f.message_id = Some(m.id.clone());
+        f.at = Some(magpie_api::Timestamp::now());
+        match step {
+            Step::Start { index, block, name } => {
+                m.lens.insert(index, 0);
+                (f.op, f.index, f.block, f.name) = (FrameOp::Start, Some(index), Some(block), name);
+                f.parent_tool_use_id = parent_tool_use_id;
+            }
+            Step::Text { index, text } => {
+                let len = m.lens.entry(index).or_insert(0);
+                (f.op, f.index, f.offset) = (FrameOp::Delta, Some(index), Some(*len));
+                *len += text.len() as u64;
+                f.text = Some(text);
+            }
+            Step::Stop { index } => {
+                m.lens.remove(&index);
+                (f.op, f.index) = (FrameOp::Stop, Some(index));
+            }
+            Step::Message { .. } | Step::Other => return None,
+        }
+        Some(f)
+    }
+}
+
 /// A turn that ended and whose end report magpie has not answered yet: the heartbeat goes on naming it (magpie
 /// would otherwise take an idle heartbeat without it as a turn the sandbox forgot, magpie 8.5 rule 2).
 #[derive(Clone, Debug)]
@@ -337,6 +395,8 @@ struct St {
     crashes: VecDeque<Instant>,
     failing_until: Option<Instant>,
     control_waiters: HashMap<String, oneshot::Sender<Result<(), String>>>,
+    /// The messages being streamed, for the live frames.
+    partial: PartialOut,
     /// The descriptor `etag` the managed files were written from.
     etag: String,
     /// The model the conversation's person picked, as the last `start_turn` said (`None`: the route's default): a
@@ -383,6 +443,7 @@ impl St {
             crashes: VecDeque::new(),
             failing_until: None,
             control_waiters: HashMap::new(),
+            partial: PartialOut::default(),
             etag: String::new(),
             model: None,
             release: None,
@@ -497,6 +558,8 @@ enum Fx {
     /// A report in a named lane (asks: their turn's).
     ReportIn(Option<Uuid>, Item),
     Task(TaskReportEvent),
+    /// A live frame of the turn (8.3).
+    Live(Uuid, magpie_api::live::LiveFrame),
     Stdin(Vec<u8>),
     SetTurn(Option<Uuid>),
     /// SIGTERM the group, 3 s, SIGKILL.
@@ -960,6 +1023,7 @@ impl Driver {
                 Fx::Report(item) => self.reporter.push(item),
                 Fx::ReportIn(lane, item) => self.reporter.push_in(lane, item),
                 Fx::Task(ev) => self.reporter.task_event(ev),
+                Fx::Live(turn, frame) => self.reporter.live_frame(turn, frame),
                 Fx::Stdin(bytes) => {
                     let w = lock(&self.st).live.as_ref().map(|g| g.writer.clone());
                     if let Some(w) = w {
@@ -1236,7 +1300,14 @@ impl Driver {
                     }
                 }
             }
-            Out::StreamEvent | Out::KeepAlive => {}
+            Out::StreamEvent(p) => {
+                if let Some(turn) = st.turn.as_ref().map(|t| t.id)
+                    && let Some(frame) = st.partial.frame(p)
+                {
+                    fx.push(Fx::Live(turn, frame));
+                }
+            }
+            Out::KeepAlive => {}
             Out::Compacted => {
                 tracing::info!(images = st.images.unwrap_or(0), "claude compacted the conversation");
                 st.images = Some(0);
@@ -3240,6 +3311,7 @@ impl Agent for Driver {
             let me = self.arc();
             me.go(me.reporter.clone().run());
             me.go(me.reporter.clone().run_tasks());
+            me.go(me.reporter.clone().run_live());
             me.go(me.clone().tick_loop());
             me.go(me.clone().heartbeat_loop());
             self.start_poll();

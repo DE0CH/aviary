@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use magpie_api::client::ClientError;
 use magpie_api::errors::ErrorCode;
+use magpie_api::live::{FrameOp, LiveFrame, LiveFramesRequest};
 use magpie_api::sandbox::{
     AckRequest, AckResult, AgentTurnRequest, AskReport, AskResolvedReport, ReportError, ReportedState, TaskReportEvent,
     TasksReport, TurnStateReport,
@@ -27,6 +28,10 @@ use crate::limits::{REPORT_RETRY_FIRST, REPORT_RETRY_MAX};
 
 /// How often task events are sent.
 pub const TASKS_BATCH: Duration = Duration::from_millis(250);
+/// How often live frames are sent (8.3): often enough to read as typing, seldom enough to be one request per breath.
+pub const LIVE_BATCH: Duration = Duration::from_millis(120);
+/// Frames waiting for a batch beyond this are dropped (magpie is slow or away): live text is never a backlog.
+const LIVE_PENDING_MAX: usize = 4_000;
 /// The longest `retryAfterMs` honoured for one wait.
 const RETRY_AFTER_MAX: Duration = Duration::from_secs(30);
 /// The longest an end report waits for its uuids while the generation lives (a uuid stdout showed that Claude Code
@@ -154,6 +159,34 @@ struct Lane {
 }
 
 /// The reporter.
+/// A frame with nothing set (`n` and the rest are filled in by who makes it).
+#[must_use]
+pub fn blank_frame() -> LiveFrame {
+    LiveFrame {
+        n: 0,
+        message_id: None,
+        index: None,
+        op: FrameOp::Status,
+        block: None,
+        name: None,
+        offset: None,
+        text: None,
+        parent_tool_use_id: None,
+        status: None,
+        attempt: None,
+        retry_in_ms: None,
+        at: None,
+    }
+}
+
+/// The live frames read since the last batch.
+#[derive(Default)]
+struct LiveQueue {
+    frames: Vec<(Uuid, LiveFrame)>,
+    /// Frames were dropped before they were sent.
+    gap: bool,
+}
+
 pub struct Reporter {
     magpie: magpie_api::client::Client,
     lease: Mutex<Option<Uuid>>,
@@ -166,6 +199,7 @@ pub struct Reporter {
     pending: watch::Sender<usize>,
     tasks: Mutex<Vec<TaskReportEvent>>,
     tasks_pending: watch::Sender<usize>,
+    live: Mutex<LiveQueue>,
     /// The highest generation that has exited.
     gone: watch::Sender<u32>,
     /// Agent-started turns magpie refused (409 `bad_transition`: a person's turn was active, 7.5's race).
@@ -193,6 +227,7 @@ impl Reporter {
             pending: watch::channel(0).0,
             tasks: Mutex::new(Vec::new()),
             tasks_pending: watch::channel(0).0,
+            live: Mutex::new(LiveQueue::default()),
             gone: watch::channel(0).0,
             refused: Mutex::new(HashSet::new()),
         })
@@ -281,6 +316,63 @@ impl Reporter {
     #[must_use]
     pub fn given_up(&self) -> u64 {
         self.given_up.load(Ordering::SeqCst)
+    }
+
+    /// Queues a live frame of `turn` for the next batch (its `n` is given when it is sent).
+    pub fn live_frame(&self, turn: Uuid, frame: LiveFrame) {
+        let mut q = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+        if q.frames.len() >= LIVE_PENDING_MAX {
+            q.frames.clear();
+            q.gap = true;
+        }
+        q.frames.push((turn, frame));
+    }
+
+    /// The live frames' task (8.3): every [`LIVE_BATCH`], the frames read since go to magpie in one request per turn,
+    /// numbered per turn from 1. Live text is best effort: a batch magpie does not take (the turn ended, magpie is
+    /// away) is dropped, never retried, and the next batch of that turn starts with a `gap` frame, so magpie sends
+    /// the open blocks whole again.
+    pub async fn run_live(self: Arc<Self>) {
+        let mut turn: Option<Uuid> = None;
+        let mut n = 0u64;
+        let mut gap = false;
+        loop {
+            tokio::time::sleep(LIVE_BATCH).await;
+            let (frames, dropped) = {
+                let mut q = self.live.lock().unwrap_or_else(PoisonError::into_inner);
+                (std::mem::take(&mut q.frames), std::mem::take(&mut q.gap))
+            };
+            gap |= dropped;
+            let mut rest = frames.into_iter().peekable();
+            while let Some((t, first)) = rest.next() {
+                if turn != Some(t) {
+                    (turn, n, gap) = (Some(t), 0, false);
+                }
+                let mut batch = Vec::new();
+                if gap {
+                    n += 1;
+                    batch.push(LiveFrame {
+                        n,
+                        op: FrameOp::Gap,
+                        ..blank_frame()
+                    });
+                }
+                let mut next = Some(first);
+                while let Some(mut f) = next {
+                    n += 1;
+                    f.n = n;
+                    batch.push(f);
+                    next = rest.next_if(|(u, _)| *u == t).map(|(_, f)| f);
+                }
+                gap = match self.calls().live_frames(t, &LiveFramesRequest { frames: batch }).await {
+                    Ok(()) => false,
+                    Err(e) => {
+                        tracing::debug!(turn = %t, error = %e, "live frames not taken: dropped");
+                        true
+                    }
+                };
+            }
+        }
     }
 
     /// Queues a task event for the next batch.

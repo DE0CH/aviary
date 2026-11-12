@@ -53,6 +53,91 @@ pub struct ResultMsg {
     pub duration_ms: Option<u64>,
 }
 
+/// A `stream_event`: one step of the model's streamed answer (the Messages API's stream events), on the main thread
+/// or a subagent's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Partial {
+    /// The subagent's `Agent` call, when the event is of a subagent's thread.
+    pub parent_tool_use_id: Option<String>,
+    pub step: Step,
+}
+
+/// What a `stream_event` says, as far as live frames need it (magpie 7.5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Step {
+    /// `message_start`: the message whose blocks follow.
+    Message { id: String },
+    /// `content_block_start`.
+    Start {
+        index: u32,
+        block: magpie_api::live::BlockType,
+        /// A `tool_use` block's tool.
+        name: Option<String>,
+    },
+    /// `content_block_delta` with text (`text_delta`) or thinking (`thinking_delta`).
+    Text { index: u32, text: String },
+    /// `content_block_stop`.
+    Stop { index: u32 },
+    /// Anything else (a tool input's JSON, a signature, `message_delta`, `message_stop`).
+    Other,
+}
+
+fn partial(parent_tool_use_id: Option<String>, event: Option<&Value>) -> Out {
+    Out::StreamEvent(Partial {
+        parent_tool_use_id,
+        step: event.map_or(Step::Other, step),
+    })
+}
+
+fn step(ev: &Value) -> Step {
+    use magpie_api::live::BlockType;
+    let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).map(str::to_owned);
+    let index = || {
+        ev.get("index")
+            .and_then(Value::as_u64)
+            .and_then(|i| u32::try_from(i).ok())
+    };
+    match ev.get("type").and_then(Value::as_str) {
+        Some("message_start") => ev
+            .get("message")
+            .and_then(|m| s(m, "id"))
+            .map_or(Step::Other, |id| Step::Message { id }),
+        Some("content_block_start") => {
+            let (Some(index), Some(b)) = (index(), ev.get("content_block")) else {
+                return Step::Other;
+            };
+            let block = match b.get("type").and_then(Value::as_str) {
+                Some("text") => BlockType::Text,
+                Some("thinking") => BlockType::Thinking,
+                Some("tool_use") => BlockType::ToolUse,
+                _ => return Step::Other,
+            };
+            let name = if block == BlockType::ToolUse {
+                s(b, "name")
+            } else {
+                None
+            };
+            Step::Start { index, block, name }
+        }
+        Some("content_block_delta") => {
+            let (Some(index), Some(d)) = (index(), ev.get("delta")) else {
+                return Step::Other;
+            };
+            let text = match d.get("type").and_then(Value::as_str) {
+                Some("text_delta") => s(d, "text"),
+                Some("thinking_delta") => s(d, "thinking"),
+                _ => None,
+            };
+            match text {
+                Some(text) if !text.is_empty() => Step::Text { index, text },
+                _ => Step::Other,
+            }
+        }
+        Some("content_block_stop") => index().map_or(Step::Other, |index| Step::Stop { index }),
+        _ => Step::Other,
+    }
+}
+
 /// One stdout message, as far as the driver needs it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Out {
@@ -76,8 +161,8 @@ pub enum Out {
         /// sends with every model call from now on.
         images: u32,
     },
-    /// `stream_event` (not produced in this release; activity all the same).
-    StreamEvent,
+    /// `stream_event` (Claude Code with `--include-partial-messages`): the model's output as it comes.
+    StreamEvent(Partial),
     Task(TaskMsg),
     Result(ResultMsg),
     ControlRequest {
@@ -109,7 +194,7 @@ impl Out {
     /// Output that opens an agent turn when nothing is pending (7.5): an `assistant`, `user` or `stream_event`.
     #[must_use]
     pub fn is_turn_output(&self) -> bool {
-        matches!(self, Out::Message { .. } | Out::StreamEvent)
+        matches!(self, Out::Message { .. } | Out::StreamEvent(_))
     }
 }
 
@@ -295,6 +380,8 @@ struct Envelope {
     request_id: Option<String>,
     request: Option<Value>,
     response: Option<Value>,
+    /// A `stream_event`'s Messages API event.
+    event: Option<Value>,
     task_id: Option<String>,
     tool_use_id: Option<String>,
     description: Option<String>,
@@ -372,7 +459,7 @@ pub fn parse(line: &[u8]) -> Out {
                 images,
             }
         }
-        "stream_event" => Out::StreamEvent,
+        "stream_event" => partial(e.parent_tool_use_id, e.event.as_ref()),
         "keep_alive" => Out::KeepAlive,
         "result" => Out::Result(ResultMsg {
             subtype: e.subtype.unwrap_or_default(),
@@ -692,6 +779,57 @@ mod tests {
             }
         );
         assert_eq!(parse(br#"{"type":"keep_alive"}"#), Out::KeepAlive);
+        // the model's answer as it comes (Claude Code 2.1.322 with --include-partial-messages)
+        let partial = |line: &str| match parse(line.as_bytes()) {
+            Out::StreamEvent(p) => p,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            partial(
+                r#"{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_1","content":[]}},"parent_tool_use_id":null,"session_id":"s","uuid":"u"}"#
+            ),
+            Partial {
+                parent_tool_use_id: None,
+                step: Step::Message { id: "msg_1".into() }
+            }
+        );
+        assert_eq!(
+            partial(r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}"#).step,
+            Step::Start { index: 0, block: magpie_api::live::BlockType::Text, name: None }
+        );
+        assert_eq!(
+            partial(
+                r#"{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}},"parent_tool_use_id":"toolu_agent"}"#
+            ),
+            Partial {
+                parent_tool_use_id: Some("toolu_agent".into()),
+                step: Step::Start {
+                    index: 1,
+                    block: magpie_api::live::BlockType::ToolUse,
+                    name: Some("Bash".into())
+                }
+            }
+        );
+        assert_eq!(
+            partial(r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Done"}}}"#).step,
+            Step::Text { index: 0, text: "Done".into() }
+        );
+        assert_eq!(
+            partial(r#"{"type":"stream_event","event":{"type":"content_block_delta","index":2,"delta":{"type":"thinking_delta","thinking":"hm"}}}"#).step,
+            Step::Text { index: 2, text: "hm".into() }
+        );
+        assert_eq!(
+            partial(r#"{"type":"stream_event","event":{"type":"content_block_stop","index":0}}"#).step,
+            Step::Stop { index: 0 }
+        );
+        // a tool input's JSON, the message's end, an event with no body: nothing to show
+        for other in [
+            r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"a"}}}"#,
+            r#"{"type":"stream_event","event":{"type":"message_stop"}}"#,
+            r#"{"type":"stream_event"}"#,
+        ] {
+            assert_eq!(partial(other).step, Step::Other, "{other}");
+        }
         assert_eq!(
             parse(br#"{"type":"rate_limit_event"}"#),
             Out::Other("rate_limit_event".into())

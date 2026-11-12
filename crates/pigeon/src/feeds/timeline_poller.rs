@@ -2,18 +2,26 @@
 //! a socket of that person on this replica watches it (and 30 s after the last one leaves). Each new or updated row
 //! is projected once and pushed as `agent_stream` to every watching socket (7.6.1), in `seqEnd` order.
 //!
+//! The running turn's live text (magpie 7.5: the model's answer as it comes) rides the same long-poll: each poll
+//! says the last live frame it has (`liveAfter`), magpie answers at once when there is more, and the text added to an
+//! open text or thinking block goes to every watching socket as an `agent_stream` timeline event without a `seq` (a
+//! chunk the app appends to the message it is showing). When the block's durable row lands, a socket that got its
+//! beginning as chunks gets the row with only the rest of the text, so the message is whole and the row's `seq`
+//! moves its cursor; a socket that joined meanwhile gets the open block from its start first.
+//!
 //! Turn boundaries from the change feed come through here (8.4): a turn event whose `timelineSeq` is past the rows
 //! sent so far waits until the poller has sent that row (at most 2 s), so `turn_completed` follows the reply's last
 //! row. A history rewrite (`timeline_replaced`, or a poll answering in another epoch) sends one
 //! `agent.timeline.replacement` per new epoch and restarts the poller from the tail of the new epoch (7.6.3); rows
 //! of the new epoch are never sent under the old one.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 use magpie_api::changes::TurnChange;
 use magpie_api::client::ClientError;
-use magpie_api::rows::{TimelinePage, TimelineQuery};
+use magpie_api::live::{BlockType, LiveState};
+use magpie_api::rows::{RowItem, TimelinePage, TimelineQuery};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -92,6 +100,94 @@ struct Poller {
     announced: Option<String>,
     cursor: u64,
     pending: VecDeque<(TurnChange, Instant)>,
+    live: Live,
+}
+
+/// A block of the running turn's answer that is still being written: `(messageId, blockIndex)`.
+type BlockKey = (String, u32);
+
+/// The live text sent so far (the module's doc).
+#[derive(Default)]
+struct Live {
+    /// The turn the frames are numbered in, and the last frame seen.
+    turn: Option<Uuid>,
+    n: u64,
+    /// The open blocks, in the order they started.
+    order: Vec<BlockKey>,
+    open: HashMap<BlockKey, OpenBlock>,
+    /// Per socket: how far into each block (a byte offset in the block) it has been sent.
+    sent: HashMap<Uuid, HashMap<BlockKey, usize>>,
+}
+
+struct OpenBlock {
+    thinking: bool,
+    /// Where `text` starts within the block (0 unless its first frames were lost).
+    start: usize,
+    text: String,
+}
+
+impl Live {
+    /// Takes a poll's live state in: each open block's text grows by what the state adds.
+    fn take(&mut self, state: &LiveState) {
+        if self.turn != Some(state.turn_id) {
+            *self = Self::default();
+            self.turn = Some(state.turn_id);
+        }
+        self.n = state.n;
+        for b in &state.blocks {
+            let thinking = match b.block {
+                BlockType::Text => false,
+                BlockType::Thinking => true,
+                BlockType::ToolUse => continue,
+            };
+            let key = (b.message_id.clone(), b.block_index);
+            let offset = usize::try_from(b.offset).unwrap_or(usize::MAX);
+            if !self.open.contains_key(&key) {
+                self.order.push(key.clone());
+            }
+            let o = self.open.entry(key).or_insert_with(|| OpenBlock {
+                thinking,
+                start: offset,
+                text: String::new(),
+            });
+            let end = o.start + o.text.len();
+            if (o.start..=end).contains(&offset) {
+                // the text from somewhere inside what is held (a reset sends blocks whole): the part past its end
+                if let Some(rest) = b.text.get(end - offset..) {
+                    o.text.push_str(rest);
+                }
+            } else {
+                // a hole (frames were lost): the block goes on from here
+                o.start = offset;
+                o.text.clone_from(&b.text);
+            }
+        }
+    }
+
+    /// What socket `conn` has not been sent yet of each open block: `(key, thinking, text)`, and marks it sent.
+    fn unsent(&mut self, conn: Uuid) -> Vec<(BlockKey, bool, String)> {
+        let sent = self.sent.entry(conn).or_default();
+        let mut out = Vec::new();
+        for key in &self.order {
+            let Some(o) = self.open.get(key) else { continue };
+            let from = sent.get(key).copied().unwrap_or(o.start).max(o.start);
+            if let Some(rest) = o.text.get(from - o.start..).filter(|r| !r.is_empty()) {
+                out.push((key.clone(), o.thinking, rest.to_owned()));
+            }
+            sent.insert(key.clone(), o.start + o.text.len());
+        }
+        out
+    }
+
+    /// The durable row of `key` has landed: the block is open no more. How far socket `conn` was sent into it.
+    fn landed(&mut self, key: &BlockKey, conn: Uuid) -> usize {
+        self.sent.get_mut(&conn).and_then(|s| s.remove(key)).unwrap_or(0)
+    }
+
+    fn close(&mut self, key: &BlockKey) {
+        self.open.remove(key);
+        self.order.retain(|k| k != key);
+    }
 }
 
 /// Runs until nobody here watches the conversation for the linger time, the conversation is purged, or the drain.
@@ -108,6 +204,7 @@ pub async fn run(hub: Hub, app: App, person: String, c: Uuid, mut ctl: mpsc::Unb
         announced: None,
         cursor: 0,
         pending: VecDeque::new(),
+        live: Live::default(),
     };
     let wait_ms = u64::try_from(tuning.poll_wait.as_millis()).unwrap_or(25_000);
     let mut fut: PollFut = Box::pin(poll(p.app.clone(), p.person.clone(), c, tail(), false));
@@ -205,6 +302,9 @@ impl Poller {
         TimelineQuery {
             after: Some(self.cursor),
             limit: Some(PAGE),
+            // the live text after the last frame seen (none seen: magpie sends the open blocks whole)
+            live_after: self.live.turn.map(|_| self.live.n),
+            live_turn: self.live.turn,
             ..TimelineQuery::default()
         }
     }
@@ -241,13 +341,49 @@ impl Poller {
             if row.seq_end <= self.cursor {
                 continue;
             }
-            if let Some(projected) = self.app.0.projector.project(&row, &ctx) {
-                let rest = payload_rest(&pushes::timeline_row(&self.c, &projected, &epoch));
+            // the row of a block whose text went out live: each socket gets what it has not been sent of it
+            let block = match &row.item {
+                RowItem::Assistant(a) if a.error.is_none() => Some(((a.message_id.clone(), a.block_index), &a.text)),
+                RowItem::Reasoning(r) => Some(((r.message_id.clone(), r.block_index), &r.text)),
+                _ => None,
+            }
+            .filter(|(key, _)| self.live.open.contains_key(key));
+            if let Some(mut projected) = self.app.0.projector.project(&row, &ctx) {
+                let whole = payload_rest(&pushes::timeline_row(&self.c, &projected, &epoch));
                 for conn in &subscribers {
-                    conn.send_sub("agent_stream", &conn.timeline_sub(), &rest);
+                    let rest = block
+                        .as_ref()
+                        .map(|(key, text)| (self.live.landed(key, conn.id), text))
+                        .and_then(|(sent, text)| text.get(sent..).filter(|_| sent > 0))
+                        .map(|rest| {
+                            if let Some(t) = projected.get_mut("item").and_then(|i| i.get_mut("text")) {
+                                *t = serde_json::Value::String(rest.to_owned());
+                            }
+                            payload_rest(&pushes::timeline_row(&self.c, &projected, &epoch))
+                        });
+                    conn.send_sub("agent_stream", &conn.timeline_sub(), rest.as_ref().unwrap_or(&whole));
                 }
             }
+            if let Some((key, _)) = &block {
+                self.live.close(key);
+            }
             self.cursor = row.seq_end;
+        }
+        match &page.live {
+            Some(state) => {
+                self.live.take(state);
+                let turn = state.turn_id;
+                for conn in &subscribers {
+                    for ((message_id, _), thinking, text) in self.live.unsent(conn.id) {
+                        let rest = payload_rest(&pushes::live_text(&self.c, &turn, &message_id, thinking, &text));
+                        conn.send_sub("agent_stream", &conn.timeline_sub(), &rest);
+                    }
+                }
+                let here: Vec<Uuid> = subscribers.iter().map(|c| c.id).collect();
+                self.live.sent.retain(|id, _| here.contains(id));
+            }
+            // no turn runs (or it has written nothing yet): nothing is open
+            None => self.live = Live::default(),
         }
         self.release(false);
         self.next_query()
