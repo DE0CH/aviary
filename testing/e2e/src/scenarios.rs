@@ -2215,6 +2215,8 @@ struct Feed {
     replacements: Vec<Value>,
     /// Texts of assistant rows ever pushed or loaded.
     said: std::collections::BTreeSet<String>,
+    /// The live text each row was sent ahead of itself (pushes without a seq), by row.
+    live: std::collections::BTreeMap<String, String>,
 }
 
 impl Feed {
@@ -2250,12 +2252,21 @@ impl Feed {
                     self.last = 0;
                     self.load(&tail);
                 }
-                // a push without a seq is live text (the reply as it is written), not a row
-                Some("agent_stream") if p["event"]["type"] == "timeline" && p["seq"].is_u64() => {
+                // a push without a seq is live text (the reply as it is written), not a row: the row that follows
+                // carries only what is left of the text, so what the socket was told is the two together
+                Some("agent_stream") if p["event"]["type"] == "timeline" && !p["seq"].is_u64() => {
+                    if let Some(t) = p["event"]["item"]["text"].as_str() {
+                        self.live.entry(row_key(&p["event"]["item"])).or_default().push_str(t);
+                    }
+                }
+                Some("agent_stream") if p["event"]["type"] == "timeline" => {
                     let seq = p["seq"].as_u64().unwrap_or(0);
                     let key = row_key(&p["event"]["item"]);
                     if let Some(t) = p["event"]["item"]["text"].as_str() {
                         self.said.insert(t.to_owned());
+                        if let Some(live) = self.live.get(&key) {
+                            self.said.insert(format!("{live}{t}"));
+                        }
                     }
                     *self.pushed.entry((key.clone(), seq)).or_default() += 1;
                     if p["epoch"] != self.epoch {
