@@ -790,6 +790,8 @@ impl Server for FixtureServer {
             None,
         );
         self.answer_json("conversation_commands")
+    }
+
     async fn conversation_tasks(&self, ctx: Ctx, id: Uuid) -> Result<magpie_api::tasks::TasksList, ApiError> {
         self.received("conversation_tasks", &ctx, &json!({"id": id.to_string()}), None, None);
         self.answer_json("conversation_tasks")

@@ -388,6 +388,10 @@ enum ApiRoute {
     SessionSchedules(String),
     /// `DELETE <sessions>/{id}/pending/{messageId}`: a queued message taken back.
     SessionPending(String, String),
+    /// `GET <sessions>/{id}/tasks`: what the conversation runs beside its reply (the app's activity panel).
+    SessionTasks(String),
+    /// `POST <sessions>/{id}/tasks/{taskId}/stop`: one of them stopped.
+    SessionTaskStop(String, String),
     Share(String),
     ShareFiles(String),
     ShareContinue(String),
@@ -442,6 +446,22 @@ impl ApiRoute {
             {
                 return Self::SessionSchedules(id.to_owned());
             }
+            if let Some(id) = rest.strip_suffix("/tasks")
+                && !id.contains('/')
+                && get
+            {
+                return Self::SessionTasks(id.to_owned());
+            }
+            if let Some((id, task)) = rest.split_once("/tasks/")
+                && let Some(task) = task.strip_suffix("/stop")
+                && !id.is_empty()
+                && !id.contains('/')
+                && !task.is_empty()
+                && !task.contains('/')
+                && post
+            {
+                return Self::SessionTaskStop(id.to_owned(), task.to_owned());
+            }
             if let Some((id, message)) = rest.split_once("/pending/")
                 && !id.is_empty()
                 && !id.contains('/')
@@ -487,6 +507,8 @@ impl ApiRoute {
             Self::SessionShares(_) => "shares",
             Self::SessionSchedules(_) => "schedules",
             Self::SessionPending(..) => "pending",
+            Self::SessionTasks(_) => "tasks",
+            Self::SessionTaskStop(..) => "task_stop",
             Self::Share(_) => "share",
             Self::ShareFiles(_) => "share_files",
             Self::ShareContinue(_) => "share_continue",
@@ -674,6 +696,8 @@ async fn api(app: &App, req: Request, path: &str, upgrade: bool) -> (&'static st
         ApiRoute::SessionShares(cid) => shares::conversation_shares(app, &parts, &id, &cid).await,
         ApiRoute::SessionSchedules(cid) => crate::schedules::conversation(app, &id, &cid).await,
         ApiRoute::SessionPending(cid, message) => withdraw_pending(app, &id, &cid, &message).await,
+        ApiRoute::SessionTasks(cid) => tasks(app, &id, &cid).await,
+        ApiRoute::SessionTaskStop(cid, task) => stop_task(app, &id, &cid, &task).await,
         ApiRoute::Share(sid) => shares::share(app, &parts, &id, &sid).await,
         ApiRoute::ShareFiles(sid) => shares::share_files(app, &parts, &id, &sid, query.as_deref()).await,
         ApiRoute::ShareContinue(sid) => shares::continue_share(app, &parts, &id, &sid).await,
@@ -831,6 +855,51 @@ async fn withdraw_pending(app: &App, id: &Identity, conversation: &str, message:
                 "WITHDRAW_FAILED",
                 "The message could not be taken back.",
             )
+        }
+    }
+}
+
+/// `GET <sessions>/{id}/tasks`: the conversation's tasks as magpie lists them (`{"tasks": [...]}`: the running ones
+/// first), for the app's activity panel.
+async fn tasks(app: &App, id: &Identity, conversation: &str) -> Response {
+    let not_found = || api_error(StatusCode::NOT_FOUND, "SESSION_NOT_FOUND", "Conversation not found.");
+    let Ok(cid) = Uuid::parse_str(conversation) else {
+        return not_found();
+    };
+    let Some(calls) = person_calls(&app.0.magpie, id) else {
+        return not_found();
+    };
+    match calls.conversation_tasks(cid).await {
+        Ok(list) => json(StatusCode::OK, &serde_json::to_value(&list).unwrap_or_default()),
+        Err(e) if e.code() == Some(&ErrorCode::NotFound) => not_found(),
+        Err(e) => {
+            tracing::warn!(error = %e, "tasks: magpie failed");
+            api_error(StatusCode::BAD_GATEWAY, "TASKS_FAILED", "The tasks could not be read.")
+        }
+    }
+}
+
+/// `POST <sessions>/{id}/tasks/{taskId}/stop`: the person stops one task. 202 `{}`: Claude Code is told; the task's
+/// end shows in the list.
+async fn stop_task(app: &App, id: &Identity, conversation: &str, task: &str) -> Response {
+    let not_found = || api_error(StatusCode::NOT_FOUND, "SESSION_NOT_FOUND", "Conversation not found.");
+    let Ok(cid) = Uuid::parse_str(conversation) else {
+        return not_found();
+    };
+    let Some(calls) = person_calls(&app.0.magpie, id) else {
+        return not_found();
+    };
+    match calls.stop_task(cid, task).await {
+        Ok(()) => json(StatusCode::ACCEPTED, &json!({})),
+        Err(e) if e.code() == Some(&ErrorCode::NotFound) => not_found(),
+        Err(e) if e.code() == Some(&ErrorCode::ViewAsReadOnly) => api_error(
+            StatusCode::FORBIDDEN,
+            "VIEW_AS_READ_ONLY",
+            crate::paseo::strings::VIEW_AS_READ_ONLY,
+        ),
+        Err(e) => {
+            tracing::warn!(error = %e, "stop task: magpie failed");
+            api_error(StatusCode::BAD_GATEWAY, "STOP_FAILED", "The task could not be stopped.")
         }
     }
 }
@@ -1094,6 +1163,22 @@ mod tests {
             r(Method::DELETE, &format!("{}c1/pending/m-7", compat::SESSIONS)),
             ApiRoute::SessionPending("c1".into(), "m-7".into())
         );
+        assert_eq!(
+            r(Method::GET, &format!("{}c1/tasks", compat::SESSIONS)),
+            ApiRoute::SessionTasks("c1".into())
+        );
+        assert_eq!(
+            r(Method::POST, &format!("{}c1/tasks/t9/stop", compat::SESSIONS)),
+            ApiRoute::SessionTaskStop("c1".into(), "t9".into())
+        );
+        for (m, p) in [
+            (Method::POST, "c1/tasks"),
+            (Method::GET, "c1/tasks/t9/stop"),
+            (Method::POST, "c1/tasks//stop"),
+            (Method::POST, "c1/tasks/a/b/stop"),
+        ] {
+            assert_eq!(r(m, &format!("{}{p}", compat::SESSIONS)), ApiRoute::Unknown, "{p}");
+        }
         for (m, p) in [
             (Method::GET, "c1/pending/m-7"),
             (Method::DELETE, "c1/pending/"),

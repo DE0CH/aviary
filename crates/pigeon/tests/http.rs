@@ -583,6 +583,52 @@ async fn routing_table_order_and_normalisation() {
     assert!(call.header("aviary-request").is_some());
 }
 
+// ---- The activity panel (Deyao, 2026-11-12) ----
+
+/// What a conversation runs beside its reply is listed for its person, and one task can be stopped.
+#[tokio::test]
+async fn a_conversations_tasks_are_listed_and_one_is_stopped() {
+    let h = Harness::start().await;
+    let cid = uuid::Uuid::new_v4();
+    let tasks = json!({"tasks": [
+        {"taskId": "b7ginl1lf", "toolUseId": "toolu_01Bash", "type": "command", "description": "Run the tests",
+         "status": "running", "startedAt": "2026-11-12T07:55:00.000Z", "endedAt": null, "now": "cargo test",
+         "steps": 2, "summary": null}]});
+    h.magpie
+        .fake
+        .script()
+        .always("conversation_tasks", Reply::json(200, tasks.clone()));
+    h.magpie.fake.script().always("stop_task", Reply::json(202, json!({})));
+    let r = h.get_as(&format!("{}{cid}/tasks", compat::SESSIONS), STAFF).await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(body_json(r).await, tasks);
+    let call = h.magpie.fake.script().calls_to("conversation_tasks").pop().unwrap();
+    assert_eq!(call.header("aviary-person"), Some(STAFF));
+    let r = h
+        .as_token(
+            h.post(&format!("{}{cid}/tasks/b7ginl1lf/stop", compat::SESSIONS)),
+            &h.token(STAFF),
+        )
+        .header("origin", &h.url)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 202);
+    let call = h.magpie.fake.script().calls_to("stop_task").pop().unwrap();
+    assert_eq!(call.param("taskId"), Some("b7ginl1lf"));
+    assert_eq!(call.param("id"), Some(cid.to_string().as_str()));
+    // a conversation magpie does not know as theirs
+    h.magpie
+        .fake
+        .script()
+        .once("conversation_tasks", Reply::error(404, "not_found", "not found"));
+    let r = h.get_as(&format!("{}{cid}/tasks", compat::SESSIONS), STAFF).await;
+    assert_eq!(r.status(), 404);
+    // nobody signed in
+    let r = h.get(&format!("{}{cid}/tasks", compat::SESSIONS)).send().await.unwrap();
+    assert_eq!(r.status(), 401);
+}
+
 // ---- Sign-in and me (spec 5.3-5.4) ----
 
 #[tokio::test]
