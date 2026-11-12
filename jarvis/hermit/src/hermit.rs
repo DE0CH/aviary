@@ -76,6 +76,8 @@ impl Server for App {
             conversations: Conversations {
                 people_create: false,
                 people_pick_model: true,
+                // a session ends in the Jarvis 4 app, and its conversation with it (reconcile.rs)
+                people_delete: false,
             },
         })
     }

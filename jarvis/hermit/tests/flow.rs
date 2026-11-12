@@ -85,6 +85,13 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         "hermit_send_turn",
         Reply::error(409, "turn_running", "a turn is running"),
     );
+    // the chat follows the session: closed while it is paused, open when it is up, gone when it is destroyed
+    for route in ["hermit_close_conversation", "hermit_delete_conversation"] {
+        magpie
+            .fake
+            .script()
+            .always(route, Reply::json(200, conv["conversation"].clone()));
+    }
     magpie.fake.script().always(
         "cc_tree",
         Reply::json(
@@ -346,6 +353,24 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     let s: Value = get_sandbox().await.json().await.unwrap();
     assert_eq!(s["state"], "gone");
     assert_eq!(s["release"]["reason"], "idle");
+    // and its conversation takes no message from its person, saying why
+    let closes = magpie.fake.script().calls_to("hermit_close_conversation");
+    assert_eq!(closes.len(), 1, "open until now: nothing was told");
+    assert_eq!(closes[0].params["id"], cid.to_string());
+    assert_eq!(
+        closes[0].body,
+        Some(json!({"reason": jarvis_aviary::reconcile::PAUSED}))
+    );
+    // a second pass tells magpie nothing new
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    assert_eq!(
+        magpie
+            .fake
+            .script()
+            .calls_to("hermit_close_conversation")
+            .len(),
+        1
+    );
     let r = c
         .post(format!("{gw}/jarvis/health"))
         .header(TOKEN_HEADER, &b.token)
@@ -401,4 +426,23 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         "{states:?}"
     );
     assert_eq!(*states.last().unwrap(), "starting");
+
+    // 9. the session is up again: its conversation is open; destroyed: it leaves the chat, once
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    let closes = magpie.fake.script().calls_to("hermit_close_conversation");
+    assert_eq!(closes.len(), 2);
+    assert_eq!(closes[1].body, Some(json!({"reason": null})));
+    assert!(
+        magpie
+            .fake
+            .script()
+            .calls_to("hermit_delete_conversation")
+            .is_empty()
+    );
+    *jr.state.lock().unwrap() = "destroyed".into();
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    let ended = magpie.fake.script().calls_to("hermit_delete_conversation");
+    assert_eq!(ended.len(), 1);
+    assert_eq!(ended[0].params["id"], cid.to_string());
 }

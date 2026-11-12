@@ -23,7 +23,7 @@ pub const MIGRATION_LOCK: &str = "hermit-jarvis-migrations";
 /// A bad URL, or a migration that fails.
 pub async fn open(url: &str) -> anyhow::Result<Pool> {
     let pool = aviary_pg::connect(url, "hermit-jarvis", 8, Duration::from_secs(10))?;
-    let migrations = aviary_pg::migrations!["0001_init.sql"]?;
+    let migrations = aviary_pg::migrations!["0001_init.sql", "0002_chat.sql"]?;
     aviary_pg::migrate(
         &pool,
         &aviary_pg::LockKey::name(MIGRATION_LOCK),
@@ -82,6 +82,37 @@ pub async fn session_of_conversation(
         .await?
         .as_ref()
         .map(SessionRow::of))
+}
+
+/// Every session whose conversation is still in the chat, with what magpie was last told about it (`open` or
+/// `closed`).
+///
+/// # Errors
+/// A statement error.
+pub async fn chats(pool: &Pool) -> Result<Vec<(SessionRow, String)>, aviary_pg::Error> {
+    Ok(pool
+        .get()
+        .await?
+        .query("select * from sessions where chat <> 'ended'", &[])
+        .await?
+        .iter()
+        .map(|r| (SessionRow::of(r), r.get("chat")))
+        .collect())
+}
+
+/// Records what magpie was told about a session's conversation.
+///
+/// # Errors
+/// A statement error.
+pub async fn set_chat(pool: &Pool, session_id: &str, chat: &str) -> Result<(), aviary_pg::Error> {
+    pool.get()
+        .await?
+        .execute(
+            "update sessions set chat = $2 where session_id = $1",
+            &[&session_id, &chat],
+        )
+        .await?;
+    Ok(())
 }
 
 /// Records a session's conversation (idempotent: magpie's create is too, by the session id).

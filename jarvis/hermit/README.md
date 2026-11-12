@@ -73,9 +73,15 @@ Jarvis 4 session machine (harness aviary)                                     â”
    `POST /v1/hermit/conversations/{id}/turns` as Deyao; 409 `turn_running` while a turn runs, which `harness-send`
    turns into 75 for the inbox loop to retry).
 5. **Pause**: Jarvis 4 pauses an idle session itself (its idle hour); hermit's next pass over `/api/remotes?harness=
-   aviary` ends that sandbox (`idle`). A turn from the chat for a paused session resumes it
-   (`POST /api/sessions/:id/start`, as the Jarvis 4 Chat app did) and the new machine's boot takes the waiting
-   sandbox. The conversation (Claude Code's `~/.claude`) is magpie's, so nothing of it rides in the snapshot; the
+   aviary` ends that sandbox (`idle`) and closes the conversation to Deyao's messages (magpie's
+   `PUT /v1/hermit/conversations/{id}/closed`): the chat's message box says the session is paused and takes nothing
+   until the session is up again, when the same pass opens it (Deyao, 2026-11-12: a session is resumed in the
+   Jarvis 4 app). A turn magpie admitted just before the close still resumes the session
+   (`POST /api/sessions/:id/start`) and the new machine's boot takes the waiting sandbox; Jarvis's own wakeups and
+   crons resume the session in the router, as for every harness. A destroyed session's
+   conversation leaves the chat (`POST /v1/hermit/conversations/{id}/delete`); the chat offers no Delete and no
+   Recently deleted (`conversations.peopleDelete: false`), since a session's life is managed in the Jarvis 4 app.
+   `sessions.chat` records what magpie was last told (`open`, `closed`, `ended`). The conversation (Claude Code's `~/.claude`) is magpie's, so nothing of it rides in the snapshot; the
    harness copies its transcripts into `~/.claude/projects/-home-claude-workspace/` every 30 s for live sync,
    archives and transcript search.
 6. **Release** (magpie's `release_sandbox`): hermit sets it pending; the supervisor gets it in its next activity reply
