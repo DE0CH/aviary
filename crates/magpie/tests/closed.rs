@@ -45,6 +45,8 @@ async fn a_closed_conversation_refuses_its_person_and_an_ended_one_leaves_the_li
         .create_conversation(&CreateRequest {
             idempotency_key: key.clone(),
             message: msg(&format!("{key}:m"), "hello"),
+            model: None,
+            thinking: None,
         })
         .await
         .unwrap()
