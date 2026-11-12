@@ -105,6 +105,8 @@ pub async fn me(app: &App, id: &Identity) -> Response {
         Identity::Person(p) => json!({
             "firstName": app.0.identity.first_name(p).await,
             "sharing": true,
+            // the product's name (hermit's `product.name`): the app says it wherever it names itself
+            "product": app.0.identity.product_name(),
             "newConversations": app.0.identity.people_create(),
             "modelPick": app.0.identity.people_pick_model(),
             // a text message sent during a reply joins the running turn (magpie M7 `midTurn`): the app sends it at
@@ -118,7 +120,9 @@ pub async fn me(app: &App, id: &Identity) -> Response {
             json!({
                 "firstName": app.0.identity.cached_first_name(&v.person).await,
                 "sharing": true,
-                "newConversations": app.0.identity.people_create(),
+                // the product's name (hermit's `product.name`): the app says it wherever it names itself
+            "product": app.0.identity.product_name(),
+            "newConversations": app.0.identity.people_create(),
                 "modelPick": app.0.identity.people_pick_model(),
                 // an admin's view-as send joins no running turn (magpie refuses it): it waits in the app's queue
                 "midTurn": false,

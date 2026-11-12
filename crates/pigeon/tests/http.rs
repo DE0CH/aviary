@@ -678,7 +678,8 @@ async fn me_gives_the_first_name() {
     assert_eq!(r.headers()["cache-control"], "no-store");
     assert_eq!(
         body_json(r).await,
-        json!({"firstName": "Tai", "sharing": true, "newConversations": true, "modelPick": false, "midTurn": true})
+        json!({"firstName": "Tai", "sharing": true, "product": PRODUCT, "newConversations": true, "modelPick": false,
+               "midTurn": true})
     );
     // no name claim: Access's get-identity answers (fake-access answers from the token's own name)
     let t1 = &h.teams[0];
