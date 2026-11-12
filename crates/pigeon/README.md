@@ -67,6 +67,14 @@ The seams in `feeds` (built for the switch window, WP-50, whose legacy upstream 
 - **`midTurn`** (2026-11-12): the `me` route (5.4) says `midTurn: true`: a text message sent during a reply is
   accepted (magpie M7 joins it to the running turn), so the app sends it at once; an app talking to a server that
   does not say so keeps such a message in its queue until the reply ends.
+- **Conversations the deployment ends** (Deyao, 2026-11-12): where hermit's deployment facts say
+  `conversations.peopleDelete: false` (a deployment whose conversations' lifecycle is managed elsewhere), the `me`
+  route says `conversationDelete: false` (the app offers no Delete and no Recently deleted) and the delete requests
+  are refused. The deployment closes a conversation to its person's messages through magpie
+  (`PUT /v1/hermit/conversations/{id}/closed`): the agent snapshot carries `closed`, the sentence the app shows in
+  its message box, which takes nothing meanwhile, and a send is refused with that sentence (magpie 409
+  `conversation_closed`). It ends one with `POST /v1/hermit/conversations/{id}/delete`, which takes it out of the
+  person's list.
 - **A question's own answer** (2026-11-12): each question of an `AskUserQuestion` ask goes to the app with
   `allowOther: true` (the app's card shows its text field only then; Claude Code's own always offers "Other"), and
   the key is removed again from the answer's `updatedInput`.

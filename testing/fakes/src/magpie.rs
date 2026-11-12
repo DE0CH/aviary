@@ -1525,7 +1525,15 @@ impl Server for FakeMagpie {
     }
 
     async fn hermit_delete_conversation(&self, ctx: Ctx, id_: Uuid) -> Result<Conversation, ApiError> {
-        scripted!(self, "hermit_delete_conversation", ctx, id(id_), None, Some(json!({})), typed)
+        scripted!(
+            self,
+            "hermit_delete_conversation",
+            ctx,
+            id(id_),
+            None,
+            Some(json!({})),
+            typed
+        )
     }
 
     async fn hermit_send_turn(

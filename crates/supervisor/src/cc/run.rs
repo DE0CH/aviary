@@ -232,6 +232,8 @@ struct Gen {
     model: String,
     /// Whether that is a picked model (`start_turn.model`) rather than the route's default.
     picked: bool,
+    /// The thinking level it was last switched to ([`Driver::apply_thinking`]).
+    thinking: Thinking,
 }
 
 impl Gen {
@@ -246,6 +248,15 @@ impl Gen {
 
 /// A turn that ended and whose end report magpie has not answered yet: the heartbeat goes on naming it (magpie
 /// would otherwise take an idle heartbeat without it as a turn the sandbox forgot, magpie 8.5 rule 2).
+/// The thinking level a generation is on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Thinking {
+    /// Not known (a new generation, or one a restarted supervisor found): the next turn's is applied.
+    Unknown,
+    /// Switched to this level; `None`: none named, Claude Code's own.
+    Level(Option<String>),
+}
+
 #[derive(Clone, Debug)]
 struct Ending {
     id: Uuid,
@@ -1563,6 +1574,85 @@ impl Driver {
         self.spawn(session, turn).await
     }
 
+    /// Switches generation `n` to the conversation's thinking level (`start_turn.thinking`; absent: the level the
+    /// models route names for the generation's model, else Claude Code's own for it) when it is not on it already:
+    /// thinking off for `none` (`set_max_thinking_tokens` 0), else on at Claude Code's effort level of that name
+    /// (`apply_flag_settings` `effortLevel`). Claude Code sends both with every model call (`thinking` present or
+    /// not, `output_config.effort`), and the gateway applies the level.
+    async fn apply_thinking(&self, n: u32, thinking: Option<&str>) -> Result<(), String> {
+        let (model, applied) = {
+            let st = lock(&self.st);
+            match st.live.as_ref().filter(|g| g.n == n) {
+                Some(g) => (g.model.clone(), g.thinking.clone()),
+                None => return Err("Claude Code exited before the prompt was written".into()),
+            }
+        };
+        let level: Option<String> = if let Some(l) = thinking {
+            Some(l.to_owned())
+        } else {
+            let models = self.models().await?;
+            models
+                .models
+                .iter()
+                .find(|m| m.id == model)
+                .and_then(|m| m.reasoning.clone())
+        };
+        if applied == Thinking::Level(level.clone()) {
+            return Ok(());
+        }
+        tracing::info!(gen = n, thinking = ?level, "claude switched to the conversation's thinking level");
+        match level.as_deref() {
+            Some("none") => {
+                self.control_call(n, |id| control::set_max_thinking_tokens(id, Some(0)))
+                    .await?;
+            }
+            Some(l) => {
+                self.control_call(n, |id| control::set_max_thinking_tokens(id, None))
+                    .await?;
+                self.control_call(n, |id| control::set_effort(id, l)).await?;
+            }
+            // back from thinking off to no level named: on again (the effort stays the last one set)
+            None if applied == Thinking::Level(Some("none".to_owned())) => {
+                self.control_call(n, |id| control::set_max_thinking_tokens(id, None))
+                    .await?;
+            }
+            None => {}
+        }
+        self.with(Change::Progress, |st, _| {
+            if let Some(g) = st.live.as_mut().filter(|g| g.n == n) {
+                g.thinking = Thinking::Level(level);
+            }
+        });
+        Ok(())
+    }
+
+    /// One control request to generation `n` and its answer (at most [`INIT_WAIT`]).
+    async fn control_call(&self, n: u32, request: impl FnOnce(&str) -> Vec<u8>) -> Result<(), String> {
+        let id = format!("ctl-{}", Uuid::new_v4());
+        let (tx, rx) = oneshot::channel();
+        let writer = {
+            let mut st = lock(&self.st);
+            let Some(w) = st.live.as_ref().filter(|g| g.n == n).map(|g| g.writer.clone()) else {
+                return Err("Claude Code exited".into());
+            };
+            st.control_waiters.insert(id.clone(), tx);
+            w
+        };
+        let _ = writer.send(Write {
+            msg_id: keeper::new_msg_id(),
+            bytes: request(&id),
+            done: None,
+        });
+        match tokio::time::timeout(INIT_WAIT, rx).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(_)) => Err("Claude Code exited".into()),
+            Err(_) => {
+                lock(&self.st).control_waiters.remove(&id);
+                Err("Claude Code did not answer a control request within 30 s".into())
+            }
+        }
+    }
+
     /// The models a generation starts with: the route's, with the conversation's picked model (`start_turn.model`)
     /// as the default when there is one; and whether there is.
     fn on_picked_model(&self, mut models: Models) -> (Models, bool) {
@@ -1573,6 +1663,7 @@ impl Driver {
         (models, picked.is_some())
     }
 
+    #[allow(clippy::too_many_lines)] // one generation's start, step by step
     async fn spawn(&self, session: &Session, turn: Option<Uuid>) -> Result<u32, GenError> {
         let Some(ctx) = self.ctx() else {
             return Err(GenError::Failed("not attached".into()));
@@ -1633,6 +1724,7 @@ impl Driver {
                 etag: st.etag.clone(),
                 model: models.default.clone(),
                 picked,
+                thinking: Thinking::Unknown,
             });
             st.control_waiters.insert(init_id.clone(), init_tx);
         });
@@ -2430,6 +2522,10 @@ impl Driver {
             };
             match self.ensure_gen(&session, Some(turn_id)).await {
                 Ok(n) => {
+                    // the conversation's thinking level, before its message is written
+                    if let Err(e) = self.apply_thinking(n, s.thinking.as_deref()).await {
+                        return fail(self, e);
+                    }
                     if !replay && let Err(e) = self.save_message(n, seq, &line).await {
                         return fail(self, e);
                     }
@@ -2996,6 +3092,7 @@ impl Driver {
                     },
                     model: g.model.clone(),
                     picked: g.picked,
+                    thinking: Thinking::Unknown,
                 });
                 // the model the conversation was on (the next start_turn says it again)
                 st.model = g.picked.then(|| g.model.clone());

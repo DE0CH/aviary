@@ -23,6 +23,8 @@ const BOB: &str = "bob@example.com";
 
 fn empty(key: &str) -> CreateRequest {
     CreateRequest {
+        model: None,
+        thinking: None,
         idempotency_key: key.to_owned(),
         message: SendRequest {
             client_message_id: format!("{key}:initial-message"),

@@ -41,8 +41,11 @@ pub async fn close(pool: &Pool, id: Uuid, reason: Option<&str>) -> Result<Conver
             .ok_or_else(Error::not_found)?;
         let person: String = row.get(0);
         if row.get::<_, Option<String>>(1).as_deref() != reason {
-            t.execute("update conversations set closed_reason = $2 where id = $1", &[&id, &reason])
-                .await?;
+            t.execute(
+                "update conversations set closed_reason = $2 where id = $1",
+                &[&id, &reason],
+            )
+            .await?;
             changes::upserted(t, &person, id).await?;
         }
         Ok(person)

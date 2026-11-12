@@ -338,6 +338,17 @@ impl Fake {
                                        "status": "stopped"}));
                 }
             }
+            "set_max_thinking_tokens" | "apply_flag_settings" => {
+                let r = &v["request"];
+                let what = if sub == "set_max_thinking_tokens" {
+                    r["max_thinking_tokens"].to_string()
+                } else {
+                    r["settings"].to_string()
+                };
+                self.note(&format!("thinking {sub} {what}"));
+                self.system(json!({"type": "control_response",
+                                   "response": {"subtype": "success", "request_id": id, "response": {}}}));
+            }
             _ => {}
         }
     }
@@ -692,6 +703,7 @@ impl World {
                 sent_at: magpie_api::Timestamp::now(),
                 answers: Vec::new(),
                 model: model.map(str::to_owned),
+                thinking: None,
             }),
         );
         (id, seq)
@@ -726,6 +738,7 @@ impl World {
                 sent_at: magpie_api::Timestamp::now(),
                 answers: Vec::new(),
                 model: None,
+                thinking: None,
             }),
         );
         (id, seq)
@@ -1398,6 +1411,7 @@ async fn a_restart_replays_a_written_prompt_exactly_once() {
                 sent_at: magpie_api::Timestamp::now(),
                 answers: Vec::new(),
                 model: None,
+                thinking: None,
             };
             let line = prompt::user_line(
                 &prompt::content(prompt::text(&s.text, &[], &[]), &[]),
@@ -2549,6 +2563,7 @@ async fn a_question_nobody_answers_is_parked_and_its_answer_resumes_the_turn_in_
                 message: None,
             }],
             model: None,
+            thinking: None,
         }),
     );
     assert_eq!(state_seen(&w, t, "completed").await["state"], "completed");
@@ -2858,5 +2873,79 @@ async fn a_resumed_conversation_counts_the_images_its_transcript_holds() {
     assert_eq!(w.ended(t).await["state"], "completed");
     until("the compaction at five", || compactions(&w) == 1).await;
     assert_eq!(w.ended(agent_turns(&w)[0]).await["state"], "completed");
+    w.idle(&sup).await;
+}
+
+// ---- the conversation's thinking level ----
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claude_is_switched_to_the_conversations_thinking_level_before_the_turn() {
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let levels = || -> Vec<String> {
+        w.fake_log()
+            .into_iter()
+            .filter_map(|l| l.strip_prefix("thinking ").map(str::to_owned))
+            .collect()
+    };
+    let turn = |text: &str, thinking: Option<&str>| {
+        let id = Uuid::now_v7();
+        w.magpie.push_command(
+            w.cid,
+            Some(id),
+            CommandBody::StartTurn(StartTurn {
+                text: text.into(),
+                files: vec![],
+                images: vec![],
+                resume: Resume {
+                    provider_session_id: None,
+                },
+                sent_at: magpie_api::Timestamp::now(),
+                answers: Vec::new(),
+                model: None,
+                thinking: thinking.map(str::to_owned),
+            }),
+        );
+        id
+    };
+    // the mock model's fixture: the level it names for its default model
+    let models: gateway_api::models::Models = serde_json::from_str(mock_model::DEFAULT_MODELS).unwrap();
+    let own = models
+        .models
+        .iter()
+        .find(|m| m.id == models.default)
+        .and_then(|m| m.reasoning.clone())
+        .unwrap();
+    let effort = |level: &str| format!("apply_flag_settings {{\"effortLevel\":\"{level}\"}}");
+    // no level picked: the one the models route names for the model, once, before the prompt
+    let t = turn("say:one", None);
+    assert_eq!(w.ended(t).await["state"], "completed");
+    assert_eq!(levels(), ["set_max_thinking_tokens null".to_owned(), effort(&own)]);
+    let log = w.fake_log();
+    let at = |needle: &str| log.iter().position(|l| l.contains(needle)).unwrap();
+    assert!(
+        at("thinking apply_flag_settings") < at("prompt say:one"),
+        "switched before the prompt"
+    );
+    // the same again: nothing is sent
+    let t = turn("say:two", None);
+    assert_eq!(w.ended(t).await["state"], "completed");
+    assert_eq!(levels().len(), 2);
+    // a picked level; `none` is thinking off; back to a level turns it on again
+    let t = turn("say:three", Some("max"));
+    assert_eq!(w.ended(t).await["state"], "completed");
+    assert_eq!(
+        levels()[2..],
+        ["set_max_thinking_tokens null".to_owned(), effort("max")]
+    );
+    let t = turn("say:four", Some("none"));
+    assert_eq!(w.ended(t).await["state"], "completed");
+    assert_eq!(levels()[4..], ["set_max_thinking_tokens 0"]);
+    let t = turn("say:five", Some("low"));
+    assert_eq!(w.ended(t).await["state"], "completed");
+    assert_eq!(
+        levels()[5..],
+        ["set_max_thinking_tokens null".to_owned(), effort("low")]
+    );
     w.idle(&sup).await;
 }

@@ -197,6 +197,19 @@ counted in `<gw>_drain_cut_total{kind}`.
 
 **Models route.** `GET /v1/aviary/models` → `{"default", "small", "title", "contextTokens", "models": [{"id", "label",
 "reasoning"}]}` (`models::Models`), for a sandbox through the proxy and for pigeon in-cluster with its pair token.
+A model may carry `thinking`, the levels a person may pick for it, lowest first (`none` = thinking off, then Claude
+Code's effort level names such as `low`, `high`, `max`); `reasoning` is then the level a conversation starts on.
+**A conversation's thinking level** goes the way of its picked model (where the deployment says
+`conversations.peoplePickModel`): pigeon lists every model with its levels in the provider snapshot (a thinking set
+per distinct list, the level ids as labels) and in `/api/providers/claude/models` (`thinking`, `reasoning` on each
+option); an agent snapshot's `thinkingOptionId` is the conversation's `pickedThinking` (none: the app shows the
+model's own). `set_agent_thinking_request` is checked against the conversation's model's levels (`null` = none picked
+again), and a `set_agent_model_request` to a model that lacks the picked level clears it; both are magpie's M5
+(`thinking` beside `title` and `model`; `""` clears). A draft's `agent.config.model` / `.thinkingOptionId` go into M3.
+magpie puts `pickedThinking` into each `start_turn` (`thinking`); the supervisor switches Claude Code before it
+writes the prompt (`set_max_thinking_tokens` 0 for `none`, else thinking on and `apply_flag_settings` `effortLevel`;
+with no level picked, the one the models route names for the model, else Claude Code's own), so every model call of
+the turn carries it (`thinking` present or not, `output_config.effort`) and the gateway applies the level.
 
 **In-cluster API.** On the implementation's in-cluster port (YYC: egress 8082): the models route for pigeon's pair
 bearer, and `GET /v1/ops/summary?tz=&recentMinutes=` for hermit's (`ops::OpsSummary`, platform 15.3's shape:

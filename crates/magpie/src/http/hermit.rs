@@ -3,8 +3,8 @@
 use magpie_api::Admitted;
 use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse};
 use magpie_api::ops::{
-    HermitCloseRequest, HermitCreateRequest, HermitSendRequest, LegacyImportStatus, PersonPurgeRequest, PersonPurgeResponse,
-    WorkspacesExistsRequest, WorkspacesExistsResponse,
+    HermitCloseRequest, HermitCreateRequest, HermitSendRequest, LegacyImportStatus, PersonPurgeRequest,
+    PersonPurgeResponse, WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
 use magpie_api::server::Ctx;
 use magpie_api::turns::SendResponse;
@@ -37,6 +37,8 @@ pub async fn create_conversation(
         async {
             let person = person_of(&body.person)?;
             let req = CreateRequest {
+                model: None,
+                thinking: None,
                 idempotency_key: body.idempotency_key,
                 message: body.message,
             };

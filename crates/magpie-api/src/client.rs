@@ -999,11 +999,7 @@ impl ServiceCalls<'_> {
     }
 
     /// Closes the conversation to its person's messages (`reason`), or opens it again (`None`) (caller hermit).
-    pub async fn hermit_close_conversation(
-        &self,
-        id: Uuid,
-        reason: Option<&str>,
-    ) -> Result<Conversation, ClientError> {
+    pub async fn hermit_close_conversation(&self, id: Uuid, reason: Option<&str>) -> Result<Conversation, ClientError> {
         let req = crate::ops::HermitCloseRequest {
             reason: reason.map(str::to_owned),
         };

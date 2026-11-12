@@ -2,12 +2,7 @@
 //! lifecycle is managed elsewhere. Closed (the session is paused): the person's messages are refused with the
 //! deployment's sentence, the deployment's own are still taken, and opening it again takes them as before. Ended (the
 //! session is retired): the conversation leaves the person's list.
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::missing_panics_doc,
-    dead_code
-)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::missing_panics_doc, dead_code)]
 
 mod common;
 
@@ -62,7 +57,10 @@ async fn a_closed_conversation_refuses_its_person_and_an_ended_one_leaves_the_li
     // closed: the conversation says why, and the person's message is refused with that sentence
     let c = deployment.hermit_close_conversation(conv, Some(PAUSED)).await.unwrap();
     assert_eq!(c.closed.as_deref(), Some(PAUSED));
-    assert_eq!(alice.get_conversation(conv).await.unwrap().closed.as_deref(), Some(PAUSED));
+    assert_eq!(
+        alice.get_conversation(conv).await.unwrap().closed.as_deref(),
+        Some(PAUSED)
+    );
     let e = alice.send_turn(conv, &msg("m2", "are you there?")).await.unwrap_err();
     assert_eq!(code(&e), ErrorCode::ConversationClosed);
     assert!(e.to_string().contains(PAUSED), "{e}");

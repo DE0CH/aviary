@@ -186,7 +186,8 @@ pub fn agent_snapshot(c: &Conversation, v: &View<'_>) -> Value {
         "pendingMessages": queue,
         // the deployment closed the conversation to messages: the sentence the app shows in place of its message box
         "closed": c.closed,
-        "thinkingOptionId": null, "effectiveThinkingOptionId": null,
+        // the thinking level the person picked (none: the app shows the model's own)
+        "thinkingOptionId": c.picked_thinking, "effectiveThinkingOptionId": c.picked_thinking,
         "runtimeInfo": {"provider": PROVIDER, "sessionId": c.claude_session_id, "model": model, "modeId": null},
 
         "createdAt": c.created_at, "updatedAt": c.updated_at, "lastUserMessageAt": last_user,

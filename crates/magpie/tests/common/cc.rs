@@ -21,6 +21,8 @@ pub async fn conversation(r: &Replica, person: &str) -> Uuid {
     r.pigeon()
         .person(person)
         .create_conversation(&CreateRequest {
+            model: None,
+            thinking: None,
             idempotency_key: key.clone(),
             message: SendRequest {
                 client_message_id: format!("{key}:m"),

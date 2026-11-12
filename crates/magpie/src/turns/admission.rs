@@ -457,7 +457,8 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
     let start_seq = events::append(tx, conversation, ev).await?;
     let conv = tx
         .query_one(
-            "select provider_session_id, name_source, title_attempts, picked_model from conversations where id = $1",
+            "select provider_session_id, name_source, title_attempts, picked_model, picked_thinking
+               from conversations where id = $1",
             &[&conversation],
         )
         .await?;
@@ -486,6 +487,7 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
         sent_at: Timestamp(now),
         answers: Vec::new(),
         model: conv.get(3),
+        thinking: conv.get(4),
     };
     let cmd = command(
         tx,

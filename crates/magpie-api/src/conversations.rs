@@ -55,6 +55,10 @@ pub struct Conversation {
     /// none was picked (the deployment's default model runs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub picked_model: Option<String>,
+    /// The thinking level the person picked (M5): `none` or one of the picked model's levels; absent while none was
+    /// picked (the model's own level).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picked_thinking: Option<String>,
     /// Set while the deployment has closed the conversation to the person's messages (hermit's route: a session
     /// that is paused elsewhere): the sentence the app shows in place of its message box. M7 answers 409
     /// `conversation_closed` meanwhile.
@@ -300,6 +304,12 @@ pub struct CreateRequest {
     pub idempotency_key: String,
     /// The first message; admitted when its text or attachments are non-empty.
     pub message: SendRequest,
+    /// The model picked in the draft (`pickedModel` from the start; the caller has checked it); absent: none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// The thinking level picked in the draft (`pickedThinking` from the start); absent: none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
 }
 
 /// M3 → 201 (200 for a repeat), and M4.
@@ -312,7 +322,8 @@ pub struct CreateResponse {
     pub turn: Option<TurnStarted>,
 }
 
-/// M5 `PATCH /v1/conversations/{id}`: a rename, a model pick, or both (400 `bad_request` with neither).
+/// M5 `PATCH /v1/conversations/{id}`: a rename, a model pick, a thinking level pick, or several (400 `bad_request`
+/// with none).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenameRequest {
@@ -323,6 +334,10 @@ pub struct RenameRequest {
     /// list, which the caller has checked (pigeon, against the models route); 1-200 characters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The thinking level of the conversation's turns from the next one (`pickedThinking`): a level of its model,
+    /// which the caller has checked; at most 200 characters. `""`: none picked again (the model's own level).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
 }
 
 impl RenameRequest {
@@ -331,7 +346,7 @@ impl RenameRequest {
     pub fn title(title: impl Into<String>) -> Self {
         Self {
             title: Some(title.into()),
-            model: None,
+            ..Self::default()
         }
     }
 
@@ -339,8 +354,17 @@ impl RenameRequest {
     #[must_use]
     pub fn model(model: impl Into<String>) -> Self {
         Self {
-            title: None,
             model: Some(model.into()),
+            ..Self::default()
+        }
+    }
+
+    /// A thinking level pick (`""`: none picked again).
+    #[must_use]
+    pub fn thinking(level: impl Into<String>) -> Self {
+        Self {
+            thinking: Some(level.into()),
+            ..Self::default()
         }
     }
 }
