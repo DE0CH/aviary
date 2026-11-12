@@ -112,10 +112,11 @@ arrives.
   `chatAppBindings`). 搜尋 is a conversation search: the palette offers 新對話, 最近刪除 and 設定, lists each
   conversation once and searches no files (`command-center/root-registration.tsx`, `SHOW_WORKSPACE_COMMANDS`,
   `SHOW_AGENT_CONTROL_COMMANDS`, `SEARCH_FILES`). Settings: 一般 is the language only; what sending during a reply
-  does is fixed (`composer/input/state.ts` `chatSendBehavior`): a text message goes out at once and joins the running
-  turn (pigeon's `midTurn`; the server writes it into the turn and Claude Code takes it in after its next tool
-  result), one with attachments waits in the composer's queue until the reply ends or "Send now" stops the reply for
-  it; 外觀 is 淺色 /
+  does is fixed (`composer/input/state.ts` `chatSendBehavior`): where the server keeps the conversation's queue
+  (pigeon's `midTurn`) every message goes out at once and the queue above the message box is the server's list
+  (`yyc/server-queue.ts`: the same on every device; a text message joins the running reply after its next tool
+  result, one with attachments is held until the reply ends and can be taken back; "send now" stops the reply);
+  elsewhere a message waits in the app's own queue until the reply ends; 外觀 is 淺色 /
   深色 / 系統, the two text sizes and the content width (`SHOW_DEVELOPER_APPEARANCE`: no code fonts, syntax theme, diff
   preview, CSS font stack, brand or plugin themes).
 - **One sidebar row**: the items at the top of the sidebar (新對話 / 最近刪除 / 搜尋), the conversation rows and the
@@ -153,7 +154,21 @@ arrives.
   only to you"): whose view it is, and the override switch (off on every load; the box turns red while on) that lets
   the admin send and start conversations as the person. The messages look like the person's own.
 - **Branding**: YYC's teal as the accent, its logo and icons, Hong Kong Chinese fonts first (`styles/theme.ts`); the
-  server writes the instance's product name into the page title.
+  server writes the instance's product name into the page title. The app's own text says "YYC AI"; where the server
+  names another product (the page's `apple-mobile-web-app-title` meta, `/api/jarvis/me` `product`) every mention is
+  that name (`yyc/product.ts`: the translations through an i18next post-processor).
+- **Activity** (Deyao, 2026-11-12; `yyc/activity.tsx`, the approved mock): what a conversation runs beside its reply
+  (a background command, a subagent, a workflow, a monitor). A chip in the header (「n running」, a still icon; absent
+  until the conversation has run one) opens a 340 px panel docked beside the chat as the schedules panel is (full
+  screen with a back arrow on a phone): one section per task with its type, how long it has run, what it does now, a
+  subagent's step count and Stop; the finished ones below with their result. Nothing in it moves except the clock.
+  Data: `GET /api/jarvis/sessions/<id>/tasks`, `POST …/tasks/<taskId>/stop` (aviary's pigeon); a server without the
+  route shows no chip. Slash commands: the message box's `/` completion lists what the server answers to
+  `list_commands_request` (aviary: the commands the conversation's Claude Code names).
+- **Conversations a deployment ends itself** (Deyao, 2026-11-12; Jarvis 4, where a conversation is a session):
+  `/api/jarvis/me` `conversationDelete: false` removes Delete (the ⋯ menu, the sidebar row) and the Recently deleted
+  entry; an agent's `closed` (a sentence: its session is paused) makes the message box read-only with that sentence
+  as its placeholder and nothing can be sent. A conversation the deployment ended just leaves the list.
 
 ## Schedules (Deyao, 2026-11-06)
 
