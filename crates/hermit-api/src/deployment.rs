@@ -27,6 +27,16 @@ pub struct Conversations {
     /// its name read-only.
     #[serde(default, skip_serializing_if = "is_false")]
     pub people_pick_model: bool,
+    /// People delete and restore their conversations in the app. False: the deployment ends every conversation
+    /// itself (a session's lifecycle is managed elsewhere; magpie's hermit routes close and delete them), so the app
+    /// offers no delete and no Recently deleted (`GET /api/jarvis/me` `conversationDelete`).
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub people_delete: bool,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if signature
+fn is_true(b: &bool) -> bool {
+    *b
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if signature
@@ -43,6 +53,7 @@ impl Default for Conversations {
         Self {
             people_create: true,
             people_pick_model: false,
+            people_delete: true,
         }
     }
 }

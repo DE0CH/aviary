@@ -1515,6 +1515,19 @@ impl Server for FakeMagpie {
         scripted!(self, "hermit_conversation", ctx, id(id_), None, None, typed)
     }
 
+    async fn hermit_close_conversation(
+        &self,
+        ctx: Ctx,
+        id_: Uuid,
+        body: magpie_api::ops::HermitCloseRequest,
+    ) -> Result<Conversation, ApiError> {
+        scripted!(self, "hermit_close_conversation", ctx, id(id_), None, ser(&body), typed)
+    }
+
+    async fn hermit_delete_conversation(&self, ctx: Ctx, id_: Uuid) -> Result<Conversation, ApiError> {
+        scripted!(self, "hermit_delete_conversation", ctx, id(id_), None, Some(json!({})), typed)
+    }
+
     async fn hermit_send_turn(
         &self,
         ctx: Ctx,

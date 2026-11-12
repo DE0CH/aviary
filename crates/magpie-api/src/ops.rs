@@ -75,6 +75,16 @@ pub struct HermitSendRequest {
     pub message: crate::turns::SendRequest,
 }
 
+/// `PUT /v1/hermit/conversations/{id}/closed` → the Conversation: the deployment closes the conversation to its
+/// person's messages (`reason`: the sentence the app shows, 1-500 characters) or opens it again (`reason` null).
+/// What runs goes on; hermit's own messages are still taken.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HermitCloseRequest {
+    /// Why it is closed, as the app shows it; null opens it.
+    pub reason: Option<String>,
+}
+
 /// At most this many ids per `workspaces/exists` call.
 pub const WORKSPACES_EXISTS_MAX: usize = 1_000;
 

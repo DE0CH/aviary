@@ -64,6 +64,9 @@ open_enum! {
         ConversationMigrating = "conversation_migrating",
         /// 409 (M7).
         ConversationDeleted = "conversation_deleted",
+        /// 409 (M7): the deployment closed the conversation to the person's messages; `message` is the deployment's
+        /// sentence (`Conversation.closed`), which the app shows.
+        ConversationClosed = "conversation_closed",
         /// 409 (M6 `DELETE`): only a conversation in Recently deleted can be deleted for good.
         NotDeleted = "not_deleted",
         /// 409 (M7): a turn is already admitted, preparing, running or stopping.
@@ -128,6 +131,7 @@ impl ErrorCode {
             C::QuotaExceeded => 507,
             C::ConversationMigrating
             | C::ConversationDeleted
+            | C::ConversationClosed
             | C::NotDeleted
             | C::TurnRunning
             | C::AlreadyResolved

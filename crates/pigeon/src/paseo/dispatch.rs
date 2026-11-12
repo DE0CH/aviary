@@ -38,6 +38,8 @@ pub enum Fail {
     Refused(Refusal),
     /// No answer, a timeout, a 5xx.
     Unreachable,
+    /// Not asked: people do not delete conversations in this deployment.
+    Kept,
 }
 
 /// Classifies a magpie error.
@@ -628,12 +630,15 @@ impl Handler {
             Fail::Refused(r) => match r.code {
                 ErrorCode::TurnRunning => l.turn_running().to_owned(),
                 ErrorCode::ConversationDeleted => l.conversation_deleted().to_owned(),
+                // the deployment's own sentence (magpie-api `Conversation.closed`)
+                ErrorCode::ConversationClosed => r.message.clone(),
                 ErrorCode::ViewAsNotRecorded => l.view_as_not_recorded().to_owned(),
                 ErrorCode::TooLarge => l.too_large().to_owned(),
                 ErrorCode::UnsupportedType => l.unsupported_type().to_owned(),
                 _ => l.unreachable().to_owned(),
             },
             Fail::Unreachable => l.unreachable().to_owned(),
+            Fail::Kept => l.delete_closed().to_owned(),
         }
     }
 
@@ -946,6 +951,7 @@ impl Handler {
     fn fail_sentence(&self, f: &Fail) -> String {
         match f {
             Fail::NotFound => strings::NOT_FOUND.to_owned(),
+            Fail::Kept => self.locale().delete_closed().to_owned(),
             _ => self.locale().unreachable().to_owned(),
         }
     }
@@ -954,6 +960,8 @@ impl Handler {
     async fn archive(&self) {
         let result = match self.target() {
             None => Err(Fail::NotFound),
+            // the deployment ends every conversation itself (hermit's `conversations.peopleDelete` false)
+            Some(_) if !self.app.identities().people_delete() => Err(Fail::Kept),
             Some(id) => self.calls().delete_conversation(id).await.map_err(fail),
         };
         if self.kind == "archive_workspace_request" {
@@ -983,6 +991,7 @@ impl Handler {
             return self.rpc_failed(strings::NOT_FOUND);
         };
         let result = match self.conversation(id).await {
+            _ if !self.app.identities().people_delete() => Err(Fail::Kept),
             Ok(c) if c.deleted_at.is_some() => self.calls().purge_conversation(id).await.map_err(fail),
             Ok(_) => self.calls().delete_conversation(id).await.map(drop).map_err(fail),
             Err(f) => Err(f),

@@ -20,6 +20,53 @@ use crate::error::{Error, Result};
 use crate::fanout;
 use crate::jobs::outbox::{self, Item};
 
+/// hermit's close: the deployment closes the conversation to its person's messages (`reason`, 1-500 characters) or
+/// opens it again (`None`). Idempotent; what runs goes on.
+///
+/// # Errors
+/// 400 for a reason out of bounds, 404; a statement error.
+pub async fn close(pool: &Pool, id: Uuid, reason: Option<&str>) -> Result<Conversation> {
+    if let Some(r) = reason
+        && !(1..=500).contains(&r.chars().count())
+    {
+        return Err(Error::bad_request("reason is 1-500 characters"));
+    }
+    let person = aviary_pg::tx!(pool, |t| -> Result<String> {
+        let row = t
+            .query_opt(
+                "select person, closed_reason from conversations where id = $1 for update",
+                &[&id],
+            )
+            .await?
+            .ok_or_else(Error::not_found)?;
+        let person: String = row.get(0);
+        if row.get::<_, Option<String>>(1).as_deref() != reason {
+            t.execute("update conversations set closed_reason = $2 where id = $1", &[&id, &reason])
+                .await?;
+            changes::upserted(t, &person, id).await?;
+        }
+        Ok(person)
+    })
+    .await?;
+    let conn = pool.get().await?;
+    load_owned(&conn, &person, id).await
+}
+
+/// hermit's delete: [`delete`] for whoever the conversation's person is.
+///
+/// # Errors
+/// 404; a statement error.
+pub async fn delete_as_deployment(pool: &Pool, id: Uuid) -> Result<Conversation> {
+    let conn = pool.get().await?;
+    let email: String = conn
+        .query_opt("select person from conversations where id = $1", &[&id])
+        .await?
+        .ok_or_else(Error::not_found)?
+        .get(0);
+    drop(conn);
+    delete(pool, &Person { email, viewer: None }, id).await
+}
+
 /// M6 `POST …/delete`: into Recently deleted (idempotent).
 ///
 /// # Errors

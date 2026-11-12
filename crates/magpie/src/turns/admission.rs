@@ -72,19 +72,20 @@ impl Sent {
     }
 }
 
-/// What a send does while a turn runs.
+/// Whose send it is, which decides what it does while a turn runs and whether a closed conversation takes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WhileRunning {
-    /// The message joins the running turn ([`super::midturn`]): a person's send.
+    /// A person's send: the message joins the running turn ([`super::midturn`]); a conversation the deployment
+    /// closed refuses it (409 `conversation_closed`).
     Join,
-    /// 409 `turn_running`: the deployment's send (hermit's route).
+    /// The deployment's send (hermit's route): 409 `turn_running` while a turn runs; a closed conversation takes it.
     Refuse,
 }
 
 /// M7.
 ///
 /// # Errors
-/// 404, 409 `conversation_deleted` / `turn_running`, 400, 413; a statement error.
+/// 404, 409 `conversation_deleted` / `conversation_closed` / `turn_running`, 400, 413; a statement error.
 pub async fn send(pool: &Pool, person: &Person, id: Uuid, req: SendRequest, running: WhileRunning) -> Result<Sent> {
     validate(&req)?;
     let req = &req; // borrowed: the transaction may run more than once (aviary_pg::tx!)
@@ -95,6 +96,14 @@ pub async fn send(pool: &Pool, person: &Person, id: Uuid, req: SendRequest, runn
                 ErrorCode::ConversationDeleted,
                 "the conversation is in Recently deleted",
             ));
+        }
+        if running == WhileRunning::Join
+            && let Some(why) = t
+                .query_one("select closed_reason from conversations where id = $1", &[&id])
+                .await?
+                .get::<_, Option<String>>(0)
+        {
+            return Err(Error::code(ErrorCode::ConversationClosed, why));
         }
         if let Some(r) = t
             .query_opt(

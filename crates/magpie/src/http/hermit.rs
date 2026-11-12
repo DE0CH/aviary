@@ -3,7 +3,7 @@
 use magpie_api::Admitted;
 use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse};
 use magpie_api::ops::{
-    HermitCreateRequest, HermitSendRequest, LegacyImportStatus, PersonPurgeRequest, PersonPurgeResponse,
+    HermitCloseRequest, HermitCreateRequest, HermitSendRequest, LegacyImportStatus, PersonPurgeRequest, PersonPurgeResponse,
     WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
 use magpie_api::server::Ctx;
@@ -66,6 +66,16 @@ pub async fn conversation(app: &Magpie, _ctx: Ctx, id: Uuid) -> Answer<Conversat
         }
         .await,
     )
+}
+
+/// `PUT /v1/hermit/conversations/{id}/closed`.
+pub async fn close_conversation(app: &Magpie, _ctx: Ctx, id: Uuid, body: HermitCloseRequest) -> Answer<Conversation> {
+    answer(crate::conversations::delete::close(&app.pool, id, body.reason.as_deref()).await)
+}
+
+/// `POST /v1/hermit/conversations/{id}/delete`.
+pub async fn delete_conversation(app: &Magpie, _ctx: Ctx, id: Uuid) -> Answer<Conversation> {
+    answer(crate::conversations::delete::delete_as_deployment(&app.pool, id).await)
 }
 
 /// `POST /v1/hermit/conversations/{id}/turns`: M7 as the person hermit names (404 for another's conversation). A

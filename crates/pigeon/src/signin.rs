@@ -108,6 +108,8 @@ pub async fn me(app: &App, id: &Identity) -> Response {
             // the product's name (hermit's `product.name`): the app says it wherever it names itself
             "product": app.0.identity.product_name(),
             "newConversations": app.0.identity.people_create(),
+            // false: the deployment ends conversations itself; the app offers no delete and no Recently deleted
+            "conversationDelete": app.0.identity.people_delete(),
             "modelPick": app.0.identity.people_pick_model(),
             // a text message sent during a reply joins the running turn (magpie M7 `midTurn`): the app sends it at
             // once instead of queueing it until the reply ends
@@ -121,8 +123,9 @@ pub async fn me(app: &App, id: &Identity) -> Response {
                 "firstName": app.0.identity.cached_first_name(&v.person).await,
                 "sharing": true,
                 // the product's name (hermit's `product.name`): the app says it wherever it names itself
-            "product": app.0.identity.product_name(),
-            "newConversations": app.0.identity.people_create(),
+                "product": app.0.identity.product_name(),
+                "newConversations": app.0.identity.people_create(),
+                "conversationDelete": app.0.identity.people_delete(),
                 "modelPick": app.0.identity.people_pick_model(),
                 // an admin's view-as send joins no running turn (magpie refuses it): it waits in the app's queue
                 "midTurn": false,

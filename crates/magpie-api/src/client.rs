@@ -998,6 +998,39 @@ impl ServiceCalls<'_> {
         self.get("hermit_conversation", &[&id.to_string()], NO_QUERY).await
     }
 
+    /// Closes the conversation to its person's messages (`reason`), or opens it again (`None`) (caller hermit).
+    pub async fn hermit_close_conversation(
+        &self,
+        id: Uuid,
+        reason: Option<&str>,
+    ) -> Result<Conversation, ClientError> {
+        let req = crate::ops::HermitCloseRequest {
+            reason: reason.map(str::to_owned),
+        };
+        self.client
+            .exec_json(
+                &self.scope,
+                route("hermit_close_conversation"),
+                &[&id.to_string()],
+                NO_QUERY,
+                json(&req)?,
+            )
+            .await
+    }
+
+    /// Ends the conversation: into Recently deleted, as its person's delete does (caller hermit).
+    pub async fn hermit_delete_conversation(&self, id: Uuid) -> Result<Conversation, ClientError> {
+        self.client
+            .exec_json(
+                &self.scope,
+                route("hermit_delete_conversation"),
+                &[&id.to_string()],
+                NO_QUERY,
+                json(&Empty {})?,
+            )
+            .await
+    }
+
     /// A turn the deployment sends into a conversation as its person (caller hermit).
     pub async fn hermit_send_turn(
         &self,

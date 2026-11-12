@@ -55,6 +55,11 @@ pub struct Conversation {
     /// none was picked (the deployment's default model runs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub picked_model: Option<String>,
+    /// Set while the deployment has closed the conversation to the person's messages (hermit's route: a session
+    /// that is paused elsewhere): the sentence the app shows in place of its message box. M7 answers 409
+    /// `conversation_closed` meanwhile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed: Option<String>,
     /// The person's messages sent while a turn ran that have not reached Claude Code's conversation yet (M7
     /// `midTurn`), oldest first: the queue the app shows. One leaves it when it shows on the timeline (taken into
     /// the running turn, or started as a turn of its own) or is taken back.

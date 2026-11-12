@@ -444,6 +444,13 @@ impl Identities {
         self.facts().is_none_or(|f| f.conversations.people_create)
     }
 
+    /// Whether people delete and restore conversations (hermit's `conversations.peopleDelete`; true before the facts
+    /// load, as the default is).
+    #[must_use]
+    pub fn people_delete(&self) -> bool {
+        self.facts().is_none_or(|f| f.conversations.people_delete)
+    }
+
     /// Whether people pick each conversation's model (hermit's `conversations.peoplePickModel`; false before the
     /// facts load, as the default is).
     #[must_use]

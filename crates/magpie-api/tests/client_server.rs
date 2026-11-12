@@ -567,6 +567,33 @@ impl Server for FixtureServer {
         self.answer_json("hermit_conversation")
     }
 
+    async fn hermit_close_conversation(
+        &self,
+        ctx: Ctx,
+        id: Uuid,
+        body: magpie_api::ops::HermitCloseRequest,
+    ) -> Result<Conversation, ApiError> {
+        self.received(
+            "hermit_close_conversation",
+            &ctx,
+            &json!({"id": id.to_string()}),
+            None,
+            Some(serde_json::to_value(&body).unwrap()),
+        );
+        self.answer_json("hermit_close_conversation")
+    }
+
+    async fn hermit_delete_conversation(&self, ctx: Ctx, id: Uuid) -> Result<Conversation, ApiError> {
+        self.received(
+            "hermit_delete_conversation",
+            &ctx,
+            &json!({"id": id.to_string()}),
+            None,
+            Some(json!({})),
+        );
+        self.answer_json("hermit_delete_conversation")
+    }
+
     async fn hermit_send_turn(
         &self,
         ctx: Ctx,
@@ -1060,6 +1087,19 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
         "hermit_conversation" => c
             .service(Some(ADMIN))
             .hermit_conversation(param_uuid(&f, "id"))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "hermit_close_conversation" => c
+            .service(Some(ADMIN))
+            .hermit_close_conversation(
+                param_uuid(&f, "id"),
+                request::<magpie_api::ops::HermitCloseRequest>(&f).reason.as_deref(),
+            )
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "hermit_delete_conversation" => c
+            .service(Some(ADMIN))
+            .hermit_delete_conversation(param_uuid(&f, "id"))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
         "hermit_send_turn" => c

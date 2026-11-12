@@ -42,6 +42,12 @@ impl Locale {
         )
     }
 
+    /// A delete where the deployment ends conversations itself (hermit's `conversations.peopleDelete` false).
+    #[must_use]
+    pub fn delete_closed(self) -> &'static str {
+        self.pick("這裡的對話不能刪除。", "Conversations can't be deleted here.")
+    }
+
     /// A send to a deleted conversation (7.5.4).
     #[must_use]
     pub fn conversation_deleted(self) -> &'static str {

@@ -184,6 +184,10 @@ pub const HERMIT_PERSON_PURGE: &str = "/v1/hermit/persons/{person}/purge";
 pub const HERMIT_CONVERSATIONS: &str = "/v1/hermit/conversations";
 /// `GET` a conversation as the deployment reads it (hermit: the title and the picked model of a session's conversation).
 pub const HERMIT_CONVERSATION: &str = "/v1/hermit/conversations/{id}";
+/// `PUT`: the deployment closes the conversation to its person's messages, or opens it again.
+pub const HERMIT_CONVERSATION_CLOSED: &str = "/v1/hermit/conversations/{id}/closed";
+/// `POST`: the deployment ends the conversation (into Recently deleted, as its person's delete does).
+pub const HERMIT_CONVERSATION_DELETE: &str = "/v1/hermit/conversations/{id}/delete";
 /// A turn the deployment sends into such a conversation as its person.
 pub const HERMIT_CONVERSATION_TURNS: &str = "/v1/hermit/conversations/{id}/turns";
 /// `POST` workspace references (hermit).
@@ -382,6 +386,8 @@ pub const ROUTES: &[Route] = &[
         false,
     ),
     service("hermit_conversation", Get, HERMIT_CONVERSATION, HERMIT, &[200], false),
+    service("hermit_close_conversation", Put, HERMIT_CONVERSATION_CLOSED, HERMIT, &[200], false),
+    service("hermit_delete_conversation", Post, HERMIT_CONVERSATION_DELETE, HERMIT, &[200], false),
     service(
         "hermit_send_turn",
         Post,
@@ -548,7 +554,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 75);
+        assert_eq!(ROUTES.len(), 77);
     }
 
     #[test]

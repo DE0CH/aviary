@@ -514,6 +514,19 @@ impl Server for Magpie {
         http::hermit::conversation(self, ctx, id).await
     }
 
+    async fn hermit_close_conversation(
+        &self,
+        ctx: Ctx,
+        id: Uuid,
+        body: magpie_api::ops::HermitCloseRequest,
+    ) -> Answer<Conversation> {
+        http::hermit::close_conversation(self, ctx, id, body).await
+    }
+
+    async fn hermit_delete_conversation(&self, ctx: Ctx, id: Uuid) -> Answer<Conversation> {
+        http::hermit::delete_conversation(self, ctx, id).await
+    }
+
     async fn hermit_send_turn(&self, ctx: Ctx, id: Uuid, body: HermitSendRequest) -> Answer<Admitted<SendResponse>> {
         http::hermit::send_turn(self, ctx, id, body).await
     }

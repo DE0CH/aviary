@@ -678,8 +678,8 @@ async fn me_gives_the_first_name() {
     assert_eq!(r.headers()["cache-control"], "no-store");
     assert_eq!(
         body_json(r).await,
-        json!({"firstName": "Tai", "sharing": true, "product": PRODUCT, "newConversations": true, "modelPick": false,
-               "midTurn": true})
+        json!({"firstName": "Tai", "sharing": true, "product": PRODUCT, "newConversations": true,
+               "conversationDelete": true, "modelPick": false, "midTurn": true})
     );
     // no name claim: Access's get-identity answers (fake-access answers from the token's own name)
     let t1 = &h.teams[0];
@@ -701,6 +701,11 @@ async fn me_gives_the_first_name() {
     h.set_facts(|d| d.conversations.people_create = false).await;
     let v = body_json(h.get_as(me(), STAFF).await).await;
     assert_eq!(v["newConversations"], false);
+    // a deployment that ends every conversation itself: the app offers no delete and no Recently deleted
+    assert_eq!(v["conversationDelete"], true);
+    h.set_facts(|d| d.conversations.people_delete = false).await;
+    let v = body_json(h.get_as(me(), STAFF).await).await;
+    assert_eq!(v["conversationDelete"], false);
     // people pick the model only where the deployment says so: the app then shows its picker
     assert_eq!(v["modelPick"], false);
     h.set_facts(|d| d.conversations.people_pick_model = true).await;

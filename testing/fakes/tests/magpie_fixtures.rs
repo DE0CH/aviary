@@ -372,6 +372,19 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .hermit_conversation(param_uuid(&f, "id"))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
+        "hermit_close_conversation" => c
+            .service(Some(ADMIN))
+            .hermit_close_conversation(
+                param_uuid(&f, "id"),
+                request::<magpie_api::ops::HermitCloseRequest>(&f).reason.as_deref(),
+            )
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "hermit_delete_conversation" => c
+            .service(Some(ADMIN))
+            .hermit_delete_conversation(param_uuid(&f, "id"))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
         "hermit_send_turn" => c
             .service(Some(ADMIN))
             .hermit_send_turn(param_uuid(&f, "id"), &request::<HermitSendRequest>(&f))

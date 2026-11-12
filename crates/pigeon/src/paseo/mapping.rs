@@ -184,6 +184,8 @@ pub fn agent_snapshot(c: &Conversation, v: &View<'_>) -> Value {
     json!({
         "id": c.id, "provider": PROVIDER, "cwd": CWD, "workspaceId": workspace_id(&c.id), "model": model,
         "pendingMessages": queue,
+        // the deployment closed the conversation to messages: the sentence the app shows in place of its message box
+        "closed": c.closed,
         "thinkingOptionId": null, "effectiveThinkingOptionId": null,
         "runtimeInfo": {"provider": PROVIDER, "sessionId": c.claude_session_id, "model": model, "modeId": null},
 
