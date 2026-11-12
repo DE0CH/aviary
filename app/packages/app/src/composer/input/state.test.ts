@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applyDictationTranscript,
   computeCanStartDictation,
+  chatSendBehavior,
   resolveActiveSendBehavior,
   resolveComposerSurfacePresentation,
   resolveComposerSurfaceText,
@@ -193,6 +194,16 @@ describe("dictation transcript behavior", () => {
 });
 
 describe("composer send behavior", () => {
+  it("sends a text message into the running reply, and queues one with attachments", () => {
+    // the server writes a text message into the running turn (Claude Code takes it in after its next tool result);
+    // it refuses one with attachments, which waits for the reply to end
+    expect(chatSendBehavior(false, true)).toBe("steer");
+    expect(chatSendBehavior(true, true)).toBe("queue");
+    // a server from before that refuses every message during a reply: all of them wait
+    expect(chatSendBehavior(false, false)).toBe("queue");
+    expect(chatSendBehavior(true, false)).toBe("queue");
+  });
+
   it("sends immediately when queue mode cannot advance past a permission", () => {
     expect(resolveActiveSendBehavior("queue", true)).toBe("interrupt");
     expect(resolveActiveSendBehavior("queue", false)).toBe("queue");

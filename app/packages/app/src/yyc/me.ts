@@ -10,9 +10,19 @@ interface Me {
    * session started in the Jarvis 4 app is one conversation; hermit's `conversations.peopleCreate`): no New chat.
    */
   newConversations: boolean;
+  /**
+   * The server takes a text message sent during a reply into the running turn (pigeon's `midTurn`; aviary magpie M7).
+   * False (a server from before that): such a message waits in the composer's queue until the reply ends.
+   */
+  midTurn: boolean;
 }
 
-const DEFAULT_ME: Me = { firstName: null, sharing: true, newConversations: true };
+const DEFAULT_ME: Me = {
+  firstName: null,
+  sharing: true,
+  newConversations: true,
+  midTurn: false,
+};
 let loadedMe: Me | null = null;
 
 let mePromise: Promise<Me> | null = null;
@@ -20,12 +30,18 @@ let mePromise: Promise<Me> | null = null;
 /** GET /api/jarvis/me (the router answers it in sandbox mode, the server in local mode), loaded once. */
 function loadMe(): Promise<Me> {
   mePromise ??= Promise.race([
-    api<{ firstName?: unknown; sharing?: unknown; newConversations?: unknown }>("/api/jarvis/me")
+    api<{
+      firstName?: unknown;
+      sharing?: unknown;
+      newConversations?: unknown;
+      midTurn?: unknown;
+    }>("/api/jarvis/me")
       .then((body) => {
         loadedMe = {
           firstName: typeof body?.firstName === "string" ? body.firstName : null,
           sharing: body?.sharing !== false,
           newConversations: body?.newConversations !== false,
+          midTurn: body?.midTurn === true,
         };
         return loadedMe;
       })
@@ -61,6 +77,21 @@ export function useNewConversationsAvailable(): boolean {
     let live = true;
     void loadMe().then((me) => {
       if (live) setAvailable(me.newConversations);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return available;
+}
+
+/** Whether a text message sent during a reply joins it: false until the server says so (yyc/me.ts `midTurn`). */
+export function useMidTurnAvailable(): boolean {
+  const [available, setAvailable] = useState(loadedMe?.midTurn ?? false);
+  useEffect(() => {
+    let live = true;
+    void loadMe().then((me) => {
+      if (live) setAvailable(me.midTurn);
     });
     return () => {
       live = false;

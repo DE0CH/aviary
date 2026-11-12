@@ -118,7 +118,8 @@ import {
 import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import { YycModelLabel } from "@/yyc/model-label";
-import { resolveActiveSendBehavior, type SendBehavior } from "./input/state";
+import { useMidTurnAvailable } from "@/yyc/me";
+import { chatSendBehavior, resolveActiveSendBehavior } from "./input/state";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
@@ -178,12 +179,6 @@ import {
   type WorkspaceFileDragPayload,
 } from "@/attachments/workspace-file-drag";
 
-/**
- * CloudCLI refuses a message while a reply runs (server/modules/paseo/paseo-connection.ts), so there is no steering
- * or interrupting by sending: a message typed during a reply waits in the composer's queue and goes when the reply
- * ends. Not a setting (docs/paseo-ui.md).
- */
-const CHAT_SEND_BEHAVIOR: SendBehavior = "queue";
 
 const composerImageAttachmentPersister: Pick<
   AttachmentPersister,
@@ -1548,7 +1543,8 @@ function ComposerContentImpl({
       if (!sendAgentMessageRef.current) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      await sendAgentMessageRef.current(agentIdRef.current, text, submitAttachments, "interrupt");
+      // "steer": sent during a reply, the message belongs to that turn (it is shown in it at once)
+      await sendAgentMessageRef.current(agentIdRef.current, text, submitAttachments, "steer");
     },
     [cwd, onMessageSent, t],
   );
@@ -1611,7 +1607,15 @@ function ComposerContentImpl({
     }
     return false;
   });
-  const activeSendBehavior = resolveActiveSendBehavior(CHAT_SEND_BEHAVIOR, hasPendingPermission);
+  const midTurn = useMidTurnAvailable();
+  const activeSendBehavior = resolveActiveSendBehavior(
+    chatSendBehavior(selectedAttachments.length > 0, midTurn),
+    hasPendingPermission,
+  );
+  // a refused send's message says how things stood then ("still replying"): it goes when the reply ends or starts
+  useEffect(() => {
+    setSendError(null);
+  }, [isAgentRunning]);
   const hasAgent = agentState.status !== null;
 
   const queueWriter = useMemo<QueueWriter>(
@@ -1945,7 +1949,21 @@ function ComposerContentImpl({
   const handleSendQueuedNow = useCallback(
     async (id: string) => {
       if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
-      // Reuse the regular send path; server-side send atomically interrupts any active run.
+      if (isAgentRunning) {
+        // The server takes no message with attachments while a reply runs, so "now" means: this one goes first, and
+        // the reply stops for it. The queue drains as soon as the agent is idle (host-runtime
+        // drainQueuedAgentMessage).
+        setQueuedMessages(serverId, (prev) => {
+          const queue = prev.get(agentId) ?? [];
+          const item = queue.find((q) => q.id === id);
+          if (!item) return prev;
+          const next = new Map(prev);
+          next.set(agentId, [item, ...queue.filter((q) => q.id !== id)]);
+          return next;
+        });
+        handleCancelAgent();
+        return;
+      }
       const result = await sendQueuedComposerMessageNow({
         agentId,
         messageId: id,
@@ -1958,7 +1976,7 @@ function ComposerContentImpl({
         setSendError(result.errorMessage);
       }
     },
-    [agentId, queueWriter, submitMessage, t],
+    [agentId, handleCancelAgent, isAgentRunning, queueWriter, serverId, setQueuedMessages, submitMessage, t],
   );
 
   const handleQueue = useCallback(

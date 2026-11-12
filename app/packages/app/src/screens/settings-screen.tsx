@@ -229,8 +229,8 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "about", labelKey: "settings.sections.about", icon: Info },
 ];
 
-// The settings a conversation app has (docs/paseo-ui.md): language, theme and text sizes, chat display. Sending
-// while a reply runs always queues (composer/index.tsx CHAT_SEND_BEHAVIOR).
+// The settings a conversation app has (docs/paseo-ui.md): language, theme and text sizes, chat display. What sending
+// does while a reply runs is fixed (composer/input/state.ts chatSendBehavior).
 // Hosts, terminals, editors, files, diagnostics and the rest belong to a developer's machine.
 /** One host, configured on the server: no host settings group. */
 const SHOW_HOST_SETTINGS: boolean = false;

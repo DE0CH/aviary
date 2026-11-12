@@ -5,6 +5,18 @@ import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 
 export type SendBehavior = ActiveTurnBehavior | "queue";
 
+/**
+ * What sending does while a reply runs (docs/paseo-ui.md; not a setting). A text message goes out at once ("steer"):
+ * the server writes it into the running turn, where Claude Code takes it in after its next tool result, or right
+ * after the reply (aviary magpie's `midTurn`; Deyao, 2026-11-12). A message with attachments cannot join a running
+ * turn (the server refuses it, 409 `turn_running`): it waits in the composer's queue and goes when the reply ends, or
+ * when "Send now" stops the reply for it. So does every message on a server that takes none mid-turn
+ * (`serverTakesMidTurn` false: yyc/me.ts `midTurn`).
+ */
+export function chatSendBehavior(hasAttachments: boolean, serverTakesMidTurn: boolean): SendBehavior {
+  return serverTakesMidTurn && !hasAttachments ? "steer" : "queue";
+}
+
 export function resolveActiveSendBehavior(
   sendBehavior: SendBehavior,
   hasPendingPermission: boolean,
