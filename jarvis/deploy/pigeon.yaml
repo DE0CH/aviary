@@ -20,14 +20,14 @@ spec:
       initContainers:
         # the app bundle (pigeon 17.1): the pigeon-app image's files, copied into the emptyDir pigeon serves
         - name: app
-          image: ghcr.io/de0ch/pigeon-app:4a0029cedd02@sha256:69aeb7aecc4c8f75d3f737138abd764dc9635d79f0129ea8f532115065ea1c57
+          image: ghcr.io/de0ch/pigeon-app:602d0eebedc2@sha256:26581fae2b189a17905f246bde792892ef01506e2cd436115f93087d18224280
           command: [/cp, -a, /app/., /srv/app/]
           volumeMounts: [{ name: app, mountPath: /srv/app }]
           resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
           securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: pigeon
-          image: ghcr.io/de0ch/pigeon:080cec6c7a32@sha256:aaced501bc828bfa02c49cf48abd7402231d23d7ac3925c8ed55846cdc93b588
+          image: ghcr.io/de0ch/pigeon:9da06bb66f5c@sha256:56cbd37dbf3d4218e0f416ca33e2afc43050c1afe7b8bc4d16b4f2f4e34eb5ad
           envFrom: [{ secretRef: { name: chat-pigeon } }]
           env: [{ name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }]
           ports: [{ containerPort: 8080 }, { containerPort: 9090 }]
