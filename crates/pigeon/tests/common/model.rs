@@ -168,6 +168,7 @@ impl Model {
             },
             model: None,
             picked_model: None,
+            picked_thinking: None,
             context_tokens: None,
             origin: Origin {
                 kind: OriginKind::New,
@@ -471,6 +472,10 @@ impl Server for Model {
             return Ok(Admitted::Repeat(r));
         }
         let id = self.add(&person, None);
+        self.edit(id, |c| {
+            c.picked_model.clone_from(&body.model);
+            c.picked_thinking.clone_from(&body.thinking);
+        });
         let turn = if body.message.text.is_empty() {
             None
         } else {
@@ -524,6 +529,9 @@ impl Server for Model {
             }
             if let Some(m) = &body.model {
                 c.picked_model = Some(m.clone());
+            }
+            if let Some(l) = &body.thinking {
+                c.picked_thinking = (!l.is_empty()).then(|| l.clone());
             }
         });
         Ok(self.st().convs[&id].conv.clone())

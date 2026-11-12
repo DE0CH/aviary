@@ -120,7 +120,7 @@ pub async fn person_row(db: &impl Db, person: &str) -> Result<PersonRow> {
 /// The columns of [`conversation_from_row`], over `conversations c` with its active and last turn.
 pub const SELECT: &str = "select c.id, c.title, c.name_source, c.created_at, c.activity_at, c.last_user_message_at,
     c.deleted_at, c.provider_session_id, c.run_state, c.background, c.sandbox_phase, c.model, c.context_tokens,
-    c.origin, c.person, c.picked_model,
+    c.origin, c.person, c.picked_model, c.picked_thinking,
     t.id as t_id, t.created_at as t_at, t.origin as t_origin,
     l.id as l_id, l.state as l_state, l.ended_at as l_ended, l.created_at as l_created, l.error_code as l_code,
     l.error_detail as l_detail
@@ -227,6 +227,7 @@ pub fn conversation_from_row(row: &Row) -> Result<Conversation> {
         },
         model: row.get("model"),
         picked_model: row.get("picked_model"),
+        picked_thinking: row.get("picked_thinking"),
         context_tokens: row
             .get::<_, Option<i32>>("context_tokens")
             .and_then(|n| u64::try_from(n).ok()),

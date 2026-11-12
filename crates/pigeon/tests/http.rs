@@ -714,7 +714,10 @@ async fn the_model_list_is_cached_and_kept_on_error() {
     let h = Harness::start().await;
     let path = "/api/providers/claude/models";
     let want = json!({"success": true, "data": {"models": {
-        "OPTIONS": [{"value": "vendor/model-a", "label": "Model A"}, {"value": "vendor/model-b", "label": "vendor/model-b"}],
+        "OPTIONS": [
+            {"value": "vendor/model-a", "label": "Model A", "thinking": ["none", "low", "high", "max"], "reasoning": "high"},
+            {"value": "vendor/model-b", "label": "vendor/model-b", "thinking": [], "reasoning": null},
+            {"value": "vendor/model-c", "label": "Model C", "thinking": ["low", "high"], "reasoning": "high"}],
         "DEFAULT": "vendor/model-a"}}});
     assert_eq!(body_json(h.get_as(path, STAFF).await).await, want);
     assert_eq!(body_json(h.get_as(path, STAFF).await).await, want);

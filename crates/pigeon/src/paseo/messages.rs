@@ -249,9 +249,57 @@ pub fn providers_snapshot(request_id: &str, cwd: Option<&str>, models: Option<&V
             .as_str()
     });
     let label = label.or(default).unwrap_or("");
-    let model_list: Vec<Value> = default
-        .map(|d| vec![json!({"id": d, "label": label, "description": "", "isDefault": true})])
+    // every model of the list, the default marked; a model with thinking levels points at its set (the levels as
+    // options, their ids as labels: the app words them; the model's own level is the set's default)
+    let mut thinking_sets: Vec<Value> = Vec::new();
+    let model_list: Vec<Value> = models
+        .and_then(|m| m.get("OPTIONS"))
+        .and_then(Value::as_array)
+        .map(|options| {
+            options
+                .iter()
+                .filter_map(|o| {
+                    let id = o.get("value").and_then(Value::as_str)?;
+                    let mut model = Map::new();
+                    model.insert("id".into(), json!(id));
+                    model.insert(
+                        "label".into(),
+                        json!(o.get("label").and_then(Value::as_str).unwrap_or(id)),
+                    );
+                    model.insert("description".into(), json!(""));
+                    model.insert("isDefault".into(), json!(Some(id) == default));
+                    let levels: Vec<&str> = o
+                        .get("thinking")
+                        .and_then(Value::as_array)
+                        .map(|l| l.iter().filter_map(Value::as_str).collect())
+                        .unwrap_or_default();
+                    if !levels.is_empty() {
+                        let own = o
+                            .get("reasoning")
+                            .and_then(Value::as_str)
+                            .filter(|r| levels.contains(r));
+                        let options: Vec<Value> = levels
+                            .iter()
+                            .map(|l| json!({"id": l, "label": l, "isDefault": Some(*l) == own}))
+                            .collect();
+                        let mut set = Map::new();
+                        set.insert("options".into(), json!(options));
+                        if let Some(own) = own {
+                            set.insert("defaultOptionId".into(), json!(own));
+                        }
+                        let set = Value::Object(set);
+                        let index = thinking_sets.iter().position(|s| *s == set).unwrap_or_else(|| {
+                            thinking_sets.push(set);
+                            thinking_sets.len() - 1
+                        });
+                        model.insert("thinkingSet".into(), json!(index));
+                    }
+                    Some(Value::Object(model))
+                })
+                .collect()
+        })
         .unwrap_or_default();
+    let hash = serde_json::to_string(&(default, &model_list, &thinking_sets)).unwrap_or_default();
     let now = now_iso();
     let mut p = Map::new();
     p.insert("requestId".into(), json!(request_id));
@@ -260,11 +308,11 @@ pub fn providers_snapshot(request_id: &str, cwd: Option<&str>, models: Option<&V
     }
     p.insert("generatedAt".into(), json!(now));
     p.insert("entries".into(), json!([]));
-    p.insert("snapshotHash".into(), json!(format!("model:{}", default.unwrap_or(""))));
+    p.insert("snapshotHash".into(), json!(format!("models:{hash}")));
     p.insert("fetchedAt".into(), json!({PROVIDER: now}));
     p.insert(
         "compactSnapshot".into(),
-        json!({"thinkingSets": [], "entries": [{"provider": PROVIDER, "status": "ready", "enabled": true,
+        json!({"thinkingSets": thinking_sets, "entries": [{"provider": PROVIDER, "status": "ready", "enabled": true,
             "source": "builtin", "label": label, "description": "", "defaultModeId": null, "models": model_list,
             "modes": []}]}),
     );

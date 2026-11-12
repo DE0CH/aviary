@@ -364,6 +364,10 @@ pub struct StartTurn {
     /// models route's default. Absent: the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The thinking level the person picked (`pickedThinking`): `none` (thinking off) or one of Claude Code's effort
+    /// levels. Absent: the level the models route names for the model, else Claude Code's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
 }
 
 /// One answer of a parked turn's `start_turn`: the question as it was asked, and the person's answer.

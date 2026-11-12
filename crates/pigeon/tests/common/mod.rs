@@ -279,8 +279,9 @@ pub fn tuning() -> Tuning {
 }
 
 const MODELS_JSON: &str = r#"{"default":"vendor/model-a","small":"vendor/model-s","title":"vendor/model-s",
-"contextTokens":200000,"models":[{"id":"vendor/model-a","label":"Model A","reasoning":null},
-{"id":"vendor/model-b","label":"","reasoning":null}]}"#;
+"contextTokens":200000,"models":[{"id":"vendor/model-a","label":"Model A","reasoning":"high",
+"thinking":["none","low","high","max"]},{"id":"vendor/model-b","label":"","reasoning":null},
+{"id":"vendor/model-c","label":"Model C","reasoning":"high","thinking":["low","high"]}]}"#;
 
 fn model_stub(
     hits: Arc<AtomicUsize>,

@@ -25,7 +25,11 @@ pub fn of(cfg: &Config) -> Deployment {
                 .collect(),
             app_scheme: f.sign_in.app_scheme.clone(),
         },
-        // YYC's staff start their own conversations
-        conversations: Conversations::default(),
+        // YYC's staff start their own conversations, and pick each one's model and thinking level in the composer's
+        // menu (Deyao, 2026-11-12)
+        conversations: Conversations {
+            people_pick_model: true,
+            ..Conversations::default()
+        },
     }
 }

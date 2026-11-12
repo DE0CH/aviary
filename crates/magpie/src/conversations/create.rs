@@ -83,7 +83,8 @@ async fn first_turn(db: &impl Db, conversation: Uuid) -> Result<Option<TurnStart
 /// # Errors
 /// 400 `bad_request` / `too_many_attachments`, 413 `too_large`; the admission's refusals; a statement error.
 pub async fn create(pool: &Pool, person: &Person, req: CreateRequest) -> Result<Admitted<CreateResponse>> {
-    create_with_model(pool, person, req, None).await
+    let model = req.model.clone();
+    create_with_model(pool, person, req, model).await
 }
 
 /// M3 for a conversation the deployment starts (hermit's route): `model` is its `pickedModel` from the start.
@@ -103,6 +104,13 @@ pub async fn create_with_model(
         .is_some_and(|m| m.is_empty() || m.chars().count() > magpie_api::conversations::MODEL_MAX_CHARS)
     {
         return Err(Error::bad_request("model must be 1-200 characters"));
+    }
+    if req
+        .thinking
+        .as_deref()
+        .is_some_and(|l| l.trim().is_empty() || l.chars().count() > magpie_api::conversations::MODEL_MAX_CHARS)
+    {
+        return Err(Error::bad_request("thinking must be 1-200 characters"));
     }
     let (req, model) = (&req, &model); // borrowed: the transaction may run more than once (aviary_pg::tx!)
     let (new, id) = aviary_pg::tx!(pool, |t| -> Result<(bool, Uuid)> {
@@ -131,8 +139,9 @@ async fn create_tx(t: &Tx<'_>, person: &Person, req: &CreateRequest, model: Opti
     };
     let inserted = t
         .query_opt(
-            "insert into conversations (id, person, create_key, title, created_at, activity_at, origin, picked_model)
-             values ($1, $2, $3, $4, $5, $5, $6, $7)
+            "insert into conversations (id, person, create_key, title, created_at, activity_at, origin, picked_model,
+                                        picked_thinking)
+             values ($1, $2, $3, $4, $5, $5, $6, $7, $8)
              on conflict (person, create_key) do nothing
              returning id",
             &[
@@ -143,6 +152,7 @@ async fn create_tx(t: &Tx<'_>, person: &Person, req: &CreateRequest, model: Opti
                 &now,
                 &serde_json::to_value(&origin)?,
                 &model,
+                &req.thinking.as_deref().map(str::trim),
             ],
         )
         .await?;

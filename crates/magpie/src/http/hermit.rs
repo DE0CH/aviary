@@ -37,6 +37,8 @@ pub async fn create_conversation(
         async {
             let person = person_of(&body.person)?;
             let req = CreateRequest {
+                model: None,
+                thinking: None,
                 idempotency_key: body.idempotency_key,
                 message: body.message,
             };

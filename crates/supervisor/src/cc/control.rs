@@ -28,6 +28,21 @@ pub fn stop_task(request_id: &str, task_id: &str) -> Vec<u8> {
                  "request": {"subtype": "stop_task", "task_id": task_id}}))
 }
 
+/// `set_max_thinking_tokens`: `Some(0)` switches thinking off (requests carry no `thinking`), `None` on again.
+#[must_use]
+pub fn set_max_thinking_tokens(request_id: &str, tokens: Option<u32>) -> Vec<u8> {
+    line(&json!({"type": "control_request", "request_id": request_id,
+                 "request": {"subtype": "set_max_thinking_tokens", "max_thinking_tokens": tokens}}))
+}
+
+/// `apply_flag_settings` with `effortLevel`: Claude Code's effort level (requests carry it as
+/// `output_config.effort`).
+#[must_use]
+pub fn set_effort(request_id: &str, level: &str) -> Vec<u8> {
+    line(&json!({"type": "control_request", "request_id": request_id,
+                 "request": {"subtype": "apply_flag_settings", "settings": {"effortLevel": level}}}))
+}
+
 fn success(request_id: &str, response: &Value) -> Vec<u8> {
     line(&json!({"type": "control_response",
                  "response": {"subtype": "success", "request_id": request_id, "response": response}}))

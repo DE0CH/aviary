@@ -43,11 +43,22 @@ pub async fn rename(pool: &Pool, person: &Person, id: Uuid, req: RenameRequest) 
             Some(m)
         }
     };
-    if title.is_none() && model.is_none() {
-        return Err(Error::bad_request("a title or a model is required"));
+    // `""`: no level picked again
+    let thinking = match req.thinking {
+        None => None,
+        Some(l) => {
+            let l = l.trim().to_owned();
+            if l.chars().count() > MODEL_MAX_CHARS {
+                return Err(Error::bad_request("thinking must be at most 200 characters"));
+            }
+            Some((!l.is_empty()).then_some(l))
+        }
+    };
+    if title.is_none() && model.is_none() && thinking.is_none() {
+        return Err(Error::bad_request("a title, a model or a thinking level is required"));
     }
     // borrowed: the transaction may run more than once (aviary_pg::tx!)
-    let (title, model) = (&title, &model);
+    let (title, model, thinking) = (&title, &model, &thinking);
     aviary_pg::tx!(pool, |t| -> Result<()> {
         lock(t, &person.email, id).await?;
         if let Some(title) = title {
@@ -66,6 +77,13 @@ pub async fn rename(pool: &Pool, person: &Person, id: Uuid, req: RenameRequest) 
             t.execute(
                 "update conversations set picked_model = $2 where id = $1",
                 &[&id, model],
+            )
+            .await?;
+        }
+        if let Some(level) = thinking {
+            t.execute(
+                "update conversations set picked_thinking = $2 where id = $1",
+                &[&id, level],
             )
             .await?;
         }

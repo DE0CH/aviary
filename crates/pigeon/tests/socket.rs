@@ -194,7 +194,22 @@ async fn static_stubs_unknown_requests_and_malformed_frames() {
         .await;
     assert_eq!(k, "get_providers_snapshot_response");
     assert_eq!(p["compactSnapshot"]["entries"][0]["label"], "Model A");
-    assert_eq!(p["snapshotHash"], "model:vendor/model-a");
+    // every model, the default marked; a model's thinking levels are a set of options, its own level the default
+    let level = |id: &str, own: bool| json!({"id": id, "label": id, "isDefault": own});
+    assert_eq!(
+        p["compactSnapshot"]["thinkingSets"],
+        json!([
+            {"options": [level("none", false), level("low", false), level("high", true), level("max", false)], "defaultOptionId": "high"},
+            {"options": [level("low", false), level("high", true)], "defaultOptionId": "high"}])
+    );
+    assert_eq!(
+        p["compactSnapshot"]["entries"][0]["models"],
+        json!([
+            {"id": "vendor/model-a", "label": "Model A", "description": "", "isDefault": true, "thinkingSet": 0},
+            {"id": "vendor/model-b", "label": "vendor/model-b", "description": "", "isDefault": false},
+            {"id": "vendor/model-c", "label": "Model C", "description": "", "isDefault": false, "thinkingSet": 1}])
+    );
+    assert!(p["snapshotHash"].as_str().unwrap().starts_with("models:"));
     let (k, p) = ws.rpc("project.list.request", json!({"subscribe": true})).await;
     assert_eq!(k, "project.list.response");
     assert_eq!(p["projects"][0]["projectId"], "prj_conversations");
@@ -1875,4 +1890,138 @@ async fn fan_out_latency_guard() {
     let p99 = all[all.len() * 99 / 100 - 1];
     assert!(p99 < 1_000_000, "p99 {p99} us");
     drop(idle);
+}
+
+#[tokio::test]
+async fn a_conversations_thinking_level_is_picked_checked_and_stored() {
+    let e = env().await;
+    let mut ws = e.ws(STAFF).await;
+    let id = e.m.add(STAFF, Some("levels"));
+    let agent = |p: &Value| (p["agent"]["model"].clone(), p["agent"]["thinkingOptionId"].clone());
+    // the model list is read once, then cached
+    ws.rpc("get_providers_snapshot_request", json!({"cwd": "/workspace"}))
+        .await;
+    tokio::time::sleep(model_cache()).await;
+    // where people do not pick models, they pick no level either
+    let (k, r) = ws
+        .rpc(
+            "set_agent_thinking_request",
+            json!({"agentId": id, "thinkingOptionId": "max"}),
+        )
+        .await;
+    assert_eq!(k, "set_agent_thinking_response");
+    assert_eq!(r["accepted"], false);
+    assert_eq!(e.m.calls_to("rename_conversation"), 0);
+    e.h.set_facts(|d| d.conversations.people_pick_model = true).await;
+
+    // a level of the conversation's model (the default while none is picked)
+    let (_, r) = ws
+        .rpc(
+            "set_agent_thinking_request",
+            json!({"agentId": id, "thinkingOptionId": "max"}),
+        )
+        .await;
+    assert_eq!((r["accepted"].clone(), r["error"].clone()), (json!(true), Value::Null));
+    let (_, p) = ws.rpc("fetch_agent_request", json!({"agentId": id})).await;
+    assert_eq!(agent(&p), (json!("vendor/model-a"), json!("max")));
+    assert_eq!(p["agent"]["effectiveThinkingOptionId"], "max");
+    // one it does not have is refused, and magpie is not asked
+    let before = e.m.calls_to("rename_conversation");
+    let (_, r) = ws
+        .rpc(
+            "set_agent_thinking_request",
+            json!({"agentId": id, "thinkingOptionId": "huge"}),
+        )
+        .await;
+    assert_eq!(r["accepted"], false);
+    assert_eq!(e.m.calls_to("rename_conversation"), before);
+
+    // another model: a level it lacks goes back to none picked, one it has stays
+    let (_, r) = ws
+        .rpc(
+            "set_agent_model_request",
+            json!({"agentId": id, "modelId": "vendor/model-c"}),
+        )
+        .await;
+    assert_eq!(r["accepted"], true);
+    let (_, p) = ws.rpc("fetch_agent_request", json!({"agentId": id})).await;
+    assert_eq!(agent(&p), (json!("vendor/model-c"), Value::Null), "model-c has no max");
+    ws.rpc(
+        "set_agent_thinking_request",
+        json!({"agentId": id, "thinkingOptionId": "low"}),
+    )
+    .await;
+    ws.rpc(
+        "set_agent_model_request",
+        json!({"agentId": id, "modelId": "vendor/model-a"}),
+    )
+    .await;
+    let (_, p) = ws.rpc("fetch_agent_request", json!({"agentId": id})).await;
+    assert_eq!(
+        agent(&p),
+        (json!("vendor/model-a"), json!("low")),
+        "model-a has low too"
+    );
+    // a model with no levels takes none
+    ws.rpc(
+        "set_agent_model_request",
+        json!({"agentId": id, "modelId": "vendor/model-b"}),
+    )
+    .await;
+    let (_, r) = ws
+        .rpc(
+            "set_agent_thinking_request",
+            json!({"agentId": id, "thinkingOptionId": "low"}),
+        )
+        .await;
+    assert_eq!(r["accepted"], false);
+    let (_, p) = ws.rpc("fetch_agent_request", json!({"agentId": id})).await;
+    assert_eq!(agent(&p), (json!("vendor/model-b"), Value::Null));
+    // null: none picked again
+    ws.rpc(
+        "set_agent_model_request",
+        json!({"agentId": id, "modelId": "vendor/model-a"}),
+    )
+    .await;
+    ws.rpc(
+        "set_agent_thinking_request",
+        json!({"agentId": id, "thinkingOptionId": "none"}),
+    )
+    .await;
+    let (_, r) = ws
+        .rpc(
+            "set_agent_thinking_request",
+            json!({"agentId": id, "thinkingOptionId": null}),
+        )
+        .await;
+    assert_eq!(r["accepted"], true);
+    let (_, p) = ws.rpc("fetch_agent_request", json!({"agentId": id})).await;
+    assert_eq!(agent(&p), (json!("vendor/model-a"), Value::Null));
+
+    // a draft's pick goes with the creation: the first turn runs on it; what the list does not hold is left out
+    let create = |key: &str, config: Value| {
+        json!({"idempotencyKey": key, "source": {"kind": "directory", "path": "/workspace", "projectId": "prj_conversations"},
+               "agent": {"initialPrompt": "start", "clientMessageId": format!("{key}-m"), "config": config}})
+    };
+    let (_, r) = ws
+        .rpc(
+            "workspace.create.request",
+            create("pick-1", json!({"provider": "claude", "cwd": "/workspace", "model": "vendor/model-c", "thinkingOptionId": "low"})),
+        )
+        .await;
+    assert_eq!(agent(&r), (json!("vendor/model-c"), json!("low")));
+    let (_, r) = ws
+        .rpc(
+            "workspace.create.request",
+            create(
+                "pick-2",
+                json!({"provider": "claude", "cwd": "/workspace", "model": "vendor/other", "thinkingOptionId": "max"}),
+            ),
+        )
+        .await;
+    assert_eq!(
+        agent(&r),
+        (json!("vendor/model-a"), json!("max")),
+        "an unknown model is left out; max is the default's"
+    );
 }

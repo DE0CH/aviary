@@ -65,6 +65,8 @@ impl World {
             .pigeon()
             .person(person)
             .create_conversation(&CreateRequest {
+                model: None,
+                thinking: None,
                 idempotency_key: key.clone(),
                 message: msg(&format!("{key}:m"), ""),
             })

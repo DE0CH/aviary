@@ -37,8 +37,13 @@ pub struct Models {
 pub struct Model {
     pub id: String,
     pub label: String,
-    /// The reasoning level the gateway applies to this model, if any.
+    /// The reasoning level the gateway applies to this model, if any: with `thinking`, the level a conversation
+    /// starts on.
     pub reasoning: Option<String>,
+    /// The thinking levels a person may choose for this model, lowest first (`none` = thinking off, then the
+    /// gateway's effort names). Empty: no choice, every turn runs at `reasoning`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub thinking: Vec<String>,
 }
 
 pub const MODELS_TIMEOUT: Duration = Duration::from_secs(10);

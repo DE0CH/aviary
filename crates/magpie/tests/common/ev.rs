@@ -171,6 +171,8 @@ pub async fn conversation(client: &magpie_api::client::Client, person: &str) -> 
     client
         .person(person)
         .create_conversation(&CreateRequest {
+            model: None,
+            thinking: None,
             idempotency_key: key.clone(),
             message: SendRequest {
                 client_message_id: format!("{key}:m"),

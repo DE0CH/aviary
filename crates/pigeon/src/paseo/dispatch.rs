@@ -80,6 +80,7 @@ fn conversation_of(kind: &str, m: &Value) -> Option<Uuid> {
         | "cancel_agent_request"
         | "update_agent_request"
         | "set_agent_model_request"
+        | "set_agent_thinking_request"
         | "archive_agent_request"
         | "delete_agent_request"
         | "refresh_agent_request"
@@ -90,6 +91,18 @@ fn conversation_of(kind: &str, m: &Value) -> Option<Uuid> {
         _ => return None,
     };
     Uuid::parse_str(id).ok()
+}
+
+/// The thinking levels the model list (`{"OPTIONS", "DEFAULT"}`) gives `model`.
+fn levels_of(models: &Value, model: &str) -> Vec<String> {
+    models
+        .get("OPTIONS")
+        .and_then(Value::as_array)
+        .and_then(|o| o.iter().find(|m| m.get("value").and_then(Value::as_str) == Some(model)))
+        .and_then(|m| m.get("thinking"))
+        .and_then(Value::as_array)
+        .map(|l| l.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+        .unwrap_or_default()
 }
 
 /// The request types handled by a task with an upstream call.
@@ -108,6 +121,7 @@ fn is_upstream(kind: &str) -> bool {
             | "cancel_agent_request"
             | "update_agent_request"
             | "set_agent_model_request"
+            | "set_agent_thinking_request"
             | "workspace.title.set.request"
             | "archive_workspace_request"
             | "archive_agent_request"
@@ -126,6 +140,7 @@ fn view_as_refused(kind: &str) -> bool {
         kind,
         "update_agent_request"
             | "set_agent_model_request"
+            | "set_agent_thinking_request"
             | "workspace.title.set.request"
             | "archive_workspace_request"
             | "archive_agent_request"
@@ -296,6 +311,7 @@ impl Handler {
             "cancel_agent_request" => self.cancel().await,
             "update_agent_request" => self.update_agent().await,
             "set_agent_model_request" => self.set_model().await,
+            "set_agent_thinking_request" => self.set_thinking().await,
             "workspace.title.set.request" => self.title_set().await,
             "archive_workspace_request" | "archive_agent_request" => self.archive().await,
             "delete_agent_request" => self.delete().await,
@@ -718,7 +734,10 @@ impl Handler {
             Ok(i) => i,
             Err(e) => return failed(e, None),
         };
+        let (model, thinking) = self.draft_pick(agent.and_then(|a| a.get("config"))).await;
         let req = CreateRequest {
+            model,
+            thinking,
             idempotency_key: key.clone(),
             message: SendRequest {
                 client_message_id,
@@ -899,9 +918,63 @@ impl Handler {
         if !listed {
             return Some(strings::NOT_AVAILABLE.to_owned());
         }
+        // a thinking level the new model lacks goes back to none picked (the model's own)
+        let current = match self.conversation(id).await {
+            Ok(c) => c.picked_thinking,
+            Err(Fail::NotFound) => return Some(strings::NOT_FOUND.to_owned()),
+            Err(_) => return Some(self.locale().unreachable().to_owned()),
+        };
+        let keeps = current.as_ref().is_none_or(|l| levels_of(&models, &wanted).contains(l));
+        let req = RenameRequest {
+            model: Some(wanted),
+            thinking: (!keeps).then(String::new),
+            ..RenameRequest::default()
+        };
+        match self.calls().rename_conversation(id, &req).await.map_err(fail) {
+            Ok(_) => None,
+            Err(Fail::NotFound) => Some(strings::NOT_FOUND.to_owned()),
+            Err(_) => Some(self.locale().unreachable().to_owned()),
+        }
+    }
+
+    /// `set_agent_thinking_request`: the thinking level of the conversation's turns from the next one, one of its
+    /// model's levels (`null`: none picked again). Where people pick models.
+    async fn set_thinking(&self) {
+        let agent = str_field(&self.m, "agentId").unwrap_or("").to_owned();
+        let error = self.pick_thinking().await;
+        self.reply(
+            "set_agent_thinking_response",
+            &json!({"requestId": self.rid, "agentId": agent, "accepted": error.is_none(), "error": error}),
+        );
+    }
+
+    async fn pick_thinking(&self) -> Option<String> {
+        if !self.app.identities().people_pick_model() {
+            return Some(strings::NOT_AVAILABLE.to_owned());
+        }
+        let Some(id) = self.agent_id() else {
+            return Some(strings::NOT_FOUND.to_owned());
+        };
+        let Some(models) = crate::http::models_value(&self.app).await else {
+            return Some(self.locale().unreachable().to_owned());
+        };
+        let wanted = str_field(&self.m, "thinkingOptionId").unwrap_or("").trim().to_owned();
+        if !wanted.is_empty() {
+            let model = match self.conversation(id).await {
+                Ok(c) => c.picked_model,
+                Err(Fail::NotFound) => return Some(strings::NOT_FOUND.to_owned()),
+                Err(_) => return Some(self.locale().unreachable().to_owned()),
+            };
+            let model = model
+                .or_else(|| models.get("DEFAULT").and_then(Value::as_str).map(str::to_owned))
+                .unwrap_or_default();
+            if !levels_of(&models, &model).contains(&wanted) {
+                return Some(strings::NOT_AVAILABLE.to_owned());
+            }
+        }
         match self
             .calls()
-            .rename_conversation(id, &RenameRequest::model(wanted))
+            .rename_conversation(id, &RenameRequest::thinking(wanted))
             .await
             .map_err(fail)
         {
@@ -909,6 +982,33 @@ impl Handler {
             Err(Fail::NotFound) => Some(strings::NOT_FOUND.to_owned()),
             Err(_) => Some(self.locale().unreachable().to_owned()),
         }
+    }
+
+    /// A draft's pick (`agent.config.model`, `.thinkingOptionId`), where people pick models: the first turn runs on
+    /// it. A model the list does not hold, or a level its model lacks, is left out.
+    async fn draft_pick(&self, config: Option<&Value>) -> (Option<String>, Option<String>) {
+        fn text<'a>(config: Option<&'a Value>, key: &str) -> Option<&'a str> {
+            config?.get(key)?.as_str().map(str::trim).filter(|s| !s.is_empty())
+        }
+        let (model, thinking) = (text(config, "model"), text(config, "thinkingOptionId"));
+        if (model.is_none() && thinking.is_none()) || !self.app.identities().people_pick_model() {
+            return (None, None);
+        }
+        let Some(models) = crate::http::models_value(&self.app).await else {
+            return (None, None);
+        };
+        let listed = |id: &str| {
+            models
+                .get("OPTIONS")
+                .and_then(Value::as_array)
+                .is_some_and(|o| o.iter().any(|m| m.get("value").and_then(Value::as_str) == Some(id)))
+        };
+        let model = model.filter(|m| listed(m));
+        let of = model
+            .or_else(|| models.get("DEFAULT").and_then(Value::as_str))
+            .unwrap_or("");
+        let thinking = thinking.filter(|l| levels_of(&models, of).iter().any(|x| x == l));
+        (model.map(str::to_owned), thinking.map(str::to_owned))
     }
 
     async fn title_set(&self) {

@@ -80,6 +80,8 @@ impl World {
             .pigeon()
             .person(ALICE)
             .create_conversation(&CreateRequest {
+                model: None,
+                thinking: None,
                 idempotency_key: key.clone(),
                 message: msg(&format!("{key}:m"), ""),
             })
@@ -1890,6 +1892,8 @@ async fn deleting_a_conversation_releases_its_sandbox_once_and_ends_its_turn() {
 async fn a_create_with_a_first_message_admits_one_first_turn() {
     let w = World::new("turn_create", None).await;
     let req = CreateRequest {
+        model: None,
+        thinking: None,
         idempotency_key: "draft-7f3a".into(),
         message: msg("draft-7f3a:initial-message", "幫我整理今日有關港珠澳大橋嘅新聞"),
     };
@@ -1928,6 +1932,8 @@ async fn a_create_with_a_first_message_admits_one_first_turn() {
     for i in 0..16 {
         let client = w.a.pigeon();
         let req = CreateRequest {
+            model: None,
+            thinking: None,
             idempotency_key: "draft-race".into(),
             message: msg("draft-race:initial-message", &format!("hi {i}")),
         };
@@ -2910,4 +2916,119 @@ async fn an_answer_that_crossed_the_park_resumes_the_turn() {
     );
     let kinds = w.kinds(conv).await;
     assert!(kinds.contains(&"ask.resolved".to_owned()));
+}
+
+#[tokio::test]
+async fn a_turns_start_carries_the_conversations_picked_thinking_level() {
+    let w = World::new("turn_thinking", Some(Duration::ZERO)).await;
+    let start = |cmds: &CommandsResponse| -> (Option<String>, Option<String>) {
+        let st = cmds
+            .commands
+            .iter()
+            .find_map(|c| match &c.body {
+                CommandBody::StartTurn(st) => Some(st.clone()),
+                _ => None,
+            })
+            .expect("start_turn");
+        (st.model, st.thinking)
+    };
+    // nothing picked: the start names neither a model nor a level
+    let conv = w.conversation().await;
+    let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
+    assert_eq!((c.picked_model, c.picked_thinking), (None, None));
+    let turn = w.send(conv, "m1", "one").await;
+    assert!(w.state_is(turn, "starting").await);
+    let sup = w.supervisor(conv).await;
+    assert_eq!(start(&sup.poll(0, 0).await), (None, None));
+    sup.run(turn).await;
+    sup.report(turn, ReportedState::Completed).await.unwrap();
+    assert!(w.state_is(turn, "completed").await);
+
+    // the person picks a level (M5, without a rename or a model): on the conversation, in the next turn's start
+    let me = w.a.pigeon();
+    let picked = me
+        .person(ALICE)
+        .rename_conversation(conv, &magpie_api::conversations::RenameRequest::thinking(" max "))
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            picked.picked_model.as_deref(),
+            picked.picked_thinking.as_deref(),
+            picked.title_source
+        ),
+        (None, Some("max"), None),
+        "a level is no rename and no model"
+    );
+    let turn = w.send(conv, "m2", "two").await;
+    assert!(w.state_is(turn, "starting").await);
+    assert_eq!(start(&sup.poll(0, 0).await), (None, Some("max".into())));
+    sup.run(turn).await;
+    sup.report(turn, ReportedState::Completed).await.unwrap();
+    assert!(w.state_is(turn, "completed").await);
+
+    // a model and a level together; then the level alone back to none picked, the model untouched
+    let both = me
+        .person(ALICE)
+        .rename_conversation(
+            conv,
+            &magpie_api::conversations::RenameRequest {
+                model: Some("vendor/other".into()),
+                thinking: Some("low".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (both.picked_model.as_deref(), both.picked_thinking.as_deref()),
+        (Some("vendor/other"), Some("low"))
+    );
+    let cleared = me
+        .person(ALICE)
+        .rename_conversation(conv, &magpie_api::conversations::RenameRequest::thinking(""))
+        .await
+        .unwrap();
+    assert_eq!(
+        (cleared.picked_model.as_deref(), cleared.picked_thinking.as_deref()),
+        (Some("vendor/other"), None)
+    );
+    // another person's conversation is not theirs to change
+    assert!(
+        me.person("bob@example.com")
+            .rename_conversation(conv, &magpie_api::conversations::RenameRequest::thinking("low"))
+            .await
+            .is_err()
+    );
+
+    // picked in the draft: the first turn already runs on them
+    let req = CreateRequest {
+        model: Some("vendor/other".into()),
+        thinking: Some("low".into()),
+        idempotency_key: "draft-pick".into(),
+        message: msg("draft-pick:initial-message", "hi"),
+    };
+    let made =
+        w.a.pigeon()
+            .person(ALICE)
+            .create_conversation(&req)
+            .await
+            .unwrap()
+            .get()
+            .clone();
+    assert_eq!(
+        (
+            made.conversation.picked_model.as_deref(),
+            made.conversation.picked_thinking.as_deref()
+        ),
+        (Some("vendor/other"), Some("low"))
+    );
+    let first = made.turn.expect("the first turn");
+    w.fake().make_ready(made.conversation.id);
+    assert!(w.state_is(first.id, "starting").await);
+    let sup2 = w.supervisor(made.conversation.id).await;
+    assert_eq!(
+        start(&sup2.poll(0, 0).await),
+        (Some("vendor/other".into()), Some("low".into()))
+    );
 }

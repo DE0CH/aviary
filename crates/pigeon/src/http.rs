@@ -890,7 +890,9 @@ async fn refresh_models(app: App) {
                 .iter()
                 .map(|e| {
                     let label = if e.label.trim().is_empty() { &e.id } else { &e.label };
-                    json!({"value": e.id, "label": label})
+                    // `thinking`: the levels a person may choose (empty: none); `reasoning`: the one a
+                    // conversation starts on
+                    json!({"value": e.id, "label": label, "thinking": e.thinking, "reasoning": e.reasoning})
                 })
                 .collect();
             Some(json!({"OPTIONS": options, "DEFAULT": m.default}))

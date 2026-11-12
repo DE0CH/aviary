@@ -173,7 +173,8 @@ pub fn agent_snapshot(c: &Conversation, v: &View<'_>) -> Value {
     let model = c.picked_model.as_deref().or(v.model);
     json!({
         "id": c.id, "provider": PROVIDER, "cwd": CWD, "workspaceId": workspace_id(&c.id), "model": model,
-        "thinkingOptionId": null, "effectiveThinkingOptionId": null,
+        // the thinking level the person picked (none: the app shows the model's own)
+        "thinkingOptionId": c.picked_thinking, "effectiveThinkingOptionId": c.picked_thinking,
         "runtimeInfo": {"provider": PROVIDER, "sessionId": c.claude_session_id, "model": model, "modeId": null},
 
         "createdAt": c.created_at, "updatedAt": c.updated_at, "lastUserMessageAt": last_user,
