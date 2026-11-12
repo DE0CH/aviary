@@ -338,6 +338,99 @@ async fn admin_reads_are_audited_once_a_day() {
     assert_eq!(listed, want);
 }
 
+/// The deployment names the model a session's conversation starts on (its `pickedModel`, carried by every
+/// `start_turn`), and reads the conversation back whoever its person is: the title for its own session list.
+#[tokio::test]
+async fn the_deployment_names_the_model_and_reads_the_conversation() {
+    use magpie_api::conversations::RenameRequest;
+    use magpie_api::ops::HermitCreateRequest;
+    use magpie_api::turns::SendRequest;
+    let hermit = FakeHermit::unguarded(HermitConfig::default());
+    let running = hermit.serve().await.unwrap();
+    let db = common::fresh_db("hmodel").await;
+    let t = common::Tokens::new();
+    let r = common::replica_with(&db.url, &t, &running.url(), common::idle()).await;
+    let create = |key: &str, model: Option<&str>| HermitCreateRequest {
+        person: STAFF.into(),
+        idempotency_key: key.into(),
+        message: SendRequest {
+            client_message_id: format!("{key}:first"),
+            text: "the session's first prompt".into(),
+            images: vec![],
+            files: vec![],
+        },
+        model: model.map(str::to_owned),
+    };
+    let made = r
+        .hermit()
+        .service(None)
+        .hermit_create_conversation(&create("session:s1", Some("claude-opus-5-5")))
+        .await
+        .unwrap()
+        .into_inner();
+    let id = made.conversation.id;
+    assert_eq!(made.conversation.picked_model.as_deref(), Some("claude-opus-5-5"));
+    let payload: serde_json::Value = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select payload from commands where conversation_id = $1 and type = 'start_turn'",
+            &[&id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(payload["model"], "claude-opus-5-5", "the first turn runs on it");
+    // a repeat keeps the conversation as it is, whatever model it names
+    let again = r
+        .hermit()
+        .service(None)
+        .hermit_create_conversation(&create("session:s1", Some("claude-fable-5-2")))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(again.conversation.picked_model.as_deref(), Some("claude-opus-5-5"));
+    // none named: none picked
+    let plain = r
+        .hermit()
+        .service(None)
+        .hermit_create_conversation(&create("session:s2", None))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(plain.conversation.picked_model, None);
+    let e = r
+        .hermit()
+        .service(None)
+        .hermit_create_conversation(&create("session:s3", Some("  ")))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code(), Some(&ErrorCode::BadRequest));
+
+    // the deployment reads it back, with the person's rename
+    r.pigeon()
+        .person(STAFF)
+        .rename_conversation(id, &RenameRequest::title("Model picker"))
+        .await
+        .unwrap();
+    let seen = r.hermit().service(None).hermit_conversation(id).await.unwrap();
+    assert_eq!(seen.id, id);
+    assert_eq!(seen.title.as_deref(), Some("Model picker"));
+    assert_eq!(seen.picked_model.as_deref(), Some("claude-opus-5-5"));
+    let e = r
+        .hermit()
+        .service(None)
+        .hermit_conversation(uuid::Uuid::new_v4())
+        .await
+        .unwrap_err();
+    assert_eq!(e.code(), Some(&ErrorCode::NotFound));
+    // pigeon may not use hermit's route
+    let e = r.pigeon().service(None).hermit_conversation(id).await.unwrap_err();
+    assert_eq!(e.code(), Some(&ErrorCode::WrongCaller));
+}
+
 #[tokio::test]
 async fn the_deployment_starts_a_persons_conversation_and_sends_its_turns() {
     use magpie_api::ops::{HermitCreateRequest, HermitSendRequest};
@@ -358,6 +451,7 @@ async fn the_deployment_starts_a_persons_conversation_and_sends_its_turns() {
         person: "  Staff@Example.org ".into(),
         idempotency_key: "session:s1".into(),
         message: msg("first", "the session's first prompt"),
+        model: None,
     };
     let made = r
         .hermit()
@@ -418,6 +512,7 @@ async fn the_deployment_starts_a_persons_conversation_and_sends_its_turns() {
             person: "nobody".into(),
             idempotency_key: "k".into(),
             message: msg("m", "x"),
+            model: None,
         })
         .await
         .unwrap_err();

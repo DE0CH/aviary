@@ -167,6 +167,7 @@ impl Model {
                 background: Vec::new(),
             },
             model: None,
+            picked_model: None,
             context_tokens: None,
             origin: Origin {
                 kind: OriginKind::New,
@@ -513,12 +514,17 @@ impl Server for Model {
         self.record("rename_conversation", &ctx)?;
         Self::read_only(&ctx)?;
         self.mine(&ctx, id)?;
-        if body.title.trim().is_empty() {
+        if body.title.as_deref().is_some_and(|t| t.trim().is_empty()) {
             return Err(refusal(ErrorCode::EmptyTitle, "empty"));
         }
         self.edit(id, |c| {
-            c.title = Some(body.title.trim().to_owned());
-            c.title_source = Some(TitleSource::User);
+            if let Some(t) = &body.title {
+                c.title = Some(t.trim().to_owned());
+                c.title_source = Some(TitleSource::User);
+            }
+            if let Some(m) = &body.model {
+                c.picked_model = Some(m.clone());
+            }
         });
         Ok(self.st().convs[&id].conv.clone())
     }
@@ -598,6 +604,7 @@ impl Server for Model {
                 id: turn,
                 started_at: now(),
             },
+            mid_turn: false,
         };
         c.sends.insert(body.client_message_id.clone(), r.clone());
         Self::start_turn_in(&mut st, id, turn, TurnOrigin::Person);

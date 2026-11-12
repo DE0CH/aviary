@@ -1,8 +1,9 @@
 //! Admission (M7 `POST /v1/conversations/{id}/turns`, and M3's first message), magpie 8.2.
 //!
 //! One transaction: the conversation row lock, the idempotency check on `clientMessageId`, the single admission
-//! point (409 `turn_running` while a turn is admitted, preparing, running or stopping, so two sockets sending at once
-//! get exactly one turn), the attachments, `user.sent` and `turn.started`, the turn, its `start_turn` (and `title`)
+//! point (while a turn is admitted, preparing, running or stopping, two sockets sending at once get exactly one
+//! turn: the second message joins that turn as a mid-turn message, [`super::midturn`], or is refused 409
+//! `turn_running` when it has attachments or comes from the deployment), the attachments, `user.sent` and `turn.started`, the turn, its `start_turn` (and `title`)
 //! command, the conversation's run state, and the changes. The user's text is stored before anything can fail, so a
 //! turn that fails later still shows as sent and unanswered.
 //!
@@ -61,21 +62,30 @@ pub struct Sent {
 }
 
 impl Sent {
-    /// The new turn, when this call admitted it.
+    /// The new turn, when this call admitted it (a message that joined a running turn started none).
     #[must_use]
     pub fn new_turn(&self) -> Option<Uuid> {
         match &self.answer {
-            Admitted::New(r) => Some(r.turn.id),
-            Admitted::Repeat(_) => None,
+            Admitted::New(r) if !r.mid_turn => Some(r.turn.id),
+            _ => None,
         }
     }
+}
+
+/// What a send does while a turn runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WhileRunning {
+    /// The message joins the running turn ([`super::midturn`]): a person's send.
+    Join,
+    /// 409 `turn_running`: the deployment's send (hermit's route).
+    Refuse,
 }
 
 /// M7.
 ///
 /// # Errors
 /// 404, 409 `conversation_deleted` / `turn_running`, 400, 413; a statement error.
-pub async fn send(pool: &Pool, person: &Person, id: Uuid, req: SendRequest) -> Result<Sent> {
+pub async fn send(pool: &Pool, person: &Person, id: Uuid, req: SendRequest, running: WhileRunning) -> Result<Sent> {
     validate(&req)?;
     let req = &req; // borrowed: the transaction may run more than once (aviary_pg::tx!)
     let answer = aviary_pg::tx!(pool, |t| -> Result<Admitted<SendResponse>> {
@@ -98,18 +108,27 @@ pub async fn send(pool: &Pool, person: &Person, id: Uuid, req: SendRequest) -> R
                     id: r.get(0),
                     started_at: Timestamp(r.get(1)),
                 },
+                mid_turn: false,
             }));
+        }
+        if let Some(r) = super::midturn::repeat(t, id, &req.client_message_id).await? {
+            return Ok(Admitted::Repeat(r));
         }
         let state: String = t
             .query_one("select run_state from conversations where id = $1", &[&id])
             .await?
             .get(0);
         if matches!(state.as_str(), "admitted" | "preparing" | "running" | "stopping") {
+            if running == WhileRunning::Join
+                && let Some(r) = super::midturn::join(t, id, person, req).await?
+            {
+                return Ok(Admitted::New(r));
+            }
             return Err(Error::code(ErrorCode::TurnRunning, "a turn is already running"));
         }
         ensure_person(t, &person.email).await?;
         let turn = admit(t, id, person, req).await?;
-        Ok(Admitted::New(SendResponse { turn }))
+        Ok(Admitted::New(SendResponse { turn, mid_turn: false }))
     })
     .await?;
     Ok(Sent { answer })
@@ -429,7 +448,7 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
     let start_seq = events::append(tx, conversation, ev).await?;
     let conv = tx
         .query_one(
-            "select provider_session_id, name_source, title_attempts from conversations where id = $1",
+            "select provider_session_id, name_source, title_attempts, picked_model from conversations where id = $1",
             &[&conversation],
         )
         .await?;
@@ -457,6 +476,7 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
         },
         sent_at: Timestamp(now),
         answers: Vec::new(),
+        model: conv.get(3),
     };
     let cmd = command(
         tx,

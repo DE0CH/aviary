@@ -866,6 +866,71 @@ async fn sends_creates_and_cancels() {
     assert_eq!(r["error"], "未能開始對話，請再試一次。");
 }
 
+/// The app's model picker: where the deployment lets people pick, a model of the list becomes the conversation's
+/// (`pickedModel`, which the agent then shows); elsewhere, and for a model that is not listed, nothing is picked.
+#[tokio::test]
+async fn a_person_picks_a_listed_model_where_the_deployment_lets_them() {
+    let e = env().await;
+    let c = e.m.add(STAFF, Some("chat"));
+    let mut ws = e.ws(STAFF).await;
+    // the model list is read (the app's first request for it)
+    ws.rpc("get_providers_snapshot_request", json!({"cwd": "/workspace"}))
+        .await;
+    let (_, a) = ws.rpc("fetch_agent_request", json!({"agentId": c})).await;
+    assert_eq!(a["agent"]["model"], "vendor/model-a", "the deployment's default");
+    // people do not pick here (the default deployment): refused, magpie never asked
+    let (k, r) = ws
+        .rpc(
+            "set_agent_model_request",
+            json!({"agentId": c, "modelId": "vendor/model-b"}),
+        )
+        .await;
+    assert_eq!(k, "set_agent_model_response");
+    assert_eq!((&r["accepted"], &r["agentId"]), (&json!(false), &json!(c.to_string())));
+    assert_eq!(e.m.calls_to("rename_conversation"), 0);
+
+    e.h.set_facts(|d| d.conversations.people_pick_model = true).await;
+    let (_, r) = ws
+        .rpc(
+            "set_agent_model_request",
+            json!({"agentId": c, "modelId": "vendor/not-listed"}),
+        )
+        .await;
+    assert_eq!(r["accepted"], false);
+    assert_eq!(e.m.calls_to("rename_conversation"), 0);
+    let (_, r) = ws
+        .rpc(
+            "set_agent_model_request",
+            json!({"agentId": c, "modelId": "vendor/model-b"}),
+        )
+        .await;
+    assert_eq!((&r["accepted"], &r["error"]), (&json!(true), &Value::Null));
+    assert_eq!(e.m.st().convs[&c].conv.picked_model.as_deref(), Some("vendor/model-b"));
+    assert_eq!(
+        e.m.st().convs[&c].conv.title.as_deref(),
+        Some("chat"),
+        "the title is not touched"
+    );
+    let (_, a) = ws.rpc("fetch_agent_request", json!({"agentId": c})).await;
+    assert_eq!(a["agent"]["model"], "vendor/model-b");
+    assert_eq!(a["agent"]["runtimeInfo"]["model"], "vendor/model-b");
+    // null: back to the list's default
+    let (_, r) = ws
+        .rpc("set_agent_model_request", json!({"agentId": c, "modelId": null}))
+        .await;
+    assert_eq!(r["accepted"], true);
+    assert_eq!(e.m.st().convs[&c].conv.picked_model.as_deref(), Some("vendor/model-a"));
+    // someone else's conversation
+    let other = e.m.add("other@example.org", None);
+    let (_, r) = ws
+        .rpc(
+            "set_agent_model_request",
+            json!({"agentId": other, "modelId": "vendor/model-b"}),
+        )
+        .await;
+    assert_eq!(r["accepted"], false);
+}
+
 #[tokio::test]
 async fn a_deployment_that_starts_conversations_refuses_a_persons_create() {
     let e = env().await;
@@ -1005,6 +1070,10 @@ async fn view_as_refuses_changes_without_a_call_and_sends_with_the_viewer() {
     .await;
     for (kind, msg) in [
         ("update_agent_request", json!({"agentId": c, "title": "x"})),
+        (
+            "set_agent_model_request",
+            json!({"agentId": c, "modelId": "vendor/model-a"}),
+        ),
         (
             "workspace.title.set.request",
             json!({"workspaceId": format!("wks_{c}"), "title": "x"}),

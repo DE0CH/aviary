@@ -59,6 +59,17 @@ The seams in `feeds` (built for the switch window, WP-50, whose legacy upstream 
 
 ## Deviations (recorded)
 
+- **The model picker** (Deyao, 2026-11-12): where hermit's deployment facts say `conversations.peoplePickModel`,
+  the `me` route (5.4) says `modelPick: true` and `set_agent_model_request` sets the conversation's model (magpie M5
+  `model`) after checking the id against the models route's list (`null` picks the list's default); an agent's
+  `model` is its conversation's `pickedModel`, else the list's default. Elsewhere the request is refused and every
+  agent shows the default.
+- **`midTurn`** (2026-11-12): the `me` route (5.4) says `midTurn: true`: a text message sent during a reply is
+  accepted (magpie M7 joins it to the running turn), so the app sends it at once; an app talking to a server that
+  does not say so keeps such a message in its queue until the reply ends.
+- **A question's own answer** (2026-11-12): each question of an `AskUserQuestion` ask goes to the app with
+  `allowOther: true` (the app's card shows its text field only then; Claude Code's own always offers "Other"), and
+  the key is removed again from the answer's `updatedInput`.
 - **The shell's raw-view script** (spec 5.2.2 says every other byte is served as built): the signed-in shell carries
   `raw::toggle_script` before `</body>`, which shows a "Raw transcript" button only in a view-as tab whose address
   names a conversation (the app bundle is frozen from A1, so the button cannot live in the app).

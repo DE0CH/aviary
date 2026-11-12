@@ -360,6 +360,10 @@ pub struct StartTurn {
     /// its predecessor asked; supervisor 7.6). Empty for every other turn.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub answers: Vec<ParkedAnswer>,
+    /// The model the conversation's person picked (`pickedModel`): Claude Code runs the turn on it instead of the
+    /// models route's default. Absent: the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// One answer of a parked turn's `start_turn`: the question as it was asked, and the person's answer.

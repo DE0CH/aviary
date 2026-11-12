@@ -184,7 +184,7 @@ pub async fn cancel(tx: &Tx<'_>, person: &str, turn: &Turn) -> Result<()> {
 async fn resume(tx: &Tx<'_>, turn: &Turn) -> Result<()> {
     let row = tx
         .query_one(
-            "select coalesce(t.parked_asks, '{}'), c.provider_session_id from turns t
+            "select coalesce(t.parked_asks, '{}'), c.provider_session_id, c.picked_model from turns t
              join conversations c on c.id = t.conversation_id where t.id = $1",
             &[&turn.id],
         )
@@ -231,6 +231,7 @@ async fn resume(tx: &Tx<'_>, turn: &Turn) -> Result<()> {
         resume: Resume { provider_session_id },
         sent_at: Timestamp(now),
         answers,
+        model: row.get(2),
     };
     let cmd = command(
         tx,

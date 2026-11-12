@@ -51,6 +51,10 @@ pub struct Conversation {
     pub run: RunInfo,
     /// The model of the last assistant line.
     pub model: Option<String>,
+    /// The model the person picked for the conversation (M5), which its turns run on from the next one; absent while
+    /// none was picked (the deployment's default model runs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picked_model: Option<String>,
     /// Context tokens of the last assistant line.
     pub context_tokens: Option<u64>,
     /// How the conversation came to be.
@@ -280,10 +284,38 @@ pub struct CreateResponse {
     pub turn: Option<TurnStarted>,
 }
 
-/// M5 `PATCH /v1/conversations/{id}`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// M5 `PATCH /v1/conversations/{id}`: a rename, a model pick, or both (400 `bad_request` with neither).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenameRequest {
-    /// 1-200 characters after trimming.
-    pub title: String,
+    /// The new title: 1-200 characters after trimming.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The model the conversation's turns run on from the next one (`pickedModel`): an id of the deployment's model
+    /// list, which the caller has checked (pigeon, against the models route); 1-200 characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
+
+impl RenameRequest {
+    /// A rename.
+    #[must_use]
+    pub fn title(title: impl Into<String>) -> Self {
+        Self {
+            title: Some(title.into()),
+            model: None,
+        }
+    }
+
+    /// A model pick.
+    #[must_use]
+    pub fn model(model: impl Into<String>) -> Self {
+        Self {
+            title: None,
+            model: Some(model.into()),
+        }
+    }
+}
+
+/// Model id limit of a pick, characters.
+pub const MODEL_MAX_CHARS: usize = 200;

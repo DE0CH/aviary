@@ -60,6 +60,10 @@ pub struct GenState {
     pub initialized: bool,
     /// The descriptor `etag` of the managed files it started with (an idle point ends it when they changed, 6.4).
     pub etag: String,
+    /// The model it runs, and whether the conversation's person picked it (`start_turn.model`) rather than the
+    /// models route's default: a turn that wants another model ends it first.
+    pub model: String,
+    pub picked: bool,
 }
 
 /// The run state machine's persisted part (7.5).

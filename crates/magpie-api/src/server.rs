@@ -45,7 +45,7 @@ use crate::routes::{
     self, ADMIN_CONVERSATION, ADMIN_CONVERSATIONS, ADMIN_EVENTS, ADMIN_SCHEDULES, ADMIN_SCHEDULES_PAUSE,
     ADMIN_TIMELINE, ADMIN_TRANSCRIPT, ASK_ANSWER, BLOB, CANCEL, CHANGES, CONVERSATION, CONVERSATION_DELETE,
     CONVERSATION_RESTORE, CONVERSATION_SCHEDULES, CONVERSATION_SHARES, CONVERSATIONS, CREATION, FILES, FILES_RAW,
-    HERMIT_CONVERSATION_TURNS, HERMIT_CONVERSATIONS, HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE,
+    HERMIT_CONVERSATION, HERMIT_CONVERSATION_TURNS, HERMIT_CONVERSATIONS, HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE,
     HERMIT_WORKSPACES_EXISTS, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS, PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS,
     SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME, SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR,
     SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE, SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS,
@@ -671,6 +671,11 @@ pub trait Server: Send + Sync + 'static {
         async move { Err(not_implemented("hermit_create_conversation")) }
     }
 
+    /// Route `hermit_conversation`.
+    fn hermit_conversation(&self, ctx: Ctx, id: Uuid) -> impl Future<Output = Result<Conversation, ApiError>> + Send {
+        async move { Err(not_implemented("hermit_conversation")) }
+    }
+
     /// Route `hermit_send_turn`.
     fn hermit_send_turn(
         &self,
@@ -1133,6 +1138,10 @@ async fn h_hermit_create_conversation<S: Server>(
     )
 }
 
+async fn h_hermit_conversation<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, P(id): P<Uuid>) -> Response {
+    reply("hermit_conversation", s.hermit_conversation(ctx, id).await)
+}
+
 async fn h_hermit_send_turn<S: Server>(
     State(s): State<Arc<S>>,
     ctx: Ctx,
@@ -1319,6 +1328,7 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
         .route(ADMIN_SCHEDULES_PAUSE, put(h_admin_schedules_pause::<S>))
         .route(HERMIT_PERSON_PURGE, post(h_person_purge::<S>))
         .route(HERMIT_CONVERSATIONS, post(h_hermit_create_conversation::<S>))
+        .route(HERMIT_CONVERSATION, get(h_hermit_conversation::<S>))
         .route(HERMIT_CONVERSATION_TURNS, post(h_hermit_send_turn::<S>))
         .route(HERMIT_WORKSPACES_EXISTS, post(h_workspaces_exists::<S>))
         .route(HERMIT_LEGACY_IMPORT, get(h_legacy_import::<S>))

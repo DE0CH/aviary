@@ -51,7 +51,7 @@ pub struct View<'a> {
     pub product: &'a str,
     /// The strings.
     pub locale: Locale,
-    /// The default model's id, when the model list is known.
+    /// The default model's id, when the model list is known (a conversation whose person picked one shows its own).
     pub model: Option<&'a str>,
 }
 
@@ -129,8 +129,26 @@ pub fn permission_request(ask: &magpie_api::conversations::Ask) -> Value {
     if let Some(d) = &ask.description {
         m.insert("description".into(), json!(d));
     }
-    m.insert("input".into(), Value::Object(ask.input.clone()));
+    m.insert("input".into(), Value::Object(question_input(ask)));
     Value::Object(m)
+}
+
+/// An ask's input as the app's card reads it. Claude Code's own `AskUserQuestion` always lets the person type an
+/// answer of their own beside the options ("Other"), and says so nowhere in the input; the app's question card shows
+/// its text field only where a question says `allowOther`. So every question with options says it here.
+fn question_input(ask: &magpie_api::conversations::Ask) -> Map<String, Value> {
+    let mut input = ask.input.clone();
+    if ask.tool_name != "AskUserQuestion" {
+        return input;
+    }
+    if let Some(questions) = input.get_mut("questions").and_then(Value::as_array_mut) {
+        for q in questions.iter_mut().filter_map(Value::as_object_mut) {
+            if !q.contains_key("allowOther") && !q.contains_key("isOther") {
+                q.insert("allowOther".into(), json!(true));
+            }
+        }
+    }
+    input
 }
 
 /// The `startedAt` the working-time counter runs from (7.7, DECISIONS 17): the turn's start moved on by the time its
@@ -151,10 +169,13 @@ pub fn agent_snapshot(c: &Conversation, v: &View<'_>) -> Value {
     let last_user = c.last_user_message_at.unwrap_or(c.updated_at);
     let asks: Vec<Value> = c.asks.iter().map(permission_request).collect();
     let attention = c.asks.first();
+    // the model the person picked for this conversation, else the deployment's default
+    let model = c.picked_model.as_deref().or(v.model);
     json!({
-        "id": c.id, "provider": PROVIDER, "cwd": CWD, "workspaceId": workspace_id(&c.id), "model": v.model,
+        "id": c.id, "provider": PROVIDER, "cwd": CWD, "workspaceId": workspace_id(&c.id), "model": model,
         "thinkingOptionId": null, "effectiveThinkingOptionId": null,
-        "runtimeInfo": {"provider": PROVIDER, "sessionId": c.claude_session_id, "model": v.model, "modeId": null},
+        "runtimeInfo": {"provider": PROVIDER, "sessionId": c.claude_session_id, "model": model, "modeId": null},
+
         "createdAt": c.created_at, "updatedAt": c.updated_at, "lastUserMessageAt": last_user,
         "status": if running { "running" } else { "idle" },
         "activeTurn": c.turn.as_ref().map(|t| json!({"turnId": t.id, "startedAt": working_since(c, t)})),
@@ -1015,6 +1036,60 @@ mod tests {
             created_at: t.started_at,
         });
         assert_eq!(working_since(&c, &t), None, "no counter while the question is open");
+    }
+
+    /// A conversation whose person picked a model shows it instead of the deployment's default.
+    #[test]
+    fn the_agent_shows_the_picked_model() {
+        let base = json!({"id": uuid::Uuid::nil(), "title": null, "titleSource": null,
+            "createdAt": "2026-11-12T04:00:00Z", "updatedAt": "2026-11-12T04:00:00Z", "lastUserMessageAt": null,
+            "deletedAt": null, "purgeAt": null, "claudeSessionId": null, "lastTurn": null, "sandbox": null,
+            "model": "claude-fable-5-2", "contextTokens": null, "turn": null,
+            "run": {"state": "idle", "background": []}, "origin": {"kind": "new"}});
+        let view = View {
+            product: "Chat",
+            locale: Locale::En,
+            model: Some("claude-fable-5-2"),
+        };
+        let plain: Conversation = serde_json::from_value(base.clone()).unwrap();
+        assert_eq!(agent_snapshot(&plain, &view)["model"], "claude-fable-5-2");
+        let mut picked = base;
+        picked["pickedModel"] = json!("claude-opus-5-5");
+        let picked: Conversation = serde_json::from_value(picked).unwrap();
+        let a = agent_snapshot(&picked, &view);
+        assert_eq!(a["model"], "claude-opus-5-5");
+        assert_eq!(a["runtimeInfo"]["model"], "claude-opus-5-5");
+    }
+
+    /// A question offers the person's own answer beside its options, as Claude Code's own does: the app shows its
+    /// text field only for a question that says `allowOther`. Another tool's input goes as it is.
+    #[test]
+    fn a_question_offers_an_answer_of_the_persons_own() {
+        let ask = |tool: &str, input: Value| magpie_api::conversations::Ask {
+            id: "ask-1".into(),
+            tool_name: tool.into(),
+            tool_use_id: Some("toolu_1".into()),
+            input: input.as_object().cloned().unwrap(),
+            title: None,
+            description: None,
+            created_at: serde_json::from_value(json!("2026-11-12T04:00:00Z")).unwrap(),
+        };
+        let input = json!({"questions": [
+            {"question": "Red or Blue?", "header": "Colour", "multiSelect": false,
+             "options": [{"label": "Red", "description": ""}, {"label": "Blue", "description": ""}]},
+            {"question": "Which sizes?", "header": "Size", "multiSelect": true, "allowOther": false,
+             "options": [{"label": "S", "description": ""}]}]});
+        let r = permission_request(&ask("AskUserQuestion", input.clone()));
+        assert_eq!(r["kind"], "question");
+        assert_eq!(r["input"]["questions"][0]["allowOther"], json!(true), "{r}");
+        assert_eq!(r["input"]["questions"][0]["options"], input["questions"][0]["options"]);
+        assert_eq!(
+            r["input"]["questions"][1]["allowOther"],
+            json!(false),
+            "what the input says stands"
+        );
+        let other = permission_request(&ask("Bash", input.clone()));
+        assert_eq!(other["input"], input, "another tool's input is not touched");
     }
 
     /// DECISIONS 17: an answered question's tool call says when it was answered (`metadata.answeredAt`), for the

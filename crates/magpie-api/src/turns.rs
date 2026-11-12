@@ -100,8 +100,18 @@ pub struct TurnStarted {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendResponse {
-    /// The turn.
+    /// The turn: the one the message started, or with `midTurn` the running one it joined.
     pub turn: TurnStarted,
+    /// The message was sent while a turn ran: it started none and is written into the running one, where Claude Code
+    /// takes it in at its next tool result or when the model stops; its `user` row, with this `clientMessageId` as
+    /// its `messageId`, comes then. If that turn ends first, magpie sends it as a turn of its own.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub mid_turn: bool,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if signature
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// M8 `POST /v1/conversations/{id}/cancel` → 202. Never an error for "nothing running".

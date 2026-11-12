@@ -199,21 +199,11 @@ async fn list_pages_by_activity_and_lists_recently_deleted_with_search() {
 
     // rename two and delete them: Recently deleted, newest deletion first, searchable by title
     alice
-        .rename_conversation(
-            ids[1],
-            &RenameRequest {
-                title: "港珠澳大橋".into(),
-            },
-        )
+        .rename_conversation(ids[1], &RenameRequest::title("港珠澳大橋"))
         .await
         .unwrap();
     alice
-        .rename_conversation(
-            ids[3],
-            &RenameRequest {
-                title: "Q3 report 100%".into(),
-            },
-        )
+        .rename_conversation(ids[3], &RenameRequest::title("Q3 report 100%"))
         .await
         .unwrap();
     alice.delete_conversation(ids[1]).await.unwrap();
@@ -316,12 +306,7 @@ async fn rename_wins_and_is_announced() {
         .unwrap()
         .head_seq;
     let c = alice
-        .rename_conversation(
-            id,
-            &RenameRequest {
-                title: "  新名  ".into(),
-            },
-        )
+        .rename_conversation(id, &RenameRequest::title("  新名  "))
         .await
         .unwrap();
     assert_eq!(c.title.as_deref(), Some("新名"));
@@ -341,40 +326,30 @@ async fn rename_wins_and_is_announced() {
     }
     // refusals
     let e = alice
-        .rename_conversation(id, &RenameRequest { title: "   ".into() })
+        .rename_conversation(id, &RenameRequest::title("   "))
         .await
         .unwrap_err();
     assert_eq!(code(&e), ErrorCode::EmptyTitle);
     let e = alice
-        .rename_conversation(
-            id,
-            &RenameRequest {
-                title: "長".repeat(201),
-            },
-        )
+        .rename_conversation(id, &RenameRequest::title("長".repeat(201)))
         .await
         .unwrap_err();
     assert_eq!(code(&e), ErrorCode::TitleTooLong);
     assert!(
         alice
-            .rename_conversation(
-                id,
-                &RenameRequest {
-                    title: "長".repeat(200)
-                }
-            )
+            .rename_conversation(id, &RenameRequest::title("長".repeat(200)))
             .await
             .is_ok()
     );
     let viewing = pigeon.viewing_as(ALICE, "admin@example.com", "s1");
     let e = viewing
-        .rename_conversation(id, &RenameRequest { title: "x".into() })
+        .rename_conversation(id, &RenameRequest::title("x"))
         .await
         .unwrap_err();
     assert_eq!(code(&e), ErrorCode::ViewAsReadOnly);
     let e = pigeon
         .person(BOB)
-        .rename_conversation(id, &RenameRequest { title: "x".into() })
+        .rename_conversation(id, &RenameRequest::title("x"))
         .await
         .unwrap_err();
     assert_eq!(code(&e), ErrorCode::NotFound);

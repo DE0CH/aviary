@@ -180,6 +180,8 @@ pub const ADMIN_SCHEDULES_PAUSE: &str = "/v1/admin/schedules/pause";
 pub const HERMIT_PERSON_PURGE: &str = "/v1/hermit/persons/{person}/purge";
 /// A conversation the deployment starts for a person (hermit's, where `conversations.peopleCreate` is false).
 pub const HERMIT_CONVERSATIONS: &str = "/v1/hermit/conversations";
+/// `GET` a conversation as the deployment reads it (hermit: the title and the picked model of a session's conversation).
+pub const HERMIT_CONVERSATION: &str = "/v1/hermit/conversations/{id}";
 /// A turn the deployment sends into such a conversation as its person.
 pub const HERMIT_CONVERSATION_TURNS: &str = "/v1/hermit/conversations/{id}/turns";
 /// `POST` workspace references (hermit).
@@ -376,6 +378,7 @@ pub const ROUTES: &[Route] = &[
         &[201, 200],
         false,
     ),
+    service("hermit_conversation", Get, HERMIT_CONVERSATION, HERMIT, &[200], false),
     service(
         "hermit_send_turn",
         Post,
@@ -542,7 +545,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 73);
+        assert_eq!(ROUTES.len(), 74);
     }
 
     #[test]

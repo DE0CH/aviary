@@ -381,6 +381,10 @@ pub struct EventMeta {
     /// Claude Code's compaction summary (an `isCompactSummary` user line): shown as an assistant row, not a prompt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_summary: Option<bool>,
+    /// A prompt line that is a person's message sent mid-turn (M7 `midTurn`), taken in by Claude Code: the app's id
+    /// of that message, which its `user` row carries as a typed message's does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_message_id: Option<String>,
 }
 
 /// `meta.compaction`: the facts of a `compact_boundary` line's `compactMetadata` (0 when absent).

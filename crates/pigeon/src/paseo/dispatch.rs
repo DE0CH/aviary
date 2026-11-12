@@ -79,6 +79,7 @@ fn conversation_of(kind: &str, m: &Value) -> Option<Uuid> {
         | "send_agent_message_request"
         | "cancel_agent_request"
         | "update_agent_request"
+        | "set_agent_model_request"
         | "archive_agent_request"
         | "delete_agent_request"
         | "refresh_agent_request"
@@ -106,6 +107,7 @@ fn is_upstream(kind: &str) -> bool {
             | "creation.subscribe.request"
             | "cancel_agent_request"
             | "update_agent_request"
+            | "set_agent_model_request"
             | "workspace.title.set.request"
             | "archive_workspace_request"
             | "archive_agent_request"
@@ -123,6 +125,7 @@ fn view_as_refused(kind: &str) -> bool {
     matches!(
         kind,
         "update_agent_request"
+            | "set_agent_model_request"
             | "workspace.title.set.request"
             | "archive_workspace_request"
             | "archive_agent_request"
@@ -292,6 +295,7 @@ impl Handler {
             "creation.subscribe.request" => self.creation().await,
             "cancel_agent_request" => self.cancel().await,
             "update_agent_request" => self.update_agent().await,
+            "set_agent_model_request" => self.set_model().await,
             "workspace.title.set.request" => self.title_set().await,
             "archive_workspace_request" | "archive_agent_request" => self.archive().await,
             "delete_agent_request" => self.delete().await,
@@ -834,7 +838,7 @@ impl Handler {
             .collect();
         match self
             .calls()
-            .rename_conversation(id, &RenameRequest { title })
+            .rename_conversation(id, &RenameRequest::title(title))
             .await
             .map_err(fail)
         {
@@ -860,6 +864,51 @@ impl Handler {
             "update_agent_response",
             &json!({"requestId": self.rid, "agentId": agent, "accepted": error.is_none(), "error": error}),
         );
+    }
+
+    /// The app's model picker (a deployment whose people pick the model, hermit's `conversations.peoplePickModel`):
+    /// the conversation's turns run on the picked model from the next one. The id must be one of the models route's
+    /// list; `null` picks the list's default. Refused where people do not pick.
+    async fn set_model(&self) {
+        let agent = str_field(&self.m, "agentId").unwrap_or("").to_owned();
+        let error = self.pick_model().await;
+        self.reply(
+            "set_agent_model_response",
+            &json!({"requestId": self.rid, "agentId": agent, "accepted": error.is_none(), "error": error}),
+        );
+    }
+
+    async fn pick_model(&self) -> Option<String> {
+        if !self.app.identities().people_pick_model() {
+            return Some(strings::NOT_AVAILABLE.to_owned());
+        }
+        let Some(id) = self.agent_id() else {
+            return Some(strings::NOT_FOUND.to_owned());
+        };
+        let Some(models) = crate::http::models_value(&self.app).await else {
+            return Some(self.locale().unreachable().to_owned());
+        };
+        let wanted = str_field(&self.m, "modelId")
+            .or_else(|| models.get("DEFAULT").and_then(Value::as_str))
+            .unwrap_or("")
+            .to_owned();
+        let listed = models.get("OPTIONS").and_then(Value::as_array).is_some_and(|o| {
+            o.iter()
+                .any(|m| m.get("value").and_then(Value::as_str) == Some(wanted.as_str()))
+        });
+        if !listed {
+            return Some(strings::NOT_AVAILABLE.to_owned());
+        }
+        match self
+            .calls()
+            .rename_conversation(id, &RenameRequest::model(wanted))
+            .await
+            .map_err(fail)
+        {
+            Ok(_) => None,
+            Err(Fail::NotFound) => Some(strings::NOT_FOUND.to_owned()),
+            Err(_) => Some(self.locale().unreachable().to_owned()),
+        }
     }
 
     async fn title_set(&self) {
@@ -1025,6 +1074,15 @@ impl Handler {
 /// not also a question's text) becomes that question's text; other keys stay. Rehearsal R1 (2026-11-06): an answer
 /// "Blue" keyed `Color choice` reached the agent as "The user did not answer the questions."
 pub fn answers_by_question(input: &mut Map<String, Value>) {
+    // the `allowOther` pigeon gave each question for the app's card (`mapping::permission_request`) is not Claude
+    // Code's: the input goes back as Claude Code wrote it
+    if let Some(questions) = input.get_mut("questions").and_then(Value::as_array_mut) {
+        for q in questions.iter_mut().filter_map(Value::as_object_mut) {
+            if q.get("allowOther") == Some(&Value::Bool(true)) {
+                q.remove("allowOther");
+            }
+        }
+    }
     let Some(Value::Object(answers)) = input.get("answers") else {
         return;
     };
@@ -1124,5 +1182,22 @@ mod tests {
         let mut bare = json!({"answers": {"Which?": "A"}}).as_object().cloned().unwrap();
         answers_by_question(&mut bare);
         assert_eq!(bare["answers"], json!({"Which?": "A"}));
+    }
+
+    /// The person's own answer ("Other") goes back keyed by the question's text, and the `allowOther` pigeon added for
+    /// the card is gone: Claude Code gets its own input back.
+    #[test]
+    fn an_answer_of_the_persons_own_goes_back_without_the_cards_key() {
+        let mut input = json!({
+            "questions": [{"question": "Red or Blue?", "header": "Colour", "multiSelect": false, "allowOther": true,
+                           "options": [{"label": "Red"}, {"label": "Blue"}]}],
+            "answers": {"Colour": "Green, actually"},
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+        answers_by_question(&mut input);
+        assert_eq!(input["answers"], json!({"Red or Blue?": "Green, actually"}));
+        assert!(input["questions"][0].get("allowOther").is_none(), "{input:?}");
     }
 }

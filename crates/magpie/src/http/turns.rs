@@ -26,7 +26,7 @@ pub async fn send(app: &Magpie, ctx: Ctx, id: Uuid, body: SendRequest) -> Answer
             {
                 legacy::paths::resolve(app, &person, &mut req).await?;
             }
-            let sent = admission::send(&app.pool, &person, id, req)
+            let sent = admission::send(&app.pool, &person, id, req, admission::WhileRunning::Join)
                 .await
                 .inspect_err(|e| unknown_upload(app, e))?;
             if let Some(turn) = sent.new_turn() {

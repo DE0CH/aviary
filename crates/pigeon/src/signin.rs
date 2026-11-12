@@ -106,6 +106,10 @@ pub async fn me(app: &App, id: &Identity) -> Response {
             "firstName": app.0.identity.first_name(p).await,
             "sharing": true,
             "newConversations": app.0.identity.people_create(),
+            "modelPick": app.0.identity.people_pick_model(),
+            // a text message sent during a reply joins the running turn (magpie M7 `midTurn`): the app sends it at
+            // once instead of queueing it until the reply ends
+            "midTurn": true,
         }),
         Identity::ViewAs(v) => {
             let expires = time::OffsetDateTime::from_unix_timestamp(v.exp)
@@ -115,6 +119,9 @@ pub async fn me(app: &App, id: &Identity) -> Response {
                 "firstName": app.0.identity.cached_first_name(&v.person).await,
                 "sharing": true,
                 "newConversations": app.0.identity.people_create(),
+                "modelPick": app.0.identity.people_pick_model(),
+                // an admin's view-as send joins no running turn (magpie refuses it): it waits in the app's queue
+                "midTurn": false,
                 "viewAs": {"user": v.person, "expiresAt": expires},
             })
         }

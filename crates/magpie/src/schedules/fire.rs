@@ -74,7 +74,20 @@ pub fn spawn(leader: Arc<Leader>, driver: Driver, every: Duration) -> JoinHandle
 /// A statement error (the next pass goes on).
 pub async fn pass(driver: &Driver) -> Result<usize> {
     settle(&driver.pool).await?;
+    crate::turns::midturn::settle(&driver.pool).await?;
     let mut n = 0;
+    // a person's mid-turn messages their turn never took (src/turns/midturn.rs), before the schedules: a person waits
+    for _ in 0..BATCH {
+        match crate::turns::midturn::redeliver_one(&driver.pool).await? {
+            Some(turn) => {
+                n += 1;
+                if let Some(t) = turn {
+                    driver::spawn(driver.clone(), t);
+                }
+            }
+            None => break,
+        }
+    }
     for _ in 0..BATCH {
         match due_one(&driver.pool).await? {
             Some(turn) => {

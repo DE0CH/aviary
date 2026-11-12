@@ -504,6 +504,10 @@ impl Server for Magpie {
         http::hermit::create_conversation(self, ctx, body).await
     }
 
+    async fn hermit_conversation(&self, ctx: Ctx, id: Uuid) -> Answer<Conversation> {
+        http::hermit::conversation(self, ctx, id).await
+    }
+
     async fn hermit_send_turn(&self, ctx: Ctx, id: Uuid, body: HermitSendRequest) -> Answer<Admitted<SendResponse>> {
         http::hermit::send_turn(self, ctx, id, body).await
     }

@@ -83,9 +83,32 @@ async fn first_turn(db: &impl Db, conversation: Uuid) -> Result<Option<TurnStart
 /// # Errors
 /// 400 `bad_request` / `too_many_attachments`, 413 `too_large`; the admission's refusals; a statement error.
 pub async fn create(pool: &Pool, person: &Person, req: CreateRequest) -> Result<Admitted<CreateResponse>> {
+    create_with_model(pool, person, req, None).await
+}
+
+/// M3 for a conversation the deployment starts (hermit's route): `model` is its `pickedModel` from the start.
+///
+/// # Errors
+/// As [`create`]; 400 `bad_request` for a model id that is empty or over 200 characters.
+pub async fn create_with_model(
+    pool: &Pool,
+    person: &Person,
+    req: CreateRequest,
+    model: Option<String>,
+) -> Result<Admitted<CreateResponse>> {
     validate(&req)?;
-    let req = &req; // borrowed: the transaction may run more than once (aviary_pg::tx!)
-    let (new, id) = aviary_pg::tx!(pool, |t| -> Result<(bool, Uuid)> { create_tx(t, person, req).await }).await?;
+    let model = model.map(|m| m.trim().to_owned());
+    if model
+        .as_deref()
+        .is_some_and(|m| m.is_empty() || m.chars().count() > magpie_api::conversations::MODEL_MAX_CHARS)
+    {
+        return Err(Error::bad_request("model must be 1-200 characters"));
+    }
+    let (req, model) = (&req, &model); // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (new, id) = aviary_pg::tx!(pool, |t| -> Result<(bool, Uuid)> {
+        create_tx(t, person, req, model.as_deref()).await
+    })
+    .await?;
     let conn = pool.get().await?;
     let conversation = load_owned(&conn, &person.email, id).await?;
     let turn = first_turn(&conn, id).await?;
@@ -97,7 +120,7 @@ pub async fn create(pool: &Pool, person: &Person, req: CreateRequest) -> Result<
     })
 }
 
-async fn create_tx(t: &Tx<'_>, person: &Person, req: &CreateRequest) -> Result<(bool, Uuid)> {
+async fn create_tx(t: &Tx<'_>, person: &Person, req: &CreateRequest, model: Option<&str>) -> Result<(bool, Uuid)> {
     ensure_person(t, &person.email).await?;
     let id = Uuid::new_v4();
     let now = OffsetDateTime::now_utc();
@@ -108,8 +131,8 @@ async fn create_tx(t: &Tx<'_>, person: &Person, req: &CreateRequest) -> Result<(
     };
     let inserted = t
         .query_opt(
-            "insert into conversations (id, person, create_key, title, created_at, activity_at, origin)
-             values ($1, $2, $3, $4, $5, $5, $6)
+            "insert into conversations (id, person, create_key, title, created_at, activity_at, origin, picked_model)
+             values ($1, $2, $3, $4, $5, $5, $6, $7)
              on conflict (person, create_key) do nothing
              returning id",
             &[
@@ -119,6 +142,7 @@ async fn create_tx(t: &Tx<'_>, person: &Person, req: &CreateRequest) -> Result<(
                 &title,
                 &now,
                 &serde_json::to_value(&origin)?,
+                &model,
             ],
         )
         .await?;

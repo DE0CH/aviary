@@ -395,6 +395,10 @@ fn fake_claude() {
         bg: Vec::new(),
     };
     fake.note(&format!("argv {}", argv.join(" ")));
+    fake.note(&format!(
+        "model {}",
+        aviary_core::env::try_required("ANTHROPIC_MODEL").unwrap_or_default()
+    ));
     let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
     std::thread::spawn(move || {
         let stdin = std::io::stdin();
@@ -672,6 +676,35 @@ impl World {
         self.turn_with(text, None, vec![], vec![])
     }
 
+    /// A turn of a conversation whose person picked `model` (`None`: none picked).
+    fn turn_on(&self, text: &str, model: Option<&str>) -> (Uuid, u64) {
+        let id = Uuid::now_v7();
+        let seq = self.magpie.push_command(
+            self.cid,
+            Some(id),
+            CommandBody::StartTurn(StartTurn {
+                text: text.into(),
+                files: vec![],
+                images: vec![],
+                resume: Resume {
+                    provider_session_id: Some(self.cid.to_string()),
+                },
+                sent_at: magpie_api::Timestamp::now(),
+                answers: Vec::new(),
+                model: model.map(str::to_owned),
+            }),
+        );
+        (id, seq)
+    }
+
+    /// The model of each generation started so far (the fake's `ANTHROPIC_MODEL`).
+    fn gen_models(&self) -> Vec<String> {
+        self.fake_log()
+            .into_iter()
+            .filter_map(|l| l.strip_prefix("model ").map(str::to_owned))
+            .collect()
+    }
+
     fn turn_with(
         &self,
         text: &str,
@@ -692,6 +725,7 @@ impl World {
                 },
                 sent_at: magpie_api::Timestamp::now(),
                 answers: Vec::new(),
+                model: None,
             }),
         );
         (id, seq)
@@ -793,6 +827,58 @@ fn texts(w: &World) -> String {
 }
 
 // ---- the tests ----
+
+/// The conversation's picked model (`start_turn.model`): a generation that runs another model ends before the turn,
+/// which resumes the conversation on a new one started on the pick; the same pick again keeps the generation; with
+/// none picked the next turn is back on the models route's default.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_turn_runs_on_the_conversations_picked_model() {
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    until("pre-spawn", || !w.spawns().is_empty()).await;
+    let default = w.gen_models()[0].clone();
+    assert!(!default.is_empty(), "the models route's default");
+    let (t1, _) = w.turn_on("say:one", None);
+    assert_eq!(w.ended(t1).await["state"], "completed");
+    w.idle(&sup).await;
+    assert_eq!(
+        w.gen_models().as_slice(),
+        std::slice::from_ref(&default),
+        "none picked: the pre-spawned generation runs it"
+    );
+
+    let (t2, _) = w.turn_on("say:two", Some("picked/model-b"));
+    assert_eq!(w.ended(t2).await["state"], "completed", "{}", texts(&w));
+    w.idle(&sup).await;
+    assert_eq!(
+        w.gen_models(),
+        [default.clone(), "picked/model-b".to_owned()],
+        "{}",
+        texts(&w)
+    );
+    assert!(
+        w.spawns()[1].contains(&format!("--resume {}", w.cid)),
+        "the conversation goes on"
+    );
+
+    let (t3, _) = w.turn_on("say:three", Some("picked/model-b"));
+    assert_eq!(w.ended(t3).await["state"], "completed");
+    w.idle(&sup).await;
+    assert_eq!(w.spawns().len(), 2, "the same pick keeps the generation");
+    sup.persisted.flush().await;
+    let saved = StateFile::new(w.dir.join("state")).load().unwrap().unwrap();
+    let g = saved.generation.unwrap();
+    assert_eq!((g.model.as_str(), g.picked), ("picked/model-b", true));
+
+    let (t4, _) = w.turn_on("say:four", None);
+    assert_eq!(w.ended(t4).await["state"], "completed");
+    assert_eq!(
+        w.gen_models(),
+        [default.clone(), "picked/model-b".to_owned(), default],
+        "none picked any more: the default again"
+    );
+    assert_eq!(w.prompts().len(), 4);
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_turn_runs_and_the_generation_lives_across_turns() {
@@ -1311,6 +1397,7 @@ async fn a_restart_replays_a_written_prompt_exactly_once() {
                 },
                 sent_at: magpie_api::Timestamp::now(),
                 answers: Vec::new(),
+                model: None,
             };
             let line = prompt::user_line(
                 &prompt::content(prompt::text(&s.text, &[], &[]), &[]),
@@ -2461,6 +2548,7 @@ async fn a_question_nobody_answers_is_parked_and_its_answer_resumes_the_turn_in_
                 updated_input: Some(given),
                 message: None,
             }],
+            model: None,
         }),
     );
     assert_eq!(state_seen(&w, t, "completed").await["state"], "completed");

@@ -62,7 +62,7 @@ async fn the_feed_is_dense_answers_latest_at_once_and_pages() {
             .conversation
             .id;
         alice
-            .rename_conversation(id, &RenameRequest { title: format!("t{i}") })
+            .rename_conversation(id, &RenameRequest::title(format!("t{i}")))
             .await
             .unwrap();
     }

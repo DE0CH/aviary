@@ -57,6 +57,10 @@ pub struct HermitCreateRequest {
     pub idempotency_key: String,
     /// The first message; admitted when its text or attachments are non-empty.
     pub message: crate::turns::SendRequest,
+    /// The conversation's model from the start (its `pickedModel`, as if the person had picked it): the model the
+    /// deployment started the session on. Kept on a repeat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// `POST /v1/hermit/conversations/{id}/turns` → 202 (200 for a repeat): M7 as the conversation's person, sent by the

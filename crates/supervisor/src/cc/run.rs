@@ -228,6 +228,20 @@ struct Gen {
     writer: mpsc::UnboundedSender<Write>,
     /// The descriptor `etag` its managed files came from.
     etag: String,
+    /// The model it runs (`ANTHROPIC_MODEL`): the conversation's picked model, else the models route's default.
+    model: String,
+    /// Whether that is a picked model (`start_turn.model`) rather than the route's default.
+    picked: bool,
+}
+
+impl Gen {
+    /// Whether it runs the model a turn wants: the picked one, or with none picked the route's default.
+    fn runs(&self, wanted: Option<&str>) -> bool {
+        match wanted {
+            Some(m) => self.model == m,
+            None => !self.picked,
+        }
+    }
 }
 
 /// A turn that ended and whose end report magpie has not answered yet: the heartbeat goes on naming it (magpie
@@ -325,6 +339,9 @@ struct St {
     control_waiters: HashMap<String, oneshot::Sender<Result<(), String>>>,
     /// The descriptor `etag` the managed files were written from.
     etag: String,
+    /// The model the conversation's person picked, as the last `start_turn` said (`None`: the route's default): a
+    /// generation is started on it, and one that runs another model ends before the next turn.
+    model: Option<String>,
     /// The release reason, once a forced release ends the turn.
     release: Option<String>,
     logged_types: HashSet<String>,
@@ -367,6 +384,7 @@ impl St {
             failing_until: None,
             control_waiters: HashMap::new(),
             etag: String::new(),
+            model: None,
             release: None,
             logged_types: HashSet::new(),
             msg_seq: 0,
@@ -884,6 +902,8 @@ impl Driver {
                 stdout_offset: g.offset,
                 initialized: g.initialized,
                 etag: g.etag.clone(),
+                model: g.model.clone(),
+                picked: g.picked,
             });
             s.managed_etag.clone_from(&st.etag);
             let t = st.turn.as_ref();
@@ -1543,14 +1563,24 @@ impl Driver {
         self.spawn(session, turn).await
     }
 
+    /// The models a generation starts with: the route's, with the conversation's picked model (`start_turn.model`)
+    /// as the default when there is one; and whether there is.
+    fn on_picked_model(&self, mut models: Models) -> (Models, bool) {
+        let picked = lock(&self.st).model.clone();
+        if let Some(m) = &picked {
+            models.default.clone_from(m);
+        }
+        (models, picked.is_some())
+    }
+
     async fn spawn(&self, session: &Session, turn: Option<Uuid>) -> Result<u32, GenError> {
         let Some(ctx) = self.ctx() else {
             return Err(GenError::Failed("not attached".into()));
         };
-        let models = tokio::select! {
+        let (models, picked) = tokio::select! {
             biased;
             () = self.until_cancelled(turn) => return Err(GenError::Canceled),
-            m = self.models() => m.map_err(GenError::Failed)?,
+            m = self.models() => self.on_picked_model(m.map_err(GenError::Failed)?),
         };
         let descriptor = self
             .hermit
@@ -1582,7 +1612,7 @@ impl Driver {
             .keeper_call(move |k| k.spawn_tracked(&spec))
             .await
             .map_err(GenError::Failed)?;
-        tracing::info!(gen = n, pid = spawned.pid, session = %session.id(), resume = matches!(session, Session::Resume(_)), "claude started");
+        tracing::info!(gen = n, pid = spawned.pid, session = %session.id(), resume = matches!(session, Session::Resume(_)), model = %models.default, "claude started");
         let (tx, rx) = mpsc::unbounded_channel();
         let (init_tx, init_rx) = oneshot::channel();
         let init_id = format!("init-{n}");
@@ -1601,6 +1631,8 @@ impl Driver {
                 writer: tx.clone(),
                 // what the managed files hold now (written at attach and at each start's step 1)
                 etag: st.etag.clone(),
+                model: models.default.clone(),
+                picked,
             });
             st.control_waiters.insert(init_id.clone(), init_tx);
         });
@@ -2180,28 +2212,32 @@ impl Driver {
 
     /// Steps 1 to 3 of 10.2 for a new turn: the descriptor, the hold, the uploads; the message.
     async fn prepare(&self, s: &StartTurn, replay: bool) -> Result<Vec<u8>, String> {
-        // 1: the descriptor (a change is applied at the next idle point); 2: a hold is superseded (an agent turn
-        // just takes the message, 7.5). A replay's turn already runs: neither applies.
+        // 1: the descriptor (a change is applied at the next idle point) and the conversation's picked model; 2: a
+        // hold is superseded (an agent turn just takes the message, 7.5). A replay's turn already runs: none applies.
         if !replay {
             match self.hermit.refresh().await {
-                Ok(d) => {
-                    self.apply_descriptor(&d);
-                    let end = {
-                        let st = lock(&self.st);
-                        st.turn.is_none()
-                            && st.tracker.is_empty()
-                            && st.live.as_ref().is_some_and(|g| g.etag != st.etag)
-                    };
-                    if end {
-                        tracing::info!("configuration changed: generation ended before the turn");
-                        self.end_generation(
-                            Why::Graceful,
-                            Instant::now() + STDIN_CLOSE_GRACE + KILL_AFTER_TERM + Duration::from_secs(2),
-                        )
-                        .await;
-                    }
-                }
+                Ok(d) => self.apply_descriptor(&d),
                 Err(e) => tracing::info!(error = %e, "descriptor not re-read"),
+            }
+            // the model this turn runs on: a generation on another model (or on other managed files) ends here and
+            // the turn resumes the conversation on a new one. While a turn or background tasks run, the generation
+            // stays: the change waits for the next turn that finds it free.
+            let end = self.with(Change::State, |st, _| {
+                st.model.clone_from(&s.model);
+                st.turn.is_none()
+                    && st.tracker.is_empty()
+                    && st
+                        .live
+                        .as_ref()
+                        .is_some_and(|g| g.etag != st.etag || !g.runs(st.model.as_deref()))
+            });
+            if end {
+                tracing::info!("configuration or model changed: generation ended before the turn");
+                self.end_generation(
+                    Why::Graceful,
+                    Instant::now() + STDIN_CLOSE_GRACE + KILL_AFTER_TERM + Duration::from_secs(2),
+                )
+                .await;
             }
             if lock(&self.st).run == RunKind::Held {
                 self.stop_tasks(Instant::now() + SUPERSEDE_WAIT, "supersede").await;
@@ -2680,7 +2716,8 @@ impl Driver {
         self.ack_in(target.map(|(id, _)| id).or(turn_id), seq, AckResult::default());
     }
 
-    /// `send_message` (a schedule's fire while a turn runs, the person's or an agent turn): the message is written to
+    /// `send_message` (a schedule's fire, or a person's message, while a turn runs, the person's or an agent turn):
+    /// the message is written to
     /// the turn's generation at once, and Claude Code takes it in at its next tool result or when the model stops, as
     /// a message typed mid-turn.
     /// It never counts as a pending input: taken in mid-turn it is answered by the turn's own `result`; left for after
@@ -2727,7 +2764,7 @@ impl Driver {
         });
         match lane {
             Some(l) => {
-                tracing::info!(turn = %l, "a scheduled message was written into the running turn");
+                tracing::info!(turn = %l, "a message was written into the running turn");
                 self.ack_in(
                     Some(l),
                     seq,
@@ -2957,7 +2994,11 @@ impl Driver {
                     } else {
                         g.etag.clone()
                     },
+                    model: g.model.clone(),
+                    picked: g.picked,
                 });
+                // the model the conversation was on (the next start_turn says it again)
+                st.model = g.picked.then(|| g.model.clone());
                 self.reporter.generation_ended(n.saturating_sub(1));
                 for t in [turn.as_ref(), queued.as_ref()].into_iter().flatten() {
                     fx.push(Fx::Report(match t.origin {

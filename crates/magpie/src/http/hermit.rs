@@ -1,7 +1,7 @@
 //! hermit's routes (magpie 16.3).
 
 use magpie_api::Admitted;
-use magpie_api::conversations::{CreateRequest, CreateResponse};
+use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse};
 use magpie_api::ops::{
     HermitCreateRequest, HermitSendRequest, LegacyImportStatus, PersonPurgeRequest, PersonPurgeResponse,
     WorkspacesExistsRequest, WorkspacesExistsResponse,
@@ -40,7 +40,7 @@ pub async fn create_conversation(
                 idempotency_key: body.idempotency_key,
                 message: body.message,
             };
-            let r = create::create(&app.pool, &person, req)
+            let r = create::create_with_model(&app.pool, &person, req, body.model)
                 .await
                 .inspect_err(|e| super::turns::unknown_upload(app, e))?;
             if let Admitted::New(c) = &r
@@ -54,13 +54,28 @@ pub async fn create_conversation(
     )
 }
 
-/// `POST /v1/hermit/conversations/{id}/turns`: M7 as the person hermit names (404 for another's conversation).
+/// `GET /v1/hermit/conversations/{id}`: the conversation whoever its person is (404 when there is none).
+pub async fn conversation(app: &Magpie, _ctx: Ctx, id: Uuid) -> Answer<Conversation> {
+    answer(
+        async {
+            let conn = app.pool.get().await?;
+            match crate::conversations::load(&conn, id).await? {
+                Some((_, c)) => Ok(c),
+                None => Err(Error::not_found()),
+            }
+        }
+        .await,
+    )
+}
+
+/// `POST /v1/hermit/conversations/{id}/turns`: M7 as the person hermit names (404 for another's conversation). A
+/// turn that runs refuses it (409 `turn_running`): the deployment's messages never join a running turn.
 pub async fn send_turn(app: &Magpie, _ctx: Ctx, id: Uuid, body: HermitSendRequest) -> Answer<Admitted<SendResponse>> {
     answer(
         async {
             let person = person_of(&body.person)?;
             admission::validate(&body.message)?;
-            let sent = admission::send(&app.pool, &person, id, body.message)
+            let sent = admission::send(&app.pool, &person, id, body.message, admission::WhileRunning::Refuse)
                 .await
                 .inspect_err(|e| super::turns::unknown_upload(app, e))?;
             if let Some(turn) = sent.new_turn() {

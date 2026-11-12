@@ -980,6 +980,11 @@ impl ServiceCalls<'_> {
             .await
     }
 
+    /// A conversation as the deployment reads it: any person's, deleted ones too (caller hermit).
+    pub async fn hermit_conversation(&self, id: Uuid) -> Result<Conversation, ClientError> {
+        self.get("hermit_conversation", &[&id.to_string()], NO_QUERY).await
+    }
+
     /// A turn the deployment sends into a conversation as its person (caller hermit).
     pub async fn hermit_send_turn(
         &self,

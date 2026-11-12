@@ -531,6 +531,12 @@ async fn apply(
                 }
                 m.replaces = r.and_then(|(s, _)| u64::try_from(s).ok());
             }
+            if e.is_prompt
+                && let Some(text) = e.text.as_deref()
+            {
+                // a person's mid-turn message taken in (src/turns/midturn.rs): its row carries the app's id
+                m.client_message_id = crate::turns::midturn::taken(tx, op.conv.id, text).await?;
+            }
             let at = OffsetDateTime::now_utc();
             let meta_json = serde_json::to_value(&m)?;
             let meta_json = meta_json

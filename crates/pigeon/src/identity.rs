@@ -444,6 +444,13 @@ impl Identities {
         self.facts().is_none_or(|f| f.conversations.people_create)
     }
 
+    /// Whether people pick each conversation's model (hermit's `conversations.peoplePickModel`; false before the
+    /// facts load, as the default is).
+    #[must_use]
+    pub fn people_pick_model(&self) -> bool {
+        self.facts().is_some_and(|f| f.conversations.people_pick_model)
+    }
+
     /// The product name ("" before the facts load).
     #[must_use]
     pub fn product_name(&self) -> String {

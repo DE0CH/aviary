@@ -163,9 +163,14 @@ pub fn prompt(line: &Value, meta: &EventMeta, text: Option<&str>) -> RowItem {
             })
         })
         .collect();
+    // a person's message sent mid-turn (`meta.clientMessageId`) keeps the app's id, as a typed message's row does
+    let message_id = meta
+        .client_message_id
+        .clone()
+        .unwrap_or_else(|| line.get("uuid").and_then(Value::as_str).unwrap_or_default().to_owned());
     RowItem::User(UserItem {
-        message_id: line.get("uuid").and_then(Value::as_str).unwrap_or_default().to_owned(),
-        client_message_id: None,
+        message_id,
+        client_message_id: meta.client_message_id.clone(),
         text,
         images,
         files: meta.attachments.clone().unwrap_or_default(),

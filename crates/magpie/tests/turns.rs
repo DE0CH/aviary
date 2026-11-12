@@ -469,15 +469,24 @@ async fn sends_at_once_admit_one_turn_and_a_repeat_answers_the_same_turn() {
                 .await
         }));
     }
+    // exactly one starts a turn; every other joins that turn as a mid-turn message (src/turns/midturn.rs)
     let mut ok = Vec::new();
+    let mut joined = Vec::new();
     for t in tasks {
-        match t.await.unwrap() {
-            Ok(r) => ok.push(r),
-            Err(e) => assert_eq!(code(&e), ErrorCode::TurnRunning),
+        let r = t.await.unwrap().unwrap();
+        if r.get().mid_turn {
+            joined.push(r);
+        } else {
+            ok.push(r);
         }
     }
-    assert_eq!(ok.len(), 1, "exactly one send is admitted");
+    assert_eq!(ok.len(), 1, "exactly one send starts a turn");
     let first = ok[0].get().turn.clone();
+    assert_eq!(joined.len(), 15);
+    assert!(
+        joined.iter().all(|r| r.get().turn.id == first.id),
+        "the others joined it"
+    );
     let n: i64 = w
         .pool()
         .get()
@@ -1256,14 +1265,16 @@ async fn agent_turns_held_tasks_and_stop_tasks() {
     let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
     assert_eq!(c.run.state, RunState::Running);
     assert_eq!(c.turn.unwrap().origin, TurnOrigin::Agent);
-    // a person's send while the agent turn runs
-    let e =
+    // a person's send while the agent turn runs joins it (src/turns/midturn.rs): no turn of its own
+    let joined =
         w.a.pigeon()
             .person(ALICE)
             .send_turn(conv, &msg("m2", "hi"))
             .await
-            .unwrap_err();
-    assert_eq!(code(&e), ErrorCode::TurnRunning);
+            .unwrap()
+            .into_inner();
+    assert!(joined.mid_turn);
+    assert_eq!(joined.turn.id, agent);
     let mut end = report(ReportedState::Completed);
     end.held = Some(true);
     end.tasks = Some(vec![magpie_api::sandbox::ReportedTask {
@@ -1600,10 +1611,7 @@ async fn the_title_command_names_a_provisional_conversation() {
     let t3_conv = w.conversation().await;
     w.a.pigeon()
         .person(ALICE)
-        .rename_conversation(
-            t3_conv,
-            &magpie_api::conversations::RenameRequest { title: "Mine".into() },
-        )
+        .rename_conversation(t3_conv, &magpie_api::conversations::RenameRequest::title("Mine"))
         .await
         .unwrap();
     let t3 = w.send(t3_conv, "m1", "hi").await;

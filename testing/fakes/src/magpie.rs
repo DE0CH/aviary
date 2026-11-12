@@ -1511,6 +1511,10 @@ impl Server for FakeMagpie {
         )
     }
 
+    async fn hermit_conversation(&self, ctx: Ctx, id_: Uuid) -> Result<Conversation, ApiError> {
+        scripted!(self, "hermit_conversation", ctx, id(id_), None, None, typed)
+    }
+
     async fn hermit_send_turn(
         &self,
         ctx: Ctx,
