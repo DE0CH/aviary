@@ -216,7 +216,7 @@ async fn e2(h: &Harness) -> anyhow::Result<()> {
         let rows = timeline(&mut ws, &id).await?;
         let said = texts_of(&rows, "assistant_message");
         ensure!(said.iter().any(|t| t == &reply), "assistant rows {said:?}");
-        // rows arrive whole: one push per row change, row seqs dense (each push's seq the previous plus one)
+        // one push per row change, row seqs dense (each push's seq the previous plus one)
         let seqs: Vec<u64> = pushes
             .iter()
             .filter(|p| p["event"]["type"] == "timeline")
@@ -227,14 +227,27 @@ async fn e2(h: &Harness) -> anyhow::Result<()> {
             seqs.windows(2).all(|w| w[1] == w[0] + 1),
             "row seqs not dense: {seqs:?}"
         );
-        let live: Vec<String> = pushes
+        // the reply arrives as it is written (live text: pushes without a seq), then its row with what is left of
+        // the text: together they are the reply, once
+        let said: Vec<&Value> = pushes
             .iter()
             .filter(|p| p["event"]["type"] == "timeline" && p["event"]["item"]["type"] == "assistant_message")
-            .filter_map(|p| p["event"]["item"]["text"].as_str().map(str::to_owned))
+            .collect();
+        let live: Vec<&str> = said
+            .iter()
+            .filter_map(|p| p["event"]["item"]["text"].as_str())
             .collect();
         ensure!(
-            live.iter().any(|t| t == &reply),
-            "the reply was not pushed whole: {live:?}"
+            live.concat() == reply,
+            "the pushes do not add up to the reply: {live:?}"
+        );
+        ensure!(
+            said.iter().filter(|p| p["seq"].is_u64()).count() == 1,
+            "the reply's row was not pushed exactly once: {said:?}"
+        );
+        ensure!(
+            said.iter().any(|p| p.get("seq").is_none_or(Value::is_null)),
+            "no live text before the row (the reply came whole): {live:?}"
         );
         // the title replaced by the title model's answer
         let until = Instant::now() + Duration::from_secs(90);
