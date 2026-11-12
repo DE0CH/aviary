@@ -1,7 +1,7 @@
 //! `aviary-gateway`: an aviary session machine's half of the sandbox gateway (src/machine.rs), started by
 //! session-image/base/harness-aviary.sh as the session user.
 //!
-//! Env: `AVIARY_GW_URL`, `AVIARY_GW_ACCESS_ID`, `AVIARY_GW_ACCESS_SECRET` (store `aviary`), `SESSION_ID`,
+//! Env: `AVIARY_GW_URL`, `AVIARY_GW_ACCESS_ID`, `AVIARY_GW_ACCESS_SECRET` (store `aviary-gw`), `SESSION_ID`,
 //! `SESSION_MODEL` (`aviary/<model id>`), `OPENROUTER_API` (store `openrouter`: an OpenRouter model's calls),
 //! `AVIARY_IMAGE` (`sha256:…`), `AVIARY_BOOT_FILE`; the descriptor's
 //! Jarvis values from the machine's own env (src/wire.rs `BOOT_ENV_NAMES`).
@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
         credentials: PathBuf::from(env::required("HOME")).join(".claude/.credentials.json"),
         boot_file: PathBuf::from(env::required("AVIARY_BOOT_FILE")),
         image: env::required("AVIARY_IMAGE"),
-        // the e2e's stand-in model (a key of its `aviary` store); Anthropic otherwise
+        // the e2e's stand-in model (a key of its `aviary-gw` store); Anthropic otherwise
         model_url: std::env::var("AVIARY_MODEL_URL")
             .ok()
             .filter(|v| !v.is_empty())

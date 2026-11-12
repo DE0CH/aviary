@@ -489,16 +489,18 @@ pub fn models() -> gateway_api::models::Models {
         small: crate::app::SMALL_MODEL.to_owned(),
         title: crate::app::SMALL_MODEL.to_owned(),
         context_tokens: 0,
+        // each entry through its JSON: a member a newer aviary adds to `Model` (an optional one, as the contract's
+        // are) then needs no change here, so the pin job's bump of the aviary crates never breaks this build
         models: crate::app::MODELS
             .iter()
-            .map(|(id, label)| gateway_api::models::Model {
-                id: (*id).to_owned(),
-                label: (*label).to_owned(),
-                reasoning: None,
-                thinking: crate::app::thinking(id)
-                    .iter()
-                    .map(|l| (*l).to_owned())
-                    .collect(),
+            .filter_map(|(id, label)| {
+                serde_json::from_value(serde_json::json!({
+                    "id": id,
+                    "label": label,
+                    "reasoning": null,
+                    "thinking": crate::app::thinking(id),
+                }))
+                .ok()
             })
             .collect(),
     }

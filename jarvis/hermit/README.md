@@ -64,7 +64,7 @@ Jarvis 4 session machine (harness aviary)                                     �
 
 ## A session's life
 
-1. **Start** (the Jarvis 4 app, harness "Claude Code · aviary"): the policy adds the stores `tunnel` and `aviary`
+1. **Start** (the Jarvis 4 app, harness "Claude Code · aviary"): the policy adds the stores `openrouter`, `tunnel` and `aviary-gw`
    (`AVIARY_GW_ACCESS_ID/SECRET`). `harness-aviary.sh` starts `aviary-gateway`, which signs `POST /jarvis/boot`
    with the machine key (`jarvis-machine sign-request`). hermit asks the router whose signature it is
    (`POST /api/machine-signatures/verify`), makes the session's conversation in magpie once (magpie's
@@ -142,7 +142,7 @@ destroyed with its volume at the end (or on Ctrl-C).
 - The session image under test is `ghcr.io/de0ch/jarvis4-session:latest` (`E2E_SESSION_IMAGE` for another): a
   harness change is tested once images.yml has built it. hermit-jarvis is always this tree's.
 - `E2E_ONLY=chat` brings up only the chat stack and keeps it (debugging hermit-jarvis against a real magpie).
-- The test store `aviary` names the run's chat front (`AVIARY_GW_URL`) and the stand-in models (`AVIARY_MODEL_URL`,
+- The test store `aviary-gw` names the run's chat front (`AVIARY_GW_URL`) and the stand-in models (`AVIARY_MODEL_URL`,
   `AVIARY_OPENROUTER_URL` with its `OPENROUTER_API`): the same keys a production store leaves unset
   (chat-gw.deyaochen.com, api.anthropic.com, openrouter.ai).
 - `E2E_MODEL=aviary/z-ai/glm-5.3` runs the session on an OpenRouter model: the agent's turns must reach the stand-in
