@@ -1360,7 +1360,8 @@ async fn e9(h: &Harness) -> anyhow::Result<()> {
                     let p = &v["message"]["payload"];
                     if v["message"]["type"] != "agent_stream" || p["agentId"] != id.as_str() { continue; }
                     match p["event"]["type"].as_str() {
-                        Some("timeline") => {
+                        // a row (live text, a timeline push without a seq, is none)
+                        Some("timeline") if p["seq"].is_u64() => {
                             let seq = p["seq"].as_u64().unwrap_or(0);
                             pushes.push((row_key(&p["event"]["item"]), seq));
                             last = json!(seq);
@@ -2135,7 +2136,8 @@ async fn e20(h: &Harness) -> anyhow::Result<()> {
                     let p = &v["message"]["payload"];
                     if v["message"]["type"] != "agent_stream" || p["agentId"] != id.as_str() { continue; }
                     match p["event"]["type"].as_str() {
-                        Some("timeline") => {
+                        // a row (live text, a timeline push without a seq, is none)
+                        Some("timeline") if p["seq"].is_u64() => {
                             let seq = p["seq"].as_u64().unwrap_or(0);
                             pushes.push((row_key(&p["event"]["item"]), seq));
                             last = json!(seq);
