@@ -97,7 +97,9 @@ decided in this order:
    `deny:path`), any method; the headers as on a fixed name, then the route's `inject` (YYC: the Access service token
    `yyc-labels-ai`) and its `identityHeaders` (header → `sandbox`, `conversation` or `person` from the verified token,
    replacing a caller's copy; YYC: `X-Jarvis-Conversation`, which the label store keys on). An outside upstream goes
-   through the exit like the model route. Timeout and drain as `tools`; one log row per call (kind `route`).
+   through the exit like the model route. `identity: false` (no `identityHeaders` with it) is for an upstream outside
+   the instance: it gets no `Aviary-*` header, so no staff identity leaves (YYC: `code`, the private repository
+   DE0CH/YYC on github.com with a read-only token, `git clone http://code/DE0CH/YYC`); its log row still names who asked. Timeout and drain as `tools`; one log row per call (kind `route`).
 3. **Self hosts** (`selfHosts` in egress.json, plus `127.0.0.1` and `localhost`; any port; also origin-form requests to
    the proxy): local paths only, the **package mirror** (cache on the pod's volume, LRU at `cacheGiB`):
    `GET /mirror/pypi/simple/...` (pypi.org, links rewritten to `/mirror/pypi/files/...` = files.pythonhosted.org),
@@ -174,7 +176,7 @@ magpie/hermit requests up to 60 s, tools calls up to 180 s; what is left at its 
 **Configuration** `/etc/egress/egress.json` (`chat/src/egress/config.ts`): `product` (`name`, `locale` for the budget
 message), `models`, `defaultModel`, `smallModel`, `titleModel`, `titleReasoning`, `contextTokens`, `routes` (exactly
 `model` and `tools`, then any sandbox routes: `{name, upstream, model?, inject, allowPaths?, timeoutSeconds?,
-identityHeaders?}`; a sandbox route needs `allowPaths`), `selfHosts`,
+identityHeaders?, identity?}`; a sandbox route needs `allowPaths`), `selfHosts`,
 `generatedAllowlist`, `defaultAllowedHosts`, `denyHosts`, `blockCidrs`, `maxUploadBytes`, `cacheGiB`, `budget`,
 `exit` (below).
 **Env:** `EGRESS_DATABASE_URL`, `EGRESS_TOKEN_MAGPIE`, `EGRESS_TOKEN_HERMIT`, `EGRESS_ACCEPT_PIGEON`,
