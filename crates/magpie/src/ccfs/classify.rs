@@ -18,7 +18,7 @@
 //! any turn, and user text lines that start with one of [`INTERNAL_PREFIXES`] (an interruption banner, a reminder,
 //! a caveat, a skill body). A compaction is shown as the old stack showed it: its `compact_boundary` line is a
 //! `cc.user` event with `meta.compaction` (one assistant row, magpie 7.3 rule 2a), and its summary line has
-//! `meta.compactSummary` (an assistant row with the summary).
+//! `meta.compactSummary` (an event, no row: the summary is written for the model).
 
 use magpie_api::errors::{DataCode, ErrorInfo};
 use magpie_api::events::{Compaction, EventMeta, TaskNotification};

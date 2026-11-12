@@ -314,11 +314,7 @@ pub async fn project(tx: &Tx<'_>, ev: &Stored) -> Result<()> {
         }
         EventBody::CcUser(line) if !derive::sidechain(line, &meta) => {
             // rule 2a
-            let compaction = match (&meta.compaction, meta.compact_summary) {
-                (Some(c), _) => Some(derive::compaction(line, c)),
-                (None, Some(true)) => derive::compact_summary(line, ev.event.text.as_deref()),
-                _ => None,
-            };
+            let compaction = derive::compaction_row(line, &meta);
             if meta.compaction.is_some() || meta.compact_summary == Some(true) {
                 if let Some(item) = compaction {
                     let message_id = match &item {

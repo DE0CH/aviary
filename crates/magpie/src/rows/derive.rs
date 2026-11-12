@@ -225,29 +225,12 @@ pub fn compaction(line: &Value, c: &magpie_api::events::Compaction) -> RowItem {
     })
 }
 
-/// Rule 2a: Claude Code's compaction summary (`meta.compactSummary`) → an `assistant` row with its text, as the old
-/// stack showed it; none when the text is blank.
+/// Rule 2a: the row of a compaction's lines. Its marker is one ([`compaction`]); Claude Code's summary
+/// (`meta.compactSummary`) is none: it is written for the model, pages of it, and staff read the marker (Deyao,
+/// 2026-11-12: with compactions at a turn's end it stood after their answer).
 #[must_use]
-pub fn compact_summary(line: &Value, text: Option<&str>) -> Option<RowItem> {
-    let text = text.map_or_else(
-        || {
-            content(line)
-                .iter()
-                .filter(|b| block_type(b) == "text")
-                .filter_map(|b| b.get("text").and_then(text_of))
-                .collect::<Vec<_>>()
-                .join("\n")
-        },
-        str::to_owned,
-    );
-    (!text.trim().is_empty()).then(|| {
-        RowItem::Assistant(AssistantItem {
-            message_id: line.get("uuid").and_then(Value::as_str).unwrap_or_default().to_owned(),
-            block_index: 0,
-            error: None,
-            text,
-        })
-    })
+pub fn compaction_row(line: &Value, meta: &magpie_api::events::EventMeta) -> Option<RowItem> {
+    meta.compaction.as_ref().map(|c| compaction(line, c))
 }
 
 /// One row of an assistant line's block (rule 4).
@@ -733,16 +716,31 @@ mod tests {
         ] {
             assert_eq!(token_count(t), want, "{t}");
         }
-        let summary = json!({"type": "user", "uuid": "s1", "isCompactSummary": true,
-            "message": {"content": "This session is being continued…"}});
-        let Some(RowItem::Assistant(a)) = compact_summary(&summary, None) else {
+        // the marker is the compaction's one row; the summary Claude Code writes for the model is none
+        let boundary = json!({"type": "system", "subtype": "compact_boundary", "uuid": "b1"});
+        let marker = magpie_api::events::EventMeta {
+            compaction: Some(magpie_api::events::Compaction {
+                trigger: "manual".into(),
+                pre_tokens: 21_676,
+                post_tokens: 3_799,
+                duration_ms: 11_112,
+            }),
+            ..Default::default()
+        };
+        let Some(RowItem::Assistant(a)) = compaction_row(&boundary, &marker) else {
             panic!("no row")
         };
         assert_eq!(
             (a.message_id.as_str(), a.text.as_str()),
-            ("s1", "This session is being continued…")
+            ("b1", "Compacted manual · 22k → 4k tokens · 11s")
         );
-        assert!(compact_summary(&summary, Some(" \n")).is_none());
+        let summary = json!({"type": "user", "uuid": "s1", "isCompactSummary": true,
+            "message": {"content": "This session is being continued…"}});
+        let of_summary = magpie_api::events::EventMeta {
+            compact_summary: Some(true),
+            ..Default::default()
+        };
+        assert!(compaction_row(&summary, &of_summary).is_none());
     }
 
     fn launch() -> ToolItem {
