@@ -73,16 +73,19 @@ decided in this order:
      `GET /v1/aviary/models` answered by egress itself (below). The route injects `Authorization: Bearer
      $OPENROUTER_API_KEY` and **forces zero data retention into every request body** (`provider.zdr: true`,
      `provider.data_collection: "deny"`, set over whatever the caller sent; a body that is not one valid JSON object
-     is refused with 400, `deny:body`; no config turns this off: `forceZdr` in `chat/src/egress/modelbody.ts`, called
-     from `proxy.ts`), pins a model's providers when `models[].providers` lists them (OpenRouter endpoint slugs such
+     is refused with 400, `deny:body`; no config turns this off: `ModelBodyRewriter` in
+     `chat/src/egress/modelbody.ts`, called from `proxy.ts`), pins a model's providers when `models[].providers` lists them (OpenRouter endpoint slugs such
      as `deepinfra/fp8`, set as `provider.order` + `provider.only` with `allow_fallbacks: false`, over the caller's;
      endpoints differ in how they render a long tool-and-image conversation), applies the configured thinking level, refuses a model outside `models[].id`, `defaultModel`,
      `smallModel`, `titleModel` (400 `deny:model`) and every call once the budget is used up (402 `budget_exceeded`,
      `deny:budget`), streams the answer back and logs its `usage.cost` (kind `model`). No `Aviary-*` header (no staff
-     identity) reaches OpenRouter. **Memory:** a request carries the whole conversation, base64 images included; the
-     body is read once into one Buffer and rewritten as slices of it plus the few rewritten members (about its own
-     size), at most 64 MiB of model bodies held at once (a call waits its turn), a body over 64 MiB refused with 413
-     `request_too_large` before it is read. No total timeout (Claude Code's own 600 s bounds it); an upstream silent
+     identity) reaches OpenRouter. **Memory:** a request carries the whole conversation, base64 images included, and
+     is never held: the body is scanned and rewritten as it streams through (every top-level member passes on as it
+     arrives; `model`, `provider`, `thinking` and `reasoning`, at most 1 MiB together, are held and written last,
+     before the closing brace), and goes out chunked. The upstream is opened once the body's `model` is known and
+     allowed (or after 256 KiB without one), and gets no complete request before the whole body has been checked: a
+     refusal found later (invalid JSON, a model not offered, the budget) drops the upstream request unfinished. A
+     body over 1 GiB is refused with 413 `request_too_large`. No total timeout (Claude Code's own 600 s bounds it); an upstream silent
      120 s ends the call (504 `upstream_timeout` before the answer's head, the stream cut after it).
    - `tools`: the REST paths only (decision 15, no MCP): `GET /v1/tools`, `POST /v1/tools/<name>`, `GET
      /v1/openapi.json` to egress.json's route `tools` (`http://tools`, `Authorization: Bearer $EGRESS_TOKEN_TOOLS`),
