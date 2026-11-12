@@ -854,6 +854,8 @@ export class Egress {
     let up = 0;
     let down = 0;
     let capped = false;
+    // the client closed first: what the upstream side reports after that is not a failure to reach it
+    let gone = false;
     let status: number | null = null;
     await new Promise<void>((resolve) => {
       let finished = false;
@@ -883,9 +885,17 @@ export class Egress {
           if (!ures.complete) wr?.abort();
         });
       });
-      res.on("close", () => finish());
+      res.on("close", () => {
+        // the client went away before the answer ended: the upstream connection goes with it (an upstream that
+        // never answers, or a half-read answer, would otherwise stay open for as long as the far side keeps it)
+        if (!res.writableFinished && !out.destroyed) {
+          gone = true;
+          out.destroy();
+        }
+        finish();
+      });
       out.on("error", () => {
-        if (capped) return finish();
+        if (capped || gone) return finish();
         if (!res.headersSent) this.#text(res, 502, `egress: could not reach ${t.authority}\n`);
         else res.destroy();
         finish({ status: 502 });

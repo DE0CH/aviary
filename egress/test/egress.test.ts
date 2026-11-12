@@ -44,6 +44,8 @@ let port: number;
 let up: Server;
 let upPort: number;
 const upHits: Record<string, number> = {};
+/** stalled upstream answers (x-stall) whose connection is still open */
+let upStalled = 0;
 let upLastHeaders: IncomingMessage["headers"] = {};
 let tls: ReturnType<typeof createTlsServer>;
 let tlsPort: number;
@@ -143,6 +145,10 @@ before(async () => {
       // x-stall plays an upstream that goes quiet: "head" never answers, "mid" sends the head and one event then
       // nothing, "drip" sends an event every 200 ms for 1.5 s then ends, "end:<ms>" sends the head and ends after ms
       const stall = String(req.headers["x-stall"] ?? "");
+      if (stall) {
+        upStalled++;
+        res.on("close", () => upStalled--);
+      }
       if (stall === "head") return;
       if (stall) {
         res.writeHead(200, { "content-type": "text/event-stream" });
@@ -863,6 +869,21 @@ test("absolute-URI HTTP is forwarded; apt-style GETs are cached", async () => {
   assert.equal(second.headers["x-egress-cache"], "hit");
   assert.equal(upHits["/pool/main/x.deb"], 1);
   assert.equal((await http(`http://other.test:${upPort}/plain`, { headers: pa() })).status, 403);
+});
+
+test("forwarded HTTP: a client that goes away closes the upstream connection (before the answer and in the middle of it)", async () => {
+  for (const stall of ["head", "mid"]) {
+    const before = upStalled;
+    const r = request({ host: "127.0.0.1", port, path: `http://allowed.test:${upPort}/plain`, headers: { ...pa(), "x-stall": stall } });
+    r.on("error", () => {});
+    r.end();
+    if (stall === "mid") await new Promise<void>((ok) => r.on("response", (res) => res.once("data", () => ok())));
+    for (let i = 0; i < 100 && upStalled === before; i++) await sleep(10);
+    assert.equal(upStalled, before + 1, `${stall}: the request reached the upstream`);
+    r.destroy();
+    for (let i = 0; i < 100 && upStalled > before; i++) await sleep(10);
+    assert.equal(upStalled, before, `${stall}: the upstream connection is closed with the client's`);
+  }
 });
 
 // ---- the exit (egress.json `exit`: internet connections by name through a SOCKS5 server) ------------------------
