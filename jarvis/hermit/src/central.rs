@@ -128,6 +128,7 @@ async fn do_boot(app: &App, machine: &str, req: &BootRequest) -> anyhow::Result<
                         images: vec![],
                         files: vec![],
                     },
+                    model: None,
                 })
                 .await
                 .map_err(|e| anyhow::anyhow!("magpie refused the conversation: {e}"))?
@@ -286,11 +287,22 @@ async fn health(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Resp
     })
     .await;
     match r {
-        Ok(Some(r)) => (
-            StatusCode::OK,
-            axum::Json(json!({"state": r.state.as_str()})),
-        )
-            .into_response(),
+        Ok(Some(r)) => {
+            // the conversation's title for the session's card (a failure is no title this time: the next report asks
+            // again)
+            let title = app
+                .magpie
+                .service(None)
+                .hermit_conversation(r.conversation_id)
+                .await
+                .ok()
+                .and_then(|c| c.title);
+            let reply = wire::HealthReply {
+                state: r.state.as_str().to_owned(),
+                title,
+            };
+            (StatusCode::OK, axum::Json(reply)).into_response()
+        }
         Ok(None) => refuse(StatusCode::FORBIDDEN, "not_allowed", "no such sandbox"),
         Err(e) => unavailable(e),
     }

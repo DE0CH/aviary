@@ -74,6 +74,7 @@ impl Server for App {
             // sessions start only in the Jarvis 4 app (Deyao, 2026-11-11)
             conversations: Conversations {
                 people_create: false,
+                people_pick_model: false,
             },
         })
     }
@@ -454,6 +455,8 @@ pub fn descriptor(app: &App, row: &SandboxRow) -> SandboxSelf {
             managed_claude_md: MANAGED_CLAUDE_MD.to_owned(),
             managed_skills: std::collections::BTreeMap::new(),
             project_settings: true,
+            // Claude Code compacts by itself at its token limit; Anthropic takes any number of images
+            compact_at_images: None,
         },
         title: Title {
             system: TITLE_SYSTEM.to_owned(),

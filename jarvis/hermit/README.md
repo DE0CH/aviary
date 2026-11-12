@@ -26,6 +26,13 @@ Jarvis 4 session machine (harness aviary)                                     â”
 - Claude Code loads the session's workspace CLAUDE.md, skills and settings itself (the descriptor's
   `claude.projectSettings`: `--setting-sources=project`); YYC AI's hermit leaves it off.
 - The model is the session's Claude subscription account.
+  Anthropic takes a subscription login's call only when its system prompt begins with Claude Code's identity line,
+  so aviary-gateway puts that line first on a call that is not Claude Code's own (the supervisor's title call:
+  `machine.rs` `with_identity`).
+- The conversation's title (magpie's: generated from the first message, or renamed in the chat) is the session's
+  title on its card: hermit-jarvis reads it (`GET /v1/hermit/conversations/{id}`) and answers it to each health
+  report, aviary-gateway serves it in `/jarvis/state`, and the harness's shim writes it as an `ai-title` line beside
+  the mirrored transcripts (`aviary-title.jsonl`), where the machine's status reads a Claude session's title.
 - hermit and the gateway are Rust, here; the gateway's sandbox-facing half runs on each session machine.
 - pigeon and magpie are a DE0CH/services tenant.
 - The session image's user `claude` is uid 1000 (the supervisor runs the agent as uid 1000).

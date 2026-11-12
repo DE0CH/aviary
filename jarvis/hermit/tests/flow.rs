@@ -65,7 +65,15 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     magpie
         .fake
         .script()
-        .always("hermit_create_conversation", Reply::json(201, conv));
+        .always("hermit_create_conversation", Reply::json(201, conv.clone()));
+    // the conversation as hermit reads it back: Deyao renamed it in the chat
+    let mut titled = conv["conversation"].clone();
+    titled["title"] = json!("Model picker");
+    titled["titleSource"] = json!("user");
+    magpie
+        .fake
+        .script()
+        .always("hermit_conversation", Reply::json(200, titled));
     magpie.fake.script().once(
         "hermit_send_turn",
         Reply::json(
@@ -255,6 +263,9 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         .await
         .unwrap();
     assert_eq!(r.status(), 200);
+    // the answer names the conversation's title (the machine shows it on the session's card in the Jarvis 4 app)
+    let told: Value = r.json().await.unwrap();
+    assert_eq!(told, json!({"state": "ready", "title": "Model picker"}));
     let put = c
         .put(format!("{hermit_url}/v1/conversations/{cid}/sandbox"))
         .header("aviary-protocol", "hermit-core=1")

@@ -70,6 +70,8 @@ struct State {
     http: reqwest::Client,
     /// The supervisor's last health answer (for the harness's status shim).
     health: std::sync::Mutex<Option<HealthReport>>,
+    /// The conversation's title as hermit last said it (for the shim: the session's card in the Jarvis 4 app).
+    title: std::sync::Mutex<Option<String>>,
 }
 
 fn full(status: StatusCode, body: serde_json::Value) -> Response<Body> {
@@ -212,6 +214,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
         boot: b,
         http,
         health: std::sync::Mutex::new(None),
+        title: std::sync::Mutex::new(None),
     });
     tokio::spawn(health_loop(state.clone()));
     loop {
@@ -335,11 +338,14 @@ fn hop(name: &str) -> bool {
     )
 }
 
-fn body_of(req: Request<Incoming>) -> reqwest::Body {
+fn stream_of(body: Incoming) -> reqwest::Body {
     reqwest::Body::wrap_stream(
-        http_body_util::BodyDataStream::new(req.into_body())
-            .map_err(|e| std::io::Error::other(e.to_string())),
+        http_body_util::BodyDataStream::new(body).map_err(|e| std::io::Error::other(e.to_string())),
     )
+}
+
+fn body_of(req: Request<Incoming>) -> reqwest::Body {
+    stream_of(req.into_body())
 }
 
 async fn relay(r: Result<reqwest::Response, reqwest::Error>) -> Response<Body> {
@@ -421,13 +427,33 @@ async fn model(state: &State, pq: &str, req: Request<Incoming>) -> Response<Body
             "no Claude login on this machine",
         );
     };
+    // a call that is not Claude Code's own (the supervisor's title call) gets Claude Code's first system line, without
+    // which Anthropic refuses a subscription login (429 `rate_limit_error`); Claude Code's own bodies go on as a stream
+    let (parts, incoming) = req.into_parts();
+    let own_call = parts
+        .headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ua| ua.starts_with("claude-cli/"));
+    let body = if own_call {
+        stream_of(incoming)
+    } else {
+        match incoming.collect().await {
+            Ok(b) => {
+                let b = b.to_bytes();
+                reqwest::Body::from(with_identity(&b).map_or(b, Bytes::from))
+            }
+            Err(_) => return refuse(StatusCode::BAD_REQUEST, "bad_request", "no body"),
+        }
+    };
     let mut r = state
         .http
         .request(method, format!("{}{pq}", state.cfg.model_url));
     let mut betas: Vec<String> = Vec::new();
-    for (k, v) in req.headers() {
+    for (k, v) in &parts.headers {
         let n = k.as_str();
-        if hop(n) || n == "authorization" || n == "x-api-key" {
+        // content-length: reqwest sets the body's own (a body given the identity line is longer)
+        if hop(n) || n == "authorization" || n == "x-api-key" || n == "content-length" {
             continue;
         }
         if n == "anthropic-beta" {
@@ -448,8 +474,47 @@ async fn model(state: &State, pq: &str, req: Request<Incoming>) -> Response<Body
     r = r
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .header("anthropic-beta", betas.join(","))
-        .body(body_of(req));
+        .body(body);
     relay(r.send().await).await
+}
+
+/// The first line of Claude Code's system prompt: Anthropic takes a subscription (OAuth) login's Messages call only
+/// when its system prompt begins with it (or with the Agent SDK's).
+pub const CLAUDE_CODE_IDENTITY: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
+const IDENTITY_STARTS: [&str; 2] = ["You are Claude Code", "You are a Claude agent"];
+
+/// A Messages body whose system prompt does not begin with Claude Code's identity, with that line put first (the
+/// caller's own system prompt follows as the next block); `None` when it already does, or the body is not a JSON
+/// object (it goes on as it is).
+#[must_use]
+pub fn with_identity(body: &[u8]) -> Option<Vec<u8>> {
+    let mut v: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let o = v.as_object_mut()?;
+    let block = |text: &str| json!({"type": "text", "text": text});
+    let known = |t: &str| IDENTITY_STARTS.iter().any(|s| t.starts_with(s));
+    let system = match o.remove("system") {
+        None | Some(serde_json::Value::Null) => vec![block(CLAUDE_CODE_IDENTITY)],
+        Some(serde_json::Value::String(t)) => {
+            if known(&t) {
+                return None;
+            }
+            vec![block(CLAUDE_CODE_IDENTITY), block(&t)]
+        }
+        Some(serde_json::Value::Array(mut blocks)) => {
+            let first = blocks
+                .first()
+                .and_then(|b| b.get("text"))
+                .and_then(serde_json::Value::as_str);
+            if first.is_some_and(known) {
+                return None;
+            }
+            blocks.insert(0, block(CLAUDE_CODE_IDENTITY));
+            blocks
+        }
+        Some(_) => return None,
+    };
+    o.insert("system".into(), serde_json::Value::Array(system));
+    serde_json::to_vec(&v).ok()
 }
 
 async fn internet(state: &State, req: Request<Incoming>) -> Response<Body> {
@@ -497,6 +562,7 @@ async fn own(state: &State, req: Request<Incoming>) -> Response<Body> {
                     "conversationId": state.boot.conversation_id,
                     "ready": h.as_ref().is_some_and(|h| h.ok && h.ready),
                     "busy": h.as_ref().is_some_and(|h| h.busy),
+                    "title": state.title.lock().ok().and_then(|t| t.clone()),
                 }),
             )
         }
@@ -551,7 +617,16 @@ async fn health_loop(state: Arc<State>) {
             .send()
             .await;
         match r {
-            Ok(r) if r.status().is_success() => ready = h.ready,
+            Ok(r) if r.status().is_success() => {
+                ready = h.ready;
+                // a title hermit names stays until it names another (an answer without one changes nothing)
+                if let Ok(reply) = r.json::<wire::HealthReply>().await
+                    && let Some(t) = reply.title
+                    && let Ok(mut slot) = state.title.lock()
+                {
+                    *slot = Some(t);
+                }
+            }
             Ok(r) => tracing::warn!(status = %r.status(), "health report refused"),
             Err(e) => tracing::warn!(error = %e, "health report failed"),
         }
@@ -567,4 +642,59 @@ pub fn listen_addr() -> SocketAddr {
     LISTEN
         .parse()
         .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 3128)))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn system_of(body: &serde_json::Value) -> Option<serde_json::Value> {
+        with_identity(&serde_json::to_vec(body).unwrap())
+            .map(|b| serde_json::from_slice::<serde_json::Value>(&b).unwrap()["system"].clone())
+    }
+
+    /// The supervisor's title call (magpie's `title` command) has only the deployment's title instructions as its
+    /// system prompt: Anthropic answered it 429 on a subscription login, so no conversation got a title (2026-11-12).
+    #[test]
+    fn a_call_without_claude_codes_identity_gets_it_first() {
+        let title = json!({"model": "claude-haiku-5-5", "max_tokens": 64, "system": "Write a short title.",
+            "messages": [{"role": "user", "content": "hello"}]});
+        assert_eq!(
+            system_of(&title),
+            Some(
+                json!([{"type": "text", "text": CLAUDE_CODE_IDENTITY}, {"type": "text", "text": "Write a short title."}])
+            )
+        );
+        let rest: serde_json::Value =
+            serde_json::from_slice(&with_identity(&serde_json::to_vec(&title).unwrap()).unwrap())
+                .unwrap();
+        assert_eq!(rest["messages"], title["messages"]);
+        assert_eq!(rest["model"], title["model"]);
+        // no system prompt at all, and one in blocks
+        assert_eq!(
+            system_of(&json!({"messages": []})),
+            Some(json!([{"type": "text", "text": CLAUDE_CODE_IDENTITY}]))
+        );
+        assert_eq!(
+            system_of(&json!({"system": [{"type": "text", "text": "Be brief."}], "messages": []})),
+            Some(
+                json!([{"type": "text", "text": CLAUDE_CODE_IDENTITY}, {"type": "text", "text": "Be brief."}])
+            )
+        );
+    }
+
+    #[test]
+    fn claude_codes_own_bodies_are_left_alone() {
+        for system in [
+            json!("You are Claude Code, Anthropic's official CLI for Claude."),
+            json!([{"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."},
+                   {"type": "text", "text": "more"}]),
+            json!([{"type": "text", "text": "You are a Claude agent, built on Anthropic's Claude Agent SDK."}]),
+        ] {
+            assert_eq!(system_of(&json!({"system": system, "messages": []})), None);
+        }
+        assert_eq!(with_identity(b"not json"), None);
+        assert_eq!(with_identity(b"[1]"), None);
+    }
 }

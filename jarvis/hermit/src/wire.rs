@@ -90,6 +90,18 @@ pub struct HealthReport {
     pub busy: bool,
 }
 
+/// `POST /jarvis/health` answer.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthReply {
+    /// The sandbox's state (`starting`, `ready`, …).
+    pub state: String,
+    /// The conversation's title in the chat (magpie's: generated from the first message, or Deyao's rename), for the
+    /// session's card in the Jarvis 4 app; none while it is untitled or magpie did not answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
 /// `POST /jarvis/deliver` body.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
