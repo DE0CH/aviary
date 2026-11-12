@@ -3,7 +3,9 @@
 Telegram notification channels made on demand for a conversation. A sandbox asks for a channel; herald creates a
 private broadcast channel as its Telegram **account** (MTProto), makes its **bot** an admin that may post, and answers
 the channel's handle and invite link. The conversation then posts to the channel through the bot (Bot API). Who joins
-a channel is not herald's concern: it hands out the invite link and nothing else.
+a channel is not herald's concern: it hands out the invite link and nothing else. A creation that does not finish
+(the bot could not be made an admin, no invite link) deletes the channel again, so a failed request leaves nothing in
+the account.
 
 herald keeps no state. A channel's **handle** is `<chat id>.<signature>`: the Bot API chat id, signed with
 HMAC-SHA256 under `HERALD_HANDLE_KEY` for the conversation that created it. Only that conversation can read or post to

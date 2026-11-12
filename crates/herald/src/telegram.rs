@@ -232,12 +232,65 @@ fn from_invocation(e: InvocationError) -> Error {
     }
 }
 
-impl Telegram for Live {
-    fn create_channel<'a>(&'a self, title: &'a str, about: &'a str) -> BoxFuture<'a, Result<Created, Error>> {
+/// A channel as the account names it: its id and access hash.
+pub type ChannelRef = (i64, i64);
+
+/// The account's steps of a creation, in order (the live account over `MTProto`; faked in tests).
+pub trait ChannelSteps: Send + Sync {
+    /// Creates the private broadcast channel.
+    fn create<'a>(&'a self, title: &'a str, about: &'a str) -> BoxFuture<'a, Result<ChannelRef, Error>>;
+    /// Makes the bot an admin that may post.
+    fn admit_bot(&self, channel: ChannelRef) -> BoxFuture<'_, Result<(), Error>>;
+    /// The channel's invite link.
+    fn invite(&self, channel: ChannelRef) -> BoxFuture<'_, Result<String, Error>>;
+    /// Deletes the channel.
+    fn delete(&self, channel: ChannelRef) -> BoxFuture<'_, Result<(), Error>>;
+}
+
+/// A creation from its steps. When a step after the create fails, the channel is deleted again: the caller gets an
+/// error and no handle, so a channel left behind could never be posted to or found, and every retry would leave one
+/// more in the account.
+///
+/// # Errors
+/// The failed step's error (a failed delete is logged, not answered).
+pub async fn create_with(steps: &dyn ChannelSteps, title: &str, about: &str) -> Result<Created, Error> {
+    let channel = steps.create(title, about).await?;
+    let finished = async {
+        steps.admit_bot(channel).await?;
+        steps.invite(channel).await
+    }
+    .await;
+    match finished {
+        Ok(invite_link) => Ok(Created {
+            chat_id: bot_chat_id(channel.0),
+            invite_link,
+        }),
+        Err(e) => {
+            if let Err(d) = steps.delete(channel).await {
+                tracing::warn!(chat = bot_chat_id(channel.0), error = %d, "an unfinished channel was not deleted");
+            }
+            Err(e)
+        }
+    }
+}
+
+/// The steps on the connected account.
+struct LiveSteps<'a> {
+    client: &'a Client,
+    bot_user: &'a tl::enums::InputUser,
+}
+
+fn input_channel((channel_id, access_hash): ChannelRef) -> tl::enums::InputChannel {
+    tl::enums::InputChannel::Channel(tl::types::InputChannel {
+        channel_id,
+        access_hash,
+    })
+}
+
+impl ChannelSteps for LiveSteps<'_> {
+    fn create<'a>(&'a self, title: &'a str, about: &'a str) -> BoxFuture<'a, Result<ChannelRef, Error>> {
         Box::pin(async move {
-            let _one = self.account.lock().await;
-            let account = connect(&self.cfg).map_err(|e| Error::Unavailable(e.to_string()))?;
-            let updates = account
+            let updates = self
                 .client
                 .invoke(&tl::functions::channels::CreateChannel {
                     broadcast: true,
@@ -257,21 +310,21 @@ impl Telegram for Live {
                 tl::enums::Updates::Combined(u) => u.chats,
                 _ => Vec::new(),
             };
-            let (id, access_hash) = chats
+            chats
                 .into_iter()
                 .find_map(|c| match c {
                     tl::enums::Chat::Channel(c) => c.access_hash.map(|h| (c.id, h)),
                     _ => None,
                 })
-                .ok_or_else(|| Error::Unavailable("Telegram answered the create without the channel".to_owned()))?;
-            let channel = tl::enums::InputChannel::Channel(tl::types::InputChannel {
-                channel_id: id,
-                access_hash,
-            });
-            account
-                .client
+                .ok_or_else(|| Error::Unavailable("Telegram answered the create without the channel".to_owned()))
+        })
+    }
+
+    fn admit_bot(&self, channel: ChannelRef) -> BoxFuture<'_, Result<(), Error>> {
+        Box::pin(async move {
+            self.client
                 .invoke(&tl::functions::channels::EditAdmin {
-                    channel: channel.clone(),
+                    channel: input_channel(channel),
                     user_id: self.bot_user.clone(),
                     admin_rights: tl::enums::ChatAdminRights::Rights(tl::types::ChatAdminRights {
                         change_info: false,
@@ -298,13 +351,19 @@ impl Telegram for Live {
                 })
                 .await
                 .map_err(from_invocation)?;
-            let invite = account
+            Ok(())
+        })
+    }
+
+    fn invite(&self, (channel_id, access_hash): ChannelRef) -> BoxFuture<'_, Result<String, Error>> {
+        Box::pin(async move {
+            let invite = self
                 .client
                 .invoke(&tl::functions::messages::ExportChatInvite {
                     legacy_revoke_permanent: false,
                     request_needed: false,
                     peer: tl::enums::InputPeer::Channel(tl::types::InputPeerChannel {
-                        channel_id: id,
+                        channel_id,
                         access_hash,
                     }),
                     expire_date: None,
@@ -314,16 +373,38 @@ impl Telegram for Live {
                 })
                 .await
                 .map_err(from_invocation)?;
-            let invite_link = match invite {
-                tl::enums::ExportedChatInvite::ChatInviteExported(i) => i.link,
+            match invite {
+                tl::enums::ExportedChatInvite::ChatInviteExported(i) => Ok(i.link),
                 tl::enums::ExportedChatInvite::ChatInvitePublicJoinRequests => {
-                    return Err(Error::Unavailable("Telegram answered no invite link".to_owned()));
+                    Err(Error::Unavailable("Telegram answered no invite link".to_owned()))
                 }
+            }
+        })
+    }
+
+    fn delete(&self, channel: ChannelRef) -> BoxFuture<'_, Result<(), Error>> {
+        Box::pin(async move {
+            self.client
+                .invoke(&tl::functions::channels::DeleteChannel {
+                    channel: input_channel(channel),
+                })
+                .await
+                .map_err(from_invocation)?;
+            Ok(())
+        })
+    }
+}
+
+impl Telegram for Live {
+    fn create_channel<'a>(&'a self, title: &'a str, about: &'a str) -> BoxFuture<'a, Result<Created, Error>> {
+        Box::pin(async move {
+            let _one = self.account.lock().await;
+            let account = connect(&self.cfg).map_err(|e| Error::Unavailable(e.to_string()))?;
+            let steps = LiveSteps {
+                client: &account.client,
+                bot_user: &self.bot_user,
             };
-            Ok(Created {
-                chat_id: bot_chat_id(id),
-                invite_link,
-            })
+            create_with(&steps, title, about).await
         })
     }
 
@@ -577,6 +658,80 @@ mod tests {
         let (_, head, _) = file_form(1, &f).unwrap();
         assert!(!head.contains("caption") && !head.contains("parse_mode") && !head.contains("disable_notification"));
         assert!(head.contains("name=\"document\"; filename="));
+    }
+
+    /// The account's steps, with the ones named in `fail` failing; what was called, in order.
+    #[derive(Default)]
+    struct Steps {
+        fail: &'static [&'static str],
+        calls: std::sync::Mutex<Vec<&'static str>>,
+    }
+
+    impl Steps {
+        fn step(&self, name: &'static str) -> Result<(), Error> {
+            self.calls.lock().unwrap().push(name);
+            if self.fail.contains(&name) {
+                return Err(Error::Refused(format!("{name} failed")));
+            }
+            Ok(())
+        }
+    }
+
+    impl ChannelSteps for Steps {
+        fn create<'a>(&'a self, _: &'a str, _: &'a str) -> BoxFuture<'a, Result<ChannelRef, Error>> {
+            Box::pin(async move { self.step("create").map(|()| (42, 7)) })
+        }
+        fn admit_bot(&self, _: ChannelRef) -> BoxFuture<'_, Result<(), Error>> {
+            Box::pin(async move { self.step("admit_bot") })
+        }
+        fn invite(&self, _: ChannelRef) -> BoxFuture<'_, Result<String, Error>> {
+            Box::pin(async move { self.step("invite").map(|()| "https://t.me/+x".to_owned()) })
+        }
+        fn delete(&self, _: ChannelRef) -> BoxFuture<'_, Result<(), Error>> {
+            Box::pin(async move { self.step("delete") })
+        }
+    }
+
+    async fn run(fail: &'static [&'static str]) -> (Result<Created, Error>, Vec<&'static str>) {
+        let steps = Steps {
+            fail,
+            ..Steps::default()
+        };
+        let made = create_with(&steps, "t", "").await;
+        let calls = steps.calls.lock().unwrap().clone();
+        (made, calls)
+    }
+
+    #[tokio::test]
+    async fn a_channel_whose_creation_does_not_finish_is_deleted_again() {
+        let (made, calls) = run(&[]).await;
+        assert_eq!(
+            made,
+            Ok(Created {
+                chat_id: -1_000_000_000_042,
+                invite_link: "https://t.me/+x".to_owned()
+            })
+        );
+        assert_eq!(calls, ["create", "admit_bot", "invite"], "a finished channel is kept");
+
+        // the bot could not be made an admin: no handle is answered, so the channel must not stay in the account
+        let (made, calls) = run(&["admit_bot"]).await;
+        assert_eq!(made, Err(Error::Refused("admit_bot failed".to_owned())));
+        assert_eq!(calls, ["create", "admit_bot", "delete"]);
+
+        let (made, calls) = run(&["invite"]).await;
+        assert_eq!(made, Err(Error::Refused("invite failed".to_owned())));
+        assert_eq!(calls, ["create", "admit_bot", "invite", "delete"]);
+
+        // the delete failing too: the step's own error is still the answer
+        let (made, calls) = run(&["invite", "delete"]).await;
+        assert_eq!(made, Err(Error::Refused("invite failed".to_owned())));
+        assert_eq!(calls, ["create", "admit_bot", "invite", "delete"]);
+
+        // nothing was created: nothing to delete
+        let (made, calls) = run(&["create"]).await;
+        assert_eq!(made, Err(Error::Refused("create failed".to_owned())));
+        assert_eq!(calls, ["create"]);
     }
 
     #[test]
