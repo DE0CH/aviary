@@ -96,8 +96,13 @@ arrives.
   chat (`utils/host-routes.ts` `buildOpenProjectRoute`), no tab row (`WorkspaceDesktopTabsRow` renders nothing), no
   project/host/mode pickers, explorer, editor, scripts, hover card or fork button; the composer has no voice,
   autocomplete or model/mode chips (`composer/input-mode.ts`) and picks the one provider and model by itself
-  (`provider-selection/resolve-agent-form.ts`); where the model chip was, it shows the model's name read-only with an
-  (i) saying the admin sets it (`yyc/model-label.tsx`, from config `models`' label for `defaultModel`).
+  (`provider-selection/resolve-agent-form.ts`); where the model chip was, one button names the conversation's model and thinking
+  level and opens a menu (`yyc/model-menu.tsx`, its state in `yyc/model-menu-state.ts`): the models of the provider
+  snapshot with an (i) beside the title (ask the admin for more), then a thinking row with one position for every
+  level any model has. The row is the same for every model, so nothing moves when the model changes: a level the
+  chosen model lacks is disabled in place, and a model with no levels greys the whole row. A conversation keeps its
+  own choice (`setAgentModel`, `setAgentThinkingOption`; used from its next message on); a new conversation starts
+  on the default model at that model's own level, whatever was chosen last.
 - **Developer controls hidden** (staff are not developers; each is a constant or a server_info feature, so the
   upstream code path stays): the composer's 「新增 issue 或 PR」 GitHub picker (only with `features.forgeSearch`, which
   CloudCLI never sends); the fork menu on earlier replies; the explorer (`workspace-tabs/explorer-sidebar.ts`
