@@ -264,7 +264,7 @@ What an implementation must do, beyond the shapes:
   304). Its `claude` holds `managedClaudeMd` and `managedSkills` (`{"<skill>/<file>": text}`, from hermit's
   `prompt.skills` folder; `valid_skill_path`; with the CLAUDE.md and the title instructions at most
   `MANAGED_MAX_BYTES` as JSON), which the supervisor writes to `/etc/claude-code/CLAUDE.md` and
-  `/etc/claude-code/.claude/skills/<skill>/<file>` (root, 0644; stale skill files removed; no `managed-mcp.json`). `GET /v1/sandbox/secrets[/{key}]`: the granted keys; a key not granted is 404 `not_granted`.
+  `/etc/claude-code/.claude/skills/<skill>/<file>` (root, 0644; stale skill files removed; no `managed-mcp.json`). `claude.compactAtImages` (optional, from hermit.json `sandbox.compactAtImages`; absent = never): the supervisor counts the images Claude Code's context holds (each main-thread image block on stdout or in a prompt, since the last `compact_boundary`; a resumed conversation's from its transcript) and, at an idle point with that many, writes `/compact` as a turn of origin agent: every model call sends all of them again, and model hosts slow down or refuse past a few dozen. `GET /v1/sandbox/secrets[/{key}]`: the granted keys; a key not granted is 404 `not_granted`.
   `POST /v1/sandbox/activity` takes the supervisor's report and answers `{state, release}`, where a non-null
   `release` repeats a pending release for the supervisor to act on as on `:7070`'s release call.
 - **Boot.** A sandbox starts with the supervisor's keeper as PID 1, the gateway's boot environment (above) and nothing

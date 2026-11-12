@@ -101,6 +101,10 @@ pub struct SandboxJson {
     pub proxy: String,
     /// The descriptor's `env`, with `{token}` and `{vip}` filled in.
     pub env: BTreeMap<String, String>,
+    /// The descriptor's `claude.compactAtImages`: the conversation is compacted at a turn's end once it holds this
+    /// many images (at least 1). Absent = never.
+    #[serde(default)]
+    pub compact_at_images: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -304,6 +308,11 @@ impl Config {
             {
                 return Err(invalid(format!("sandbox.env: {k:?} is not a variable name")));
             }
+        }
+        if s.compact_at_images == Some(0) {
+            return Err(invalid(
+                "sandbox.compactAtImages must be at least 1 (leave it out for never)",
+            ));
         }
         if file.product.name.trim().is_empty() || file.product.locale.trim().is_empty() {
             return Err(invalid("product.name and product.locale must be set"));

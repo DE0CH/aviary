@@ -7,7 +7,8 @@
 //! interrupts), `crash:N`, `bg:ID` (a background Bash task), `bgdone:ID:MS` (one that completes after MS and wakes
 //! the agent), `wake:MS` (an agent turn after MS), `slowwake:MS` (an agent turn after MS whose result comes 1.5 s
 //! later), `ask` (an `AskUserQuestion` that needs a person: its `tool_use`, then the `can_use_tool`), `askbash` (the
-//! same beside a Bash call still running). Like Claude Code 2.1.304, the fake answers an open question itself when
+//! same beside a Bash call still running), `img:N` (a tool result carrying N images). The text `/compact` is the
+//! command: `status`, 300 ms, then a second `init`, `compact_boundary`, the summary and a `result`. Like Claude Code 2.1.304, the fake answers an open question itself when
 //! its stdin closes ("Tool permission stream closed before response received") and calls the model again.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
@@ -104,6 +105,16 @@ impl Fake {
             let v = json!({"type": "system", "subtype": "init", "session_id": self.session, "model": "m"});
             self.system(v);
         }
+        if msg["message"]["content"] == "/compact" {
+            self.note("prompt /compact");
+            self.busy = true;
+            self.system(json!({"type": "system", "subtype": "status", "status": "compacting"}));
+            self.timers.push((
+                std::time::Instant::now() + Duration::from_millis(300),
+                "compacted:".into(),
+            ));
+            return;
+        }
         let content = &msg["message"]["content"];
         let (text, images) = match content {
             Value::String(s) => (s.clone(), 0),
@@ -174,6 +185,18 @@ impl Fake {
                             format!("done:{id}"),
                         ));
                     }
+                }
+                "img" => {
+                    let n: usize = arg.parse().unwrap();
+                    self.assistant(
+                        "reading",
+                        &[json!({"type": "tool_use", "id": "toolu_img", "name": "Read", "input": {"file_path": "a.png"}})],
+                    );
+                    let image = json!({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "QUJD"}});
+                    let v = json!({"type": "user", "uuid": Uuid::new_v4().to_string(), "parent_tool_use_id": null,
+                                   "message": {"role": "user", "content": [
+                                       {"type": "tool_result", "tool_use_id": "toolu_img", "content": vec![image; n]}]}});
+                    out_line(&mut self.out, &v);
                 }
                 "wake" | "slowwake" => {
                     let ms: u64 = arg.parse().unwrap();
@@ -249,6 +272,25 @@ impl Fake {
             }
             "slowend" => {
                 self.result(true, "agent");
+                self.next_queued();
+            }
+            "compacted" => {
+                // as Claude Code 2.1.322 answers `/compact`
+                self.system(json!({"type": "system", "subtype": "status", "status": null}));
+                self.system(json!({"type": "system", "subtype": "init", "session_id": self.session, "model": "m"}));
+                self.system(
+                    json!({"type": "system", "subtype": "compact_boundary", "uuid": Uuid::new_v4().to_string(),
+                                   "compact_metadata": {"trigger": "manual", "pre_tokens": 9, "post_tokens": 3}}),
+                );
+                let v = json!({"type": "user", "uuid": Uuid::new_v4().to_string(), "parent_tool_use_id": null,
+                               "isSynthetic": true, "message": {"role": "user",
+                               "content": "This session is being continued from a previous conversation."}});
+                out_line(&mut self.out, &v);
+                let v = json!({"type": "user", "uuid": Uuid::new_v4().to_string(), "parent_tool_use_id": null,
+                               "isReplay": true, "message": {"role": "user",
+                               "content": "<local-command-stdout>Compacted </local-command-stdout>"}});
+                out_line(&mut self.out, &v);
+                self.result(true, "");
                 self.next_queued();
             }
             _ => {}
@@ -421,8 +463,19 @@ struct World {
 }
 
 async fn world() -> World {
+    world_with(HermitConfig::default()).await
+}
+
+/// A world whose descriptors compact the conversation at `images` images.
+async fn world_compacting(images: u32) -> World {
+    let mut cfg = HermitConfig::default();
+    cfg.descriptor.claude.compact_at_images = Some(images);
+    world_with(cfg).await
+}
+
+async fn world_with(hermit: HermitConfig) -> World {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let hermit = FakeHermit::with_config(HermitConfig::default());
+    let hermit = FakeHermit::with_config(hermit);
     let magpie = FakeMagpie::new();
     let model = mock_model::MockModel::with_default_models();
     let hs = hermit.serve().await.unwrap();
@@ -540,6 +593,7 @@ impl World {
             },
             managed_dir: self.dir.join("managed"),
             gen_dir: self.dir.join("gens"),
+            claude_dir: self.dir.join("dot-claude"),
             uploads: Uploads {
                 workspace: self.ws.clone(),
                 uid,
@@ -2583,4 +2637,138 @@ async fn a_message_sent_into_a_running_turn_is_written_at_once() {
     until("an agent turn", || !calls.script().calls_to("agent_turn").is_empty()).await;
     w.idle(&sup).await;
     assert!(!w.prompts().iter().any(|p| p == "prompt say:nope"));
+}
+
+// ---- compaction by images ----
+
+fn agent_turns(w: &World) -> Vec<Uuid> {
+    w.magpie
+        .script()
+        .calls_to("agent_turn")
+        .iter()
+        .map(|c| serde_json::from_value(c.body.as_ref().unwrap()["turnId"].clone()).unwrap())
+        .collect()
+}
+
+fn compactions(w: &World) -> usize {
+    w.fake_log().iter().filter(|l| *l == "prompt /compact").count()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_conversation_is_compacted_at_a_turns_end_once_it_holds_the_configured_images() {
+    let w = world_compacting(3).await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    // two images: under the limit, the turn's end is an ordinary idle point
+    let (t, _) = w.turn("img:2");
+    assert_eq!(w.ended(t).await["state"], "completed");
+    w.idle(&sup).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!((compactions(&w), agent_turns(&w).len()), (0, 0));
+    assert_eq!(sup.persisted.read(|s| s.run.images), Some(2));
+    // the third: at the turn's end Claude Code is told to compact, as a turn of origin agent that ends at the
+    // compaction's result
+    let (t, _) = w.turn("img:1");
+    assert_eq!(w.ended(t).await["state"], "completed");
+    until("the compaction's turn", || agent_turns(&w).len() == 1).await;
+    assert_eq!(w.ended(agent_turns(&w)[0]).await["state"], "completed");
+    w.idle(&sup).await;
+    assert_eq!(compactions(&w), 1);
+    assert_eq!(
+        sup.persisted.read(|s| s.run.images),
+        Some(0),
+        "the compaction's boundary starts the count again"
+    );
+    // the count starts again, and a person's message during a compaction is answered after it
+    let (t, _) = w.turn("img:2");
+    assert_eq!(w.ended(t).await["state"], "completed");
+    w.idle(&sup).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(compactions(&w), 1);
+    let (t, _) = w.turn("img:4");
+    assert_eq!(w.ended(t).await["state"], "completed");
+    until("the second compaction", || compactions(&w) == 2).await;
+    let (p, _) = w.turn("say:after the compaction");
+    assert_eq!(w.ended(agent_turns(&w)[1]).await["state"], "completed");
+    assert_eq!(w.ended(p).await["state"], "completed");
+    assert_eq!(w.state_names(p), ["running", "completed"]);
+    w.idle(&sup).await;
+    assert_eq!(
+        w.prompts().iter().rev().take(2).rev().collect::<Vec<_>>(),
+        ["prompt /compact", "prompt say:after the compaction"]
+    );
+    assert_eq!(compactions(&w), 2);
+    assert_eq!(agent_turns(&w).len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn without_the_setting_images_never_compact_and_a_prompts_own_images_count() {
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let (t, _) = w.turn("img:50");
+    assert_eq!(w.ended(t).await["state"], "completed");
+    w.idle(&sup).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!((compactions(&w), agent_turns(&w).len()), (0, 0));
+    assert_eq!(sup.persisted.read(|s| s.run.images), Some(50));
+    drop(sup);
+
+    let w = world_compacting(2).await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let sha = w.magpie.seed_blob(b"\x89PNG\r\n\x1a\nimage");
+    let image = |n: u32| StartImage {
+        upload_id: Uuid::new_v4(),
+        mime_type: "image/png".into(),
+        workspace_path: format!("uploads/{n}.png"),
+        blob: sha.clone(),
+        model_blob: sha.clone(),
+        model_mime: "image/png".into(),
+    };
+    let (t, _) = w.turn_with("say:two", None, vec![], vec![image(1), image(2)]);
+    assert_eq!(w.ended(t).await["state"], "completed");
+    until("the compaction", || compactions(&w) == 1).await;
+    assert_eq!(w.ended(agent_turns(&w)[0]).await["state"], "completed");
+    w.idle(&sup).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_resumed_conversation_counts_the_images_its_transcript_holds() {
+    let w = world_compacting(5).await;
+    let session = Uuid::new_v4().to_string();
+    let dir = w.dir.join("dot-claude/projects/-workspace");
+    std::fs::create_dir_all(&dir).unwrap();
+    let image = r#"{"type":"image","source":{"type":"base64","media_type":"image/png","data":"QUJD"}}"#;
+    let result = |n: usize| {
+        format!(
+            r#"{{"type":"user","uuid":"u","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"t","content":[{}]}}]}}}}"#,
+            vec![image; n].join(",")
+        )
+    };
+    // seven images before a compaction, three after it and a text that only quotes an image block
+    let quoted = serde_json::to_string(&json!({"type": "user", "message": {"content": image}})).unwrap();
+    let lines = [
+        result(7),
+        r#"{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"auto"}}"#.to_owned(),
+        result(2),
+        quoted,
+        result(1),
+    ];
+    std::fs::write(dir.join(format!("{session}.jsonl")), lines.join("\n") + "\n").unwrap();
+    assert_eq!(count_images(&dir.join(format!("{session}.jsonl"))).unwrap(), 3);
+
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let (t, _) = w.turn_with("img:1", Some(session.clone()), vec![], vec![]);
+    assert_eq!(w.ended(t).await["state"], "completed");
+    w.idle(&sup).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        sup.persisted.read(|s| s.run.images),
+        Some(4),
+        "three in the transcript and the one just read"
+    );
+    assert_eq!(compactions(&w), 0);
+    let (t, _) = w.turn_with("img:1", Some(session), vec![], vec![]);
+    assert_eq!(w.ended(t).await["state"], "completed");
+    until("the compaction at five", || compactions(&w) == 1).await;
+    assert_eq!(w.ended(agent_turns(&w)[0]).await["state"], "completed");
+    w.idle(&sup).await;
 }

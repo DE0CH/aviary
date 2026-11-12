@@ -72,6 +72,9 @@ pub enum Out {
         tool_results: Vec<String>,
         /// The `<task-notification>…</task-notification>` text of a user message (a wake-up for a background task).
         task_notification: Option<String>,
+        /// The image blocks the message carries, its tool results' included: what it adds to the images Claude Code
+        /// sends with every model call from now on.
+        images: u32,
     },
     /// `stream_event` (not produced in this release; activity all the same).
     StreamEvent,
@@ -91,7 +94,10 @@ pub enum Out {
         request_id: String,
     },
     KeepAlive,
-    /// A `system` message the driver only logs (`api_retry`, `status`, `compact_boundary`, `hook_*`).
+    /// `system`/`compact_boundary`: Claude Code replaced the conversation so far by a summary (its images are gone
+    /// from the context).
+    Compacted,
+    /// A `system` message the driver only logs (`api_retry`, `status`, `hook_*`).
     Logged(String),
     /// A type the driver does not know (logged once per type).
     Other(String),
@@ -120,11 +126,117 @@ struct Block {
     name: Option<String>,
     input: Option<Value>,
     tool_use_id: Option<String>,
+    /// A `tool_result`'s own content: only its image blocks are counted.
+    #[serde(default)]
+    content: Images,
 }
 
-/// `message.content`: a string (skipped) or blocks (only `tool_use` and `tool_result` blocks kept).
+/// How many `image` blocks a content holds: a string or anything but a list has none. The blocks' other members
+/// (the base64 data) are skipped, never kept.
 #[derive(Default)]
-struct Content(Vec<Block>);
+struct Images(u32);
+
+impl<'de> Deserialize<'de> for Images {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Kind {
+            #[serde(rename = "type")]
+            kind: Option<String>,
+        }
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = Images;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("any content")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Images, A::Error> {
+                let mut n = 0;
+                // a block that is no object (a bare string) counts as none
+                while let Some(b) = seq.next_element::<Value0<Kind>>()? {
+                    if b.0.is_some_and(|k| k.kind.as_deref() == Some("image")) {
+                        n += 1;
+                    }
+                }
+                Ok(Images(n))
+            }
+            fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<Images, E> {
+                Ok(Images(0))
+            }
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Images, E> {
+                Ok(Images(0))
+            }
+            fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Images, E> {
+                Ok(Images(0))
+            }
+            fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Images, E> {
+                Ok(Images(0))
+            }
+            fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Images, E> {
+                Ok(Images(0))
+            }
+            fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Images, E> {
+                Ok(Images(0))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Images, A::Error> {
+                while map
+                    .next_entry::<serde::de::IgnoredAny, serde::de::IgnoredAny>()?
+                    .is_some()
+                {}
+                Ok(Images(0))
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+
+/// `T` when the value is an object that reads as one, nothing otherwise (the value is consumed either way).
+struct Value0<T>(Option<T>);
+
+impl<'de, T: serde::de::DeserializeOwned> Deserialize<'de> for Value0<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V<T>(std::marker::PhantomData<T>);
+        impl<'de, T: serde::de::DeserializeOwned> serde::de::Visitor<'de> for V<T> {
+            type Value = Value0<T>;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("any value")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<Value0<T>, A::Error> {
+                T::deserialize(serde::de::value::MapAccessDeserializer::new(map)).map(|t| Value0(Some(t)))
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Value0<T>, A::Error> {
+                while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+                Ok(Value0(None))
+            }
+            fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<Value0<T>, E> {
+                Ok(Value0(None))
+            }
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Value0<T>, E> {
+                Ok(Value0(None))
+            }
+            fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Value0<T>, E> {
+                Ok(Value0(None))
+            }
+            fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Value0<T>, E> {
+                Ok(Value0(None))
+            }
+            fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Value0<T>, E> {
+                Ok(Value0(None))
+            }
+            fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Value0<T>, E> {
+                Ok(Value0(None))
+            }
+        }
+        d.deserialize_any(V(std::marker::PhantomData))
+    }
+}
+
+/// `message.content`: a string (skipped) or blocks (only `tool_use` and `tool_result` blocks kept, the image blocks
+/// counted: the message's own and those inside its tool results).
+#[derive(Default)]
+struct Content {
+    blocks: Vec<Block>,
+    images: u32,
+}
 
 impl<'de> Deserialize<'de> for Content {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
@@ -141,13 +253,19 @@ impl<'de> Deserialize<'de> for Content {
                 Ok(Content::default())
             }
             fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Content, A::Error> {
-                let mut out = Vec::new();
+                let mut out = Content::default();
                 while let Some(b) = seq.next_element::<Block>()? {
-                    if matches!(b.kind.as_deref(), Some("tool_use" | "tool_result")) {
-                        out.push(b);
+                    match b.kind.as_deref() {
+                        Some("image") => out.images += 1,
+                        Some("tool_result") => {
+                            out.images += b.content.0;
+                            out.blocks.push(b);
+                        }
+                        Some("tool_use") => out.blocks.push(b),
+                        _ => {}
                     }
                 }
-                Ok(Content(out))
+                Ok(out)
             }
         }
         d.deserialize_any(V)
@@ -170,6 +288,9 @@ struct Envelope {
     model: Option<String>,
     #[serde(default)]
     parent_tool_use_id: Option<String>,
+    /// A transcript line of a subagent's thread (stdout marks those by `parent_tool_use_id`).
+    #[serde(default, rename = "isSidechain")]
+    is_sidechain: bool,
     message: Option<Msg>,
     request_id: Option<String>,
     request: Option<Value>,
@@ -226,16 +347,16 @@ pub fn parse(line: &[u8]) -> Out {
     };
     match e.kind.as_str() {
         "assistant" | "user" => {
-            let (uses, results): (Vec<Block>, Vec<Block>) = e
-                .message
-                .map(|m| m.content.0)
-                .unwrap_or_default()
+            let content = e.message.map(|m| m.content).unwrap_or_default();
+            let images = content.images;
+            let (uses, results): (Vec<Block>, Vec<Block>) = content
+                .blocks
                 .into_iter()
                 .partition(|b| b.kind.as_deref() == Some("tool_use"));
             Out::Message {
                 assistant: e.kind == "assistant",
                 uuid: e.uuid,
-                main: e.parent_tool_use_id.is_none(),
+                main: e.parent_tool_use_id.is_none() && !e.is_sidechain,
                 tool_uses: uses
                     .into_iter()
                     .filter_map(|b| {
@@ -248,6 +369,7 @@ pub fn parse(line: &[u8]) -> Out {
                     .collect(),
                 tool_results: results.into_iter().filter_map(|b| b.tool_use_id).collect(),
                 task_notification: if e.kind == "user" { notification(line) } else { None },
+                images,
             }
         }
         "stream_event" => Out::StreamEvent,
@@ -298,6 +420,7 @@ pub fn parse(line: &[u8]) -> Out {
                 "task_updated" => TaskKind::Updated,
                 "task_notification" => TaskKind::Notification,
                 "task_progress" => TaskKind::Progress,
+                "compact_boundary" => return Out::Compacted,
                 _ => return Out::Logged(sub),
             };
             let Some(task_id) = e.task_id else {
@@ -499,6 +622,7 @@ mod tests {
             tool_uses,
             tool_results,
             task_notification,
+            images: _,
         } = a
         else {
             panic!("{a:?}")
@@ -519,7 +643,17 @@ mod tests {
             "A".repeat(100_000)
         );
         assert!(
-            matches!(parse(big.as_bytes()), Out::Message { tool_uses, tool_results, .. } if tool_uses.is_empty() && tool_results == ["t"])
+            matches!(parse(big.as_bytes()), Out::Message { tool_uses, tool_results, images: 1, .. } if tool_uses.is_empty() && tool_results == ["t"])
+        );
+        // images are counted wherever a message carries them: its own blocks and each tool result's, not text that
+        // merely looks like one, not an assistant's tool input
+        let many = br#"{"type":"user","uuid":"u5","message":{"content":[{"type":"image","source":{"data":"QQ=="}},{"type":"text","text":"{\"type\":\"image\"}"},{"type":"tool_result","tool_use_id":"a","content":[{"type":"text","text":"x"},{"type":"image","source":{}},{"type":"image","source":{}},"odd",7]},{"type":"tool_result","tool_use_id":"b","content":"plain"},{"type":"tool_result","tool_use_id":"c"}]}}"#;
+        assert!(matches!(parse(many), Out::Message { images: 3, tool_results, .. } if tool_results == ["a", "b", "c"]));
+        let none = br#"{"type":"assistant","uuid":"u6","message":{"content":[{"type":"tool_use","id":"t","name":"X","input":{"content":[{"type":"image"}]}}]}}"#;
+        assert!(matches!(parse(none), Out::Message { images: 0, .. }));
+        assert_eq!(
+            parse(br#"{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual"}}"#),
+            Out::Compacted
         );
     }
 

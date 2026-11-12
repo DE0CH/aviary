@@ -105,11 +105,14 @@ fn content_text(content: Option<&Value>) -> Option<String> {
 
 /// User text that is not a person's message: the old stack's history left these lines out (its
 /// `INTERNAL_CONTENT_PREFIXES`), so they are internal.
-pub const INTERNAL_PREFIXES: [&str; 4] = [
+pub const INTERNAL_PREFIXES: [&str; 6] = [
     "<system-reminder>",
     "Caveat:",
     "[Request interrupted",
     "Base directory for this skill:",
+    // a slash command run in Claude Code and its output (the supervisor's `/compact`): no message of a person's
+    "<command-name>",
+    "<local-command-stdout>",
 ];
 
 fn blocks(content: Option<&Value>) -> impl Iterator<Item = &Value> {
@@ -596,6 +599,14 @@ mod tests {
 
         let meta = json!({"type": "user", "isMeta": true, "message": {"content": "x"}});
         assert_eq!(classify(Some(&meta), Context::default()), Class::Internal);
+        // the supervisor's `/compact` as Claude Code 2.1.322 records it, and its output
+        for text in [
+            "<command-name>/compact</command-name>\n            <command-message>compact</command-message>\n            <command-args></command-args>",
+            "<local-command-stdout>Compacted </local-command-stdout>",
+        ] {
+            let line = json!({"type": "user", "message": {"content": text}});
+            assert_eq!(classify(Some(&line), Context::default()), Class::Internal, "{text}");
+        }
 
         let summary = json!({"type": "user", "isCompactSummary": true, "message": {"content": "summary"}});
         let e = event(classify(Some(&summary), ECHO));

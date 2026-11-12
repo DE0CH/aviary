@@ -85,6 +85,9 @@ pub struct RunPart {
     pub queued_handed: Option<bool>,
     /// The main thread's tool calls without a result yet (an `asking` run's open calls are all its questions).
     pub open_tools: Vec<String>,
+    /// The images Claude Code's context holds since its last compaction (absent: not counted yet, the next
+    /// generation counts them from the transcript).
+    pub images: Option<u32>,
 }
 
 impl Default for RunPart {
@@ -101,6 +104,7 @@ impl Default for RunPart {
             queued_turn_id: None,
             handed: None,
             open_tools: Vec::new(),
+            images: None,
             queued_interrupt_elapsed_ms: None,
             queued_handed: None,
         }

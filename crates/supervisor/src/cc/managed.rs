@@ -141,6 +141,7 @@ mod tests {
         Claude {
             managed_claude_md: md.to_owned(),
             project_settings: false,
+            compact_at_images: None,
             managed_skills: skills
                 .iter()
                 .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))

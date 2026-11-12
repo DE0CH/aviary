@@ -369,6 +369,13 @@ symlinked root refused by the hook (`sent_files::tests::only_regular_files_are_o
 21. **Upload names** are at most 255 UTF-8 bytes (`magpie_api::sandbox::WORKSPACE_NAME_MAX_BYTES`; magpie's
     `safe_name` cuts to 200 characters and 255 bytes, keeping the extension), and the part file is
     `.upload.part-<32 hex>` whatever the name.
+22. **Compaction by images** (the descriptor's `claude.compactAtImages`, beyond the spec): the driver counts the
+    images in Claude Code's context (each main-thread image block of a stdout `user` line or of a prompt it writes;
+    zero again at `system`/`compact_boundary`; kept in run.json; the first generation on a session counts its
+    transcript since the last boundary) and at an idle point with that many writes `/compact` to stdin under a turn
+    of origin agent, which ends at the command's own `result`. A person's `start_turn` meanwhile queues behind it as
+    behind any agent turn. A compaction that does not lower the count is asked again only once more images have
+    come.
 
 ### Open items (WP-23)
 

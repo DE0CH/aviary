@@ -87,6 +87,8 @@ pub struct DriverConfig {
     pub managed_dir: PathBuf,
     pub gen_dir: PathBuf,
     pub uploads: Uploads,
+    /// Claude Code's `~/.claude` (the main transcript is `projects/-workspace/<session>.jsonl` under it).
+    pub claude_dir: PathBuf,
 }
 
 impl DriverConfig {
@@ -97,6 +99,7 @@ impl DriverConfig {
             managed_dir: managed::MANAGED_DIR.into(),
             gen_dir: crate::state::GEN_DIR.into(),
             uploads: Uploads::sandbox(),
+            claude_dir: PathBuf::from(crate::boot::AGENT_HOME).join(".claude"),
         }
     }
 }
@@ -289,6 +292,16 @@ struct St {
     /// An interrupt or kill arrived for the turn being prepared.
     cancel_starting: Option<Uuid>,
     pending_inputs: u32,
+    /// The images Claude Code's context holds since its last compaction: each main-thread image block read from
+    /// stdout or written in a prompt (`None`: not counted yet, the next generation counts the transcript's).
+    images: Option<u32>,
+    /// The session `images` was counted for (another session's generation counts its own transcript).
+    images_session: Option<String>,
+    /// The descriptor's `claude.compactAtImages`.
+    compact_at: Option<u32>,
+    /// The image count a compaction was last asked for at: asked again only once more images have come (a
+    /// compaction that fails is not repeated at every idle point).
+    compact_tried: Option<u32>,
     live: Option<Gen>,
     last_gen: u32,
     tracker: Tracker,
@@ -333,6 +346,10 @@ impl St {
             starting: None,
             cancel_starting: None,
             pending_inputs: 0,
+            images: None,
+            images_session: None,
+            compact_at: None,
+            compact_tried: None,
             live: None,
             last_gen: 0,
             tracker: Tracker::default(),
@@ -587,6 +604,29 @@ pub fn agent_turn_id(boot_id: &str, gen_n: u32, offset: u64, gen_started: Offset
     r.copy_from_slice(&d[..10]);
     let ms = u64::try_from(gen_started.unix_timestamp_nanos() / 1_000_000).unwrap_or(0);
     uuid::Builder::from_unix_timestamp_millis(ms, &r).into_uuid()
+}
+
+/// The image blocks in the transcript at `path` after its last `compact_boundary` line: each main-thread message's
+/// own and its tool results', read as the stdout lines are ([`crate::cc::stream::parse`]).
+///
+/// # Errors
+/// The file cannot be read.
+pub fn count_images(path: &std::path::Path) -> std::io::Result<u32> {
+    use std::io::BufRead as _;
+    let mut r = std::io::BufReader::with_capacity(1 << 20, std::fs::File::open(path)?);
+    let mut line = Vec::new();
+    let mut n: u32 = 0;
+    loop {
+        line.clear();
+        if r.read_until(b'\n', &mut line)? == 0 {
+            return Ok(n);
+        }
+        match crate::cc::stream::parse(line.strip_suffix(b"\n").unwrap_or(&line)) {
+            Out::Compacted => n = 0,
+            Out::Message { main: true, images, .. } => n = n.saturating_add(images),
+            _ => {}
+        }
+    }
 }
 
 /// The `askId` of the `can_use_tool` request on generation `gen_n`'s stdout line ending at `offset` (as
@@ -861,6 +901,7 @@ impl Driver {
                 queued_interrupt_elapsed_ms: st.queued.as_ref().and_then(|q| q.interrupt_mono).map(elapsed_ms),
                 queued_handed: st.queued.as_ref().map(|q| q.handed),
                 open_tools: st.open_tools.iter().cloned().collect(),
+                images: st.images,
             };
             s.last_turn.clone_from(&st.last_turn);
             s.tasks = st.tracker.saved();
@@ -1108,13 +1149,15 @@ impl Driver {
             Out::Init { .. }
             | Out::Task(_)
             | Out::Result(_)
+            | Out::Compacted
             | Out::ControlRequest { .. }
             | Out::ControlCancel { .. } => Change::State,
             Out::Message {
                 tool_uses,
                 task_notification,
+                images,
                 ..
-            } if !tool_uses.is_empty() || task_notification.is_some() => Change::State,
+            } if !tool_uses.is_empty() || task_notification.is_some() || *images > 0 => Change::State,
             _ => Change::Progress,
         };
         // an assistant message, a stream event, or a task-notification wake-up opens an agent turn; a bare
@@ -1147,10 +1190,15 @@ impl Driver {
                 tool_uses,
                 tool_results,
                 task_notification,
+                images,
                 ..
             } => {
                 if let Some(text) = task_notification {
                     st.tracker.on_notification(&text);
+                }
+                if main && images > 0 {
+                    // a tool result's images stay in Claude Code's context, sent with every model call from now on
+                    st.images = Some(st.images.unwrap_or(0).saturating_add(images));
                 }
                 if main {
                     let t = now();
@@ -1169,6 +1217,11 @@ impl Driver {
                 }
             }
             Out::StreamEvent | Out::KeepAlive => {}
+            Out::Compacted => {
+                tracing::info!(images = st.images.unwrap_or(0), "claude compacted the conversation");
+                st.images = Some(0);
+                st.compact_tried = None;
+            }
             Out::Task(m) => {
                 let change = st.tracker.on_task(&m, now());
                 fx.push(Fx::Task(TaskReportEvent {
@@ -1458,6 +1511,23 @@ impl Driver {
                 .await;
             }
         }
+        let counted = {
+            let st = lock(&self.st);
+            st.images.is_some() && st.images_session.as_deref() == Some(session.id())
+        };
+        if !counted {
+            // the first generation on this session here (a conversation resumed on a new sandbox, or another
+            // session): what its transcript already holds counts
+            let n = match session {
+                Session::Resume(id) => self.transcript_images(id).await,
+                Session::New(_) => 0,
+            };
+            self.with(Change::State, |st, _| {
+                st.images = Some(n);
+                st.images_session = Some(session.id().to_owned());
+                st.compact_tried = None;
+            });
+        }
         if let Some(g) = lock(&self.st).live.as_ref() {
             // never two Claude Codes: one that would not end blocks the next
             return Err(GenError::Failed(format!(
@@ -1738,6 +1808,10 @@ impl Driver {
     async fn idle_point(&self) {
         // a start_turn in progress owns the generation (its step 1 applies a configuration change itself)
         let Ok(_lane) = self.turn_lane.try_lock() else {
+            // the start_turn is still finishing its delivery while its turn has already ended (a quick answer): the
+            // compaction check waits for it, the rest is that start_turn's
+            let _lane = self.turn_lane.lock().await;
+            self.compact_if_due();
             return;
         };
         let (cur, end) = {
@@ -1772,11 +1846,76 @@ impl Driver {
                 )
                 .await;
             }
+            return;
+        }
+        self.compact_if_due();
+    }
+
+    /// At an idle point, with the descriptor's `claude.compactAtImages` reached: Claude Code is told to compact
+    /// (`/compact`), as a turn of origin agent that ends at the compaction's own `result`. Every model call sends all
+    /// the conversation's images again, and model hosts slow down or refuse past a few dozen; the compaction replaces
+    /// the conversation so far, its images included, by a summary. A person's `start_turn` meanwhile is written
+    /// behind it and answered after it, as during any agent turn (7.5).
+    fn compact_if_due(&self) {
+        let boot = self.ctx().map(|c| c.boot_id.clone()).unwrap_or_default();
+        self.with(Change::State, |st, fx| {
+            let (Some(at), Some(images)) = (st.compact_at, st.images) else {
+                return;
+            };
+            let idle = st.run == RunKind::Idle
+                && st.turn.is_none()
+                && st.queued.is_none()
+                && st.starting.is_none()
+                && st.tracker.is_empty()
+                && st.pending_inputs == 0
+                && !st.quiesced
+                && st.release.is_none();
+            if !idle || images < at || st.compact_tried.is_some_and(|t| images <= t) {
+                return;
+            }
+            let Some(g) = st.live.as_ref().filter(|g| g.initialized) else {
+                return;
+            };
+            tracing::info!(images, at, "the conversation holds too many images: compacting");
+            let id = agent_turn_id(&boot, g.n, g.offset, g.started_at);
+            st.compact_tried = Some(images);
+            // as a wake-up's turn, it is no pending input: it ends at its own `result`, and a person's message written
+            // meanwhile is answered by the next one
+            Self::open_agent_turn(st, fx, id);
+            fx.push(Fx::Stdin(prompt::user_line(
+                &Value::String("/compact".to_owned()),
+                &rfc3339(now()),
+            )));
+        });
+    }
+
+    /// The image blocks of the main transcript since its last compaction: what a resumed Claude Code sends with
+    /// every model call. A transcript that cannot be read counts as none.
+    async fn transcript_images(&self, session: &str) -> u32 {
+        let path = self.cfg.claude_dir.join(format!("projects/-workspace/{session}.jsonl"));
+        let counted = tokio::time::timeout(
+            Duration::from_secs(30),
+            tokio::task::spawn_blocking(move || count_images(&path)),
+        )
+        .await;
+        match counted {
+            Ok(Ok(Ok(n))) => n,
+            Ok(Ok(Err(e))) => {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!(error = %e, "the transcript's images were not counted");
+                }
+                0
+            }
+            _ => {
+                tracing::warn!("the transcript's images were not counted in 30 s");
+                0
+            }
         }
     }
 
     /// Writes the managed files from the descriptor if its `etag` differs from what they hold.
     fn apply_descriptor(&self, d: &hermit_api::sandbox_surface::SandboxSelf) {
+        lock(&self.st).compact_at = d.claude.compact_at_images;
         let differs = lock(&self.st).etag != d.etag;
         if differs {
             match managed::write(&self.cfg.managed_dir, &d.claude) {
@@ -2275,6 +2414,10 @@ impl Driver {
         } else {
             msg_id(&ctx.boot_id, seq)
         };
+        let prompt_images = match crate::cc::stream::parse(line.strip_suffix(b"\n").unwrap_or(&line)) {
+            Out::Message { images, .. } => images,
+            _ => 0,
+        };
         let prepared = self.with(Change::State, |st, fx| {
             if st.cancelled(Some(turn_id)) {
                 // stopped (or released) while it was prepared: the message is never written
@@ -2323,6 +2466,10 @@ impl Driver {
                     error: None,
                 },
             );
+            if !replay {
+                // the message's own image blocks join the context with it
+                st.images = Some(st.images.unwrap_or(0).saturating_add(prompt_images));
+            }
             if !current {
                 st.pending_inputs = after;
                 let mut t = Turn::new(turn_id, TurnOrigin::Person);
@@ -2826,6 +2973,8 @@ impl Driver {
                 st.turn = turn;
                 st.queued = queued;
                 st.pending_inputs = prior.run.pending_inputs;
+                st.images = prior.run.images;
+                st.images_session = prior.generation.as_ref().and_then(|g| g.session_id.clone());
                 st.open_tools = prior.run.open_tools.iter().cloned().collect();
                 st.tracker = Tracker::from_saved(&prior.tasks);
                 st.asks = prior

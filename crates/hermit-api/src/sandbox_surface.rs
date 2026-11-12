@@ -163,6 +163,11 @@ pub struct Claude {
     /// does not use it is byte for byte what it was before the field existed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub project_settings: bool,
+    /// The supervisor compacts the conversation (`/compact`) at the end of a turn once Claude Code's context holds
+    /// this many images: every model call carries all of them again, and model hosts slow down or refuse past a few
+    /// dozen. Absent = never (Claude Code still compacts by itself at its token limit). Not serialised when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_at_images: Option<u32>,
 }
 
 /// A managed skill file's key: `<skill>/<file>`, each part `[A-Za-z0-9][A-Za-z0-9._-]{0,127}` (no dot segments, no
