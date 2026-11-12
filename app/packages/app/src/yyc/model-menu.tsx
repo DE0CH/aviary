@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, Info } from "lucide-react-native";
@@ -11,7 +11,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { isWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
@@ -107,16 +106,6 @@ function ModelMenu({ choice }: { choice: Choice }) {
   const canPick = useModelPickAvailable();
   const state = menuState(choice.models, choice.modelId, choice.level);
   const levelLabel = useCallback((level: string) => t(`conversation.model.level.${level}`, { defaultValue: level }), [t]);
-  const options = useMemo<SegmentedControlOption<string>[]>(
-    () =>
-      state.row.map((level) => ({
-        value: level,
-        label: levelLabel(level),
-        disabled: !state.model?.levels.includes(level),
-        testID: `yyc-model-level-${level}`,
-      })),
-    [levelLabel, state.model, state.row],
-  );
   if (!state.model) return null;
   const model = state.model;
   if (!canPick) {
@@ -165,6 +154,7 @@ function ModelMenu({ choice }: { choice: Choice }) {
             key={entry.id}
             testID={`yyc-model-${entry.id}`}
             selected={entry.id === model.id}
+            active={entry.id === model.id}
             closeOnSelect={false}
             onSelect={() => choice.selectModel(entry.id)}
           >
@@ -180,14 +170,26 @@ function ModelMenu({ choice }: { choice: Choice }) {
                 <Text style={styles.headingNote}>{t("conversation.model.thinkingUnavailable")}</Text>
               ) : null}
             </View>
-            <View style={styles.levels}>
-              <SegmentedControl
-                testID="yyc-model-levels"
-                options={options}
-                value={state.level ?? ""}
-                onValueChange={choice.selectLevel}
-                style={styles.levelsControl}
-              />
+            <View style={styles.levels} testID="yyc-model-levels">
+              {state.row.map((level) => {
+                const offered = model.levels.includes(level);
+                const picked = level === state.level;
+                return (
+                  <Pressable
+                    key={level}
+                    testID={`yyc-model-level-${level}`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: picked, disabled: !offered }}
+                    disabled={!offered}
+                    onPress={() => choice.selectLevel(level)}
+                    style={[styles.levelCell, picked && styles.levelPicked, !offered && styles.levelMissing]}
+                  >
+                    <Text style={picked ? styles.levelTextPicked : styles.levelText} numberOfLines={1}>
+                      {levelLabel(level)}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </View>
           </>
         ) : null}
@@ -242,12 +244,39 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     marginLeft: "auto",
   },
+  // the thinking row: one equal cell per level on a track, the picked one raised; a level the model lacks stays in
+  // its place, dimmed
   levels: {
-    paddingHorizontal: theme.spacing[2],
-    paddingBottom: theme.spacing[2],
+    flexDirection: "row",
+    marginHorizontal: theme.spacing[2],
+    marginBottom: theme.spacing[2],
+    padding: 2,
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surface2,
   },
-  levelsControl: {
-    alignSelf: "stretch",
+  levelCell: {
+    flex: 1,
+    minHeight: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  levelPicked: {
+    backgroundColor: theme.colors.surface0,
+    borderColor: theme.colors.border,
+  },
+  levelMissing: {
+    opacity: 0.35,
+  },
+  levelText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  levelTextPicked: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
   },
   tooltipText: {
     color: theme.colors.popoverForeground,
