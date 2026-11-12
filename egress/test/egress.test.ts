@@ -18,7 +18,7 @@ import { createSocket } from "node:dgram";
 import { HostPolicy, HostRules } from "../src/egress/allowlist.ts";
 import { EgressApi, acceptLists } from "../src/egress/api.ts";
 import { BudgetGate } from "../src/egress/budget.ts";
-import { parseEgressConfig, type EgressConfig } from "../src/egress/config.ts";
+import { modelPlan, modelsAnswer, parseEgressConfig, type EgressConfig } from "../src/egress/config.ts";
 import { EgressLog } from "../src/egress/egresslog.ts";
 import { isRequestId, uuidv7 } from "../src/egress/ids.ts";
 import { AddressGuard } from "../src/egress/netguard.ts";
@@ -846,10 +846,21 @@ test("model route: a refusal while the body streams (model, invalid JSON) leaves
   assert.equal(ok.status, 200);
 });
 
+test("egress.json: a model's thinking levels are ordered, hold its own level, and reach the models answer and the plan", () => {
+  const base = config("http://127.0.0.1:1");
+  const withModel = (m: object) => ({ ...base, models: [{ id: "vendor/claude-x", label: "X", ...m }] }) as EgressConfig;
+  const ok = withModel({ reasoning: "high", thinking: ["none", "low", "high", "max"] });
+  parseEgressConfig(ok);
+  assert.deepEqual(modelsAnswer(ok).models, [{ id: "vendor/claude-x", label: "X", reasoning: "high", thinking: ["none", "low", "high", "max"] }]);
+  assert.deepEqual(modelPlan(ok)["vendor/claude-x"]?.levels, ["none", "low", "high", "max"]);
+  for (const bad of [{ reasoning: "high", thinking: [] }, { reasoning: "high", thinking: ["low", "none", "high"] }, { reasoning: "high", thinking: ["low", "low", "high"] }, { reasoning: "high", thinking: ["low", "huge", "high"] }, { reasoning: "medium", thinking: ["low", "high"] }, { thinking: ["low", "high"] }])
+    assert.throws(() => parseEgressConfig(withModel(bad)), /thinking/, JSON.stringify(bad));
+});
+
 test("model route: GET http://model/v1/aviary/models answers the R18 shape from egress.json", async () => {
   const r = await http("http://model/v1/aviary/models", { headers: pa() });
   assert.equal(r.status, 200);
-  assert.deepEqual(JSON.parse(r.body), { default: "vendor/claude-x", small: "vendor/claude-x", title: "vendor/claude-x", contextTokens: 1048576, models: [{ id: "vendor/claude-x", label: "X", reasoning: "high" }] });
+  assert.deepEqual(JSON.parse(r.body), { default: "vendor/claude-x", small: "vendor/claude-x", title: "vendor/claude-x", contextTokens: 1048576, models: [{ id: "vendor/claude-x", label: "X", reasoning: "high", thinking: [] }] });
 });
 
 test("tools route: the tools pair bearer and the verified person, never the sandbox's credential; one log row", async () => {

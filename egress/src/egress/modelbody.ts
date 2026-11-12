@@ -2,7 +2,7 @@
 // thinking level applied, as the body streams through. A Claude Code request carries the whole conversation (images as
 // base64 included) and reaches tens of MB, so egress never holds it: one strict scanner validates the JSON byte by
 // byte across chunks and passes every top-level member on as it arrives, except the few small ones the rewrite
-// decides on (`model`, `provider`, `thinking`, `reasoning`), which are held and written last, before the closing
+// decides on (`model`, `provider`, `thinking`, `reasoning`, `output_config`), which are held and written last, before the closing
 // brace. A request costs a few KB of memory whatever its size.
 import type { ModelPlan } from "../common/config.ts";
 
@@ -16,7 +16,7 @@ export class InvalidBody extends Error {}
 
 /** The top-level members held back and written last (every occurrence is dropped where it stood; the last wins, as
  * JSON.parse resolves duplicates). */
-const HELD = new Set(["model", "provider", "thinking", "reasoning"]);
+const HELD = new Set(["model", "provider", "thinking", "reasoning", "output_config"]);
 /** Bytes of held members at most: they are a model id and small option objects. */
 export const HELD_MAX = 1024 * 1024;
 /** Keys longer than this (in bytes, escapes included) are never decoded: none of the keys looked at comes close. */
@@ -383,9 +383,9 @@ export class ModelBodyRewriter {
       ...(pinned ? { order: pinned, only: pinned, allow_fallbacks: false } : {}),
       ...FORCED_PROVIDER,
     };
-    const keep = new Set(["model", "thinking", "reasoning"]);
+    const keep = new Set(["model", "thinking", "reasoning", "output_config"]);
     const add: Record<string, unknown> = { provider };
-    const effort = typeof model === "string" ? planned(this.#plan, model, this.#hasTools) : undefined;
+    const effort = typeof model === "string" ? planned(this.#plan, model, this.#hasTools, value("thinking"), value("output_config")) : undefined;
     if (effort === "none") {
       // On OpenRouter's Messages API only Anthropic's `thinking: {type: "disabled"}` turns a reasoning model's thinking
       // off (`reasoning.effort: "none"` is ignored there).
@@ -395,6 +395,8 @@ export class ModelBodyRewriter {
     } else if (effort) {
       keep.delete("reasoning");
       add.reasoning = { effort };
+      // a model that cannot switch thinking off was asked to: it thinks at its lowest level, so `disabled` must not pass
+      if (isDisabled(value("thinking"))) keep.delete("thinking");
     }
     const parts: Buffer[] = [];
     for (const k of keep) {
@@ -415,10 +417,25 @@ export class ModelBodyRewriter {
   }
 }
 
-/** The thinking level for a request: chat turns carry tools, titles and Claude Code's quick calls don't. */
-function planned(plan: ModelPlan | undefined, model: string, withTools: boolean): string | undefined {
+/** OpenRouter's levels in order, with the two of Claude Code's effort levels that lie between them. */
+const ORDER = ["none", "low", "medium", "high", "xhigh", "max"];
+
+const isDisabled = (thinking: unknown): boolean => !!thinking && typeof thinking === "object" && (thinking as { type?: unknown }).type === "disabled";
+
+/** The thinking level for a request: chat turns carry tools, titles and Claude Code's quick calls don't. A chat turn
+ * on a model with `levels` takes the level its caller asks for: none when the request has no `thinking` or a disabled
+ * one (Claude Code with thinking switched off), else `output_config.effort` (Claude Code's effort level), else the
+ * plan's; brought to the nearest level the model offers at or below it (its lowest when there is none below). */
+function planned(plan: ModelPlan | undefined, model: string, withTools: boolean, thinking: unknown, outputConfig: unknown): string | undefined {
   const entry = entryOf(plan, model);
-  return withTools ? entry?.withTools : entry?.withoutTools;
+  if (!withTools) return entry?.withoutTools;
+  const levels = entry?.levels;
+  if (!levels?.length) return entry?.withTools;
+  const asked = outputConfig && typeof outputConfig === "object" ? (outputConfig as { effort?: unknown }).effort : undefined;
+  const want = thinking === undefined || thinking === null || isDisabled(thinking) ? "none" : typeof asked === "string" && ORDER.includes(asked) ? asked : entry?.withTools;
+  if (!want) return levels.at(-1);
+  const at = ORDER.indexOf(want);
+  return levels.findLast((l) => ORDER.indexOf(l) <= at) ?? levels[0];
 }
 
 /** A model's plan entry, by its full id or, as clients may send it, without the provider prefix. */

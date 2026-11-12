@@ -13,6 +13,10 @@ export interface EgressModel {
   label: string;
   /** Thinking level for this model's chat turns (requests that carry tools); absent = the model's own default. */
   reasoning?: ReasoningEffort;
+  /** The thinking levels a person may choose for this model's chat turns, lowest first (what the model's OpenRouter
+   * endpoints take, e.g. none, low, high, max); `reasoning` is the one a conversation starts on and must be among
+   * them. Absent = no choice: every chat turn runs at `reasoning`. */
+  thinking?: ReasoningEffort[];
   /** OpenRouter endpoints (provider slugs, e.g. "deepinfra/fp8") this model's requests may use, in order of preference;
    * absent = OpenRouter picks among every ZDR endpoint. Pinned because endpoints differ in how they render a
    * conversation: one dropped part of long tool-and-image histories and the model took its own tool results for the
@@ -112,6 +116,12 @@ export function parseEgressConfig(raw: unknown): EgressConfig {
     need("models[].id", m?.id);
     need(`models[${m.id}].label`, m.label);
     if (m.reasoning !== undefined && !REASONING.has(m.reasoning)) throw new Error(`egress config: models[${m.id}].reasoning must be one of ${[...REASONING].join(", ")}`);
+    if (m.thinking !== undefined) {
+      const order = [...REASONING];
+      const ok = Array.isArray(m.thinking) && m.thinking.length > 0 && m.thinking.every((l, i) => REASONING.has(l) && (i === 0 || order.indexOf(l) > order.indexOf(m.thinking![i - 1]!)));
+      if (!ok) throw new Error(`egress config: models[${m.id}].thinking must be levels of ${order.join(", ")}, lowest first`);
+      if (!m.reasoning || !m.thinking.includes(m.reasoning)) throw new Error(`egress config: models[${m.id}].reasoning must be one of its thinking levels`);
+    }
     if (m.providers !== undefined && (!Array.isArray(m.providers) || !m.providers.length || !m.providers.every((p) => typeof p === "string" && /^[a-z0-9][a-z0-9./-]*$/.test(p))))
       throw new Error(`egress config: models[${m.id}].providers must be a non-empty list of OpenRouter provider slugs`);
   }
@@ -162,7 +172,7 @@ export function parseEgressConfig(raw: unknown): EgressConfig {
   };
   return {
     product: { name: c.product.name, locale: typeof c.product.locale === "string" && c.product.locale ? c.product.locale : "en" },
-    models: c.models.map((m: EgressModel) => ({ id: m.id, label: m.label, ...(m.reasoning ? { reasoning: m.reasoning } : {}), ...(m.providers ? { providers: [...m.providers] } : {}) })),
+    models: c.models.map((m: EgressModel) => ({ id: m.id, label: m.label, ...(m.reasoning ? { reasoning: m.reasoning } : {}), ...(m.thinking ? { thinking: [...m.thinking] } : {}), ...(m.providers ? { providers: [...m.providers] } : {}) })),
     defaultModel: c.defaultModel,
     smallModel: typeof c.smallModel === "string" && c.smallModel ? c.smallModel : c.defaultModel,
     titleModel: typeof c.titleModel === "string" && c.titleModel ? c.titleModel : c.defaultModel,
@@ -195,19 +205,21 @@ export function allowedModels(c: EgressConfig): string[] {
 export function modelPlan(c: EgressConfig): ModelPlan {
   const plan: ModelPlan = {};
   for (const m of c.models) if (m.reasoning) plan[m.id] = { ...plan[m.id], withTools: m.reasoning };
+  for (const m of c.models) if (m.thinking) plan[m.id] = { ...plan[m.id], levels: [...m.thinking] };
   for (const m of c.models) if (m.providers) plan[m.id] = { ...plan[m.id], providers: [...m.providers] };
   if (c.titleReasoning) plan[c.titleModel] = { ...plan[c.titleModel], withoutTools: c.titleReasoning };
   return plan;
 }
 
 /** `GET /v1/aviary/models` (R18): for pigeon in-cluster and for sandboxes as `http://model/v1/aviary/models`. */
-export function modelsAnswer(c: EgressConfig): { default: string; small: string; title: string; contextTokens: number; models: Array<{ id: string; label: string; reasoning: string | null }> } {
+export function modelsAnswer(c: EgressConfig): { default: string; small: string; title: string; contextTokens: number; models: Array<{ id: string; label: string; reasoning: string | null; thinking: string[] }> } {
   return {
     default: c.defaultModel,
     small: c.smallModel,
     title: c.titleModel,
     contextTokens: c.contextTokens,
-    models: c.models.map((m) => ({ id: m.id, label: m.label, reasoning: m.reasoning ?? null })),
+    // `thinking`: the levels a person may choose (empty: none), `reasoning` the one a conversation starts on
+    models: c.models.map((m) => ({ id: m.id, label: m.label, reasoning: m.reasoning ?? null, thinking: m.thinking ? [...m.thinking] : [] })),
   };
 }
 

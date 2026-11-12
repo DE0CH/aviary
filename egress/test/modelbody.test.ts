@@ -187,3 +187,43 @@ test("the scanner: deep nesting needs no stack", () => {
   assert.ok(rewrite(Buffer.from('{"a":' + "[".repeat(depth) + "]".repeat(depth) + "}")));
   assert.equal(rewrite(Buffer.from('{"a":' + "[".repeat(depth) + "]".repeat(depth - 1) + "}")), null);
 });
+
+test("rewrite: a model with thinking levels takes the level the caller asks for, within what it offers", () => {
+  const plan: ModelPlan = {
+    "deepseek/deepseek-v4.1-flash-1017": { withTools: "high", withoutTools: "none", levels: ["none", "low", "high", "max"] },
+    "z-ai/glm-5.3": { withTools: "high", levels: ["low", "high", "max"] },
+  };
+  const tools = [{ name: "Bash" }];
+  const turn = (model: string, extra: object) => out(JSON.stringify({ model, tools, ...extra }), plan)!;
+  const D = "deepseek/deepseek-v4.1-flash-1017";
+  // Claude Code's request: `thinking` adaptive and `output_config.effort` (its effort level), or no `thinking` at all
+  // when thinking is switched off
+  const on = { type: "adaptive", display: "updates" };
+  for (const [effort, want] of [["low", "low"], ["high", "high"], ["max", "max"], ["medium", "low"], ["xhigh", "high"]] as const) {
+    const r = turn(D, { thinking: on, output_config: { effort } });
+    assert.deepEqual(r.reasoning, { effort: want }, `effort ${effort}`);
+    assert.deepEqual(r.thinking, on);
+    assert.deepEqual(r.output_config, { effort }, "the caller's output_config passes as sent");
+  }
+  // no level named: the model's own (`reasoning`)
+  assert.deepEqual(turn(D, { thinking: on }).reasoning, { effort: "high" });
+  assert.deepEqual(turn(D, { thinking: on, output_config: { effort: "nonsense" } }).reasoning, { effort: "high" });
+  // thinking off
+  for (const off of [{}, { thinking: { type: "disabled" } }, { output_config: { effort: "max" } }]) {
+    const r = turn(D, off);
+    assert.deepEqual(r.thinking, { type: "disabled" }, JSON.stringify(off));
+    assert.equal(r.reasoning, undefined);
+  }
+  // a model that cannot switch thinking off takes its lowest level instead
+  const g = turn("z-ai/glm-5.3", { output_config: { effort: "high" } });
+  assert.deepEqual(g.reasoning, { effort: "low" });
+  assert.equal(g.thinking, undefined);
+  assert.deepEqual(turn("z-ai/glm-5.3", { thinking: on, output_config: { effort: "max" } }).reasoning, { effort: "max" });
+  // the caller's own `reasoning` never counts, and a call without tools keeps the plan's level
+  assert.deepEqual(turn(D, { thinking: on, output_config: { effort: "low" }, reasoning: { effort: "max" } }).reasoning, { effort: "low" });
+  const title = out(JSON.stringify({ model: D, thinking: on, output_config: { effort: "max" } }), plan)!;
+  assert.deepEqual(title.thinking, { type: "disabled" });
+  // a model without levels is as before: the plan's level whatever the caller asks
+  const fixed = out(JSON.stringify({ model: D, tools, thinking: on, output_config: { effort: "low" } }), PLAN)!;
+  assert.deepEqual(fixed.reasoning, { effort: "high" });
+});
