@@ -175,6 +175,10 @@ pub const CONVERSATION_SCHEDULES: &str = "/v1/conversations/{id}/schedules";
 pub const CONVERSATION_COMMANDS: &str = "/v1/conversations/{id}/commands";
 /// `DELETE` a message that waits for the running turn to end (`pendingMessages` with `held`): taken back.
 pub const CONVERSATION_PENDING: &str = "/v1/conversations/{id}/pending/{clientMessageId}";
+/// `GET` the conversation's tasks (the app's activity panel).
+pub const CONVERSATION_TASKS: &str = "/v1/conversations/{id}/tasks";
+/// `POST` stop one of them.
+pub const CONVERSATION_TASK_STOP: &str = "/v1/conversations/{id}/tasks/{taskId}/stop";
 /// `GET` everyone's schedules and the pause-all switch (admin).
 pub const ADMIN_SCHEDULES: &str = "/v1/admin/schedules";
 /// `PUT` the pause-all switch (admin).
@@ -316,6 +320,8 @@ pub const ROUTES: &[Route] = &[
     pigeon_extra("conversation_schedules", Get, CONVERSATION_SCHEDULES, &[200]),
     pigeon_extra("conversation_commands", Get, CONVERSATION_COMMANDS, &[200]),
     pigeon_extra("withdraw_pending", Delete, CONVERSATION_PENDING, &[200]),
+    pigeon_extra("conversation_tasks", Get, CONVERSATION_TASKS, &[200]),
+    pigeon_extra("stop_task", Post, CONVERSATION_TASK_STOP, &[202]),
     Route {
         id: "blob",
         m: Some("M15"),
@@ -571,7 +577,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 78);
+        assert_eq!(ROUTES.len(), 80);
     }
 
     #[test]

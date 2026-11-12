@@ -790,6 +790,20 @@ impl Server for FixtureServer {
             None,
         );
         self.answer_json("conversation_commands")
+    async fn conversation_tasks(&self, ctx: Ctx, id: Uuid) -> Result<magpie_api::tasks::TasksList, ApiError> {
+        self.received("conversation_tasks", &ctx, &json!({"id": id.to_string()}), None, None);
+        self.answer_json("conversation_tasks")
+    }
+
+    async fn stop_task(&self, ctx: Ctx, id: Uuid, task_id: String) -> Result<(), ApiError> {
+        self.received(
+            "stop_task",
+            &ctx,
+            &json!({"id": id.to_string(), "taskId": task_id}),
+            None,
+            Some(json!({})),
+        );
+        self.answer_unit("stop_task")
     }
 
     async fn conversation_schedules(&self, ctx: Ctx, id: Uuid) -> Result<SchedulesList, ApiError> {
@@ -1213,6 +1227,16 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .withdraw_pending(param_uuid(&f, "id"), &param_str(&f, "clientMessageId"))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
+        "conversation_tasks" => c
+            .person(PERSON)
+            .conversation_tasks(param_uuid(&f, "id"))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "stop_task" => c
+            .person(PERSON)
+            .stop_task(param_uuid(&f, "id"), &param_str(&f, "taskId"))
+            .await
+            .map(|()| Value::Null),
         "admin_schedules" => c
             .service(Some(ADMIN))
             .admin_schedules()

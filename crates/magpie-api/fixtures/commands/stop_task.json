@@ -1,0 +1,7 @@
+{
+  "cmdSeq": 47,
+  "type": "stop_task",
+  "payload": {
+    "taskId": "b7ginl1lf"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "route": "conversation_tasks",
+  "params": {
+    "id": "a103219b-5c1e-4d8f-9a7b-3e2f1c0d9b8a"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "tasks": [
+          {
+            "taskId": "a0232557cf3483061",
+            "toolUseId": "toolu_01Agent",
+            "type": "subagent",
+            "description": "Review the supervisor change",
+            "status": "running",
+            "startedAt": "2026-11-12T08:00:00.000Z",
+            "endedAt": null,
+            "now": "Running Read crates/supervisor/src/cc/run.rs",
+            "steps": 14,
+            "summary": null
+          },
+          {
+            "taskId": "b7ginl1lf",
+            "toolUseId": "toolu_01Bash",
+            "type": "command",
+            "description": "Run the magpie tests",
+            "status": "completed",
+            "startedAt": "2026-11-12T07:55:00.000Z",
+            "endedAt": "2026-11-12T07:59:12.000Z",
+            "now": null,
+            "steps": 0,
+            "summary": "Background command \"Run the magpie tests\" completed (exit code 0)"
+          }
+        ]
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    }
+  ]
+}

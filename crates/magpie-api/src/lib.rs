@@ -31,6 +31,7 @@ pub mod sandbox;
 pub mod schedules;
 pub mod server;
 pub mod shares;
+pub mod tasks;
 pub mod turns;
 pub mod uploads;
 

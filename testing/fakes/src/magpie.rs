@@ -1658,6 +1658,13 @@ impl Server for FakeMagpie {
 
     async fn conversation_commands(&self, ctx: Ctx, id_: Uuid) -> Result<magpie_api::sandbox::CommandsList, ApiError> {
         scripted!(self, "conversation_commands", ctx, id(id_), None, None, typed)
+    async fn conversation_tasks(&self, ctx: Ctx, id_: Uuid) -> Result<magpie_api::tasks::TasksList, ApiError> {
+        scripted!(self, "conversation_tasks", ctx, id(id_), None, None, typed)
+    }
+
+    async fn stop_task(&self, ctx: Ctx, id_: Uuid, task_id: String) -> Result<(), ApiError> {
+        let params = json!({"id": id_.to_string(), "taskId": task_id});
+        scripted!(self, "stop_task", ctx, params, None, Some(json!({})), unit)
     }
 
     async fn conversation_schedules(&self, ctx: Ctx, id_: Uuid) -> Result<SchedulesList, ApiError> {

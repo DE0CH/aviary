@@ -659,6 +659,17 @@ impl PersonCalls<'_> {
         self.get("conversation_commands", &[&id.to_string()], NO_QUERY).await
     }
 
+    /// The conversation's tasks (the app's activity panel).
+    pub async fn conversation_tasks(&self, id: Uuid) -> Result<crate::tasks::TasksList, ClientError> {
+        self.get("conversation_tasks", &[&id.to_string()], NO_QUERY).await
+    }
+
+    /// Stops one of them (202: Claude Code is told to; nothing happens when it no longer runs).
+    pub async fn stop_task(&self, id: Uuid, task_id: &str) -> Result<(), ClientError> {
+        self.empty("stop_task", &[&id.to_string(), task_id], json(&Empty {})?)
+            .await
+    }
+
     pub async fn conversation_schedules(&self, id: Uuid) -> Result<SchedulesList, ClientError> {
         self.get("conversation_schedules", &[&id.to_string()], NO_QUERY).await
     }

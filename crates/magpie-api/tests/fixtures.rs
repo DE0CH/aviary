@@ -109,6 +109,8 @@ fn check_route(id: &str, f: &serde_json::Value) {
         "conversation_commands" => check::<NoQuery, NoBody, Json<CommandsList>>(id, f),
         "conversation_schedules" => check::<NoQuery, NoBody, Json<SchedulesList>>(id, f),
         "withdraw_pending" => check::<NoQuery, NoBody, Json<Conversation>>(id, f),
+        "conversation_tasks" => check::<NoQuery, NoBody, Json<magpie_api::tasks::TasksList>>(id, f),
+        "stop_task" => check::<NoQuery, Json<Empty>, Json<Empty>>(id, f),
         "admin_schedules" => check::<NoQuery, NoBody, Json<AdminSchedules>>(id, f),
         "admin_schedules_pause" => check::<NoQuery, Json<PauseAll>, Json<AdminSchedules>>(id, f),
         other => panic!("no typed check for route {other}"),

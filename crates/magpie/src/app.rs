@@ -588,6 +588,18 @@ impl Server for Magpie {
             async {
                 let person = crate::conversations::Person::from_ctx(&ctx)?;
                 turns::midturn::withdraw(&self.pool, &person, id, &client_message_id).await
+    async fn conversation_tasks(&self, ctx: Ctx, id: Uuid) -> Answer<magpie_api::tasks::TasksList> {
+        http::answer(
+            async { crate::turns::tasks::list(&self.pool, &crate::conversations::Person::from_ctx(&ctx)?, id).await }
+                .await,
+        )
+    }
+
+    async fn stop_task(&self, ctx: Ctx, id: Uuid, task_id: String) -> Answer<()> {
+        http::answer(
+            async {
+                crate::turns::tasks::stop(&self.pool, &crate::conversations::Person::from_ctx(&ctx)?, id, &task_id)
+                    .await
             }
             .await,
         )

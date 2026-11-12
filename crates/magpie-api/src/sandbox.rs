@@ -265,6 +265,9 @@ pub enum CommandBody {
     AnswerAsk(AnswerAsk),
     /// Stop every background task (a cancel while held).
     StopTasks(crate::Empty),
+    /// Stop one task (the app's activity panel): acked `stopped` 1 when Claude Code was told to, 0 when the task
+    /// no longer runs.
+    StopTask(StopTask),
     /// A message for the running turn (a schedule's fire while the conversation works): written to Claude Code at
     /// once, which takes it in at its next tool result or when the model stops. Acked `delivered: true` when it was
     /// written to the turn's generation, `delivered: false` when that turn no longer runs (magpie then sends it as a
@@ -297,6 +300,7 @@ impl<'de> Deserialize<'de> for CommandBody {
             "kill" => CommandBody::Kill(payload(raw.payload)?),
             "answer_ask" => CommandBody::AnswerAsk(payload(raw.payload)?),
             "stop_tasks" => CommandBody::StopTasks(payload(raw.payload)?),
+            "stop_task" => CommandBody::StopTask(payload(raw.payload)?),
             "send_message" => CommandBody::SendMessage(payload(raw.payload)?),
             _ => CommandBody::Unknown,
         })
@@ -311,6 +315,7 @@ pub const COMMAND_TYPES: &[&str] = &[
     "kill",
     "answer_ask",
     "stop_tasks",
+    "stop_task",
     "send_message",
 ];
 
@@ -325,10 +330,19 @@ impl CommandBody {
             CommandBody::Kill(_) => "kill",
             CommandBody::AnswerAsk(_) => "answer_ask",
             CommandBody::StopTasks(_) => "stop_tasks",
+            CommandBody::StopTask(_) => "stop_task",
             CommandBody::SendMessage(_) => "send_message",
             CommandBody::Unknown => return None,
         })
     }
+}
+
+/// `stop_task`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StopTask {
+    /// Claude Code's task id.
+    pub task_id: String,
 }
 
 /// `send_message`.

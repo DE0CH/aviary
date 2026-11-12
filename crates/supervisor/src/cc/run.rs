@@ -2278,6 +2278,28 @@ impl Driver {
                     },
                 );
             }
+            CommandBody::StopTask(t) => {
+                // one task (the app's activity panel): Claude Code is told to stop it; its end comes as the task's
+                // own events. Nothing to tell when no Claude Code runs.
+                let told = self.with(Change::State, |st, fx| {
+                    let live = st.live.is_some();
+                    if live {
+                        fx.push(Fx::Stdin(control::stop_task(
+                            &format!("stop-{}", Uuid::new_v4()),
+                            &t.task_id,
+                        )));
+                    }
+                    live
+                });
+                tracing::info!(task = %t.task_id, told, "stop_task");
+                self.ack(
+                    seq,
+                    AckResult {
+                        stopped: Some(u32::from(told)),
+                        ..AckResult::default()
+                    },
+                );
+            }
             CommandBody::SendMessage(m) => self.send_message(seq, c.turn_id, &m.text).await,
             CommandBody::Unknown => self.ack(seq, err_ack("unsupported")),
         }

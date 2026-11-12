@@ -17,6 +17,7 @@ pub mod midturn;
 pub mod parked;
 pub mod reports;
 pub mod sweeper;
+pub mod tasks;
 pub mod titles;
 
 use std::time::Duration;
