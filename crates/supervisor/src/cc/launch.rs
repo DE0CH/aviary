@@ -101,8 +101,11 @@ pub fn fixed_env(models: &Models) -> Vec<(&'static str, String)> {
         ("MAX_MCP_OUTPUT_TOKENS", "25000".to_owned()),
         ("API_TIMEOUT_MS", "600000".to_owned()),
     ];
-    if models.context_tokens > 0 {
-        v.push(("CLAUDE_CODE_MAX_CONTEXT_TOKENS", models.context_tokens.to_string()));
+    // the window of the model this Claude Code runs (`models.default`: the conversation's picked model, else the
+    // route's default): its own when the route names one for it
+    let context = models.context_of(&models.default);
+    if context > 0 {
+        v.push(("CLAUDE_CODE_MAX_CONTEXT_TOKENS", context.to_string()));
     }
     v
 }
@@ -175,6 +178,34 @@ mod tests {
 
     fn models() -> Models {
         serde_json::from_str(include_str!("../../../gateway-api/fixtures/models.json")).unwrap()
+    }
+
+    /// A conversation on a model with its own context window (a 1M model picked beside 200k ones) runs Claude Code
+    /// at that window; before, every model got the route's one number and a 1M model compacted at 200k.
+    #[test]
+    fn the_context_window_is_the_running_model_s() {
+        let ctx = |m: &Models| {
+            fixed_env(m)
+                .into_iter()
+                .find(|(k, _)| *k == "CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+                .map(|(_, v)| v)
+        };
+        let mut m = models();
+        assert_eq!(ctx(&m), Some(m.context_tokens.to_string()));
+        m.models[1].context_tokens = Some(1_000_000);
+        assert_eq!(
+            ctx(&m),
+            Some(m.context_tokens.to_string()),
+            "the default model names none"
+        );
+        // the conversation's picked model becomes `default` (run.rs on_picked_model)
+        m.default.clone_from(&m.models[1].id);
+        assert_eq!(ctx(&m).as_deref(), Some("1000000"));
+        // a route that names no window, a model that does: only that model's Claude Code gets one
+        m.context_tokens = 0;
+        assert_eq!(ctx(&m).as_deref(), Some("1000000"));
+        m.default.clone_from(&m.models[0].id);
+        assert_eq!(ctx(&m), None);
     }
 
     #[test]

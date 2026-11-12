@@ -27,7 +27,7 @@ pub struct Models {
     pub small: String,
     /// The id for titles.
     pub title: String,
-    /// The default model's context window.
+    /// The models' context window (a model may name its own: [`Model::context_tokens`]).
     pub context_tokens: u64,
     pub models: Vec<Model>,
 }
@@ -44,6 +44,23 @@ pub struct Model {
     /// gateway's effort names). Empty: no choice, every turn runs at `reasoning`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub thinking: Vec<String>,
+    /// This model's context window, when it is not the route's `contextTokens` (a deployment whose models differ:
+    /// a 1M model beside 200k ones). Absent: the route's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<u64>,
+}
+
+impl Models {
+    /// The context window of the model `id`: its own when it names one, else the route's `contextTokens` (0: none
+    /// named, Claude Code keeps its own for the model).
+    #[must_use]
+    pub fn context_of(&self, id: &str) -> u64 {
+        self.models
+            .iter()
+            .find(|m| m.id == id)
+            .and_then(|m| m.context_tokens)
+            .unwrap_or(self.context_tokens)
+    }
 }
 
 pub const MODELS_TIMEOUT: Duration = Duration::from_secs(10);
@@ -81,4 +98,29 @@ pub async fn fetch(
         status: status.as_u16(),
         message: e.to_string(),
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    /// A deployment with a 1M model beside 200k ones (Jarvis 4: GLM 5.3 beside the Claude models, 2026-11-12): the
+    /// model's own window wins, every other model and an unknown id take the route's.
+    #[test]
+    fn a_model_s_own_context_window_wins_over_the_route_s() {
+        let m: Models = serde_json::from_str(
+            r#"{"default":"a","small":"a","title":"a","contextTokens":200000,"models":[
+                {"id":"a","label":"A","reasoning":null},
+                {"id":"big","label":"Big","reasoning":null,"contextTokens":1000000}]}"#,
+        )
+        .unwrap();
+        assert_eq!(m.context_of("a"), 200_000);
+        assert_eq!(m.context_of("big"), 1_000_000);
+        assert_eq!(m.context_of("unknown"), 200_000);
+        // absent stays absent on the wire (older readers and fixtures see no new member)
+        let v = serde_json::to_value(&m).unwrap();
+        assert_eq!(v["models"][0].get("contextTokens"), None);
+        assert_eq!(v["models"][1]["contextTokens"], 1_000_000);
+    }
 }
