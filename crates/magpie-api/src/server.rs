@@ -44,14 +44,14 @@ use crate::ops::{
 use crate::routes::{
     self, ADMIN_CONVERSATION, ADMIN_CONVERSATIONS, ADMIN_EVENTS, ADMIN_SCHEDULES, ADMIN_SCHEDULES_PAUSE,
     ADMIN_TIMELINE, ADMIN_TRANSCRIPT, ASK_ANSWER, BLOB, CANCEL, CHANGES, CONVERSATION, CONVERSATION_DELETE,
-    CONVERSATION_RESTORE, CONVERSATION_SCHEDULES, CONVERSATION_SHARES, CONVERSATIONS, CREATION, FILES, FILES_RAW,
-    HERMIT_CONVERSATION, HERMIT_CONVERSATION_TURNS, HERMIT_CONVERSATIONS, HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE,
-    HERMIT_WORKSPACES_EXISTS, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS, PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS,
-    SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME, SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR,
-    SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE, SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS,
-    SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES, SANDBOX_SENT_FILES,
-    SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS, SEARCH, SHARE,
-    SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
+    CONVERSATION_PENDING, CONVERSATION_RESTORE, CONVERSATION_SCHEDULES, CONVERSATION_SHARES, CONVERSATIONS, CREATION,
+    FILES, FILES_RAW, HERMIT_CONVERSATION, HERMIT_CONVERSATION_TURNS, HERMIT_CONVERSATIONS, HERMIT_LEGACY_IMPORT,
+    HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS, PROMPTS,
+    SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME,
+    SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE,
+    SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES,
+    SANDBOX_SENT_FILES, SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS,
+    SEARCH, SHARE, SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
 };
 use crate::rows::{
     PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery,
@@ -811,6 +811,16 @@ pub trait Server: Send + Sync + 'static {
         async move { Err(not_implemented("delete_schedule")) }
     }
 
+    /// Route `withdraw_pending`.
+    fn withdraw_pending(
+        &self,
+        ctx: Ctx,
+        id: Uuid,
+        client_message_id: String,
+    ) -> impl Future<Output = Result<Conversation, ApiError>> + Send {
+        async move { Err(not_implemented("withdraw_pending")) }
+    }
+
     /// Route `conversation_schedules`.
     fn conversation_schedules(
         &self,
@@ -1205,6 +1215,14 @@ async fn h_delete_schedule<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, P(sched
     reply_empty(s.delete_schedule(ctx, schedule_id).await)
 }
 
+async fn h_withdraw_pending<S: Server>(
+    State(s): State<Arc<S>>,
+    ctx: Ctx,
+    P((id, client_message_id)): P<(Uuid, String)>,
+) -> Response {
+    reply("withdraw_pending", s.withdraw_pending(ctx, id, client_message_id).await)
+}
+
 async fn h_conversation_schedules<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, P(id): P<Uuid>) -> Response {
     reply("conversation_schedules", s.conversation_schedules(ctx, id).await)
 }
@@ -1324,6 +1342,7 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
                 .delete(h_delete_schedule::<S>),
         )
         .route(CONVERSATION_SCHEDULES, get(h_conversation_schedules::<S>))
+        .route(CONVERSATION_PENDING, delete(h_withdraw_pending::<S>))
         .route(ADMIN_SCHEDULES, get(h_admin_schedules::<S>))
         .route(ADMIN_SCHEDULES_PAUSE, put(h_admin_schedules_pause::<S>))
         .route(HERMIT_PERSON_PURGE, post(h_person_purge::<S>))

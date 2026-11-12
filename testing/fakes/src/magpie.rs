@@ -1630,6 +1630,11 @@ impl Server for FakeMagpie {
         )
     }
 
+    async fn withdraw_pending(&self, ctx: Ctx, id_: Uuid, client_message_id: String) -> Result<Conversation, ApiError> {
+        let params = json!({"id": id_.to_string(), "clientMessageId": client_message_id});
+        scripted!(self, "withdraw_pending", ctx, params, None, None, typed)
+    }
+
     async fn conversation_schedules(&self, ctx: Ctx, id_: Uuid) -> Result<SchedulesList, ApiError> {
         scripted!(self, "conversation_schedules", ctx, id(id_), None, None, typed)
     }

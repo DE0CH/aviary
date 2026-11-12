@@ -98,14 +98,15 @@ reads and their once-a-day audit. `tests/legacy_paths.rs`: the legacy-path set (
 
 ## Deviations from the spec text
 
-- **A message sent while a turn runs joins it** (Deyao, 2026-11-12; `src/turns/midturn.rs`): M7 no longer answers
-  409 `turn_running` to a person's text message. It answers 202 with `midTurn: true` and the running turn, and queues
-  a `send_message`; Claude Code takes the message in after its next tool result, or answers it in a run of its own
-  right after the reply. The transcript's prompt line with the message's text is its `user` row, under the app's
-  `clientMessageId` (`meta.clientMessageId`). A message its turn
-  never took (the turn was being stopped or had ended, or its Claude Code went away) is sent again by the job leader,
-  into the turn that runs by then or as a turn of its own. A message with attachments, hermit's messages and an
-  admin's view-as send are refused as before.
+- **The queue of messages sent while a turn runs is magpie's** (Deyao, 2026-11-12; `src/turns/midturn.rs`): M7 no
+  longer answers 409 `turn_running` to a person's message. It answers 202 with `midTurn: true` and the running turn,
+  and the message waits in the conversation's `pendingMessages`. A text message is written into the turn (a
+  `send_message`): Claude Code takes it in after its next tool result, or answers it in a run of its own right after
+  the reply, and the transcript's prompt line with its text is its `user` row, under the app's `clientMessageId`
+  (`meta.clientMessageId`). A message with attachments is held (`held`), can be taken back
+  (`DELETE /v1/conversations/{id}/pending/{clientMessageId}`), and starts a turn of its own once the turn has ended,
+  as does a text message its turn never took. The job leader settles and sends again every second. hermit's
+  messages and an admin's view-as send are refused as before.
 - **A conversation's model** (Deyao, 2026-11-12): M5 takes `model` beside `title` (`pickedModel`, kept in
   `conversations.picked_model`), hermit's create takes `model` for the conversation's first, and every `start_turn`
   carries it (`model`); the supervisor runs Claude Code on it instead of the models route's default. magpie does not

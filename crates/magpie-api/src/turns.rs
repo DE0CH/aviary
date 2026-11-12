@@ -102,9 +102,10 @@ pub struct TurnStarted {
 pub struct SendResponse {
     /// The turn: the one the message started, or with `midTurn` the running one it joined.
     pub turn: TurnStarted,
-    /// The message was sent while a turn ran: it started none and is written into the running one, where Claude Code
-    /// takes it in at its next tool result or when the model stops; its `user` row, with this `clientMessageId` as
-    /// its `messageId`, comes then. If that turn ends first, magpie sends it as a turn of its own.
+    /// The message was sent while a turn ran: it started none and waits in the conversation's `pendingMessages`. A
+    /// text message is written into the running turn, where Claude Code takes it in at its next tool result or when
+    /// the model stops (its `user` row, with this `clientMessageId` as its `messageId`, comes then); if that turn
+    /// ends first, and for a message with attachments, magpie starts it as a turn of its own once the turn has ended.
     #[serde(default, skip_serializing_if = "is_false")]
     pub mid_turn: bool,
 }

@@ -743,6 +743,17 @@ impl Server for FixtureServer {
         self.answer_empty("delete_schedule")
     }
 
+    async fn withdraw_pending(&self, ctx: Ctx, id: Uuid, client_message_id: String) -> Result<Conversation, ApiError> {
+        self.received(
+            "withdraw_pending",
+            &ctx,
+            &json!({"id": id.to_string(), "clientMessageId": client_message_id}),
+            None,
+            None,
+        );
+        self.answer_json("withdraw_pending")
+    }
+
     async fn conversation_schedules(&self, ctx: Ctx, id: Uuid) -> Result<SchedulesList, ApiError> {
         self.received(
             "conversation_schedules",
@@ -1139,6 +1150,11 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
         "conversation_schedules" => c
             .person(PERSON)
             .conversation_schedules(param_uuid(&f, "id"))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "withdraw_pending" => c
+            .person(PERSON)
+            .withdraw_pending(param_uuid(&f, "id"), &param_str(&f, "clientMessageId"))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
         "admin_schedules" => c

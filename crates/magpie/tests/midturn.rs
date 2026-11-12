@@ -17,7 +17,6 @@ mod common;
 
 use aviary_fakes::hermit::{FakeHermit, HermitConfig, Running};
 use common::cc::{Sandbox, main_path, person_turn, set_main};
-use magpie::schedules::fire;
 use magpie::turns::driver::Driver;
 use magpie_api::client::ClientError;
 use magpie_api::conversations::CreateRequest;
@@ -67,9 +66,9 @@ impl World {
             .id
     }
 
-    /// The leader's pass (the schedules' and the mid-turn messages').
+    /// The leader's pass over the queue.
     async fn pass(&self) -> usize {
-        fire::pass(&Driver::of(self.a.app())).await.unwrap()
+        magpie::turns::midturn::pass(&Driver::of(self.a.app())).await.unwrap()
     }
 
     /// `(state, turn, cmd_seq)` of the message `cmid`.
@@ -120,21 +119,17 @@ impl World {
             .collect()
     }
 
-    /// The texts of the messages Claude Code has not taken in yet, oldest first.
-    async fn waiting(&self, conv: Uuid) -> Vec<String> {
-        self.pool()
-            .get()
+    /// The conversation's queue as the app gets it: `(text, held)`, oldest first.
+    async fn waiting(&self, conv: Uuid) -> Vec<(String, bool)> {
+        self.a
+            .pigeon()
+            .person(ALICE)
+            .get_conversation(conv)
             .await
             .unwrap()
-            .query(
-                "select text from pending_messages
-                 where conversation_id = $1 and state in ('pending', 'written', 'redeliver') order by created_at",
-                &[&conv],
-            )
-            .await
-            .unwrap()
-            .iter()
-            .map(|r| r.get(0))
+            .pending_messages
+            .into_iter()
+            .map(|m| (m.text, m.held))
             .collect()
     }
 }
@@ -187,7 +182,7 @@ async fn a_message_sent_while_a_turn_runs_joins_it() {
     assert_eq!(cmd.get::<_, String>(0), "send_message");
     assert_eq!(cmd.get::<_, Option<Uuid>>(1), Some(busy));
     assert_eq!(cmd.get::<_, Value>(2), json!({"text": "順便查埋天氣"}));
-    assert_eq!(w.waiting(conv).await, ["順便查埋天氣"]);
+    assert_eq!(w.waiting(conv).await, [("順便查埋天氣".to_owned(), false)]);
 
     // a repeat is the same message: nothing new
     let again = alice.send_turn(conv, &msg("m2", "順便查埋天氣")).await.unwrap();
@@ -209,29 +204,117 @@ async fn a_message_sent_while_a_turn_runs_joins_it() {
     w.ack(conv, seq, true).await;
     w.pass().await;
     assert_eq!(w.message(conv, "m2").await.0, "written");
-    assert_eq!(w.waiting(conv).await, ["順便查埋天氣"]);
+    assert_eq!(w.waiting(conv).await, [("順便查埋天氣".to_owned(), false)]);
 
     // a third joins too, in order
     alice.send_turn(conv, &msg("m3", "仲有交通")).await.unwrap();
-    assert_eq!(w.waiting(conv).await, ["順便查埋天氣", "仲有交通"]);
+    assert_eq!(
+        w.waiting(conv).await,
+        [("順便查埋天氣".to_owned(), false), ("仲有交通".to_owned(), false)]
+    );
+}
+
+/// A message with attachments cannot be written into a running turn: it is held in the queue, can be taken back,
+/// and starts a turn of its own, in the order sent, once the running turn has ended.
+#[tokio::test]
+async fn a_message_with_attachments_is_held_until_the_turn_ends() {
+    use magpie_api::uploads::UploadKind;
+    let w = World::new("midturn_held").await;
+    let conv = w.conversation().await;
+    let pigeon = w.a.pigeon();
+    let alice = pigeon.person(ALICE);
+    let busy = alice.send_turn(conv, &msg("m1", "長任務")).await.unwrap().get().turn.id;
+    let with_file = async |cmid: &str, text: &str| -> SendRequest {
+        let up = alice
+            .upload("a.txt", UploadKind::File, "text/plain", b"hello".to_vec())
+            .await
+            .unwrap();
+        let mut m = msg(cmid, text);
+        m.files.push(FileRef {
+            path: up.path,
+            name: up.name,
+            mime_type: up.mime_type,
+            size: up.size,
+        });
+        m
+    };
+    let m2 = with_file("m2", "睇下呢個").await;
+    let r = alice.send_turn(conv, &m2).await.unwrap().into_inner();
+    assert!(r.mid_turn);
+    assert_eq!(r.turn.id, busy);
+    let m3 = with_file("m3", "同埋呢個").await;
+    alice.send_turn(conv, &m3).await.unwrap();
+    let c = alice.get_conversation(conv).await.unwrap();
+    let q = &c.pending_messages;
+    assert_eq!(q.len(), 2);
+    assert_eq!(
+        (q[0].client_message_id.as_str(), q[0].attachments, q[0].held),
+        ("m2", 1, true)
+    );
+    // no command for the supervisor: nothing is written into the running turn
+    let n: i64 = w
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select count(*) from commands where conversation_id = $1 and type = 'send_message'",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(n, 0);
+    // while the turn runs it goes on waiting
+    assert_eq!(w.pass().await, 0);
+    assert_eq!(w.sent(conv).await, ["長任務"]);
+
+    // taken back: gone from the queue; a text message on its way into the turn cannot be
+    let after = alice.withdraw_pending(conv, "m3").await.unwrap();
+    assert_eq!(after.pending_messages.len(), 1);
+    alice.send_turn(conv, &msg("m4", "文字")).await.unwrap();
+    let e = alice.withdraw_pending(conv, "m4").await.unwrap_err();
+    assert_eq!(code(&e), ErrorCode::BadTransition);
+    let e = alice.withdraw_pending(conv, "nothing").await.unwrap_err();
+    assert_eq!(code(&e), ErrorCode::NotFound);
+
+    // the turn ends: the held message starts a turn of its own, with its file
+    alice.cancel_turn(conv).await.unwrap();
+    assert_eq!(w.pass().await, 1, "one turn at a time: m2 first");
+    let (state, turn, _) = w.message(conv, "m2").await;
+    assert_eq!(state, "turn");
+    assert_ne!(turn, Some(busy));
+    assert_eq!(w.sent(conv).await, ["長任務", "睇下呢個"]);
+    let files: i64 = w
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select count(*) from uploads where conversation_id = $1 and attached_seq is not null",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(files, 1, "its upload is attached to the new turn");
+    // the text message never written (its turn was stopped) joins the new turn at the next pass
+    assert_eq!(w.pass().await, 1);
+    assert_eq!(w.message(conv, "m4").await.1, turn);
+    assert_eq!(
+        alice.get_conversation(conv).await.unwrap().pending_messages.len(),
+        1,
+        "only the text message still waits"
+    );
 }
 
 #[tokio::test]
-async fn attachments_and_the_deployments_messages_are_refused_while_a_turn_runs() {
+async fn the_deployments_and_a_view_as_message_are_refused_while_a_turn_runs() {
     let w = World::new("midturn_refused").await;
     let conv = w.conversation().await;
     let pigeon = w.a.pigeon();
     let alice = pigeon.person(ALICE);
     alice.send_turn(conv, &msg("m1", "長任務")).await.unwrap();
-    let mut with_file = msg("m2", "睇下呢個");
-    with_file.files.push(FileRef {
-        path: format!("uploads/{}/a.pdf", Uuid::new_v4()),
-        name: "a.pdf".into(),
-        mime_type: "application/pdf".into(),
-        size: 5,
-    });
-    let e = alice.send_turn(conv, &with_file).await.unwrap_err();
-    assert_eq!(code(&e), ErrorCode::TurnRunning);
     // the deployment's own message (Jarvis's inbox delivers it again once the conversation is idle)
     let e =
         w.a.hermit()

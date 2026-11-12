@@ -64,6 +64,22 @@
         },
         "model": "deepseek/deepseek-v4.1-flash-1017",
         "pickedModel": "claude-opus-5-5",
+        "pendingMessages": [
+          {
+            "clientMessageId": "msg_7c1d",
+            "text": "順便睇埋尋日嘅新聞",
+            "attachments": 0,
+            "sentAt": "2026-11-02T03:46:40.002Z",
+            "held": false
+          },
+          {
+            "clientMessageId": "msg_7c1e",
+            "text": "同埋呢份報告",
+            "attachments": 1,
+            "sentAt": "2026-11-02T03:46:45.000Z",
+            "held": true
+          }
+        ],
         "contextTokens": 51234,
         "origin": {
           "kind": "new"

@@ -55,10 +55,33 @@ pub struct Conversation {
     /// none was picked (the deployment's default model runs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub picked_model: Option<String>,
+    /// The person's messages sent while a turn ran that have not reached Claude Code's conversation yet (M7
+    /// `midTurn`), oldest first: the queue the app shows. One leaves it when it shows on the timeline (taken into
+    /// the running turn, or started as a turn of its own) or is taken back.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_messages: Vec<PendingMessage>,
     /// Context tokens of the last assistant line.
     pub context_tokens: Option<u64>,
     /// How the conversation came to be.
     pub origin: Origin,
+}
+
+/// A message sent while a turn ran, still waiting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingMessage {
+    /// The app's message id (M7's `clientMessageId`).
+    pub client_message_id: String,
+    /// The text.
+    pub text: String,
+    /// How many images and files it carries.
+    pub attachments: u32,
+    /// When the person sent it.
+    pub sent_at: Timestamp,
+    /// It waits for the running turn to end and then starts a turn of its own (it has attachments, or the turn
+    /// could not take it), so it can still be taken back (`DELETE …/pending/{clientMessageId}`). False: it is on
+    /// its way into the running turn.
+    pub held: bool,
 }
 
 /// `titleSource`.

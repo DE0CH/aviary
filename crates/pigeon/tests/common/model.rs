@@ -168,6 +168,7 @@ impl Model {
             },
             model: None,
             picked_model: None,
+            pending_messages: Vec::new(),
             context_tokens: None,
             origin: Origin {
                 kind: OriginKind::New,

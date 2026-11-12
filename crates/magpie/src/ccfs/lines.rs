@@ -536,6 +536,10 @@ async fn apply(
             {
                 // a person's mid-turn message taken in (src/turns/midturn.rs): its row carries the app's id
                 m.client_message_id = crate::turns::midturn::taken(tx, op.conv.id, text).await?;
+                if m.client_message_id.is_some() {
+                    // it has left the conversation's queue
+                    op.upserted(tx).await?;
+                }
             }
             let at = OffsetDateTime::now_utc();
             let meta_json = serde_json::to_value(&m)?;

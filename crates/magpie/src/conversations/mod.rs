@@ -227,6 +227,7 @@ pub fn conversation_from_row(row: &Row) -> Result<Conversation> {
         },
         model: row.get("model"),
         picked_model: row.get("picked_model"),
+        pending_messages: Vec::new(),
         context_tokens: row
             .get::<_, Option<i32>>("context_tokens")
             .and_then(|n| u64::try_from(n).ok()),
@@ -295,6 +296,7 @@ pub async fn load(db: &impl Db, id: Uuid) -> Result<Option<(String, Conversation
     let person: String = row.get("person");
     let mut c = [conversation_from_row(&row)?];
     attach_asks(db, &mut c).await?;
+    crate::turns::midturn::attach(db, &mut c).await?;
     let [c] = c;
     Ok(Some((person, c)))
 }
@@ -327,6 +329,7 @@ pub async fn load_many(db: &impl Db, ids: &[Uuid]) -> Result<Vec<Conversation>> 
     }
     let mut out: Vec<Conversation> = ids.iter().filter_map(|id| by_id.remove(id)).collect();
     attach_asks(db, &mut out).await?;
+    crate::turns::midturn::attach(db, &mut out).await?;
     Ok(out)
 }
 

@@ -215,6 +215,12 @@ impl Service {
                 driver.clone(),
                 intervals.schedules,
             ));
+            // the queue of messages sent mid-turn: five times as often as the schedules (1 s in production)
+            jobs.push(turns::midturn::spawn(
+                jobs.leader(),
+                driver.clone(),
+                intervals.schedules / 5,
+            ));
             jobs.push(crate::hermit::feed::spawn(jobs.leader(), driver));
             Some(jobs)
         };
@@ -562,6 +568,16 @@ impl Server for Magpie {
 
     async fn delete_schedule(&self, ctx: Ctx, schedule_id: String) -> Answer<()> {
         http::schedules::delete(self, ctx, &schedule_id).await
+    }
+
+    async fn withdraw_pending(&self, ctx: Ctx, id: Uuid, client_message_id: String) -> Answer<Conversation> {
+        http::answer(
+            async {
+                let person = crate::conversations::Person::from_ctx(&ctx)?;
+                turns::midturn::withdraw(&self.pool, &person, id, &client_message_id).await
+            }
+            .await,
+        )
     }
 
     async fn conversation_schedules(&self, ctx: Ctx, id: Uuid) -> Answer<SchedulesList> {

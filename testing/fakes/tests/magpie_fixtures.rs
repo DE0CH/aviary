@@ -462,6 +462,11 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .conversation_schedules(param_uuid(&f, "id"))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
+        "withdraw_pending" => c
+            .person(PERSON)
+            .withdraw_pending(param_uuid(&f, "id"), &param_str(&f, "clientMessageId"))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
         "admin_schedules" => c
             .service(Some(ADMIN))
             .admin_schedules()

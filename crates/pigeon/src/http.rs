@@ -12,6 +12,7 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use magpie_api::errors::ErrorCode;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -385,6 +386,8 @@ enum ApiRoute {
     Blob(String),
     SessionShares(String),
     SessionSchedules(String),
+    /// `DELETE <sessions>/{id}/pending/{messageId}`: a queued message taken back.
+    SessionPending(String, String),
     Share(String),
     ShareFiles(String),
     ShareContinue(String),
@@ -439,6 +442,15 @@ impl ApiRoute {
             {
                 return Self::SessionSchedules(id.to_owned());
             }
+            if let Some((id, message)) = rest.split_once("/pending/")
+                && !id.is_empty()
+                && !id.contains('/')
+                && !message.is_empty()
+                && !message.contains('/')
+                && *method == Method::DELETE
+            {
+                return Self::SessionPending(id.to_owned(), message.to_owned());
+            }
         }
         if let Some(rest) = path.strip_prefix(compat::SHARES) {
             if let Some(id) = rest.strip_suffix("/files/raw")
@@ -474,6 +486,7 @@ impl ApiRoute {
             Self::Blob(_) => "blob",
             Self::SessionShares(_) => "shares",
             Self::SessionSchedules(_) => "schedules",
+            Self::SessionPending(..) => "pending",
             Self::Share(_) => "share",
             Self::ShareFiles(_) => "share_files",
             Self::ShareContinue(_) => "share_continue",
@@ -660,6 +673,7 @@ async fn api(app: &App, req: Request, path: &str, upgrade: bool) -> (&'static st
         ApiRoute::Blob(blob) => blobs::blob(app, &parts, &blob, query.as_deref()).await,
         ApiRoute::SessionShares(cid) => shares::conversation_shares(app, &parts, &id, &cid).await,
         ApiRoute::SessionSchedules(cid) => crate::schedules::conversation(app, &id, &cid).await,
+        ApiRoute::SessionPending(cid, message) => withdraw_pending(app, &id, &cid, &message).await,
         ApiRoute::Share(sid) => shares::share(app, &parts, &id, &sid).await,
         ApiRoute::ShareFiles(sid) => shares::share_files(app, &parts, &id, &sid, query.as_deref()).await,
         ApiRoute::ShareContinue(sid) => shares::continue_share(app, &parts, &id, &sid).await,
@@ -784,6 +798,41 @@ async fn warm(app: &App, body: Body, id: &Identity) -> Response {
         });
     }
     ok
+}
+
+/// `DELETE <sessions>/{id}/pending/{messageId}`: the person takes back a message that waits for the running reply to
+/// end (the conversation's queue, magpie's `pendingMessages` with `held`). 200 `{}`; 409 `MESSAGE_SENT` once it is on
+/// its way into the reply; 404 when there is no such waiting message.
+async fn withdraw_pending(app: &App, id: &Identity, conversation: &str, message: &str) -> Response {
+    let not_found = || api_error(StatusCode::NOT_FOUND, "MESSAGE_NOT_FOUND", "No such waiting message.");
+    let Ok(cid) = Uuid::parse_str(conversation) else {
+        return not_found();
+    };
+    let Some(calls) = person_calls(&app.0.magpie, id) else {
+        return not_found();
+    };
+    match calls.withdraw_pending(cid, message).await {
+        Ok(_) => json(StatusCode::OK, &json!({})),
+        Err(e) if e.code() == Some(&ErrorCode::NotFound) => not_found(),
+        Err(e) if e.code() == Some(&ErrorCode::BadTransition) => api_error(
+            StatusCode::CONFLICT,
+            "MESSAGE_SENT",
+            "The message is already on its way into the reply.",
+        ),
+        Err(e) if e.code() == Some(&ErrorCode::ViewAsReadOnly) => api_error(
+            StatusCode::FORBIDDEN,
+            "VIEW_AS_READ_ONLY",
+            crate::paseo::strings::VIEW_AS_READ_ONLY,
+        ),
+        Err(e) => {
+            tracing::warn!(error = %e, "withdraw: magpie failed");
+            api_error(
+                StatusCode::BAD_GATEWAY,
+                "WITHDRAW_FAILED",
+                "The message could not be taken back.",
+            )
+        }
+    }
 }
 
 /// After a failed refresh of a cached model list, the next refresh starts no sooner than this.
@@ -1039,5 +1088,16 @@ mod tests {
             r(Method::POST, &format!("{}c1/schedules", compat::SESSIONS)),
             ApiRoute::Unknown
         );
+        assert_eq!(
+            r(Method::DELETE, &format!("{}c1/pending/m-7", compat::SESSIONS)),
+            ApiRoute::SessionPending("c1".into(), "m-7".into())
+        );
+        for (m, p) in [
+            (Method::GET, "c1/pending/m-7"),
+            (Method::DELETE, "c1/pending/"),
+            (Method::DELETE, "c1/pending/a/b"),
+        ] {
+            assert_eq!(r(m, &format!("{}{p}", compat::SESSIONS)), ApiRoute::Unknown, "{p}");
+        }
     }
 }

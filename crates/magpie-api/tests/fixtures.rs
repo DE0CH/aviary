@@ -105,6 +105,7 @@ fn check_route(id: &str, f: &serde_json::Value) {
         "update_schedule" => check::<NoQuery, Json<UpdateSchedule>, Json<Schedule>>(id, f),
         "delete_schedule" => check::<NoQuery, NoBody, NoContent>(id, f),
         "conversation_schedules" => check::<NoQuery, NoBody, Json<SchedulesList>>(id, f),
+        "withdraw_pending" => check::<NoQuery, NoBody, Json<Conversation>>(id, f),
         "admin_schedules" => check::<NoQuery, NoBody, Json<AdminSchedules>>(id, f),
         "admin_schedules_pause" => check::<NoQuery, Json<PauseAll>, Json<AdminSchedules>>(id, f),
         other => panic!("no typed check for route {other}"),

@@ -171,8 +171,19 @@ pub fn agent_snapshot(c: &Conversation, v: &View<'_>) -> Value {
     let attention = c.asks.first();
     // the model the person picked for this conversation, else the deployment's default
     let model = c.picked_model.as_deref().or(v.model);
+    // the conversation's queue (magpie's `pendingMessages`): messages sent during the reply that have not reached it
+    // yet. `held`: it waits for the reply to end and can still be taken back.
+    let queue: Vec<Value> = c
+        .pending_messages
+        .iter()
+        .map(|m| {
+            json!({"messageId": m.client_message_id, "text": m.text, "attachments": m.attachments,
+                   "sentAt": m.sent_at, "held": m.held})
+        })
+        .collect();
     json!({
         "id": c.id, "provider": PROVIDER, "cwd": CWD, "workspaceId": workspace_id(&c.id), "model": model,
+        "pendingMessages": queue,
         "thinkingOptionId": null, "effectiveThinkingOptionId": null,
         "runtimeInfo": {"provider": PROVIDER, "sessionId": c.claude_session_id, "model": model, "modeId": null},
 
@@ -1055,10 +1066,25 @@ mod tests {
         assert_eq!(agent_snapshot(&plain, &view)["model"], "claude-fable-5-2");
         let mut picked = base;
         picked["pickedModel"] = json!("claude-opus-5-5");
+        picked["pendingMessages"] = json!([
+            {"clientMessageId": "m2", "text": "also this", "attachments": 0, "sentAt": "2026-11-12T04:01:00.000Z",
+             "held": false},
+            {"clientMessageId": "m3", "text": "and this file", "attachments": 1,
+             "sentAt": "2026-11-12T04:01:05.000Z", "held": true}]);
         let picked: Conversation = serde_json::from_value(picked).unwrap();
         let a = agent_snapshot(&picked, &view);
         assert_eq!(a["model"], "claude-opus-5-5");
         assert_eq!(a["runtimeInfo"]["model"], "claude-opus-5-5");
+        // the conversation's queue goes to the app with the agent
+        assert_eq!(agent_snapshot(&plain, &view)["pendingMessages"], json!([]));
+        assert_eq!(
+            a["pendingMessages"],
+            json!([
+                {"messageId": "m2", "text": "also this", "attachments": 0, "sentAt": "2026-11-12T04:01:00.000Z",
+                 "held": false},
+                {"messageId": "m3", "text": "and this file", "attachments": 1,
+                 "sentAt": "2026-11-12T04:01:05.000Z", "held": true}])
+        );
     }
 
     /// A question offers the person's own answer beside its options, as Claude Code's own does: the app shows its

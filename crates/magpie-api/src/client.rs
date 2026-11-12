@@ -641,6 +641,19 @@ impl PersonCalls<'_> {
     }
 
     /// The conversation's schedules with their last runs (the app's panel).
+    /// Takes back a message that waits for the running turn to end (409 `bad_transition` once it is on its way).
+    pub async fn withdraw_pending(&self, id: Uuid, client_message_id: &str) -> Result<Conversation, ClientError> {
+        self.client
+            .exec_json(
+                &self.scope,
+                route("withdraw_pending"),
+                &[&id.to_string(), client_message_id],
+                NO_QUERY,
+                Body::None,
+            )
+            .await
+    }
+
     pub async fn conversation_schedules(&self, id: Uuid) -> Result<SchedulesList, ClientError> {
         self.get("conversation_schedules", &[&id.to_string()], NO_QUERY).await
     }
