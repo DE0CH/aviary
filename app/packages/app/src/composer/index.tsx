@@ -117,7 +117,7 @@ import {
 } from "@/attachments/service";
 import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
-import { YycModelMenu } from "@/yyc/model-menu";
+import { YycModelMenu } from "@/yyc/model-menu-lazy";
 import { useMidTurnAvailable } from "@/yyc/me";
 import { chatSendBehavior, resolveActiveSendBehavior } from "./input/state";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
