@@ -486,6 +486,88 @@ async fn a_socket_joining_mid_turn_sees_the_next_rows_and_catches_up_by_its_own_
     assert_eq!(p["entries"].as_array().unwrap().len(), 2);
 }
 
+/// The answer as it comes (magpie's live state): the text added to an open block goes out as chunks without a `seq`,
+/// under the message's id, so the app appends them; the block's row then carries only what a socket has not had, with
+/// its `seq`. A socket that joins while the block is open gets it from its start.
+#[tokio::test]
+async fn the_answer_is_sent_as_it_is_written() {
+    use magpie_api::live::{BlockType, LiveBlock, LiveState};
+    let e = env().await;
+    let c = e.m.add(STAFF, None);
+    let turn = Uuid::now_v7();
+    let live = |n: u64, text: &str| LiveState {
+        turn_id: turn,
+        n,
+        reset: true,
+        blocks: vec![LiveBlock {
+            message_id: "msg_1".into(),
+            block_index: 0,
+            block: BlockType::Text,
+            name: None,
+            offset: 0,
+            text: text.into(),
+            done: false,
+            after_row_seq: 0,
+        }],
+        status: None,
+    };
+    let chunk = |v: &Value| {
+        v["message"]["payload"]["event"]["item"]["text"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let mut a = e.ws(STAFF).await;
+    watch(&mut a, &[c]).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    e.m.with_conv(c, |conv| conv.live = Some(live(1, "你好")));
+    let v = a.wait_for("the first chunk", |v| is_stream(v, c)).await;
+    let p = &v["message"]["payload"];
+    assert_eq!(chunk(&v), "你好");
+    assert_eq!(p["event"]["item"]["type"], "assistant_message");
+    assert_eq!(p["event"]["item"]["messageId"], "msg_1");
+    assert_eq!(p["event"]["turnId"], turn.to_string());
+    assert!(
+        p.get("seq").is_none() && p.get("epoch").is_none(),
+        "a chunk is no row: {p}"
+    );
+    // more text: only what was added
+    e.m.with_conv(c, |conv| conv.live = Some(live(2, "你好, wor")));
+    let v = a.wait_for("the second chunk", |v| is_stream(v, c)).await;
+    assert_eq!(chunk(&v), ", wor");
+    // a socket that joins now gets the open block from its start
+    let mut b = e.ws(STAFF).await;
+    watch(&mut b, &[c]).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    e.m.with_conv(c, |conv| conv.live = Some(live(3, "你好, world")));
+    let v = b.wait_for("the late socket's first chunk", |v| is_stream(v, c)).await;
+    assert_eq!(chunk(&v), "你好, world");
+    let v = a.wait_for("the third chunk", |v| is_stream(v, c)).await;
+    assert_eq!(chunk(&v), "ld");
+    // the block is complete: its row, with what each socket has not had (nothing: the text is whole already)
+    e.m.with_conv(c, |conv| conv.live = None);
+    e.m.row(
+        c,
+        Some(turn),
+        RowItem::Assistant(AssistantItem {
+            message_id: "msg_1".into(),
+            block_index: 0,
+            text: "你好, world!".into(),
+            error: None,
+        }),
+    );
+    for ws in [&mut a, &mut b] {
+        let v = ws.wait_for("the row", |v| is_stream(v, c)).await;
+        assert_eq!(chunk(&v), "!", "the rest of the text");
+        assert_eq!(v["message"]["payload"]["seq"], 1, "the row moves the cursor");
+        assert_eq!(v["message"]["payload"]["event"]["item"]["messageId"], "msg_1");
+    }
+    // a row whose block never went out live is sent whole, as before
+    e.m.row(c, Some(turn), assistant("whole"));
+    let v = a.wait_for("a whole row", |v| is_stream(v, c)).await;
+    assert_eq!(chunk(&v), "whole");
+}
+
 /// The app's order when a page that watches one conversation opens another (a new chat): the new set first, then
 /// a release of the subscription it held before. That release ends the earlier subscription only: the socket goes
 /// on watching the new set, so the new conversation's first reply arrives live.

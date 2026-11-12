@@ -254,6 +254,12 @@ heartbeat (the stuck rule's evidence that magpie answers other calls). The binar
 
 ## The Claude Code driver (WP-23)
 
+**Live frames** (8.3; Deyao, 2026-11-12): Claude Code runs with `--include-partial-messages`, and each
+`stream_event` of a running turn becomes a live frame (`cc::run` `PartialOut`: a block's start, its text at its byte
+offset, its end, under the message its thread is streaming; a tool input's JSON makes none). `cc::report`
+`run_live` sends them every 120 ms in one request per turn, numbered per turn. They are best effort: a batch magpie
+does not take is dropped, and the next one starts with a `gap` frame.
+
 `cc::run::Driver` keeps one run state behind a lock never held across an `await`: stdout lines (tailed from the
 generation's file with inotify and a 250 ms poll), keeper exits, commands and a 1 s tick change it and return the
 effects (stdin lines through the generation's ordered writer, reports, signals). Every state change is put into

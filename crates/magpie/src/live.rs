@@ -2,8 +2,8 @@
 //! the unlogged `live_frames` table, served as [`LiveState`] in M9 and `GET …/live`, superseded by the durable row
 //! (rule 4 deletes a block's frames in the transaction that writes its row) and swept 60 s after the turn's end.
 //!
-//! Live frames never take a row seq and are never events. In this release the supervisor sends none and pigeon
-//! renders none (platform R36); this is the receiving side.
+//! Live frames never take a row seq and are never events. This is the receiving side: the supervisor sends them
+//! (`cc::report` `run_live`) and pigeon's timeline poller reads them with each long-poll.
 
 use std::collections::BTreeMap;
 

@@ -1,6 +1,8 @@
 //! Live frames (magpie 7.5, supervisor 8.3): partial assistant output of a running turn, never events, never a row
-//! seq, superseded by the durable row with the same `(messageId, blockIndex)`. In this release the supervisor sends
-//! none and pigeon renders none (platform R36, DESIGN 12 D3); magpie serves the receiving side.
+//! seq, superseded by the durable row with the same `(messageId, blockIndex)`. The supervisor sends them from Claude
+//! Code's `stream_event`s (`--include-partial-messages`), magpie keeps and serves them, and pigeon sends the text
+//! added to each open block to the app as it comes (platform R36 and DESIGN 12 D3 had left both ends out of the
+//! first release; Deyao, 2026-11-12).
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
