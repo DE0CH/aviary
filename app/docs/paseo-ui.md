@@ -1,82 +1,20 @@
 # The Paseo UI
 
-The browser UI of this fork (a Jarvis 4 session's `cloudcli` harness, and YYC AI's web app, which DE0CH/aviary's pigeon
-serves from the `pigeon-app` image) and the YYC AI iOS app are the Paseo app
-(getpaseo/paseo, Apache-2.0), copied into `paseo/` at upstream commit e3bbed3 and changed into a chat app. It is not
-kept in sync with upstream (Deyao, 2026-10-26): change it as this fork's own code. CloudCLI's server and state stay
-as they were; the app reaches them through a bridge that speaks Paseo's protocol.
+The chat app of YYC AI and of Jarvis 4's chat (chat.deyaochen.com) is the Paseo app (getpaseo/paseo, Apache-2.0),
+copied into `paseo/` at upstream commit e3bbed3 and changed into a chat app. It is not kept in sync with upstream
+(Deyao, 2026-10-26): change it as this fork's own code. It is one build for every deployment (see "Branding").
 
 ```
-browser (paseo/packages/app, served from dist/)
+browser, or the YYC AI iOS app (paseo/packages/app; the web export is the `pigeon-app` image)
    │  /paseo-ws: Paseo's WebSocket protocol (paseo/packages/protocol messages.ts)
-   │  /api/...:  CloudCLI REST for what the protocol has no message for (uploads, files, sharing, warming, /me)
+   │  /api/jarvis/...: REST for what the protocol has no message for (uploads, files, sharing, warming, /me, tasks)
    ▼
-CloudCLI server (Jarvis mode: a Jarvis 4 session's one user)
-   server/modules/paseo/paseo-connection.ts   one per browser socket: answers the protocol
-   server/modules/paseo/paseo-hub.ts          one per process: a CloudCLI chat client of its own (handleChatConnection),
-                                              the conversations' timelines, run status, list changes
-   server/modules/paseo/paseo-timeline.ts     CloudCLI messages → Paseo timeline rows (seq, epoch, pages)
-   └─ sessionsService, chatRunRegistry, the provider runtime, Postgres (as before)
+pigeon (DE0CH/aviary crates/pigeon: the gateway that speaks both), in front of magpie and hermit
 ```
 
-This CloudCLI server and its Jarvis mode serve no deployment any more: YYC AI's app talks to aviary's pigeon, and so
-does Jarvis 4's (its aviary harness, chat.deyaochen.com; DE0CH/jarvis4 aviary/README.md).
-
-## How the app sees CloudCLI
-
-| Paseo | CloudCLI |
-|---|---|
-| host (`srv_conversations`, named after the product) | the per-person server process |
-| one project (`prj_conversations`, the workspace path) | the one project of Jarvis mode |
-| workspace `wks_<session id>` | a conversation (session row) |
-| agent `<session id>`, provider `claude`, one model | the same conversation; the instance's model |
-| workspace title | the session name (`workspace.title.set` = rename) |
-| archive (workspace or agent) | delete = Recently deleted |
-| History page, archived agents | Recently deleted; opening one + Unarchive (`refresh_agent_request`) = restore |
-| `delete_agent_request` on an archived agent | delete for good |
-| timeline rows | the session's history, then the run's live events |
-| `send_agent_message_request`, `workspace.create.request` | `chat.send` (a new session first for a create) |
-| `cancel_agent_request` | `chat.abort` |
-| `agent_permission_request` kind `question` (the question card), `agent_permission_resolved`, the agent's `pendingPermissions` | Claude Code's AskUserQuestion: the run's `permission_request` / `permission_resolved` / `permission_cancelled`, and `chat_subscribed.pendingPermissions` |
-| `agent_permission_response` | `chat.permission-response`, answers re-keyed from the card's `header` to the question's text (Claude Code reads them by text) |
-| `yyc.sandbox_status` (added to the protocol) | the run's `status` frames with `jarvisSandbox` |
-| timeline `user_message` `images` / `attachments` (added to the protocol) | the history's user images (data: URLs from the transcript) and files (`<files_input>`, paths under /workspace/uploads) |
-
-Questions: turns run with `bypassPermissions`, but Claude Code still sends a tool that needs the person
-(AskUserQuestion) to `canUseTool`. The hub keeps each waiting question
-(`paseo-hub.ts` `questions`), every tab gets the card, and the first answer wins. A question never times out for the
-person (DE0CH/YYC yyc-ai/refactor/DECISIONS.md 17). With parking on (`parkQuestions`, off by default in this server:
-the stop needs a Claude Code process the server spawned itself), once the turn waits only on it (the model's reply
-ended, no other tool call open, no background work), the runtime parks it (`claude-runtime.provider.js`): the turn
-ends (`complete` with `awaitingAnswer`, so no working time runs), Claude Code gets a SIGTERM, and the question is kept
-in this process and its database (`jarvis-open-questions.ts`, table `jarvis_open_questions`), so the card stays, also
-after a reload or a restart of this process. The last answer starts a turn that resumes the
-conversation and gives Claude Code the answer as its message, in the words of the tool's own result: a resumed Claude
-Code (2.1.304) closes a tool call made before it restarted as interrupted and takes no answer for it. History shows
-that answer on the question's card (`paseo-timeline.ts`). A message sent instead withdraws the question; a question
-is closed after the 7-day safety limit (`CLAUDE_INTERACTIVE_TOOL_TIMEOUT_MS`). Any other tool that asks (ExitPlanMode after the model entered plan mode) is allowed at once: staff are
-never asked for permission. Before 2026-11-04 the bridge dropped these frames, so a turn with a question hung,
-showing nothing, until stopped.
-
-Everything a developer machine has (git, terminals, scripts, plugins, worktrees, providers, voice) answers empty or
-`rpc_error`, and the server_info features leave it out. Add a feature by answering its messages in
-`paseo-connection.ts` and checking the replies against `WSOutboundMessageSchema` (below): the app validates every
-frame and drops one that does not parse, usually with "Response validation failed for …".
-
-User attachments: a `user_message` row carries the images (`{url, mimeType}`, data: URLs) and files (`uploaded_file`
-attachments, paths relative to /workspace) the user sent, from the history and on the row a send puts on the timeline, so
-a reopened chat shows them as the message did when sent. The app keeps such images as `remote-url` attachments
-(`attachments/types.ts`: the URL is the storage key, nothing is stored locally). The app sends a file as its path in
-CloudCLI's assets folder, outside /workspace, and its copy in /workspace/uploads is made only when the turn runs, so the
-row a send puts on the timeline gets its files from Claude Code's echo of the message (`paseo-timeline.ts`
-`fillUserFiles`); an upload's file name is read as UTF-8 (`image-assets.service.ts` `utf8FileName`).
-
-Timelines: the first fetch of a conversation reads its whole history (sessionsService.fetchHistory) into rows; live
-events from the hub's chat socket are appended after that, deduplicated by message id. The user's own message goes on
-the timeline when it is sent (CloudCLI's live stream does not echo it) with the app's `clientMessageId`, which is how
-the app replaces its optimistic copy. Epochs change with the process, so a restart makes every open tab fetch the tail
-again. A run started elsewhere (another tab, the iOS app, a scheduled turn) is followed when its `session_upserted`
-arrives.
+How pigeon maps a conversation onto Paseo's host, project, workspace and agent, and each protocol message it
+answers, is pigeon's own documentation (DE0CH/aviary `crates/pigeon/README.md`, `src/paseo/`). This repo's CloudCLI
+server (`server/`) serves no deployment.
 
 ## What changed in the app (paseo/packages/app)
 
@@ -105,7 +43,7 @@ arrives.
   on the default model at that model's own level, whatever was chosen last.
 - **Developer controls hidden** (staff are not developers; each is a constant or a server_info feature, so the
   upstream code path stays): the composer's 「新增 issue 或 PR」 GitHub picker (only with `features.forgeSearch`, which
-  CloudCLI never sends); the fork menu on earlier replies; the explorer (`workspace-tabs/explorer-sidebar.ts`
+  the server never sends); the fork menu on earlier replies; the explorer (`workspace-tabs/explorer-sidebar.ts`
   `EXPLORER_ENABLED`: no swipe, shortcut or stored layout opens it); every key-chord hint, including the composer's
   「⌘L 聚焦」 and the Alt number badges (`components/ui/shortcut.tsx` `SHOW_SHORTCUT_HINTS`); the key handler binds only
   new chat, search, settings, the sidebar, stop and the composer's keys (`keyboard/keyboard-shortcuts.ts`
@@ -125,7 +63,7 @@ arrives.
   `SidebarHeaderRow variant="compact"`, the same component as the top items, on phones too. Signed-out shell, share
   page, 最近刪除 and the loading skeleton take the same values as the screens they stand for.
 - **YYC features** (`src/yyc/`): sent-file cards (`sent-files.tsx`; kept visible when a turn folds,
-  `agent-stream/turn-collapse/model.ts`), paths in replies download through CloudCLI, uploads through
+  `agent-stream/turn-collapse/model.ts`), paths in replies download through the server, uploads through
   `/api/assets/files` (`composer/actions.ts`), the "preparing the workspace" chip (`sandbox-status.ts`,
   `sandbox-chip.tsx`; only while a sent message waits on the sandbox, the hub never shows it for a turn nobody sent:
   Deyao, 2026-11-03), typing warms a host (`warm.ts`), the greeting with the person's first name (`greeting.ts`,
@@ -423,10 +361,6 @@ Store Connect key) and uploads to TestFlight. Its secrets: `YYC_SITE`, `ASC_KEY_
   (`scripts/build-paseo-ui.mjs`, about 20 minutes on 4 cores) and the server. Metro needs a big heap for the 10 MB
   generated protocol validator: the script gives it 6 GB and `build:web` runs 3 workers. On a machine with 8 GB, stop
   anything else heavy first.
-- Development: run the server (`npm run server:dev`, Jarvis local mode needs `JARVIS_LOCAL_WORKSPACE`,
-  `JARVIS_CC_OWNER`, a Postgres in `DATABASE_URL`), then `EXPO_PUBLIC_LOCAL_DAEMON=localhost:<port> npm --prefix paseo
-  run dev:web`; the app connects to that server instead of Metro's origin. CloudCLI's REST is cross-origin there
-  (the CORS answer refuses credentials), so the YYC REST features only work on the built app served by the server.
 - A change to `paseo/packages/protocol` needs `npm --prefix paseo run build:protocol` (it regenerates the validators)
   before the app typechecks against it.
 - For pigeon (DE0CH/aviary), `.github/workflows/pigeon-app.yml` packs the web export into
