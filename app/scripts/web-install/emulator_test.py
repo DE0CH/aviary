@@ -243,6 +243,10 @@ sh("echo 'chrome --disable-fre --no-default-browser-check --no-first-run' > /dat
 sh(f"am set-debug-app --persistent {CHROME}")
 sh("settings put system accelerometer_rotation 0; settings put system user_rotation 0; cmd uimode night no")
 sh("logcat -G 32M")  # room for the whole run's log (fail() keeps it)
+# Chrome asks the Play Store to install a WebAPK first. With no Google account it cannot, and Chrome then pins a
+# home-screen icon; but a fresh emulator's Play Store is updating itself, restarts in the middle and never answers,
+# and Chrome then does nothing at all. Without the Play Store, Chrome goes straight to the icon.
+sh("pm disable-user --user 0 com.android.vending")
 before = webapks()
 # let a freshly booted emulator settle (its launcher's "isn't responding" comes in the first minute)
 for _ in range(10):
