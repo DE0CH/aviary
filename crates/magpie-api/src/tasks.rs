@@ -36,6 +36,9 @@ impl TaskType {
     }
 }
 
+/// The most characters of a task's `command` (the app shows it whole in the task's entry).
+pub const TASK_COMMAND_CHARS: usize = 4000;
+
 /// One task of a conversation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +52,11 @@ pub struct Task {
     pub kind: TaskType,
     /// What it was started to do (its first description).
     pub description: Option<String>,
+    /// What it runs: the command line of the call that launched it (`Bash`'s or `Monitor`'s `command`), cut to
+    /// [`TASK_COMMAND_CHARS`] characters. `None` for a task with no command (a subagent) or a launch magpie has
+    /// not seen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
     /// `running`, `completed`, `failed`, `stopped`.
     pub status: TaskState,
     /// When it started.

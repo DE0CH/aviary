@@ -176,6 +176,7 @@ impl Model {
             closed: None,
             pending_messages: Vec::new(),
             context_tokens: None,
+            context_window: None,
             origin: Origin {
                 kind: OriginKind::New,
                 share_id: None,

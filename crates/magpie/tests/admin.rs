@@ -485,6 +485,7 @@ async fn the_deployment_starts_a_persons_conversation_and_sends_its_turns() {
             &HermitSendRequest {
                 person: STAFF.into(),
                 message: msg("w1", "a scheduled wakeup"),
+                join_running: false,
             },
         )
         .await
@@ -499,6 +500,7 @@ async fn the_deployment_starts_a_persons_conversation_and_sends_its_turns() {
             &HermitSendRequest {
                 person: LEAVER.into(),
                 message: msg("w2", "x"),
+                join_running: false,
             },
         )
         .await

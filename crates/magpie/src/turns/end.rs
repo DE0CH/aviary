@@ -124,6 +124,21 @@ pub async fn end(tx: &Tx<'_>, person: &str, turn: &Turn, ending: Ending) -> Resu
         ],
     )
     .await?;
+    // the window Claude Code ran the conversation's model at (the supervisor's usage names it): the app's meter
+    if let Some(window) = ending
+        .usage
+        .as_ref()
+        .and_then(|u| u.get("contextWindow"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|w| i32::try_from(w).ok())
+        .filter(|w| *w > 0)
+    {
+        tx.execute(
+            "update conversations set context_window = $2 where id = $1 and context_window is distinct from $2",
+            &[&turn.conversation, &window],
+        )
+        .await?;
+    }
     tx.execute(
         "update commands set canceled_at = now()
          where conversation_id = $1 and turn_id = $2 and acked_at is null and canceled_at is null and type <> 'kill'",

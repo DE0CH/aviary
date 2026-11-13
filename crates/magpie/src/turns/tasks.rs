@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use aviary_pg::Pool;
 use magpie_api::Timestamp;
 use magpie_api::events::{TaskEvent, TaskState, TaskStatus};
-use magpie_api::tasks::{Task, TaskType, TasksList};
+use magpie_api::tasks::{TASK_COMMAND_CHARS, Task, TaskType, TasksList};
 use serde_json::{Value, json};
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -42,6 +42,7 @@ pub async fn list(pool: &Pool, person: &Person, id: Uuid) -> Result<TasksList> {
                 tool_use_id: None,
                 kind: TaskType::Other,
                 description: None,
+                command: None,
                 status: TaskState::Running,
                 started_at: when,
                 ended_at: None,
@@ -70,17 +71,26 @@ pub async fn list(pool: &Pool, person: &Person, id: Uuid) -> Result<TasksList> {
     }
     // what each one is: the tool that launched it
     let calls: Vec<String> = tasks.iter().filter_map(|t| t.tool_use_id.clone()).collect();
-    let names: HashMap<String, String> = conn
+    // (the assistant line that made the call holds its input: the command a background command runs)
+    let launches: HashMap<String, (String, Option<String>)> = conn
         .query(
-            "select tool_use_id, name from tool_links where conversation_id = $1 and tool_use_id = any($2)",
+            "select l.tool_use_id, l.name, e.data from tool_links l
+             left join events e on e.conversation_id = l.conversation_id and e.seq = l.use_seq
+             where l.conversation_id = $1 and l.tool_use_id = any($2)",
             &[&id, &calls],
         )
         .await?
         .iter()
-        .map(|r| (r.get(0), r.get(1)))
+        .map(|r| {
+            let call: String = r.get(0);
+            let command = r.get::<_, Option<Value>>(2).and_then(|line| command_of(&line, &call));
+            (call, (r.get(1), command))
+        })
         .collect();
     for t in &mut tasks {
-        t.kind = TaskType::of_tool(t.tool_use_id.as_ref().and_then(|c| names.get(c)).map(String::as_str));
+        let launch = t.tool_use_id.as_ref().and_then(|c| launches.get(c));
+        t.kind = TaskType::of_tool(launch.map(|(name, _)| name.as_str()));
+        t.command = launch.and_then(|(_, command)| command.clone());
         if t.status != TaskState::Running {
             t.now = None;
         }
@@ -91,6 +101,16 @@ pub async fn list(pool: &Pool, person: &Person, id: Uuid) -> Result<TasksList> {
             .then(b.started_at.0.cmp(&a.started_at.0))
     });
     Ok(TasksList { tasks })
+}
+
+/// The `command` of the tool call `call` in the assistant line `line` (Claude Code's transcript line, as the
+/// `cc.assistant` event keeps it), cut to [`TASK_COMMAND_CHARS`] characters; `None` when the call has none.
+fn command_of(line: &Value, call: &str) -> Option<String> {
+    let block = line.pointer("/message/content")?.as_array()?.iter().find(|b| {
+        b.get("type").and_then(Value::as_str) == Some("tool_use") && b.get("id").and_then(Value::as_str) == Some(call)
+    })?;
+    let command = block.pointer("/input/command")?.as_str()?.trim();
+    (!command.is_empty()).then(|| command.chars().take(TASK_COMMAND_CHARS).collect())
 }
 
 /// Tells the conversation's supervisor to stop the task `task_id`. Nothing is checked about the task: one that no

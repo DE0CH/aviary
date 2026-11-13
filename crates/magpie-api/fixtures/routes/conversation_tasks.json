@@ -25,6 +25,7 @@
             "toolUseId": "toolu_01Bash",
             "type": "command",
             "description": "Run the magpie tests",
+            "command": "cargo nextest run -p magpie",
             "status": "completed",
             "startedAt": "2026-11-12T07:55:00.000Z",
             "endedAt": "2026-11-12T07:59:12.000Z",

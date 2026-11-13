@@ -81,13 +81,19 @@ pub async fn delete_conversation(app: &Magpie, _ctx: Ctx, id: Uuid) -> Answer<Co
 }
 
 /// `POST /v1/hermit/conversations/{id}/turns`: M7 as the person hermit names (404 for another's conversation). A
-/// turn that runs refuses it (409 `turn_running`): the deployment's messages never join a running turn.
+/// turn that runs refuses it (409 `turn_running`) unless the request says `joinRunning`: then the message joins the
+/// running turn as a person's does.
 pub async fn send_turn(app: &Magpie, _ctx: Ctx, id: Uuid, body: HermitSendRequest) -> Answer<Admitted<SendResponse>> {
     answer(
         async {
             let person = person_of(&body.person)?;
             admission::validate(&body.message)?;
-            let sent = admission::send(&app.pool, &person, id, body.message, admission::WhileRunning::Refuse)
+            let running = if body.join_running {
+                admission::WhileRunning::JoinAsDeployment
+            } else {
+                admission::WhileRunning::Refuse
+            };
+            let sent = admission::send(&app.pool, &person, id, body.message, running)
                 .await
                 .inspect_err(|e| super::turns::unknown_upload(app, e))?;
             if let Some(turn) = sent.new_turn() {

@@ -311,7 +311,7 @@ async fn a_message_with_attachments_is_held_until_the_turn_ends() {
 }
 
 #[tokio::test]
-async fn the_deployments_and_a_view_as_message_are_refused_while_a_turn_runs() {
+async fn the_deployments_and_a_view_as_message_are_refused_while_a_turn_runs_unless_the_deployments_joins() {
     let w = World::new("midturn_refused").await;
     let conv = w.conversation().await;
     let pigeon = w.a.pigeon();
@@ -326,11 +326,30 @@ async fn the_deployments_and_a_view_as_message_are_refused_while_a_turn_runs() {
                 &HermitSendRequest {
                     person: ALICE.into(),
                     message: msg("wakeup-1", "Scheduled wakeup"),
+                    join_running: false,
                 },
             )
             .await
             .unwrap_err();
     assert_eq!(code(&e), ErrorCode::TurnRunning);
+    assert!(w.waiting(conv).await.is_empty());
+    // unless it says it joins the running turn (a warning to the agent that must not wait for a long turn to end):
+    // then it waits in the conversation's queue as a person's message does
+    let joined =
+        w.a.hermit()
+            .service(None)
+            .hermit_send_turn(
+                conv,
+                &HermitSendRequest {
+                    person: ALICE.into(),
+                    message: msg("watchdog-1", "Jarvis watchdog: memory pressure"),
+                    join_running: true,
+                },
+            )
+            .await
+            .unwrap();
+    assert!(joined.get().mid_turn, "it joined the running turn");
+    assert_eq!(w.waiting(conv).await.len(), 1);
     // an admin viewing as the person
     let e = pigeon
         .viewing_as(ALICE, "admin@example.org", "s1")
@@ -338,7 +357,11 @@ async fn the_deployments_and_a_view_as_message_are_refused_while_a_turn_runs() {
         .await
         .unwrap_err();
     assert_eq!(code(&e), ErrorCode::TurnRunning);
-    assert!(w.waiting(conv).await.is_empty());
+    assert_eq!(
+        w.waiting(conv).await.len(),
+        1,
+        "only the deployment's joining message waits"
+    );
 }
 
 #[tokio::test]

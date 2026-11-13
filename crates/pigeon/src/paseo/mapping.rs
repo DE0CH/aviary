@@ -181,7 +181,7 @@ pub fn agent_snapshot(c: &Conversation, v: &View<'_>) -> Value {
                    "sentAt": m.sent_at, "held": m.held})
         })
         .collect();
-    json!({
+    let mut snapshot = json!({
         "id": c.id, "provider": PROVIDER, "cwd": CWD, "workspaceId": workspace_id(&c.id), "model": model,
         "pendingMessages": queue,
         // the deployment closed the conversation to messages: the sentence the app shows in place of its message box
@@ -202,7 +202,13 @@ pub fn agent_snapshot(c: &Conversation, v: &View<'_>) -> Value {
         "requiresAttention": attention.is_some(),
         "attentionReason": attention.map(|_| "permission"),
         "attentionTimestamp": attention.map(|a| a.created_at),
-    })
+    });
+    // the app's context meter: the tokens of the conversation's last model call, of the window Claude Code runs its
+    // model at (known once a turn has ended; the meter shows nothing before)
+    if let (Some(used), Some(window)) = (c.context_tokens, c.context_window) {
+        snapshot["lastUsage"] = json!({"contextWindowUsedTokens": used, "contextWindowMaxTokens": window});
+    }
+    snapshot
 }
 
 // ------------------------------------------------------------------------------------------------ the tool mapper
@@ -853,6 +859,23 @@ pub fn tool_call_item(t: &ToolItem, locale: Locale) -> Option<Value> {
     let kind = tool_kind(trimmed);
     let name = if kind == ToolKind::Speak { "speak" } else { trimmed };
     let detail = derive_detail(detail_name(kind, name), &t.input, output);
+    if kind == ToolKind::Shell {
+        // what the model said the command is for (Claude Code's `description` of a Bash call): the app's row says
+        // it, with the command under it
+        if let Some(d) = t.input.get("description").and_then(Value::as_str).map(str::trim)
+            && !d.is_empty()
+        {
+            metadata
+                .get_or_insert_with(Map::new)
+                .insert("description".into(), json!(d));
+        }
+        // a command left running in the background (the call returns at once; the activity panel has the task)
+        if t.task.is_some() || t.input.get("run_in_background") == Some(&Value::Bool(true)) {
+            metadata
+                .get_or_insert_with(Map::new)
+                .insert("background".into(), json!(true));
+        }
+    }
     let error = if t.status == ToolStatus::Failed {
         let message = match (&t.result, &t.error) {
             (Some(r), _) if r.is_error && !r.text.is_empty() => r.text.clone(),
@@ -1078,6 +1101,20 @@ mod tests {
         let a = agent_snapshot(&picked, &view);
         assert_eq!(a["model"], "claude-opus-5-5");
         assert_eq!(a["runtimeInfo"]["model"], "claude-opus-5-5");
+        // the context meter: nothing until Claude Code's window for the model is known, then used of window
+        assert!(agent_snapshot(&plain, &view).get("lastUsage").is_none());
+        let mut metered = serde_json::to_value(&plain).unwrap();
+        metered["contextTokens"] = json!(51_234);
+        assert!(
+            agent_snapshot(&serde_json::from_value(metered.clone()).unwrap(), &view)
+                .get("lastUsage")
+                .is_none()
+        );
+        metered["contextWindow"] = json!(1_000_000);
+        assert_eq!(
+            agent_snapshot(&serde_json::from_value(metered).unwrap(), &view)["lastUsage"],
+            json!({"contextWindowUsedTokens": 51_234, "contextWindowMaxTokens": 1_000_000})
+        );
         // the conversation's queue goes to the app with the agent
         assert_eq!(agent_snapshot(&plain, &view)["pendingMessages"], json!([]));
         assert_eq!(
@@ -1186,6 +1223,38 @@ mod tests {
 
     fn detail(name: &str, input: Value, status: ToolStatus, result: Option<&str>) -> Value {
         tool_call_item(&tool(name, input, status, result), Locale::En).unwrap()["detail"].clone()
+    }
+
+    /// A Bash call's `description` (what the model said the command is for) and its background launch reach the
+    /// app in the row's metadata; a call with neither has no metadata.
+    #[test]
+    fn a_shell_row_carries_its_description_and_background_launch() {
+        let item = |input: Value| tool_call_item(&tool("Bash", input, ToolStatus::Running, None), Locale::En).unwrap();
+        let described = item(json!({"command": "cargo test", "description": " Run the tests "}));
+        assert_eq!(described["metadata"], json!({"description": "Run the tests"}));
+        assert_eq!(described["detail"]["command"], "cargo test");
+        let background = item(json!({"command": "npm ci", "description": "Install", "run_in_background": true}));
+        assert_eq!(
+            background["metadata"],
+            json!({"description": "Install", "background": true})
+        );
+        assert!(
+            item(json!({"command": "ls", "description": "  "}))
+                .get("metadata")
+                .is_none()
+        );
+        // only a shell call: another tool's `description` is its own input
+        let other = tool_call_item(
+            &tool(
+                "Agent",
+                json!({"description": "Review", "prompt": "…"}),
+                ToolStatus::Running,
+                None,
+            ),
+            Locale::En,
+        )
+        .unwrap();
+        assert!(other.get("metadata").is_none(), "{other}");
     }
 
     #[test]

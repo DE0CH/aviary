@@ -50,7 +50,7 @@ async fn the_tasks_of_a_conversation_are_listed_and_one_is_stopped() {
     assert_eq!(alice.conversation_tasks(id).await.unwrap().tasks, []);
 
     // a command in the background that ends, and a subagent that still runs
-    ev::append(
+    let seqs = ev::append(
         pool,
         ALICE,
         id,
@@ -100,7 +100,8 @@ async fn the_tasks_of_a_conversation_are_listed_and_one_is_stopped() {
     )
     .await;
     // which tool launched each call (magpie records it as it reads Claude Code's transcript)
-    for (call, name, seq) in [("call-bash", "Bash", 1_i64), ("call-agent", "Agent", 2)] {
+    // (both calls are in the assistant line, the second event)
+    for (call, name, seq) in [("call-bash", "Bash", seqs[1]), ("call-agent", "Agent", seqs[1])] {
         pool.get()
             .await
             .unwrap()
@@ -131,6 +132,7 @@ async fn the_tasks_of_a_conversation_are_listed_and_one_is_stopped() {
     let bash = &tasks[1];
     assert_eq!((bash.kind, bash.status), (TaskType::Command, TaskState::Completed));
     assert_eq!(bash.description.as_deref(), Some("Run the tests"));
+    assert_eq!(bash.command.as_deref(), Some("ls"), "the command the call ran");
     assert_eq!(bash.summary.as_deref(), Some("12 passed"));
     assert!(bash.ended_at.is_some());
     assert!(bash.now.is_none());

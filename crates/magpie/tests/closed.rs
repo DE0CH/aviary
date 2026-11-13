@@ -77,6 +77,7 @@ async fn a_closed_conversation_refuses_its_person_and_an_ended_one_leaves_the_li
             &HermitSendRequest {
                 person: ALICE.into(),
                 message: msg("wakeup-1", "Scheduled wakeup"),
+                join_running: false,
             },
         )
         .await

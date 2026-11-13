@@ -397,17 +397,34 @@ struct Envelope {
     is_error: bool,
     result: Option<String>,
     usage: Option<Value>,
+    /// A `result`'s usage per model (`{"<model>": {"inputTokens": …, "contextWindow": …}}`).
+    #[serde(default, rename = "modelUsage")]
+    model_usage: Option<Value>,
     duration_ms: Option<u64>,
 }
 
-fn usage(v: &Value) -> magpie_api::sandbox::Usage {
+fn usage(v: &Value, per_model: Option<&Value>) -> magpie_api::sandbox::Usage {
     let n = |k: &str| v.get(k).and_then(Value::as_u64).unwrap_or(0);
     magpie_api::sandbox::Usage {
         input_tokens: n("input_tokens"),
         output_tokens: n("output_tokens"),
         cache_read_input_tokens: n("cache_read_input_tokens"),
         cache_creation_input_tokens: n("cache_creation_input_tokens"),
+        context_window: per_model.and_then(context_window),
     }
+}
+
+/// The context window of the conversation's model in a `result`'s `modelUsage`: Claude Code states each model's
+/// `contextWindow` there, the small model's (titles, summaries) included, so the conversation's is the entry that
+/// read the most input. `None` when no entry names a window.
+fn context_window(per_model: &Value) -> Option<u64> {
+    let n = |m: &Value, k: &str| m.get(k).and_then(Value::as_u64).unwrap_or(0);
+    per_model
+        .as_object()?
+        .values()
+        .filter(|m| n(m, "contextWindow") > 0)
+        .max_by_key(|m| n(m, "inputTokens") + n(m, "cacheReadInputTokens") + n(m, "cacheCreationInputTokens"))
+        .map(|m| n(m, "contextWindow"))
 }
 
 /// A `control_response` line: whose answer it is, whether it succeeded, and what an `initialize` answer names.
@@ -511,7 +528,7 @@ pub fn parse(line: &[u8]) -> Out {
             subtype: e.subtype.unwrap_or_default(),
             is_error: e.is_error,
             result: e.result,
-            usage: e.usage.as_ref().map(usage),
+            usage: e.usage.as_ref().map(|u| usage(u, e.model_usage.as_ref())),
             duration_ms: e.duration_ms,
         }),
         "control_request" => {
@@ -736,6 +753,25 @@ impl Watch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `result` names the window Claude Code runs each model at; the conversation's is the one that read the most
+    /// input (the small model's entry is there too).
+    #[test]
+    fn a_result_names_the_conversations_context_window() {
+        let Out::Result(r) = parse(br#"{"type":"result","subtype":"success","is_error":false,"result":"done","usage":{"input_tokens":3,"output_tokens":4}}"#) else {
+            panic!()
+        };
+        assert_eq!(
+            r.usage.unwrap().context_window,
+            None,
+            "a result that names no model's window"
+        );
+        // the window of the conversation's model: the entry that read the most input, not the small model's
+        let Out::Result(r) = parse(br#"{"type":"result","subtype":"success","is_error":false,"result":"done","usage":{"input_tokens":3,"output_tokens":4},"modelUsage":{"claude-haiku-5-5":{"inputTokens":900,"outputTokens":20,"cacheReadInputTokens":0,"cacheCreationInputTokens":0,"contextWindow":200000},"z-ai/glm-5.3":{"inputTokens":10,"outputTokens":400,"cacheReadInputTokens":52000,"cacheCreationInputTokens":3000,"contextWindow":1000000}}}"#) else {
+            panic!()
+        };
+        assert_eq!(r.usage.unwrap().context_window, Some(1_000_000));
+    }
 
     #[test]
     fn messages() {

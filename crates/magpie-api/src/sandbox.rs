@@ -663,6 +663,11 @@ pub struct Usage {
     pub cache_read_input_tokens: u64,
     /// Cache writes.
     pub cache_creation_input_tokens: u64,
+    /// The context window Claude Code runs the conversation's model at (its `result`'s `modelUsage` entry of the
+    /// model that read the most input): what the app's context meter is a share of. Absent from a supervisor
+    /// that does not report it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
 }
 
 /// `POST /v1/sandbox/tasks` → 204.

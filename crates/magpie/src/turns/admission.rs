@@ -80,6 +80,9 @@ pub enum WhileRunning {
     Join,
     /// The deployment's send (hermit's route): 409 `turn_running` while a turn runs; a closed conversation takes it.
     Refuse,
+    /// The deployment's send that says `joinRunning`: the message joins the running turn as a person's does; a
+    /// closed conversation takes it.
+    JoinAsDeployment,
 }
 
 /// M7.
@@ -128,7 +131,7 @@ pub async fn send(pool: &Pool, person: &Person, id: Uuid, req: SendRequest, runn
             .await?
             .get(0);
         if matches!(state.as_str(), "admitted" | "preparing" | "running" | "stopping") {
-            if running == WhileRunning::Join
+            if running != WhileRunning::Refuse
                 && let Some(r) = super::midturn::join(t, id, person, req).await?
             {
                 return Ok(Admitted::New(r));

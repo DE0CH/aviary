@@ -71,6 +71,10 @@ pub struct Conversation {
     pub pending_messages: Vec<PendingMessage>,
     /// Context tokens of the last assistant line.
     pub context_tokens: Option<u64>,
+    /// The context window Claude Code runs the conversation's model at (the last turn end's `usage.contextWindow`):
+    /// what `context_tokens` is a share of. Absent until a turn has ended under a supervisor that reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
     /// How the conversation came to be.
     pub origin: Origin,
 }
