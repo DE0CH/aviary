@@ -1919,13 +1919,19 @@ function applyCanonicalUserMessageEvent(params: {
     timelineCursor,
     text: normalized.chunk,
     timestamp,
+    // what the person attached: a row with no twin on this page (a message from the server's queue, or from another
+    // page) has nothing else to show them from
+    images: timelineUserImages(event.item.images, timestamp),
+    attachments: event.item.attachments,
   });
+  const hasContent =
+    normalized.hasContent || Boolean(canonical.images?.length) || Boolean(canonical.attachments?.length);
   if (unmatchedInsert === "head") {
     const reconciled = upsertUserMessageAcrossStream({
       tail,
       head,
       message: canonical,
-      insert: normalized.hasContent ? "head" : "none",
+      insert: hasContent ? "head" : "none",
       presentation: "existing",
     });
     const reconciledTail = canonical.clientMessageId
@@ -1953,7 +1959,7 @@ function applyCanonicalUserMessageEvent(params: {
           : [],
     };
   }
-  const reconciled = placeCanonicalUserMessageAtTail(flushedTail, canonical, normalized.hasContent);
+  const reconciled = placeCanonicalUserMessageAtTail(flushedTail, canonical, hasContent);
   const reconciledTail = canonical.clientMessageId
     ? reconcileCanonicalUserTurnMembership(
         reconciled.items,

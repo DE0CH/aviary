@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
-import { hydrateStreamState } from "./stream";
+import { applyStreamEvent, hydrateStreamState } from "./stream";
 
 const file = { type: "uploaded_file" as const, id: "uploads/a.pdf", fileName: "a.pdf", mimeType: "application/pdf", size: 3, path: "uploads/a.pdf" };
 
@@ -44,5 +44,32 @@ describe("timeline user messages with attachments (YYC: history keeps what the u
     if (item?.kind !== "user_message") throw new Error("no user message");
     expect(item.images?.[0]?.previewKey).toBe("https://x/blob/1?v=thumb");
     expect(item.images?.[1]?.previewKey).toBeUndefined();
+  });
+
+  // A message another page sent, or one that waited in the server's queue, has no row of this page's own: the live
+  // row is all there is (Deyao, 2026-11-13: a queued message with a picture showed without it until a reload).
+  it("shows the images and files of a row that arrives live", () => {
+    const { event, timestamp } = timelineUser({
+      text: "see",
+      messageId: "m9",
+      clientMessageId: "m9",
+      images: [{ url: "https://x/blob/9?v=display", mimeType: "image/jpeg", thumbnailUrl: "https://x/blob/9?v=thumb" }],
+      attachments: [file],
+    });
+    const { tail } = applyStreamEvent({ tail: [], head: [], event, timestamp });
+    const item = tail[0];
+    expect(item?.kind).toBe("user_message");
+    if (item?.kind !== "user_message") return;
+    expect(item.images?.[0]).toMatchObject({ storageKey: "https://x/blob/9?v=display", previewKey: "https://x/blob/9?v=thumb" });
+    expect(item.attachments).toEqual([file]);
+  });
+
+  it("keeps a live row that has only an image", () => {
+    const { event, timestamp } = timelineUser({
+      text: "",
+      messageId: "m10",
+      images: [{ url: "https://x/blob/10?v=display", mimeType: "image/jpeg" }],
+    });
+    expect(applyStreamEvent({ tail: [], head: [], event, timestamp }).tail).toHaveLength(1);
   });
 });
