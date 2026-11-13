@@ -23,16 +23,16 @@ resources:
 # one aviary commit for pigeon, magpie, hermit and sandboxd (check item 4); sandboxd's tag is hermit.json's
 # fabric.sandboxd; the sandbox image is pinned by digest in hermit/hermit.json
 images:
-  - {name: pigeon, newName: ghcr.io/de0ch/pigeon, newTag: "8e0d01d1702b"}
-  - {name: magpie, newName: ghcr.io/de0ch/magpie, newTag: "8e0d01d1702b"}
-  - {name: hermit, newName: ghcr.io/de0ch/hermit, newTag: "8e0d01d1702b"}
-  - {name: sandboxd, newName: ghcr.io/de0ch/sandboxd, newTag: "8e0d01d1702b"}
+  - {name: pigeon, newName: ghcr.io/de0ch/pigeon, newTag: "3422d1a31f86"}
+  - {name: magpie, newName: ghcr.io/de0ch/magpie, newTag: "3422d1a31f86"}
+  - {name: hermit, newName: ghcr.io/de0ch/hermit, newTag: "3422d1a31f86"}
+  - {name: sandboxd, newName: ghcr.io/de0ch/sandboxd, newTag: "3422d1a31f86"}
   # herald (aviary crates/herald): its own aviary commit, released with the others' CI
   - {name: herald, newName: ghcr.io/de0ch/herald, newTag: "e90075c4fcc1"}
   # the app bundle (DE0CH/claudecodeui pigeon-app.yml)
   - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "838694dcf040"}
   # egress and tools (DE0CH/jarvis3 chat.yml); the ZDR guard reads this tag (yyc-ai/tests/test_zdr.py)
-  - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "df17e0ac9de1"}
+  - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "e31efd7efde1"}
 configMapGenerator:
   # yyc-mcp's access catalogue (news-stream/deploy/apps/yyc-mcp.yaml checks it on every call): catalogue.json under the
   # old key config.json, a fixed name so the mounted file changes in place (DESIGN 15.4; on yyc-talos since T4b)
