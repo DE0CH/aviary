@@ -76,6 +76,9 @@ def where():
 def fail(name, text):
     shot(f"fail-{name}")
     save_ui(f"fail-{name}")
+    # the device's log goes with the screenshots (encrypted in CI): what Chrome and the launcher said
+    with open(os.path.join(OUT, f"fail-{name}.logcat.txt"), "wb") as fh:
+        fh.write(adb("logcat", "-d", "-t", "4000", check=False))
     try:
         text = f"{text} ({where()})"
     except Exception:
