@@ -79,8 +79,11 @@ Jarvis 4 session machine (harness aviary)                                     �
    The network is the machine's: the agent reaches `$JARVIS_URL`, `session-secret`'s socket and the ssh agent as in
    any session. Its descriptor (through the gateway) carries the machine's non-secret Jarvis values
    (`src/wire.rs` `BOOT_ENV_NAMES`) and the proxy variables; no secret travels through hermit.
-3. **Ready**: `aviary-gateway` reads the supervisor's `GET :7070/v1/health` every 2 s (the status shim's busy/idle)
-   and reports it to hermit (`POST /jarvis/health`), which marks the sandbox `ready`.
+3. **Ready**: `aviary-gateway` reads the supervisor's `GET :7070/v1/health` every 2 s and reports it to hermit
+   (`POST /jarvis/health`), which marks the sandbox `ready`. The session's status on its card is the supervisor's
+   run state in the registry's words (`src/machine.rs` `jarvis_status`, served in `/jarvis/state`, written by the
+   harness's shim): a turn = `busy`; `held` (background tasks after a turn) = idle with background jobs, which is
+   what lets the idle watchdog fire; `asking` (an open question) = `waiting`.
 4. **Turns**: from the chat (pigeon → magpie → the supervisor's command poll), or from Jarvis (the first prompt,
    wakeups, crons, watches, peer messages: `harness-send` → `POST 127.0.0.1:3128/jarvis/deliver` → hermit → magpie's
    `POST /v1/hermit/conversations/{id}/turns` as Deyao; 409 `turn_running` while a turn runs, which `harness-send`
