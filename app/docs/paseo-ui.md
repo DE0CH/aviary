@@ -392,7 +392,7 @@ launch frame, the welcome and sign-in screens, the new-chat page), `favicon.png`
 `favicon-attention.png` (the tab icon and its two states), `apple-touch-icon.png`, `icon-192.png`, `icon-512.png`
 (home screen) and `manifest.json` (the name on the home screen, the colours). The bundle's own
 (`paseo/packages/app/public/branding/`) are neutral; a deployment mounts its files over the bundle's `/branding/`
-when it deploys pigeon (YYC: DE0CH/YYC `yyc-ai/deploy/branding/`; Jarvis 4's chat: DE0CH/services
+when it deploys pigeon (YYC: DE0CH/YYC `yyc-ai/deploy/branding/`; Jarvis 4's chat: DE0CH/deyao-ai
 `k8s/chat/branding/`). The product's name comes from the server too (`src/yyc/product.ts`). Only the native builds'
 app icon and launch image are build-time files (`app.config.js`): those builds are YYC's apps.
 
