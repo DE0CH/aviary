@@ -86,8 +86,9 @@ Jarvis 4 session machine (harness aviary)                                     �
    what lets the idle watchdog fire; `asking` (an open question) = `waiting`.
 4. **Turns**: from the chat (pigeon → magpie → the supervisor's command poll), or from Jarvis (the first prompt,
    wakeups, crons, watches, peer messages: `harness-send` → `POST 127.0.0.1:3128/jarvis/deliver` → hermit → magpie's
-   `POST /v1/hermit/conversations/{id}/turns` as Deyao; 409 `turn_running` while a turn runs, which `harness-send`
-   turns into 75 for the inbox loop to retry).
+   `POST /v1/hermit/conversations/{id}/turns` as Deyao with `joinRunning`: while a turn runs the message joins it,
+   as Deyao's own mid-reply messages do, so a watchdog's warning or an Inbox outcome arrives during a long turn; a
+   409 `turn_running` that still comes back `harness-send` turns into 75 for the inbox loop to retry).
 5. **Pause**: Jarvis 4 pauses an idle session itself (its idle hour); hermit's next pass over `/api/remotes?harness=
    aviary` ends that sandbox (`idle`) and closes the conversation to Deyao's messages (magpie's
    `PUT /v1/hermit/conversations/{id}/closed`): the chat's message box says the session is paused and takes nothing

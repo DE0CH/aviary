@@ -308,8 +308,10 @@ async fn health(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Resp
     }
 }
 
-/// `POST /jarvis/deliver`: a prompt from Jarvis into the session's conversation, as its person (409 `turn_running`
-/// while a turn runs: Jarvis's inbox delivers it again later).
+/// `POST /jarvis/deliver`: a prompt from Jarvis into the session's conversation, as its person. While a turn runs
+/// it joins that turn (magpie's `joinRunning`: Claude Code takes it in after its next tool result); a refusal
+/// magpie still makes (409 `turn_running` from one that predates `joinRunning`) goes back as it is, and Jarvis's
+/// inbox delivers it again later.
 async fn deliver(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Response {
     let (_, row) = match sandbox_of(&app, &headers).await {
         Ok(x) => x,
@@ -331,6 +333,9 @@ async fn deliver(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Res
                     images: vec![],
                     files: vec![],
                 },
+                // Jarvis's message joins a turn that runs, as Deyao's own mid-reply messages do: a warning (the
+                // pressure watchdog), an Inbox outcome or a wakeup must not wait for a long turn to end
+                join_running: true,
             },
         )
         .await;

@@ -294,7 +294,8 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         .unwrap();
     assert_eq!(put.status(), 409);
 
-    // 4. Jarvis's delivery is magpie's turn as the owner; a second while one runs is 409
+    // 4. Jarvis's delivery is magpie's turn as the owner, and says it joins a turn that runs (a watchdog's warning
+    //    must not wait for a long turn to end); what magpie still refuses is answered as it is
     let r = c
         .post(format!("{gw}/jarvis/deliver"))
         .header(TOKEN_HEADER, &b.token)
@@ -310,6 +311,7 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         sent[0].body.as_ref().unwrap()["message"]["clientMessageId"],
         "jarvis-1"
     );
+    assert_eq!(sent[0].body.as_ref().unwrap()["joinRunning"], true);
     let r = c
         .post(format!("{gw}/jarvis/deliver"))
         .header(TOKEN_HEADER, &b.token)
