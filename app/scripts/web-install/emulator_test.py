@@ -7,7 +7,7 @@ against the deployed site ($YYC_SITE), with a screenshot of every step in OUT:
   2. Chrome's menu offers to install it, and the install gives a home-screen app (a WebAPK);
   3. the installed app opens the site in its own window (no address bar);
   4. it turns with the phone (the manifest has no orientation lock);
-  5. its status bar is the page's background in the light and in the dark scheme (theme-color);
+  5. its status bar is the page's background in the light scheme and Chrome's own dark in the dark scheme;
   6. Sign in stays inside the installed app (Access's login in the app's window).
 Run inside android-emulator-runner. Usage: emulator_test.py OUT
 
@@ -333,16 +333,19 @@ if not (portrait[0] < portrait[1] and landscape[0] > landscape[1]):
          f"{landscape[0]}x{landscape[1]}): the manifest locks the orientation")
 note(f"ok: the installed app turns with the phone ({portrait[0]}x{portrait[1]} -> {landscape[0]}x{landscape[1]})")
 
-# ---- 5. the status bar is the page's background, light and dark
+# ---- 5. the status bar: the page's background in the light scheme, Chrome's own dark in the dark scheme
+# What Chrome paints it with (measured on this emulator with local pages, 2026-11-13): the page's theme-color, unless
+# that is brighter than about #eeeeee (#f7f7f7, #fafafa and #ffffff are ignored), then the manifest's theme_color;
+# in the dark scheme its own #121318 whatever both say (the page's dark is #181b1a, next to it).
 wait_for(SIGN_IN, 30)
-for scheme, night, want in (("light", "no", (255, 255, 255)), ("dark", "yes", (0x18, 0x1B, 0x1A))):
+for scheme, night, want in (("light", "no", (255, 255, 255)), ("dark", "yes", (0x12, 0x13, 0x18))):
     sh(f"cmd uimode night {night}")
     time.sleep(6)
     wait_for(SIGN_IN, 30)
     colour = status_bar_colour(shot(f"5-status-bar-{scheme}"))
     hexed = "#%02x%02x%02x" % colour
     if not near(colour, want):
-        fail(f"5-{scheme}", f"the status bar is {hexed} in the {scheme} scheme, not the page's #%02x%02x%02x" % want)
+        fail(f"5-{scheme}", f"the status bar is {hexed} in the {scheme} scheme, not #%02x%02x%02x" % want)
     note(f"ok: status bar {hexed} in the {scheme} scheme")
 sh("cmd uimode night no")
 time.sleep(4)

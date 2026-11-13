@@ -6,7 +6,7 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "theme_color": "#181b1a",
+  "theme_color": "#ffffff",
   "background_color": "#181b1a",
   "categories": [
     "productivity"

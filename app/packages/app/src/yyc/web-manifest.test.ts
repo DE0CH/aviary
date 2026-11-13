@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { darkTheme } from "@/styles/theme";
+import { darkTheme, lightTheme } from "@/styles/theme";
 
 // The web app manifest behind Chrome's "Install app" on Android (docs/paseo-ui.md "Installed on a phone").
 const manifest = JSON.parse(readFileSync(path.resolve(__dirname, "../../public/branding/manifest.json"), "utf8"));
@@ -38,8 +38,10 @@ describe("public/branding/manifest.json (the bundle's neutral one)", () => {
     expect(manifest).not.toHaveProperty("orientation");
   });
 
-  it("starts on the dark theme's background", () => {
+  // Chrome on Android ignores a page theme-color brighter than about #eeeeee and paints an installed app's status
+  // bar with the manifest's instead; a dark page colour is honoured. So the manifest carries the light theme's.
+  it("gives the status bar the light theme's background, the launch screen the dark theme's", () => {
+    expect(manifest.theme_color).toBe(lightTheme.colors.surface0.toLowerCase());
     expect(manifest.background_color).toBe(darkTheme.colors.surface0.toLowerCase());
-    expect(manifest.theme_color).toBe(darkTheme.colors.surface0.toLowerCase());
   });
 });
