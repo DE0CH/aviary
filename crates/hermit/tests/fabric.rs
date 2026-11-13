@@ -1457,7 +1457,6 @@ async fn ec2_reconcile_and_orphans() {
                 workspace: None,
                 pids: None,
                 scratch_bytes: None,
-                scratch_bytes: None,
             },
             state: HostState::Running,
             alive: Some(true),
