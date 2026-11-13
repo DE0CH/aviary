@@ -293,7 +293,7 @@ if taps == 0:
 # one minted and pins a home-screen shortcut instead, which opens the same standalone window from the same manifest.
 package = None
 pinned = False
-for _ in range(90):
+for _ in range(40):
     new = [name for name in webapks() if name not in before]
     if new:
         package = new[0]
@@ -313,7 +313,17 @@ for _ in range(90):
         break
     time.sleep(2)
 if not package and not pinned:
-    fail("2-install", f"{label} then Install gave neither an installed app nor a home-screen icon within 180 s")
+    # no sheet seen: the launcher may have taken the icon by itself, onto its next page
+    sh("input keyevent KEYCODE_HOME")
+    time.sleep(2)
+    for page in range(4):
+        if wait_for(r"YYC AI", 6, clear=False):
+            pinned = True
+            break
+        width, height = png_size(shot("2-home-page"))
+        sh(f"input swipe {width * 4 // 5} {height // 2} {width // 5} {height // 2} 200")
+if not package and not pinned:
+    fail("2-install", f"{label} then Install ({taps} taps) gave neither an installed app nor a home-screen icon")
 kind = "an app (WebAPK)" if package else "a home-screen icon (no Google account here, so no WebAPK)"
 note(f"ok: Chrome's menu ({label}) installed the site as {kind}")
 time.sleep(3)
