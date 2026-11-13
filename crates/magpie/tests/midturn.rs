@@ -271,12 +271,10 @@ async fn a_message_with_attachments_is_held_until_the_turn_ends() {
     assert_eq!(w.pass().await, 0);
     assert_eq!(w.sent(conv).await, ["長任務"]);
 
-    // taken back: gone from the queue; a text message on its way into the turn cannot be
+    // taken back: gone from the queue
     let after = alice.withdraw_pending(conv, "m3").await.unwrap();
     assert_eq!(after.pending_messages.len(), 1);
     alice.send_turn(conv, &msg("m4", "文字")).await.unwrap();
-    let e = alice.withdraw_pending(conv, "m4").await.unwrap_err();
-    assert_eq!(code(&e), ErrorCode::BadTransition);
     // the order they were sent in is the order they arrive in (Deyao, 2026-11-13: a later text overtook an earlier
     // message with a picture): a text sent after a held message waits behind it, not written into the running turn
     let written: i64 = w
@@ -293,13 +291,10 @@ async fn a_message_with_attachments_is_held_until_the_turn_ends() {
         .get(0);
     assert_eq!(written, 0, "m4 waits behind the held m2");
     assert_eq!(w.pass().await, 0, "and goes on waiting while m2 does");
+    // (it has reached no Claude Code either: held, so the person can take it back as well)
     assert_eq!(
-        w.waiting(conv)
-            .await
-            .iter()
-            .map(|(t, _)| t.as_str())
-            .collect::<Vec<_>>(),
-        ["睇下呢個", "文字"]
+        w.waiting(conv).await,
+        [("睇下呢個".to_owned(), true), ("文字".to_owned(), true)]
     );
     let e = alice.withdraw_pending(conv, "nothing").await.unwrap_err();
     assert_eq!(code(&e), ErrorCode::NotFound);
@@ -327,6 +322,9 @@ async fn a_message_with_attachments_is_held_until_the_turn_ends() {
     // the text message never written (its turn was stopped) joins the new turn at the next pass
     assert_eq!(w.pass().await, 1);
     assert_eq!(w.message(conv, "m4").await.1, turn);
+    // on its way into the turn now: it cannot be taken back any more
+    let e = alice.withdraw_pending(conv, "m4").await.unwrap_err();
+    assert_eq!(code(&e), ErrorCode::BadTransition);
     assert_eq!(
         alice.get_conversation(conv).await.unwrap().pending_messages.len(),
         1,
