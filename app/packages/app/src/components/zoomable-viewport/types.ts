@@ -9,10 +9,22 @@ export interface ZoomableViewportAction {
   testID?: string;
 }
 
+/** What a toolbar of its own needs from the viewport. */
+export interface ZoomableViewportControls {
+  scale: number;
+  minScale: number;
+  maxScale: number;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  reset: () => void;
+}
+
 export interface ZoomableViewportProps {
   contentSize: ViewportSize;
   children: ReactNode;
   actions?: ZoomableViewportAction[];
+  /** Draws the controls in place of the viewport's own toolbar (the image viewer's zoom pill). */
+  renderToolbar?: (controls: ZoomableViewportControls) => ReactNode;
   accessibilityLabel?: string;
   fit?: ViewportFitOptions;
   maxScale?: number;

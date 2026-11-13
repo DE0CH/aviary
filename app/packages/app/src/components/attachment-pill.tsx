@@ -133,7 +133,9 @@ export function AttachmentLabel({ icon, title, subtitle }: AttachmentLabelProps)
 
 /** Square image preview pill body. */
 export function AttachmentThumbnail({ metadata }: { metadata: AttachmentMetadata }) {
-  const uri = useAttachmentPreviewUrl(metadata);
+  const full = useAttachmentPreviewUrl(metadata);
+  // the server's small rendition when it sent one: a chip never needs the full image
+  const uri = metadata.previewKey ?? full;
   const source = useMemo(() => ({ uri: uri ?? "" }), [uri]);
   if (!uri) {
     return <View style={styles.thumbnailPlaceholder} />;

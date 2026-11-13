@@ -27,6 +27,20 @@ export interface ViewportFitOptions {
 
 export const FIT_TRANSFORM: ViewportTransform = { scale: 1, x: 0, y: 0 };
 
+/** The long side a picture is laid out at while only its small rendition is known. */
+const PROVISIONAL_LONG_SIDE = 2048;
+
+/**
+ * The size to lay a picture out at from its small rendition's size, before the full one has come: the same shape,
+ * its long side at `PROVISIONAL_LONG_SIDE`. The fit on screen depends on the shape alone, so nothing moves when the
+ * real size arrives. Null for a size that is no size.
+ */
+export function provisionalContentSize(small: ViewportSize): ViewportSize | null {
+  if (!(small.width > 0) || !(small.height > 0)) return null;
+  const scale = PROVISIONAL_LONG_SIDE / Math.max(small.width, small.height);
+  return { width: Math.round(small.width * scale), height: Math.round(small.height * scale) };
+}
+
 export function isActivePinchUpdate(activeTouches: number, reportedPointers: number): boolean {
   "worklet";
   return activeTouches >= 2 && reportedPointers >= 2;

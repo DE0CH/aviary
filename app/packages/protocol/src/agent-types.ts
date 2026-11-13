@@ -379,7 +379,7 @@ export type AgentTimelineItem =
       messageId?: string;
       clientMessageId?: string;
       /** YYC: the user's attached images (data: URLs from the transcript) and files (paths under /workspace). */
-      images?: Array<{ url: string; mimeType: string }>;
+      images?: Array<{ url: string; mimeType: string; thumbnailUrl?: string }>;
       attachments?: Array<{
         type: "uploaded_file";
         id: string;

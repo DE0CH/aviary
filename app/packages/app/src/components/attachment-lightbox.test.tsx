@@ -85,36 +85,26 @@ vi.mock("lucide-react-native", () => {
     React.createElement("span", { ...props, "data-icon": name });
   return {
     X: createIcon("X"),
+    Minus: createIcon("Minus"),
+    Plus: createIcon("Plus"),
   };
 });
 
 vi.mock("@/components/zoomable-viewport/image", () => ({
   ZoomableImage: (props: Record<string, unknown>) => {
-    const actions = props.actions as Array<{
-      label: string;
-      onPress: () => void;
-      testID?: string;
-    }>;
+    const renderToolbar = props.renderToolbar as
+      | ((controls: Record<string, unknown>) => React.ReactNode)
+      | undefined;
+    const idle = () => {};
     return React.createElement(
       "div",
       {
         "data-testid": `${String(props.testID)}-image`,
         "data-source": props.uri,
+        "data-placeholder": props.placeholderUri ?? "",
         role: "img",
       },
-      actions.map((action) =>
-        React.createElement(
-          "button",
-          {
-            "aria-label": action.label,
-            "data-testid": action.testID,
-            key: action.label,
-            onClick: action.onPress,
-            type: "button",
-          },
-          action.label,
-        ),
-      ),
+      renderToolbar?.({ scale: 1, minScale: 1, maxScale: 1, zoomIn: idle, zoomOut: idle, reset: idle }),
     );
   },
 }));
@@ -227,12 +217,36 @@ describe("AttachmentLightbox", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("shows error text when the preview URL resolves to null", () => {
-    useAttachmentPreviewUrlMock.mockReturnValue(null);
-    render(<AttachmentLightbox source={attachmentSource} onClose={vi.fn()} />);
+  it("shows error text when the preview URL never resolves, not while it is being resolved", () => {
+    vi.useFakeTimers();
+    try {
+      useAttachmentPreviewUrlMock.mockReturnValue(null);
+      render(<AttachmentLightbox source={attachmentSource} onClose={vi.fn()} />);
 
-    expect(queryByTestId("attachment-lightbox-image")).toBeNull();
-    expect(document.body.textContent ?? "").toContain("Couldn't load image");
+      expect(queryByTestId("attachment-lightbox-image")).toBeNull();
+      // the address is resolved a moment after the viewer opens: no error flashes meanwhile
+      expect(document.body.textContent ?? "").not.toContain("Couldn't load image");
+      expect(queryByTestId("attachment-lightbox-close")).not.toBeNull();
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+      expect(document.body.textContent ?? "").toContain("Couldn't load image");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives the image its small rendition to show first", () => {
+    const withPreview: ImageLightboxSource = {
+      type: "attachment",
+      metadata: { ...imageMetadata, storageType: "remote-url", previewKey: "https://x/thumb" },
+    };
+    render(<AttachmentLightbox source={withPreview} onClose={vi.fn()} />);
+    expect(queryByTestId("attachment-lightbox-image")?.getAttribute("data-placeholder")).toBe(
+      "https://x/thumb",
+    );
+    expect(queryByTestId("attachment-lightbox-zoom")).not.toBeNull();
+    expect(queryByTestId("attachment-lightbox-loading")).not.toBeNull();
   });
 
   it("closes on Escape key on web", () => {

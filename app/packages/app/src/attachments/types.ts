@@ -22,6 +22,8 @@ export interface AttachmentMetadata {
   fileName?: string | null;
   byteSize?: number | null;
   createdAt: number;
+  /** remote-url: the URL of a small rendition of the image, when the server sent one (drawn first, and in chips). */
+  previewKey?: string;
 }
 
 export interface BrowserElementAttachment {

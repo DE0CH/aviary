@@ -47,6 +47,7 @@ export function ZoomableViewport({
   contentSize,
   children,
   actions = [],
+  renderToolbar,
   accessibilityLabel,
   fit,
   maxScale = DEFAULT_MAX_SCALE,
@@ -300,24 +301,28 @@ export function ZoomableViewport({
       >
         <div style={renderedContentStyle}>{children}</div>
       </div>
-      <div
-        onBlurCapture={handleBlur}
-        onFocusCapture={handleFocus}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        style={toolbarDomStyle}
-      >
-        <ViewportToolbar
-          actions={actions}
-          maxScale={maxScale}
-          minScale={minScale}
-          onReset={reset}
-          onZoomIn={zoomIn}
-          onZoomOut={zoomOut}
-          scale={transform.scale}
-          visible={controlsVisible}
-        />
-      </div>
+      {renderToolbar ? (
+        renderToolbar({ scale: transform.scale, minScale, maxScale, zoomIn, zoomOut, reset })
+      ) : (
+        <div
+          onBlurCapture={handleBlur}
+          onFocusCapture={handleFocus}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          style={toolbarDomStyle}
+        >
+          <ViewportToolbar
+            actions={actions}
+            maxScale={maxScale}
+            minScale={minScale}
+            onReset={reset}
+            onZoomIn={zoomIn}
+            onZoomOut={zoomOut}
+            scale={transform.scale}
+            visible={controlsVisible}
+          />
+        </div>
+      )}
     </View>
   );
 }

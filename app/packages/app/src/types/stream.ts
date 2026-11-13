@@ -894,7 +894,7 @@ export function handoffCreatedAgentUserMessageToStream(params: {
 
 /** A timeline user_message's images (YYC: URLs from the history) as attachments the user bubble can show. */
 function timelineUserImages(
-  images: ReadonlyArray<{ url: string; mimeType: string }> | undefined,
+  images: ReadonlyArray<{ url: string; mimeType: string; thumbnailUrl?: string }> | undefined,
   timestamp: Date,
 ): UserMessageImageAttachment[] | undefined {
   if (!images?.length) return undefined;
@@ -904,6 +904,7 @@ function timelineUserImages(
     storageType: "remote-url",
     storageKey: image.url,
     createdAt: timestamp.getTime(),
+    ...(image.thumbnailUrl ? { previewKey: image.thumbnailUrl } : {}),
   }));
 }
 

@@ -711,7 +711,11 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     messageId: z.string().optional(),
     clientMessageId: z.string().optional(),
     // YYC: what the user attached, so history shows it as the message did when sent (agent-types.ts)
-    images: z.array(z.object({ url: z.string(), mimeType: z.string() })).optional(),
+    // thumbnailUrl: a small rendition of the image, when the server has one (the chip in the message, the viewer's
+    // first frame)
+    images: z
+      .array(z.object({ url: z.string(), mimeType: z.string(), thumbnailUrl: z.string().optional() }))
+      .optional(),
     attachments: z
       .array(
         z.object({

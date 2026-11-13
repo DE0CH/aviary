@@ -21,6 +21,7 @@ export function ZoomableViewport({
   contentSize,
   children,
   actions = [],
+  renderToolbar,
   accessibilityLabel,
   fit,
   maxScale = DEFAULT_MAX_SCALE,
@@ -225,16 +226,20 @@ export function ZoomableViewport({
           ) : null}
         </View>
       </GestureDetector>
-      <ViewportToolbar
-        actions={actions}
-        maxScale={maxScale}
-        minScale={minScale}
-        onReset={reset}
-        onZoomIn={zoomIn}
-        onZoomOut={zoomOut}
-        scale={toolbarScale}
-        visible
-      />
+      {renderToolbar ? (
+        renderToolbar({ scale: toolbarScale, minScale, maxScale, zoomIn, zoomOut, reset })
+      ) : (
+        <ViewportToolbar
+          actions={actions}
+          maxScale={maxScale}
+          minScale={minScale}
+          onReset={reset}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          scale={toolbarScale}
+          visible
+        />
+      )}
     </View>
   );
 }

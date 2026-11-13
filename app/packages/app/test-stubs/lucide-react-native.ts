@@ -110,6 +110,7 @@ export const Unlink = StubIcon;
 export const Upload = StubIcon;
 export const Wrench = StubIcon;
 export const X = StubIcon;
+export const Minus = StubIcon;
 export const XCircle = StubIcon;
 export const Code = StubIcon;
 export const Maximize2 = StubIcon;

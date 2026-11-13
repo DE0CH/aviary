@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   FIT_TRANSFORM,
+  provisionalContentSize,
   clampTransform,
   fitContentSize,
   isActivePinchUpdate,
@@ -104,5 +105,13 @@ describe("zoomable viewport geometry", () => {
         maxScale: 8,
       }),
     ).toEqual({ scale: 0.25, x: 0, y: 0 });
+  });
+
+  // The viewer lays a picture out from its small rendition before the full one has come: the same shape, at a size
+  // worth zooming into.
+  it("sizes a picture from its small rendition, keeping its shape", () => {
+    expect(provisionalContentSize({ width: 320, height: 180 })).toEqual({ width: 2048, height: 1152 });
+    expect(provisionalContentSize({ width: 90, height: 360 })).toEqual({ width: 512, height: 2048 });
+    expect(provisionalContentSize({ width: 0, height: 10 })).toBeNull();
   });
 });
