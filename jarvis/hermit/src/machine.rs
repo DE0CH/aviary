@@ -75,6 +75,8 @@ pub struct Config {
 struct State {
     cfg: Config,
     boot: BootReply,
+    /// The deployment's settings, as the boot reply gave them: the models route and each model's routing.
+    settings: crate::settings::Settings,
     http: reqwest::Client,
     /// The supervisor's last health answer (for the harness's status shim).
     health: std::sync::Mutex<Option<HealthReport>>,
@@ -178,7 +180,13 @@ async fn boot(cfg: &Config, http: &reqwest::Client) -> BootReply {
                     r.text().await.unwrap_or_default()
                 );
             }
-            Ok::<_, anyhow::Error>(r.json::<BootReply>().await?)
+            let reply = r.json::<BootReply>().await?;
+            // the deployment's settings come with the boot: without them no model can be routed
+            anyhow::ensure!(
+                reply.settings.is_some(),
+                "hermit-jarvis sent no settings (it predates them)"
+            );
+            Ok::<_, anyhow::Error>(reply)
         };
         match attempt.await {
             Ok(b) => return b,
@@ -218,6 +226,10 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     tracing::info!(sandbox = %b.sandbox_id, conversation = %b.conversation_id, "booted");
     write_private(&cfg.boot_file, boot_env(&b).as_bytes())?;
     let state = Arc::new(State {
+        settings: b
+            .settings
+            .clone()
+            .unwrap_or_else(|| unreachable!("boot() returns only a reply with settings")),
         cfg,
         boot: b,
         http,
@@ -429,7 +441,7 @@ async fn model(state: &State, pq: &str, req: Request<Incoming>) -> Response<Body
         return refuse(StatusCode::FORBIDDEN, "not_allowed", "not a model path");
     }
     if method == Method::GET {
-        let mut m = crate::central::models();
+        let mut m = state.settings.models_route();
         m.default.clone_from(&state.cfg.model);
         return full(StatusCode::OK, serde_json::to_value(m).unwrap_or_default());
     }
@@ -441,7 +453,7 @@ async fn model(state: &State, pq: &str, req: Request<Incoming>) -> Response<Body
     else {
         return refuse(StatusCode::BAD_REQUEST, "bad_request", "no body");
     };
-    if model_of(&body).is_some_and(|m| crate::app::openrouter(&m)) {
+    if model_of(&body).is_some_and(|m| crate::settings::openrouter(&m)) {
         return openrouter(state, method, pq, &parts.headers, &body).await;
     }
     let Some(token) = claude_token(&state.cfg.credentials) else {
@@ -520,7 +532,7 @@ async fn openrouter(
             "no OpenRouter key on this machine (OPENROUTER_API, store openrouter)",
         );
     };
-    let body = for_openrouter(body).map_or_else(|| body.clone(), Bytes::from);
+    let body = for_openrouter(body, &state.settings).map_or_else(|| body.clone(), Bytes::from);
     let mut r = state
         .http
         .request(method, format!("{}{pq}", state.cfg.openrouter_url));
@@ -537,17 +549,20 @@ async fn openrouter(
     relay(r.send().await).await
 }
 
-/// A Messages body as OpenRouter gets it: the model's hosts first (`provider.order`, app.rs), Claude Code's effort
-/// level as OpenRouter's `reasoning.effort`, and no `thinking: {type: "disabled"}` (the model's hosts refuse a call
-/// that switches thinking off; it then thinks at its own level). `None` when the body is not a JSON object.
+/// A Messages body as OpenRouter gets it, by the deployment's settings for its model: the model's hosts first
+/// (`provider.order`), Claude Code's effort level as OpenRouter's `reasoning.effort` when it is one of the model's
+/// levels, and no `thinking: {type: "disabled"}` for a model with no level `none` (its hosts refuse a call that
+/// switches thinking off; it then thinks at its own level). A model the settings do not list goes as it came, minus
+/// a switched-off thinking. `None` when the body is not a JSON object.
 #[must_use]
-pub fn for_openrouter(body: &[u8]) -> Option<Vec<u8>> {
+pub fn for_openrouter(body: &[u8], settings: &crate::settings::Settings) -> Option<Vec<u8>> {
     let mut v: serde_json::Value = serde_json::from_slice(body).ok()?;
     let o = v.as_object_mut()?;
-    let model = o.get("model").and_then(|m| m.as_str()).unwrap_or_default();
-    if let Some((_, hosts)) = crate::app::OPENROUTER_PROVIDERS
-        .iter()
-        .find(|(id, _)| *id == model)
+    let listed = settings.model(o.get("model").and_then(|m| m.as_str()).unwrap_or_default());
+    if let Some(hosts) = listed
+        .and_then(|m| m.openrouter.as_ref())
+        .map(|r| &r.providers)
+        .filter(|hosts| !hosts.is_empty())
     {
         o.insert("provider".to_owned(), json!({"order": hosts}));
     }
@@ -556,14 +571,14 @@ pub fn for_openrouter(body: &[u8]) -> Option<Vec<u8>> {
         .and_then(|t| t.get("type"))
         .and_then(|t| t.as_str())
         == Some("disabled");
-    if disabled {
+    if disabled && listed.is_none_or(|m| !m.thinking.iter().any(|l| l == "none")) {
         o.remove("thinking");
     }
     let effort = o
         .get("output_config")
         .and_then(|c| c.get("effort"))
         .and_then(|e| e.as_str())
-        .filter(|e| crate::app::OPENROUTER_THINKING.contains(e))
+        .filter(|e| listed.is_none_or(|m| m.thinking.iter().any(|l| l == e)))
         .map(str::to_owned);
     if let Some(effort) = effort {
         o.insert("reasoning".to_owned(), json!({"effort": effort}));
@@ -761,6 +776,11 @@ pub fn listen_addr() -> SocketAddr {
 mod tests {
     use super::*;
 
+    /// The deployment's settings as the tests' boot reply gives them (tests/settings.json).
+    fn settings() -> crate::settings::Settings {
+        crate::settings::Settings::parse(include_str!("../tests/settings.json")).unwrap()
+    }
+
     /// Background tasks after a turn are idle with background jobs, an open question is waiting, never "working".
     #[test]
     fn the_supervisors_state_is_the_sessions_status() {
@@ -829,9 +849,13 @@ mod tests {
     fn a_call_is_openrouters_by_its_model() {
         let of =
             |m: &str| model_of(&serde_json::to_vec(&json!({"model": m, "messages": []})).unwrap());
-        assert!(crate::app::openrouter(&of("z-ai/glm-5.3").unwrap()));
-        assert!(!crate::app::openrouter(&of("claude-fable-5-2").unwrap()));
-        assert!(!crate::app::openrouter(&of("claude-haiku-5-5").unwrap()));
+        assert!(crate::settings::openrouter(&of("z-ai/glm-5.3").unwrap()));
+        assert!(!crate::settings::openrouter(
+            &of("claude-fable-5-2").unwrap()
+        ));
+        assert!(!crate::settings::openrouter(
+            &of("claude-haiku-5-5").unwrap()
+        ));
         assert_eq!(model_of(b"{}"), None);
         assert_eq!(model_of(b"not json"), None);
     }
@@ -839,8 +863,10 @@ mod tests {
     #[test]
     fn an_openrouter_body_names_the_hosts_and_the_effort_and_never_switches_thinking_off() {
         let to = |b: serde_json::Value| -> serde_json::Value {
-            serde_json::from_slice(&for_openrouter(&serde_json::to_vec(&b).unwrap()).unwrap())
-                .unwrap()
+            serde_json::from_slice(
+                &for_openrouter(&serde_json::to_vec(&b).unwrap(), &settings()).unwrap(),
+            )
+            .unwrap()
         };
         // a turn at an effort level: the hosts in order, the level as OpenRouter's, the rest as it came
         let turn = json!({"model": "z-ai/glm-5.3", "max_tokens": 64, "thinking": {"type": "adaptive"},
@@ -861,8 +887,13 @@ mod tests {
             to(json!({"model": "other/model", "messages": []})).get("provider"),
             None
         );
-        assert_eq!(for_openrouter(b"not json"), None);
-        assert_eq!(for_openrouter(b"[1]"), None);
+        // a level the model does not have is not passed on
+        let odd = to(
+            json!({"model": "z-ai/glm-5.3", "output_config": {"effort": "none"}, "messages": []}),
+        );
+        assert_eq!(odd.get("reasoning"), None);
+        assert_eq!(for_openrouter(b"not json", &settings()), None);
+        assert_eq!(for_openrouter(b"[1]", &settings()), None);
     }
 
     /// What a stand-in upstream saw: (authorization, anthropic-beta, body).
@@ -933,8 +964,9 @@ mod tests {
                 conversation_id: uuid::Uuid::new_v4(),
                 token: "hst1.test".to_owned(),
                 control_token: "hct_test".to_owned(),
-                settings: None,
+                settings: Some(settings()),
             },
+            settings: settings(),
             http: http_client().unwrap(),
             health: std::sync::Mutex::new(None),
             title: std::sync::Mutex::new(None),

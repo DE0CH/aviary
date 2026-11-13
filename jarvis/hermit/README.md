@@ -26,16 +26,20 @@ Jarvis 4 session machine (harness aviary)                                     �
   `/v1/deployment` `conversations.peopleCreate: false` → pigeon's `/api/jarvis/me` `newConversations: false`).
 - Claude Code loads the session's workspace CLAUDE.md, skills and settings itself (the descriptor's
   `claude.projectSettings`: `--setting-sources=project`); YYC AI's hermit leaves it off.
-- The models (`src/app.rs` `MODELS`; the Jarvis 4 app's picker is `router/harness.go`): the Claude models on the
+- The models are the deployment's settings (`HERMIT_SETTINGS`, DE0CH/deyao-ai `k8s/chat/settings.json`,
+  `src/settings.rs`: the product name, the menu, each model's thinking levels, context window and OpenRouter hosts;
+  hermit-jarvis refuses to start on a file that cannot work and hands the settings to each machine's gateway in the
+  boot reply). The Jarvis 4 app's picker is `router/harness.go` `modelCatalog`: a model is added in both. Today: the Claude models on the
   session's Claude subscription account, and GLM 5.3 on OpenRouter (Deyao, 2026-11-12). aviary-gateway routes each
   Messages call by its `model`: an id with a `/` (`z-ai/glm-5.3`) goes to OpenRouter's Messages API
   (`https://openrouter.ai/api/v1/messages`) with `OPENROUTER_API` (store `openrouter`, which the harness's policy
   brings; the key stays with the gateway), everything else (Claude Code's small model and the title call included) to
   Anthropic. For OpenRouter the gateway rewrites the body (`machine.rs` `for_openrouter`): `provider.order` = the
-  model's hosts (`OPENROUTER_PROVIDERS`: z.ai's own fp8 host first, OpenRouter's others as the fallback),
+  model's hosts (its `openrouter.providers` in the settings: z.ai's own fp8 host first, OpenRouter's others as the
+  fallback),
   `output_config.effort` → `reasoning.effort`, and a `thinking: {type: "disabled"}` is dropped (GLM 5.3's hosts answer
-  it 400 "Reasoning is mandatory for this endpoint", so its menu has no "none"). OpenRouter has no `count_tokens`
-  (404; Claude Code estimates). GLM 5.3 names its own context window on the models route (`CONTEXT_TOKENS`: 1M;
+  it 400 "Reasoning is mandatory for this endpoint", so its `thinking` in the settings has no "none"). OpenRouter has no `count_tokens`
+  (404; Claude Code estimates). GLM 5.3 names its own context window on the models route (`contextTokens` in the settings: 1M;
   the supervisor sets `CLAUDE_CODE_MAX_CONTEXT_TOKENS` for the model a conversation runs), since Claude Code takes a
   model it does not know as 200k; the Claude models name none.
   Anthropic takes a subscription login's call only when its system prompt begins with Claude Code's identity line,

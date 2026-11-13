@@ -144,6 +144,7 @@ pub fn openrouter(model: &str) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -186,6 +187,10 @@ mod tests {
                 .providers,
             ["z-ai/fp8"]
         );
+        // none is named as a model's own level: with nothing picked, Claude Code keeps its default for the model
+        assert!(route.models.iter().all(|m| m.reasoning.is_none()));
+        assert_eq!(route.context_of("z-ai/glm-5.3"), 1_000_000);
+        assert_eq!(route.context_of("claude-fable-5-2"), 0);
         // what a machine's gateway gets in the boot reply is the same settings
         let again: Settings = serde_json::from_value(serde_json::to_value(&s).unwrap()).unwrap();
         assert_eq!(again, s);

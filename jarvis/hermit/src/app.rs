@@ -16,47 +16,6 @@ pub const LIFETIME: Duration = Duration::from_secs(30 * 24 * 3600);
 /// A resume that has not booted the machine in this long ends the waiting sandbox (`start_timed_out`).
 pub const RESUME_DEADLINE: Duration = Duration::from_secs(10 * 60);
 
-/// The models these sessions offer: a session starts on the model picked in the Jarvis 4 app, and its conversation's
-/// menu in the chat picks among these from then on (the list is what pigeon shows). A Claude model runs on the
-/// session's Claude login; an id with a `/` is OpenRouter's (see [`openrouter`]).
-pub const MODELS: &[(&str, &str)] = &[
-    ("claude-fable-5-2", "Fable 5.2"),
-    ("claude-opus-5-5", "Opus 5.5"),
-    ("z-ai/glm-5.3", "GLM 5.3"),
-];
-/// The thinking levels a person may choose for each Claude model of [`MODELS`], lowest first: thinking off, then
-/// Claude Code's effort levels. None is named as a model's own: with nothing chosen, Claude Code keeps its default
-/// for the model.
-pub const THINKING: &[&str] = &["none", "low", "medium", "high", "xhigh", "max"];
-/// The levels of an OpenRouter model: its hosts refuse thinking switched off ("Reasoning is mandatory for this
-/// endpoint", 2026-11-12), so there is no `none`.
-pub const OPENROUTER_THINKING: &[&str] = &["low", "medium", "high", "xhigh", "max"];
-/// The OpenRouter hosts a model's calls are tried on first, in order (`provider.order`; OpenRouter's other hosts
-/// stay as the fallback): the model's maker, at full fp8 weights.
-pub const OPENROUTER_PROVIDERS: &[(&str, &[&str])] = &[("z-ai/glm-5.3", &["z-ai/fp8"])];
-
-/// The context window of a model that is not Claude Code's own for it (the models route's per-model
-/// `contextTokens`; the supervisor runs Claude Code at it): Claude Code takes a model it does not know as 200k.
-pub const CONTEXT_TOKENS: &[(&str, u64)] = &[("z-ai/glm-5.3", 1_000_000)];
-
-/// Whether a model id is OpenRouter's (`maker/model`); a Claude id has no `/`.
-#[must_use]
-pub fn openrouter(model: &str) -> bool {
-    model.contains('/')
-}
-
-/// The thinking levels of a model, lowest first.
-#[must_use]
-pub fn thinking(model: &str) -> &'static [&'static str] {
-    if openrouter(model) {
-        OPENROUTER_THINKING
-    } else {
-        THINKING
-    }
-}
-/// Claude Code's small model and the title model.
-pub const SMALL_MODEL: &str = "claude-haiku-5-5";
-
 /// Everything a request needs.
 #[derive(Clone, Debug)]
 pub struct App(pub Arc<Inner>);

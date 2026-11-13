@@ -487,35 +487,6 @@ async fn forward(app: &App, name: FixedName, req: Request) -> Response {
         })
 }
 
-/// The models route for pigeon (the cluster's `model` name, gateway contract "In-cluster API").
-#[must_use]
-pub fn models() -> gateway_api::models::Models {
-    gateway_api::models::Models {
-        default: crate::app::MODELS[0].0.to_owned(),
-        small: crate::app::SMALL_MODEL.to_owned(),
-        title: crate::app::SMALL_MODEL.to_owned(),
-        context_tokens: 0,
-        // each entry through its JSON: a member a newer aviary adds to `Model` (an optional one, as the contract's
-        // are) then needs no change here, so the pin job's bump of the aviary crates never breaks this build
-        models: crate::app::MODELS
-            .iter()
-            .filter_map(|(id, label)| {
-                let mut m = serde_json::json!({
-                    "id": id,
-                    "label": label,
-                    "reasoning": null,
-                    "thinking": crate::app::thinking(id),
-                });
-                if let Some((_, tokens)) = crate::app::CONTEXT_TOKENS.iter().find(|(i, _)| i == id)
-                {
-                    m["contextTokens"] = serde_json::json!(tokens);
-                }
-                serde_json::from_value(m).ok()
-            })
-            .collect(),
-    }
-}
-
 pub(crate) fn hex(b: &[u8]) -> String {
     use std::fmt::Write as _;
     b.iter()
@@ -536,33 +507,4 @@ pub fn http() -> anyhow::Result<reqwest::Client> {
         .pool_idle_timeout(Duration::from_secs(90))
         .user_agent(concat!("hermit-jarvis/", env!("CARGO_PKG_VERSION")))
         .build()?)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn every_model_offers_its_thinking_levels_and_names_none_as_its_own() {
-        let m = super::models();
-        assert_eq!(m.default, crate::app::MODELS[0].0);
-        assert_eq!(m.models.len(), crate::app::MODELS.len());
-        for model in &m.models {
-            if crate::app::openrouter(&model.id) {
-                // an OpenRouter model's hosts refuse thinking switched off: no `none`
-                assert_eq!(model.thinking, ["low", "medium", "high", "xhigh", "max"]);
-            } else {
-                // thinking off, then Claude Code's effort levels, lowest first
-                assert_eq!(
-                    model.thinking,
-                    ["none", "low", "medium", "high", "xhigh", "max"]
-                );
-            }
-            // none named: with nothing picked, Claude Code keeps its own default for the model
-            assert_eq!(model.reasoning, None);
-        }
-        // GLM 5.3 through OpenRouter is on the menu beside the Claude models (Deyao, 2026-11-12), at its own 1M
-        // window (Claude Code takes it as 200k otherwise); the Claude models name none
-        assert!(m.models.iter().any(|x| x.id == "z-ai/glm-5.3"));
-        assert_eq!(m.context_of("z-ai/glm-5.3"), 1_000_000);
-        assert_eq!(m.context_of("claude-fable-5-2"), 0);
-    }
 }
