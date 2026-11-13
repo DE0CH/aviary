@@ -688,7 +688,7 @@ async fn api(app: &App, req: Request, path: &str, upgrade: bool) -> (&'static st
         ApiRoute::SignIn => signin::signin(query.as_deref()),
         ApiRoute::Me => signin::me(app, &id).await,
         ApiRoute::Warm => warm(app, body, &id).await,
-        ApiRoute::Models => models(app).await,
+        ApiRoute::Models => models(app, id.subject()).await,
         ApiRoute::Upload => uploads::upload(app, Request::from_parts(parts, body), &id).await,
         ApiRoute::FilesRaw(cid) => blobs::files_raw(app, &parts, &id, &cid, query.as_deref()).await,
         ApiRoute::Transcript(cid) => crate::raw::transcript(app, &id, &cid, query.as_deref()).await,
@@ -935,11 +935,52 @@ impl Default for Models {
     }
 }
 
-async fn models(app: &App) -> Response {
+async fn models(app: &App, person: Option<&str>) -> Response {
     match models_value(app).await {
-        Some(v) => answer_models(&v),
+        Some(v) => answer_models(&visible_models(&v, person.unwrap_or(""))),
         None => models_unavailable(),
     }
+}
+
+/// The model list as `person` sees it: without the models that are other people's only (a model's `visibleTo`),
+/// and without that list itself.
+#[must_use]
+pub(crate) fn visible_models(models: &Value, person: &str) -> Value {
+    let mut out = models.clone();
+    if let Some(options) = out.get_mut("OPTIONS").and_then(Value::as_array_mut) {
+        options.retain(|m| {
+            m.get("visibleTo").and_then(Value::as_array).is_none_or(|to| {
+                to.is_empty()
+                    || to
+                        .iter()
+                        .any(|e| e.as_str().is_some_and(|e| e.eq_ignore_ascii_case(person)))
+            })
+        });
+        for m in options.iter_mut() {
+            if let Some(o) = m.as_object_mut() {
+                o.remove("visibleTo");
+            }
+        }
+    }
+    out
+}
+
+/// [`models_value`] as `person` sees it.
+pub(crate) async fn models_for(app: &App, person: &str) -> Option<Value> {
+    models_value(app).await.map(|v| visible_models(&v, person))
+}
+
+/// The harness of the listed model `id` (a model the list does not hold: the default harness).
+#[must_use]
+pub(crate) fn harness_of(models: &Value, id: &str) -> magpie_api::Harness {
+    models
+        .get("OPTIONS")
+        .and_then(Value::as_array)
+        .and_then(|o| o.iter().find(|m| m.get("value").and_then(Value::as_str) == Some(id)))
+        .and_then(|m| m.get("harness"))
+        .and_then(Value::as_str)
+        .and_then(magpie_api::Harness::parse)
+        .unwrap_or_default()
 }
 
 /// The cached model list without waiting (a stale one too), starting a refresh when it is stale or missing.
@@ -1010,7 +1051,16 @@ async fn refresh_models(app: App) {
                     let label = if e.label.trim().is_empty() { &e.id } else { &e.label };
                     // `thinking`: the levels a person may choose (empty: none); `reasoning`: the one a
                     // conversation starts on
-                    json!({"value": e.id, "label": label, "thinking": e.thinking, "reasoning": e.reasoning})
+                    let mut o =
+                        json!({"value": e.id, "label": label, "thinking": e.thinking, "reasoning": e.reasoning});
+                    // only what is not the usual: a Claude Code model for everyone reads as it always did
+                    if !e.harness.is_default() {
+                        o["harness"] = json!(e.harness);
+                    }
+                    if !e.visible_to.is_empty() {
+                        o["visibleTo"] = json!(e.visible_to);
+                    }
+                    o
                 })
                 .collect();
             Some(json!({"OPTIONS": options, "DEFAULT": m.default}))

@@ -561,6 +561,7 @@ impl Server for Model {
                 c.title_source = Some(TitleSource::User);
             }
             if let Some(m) = &body.model {
+                c.harness = body.harness.unwrap_or_default();
                 c.picked_model = Some(m.clone());
             }
             if let Some(l) = &body.thinking {

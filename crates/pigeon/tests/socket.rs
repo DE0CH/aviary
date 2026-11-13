@@ -963,6 +963,63 @@ async fn sends_creates_and_cancels() {
     assert_eq!(r["error"], "未能開始對話，請再試一次。");
 }
 
+/// A model limited to some people is theirs alone to see and to pick, and nobody is shown who it is limited to. A
+/// pick carries the model's harness to the conversation: its next turn runs in it.
+#[tokio::test]
+async fn a_limited_model_is_its_peoples_alone_and_a_pick_carries_its_harness() {
+    use magpie_api::Harness;
+    let e = env().await;
+    e.h.set_facts(|d| d.conversations.people_pick_model = true).await;
+    let c = e.m.add(STAFF, Some("chat"));
+    let mut ws = e.ws(STAFF).await;
+    let (_, snap) = ws
+        .rpc("get_providers_snapshot_request", json!({"cwd": "/workspace"}))
+        .await;
+    assert!(snap.to_string().contains("vendor/model-b"));
+    assert!(!snap.to_string().contains("vendor/video"), "{snap}");
+    let (_, r) = ws
+        .rpc(
+            "set_agent_model_request",
+            json!({"agentId": c, "modelId": "vendor/video"}),
+        )
+        .await;
+    assert_eq!(r["accepted"], false, "not theirs to pick");
+    assert_eq!(e.m.calls_to("rename_conversation"), 0);
+
+    // the person it is for
+    let t = e.m.add(STAFF2, Some("video"));
+    let mut tw = e.ws(STAFF2).await;
+    let (_, snap) = tw
+        .rpc("get_providers_snapshot_request", json!({"cwd": "/workspace"}))
+        .await;
+    assert!(snap.to_string().contains("vendor/video"), "{snap}");
+    assert!(
+        !snap.to_string().contains("visibleTo") && !snap.to_string().contains(STAFF2),
+        "{snap}"
+    );
+    let (_, r) = tw
+        .rpc(
+            "set_agent_model_request",
+            json!({"agentId": t, "modelId": "vendor/video"}),
+        )
+        .await;
+    assert_eq!((&r["accepted"], &r["error"]), (&json!(true), &Value::Null));
+    let picked = e.m.st().convs[&t].conv.clone();
+    assert_eq!(
+        (picked.picked_model.as_deref(), picked.harness),
+        (Some("vendor/video"), Harness::Qwen)
+    );
+    // back to a model of the other harness
+    let (_, r) = tw
+        .rpc(
+            "set_agent_model_request",
+            json!({"agentId": t, "modelId": "vendor/model-b"}),
+        )
+        .await;
+    assert_eq!(r["accepted"], true);
+    assert_eq!(e.m.st().convs[&t].conv.harness, Harness::Claude);
+}
+
 /// The app's model picker: where the deployment lets people pick, a model of the list becomes the conversation's
 /// (`pickedModel`, which the agent then shows); elsewhere, and for a model that is not listed, nothing is picked.
 #[tokio::test]

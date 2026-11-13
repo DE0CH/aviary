@@ -741,11 +741,11 @@ impl Handler {
             Ok(i) => i,
             Err(e) => return failed(e, None),
         };
-        let (model, thinking) = self.draft_pick(agent.and_then(|a| a.get("config"))).await;
+        let (model, thinking, harness) = self.draft_pick(agent.and_then(|a| a.get("config"))).await;
         let req = CreateRequest {
             model,
             thinking,
-            harness: magpie_api::Harness::default(),
+            harness,
             idempotency_key: key.clone(),
             message: SendRequest {
                 client_message_id,
@@ -912,7 +912,7 @@ impl Handler {
         let Some(id) = self.agent_id() else {
             return Some(strings::NOT_FOUND.to_owned());
         };
-        let Some(models) = crate::http::models_value(&self.app).await else {
+        let Some(models) = crate::http::models_for(&self.app, &self.conn.person).await else {
             return Some(self.locale().unreachable().to_owned());
         };
         let wanted = str_field(&self.m, "modelId")
@@ -934,6 +934,8 @@ impl Handler {
         };
         let keeps = current.as_ref().is_none_or(|l| levels_of(&models, &wanted).contains(l));
         let req = RenameRequest {
+            // the model's harness goes with the pick: the conversation's next turn runs in it
+            harness: Some(crate::http::harness_of(&models, &wanted)),
             model: Some(wanted),
             thinking: (!keeps).then(String::new),
             ..RenameRequest::default()
@@ -963,7 +965,7 @@ impl Handler {
         let Some(id) = self.agent_id() else {
             return Some(strings::NOT_FOUND.to_owned());
         };
-        let Some(models) = crate::http::models_value(&self.app).await else {
+        let Some(models) = crate::http::models_for(&self.app, &self.conn.person).await else {
             return Some(self.locale().unreachable().to_owned());
         };
         let wanted = str_field(&self.m, "thinkingOptionId").unwrap_or("").trim().to_owned();
@@ -994,16 +996,17 @@ impl Handler {
 
     /// A draft's pick (`agent.config.model`, `.thinkingOptionId`), where people pick models: the first turn runs on
     /// it. A model the list does not hold, or a level its model lacks, is left out.
-    async fn draft_pick(&self, config: Option<&Value>) -> (Option<String>, Option<String>) {
+    async fn draft_pick(&self, config: Option<&Value>) -> (Option<String>, Option<String>, magpie_api::Harness) {
         fn text<'a>(config: Option<&'a Value>, key: &str) -> Option<&'a str> {
             config?.get(key)?.as_str().map(str::trim).filter(|s| !s.is_empty())
         }
         let (model, thinking) = (text(config, "model"), text(config, "thinkingOptionId"));
+        let none = (None, None, magpie_api::Harness::default());
         if (model.is_none() && thinking.is_none()) || !self.app.identities().people_pick_model() {
-            return (None, None);
+            return none;
         }
-        let Some(models) = crate::http::models_value(&self.app).await else {
-            return (None, None);
+        let Some(models) = crate::http::models_for(&self.app, &self.conn.person).await else {
+            return none;
         };
         let listed = |id: &str| {
             models
@@ -1016,7 +1019,9 @@ impl Handler {
             .or_else(|| models.get("DEFAULT").and_then(Value::as_str))
             .unwrap_or("");
         let thinking = thinking.filter(|l| levels_of(&models, of).iter().any(|x| x == l));
-        (model.map(str::to_owned), thinking.map(str::to_owned))
+        // the picked model's harness; with none picked, the default model's
+        let harness = crate::http::harness_of(&models, of);
+        (model.map(str::to_owned), thinking.map(str::to_owned), harness)
     }
 
     async fn title_set(&self) {
@@ -1176,7 +1181,7 @@ impl Handler {
     }
 
     async fn providers(&self) {
-        let models = crate::http::models_value(&self.app).await;
+        let models = crate::http::models_for(&self.app, &self.conn.person).await;
         let cwd = str_field(&self.m, "cwd");
         self.reply(
             "get_providers_snapshot_response",

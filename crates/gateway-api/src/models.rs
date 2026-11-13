@@ -52,6 +52,10 @@ pub struct Model {
     /// The harness a conversation on this model runs in. Absent: Claude Code.
     #[serde(default, skip_serializing_if = "Harness::is_default")]
     pub harness: Harness,
+    /// The people (emails) who may pick this model. Empty: everyone. A model being tried is listed for the people
+    /// trying it and is no one else's to see or pick.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub visible_to: Vec<String>,
 }
 
 impl Models {
@@ -154,6 +158,14 @@ mod tests {
         let v = serde_json::to_value(&m).unwrap();
         assert_eq!(v["models"][0].get("harness"), None);
         assert_eq!(v["models"][1]["harness"], "qwen");
+        assert_eq!(
+            v["models"][1].get("visibleTo"),
+            None,
+            "a model for everyone names no one"
+        );
+        let limited: Model =
+            serde_json::from_str(r#"{"id":"v","label":"V","reasoning":null,"visibleTo":["a@example.com"]}"#).unwrap();
+        assert_eq!(limited.visible_to, ["a@example.com"]);
         assert!(serde_json::from_str::<Models>(
             r#"{"default":"a","small":"a","title":"a","contextTokens":1,"models":[{"id":"a","label":"A","reasoning":null,"harness":"codex"}]}"#
         )
