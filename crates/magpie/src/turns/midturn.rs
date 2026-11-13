@@ -281,6 +281,21 @@ async fn write_attached(
         }
     }
     let placed = admission::place(tx, conversation, person, m, &planned).await?;
+    // the supervisor reads the files now, and the sandbox's blob read serves only what its conversation
+    // references (`serve_sandbox_blob`): the conversation holds the blobs from here on
+    let blobs = placed
+        .start_files
+        .iter()
+        .map(|f| &f.blob)
+        .chain(placed.start_images.iter().flat_map(|i| [&i.blob, &i.model_blob]));
+    for sha in blobs {
+        tx.execute(
+            "insert into blob_refs (owner, owner_kind, blob) values ($1, 'conversation', decode($2, 'hex'))
+             on conflict do nothing",
+            &[&conversation, sha],
+        )
+        .await?;
+    }
     let payload = serde_json::to_value(SendAttached {
         text: m.text.clone(),
         files: placed.start_files,

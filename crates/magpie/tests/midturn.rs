@@ -293,6 +293,21 @@ async fn a_message_with_attachments_joins_the_running_turn_or_is_held_until_it_e
     );
     // its upload becomes the conversation's when Claude Code has taken the message in, not before
     assert_eq!(uploads().await, 0);
+    // but the supervisor reads the file now: the sandbox's blob read serves only what its conversation references
+    let readable: i64 = w
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select count(*) from blob_refs r join uploads u on u.blob = r.blob
+             where r.owner = $1 and r.owner_kind = 'conversation' and u.conversation_id is null",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(readable, 1, "the sandbox can read the file's blob");
     // a second file of the same name gets a name of its own, though the first is not the conversation's yet
     let m3 = with_file("m3", "同埋呢個").await;
     alice.send_turn(conv, &m3).await.unwrap();
