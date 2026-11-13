@@ -23,7 +23,7 @@ spec:
       terminationGracePeriodSeconds: 75
       containers:
         - name: hermit
-          image: ghcr.io/de0ch/hermit-jarvis:sha-8e5c9b880b7b@sha256:c5f098fd6433e6f85073c8abf1aed9591520b5718e51aa83f438799d1c647844
+          image: ghcr.io/de0ch/hermit-jarvis:sha-7103f896d3fe@sha256:3812ee7aa48b0bdebf0a0455116c5757acae91da22e9753e22eeff17fc91d23e
           envFrom: [{ secretRef: { name: chat-hermit } }]
           env:
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
