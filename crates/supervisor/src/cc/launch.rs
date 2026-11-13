@@ -94,6 +94,11 @@ pub struct Start {
     pub model: String,
 }
 
+/// How Qwen Code sends files to the person (it has no `SendUserFile` tool): added to its instructions.
+pub const QWEN_SEND_FILE: &str = "Sending files to the user: run the shell command `send-file [--caption TEXT] PATH…` \
+as a command of its own, with every file to send in that one command. Where these instructions name the SendUserFile \
+tool, this command is it.";
+
 /// The argv of 6.1 (`bin` is the harness's binary in a sandbox).
 #[must_use]
 pub fn argv(bin: &str, session: &Session, start: &Start) -> Vec<String> {
@@ -133,9 +138,12 @@ pub fn argv(bin: &str, session: &Session, start: &Start) -> Vec<String> {
             ]);
             a.extend(QWEN_EXCLUDED_TOOLS.iter().map(|t| format!("--exclude-tools={t}")));
             a.extend(["--model".to_owned(), start.model.clone()]);
-            if !start.instructions.is_empty() {
-                a.extend(["--append-system-prompt".to_owned(), start.instructions.clone()]);
-            }
+            let instructions = if start.instructions.is_empty() {
+                QWEN_SEND_FILE.to_owned()
+            } else {
+                format!("{}\n\n{QWEN_SEND_FILE}", start.instructions)
+            };
+            a.extend(["--append-system-prompt".to_owned(), instructions]);
             a
         }
     };
@@ -348,10 +356,12 @@ mod tests {
             ["--input-format", "stream-json"],
             ["--approval-mode", "yolo"],
             ["--model", "xiaomi/mimo-v2.6-pro"],
-            ["--append-system-prompt", "You help the staff."],
         ] {
             assert!(a.windows(2).any(|w| w == pair), "{pair:?}");
         }
+        // the managed instructions, then how this harness sends files
+        let at = a.iter().position(|x| x == "--append-system-prompt").unwrap();
+        assert_eq!(a[at + 1], format!("You help the staff.\n\n{QWEN_SEND_FILE}"));
         assert!(a.iter().any(|x| x == "--include-partial-messages"));
         for t in QWEN_EXCLUDED_TOOLS {
             assert!(a.iter().any(|x| x == &format!("--exclude-tools={t}")), "{t}");
@@ -368,9 +378,10 @@ mod tests {
         }
         let r = argv(QWEN_BIN, &Session::resume(Harness::Qwen, "q9"), &start);
         assert_eq!(r[r.len() - 2..], ["--resume".to_owned(), "q9".to_owned()]);
-        // no instructions: no empty argument
+        // no managed instructions: how it sends files alone
         let bare = argv(QWEN_BIN, &Session::new(Harness::Qwen, "c1"), &Start::default());
-        assert!(!bare.iter().any(|x| x == "--append-system-prompt"));
+        let at = bare.iter().position(|x| x == "--append-system-prompt").unwrap();
+        assert_eq!(bare[at + 1], QWEN_SEND_FILE);
     }
 
     /// Qwen Code's environment carries no model settings (they are in its managed settings file) and none of

@@ -641,17 +641,31 @@ pub fn hook(paths: &HookPaths, input: &Value) -> HookOutcome {
     if files.is_empty() {
         return HookOutcome::Skip;
     }
-    if files.len() > MAX_FDS {
-        return HookOutcome::Failed(format!("more than {MAX_FDS} files"));
-    }
     let cwd = input
         .get("cwd")
         .and_then(Value::as_str)
         .filter(|c| !c.is_empty())
         .unwrap_or(WORKSPACE);
+    let caption = tool_input.get("caption").and_then(Value::as_str);
+    send_paths(paths, tool_use_id, cwd, &files, caption)
+}
+
+/// Opens `files` (as named from `cwd`) beneath the workspace and hands them to the supervisor for the tool call
+/// `tool_use_id` (empty: the shell call that runs this command, which the supervisor knows).
+#[must_use]
+pub fn send_paths(
+    paths: &HookPaths,
+    tool_use_id: &str,
+    cwd: &str,
+    files: &[String],
+    caption: Option<&str>,
+) -> HookOutcome {
+    if files.len() > MAX_FDS {
+        return HookOutcome::Failed(format!("more than {MAX_FDS} files"));
+    }
     let mut sent = Vec::new();
     let mut fds = Vec::new();
-    for f in &files {
+    for f in files {
         let comps = match workspace_components(cwd, f) {
             Ok(c) => c,
             Err(e) => return HookOutcome::Failed(e),
@@ -683,7 +697,7 @@ pub fn hook(paths: &HookPaths, input: &Value) -> HookOutcome {
     }
     let req = SendUserFileRequest {
         tool_use_id: tool_use_id.to_owned(),
-        caption: tool_input.get("caption").and_then(Value::as_str).map(str::to_owned),
+        caption: caption.map(str::to_owned),
         files: sent,
     };
     let body = serde_json::to_vec(&req).unwrap_or_default();
@@ -708,6 +722,44 @@ pub fn hook_cli() -> i32 {
     let input: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
     match hook(&HookPaths::sandbox(), &input) {
         HookOutcome::Skip | HookOutcome::Sent(_) => 0,
+        HookOutcome::Failed(reason) => {
+            let _ = writeln!(io::stderr(), "{}", hook_failure_text(&reason));
+            HOOK_FAILED_EXIT
+        }
+    }
+}
+
+/// `send-file [--caption TEXT] PATH…` (Qwen Code has no `SendUserFile` tool: its shell tool runs this command, and
+/// the files land on that shell call's row): the exit code. `args` are the words after the command's name.
+#[must_use]
+pub fn send_file_cli(args: &[String]) -> i32 {
+    let mut caption = None;
+    let mut files = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--caption" {
+            caption = it.next().cloned();
+        } else if let Some(c) = a.strip_prefix("--caption=") {
+            caption = Some(c.to_owned());
+        } else {
+            files.push(a.clone());
+        }
+    }
+    if files.is_empty() {
+        let _ = writeln!(io::stderr(), "usage: send-file [--caption TEXT] PATH…");
+        return HOOK_FAILED_EXIT;
+    }
+    let cwd = std::env::current_dir().map_or_else(|_| WORKSPACE.to_owned(), |d| d.to_string_lossy().into_owned());
+    match send_paths(&HookPaths::sandbox(), "", &cwd, &files, caption.as_deref()) {
+        HookOutcome::Skip => 0,
+        HookOutcome::Sent(n) => {
+            let _ = writeln!(
+                io::stdout(),
+                "sent {n} file{} to the user",
+                if n == 1 { "" } else { "s" }
+            );
+            0
+        }
         HookOutcome::Failed(reason) => {
             let _ = writeln!(io::stderr(), "{}", hook_failure_text(&reason));
             HOOK_FAILED_EXIT

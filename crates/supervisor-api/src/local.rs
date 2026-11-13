@@ -40,6 +40,9 @@ pub fn hook_failure_text(reason: &str) -> String {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendUserFileRequest {
+    /// The tool call the files belong to; empty from the `send-file` command, whose call (the shell command that
+    /// runs it) the supervisor knows.
+    #[serde(default)]
     pub tool_use_id: String,
     #[serde(default)]
     pub caption: Option<String>,

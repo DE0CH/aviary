@@ -403,6 +403,9 @@ struct St {
     /// The main thread's tool calls without a result yet: a run whose open calls are all its questions waits only
     /// on the person (`asking`).
     open_tools: HashSet<String>,
+    /// The main thread's open shell calls that run `send-file`, oldest first: the next `send-file` without a tool
+    /// call of its own (Qwen Code) puts its files on the first one.
+    open_sends: Vec<String>,
     /// A parked turn whose `parked` report magpie has not answered: the heartbeat still names it.
     parking: Option<Uuid>,
     delivered: BTreeMap<u64, Delivered>,
@@ -453,6 +456,7 @@ impl St {
             asks: Vec::new(),
             asks_since: None,
             open_tools: HashSet::new(),
+            open_sends: Vec::new(),
             parking: None,
             delivered: BTreeMap::new(),
             cmd_after: 0,
@@ -1120,6 +1124,7 @@ impl Driver {
             Outcome::Canceled => (ReportedState::Canceled, None, TurnOutcome::Canceled),
         };
         st.open_tools.clear();
+        st.open_sends.clear();
         let ms = u64::try_from(st.worked(&turn).as_millis()).unwrap_or(u64::MAX);
         tracing::info!(turn = %turn.id, origin = origin_str(turn.origin), outcome = ?out, ms, held, "turn ended");
         let report = TurnStateReport {
@@ -1312,9 +1317,13 @@ impl Driver {
                     for tu in &tool_uses {
                         st.tracker.on_tool_use(tu, t);
                         st.open_tools.insert(tu.id.clone());
+                        if harness::runs_send_file(tu) {
+                            st.open_sends.push(tu.id.clone());
+                        }
                     }
                     for id in &tool_results {
                         st.open_tools.remove(id);
+                        st.open_sends.retain(|s| s != id);
                     }
                     if let (Some(u), Some(turn)) = (uuid, st.turn.as_mut())
                         && !turn.uuids.contains(&u)
@@ -1487,6 +1496,7 @@ impl Driver {
             }
             st.tracker.clear();
             st.open_tools.clear();
+            st.open_sends.clear();
             st.pending_inputs = 0;
             for a in st.asks.drain(..) {
                 fx.push(a.resolved(AskOutcome::Canceled));
@@ -3741,6 +3751,7 @@ impl Agent for Driver {
             // the wait goes on in magpie, which keeps the questions; nothing of it is this run's any more
             st.asks_since = None;
             st.open_tools.clear();
+            st.open_sends.clear();
             st.pending_inputs = 0;
             st.release = Some(reason.to_owned());
             if let Some(g) = st.live.as_mut() {
@@ -3801,7 +3812,32 @@ impl Agent for Driver {
         req: supervisor_api::local::SendUserFileRequest,
         fds: Vec<std::os::fd::OwnedFd>,
     ) -> BoxFuture<'_, Result<supervisor_api::local::SendUserFileReply, String>> {
-        Box::pin(async move { crate::sent_files::send(&self.reporter, req, fds).await })
+        Box::pin(async move {
+            let mut req = req;
+            if req.tool_use_id.is_empty() {
+                // the `send-file` command: its files go on the shell call that runs it. The harness writes the call
+                // to its output before it runs the command, so the call is known here within moments.
+                let deadline = Instant::now() + SEND_FILE_CALL_WAIT;
+                req.tool_use_id = loop {
+                    let found = {
+                        let mut st = lock(&self.st);
+                        (!st.open_sends.is_empty()).then(|| st.open_sends.remove(0))
+                    };
+                    match found {
+                        Some(id) => break id,
+                        None if Instant::now() >= deadline => {
+                            return Err(
+                                "send-file sends once per shell command: run it as a command of its own, \
+                                        with every file to send"
+                                    .to_owned(),
+                            );
+                        }
+                        None => tokio::time::sleep(Duration::from_millis(50)).await,
+                    }
+                };
+            }
+            crate::sent_files::send(&self.reporter, req, fds).await
+        })
     }
 
     fn asks(&self) -> Vec<Value> {
@@ -3815,6 +3851,9 @@ impl Agent for Driver {
 
 #[cfg(test)]
 mod tests;
+
+/// How long a `send-file` waits for the shell call that runs it to show in the harness's output.
+const SEND_FILE_CALL_WAIT: Duration = Duration::from_secs(3);
 
 /// What the model is told when nobody answered its question within [`ASK_TIMEOUT`] (Deyao, 2026-11-05): a safety
 /// limit only, since a question that waits never holds a sandbox (its turn is parked, DECISIONS 17); the model may

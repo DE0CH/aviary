@@ -7,7 +7,7 @@
 //! interrupts), `crash:N`, `bg:ID` (a background Bash task), `bgdone:ID:MS` (one that completes after MS and wakes
 //! the agent), `wake:MS` (an agent turn after MS), `slowwake:MS` (an agent turn after MS whose result comes 1.5 s
 //! later), `ask` (an `AskUserQuestion` that needs a person: its `tool_use`, then the `can_use_tool`), `askbash` (the
-//! same beside a Bash call still running), `img:N` (a tool result carrying N images). The text `/compact` is the
+//! same beside a Bash call still running), `sendsh` (a shell call running `send-file`, until an interrupt), `img:N` (a tool result carrying N images). The text `/compact` is the
 //! command: `status`, 300 ms, then a second `init`, `compact_boundary`, the summary and a `result`. Like Claude Code 2.1.304, the fake answers an open question itself when
 //! its stdin closes ("Tool permission stream closed before response received") and calls the model again.
 
@@ -153,6 +153,17 @@ impl Fake {
                 }
                 "hang" => {
                     self.assistant("working", &[]);
+                    self.waiting = Some("interrupt");
+                    return;
+                }
+                "sendsh" => {
+                    self.assistant(
+                        "sending",
+                        &[
+                            json!({"type": "tool_use", "id": "call_send", "name": "run_shell_command",
+                                  "input": {"command": "send-file out.txt"}}),
+                        ],
+                    );
                     self.waiting = Some("interrupt");
                     return;
                 }
@@ -1106,6 +1117,44 @@ async fn a_turn_in_another_harness_starts_that_harness() {
         running["transcriptPath"],
         format!("claude/projects/-workspace/{}.jsonl", w.cid)
     );
+    w.idle(&sup).await;
+}
+
+/// Qwen Code has no `SendUserFile` tool: its shell runs `send-file`, which names no tool call, and the files land
+/// on the shell call that runs it. A `send-file` no shell call runs is refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_send_file_command_puts_its_files_on_the_shell_call_that_runs_it() {
+    use std::os::fd::OwnedFd;
+    use supervisor_api::local::{SendUserFileRequest, SentFile};
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let (t, _) = w.turn_in("sendsh", magpie_api::Harness::Qwen, Some("vendor/video"), None);
+    until("running", || w.states(t).iter().any(|s| s["state"] == "running")).await;
+    let file = w.dir.join("out.txt");
+    std::fs::write(&file, b"the film").unwrap();
+    let send = || {
+        let fd: OwnedFd = std::fs::File::open(&file).unwrap().into();
+        let req = SendUserFileRequest {
+            tool_use_id: String::new(),
+            caption: Some("here".into()),
+            files: vec![SentFile {
+                path: "/workspace/out.txt".into(),
+                size: 8,
+            }],
+        };
+        crate::lifecycle::Agent::send_user_file(&*sup.driver, req, vec![fd])
+    };
+    assert_eq!(send().await.unwrap().sent, 1);
+    let kept = w.magpie.sent(w.cid);
+    assert_eq!(kept.keys().collect::<Vec<_>>(), ["call_send"]);
+    assert_eq!(kept["call_send"].request.files[0].path, "/workspace/out.txt");
+    // the call has had its send: a second one in the same command is told so
+    let refused = send().await.unwrap_err();
+    assert!(refused.contains("once per shell command"), "{refused}");
+    assert_eq!(w.magpie.sent(w.cid).len(), 1);
+    w.magpie
+        .push_command(w.cid, Some(t), CommandBody::Interrupt(magpie_api::Empty {}));
+    assert_eq!(w.ended(t).await["state"], "canceled");
     w.idle(&sup).await;
 }
 
