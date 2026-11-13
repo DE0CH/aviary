@@ -313,6 +313,9 @@ function useRetainedValue<T>(value: T, active: boolean): T {
   return active ? value : retainedRef.current;
 }
 const EMPTY_PENDING_MESSAGE_SUBMISSIONS: readonly PendingMessageSubmission[] = [];
+/** How many pages are fetched by themselves to reach the prompt of a turn folded at the top of the loaded history. */
+const HEADLESS_TURN_MAX_LOADS = 40;
+
 const GROUPED_TOOL_CALL_DETAIL_MAX_HEIGHT = 200;
 
 function resolveBottomOverlayControlOffset(clearance: number | undefined): number {
@@ -531,6 +534,27 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     });
     const isLoadingOlder = remoteIsLoadingOlder;
     const hasOlder = hasLocalHistory || remoteHasOlder;
+
+    // The turn at the top of the loaded history is folded into its reply while its prompt is on a page not loaded
+    // yet (turn-collapse/model.ts `headless`): older pages add nothing to the screen until that prompt arrives, so
+    // nothing would ask for them. They are fetched without waiting for a scroll, up to a bound a server that keeps
+    // answering "there is more" with nothing cannot run past.
+    const headlessTurnHostId = useMemo(() => {
+      for (const turn of presentation.turns.turnsByHostId.values()) if (turn.headless) return turn.hostId;
+      return null;
+    }, [presentation.turns]);
+    const headlessLoads = useRef<{ hostId: string | null; count: number }>({ hostId: null, count: 0 });
+    useEffect(() => {
+      if (!headlessTurnHostId || !remoteHasOlder || remoteIsLoadingOlder) return;
+      const loads = headlessLoads.current;
+      if (loads.hostId !== headlessTurnHostId) {
+        loads.hostId = headlessTurnHostId;
+        loads.count = 0;
+      }
+      if (loads.count >= HEADLESS_TURN_MAX_LOADS) return;
+      loads.count += 1;
+      loadRemoteOlder();
+    }, [headlessTurnHostId, loadRemoteOlder, presentation.tail.length, remoteHasOlder, remoteIsLoadingOlder]);
     const progressKey = `${remoteProgressKey ?? "local"}:${historyWindowStart}`;
 
     const baseRenderModel = useMemo(() => {
@@ -748,7 +772,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const renderAssistantMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "assistant_message" }>) => {
-        return (
+        // the reply of a turn whose prompt is above the loaded history carries that turn's summary line
+        const headlessTurn = getCollapsedTurn(item.id);
+        const message = (
           <AssistantFileLinkResolverProvider
             client={client}
             serverId={resolvedServerId}
@@ -773,8 +799,24 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             </ChatFindExpansion>
           </AssistantFileLinkResolverProvider>
         );
+        if (!headlessTurn) return message;
+        return (
+          <>
+            <TurnSummaryLine turn={headlessTurn} onExpandedChange={setTurnExpanded} />
+            {message}
+          </>
+        );
       },
-      [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot],
+      [
+        agentId,
+        client,
+        getCollapsedTurn,
+        handleInlinePathPress,
+        resolvedServerId,
+        setTurnExpanded,
+        toast,
+        workspaceRoot,
+      ],
     );
 
     const renderThoughtItem = useCallback(

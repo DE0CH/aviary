@@ -136,13 +136,40 @@ describe("collapseTurns", () => {
     expect(result.turnsByHostId.size).toBe(0);
   });
 
-  it("does not fold a turn without a reply or whose prompt is above the loaded history", () => {
-    const tail = [shell("c0"), reply("r0"), user("u1"), shell("c1")];
+  it("does not fold a turn without a reply", () => {
+    const tail = [user("u1"), shell("c1")];
 
     const result = collapse(tail);
 
     expect(result.tail).toBe(tail);
     expect(result.turnsByHostId.size).toBe(0);
+  });
+
+  // Deyao, 2026-11-13: steps folded into "used N tools" only when the whole turn was loaded. A long turn's prompt is
+  // pages above what a conversation opens on, so its steps showed one by one, and the view jumped when the prompt
+  // finally loaded and the turn folded.
+  it("folds a turn whose prompt is above the loaded history into its reply", () => {
+    const tail = [shell("c0"), shell("c00"), reply("r0"), user("u1"), shell("c1"), reply("r1")];
+
+    const result = collapse(tail);
+
+    // the loaded part of the top turn is one line, carried by the reply's row, above it
+    expect(ids(result.tail)).toEqual(["r0", "u1", "r1"]);
+    expect(result.turnsByHostId.get("r0")).toMatchObject({ hostId: "r0", headless: true, expanded: false });
+    const counted = Object.values(result.turnsByHostId.get("r0")?.summary.tools ?? {});
+    expect(counted.reduce((sum, count) => sum + count, 0)).toBe(2);
+    expect(result.turnsByHostId.get("u1")?.headless).toBeUndefined();
+    // expanded: its steps show above the reply, as a turn's do
+    const open = collapse(tail, { expandedHostIds: new Set(["r0"]) });
+    expect(ids(open.tail)).toEqual(["c0", "c00", "r0", "u1", "r1"]);
+    expect(open.nestedItemIds.has("c0")).toBe(true);
+  });
+
+  it("leaves a top turn that is still producing output, or has nothing before its reply, as it is", () => {
+    const running = [shell("c0"), reply("r0")];
+    expect(collapse(running, { isLatestTurnOpen: true }).turnsByHostId.size).toBe(0);
+    const onlyReply = [reply("r0"), user("u1")];
+    expect(collapse(onlyReply).turnsByHostId.size).toBe(0);
   });
 
   it("counts every call a tool-call group row stands for", () => {

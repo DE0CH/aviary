@@ -8,10 +8,15 @@ export interface TurnSummary {
 }
 
 export interface CollapsedTurn {
-  /** The user message the turn answers. Its row carries the turn's summary line. */
+  /**
+   * The row that carries the turn's summary line: the user message the turn answers, under it; or, for a turn whose
+   * prompt is above the loaded history (`headless`), the turn's reply, above it.
+   */
   hostId: string;
   expanded: boolean;
   summary: TurnSummary;
+  /** The turn's prompt is not loaded: the summary counts the loaded part and sits above the reply. */
+  headless?: true;
 }
 
 export interface TurnCollapse {
@@ -71,8 +76,12 @@ function findLastAssistantIndex(tail: StreamItem[], start: number, end: number):
 /**
  * Folds each answered turn into its user message: everything the agent did before its last
  * message collapses into one summary line, and that message stays in the chat. A turn folds
- * only once it is complete, its user message is loaded, and it sent messages or called tools
- * before its reply. Thoughts fold with the turn but are not counted.
+ * only once it is complete and it sent messages or called tools before its reply. Thoughts fold
+ * with the turn but are not counted.
+ *
+ * The turn at the top of the loaded history, whose prompt is on a page not loaded yet, folds the
+ * same way into its reply (the line above it): a long turn is pages of steps, and showing them one
+ * by one until the prompt arrived, then folding them all at once, made scrolling back slow and jumpy.
  */
 export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
   const { tail } = input;
@@ -83,10 +92,18 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
 
   let runStart = 0;
   const flushRun = (runEnd: number) => {
-    const host = tail[runStart - 1];
+    const prompt = tail[runStart - 1];
     const isClosed = runEnd < tail.length || !input.isLatestTurnOpen;
     const replyIndex = findLastAssistantIndex(tail, runStart, runEnd);
-    if (host?.kind !== "user_message" || !isClosed || replyIndex <= runStart) {
+    // the top of the loaded history: the run's prompt is above it, its reply carries the line
+    const headless = runStart === 0 && prompt === undefined;
+    const host = headless ? tail[replyIndex] : prompt;
+    if (
+      (host?.kind !== "user_message" && !headless) ||
+      host === undefined ||
+      !isClosed ||
+      replyIndex <= runStart
+    ) {
       output.push(...tail.slice(runStart, runEnd));
       return;
     }
@@ -100,7 +117,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
       return;
     }
     const expanded = input.expandedHostIds.has(host.id);
-    turnsByHostId.set(host.id, { hostId: host.id, expanded, summary });
+    turnsByHostId.set(host.id, { hostId: host.id, expanded, summary, ...(headless ? { headless } : {}) });
     for (const item of folded) {
       hostIdByFoldedMessageId.set(getStreamItemMessageId(item), host.id);
       if (expanded) nestedItemIds.add(item.id);
