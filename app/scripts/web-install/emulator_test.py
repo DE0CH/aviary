@@ -338,6 +338,7 @@ note(f"ok: the installed app turns with the phone ({portrait[0]}x{portrait[1]} -
 # that is brighter than about #eeeeee (#f7f7f7, #fafafa and #ffffff are ignored), then the manifest's theme_color;
 # in the dark scheme its own #121318 whatever both say (the page's dark is #181b1a, next to it).
 wait_for(SIGN_IN, 30)
+wrong = []
 for scheme, night, want in (("light", "no", (255, 255, 255)), ("dark", "yes", (0x12, 0x13, 0x18))):
     sh(f"cmd uimode night {night}")
     time.sleep(6)
@@ -345,7 +346,11 @@ for scheme, night, want in (("light", "no", (255, 255, 255)), ("dark", "yes", (0
     colour = status_bar_colour(shot(f"5-status-bar-{scheme}"))
     hexed = "#%02x%02x%02x" % colour
     if not near(colour, want):
-        fail(f"5-{scheme}", f"the status bar is {hexed} in the {scheme} scheme, not #%02x%02x%02x" % want)
+        # a wrong colour does not stop the check: step 6 is worth knowing either way
+        wrong.append(f"5-{scheme}")
+        print(f"::error title=install check::5-{scheme}: the status bar is {hexed} in the {scheme} scheme, "
+              f"not #%02x%02x%02x" % want, flush=True)
+        continue
     note(f"ok: status bar {hexed} in the {scheme} scheme")
 sh("cmd uimode night no")
 time.sleep(4)
@@ -370,4 +375,6 @@ if not left:
 if "webapp" not in top.lower() and "webapk" not in top.lower():
     fail("6-signin", "Sign in left the installed app for another window")
 note("ok: Sign in opens Access's login inside the installed app")
+if wrong:
+    sys.exit(1)
 note("ok: all steps")
