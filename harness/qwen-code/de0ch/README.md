@@ -11,6 +11,10 @@ refs/tags/vX.Y.Z` and `git merge`, never a rebase), tested against aviary's supe
 - `packages/core/src/core/openaiContentGenerator/converter.ts`: an inline audio part is sent as the bare base64 the
   OpenAI chat completions API defines for `input_audio.data`. Upstream sends a `data:` URI, which DashScope takes
   and OpenRouter refuses with 400; OpenRouter is the only endpoint this fork is run against.
+- `packages/core/src/utils/runtimeFetchOptions.ts`, `config/config.ts` (`PLAIN_HTTP_VIA_PROXY`): a plain-http request
+  through an http proxy goes to the proxy itself (absolute-form), not through a `CONNECT` tunnel. aviary's sandbox
+  proxy serves its named routes (`http://model/v1`) only that way and answers `CONNECT model:80` with 403; upstream
+  tunnels every origin, so every model call failed ("Proxy response (403) !== 200 when HTTP Tunneling").
 - `de0ch/` and `.github/workflows/de0ch-release.yml`: this file and the release build.
 
 Everything else aviary needs is configuration, not a change here: the system settings file

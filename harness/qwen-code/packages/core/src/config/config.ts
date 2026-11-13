@@ -302,6 +302,7 @@ import { FatalConfigError, getErrorMessage } from '../utils/errors.js';
 import { normalizeProxyUrl } from '../utils/proxyUtils.js';
 import {
   loadUndici,
+  PLAIN_HTTP_VIA_PROXY,
   setResolvedProxyUrlForRuntimeFetch,
   redactProxyError,
 } from '../utils/runtimeFetchOptions.js';
@@ -3997,6 +3998,7 @@ export class Config {
         .then(({ EnvHttpProxyAgent, setGlobalDispatcher }) => {
           setGlobalDispatcher(
             new EnvHttpProxyAgent({
+              ...PLAIN_HTTP_VIA_PROXY,
               httpProxy: proxyUrl,
               httpsProxy: proxyUrl,
             }),

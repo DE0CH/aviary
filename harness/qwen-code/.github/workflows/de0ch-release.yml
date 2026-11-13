@@ -30,7 +30,7 @@ jobs:
           corepack pnpm install --frozen-lockfile
       - name: the test of what this fork changes
         working-directory: packages/core
-        run: corepack pnpm exec vitest run src/core/openaiContentGenerator/converter.test.ts
+        run: corepack pnpm exec vitest run src/core/openaiContentGenerator/converter.test.ts src/utils/runtimeFetchOptions.test.ts
       - name: build, bundle, pack
         run: |
           npm run build

@@ -243,6 +243,17 @@ const NO_DISPATCHER_FALLBACK = {
  * @param proxyUrl - Proxy URL used to create a cached proxy dispatcher
  * @returns A cached undici dispatcher that honors NO_PROXY
  */
+/**
+ * DE0CH fork: a plain-http request through an http proxy is sent to the proxy
+ * itself (absolute-form `POST http://host/path`), not through a `CONNECT`
+ * tunnel, which is what undici does by default for every origin. aviary's
+ * sandbox proxy serves its named routes (`http://model/…`) only that way: it
+ * adds the credential to the request it forwards, which it cannot do inside
+ * a tunnel, and refuses `CONNECT model:80` with 403. https origins are
+ * tunnelled as before.
+ */
+export const PLAIN_HTTP_VIA_PROXY = { proxyTunnel: false } as const;
+
 export function getOrCreateSharedDispatcher(
   proxyUrl: string,
   insecure: boolean = isTlsVerificationDisabled(),
@@ -258,6 +269,7 @@ export function getOrCreateSharedDispatcher(
 
   const { EnvHttpProxyAgent } = requireUndici();
   const dispatcher = new EnvHttpProxyAgent({
+    ...PLAIN_HTTP_VIA_PROXY,
     httpProxy: proxyUrl,
     httpsProxy: proxyUrl,
     headersTimeout: 0,
@@ -326,6 +338,7 @@ export function getOrCreateMcpDispatcher(
   }
   const { EnvHttpProxyAgent } = requireUndici();
   const dispatcher = new EnvHttpProxyAgent({
+    ...PLAIN_HTTP_VIA_PROXY,
     headersTimeout: 0,
     bodyTimeout: 0,
     keepAliveTimeout: 60_000,

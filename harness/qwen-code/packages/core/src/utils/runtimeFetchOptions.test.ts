@@ -242,6 +242,18 @@ describe('getOrCreateSharedDispatcher', () => {
     expect(d1).not.toBe(d2);
   });
 
+  // DE0CH fork: aviary's sandbox proxy refuses a CONNECT tunnel to its named http routes
+  it('sends plain-http requests to the proxy itself instead of tunnelling them', () => {
+    const shared = getOrCreateSharedDispatcher('http://proxy.local') as unknown as {
+      options: { proxyTunnel?: boolean };
+    };
+    expect(shared.options.proxyTunnel).toBe(false);
+    const fromEnv = getOrCreateMcpDispatcher(false) as unknown as {
+      options: { proxyTunnel?: boolean };
+    };
+    expect(fromEnv.options.proxyTunnel).toBe(false);
+  });
+
   it('shares the same EnvHttpProxyAgent dispatcher with buildRuntimeFetchOptions when proxy is set', () => {
     const shared = getOrCreateSharedDispatcher('http://proxy.local');
     const result = buildRuntimeFetchOptions('openai', 'http://proxy.local');
