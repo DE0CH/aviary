@@ -7,12 +7,11 @@ PUBLIC = os.path.join(os.path.dirname(__file__), "../../../paseo/packages/app/pu
 LIGHT, DARK = "(prefers-color-scheme: light)", "(prefers-color-scheme: dark)"
 # name: (manifest theme_color, [(media or None, content)])
 VARIANTS = {
-    8101: ("TA", "#181b1a", [(LIGHT, "#ffffff"), (DARK, "#181b1a")]),
-    8102: ("TB", "#ffffff", [(LIGHT, "#ffffff"), (DARK, "#181b1a")]),
-    8103: ("TC", "#ffffff", [(DARK, "#181b1a")]),
-    8104: ("TD", "#181b1a", [(LIGHT, "#eeeeef"), (DARK, "#181b1a")]),
-    8105: ("TE", "#ffffff", []),
+    8107: ("TG", "#181b1a", [(LIGHT, "#f7f7f7"), (DARK, "#181b1a")]),
     8106: ("TF", "#181b1a", [(LIGHT, "#fafafa"), (DARK, "#181b1a")]),
+    8104: ("TD", "#181b1a", [(LIGHT, "#eeeeef"), (DARK, "#181b1a")]),
+    8102: ("TB", "#ffffff", [(LIGHT, "#ffffff"), (DARK, "#181b1a")]),
+    8108: ("TH", "#f7f7f7", [(LIGHT, "#f7f7f7"), (DARK, "#181b1a")]),
 }
 
 
@@ -37,7 +36,7 @@ def handler(name, theme, metas):
             if self.path == "/manifest.json":
                 body, kind = manifest, "application/json"
             elif self.path.startswith("/pwa-icon-"):
-                body, kind = open(os.path.join(PUBLIC, self.path.lstrip("/")), "rb").read(), "image/png"
+                body, kind = open(os.path.join(PUBLIC, "branding", self.path.lstrip("/").replace("pwa-", "")), "rb").read(), "image/png"
             else:
                 body, kind = html, "text/html"
             self.send_response(200)
@@ -48,8 +47,12 @@ def handler(name, theme, metas):
     return H
 
 
-if __name__ == "__main__":
+def start():
     for port, (name, theme, metas) in VARIANTS.items():
         server = http.server.ThreadingHTTPServer(("127.0.0.1", port), handler(name, theme, metas))
         threading.Thread(target=server.serve_forever, daemon=True).start()
+
+
+if __name__ == "__main__":
+    start()
     threading.Event().wait()

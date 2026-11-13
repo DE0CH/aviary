@@ -11,8 +11,7 @@ source = open(os.path.join(HERE, "../emulator_test.py")).read()
 os.environ.setdefault("YYC_SITE", "http://localhost")
 exec(source[:source.index("# ---- 0. Chrome")])  # the helpers
 
-subprocess.Popen([sys.executable, os.path.join(HERE, "server.py")])
-time.sleep(2)
+variants.start()  # daemon threads: the step ends with this script
 sh("echo 'chrome --disable-fre --no-default-browser-check --no-first-run' > /data/local/tmp/chrome-command-line")
 sh(f"am set-debug-app --persistent {CHROME}")
 sh("settings put system accelerometer_rotation 0; settings put system user_rotation 0; cmd uimode night no")
@@ -20,7 +19,7 @@ for _ in range(10):
     answer_anr(nodes())
     time.sleep(3)
 
-for port, (name, theme, metas) in variants.VARIANTS.items():
+def run(port, name, theme, metas):
     adb("reverse", f"tcp:{port}", f"tcp:{port}")
     ready = None
     for attempt in range(5):
@@ -30,7 +29,7 @@ for port, (name, theme, metas) in variants.VARIANTS.items():
             break
     if not ready:
         note(f"{name}: the page did not load")
-        continue
+        return
     time.sleep(3)
     menu = wait_for(r".*menu_button", 20, by=("id",))
     tap(menu)
@@ -39,7 +38,7 @@ for port, (name, theme, metas) in variants.VARIANTS.items():
         shot(f"{name}-no-item")
         note(f"{name}: no install item in the menu")
         sh("input keyevent KEYCODE_BACK")
-        continue
+        return
     tap(item)
     button = wait_for(r"Install|Add", 15, clear=False)
     if button:
@@ -69,12 +68,12 @@ for port, (name, theme, metas) in variants.VARIANTS.items():
     if not icon:
         shot(f"{name}-no-icon")
         note(f"{name}: no icon on the home screen")
-        continue
+        return
     tap(icon)
     if not wait_for(f"Ready {name}", 40):
         shot(f"{name}-no-app")
         note(f"{name}: the installed app did not open")
-        continue
+        return
     found = {}
     for scheme, night in (("light", "no"), ("dark", "yes")):
         sh(f"cmd uimode night {night}")
@@ -85,3 +84,12 @@ for port, (name, theme, metas) in variants.VARIANTS.items():
     note(f"{name}: manifest {theme}, metas {[c for _m, c in metas]} -> light {found['light']}, dark {found['dark']}")
     sh("input keyevent KEYCODE_HOME")
     time.sleep(2)
+
+
+for port, (name, theme, metas) in variants.VARIANTS.items():
+    try:
+        run(port, name, theme, metas)
+    except Exception as error:  # a dead emulator ends the run; anything else is that variant's
+        note(f"{name}: {type(error).__name__}")
+        if subprocess.run(["adb", "get-state"], capture_output=True).stdout.strip() != b"device":
+            sys.exit(1)
