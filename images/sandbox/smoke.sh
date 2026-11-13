@@ -294,6 +294,30 @@ check "mock-model filed Claude Code's Messages calls under the conversation the 
   jq -e 'length > 0' "$work/requests.json"
 check "the memory guard runs (the keeper is PID 1)" sh -c "! docker logs '$name' 2>&1 | grep -q 'memory guard off'"
 
+# a turn in Qwen Code, the other harness: the supervisor ends Claude Code's generation and starts Qwen Code, whose
+# chat completions call reaches mock-model through the proxy as http://model/v1/chat/completions (a plain proxied
+# request: the proxy refuses a CONNECT tunnel to its named routes) and answers "ok"
+qturn=$(curl -sf -X POST -H 'content-type: application/json' --data '{"text":"Say ok.","harness":"qwen","model":"mock/qwen"}' \
+  http://127.0.0.1:7300/turn)
+qtid=$(jq -r .turnId <<< "$qturn")
+qend=
+for _ in $(seq 240); do
+  qend=$(curl -sf http://127.0.0.1:7300/calls/turn_state |
+    jq -r --arg t "$qtid" '[.[] | select(.params.turnId == $t) | .body.state] | map(select(. == "completed" or . == "failed" or . == "canceled")) | first // empty')
+  [ -n "$qend" ] && break
+  sleep 0.5
+done
+check "a start_turn in Qwen Code ran it to the end: ${qend:-no end}" test "$qend" = completed
+curl -sf http://127.0.0.1:7300/calls/turn_state > "$work/turn-states.json"
+check "the turn ran in Qwen Code, on its own transcript" \
+  jq -e --arg t "$qtid" 'any(.[]; .params.turnId == $t and .body.state == "running" and .body.harness == "qwen"
+    and (.body.transcriptPath | test("^qwen/projects/-workspace/chats/[0-9a-f-]+[.]jsonl$")))' "$work/turn-states.json"
+curl -sf http://127.0.0.1:7300/gateway > "$work/gateway-qwen.json"
+check "the gateway proxied Qwen Code's POST http://model/v1/chat/completions (absolute form), answered 200" \
+  jq -e 'any(.[]; .method == "POST" and (.target | test("^http://model/v1/chat/completions([?]|$)")) and .status == 200)' "$work/gateway-qwen.json"
+check "Qwen Code's reply is on its stdout" \
+  x sh -c 'cat /var/lib/supervisor/run/*/stdout.ndjson | grep -q "\"qwen_code_version\"" && cat /var/lib/supervisor/run/*/stdout.ndjson | grep "\"type\":\"result\"" | grep -q "\"result\":\"ok\""'
+
 # Docker on demand: the wrapper asks the supervisor (GET /start on /run/supervisor/docker.sock), which starts
 # dockerd through the keeper; uid 1000 then uses it (dockerd's socket is group node's) and runs a container from an
 # image imported offline (one static binary)

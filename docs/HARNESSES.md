@@ -32,10 +32,15 @@ ran before, for a pick back.
   (`/etc/claude-code`; `/etc/qwen-code/settings.json` with the model route and the managed skills' folder), the main
   transcript's path, the compaction command (`/compact`, `/compress`), the tool that asks the person a question
   (`AskUserQuestion`, `ask_user_question`; Qwen Code's answers are keyed by the question's index), and how the
-  thinking level is set. A generation is reused only by a turn of the same harness and session; a turn in the other
+  thinking level is set, and how a turn's end waits for its transcript (Claude Code's lines carry the uuids its
+  stdout shows, so the end waits for those lines; Qwen Code's records have their own, so its end waits for the
+  writes in flight). Qwen Code takes only a UUID of version 1 to 5 as a session id: a conversation whose id is
+  another kind gets the version 5 UUID made from it (`launch::qwen_session_id`). A generation is reused only by a turn of the same harness and session; a turn in the other
   harness ends it and starts that harness's.
 - **Model calls.** Claude Code calls `http://model/v1/messages`; Qwen Code calls `http://model/v1/chat/completions`
-  (the gateway's `model` route must allow both paths) with the placeholder key `AVIARY_MODEL_KEY`.
+  (`gateway_api::models::CHAT_COMPLETIONS`: a gateway's `model` route allows both paths) with the placeholder key
+  `AVIARY_MODEL_KEY`. The fork sends a plain-http request to the proxy itself; upstream Qwen Code tunnels every
+  origin with `CONNECT`, which the sandbox proxy refuses for its named routes.
 - **Files to the person.** Claude Code has the `SendUserFile` tool and its hook. Qwen Code has no such tool: its
   shell runs `send-file [--caption TEXT] PATH…` (the supervisor binary under that name), which names no tool call;
   the driver puts the files on the open shell call that runs it, one send per call. Its instructions say so

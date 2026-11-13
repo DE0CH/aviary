@@ -114,7 +114,10 @@ impl FixedName {
             Self::Magpie | Self::Hermit => path.starts_with(hermit_api::routes::SANDBOX_SURFACE_PREFIX),
             Self::Model => matches!(
                 (method, path),
-                ("POST", models::MESSAGES | models::COUNT_TOKENS) | ("GET", models::MODELS)
+                (
+                    "POST",
+                    models::MESSAGES | models::COUNT_TOKENS | models::CHAT_COMPLETIONS
+                ) | ("GET", models::MODELS)
             ),
             Self::Tools => match method {
                 "GET" => path == models::TOOLS_LIST || path == models::TOOLS_OPENAPI,
@@ -186,6 +189,9 @@ mod tests {
         assert!(!Hermit.allows("GET", "/v1/sandbox//self"));
         assert!(Model.allows("POST", "/v1/messages"));
         assert!(Model.allows("POST", "/v1/messages/count_tokens"));
+        // Qwen Code's model calls
+        assert!(Model.allows("POST", "/v1/chat/completions"));
+        assert!(!Model.allows("GET", "/v1/chat/completions"));
         assert!(Model.allows("GET", "/v1/aviary/models"));
         assert!(!Model.allows("GET", "/v1/messages"));
         assert!(!Model.allows("GET", "/v1/models"));

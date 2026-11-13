@@ -1117,6 +1117,12 @@ impl Driver {
     #[allow(clippy::needless_pass_by_value)] // an outcome is consumed by the turn's end
     fn end_turn_now(&self, st: &mut St, fx: &mut Vec<Fx>, outcome: Outcome, wait: bool, exit_code: Option<i32>) {
         let Some(turn) = st.turn.take() else { return };
+        // only a harness whose transcript lines carry its stdout's uuids can be waited for by them
+        let wait = wait
+            && st
+                .live
+                .as_ref()
+                .is_none_or(|g| harness::lines_carry_stdout_uuids(g.harness));
         let held = !st.tracker.is_empty() && st.live.is_some();
         let (state, err, out) = match &outcome {
             Outcome::Completed => (ReportedState::Completed, None, TurnOutcome::Completed),

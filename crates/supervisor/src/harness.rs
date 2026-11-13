@@ -43,6 +43,18 @@ pub const fn ask_tool(h: Harness) -> &'static str {
     }
 }
 
+/// Whether the harness's transcript lines carry the uuids its stdout messages show. Claude Code's do, so a turn's
+/// end waits until magpie has the lines of every message stdout showed (supervisor 8.2). Qwen Code's transcript
+/// records have uuids of their own (measured on 0.27.3), so its turn's end waits for the filesystem writes in
+/// flight instead: Qwen Code writes a record before it prints the message.
+#[must_use]
+pub const fn lines_carry_stdout_uuids(h: Harness) -> bool {
+    match h {
+        Harness::Claude => true,
+        Harness::Qwen => false,
+    }
+}
+
 /// The command that sends files to the person from a shell (Qwen Code, which has no `SendUserFile` tool).
 pub const SEND_FILE: &str = "send-file";
 
@@ -79,6 +91,7 @@ mod tests {
         assert_eq!(of_process("dockerd"), None);
         assert_eq!(compact_command(Harness::Qwen), "/compress");
         assert_eq!(ask_tool(Harness::Qwen), "ask_user_question");
+        assert!(lines_carry_stdout_uuids(Harness::Claude) && !lines_carry_stdout_uuids(Harness::Qwen));
         let call = |name: &str, command: &str| crate::cc::stream::ToolUse {
             id: "c1".into(),
             name: name.into(),

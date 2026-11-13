@@ -1,7 +1,8 @@
 //! The model route (platform R18) and the other fixed-name paths.
 //!
 //! `GET http://model/v1/aviary/models` serves both pigeon (in-cluster with its pair token) and the supervisor
-//! (through the gateway); `POST /v1/messages` and `/v1/messages/count_tokens` are the Messages API relayed with the
+//! (through the gateway); `POST /v1/messages` and `/v1/messages/count_tokens` are the Messages API (Claude Code's
+//! calls) and `POST /v1/chat/completions` the `OpenAI` chat completions API (Qwen Code's), each relayed with the
 //! implementation's credential.
 
 use std::time::Duration;
@@ -11,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MESSAGES: &str = "/v1/messages";
 pub const COUNT_TOKENS: &str = "/v1/messages/count_tokens";
+pub const CHAT_COMPLETIONS: &str = "/v1/chat/completions";
 pub const MODELS: &str = "/v1/aviary/models";
 /// `tools` (decision 15: REST, no MCP): `GET /v1/tools` lists the tools, `POST /v1/tools/<name>` calls one with its
 /// JSON arguments, `GET /v1/openapi.json` describes both.

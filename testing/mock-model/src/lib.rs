@@ -6,6 +6,7 @@
 //!   or Anthropic's native one ([`sse::Wire`]: per process, [`MockModel::with_wire`] / `--wire`, or per script
 //!   entry, `wire`); bodies up to [`MAX_BODY`] (the gateway's `model` route limit, platform 3.11.3);
 //! - `POST /v1/messages/count_tokens`: a fixed estimate (`ceil(request bytes / 4)`);
+//! - `POST /v1/chat/completions`: the `OpenAI` chat completions API as Qwen Code calls it; always the text `ok`;
 //! - `GET /v1/aviary/models`: the configured [`gateway_api::models::Models`];
 //! - `POST /__script`: queue a reply for requests that match (`conversation` from `Aviary-Sandbox-Conversation`,
 //!   `textContains` in the last user message, `nth` request of the conversation, `model`), used `times` times
@@ -367,6 +368,7 @@ impl MockModel {
         Router::new()
             .route(gateway_api::models::MESSAGES, post(messages))
             .route(gateway_api::models::COUNT_TOKENS, post(count_tokens))
+            .route(gateway_api::models::CHAT_COMPLETIONS, post(chat_completions))
             .route(gateway_api::models::MODELS, get(models))
             .route("/__script", post(script))
             .route("/__requests", get(requests))
@@ -755,6 +757,40 @@ async fn count_tokens(body: Result<Bytes, BytesRejection>) -> Response {
         StatusCode::OK,
         &json!({"input_tokens": (body.len() as u64).div_ceil(4)}),
     )
+}
+
+/// `POST /v1/chat/completions` (Qwen Code's calls): the text `ok`, as a stream of chunks when the request asks for
+/// one (`stream: true`), else as one completion. Nothing is scripted or recorded for this route.
+async fn chat_completions(body: Bytes) -> Response {
+    let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let model = v.get("model").and_then(Value::as_str).unwrap_or("mock").to_owned();
+    let usage = json!({"prompt_tokens": 7, "completion_tokens": 1, "total_tokens": 8});
+    if v.get("stream").and_then(Value::as_bool) != Some(true) {
+        return aviary_core::http::json(
+            StatusCode::OK,
+            &json!({"id": "chatcmpl-mock", "object": "chat.completion", "created": 0, "model": model, "usage": usage,
+                    "choices": [{"index": 0, "finish_reason": "stop",
+                                 "message": {"role": "assistant", "content": "ok"}}]}),
+        );
+    }
+    let chunk = |choices: Value, usage: Value| {
+        format!(
+            "data: {}\n\n",
+            json!({"id": "chatcmpl-mock", "object": "chat.completion.chunk", "created": 0, "model": model,
+                   "choices": choices, "usage": usage})
+        )
+    };
+    let text = [
+        chunk(
+            json!([{"index": 0, "delta": {"role": "assistant", "content": "ok"}, "finish_reason": null}]),
+            Value::Null,
+        ),
+        chunk(json!([{"index": 0, "delta": {}, "finish_reason": "stop"}]), Value::Null),
+        chunk(json!([]), usage),
+        "data: [DONE]\n\n".to_owned(),
+    ]
+    .concat();
+    ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], text).into_response()
 }
 
 async fn models(State(m): State<Arc<MockModel>>) -> Response {

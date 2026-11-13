@@ -327,6 +327,11 @@ struct TurnRequest {
     text: String,
     #[serde(default)]
     resume: Option<String>,
+    /// The harness the turn runs in (absent: Claude Code) and its model (absent: the models route's default).
+    #[serde(default)]
+    harness: magpie_api::Harness,
+    #[serde(default)]
+    model: Option<String>,
 }
 
 async fn turn(State(w): State<Arc<World>>, Json(t): Json<TurnRequest>) -> Json<Value> {
@@ -335,7 +340,7 @@ async fn turn(State(w): State<Arc<World>>, Json(t): Json<TurnRequest>) -> Json<V
         w.cid,
         Some(turn_id),
         CommandBody::StartTurn(StartTurn {
-            harness: magpie_api::Harness::default(),
+            harness: t.harness,
             carry_over: None,
             text: t.text,
             files: vec![],
@@ -345,7 +350,7 @@ async fn turn(State(w): State<Arc<World>>, Json(t): Json<TurnRequest>) -> Json<V
             },
             sent_at: magpie_api::Timestamp::now(),
             answers: Vec::new(),
-            model: None,
+            model: t.model,
             thinking: None,
         }),
     );

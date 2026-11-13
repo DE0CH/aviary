@@ -64,13 +64,19 @@ impl Session {
         }
     }
 
-    /// `--session-id <id>`.
+    /// `--session-id <id>`: a harness's first session in a conversation is named after the conversation (`id`).
+    /// Qwen Code takes only UUIDs of versions 1 to 5 as a session id, so any other id (a version 7 conversation id)
+    /// is named by the version 5 UUID made from it.
     #[must_use]
     pub fn new(harness: Harness, id: impl Into<String>) -> Self {
+        let id = id.into();
         Self {
             harness,
             resume: false,
-            id: id.into(),
+            id: match harness {
+                Harness::Claude => id,
+                Harness::Qwen => qwen_session_id(&id),
+            },
         }
     }
 
@@ -92,6 +98,24 @@ pub struct Start {
     pub instructions: String,
     /// The model the generation runs. Claude Code takes it from `ANTHROPIC_MODEL`; Qwen Code from `--model`.
     pub model: String,
+}
+
+/// The session id Qwen Code is given for a conversation: `id` itself when Qwen Code takes it (an RFC 4122 UUID of
+/// version 1 to 5), else the version 5 UUID of `id` (the same for the same conversation, always).
+#[must_use]
+pub fn qwen_session_id(id: &str) -> String {
+    let taken = uuid::Uuid::parse_str(id)
+        .ok()
+        .filter(|u| (1..=5).contains(&u.get_version_num()) && u.get_variant() == uuid::Variant::RFC4122);
+    match taken {
+        Some(u) => u.hyphenated().to_string(),
+        None => uuid::Uuid::new_v5(
+            &uuid::Uuid::NAMESPACE_URL,
+            format!("aviary:conversation:{id}").as_bytes(),
+        )
+        .hyphenated()
+        .to_string(),
+    }
 }
 
 /// How Qwen Code sends files to the person (it has no `SendUserFile` tool): added to its instructions.
@@ -349,7 +373,8 @@ mod tests {
             instructions: "You help the staff.".into(),
             model: "xiaomi/mimo-v2.6-pro".into(),
         };
-        let a = argv(QWEN_BIN, &Session::new(Harness::Qwen, "c1"), &start);
+        let conversation = "279aabf0-1111-4222-8333-444455556666";
+        let a = argv(QWEN_BIN, &Session::new(Harness::Qwen, conversation), &start);
         assert_eq!(a[0], QWEN_BIN);
         for pair in [
             ["--output-format", "stream-json"],
@@ -366,7 +391,7 @@ mod tests {
         for t in QWEN_EXCLUDED_TOOLS {
             assert!(a.iter().any(|x| x == &format!("--exclude-tools={t}")), "{t}");
         }
-        assert_eq!(a[a.len() - 2..], ["--session-id".to_owned(), "c1".to_owned()]);
+        assert_eq!(a[a.len() - 2..], ["--session-id".to_owned(), conversation.to_owned()]);
         // Claude Code's flags mean nothing to it
         for absent in [
             "--permission-mode",
@@ -382,6 +407,25 @@ mod tests {
         let bare = argv(QWEN_BIN, &Session::new(Harness::Qwen, "c1"), &Start::default());
         let at = bare.iter().position(|x| x == "--append-system-prompt").unwrap();
         assert_eq!(bare[at + 1], QWEN_SEND_FILE);
+    }
+
+    /// Qwen Code refuses a session id that is not a UUID of version 1 to 5 (it prints its usage and exits): a
+    /// conversation with such an id keeps it, any other gets a stable one Qwen Code takes.
+    #[test]
+    fn qwen_codes_session_is_named_by_an_id_it_takes() {
+        let v4 = "279aabf0-1111-4222-8333-444455556666";
+        assert_eq!(qwen_session_id(v4), v4);
+        assert_eq!(Session::new(Harness::Qwen, v4).id(), v4);
+        let v7 = "01a1d4d5-0164-751e-8103-360b529e860a";
+        let named = qwen_session_id(v7);
+        assert_ne!(named, v7);
+        assert_eq!(named, qwen_session_id(v7), "the same every time");
+        let u = uuid::Uuid::parse_str(&named).unwrap();
+        assert_eq!((u.get_version_num(), u.get_variant()), (5, uuid::Variant::RFC4122));
+        assert_eq!(Session::new(Harness::Qwen, v7).id(), named);
+        // Claude Code takes the conversation's id as it is; a resumed session is never renamed
+        assert_eq!(Session::new(Harness::Claude, v7).id(), v7);
+        assert_eq!(Session::resume(Harness::Qwen, v7).id(), v7);
     }
 
     /// Qwen Code's environment carries no model settings (they are in its managed settings file) and none of

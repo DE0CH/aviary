@@ -87,6 +87,10 @@ pub const QWEN: Table = Table {
         "logs",
         "debug",
         "ide",
+        // seen from a real turn in a sandbox (2026-11-13): looked up or made at start, nothing a conversation keeps
+        ".git",
+        "rules",
+        "review-state",
     ],
     refused: &[
         "settings.json",

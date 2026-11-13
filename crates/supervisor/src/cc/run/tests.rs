@@ -1076,15 +1076,20 @@ async fn a_turn_in_another_harness_starts_that_harness() {
         "Claude Code first"
     );
 
+    // the test world's conversation id is a version 7 UUID, which Qwen Code does not take as a session id
+    let qsid = crate::cc::launch::qwen_session_id(&w.cid.to_string());
     let (t1, _) = w.turn_in("say:one", Harness::Qwen, Some("vendor/video"), None);
-    assert_eq!(w.ended(t1).await["state"], "completed");
+    let end = w.ended(t1).await;
+    assert_eq!(end["state"], "completed");
+    // Qwen Code's transcript lines do not carry its stdout's uuids: its turn's end names none to wait for
+    assert_eq!(end.get("lastUuid"), None, "{end}");
     let spawns = w.spawns();
     assert_eq!(spawns.len(), 2, "{spawns:?}");
     let q = &spawns[1];
     for part in [
         "--approval-mode yolo".to_owned(),
         "--model vendor/video".to_owned(),
-        format!("--session-id {}", w.cid),
+        format!("--session-id {qsid}"),
         "--exclude-tools=cron_create".to_owned(),
         "--append-system-prompt".to_owned(),
     ] {
@@ -1094,10 +1099,10 @@ async fn a_turn_in_another_harness_starts_that_harness() {
     let running = &w.states(t1)[0];
     assert_eq!(running["state"], "running");
     assert_eq!(running["harness"], "qwen");
-    assert_eq!(running["providerSessionId"], w.cid.to_string());
+    assert_eq!(running["providerSessionId"], qsid);
     assert_eq!(
         running["transcriptPath"],
-        format!("qwen/projects/-workspace/chats/{}.jsonl", w.cid)
+        format!("qwen/projects/-workspace/chats/{qsid}.jsonl")
     );
     let settings: Value =
         serde_json::from_slice(&std::fs::read(w.dir.join("managed-qwen/settings.json")).unwrap()).unwrap();
@@ -1107,7 +1112,12 @@ async fn a_turn_in_another_harness_starts_that_harness() {
 
     // back in Claude Code: the Qwen Code generation ends, Claude Code resumes its own session
     let (t2, _) = w.turn_in("say:two", Harness::Claude, None, Some(w.cid.to_string()));
-    assert_eq!(w.ended(t2).await["state"], "completed");
+    let end = w.ended(t2).await;
+    assert_eq!(end["state"], "completed");
+    assert!(
+        end["lastUuid"].is_string(),
+        "Claude Code's turn ends at its last line: {end}"
+    );
     let spawns = w.spawns();
     assert_eq!(spawns.len(), 3, "{spawns:?}");
     assert!(spawns[2].contains(&format!("--resume {}", w.cid)) && spawns[2].contains("--permission-mode"));
