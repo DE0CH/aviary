@@ -4,7 +4,10 @@
     <meta charset="utf-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="robots" content="noindex,nofollow" />
-    <meta name="theme-color" content="#181B1A" />
+    <!-- The browser's bar and an installed app's status bar: the page's own background (styles/theme.ts surface0),
+         by the system's scheme until the app sets its theme's (appearance/system-bars.web.tsx) -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#181b1a" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="YYC AI" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -192,10 +195,7 @@
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"><div id="boot" aria-hidden="true"><div class="side"><div class="rows"><div class="bar"></div><div class="bar"></div><div class="bar"></div></div><div class="list"><div class="bar"></div></div></div><div class="main"><div class="head"><div class="bar"></div></div><div class="center"><div class="col"><svg class="logo" viewBox="0 0 48 48"><rect width="48" height="48" rx="12" fill="#1b2a3a"/><g transform="translate(1.5 0.4) scale(0.088)"><polygon points="233.16,105.56 233.16,248.81 109.10,320.44 109.10,177.19" fill="#02A9C4"/><polygon points="278.84,105.56 402.90,177.19 402.90,320.44 278.84,248.81" fill="#0A7F95"/><polygon points="256.00,288.37 380.07,360.00 256.00,431.63 131.93,360.00" fill="#E5A711"/></g></svg><div class="bar greet"></div><div class="bar lead"></div><div class="box"></div></div></div></div></div></div>
     <script>
-      // Inside the Android app (its WebView names itself YYCAI-Android, android/README.md) the app is installed ahead,
-      // so none of the first-load frame: no page frame here and none again while connecting (Deyao, 2026-11-03)
-      if (/\bYYCAI-Android\//.test(navigator.userAgent)) document.getElementById("boot").remove();
-      else window.__yycBootFrame = document.getElementById("boot").outerHTML;
+      window.__yycBootFrame = document.getElementById("boot").outerHTML;
     </script>
     <div id="yyc-early" data-yyc-early><textarea id="yyc-early-input" rows="1" autocomplete="off" spellcheck="true"></textarea><button type="button" tabindex="-1" disabled aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button></div>
     <script>
@@ -221,7 +221,7 @@
         }
         var path = norm(location.pathname);
         var signedOut = (d.querySelector('meta[name="yyc-signed-out"]') || {}).content === "1";
-        var skip = signedOut || /\bYYCAI-Android\//.test(navigator.userAgent) ||
+        var skip = signedOut ||
           /(^|[#&])jarvis-view-as=/.test(location.hash) || !!read("sessionStorage", "yyc.view-as") ||
           !!w.paseoDesktop || !COMPOSER.test(path);
         var active = false, composing = false, readied = false, handoff = null, timer = 0, observer = null;
@@ -285,6 +285,10 @@
         if (!signedOut) {
           if (settings.theme === "light") html.classList.add("yyc-light");
           else if (settings.theme && settings.theme !== "auto" && settings.theme !== "plugin") html.classList.add("yyc-dark");
+          // The saved theme's background on the bar too, before the app arrives
+          var bar = html.classList.contains("yyc-light") ? "#ffffff" : html.classList.contains("yyc-dark") ? "#181b1a" : "";
+          var metas = d.querySelectorAll('meta[name="theme-color"]');
+          for (var k = 0; bar && k < metas.length; k++) metas[k].setAttribute("content", bar);
           if (CONV.test(path)) html.classList.add("yyc-conv");
           // The column's width (appearance/provider.tsx resolveContentMaxWidth; storage.ts clamps it to 600..4000)
           var colW = settings.contentMaxWidth;

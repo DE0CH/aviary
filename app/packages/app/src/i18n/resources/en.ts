@@ -2443,12 +2443,6 @@ export const en = {
     },
     general: {
       title: "General",
-      androidApp: {
-        title: "Apps",
-        label: "Android",
-        description: "Install YYC AI on an Android phone. Open the downloaded file to install it.",
-        download: "Download",
-      },
       sending: "Sending",
       browserData: {
         title: "Browser data",

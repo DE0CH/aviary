@@ -2401,12 +2401,6 @@ export const zhHK: TranslationResources = {
     },
     general: {
       title: "通用",
-      androidApp: {
-        title: "應用程式",
-        label: "Android",
-        description: "在 Android 手機上安裝 YYC AI。下載後打開檔案即可安裝。",
-        download: "下載",
-      },
       sending: "傳送",
       browserData: {
         title: "瀏覽器資料",

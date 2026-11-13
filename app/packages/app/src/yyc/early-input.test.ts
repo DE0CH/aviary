@@ -83,13 +83,13 @@ describe("public/index.html early message box", () => {
     expect(page("https://ai.example/h/a/workspace/b/").box()).not.toBeNull();
   });
 
-  it("and the page frame are both left out inside the Android app", () => {
+  it("and the page frame are drawn for every browser, a phone's installed app included", () => {
     const { window, box } = page("https://ai.example/new", {
       userAgent: "Mozilla/5.0 (Linux; Android 15; wv) Chrome/140.0 Mobile Safari/537.36 YYCAI-Android/1.0",
     });
-    expect(box()).toBeNull();
-    expect(window.document.getElementById("boot")).toBeNull();
-    expect((window as unknown as { __yycBootFrame?: string }).__yycBootFrame).toBeUndefined();
+    expect(box()).not.toBeNull();
+    expect(window.document.getElementById("boot")).not.toBeNull();
+    expect((window as unknown as { __yycBootFrame?: string }).__yycBootFrame).toContain("boot");
   });
 
   it("puts the box at the bottom on a conversation page", () => {
