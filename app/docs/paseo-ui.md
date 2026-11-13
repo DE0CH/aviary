@@ -40,7 +40,12 @@ server (`server/`) serves no deployment.
   level any model has. The row is the same for every model, so nothing moves when the model changes: a level the
   chosen model lacks is disabled in place, and a model with no levels greys the whole row. A conversation keeps its
   own choice (`setAgentModel`, `setAgentThinkingOption`; used from its next message on); a new conversation starts
-  on the default model at that model's own level, whatever was chosen last.
+  on the default model at that model's own level, whatever was chosen last. A model may run in another agent
+  program than the others (the snapshot's `metadata.harness`; the programs keep separate sessions): picking one that
+  moves a conversation with messages asks first (`yyc/harness-switch-store.ts`, the dialog
+  `yyc/harness-switch-dialog.tsx` in the hosts chunk: Continue / Cancel), and during that conversation's next turn
+  the working indicator says 「正在總結至今的對話…」 (`yyc/harness-switch-label.ts`): the reply begins with a summary of
+  the conversation so far. Typing and sending are never held back.
 - **Developer controls hidden** (staff are not developers; each is a constant or a server_info feature, so the
   upstream code path stays): the composer's 「新增 issue 或 PR」 GitHub picker (only with `features.forgeSearch`, which
   the server never sends); the fork menu on earlier replies; the explorer (`workspace-tabs/explorer-sidebar.ts`
@@ -75,6 +80,8 @@ server (`server/`) serves no deployment.
   false` (pigeon, from hermit's `conversations.peopleCreate`; Jarvis 4, whose sessions start in the Jarvis 4 app) greys
   out the sidebar's 新對話, drops it from the palette and the shortcut, and `/new` says where conversations start
   (`me.ts` `useNewConversationsAvailable`, `new-workspace-screen.tsx`).
+- **Sent files show on the call that sent them**: the SendUserFile call, or any tool call whose metadata carries
+  `sentFiles` (an agent program without that tool sends from a shell command).
 - **Sent files keep their version** (Deyao, 2026-10-28): each file card carries its SendUserFile call's id
   (`sent` on the tool call's `sentFiles`, paseo-timeline.ts) and downloads with `files/raw?…&sent=<id>`, so a server
   that keeps a snapshot of each send can serve the file as it was sent (this server, in Jarvis mode, reads the live
