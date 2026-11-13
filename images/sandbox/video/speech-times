@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""speech-times: measure where there is sound in a video's or audio file's sound track.
+
+Prints one line per stretch of sound (start - end in the file's seconds), split at pauses of 0.25 s or more, from
+the loudness of 20 ms steps. Nothing is guessed and no model is asked: these are the times to cut on. What is said in
+each stretch you hear yourself (clip + read_file).
+
+usage: speech-times FILE [--start S] [--end S] [--pause SECONDS]
+"""
+import argparse, array, math, subprocess, sys
+
+ap = argparse.ArgumentParser()
+ap.add_argument("file")
+ap.add_argument("--start", type=float, default=0.0)
+ap.add_argument("--end", type=float, default=None)
+ap.add_argument("--pause", type=float, default=0.25)
+a = ap.parse_args()
+cmd = ["ffmpeg", "-v", "error", "-ss", str(a.start)] + (["-to", str(a.end)] if a.end is not None else []) + \
+      ["-i", a.file, "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-"]
+r = subprocess.run(cmd, capture_output=True)
+if r.returncode != 0 or not r.stdout:
+    sys.exit(f"speech-times: no sound track could be read from {a.file}: {r.stderr.decode()[-300:]}")
+x = array.array("h"); x.frombytes(r.stdout[:len(r.stdout) // 2 * 2])
+step = 320
+db = [10 * math.log10(sum(v * v for v in x[i:i + step]) / step + 1.0) for i in range(0, len(x) - step + 1, step)]
+srt = sorted(db); floor, top = srt[len(srt) // 10], srt[len(srt) * 95 // 100]
+if top - floor < 6:
+    print("(no clear loud and quiet parts: constant sound or silence throughout)"); sys.exit(0)
+thr = floor + 0.4 * (top - floor)
+segs, i = [], 0
+while i < len(db):
+    if db[i] > thr:
+        j = i
+        while j < len(db) and db[j] > thr:
+            j += 1
+        if segs and (i - segs[-1][1]) * 0.02 < a.pause:
+            segs[-1][1] = j
+        else:
+            segs.append([i, j])
+        i = j
+    else:
+        i += 1
+segs = [(a.start + s * 0.02, a.start + e * 0.02) for s, e in segs if (e - s) * 0.02 >= 0.2]
+for n, (s, e) in enumerate(segs, 1):
+    gap = f"   (pause before: {s - segs[n - 2][1]:.2f} s)" if n > 1 else ""
+    print(f"{n:3d}. {s:7.2f} - {e:7.2f}{gap}")
+print(f"{len(segs)} stretches of sound, measured from the sound track; each starts and ends in a pause.")

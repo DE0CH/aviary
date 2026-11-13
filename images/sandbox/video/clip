@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""clip: prepare a stretch of a video so the model can watch and hear it itself.
+
+Writes two small files for [start, end] of FILE: the picture (360p, low frame rate, no sound) as .mp4 and the sound
+(mono) as .mp3, and prints their paths. Open BOTH with read_file in the same step: the picture and the sound then
+sit in the conversation. Models ignore a sound track inside a video file, which is why the sound is its own file.
+
+usage: clip FILE [--start S] [--end S] [--fps N] [--height H]
+"""
+import argparse, os, re, subprocess, sys
+
+ap = argparse.ArgumentParser()
+ap.add_argument("file")
+ap.add_argument("--start", type=float, default=0.0)
+ap.add_argument("--end", type=float, default=None)
+ap.add_argument("--fps", type=float, default=2.0)
+ap.add_argument("--height", type=int, default=360)
+ap.add_argument("--out", default="work/watch")
+a = ap.parse_args()
+if not os.path.isfile(a.file):
+    sys.exit(f"clip: no such file {a.file}")
+
+def probe(*args):
+    return subprocess.check_output(["ffprobe", "-v", "error", *args, a.file]).decode().strip()
+
+dur = float(probe("-show_entries", "format=duration", "-of", "csv=p=0"))
+has_audio = bool(probe("-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0"))
+end = min(a.end if a.end is not None else dur, dur)
+if end <= a.start:
+    sys.exit(f"clip: --end must be after --start (the file is {dur:.2f} s long)")
+if end - a.start > 300:
+    sys.exit(f"clip: at most 300 s per clip (asked {end - a.start:.1f} s of {dur:.1f} s); take it in parts")
+if not 0.2 <= a.fps <= 10:
+    sys.exit("clip: --fps must be 0.2-10")
+os.makedirs(a.out, exist_ok=True)
+stem = re.sub(r"[^\w.-]+", "_", os.path.splitext(os.path.basename(a.file))[0])[:60]
+base = os.path.join(a.out, f"{stem}_{a.start:g}-{end:g}s")
+cut = ["ffmpeg", "-v", "error", "-y", "-ss", str(a.start), "-to", str(end), "-i", a.file]
+subprocess.run(cut + ["-vf", f"scale=-2:{a.height},fps={a.fps}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-an",
+                      "-movflags", "+faststart", base + ".mp4"], check=True)
+print(f"{base}.mp4   picture of {a.file} from {a.start:g} s to {end:g} s, {a.fps:g} frames per second")
+if has_audio:
+    subprocess.run(cut + ["-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", base + ".mp3"], check=True)
+    print(f"{base}.mp3   its sound")
+    print("Open both with read_file in the same step. Second 0 of these files is second "
+          f"{a.start:g} of the original: add {a.start:g} to any time you take from them.")
+else:
+    print("This video has no sound track. Open the .mp4 with read_file.")

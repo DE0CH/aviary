@@ -1,0 +1,2409 @@
+[
+{
+"file": "sfx/whoosh/air-woosh-1489.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1489/1489-preview.mp3",
+"sha256": "8af9843a636d3b4961f0c8b3545a21e674bd43d59f97d5c38d3f9a3f04674fd2",
+"bytes": 71724,
+"category": "whoosh",
+"title": "Air woosh",
+"seconds": 2.35
+},
+{
+"file": "sfx/whoosh/cinematic-whoosh-fast-transition-1492.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1492/1492-preview.mp3",
+"sha256": "5a20424fb50af5c0eda1c8aecfa2836fd347f5072391c0b3c685dc03dab7ed0d",
+"bytes": 44574,
+"category": "whoosh",
+"title": "Cinematic whoosh fast transition",
+"seconds": 1.38
+},
+{
+"file": "sfx/whoosh/arrow-whoosh-1491.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1491/1491-preview.mp3",
+"sha256": "f1c119427835ed61b438cf71b5e82890c10f78423a1c6553caf772e8170574cd",
+"bytes": 36954,
+"category": "whoosh",
+"title": "Arrow whoosh",
+"seconds": 1.15
+},
+{
+"file": "sfx/whoosh/fast-rocket-whoosh-1714.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1714/1714-preview.mp3",
+"sha256": "b911d354a6f440db37825086a1eb03980bcb3f5e2a4b769bc2f79e39ab5b4818",
+"bytes": 133622,
+"category": "whoosh",
+"title": "Fast rocket whoosh",
+"seconds": 4.78
+},
+{
+"file": "sfx/whoosh/fast-whoosh-transition-1490.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1490/1490-preview.mp3",
+"sha256": "b88fd5d484251930efd6eca78c4340339908ea29d1e69bd24fb5191a10da4f78",
+"bytes": 57624,
+"category": "whoosh",
+"title": "Fast whoosh transition",
+"seconds": 1.8
+},
+{
+"file": "sfx/whoosh/cinematic-tunnel-reverb-woosh-1486.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1486/1486-preview.mp3",
+"sha256": "b08198fe3a699296aca18c5911fd140dded026639be294036151dbc47a317f02",
+"bytes": 201481,
+"category": "whoosh",
+"title": "Cinematic tunnel reverb woosh",
+"seconds": 6.79
+},
+{
+"file": "sfx/whoosh/explainer-video-pops-whoosh-light-pop-3005.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/3005/3005-preview.mp3",
+"sha256": "966bc3f7f2d8c19570f8826562b987f4d701854c1b63b98aba2f2c86178022b0",
+"bytes": 7829,
+"category": "whoosh",
+"title": "Explainer video pops whoosh light pop",
+"seconds": 0.21
+},
+{
+"file": "sfx/whoosh/magic-sparkle-whoosh-2350.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2350/2350-preview.mp3",
+"sha256": "c2d242f259d2704a1623107743aebac484056642746cc9139e5b1f25708796cd",
+"bytes": 102610,
+"category": "whoosh",
+"title": "Magic sparkle whoosh",
+"seconds": 3.53
+},
+{
+"file": "sfx/whoosh/metal-hit-woosh-1485.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1485/1485-preview.mp3",
+"sha256": "06138da94bbc087219e56cddf361c4a05d2aeb075072ea4803c1e53fd5d53267",
+"bytes": 17955,
+"category": "whoosh",
+"title": "Metal hit woosh",
+"seconds": 0.52
+},
+{
+"file": "sfx/whoosh/cinematic-whoosh-stutter-787.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/787/787-preview.mp3",
+"sha256": "e1ce0dcd883aae324fac2d2ebffe70cff48e820fe8cff758f3cdb2c95fbd65e4",
+"bytes": 84296,
+"category": "whoosh",
+"title": "Cinematic whoosh stutter",
+"seconds": 2.56
+},
+{
+"file": "sfx/transition/fast-small-sweep-transition-166.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/166/166-preview.mp3",
+"sha256": "5d8153579cfbd4ec23738494dff8dec95b3737981578222b793eff9e3fdd4ca8",
+"bytes": 27247,
+"category": "transition",
+"title": "Fast small sweep transition",
+"seconds": 0.81
+},
+{
+"file": "sfx/transition/epic-orchestra-transition-2290.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2290/2290-preview.mp3",
+"sha256": "33b434e68d6867014cb3e53e7579e50863ed6897ceef0777b7641bede7020044",
+"bytes": 217771,
+"category": "transition",
+"title": "Epic orchestra transition",
+"seconds": 7.16
+},
+{
+"file": "sfx/transition/movie-trailer-epic-impact-2908.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2908/2908-preview.mp3",
+"sha256": "b38888dcdfb4d5c3b13988308b430a0172846dcaa0ccde2feedc8ed4d1d911c2",
+"bytes": 154441,
+"category": "transition",
+"title": "Movie trailer epic impact",
+"seconds": 4.91
+},
+{
+"file": "sfx/transition/air-zoom-vacuum-2608.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2608/2608-preview.mp3",
+"sha256": "0e25921648c66e30924892ee17110ae621243de770b2944496526845a15a9998",
+"bytes": 41082,
+"category": "transition",
+"title": "Air zoom vacuum",
+"seconds": 1.31
+},
+{
+"file": "sfx/transition/cool-impact-movie-trailer-2909.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2909/2909-preview.mp3",
+"sha256": "72ea41df2b14a2c029992118d9f653c0336cba1ff3a6dd876e6169a2e318c171",
+"bytes": 179619,
+"category": "transition",
+"title": "Cool impact movie trailer",
+"seconds": 6.03
+},
+{
+"file": "sfx/transition/cinematic-laser-gun-thunder-1287.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1287/1287-preview.mp3",
+"sha256": "385340df21a87da878c23fa6ba1fdbe4059a4fd15d160bd45d20c9ecf7faecfc",
+"bytes": 145112,
+"category": "transition",
+"title": "Cinematic laser gun thunder",
+"seconds": 4.86
+},
+{
+"file": "sfx/transition/transition-windy-swoosh-1474.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1474/1474-preview.mp3",
+"sha256": "d66b0d3786d9fc7de9a218c73fbc9d7126998c23dbc345e0862e08ee56794fef",
+"bytes": 98070,
+"category": "transition",
+"title": "Transition windy swoosh",
+"seconds": 3.24
+},
+{
+"file": "sfx/transition/intro-transition-1146.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1146/1146-preview.mp3",
+"sha256": "070e5417ec9a4b071a961ac49aec2cda2a0d4e02bf9546cf97c44e38913aab86",
+"bytes": 234670,
+"category": "transition",
+"title": "Intro transition",
+"seconds": 7.55
+},
+{
+"file": "sfx/pop/long-pop-2358.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3",
+"sha256": "14aad47518786ea2556b45f050fed2a301d521ff9dedd46b73701b3cc3d54a2e",
+"bytes": 15239,
+"category": "pop",
+"title": "Long pop",
+"seconds": 0.52
+},
+{
+"file": "sfx/pop/message-pop-alert-2354.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3",
+"sha256": "58ecb2df40864551fd8aa7f770c13646187854df7fe4ca74497997b24f7669cd",
+"bytes": 13059,
+"category": "pop",
+"title": "Message pop alert",
+"seconds": 1.1
+},
+{
+"file": "sfx/pop/hard-pop-click-2364.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2364/2364-preview.mp3",
+"sha256": "2fc680a90f2e9a090de8d7afc4c047acfbc2cc9f5a8543a01ee87a8dfa401422",
+"bytes": 39145,
+"category": "pop",
+"title": "Hard pop click",
+"seconds": 1.2
+},
+{
+"file": "sfx/pop/bubble-pop-up-alert-notification-2357.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2357/2357-preview.mp3",
+"sha256": "d87b208f391d35df3c51e36d988f1c24a8017c7a24afeed44849a3aeeacdf91b",
+"bytes": 12316,
+"category": "pop",
+"title": "Bubble pop up alert notification",
+"seconds": 0.42
+},
+{
+"file": "sfx/pop/dry-pop-up-notification-alert-2356.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2356/2356-preview.mp3",
+"sha256": "e374bcd10352200c2f36b24bc508d11f99007b1ae34a08e9b4fc90313db58d21",
+"bytes": 9706,
+"category": "pop",
+"title": "Dry pop up notification alert",
+"seconds": 0.34
+},
+{
+"file": "sfx/pop/soap-bubble-sound-2925.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2925/2925-preview.mp3",
+"sha256": "92a0c7684c96d8609787545f37fc0e26961780558762be368113f0d709da4fae",
+"bytes": 38311,
+"category": "pop",
+"title": "Soap bubble sound",
+"seconds": 1.18
+},
+{
+"file": "sfx/pop/game-blood-pop-slide-2363.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2363/2363-preview.mp3",
+"sha256": "e8f9f0ccc0f90d7d72f42502d28ce7b5b08c743b77488cdf290339d40fb2655c",
+"bytes": 85385,
+"category": "pop",
+"title": "Game blood pop slide",
+"seconds": 2.93
+},
+{
+"file": "sfx/pop/silly-pop-cluster-2359.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2359/2359-preview.mp3",
+"sha256": "f30bda9d4294a7e42bebc252f965dea0ddb67c518be3f5cd37bb8fd359694da3",
+"bytes": 49116,
+"category": "pop",
+"title": "Silly pop cluster",
+"seconds": 1.52
+},
+{
+"file": "sfx/click/camera-shutter-click-1133.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1133/1133-preview.mp3",
+"sha256": "042d01db7a4a0c492c580c0d3d64460c0ceb8638f0c6419d0e4b7a9ba2ac8eed",
+"bytes": 14406,
+"category": "click",
+"title": "Camera shutter click",
+"seconds": 0.39
+},
+{
+"file": "sfx/click/fast-double-click-on-mouse-275.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/275/275-preview.mp3",
+"sha256": "8463e146fa8aee6291f760237bb233607200bafb80614b8cc8fb8208ba7a10f5",
+"bytes": 10540,
+"category": "click",
+"title": "Fast double click on mouse",
+"seconds": 0.5
+},
+{
+"file": "sfx/click/select-click-1109.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1109/1109-preview.mp3",
+"sha256": "4473ef3397b4a35bb75520e637b827e9984ae1d09bbf27c7f7c72cacc17885f7",
+"bytes": 35602,
+"category": "click",
+"title": "Select click",
+"seconds": 1.15
+},
+{
+"file": "sfx/click/sci-fi-click-900.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/900/900-preview.mp3",
+"sha256": "4a71ab99512b330e95f49699c9efb87b2f2d8f5c3a321e7ec70e87567ae5afed",
+"bytes": 20354,
+"category": "click",
+"title": "Sci fi click",
+"seconds": 0.73
+},
+{
+"file": "sfx/click/typing-on-a-laptop-keyboard-2531.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2531/2531-preview.mp3",
+"sha256": "152f78c3bff50cf018654a66e5de0260bdbad45d87af6051725fa479c517bdf9",
+"bytes": 513831,
+"category": "click",
+"title": "Typing on a laptop keyboard",
+"seconds": 19.67
+},
+{
+"file": "sfx/click/modern-technology-select-3124.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/3124/3124-preview.mp3",
+"sha256": "1cd63275367d5434ae0ee384c6390d12f00b141ba7810522ef0ab4375178178f",
+"bytes": 4742,
+"category": "click",
+"title": "Modern technology select",
+"seconds": 0.55
+},
+{
+"file": "sfx/ding/bell-notification-933.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/933/933-preview.mp3",
+"sha256": "7300912e0a685b9fefefa275ac2669c92bf1e0db0ea9ef75c98bc73a2fecb4f6",
+"bytes": 105280,
+"category": "ding",
+"title": "Bell notification",
+"seconds": 3.4
+},
+{
+"file": "sfx/ding/happy-bells-notification-937.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/937/937-preview.mp3",
+"sha256": "d765705ab2455c90a3d39511288f33d917e4b9daa5c383dcbf20b7c289718d55",
+"bytes": 96931,
+"category": "ding",
+"title": "Happy bells notification",
+"seconds": 3.06
+},
+{
+"file": "sfx/ding/achievement-bell-600.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/600/600-preview.mp3",
+"sha256": "f9ad8bc90064e3873756900265d4a36f48014214bd0a1a6c4e61317a6eb7473e",
+"bytes": 62322,
+"category": "ding",
+"title": "Achievement bell",
+"seconds": 2.43
+},
+{
+"file": "sfx/ding/cartoon-door-melodic-bell-110.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/110/110-preview.mp3",
+"sha256": "e81506921124d3b159bf6e4ec7eaf2c1b4f50e6dbe566f5d1a1ea4ccce623ef3",
+"bytes": 79753,
+"category": "ding",
+"title": "Cartoon door melodic bell",
+"seconds": 2.53
+},
+{
+"file": "sfx/ding/church-bell-calling-603.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/603/603-preview.mp3",
+"sha256": "1e4a70ab3cc9b18c338bea3e730779379233a3faa1fae5d4f02f2cc76fdbe64c",
+"bytes": 872485,
+"category": "ding",
+"title": "Church bell calling",
+"seconds": 28.0
+},
+{
+"file": "sfx/ding/relaxing-bell-chime-3109.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/3109/3109-preview.mp3",
+"sha256": "8b294a697c2e3396849d2aa1c0d5e40910a876be704791c4a1bcbeefae8ff252",
+"bytes": 42891,
+"category": "ding",
+"title": "Relaxing bell chime",
+"seconds": 1.72
+},
+{
+"file": "sfx/notification/correct-answer-tone-2870.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2870/2870-preview.mp3",
+"sha256": "354bd203b56867522e8138fc9664fc766f7f933af3452a2faadfcebb812f1f83",
+"bytes": 63471,
+"category": "notification",
+"title": "Correct answer tone",
+"seconds": 2.01
+},
+{
+"file": "sfx/notification/software-interface-start-2574.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2574/2574-preview.mp3",
+"sha256": "6b2990b8598d3b5994c95d9d8104a310cf2b459624bdf351b5cf722f36abae19",
+"bytes": 71725,
+"category": "notification",
+"title": "Software interface start",
+"seconds": 2.38
+},
+{
+"file": "sfx/notification/software-interface-back-2575.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2575/2575-preview.mp3",
+"sha256": "16463e3b55ae21c55eb52561b10192051b23838c73ed195cd736f9ddc7906f46",
+"bytes": 41969,
+"category": "notification",
+"title": "Software interface back",
+"seconds": 1.36
+},
+{
+"file": "sfx/notification/positive-notification-951.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/951/951-preview.mp3",
+"sha256": "f8ceb17da71129457582aaf169de637f84a63491678d9abaff629f3dc2981608",
+"bytes": 87485,
+"category": "notification",
+"title": "Positive notification",
+"seconds": 2.85
+},
+{
+"file": "sfx/notification/confirmation-tone-2867.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2867/2867-preview.mp3",
+"sha256": "6a60dff7933c536948499acadccb758f181d295e1921bf4b30e179e37e3f80dc",
+"bytes": 43636,
+"category": "notification",
+"title": "Confirmation tone",
+"seconds": 1.33
+},
+{
+"file": "sfx/notification/sci-fi-confirmation-914.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/914/914-preview.mp3",
+"sha256": "d69cb0edac2a0d78bb9ebd8a1ca9933a83cdc090e573c5c2f10c64d74500c081",
+"bytes": 24524,
+"category": "notification",
+"title": "Sci Fi confirmation",
+"seconds": 1.07
+},
+{
+"file": "sfx/impact/cinematic-whoosh-deep-impact-1143.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1143/1143-preview.mp3",
+"sha256": "9854bff8a78fcebef95350ff0ec72a41ba449ab372bbd601b55d84de13bd626d",
+"bytes": 115904,
+"category": "impact",
+"title": "Cinematic whoosh deep impact",
+"seconds": 4.1
+},
+{
+"file": "sfx/impact/big-cinematic-impact-788.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/788/788-preview.mp3",
+"sha256": "1d4fbce38a2a680eabc21a889d79afe87ac90be9274001c2b7c27c6ad327a680",
+"bytes": 225505,
+"category": "impact",
+"title": "Big cinematic impact",
+"seconds": 7.97
+},
+{
+"file": "sfx/impact/epic-impact-afar-explosion-2782.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2782/2782-preview.mp3",
+"sha256": "5eadacabb07da83ba1bceb0f33ea040628e8e7bada3135ddf44cdafc1fb75bc5",
+"bytes": 148658,
+"category": "impact",
+"title": "Epic impact afar explosion",
+"seconds": 4.57
+},
+{
+"file": "sfx/impact/strong-punches-to-the-body-2198.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2198/2198-preview.mp3",
+"sha256": "c713b2bf74ae6339328a09866de827c3d9c4a7245a03abf82bc9de8fbbef059e",
+"bytes": 57707,
+"category": "impact",
+"title": "Strong punches to the body",
+"seconds": 3.08
+},
+{
+"file": "sfx/impact/deep-heartbeat-impact-498.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/498/498-preview.mp3",
+"sha256": "1cc994250942fb7e62760d99cdb62c9217cfa989b06f25cea35e2788bd599dc4",
+"bytes": 111276,
+"category": "impact",
+"title": "Deep heartbeat impact",
+"seconds": 3.5
+},
+{
+"file": "sfx/impact/wood-hard-hit-2182.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2182/2182-preview.mp3",
+"sha256": "6c408eac4de933ebb6d3037367277519228d90f665607fa7ea800ea8d43dbc8c",
+"bytes": 12213,
+"category": "impact",
+"title": "Wood hard hit",
+"seconds": 0.44
+},
+{
+"file": "sfx/impact/dramatic-metal-explosion-impact-1687.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1687/1687-preview.mp3",
+"sha256": "c26d68f8fe1dfccf33191cc31139970a95f8c4c6e7c84931cd93cbef50042d24",
+"bytes": 126310,
+"category": "impact",
+"title": "Dramatic metal explosion impact",
+"seconds": 4.05
+},
+{
+"file": "sfx/impact/shot-light-energy-flowing-2589.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2589/2589-preview.mp3",
+"sha256": "8a631bca7df8371fa0f4eebecfb706066b78a906c9bfad83b767f2e19c996039",
+"bytes": 227673,
+"category": "impact",
+"title": "Shot light energy flowing",
+"seconds": 7.44
+},
+{
+"file": "sfx/riser/cinematic-trailer-riser-790.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/790/790-preview.mp3",
+"sha256": "22158444a8bab90fdf014c305d37e21f74882e7e6b1df186bc5c9886b48d0ca3",
+"bytes": 82884,
+"category": "riser",
+"title": "Cinematic trailer riser",
+"seconds": 2.61
+},
+{
+"file": "sfx/riser/short-space-stutter-intro-riser-1144.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1144/1144-preview.mp3",
+"sha256": "a63040c52099264d974654229f79125df328874f94a4a96eebb2578a34482bfe",
+"bytes": 210840,
+"category": "riser",
+"title": "Short space stutter intro riser",
+"seconds": 6.58
+},
+{
+"file": "sfx/riser/cinematic-riser-helicopter-engine-2719.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2719/2719-preview.mp3",
+"sha256": "6488c8bf92dd6defce406822ec2fc3bcaa1d5c17877f974fcac1510a9b608894",
+"bytes": 406148,
+"category": "riser",
+"title": "Cinematic riser helicopter engine",
+"seconds": 13.48
+},
+{
+"file": "sfx/riser/cinematic-drama-riser-632.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/632/632-preview.mp3",
+"sha256": "f0ac0728951c90be8520ff9d8d2b30459dfa9d0296ea3fd325f7145190cdef81",
+"bytes": 968328,
+"category": "riser",
+"title": "Cinematic drama riser",
+"seconds": 31.03
+},
+{
+"file": "sfx/riser/cinematic-synth-riser-645.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/645/645-preview.mp3",
+"sha256": "e17a5537f093b36b14197004a70bd3b1bfac44c2659cd8246f4a304fe82a5f12",
+"bytes": 288731,
+"category": "riser",
+"title": "Cinematic synth riser",
+"seconds": 9.38
+},
+{
+"file": "sfx/riser/tech-choir-cinematic-riser-794.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/794/794-preview.mp3",
+"sha256": "70c1c8a560b4ae1adcb6752adfe04a4782e267ef608e165e3a502e68a166d4bf",
+"bytes": 542051,
+"category": "riser",
+"title": "Tech choir cinematic riser",
+"seconds": 17.61
+},
+{
+"file": "sfx/glitch/small-electric-glitch-2595.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2595/2595-preview.mp3",
+"sha256": "8a649434e49485135236a8d5f337674a01cb3d32ea89fcb14bca113747b2c514",
+"bytes": 36538,
+"category": "glitch",
+"title": "Small electric glitch",
+"seconds": 1.07
+},
+{
+"file": "sfx/glitch/terror-radio-frequency-2566.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2566/2566-preview.mp3",
+"sha256": "2767e69c2e96c9556466e5d44756744a1c141f3c02ce0002efb6b742e568dd28",
+"bytes": 883367,
+"category": "glitch",
+"title": "Terror radio frequency",
+"seconds": 25.81
+},
+{
+"file": "sfx/glitch/glitch-static-1457.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1457/1457-preview.mp3",
+"sha256": "58dc85a58c9d1399f70ead26740129149190a725fd4c61c678b8ee095362cff6",
+"bytes": 48177,
+"category": "glitch",
+"title": "Glitch static",
+"seconds": 1.44
+},
+{
+"file": "sfx/glitch/broken-radio-frequency-signal-2563.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2563/2563-preview.mp3",
+"sha256": "a0b784c2d4b1b8449bbcef40461e3ce2bf51ea34e981e749411048f93c49f43f",
+"bytes": 195621,
+"category": "glitch",
+"title": "Broken radio frequency signal",
+"seconds": 6.22
+},
+{
+"file": "sfx/glitch/glitch-roar-1033.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1033/1033-preview.mp3",
+"sha256": "4aa573130c3210276055d75a4c41f0d557779fc7b29156285cd2f03176ed7234",
+"bytes": 36956,
+"category": "glitch",
+"title": "Glitch roar",
+"seconds": 1.12
+},
+{
+"file": "sfx/glitch/glitchy-cinematic-suspense-hit-679.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/679/679-preview.mp3",
+"sha256": "998e75707b6df26d787adbc6d271e49262f5bf2c658ff6a01769aa559dddc8b1",
+"bytes": 411527,
+"category": "glitch",
+"title": "Glitchy cinematic suspense hit",
+"seconds": 13.37
+},
+{
+"file": "sfx/win/retro-game-notification-212.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/212/212-preview.mp3",
+"sha256": "bd02442d22dd61676d386cede19ec0e76820a718585dfefe8c1da353b23c5502",
+"bytes": 27236,
+"category": "win",
+"title": "Retro game notification",
+"seconds": 1.52
+},
+{
+"file": "sfx/win/huge-crowd-cheering-victory-462.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/462/462-preview.mp3",
+"sha256": "8620209339ea51a159de2c75ad0918aec7063b187f5b7398bbaf2b9b09fc0633",
+"bytes": 311174,
+"category": "win",
+"title": "Huge crowd cheering victory",
+"seconds": 10.11
+},
+{
+"file": "sfx/win/quick-win-video-game-notification-269.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/269/269-preview.mp3",
+"sha256": "c2819c730bb3096e8d13bdc47cb713d56d2ec9bbadfd4fb025ef06efaa8ec746",
+"bytes": 58415,
+"category": "win",
+"title": "Quick win video game notification",
+"seconds": 1.99
+},
+{
+"file": "sfx/win/unlock-game-notification-253.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/253/253-preview.mp3",
+"sha256": "182403a07ebc02c0d35c6866a3aae7e8043bc34f55cc0fb792694ae1ac620b9e",
+"bytes": 44163,
+"category": "win",
+"title": "Unlock game notification",
+"seconds": 1.44
+},
+{
+"file": "sfx/win/cheering-crowd-loud-whistle-610.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/610/610-preview.mp3",
+"sha256": "8a05ea4e339524502040b566f2785ceeaefc29353787ba352d5bfff20f5c839c",
+"bytes": 504323,
+"category": "win",
+"title": "Cheering crowd loud whistle",
+"seconds": 14.81
+},
+{
+"file": "sfx/win/fantasy-game-success-notification-270.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/270/270-preview.mp3",
+"sha256": "3b0992b7756421da93f601c53c762f9cdc88f795ad89c703085741211b6d32ee",
+"bytes": 91327,
+"category": "win",
+"title": "Fantasy game success notification",
+"seconds": 3.03
+},
+{
+"file": "sfx/cartoon/cartoon-toy-whistle-616.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/616/616-preview.mp3",
+"sha256": "b67ce6b3a664e9e88ef03458282c23c70639833796d12a4c9ec022dd47ac843b",
+"bytes": 36899,
+"category": "cartoon",
+"title": "Cartoon toy whistle",
+"seconds": 1.25
+},
+{
+"file": "sfx/cartoon/cartoon-laugh-voice-2882.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2882/2882-preview.mp3",
+"sha256": "9db2f1e10e862547fd30f25b5791a6698de8c68c723c23ec203defce20d39a70",
+"bytes": 70411,
+"category": "cartoon",
+"title": "Cartoon laugh voice",
+"seconds": 2.12
+},
+{
+"file": "sfx/cartoon/laughing-cartoon-creature-414.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/414/414-preview.mp3",
+"sha256": "49e4acb38f7d6e7a9720bb000aa9ac6fb29084c581e4bd0941d7cc0587f76151",
+"bytes": 119426,
+"category": "cartoon",
+"title": "Laughing cartoon creature",
+"seconds": 3.58
+},
+{
+"file": "sfx/cartoon/cartoon-failure-piano-473.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/473/473-preview.mp3",
+"sha256": "25ca5b5091c7e75769569337bebbdf54ad8fbbd728487bff16457d9b51fa7f31",
+"bytes": 77981,
+"category": "cartoon",
+"title": "Cartoon failure piano",
+"seconds": 2.35
+},
+{
+"file": "sfx/cartoon/boing-hit-sound-2894.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2894/2894-preview.mp3",
+"sha256": "8da11d2051cccaaaf2b86aaa6ac4c4bd893d474755016ca6d7630f4ba4b25d57",
+"bytes": 41858,
+"category": "cartoon",
+"title": "Boing hit sound",
+"seconds": 1.28
+},
+{
+"file": "sfx/cartoon/trombone-disappoint-744.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/744/744-preview.mp3",
+"sha256": "f67c8c89808f05c6a061a612ab35a362cf2e50e5ad799ea3d9cf82a2083a03ab",
+"bytes": 87376,
+"category": "cartoon",
+"title": "Trombone disappoint",
+"seconds": 2.69
+},
+{
+"file": "sfx/cartoon/cartoon-kitty-begging-meow-92.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/92/92-preview.mp3",
+"sha256": "e37cb6f512ea1964456f437e077de787f201d04e0b7821ea82fb471b7fa76a0b",
+"bytes": 85181,
+"category": "cartoon",
+"title": "Cartoon kitty begging meow",
+"seconds": 2.66
+},
+{
+"file": "sfx/cartoon/cartoon-friendly-kiss-2194.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2194/2194-preview.mp3",
+"sha256": "524d97454e1265d8bd4e136d79a8f9d710289de6022eb50618284d5dbe232387",
+"bytes": 35023,
+"category": "cartoon",
+"title": "Cartoon friendly kiss",
+"seconds": 1.07
+},
+{
+"file": "sfx/applause/small-group-cheer-and-applause-518.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/518/518-preview.mp3",
+"sha256": "ee695dcf87d0940e347d9049aada9fec33598c10da1f9d10fef32515c73c90cf",
+"bytes": 345057,
+"category": "applause",
+"title": "Small group cheer and applause",
+"seconds": 10.63
+},
+{
+"file": "sfx/applause/ending-show-audience-clapping-478.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/478/478-preview.mp3",
+"sha256": "a70a80349894e120d8d2826a7951af7dddedeab1b296ff4f741e15f6770499ad",
+"bytes": 801832,
+"category": "applause",
+"title": "Ending show audience clapping",
+"seconds": 24.53
+},
+{
+"file": "sfx/applause/small-crowd-laugh-and-applause-422.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/422/422-preview.mp3",
+"sha256": "3aa5232977206ad5053cd436d313735a827e4ba4ddace02033df53cb50993613",
+"bytes": 184199,
+"category": "applause",
+"title": "Small crowd laugh and applause",
+"seconds": 5.8
+},
+{
+"file": "sfx/applause/conference-audience-clapping-strongly-476.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/476/476-preview.mp3",
+"sha256": "a15d31483f3375623c8541810ce278db257278e901541196ac6fa64a77be7c75",
+"bytes": 286258,
+"category": "applause",
+"title": "Conference audience clapping strongly",
+"seconds": 8.65
+},
+{
+"file": "sfx/laugh/crowd-laugh-424.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/424/424-preview.mp3",
+"sha256": "919bc54f42ed21734941b6f6985bd6f1bf5f946d7840b8a5334427b23a4b18cd",
+"bytes": 127141,
+"category": "laugh",
+"title": "Crowd laugh",
+"seconds": 4.15
+},
+{
+"file": "sfx/laugh/cartoon-voice-laugh-343.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/343/343-preview.mp3",
+"sha256": "68350e1eb720b48e885b8a8cae6263e782dc5fc642738afe4714d1c40d9261a6",
+"bytes": 42173,
+"category": "laugh",
+"title": "Cartoon voice laugh",
+"seconds": 1.31
+},
+{
+"file": "sfx/laugh/laughing-teenagers-429.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/429/429-preview.mp3",
+"sha256": "16776021c05227fa46e69aa582e33ef01fd909fa70974f7c546872398964036e",
+"bytes": 378384,
+"category": "laugh",
+"title": "Laughing teenagers",
+"seconds": 11.83
+},
+{
+"file": "sfx/laugh/happy-child-laughing-2265.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2265/2265-preview.mp3",
+"sha256": "00197876f0af562c676bff84fd45f82f7fba88f6be07bd1660324ae74229eb33",
+"bytes": 75577,
+"category": "laugh",
+"title": "Happy child laughing",
+"seconds": 2.43
+},
+{
+"file": "sfx/camera/camera-shutter-hard-click-1430.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1430/1430-preview.mp3",
+"sha256": "b33152521d12edd3d6d0bdcf7e29a0b1c6fc4c4c52d613486cd2fe2bdd200692",
+"bytes": 18370,
+"category": "camera",
+"title": "Camera shutter hard click",
+"seconds": 0.68
+},
+{
+"file": "sfx/camera/vintage-camera-shutter-1438.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1438/1438-preview.mp3",
+"sha256": "b8736115a13bd0f930d73854ba7f51ca6e4e3703a3843e6a899e70faf4a007e7",
+"bytes": 30533,
+"category": "camera",
+"title": "Vintage camera shutter",
+"seconds": 1.2
+},
+{
+"file": "sfx/camera/camera-digital-shutter-1432.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1432/1432-preview.mp3",
+"sha256": "7a3f4f159209dede2e9f209d50f98f34cf2c7e792fc0fe847dff092bfabd5aa3",
+"bytes": 49898,
+"category": "camera",
+"title": "Camera digital shutter",
+"seconds": 1.54
+},
+{
+"file": "sfx/camera/classic-camera-click-1440.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1440/1440-preview.mp3",
+"sha256": "f5e8fe365b1186040a178bdb3c753d5d3ed4d64938b798ebc3ca9ff817b5ad80",
+"bytes": 29907,
+"category": "camera",
+"title": "Classic camera click",
+"seconds": 1.04
+},
+{
+"file": "sfx/typing/keyboard-typing-1386.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1386/1386-preview.mp3",
+"sha256": "1e2f60a8c637d5e70cbe804b588581380141d33cc6f7e376c91c0e8fc36747b9",
+"bytes": 908333,
+"category": "typing",
+"title": "Keyboard typing",
+"seconds": 26.36
+},
+{
+"file": "sfx/typing/slow-typing-on-a-keyboard-2532.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2532/2532-preview.mp3",
+"sha256": "708d1b14f90ec91abf89f8822634c453d5bb3daae46033d059df38bc4671b12f",
+"bytes": 567338,
+"category": "typing",
+"title": "Slow typing on a keyboard",
+"seconds": 23.85
+},
+{
+"file": "sfx/typing/single-key-type-2533.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2533/2533-preview.mp3",
+"sha256": "79ed0b2aad28f035119fbee5b265059ff80f612aa81bbd00fd67763f3a3290bf",
+"bytes": 11884,
+"category": "typing",
+"title": "Single key type",
+"seconds": 1.25
+},
+{
+"file": "sfx/magic/fairy-magic-sparkle-871.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/871/871-preview.mp3",
+"sha256": "ffcfe4e205ef78b7fb3a5a823894f54ae556cc8b5ff058d54d037e37d628b83d",
+"bytes": 43742,
+"category": "magic",
+"title": "Fairy magic sparkle",
+"seconds": 1.33
+},
+{
+"file": "sfx/magic/magic-notification-ring-2344.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2344/2344-preview.mp3",
+"sha256": "d50cab5faf2bdb98c9e09c7c4b1278c3fbc464a76f3ec252c1d6e17043afb57c",
+"bytes": 91447,
+"category": "magic",
+"title": "Magic notification ring",
+"seconds": 3.06
+},
+{
+"file": "sfx/magic/magic-transition-sweep-presentation-2638.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2638/2638-preview.mp3",
+"sha256": "1ed910cff2a88195139f45dc7eb01f9a35ce11d0d58033a3b7bdf3143947837d",
+"bytes": 121608,
+"category": "magic",
+"title": "Magic transition sweep presentation",
+"seconds": 4.0
+},
+{
+"file": "sfx/magic/fairy-sparkle-whoosh-869.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/869/869-preview.mp3",
+"sha256": "c4ee1a64554bd413082173cd2045aacd5a65189a43c9d8f309530744e86098ad",
+"bytes": 143743,
+"category": "magic",
+"title": "Fairy sparkle whoosh",
+"seconds": 4.6
+},
+{
+"file": "sfx/magic/fairy-glitter-867.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/867/867-preview.mp3",
+"sha256": "7323c895bf12cdf34ac2c497bd87b5ebfba3aef10921fca2207256eb611c2460",
+"bytes": 76937,
+"category": "magic",
+"title": "Fairy glitter",
+"seconds": 2.32
+},
+{
+"file": "sfx/magic/magic-glitter-shot-2353.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2353/2353-preview.mp3",
+"sha256": "75519aa16ba7195c0420d939e626ed30425f5c09539c7957135b8835f8cbb948",
+"bytes": 114135,
+"category": "magic",
+"title": "Magic glitter shot",
+"seconds": 4.83
+},
+{
+"file": "sfx/swoosh/vacuum-swoosh-transition-1465.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1465/1465-preview.mp3",
+"sha256": "255101fe9c148b0e52ddafbe287e2b7cc2d8928fe0f463ae30308f12631416b9",
+"bytes": 73226,
+"category": "swoosh",
+"title": "Vacuum swoosh transition",
+"seconds": 2.3
+},
+{
+"file": "sfx/swoosh/cinematic-wind-swoosh-1471.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1471/1471-preview.mp3",
+"sha256": "8e954ccb6838372018193460d8e9e8178f379546dbf4f09941d1c8152986693c",
+"bytes": 41968,
+"category": "swoosh",
+"title": "Cinematic wind swoosh",
+"seconds": 1.49
+},
+{
+"file": "sfx/swoosh/short-wind-swoosh-1461.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1461/1461-preview.mp3",
+"sha256": "e702dc99aac9ba1b9a12416068606e6c4c3fc4c7896555bed490745373df0d76",
+"bytes": 44058,
+"category": "swoosh",
+"title": "Short wind swoosh",
+"seconds": 1.44
+},
+{
+"file": "sfx/swoosh/fast-transitions-swoosh-3115.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/3115/3115-preview.mp3",
+"sha256": "9f7e4edb094569f9cb40e8dbb987a5fc20926b30326a1a9d827236960980f070",
+"bytes": 19051,
+"category": "swoosh",
+"title": "Fast transitions swoosh",
+"seconds": 0.6
+},
+{
+"file": "sfx/swoosh/dagger-woosh-1487.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1487/1487-preview.mp3",
+"sha256": "a3984012c5bd29857be2359106a90ebe77cd1fbe58109fe7d2b7800e53c585c8",
+"bytes": 11848,
+"category": "swoosh",
+"title": "Dagger woosh",
+"seconds": 0.31
+},
+{
+"file": "sfx/swoosh/flying-fast-swoosh-1469.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/1469/1469-preview.mp3",
+"sha256": "4bd0dae7529d1a97ebae5f99e85f150006d3688849f859db6dfc0f89a090db01",
+"bytes": 49582,
+"category": "swoosh",
+"title": "Flying fast swoosh",
+"seconds": 1.67
+},
+{
+"file": "sfx/boing/metallic-boing-hit-2895.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2895/2895-preview.mp3",
+"sha256": "ed1508bdfb02160a04f1228b504e82fddcd70c0f3995d1159c894a2250f5ea80",
+"bytes": 40294,
+"category": "boing",
+"title": "Metallic boing hit",
+"seconds": 1.25
+},
+{
+"file": "sfx/drum/cinematic-transition-swoosh-heartbeat-trailer-488.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/488/488-preview.mp3",
+"sha256": "111404d2b2284798d02d3a70cc1328fd1a0206f27e4b5c1b2e7adf9688df42ad",
+"bytes": 237176,
+"category": "drum",
+"title": "Cinematic transition swoosh heartbeat trailer",
+"seconds": 8.15
+},
+{
+"file": "sfx/drum/cinematic-mystery-heartbeat-transition-492.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/492/492-preview.mp3",
+"sha256": "7c8aaf1de5d80b399534e26af77580c70fd215e5965d15373332120c3fa581ad",
+"bytes": 2088277,
+"category": "drum",
+"title": "Cinematic mystery heartbeat transition",
+"seconds": 67.32
+},
+{
+"file": "sfx/drum/hard-horror-hit-drum-565.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/565/565-preview.mp3",
+"sha256": "976cd19d369b33de77b43cbe975781f5a1b5be69703d9579035b6afca6ceaaaf",
+"bytes": 122209,
+"category": "drum",
+"title": "Hard horror hit drum",
+"seconds": 4.18
+},
+{
+"file": "sfx/drum/short-bass-hit-2299.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2299/2299-preview.mp3",
+"sha256": "8bd0c7fd63fbb8a4442ffe1176aa41b260d1fafbcf728e3c63648eb5bcd4e16b",
+"bytes": 36222,
+"category": "drum",
+"title": "Short bass hit",
+"seconds": 1.15
+},
+{
+"file": "sfx/drum/drum-deep-impact-563.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/563/563-preview.mp3",
+"sha256": "a8497fc2f1afd4b09bf7c9d91e0017bb91483e54c6a0ddf683b77a216269a1f8",
+"bytes": 139372,
+"category": "drum",
+"title": "Drum deep impact",
+"seconds": 5.54
+},
+{
+"file": "sfx/robot/ui-zoom-out-2619.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2619/2619-preview.mp3",
+"sha256": "8b98f2c91a976b6a29b9b536380d216a7861ae8f81f6e5547489c51329e381b9",
+"bytes": 34864,
+"category": "robot",
+"title": "UI zoom out",
+"seconds": 1.18
+},
+{
+"file": "sfx/robot/bass-rumble-hum-2297.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2297/2297-preview.mp3",
+"sha256": "90c50094fc834a5210f3087715585ade13b1f3a3b5d060ba317f32505dc1e143",
+"bytes": 236030,
+"category": "robot",
+"title": "Bass rumble hum",
+"seconds": 7.03
+},
+{
+"file": "sfx/robot/futuristic-sci-fi-computer-ambience-2507.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2507/2507-preview.mp3",
+"sha256": "755f93f22cfe7c524b1202e5bead14533c4aafb8efd9643a18cb1b5b7f2ea1d4",
+"bytes": 776699,
+"category": "robot",
+"title": "Futuristic Sci Fi computer ambience",
+"seconds": 23.54
+},
+{
+"file": "sfx/robot/electric-pop-2365.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2365/2365-preview.mp3",
+"sha256": "77e9ba9ef0ef8a9091d30ecec778461770d20eeed57521de50911c6651a43f24",
+"bytes": 37423,
+"category": "robot",
+"title": "Electric pop",
+"seconds": 1.15
+},
+{
+"file": "sfx/robot/mechanical-technology-movements-3117.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/3117/3117-preview.mp3",
+"sha256": "46bdcef45cb5992aacc899697661738531876301403808fa9d569cf0f4e22866",
+"bytes": 73906,
+"category": "robot",
+"title": "Mechanical technology movements",
+"seconds": 2.53
+},
+{
+"file": "sfx/robot/sci-fi-positive-notification-266.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/266/266-preview.mp3",
+"sha256": "a261ddc0303a2798e9d9a16325acf65ac8e163dba8e9dd613aace8564d2b09a5",
+"bytes": 43748,
+"category": "robot",
+"title": "Sci Fi positive notification",
+"seconds": 4.05
+},
+{
+"file": "sfx/robot/user-interface-zoom-out-2620.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/2620/2620-preview.mp3",
+"sha256": "9c0bd85bc9af350be0b9878f900a40cd4b35ac1bc65027e063da184b21c55992",
+"bytes": 34864,
+"category": "robot",
+"title": "User interface zoom out",
+"seconds": 1.2
+},
+{
+"file": "sfx/robot/technology-computer-calculations-3122.mp3",
+"url": "https://assets.mixkit.co/active_storage/sfx/3122/3122-preview.mp3",
+"sha256": "70cc2c69e7a59396fbf330f7078656152c83220f4423db30aee12ac9cf8c56e5",
+"bytes": 111072,
+"category": "robot",
+"title": "Technology computer calculations",
+"seconds": 4.05
+},
+{
+"file": "music/upbeat/upbeat-jazz-644.mp3",
+"url": "https://assets.mixkit.co/music/644/644.mp3",
+"sha256": "47427e8614cb7472c55093a11649974738e0a1528cf0eb54ff95fa8c1df90e3a",
+"bytes": 3527693,
+"category": "upbeat",
+"title": "Upbeat Jazz",
+"seconds": 110.24,
+"bpm": 111
+},
+{
+"file": "music/happy/tears-of-joy-839.mp3",
+"url": "https://assets.mixkit.co/music/839/839.mp3",
+"sha256": "30717c4e8d2a954a6163477b831e5b8981b406d2c34d72820fce4d40a8686ddc",
+"bytes": 4485656,
+"category": "happy",
+"title": "Tears of Joy",
+"seconds": 140.17,
+"bpm": 125
+},
+{
+"file": "music/happy/smile-1076.mp3",
+"url": "https://assets.mixkit.co/music/1076/1076.mp3",
+"sha256": "0f582b05625f07762b551757097d0d15412bc2e9154781508b59060dea5a58a5",
+"bytes": 3092942,
+"category": "happy",
+"title": "Smile",
+"seconds": 96.63,
+"bpm": 154
+},
+{
+"file": "music/happy/feeling-happy-5.mp3",
+"url": "https://assets.mixkit.co/music/5/5.mp3",
+"sha256": "73f8fa95c7fa9f835fcc37afed86b5527341400574ddf721de362395ae280fcc",
+"bytes": 4736484,
+"category": "happy",
+"title": "Feeling Happy",
+"seconds": 147.98,
+"bpm": 102
+},
+{
+"file": "music/happy/happy-home-801.mp3",
+"url": "https://assets.mixkit.co/music/801/801.mp3",
+"sha256": "76b82159ba1d6821a5ac9465e8ff19007446c1b657dfe53b5917fc8896b3bf21",
+"bytes": 3520932,
+"category": "happy",
+"title": "Happy Home",
+"seconds": 110.0,
+"bpm": 143
+},
+{
+"file": "music/happy/owies-ukulele-1072.mp3",
+"url": "https://assets.mixkit.co/music/1072/1072.mp3",
+"sha256": "d16e2057fde4e093f1641d2d352b99e369eee71784c102fd248ee6170f395592",
+"bytes": 5105833,
+"category": "happy",
+"title": "Owies Ukulele",
+"seconds": 159.53,
+"bpm": 150
+},
+{
+"file": "music/energetic/sports-highlights-51.mp3",
+"url": "https://assets.mixkit.co/music/51/51.mp3",
+"sha256": "165df8e17e9d23645f9dcd2ef4a8252b8f3c32e74bd5e7bc8f868be9f3044223",
+"bytes": 3085545,
+"category": "energetic",
+"title": "Sports Highlights",
+"seconds": 96.39,
+"bpm": 128
+},
+{
+"file": "music/energetic/dirty-thinkin-989.mp3",
+"url": "https://assets.mixkit.co/music/989/989.mp3",
+"sha256": "e36220dbbaf56e0380bb106e32779b1832fa8f4bd8d40edcaf15b07a17bb9a8f",
+"bytes": 2854705,
+"category": "energetic",
+"title": "Dirty Thinkin'",
+"seconds": 89.18,
+"bpm": 122
+},
+{
+"file": "music/energetic/trap-electro-vibes-126.mp3",
+"url": "https://assets.mixkit.co/music/126/126.mp3",
+"sha256": "7c82480484f0e689bf7a3ef98c4eeef7e7502ef8bc3684363f2433a9b1c2e916",
+"bytes": 3704902,
+"category": "energetic",
+"title": "Trap Electro Vibes",
+"seconds": 115.78,
+"bpm": 140
+},
+{
+"file": "music/energetic/k-o-1068.mp3",
+"url": "https://assets.mixkit.co/music/1068/1068.mp3",
+"sha256": "ddebd9fdaca9c2f9a273ce704b6bd823166590ca624fe452a5416dfceaa4da5f",
+"bytes": 3235884,
+"category": "energetic",
+"title": "K.O.",
+"seconds": 101.09,
+"bpm": 120
+},
+{
+"file": "music/energetic/games-music-706.mp3",
+"url": "https://assets.mixkit.co/music/706/706.mp3",
+"sha256": "c1129accbe28650b96f19e065b229ac5769d77fd09a184a9f628e2c87571a9ab",
+"bytes": 3786828,
+"category": "energetic",
+"title": "Games Music",
+"seconds": 118.33,
+"bpm": 143
+},
+{
+"file": "music/funk/gimme-that-groove-872.mp3",
+"url": "https://assets.mixkit.co/music/872/872.mp3",
+"sha256": "702e5dffc429b991b31c24dc284d56253fa0993c34fca75c7f32de167e067cff",
+"bytes": 2830463,
+"category": "funk",
+"title": "Gimme that Groove!",
+"seconds": 88.42,
+"bpm": 113
+},
+{
+"file": "music/funk/funkee-monkeee-1140.mp3",
+"url": "https://assets.mixkit.co/music/1140/1140.mp3",
+"sha256": "19c66f13d9511c2b85fad8d0d2da94fcfaf3cfd750982259acae015fcb0eacf3",
+"bytes": 3140589,
+"category": "funk",
+"title": "Funkee Monkeee",
+"seconds": 98.12,
+"bpm": 122
+},
+{
+"file": "music/funk/midnight-funk-1147.mp3",
+"url": "https://assets.mixkit.co/music/1147/1147.mp3",
+"sha256": "9a3163a731f85037d0e75b07e90be42e8564efbb57e491586c5e522b02f22277",
+"bytes": 3425637,
+"category": "funk",
+"title": "Midnight Funk",
+"seconds": 107.02,
+"bpm": 120
+},
+{
+"file": "music/funk/funky-triplets-1141.mp3",
+"url": "https://assets.mixkit.co/music/1141/1141.mp3",
+"sha256": "9f99baed5d9069f9490367716a685581bc8396d7597b8de56e5f6e87855b7650",
+"bytes": 3473284,
+"category": "funk",
+"title": "Funky Triplets",
+"seconds": 108.51,
+"bpm": 100
+},
+{
+"file": "music/electronic/digital-clouds-175.mp3",
+"url": "https://assets.mixkit.co/music/175/175.mp3",
+"sha256": "71cd4ea39edcc7532672bd97311abadfd318d00e7a828310a88b4f57fad9cd48",
+"bytes": 3232566,
+"category": "electronic",
+"title": "Digital Clouds",
+"seconds": 101.02,
+"bpm": 130
+},
+{
+"file": "music/electronic/pop-track-03-729.mp3",
+"url": "https://assets.mixkit.co/music/729/729.mp3",
+"sha256": "0bb90793c71a07e6d698afdd434b32ffb4fe93dbbdb0577d3e71a4de80b0337b",
+"bytes": 3875525,
+"category": "electronic",
+"title": "Pop Track 03",
+"seconds": 96.89,
+"bpm": 109
+},
+{
+"file": "music/electronic/infinity-440.mp3",
+"url": "https://assets.mixkit.co/music/440/440.mp3",
+"sha256": "b39a014450d406cfb5dc59dedb41823e44c0f9c89ca228c44b52ed63c8a39861",
+"bytes": 3293562,
+"category": "electronic",
+"title": "Infinity",
+"seconds": 102.9,
+"bpm": 113
+},
+{
+"file": "music/electronic/sci-fi-score-464.mp3",
+"url": "https://assets.mixkit.co/music/464/464.mp3",
+"sha256": "81761db851aedc0ce062e3dabe6c365769b8cc82c3aece1bf8f05a7501713eb0",
+"bytes": 3120527,
+"category": "electronic",
+"title": "Sci-Fi Score",
+"seconds": 97.49,
+"bpm": 118
+},
+{
+"file": "music/hip-hop/hip-hop-02-738.mp3",
+"url": "https://assets.mixkit.co/music/738/738.mp3",
+"sha256": "4b7bc45aedd38bf43e67d550177aeaafa367ec32a3a6498f8ffd9ec5132e268e",
+"bytes": 4600684,
+"category": "hip-hop",
+"title": "Hip Hop 02",
+"seconds": 115.02,
+"bpm": 98
+},
+{
+"file": "music/hip-hop/c-b-p-d-400.mp3",
+"url": "https://assets.mixkit.co/music/400/400.mp3",
+"sha256": "75cd47d2ce88f7a665c31b10ba893d0327494d461b51ecb8776b1327cb117b39",
+"bytes": 3180713,
+"category": "hip-hop",
+"title": "C.B.P.D",
+"seconds": 99.37,
+"bpm": 146
+},
+{
+"file": "music/hip-hop/sweet-september-282.mp3",
+"url": "https://assets.mixkit.co/music/282/282.mp3",
+"sha256": "6ad6db61c4c9018cb9dfc99ed5c3b72f3143d3a5db31920e4f1f6b01d2f1b4a1",
+"bytes": 3160651,
+"category": "hip-hop",
+"title": "Sweet September",
+"seconds": 98.74,
+"bpm": 103
+},
+{
+"file": "music/hip-hop/complicated-281.mp3",
+"url": "https://assets.mixkit.co/music/281/281.mp3",
+"sha256": "f0ef745dcf71f9795f3d69126b3b112e2854083470a644a036afe9639d3e126f",
+"bytes": 3502542,
+"category": "hip-hop",
+"title": "Complicated",
+"seconds": 109.43,
+"bpm": 158
+},
+{
+"file": "music/corporate/close-up-1167.mp3",
+"url": "https://assets.mixkit.co/music/1167/1167.mp3",
+"sha256": "a7f05a29d07a84d38072ccd2b35204bca812db86e75b2a837e71cc144d3e739b",
+"bytes": 3045294,
+"category": "corporate",
+"title": "Close Up",
+"seconds": 95.14,
+"bpm": 107
+},
+{
+"file": "music/corporate/raising-me-higher-34.mp3",
+"url": "https://assets.mixkit.co/music/34/34.mp3",
+"sha256": "619b82cea299230cca5beac36d049291a1cb2be8ce0afdafda3e06fb30d06525",
+"bytes": 3126333,
+"category": "corporate",
+"title": "Raising Me Higher",
+"seconds": 97.67,
+"bpm": 111
+},
+{
+"file": "music/corporate/piano-reflections-22.mp3",
+"url": "https://assets.mixkit.co/music/22/22.mp3",
+"sha256": "7d58c4255d91f58e29e61520b6011cabd5a54b3e89b54646cebac9d37295bbec",
+"bytes": 6365591,
+"category": "corporate",
+"title": "Piano Reflections",
+"seconds": 198.9,
+"bpm": 122
+},
+{
+"file": "music/corporate/curiosity-480.mp3",
+"url": "https://assets.mixkit.co/music/480/480.mp3",
+"sha256": "181e91737f341ca61a1641b2955cc794fa6276ca0854d06266d55841d655a24b",
+"bytes": 3613867,
+"category": "corporate",
+"title": "Curiosity",
+"seconds": 100.18,
+"bpm": 162
+},
+{
+"file": "music/house/deep-urban-623.mp3",
+"url": "https://assets.mixkit.co/music/623/623.mp3",
+"sha256": "ac7e28f0cdd6c607df199c759f34ca66cfebd881ea61c26473fb4cecebe64fa8",
+"bytes": 9240540,
+"category": "house",
+"title": "Deep Urban",
+"seconds": 288.73,
+"bpm": 125
+},
+{
+"file": "music/house/cat-walk-371.mp3",
+"url": "https://assets.mixkit.co/music/371/371.mp3",
+"sha256": "e241cba000ce12e52cadd4c9956274e391ef1f66d1e48a5dd40bfc21645aa489",
+"bytes": 3969820,
+"category": "house",
+"title": "Cat Walk",
+"seconds": 124.03,
+"bpm": 130
+},
+{
+"file": "music/house/house-02-744.mp3",
+"url": "https://assets.mixkit.co/music/744/744.mp3",
+"sha256": "5610ba37ab13f997f66c0a00ac1943b782d82f5c04ae1b171e40361ce8ef692f",
+"bytes": 4527542,
+"category": "house",
+"title": "House 02",
+"seconds": 113.19,
+"bpm": 125
+},
+{
+"file": "music/chiptune/keeping-fit-82.mp3",
+"url": "https://assets.mixkit.co/music/82/82.mp3",
+"sha256": "e17ed43e8e9a574a9a1f49e09b12ddd2f6dafb28e41bef7ff4ba4a3991811371",
+"bytes": 3163286,
+"category": "chiptune",
+"title": "Keeping Fit",
+"seconds": 98.82,
+"bpm": 130
+},
+{
+"file": "music/chiptune/bold-and-brash-62.mp3",
+"url": "https://assets.mixkit.co/music/62/62.mp3",
+"sha256": "621181c4ad2b2168cf91981d3418baebbddfa60b11be334a243ede063328c797",
+"bytes": 3154091,
+"category": "chiptune",
+"title": "Bold and Brash",
+"seconds": 98.53,
+"bpm": 154
+},
+{
+"file": "music/cute/classical-vibes-2-682.mp3",
+"url": "https://assets.mixkit.co/music/682/682.mp3",
+"sha256": "da60c04a87dfe3052296c91daed3c41cd5e8dc05a18200aa027939f9ff019230",
+"bytes": 3623169,
+"category": "cute",
+"title": "Classical vibes 2",
+"seconds": 113.19,
+"bpm": 140
+},
+{
+"file": "music/cute/a-very-happy-christmas-897.mp3",
+"url": "https://assets.mixkit.co/music/897/897.mp3",
+"sha256": "714baa43f1c04e8ca77a8268825ea7e68e958917f5f5fe4c656d83811e1d0c98",
+"bytes": 4164589,
+"category": "cute",
+"title": "A Very Happy Christmas",
+"seconds": 130.12,
+"bpm": 113
+},
+{
+"file": "music/cute/comical-2.mp3",
+"url": "https://assets.mixkit.co/music/2/2.mp3",
+"sha256": "2f5ed23f2c51b5aa28b237563ee1249d12094fefce7afdaddee4f5a330e010cb",
+"bytes": 3664001,
+"category": "cute",
+"title": "Comical",
+"seconds": 114.47,
+"bpm": 143
+},
+{
+"file": "music/chill/serene-view-443.mp3",
+"url": "https://assets.mixkit.co/music/443/443.mp3",
+"sha256": "556ae7a19c783bd666593e60fbba776bac7f9ff6c2173bebded0bc200cc82ec3",
+"bytes": 3647991,
+"category": "chill",
+"title": "Serene View",
+"seconds": 113.97,
+"bpm": 143
+},
+{
+"file": "music/chill/pop-05-695.mp3",
+"url": "https://assets.mixkit.co/music/695/695.mp3",
+"sha256": "68c6c8358b8761c55142b705c7a3c9e7f687108e0fd94e5a49c479740304d72f",
+"bytes": 4933889,
+"category": "chill",
+"title": "Pop 05",
+"seconds": 154.15,
+"bpm": 95
+},
+{
+"file": "music/chill/sleepy-cat-135.mp3",
+"url": "https://assets.mixkit.co/music/135/135.mp3",
+"sha256": "fc15a57f37b711f746e523bc89ee7311e2081cd4b25a6a89db0da33c3c42f64c",
+"bytes": 3813190,
+"category": "chill",
+"title": "Sleepy Cat",
+"seconds": 119.16,
+"bpm": 136
+},
+{
+"file": "music/chill/majestic-475.mp3",
+"url": "https://assets.mixkit.co/music/475/475.mp3",
+"sha256": "49d3d71403a6a06bcd6e5f928f16d5e380e7c139fc33a2f006fdc298d88927a3",
+"bytes": 3504905,
+"category": "chill",
+"title": "Majestic",
+"seconds": 108.75,
+"bpm": 171
+},
+{
+"file": "music/cinematic/driving-ambition-32.mp3",
+"url": "https://assets.mixkit.co/music/32/32.mp3",
+"sha256": "e3c88488e65b8c87a6f06120983ce2cb12ea3aeba99f8cadb7ee5d6d284ef2c6",
+"bytes": 3270947,
+"category": "cinematic",
+"title": "Driving Ambition",
+"seconds": 102.19,
+"bpm": 102
+},
+{
+"file": "music/cinematic/silent-descent-614.mp3",
+"url": "https://assets.mixkit.co/music/614/614.mp3",
+"sha256": "601955cacab6c38417687b144754c914f392f6508c35c241372695ad3987ec2b",
+"bytes": 5134509,
+"category": "cinematic",
+"title": "Silent Descent",
+"seconds": 160.42,
+"bpm": 146
+},
+{
+"file": "music/cinematic/fright-night-871.mp3",
+"url": "https://assets.mixkit.co/music/871/871.mp3",
+"sha256": "144384cf2bcda8070a0d11c8aa98c3ae547de861a553275788669b7cf6a57bcd",
+"bytes": 3243407,
+"category": "cinematic",
+"title": "Fright Night",
+"seconds": 101.33,
+"bpm": 94
+},
+{
+"file": "music/pop/one-more-dance-288.mp3",
+"url": "https://assets.mixkit.co/music/288/288.mp3",
+"sha256": "ac06017260e10c2a7a0e75720ba08d3f051b03ed0a952c44aa8caf15d9b09c01",
+"bytes": 3210806,
+"category": "pop",
+"title": "One More Dance",
+"seconds": 100.31,
+"bpm": 111
+},
+{
+"file": "music/pop/what-about-action-474.mp3",
+"url": "https://assets.mixkit.co/music/474/474.mp3",
+"sha256": "4bcd99a13f3d71c6d356c2459f6f585f0d3f91ca8912aeef81ac626b8c8e3133",
+"bytes": 3747466,
+"category": "pop",
+"title": "What About Action?",
+"seconds": 117.08,
+"bpm": 122
+},
+{
+"file": "music/pop/karma-1183.mp3",
+"url": "https://assets.mixkit.co/music/1183/1183.mp3",
+"sha256": "56f331c37552486a1a31c65a443f1669ed37f7fb3bd99d9078d23ec55caa052f",
+"bytes": 4329265,
+"category": "pop",
+"title": "Karma",
+"seconds": 135.26,
+"bpm": 130
+},
+{
+"file": "music/tech/hazy-after-hours-132.mp3",
+"url": "https://assets.mixkit.co/music/132/132.mp3",
+"sha256": "5a30d042dc51f517dc64b5d409e1ac0b9dba2a80241f8955f41257585e77890f",
+"bytes": 4071238,
+"category": "tech",
+"title": "Hazy After Hours",
+"seconds": 127.22,
+"bpm": 122
+},
+{
+"file": "music/tech/romantic-05-759.mp3",
+"url": "https://assets.mixkit.co/music/759/759.mp3",
+"sha256": "1ca2ad81ac3659c6818cd7bf14af6b57314f1b1bc6275f2cd896401ea3ff3485",
+"bytes": 4480521,
+"category": "tech",
+"title": "Romantic 05",
+"seconds": 112.01,
+"bpm": 91
+},
+{
+"file": "music/tech/deep-techno-ambience-134.mp3",
+"url": "https://assets.mixkit.co/music/134/134.mp3",
+"sha256": "b873f8373c4d1cf134f358105ff5914e601d60dd518a7a5c0ad04398f47c0fad",
+"bytes": 3921411,
+"category": "tech",
+"title": "Deep Techno Ambience",
+"seconds": 122.54,
+"bpm": 125
+},
+{
+"file": "music/tech/cyberpunk-city-140.mp3",
+"url": "https://assets.mixkit.co/music/140/140.mp3",
+"sha256": "08e4b8058344db486580e409edfead2e72f0d1b4ad02d5ad1176caa71f2e011a",
+"bytes": 3191654,
+"category": "tech",
+"title": "Cyberpunk City",
+"seconds": 99.74,
+"bpm": 115
+},
+{
+"file": "emoji/fire.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f525/lottie.json",
+"sha256": "96199d8e8fea7d90196b95b9a9e56b13af43e3817efe037bd9aa1e5215579838",
+"bytes": 29358,
+"category": "emoji",
+"name": "fire",
+"emoji": "🔥"
+},
+{
+"file": "emoji/sparkles.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/2728/lottie.json",
+"sha256": "60b0b7e80faadfadef6972fbf63b707f01b022fe7662573dca0bbf76785863ad",
+"bytes": 15584,
+"category": "emoji",
+"name": "sparkles",
+"emoji": "✨"
+},
+{
+"file": "emoji/star.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f31f/lottie.json",
+"sha256": "6a2654898edd8c50b76c08600850641eaec8d0098b753f2f5b4829fbd64f62bf",
+"bytes": 73203,
+"category": "emoji",
+"name": "star",
+"emoji": "🌟"
+},
+{
+"file": "emoji/party.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f389/lottie.json",
+"sha256": "eab1fd7070bffd2965c12a80d2d91cff76683af65019f142acf9a553ee877b5c",
+"bytes": 67875,
+"category": "emoji",
+"name": "party",
+"emoji": "🎉"
+},
+{
+"file": "emoji/confetti.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f38a/lottie.json",
+"sha256": "b4a32619950d449fea21a12e14fa96bbfe155c3ddb540c27dd868633d5b6f8d5",
+"bytes": 122718,
+"category": "emoji",
+"name": "confetti",
+"emoji": "🎊"
+},
+{
+"file": "emoji/heart.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/2764_fe0f/lottie.json",
+"sha256": "7925790edd7ec4a4da6ccb9491c61a2e03705182e7db263f12d8e46a8fcddb79",
+"bytes": 8439,
+"category": "emoji",
+"name": "heart",
+"emoji": "❤️"
+},
+{
+"file": "emoji/heart-eyes.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f60d/lottie.json",
+"sha256": "2351f649844d0211f0935346c6358b7cdd38e7f2fb42164b7ecedbb67f7954aa",
+"bytes": 42336,
+"category": "emoji",
+"name": "heart-eyes",
+"emoji": "😍"
+},
+{
+"file": "emoji/joy.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f602/lottie.json",
+"sha256": "ae479405485961c5c233d882bd2b8ddf54c24e7ddb48371e6346b04b6b57edca",
+"bytes": 59124,
+"category": "emoji",
+"name": "joy",
+"emoji": "😂"
+},
+{
+"file": "emoji/rofl.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f923/lottie.json",
+"sha256": "da5832ec41e5b4b60a2668891bd0670c1495022096839b0b92d943cb85008aea",
+"bytes": 78237,
+"category": "emoji",
+"name": "rofl",
+"emoji": "🤣"
+},
+{
+"file": "emoji/wink.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f609/lottie.json",
+"sha256": "2ac8b005d0a95d73859f510572bf7c4724c704df3c0f35115504542a8b5fc827",
+"bytes": 27737,
+"category": "emoji",
+"name": "wink",
+"emoji": "😉"
+},
+{
+"file": "emoji/cool.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f60e/lottie.json",
+"sha256": "17ca3ea161b36f64e17a55c9f92ff3aa794e3036ce799aa1b55748ed3d72a977",
+"bytes": 25407,
+"category": "emoji",
+"name": "cool",
+"emoji": "😎"
+},
+{
+"file": "emoji/thinking.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f914/lottie.json",
+"sha256": "46405d972ad78a2fc917fa8e5786b0ebcdfdf644114be3c0941b98cb7e1c47c5",
+"bytes": 68027,
+"category": "emoji",
+"name": "thinking",
+"emoji": "🤔"
+},
+{
+"file": "emoji/mind-blown.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f92f/lottie.json",
+"sha256": "553f0131420995a5f7d989fa3e243ce57fe2620a34e4866c2adf1dd000aeeecf",
+"bytes": 143616,
+"category": "emoji",
+"name": "mind-blown",
+"emoji": "🤯"
+},
+{
+"file": "emoji/scream.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f631/lottie.json",
+"sha256": "159c6e05378b35fdb834c8981893162aad7935c3c7f52db5070caa0f47aca925",
+"bytes": 90226,
+"category": "emoji",
+"name": "scream",
+"emoji": "😱"
+},
+{
+"file": "emoji/wow.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f62e/lottie.json",
+"sha256": "daa0118bbc4f628aaabde5b0c96ebf3980c7aca265700bb0da809cb9f4d0ffbd",
+"bytes": 18749,
+"category": "emoji",
+"name": "wow",
+"emoji": "😮"
+},
+{
+"file": "emoji/cry.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f62d/lottie.json",
+"sha256": "9f8b1a18099511d53356d870edd0e042323e0d2b023321ee144821e197f551ec",
+"bytes": 119550,
+"category": "emoji",
+"name": "cry",
+"emoji": "😭"
+},
+{
+"file": "emoji/clap.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f44f/lottie.json",
+"sha256": "fc1d22422ac8ce686e9851ea69410d43dc7d244cc9c3a33cc768ffd2653a79e3",
+"bytes": 138962,
+"category": "emoji",
+"name": "clap",
+"emoji": "👏"
+},
+{
+"file": "emoji/thumbs-up.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f44d/lottie.json",
+"sha256": "a5803c4978c0760977aa08033ab0abcb5023945a47008261cd405815fc947698",
+"bytes": 40892,
+"category": "emoji",
+"name": "thumbs-up",
+"emoji": "👍"
+},
+{
+"file": "emoji/ok.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f44c/lottie.json",
+"sha256": "6f8ad3f6e6174b6cda8dbbc134f670876d5facedca5e012c84729eb1470b0d02",
+"bytes": 44446,
+"category": "emoji",
+"name": "ok",
+"emoji": "👌"
+},
+{
+"file": "emoji/muscle.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f4aa/lottie.json",
+"sha256": "92a40376944e3caa1720edcea3d8a51274eabf1d5a48d2a974912c221fe19e80",
+"bytes": 69765,
+"category": "emoji",
+"name": "muscle",
+"emoji": "💪"
+},
+{
+"file": "emoji/wave.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f44b/lottie.json",
+"sha256": "11f8511c925e8ee908685b494a1cad1a2ea34f09a82c5c540d8e4805fe236dd6",
+"bytes": 94945,
+"category": "emoji",
+"name": "wave",
+"emoji": "👋"
+},
+{
+"file": "emoji/point-right.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f449/lottie.json",
+"sha256": "3696f0747cc7e13fbff2390b1adcc48218049d7bb6e722eff4fb4bba2d35ba68",
+"bytes": 44436,
+"category": "emoji",
+"name": "point-right",
+"emoji": "👉"
+},
+{
+"file": "emoji/point-down.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f447/lottie.json",
+"sha256": "cba1be7343a754ab6bfbba6354e3725dfe03494a0d1a28a20ffe78569b5e6319",
+"bytes": 44443,
+"category": "emoji",
+"name": "point-down",
+"emoji": "👇"
+},
+{
+"file": "emoji/point-up.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f446/lottie.json",
+"sha256": "46aadca75e4ed94e0b98373e7d9c87b188354b1f6f55df978b83802776ee5540",
+"bytes": 44436,
+"category": "emoji",
+"name": "point-up",
+"emoji": "👆"
+},
+{
+"file": "emoji/point-left.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f448/lottie.json",
+"sha256": "b304d9470611052fd99cbe3d19737e9d9a62df43ec9246b86b2e9237166f7d32",
+"bytes": 44435,
+"category": "emoji",
+"name": "point-left",
+"emoji": "👈"
+},
+{
+"file": "emoji/robot.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f916/lottie.json",
+"sha256": "62c2d17f5d8bf02cd3508eed1fd8247f1c213b1e3da81de99efe9be848b68503",
+"bytes": 187153,
+"category": "emoji",
+"name": "robot",
+"emoji": "🤖"
+},
+{
+"file": "emoji/rocket.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f680/lottie.json",
+"sha256": "2b6daf24cee4de340073838a7d97d07c097f2d3919b676d0e4e5fed8a2f23453",
+"bytes": 81575,
+"category": "emoji",
+"name": "rocket",
+"emoji": "🚀"
+},
+{
+"file": "emoji/100.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f4af/lottie.json",
+"sha256": "8e48b464d7473e94e7b744a1774f4c3b7c7a6892faee8667f9e555ddf5160798",
+"bytes": 66142,
+"category": "emoji",
+"name": "100",
+"emoji": "💯"
+},
+{
+"file": "emoji/boom.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f4a5/lottie.json",
+"sha256": "0045d698832e0f485389cab1cc24c0c1cd2b4194accfffca53f31328d8aa0a54",
+"bytes": 87831,
+"category": "emoji",
+"name": "boom",
+"emoji": "💥"
+},
+{
+"file": "emoji/idea.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f4a1/lottie.json",
+"sha256": "beccdc9a9a3d50ca382d3dfeecbade2f26af02c63fa2f1637c56b6ec449925de",
+"bytes": 23436,
+"category": "emoji",
+"name": "idea",
+"emoji": "💡"
+},
+{
+"file": "emoji/money-face.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f911/lottie.json",
+"sha256": "586ddc8ddca3e2dc2270f08bb3aa6185bf86ec633e4e27f31167c6e5e61be62c",
+"bytes": 62491,
+"category": "emoji",
+"name": "money-face",
+"emoji": "🤑"
+},
+{
+"file": "emoji/eyes.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f440/lottie.json",
+"sha256": "0dfcabf677099ebe20efacf98f680cf3aeac6f7b647228acda73917c65e2120f",
+"bytes": 28242,
+"category": "emoji",
+"name": "eyes",
+"emoji": "👀"
+},
+{
+"file": "emoji/check.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/2705/lottie.json",
+"sha256": "6afa2843755236d432ebf032dd9b5370d663842ca6f0252c04152612cd27520f",
+"bytes": 15925,
+"category": "emoji",
+"name": "check",
+"emoji": "✅"
+},
+{
+"file": "emoji/cross.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/274c/lottie.json",
+"sha256": "dc1f748a503825ca71e45629288bb166a0a39d180ab6e11ebb08d79c58f74506",
+"bytes": 7292,
+"category": "emoji",
+"name": "cross",
+"emoji": "❌"
+},
+{
+"file": "emoji/warning.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/26a0_fe0f/lottie.json",
+"sha256": "9cf176002ced202e175e3d9437495cd87b98974301cbee535b04ac1e9ef72888",
+"bytes": 16168,
+"category": "emoji",
+"name": "warning",
+"emoji": "⚠️"
+},
+{
+"file": "emoji/bell.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f514/lottie.json",
+"sha256": "e709a753ff87104a31684163a32e3173cbf24c0128b58821f41709bf8b9fe8d7",
+"bytes": 36717,
+"category": "emoji",
+"name": "bell",
+"emoji": "🔔"
+},
+{
+"file": "emoji/notes.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f3b6/lottie.json",
+"sha256": "33223731fb8bda8446613685c7c11f2055bf642b49cc0903e3529d495168892a",
+"bytes": 12828,
+"category": "emoji",
+"name": "notes",
+"emoji": "🎶"
+},
+{
+"file": "emoji/dancer.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f483/lottie.json",
+"sha256": "73926f389197172f69cbaccf1ccd90f2ce1bc4e4448ae6433d74dbca722b9c54",
+"bytes": 364759,
+"category": "emoji",
+"name": "dancer",
+"emoji": "💃"
+},
+{
+"file": "emoji/cake.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f382/lottie.json",
+"sha256": "4caa1f1394aee19dab4f993afee1643b5589943d567a6a69f20f1f5b463c961d",
+"bytes": 93106,
+"category": "emoji",
+"name": "cake",
+"emoji": "🎂"
+},
+{
+"file": "emoji/gift.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f381/lottie.json",
+"sha256": "7c8172f12a23c3b4c3e65e7064eb35924e5eaee64df2b339ca031de0667bef40",
+"bytes": 73479,
+"category": "emoji",
+"name": "gift",
+"emoji": "🎁"
+},
+{
+"file": "emoji/balloon.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f388/lottie.json",
+"sha256": "ffd2d23c730407b3fe87d5abbabf324f09a4a8bcefdcd624489de4259e16ac50",
+"bytes": 14095,
+"category": "emoji",
+"name": "balloon",
+"emoji": "🎈"
+},
+{
+"file": "emoji/trophy.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f3c6/lottie.json",
+"sha256": "3270e7b560f539cb92b454e9e1405ccd21d2210f212d96384a7aef488ab09765",
+"bytes": 79233,
+"category": "emoji",
+"name": "trophy",
+"emoji": "🏆"
+},
+{
+"file": "emoji/crown.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f451/lottie.json",
+"sha256": "242b70a86733181e584b278e62020c6c52751b0ab7ec0c63676b535de73b8303",
+"bytes": 160863,
+"category": "emoji",
+"name": "crown",
+"emoji": "👑"
+},
+{
+"file": "emoji/gem.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f48e/lottie.json",
+"sha256": "7d72e50d378fc4c57e8703223ea134500874e4d08456bcf320728dc03d78b602",
+"bytes": 62646,
+"category": "emoji",
+"name": "gem",
+"emoji": "💎"
+},
+{
+"file": "emoji/rainbow.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f308/lottie.json",
+"sha256": "e750f606615ddec792171cbd0f17994e1dd496d9ae794b21d57560a52d713688",
+"bytes": 13837,
+"category": "emoji",
+"name": "rainbow",
+"emoji": "🌈"
+},
+{
+"file": "emoji/lightning.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/26a1/lottie.json",
+"sha256": "9a746760dea14bcfe68bfa995a571a63d20805631432cd24d286a122f1ff5a2e",
+"bytes": 89096,
+"category": "emoji",
+"name": "lightning",
+"emoji": "⚡"
+},
+{
+"file": "emoji/question.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/2753/lottie.json",
+"sha256": "a2c0e9f99b906ce6f7d5c36e83d47dde349714f777a0f92f54b0cdc62643220d",
+"bytes": 48981,
+"category": "emoji",
+"name": "question",
+"emoji": "❓"
+},
+{
+"file": "emoji/exclamation.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/2757/lottie.json",
+"sha256": "c8446c7e0e0a752ca921ddccd63c72a3f4d1ce335ee3ae0ece2fe91536a3a471",
+"bytes": 26652,
+"category": "emoji",
+"name": "exclamation",
+"emoji": "❗"
+},
+{
+"file": "emoji/sweat-smile.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f605/lottie.json",
+"sha256": "51c188f920622275409455006d4d6f38c3eaae5d7a9e490f094f9ea5fbb097fb",
+"bytes": 67751,
+"category": "emoji",
+"name": "sweat-smile",
+"emoji": "😅"
+},
+{
+"file": "emoji/star-struck.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f929/lottie.json",
+"sha256": "11faaec0e83c4f3b7c75f773ea33f40a71991b00a0ce97c6d6453c072a619f11",
+"bytes": 46757,
+"category": "emoji",
+"name": "star-struck",
+"emoji": "🤩"
+},
+{
+"file": "emoji/partying.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f973/lottie.json",
+"sha256": "6cc02b10d9471287c26b188d5a9b64899da86543fde29b60ed5e5caf69776c3d",
+"bytes": 67877,
+"category": "emoji",
+"name": "partying",
+"emoji": "🥳"
+},
+{
+"file": "emoji/smile.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f600/lottie.json",
+"sha256": "b93b4e7f34019b29df77a873ea6583f5974008c0add4cac69f8f3b37c07a2426",
+"bytes": 37328,
+"category": "emoji",
+"name": "smile",
+"emoji": "😀"
+},
+{
+"file": "emoji/grin.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f604/lottie.json",
+"sha256": "1e4231ba433f154548efaf17833fb5b6e2267c9a7f60f0bf65bb6f667f5d45b7",
+"bytes": 48154,
+"category": "emoji",
+"name": "grin",
+"emoji": "😄"
+},
+{
+"file": "emoji/melting.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1fae0/lottie.json",
+"sha256": "5d071c234038ddf15f6e14d3c40ab1b965dc3af4661f2c77c0ba41fc4d712e5c",
+"bytes": 135911,
+"category": "emoji",
+"name": "melting",
+"emoji": "🫠"
+},
+{
+"file": "emoji/salute.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1fae1/lottie.json",
+"sha256": "8867659c2abcd4c584ff2f14a0e223357142c20c7b40a1d9c1e18a8b0afd0ecd",
+"bytes": 50214,
+"category": "emoji",
+"name": "salute",
+"emoji": "🫡"
+},
+{
+"file": "emoji/bubble-tea.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f9cb/lottie.json",
+"sha256": "d3542c3b15733f5cd16216a23282374e64a50ea583e3b074f531298cb1828af0",
+"bytes": 121119,
+"category": "emoji",
+"name": "bubble-tea",
+"emoji": "🧋"
+},
+{
+"file": "emoji/coffee.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/2615/lottie.json",
+"sha256": "9514ec6c99f204705f85e0dfe709ee179c1334464d4a262fb58a03f2a0015781",
+"bytes": 36778,
+"category": "emoji",
+"name": "coffee",
+"emoji": "☕"
+},
+{
+"file": "emoji/glowing-star.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f31f/lottie.json",
+"sha256": "6a2654898edd8c50b76c08600850641eaec8d0098b753f2f5b4829fbd64f62bf",
+"bytes": 73203,
+"category": "emoji",
+"name": "glowing-star",
+"emoji": "🌟"
+},
+{
+"file": "emoji/alarm.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/23f0/lottie.json",
+"sha256": "78d204eb11cf05bff145a8f61545eca487b70dc3e15e4ac847170ad2e3bac3db",
+"bytes": 36409,
+"category": "emoji",
+"name": "alarm",
+"emoji": "⏰"
+},
+{
+"file": "emoji/hourglass.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/23f3/lottie.json",
+"sha256": "17753c7722f8cb190cac8244a47be6bc91a5e5fd7636e40da4d9270c581d3cd5",
+"bytes": 30043,
+"category": "emoji",
+"name": "hourglass",
+"emoji": "⏳"
+},
+{
+"file": "emoji/camera.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f4f7/lottie.json",
+"sha256": "fa53959235e6742b97ab6b10ffcab491b1498eba42f49acc10fe3ef5dbaf46f7",
+"bytes": 33087,
+"category": "emoji",
+"name": "camera",
+"emoji": "📷"
+},
+{
+"file": "emoji/clapper.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f3ac/lottie.json",
+"sha256": "a7ccc88c8e6e60b922b428b23c52f4f335a85c2a7758673c7461c235e285c0ef",
+"bytes": 38638,
+"category": "emoji",
+"name": "clapper",
+"emoji": "🎬"
+},
+{
+"file": "emoji/pray.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f64f/lottie.json",
+"sha256": "96c6f33baf19eb1e0fdcc2e16cd32bec25797022c66f66203721354491f0fd2f",
+"bytes": 63630,
+"category": "emoji",
+"name": "pray",
+"emoji": "🙏"
+},
+{
+"file": "emoji/raised-hands.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f64c/lottie.json",
+"sha256": "a7f2d88118d720d0d1b68496561f8ef57e3a4e47c354b2bbdd53608784228b3f",
+"bytes": 117526,
+"category": "emoji",
+"name": "raised-hands",
+"emoji": "🙌"
+},
+{
+"file": "emoji/victory.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/270c_fe0f/lottie.json",
+"sha256": "59e418cb624d594e8b5b7456bfb120c53408b1a70866259fd22dd5d742730251",
+"bytes": 111616,
+"category": "emoji",
+"name": "victory",
+"emoji": "✌️"
+},
+{
+"file": "emoji/kiss.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f618/lottie.json",
+"sha256": "20be88735ef8db8a1da3be4ac59fe5a2c00201f2945435b4a4202613579b5130",
+"bytes": 64904,
+"category": "emoji",
+"name": "kiss",
+"emoji": "😘"
+},
+{
+"file": "emoji/skull.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f480/lottie.json",
+"sha256": "e0ce80dfbd957fb9c64c432c1d16ca6123f290e270688b0e23601099bfc2cc31",
+"bytes": 226657,
+"category": "emoji",
+"name": "skull",
+"emoji": "💀"
+},
+{
+"file": "emoji/ghost.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f47b/lottie.json",
+"sha256": "87e7bc24a3a7c0dcbbc3638ae97e4f6c026b67c460bbaa86c6891de7e0846d53",
+"bytes": 200747,
+"category": "emoji",
+"name": "ghost",
+"emoji": "👻"
+},
+{
+"file": "emoji/pumpkin.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f383/lottie.json",
+"sha256": "ad13aa5d78900645c7bf05e51eb0d3123f5413febe55ed783e5f22b5519aff24",
+"bytes": 62686,
+"category": "emoji",
+"name": "pumpkin",
+"emoji": "🎃"
+},
+{
+"file": "emoji/snowflake.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/2744_fe0f/lottie.json",
+"sha256": "a02b680ac9e6b17ba17096b5ce57b900d1ae61ca4074e2e7b2735cbe3f5e7987",
+"bytes": 138664,
+"category": "emoji",
+"name": "snowflake",
+"emoji": "❄️"
+},
+{
+"file": "emoji/fireworks.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f386/lottie.json",
+"sha256": "1da59d537da6bd3035d000ae722f475078c7ed62aa0792145797079ded707a91",
+"bytes": 110210,
+"category": "emoji",
+"name": "fireworks",
+"emoji": "🎆"
+},
+{
+"file": "emoji/dragon.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f409/lottie.json",
+"sha256": "7323f9903aba8c4a59f2cb10cf592642b3faa486a4cf9e99cfd7feecba7932e7",
+"bytes": 258884,
+"category": "emoji",
+"name": "dragon",
+"emoji": "🐉"
+},
+{
+"file": "emoji/shush.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f92b/lottie.json",
+"sha256": "6a0f5f035c5db84b2032c03647a3e6b3ea45a4d2e7eff90cbc2f3e49aab9ba54",
+"bytes": 60687,
+"category": "emoji",
+"name": "shush",
+"emoji": "🤫"
+},
+{
+"file": "emoji/smirk.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f60f/lottie.json",
+"sha256": "cae3d27a29c7a6845e3373d26c623195100e619997d371ac042732d9e3f0e8f9",
+"bytes": 31466,
+"category": "emoji",
+"name": "smirk",
+"emoji": "😏"
+},
+{
+"file": "emoji/angry.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f621/lottie.json",
+"sha256": "7233c926fc3509ed33d6185be3e288beb3af037e8cd9408d1638bf7395f964ac",
+"bytes": 46289,
+"category": "emoji",
+"name": "angry",
+"emoji": "😡"
+},
+{
+"file": "emoji/sleepy.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f634/lottie.json",
+"sha256": "1fa14c30659503270104b54a7eefd082d7ebc039fc0bab280a6bd173fba3dcdd",
+"bytes": 24420,
+"category": "emoji",
+"name": "sleepy",
+"emoji": "😴"
+},
+{
+"file": "emoji/yum.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f60b/lottie.json",
+"sha256": "a5bdb14e8753d86f92731ef8ff19c565082252bd2d1a8ad418d8aea538b2b11a",
+"bytes": 38167,
+"category": "emoji",
+"name": "yum",
+"emoji": "😋"
+},
+{
+"file": "emoji/hug.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f917/lottie.json",
+"sha256": "feeec5c571e24716e978f149617c57702da4e7849fc1f0d4e21570ff4f4f660c",
+"bytes": 80181,
+"category": "emoji",
+"name": "hug",
+"emoji": "🤗"
+},
+{
+"file": "emoji/hundred.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f4af/lottie.json",
+"sha256": "8e48b464d7473e94e7b744a1774f4c3b7c7a6892faee8667f9e555ddf5160798",
+"bytes": 66142,
+"category": "emoji",
+"name": "hundred",
+"emoji": "💯"
+},
+{
+"file": "emoji/broken-heart.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f494/lottie.json",
+"sha256": "b0589f638ae4bd20d9aa9119ac93ee4f30fce771fdc898e69d112240efbad618",
+"bytes": 87260,
+"category": "emoji",
+"name": "broken-heart",
+"emoji": "💔"
+},
+{
+"file": "emoji/two-hearts.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f495/lottie.json",
+"sha256": "0dd10406edd7c8ef16372581833dfea6963387cb86f5798f91b415dc8ff4b0c4",
+"bytes": 12457,
+"category": "emoji",
+"name": "two-hearts",
+"emoji": "💕"
+},
+{
+"file": "emoji/plus.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/2795/lottie.json",
+"sha256": "cc8467f2b8d901e7b48c357282846a039f08b1a28e56afe95a89d569b8d59a40",
+"bytes": 33464,
+"category": "emoji",
+"name": "plus",
+"emoji": "➕"
+},
+{
+"file": "emoji/peace.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/262e_fe0f/lottie.json",
+"sha256": "5d6a952f775b2d358f4ab770d59c4543a2f2bb9fccd36651e1663628e4bd3a0e",
+"bytes": 16575,
+"category": "emoji",
+"name": "peace",
+"emoji": "☮️"
+},
+{
+"file": "emoji/cursing.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f92c/lottie.json",
+"sha256": "654bafb12c2fc9382bdfbe4676477fe1cb4195f39f2035ece178fe05c78b938a",
+"bytes": 235182,
+"category": "emoji",
+"name": "cursing",
+"emoji": "🤬"
+},
+{
+"file": "emoji/shocked.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f632/lottie.json",
+"sha256": "efccd6e63516c8ab4b99be24f9fdf57ee15bdf1ea39a30b5e7becb0097881566",
+"bytes": 21560,
+"category": "emoji",
+"name": "shocked",
+"emoji": "😲"
+},
+{
+"file": "emoji/drum.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f941/lottie.json",
+"sha256": "c254375dee96cd190cc0ecc78f1401da1335da2e508f51d2115a40b4855b767b",
+"bytes": 37285,
+"category": "emoji",
+"name": "drum",
+"emoji": "🥁"
+},
+{
+"file": "emoji/guitar.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f3b8/lottie.json",
+"sha256": "7df88786c5f38ce8e139d03088ab3cc34c1ed3a26032f1324e55d0dce92e2e1d",
+"bytes": 43709,
+"category": "emoji",
+"name": "guitar",
+"emoji": "🎸"
+},
+{
+"file": "emoji/disco.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1faa9/lottie.json",
+"sha256": "64c3f1e2a54905bcc38132697b7f3e5c3d85cb215a22c0ba19fc7621ef3b44de",
+"bytes": 172207,
+"category": "emoji",
+"name": "disco",
+"emoji": "🪩"
+},
+{
+"file": "emoji/target.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f3af/lottie.json",
+"sha256": "ae36f71945619fab24d26c18b01f8954a04648ee92d82d601a9a0b7e1e32a4c0",
+"bytes": 45947,
+"category": "emoji",
+"name": "target",
+"emoji": "🎯"
+},
+{
+"file": "emoji/dice.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f3b2/lottie.json",
+"sha256": "d013280a294f20c80ade5cadd82359f5ac289f3bea867fcf2ba07b7d99a6952c",
+"bytes": 182164,
+"category": "emoji",
+"name": "dice",
+"emoji": "🎲"
+},
+{
+"file": "emoji/bulb.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f4a1/lottie.json",
+"sha256": "beccdc9a9a3d50ca382d3dfeecbade2f26af02c63fa2f1637c56b6ec449925de",
+"bytes": 23436,
+"category": "emoji",
+"name": "bulb",
+"emoji": "💡"
+},
+{
+"file": "emoji/megaphone.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f4e3/lottie.json",
+"sha256": "78e3f7594512ba6007d348a8a2ffd88dc825b2809a9efb71a3f7c648542a86c0",
+"bytes": 44782,
+"category": "emoji",
+"name": "megaphone",
+"emoji": "📣"
+},
+{
+"file": "emoji/folded.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f64f/lottie.json",
+"sha256": "96c6f33baf19eb1e0fdcc2e16cd32bec25797022c66f66203721354491f0fd2f",
+"bytes": 63630,
+"category": "emoji",
+"name": "folded",
+"emoji": "🙏"
+},
+{
+"file": "emoji/handshake.json",
+"url": "https://fonts.gstatic.com/s/e/notoemoji/latest/1f91d/lottie.json",
+"sha256": "78d7d6671ec57c9aec7bca9ec81ae6ffcd9980e30c628d8ac498668d99fb7411",
+"bytes": 86930,
+"category": "emoji",
+"name": "handshake",
+"emoji": "🤝"
+}
+]

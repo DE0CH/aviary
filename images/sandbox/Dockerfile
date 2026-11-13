@@ -83,6 +83,53 @@ RUN npm install --prefix /opt/claude-code -g @anthropic-ai/claude-code@${CLAUDE_
  && mkdir -p /etc/claude-code \
  && /opt/claude-code/bin/claude --version | grep -qF "${CLAUDE_CODE_VERSION}"
 
+# Qwen Code, the second harness (the supervisor runs /opt/qwen-code/bin/qwen by that absolute path): the DE0CH fork's
+# release (github.com/DE0CH/qwen-code, de0ch/README.md), pinned by its sha256, root-owned like Claude Code. The
+# managed files in /etc/qwen-code are the supervisor's, written at each Qwen Code start.
+ARG QWEN_CODE_RELEASE=de0ch-11d16f9fd011
+ARG QWEN_CODE_SHA256=4a060efefb5999d31e026c63034459c75a9486b00f6c61c31b6897c99c272a9b
+RUN curl -fsSL -o /tmp/qwen-code.tgz "https://github.com/DE0CH/qwen-code/releases/download/${QWEN_CODE_RELEASE}/qwen-code-de0ch.tgz" \
+ && printf '%s  %s\n' "${QWEN_CODE_SHA256}" /tmp/qwen-code.tgz | sha256sum -c - \
+ && npm install --prefix /opt/qwen-code -g /tmp/qwen-code.tgz \
+ && npm cache clean --force \
+ && rm -rf /root/.npm /tmp/qwen-code.tgz \
+ && chown -R root:root /opt/qwen-code \
+ && chmod -R go-w /opt/qwen-code \
+ && ln -s /opt/qwen-code/bin/qwen /usr/local/bin/qwen \
+ && mkdir -p /etc/qwen-code \
+ && /opt/qwen-code/bin/qwen --version
+
+# Video editing, for a harness whose model takes video and sound (Qwen Code): ffmpeg; `clip` (a stretch of a video
+# as a small picture file and a sound file the model opens itself), `speech-times` (where each stretch of speech
+# starts and ends, measured from the sound) and `edit` (a JSON edit plan rendered by ffmpeg and HyperFrames:
+# /opt/engine, its dependencies by its lock file, and the headless Chrome HyperFrames drives, pinned, with the
+# libraries it needs; /opt/engine/GUIDE.md is how to work with the three, for a deployment's skill to point at); the library `edit assets` lists (/opt/assets: music and sound effects from Mixkit, animated
+# emoji from Google's Noto set, fetched by a manifest that pins every file's sha256); and the fonts its looks name,
+# with full Cantonese coverage where the look is for Chinese text (Google Fonts at the commit above).
+ARG CHROME_HEADLESS_SHELL=152.0.7977.30
+COPY video/engine /opt/engine
+COPY --chmod=755 video/clip video/speech-times /usr/local/bin/
+COPY video/assets-manifest.json video/fetch-assets.py video/fonts.txt /opt/image-setup/video/
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg aubio-tools fonts-noto-color-emoji \
+      libnss3 libdbus-1-3 libatk1.0-0t64 libatk-bridge2.0-0t64 libgbm1 libasound2t64 libxrandr2 libxkbcommon0 \
+      libxfixes3 libxcomposite1 libxdamage1 libcairo2 libcups2t64 \
+ && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man \
+ && cd /opt/engine && npm ci --no-audit --no-fund \
+ && npx --yes @puppeteer/browsers@2.10.10 install chrome-headless-shell@${CHROME_HEADLESS_SHELL} --path /opt/engine/chrome-install \
+ && mkdir chrome && ln -s "$(find /opt/engine/chrome-install -type f -name chrome-headless-shell | head -1)" chrome/chrome-headless-shell \
+ && test -x chrome/chrome-headless-shell \
+ && npm cache clean --force && rm -rf /root/.npm \
+ && printf '#!/bin/sh\nexec node /opt/engine/edit.mjs "$@"\n' > /usr/local/bin/edit && chmod 755 /usr/local/bin/edit \
+ && python3 /opt/image-setup/video/fetch-assets.py /opt/image-setup/video/assets-manifest.json /opt/assets \
+ && d=/usr/local/share/fonts/edit && mkdir -p $d && cd $d \
+ && grep -v '^#' /opt/image-setup/video/fonts.txt | while read -r sum file; do \
+      curl -fsSL -o "$(basename "$file")" "https://raw.githubusercontent.com/google/fonts/$GOOGLE_FONTS/ofl/$(printf '%s' "$file" | sed 's/\[/%5B/; s/\]/%5D/')" \
+      && printf '%s  %s\n' "$sum" "$(basename "$file")" | sha256sum -c - || exit 1; \
+    done \
+ && test "$(ls | wc -l)" = "$(grep -vc '^#' /opt/image-setup/video/fonts.txt)" \
+ && fc-cache -f && chown -R root:root /opt/engine /opt/assets && chmod -R go-w /opt/engine /opt/assets
+
 # Installing system packages (A5.F4): `apt-get`/`apt` are wrappers that go through sudo for uid 1000 and fetch the
 # package lists on the first install (the image ships without them). apt reaches the Debian mirrors through the
 # sandbox's proxy: sudo keeps the proxy variables, and the supervisor writes /etc/apt/apt.conf.d/80sandbox-proxy at
@@ -131,9 +178,10 @@ ENV PATH=/home/sandbox/.npm-global/bin:/home/sandbox/.local/bin:/home/sandbox/.c
 COPY Dockerfile apt-wrapper.sh docker-wrapper.sh reportlab-cjk.py line-buffered.pth 90sandbox sudoers npmrc pip.conf profile /opt/image-setup/
 
 # The supervisor and the keeper of this commit (static musl, root 0755), and `sandbox-secret`, which the supervisor
-# binary answers by argv[0] (supervisor spec 3). Last, so a new commit rebuilds only this layer.
+# binary answers by argv[0] (supervisor spec 3), as it does `send-file` (files to the person from a shell command:
+# Qwen Code's way). Last, so a new commit rebuilds only this layer.
 COPY --chmod=755 dist/supervisor dist/supervisor-keeper /usr/local/bin/
-RUN ln -s supervisor /usr/local/bin/sandbox-secret
+RUN ln -s supervisor /usr/local/bin/sandbox-secret && ln -s supervisor /usr/local/bin/send-file
 
 ARG REVISION=dev
 ARG VERSION=dev
@@ -143,7 +191,7 @@ LABEL org.opencontainers.image.source="https://github.com/DE0CH/aviary" \
       org.opencontainers.image.revision="${REVISION}" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
-      org.opencontainers.image.description="hermit's sandbox: Claude Code under the aviary supervisor" \
+      org.opencontainers.image.description="hermit's sandbox: Claude Code or Qwen Code under the aviary supervisor" \
       dev.de0ch.aviary.speaks="${SPEAKS}" \
       dev.de0ch.aviary.supervisor="${SUPERVISOR_SHA256}"
 USER root

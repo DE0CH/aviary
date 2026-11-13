@@ -64,11 +64,12 @@ check "label supervisor is the binary's sha256 ($image_sum)" test -n "$image_sum
 
 check "no tini, no /opt/agent, no /run/sbx-docker" \
   img_run "$img" -c '! command -v tini && ! test -e /usr/bin/tini && ! test -e /opt/agent && ! test -e /run/sbx-docker'
-check "supervisor, supervisor-keeper root 0755, sandbox-secret -> supervisor" img_run "$img" -c '
+check "supervisor, supervisor-keeper root 0755, sandbox-secret and send-file -> supervisor" img_run "$img" -c '
   for b in supervisor supervisor-keeper; do
     test "$(stat -c "%U %a" /usr/local/bin/$b)" = "root 755" || exit 1
   done
-  test "$(readlink /usr/local/bin/sandbox-secret)" = supervisor'
+  test "$(readlink /usr/local/bin/sandbox-secret)" = supervisor
+  test "$(readlink /usr/local/bin/send-file)" = supervisor'
 check "supervisor --version" img_run "$img" -c '/usr/local/bin/supervisor --version | grep -q "^supervisor "'
 # Claude Code: the path the supervisor executes resolves inside /opt/claude-code, and nothing on the way (every
 # directory from / down, the link, the binary) nor anything under /opt/claude-code is uid 1000's or writable by it
@@ -90,6 +91,24 @@ check "Claude Code $claude_version runs as uid 1000" \
   img_run -u 1000 "$img" -c "/opt/claude-code/bin/claude --version | grep -qF '$claude_version'"
 check "a login shell's claude is the same binary" \
   img_run -u 1000 "$img" -lc 'test "$(readlink -f "$(command -v claude)")" = "$(readlink -f /opt/claude-code/bin/claude)"'
+check "Qwen Code runs as uid 1000, root-owned and not writable by it" img_run -u 1000 "$img" -c '
+  /opt/qwen-code/bin/qwen --version | grep -Eq "^[0-9]+\.[0-9]+\.[0-9]+" || exit 1
+  test "$(stat -c %u /opt/qwen-code/bin/qwen)" = 0 && test -d /etc/qwen-code
+  test -z "$(find /opt/qwen-code \( ! -user root -o \( ! -type l -perm /022 \) \) -print -quit)"'
+check "video editing: the library is whole and the fonts cover Cantonese" img_run -u 1000 "$img" -c '
+  cd /tmp && edit assets | grep -q "49 tracks" && edit assets | grep -q "119 sound effects" && edit assets | grep -q "94 animated emoji" || exit 1
+  test -s /opt/assets/music/index.json && test "$(find /opt/assets -name "*.mp3" | wc -l)" = 168 || exit 1
+  for fam in "Chiron Hei HK" "Chiron GoRound TC" "Chiron Sung HK" "LXGW WenKai TC" "Huninn"; do
+    fc-list "$fam:charset=5605" family | grep -q . || { echo "no $fam with 嘅"; exit 1; }
+  done
+  command -v ffmpeg clip speech-times aubiotrack >/dev/null'
+# one frame of a card through the whole engine as the sandbox user: ffmpeg, the composition's build and headless
+# Chrome under HyperFrames, with the pinned browser and no network
+check "video editing: edit renders a frame as uid 1000 (HyperFrames with the pinned Chrome, no network)" \
+  img_run -u 1000 -e HOME=/home/sandbox "$img" -c '
+  mkdir -p /tmp/v && cd /tmp/v && printf "%s" "{\"clips\":[{\"card\":\"標題 *嘅* 測試\",\"seconds\":1.5,\"emoji\":\"🔥\"}],\"theme\":\"bold\"}" > p.json
+  edit check p.json >/dev/null && edit frame p.json --at 0.9 --out f.png >/dev/null 2>e.log || { cat e.log; exit 1; }
+  test "$(stat -c %s f.png)" -gt 20000'
 check "uid 1000 is node, home /home/sandbox" \
   img_run "$img" -c 'test "$(getent passwd 1000 | cut -d: -f1,3,4,6)" = "node:1000:1000:/home/sandbox"'
 check "/workspace, /work and an empty /home/sandbox/.harness are uid 1000's, ~/.claude and ~/.qwen link into it; /var/lib/supervisor root 0700" img_run "$img" -c '

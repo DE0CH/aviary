@@ -19,6 +19,7 @@ ctx=$(mktemp -d)
 trap 'rm -rf "$ctx"' EXIT
 cp "$here"/Dockerfile "$here"/*.sh "$here"/*.py "$here"/*.pth "$here"/90sandbox "$here"/sudoers "$here"/profile "$here"/npmrc "$here"/pip.conf "$ctx/"
 rm -f "$ctx/build.sh" "$ctx/smoke.sh"
+cp -r "$here/video" "$ctx/video"
 mkdir -p "$ctx/dist"
 cp "$bin/supervisor" "$bin/supervisor-keeper" "$ctx/dist/"
 speaks=$("$bin/supervisor" --speaks)

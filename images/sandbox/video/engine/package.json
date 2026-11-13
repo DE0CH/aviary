@@ -1,0 +1,14 @@
+{
+  "name": "edit-engine",
+  "private": true,
+  "type": "module",
+  "description": "edit: JSON edit plan -> video (ffmpeg cuts, HyperFrames renders the page this folder's src/ draws). See edit.mjs.",
+  "dependencies": {
+    "hyperframes": "0.9.41",
+    "esbuild": "0.25.10",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "gsap": "3.13.0",
+    "lottie-web": "5.12.2"
+  }
+}
