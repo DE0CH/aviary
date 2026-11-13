@@ -69,8 +69,12 @@ decided in this order:
      `egress_fixed_bytes_total{route,dir}` instead; a gateway-side failure (502 unreachable, 504 idle, an answer cut)
      is logged (`egress fixed-name upstream`: route, status, request, conversation, `person_key`, never the path),
      at most one line per route per second with the left-out count in the next.
-   - `model`: `POST /v1/messages`, `POST /v1/messages/count_tokens` to egress.json's route `model` (OpenRouter), and
-     `GET /v1/aviary/models` answered by egress itself (below). The route injects `Authorization: Bearer
+   - `model`: `POST /v1/messages`, `POST /v1/messages/count_tokens` (the Messages API, Claude Code) and
+     `POST /v1/chat/completions` (OpenAI chat completions, Qwen Code) to egress.json's route `model` (OpenRouter;
+     the route's `allowPaths` must list both), and `GET /v1/aviary/models` answered by egress itself (below). A
+     model names its harness (`models[].harness`: `qwen`; absent = Claude Code) and may be limited to some people
+     (`models[].visibleTo`: emails; absent = everyone; never the default model); both are in the models answer when
+     set, and pigeon shows and lets pick a limited model only to those people. The route injects `Authorization: Bearer
      $OPENROUTER_API_KEY` and **forces zero data retention into every request body** (`provider.zdr: true`,
      `provider.data_collection: "deny"`, set over whatever the caller sent; a body that is not one valid JSON object
      is refused with 400, `deny:body`; no config turns this off: `ModelBodyRewriter` in
