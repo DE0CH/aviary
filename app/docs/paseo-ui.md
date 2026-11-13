@@ -220,15 +220,20 @@ measuring; test on a throttled connection. So:
   page's own loading frame (`WorkspaceLoadingFrame`) draws the box at the composer's place, so a send or a drawer tap
   before its chunk arrives never leaves the page without one; if the chunk cannot be fetched it shows a Reload button.
 - **Installed on a phone** (Chrome on Android: menu, 「加到主畫面」 / "Add to Home screen", 「安裝」 / "Install"; there
-  is no Android app): `public/manifest.json` meets Chrome's install criteria (name, `start_url` and `scope` `/`,
-  `display: standalone`, 192 and 512 px icons that also serve as maskable ones: full-bleed navy, the mark inside the
+  is no Android app): the deployment's `/branding/manifest.json` (Branding below; the bundle's neutral one is
+  `public/branding/manifest.json`) meets Chrome's install criteria (name, `start_url` and `scope` `/`,
+  `display: standalone`, 192 and 512 px icons that also serve as maskable ones: full-bleed, the mark inside the
   middle 80%), with no `orientation`, so a tablet or a foldable turns freely. No service worker: Chrome asks for
   none, and the app does nothing offline. The manifest and icons are outside Access, so the signed-out page installs
-  too; sign-in then runs inside the installed window. `theme-color` (the browser's bar, the installed app's status
-  bar) is the page's background: one meta per system scheme in `index.html`, set to the saved theme's by the early
-  script and to the live theme's `surface0` by `appearance/system-bars.web.tsx`. Tests: `yyc/web-manifest.test.ts`,
-  `appearance/theme-color.test.ts`; Chrome's own verdict on a deployed site: claude-env `yyc-ai` skill, "Installed
-  from Chrome".
+  too; sign-in then runs inside the installed window. **The status bar of the installed app**: Chrome paints it with
+  the page's `theme-color` unless that is brighter than about `#eeeeee` (white is ignored), then with the manifest's
+  `theme_color`; in the system's dark scheme it paints its own `#121318` whatever both say. So the manifest's
+  `theme_color` is the light theme's background (`#ffffff`; a deployment's manifest keeps it), and the page's
+  `theme-color` is the page's background: one meta per system scheme in `index.html`, set to the saved theme's by
+  the early script and to the live theme's `surface0` by `appearance/system-bars.web.tsx` (a dark theme picked in
+  the app on a light phone gets its dark bar that way). Tests: `yyc/web-manifest.test.ts`,
+  `appearance/theme-color.test.ts`; the deployed site on an emulator's Chrome: workflow `yyc-web-install`
+  (`scripts/web-install/emulator_test.py`; claude-env `yyc-ai` skill, "Android: installed from Chrome").
 - **The early message box** (`#yyc-early` in `public/index.html`, outside `#root`): a plain textarea and a disabled
   send button over the frame's message box, typable before any script (font, line height and padding from
   `composer/input/input.tsx`, 16 px on touch screens; theme and placeholder language from the saved settings). Its
