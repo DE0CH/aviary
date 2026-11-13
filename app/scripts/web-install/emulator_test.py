@@ -53,9 +53,32 @@ def shot(name):
     return path
 
 
+KNOWN_SCREENS = {  # fixed words for what is on the screen at a failure (never anything read off the site)
+    "an ANR dialog": r".*isn't responding.*",
+    "Chrome's offline page": r".*(No internet|site can.t be reached|ERR_[A-Z_]+).*",
+    "Chrome's Install dialog": r"Install app|Install",
+    "the launcher's Add to home screen sheet": r"Add to home screen|Add automatically",
+    "Sign in": SIGN_IN,
+}
+
+
+def where():
+    """The window in front and which known screens show, for a failure's annotation."""
+    seen = nodes()
+    top = re.search(r" (com\.[\w.]+)/([\w.$]+)", resumed())
+    window = f"{top.group(1)}/{top.group(2).rsplit('.', 1)[-1]}" if top else "unknown"
+    shows = [name for name, pattern in KNOWN_SCREENS.items()
+             if any(re.fullmatch(pattern, node[key].strip(), re.S) for node in seen for key in ("text", "desc"))]
+    return f"in front: {window}, {len(seen)} nodes, showing: {', '.join(shows) or 'none of the known screens'}"
+
+
 def fail(name, text):
     shot(f"fail-{name}")
     save_ui(f"fail-{name}")
+    try:
+        text = f"{text} ({where()})"
+    except Exception:
+        pass
     print(f"FAIL: {text}", file=sys.stderr, flush=True)
     print(f"::error title=install check::{name}: {text}", flush=True)
     sys.exit(1)
