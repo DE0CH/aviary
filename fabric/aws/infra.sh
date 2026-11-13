@@ -30,7 +30,7 @@
 #                                      `template` by hand.
 #   infra.sh --config F template <ami> launch template (new default version): fabric.aws.instanceType (default m7i.xlarge), that AMI, the SG, a public
 #                                      IPv4 and an IPv6 address, one subnet (one AZ: host-to-host traffic is free),
-#                                      IMDSv2 with hop limit 1, no instance profile, no key pair, gp3 40 GB deleted with
+#                                      IMDSv2 with hop limit 1, no instance profile, no key pair, gp3 of fabric.aws.diskGiB (default 40) deleted with
 #                                      the instance, terminate on shutdown; the template's other versions are deleted
 #   infra.sh --config F iam            IAM user hermit-scaler with only: RunInstances from that template (its instance type,
 #                                      tag app=<tags.app>), tags at launch, TerminateInstances of app=<tags.app>
@@ -59,6 +59,9 @@ PIN_IMAGE=$(cfg .sandbox.image)
 PIN_SANDBOXD=$(cfg .fabric.sandboxd)
 PIN_RUNSC=$(cfg .fabric.runsc)
 INSTANCE_TYPE=$(jq -r '.fabric.aws.instanceType // "m7i.xlarge"' "$CONFIG")   # hermit spec 13.1's host size
+# the hosts' disk, GiB: every sandbox's scratch in full (sandbox.tmpGiB each) beside the system and the image
+DISK_GIB=$(jq -r '.fabric.aws.diskGiB // 40' "$CONFIG")
+[[ $DISK_GIB =~ ^[1-9][0-9]{1,3}$ ]] || { echo "fabric.aws.diskGiB '$DISK_GIB' is not a whole number of GiB (10-9999)" >&2; exit 2; }
 SCALER_USER=hermit-scaler
 CI_USER=hermit-ami-ci
 
@@ -74,6 +77,7 @@ tagspec() {
 }
 
 # the default template version's AMI, and one of its tags
+cur_disk() { aws ec2 describe-launch-template-versions --launch-template-name "$NAME" --versions '$Default' --query 'LaunchTemplateVersions[0].LaunchTemplateData.BlockDeviceMappings[0].Ebs.VolumeSize' --output text; }
 cur_ami() { aws ec2 describe-launch-template-versions --launch-template-name "$NAME" --versions '$Default' --query 'LaunchTemplateVersions[0].LaunchTemplateData.ImageId' --output text; }
 ami_tag() { aws ec2 describe-images --image-ids "$1" --query "Images[0].Tags[?Key=='$2'].Value | [0]" --output text | grep -v '^None$' || true; }
 # a registry login for crane, only when GHCR_USER/GHCR_TOKEN are set (a public image needs none)
@@ -201,11 +205,11 @@ ami)
 template)
   AMI=${2:?ami id}
   sg=$(sg_id)
-  data=$(jq -cn --arg ami "$AMI" --arg sg "$sg" --arg subnet "$SUBNET" --arg type "$INSTANCE_TYPE" --argjson eni "$(tagspec network-interface)" '{
+  data=$(jq -cn --arg ami "$AMI" --arg sg "$sg" --arg subnet "$SUBNET" --arg type "$INSTANCE_TYPE" --argjson disk "$DISK_GIB" --argjson eni "$(tagspec network-interface)" '{
     ImageId: $ami, InstanceType: $type,
     NetworkInterfaces: [{DeviceIndex: 0, SubnetId: $subnet, Groups: [$sg], AssociatePublicIpAddress: true, Ipv6AddressCount: 1, DeleteOnTermination: true}],
     MetadataOptions: {HttpTokens: "required", HttpPutResponseHopLimit: 1, HttpEndpoint: "enabled", InstanceMetadataTags: "disabled"},
-    BlockDeviceMappings: [{DeviceName: "/dev/sda1", Ebs: {VolumeSize: 40, VolumeType: "gp3", DeleteOnTermination: true}}],
+    BlockDeviceMappings: [{DeviceName: "/dev/sda1", Ebs: {VolumeSize: $disk, VolumeType: "gp3", DeleteOnTermination: true}}],
     InstanceInitiatedShutdownBehavior: "terminate",
     TagSpecifications: [$eni]
   }')
@@ -264,7 +268,7 @@ prune-amis)
   ;;
 current)
   ami=$(cur_ami)
-  echo "$ami image=$(ami_tag "$ami" image) sandboxd=$(ami_tag "$ami" sandboxd) runsc=$(ami_tag "$ami" runsc)"
+  echo "$ami image=$(ami_tag "$ami" image) sandboxd=$(ami_tag "$ami" sandboxd) runsc=$(ami_tag "$ami" runsc) disk=$(cur_disk)"
   ;;
 check)
   want=$(digest_of "$PIN_IMAGE"); ami=$(cur_ami)
@@ -276,7 +280,12 @@ check)
     echo "stale: $ami holds a local sandboxd build (sandboxd=local), which never matches the pin $PIN_SANDBOXD" >&2
   fi
   if [ -n "$want" ] && [ "$want" = "$have" ] && [ "$PIN_SANDBOXD" = "$have_rel" ] && [ "$PIN_RUNSC" = "$have_gv" ]; then
-    echo "ok: $ami holds image $want, sandboxd $have_rel, runsc $have_gv"; exit 0
+    have_disk=$(cur_disk)
+    if [ "$have_disk" != "$DISK_GIB" ]; then
+      # the AMI is right, the template is not: exit 4, so sync writes the template without baking
+      echo "stale: the template's disk is ${have_disk:-?} GiB; fabric.aws.diskGiB is $DISK_GIB ($ami holds the pins)" >&2; exit 4
+    fi
+    echo "ok: $ami holds image $want, sandboxd $have_rel, runsc $have_gv; disk $DISK_GIB GiB"; exit 0
   fi
   echo "stale: $ami holds image ${have:-?} sandboxd ${have_rel:-?} runsc ${have_gv:-?}; the pins are $want $PIN_SANDBOXD $PIN_RUNSC" >&2
   exit 1
@@ -290,7 +299,15 @@ sync)
     echo "sync refused: fabric.sandboxd '$PIN_SANDBOXD' is not an aviary-<sha12> release (none is published before WP-28's publish job), so a baked AMI could never pass check" >&2
     exit 3
   fi
-  if [ -z "${FORCE:-}" ] && bash "$here/infra.sh" --config "$CONFIG" check; then exit 0; fi
+  if [ -z "${FORCE:-}" ]; then
+    rc=0; bash "$here/infra.sh" --config "$CONFIG" check || rc=$?
+    if [ "$rc" = 0 ]; then exit 0; fi
+    if [ "$rc" = 4 ]; then   # only the disk differs: the same AMI, a new template version
+      bash "$here/infra.sh" --config "$CONFIG" template "$(cur_ami)"
+      bash "$here/infra.sh" --config "$CONFIG" current
+      exit 0
+    fi
+  fi
   new=$(bash "$here/infra.sh" --config "$CONFIG" ami | tail -1)
   [[ $new == ami-* ]] || { echo "bake failed" >&2; exit 1; }
   bash "$here/infra.sh" --config "$CONFIG" template "$new"

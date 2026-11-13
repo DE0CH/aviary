@@ -1,7 +1,8 @@
 //! A sandbox's files on the host (docs/HOST.md "Storage in the sandbox"):
-//! - scratch: a sparse 5 GiB ext4 file per sandbox, loop-mounted at /var/lib/sbx/scratch/<name>; it holds the root
-//!   overlay's upper layer (installs) and the sandbox's /tmp and Docker directory, so writes past 5 GiB fail with
-//!   ENOSPC and one sandbox can't fill the host's disk. Plain files: a migration copies them file by file with rsync
+//! - scratch: a sparse ext4 file per sandbox of the spec's `scratchBytes` (5 GiB when it names none), loop-mounted
+//!   at /var/lib/sbx/scratch/<name>; it holds the root overlay's upper layer (installs) and the sandbox's /tmp and
+//!   Docker directory, so writes past its size fail with ENOSPC and one sandbox can't fill the host's disk (the
+//!   host's disk must hold every sandbox's scratch in full: the files are sparse, nothing here checks it). Plain files: a migration copies them file by file with rsync
 //!   (`sync_scratch` on the source, `rsync --daemon` behind the destination's migrate-relay; docs/HOST.md
 //!   "Scratch on migration"): rounds while the sandbox runs, then a final delta while it is stopped.
 //! - root: Linux overlayfs, the image's rootfs (read-only, shared) under scratch/upper, at /var/lib/sbx/root/<name>;
@@ -18,7 +19,19 @@ use crate::proc::{quiet, sh};
 use crate::util::{Error, Res};
 use core::fmt::Write as _;
 
-pub const SCRATCH_BYTES: &str = "5G";
+/// `truncate -s`'s size for a scratch file: the bytes in decimal.
+pub fn scratch_size(spec: &Spec) -> crate::fixed::Str<24> {
+    let mut s = crate::fixed::Str::new();
+    let _ = write!(s, "{}", spec.scratch_bytes());
+    s
+}
+
+/// mkfs for the scratch file `img`. No reserved blocks (every byte usable) and no lazy init thread writing behind
+/// our back; the journal is 64 MiB at any size (mke2fs's own choice at 5 GiB; at 100 GiB it would take 512 MiB and
+/// write all of it before the sandbox starts).
+pub fn mkfs_argv(img: &str) -> [&str; 10] {
+    ["mkfs.ext4", "-q", "-F", "-m", "0", "-J", "size=64", "-E", "lazy_itable_init=0,lazy_journal_init=0", img]
+}
 
 pub fn scratch_img(name: &str) -> P {
     path!("/var/lib/sbx/scratch/{name}.img")
@@ -100,9 +113,8 @@ pub fn setup(spec: &Spec) -> Res<P> {
     crate::util::mkdir(path!("/var/lib/sbx/scratch").as_str(), 0o700)?;
     if !is_mount(sd.as_str()) {
         if std::fs::metadata(img.as_str()).is_err() {
-            sh(&["truncate", "-s", SCRATCH_BYTES, img.as_str()])?;
-            // no reserved blocks (all 5 GiB usable), no lazy init thread writing behind our back
-            sh(&["mkfs.ext4", "-q", "-F", "-m", "0", "-E", "lazy_itable_init=0,lazy_journal_init=0", img.as_str()])?;
+            sh(&["truncate", "-s", scratch_size(spec).as_str(), img.as_str()])?;
+            sh(&mkfs_argv(img.as_str()))?;
         }
         crate::util::mkdir(sd.as_str(), 0o700)?;
         sh(&["mount", "-o", "loop,noatime", img.as_str(), sd.as_str()])?;
@@ -313,6 +325,29 @@ pub fn teardown(name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scratch_is_the_specs_size() {
+        let spec = |extra: &str| {
+            let mut t = String::from(r#"{"name":"sbx-0a1b2c","ip":"10.98.0.11","image":""#);
+            t.push_str(&"c".repeat(64));
+            t.push_str(r#"","cpu":1,"memory":1073741824"#);
+            t.push_str(extra);
+            t.push('}');
+            Spec::parse(t.as_bytes(), "10.98.0.0/16")
+        };
+        // no size named: 5 GiB, as before the field
+        assert_eq!(scratch_size(&spec("").ok().unwrap()).as_str(), "5368709120");
+        assert_eq!(scratch_size(&spec(r#","scratchBytes":107374182400"#).ok().unwrap()).as_str(), "107374182400");
+        // under 1 GiB, over 1 TiB, a fraction: refused, never rounded
+        for bad in ["1073741823", "1099511627777", "5368709120.5", "\"x\"", "true"] {
+            assert!(spec(&format!(r#","scratchBytes":{bad}"#)).is_err(), "{bad}");
+        }
+        // the journal does not grow with the file
+        let a = mkfs_argv("/x.img");
+        assert_eq!(&a[5..7], &["-J", "size=64"]);
+        assert_eq!(a[9], "/x.img");
+    }
 
     #[test]
     fn final_delta_compares_contents() {

@@ -388,7 +388,10 @@ unknown path and for a known path with another method: 404 `not found`).
 - **hermit spec 13.2's additions** (WP-19), all optional so a host on an older sandboxd still parses: `Listed.alive`
   (item 6; absent = not reported, read as alive), `Spec.pids` (item 9; absent = sandboxd's 4096), `GET
   …/log?tail=<bytes>` (item 10, `text/plain`, at most 64 KiB; the `Server` trait's default answers 404) and `GET
-  …/receive` without `wait` with the state `none` (item 11, `ReceiveResult::None`). `Spec.user` stays in the type
+  …/receive` without `wait` with the state `none` (item 11, `ReceiveResult::None`). `Spec.scratchBytes` (the scratch
+  filesystem's size; absent = sandboxd's 5 GiB) is the same, with one difference: a sandboxd that predates it refuses
+  the field, so hermit names it only when `sandbox.tmpGiB` is not 5, and a deployment that changes `tmpGiB` moves its
+  sandboxes onto hosts of the new AMI (the fresh-host switch, then retire the old hosts). `Spec.user` stays in the type
   until sandboxd drops the bind (item 2); hermit never sends it.
 - **The router reads bodies as sandboxd does,** except for one leniency: the content type is ignored, an empty or
   whitespace body and a JSON value that is not an object are `{}`, a body that is not JSON is 400, over 64 KiB is

@@ -319,10 +319,16 @@ pub struct Spec {
     pub workspace: Str<64>,
     /// the pids limit (hermit spec 13.2 item 9); 0 = not given (the bundle uses [`DEFAULT_PIDS`])
     pub pids: u64,
+    /// the size of the scratch filesystem, bytes (docs/HOST.md "Storage"); 0 = not given ([`DEFAULT_SCRATCH_BYTES`])
+    pub scratch: u64,
 }
 
 /// The pids limit of a spec that gives none.
 pub const DEFAULT_PIDS: u64 = 4096;
+/// The scratch filesystem of a spec that gives no size (sandboxd-api's `DEFAULT_SCRATCH_BYTES`).
+pub const DEFAULT_SCRATCH_BYTES: u64 = 5 << 30;
+/// The sizes a spec may ask for: 1 GiB to 1 TiB.
+pub const SCRATCH_RANGE: core::ops::RangeInclusive<u64> = (1 << 30)..=(1 << 40);
 // SAFETY: Spec is only fixed strings, numbers and bools, for which all zeros is a valid value.
 unsafe impl crate::fixed::Zeroed for Spec {}
 
@@ -368,9 +374,11 @@ impl Spec {
             cpu_features: Str::new(),
             workspace: Str::new(),
             pids: 0,
+            scratch: 0,
         };
         let mut memory = f64::NAN;
         let mut pids = f64::NAN;
+        let mut scratch = f64::NAN;
         let (mut have_name, mut have_ip, mut have_image) = (false, false, false);
         let mut envn = 0usize;
         let e400 = |m: &str| Error::new(400, m);
@@ -464,6 +472,18 @@ impl Spec {
                 if !(pids.is_nan() || (pids == pids.trunc() && (64.0..=1_048_576.0).contains(&pids))) {
                     return Err(e400("spec: pids must be a whole number in [64, 1048576]"));
                 }
+            } else if k.is("scratchBytes") {
+                scratch = match v {
+                    Val::Null => f64::NAN,
+                    Val::Num(x) => x,
+                    // a string that is no number is refused, not read as "not given"
+                    Val::Str(s) => Some(num_from_str(s)).filter(|n| !n.is_nan()).unwrap_or(-1.0),
+                    _ => -1.0,
+                };
+                let (lo, hi) = (*SCRATCH_RANGE.start() as f64, *SCRATCH_RANGE.end() as f64);
+                if !(scratch.is_nan() || (scratch == scratch.trunc() && (lo..=hi).contains(&scratch))) {
+                    return Err(e400("spec: scratchBytes must be a whole number of bytes in [1 GiB, 1 TiB]"));
+                }
             } else if k.is("cpuFeatures") {
                 if matches!(v, Val::Null) {
                     return Ok(());
@@ -503,6 +523,9 @@ impl Spec {
         if !pids.is_nan() {
             sp.pids = pids as u64;
         }
+        if !scratch.is_nan() {
+            sp.scratch = scratch as u64;
+        }
         Ok(sp)
     }
 
@@ -525,7 +548,16 @@ impl Spec {
         if self.pids != 0 {
             w.ku64("pids", self.pids);
         }
+        // a migration's destination makes the scratch from this (GET spec → receive), so it must travel
+        if self.scratch != 0 {
+            w.ku64("scratchBytes", self.scratch);
+        }
         w.end();
+    }
+
+    /// The size of the scratch filesystem the sandbox gets, bytes.
+    pub fn scratch_bytes(&self) -> u64 {
+        if self.scratch == 0 { DEFAULT_SCRATCH_BYTES } else { self.scratch }
     }
 
     /// The pids limit the bundle gets.

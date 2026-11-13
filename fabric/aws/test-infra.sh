@@ -13,6 +13,7 @@ printf '%s\n' "$*" >> "$AWS_LOG"
 args=" $* "
 case $args in
   *" sts get-caller-identity "*) echo 123456789012 ;;
+  *" describe-launch-template-versions "*"--versions \$Default"*"VolumeSize"*) echo "${LT_DISK:-40}" ;;
   *" describe-launch-template-versions "*"--versions \$Default"*) echo ami-0cur ;;
   *" describe-launch-templates "*"LaunchTemplateId,DefaultVersionNumber"*) printf 'lt-0abc\t2\n' ;;
   *" describe-launch-templates "*"LaunchTemplateId"*) echo lt-0abc ;;
@@ -46,7 +47,7 @@ has() { grep -qF -- "$1" "$AWS_LOG" || fail "no aws call with: $1"; }
 if bash "$here/infra.sh" current >/dev/null 2>&1; then fail "runs without --config"; fi
 
 run current > "$t/out"
-grep -q "^ami-0cur image=$d sandboxd=aviary-0123456789ab runsc=precopy-20261021.2$" "$t/out" || fail "current: $(cat "$t/out")"
+grep -q "^ami-0cur image=$d sandboxd=aviary-0123456789ab runsc=precopy-20261021.2 disk=40$" "$t/out" || fail "current: $(cat "$t/out")"
 has "--region xx-test-1 ec2 describe-launch-template-versions --launch-template-name test-host"
 echo "ok  current reads the template and the AMI's tags"
 
@@ -67,7 +68,22 @@ rc=0; SANDBOXD_BINARY=/nonexistent run sync > /dev/null 2>&1 || rc=$?
 ! grep -qE "run-instances|create-image|import-key-pair" "$AWS_LOG" || fail "sync baked with SANDBOXD_BINARY"
 echo "ok  sync refuses a local build and a pin that is not a release (nothing baked); check says why"
 
+# the hosts' disk: fabric.aws.diskGiB (40 when absent); a template with another size is stale without a bake
+jq '.fabric.aws.diskGiB = 220' "$t/hermit.json" > "$t/disk.json"
+rc=0; : > "$AWS_LOG"; bash "$here/infra.sh" --config "$t/disk.json" check > /dev/null 2>"$t/err" || rc=$?
+[ "$rc" = 4 ] || fail "check with a 40 GiB template and diskGiB 220 exited $rc, not 4"
+grep -q "disk is 40 GiB; fabric.aws.diskGiB is 220" "$t/err" || fail "check does not name the disk: $(cat "$t/err")"
+LT_DISK=220 bash "$here/infra.sh" --config "$t/disk.json" check > /dev/null || fail "check with the disk in place"
+: > "$AWS_LOG"; bash "$here/infra.sh" --config "$t/disk.json" sync > /dev/null || fail "sync with only the disk stale"
+! grep -qE "run-instances|create-image" "$AWS_LOG" || fail "sync baked for a disk change"
+grep -F "create-launch-template-version" "$AWS_LOG" | grep -q '"ImageId":"ami-0cur"' || fail "disk sync: not the current AMI"
+grep -F "create-launch-template-version" "$AWS_LOG" | grep -q '"VolumeSize":220,' || fail "disk sync: not 220 GiB"
+jq '.fabric.aws.diskGiB = "big"' "$t/hermit.json" > "$t/baddisk.json"
+if bash "$here/infra.sh" --config "$t/baddisk.json" current > /dev/null 2>&1; then fail "a diskGiB that is no number"; fi
+echo "ok  disk: the template's volume is fabric.aws.diskGiB; a size change writes the template, no bake"
+
 run template ami-0new > /dev/null
+grep -F "create-launch-template-version" "$AWS_LOG" | grep -q '"VolumeSize":40,' || fail "template disk (the default)"
 has "create-launch-template-version --launch-template-name test-host"
 grep -F "create-launch-template-version" "$AWS_LOG" | grep -q '"SubnetId":"subnet-0test"' || fail "template subnet"
 grep -F "create-launch-template-version" "$AWS_LOG" | grep -q '"ImageId":"ami-0new"' || fail "template AMI"

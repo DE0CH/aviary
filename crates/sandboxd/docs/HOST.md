@@ -120,8 +120,11 @@ reached over the node's IPv6; the egress VIP translation; the image source for b
   no `args` or `user`: an unknown spec field is a 400. `/dev/fuse` (`c 10:229`, 0666) is in the bundle's
   `linux.devices` and the device allow-list; runsc needs no FUSE flag (the fork registers FUSE unconditionally), so
   the flags above are the same on every host.
-- Its files ("Storage"): root = Linux overlayfs (the image read-only + `upper/` on the sandbox's 5 GiB ext4 scratch
-  file), `/tmp` and `/var/lib/docker` on the same scratch, and `/workspace` = `ws/<workspace>` of the host's JuiceFS
+- Its files ("Storage"): root = Linux overlayfs (the image read-only + `upper/` on the sandbox's ext4 scratch
+  file: the spec's `scratchBytes`, 1 GiB to 1 TiB, 5 GiB when it names none), `/tmp` and `/var/lib/docker` on the
+  same scratch. The scratch files are sparse and nothing on the host counts them: the host's disk (hermit.json
+  `fabric.aws.diskGiB`, the launch template's volume) must hold every sandbox's scratch in full, which hermit checks
+  when it loads its configuration. `/workspace` = `ws/<workspace>` of the host's JuiceFS
   mount (`sbx-jfs`). hermit makes `ws/<workspace>` and sets its quota (hermit spec 15.5); sandboxd makes, chowns and
   quotas nothing there and refuses a create whose folder is missing (409 `workspace missing`). No `~/.claude` bind
   (the supervisor mounts its FUSE filesystem on the pre-made `/home/sandbox/.claude`) and no `/etc/hosts` bind (the

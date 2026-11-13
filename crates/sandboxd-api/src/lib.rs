@@ -369,7 +369,16 @@ pub struct Spec {
     /// The sandbox's pids limit (hermit spec 13.2 item 9; sandboxd's default 4096 when absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pids: Option<u32>,
+    /// The size of the sandbox's scratch filesystem (the root's upper layer, `/tmp`, Docker's directory), bytes, a
+    /// whole number in [1 GiB, 1 TiB]; absent = [`DEFAULT_SCRATCH_BYTES`]. A caller names it only when it differs
+    /// from the default, so a host on a sandboxd that predates the field (which refuses unknown fields) still
+    /// takes a default-sized sandbox.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scratch_bytes: Option<u64>,
 }
+
+/// The scratch filesystem of a spec that names no size: 5 GiB.
+pub const DEFAULT_SCRATCH_BYTES: u64 = 5 << 30;
 
 /// A sandbox's state on a host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

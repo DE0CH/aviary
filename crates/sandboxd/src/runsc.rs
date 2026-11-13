@@ -146,7 +146,7 @@ pub fn bundle_spec(b: &mut Buf, spec: &Spec, image_env: &[&str], args: &[&str], 
     mount(&mut w, "/sys", "sysfs", "sysfs", &["nosuid", "noexec", "nodev", "ro"]);
     mount(&mut w, "/sys/fs/cgroup", "cgroup", "cgroup", &["nosuid", "noexec", "nodev"]);
     mount(&mut w, "/run", "tmpfs", "tmpfs", &["nosuid", "nodev", "mode=755"]);
-    // scratch (storage.rs): host files on the sandbox's own 5 GiB filesystem, not memory
+    // scratch (storage.rs): host files on the sandbox's own filesystem of the spec's size, not memory
     let tmp = crate::paths::join(scratch, "/tmp");
     let docker = crate::paths::join(scratch, "/docker");
     mount(&mut w, "/tmp", "bind", tmp.as_str(), &["rbind", "rw"]);

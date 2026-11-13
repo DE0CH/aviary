@@ -61,7 +61,9 @@ fn sandboxes() {
         (Some(true), true, Some(5_033_164_800))
     );
     let p: Spec = round_trip("spec-pids.json");
-    assert_eq!(p.pids, Some(4096));
+    assert_eq!((p.pids, p.scratch_bytes), (Some(4096), None));
+    let p: Spec = round_trip("spec-scratch.json");
+    assert_eq!(p.scratch_bytes, Some(100 << 30));
     let _: Sandboxes = round_trip("sandboxes.json");
     let _: Deleted = round_trip("deleted.json");
 }

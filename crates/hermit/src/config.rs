@@ -174,6 +174,10 @@ pub struct MigrationJson {
     pub max_scratch_mib: u32,
 }
 
+/// What a host's disk holds beside the sandboxes' scratch: the system and the unpacked sandbox image (the AMI's
+/// own snapshot is 16 GiB).
+pub const HOST_SYSTEM_GIB: u64 = 16;
+
 fn max_scratch_mib() -> u32 {
     512
 }
@@ -187,6 +191,10 @@ pub struct AwsJson {
     pub subnet: String,
     pub tags: BTreeMap<String, String>,
     pub fallback_host: FallbackHost,
+    /// The hosts' disk, GiB (gp3): the launch template's volume, which `fabric/aws/infra.sh` writes (40 when
+    /// absent). It must hold every sandbox of a host at `sandbox.tmpGiB` in full, plus the system and the image.
+    #[serde(default, rename = "diskGiB")]
+    pub disk_gib: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -325,7 +333,31 @@ impl Config {
             parse_quantity(m).ok_or_else(|| invalid(format!("fabric: {m:?} is not a quantity")))?;
         }
         let workspace_quota_bytes = u64::from(s.workspace.quota_gib) << 30;
+        // sandboxd's range for a spec's `scratchBytes`
+        if !(1..=1024).contains(&s.tmp_gib) {
+            return Err(invalid("sandbox.tmpGiB must be in [1, 1024]"));
+        }
         let tmp_bytes = u64::from(s.tmp_gib) << 30;
+        // a named disk must hold what it is for: every sandbox of a host with its scratch full, beside the system
+        // and the unpacked image (`HOST_SYSTEM_GIB`); the scratch files are sparse, so nothing else would say so
+        // until a sandbox's writes fail short of its size
+        if let Some(disk) = file.fabric.aws.disk_gib {
+            let fb = &file.fabric.aws.fallback_host;
+            let free = parse_quantity(&fb.memory)
+                .unwrap_or(0)
+                .saturating_sub(parse_quantity(&fb.reserve).unwrap_or(0));
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // floor of a small positive value
+            let by_cpu = (f64::from(fb.cpus) * f64::from(file.fabric.cpu_overcommit) / f64::from(s.cpu)).floor() as u64;
+            let slots = (free / memory_bytes).min(by_cpu);
+            let need = slots * u64::from(s.tmp_gib) + HOST_SYSTEM_GIB;
+            if u64::from(disk) < need {
+                return Err(invalid(format!(
+                    "fabric.aws.diskGiB {disk} is too small: a host takes {slots} sandboxes of sandbox.tmpGiB {} \
+                     and needs {HOST_SYSTEM_GIB} GiB for the system and the image, {need} GiB",
+                    s.tmp_gib
+                )));
+            }
+        }
         let rules = rules
             .replace("{workspaceGiB}", &s.workspace.quota_gib.to_string())
             .replace("{workspaceFiles}", &thousands(s.workspace.quota_inodes))
@@ -513,6 +545,35 @@ mod tests {
         v["sandbox"]["idleMinute"] = 3.into();
         let e = serde_json::from_value::<HermitJson>(v).unwrap_err();
         assert!(e.to_string().contains("idleMinute"), "{e}");
+    }
+
+    #[test]
+    fn a_named_disk_must_hold_every_sandboxs_scratch() {
+        let load = |edit: &dyn Fn(&mut serde_json::Value)| {
+            let mut v: serde_json::Value = serde_json::from_str(EXAMPLE).unwrap();
+            edit(&mut v);
+            Config::from_parts(serde_json::from_value(v).unwrap(), "i", "r", "t")
+        };
+        // 7Gi on the fallback host (15.5Gi - 1Gi, 4 CPUs x 3): 2 sandboxes; 2 x 100 + 16 = 216 GiB
+        let sized = |disk: u32| {
+            load(&move |v| {
+                v["sandbox"]["memory"] = "7Gi".into();
+                v["sandbox"]["tmpGiB"] = 100.into();
+                v["fabric"]["aws"]["fallbackHost"] =
+                    serde_json::json!({"memory": "15.5Gi", "reserve": "1Gi", "cpus": 4});
+                v["fabric"]["cpuOvercommit"] = 3.into();
+                v["fabric"]["aws"]["diskGiB"] = disk.into();
+            })
+        };
+        let c = sized(216).unwrap();
+        assert_eq!((c.tmp_bytes, c.file.fabric.aws.disk_gib), (100 << 30, Some(216)));
+        let e = sized(215).unwrap_err().to_string();
+        assert!(e.contains("2 sandboxes") && e.contains("216 GiB"), "{e}");
+        // no disk named: nothing to check (the template keeps infra.sh's default)
+        assert!(load(&|v| v["sandbox"]["tmpGiB"] = 100.into()).is_ok());
+        // sandboxd refuses a scratch outside [1 GiB, 1 TiB]
+        assert!(load(&|v| v["sandbox"]["tmpGiB"] = 0.into()).is_err());
+        assert!(load(&|v| v["sandbox"]["tmpGiB"] = 1025.into()).is_err());
     }
 
     #[test]

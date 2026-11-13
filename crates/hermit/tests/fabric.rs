@@ -701,6 +701,7 @@ impl Rig {
             cpu_features: String::new(),
             workspace: None,
             pids: None,
+            scratch_bytes: None,
         };
         self.fleet.sim(host).sandboxes.lock().unwrap().insert(
             name.clone(),
@@ -1455,6 +1456,8 @@ async fn ec2_reconcile_and_orphans() {
                 cpu_features: String::new(),
                 workspace: None,
                 pids: None,
+                scratch_bytes: None,
+                scratch_bytes: None,
             },
             state: HostState::Running,
             alive: Some(true),
@@ -1949,6 +1952,8 @@ async fn a_start_and_release_through_the_core() {
         .clone();
     assert_eq!(spec.image, rig.h.config.image_digest.trim_start_matches("sha256:"));
     assert_eq!(spec.pids, Some(4096));
+    // `sandbox.tmpGiB` 5 is sandboxd's default: not named, so an older sandboxd takes the spec
+    assert_eq!(spec.scratch_bytes, None);
     assert_eq!(spec.workspace, Some(cid.to_string()));
     assert_eq!(spec.cpu_features, "sse4_2,avx2");
     assert!(
@@ -2004,4 +2009,52 @@ async fn a_start_and_release_through_the_core() {
         format!("console of {}\n", row.name).into_bytes(),
         "a tail_unavailable row is fetched again"
     );
+}
+
+/// `sandbox.tmpGiB` other than sandboxd's 5 GiB reaches the host as the spec's `scratchBytes`: the sandbox's scratch
+/// filesystem is that size, not the text of the rules only.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_scratch_size_reaches_the_host() {
+    let rig = Rig::new(
+        "fabric_scratch",
+        |v| v["sandbox"]["tmpGiB"] = json!(100),
+        Timings {
+            scaler: Duration::from_millis(200),
+            ..manual()
+        },
+    )
+    .await;
+    let (r, _g) = rig.replica("hermit-a").await;
+    assert!(eventually(|| async { rig.host_status(GATEWAY).await == "active" }).await);
+    let cid = Uuid::now_v7();
+    let path = routes::fill(routes::SANDBOX, &[&cid.to_string()]);
+    let a = rig
+        .h
+        .client(Caller::Magpie)
+        .call(&r.url, "PUT", &path, Some(json!({"person": STAFF})), &[])
+        .await;
+    assert!(matches!(a.status, 200 | 202), "{}: {}", a.status, a.body);
+    assert!(
+        eventually(|| async {
+            db::latest_of(&rig.h.pool(), cid)
+                .await
+                .unwrap()
+                .is_some_and(|r| r.status == SandboxState::Ready)
+        })
+        .await,
+        "{:?}",
+        db::latest_of(&rig.h.pool(), cid).await.unwrap()
+    );
+    let row = db::latest_of(&rig.h.pool(), cid).await.unwrap().unwrap();
+    let spec = rig
+        .fleet
+        .sim(&row.host.clone().unwrap())
+        .sandboxes
+        .lock()
+        .unwrap()
+        .get(&row.name)
+        .unwrap()
+        .spec
+        .clone();
+    assert_eq!(spec.scratch_bytes, Some(100 << 30));
 }

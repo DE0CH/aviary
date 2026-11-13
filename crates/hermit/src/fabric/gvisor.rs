@@ -269,6 +269,9 @@ impl Fabric for Gvisor {
                 cpu_features: core.cfg.file.fabric.cpu_features.clone(),
                 workspace: Some(spec.workspace.to_string()),
                 pids: Some(spec.pids),
+                // named only when it is not sandboxd's default, so a host still on a sandboxd that predates the
+                // field (and refuses unknown ones) keeps taking default-sized sandboxes
+                scratch_bytes: Some(core.cfg.tmp_bytes).filter(|b| *b != sandboxd_api::DEFAULT_SCRATCH_BYTES),
             };
             client.create(&s).await.map_err(|e| sandboxd::create_error(&e))?;
             // the gateway routes the new /32 to its host
