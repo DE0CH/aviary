@@ -58,6 +58,19 @@ configMapGenerator:
       - schedules.SKILL.md=hermit/skills/schedules/SKILL.md
       - telegram.SKILL.md=hermit/skills/telegram/SKILL.md
       - web.SKILL.md=hermit/skills/web/SKILL.md
+  # YYC's look (check item B): the app bundle holds neutral files under /branding/ (the logo, the tab and home-screen
+  # icons, the manifest); pigeon mounts these over them. Hashed, so a change rolls pigeon
+  - name: pigeon-branding
+    namespace: yyc-ai
+    files:
+      - branding/logo.png
+      - branding/favicon.png
+      - branding/favicon-running.png
+      - branding/favicon-attention.png
+      - branding/apple-touch-icon.png
+      - branding/icon-192.png
+      - branding/icon-512.png
+      - branding/manifest.json
   - name: catalogue
     namespace: yyc-ai
     files: [catalogue.json]
