@@ -67,3 +67,48 @@ export function menuDefaults(models: MenuModel[]): { modelId: string | null; lev
   const state = menuState(models, null, null);
   return { modelId: state.model?.id ?? null, level: state.level };
 }
+
+/** A conversation's model and level as the server has them. */
+export interface ServerChoice {
+  modelId: string | null | undefined;
+  level: string | null | undefined;
+}
+
+/** A pick the person has just made that the server has not confirmed yet. */
+export interface PendingPick {
+  modelId?: string;
+  level?: string | null;
+}
+
+/**
+ * What the menu shows: the person's pick the moment they make it, the server's state otherwise. A pick is sent to the
+ * server, which answers a moment later; showing only the server's state made a click look dead for that moment.
+ */
+export function shownChoice(server: ServerChoice, pending: PendingPick | null): ServerChoice {
+  if (!pending) return server;
+  return {
+    modelId: pending.modelId ?? server.modelId,
+    level: pending.level !== undefined ? pending.level : server.level,
+  };
+}
+
+/** Whether the server's state has caught up with the pick (it is then let go). */
+export function pickSettled(server: ServerChoice, pending: PendingPick): boolean {
+  const modelDone = pending.modelId === undefined || pending.modelId === server.modelId;
+  const levelDone = pending.level === undefined || (pending.level ?? null) === (server.level ?? null);
+  return modelDone && levelDone;
+}
+
+/** The levels last picked, by model id. */
+export type LevelsByModel = Readonly<Record<string, string>>;
+
+/** The level a model is used at: the one last picked for it if it still has it, else its own. */
+export function levelForModel(model: MenuModel, remembered: LevelsByModel): string | null {
+  if (model.levels.length === 0) return null;
+  const last = remembered[model.id];
+  return last && model.levels.includes(last) ? last : model.defaultLevel;
+}
+
+export function rememberLevel(remembered: LevelsByModel, modelId: string, level: string): LevelsByModel {
+  return { ...remembered, [modelId]: level };
+}

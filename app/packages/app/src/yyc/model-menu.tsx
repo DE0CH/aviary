@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -19,7 +19,18 @@ import { useSessionStore } from "@/stores/session-store";
 import { ICON_SIZE } from "@/styles/theme";
 import { toErrorMessage } from "@/utils/error-messages";
 import { useModelPickAvailable } from "@/yyc/me";
-import { menuDefaults, menuModels, menuState, type MenuModel } from "@/yyc/model-menu-state";
+import {
+  levelForModel,
+  menuDefaults,
+  menuModels,
+  menuState,
+  pickSettled,
+  rememberLevel,
+  shownChoice,
+  type LevelsByModel,
+  type MenuModel,
+  type PendingPick,
+} from "@/yyc/model-menu-state";
 
 const ThemedInfo = withUnistyles(Info);
 const ThemedChevron = withUnistyles(ChevronDown);
@@ -32,6 +43,37 @@ interface Choice {
   selectModel: (modelId: string) => void;
   selectLevel: (level: string) => void;
 }
+
+// The level last picked for each model (Deyao, 2026-11-13: a thinking level per model), kept on this device.
+const LEVELS_KEY = "yyc.levels-by-model";
+let levelsByModel: LevelsByModel | null = null;
+function rememberedLevels(): LevelsByModel {
+  if (levelsByModel) return levelsByModel;
+  let stored: unknown = null;
+  try {
+    stored = JSON.parse(globalThis.localStorage?.getItem(LEVELS_KEY) ?? "null");
+  } catch {
+    stored = null;
+  }
+  const levels: Record<string, string> = {};
+  if (stored && typeof stored === "object") {
+    for (const [id, level] of Object.entries(stored)) if (typeof level === "string") levels[id] = level;
+  }
+  levelsByModel = levels;
+  return levels;
+}
+function rememberPickedLevel(modelId: string | null | undefined, level: string): void {
+  if (!modelId) return;
+  levelsByModel = rememberLevel(rememberedLevels(), modelId, level);
+  try {
+    globalThis.localStorage?.setItem(LEVELS_KEY, JSON.stringify(levelsByModel));
+  } catch {
+    // no storage (private mode, native): remembered for this visit only
+  }
+}
+
+/** How long a pick is shown without the server's word before the server's state shows again. */
+const PICK_SHOWN_MS = 10_000;
 
 /** A draft that has been put on the defaults once (a draft's form otherwise opens on the last choice made). */
 const startedDrafts = new Set<string>();
@@ -47,13 +89,24 @@ function useDraftChoice(agentId: string, draft: DraftAgentControlsProps): Choice
     if (start.modelId && start.modelId !== selectedModel) onSelectModel(start.modelId);
     if (start.level && start.level !== selectedThinkingOptionId) onSelectThinkingOption(start.level);
   }, [agentId, models, onSelectModel, onSelectThinkingOption, selectedModel, selectedThinkingOptionId]);
-  return {
-    models,
-    modelId: selectedModel,
-    level: selectedThinkingOptionId,
-    selectModel: onSelectModel,
-    selectLevel: onSelectThinkingOption,
-  };
+  // each model at the level last picked for it
+  const selectModel = useCallback(
+    (modelId: string) => {
+      onSelectModel(modelId);
+      const model = models.find((entry) => entry.id === modelId);
+      const level = model ? levelForModel(model, rememberedLevels()) : null;
+      if (level) onSelectThinkingOption(level);
+    },
+    [models, onSelectModel, onSelectThinkingOption],
+  );
+  const selectLevel = useCallback(
+    (level: string) => {
+      rememberPickedLevel(menuState(models, selectedModel, null).model?.id, level);
+      onSelectThinkingOption(level);
+    },
+    [models, onSelectThinkingOption, selectedModel],
+  );
+  return { models, modelId: selectedModel, level: selectedThinkingOptionId, selectModel, selectLevel };
 }
 
 /** A conversation's choice: kept with the conversation, used from its next message on. */
@@ -67,19 +120,54 @@ function useConversationChoice(serverId: string, agentId: string): Choice {
     () => menuModels((entries ?? []).find((entry) => entry.provider === provider)?.models),
     [entries, provider],
   );
+  // A pick shows the moment it is made (the server confirms a moment later; showing only its state made a click look
+  // dead), and is let go when the server's state is the pick, or after a while when it never becomes it.
+  const server = useMemo(
+    () => ({ modelId: agent?.model, level: agent?.thinkingOptionId }),
+    [agent?.model, agent?.thinkingOptionId],
+  );
+  const [pending, setPending] = useState<PendingPick | null>(null);
+  useEffect(() => {
+    if (!pending) return undefined;
+    if (pickSettled(server, pending)) {
+      setPending(null);
+      return undefined;
+    }
+    const timer = setTimeout(() => setPending(null), PICK_SHOWN_MS);
+    return () => clearTimeout(timer);
+  }, [pending, server]);
+  const refused = useCallback(
+    (error: unknown) => {
+      setPending(null);
+      toast.error(toErrorMessage(error));
+    },
+    [toast],
+  );
+  const shown = shownChoice(server, pending);
   const selectModel = useCallback(
     (modelId: string) => {
-      client?.setAgentModel(agentId, modelId).catch((error: unknown) => toast.error(toErrorMessage(error)));
+      if (!client) return;
+      // each model at the level last picked for it
+      const model = models.find((entry) => entry.id === modelId);
+      const level = model ? levelForModel(model, rememberedLevels()) : null;
+      setPending({ modelId, ...(level ? { level } : {}) });
+      client
+        .setAgentModel(agentId, modelId)
+        .then(() => (level ? client.setAgentThinkingOption(agentId, level) : undefined))
+        .catch(refused);
     },
-    [agentId, client, toast],
+    [agentId, client, models, refused],
   );
   const selectLevel = useCallback(
     (level: string) => {
-      client?.setAgentThinkingOption(agentId, level).catch((error: unknown) => toast.error(toErrorMessage(error)));
+      if (!client) return;
+      rememberPickedLevel(menuState(models, shown.modelId, null).model?.id, level);
+      setPending((before) => ({ ...before, level }));
+      client.setAgentThinkingOption(agentId, level).catch(refused);
     },
-    [agentId, client, toast],
+    [agentId, client, models, refused, shown.modelId],
   );
-  return { models, modelId: agent?.model, level: agent?.thinkingOptionId, selectModel, selectLevel };
+  return { models, modelId: shown.modelId, level: shown.level, selectModel, selectLevel };
 }
 
 function DraftModelMenu({ agentId, draft }: { agentId: string; draft: DraftAgentControlsProps }) {
