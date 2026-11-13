@@ -335,6 +335,8 @@ async fn turn(State(w): State<Arc<World>>, Json(t): Json<TurnRequest>) -> Json<V
         w.cid,
         Some(turn_id),
         CommandBody::StartTurn(StartTurn {
+            harness: magpie_api::Harness::default(),
+            carry_over: None,
             text: t.text,
             files: vec![],
             images: vec![],

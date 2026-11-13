@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
+use crate::Harness;
 use crate::Timestamp;
 use crate::errors::ErrorInfo;
 use crate::turns::{SendRequest, TurnOrigin, TurnOutcome, TurnStarted};
@@ -59,6 +60,10 @@ pub struct Conversation {
     /// picked (the model's own level).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub picked_thinking: Option<String>,
+    /// The harness the conversation's next turn runs in: the picked model's (the caller names it with the pick),
+    /// Claude Code while none was picked.
+    #[serde(default, skip_serializing_if = "Harness::is_default")]
+    pub harness: Harness,
     /// Set while the deployment has closed the conversation to the person's messages (hermit's route: a session
     /// that is paused elsewhere): the sentence the app shows in place of its message box. M7 answers 409
     /// `conversation_closed` meanwhile.
@@ -314,6 +319,9 @@ pub struct CreateRequest {
     /// The thinking level picked in the draft (`pickedThinking` from the start); absent: none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
+    /// The harness of `model` (the caller reads it from the models route); absent: Claude Code.
+    #[serde(default, skip_serializing_if = "Harness::is_default")]
+    pub harness: Harness,
 }
 
 /// M3 → 201 (200 for a repeat), and M4.
@@ -342,6 +350,9 @@ pub struct RenameRequest {
     /// which the caller has checked; at most 200 characters. `""`: none picked again (the model's own level).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
+    /// With `model`: that model's harness (the caller reads it from the models route); absent: Claude Code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<Harness>,
 }
 
 impl RenameRequest {

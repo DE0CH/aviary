@@ -1118,6 +1118,7 @@ impl Driver {
         let report = TurnStateReport {
             state,
             at: wire(now()),
+            harness: magpie_api::Harness::default(),
             provider_session_id: None,
             transcript_path: None,
             exit_code,
@@ -3320,6 +3321,7 @@ fn end_report(state: ReportedState, err: Option<ReportError>) -> TurnStateReport
     TurnStateReport {
         state,
         at: wire(now()),
+        harness: magpie_api::Harness::default(),
         provider_session_id: None,
         transcript_path: None,
         exit_code: None,
@@ -3627,6 +3629,7 @@ impl Agent for Driver {
             let report = TurnStateReport {
                 state: ReportedState::Parked,
                 at: wire(now()),
+                harness: magpie_api::Harness::default(),
                 provider_session_id: None,
                 transcript_path: None,
                 exit_code: None,

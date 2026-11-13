@@ -59,6 +59,7 @@ pub async fn rename(pool: &Pool, person: &Person, id: Uuid, req: RenameRequest) 
     }
     // borrowed: the transaction may run more than once (aviary_pg::tx!)
     let (title, model, thinking) = (&title, &model, &thinking);
+    let harness = req.harness.unwrap_or_default();
     aviary_pg::tx!(pool, |t| -> Result<()> {
         lock(t, &person.email, id).await?;
         if let Some(title) = title {
@@ -74,9 +75,10 @@ pub async fn rename(pool: &Pool, person: &Person, id: Uuid, req: RenameRequest) 
             events::append(t, id, NewEvent::of(&body)?).await?;
         }
         if let Some(model) = model {
+            // the pick names the model's harness with it (absent: Claude Code)
             t.execute(
-                "update conversations set picked_model = $2 where id = $1",
-                &[&id, model],
+                "update conversations set picked_model = $2, picked_harness = $3 where id = $1",
+                &[&id, model, &harness.as_str()],
             )
             .await?;
         }

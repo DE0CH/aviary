@@ -140,8 +140,8 @@ async fn create_tx(t: &Tx<'_>, person: &Person, req: &CreateRequest, model: Opti
     let inserted = t
         .query_opt(
             "insert into conversations (id, person, create_key, title, created_at, activity_at, origin, picked_model,
-                                        picked_thinking)
-             values ($1, $2, $3, $4, $5, $5, $6, $7, $8)
+                                        picked_thinking, picked_harness)
+             values ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9)
              on conflict (person, create_key) do nothing
              returning id",
             &[
@@ -153,6 +153,7 @@ async fn create_tx(t: &Tx<'_>, person: &Person, req: &CreateRequest, model: Opti
                 &serde_json::to_value(&origin)?,
                 &model,
                 &req.thinking.as_deref().map(str::trim),
+                &req.harness.as_str(),
             ],
         )
         .await?;

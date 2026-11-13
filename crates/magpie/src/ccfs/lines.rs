@@ -1120,7 +1120,8 @@ pub async fn promote(tx: &Tx<'_>, op: &mut Op<'_>, file: i64) -> Result<()> {
 pub async fn set_main_transcript(tx: &Tx<'_>, conversation: Uuid, path: &str) -> Result<()> {
     let row = tx
         .query_one(
-            "select person, main_transcript, active_turn, cc_bytes, title, name_source, model, provider_session_id
+            "select person, main_transcript, active_turn, cc_bytes, title, name_source, model, provider_session_id,
+                    harness
              from conversations where id = $1",
             &[&conversation],
         )
@@ -1129,11 +1130,11 @@ pub async fn set_main_transcript(tx: &Tx<'_>, conversation: Uuid, path: &str) ->
     let valid = session.as_deref().is_some_and(|sid| {
         !sid.is_empty()
             && sid.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-            && path == format!("projects/-workspace/{sid}.jsonl")
+            && path == crate::turns::harness::main_transcript(row.get(8), sid)
     });
     if !valid {
         return Err(Error::bad_request(
-            "transcriptPath is not projects/-workspace/<providerSessionId>.jsonl",
+            "transcriptPath is not the main transcript of the harness's session",
         ));
     }
     let current: Option<String> = row.get(1);

@@ -207,6 +207,7 @@ async fn legacy_paths_resolve_through_both_tables_any_number_of_times() {
     // M3's first message resolves the same way
     let created = a
         .create_conversation(&magpie_api::conversations::CreateRequest {
+            harness: magpie_api::Harness::default(),
             model: None,
             thinking: None,
             idempotency_key: "p3".into(),

@@ -43,6 +43,7 @@ async fn a_closed_conversation_refuses_its_person_and_an_ended_one_leaves_the_li
     let key = Uuid::new_v4().to_string();
     let conv = alice
         .create_conversation(&CreateRequest {
+            harness: magpie_api::Harness::default(),
             idempotency_key: key.clone(),
             message: msg(&format!("{key}:m"), "hello"),
             model: None,

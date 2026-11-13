@@ -55,3 +55,4 @@ pub use aviary_core::http::headers;
 
 /// Pair-token callers; which caller may use which route is [`routes::ROUTES`].
 pub use aviary_core::auth::Caller;
+pub use aviary_core::harness::Harness;

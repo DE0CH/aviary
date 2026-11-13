@@ -184,7 +184,8 @@ pub async fn cancel(tx: &Tx<'_>, person: &str, turn: &Turn) -> Result<()> {
 async fn resume(tx: &Tx<'_>, turn: &Turn) -> Result<()> {
     let row = tx
         .query_one(
-            "select coalesce(t.parked_asks, '{}'), c.provider_session_id, c.picked_model, c.picked_thinking from turns t
+            "select coalesce(t.parked_asks, '{}'), c.provider_session_id, c.picked_model, c.picked_thinking,
+                    c.harness from turns t
              join conversations c on c.id = t.conversation_id where t.id = $1",
             &[&turn.id],
         )
@@ -233,6 +234,9 @@ async fn resume(tx: &Tx<'_>, turn: &Turn) -> Result<()> {
         answers,
         model: row.get(2),
         thinking: row.get(3),
+        // a parked turn resumes in the harness that asked the questions
+        harness: magpie_api::Harness::parse(row.get(4)).unwrap_or_default(),
+        carry_over: None,
     };
     let cmd = command(
         tx,

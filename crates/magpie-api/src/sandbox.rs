@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
+use crate::Harness;
 use crate::Timestamp;
 use crate::events::{TaskEvent, TaskState};
 use crate::turns::{TurnOrigin, TurnOutcome};
@@ -382,6 +383,29 @@ pub struct StartTurn {
     /// levels. Absent: the level the models route names for the model, else Claude Code's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
+    /// The harness the turn runs in (the picked model's). `resume` names that harness's session. Absent: Claude
+    /// Code.
+    #[serde(default, skip_serializing_if = "Harness::is_default")]
+    pub harness: Harness,
+    /// Set on the first turn after the conversation changed harness: what the conversation held before, for the
+    /// new harness to read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carry_over: Option<CarryOver>,
+}
+
+/// The earlier conversation handed to a harness that has not seen it (`start_turn.carryOver`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CarryOver {
+    /// The harness the earlier turns ran in.
+    pub from: Harness,
+    /// The blob holding those turns as plain text (the person's messages, the replies, the tool calls and their
+    /// results in order), which the supervisor writes into the workspace.
+    pub blob_id: BlobId,
+    /// Its size.
+    pub bytes: u64,
+    /// The file name under `/workspace/.conversation/` (`earlier-<n>.md`; one per change of harness).
+    pub name: String,
 }
 
 /// One answer of a parked turn's `start_turn`: the question as it was asked, and the person's answer.
@@ -559,10 +583,15 @@ pub struct TurnStateReport {
     pub state: ReportedState,
     /// When.
     pub at: Timestamp,
-    /// `running`: Claude Code's session id.
+    /// `running`: the harness the turn runs in (absent: Claude Code); `providerSessionId` and `transcriptPath` are
+    /// its session and its main transcript.
+    #[serde(default, skip_serializing_if = "Harness::is_default")]
+    pub harness: Harness,
+    /// `running`: the harness's session id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_session_id: Option<String>,
-    /// `running`: `projects/-workspace/<sid>.jsonl`.
+    /// `running`: the main transcript, relative to the harness's home (`projects/-workspace/<sid>.jsonl` for Claude
+    /// Code, `projects/-workspace/chats/<sid>.jsonl` for Qwen Code).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript_path: Option<String>,
     /// Claude Code's exit code.

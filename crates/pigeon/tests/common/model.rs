@@ -173,6 +173,7 @@ impl Model {
             model: None,
             picked_model: None,
             picked_thinking: None,
+            harness: magpie_api::Harness::default(),
             closed: None,
             pending_messages: Vec::new(),
             context_tokens: None,

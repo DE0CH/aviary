@@ -56,6 +56,7 @@ impl World {
             .pigeon()
             .person(ALICE)
             .create_conversation(&CreateRequest {
+                harness: magpie_api::Harness::default(),
                 model: None,
                 thinking: None,
                 idempotency_key: key.clone(),
@@ -691,6 +692,7 @@ async fn a_person_picks_the_conversations_model() {
                 title: Some("Both".into()),
                 model: Some("claude-fable-5-2".into()),
                 thinking: None,
+                harness: None,
             },
         )
         .await

@@ -13,6 +13,7 @@ pub mod cancel;
 pub mod commands;
 pub mod driver;
 pub mod end;
+pub mod harness;
 pub mod midturn;
 pub mod parked;
 pub mod reports;

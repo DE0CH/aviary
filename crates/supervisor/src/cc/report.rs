@@ -690,6 +690,7 @@ mod tests {
         let turn = Uuid::now_v7();
         let at = magpie_api::Timestamp::now();
         let state = |state| TurnStateReport {
+            harness: magpie_api::Harness::default(),
             state,
             at,
             provider_session_id: None,
@@ -790,6 +791,7 @@ mod tests {
         r.set_lease(Uuid::new_v4());
         tokio::spawn(r.clone().run());
         let end = || TurnStateReport {
+            harness: magpie_api::Harness::default(),
             state: ReportedState::Completed,
             at: magpie_api::Timestamp::now(),
             provider_session_id: None,

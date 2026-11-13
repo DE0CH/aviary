@@ -21,6 +21,7 @@ pub async fn conversation(r: &Replica, person: &str) -> Uuid {
     r.pigeon()
         .person(person)
         .create_conversation(&CreateRequest {
+            harness: magpie_api::Harness::default(),
             model: None,
             thinking: None,
             idempotency_key: key.clone(),

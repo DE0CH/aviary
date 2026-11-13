@@ -10,6 +10,7 @@ use super::Replica;
 
 pub fn empty(key: &str) -> CreateRequest {
     CreateRequest {
+        harness: magpie_api::Harness::default(),
         model: None,
         thinking: None,
         idempotency_key: key.to_owned(),

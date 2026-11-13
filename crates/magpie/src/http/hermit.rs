@@ -39,6 +39,7 @@ pub async fn create_conversation(
             let req = CreateRequest {
                 model: None,
                 thinking: None,
+                harness: magpie_api::Harness::default(),
                 idempotency_key: body.idempotency_key,
                 message: body.message,
             };

@@ -217,6 +217,7 @@ fn lost(reason: &str) -> TurnStateReport {
     TurnStateReport {
         state: ReportedState::Failed,
         at: magpie_api::Timestamp::now(),
+        harness: magpie_api::Harness::default(),
         provider_session_id: None,
         transcript_path: None,
         exit_code: None,

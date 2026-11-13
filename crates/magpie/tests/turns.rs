@@ -80,6 +80,7 @@ impl World {
             .pigeon()
             .person(ALICE)
             .create_conversation(&CreateRequest {
+                harness: magpie_api::Harness::default(),
                 model: None,
                 thinking: None,
                 idempotency_key: key.clone(),
@@ -301,6 +302,7 @@ fn report(state: ReportedState) -> TurnStateReport {
     TurnStateReport {
         state,
         at: Timestamp::now(),
+        harness: magpie_api::Harness::default(),
         provider_session_id: None,
         transcript_path: None,
         exit_code: None,
@@ -1893,6 +1895,7 @@ async fn deleting_a_conversation_releases_its_sandbox_once_and_ends_its_turn() {
 async fn a_create_with_a_first_message_admits_one_first_turn() {
     let w = World::new("turn_create", None).await;
     let req = CreateRequest {
+        harness: magpie_api::Harness::default(),
         model: None,
         thinking: None,
         idempotency_key: "draft-7f3a".into(),
@@ -1933,6 +1936,7 @@ async fn a_create_with_a_first_message_admits_one_first_turn() {
     for i in 0..16 {
         let client = w.a.pigeon();
         let req = CreateRequest {
+            harness: magpie_api::Harness::default(),
             model: None,
             thinking: None,
             idempotency_key: "draft-race".into(),
@@ -2968,6 +2972,90 @@ async fn an_answer_that_crossed_the_park_resumes_the_turn() {
     assert!(kinds.contains(&"ask.resolved".to_owned()));
 }
 
+/// The model a person picks names the harness its turns run in: a turn's start says which, and resumes that
+/// harness's own session. The session of the harness that ran before is kept for a pick back.
+#[tokio::test]
+async fn a_turns_start_names_the_picked_models_harness_and_resumes_its_session() {
+    use magpie_api::Harness;
+    use magpie_api::conversations::RenameRequest;
+    let w = World::new("turn_harness", Some(Duration::ZERO)).await;
+    let start = |cmds: &CommandsResponse, turn: Uuid| -> (Harness, Option<String>) {
+        let st = cmds
+            .commands
+            .iter()
+            .find_map(|c| match &c.body {
+                CommandBody::StartTurn(st) if c.turn_id == Some(turn) => Some(st.clone()),
+                _ => None,
+            })
+            .expect("start_turn");
+        (st.harness, st.resume.provider_session_id)
+    };
+    let claude_session = "279aabf0-1111-4222-8333-444455556666";
+    let conv = w.conversation().await;
+    let me = w.a.pigeon();
+    // nothing picked: Claude Code, a new session
+    let turn = w.send(conv, "m1", "one").await;
+    assert!(w.state_is(turn, "starting").await);
+    let sup = w.supervisor(conv).await;
+    assert_eq!(start(&sup.poll(0, 0).await, turn), (Harness::Claude, None));
+    sup.run(turn).await;
+    sup.report(turn, ReportedState::Completed).await.unwrap();
+    assert!(w.state_is(turn, "completed").await);
+
+    // a model of the other harness: the conversation says so, and the next turn starts Qwen Code afresh
+    let pick = |model: &str, harness: Option<Harness>| RenameRequest {
+        model: Some(model.into()),
+        harness,
+        ..Default::default()
+    };
+    let picked = me
+        .person(ALICE)
+        .rename_conversation(conv, &pick("vendor/video", Some(Harness::Qwen)))
+        .await
+        .unwrap();
+    assert_eq!(picked.harness, Harness::Qwen);
+    let turn = w.send(conv, "m2", "two").await;
+    assert!(w.state_is(turn, "starting").await);
+    assert_eq!(start(&sup.poll(0, 0).await, turn), (Harness::Qwen, None));
+    sup.take(turn).await;
+    let mut running = report(ReportedState::Running);
+    running.harness = Harness::Qwen;
+    running.provider_session_id = Some("q-1".into());
+    // Claude Code's place for a transcript is not Qwen Code's
+    running.transcript_path = Some("projects/-workspace/q-1.jsonl".into());
+    assert!(sup.calls().turn_state(turn, &running).await.is_err());
+    running.transcript_path = Some("projects/-workspace/chats/q-1.jsonl".into());
+    sup.calls().turn_state(turn, &running).await.unwrap();
+    sup.report(turn, ReportedState::Completed).await.unwrap();
+    assert!(w.state_is(turn, "completed").await);
+
+    // back to a Claude Code model (a pick that names no harness): its session of the first turn
+    let picked = me
+        .person(ALICE)
+        .rename_conversation(conv, &pick("vendor/other", None))
+        .await
+        .unwrap();
+    assert_eq!(picked.harness, Harness::Claude);
+    let turn = w.send(conv, "m3", "three").await;
+    assert!(w.state_is(turn, "starting").await);
+    assert_eq!(
+        start(&sup.poll(0, 0).await, turn),
+        (Harness::Claude, Some(claude_session.into()))
+    );
+    sup.run(turn).await;
+    sup.report(turn, ReportedState::Completed).await.unwrap();
+    assert!(w.state_is(turn, "completed").await);
+
+    // and Qwen Code again: the session it had
+    me.person(ALICE)
+        .rename_conversation(conv, &pick("vendor/video", Some(Harness::Qwen)))
+        .await
+        .unwrap();
+    let turn = w.send(conv, "m4", "four").await;
+    assert!(w.state_is(turn, "starting").await);
+    assert_eq!(start(&sup.poll(0, 0).await, turn), (Harness::Qwen, Some("q-1".into())));
+}
+
 #[tokio::test]
 async fn a_turns_start_carries_the_conversations_picked_thinking_level() {
     let w = World::new("turn_thinking", Some(Duration::ZERO)).await;
@@ -3057,6 +3145,7 @@ async fn a_turns_start_carries_the_conversations_picked_thinking_level() {
         thinking: Some("low".into()),
         idempotency_key: "draft-pick".into(),
         message: msg("draft-pick:initial-message", "hi"),
+        harness: magpie_api::Harness::default(),
     };
     let made =
         w.a.pigeon()

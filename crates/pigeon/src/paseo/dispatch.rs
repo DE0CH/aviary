@@ -745,6 +745,7 @@ impl Handler {
         let req = CreateRequest {
             model,
             thinking,
+            harness: magpie_api::Harness::default(),
             idempotency_key: key.clone(),
             message: SendRequest {
                 client_message_id,

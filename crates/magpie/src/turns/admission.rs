@@ -460,7 +460,8 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
     let start_seq = events::append(tx, conversation, ev).await?;
     let conv = tx
         .query_one(
-            "select provider_session_id, name_source, title_attempts, picked_model, picked_thinking
+            "select provider_session_id, name_source, title_attempts, picked_model, picked_thinking,
+                    picked_harness, harness, harness_sessions
                from conversations where id = $1",
             &[&conversation],
         )
@@ -485,12 +486,14 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
         files: start_files,
         images: start_images,
         resume: Resume {
-            provider_session_id: conv.get(0),
+            provider_session_id: super::harness::session_of(conv.get(5), conv.get(6), conv.get(0), &conv.get(7)),
         },
         sent_at: Timestamp(now),
         answers: Vec::new(),
         model: conv.get(3),
         thinking: conv.get(4),
+        harness: magpie_api::Harness::parse(conv.get(5)).unwrap_or_default(),
+        carry_over: None,
     };
     let cmd = command(
         tx,

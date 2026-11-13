@@ -703,6 +703,8 @@ impl World {
             self.cid,
             Some(id),
             CommandBody::StartTurn(StartTurn {
+                harness: magpie_api::Harness::default(),
+                carry_over: None,
                 text: text.into(),
                 files: vec![],
                 images: vec![],
@@ -738,6 +740,8 @@ impl World {
             self.cid,
             Some(id),
             CommandBody::StartTurn(StartTurn {
+                harness: magpie_api::Harness::default(),
+                carry_over: None,
                 text: text.into(),
                 files,
                 images,
@@ -1522,6 +1526,8 @@ async fn a_restart_replays_a_written_prompt_exactly_once() {
         let id = msg_id(boot_id, seq);
         if keeper_had_it {
             let s = StartTurn {
+                harness: magpie_api::Harness::default(),
+                carry_over: None,
                 text: "say:once".into(),
                 files: vec![],
                 images: vec![],
@@ -2694,6 +2700,8 @@ async fn a_question_nobody_answers_is_parked_and_its_answer_resumes_the_turn_in_
         w.cid,
         Some(t),
         CommandBody::StartTurn(StartTurn {
+            harness: magpie_api::Harness::default(),
+            carry_over: None,
             text: String::new(),
             files: vec![],
             images: vec![],
@@ -3042,6 +3050,8 @@ async fn claude_is_switched_to_the_conversations_thinking_level_before_the_turn(
             w.cid,
             Some(id),
             CommandBody::StartTurn(StartTurn {
+                harness: magpie_api::Harness::default(),
+                carry_over: None,
                 text: text.into(),
                 files: vec![],
                 images: vec![],

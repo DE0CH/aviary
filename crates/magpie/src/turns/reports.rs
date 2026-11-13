@@ -88,10 +88,15 @@ async fn running(tx: &Tx<'_>, c: &Locked, caller: &Sandbox, turn: &Turn, r: &Tur
 /// Setting the path promotes the lines Claude Code wrote there before (magpie 6.2).
 async fn session_facts(tx: &Tx<'_>, conversation: Uuid, r: &TurnStateReport) -> Result<()> {
     if r.provider_session_id.is_some() {
+        // the harness that runs now; the session of the one that ran before is kept for a pick back
         tx.execute(
-            "update conversations set provider_session_id = $2
-             where id = $1 and provider_session_id is distinct from $2",
-            &[&conversation, &r.provider_session_id],
+            "update conversations
+                set harness_sessions = (case when harness <> $3 and provider_session_id is not null
+                                             then harness_sessions || jsonb_build_object(harness, provider_session_id)
+                                             else harness_sessions end) - $3,
+                    harness = $3, provider_session_id = $2
+              where id = $1 and (provider_session_id is distinct from $2 or harness <> $3)",
+            &[&conversation, &r.provider_session_id, &r.harness.as_str()],
         )
         .await?;
     }
@@ -512,6 +517,7 @@ async fn reconcile_active(t: &Tx<'_>, c: &Locked, caller: &Sandbox, hb: &Heartbe
         let r = TurnStateReport {
             state: ReportedState::Running,
             at: Timestamp::now(),
+            harness: magpie_api::Harness::default(),
             provider_session_id: None,
             transcript_path: None,
             exit_code: None,
