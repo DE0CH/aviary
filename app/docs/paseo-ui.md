@@ -379,6 +379,18 @@ measuring; test on a throttled connection. So:
 - Measure with claude-env `.claude/skills/yyc-ai/load-timing.mjs` (cold cache, Chrome's Fast/Slow 4G) through
   `brotli-proxy.mjs`.
 
+## Branding
+
+The app is one build for every deployment. What names a deployment to the eye is a set of files under `/branding/`
+of the server (`paseo/packages/app/src/yyc/brand.ts` `BRAND_FILES`): `logo.png` (square, transparent, 512 px: the
+launch frame, the welcome and sign-in screens, the new-chat page), `favicon.png`, `favicon-running.png`,
+`favicon-attention.png` (the tab icon and its two states), `apple-touch-icon.png`, `icon-192.png`, `icon-512.png`
+(home screen) and `manifest.json` (the name on the home screen, the colours). The bundle's own
+(`paseo/packages/app/public/branding/`) are neutral; a deployment mounts its files over the bundle's `/branding/`
+when it deploys pigeon (YYC: DE0CH/YYC `yyc-ai/deploy/branding/`; Jarvis 4's chat: DE0CH/services
+`k8s/chat/branding/`). The product's name comes from the server too (`src/yyc/product.ts`). Only the native builds'
+app icon and launch image are build-time files (`app.config.js`): those builds are YYC's apps.
+
 ## The iOS app
 
 The same `paseo/packages/app`, built natively as YYC AI (`dev.de0ch.yycai`, the TestFlight app the SwiftUI shell used
