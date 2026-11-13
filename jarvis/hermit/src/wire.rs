@@ -88,6 +88,10 @@ pub struct HealthReport {
     pub version: String,
     pub boot_id: String,
     pub busy: bool,
+    /// The supervisor's run state (`starting`, `running`, `stopping`, `held`, `asking`, `idle`, …); empty from a
+    /// machine whose gateway predates it.
+    #[serde(default)]
+    pub state: String,
 }
 
 /// `POST /jarvis/health` answer.

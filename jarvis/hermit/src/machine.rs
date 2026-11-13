@@ -655,11 +655,30 @@ async fn own(state: &State, req: Request<Incoming>) -> Response<Body> {
                     "conversationId": state.boot.conversation_id,
                     "ready": h.as_ref().is_some_and(|h| h.ok && h.ready),
                     "busy": h.as_ref().is_some_and(|h| h.busy),
+                    // what the session is doing, in the words Jarvis 4's registry takes (the harness's shim)
+                    "status": h.as_ref().map(|h| jarvis_status(&h.state, h.busy)),
                     "title": state.title.lock().ok().and_then(|t| t.clone()),
                 }),
             )
         }
         _ => refuse(StatusCode::NOT_FOUND, "not_found", "no such path"),
+    }
+}
+
+/// The session's status as Jarvis 4's registry names it (router/registry.go), from the supervisor's run state. The
+/// supervisor's `busy` is true while background tasks outlive a turn (`held`), which Jarvis showed as working: no
+/// "idle with background jobs" on the card and no idle watchdog (Deyao, 2026-11-13). `held` is `shell` (the registry's
+/// idle with at least one background task), `asking` is `waiting` (on Deyao's answer); a state this build does not
+/// know goes by `busy`.
+#[must_use]
+pub fn jarvis_status(state: &str, busy: bool) -> &'static str {
+    match state {
+        "held" => "shell",
+        "asking" => "waiting",
+        "idle" => "idle",
+        "starting" | "running" | "stopping" => "busy",
+        _ if busy => "busy",
+        _ => "idle",
     }
 }
 
@@ -741,6 +760,20 @@ pub fn listen_addr() -> SocketAddr {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    /// Background tasks after a turn are idle with background jobs, an open question is waiting, never "working".
+    #[test]
+    fn the_supervisors_state_is_the_sessions_status() {
+        assert_eq!(jarvis_status("running", true), "busy");
+        assert_eq!(jarvis_status("starting", true), "busy");
+        assert_eq!(jarvis_status("held", true), "shell");
+        assert_eq!(jarvis_status("asking", false), "waiting");
+        assert_eq!(jarvis_status("idle", false), "idle");
+        // a supervisor that names no state, or one this build does not know: by its busy flag
+        assert_eq!(jarvis_status("", true), "busy");
+        assert_eq!(jarvis_status("", false), "idle");
+        assert_eq!(jarvis_status("migrating", true), "busy");
+    }
 
     fn system_of(body: &serde_json::Value) -> Option<serde_json::Value> {
         with_identity(&serde_json::to_vec(body).unwrap())
