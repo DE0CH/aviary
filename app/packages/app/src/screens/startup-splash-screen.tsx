@@ -3,7 +3,7 @@ import { ScrollView, Text, View } from "react-native";
 import Animated, {
   cancelAnimation,
   Easing,
-  useAnimatedProps,
+  useAnimatedStyle,
   useSharedValue,
   withRepeat,
   withTiming,
@@ -12,21 +12,7 @@ import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
 import { Copy, RotateCw } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import Svg, {
-  ClipPath,
-  Defs,
-  G,
-  LinearGradient as SvgLinearGradient,
-  Polygon,
-  Rect,
-  Stop,
-} from "react-native-svg";
-import {
-  YYC_LOGO_FACES,
-  YYC_LOGO_VIEWBOX,
-  YycLogo,
-  YycLogoFaces,
-} from "@/components/icons/yyc-logo";
+import { ProductLogo } from "@/components/icons/product-logo";
 import { Button } from "@/components/ui/button";
 import { getDesktopDaemonLogs, type DesktopDaemonLogs } from "@/desktop/daemon/desktop-daemon";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
@@ -41,55 +27,30 @@ interface StartupSplashScreenProps {
 }
 
 const LOGO_SIZE = 96;
-const SHEEN_WIDTH = 220;
 const SHIMMER_DURATION_MS = 1800;
 
-const AnimatedRect = Animated.createAnimatedComponent(Rect);
-
-// YYC's colour logo with Paseo's shimmer: a light band sweeps across, drawn inside the logo's SVG and clipped to its
-// faces, so nothing shows outside the logo.
+// The deployment's logo, breathing while the app starts.
 function LogoShimmer() {
-  const sheenX = useSharedValue(-SHEEN_WIDTH);
+  const opacity = useSharedValue(1);
 
   useEffect(() => {
-    sheenX.value = -SHEEN_WIDTH;
-    sheenX.value = withRepeat(
-      withTiming(512, { duration: SHIMMER_DURATION_MS, easing: Easing.linear }),
+    opacity.value = 1;
+    opacity.value = withRepeat(
+      withTiming(0.45, { duration: SHIMMER_DURATION_MS / 2, easing: Easing.inOut(Easing.quad) }),
       -1,
-      false,
+      true,
     );
     return () => {
-      cancelAnimation(sheenX);
+      cancelAnimation(opacity);
     };
-  }, [sheenX]);
+  }, [opacity]);
 
-  const sheenProps = useAnimatedProps(() => ({ x: sheenX.value }));
+  const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
 
   return (
-    <Svg width={LOGO_SIZE} height={LOGO_SIZE} viewBox={YYC_LOGO_VIEWBOX}>
-      <Defs>
-        <ClipPath id="yycSplashFaces">
-          {YYC_LOGO_FACES.map((face) => (
-            <Polygon key={face.fill} points={face.points} />
-          ))}
-        </ClipPath>
-        <SvgLinearGradient id="yycSplashSheen" x1="0" y1="0" x2="1" y2="0">
-          <Stop offset="0" stopColor="#FFFFFF" stopOpacity="0" />
-          <Stop offset="0.5" stopColor="#FFFFFF" stopOpacity="0.55" />
-          <Stop offset="1" stopColor="#FFFFFF" stopOpacity="0" />
-        </SvgLinearGradient>
-      </Defs>
-      <YycLogoFaces />
-      <G clipPath="url(#yycSplashFaces)">
-        <AnimatedRect
-          animatedProps={sheenProps}
-          y={0}
-          width={SHEEN_WIDTH}
-          height={512}
-          fill="url(#yycSplashSheen)"
-        />
-      </G>
-    </Svg>
+    <Animated.View style={style}>
+      <ProductLogo size={LOGO_SIZE} />
+    </Animated.View>
   );
 }
 
@@ -314,7 +275,7 @@ function StartupSplash({ bootstrapState }: StartupSplashScreenProps) {
       >
         <View style={styles.errorContent}>
           <View style={styles.errorHeader}>
-            <YycLogo size={64} />
+            <ProductLogo size={64} />
             <Text style={styles.title}>{t("startup.errorTitle")}</Text>
           </View>
 

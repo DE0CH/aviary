@@ -90,7 +90,12 @@ function mountCard(question: Record<string, unknown>) {
     if (!response || response.behavior !== "allow") throw new Error("card did not submit");
     return (response.updatedInput as { answers: Record<string, string> }).answers;
   };
-  return { check, type, otherInput, submit, submittedAnswers };
+  const isChecked = (label: string) =>
+    view.getByRole(optionRole, { name: label }).getAttribute("aria-checked") === "true";
+  const submitDisabled = () =>
+    view.getByRole<HTMLButtonElement>("button", { name: "Submit" }).getAttribute("aria-disabled") ===
+    "true";
+  return { check, type, otherInput, submit, submittedAnswers, isChecked, submitDisabled };
 }
 
 const multiSelectQuestion = {
@@ -143,14 +148,50 @@ describe("QuestionFormCard other answers", () => {
     expect(card.submittedAnswers()).toEqual({ Provider: "OpenCode" });
   });
 
-  it("clears the typed other answer on screen when an option is picked afterwards (single-select)", () => {
+  it("keeps the typed other answer in its box, unsent, when an option is picked afterwards (single-select)", () => {
+    const card = mountCard(singleSelectQuestion);
+
+    card.type("OpenCode");
+    expect(card.isChecked("Other")).toBe(true);
+    card.check("Codex");
+
+    expect(card.isChecked("Other")).toBe(false);
+    expect(card.otherInput().value).toBe("OpenCode");
+    card.submit();
+    expect(card.submittedAnswers()).toEqual({ Provider: "Codex" });
+  });
+
+  it("shows Other as one more radio, which sends the text in its box when picked again", () => {
     const card = mountCard(singleSelectQuestion);
 
     card.type("OpenCode");
     card.check("Codex");
+    card.check("Other");
 
-    expect(card.otherInput().value).toBe("");
+    expect(card.isChecked("Other")).toBe(true);
+    expect(card.isChecked("Codex")).toBe(false);
     card.submit();
-    expect(card.submittedAnswers()).toEqual({ Provider: "Codex" });
+    expect(card.submittedAnswers()).toEqual({ Provider: "OpenCode" });
+  });
+
+  it("does not take a picked Other with an empty box as an answer", () => {
+    const card = mountCard(singleSelectQuestion);
+
+    card.check("Other");
+
+    expect(card.isChecked("Other")).toBe(true);
+    expect(card.submitDisabled()).toBe(true);
+  });
+
+  it("shows Other as one more checkbox (multi-select)", () => {
+    const card = mountCard(multiSelectQuestion);
+
+    card.check("Apple");
+    card.type("durian");
+    expect(card.isChecked("Other")).toBe(true);
+    card.check("Other");
+    card.submit();
+
+    expect(card.submittedAnswers()).toEqual({ Fruits: "Apple" });
   });
 });

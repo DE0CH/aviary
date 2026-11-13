@@ -1,3 +1,4 @@
+import { BrandLogoImage } from "@/components/icons/product-logo";
 import { greeting, greetingLocale, GREETING_DRAW } from "@/yyc/greeting";
 import { useFirstName, useNewConversationsAvailable } from "@/yyc/me";
 import type {
@@ -160,7 +161,6 @@ interface NewWorkspaceScreenProps {
 
 // A terminal launch sends argv, not a message: there is nothing to attach and
 // no draft to persist, so the composer's attachment and draft seams are inert.
-const YYC_LOGO = require("../../assets/images/yyc-logo.png");
 
 const NO_TERMINAL_ATTACHMENTS: UserComposerAttachment[] = [];
 function noopChangeAttachments() {}
@@ -1376,7 +1376,7 @@ function NewWorkspaceLayout({
   const welcome = (
     <View style={styles.composerTitleColumn} pointerEvents="none">
       <View style={styles.composerTitleContainer}>
-        <Image source={YYC_LOGO} style={styles.brandLogo} accessibilityIgnoresInvertColors />
+        <BrandLogoImage style={styles.brandLogo} />
         <Text style={styles.composerTitle}>{greetingText ?? title}</Text>
       </View>
     </View>

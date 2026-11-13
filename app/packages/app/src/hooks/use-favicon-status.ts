@@ -5,22 +5,10 @@ import { getDesktopHost } from "@/desktop/host";
 import { useWorkspaceStatusesForBadges } from "@/stores/session-store-hooks";
 import { deriveMacDockBadgeCountFromWorkspaceStatuses } from "@/utils/desktop-badge-state";
 import { isNative } from "@/constants/platform";
+import { brandFaviconPath } from "@/yyc/brand";
 
 type FaviconStatus = "none" | "running" | "attention";
 type ColorScheme = "dark" | "light";
-
-/* eslint-disable @typescript-eslint/no-require-imports */
-// YYC's colour logo reads on light and dark tabs alike, so both schemes use the same images.
-const YYC_FAVICONS: Record<FaviconStatus, { uri: string } | number> = {
-  none: require("../../assets/images/favicon.png"),
-  running: require("../../assets/images/favicon-running.png"),
-  attention: require("../../assets/images/favicon-attention.png"),
-};
-const FAVICON_IMAGES: Record<ColorScheme, Record<FaviconStatus, { uri: string } | number>> = {
-  dark: YYC_FAVICONS,
-  light: YYC_FAVICONS,
-};
-/* eslint-enable @typescript-eslint/no-require-imports */
 
 function deriveFaviconStatus(
   agents: ReturnType<typeof useAggregatedAgents>["agents"],
@@ -37,13 +25,9 @@ function deriveFaviconStatus(
   return "none";
 }
 
-function getFaviconUri(status: FaviconStatus, colorScheme: ColorScheme): string {
-  const image = FAVICON_IMAGES[colorScheme][status];
-  if (typeof image === "object" && "uri" in image) {
-    return image.uri;
-  }
-  const suffix = status === "none" ? "" : `-${status}`;
-  return `/assets/images/favicon${suffix}.png`;
+// The deployment's own tab icons (yyc/brand.ts); one set for light and dark tabs alike.
+function getFaviconUri(status: FaviconStatus, _colorScheme: ColorScheme): string {
+  return brandFaviconPath(status);
 }
 
 function getOrCreateFaviconLink(): HTMLLinkElement | null {

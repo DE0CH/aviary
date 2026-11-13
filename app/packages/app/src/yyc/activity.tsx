@@ -30,6 +30,7 @@ import {
   nowLabel,
   runningCount,
   taskElapsedMs,
+  taskCommand,
   taskTitle,
 } from "@/yyc/activity-text";
 
@@ -137,6 +138,7 @@ function TaskSection({
   const w = activityWords(locale);
   const running = task.status === "running";
   const doing = running ? nowLabel(task.now) : null;
+  const command = taskCommand(task);
   const handleStop = useCallback(() => onStop(task.taskId), [onStop, task.taskId]);
   return (
     <View style={styles.section} testID="activity-task">
@@ -164,6 +166,14 @@ function TaskSection({
           {elapsedLabel(taskElapsedMs(task, now))}
         </Text>
       </View>
+      {command ? (
+        <>
+          <Text style={styles.heading}>{w.command}</Text>
+          <Text style={styles.mono} numberOfLines={6} selectable testID="activity-task-command">
+            {command}
+          </Text>
+        </>
+      ) : null}
       {doing ? (
         <>
           <Text style={styles.heading}>{w.now}</Text>

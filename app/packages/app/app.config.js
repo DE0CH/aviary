@@ -121,7 +121,6 @@ export default {
     },
     web: {
       output: "single",
-      favicon: "./assets/images/favicon.png",
     },
     autolinking: {
       searchPaths: ["../../node_modules", "./node_modules"],

@@ -121,9 +121,13 @@ import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/inp
 import { YycModelMenu } from "@/yyc/model-menu-lazy";
 import { useMidTurnAvailable } from "@/yyc/me";
 import {
+  LEAVING_SHOWN_MS,
   SENDING_SHOWN_MS,
+  leavingQueueItems,
+  queuedIdsOnTimeline,
   serverQueueItems,
   withdrawQueuedMessage,
+  type LeavingQueueItem,
   type SentMidTurn,
   type ServerQueueItem,
 } from "@/yyc/server-queue";
@@ -1728,9 +1732,57 @@ function ComposerContentImpl({
     const timer = setTimeout(() => setQueueClock(Date.now()), SENDING_SHOWN_MS);
     return () => clearTimeout(timer);
   }, [sentMidTurn]);
+  // The server's list and the chat's rows come on two feeds: a message leaves the queue when its row is in the chat
+  // (yyc/server-queue.ts). `leaving`: the messages the list has dropped whose row has not come yet.
+  const [leavingQueue, setLeavingQueue] = useState<readonly LeavingQueueItem[]>([]);
+  const withdrawnQueueIdsRef = useRef<Set<string>>(new Set());
+  const queuedIds = useMemo(
+    () => [
+      ...(serverQueue ?? []).map((m) => m.messageId),
+      ...leavingQueue.map((m) => m.id),
+      ...sentMidTurn.map((m) => m.id),
+    ],
+    [leavingQueue, sentMidTurn, serverQueue],
+  );
+  const queuedOnTimeline = useSessionStore((state) => {
+    const session = state.sessions[serverId];
+    return queuedIdsOnTimeline(
+      queuedIds,
+      session?.agentStreamTail.get(agentId),
+      session?.agentStreamHead.get(agentId),
+    );
+  });
+  const queuedOnTimelineIds = useMemo(
+    () => new Set(queuedOnTimeline ? queuedOnTimeline.split(" ") : []),
+    [queuedOnTimeline],
+  );
+  const serverQueueBeforeRef = useRef(serverQueue);
+  useEffect(() => {
+    const before = serverQueueBeforeRef.current;
+    serverQueueBeforeRef.current = serverQueue;
+    const now = Date.now();
+    setLeavingQueue((leaving) =>
+      leavingQueueItems(
+        leaving,
+        before,
+        serverQueue,
+        queuedOnTimelineIds,
+        withdrawnQueueIdsRef.current,
+        now,
+      ),
+    );
+    setQueueClock(now);
+  }, [queuedOnTimelineIds, serverQueue]);
+  useEffect(() => {
+    if (leavingQueue.length === 0) return undefined;
+    // once: when the newest of them stops being waited for
+    const timer = setTimeout(() => setQueueClock(Date.now()), LEAVING_SHOWN_MS);
+    return () => clearTimeout(timer);
+  }, [leavingQueue]);
   const serverQueueList = useMemo(
-    () => serverQueueItems(serverQueue, sentMidTurn, queueClock),
-    [queueClock, sentMidTurn, serverQueue],
+    () =>
+      serverQueueItems(serverQueue, sentMidTurn, queueClock, queuedOnTimelineIds, leavingQueue),
+    [leavingQueue, queueClock, queuedOnTimelineIds, sentMidTurn, serverQueue],
   );
   // a refused send's message says how things stood then ("still replying"): it goes when the reply ends or starts
   useEffect(() => {
@@ -2071,11 +2123,14 @@ function ComposerContentImpl({
     (id: string) => {
       const item = serverQueueList.find((m) => m.id === id);
       if (!item) return;
+      // taken back: when the server's list drops it, its row is not waited for
+      withdrawnQueueIdsRef.current.add(id);
       void withdrawQueuedMessage(agentId, id)
         .then(() => {
           replaceUserInput(item.text);
         })
         .catch((error) => {
+          withdrawnQueueIdsRef.current.delete(id);
           setSendError(error instanceof Error ? error.message : t("composer.errors.failedToSend"));
         });
     },

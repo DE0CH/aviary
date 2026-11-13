@@ -1,6 +1,6 @@
 import { Alert } from "@/components/ui/alert";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { useState, useCallback, useMemo, useRef, type RefObject } from "react";
+import { useState, useCallback, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import {
   View,
   Text,
@@ -24,6 +24,8 @@ import {
   buildQuestionFormAnswers,
   isQuestionAnswered,
   parseQuestionFormQuestions,
+  OTHER_OPTION_INDEX,
+  questionHasOtherOption,
   questionShowsTextInput,
   resolveDismissLabel,
   shouldSubmitEmptyOnDismiss,
@@ -298,6 +300,96 @@ function QuestionNav({
   );
 }
 
+interface QuestionOtherRowProps {
+  qIndex: number;
+  label: string;
+  isSelected: boolean;
+  multiSelect: boolean;
+  isResponding: boolean;
+  onToggle: (qIndex: number, optIndex: number, multiSelect: boolean) => void;
+  children: ReactNode;
+}
+
+/**
+ * The last row of a question's options: the same radio (or checkbox) as the rows above it, labelled "Other", with
+ * the text box for the person's own answer under the label.
+ */
+function QuestionOtherRow({
+  qIndex,
+  label,
+  isSelected,
+  multiSelect,
+  isResponding,
+  onToggle,
+  children,
+}: QuestionOtherRowProps) {
+  const { theme } = useUnistyles();
+  const handlePress = useCallback(() => {
+    onToggle(qIndex, OTHER_OPTION_INDEX, multiSelect);
+  }, [onToggle, qIndex, multiSelect]);
+  const rowStyle = useMemo(
+    () => [styles.optionItem, isSelected && { backgroundColor: theme.colors.surface2 }],
+    [isSelected, theme.colors.surface2],
+  );
+  const controlPressableStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.otherRowControl,
+      pressed && styles.optionItemPressed,
+    ],
+    [],
+  );
+  const accessibilityState = useMemo(() => ({ checked: isSelected }), [isSelected]);
+  const controlStyle = useMemo(
+    () => [
+      styles.selectionControl,
+      multiSelect ? styles.selectionControlCheckbox : styles.selectionControlRadio,
+      {
+        borderColor: isSelected ? theme.colors.accent : theme.colors.foregroundExtraMuted,
+        backgroundColor: isSelected && multiSelect ? theme.colors.accent : "transparent",
+      },
+    ],
+    [isSelected, multiSelect, theme.colors.accent, theme.colors.foregroundExtraMuted],
+  );
+  const radioDotStyle = useMemo(
+    () => [styles.selectionRadioDot, { backgroundColor: theme.colors.accent }],
+    [theme.colors.accent],
+  );
+  const labelStyle = useMemo(
+    () => [
+      styles.otherRowLabel,
+      { color: isSelected ? theme.colors.foreground : theme.colors.foregroundMuted },
+    ],
+    [isSelected, theme.colors.foreground, theme.colors.foregroundMuted],
+  );
+
+  // The radio and its label are the pressable; the text box beside them is not inside it (a button holding an
+  // input takes the input's clicks and keys).
+  return (
+    <View style={rowStyle} testID="question-form-other-row">
+      <View style={styles.optionItemContent}>
+        <Pressable
+          style={controlPressableStyle}
+          onPress={handlePress}
+          disabled={isResponding}
+          accessibilityRole={multiSelect ? "checkbox" : "radio"}
+          accessibilityLabel={label}
+          accessibilityState={accessibilityState}
+          aria-checked={isSelected}
+        >
+          <View style={controlStyle}>
+            {isSelected && multiSelect ? (
+              <Check size={12} color={theme.colors.accentForeground} />
+            ) : null}
+            {isSelected && !multiSelect ? <View style={radioDotStyle} /> : null}
+          </View>
+          <Text style={labelStyle}>{label}</Text>
+        </Pressable>
+        <View style={styles.optionTextBlock}>{children}</View>
+      </View>
+    </View>
+  );
+}
+
 interface QuestionOtherInputProps {
   qIndex: number;
   inputRef: RefObject<EditingTextInputHandle | null>;
@@ -401,36 +493,35 @@ export function QuestionFormCard({
 
       setSelections((prev) => ({ ...prev, [qIndex]: next }));
 
-      // Single-select: an option and a custom answer replace each other, as in Claude Code.
-      // Multi-select keeps both. The editing surface owns its text and never replays state
-      // (docs/forms.md), so clearing state alone would leave stale text on screen that
-      // submit ignores; clear the surface explicitly.
-      if (!multiSelect && otherTexts[qIndex]) {
-        setOtherTexts((prev) => {
-          const nextTexts = { ...prev };
-          delete nextTexts[qIndex];
-          return nextTexts;
-        });
-        otherInputRef.current?.replaceText("");
+      // "Other" is one more radio (or checkbox): picking an option of a single-select question unpicks it and its
+      // text stays in the box, unsent, for when it is picked again. Picking "Other" puts the cursor in its box.
+      if (optIndex === OTHER_OPTION_INDEX) {
+        if (next.has(OTHER_OPTION_INDEX)) otherInputRef.current?.focus();
+        return;
       }
 
       if (!multiSelect && next.size > 0 && qIndex === activeQuestionIndex && questions) {
         setActiveQuestionIndex(Math.min(qIndex + 1, questions.length - 1));
       }
     },
-    [activeQuestionIndex, otherTexts, questions, selections],
+    [activeQuestionIndex, questions, selections],
   );
 
   const setOtherText = useCallback(
     (qIndex: number, text: string) => {
       setOtherTexts((prev) => ({ ...prev, [qIndex]: text }));
-      const multiSelect = questions?.[qIndex]?.multiSelect ?? false;
-      if (!multiSelect && text.length > 0) {
-        setSelections((prev) => {
-          if (!prev[qIndex] || prev[qIndex].size === 0) return prev;
-          return { ...prev, [qIndex]: new Set<number>() };
-        });
-      }
+      const question = questions?.[qIndex];
+      if (!question || !questionHasOtherOption(question)) return;
+      // Typing picks the "Other" row (a single-select question's option gives way); an emptied box unpicks it.
+      setSelections((prev) => {
+        const current = prev[qIndex] ?? new Set<number>();
+        const wanted = text.trim().length > 0;
+        if (current.has(OTHER_OPTION_INDEX) === wanted) return prev;
+        const next = question.multiSelect || !wanted ? new Set(current) : new Set<number>();
+        if (wanted) next.add(OTHER_OPTION_INDEX);
+        else next.delete(OTHER_OPTION_INDEX);
+        return { ...prev, [qIndex]: next };
+      });
     },
     [questions],
   );
@@ -576,6 +667,7 @@ export function QuestionFormCard({
   const selected = selections[resolvedActiveQuestionIndex] ?? new Set<number>();
   const otherText = otherTexts[resolvedActiveQuestionIndex] ?? "";
   const showTextInput = questionShowsTextInput(questions[resolvedActiveQuestionIndex]);
+  const hasOtherOption = questionHasOtherOption(questions[resolvedActiveQuestionIndex]);
 
   return (
     <View style={containerStyle} testID="question-form-card">
@@ -608,9 +700,34 @@ export function QuestionFormCard({
                   onToggle={toggleOption}
                 />
               ))}
+              {hasOtherOption ? (
+                <QuestionOtherRow
+                  qIndex={resolvedActiveQuestionIndex}
+                  label={t("message.question.other")}
+                  isSelected={selected.has(OTHER_OPTION_INDEX)}
+                  multiSelect={activeQuestion.multiSelect}
+                  isResponding={isResponding}
+                  onToggle={toggleOption}
+                >
+                  <QuestionOtherInput
+                    qIndex={resolvedActiveQuestionIndex}
+                    inputRef={otherInputRef}
+                    accessibilityLabel={activeQuestion.question}
+                    value={otherText}
+                    placeholder={getQuestionInputPlaceholder({
+                      question: activeQuestion,
+                      answerPlaceholder: t("message.question.answerPlaceholder"),
+                      otherPlaceholder: t("message.question.otherPlaceholder"),
+                    })}
+                    isResponding={isResponding}
+                    onChange={setOtherText}
+                    onSubmit={handlePrimaryAction}
+                  />
+                </QuestionOtherRow>
+              ) : null}
             </View>
           ) : null}
-          {showTextInput ? (
+          {showTextInput && !hasOtherOption ? (
             <QuestionOtherInput
               qIndex={resolvedActiveQuestionIndex}
               inputRef={otherInputRef}
@@ -759,6 +876,16 @@ const styles = StyleSheet.create((theme) => ({
     width: 8,
     height: 8,
     borderRadius: 999,
+  },
+  otherRowControl: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+  },
+  otherRowLabel: {
+    fontSize: theme.fontSize.base,
+    lineHeight: 22,
   },
   otherInput: {
     borderWidth: 1,

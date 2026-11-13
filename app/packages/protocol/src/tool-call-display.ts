@@ -82,9 +82,13 @@ function buildFilePathDisplay(
 function buildCanonicalDetailDisplay(input: ToolCallDisplayInput): DetailDisplay {
   switch (input.detail.type) {
     case "shell":
+      // The model's own words for what the command is for (the call's `description`, in the row's metadata) are the
+      // row's line; the command is in the row's details. A call with none says its command.
       return {
         displayName: "Shell",
-        summary: input.detail.command,
+        summary:
+          (isRecord(input.metadata) ? readString(input.metadata.description) : undefined) ??
+          input.detail.command,
       };
     case "read":
       return buildFilePathDisplay("Read", input.detail.filePath, input.cwd);

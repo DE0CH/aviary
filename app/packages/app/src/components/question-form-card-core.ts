@@ -16,6 +16,12 @@ export interface QuestionFormQuestion {
 }
 
 export type QuestionSelections = Record<number, ReadonlySet<number>>;
+
+/**
+ * The index of the "Other" row in a question's selection: a radio (or checkbox) like the options above it, with a
+ * text box for the person's own answer. It counts as an answer only with text in the box.
+ */
+export const OTHER_OPTION_INDEX = -1;
 export type QuestionOtherTexts = Record<number, string>;
 
 function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
@@ -68,6 +74,15 @@ export function questionShowsTextInput(question: QuestionFormQuestion): boolean 
   return question.options.length === 0 || question.allowOther;
 }
 
+/** A question with options that also takes the person's own answer: it gets the "Other" row. */
+export function questionHasOtherOption(question: QuestionFormQuestion): boolean {
+  return question.options.length > 0 && question.allowOther;
+}
+
+function selectedOptionIndexes(selected: ReadonlySet<number> | undefined): number[] {
+  return selected ? Array.from(selected).filter((idx) => idx !== OTHER_OPTION_INDEX) : [];
+}
+
 export function isQuestionAnswered(
   question: QuestionFormQuestion,
   qIndex: number,
@@ -75,7 +90,7 @@ export function isQuestionAnswered(
   otherTexts: QuestionOtherTexts,
 ): boolean {
   const selected = selections[qIndex];
-  if (selected && selected.size > 0) {
+  if (selectedOptionIndexes(selected).length > 0) {
     return true;
   }
 
@@ -85,7 +100,8 @@ export function isQuestionAnswered(
 
   const otherText = otherTexts[qIndex]?.trim();
   if (otherText && otherText.length > 0) {
-    return true;
+    // With options, the text is an answer only while its "Other" row is the one picked.
+    return question.options.length === 0 || Boolean(selected?.has(OTHER_OPTION_INDEX));
   }
 
   return question.allowEmpty;
@@ -113,10 +129,11 @@ export function buildQuestionFormAnswers(
     const q = questions[i];
     const selected = selections[i];
     const otherText = otherTexts[i]?.trim();
-    const labels = selected ? Array.from(selected).map((idx) => q.options[idx].label) : [];
+    const labels = selectedOptionIndexes(selected).map((idx) => q.options[idx].label);
+    const otherPicked = q.options.length === 0 || Boolean(selected?.has(OTHER_OPTION_INDEX));
 
     if (questionShowsTextInput(q)) {
-      if (otherText && otherText.length > 0) {
+      if (otherPicked && otherText && otherText.length > 0) {
         // Multi-select keeps the checked options and appends the custom answer, the way
         // Claude Code's own AskUserQuestion UI does. Single-select replaces the option.
         answers[q.header] = q.multiSelect ? [...labels, otherText].join(", ") : otherText;

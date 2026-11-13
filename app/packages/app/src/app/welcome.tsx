@@ -1,3 +1,4 @@
+import { BrandLogoImage } from "@/components/icons/product-logo";
 import { useCallback, useEffect } from "react";
 import { releaseEarlyInput } from "@/yyc/early-input";
 import { Image, Text, View } from "react-native";
@@ -5,7 +6,6 @@ import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 
-const YYC_LOGO = require("../../assets/images/yyc-logo.png");
 
 /**
  * Where the app lands when the server that served it cannot be reached (Paseo's own welcome screen offers to pair
@@ -19,7 +19,7 @@ export default function WelcomeRoute() {
   }, []);
   return (
     <View style={styles.screen}>
-      <Image source={YYC_LOGO} style={styles.logo} accessibilityIgnoresInvertColors />
+      <BrandLogoImage style={styles.logo} />
       <Text style={styles.title}>{t("conversation.offline.title")}</Text>
       <Text style={styles.body}>{t("conversation.offline.body")}</Text>
       <Button variant="default" size="sm" onPress={reload}>

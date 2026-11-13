@@ -12,6 +12,8 @@ export interface ActivityTask {
   type: TaskType;
   /** What it was started to do. */
   description?: string | null;
+  /** What it runs: the command line of the call that started it (a command, a monitor). */
+  command?: string | null;
   status: TaskStatus;
   startedAt: string;
   endedAt?: string | null;
@@ -42,6 +44,7 @@ const WORDS = {
     finishedIn: "Finished in",
     failedAfter: "Failed after",
     stoppedAfter: "Stopped after",
+    command: "Command",
     now: "Now",
     steps: "Steps",
     result: "Result",
@@ -62,6 +65,7 @@ const WORDS = {
     finishedIn: "完成，用時",
     failedAfter: "失敗，用時",
     stoppedAfter: "已停止，用時",
+    command: "指令",
     now: "目前",
     steps: "步驟",
     result: "結果",
@@ -112,6 +116,12 @@ export function runningCount(tasks: readonly ActivityTask[]): number {
 export function chipLabel(tasks: readonly ActivityTask[], locale: ActivityLocale): string {
   const n = runningCount(tasks);
   return n > 0 ? WORDS[locale].running(n) : WORDS[locale].idle;
+}
+
+/** The command line a task runs, for its entry; null when it has none. */
+export function taskCommand(task: Pick<ActivityTask, "command">): string | null {
+  const c = task.command?.trim();
+  return c ? c : null;
 }
 
 /** A task's title: what it was started to do, else what it is. */

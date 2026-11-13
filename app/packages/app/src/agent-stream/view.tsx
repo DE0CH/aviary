@@ -1369,7 +1369,7 @@ interface ThoughtSlotProps {
   defaultExpanded: boolean;
 }
 
-// Reasoning text is paced the same way assistant text is; see @/hooks/use-revealed-text.
+// Reasoning text shows as it arrives, as assistant text does; see @/hooks/use-revealed-text.
 function ThoughtSlot({
   itemId,
   onInlineDetailsExpandedChangeByItemId,

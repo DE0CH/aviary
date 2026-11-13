@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
+  OTHER_OPTION_INDEX,
   parseQuestionFormQuestions,
   questionShowsTextInput,
   resolveDismissLabel,
@@ -68,16 +69,24 @@ describe("question form card core", () => {
     });
 
     if (!questions) throw new Error("questions did not parse");
-    expect(buildQuestionFormAnswers(questions, { 0: new Set([0, 2]) }, { 0: " durian " })).toEqual({
-      Fruits: "Apple, Cherry, durian",
-    });
+    const other = OTHER_OPTION_INDEX;
+    expect(
+      buildQuestionFormAnswers(questions, { 0: new Set([0, 2, other]) }, { 0: " durian " }),
+    ).toEqual({ Fruits: "Apple, Cherry, durian" });
     expect(buildQuestionFormAnswers(questions, { 0: new Set([0, 2]) }, {})).toEqual({
       Fruits: "Apple, Cherry",
     });
-    expect(buildQuestionFormAnswers(questions, { 0: new Set() }, { 0: "durian" })).toEqual({
+    expect(buildQuestionFormAnswers(questions, { 0: new Set([other]) }, { 0: "durian" })).toEqual({
       Fruits: "durian",
     });
-    expect(buildQuestionFormAnswers(questions, {}, { 0: "durian" })).toEqual({ Fruits: "durian" });
+    // text in the box of an unchecked "Other" is not an answer
+    expect(buildQuestionFormAnswers(questions, { 0: new Set([0]) }, { 0: "durian" })).toEqual({
+      Fruits: "Apple",
+    });
+    expect(areQuestionsAnswered(questions, {}, { 0: "durian" })).toBe(false);
+    // a checked "Other" with an empty box is not one either
+    expect(areQuestionsAnswered(questions, { 0: new Set([other]) }, {})).toBe(false);
+    expect(areQuestionsAnswered(questions, { 0: new Set([other]) }, { 0: "durian" })).toBe(true);
   });
 
   test("replaces the selected option with the other answer for single-select", () => {
@@ -94,8 +103,12 @@ describe("question form card core", () => {
     });
 
     if (!questions) throw new Error("questions did not parse");
+    expect(
+      buildQuestionFormAnswers(questions, { 0: new Set([OTHER_OPTION_INDEX]) }, { 0: "OpenCode" }),
+    ).toEqual({ Provider: "OpenCode" });
+    // the option's radio is the one picked: the text left in the "Other" box is not sent
     expect(buildQuestionFormAnswers(questions, { 0: new Set([1]) }, { 0: "OpenCode" })).toEqual({
-      Provider: "OpenCode",
+      Provider: "Codex",
     });
     expect(buildQuestionFormAnswers(questions, { 0: new Set([1]) }, {})).toEqual({
       Provider: "Codex",
@@ -119,8 +132,9 @@ describe("question form card core", () => {
     const [question] = questions;
     if (!question) throw new Error("question missing");
     expect(questionShowsTextInput(question)).toBe(true);
-    expect(areQuestionsAnswered(questions, {}, { 0: "custom" })).toBe(true);
-    expect(buildQuestionFormAnswers(questions, {}, { 0: "custom" })).toEqual({
+    const picked = { 0: new Set([OTHER_OPTION_INDEX]) };
+    expect(areQuestionsAnswered(questions, picked, { 0: "custom" })).toBe(true);
+    expect(buildQuestionFormAnswers(questions, picked, { 0: "custom" })).toEqual({
       Response: "custom",
     });
   });
@@ -142,8 +156,9 @@ describe("question form card core", () => {
     const [question] = questions;
     if (!question) throw new Error("question missing");
     expect(questionShowsTextInput(question)).toBe(true);
-    expect(areQuestionsAnswered(questions, {}, { 0: "custom" })).toBe(true);
-    expect(buildQuestionFormAnswers(questions, {}, { 0: "custom" })).toEqual({
+    const picked = { 0: new Set([OTHER_OPTION_INDEX]) };
+    expect(areQuestionsAnswered(questions, picked, { 0: "custom" })).toBe(true);
+    expect(buildQuestionFormAnswers(questions, picked, { 0: "custom" })).toEqual({
       Response: "custom",
     });
   });

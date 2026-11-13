@@ -86,6 +86,24 @@ describe("shared tool-call display mapping", () => {
     });
   });
 
+  it("says what a shell call is for when the model described it, else its command", () => {
+    const shell = (metadata?: Record<string, unknown>) =>
+      buildToolCallDisplayModel({
+        name: "shell",
+        status: "running",
+        error: null,
+        detail: { type: "shell", command: "cargo nextest run -p magpie" },
+        metadata,
+      });
+
+    expect(shell({ description: "Run the magpie tests" })).toEqual({
+      displayName: "Shell",
+      summary: "Run the magpie tests",
+    });
+    expect(shell({ description: "" }).summary).toBe("cargo nextest run -p magpie");
+    expect(shell().summary).toBe("cargo nextest run -p magpie");
+  });
+
   it("provides errorText for failed calls", () => {
     const display = buildToolCallDisplayModel({
       name: "shell",

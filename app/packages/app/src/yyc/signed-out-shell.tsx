@@ -1,3 +1,4 @@
+import { BrandLogoImage } from "@/components/icons/product-logo";
 import React, { useCallback, useEffect } from "react";
 import { useProductName } from "@/yyc/product";
 import { releaseEarlyInput } from "@/yyc/early-input";
@@ -13,7 +14,6 @@ import { density, densityIconBox, SIDEBAR_ROW_LINE_HEIGHT } from "@/styles/densi
 import { ICON_SIZE } from "@/styles/theme";
 import { YYC_GREETING_LINE_HEIGHT, YYC_HERO_LOGO_SIZE } from "@/yyc/hero";
 
-const YYC_LOGO = require("../../assets/images/yyc-logo.png");
 
 /**
  * Whether the server marked this page signed out (web only): the router serves the built app to a visitor without an
@@ -56,7 +56,7 @@ export function SignedOutShell() {
     <View style={styles.main}>
       {compact ? (
         <View style={styles.compactHeader}>
-          <Image source={YYC_LOGO} style={styles.headerLogo} accessibilityIgnoresInvertColors />
+          <BrandLogoImage style={styles.headerLogo} />
           <Text style={styles.headerTitle}>{product}</Text>
           <View style={styles.flex} />
           {signInButton("yyc-signed-out-header-sign-in")}
@@ -65,7 +65,7 @@ export function SignedOutShell() {
       <View style={styles.center}>
         <View style={styles.content}>
           <View style={styles.titleBlock}>
-            <Image source={YYC_LOGO} style={styles.logo} accessibilityIgnoresInvertColors />
+            <BrandLogoImage style={styles.logo} />
             <Text style={styles.greeting}>{t("conversation.signedOut.greeting")}</Text>
             <Text style={styles.lead}>{t("conversation.signedOut.lead")}</Text>
           </View>

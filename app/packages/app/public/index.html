@@ -15,8 +15,10 @@
       name="viewport"
       content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover"
     />
-    <link rel="manifest" href="/manifest.json" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- The deployment's own files (src/yyc/brand.ts): the bundle's are neutral -->
+    <link rel="manifest" href="/branding/manifest.json" />
+    <link rel="apple-touch-icon" href="/branding/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" href="/branding/favicon.png" />
     <title>%WEB_TITLE%</title>
     <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
     <style id="expo-reset">
@@ -193,7 +195,7 @@
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
-    <div id="root"><div id="boot" aria-hidden="true"><div class="side"><div class="rows"><div class="bar"></div><div class="bar"></div><div class="bar"></div></div><div class="list"><div class="bar"></div></div></div><div class="main"><div class="head"><div class="bar"></div></div><div class="center"><div class="col"><svg class="logo" viewBox="0 0 48 48"><rect width="48" height="48" rx="12" fill="#1b2a3a"/><g transform="translate(1.5 0.4) scale(0.088)"><polygon points="233.16,105.56 233.16,248.81 109.10,320.44 109.10,177.19" fill="#02A9C4"/><polygon points="278.84,105.56 402.90,177.19 402.90,320.44 278.84,248.81" fill="#0A7F95"/><polygon points="256.00,288.37 380.07,360.00 256.00,431.63 131.93,360.00" fill="#E5A711"/></g></svg><div class="bar greet"></div><div class="bar lead"></div><div class="box"></div></div></div></div></div></div>
+    <div id="root"><div id="boot" aria-hidden="true"><div class="side"><div class="rows"><div class="bar"></div><div class="bar"></div><div class="bar"></div></div><div class="list"><div class="bar"></div></div></div><div class="main"><div class="head"><div class="bar"></div></div><div class="center"><div class="col"><img class="logo" src="/branding/logo.png" alt="" /><div class="bar greet"></div><div class="bar lead"></div><div class="box"></div></div></div></div></div></div>
     <script>
       window.__yycBootFrame = document.getElementById("boot").outerHTML;
     </script>

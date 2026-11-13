@@ -377,7 +377,8 @@ export const en = {
       submit: "Submit",
       next: "Next",
       answerPlaceholder: "Type your answer...",
-      otherPlaceholder: "Other...",
+      other: "Other",
+      otherPlaceholder: "Type your own answer...",
     },
     todo: {
       title: "Tasks",

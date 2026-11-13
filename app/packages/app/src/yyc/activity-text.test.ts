@@ -7,6 +7,7 @@ import {
   elapsedLabel,
   nowLabel,
   runningCount,
+  taskCommand,
   taskElapsedMs,
   taskTitle,
 } from "./activity-text";
@@ -52,6 +53,10 @@ describe("the activity panel's words", () => {
   it("titles a task by what it was started to do, else by what it is", () => {
     expect(taskTitle(task({ description: " Run the tests " }), "en")).toBe("Run the tests");
     expect(taskTitle(task({ type: "subagent", description: null }), "en")).toBe("Subagent");
+    // the entry of a command names the command line it runs
+    expect(taskCommand(task({ command: " npm test \n" }))).toBe("npm test");
+    expect(taskCommand(task({ command: "  " }))).toBeNull();
+    expect(taskCommand(task({}))).toBeNull();
     expect(taskTitle(task({ type: "workflow" }), "zh")).toBe("工作流程");
   });
 

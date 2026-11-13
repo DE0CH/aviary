@@ -1,3 +1,4 @@
+import { BrandLogoImage } from "@/components/icons/product-logo";
 import React, { useCallback, useEffect, useState, type ReactNode } from "react";
 import { AppState, Image, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -16,7 +17,6 @@ import type { Theme } from "@/styles/theme";
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const accentColorMapping = (theme: Theme) => ({ color: theme.colors.accent });
 
-const YYC_LOGO = require("../../assets/images/yyc-logo.png");
 
 type GateState = "checking" | "signed-out" | "signed-in";
 
@@ -134,7 +134,7 @@ function SignInScreen({ onSignedIn }: { onSignedIn: () => void }) {
 
   return (
     <View style={styles.screen}>
-      <Image source={YYC_LOGO} style={styles.logo} accessibilityIgnoresInvertColors />
+      <BrandLogoImage style={styles.logo} />
       <Text style={styles.title}>{t("conversation.signIn.title")}</Text>
       <Button variant="default" size="md" onPress={() => void signIn()} disabled={busy} testID="yyc-sign-in">
         {t("conversation.signIn.button")}

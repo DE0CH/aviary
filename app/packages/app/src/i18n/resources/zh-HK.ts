@@ -379,7 +379,8 @@ export const zhHK: TranslationResources = {
       submit: "提交",
       next: "下一步",
       answerPlaceholder: "輸入你的回答...",
-      otherPlaceholder: "其他...",
+      other: "其他",
+      otherPlaceholder: "輸入你自己的回答...",
     },
     todo: {
       title: "任務",
