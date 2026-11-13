@@ -142,7 +142,8 @@ export function routed(name: FixedName, method: string, pathq: string): boolean 
     case "hermit":
       return path.startsWith("/v1/sandbox/");
     case "model":
-      return (method === "POST" && (path === "/v1/messages" || path === "/v1/messages/count_tokens")) || (method === "GET" && path === "/v1/aviary/models");
+      // the Messages API (Claude Code) and OpenAI chat completions (Qwen Code)
+      return (method === "POST" && (path === "/v1/messages" || path === "/v1/messages/count_tokens" || path === "/v1/chat/completions")) || (method === "GET" && path === "/v1/aviary/models");
     case "tools":
       // decision 15: the REST API, no MCP
       if (method === "GET") return path === "/v1/tools" || path === "/v1/openapi.json";
@@ -1155,7 +1156,8 @@ function declaredLength(req: IncomingMessage): number | null {
   return Number.isSafeInteger(n) && n >= 0 ? n : null;
 }
 
-/** Collects usage.cost from an Anthropic-format response: a JSON body, or the SSE events of a streamed one. */
+/** Collects usage.cost from a model response, a JSON body or the SSE events of a streamed one: the Messages API's
+ * (`usage.cost`, `message.usage.cost`) and a chat completion's (`usage.cost` on the answer or on the stream's last chunk). */
 export class CostSniffer {
   contentType = "";
   #buf = "";

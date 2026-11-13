@@ -22,7 +22,17 @@ export interface EgressModel {
    * conversation: one dropped part of long tool-and-image histories and the model took its own tool results for the
    * user's words (2026-11-10). */
   providers?: string[];
+  /** The harness a conversation on this model runs in: "claude" (Claude Code; the default, never written out) or
+   * "qwen" (Qwen Code, which calls the model route's OpenAI chat completions path). */
+  harness?: Harness;
+  /** The people (emails) who may pick this model; absent = everyone. A model being tried is listed for the people
+   * trying it only. */
+  visibleTo?: string[];
 }
+
+/** The harnesses a model can name. */
+export type Harness = "claude" | "qwen";
+const HARNESSES = new Set<string>(["claude", "qwen"]);
 
 /** Which verified fact an `identityHeaders` header carries. */
 export type IdentityFact = "sandbox" | "conversation" | "person";
@@ -124,7 +134,12 @@ export function parseEgressConfig(raw: unknown): EgressConfig {
     }
     if (m.providers !== undefined && (!Array.isArray(m.providers) || !m.providers.length || !m.providers.every((p) => typeof p === "string" && /^[a-z0-9][a-z0-9./-]*$/.test(p))))
       throw new Error(`egress config: models[${m.id}].providers must be a non-empty list of OpenRouter provider slugs`);
+    if (m.harness !== undefined && !HARNESSES.has(m.harness)) throw new Error(`egress config: models[${m.id}].harness must be one of ${[...HARNESSES].join(", ")}`);
+    if (m.visibleTo !== undefined && (!Array.isArray(m.visibleTo) || !m.visibleTo.length || !m.visibleTo.every((e) => typeof e === "string" && /^[^\s@]+@[^\s@]+$/.test(e))))
+      throw new Error(`egress config: models[${m.id}].visibleTo must be a non-empty list of emails`);
   }
+  const dflt = (c.models as EgressModel[]).find((m) => m.id === c.defaultModel);
+  if (dflt?.visibleTo) throw new Error("egress config: defaultModel must be a model everyone sees");
   if (!c.models.some((m: EgressModel) => m.id === c.defaultModel)) throw new Error("egress config: defaultModel must be one of models");
   if (c.titleReasoning !== undefined && !REASONING.has(c.titleReasoning)) throw new Error(`egress config: titleReasoning must be one of ${[...REASONING].join(", ")}`);
   if (!Number.isInteger(c.contextTokens) || c.contextTokens <= 0) throw new Error("egress config: contextTokens must be a positive integer");
@@ -172,7 +187,7 @@ export function parseEgressConfig(raw: unknown): EgressConfig {
   };
   return {
     product: { name: c.product.name, locale: typeof c.product.locale === "string" && c.product.locale ? c.product.locale : "en" },
-    models: c.models.map((m: EgressModel) => ({ id: m.id, label: m.label, ...(m.reasoning ? { reasoning: m.reasoning } : {}), ...(m.thinking ? { thinking: [...m.thinking] } : {}), ...(m.providers ? { providers: [...m.providers] } : {}) })),
+    models: c.models.map((m: EgressModel) => ({ id: m.id, label: m.label, ...(m.reasoning ? { reasoning: m.reasoning } : {}), ...(m.thinking ? { thinking: [...m.thinking] } : {}), ...(m.providers ? { providers: [...m.providers] } : {}), ...(m.harness && m.harness !== "claude" ? { harness: m.harness } : {}), ...(m.visibleTo ? { visibleTo: m.visibleTo.map((e) => e.toLowerCase()) } : {}) })),
     defaultModel: c.defaultModel,
     smallModel: typeof c.smallModel === "string" && c.smallModel ? c.smallModel : c.defaultModel,
     titleModel: typeof c.titleModel === "string" && c.titleModel ? c.titleModel : c.defaultModel,
@@ -212,14 +227,22 @@ export function modelPlan(c: EgressConfig): ModelPlan {
 }
 
 /** `GET /v1/aviary/models` (R18): for pigeon in-cluster and for sandboxes as `http://model/v1/aviary/models`. */
-export function modelsAnswer(c: EgressConfig): { default: string; small: string; title: string; contextTokens: number; models: Array<{ id: string; label: string; reasoning: string | null; thinking: string[] }> } {
+export function modelsAnswer(c: EgressConfig): { default: string; small: string; title: string; contextTokens: number; models: Array<{ id: string; label: string; reasoning: ReasoningEffort | null; thinking: ReasoningEffort[]; harness?: Harness; visibleTo?: string[] }> } {
   return {
     default: c.defaultModel,
     small: c.smallModel,
     title: c.titleModel,
     contextTokens: c.contextTokens,
     // `thinking`: the levels a person may choose (empty: none), `reasoning` the one a conversation starts on
-    models: c.models.map((m) => ({ id: m.id, label: m.label, reasoning: m.reasoning ?? null, thinking: m.thinking ? [...m.thinking] : [] })),
+    // `harness` and `visibleTo` only when they say something: a Claude Code model for everyone reads as it always did
+    models: c.models.map((m) => ({
+      id: m.id,
+      label: m.label,
+      reasoning: m.reasoning ?? null,
+      thinking: m.thinking ? [...m.thinking] : [],
+      ...(m.harness && m.harness !== "claude" ? { harness: m.harness } : {}),
+      ...(m.visibleTo ? { visibleTo: [...m.visibleTo] } : {}),
+    })),
   };
 }
 

@@ -343,6 +343,10 @@ test("targets and fixed names: exact host, no port or port 80; dot and encoded p
   assert.ok(!routed("hermit", "GET", "/v1/sandbox/%2e%2e/people"));
   assert.ok(!routed("hermit", "GET", "/v1/sandbox//self"));
   assert.ok(routed("model", "POST", "/v1/messages/count_tokens"));
+  // Qwen Code speaks OpenAI chat completions to the same route
+  assert.ok(routed("model", "POST", "/v1/chat/completions"));
+  assert.ok(!routed("model", "GET", "/v1/chat/completions"));
+  assert.ok(!routed("model", "POST", "/v1/completions"));
   assert.ok(routed("model", "GET", "/v1/aviary/models"));
   assert.ok(!routed("model", "GET", "/v1/models"));
   // decision 15: tools is REST only
@@ -844,6 +848,34 @@ test("model route: a refusal while the body streams (model, invalid JSON) leaves
   // and the route still works
   const ok = await http("http://model/v1/messages", { method: "POST", headers: pa(), body: '{"model":"vendor/claude-x"}' });
   assert.equal(ok.status, 200);
+});
+
+test("egress.json: a model names its harness and the people it is for, and both reach the models answer", () => {
+  const base = config("http://127.0.0.1:1");
+  const withModels = (m: object, defaultModel = "vendor/claude-x") => ({ ...base, defaultModel, models: [{ id: "vendor/claude-x", label: "X" }, { id: "vendor/video", label: "Video", ...m }] }) as EgressConfig;
+  const ok = parseEgressConfig(withModels({ harness: "qwen", visibleTo: ["Deyao@Example.com"] }));
+  assert.deepEqual(modelsAnswer(ok).models, [
+    { id: "vendor/claude-x", label: "X", reasoning: null, thinking: [] },
+    { id: "vendor/video", label: "Video", reasoning: null, thinking: [], harness: "qwen", visibleTo: ["deyao@example.com"] },
+  ]);
+  // Claude Code is the unnamed harness
+  assert.deepEqual(modelsAnswer(parseEgressConfig(withModels({ harness: "claude" }))).models[1], { id: "vendor/video", label: "Video", reasoning: null, thinking: [] });
+  for (const bad of [{ harness: "codex" }, { visibleTo: [] }, { visibleTo: ["not an email"] }, { visibleTo: "a@b.c" }])
+    assert.throws(() => parseEgressConfig(withModels(bad)), /harness|visibleTo/, JSON.stringify(bad));
+  // the default model is everyone's
+  assert.throws(() => parseEgressConfig(withModels({ visibleTo: ["a@example.com"] }, "vendor/video")), /defaultModel/);
+});
+
+test("the cost of a chat completion is read from its answer and from its stream's last chunk", () => {
+  const stream = new CostSniffer();
+  stream.contentType = "text/event-stream";
+  stream.push(Buffer.from('data: {"id":"c1","choices":[{"delta":{"content":"hi"}}]}\n\n'));
+  stream.push(Buffer.from('data: {"id":"c1","choices":[],"usage":{"prompt_tokens":13,"completion_tokens":16,"cost":0.000017559}}\n\ndata: [DONE]\n\n'));
+  assert.equal(stream.cost(), 0.000017559);
+  const whole = new CostSniffer();
+  whole.contentType = "application/json";
+  whole.push(Buffer.from('{"id":"c2","choices":[{"message":{"content":"hi"}}],"usage":{"cost":0.25}}'));
+  assert.equal(whole.cost(), 0.25);
 });
 
 test("egress.json: a model's thinking levels are ordered, hold its own level, and reach the models answer and the plan", () => {
