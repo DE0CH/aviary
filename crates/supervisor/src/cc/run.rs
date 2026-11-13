@@ -3059,7 +3059,10 @@ impl Driver {
             let i = st.asks.iter().position(|x| x.ask_id == a.ask_id)?;
             let ask = st.asks.remove(i);
             let line = if a.allow {
-                let input = a.updated_input.clone().map_or_else(|| json!({}), Value::Object);
+                let mut input = a.updated_input.clone().map_or_else(|| json!({}), Value::Object);
+                if st.live.as_ref().is_some_and(|g| g.harness == Harness::Qwen) {
+                    input = control::qwen_answers(&input);
+                }
                 control::allow(&ask.cli_request_id, &input, ask.tool_use_id.as_deref())
             } else {
                 control::deny(

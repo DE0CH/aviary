@@ -125,7 +125,7 @@ fn answer(a: &magpie_api::sandbox::ParkedAnswer) -> String {
     }
     let input = a.updated_input.as_ref().unwrap_or(&a.input);
     match a.tool_name.as_str() {
-        "AskUserQuestion" => questions(&a.input, input),
+        "AskUserQuestion" | "ask_user_question" => questions(&a.input, input),
         "ExitPlanMode" => {
             let plan = input.get("plan").and_then(Value::as_str).unwrap_or("").trim();
             if plan.is_empty() {

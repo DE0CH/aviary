@@ -64,6 +64,31 @@ pub fn allow(request_id: &str, updated_input: &Value, tool_use_id: Option<&str>)
     )
 }
 
+/// The answered input as Qwen Code's question tool reads it: `answers` keyed by each question's index (`"0"`,
+/// `"1"`), where the app (as Claude Code's tool) keys them by the question's text. A key that is already an index,
+/// or names no question, is kept as it is.
+#[must_use]
+pub fn qwen_answers(updated_input: &Value) -> Value {
+    let mut out = updated_input.clone();
+    let questions: Vec<String> = updated_input
+        .get("questions")
+        .and_then(Value::as_array)
+        .map(|qs| {
+            qs.iter()
+                .map(|q| q.get("question").and_then(Value::as_str).unwrap_or("").to_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(answers) = out.get_mut("answers").and_then(Value::as_object_mut) {
+        let given = std::mem::take(answers);
+        for (k, v) in given {
+            let key = questions.iter().position(|q| *q == k).map_or(k, |i| i.to_string());
+            answers.insert(key, v);
+        }
+    }
+    out
+}
+
 /// `can_use_tool` answered `deny`.
 #[must_use]
 pub fn deny(request_id: &str, message: &str, tool_use_id: Option<&str>) -> Vec<u8> {
@@ -100,11 +125,15 @@ pub fn answer(request_id: &str, subtype: &str, request: &Value) -> Answer {
         "can_use_tool" => {
             let tool_use_id = request.get("tool_use_id").and_then(Value::as_str);
             let input = request.get("input").cloned().unwrap_or_else(|| json!({}));
-            if request
+            // Claude Code marks a tool that needs the person; Qwen Code asks permission only for its question
+            // tool when every tool is allowed, and does not mark it
+            let asks = request
                 .get("requires_user_interaction")
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
-            {
+                || request.get("tool_name").and_then(Value::as_str)
+                    == Some(crate::harness::ask_tool(crate::harness::Harness::Qwen));
+            if asks {
                 Answer::Ask {
                     tool_name: request
                         .get("tool_name")
@@ -175,6 +204,18 @@ mod tests {
         );
         assert_eq!(v(&stop_task("s1", "t9"))["request"]["task_id"], "t9");
         assert_eq!(v(&initialize("init-1"))["request"]["subtype"], "initialize");
+        // Qwen Code's question tool is an ask though it carries no mark, and its answers go back by index
+        assert!(matches!(
+            answer("r9", "can_use_tool", &json!({"tool_name": "ask_user_question", "tool_use_id": "t9", "input": {"questions": []}})),
+            Answer::Ask { tool_name, .. } if tool_name == "ask_user_question"
+        ));
+        let given = json!({"questions": [{"question": "Colour?"}, {"question": "Size?"}],
+                           "answers": {"Size?": "L", "Colour?": "Blue", "1x": "kept"}});
+        assert_eq!(
+            qwen_answers(&given)["answers"],
+            json!({"0": "Blue", "1": "L", "1x": "kept"})
+        );
+        assert_eq!(qwen_answers(&json!({"a": 1})), json!({"a": 1}));
         let e = v(&qwen_set_effort("c1", "high"));
         assert_eq!(
             (e["request"]["subtype"].as_str(), e["request"]["effort"].as_str()),
