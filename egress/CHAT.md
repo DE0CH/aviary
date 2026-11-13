@@ -128,7 +128,9 @@ Every request except the magpie and hermit calls → one `egress_log` row (kind 
 first; 401 without one, 403 `wrong_caller` for the wrong one): `GET /v1/aviary/models` (pigeon, admin; Service
 `model`) → `{"default", "small", "title", "contextTokens", "models": [{"id", "label", "reasoning"}]}` from egress.json,
 the same answer sandboxes get at `http://model/v1/aviary/models`; `GET /v1/ops/summary?tz=&recentMinutes=` (hermit,
-admin): spend and the budget, refusals and errors (aviary platform spec 15.3; owners are emails);
+admin): spend and the budget, refusals and errors (aviary platform spec 15.3; owners are emails; a tools or route
+call turned down for what the agent sent (400, 404, 405, 409, 413, 415, 422) is the caller's mistake: not counted as
+a failed call, its own count `recent.callerErrors`);
 `GET /v1/admin/egress-log?conversation=&since=&limit=` (admin): one conversation's rows.
 
 **Health (9090):** `/healthz`; `/readyz` 503 until migrations are verified, the host lists are loaded and tokens can be
