@@ -52,7 +52,8 @@ commits a week, so spec 17.1's "every build of the last 30 days, or the last 5" 
   seeds grow at what the ui pins of the last 7 days added, per day. When the projection goes over the budget the run
   warns (a `::warning::` with when it goes over and when it fits again). It is information only; the build fails on the
   real tree alone. Seeds are never pruned, so this is the limit of the design (gap 1).
-- `.br`/`.gz` siblings are written for the pigeon-app builds' files and the unhashed files only. Files kept only for
+- `.br`/`.gz` siblings are written for the pigeon-app builds' files and the unhashed files only, and for nothing under
+  `branding/` (a deployment replaces those files; a sibling of the neutral one would be served in its place). Files kept only for
   seeds are served as they are (pigeon serves the file itself when no sibling exists, pigeon spec 5.2.1). Those are the
   old ui builds' chunks, mostly 21.5 MB entry bundles from before the chunk split, which a running tab never fetches
   again. This saves 110 MiB on the first image.

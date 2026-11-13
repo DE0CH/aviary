@@ -189,6 +189,8 @@ test('assemble: the first build holds its export, the seeds, sw.js and compresse
     '_expo/static/js/web/entry-11.js': 'entry one'.repeat(50),
     '_expo/static/css/a-11.css': 'body{}',
     'assets/assets/images/logo.11.png': 'png',
+    // a deployment replaces these files where it deploys the bundle (src/yyc/brand.ts)
+    'branding/manifest.json': '{"name":"Chat"}',
   });
   const seeds = seedDir(root, '3de3f5d8771b', {
     '_expo/static/js/web/entry-00.js': 'entry zero',
@@ -220,6 +222,11 @@ test('assemble: the first build holds its export, the seeds, sw.js and compresse
   assert.equal(gunzipSync(readFileSync(`${entry}.gz`)).toString(), readFileSync(entry, 'utf8'));
   assert.ok(existsSync(path.join(out, 'app', 'index.html.br')));
   assert.ok(!existsSync(path.join(out, 'app', 'assets/assets/images/logo.11.png.br')));
+  // nothing under branding/ gets siblings: a deployment puts its own files there, and a sibling of the bundle's
+  // neutral file would go on being served in place of the deployment's (2026-11-13: YYC AI's manifest said "Chat")
+  assert.ok(existsSync(path.join(out, 'app', 'branding/manifest.json')));
+  assert.ok(!existsSync(path.join(out, 'app', 'branding/manifest.json.br')));
+  assert.ok(!existsSync(path.join(out, 'app', 'branding/manifest.json.gz')));
   // files kept only for seeds are served without siblings; a seed file this build also has keeps its siblings
   assert.ok(!existsSync(path.join(out, 'app', '_expo/static/js/web/reply-00.js.br')));
   assert.ok(!existsSync(path.join(out, 'app', '_expo/static/js/web/entry-00.js.gz')));

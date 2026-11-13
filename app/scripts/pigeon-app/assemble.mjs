@@ -277,6 +277,9 @@ export function assemble({
   const siblingSources = [prevApp, ...restored.map((build) => build.from)].filter(Boolean);
   for (const rel of walk(app)) {
     if (!COMPRESSIBLE.test(rel) || SIBLING.test(rel)) continue;
+    // branding/ holds the files a deployment replaces where it deploys the bundle (paseo/packages/app
+    // src/yyc/brand.ts): a sibling of the bundle's neutral file would be served in place of the deployment's
+    if (rel.startsWith('branding/')) continue;
     if (isHashed(rel) && !buildFiles.has(rel)) continue;
     const file = path.join(app, rel);
     const hash = sha256(file);
