@@ -1695,8 +1695,18 @@ test("in-cluster API: models for pigeon, the ops summary for hermit, the egress 
     await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('tools', 'tools', '/v1/tools/web_search', 'allow', 401, 'staff@example.org')");
     await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('tools', 'tools', '/v1/nope', 'deny:path', 403, 'staff@example.org')");
     await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('model', 'openrouter.ai', '/v1/messages', 'allow', 400, 'staff@example.org')");
+    // noise (Claude Code's token count a model lacks, 404) is not an error by kind; a tool or route of ours that
+    // failed (5xx) is no passing glitch as a busy model provider is: it counts
+    await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('model', 'openrouter.ai', '/v1/messages/count_tokens', 'allow', 404, 'staff@example.org')");
+    await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('model', 'openrouter.ai', '/v1/messages', 'allow', 429, 'staff@example.org')");
+    await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('tools', 'tools', '/v1/tools/data_x', 'allow', 502, 'staff@example.org')");
+    await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('route', 'labels', '/v1/labels', 'allow', 503, 'staff@example.org')");
     const sum2 = JSON.parse((await get("/v1/ops/summary?tz=Asia%2FHong_Kong&recentMinutes=15", "her")).body);
-    assert.equal(sum2.recent.modelErrors, before + 3, "only the three that are ours count");
+    assert.equal(sum2.recent.modelErrors, before + 5, "only the five that are ours count");
+    for (const what of ["tools 502", "route 503"]) assert.ok(sum2.recent.list.some((r: { what: string }) => r.what === what), what);
+    assert.ok(sum2.recent.glitches >= 1 && sum2.recent.list.every((r: { what: string }) => r.what !== "model 429"), "a busy provider is a glitch");
+    assert.ok(sum2.egress.byStatus.every((x: { kind: string; status: number }) => !(x.kind === "model" && x.status === 404)), "the token count is not an error by kind");
+    assert.ok(sum2.egress.byStatus.some((x: { kind: string; status: number }) => x.kind === "tools" && x.status === 502));
     assert.equal(sum2.recent.callerErrors, callers.length + 2);
     assert.ok(sum2.recent.list.every((r: { what: string }) => r.what !== "route 405" && r.what !== "route 400"), "no route caller mistake in the recent list");
     assert.ok(sum2.egress.recent.filter((r: { kind: string; host: string }) => r.kind === "route" && r.host === "herald").every((r: { quiet: boolean }) => r.quiet));

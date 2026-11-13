@@ -13,9 +13,10 @@ const num = (v: unknown): number => Number(v ?? 0);
 /** not an error: an MCP client's optional GET stream that the tools server turns down with 405 (MCP streamable HTTP),
  *  and Claude Code's token count that a model without one answers 404 (it counts locally then) */
 const NOISE = (e = "") => `((${e}kind in ('inject', 'tools') and ${e}status = 405) or (${e}path like '%/count_tokens' and ${e}status = 404))`;
-/** a glitch, not an error: the provider busy or its upstream down for a moment (429, 5xx, no answer at all); Claude
- *  Code retries it */
-const GLITCH = (e = "") => `(${e}decision = 'allow' and (${e}status = 429 or ${e}status >= 500 or ${e}status is null))`;
+/** a glitch, not an error: the model provider busy or its upstream down for a moment (429, 5xx, no answer at all);
+ *  Claude Code retries it. Only model calls: a tool or route of ours that answers 5xx has failed (a tool's query
+ *  past its timeout looked like a glitch three times a day) */
+const GLITCH = (e = "") => `(${e}kind = 'model' and ${e}decision = 'allow' and (${e}status = 429 or ${e}status >= 500 or ${e}status is null))`;
 /** the caller's mistake, not ours: a tools or route call that reached its service and was turned down for what the
  *  agent sent (bad arguments 400, an unknown tool or path 404, the wrong method 405, 409, too large 413, 415, the
  *  tool's own "change this" 422). As an API provider is not alerted when a client misuses an endpoint. Still ours:
@@ -92,13 +93,13 @@ async function spend(db: Db, gate: BudgetGate | null, cfg: BudgetConfig | undefi
 }
 
 /** Refusals and errors over 24 h: model and tools calls that failed (402 budget, 503, …) and blocked hosts. A
- *  caller's mistake (CALLER) is not among the errors by kind; in `recent` it is marked quiet. */
+ *  caller's mistake (CALLER) and noise (NOISE) are not among the errors by kind; in `recent` they are marked quiet. */
 async function refusals(db: Db): Promise<Row> {
   const [{ rows: byStatus }, { rows: recent }, { rows: denied }] = await Promise.all([
     db.query(
       `select kind, status, decision, count(*)::int as n, max(at) as "lastAt"
          from egress_log where at > now() - interval '24 hours' and kind in ${CALLS}
-          and (status >= 400 or status is null or decision like 'deny%') and not ${CALLER()}
+          and (status >= 400 or status is null or decision like 'deny%') and not ${CALLER()} and not ${NOISE()}
         group by 1, 2, 3 order by n desc limit 20`,
     ),
     db.query(
