@@ -25,6 +25,17 @@ spec:
           volumeMounts: [{ name: app, mountPath: /srv/app }]
           resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
           securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
+        # this deployment's branding over the bundle's neutral files (ConfigMap pigeon-branding in branding.yaml, from
+        # k8s/chat/branding/ by infra/branding.py: the logo, the tab and home-screen icons, the manifest): copied into
+        # the bundle's /branding/, which a bundle from before the app had one does not have yet (-L: a ConfigMap's
+        # files are links). Not mounted over it in pigeon: the bundle is read-only there, and a mount point that does
+        # not exist cannot be made (2026-11-13)
+        - name: branding
+          image: ghcr.io/de0ch/pigeon-app:5b42ec20b86e@sha256:98bbbbfa27a0269a169058459a2b45839174e31ca6bd1bdb24fca0670c3b4192
+          command: [/cp, -rL, /branding, /srv/app/]
+          volumeMounts: [{ name: app, mountPath: /srv/app }, { name: branding, mountPath: /branding, readOnly: true }]
+          resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
+          securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: pigeon
           image: ghcr.io/de0ch/pigeon:5db526f970f5@sha256:f8c178cd2bacbed06fc706fc96e909e5288842b73758550ae5ceebfc5c1b949f
@@ -37,10 +48,7 @@ spec:
           readinessProbe: { httpGet: { path: /readyz, port: 9090 }, periodSeconds: 2, failureThreshold: 2 }
           resources: { requests: { cpu: 30m, memory: 64Mi }, limits: { cpu: 500m, memory: 256Mi } }
           securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
-          # this deployment's branding in place of the bundle's neutral files (ConfigMap pigeon-branding in branding.yaml,
-          # from k8s/chat/branding/ by infra/branding.py: the logo, the tab and home-screen icons, the manifest), mounted over the bundle's
-          # /branding/ (pigeon reads the bundle's file list once, at its start, and follows a ConfigMap's links)
-          volumeMounts: [{ name: app, mountPath: /srv/app, readOnly: true }, { name: branding, mountPath: /srv/app/branding, readOnly: true }]
+          volumeMounts: [{ name: app, mountPath: /srv/app, readOnly: true }]
       volumes: [{ name: app, emptyDir: { sizeLimit: 512Mi } }, { name: branding, configMap: { name: pigeon-branding } }]
 ---
 apiVersion: v1
