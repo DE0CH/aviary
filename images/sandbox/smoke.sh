@@ -92,9 +92,10 @@ check "a login shell's claude is the same binary" \
   img_run -u 1000 "$img" -lc 'test "$(readlink -f "$(command -v claude)")" = "$(readlink -f /opt/claude-code/bin/claude)"'
 check "uid 1000 is node, home /home/sandbox" \
   img_run "$img" -c 'test "$(getent passwd 1000 | cut -d: -f1,3,4,6)" = "node:1000:1000:/home/sandbox"'
-check "/workspace, /work and an empty /home/sandbox/.claude are uid 1000's; /var/lib/supervisor root 0700" img_run "$img" -c '
-  for d in /workspace /work /home/sandbox /home/sandbox/.claude; do test "$(stat -c %u "$d")" = 1000 || exit 1; done
-  test -z "$(ls -A /home/sandbox/.claude)" && test "$(stat -c "%U %a" /var/lib/supervisor)" = "root 700"'
+check "/workspace, /work and an empty /home/sandbox/.harness are uid 1000's, ~/.claude and ~/.qwen link into it; /var/lib/supervisor root 0700" img_run "$img" -c '
+  for d in /workspace /work /home/sandbox /home/sandbox/.harness; do test "$(stat -c %u "$d")" = 1000 || exit 1; done
+  test "$(readlink /home/sandbox/.claude)" = .harness/claude && test "$(readlink /home/sandbox/.qwen)" = .harness/qwen || exit 1
+  test -z "$(ls -A /home/sandbox/.harness)" && test "$(stat -c "%U %a" /var/lib/supervisor)" = "root 700"'
 check "python3 is the venv's and imports pandas, weasyprint, pymupdf and reportlab (uid 1000)" \
   img_run -u 1000 "$img" -c 'test "$(command -v python3)" = /opt/py/bin/python3 && python3 -c "import pandas, weasyprint, pymupdf, reportlab, sbx_reportlab_cjk"'
 check "the TrueType Noto Sans/Serif HK fonts" \
@@ -187,10 +188,10 @@ docker run -d --name "$name" ${SMOKE_RUNTIME:+--runtime "$SMOKE_RUNTIME"} --netw
 x() { docker exec "$name" "$@"; }
 mounted=
 for _ in $(seq 120); do
-  if x grep -q ' /home/sandbox/.claude fuse' /proc/mounts 2>/dev/null; then mounted=1; break; fi
+  if x grep -q ' /home/sandbox/.harness fuse' /proc/mounts 2>/dev/null; then mounted=1; break; fi
   sleep 0.5
 done
-check "the supervisor mounted ~/.claude (FUSE) under the keeper" test -n "$mounted"
+check "the supervisor mounted the harness homes (FUSE) under the keeper" test -n "$mounted"
 if [ -z "${SMOKE_RUNTIME:-}" ]; then
   check "the keeper is PID 1 (RSS $(x awk '/VmRSS/ {print $2 " " $3}' /proc/1/status), at most 4 MiB)" \
     x sh -c 'test "$(cat /proc/1/comm)" = supervisor-keep && test "$(awk "/VmRSS/ {print \$2}" /proc/1/status)" -le 4096'

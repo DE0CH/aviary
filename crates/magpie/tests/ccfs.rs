@@ -249,7 +249,7 @@ async fn op_ids_replay_and_rule_zero() {
     // a truncate replayed
     let t = Uuid::new_v4();
     let tq = magpie_api::sandbox::CcTruncate {
-        path: p.clone(),
+        path: common::cc::home(&p),
         size: 3,
         mtime_ns: 5,
         op_id: t,
@@ -265,7 +265,7 @@ async fn op_ids_replay_and_rule_zero() {
     );
     // a mkdir replayed answers its stored success, not `exists`
     let m = magpie_api::sandbox::CcMkdir {
-        path: "plans".into(),
+        path: "claude/plans".into(),
         mode: 0o700,
         mtime_ns: 1,
         op_id: Uuid::new_v4(),

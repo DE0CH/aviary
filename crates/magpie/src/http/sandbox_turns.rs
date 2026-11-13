@@ -30,8 +30,16 @@ pub async fn agent_turn(app: &Magpie, ctx: Ctx, body: AgentTurnRequest) -> Answe
 }
 
 /// `POST /v1/sandbox/turns/{turnId}/state`.
-pub async fn turn_state(app: &Magpie, ctx: Ctx, turn_id: Uuid, body: TurnStateReport) -> Answer<()> {
-    answer(async { reports::turn_state(&app.pool, &Sandbox::from_ctx(&ctx)?, turn_id, body).await }.await)
+pub async fn turn_state(app: &Magpie, ctx: Ctx, turn_id: Uuid, mut body: TurnStateReport) -> Answer<()> {
+    answer(
+        async {
+            if let Some(p) = &body.transcript_path {
+                body.transcript_path = Some(crate::ccfs::homes::stored(&ctx, p)?);
+            }
+            reports::turn_state(&app.pool, &Sandbox::from_ctx(&ctx)?, turn_id, body).await
+        }
+        .await,
+    )
 }
 
 /// `POST /v1/sandbox/tasks`.

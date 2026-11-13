@@ -76,10 +76,12 @@ impl Tree {
         self.files.get_mut(path)
     }
 
-    /// Whether `path` is a directory of the tree (`""`, the root, always is).
+    /// Whether `path` is a directory of the tree (`""`, the mount, and each harness's home always are).
     #[must_use]
     pub fn is_dir(&self, path: &str) -> bool {
-        path.is_empty() || self.files.get(path).is_some_and(Entry::is_dir)
+        path.is_empty()
+            || super::scope::split(path).is_some_and(|(_, rest)| rest.is_empty())
+            || self.files.get(path).is_some_and(Entry::is_dir)
     }
 
     /// The direct children of a directory: (name, entry).

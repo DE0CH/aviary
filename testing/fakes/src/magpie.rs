@@ -151,8 +151,12 @@ pub fn kind_of(path: &str) -> CcKind {
     }
 }
 
+/// The parent directory a path needs: none at the top, and none directly under a harness's home (`claude`,
+/// `qwen`), which always exists.
 fn parent(path: &str) -> Option<&str> {
-    path.rsplit_once('/').map(|(p, _)| p)
+    path.rsplit_once('/')
+        .map(|(p, _)| p)
+        .filter(|p| aviary_core::harness::Harness::parse(p).is_none())
 }
 
 /// At most this many files in one send (magpie 11.2).
@@ -463,7 +467,7 @@ impl FakeMagpie {
         let mut m = self.lock();
         let c = m.convs.entry(conversation).or_default();
         c.provider_session_id = Some(session.to_owned());
-        c.main_transcript = Some(format!("projects/-workspace/{session}.jsonl"));
+        c.main_transcript = Some(format!("claude/projects/-workspace/{session}.jsonl"));
     }
 
     /// Put a file (and its parent directories) into `conversation`'s `~/.claude` without an operation.
@@ -1073,7 +1077,7 @@ impl FakeMagpie {
                 c.main_transcript = Some(
                     body.transcript_path
                         .clone()
-                        .unwrap_or_else(|| format!("projects/-workspace/{sid}.jsonl")),
+                        .unwrap_or_else(|| format!("claude/projects/-workspace/{sid}.jsonl")),
                 );
             }
             Ok(())

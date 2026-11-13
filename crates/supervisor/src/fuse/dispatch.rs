@@ -537,7 +537,7 @@ impl Core {
         nodes.retain(|p| match scope::scope_of(p) {
             Scope::Magpie => tree.get(p).is_some(),
             Scope::Local => local.exists(p),
-            Scope::Root => true,
+            Scope::Top | Scope::Root => true,
             Scope::Refused => false,
         });
     }
@@ -1273,9 +1273,10 @@ impl Core {
     /// The attributes of a node (magpie: the tree; local: lstat; root: fixed).
     fn attr(&self, ino: u64, path: &str, gone: bool, handle: Option<u64>) -> Result<Attr, i32> {
         match scope::scope_of(path) {
-            Scope::Root => Ok(self.root_attr()),
+            Scope::Top => Ok(self.root_attr()),
             Scope::Refused => Err(ENOENT),
-            Scope::Local => self.local.getattr(ino, path, handle),
+            // a home is its backing directory, which the mount made
+            Scope::Local | Scope::Root => self.local.getattr(ino, path, handle),
             Scope::Magpie => {
                 self.leased()?;
                 let st = lock(&self.st);
@@ -1313,6 +1314,7 @@ impl Core {
                         a.ino = lock(&self.st).nodes.assign(&p);
                         a
                     }
+                    Scope::Top => return Err(EINVAL), // a joined path is never the mount itself
                 };
                 Ok(self.entry(&a))
             }
@@ -1530,7 +1532,12 @@ impl Core {
             return Err(EPERM);
         }
         match scope::scope_of(&p) {
-            Scope::Root => return Ok(proto::attr_out(&self.root_attr(), self.cfg.attr_valid)),
+            Scope::Top => return Ok(proto::attr_out(&self.root_attr(), self.cfg.attr_valid)),
+            // a home keeps the attributes the mount gave it
+            Scope::Root => {
+                let a = self.local.getattr(h.nodeid, &p, None)?;
+                return Ok(proto::attr_out(&a, self.cfg.attr_valid));
+            }
             Scope::Refused => return Err(ENOENT),
             Scope::Local => {
                 *effect = true;
@@ -1670,7 +1677,7 @@ impl Core {
         let flags = u32_at(b, 0) as i32;
         let (p, gone) = self.path_of(h.nodeid)?;
         match scope::scope_of(&p) {
-            Scope::Root => Ok(proto::open_out(fh::of(h.nodeid, flags))),
+            Scope::Top | Scope::Root => Ok(proto::open_out(fh::of(h.nodeid, flags))),
             Scope::Refused => Err(ENOENT),
             Scope::Local => {
                 if flags & libc::O_TRUNC != 0 {
@@ -1725,6 +1732,7 @@ impl Core {
         self.unclassified.note(&p);
         match scope::scope_of(&p) {
             Scope::Refused => Err(EACCES),
+            Scope::Top => Err(EINVAL),
             Scope::Local | Scope::Root => {
                 *effect = true;
                 let handle = match self.local.create(|| lock(&self.st).nodes.assign(&p), &p, flags, mode) {
@@ -1833,7 +1841,7 @@ impl Core {
         let (p, gone) = self.path_of(h.nodeid)?;
         match scope::scope_of(&p) {
             Scope::Local => self.local.read(handle, &p, off, size),
-            Scope::Root => Err(libc::EISDIR),
+            Scope::Top | Scope::Root => Err(libc::EISDIR),
             Scope::Refused => Err(ENOENT),
             Scope::Magpie => {
                 self.leased()?;
@@ -1892,7 +1900,7 @@ impl Core {
                 *effect = true;
                 Ok(proto::write_out(self.local.write(handle, &p, off, data)?))
             }
-            Scope::Root => Err(libc::EISDIR),
+            Scope::Top | Scope::Root => Err(libc::EISDIR),
             Scope::Refused => Err(ENOENT),
             Scope::Magpie => {
                 self.leased()?;
@@ -1949,6 +1957,7 @@ impl Core {
         self.unclassified.note(&p);
         match scope::scope_of(&p) {
             Scope::Refused => Err(EACCES),
+            Scope::Top => Err(EINVAL),
             Scope::Local | Scope::Root => {
                 *effect = true;
                 match self.local.mkdir(&p, mode) {
@@ -2019,7 +2028,9 @@ impl Core {
         let p = scope::join(&parent, name)?;
         match scope::scope_of(&p) {
             Scope::Refused => Err(ENOENT),
-            Scope::Local | Scope::Root => {
+            // the homes belong to the mount
+            Scope::Top | Scope::Root => Err(libc::EBUSY),
+            Scope::Local => {
                 *effect = true;
                 let r = if rmdir {
                     self.local.rmdir(&p)
@@ -2201,18 +2212,25 @@ impl Core {
         let (p, _) = self.path_of(h.nodeid)?;
         let mut names: Vec<(String, FileType)> = Vec::new();
         match scope::scope_of(&p) {
+            Scope::Top => {
+                names.extend(
+                    aviary_core::harness::Harness::ALL
+                        .iter()
+                        .map(|h| (scope::home(*h).to_owned(), FileType::Dir)),
+                );
+            }
             Scope::Root => {
                 let st = lock(&self.st);
                 if self.is_leased() {
-                    for (n, e) in st.tree.children("") {
-                        if scope::scope_of(&n) == Scope::Magpie {
+                    for (n, e) in st.tree.children(&p) {
+                        if scope::scope_of(&format!("{p}/{n}")) == Scope::Magpie {
                             names.push((n, if e.is_dir() { FileType::Dir } else { FileType::File }));
                         }
                     }
                 }
                 drop(st);
-                for (n, t) in self.local.readdir("")? {
-                    if scope::scope_of(&n) == Scope::Local {
+                for (n, t) in self.local.readdir(&p)? {
+                    if scope::scope_of(&format!("{p}/{n}")) == Scope::Local {
                         names.push((n, t));
                     }
                 }

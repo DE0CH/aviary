@@ -102,13 +102,16 @@ COPY --chmod=644 pip.conf /etc/pip.conf
 COPY --chmod=644 --chown=1000:1000 line-buffered.pth /opt/py/lib/python3.13/site-packages/sbx-line-buffered.pth
 COPY --chmod=644 profile /etc/profile.d/00-sandbox-path.sh
 
-# uid 1000 is the image's `node` user, with home /home/sandbox. /home/sandbox/.claude is an empty directory: the
-# supervisor mounts the conversation's ~/.claude there (FUSE, supervisor spec 9; nothing is bind-mounted over it).
+# uid 1000 is the image's `node` user, with home /home/sandbox. /home/sandbox/.harness is an empty directory: the
+# supervisor mounts the conversation's harness homes there (FUSE, supervisor spec 9; nothing is bind-mounted over
+# it): `claude/` is Claude Code's ~/.claude and `qwen/` is Qwen Code's ~/.qwen, which are links into it.
 # /workspace is the conversation's persistent folder (the runtime's mount; a plain folder elsewhere); /work is only
 # the folder the runtime starts the first process in. /var/lib/supervisor (the supervisor's run state, generations,
 # cache and journal; on the scratch disk with the rest of the overlay upper) is root's alone.
-RUN mkdir -p /home/sandbox/.claude /work /workspace \
- && chown 1000:1000 /home/sandbox /home/sandbox/.claude /work /workspace \
+RUN mkdir -p /home/sandbox/.harness /work /workspace \
+ && ln -s .harness/claude /home/sandbox/.claude && ln -s .harness/qwen /home/sandbox/.qwen \
+ && chown 1000:1000 /home/sandbox /home/sandbox/.harness /work /workspace \
+ && chown -h 1000:1000 /home/sandbox/.claude /home/sandbox/.qwen \
  && usermod -d /home/sandbox node \
  && install -d -m 0700 -o root -g root /var/lib/supervisor
 COPY --chmod=644 --chown=1000:1000 npmrc /home/sandbox/.npmrc

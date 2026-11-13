@@ -55,6 +55,10 @@ impl Nodes {
             },
         );
         n.by_path.insert(String::new(), ROOT);
+        // each harness's home has a fixed id (ROOT + 1, …): assigned here, before any log line is read
+        for h in aviary_core::harness::Harness::ALL {
+            n.assign(super::scope::home(h));
+        }
         n
     }
 

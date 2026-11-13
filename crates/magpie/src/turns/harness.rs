@@ -4,12 +4,13 @@
 use magpie_api::Harness;
 use serde_json::Value;
 
-/// The main transcript of `session`, relative to the harness's home.
+/// The main transcript of `session`, as stored ([`crate::ccfs::homes`]: Claude Code's files without a prefix, Qwen
+/// Code's under `qwen/`).
 #[must_use]
 pub fn main_transcript(harness: &str, session: &str) -> String {
     match Harness::parse(harness).unwrap_or_default() {
         Harness::Claude => format!("projects/-workspace/{session}.jsonl"),
-        Harness::Qwen => format!("projects/-workspace/chats/{session}.jsonl"),
+        Harness::Qwen => format!("qwen/projects/-workspace/chats/{session}.jsonl"),
     }
 }
 
@@ -33,7 +34,10 @@ mod tests {
     #[test]
     fn each_harness_keeps_its_transcript_where_it_writes_it() {
         assert_eq!(main_transcript("claude", "s-1"), "projects/-workspace/s-1.jsonl");
-        assert_eq!(main_transcript("qwen", "s-1"), "projects/-workspace/chats/s-1.jsonl");
+        assert_eq!(
+            main_transcript("qwen", "s-1"),
+            "qwen/projects/-workspace/chats/s-1.jsonl"
+        );
     }
 
     #[test]

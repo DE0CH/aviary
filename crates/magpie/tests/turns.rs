@@ -275,7 +275,7 @@ impl Sup {
         self.take(turn).await;
         let mut running = report(ReportedState::Running);
         running.provider_session_id = Some("279aabf0-1111-4222-8333-444455556666".into());
-        running.transcript_path = Some("projects/-workspace/279aabf0-1111-4222-8333-444455556666.jsonl".into());
+        running.transcript_path = Some("claude/projects/-workspace/279aabf0-1111-4222-8333-444455556666.jsonl".into());
         self.calls().turn_state(turn, &running).await.unwrap();
     }
 
@@ -2254,7 +2254,7 @@ async fn a_cancel_and_a_command_poll_at_once_agree_on_the_delivery() {
 
 /// `projects/-workspace`, as Claude Code creates it.
 async fn project_dir(sup: &Sup) {
-    for path in ["projects", "projects/-workspace"] {
+    for path in ["claude/projects", "claude/projects/-workspace"] {
         sup.calls()
             .cc_mkdir(&magpie_api::sandbox::CcMkdir {
                 path: path.to_owned(),
@@ -2338,7 +2338,7 @@ async fn a_running_report_carries_the_slash_commands_the_person_reads() {
     };
     let mut running = report(ReportedState::Running);
     running.provider_session_id = Some("279aabf0-1111-4222-8333-444455556666".into());
-    running.transcript_path = Some("projects/-workspace/279aabf0-1111-4222-8333-444455556666.jsonl".into());
+    running.transcript_path = Some("claude/projects/-workspace/279aabf0-1111-4222-8333-444455556666.jsonl".into());
     running.commands = Some(vec![
         command("compact", "Keep a summary"),
         command("retire-session", &"x".repeat(1000)),
@@ -2381,7 +2381,7 @@ async fn a_late_running_report_keeps_the_session_and_transcript() {
                "content": [{"type": "text", "text": "hello"}], "usage": {"input_tokens": 3}}})
     );
     let q = |offset: u64| magpie_api::sandbox::CcWriteQuery {
-        path: path.clone(),
+        path: format!("claude/{path}"),
         offset,
         mtime_ns: 1,
         op_id: Uuid::new_v4(),
@@ -2413,7 +2413,7 @@ async fn a_late_running_report_keeps_the_session_and_transcript() {
     // the real report lands after all: its session and path count, and the earlier line is promoted (6.2)
     let mut running = report(ReportedState::Running);
     running.provider_session_id = Some(sid.into());
-    running.transcript_path = Some(path.clone());
+    running.transcript_path = Some(format!("claude/{path}"));
     sup.calls().turn_state(turn, &running).await.unwrap();
     assert_eq!(facts().await, (Some(sid.to_owned()), Some(path.clone())));
     assert!(
@@ -2441,7 +2441,7 @@ async fn a_late_running_report_keeps_the_session_and_transcript() {
     let sid2 = "379aabf0-1111-4222-8333-444455556666";
     let mut end = report(ReportedState::Completed);
     end.provider_session_id = Some(sid2.into());
-    end.transcript_path = Some(format!("projects/-workspace/{sid2}.jsonl"));
+    end.transcript_path = Some(format!("claude/projects/-workspace/{sid2}.jsonl"));
     sup.calls().turn_state(t2, &end).await.unwrap();
     assert_eq!(w.turn(t2).await.0, "completed");
     assert_eq!(
@@ -2485,7 +2485,7 @@ async fn an_agent_turn_refused_while_a_person_turn_waits_writes_into_that_turn()
     sup.calls()
         .cc_write(
             &magpie_api::sandbox::CcWriteQuery {
-                path: path.to_owned(),
+                path: format!("claude/{path}"),
                 offset: 0,
                 mtime_ns: 1,
                 op_id: Uuid::new_v4(),
@@ -3021,10 +3021,15 @@ async fn a_turns_start_names_the_picked_models_harness_and_resumes_its_session()
     let mut running = report(ReportedState::Running);
     running.harness = Harness::Qwen;
     running.provider_session_id = Some("q-1".into());
-    // Claude Code's place for a transcript is not Qwen Code's
-    running.transcript_path = Some("projects/-workspace/q-1.jsonl".into());
-    assert!(sup.calls().turn_state(turn, &running).await.is_err());
-    running.transcript_path = Some("projects/-workspace/chats/q-1.jsonl".into());
+    // Claude Code's place for a transcript is not Qwen Code's, in either home
+    for wrong in [
+        "claude/projects/-workspace/q-1.jsonl",
+        "qwen/projects/-workspace/q-1.jsonl",
+    ] {
+        running.transcript_path = Some(wrong.into());
+        assert!(sup.calls().turn_state(turn, &running).await.is_err());
+    }
+    running.transcript_path = Some("qwen/projects/-workspace/chats/q-1.jsonl".into());
     sup.calls().turn_state(turn, &running).await.unwrap();
     sup.report(turn, ReportedState::Completed).await.unwrap();
     assert!(w.state_is(turn, "completed").await);

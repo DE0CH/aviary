@@ -43,7 +43,8 @@ pub fn now_ns() -> i64 {
 /// [`Config::under`].
 #[derive(Clone, Debug)]
 pub struct Config {
-    /// The mount point (`/home/sandbox/.claude`).
+    /// The mount point (`/home/sandbox/.harness`: it holds `claude/`, which `~/.claude` links to, and `qwen/`,
+    /// which `~/.qwen` links to).
     pub mount: PathBuf,
     /// `nodes.log`, `boot_id` (`/var/lib/supervisor/state`).
     pub state: PathBuf,
@@ -69,7 +70,7 @@ impl Config {
     /// The sandbox's paths and the constants of 20.
     #[must_use]
     pub fn sandbox() -> Self {
-        Self::under(Path::new("/var/lib/supervisor"), Path::new("/home/sandbox/.claude"))
+        Self::under(Path::new("/var/lib/supervisor"), Path::new("/home/sandbox/.harness"))
     }
 
     /// Every path under `root` (tests), with the production sizes.
@@ -313,7 +314,7 @@ pub fn mount_fresh(mount: &Path) -> std::io::Result<OwnedFd> {
     if r < 0 {
         return Err(std::io::Error::last_os_error());
     }
-    tracing::info!(mount = %mount.display(), "mounted ~/.claude");
+    tracing::info!(mount = %mount.display(), "mounted the harness homes");
     Ok(owned)
 }
 

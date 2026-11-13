@@ -18,6 +18,7 @@
 
 pub mod classify;
 pub mod extract;
+pub mod homes;
 pub mod lease;
 pub mod limbo;
 pub mod lines;
@@ -130,10 +131,13 @@ pub fn kind_of(path: &str) -> Kind {
     }
 }
 
-/// The parent directory of `path` (`None` at the top of the scope).
+/// The parent directory `path` needs (`None` at the top of the scope, and directly under a harness's home,
+/// `claude` or `qwen`: a home always exists and is no file of the scope).
 #[must_use]
 pub fn parent(path: &str) -> Option<&str> {
-    path.rsplit_once('/').map(|(p, _)| p)
+    path.rsplit_once('/')
+        .map(|(p, _)| p)
+        .filter(|p| magpie_api::Harness::parse(p).is_none())
 }
 
 /// A path relative to `~/.claude`: at most 4,096 bytes, components of 1-255 bytes, no NUL, no `.` or `..`, not

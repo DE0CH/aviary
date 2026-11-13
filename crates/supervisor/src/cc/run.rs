@@ -2721,7 +2721,7 @@ impl Driver {
                     fx.push(Fx::SetTurn(Some(turn_id)));
                 }
                 tracing::info!(turn = %turn_id, origin = "person", "turn started");
-                fx.push(Fx::MainTranscript(format!("projects/-workspace/{sid}.jsonl")));
+                fx.push(Fx::MainTranscript(format!("claude/projects/-workspace/{sid}.jsonl")));
                 // the generation's slash commands ride its first turn's report
                 let commands = st.live.as_mut().and_then(|g| g.commands.take());
                 fx.push(Fx::Report(Item::state(
@@ -3305,7 +3305,7 @@ enum Prepared {
 fn running_report(sid: &str) -> TurnStateReport {
     TurnStateReport {
         provider_session_id: Some(sid.to_owned()),
-        transcript_path: Some(format!("projects/-workspace/{sid}.jsonl")),
+        transcript_path: Some(format!("claude/projects/-workspace/{sid}.jsonl")),
         ..end_report(ReportedState::Running, None)
     }
 }

@@ -76,18 +76,21 @@ async fn magpie_lease_and_cc_files() {
     let s = c.sandbox(Some(lease.lease_id));
 
     // an earlier lease is dead at once; no lease at all is lost too
-    assert_eq!(code(old.cc_mkdir(&mkdir("projects")).await).1, "lease_lost");
-    assert_eq!(code(c.sandbox(None).cc_mkdir(&mkdir("projects")).await).1, "lease_lost");
+    assert_eq!(code(old.cc_mkdir(&mkdir("claude/projects")).await).1, "lease_lost");
+    assert_eq!(
+        code(c.sandbox(None).cc_mkdir(&mkdir("claude/projects")).await).1,
+        "lease_lost"
+    );
 
     // a write into a missing parent is 404 (Claude Code then runs mkdir -p)
-    let t = "projects/-workspace/s1.jsonl";
+    let t = "claude/projects/-workspace/s1.jsonl";
     assert_eq!(
         code(s.cc_write(&write(t, 0, true), b"x\n".to_vec()).await),
         (404, "not_found".into())
     );
-    s.cc_mkdir(&mkdir("projects")).await.unwrap();
-    assert_eq!(code(s.cc_mkdir(&mkdir("projects")).await).1, "exists");
-    s.cc_mkdir(&mkdir("projects/-workspace")).await.unwrap();
+    s.cc_mkdir(&mkdir("claude/projects")).await.unwrap();
+    assert_eq!(code(s.cc_mkdir(&mkdir("claude/projects")).await).1, "exists");
+    s.cc_mkdir(&mkdir("claude/projects/-workspace")).await.unwrap();
     let w = s.cc_write(&write(t, 0, true), b"{\"a\":1}\n".to_vec()).await.unwrap();
     assert_eq!((w.size, w.version), (8, 1));
     let w = s.cc_write(&write(t, 8, false), b"{\"b\":2}\n".to_vec()).await.unwrap();
@@ -97,7 +100,11 @@ async fn magpie_lease_and_cc_files() {
         "offset_beyond_eof"
     );
     assert_eq!(
-        code(s.cc_write(&write("projects/nope", 0, false), b"z".to_vec()).await).1,
+        code(
+            s.cc_write(&write("claude/projects/nope", 0, false), b"z".to_vec())
+                .await
+        )
+        .1,
         "not_found"
     );
 
@@ -142,7 +149,7 @@ async fn magpie_lease_and_cc_files() {
     assert_eq!(&part.bytes().await.unwrap()[..], b"{\"b\":2}\n");
 
     // truncate, compaction's rename-over, setattr, the tree
-    let tmp = "projects/-workspace/s1.jsonl.compact.tmp.3f";
+    let tmp = "claude/projects/-workspace/s1.jsonl.compact.tmp.3f";
     s.cc_write(&write(tmp, 0, true), b"{\"x\":0}\n".to_vec()).await.unwrap();
     let tr = s
         .cc_truncate(&CcTruncate {
@@ -185,7 +192,7 @@ async fn magpie_lease_and_cc_files() {
         op_id: Uuid::new_v4(),
     };
     assert_eq!(code(s.cc_unlink(&unlink(t)).await), (403, "protected".into()));
-    assert_eq!(code(s.cc_rmdir(&unlink("projects")).await).1, "not_empty");
+    assert_eq!(code(s.cc_rmdir(&unlink("claude/projects")).await).1, "not_empty");
     s.cc_mkdir(&mkdir("plans")).await.unwrap();
     s.cc_rmdir(&unlink("plans")).await.unwrap();
     assert_eq!(code(s.cc_rmdir(&unlink("plans")).await).1, "not_found");

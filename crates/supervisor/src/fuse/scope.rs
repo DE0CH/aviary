@@ -1,81 +1,167 @@
-//! The scope table (supervisor 9.1): which paths under `~/.claude` go to magpie, which stay in the sandbox, which
-//! are refused; and the path checks every call passes (9.3).
+//! The scope table (supervisor 9.1): the mount holds one home per harness (`claude/` is Claude Code's `~/.claude`,
+//! `qwen/` is Qwen Code's `~/.qwen`); under a home, which paths go to magpie, which stay in the sandbox, which are
+//! refused; and the path checks every call passes (9.3).
 
 use std::collections::HashSet;
 use std::sync::Mutex;
+
+use aviary_core::harness::Harness;
 
 use super::errno::{EINVAL, ENAMETOOLONG};
 
 /// Where a path is served from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
-    /// `~/.claude` itself: the union of both.
+    /// The mount itself: it holds the harness homes and nothing else.
+    Top,
+    /// A harness's home (`claude`, `qwen`): the union of its magpie and local entries.
     Root,
     /// The conversation's files in magpie.
     Magpie,
     /// The backing directory on scratch (passthrough).
     Local,
-    /// Always absent; a create is EACCES (managed settings and instructions, A8.F28, A11.F12).
+    /// Always absent; a create is EACCES (managed settings and instructions, A8.F28, A11.F12; any name at the top
+    /// that is not a harness).
     Refused,
 }
 
-/// Top-level names (and their subtrees) in magpie scope.
-pub const MAGPIE: &[&str] = &["projects", "todos", "plans", "tasks", "file-history"];
-/// Top-level names in local scope that are known (anything else is local too, logged once as unclassified).
-pub const LOCAL: &[&str] = &[
-    "sessions",
-    "shell-snapshots",
-    "session-env",
-    "backups",
-    ".last-cleanup",
-    "statsig",
-    "telemetry",
-    "debug",
-    "ide",
-    "cache",
-    "mcp-discovery-cache",
-    "uploads",
-    "plugins",
-];
-/// Top-level names that are always absent.
-pub const REFUSED: &[&str] = &[
-    "settings.json",
-    "settings.local.json",
-    "CLAUDE.md",
-    "CLAUDE.local.md",
-    "commands",
-    "agents",
-    "skills",
-    "output-styles",
-    "hooks",
-    "rules",
-];
+/// One harness's table: its top-level names (and their subtrees) by scope.
+#[derive(Debug)]
+pub struct Table {
+    /// In magpie scope.
+    pub magpie: &'static [&'static str],
+    /// In local scope and known (anything else is local too, logged once as unclassified).
+    pub local: &'static [&'static str],
+    /// Always absent.
+    pub refused: &'static [&'static str],
+}
+
+/// Claude Code's `~/.claude`.
+pub const CLAUDE: Table = Table {
+    magpie: &["projects", "todos", "plans", "tasks", "file-history"],
+    local: &[
+        "sessions",
+        "shell-snapshots",
+        "session-env",
+        "backups",
+        ".last-cleanup",
+        "statsig",
+        "telemetry",
+        "debug",
+        "ide",
+        "cache",
+        "mcp-discovery-cache",
+        "uploads",
+        "plugins",
+    ],
+    refused: &[
+        "settings.json",
+        "settings.local.json",
+        "CLAUDE.md",
+        "CLAUDE.local.md",
+        "commands",
+        "agents",
+        "skills",
+        "output-styles",
+        "hooks",
+        "rules",
+    ],
+};
+
+/// Qwen Code's `~/.qwen`: `projects/<cwd>/chats/<sid>.jsonl` are the transcripts (with their `.ledger.jsonl` and
+/// `.title.json`), `projects/<cwd>/memory` and `memories` its memory.
+pub const QWEN: Table = Table {
+    magpie: &["projects", "memories", "todos"],
+    local: &[
+        "usage",
+        "usage_record.jsonl",
+        "tmp",
+        "logs",
+        "cache",
+        "installation_id",
+        "sessions",
+        "session-registry",
+        "debug",
+        "ide",
+        "extensions",
+        "mcp-oauth-tokens.json",
+    ],
+    refused: &[
+        "settings.json",
+        "QWEN.md",
+        "AGENTS.md",
+        "commands",
+        "agents",
+        "skills",
+        "hooks",
+        "output-styles",
+        "oauth_creds.json",
+    ],
+};
+
+/// The table of a harness.
+#[must_use]
+pub const fn table(h: Harness) -> &'static Table {
+    match h {
+        Harness::Claude => &CLAUDE,
+        Harness::Qwen => &QWEN,
+    }
+}
+
+/// A path split into its harness and the rest under that harness's home (`""` for the home itself). `None`: the
+/// mount's root, or a top-level name that is no harness.
+#[must_use]
+pub fn split(path: &str) -> Option<(Harness, &str)> {
+    let (top, rest) = path.split_once('/').unwrap_or((path, ""));
+    Harness::parse(top).map(|h| (h, rest))
+}
+
+/// The home of a harness, as a path of the mount.
+#[must_use]
+pub const fn home(h: Harness) -> &'static str {
+    h.as_str()
+}
 
 /// The longest path (bytes) and component.
 pub const PATH_MAX: usize = 4096;
 pub const NAME_MAX: usize = 255;
 
-/// The scope of a path relative to `~/.claude` (`""` is the root).
+/// The scope of a path of the mount (`""` is the mount itself).
 #[must_use]
 pub fn scope_of(path: &str) -> Scope {
     if path.is_empty() {
+        return Scope::Top;
+    }
+    let Some((h, rest)) = split(path) else {
+        return Scope::Refused;
+    };
+    if rest.is_empty() {
         return Scope::Root;
     }
-    let top = path.split('/').next().unwrap_or(path);
-    if MAGPIE.contains(&top) {
+    let t = table(h);
+    let top = rest.split('/').next().unwrap_or(rest);
+    if t.magpie.contains(&top) {
         Scope::Magpie
-    } else if REFUSED.contains(&top) {
+    } else if t.refused.contains(&top) {
         Scope::Refused
     } else {
         Scope::Local
     }
 }
 
-/// Whether a top-level name is one the table names (else a local path is "unclassified").
+/// Whether a path's name under its home is one the harness's table names (else a local path is "unclassified").
+/// The mount, a home and a name that is no harness count as classified.
 #[must_use]
 pub fn classified(path: &str) -> bool {
-    let top = path.split('/').next().unwrap_or(path);
-    MAGPIE.contains(&top) || LOCAL.contains(&top) || REFUSED.contains(&top)
+    let Some((h, rest)) = split(path) else {
+        return true;
+    };
+    if rest.is_empty() {
+        return true;
+    }
+    let t = table(h);
+    let top = rest.split('/').next().unwrap_or(rest);
+    t.magpie.contains(&top) || t.local.contains(&top) || t.refused.contains(&top)
 }
 
 /// Logs `unclassified path` once per top-level name, so a Claude Code upgrade that adds state is noticed.
@@ -84,10 +170,11 @@ pub struct Unclassified(Mutex<HashSet<String>>);
 
 impl Unclassified {
     pub fn note(&self, path: &str) {
-        if path.is_empty() || classified(path) {
+        if classified(path) {
             return;
         }
-        let top = path.split('/').next().unwrap_or(path).to_owned();
+        // the harness and the name under its home: `claude/something-new`
+        let top = path.splitn(3, '/').take(2).collect::<Vec<_>>().join("/");
         let mut seen = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if seen.insert(top.clone()) {
             tracing::warn!(path = %top, "unclassified path");
@@ -161,38 +248,71 @@ mod tests {
     #[test]
     fn the_table() {
         for p in [
-            "projects",
-            "projects/-workspace/abc.jsonl",
-            "projects/-workspace/abc/subagents/agent-1.jsonl",
-            "projects/-workspace/memory/MEMORY.md",
-            "todos/x.json",
-            "plans/p.md",
-            "tasks/t",
-            "file-history/s/h@v1",
+            "claude/projects",
+            "claude/projects/-workspace/abc.jsonl",
+            "claude/projects/-workspace/abc/subagents/agent-1.jsonl",
+            "claude/projects/-workspace/memory/MEMORY.md",
+            "claude/todos/x.json",
+            "claude/plans/p.md",
+            "claude/tasks/t",
+            "claude/file-history/s/h@v1",
+            "qwen/projects",
+            "qwen/projects/-workspace/chats/abc.jsonl",
+            "qwen/projects/-workspace/chats/abc.ledger.jsonl",
+            "qwen/projects/-workspace/memory/MEMORY.md",
+            "qwen/memories/MEMORY.md",
         ] {
             assert_eq!(scope_of(p), Scope::Magpie, "{p}");
         }
         for p in [
-            "sessions/12.json",
-            "shell-snapshots/s.sh",
-            "session-env/x",
-            "backups/.claude.json.backup",
-            ".last-cleanup",
-            "statsig/x",
-            "plugins",
-            "something-new/x",
-            ".ccr-tip.json",
+            "claude/sessions/12.json",
+            "claude/shell-snapshots/s.sh",
+            "claude/session-env/x",
+            "claude/backups/.claude.json.backup",
+            "claude/.last-cleanup",
+            "claude/statsig/x",
+            "claude/plugins",
+            "claude/something-new/x",
+            "claude/.ccr-tip.json",
+            "qwen/usage/token-usage-2026-11.jsonl",
+            "qwen/usage_record.jsonl",
+            "qwen/something-new",
+            // one harness's names mean nothing in the other's home
+            "qwen/file-history/x",
+            "claude/memories/x",
         ] {
             assert_eq!(scope_of(p), Scope::Local, "{p}");
         }
-        for p in ["settings.json", "CLAUDE.md", "skills/x/SKILL.md", "hooks", "rules/a.md"] {
+        for p in [
+            "claude/settings.json",
+            "claude/CLAUDE.md",
+            "claude/skills/x/SKILL.md",
+            "claude/hooks",
+            "claude/rules/a.md",
+            "qwen/settings.json",
+            "qwen/QWEN.md",
+            "qwen/skills/x/SKILL.md",
+            // the mount holds the harness homes and nothing else
+            "projects",
+            "projects/-workspace/abc.jsonl",
+            "codex",
+            "claudeX/projects",
+        ] {
             assert_eq!(scope_of(p), Scope::Refused, "{p}");
         }
-        assert_eq!(scope_of(""), Scope::Root);
-        assert!(!classified("something-new/x"));
-        assert!(classified("sessions"));
+        assert_eq!(scope_of(""), Scope::Top);
+        assert_eq!(scope_of("claude"), Scope::Root);
+        assert_eq!(scope_of("qwen"), Scope::Root);
+        assert!(!classified("claude/something-new/x"));
+        assert!(classified("claude/sessions"));
+        assert!(classified("claude"));
+        assert!(classified(""));
         // a name that only starts like a magpie one is not one
-        assert_eq!(scope_of("projectsX"), Scope::Local);
+        assert_eq!(scope_of("claude/projectsX"), Scope::Local);
+        assert_eq!(split("qwen/projects/a"), Some((Harness::Qwen, "projects/a")));
+        assert_eq!(split("claude"), Some((Harness::Claude, "")));
+        assert_eq!(split(""), None);
+        assert_eq!(split("projects/a"), None);
     }
 
     #[test]

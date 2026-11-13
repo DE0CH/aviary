@@ -164,7 +164,7 @@ fn ok(r: &super::proto::Reply, what: &str) {
 /// projects/ and projects/-workspace/ exist; returns the -workspace dir's node.
 fn workspace_dir(w: &World) -> u64 {
     let s = &w.sentry;
-    let r = s.call(op::MKDIR, 1, PID, &body::mkdir("projects", 0o700));
+    let r = s.call(op::MKDIR, HOME, PID, &body::mkdir("projects", 0o700));
     ok(&r, "mkdir projects");
     let projects = out::node(&r);
     let r = s.call(op::MKDIR, projects, PID, &body::mkdir("-workspace", 0o700));
@@ -199,7 +199,7 @@ fn every_opcode_against_both_scopes() {
         assert_eq!(super::proto::u32_at(&r.payload, 0), 8);
     }
     assert_eq!(
-        w.data("projects/-workspace/s.jsonl").unwrap(),
+        w.data("claude/projects/-workspace/s.jsonl").unwrap(),
         b"{\"a\":1}\n{\"b\":2}\n"
     );
     let r = s.call(op::READ, t, PID, &body::read(fh, 15, 1));
@@ -230,7 +230,7 @@ fn every_opcode_against_both_scopes() {
         "pwrite",
     );
     assert_eq!(
-        w.data("projects/-workspace/s.jsonl").unwrap(),
+        w.data("claude/projects/-workspace/s.jsonl").unwrap(),
         b"{\"a\":1}\n{\"c\":3}\n"
     );
     // mode, mtime (lock refresh by utimes), uid
@@ -250,7 +250,10 @@ fn every_opcode_against_both_scopes() {
     );
     ok(&r, "utimes");
     assert_eq!(
-        w.magpie.node(w.cid, "projects/-workspace/s.jsonl").unwrap().mtime_ns,
+        w.magpie
+            .node(w.cid, "claude/projects/-workspace/s.jsonl")
+            .unwrap()
+            .mtime_ns,
         1_700_000_000_000_000_005
     );
     assert_eq!(
@@ -276,7 +279,7 @@ fn every_opcode_against_both_scopes() {
     // open O_TRUNC → cc/truncate before the reply
     let r = s.call(op::OPEN, t, PID, &body::open(O_RDWR | libc::O_TRUNC));
     ok(&r, "open O_TRUNC");
-    assert_eq!(w.data("projects/-workspace/s.jsonl").unwrap(), b"");
+    assert_eq!(w.data("claude/projects/-workspace/s.jsonl").unwrap(), b"");
     ok(
         &s.call(op::WRITE, t, PID, &body::write(out::open_fh(&r), 0, b"x\n")),
         "write after trunc",
@@ -303,8 +306,8 @@ fn every_opcode_against_both_scopes() {
         ),
         "rename over",
     );
-    assert_eq!(w.data("projects/-workspace/s.jsonl").unwrap(), b"c\n");
-    assert!(w.data("projects/-workspace/s.jsonl.compact.tmp.ab").is_none());
+    assert_eq!(w.data("claude/projects/-workspace/s.jsonl").unwrap(), b"c\n");
+    assert!(w.data("claude/projects/-workspace/s.jsonl.compact.tmp.ab").is_none());
     let r = s.call(op::LOOKUP, ws, PID, &body::name("s.jsonl"));
     assert_eq!(out::node(&r), tmp, "the renamed node keeps its id");
     let r = s.call(op::READ, tmp, PID, &body::read(0, 0, 100));
@@ -313,10 +316,10 @@ fn every_opcode_against_both_scopes() {
     // namespace answers from the tree: EEXIST, ENOENT, ENOTEMPTY with no magpie call
     let before = w.calls("cc_mkdir") + w.calls("cc_rmdir") + w.calls("cc_unlink");
     assert_eq!(
-        s.call(op::MKDIR, 1, PID, &body::mkdir("projects", 0o700)).errno,
+        s.call(op::MKDIR, HOME, PID, &body::mkdir("projects", 0o700)).errno,
         libc::EEXIST
     );
-    let projects = out::node(&s.call(op::LOOKUP, 1, PID, &body::name("projects")));
+    let projects = out::node(&s.call(op::LOOKUP, HOME, PID, &body::name("projects")));
     assert_eq!(
         s.call(op::RMDIR, projects, PID, &body::name("-workspace")).errno,
         libc::ENOTEMPTY
@@ -375,7 +378,7 @@ fn every_opcode_against_both_scopes() {
     assert_eq!(s.call(op::FALLOCATE, t, PID, &body::fh(0)).errno, libc::EOPNOTSUPP);
     assert_eq!(s.call(op::GETLK, t, PID, &body::fh(0)).errno, libc::ENOSYS);
     ok(&s.call(op::ACCESS, t, PID, &body::fh(0)), "access");
-    let r = s.call(op::STATFS, 1, PID, &[]);
+    let r = s.call(op::STATFS, HOME, PID, &[]);
     ok(&r, "statfs");
     assert_eq!(super::proto::u64_at(&r.payload, 0), (2u64 << 30) / 4096);
     ok(&s.call(op::OPENDIR, ws, PID, &body::open(0)), "opendir");
@@ -385,7 +388,7 @@ fn every_opcode_against_both_scopes() {
 
     // refused paths: absent, a create is EACCES
     assert_eq!(
-        s.call(op::LOOKUP, 1, PID, &body::name("settings.json")).errno,
+        s.call(op::LOOKUP, HOME, PID, &body::name("settings.json")).errno,
         libc::ENOENT
     );
     assert_eq!(
@@ -399,14 +402,17 @@ fn every_opcode_against_both_scopes() {
         libc::EACCES
     );
     assert_eq!(
-        s.call(op::MKDIR, 1, PID, &body::mkdir("skills", 0o700)).errno,
+        s.call(op::MKDIR, HOME, PID, &body::mkdir("skills", 0o700)).errno,
         libc::EACCES
     );
-    assert_eq!(s.call(op::MKDIR, 1, PID, &body::mkdir("..", 0o700)).errno, libc::EINVAL);
+    assert_eq!(
+        s.call(op::MKDIR, HOME, PID, &body::mkdir("..", 0o700)).errno,
+        libc::EINVAL
+    );
 
     // local scope: passthrough, nothing reaches magpie
     let writes = w.calls("cc_write");
-    let r = s.call(op::MKDIR, 1, PID, &body::mkdir("sessions", 0o700));
+    let r = s.call(op::MKDIR, HOME, PID, &body::mkdir("sessions", 0o700));
     ok(&r, "mkdir sessions");
     let sessions = out::node(&r);
     let r = s.call(
@@ -471,10 +477,10 @@ fn every_opcode_against_both_scopes() {
     );
     ok(&s.call(op::RMDIR, sessions, PID, &body::name("d")), "local rmdir");
     assert_eq!(w.calls("cc_write"), writes, "local scope never reaches magpie");
-    assert!(w.dir.join("local/sessions/13.json").exists());
+    assert!(w.dir.join("local/claude/sessions/13.json").exists());
     // an unclassified name is local
     ok(
-        &s.call(op::MKDIR, 1, PID, &body::mkdir("brand-new", 0o700)),
+        &s.call(op::MKDIR, HOME, PID, &body::mkdir("brand-new", 0o700)),
         "unclassified",
     );
     // across scopes: EXDEV
@@ -484,11 +490,11 @@ fn every_opcode_against_both_scopes() {
         libc::EXDEV
     );
     // the root lists the union
-    let r = s.call(op::READDIR, 1, PID, &body::readdir(0));
+    let r = s.call(op::READDIR, HOME, PID, &body::readdir(0));
     assert_eq!(out::names(&r), [".", "..", "brand-new", "projects", "sessions"]);
 
     // every opcode of the table against a file and a directory of each scope
-    let lpath = "sessions/13.json";
+    let lpath = "claude/sessions/13.json";
     let r = s.call(
         op::CREATE,
         ws,
@@ -557,9 +563,9 @@ fn every_opcode_against_both_scopes() {
         );
     }
     assert!(w.dir.join("local").join(lpath).exists());
-    assert!(w.data("projects/-workspace/o.json").is_some());
+    assert!(w.data("claude/projects/-workspace/o.json").is_some());
     assert_eq!(
-        s.call(op::BATCH_FORGET + 50, 1, PID, &[]).errno,
+        s.call(op::BATCH_FORGET + 50, HOME, PID, &[]).errno,
         libc::ENOSYS,
         "{}",
         opname(op::BATCH_FORGET + 50)
@@ -638,12 +644,12 @@ fn journal_replay_at_each_fault_point() {
             );
             match opcode {
                 op::WRITE => {
-                    assert_eq!(w.data("projects/-workspace/t.jsonl").unwrap(), b"one\ntwo\n");
+                    assert_eq!(w.data("claude/projects/-workspace/t.jsonl").unwrap(), b"one\ntwo\n");
                     assert!(w.calls("cc_write") >= 3);
                 }
-                op::MKDIR => assert!(w.magpie.node(w.cid, "projects/-workspace/t.lock").is_some()),
-                op::CREATE => assert!(w.data("projects/-workspace/n.json").is_some()),
-                _ => assert!(w.data("projects/-workspace/u.jsonl").is_some()),
+                op::MKDIR => assert!(w.magpie.node(w.cid, "claude/projects/-workspace/t.lock").is_some()),
+                op::CREATE => assert!(w.data("claude/projects/-workspace/n.json").is_some()),
+                _ => assert!(w.data("claude/projects/-workspace/u.jsonl").is_some()),
             }
             // magpie's rule 0 would hide a second application of the same bytes: the replay must reuse the derived
             // opId, so the request names exactly one opId whether or not the killed instance sent it
@@ -742,7 +748,7 @@ fn resends_after_a_checkpoint_apply_once() {
             w.magpie.faults().remove(f);
             assert_eq!(w.calls(route) - before, 1, "{}: one magpie operation", opname(opcode));
             if opcode == op::WRITE {
-                assert_eq!(w.data("projects/-workspace/t.jsonl").unwrap(), b"one\ntwo\n");
+                assert_eq!(w.data("claude/projects/-workspace/t.jsonl").unwrap(), b"one\ntwo\n");
             }
             // the thread's next, different request is served normally
             ok(
@@ -777,7 +783,7 @@ fn a_general_outage_blocks_without_eio() {
     w.magpie.faults().remove(f);
     let r = s.wait(u, Duration::from_secs(5)).unwrap();
     assert_eq!(r.errno, 0);
-    assert_eq!(w.data("projects/-workspace/t.jsonl").unwrap(), b"x\n");
+    assert_eq!(w.data("claude/projects/-workspace/t.jsonl").unwrap(), b"x\n");
 }
 
 #[test]
@@ -883,7 +889,7 @@ fn a_replayed_write_magpie_holds_is_stuck_without_the_heartbeat() {
     assert!(w.calls("cc_tree") >= 3, "the probe asked magpie");
     // the start went on: a new request is served
     ok(
-        &s.call(op::GETATTR, 1, PID, &body::getattr()),
+        &s.call(op::GETATTR, HOME, PID, &body::getattr()),
         "getattr after the start",
     );
     w.magpie.faults().remove(f);
@@ -907,14 +913,19 @@ fn offset_repair_from_the_cache() {
     ok(&s.call(op::WRITE, t, PID, &body::write(fh, 0, b"one\n")), "1");
     ok(&s.call(op::WRITE, t, PID, &body::write(fh, 4, b"two\n")), "2");
     // magpie loses the acknowledged second write (a restore)
-    w.magpie.seed_file(w.cid, "projects/-workspace/t.jsonl", b"one\n");
+    w.magpie
+        .seed_file(w.cid, "claude/projects/-workspace/t.jsonl", b"one\n");
     ok(
         &s.call(op::WRITE, t, PID, &body::write(fh, 8, b"three\n")),
         "3 after the repair",
     );
-    assert_eq!(w.data("projects/-workspace/t.jsonl").unwrap(), b"one\ntwo\nthree\n");
+    assert_eq!(
+        w.data("claude/projects/-workspace/t.jsonl").unwrap(),
+        b"one\ntwo\nthree\n"
+    );
     // a fork: magpie's bytes are not a prefix of the cache → EIO, the agent stopped
-    w.magpie.seed_file(w.cid, "projects/-workspace/t.jsonl", b"ONE\n");
+    w.magpie
+        .seed_file(w.cid, "claude/projects/-workspace/t.jsonl", b"ONE\n");
     assert_eq!(
         s.call(op::WRITE, t, PID, &body::write(fh, 14, b"four\n")).errno,
         libc::EIO
@@ -975,7 +986,7 @@ fn lease_lost_and_not_current_without_a_restart_loop() {
         "unleased: magpie scope is EIO"
     );
     assert_eq!(
-        s.call(op::READDIR, 1, PID, &body::readdir(0)).errno,
+        s.call(op::READDIR, HOME, PID, &body::readdir(0)).errno,
         0,
         "the root still answers"
     );
@@ -1083,7 +1094,7 @@ fn a_kernel_mount_serves_real_syscalls() {
         .unwrap();
     let m = mnt.clone();
     let worker = std::thread::spawn(move || {
-        let ws = m.join("projects/-workspace");
+        let ws = m.join("claude/projects/-workspace");
         std::fs::create_dir_all(&ws).unwrap();
         let t = ws.join("s.jsonl");
         for line in ["{\"a\":1}\n", "{\"b\":2}\n"] {
@@ -1112,9 +1123,9 @@ fn a_kernel_mount_serves_real_syscalls() {
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .collect();
         assert_eq!(names, ["r.jsonl"]);
-        std::fs::create_dir_all(m.join("sessions")).unwrap();
-        std::fs::write(m.join("sessions/1.json"), b"{}").unwrap();
-        assert_eq!(std::fs::read(m.join("sessions/1.json")).unwrap(), b"{}");
+        std::fs::create_dir_all(m.join("claude/sessions")).unwrap();
+        std::fs::write(m.join("claude/sessions/1.json"), b"{}").unwrap();
+        assert_eq!(std::fs::read(m.join("claude/sessions/1.json")).unwrap(), b"{}");
         assert_eq!(
             std::fs::write(m.join("settings.json"), b"{}")
                 .unwrap_err()
@@ -1143,9 +1154,9 @@ fn a_kernel_mount_serves_real_syscalls() {
     core.stop();
     assert!(!hung, "the syscalls on the kernel mount gave no answer in 60 s");
     r.unwrap();
-    assert!(w.dir.join("local/sessions/1.json").exists());
-    assert!(w.data("projects/-workspace/r.jsonl").is_none());
-    assert!(w.magpie.node(w.cid, "projects/-workspace").is_some());
+    assert!(w.dir.join("local/claude/sessions/1.json").exists());
+    assert!(w.data("claude/projects/-workspace/r.jsonl").is_none());
+    assert!(w.magpie.node(w.cid, "claude/projects/-workspace").is_some());
     eprintln!("kernel fuse mount served real syscalls");
 }
 
@@ -1199,7 +1210,7 @@ fn the_end_report_waits_for_the_uuids_magpie_acknowledged() {
     let boot = Uuid::new_v4();
     super::store_boot_id(&w.dir.join("state"), boot).unwrap();
     let core = w.start(&fs, boot, false, Hooks::default());
-    core.set_main_transcript(Some("projects/-workspace/s.jsonl".into()));
+    core.set_main_transcript(Some("claude/projects/-workspace/s.jsonl".into()));
     let s = &w.sentry;
     let ws = workspace_dir(&w);
     let r = s.call(
@@ -1245,7 +1256,7 @@ fn the_end_report_waits_for_the_uuids_magpie_acknowledged() {
     // a restarted server has not seen the writes: it finds them in what magpie holds
     core.stop();
     let core2 = w.start(&fs, boot, true, Hooks::default());
-    core2.set_main_transcript(Some("projects/-workspace/s.jsonl".into()));
+    core2.set_main_transcript(Some("claude/projects/-workspace/s.jsonl".into()));
     assert_eq!(wait(vec![b.clone()], Duration::from_secs(5)), Some(Stored::All));
     // a uuid never written, then the stuck rule fires: the wait ends Stuck
     let c = vec![Uuid::now_v7().to_string()];
@@ -1261,9 +1272,12 @@ fn the_end_report_waits_for_the_uuids_magpie_acknowledged() {
     assert_eq!(r.unwrap().unwrap(), Stored::Stuck);
 }
 
-/// The node of a path that exists in magpie (LOOKUP from the root).
+/// Claude Code's home in the mount: the tests work under it (its node id is fixed, the first after the root).
+const HOME: u64 = 2;
+
+/// The node of a path under that home that exists in magpie (LOOKUP from the home).
 fn lookup(w: &World, path: &str) -> u64 {
-    let mut node = 1;
+    let mut node = HOME;
     for part in path.split('/') {
         let r = w.sentry.call(op::LOOKUP, node, PID, &body::name(part));
         ok(&r, &format!("lookup {part}"));
@@ -1310,13 +1324,14 @@ fn an_append_at_a_stale_offset_is_refused_not_overwritten() {
         "an O_APPEND write is sent as an append: {:?}",
         last.query
     );
-    w.magpie.seed_file(w.cid, "projects/-workspace/t.jsonl", b"one\nXX\n");
+    w.magpie
+        .seed_file(w.cid, "claude/projects/-workspace/t.jsonl", b"one\nXX\n");
     assert_eq!(
         s.call(op::WRITE, t, PID, &body::write(fh, 4, b"two\n")).errno,
         libc::EIO
     );
     assert_eq!(
-        w.data("projects/-workspace/t.jsonl").unwrap(),
+        w.data("claude/projects/-workspace/t.jsonl").unwrap(),
         b"one\nXX\n",
         "magpie's bytes are not overwritten"
     );
@@ -1324,7 +1339,8 @@ fn an_append_at_a_stale_offset_is_refused_not_overwritten() {
     // a handle without O_APPEND keeps pwrite semantics (no append flag)
     let r = s.call(op::OPEN, t, PID, &body::open(O_RDWR));
     let h = out::open_fh(&r);
-    w.magpie.seed_file(w.cid, "projects/-workspace/t.jsonl", b"one\n");
+    w.magpie
+        .seed_file(w.cid, "claude/projects/-workspace/t.jsonl", b"one\n");
     let _ = s.call(op::READ, t, PID, &body::read(h, 0, 1));
     let before = w.calls("cc_write");
     let _ = s.call(op::WRITE, t, PID, &body::write(h, 0, b"ONE\n"));
@@ -1363,7 +1379,8 @@ fn a_lease_lost_on_a_repair_write_runs_the_lease_loop() {
     ok(&s.call(op::WRITE, t, PID, &body::write(fh, 0, b"one\n")), "1");
     ok(&s.call(op::WRITE, t, PID, &body::write(fh, 4, b"two\n")), "2");
     // magpie loses the second write; the repair's first write (at magpie's size, 4) is answered lease_lost
-    w.magpie.seed_file(w.cid, "projects/-workspace/t.jsonl", b"one\n");
+    w.magpie
+        .seed_file(w.cid, "claude/projects/-workspace/t.jsonl", b"one\n");
     let once = Arc::new(AtomicBool::new(true));
     w.magpie.script().handle("cc_write", move |c| {
         let off = c.query.as_ref().and_then(|q| q.get("offset")).cloned();
@@ -1410,7 +1427,7 @@ fn a_transient_500_on_cc_write_is_retried() {
         aviary_fakes::script::Reply::error(500, "internal", "a database error"),
     );
     ok(&s.call(op::WRITE, t, PID, &body::write(fh, 0, b"one\n")), "after a 500");
-    assert_eq!(w.data("projects/-workspace/t.jsonl").unwrap(), b"one\n");
+    assert_eq!(w.data("claude/projects/-workspace/t.jsonl").unwrap(), b"one\n");
     let calls = w.magpie.script().calls_to("cc_write");
     assert_eq!(calls.len() - before, 2, "one refused attempt, one retry");
     let ids: Vec<_> = calls[before..]
@@ -1495,7 +1512,7 @@ fn journal_replay_at_each_fault_point_local_scope() {
             };
             let core = w.start(&fs, boot, false, hooks);
             let s = &w.sentry;
-            let r = s.call(op::MKDIR, 1, PID, &body::mkdir("sessions", 0o700));
+            let r = s.call(op::MKDIR, HOME, PID, &body::mkdir("sessions", 0o700));
             let d = out::node(&r);
             let r = s.call(
                 op::CREATE,
@@ -1536,7 +1553,7 @@ fn journal_replay_at_each_fault_point_local_scope() {
             } else {
                 assert_eq!(r.errno, 0, "{what}: one success, not EEXIST/ENOENT");
             }
-            let l = w.dir.join("local/sessions");
+            let l = w.dir.join("local/claude/sessions");
             match opcode {
                 op::MKDIR => assert!(l.join("x.lock").is_dir(), "{what}"),
                 op::CREATE => assert!(l.join("n.json").is_file(), "{what}"),
@@ -1561,7 +1578,7 @@ fn journal_replay_at_each_fault_point_local_scope() {
 fn concurrent_cache_misses_share_one_fetch() {
     let w = world();
     let data = lines(3 << 20);
-    w.magpie.seed_file(w.cid, "projects/-workspace/big.jsonl", &data);
+    w.magpie.seed_file(w.cid, "claude/projects/-workspace/big.jsonl", &data);
     let fs = w.fs(fast());
     let _core = w.start(&fs, Uuid::new_v4(), false, Hooks::default());
     let s = &w.sentry;
@@ -1603,7 +1620,7 @@ fn concurrent_cache_misses_share_one_fetch() {
 fn a_write_during_the_prefetch_leaves_the_main_transcript_cached() {
     let w = world();
     let data = lines(2 << 20);
-    w.magpie.seed_file(w.cid, "projects/-workspace/s.jsonl", &data);
+    w.magpie.seed_file(w.cid, "claude/projects/-workspace/s.jsonl", &data);
     w.magpie.set_provider_session(w.cid, "s");
     // the prefetch's answer is the file as magpie read it, delivered 1.5 s later (after the write below)
     let (first, old) = (Arc::new(AtomicBool::new(true)), data.clone());
@@ -1664,22 +1681,25 @@ fn a_short_read_answers_only_the_request_it_names() {
     let fs = FuseFs::new(cfg, w.client("sbx-1"));
     let core = w.start(&fs, Uuid::new_v4(), false, Hooks::default());
     let s = &w.sentry;
-    let u1 = s.submit(op::GETATTR, 1, PID, &body::getattr());
+    let u1 = s.submit(op::GETATTR, HOME, PID, &body::getattr());
     ok(&s.wait(u1, Duration::from_secs(5)).unwrap(), "getattr");
     // nothing of the request landed (the WP-57 case: the slot kept len 0 while read returned 56)
-    let u2 = s.submit_short(op::GETATTR, 1, PID, &body::getattr(), 0..0);
+    let u2 = s.submit_short(op::GETATTR, HOME, PID, &body::getattr(), 0..0);
     wait_for("the short read", || core.short_reads() == 1);
     assert!(s.wait(u2, Duration::from_millis(300)).is_none(), "nothing names u2");
     assert_eq!(s.refused(u1), 0, "no EIO to the slot's previous, answered request");
     assert_eq!(core.lost_requests(), 1, "counted as lost");
     // the header without its len: EIO to the request it names
-    let u3 = s.submit_short(op::GETATTR, 1, PID, &body::getattr(), 4..56);
+    let u3 = s.submit_short(op::GETATTR, HOME, PID, &body::getattr(), 4..56);
     let r = s
         .wait(u3, Duration::from_secs(5))
         .expect("the named request is answered");
     assert_eq!(r.errno, libc::EIO);
     assert_eq!((core.short_reads(), core.lost_requests()), (2, 1));
-    ok(&s.call(op::GETATTR, 1, PID, &body::getattr()), "the slot serves again");
+    ok(
+        &s.call(op::GETATTR, HOME, PID, &body::getattr()),
+        "the slot serves again",
+    );
 }
 
 /// 9.5 item 6 (WP-22 review 3 item 2): a repair candidate's cache file holds the only copy of what magpie lost, so
@@ -1710,7 +1730,7 @@ fn a_repair_that_fails_without_a_mismatch_keeps_the_cached_copy() {
         let (t, fh) = (out::node(&r), out::create_fh(&r));
         ok(&s.call(op::WRITE, t, PID, &body::write(fh, 0, b"one\n")), "1");
         ok(&s.call(op::WRITE, t, PID, &body::write(fh, 4, b"two\n")), "2");
-        let path = "projects/-workspace/t.jsonl";
+        let path = "claude/projects/-workspace/t.jsonl";
         let v = w.magpie.node(w.cid, path).unwrap().version;
         // a restore lost the second write: magpie is one version behind the cache
         w.magpie.restore_file(w.cid, path, b"one\n", v - 1);
@@ -1809,7 +1829,7 @@ fn a_local_replay_that_was_never_applicable_keeps_its_error() {
         };
         let core = w.start(&fs, boot, false, hooks);
         let s = &w.sentry;
-        let d = out::node(&s.call(op::MKDIR, 1, PID, &body::mkdir("sessions", 0o700)));
+        let d = out::node(&s.call(op::MKDIR, HOME, PID, &body::mkdir("sessions", 0o700)));
         let r = s.call(
             op::CREATE,
             d,
@@ -1861,7 +1881,7 @@ fn a_restart_during_an_outage_waits_for_magpie_then_completes() {
     let s = &w.sentry;
     assert!(core.settle(Duration::from_secs(5)));
     armed.store(true, Ordering::SeqCst);
-    let u = s.submit(op::MKDIR, 1, PID, &body::mkdir("sessions", 0o700)); // local scope
+    let u = s.submit(op::MKDIR, HOME, PID, &body::mkdir("sessions", 0o700)); // local scope
     wait_for("the fault", || core.died());
     let lease = w.lease();
     let f = w
@@ -1890,7 +1910,7 @@ fn a_restart_during_an_outage_waits_for_magpie_then_completes() {
 fn the_main_transcript_is_prefetched_after_a_retried_start() {
     let w = world();
     let data = lines(64 << 10);
-    w.magpie.seed_file(w.cid, "projects/-workspace/s.jsonl", &data);
+    w.magpie.seed_file(w.cid, "claude/projects/-workspace/s.jsonl", &data);
     w.magpie.set_provider_session(w.cid, "s");
     let fs = w.fs(fast());
     let boot = Uuid::new_v4();

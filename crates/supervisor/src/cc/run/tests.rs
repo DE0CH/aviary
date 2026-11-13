@@ -1052,7 +1052,7 @@ async fn a_turn_runs_and_the_generation_lives_across_turns() {
     assert_eq!(running["providerSessionId"], w.cid.to_string());
     assert_eq!(
         running["transcriptPath"],
-        format!("projects/-workspace/{}.jsonl", w.cid)
+        format!("claude/projects/-workspace/{}.jsonl", w.cid)
     );
     assert_eq!(w.acked(s1).await.delivered, Some(true));
     w.idle(&sup).await;

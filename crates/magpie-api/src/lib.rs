@@ -43,7 +43,7 @@ pub const PROTOCOL_PERSON: u32 = 1;
 
 /// The sandbox surface (`magpie-sandbox`): the supervisor's routes through the gateway. Fixed for a sandbox's life,
 /// so magpie accepts this number and the previous one (platform 3.4).
-pub const PROTOCOL_SANDBOX: u32 = 1;
+pub const PROTOCOL_SANDBOX: u32 = 2;
 
 /// Surface names, as they appear in `Aviary-Protocol` and in `/version`.
 pub const SURFACE_PERSON: &str = "magpie-person";

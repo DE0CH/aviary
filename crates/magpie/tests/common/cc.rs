@@ -169,14 +169,15 @@ impl Sandbox {
     }
 
     pub async fn take_lease(&mut self) -> Result<LeaseResponse, ClientError> {
-        let l = self.calls().lease().await?;
+        let mut l = self.calls().lease().await?;
         self.lease = Some(l.lease_id);
+        l.main_transcript = l.main_transcript.map(|p| stored(&p));
         Ok(l)
     }
 
     pub fn wq(&self, path: &str, offset: u64, op_id: Uuid) -> CcWriteQuery {
         CcWriteQuery {
-            path: path.to_owned(),
+            path: home(path),
             offset,
             mtime_ns: 1,
             op_id,
@@ -197,7 +198,7 @@ impl Sandbox {
         let res = self
             .calls()
             .cc_file(&CcFileQuery {
-                path: path.to_owned(),
+                path: home(path),
                 offset: None,
                 length: None,
             })
@@ -209,7 +210,7 @@ impl Sandbox {
         let res = self
             .calls()
             .cc_file(&CcFileQuery {
-                path: path.to_owned(),
+                path: home(path),
                 offset: Some(offset),
                 length: Some(length),
             })
@@ -221,7 +222,7 @@ impl Sandbox {
     pub async fn truncate(&self, path: &str, size: u64) -> Result<CcSizeVersion, ClientError> {
         self.calls()
             .cc_truncate(&CcTruncate {
-                path: path.to_owned(),
+                path: home(path),
                 size,
                 mtime_ns: 2,
                 op_id: Uuid::new_v4(),
@@ -232,8 +233,8 @@ impl Sandbox {
     pub async fn rename(&self, from: &str, to: &str) -> Result<CcVersion, ClientError> {
         self.calls()
             .cc_rename(&CcRename {
-                from: from.to_owned(),
-                to: to.to_owned(),
+                from: home(from),
+                to: home(to),
                 op_id: Uuid::new_v4(),
             })
             .await
@@ -242,7 +243,7 @@ impl Sandbox {
     pub async fn unlink(&self, path: &str) -> Result<(), ClientError> {
         self.calls()
             .cc_unlink(&CcPathOp {
-                path: path.to_owned(),
+                path: home(path),
                 op_id: Uuid::new_v4(),
             })
             .await
@@ -251,7 +252,7 @@ impl Sandbox {
     pub async fn mkdir(&self, path: &str) -> Result<(), ClientError> {
         self.calls()
             .cc_mkdir(&CcMkdir {
-                path: path.to_owned(),
+                path: home(path),
                 mode: 0o700,
                 mtime_ns: 3,
                 op_id: Uuid::new_v4(),
@@ -278,7 +279,7 @@ impl Sandbox {
     pub async fn rmdir(&self, path: &str) -> Result<(), ClientError> {
         self.calls()
             .cc_rmdir(&CcPathOp {
-                path: path.to_owned(),
+                path: home(path),
                 op_id: Uuid::new_v4(),
             })
             .await
@@ -292,7 +293,7 @@ impl Sandbox {
     ) -> Result<CcVersion, ClientError> {
         self.calls()
             .cc_setattr(&CcSetattr {
-                path: path.to_owned(),
+                path: home(path),
                 mode,
                 mtime_ns,
                 op_id: Uuid::new_v4(),
@@ -301,8 +302,23 @@ impl Sandbox {
     }
 
     pub async fn tree(&self) -> Result<CcTree, ClientError> {
-        self.calls().cc_tree().await
+        let mut t = self.calls().cc_tree().await?;
+        for f in &mut t.files {
+            f.path = stored(&f.path);
+        }
+        Ok(t)
     }
+}
+
+/// A path of Claude Code's `~/.claude` as a supervisor names it: under Claude Code's home. These helpers take and
+/// return the paths relative to `~/.claude` that the tests (and the stored form) use.
+pub fn home(path: &str) -> String {
+    format!("claude/{path}")
+}
+
+/// The stored form of a path a supervisor is shown (Claude Code's home taken off).
+pub fn stored(path: &str) -> String {
+    path.strip_prefix("claude/").unwrap_or(path).to_owned()
 }
 
 /// The code of an API error.

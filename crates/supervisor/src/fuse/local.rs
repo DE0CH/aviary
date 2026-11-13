@@ -99,6 +99,10 @@ impl Local {
     /// It cannot be made.
     pub fn open(root: &Path) -> std::io::Result<Self> {
         std::fs::create_dir_all(root)?;
+        // each harness's home exists from the start
+        for h in aviary_core::harness::Harness::ALL {
+            std::fs::create_dir_all(root.join(super::scope::home(h)))?;
+        }
         Ok(Self {
             root: root.to_owned(),
             fds: Mutex::new(HashMap::new()),
