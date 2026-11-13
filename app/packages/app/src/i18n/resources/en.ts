@@ -3168,6 +3168,13 @@ export const en = {
       info: "For more models, ask your admin.",
       thinking: "Thinking",
       thinkingUnavailable: "Not for this model",
+      move: {
+        title: "Switch to {{model}}?",
+        message:
+          "This model works from a summary of the conversation so far. It writes the summary at the start of its next reply, and the full conversation stays available to it as a file. Your files are kept.",
+        continue: "Continue",
+        summarising: "Summarising the conversation so far…",
+      },
       level: {
         none: "None",
         low: "Light",

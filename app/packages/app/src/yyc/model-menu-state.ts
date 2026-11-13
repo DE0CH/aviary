@@ -11,7 +11,12 @@ export interface MenuModel {
   /** The level a conversation starts on. */
   defaultLevel: string | null;
   isDefault: boolean;
+  /** The agent program the model runs in ("claude" unless the model says otherwise). */
+  harness: string;
 }
+
+/** The harness of a model that names none. */
+export const DEFAULT_HARNESS = "claude";
 
 export interface MenuState {
   models: MenuModel[];
@@ -43,6 +48,7 @@ export function menuModels(models: readonly AgentModelDefinition[] | null | unde
       levels,
       defaultLevel: own !== null && levels.includes(own) ? own : null,
       isDefault: model.isDefault === true,
+      harness: typeof model.metadata?.harness === "string" ? model.metadata.harness : DEFAULT_HARNESS,
     };
   });
 }
@@ -60,6 +66,16 @@ export function menuState(
     level = selectedLevel && model.levels.includes(selectedLevel) ? selectedLevel : model.defaultLevel;
   }
   return { models, model, row, level };
+}
+
+/**
+ * Whether picking `toId` in a conversation on `fromId` moves it to another harness. The harnesses keep separate
+ * sessions, so the conversation so far is carried over as a summary: the person is asked first.
+ */
+export function movesHarness(models: MenuModel[], fromId: string | null | undefined, toId: string): boolean {
+  const from = menuState(models, fromId, null).model;
+  const to = models.find((entry) => entry.id === toId);
+  return from !== null && to !== undefined && from.harness !== to.harness;
 }
 
 /** What a new conversation starts on: the default model at its own level. */

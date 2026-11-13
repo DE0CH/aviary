@@ -18,12 +18,14 @@ import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useSessionStore } from "@/stores/session-store";
 import { ICON_SIZE } from "@/styles/theme";
 import { toErrorMessage } from "@/utils/error-messages";
+import { useHarnessSwitchStore } from "@/yyc/harness-switch-store";
 import { useModelPickAvailable } from "@/yyc/me";
 import {
   levelForModel,
   menuDefaults,
   menuModels,
   menuState,
+  movesHarness,
   pickSettled,
   rememberLevel,
   shownChoice,
@@ -144,19 +146,28 @@ function useConversationChoice(serverId: string, agentId: string): Choice {
     [toast],
   );
   const shown = shownChoice(server, pending);
+  const hasMessages = agent?.lastUserMessageAt != null;
   const selectModel = useCallback(
     (modelId: string) => {
       if (!client) return;
       // each model at the level last picked for it
       const model = models.find((entry) => entry.id === modelId);
       const level = model ? levelForModel(model, rememberedLevels()) : null;
-      setPending({ modelId, ...(level ? { level } : {}) });
-      client
-        .setAgentModel(agentId, modelId)
-        .then(() => (level ? client.setAgentThinkingOption(agentId, level) : undefined))
-        .catch(refused);
+      const pick = () => {
+        setPending({ modelId, ...(level ? { level } : {}) });
+        client
+          .setAgentModel(agentId, modelId)
+          .then(() => (level ? client.setAgentThinkingOption(agentId, level) : undefined))
+          .catch(refused);
+      };
+      // a model of another harness starts from a summary of the conversation: asked first, once it has messages
+      if (model && hasMessages && movesHarness(models, shown.modelId, modelId)) {
+        useHarnessSwitchStore.getState().ask({ agentId, modelLabel: model.label, confirm: pick });
+        return;
+      }
+      pick();
     },
-    [agentId, client, models, refused],
+    [agentId, client, hasMessages, models, refused, shown.modelId],
   );
   const selectLevel = useCallback(
     (level: string) => {

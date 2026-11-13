@@ -4,6 +4,7 @@ import {
   menuDefaults,
   menuModels,
   menuState,
+  movesHarness,
   pickSettled,
   rememberLevel,
   shownChoice,
@@ -31,9 +32,9 @@ const MODELS = menuModels([
 describe("the model menu", () => {
   it("reads models with their levels in order and the level a conversation starts on", () => {
     expect(MODELS).toEqual([
-      { id: "deepseek", label: "DeepSeek V4.1 Flash", levels: ["none", "low", "high", "max"], defaultLevel: "high", isDefault: true },
-      { id: "glm", label: "GLM 5.3", levels: ["low", "high", "max"], defaultLevel: "high", isDefault: false },
-      { id: "plain", label: "plain", levels: [], defaultLevel: null, isDefault: false },
+      { id: "deepseek", label: "DeepSeek V4.1 Flash", levels: ["none", "low", "high", "max"], defaultLevel: "high", isDefault: true, harness: "claude" },
+      { id: "glm", label: "GLM 5.3", levels: ["low", "high", "max"], defaultLevel: "high", isDefault: false, harness: "claude" },
+      { id: "plain", label: "plain", levels: [], defaultLevel: null, isDefault: false, harness: "claude" },
     ]);
   });
 
@@ -88,5 +89,28 @@ describe("the model menu", () => {
     expect(levelForModel(b, { b: "low" })).toBe("high");
     expect(levelForModel(c, { c: "high" })).toBeNull();
     expect(rememberLevel({ a: "high" }, "b", "max")).toEqual({ a: "high", b: "max" });
+  });
+});
+
+describe("a model of another harness", () => {
+  const models = menuModels([
+    { provider: "claude", id: "deepseek", label: "DeepSeek", isDefault: true },
+    { provider: "claude", id: "glm", label: "GLM" },
+    { provider: "claude", id: "mimo", label: "MiMo", metadata: { harness: "qwen" } },
+  ]);
+
+  it("names its harness; the others are Claude Code's", () => {
+    expect(models.map((model) => model.harness)).toEqual(["claude", "claude", "qwen"]);
+  });
+
+  it("moves the conversation only when the harness changes", () => {
+    expect(movesHarness(models, "deepseek", "glm")).toBe(false);
+    expect(movesHarness(models, "deepseek", "mimo")).toBe(true);
+    expect(movesHarness(models, "mimo", "glm")).toBe(true);
+    expect(movesHarness(models, "mimo", "mimo")).toBe(false);
+    // no model picked yet: the conversation is on the default
+    expect(movesHarness(models, null, "mimo")).toBe(true);
+    expect(movesHarness(models, null, "glm")).toBe(false);
+    expect(movesHarness(models, "deepseek", "gone")).toBe(false);
   });
 });

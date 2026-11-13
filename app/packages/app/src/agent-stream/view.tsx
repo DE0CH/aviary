@@ -1,4 +1,5 @@
 import { openConversationFile, readSendUserFileCaption, readSentFiles, SentFilesCards, useConversationFileUrl } from "@/yyc/sent-files";
+import { useSummarisingLabel } from "@/yyc/harness-switch-label";
 import { parseScheduledMessage, readScheduleCall, ScheduledMessage, ScheduleToolCard } from "@/yyc/schedules";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -852,11 +853,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             if (call) return <ScheduleToolCard sessionId={agentId} call={call} />;
           }
 
-          if (data.name === "SendUserFile") {
+          // files sent to the person: the SendUserFile call, or whichever call sent them (a harness without
+          // that tool sends from a shell command)
+          const sentFiles = readSentFiles(data.metadata);
+          if (data.name === "SendUserFile" || sentFiles.length > 0) {
             return (
               <SentFilesCards
                 sessionId={agentId}
-                files={readSentFiles(data.metadata)}
+                files={sentFiles}
                 caption={readSendUserFileCaption(data.detail)}
                 isLastInSequence={isLastInSequence}
               />
@@ -1038,12 +1042,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         }),
       [client, pendingPermissionItems],
     );
+    // a conversation moved to another harness: its next reply begins by summing up what came before
+    const summarisingLabel = useSummarisingLabel(agentId, isTurnActive);
     const turnFooterNode = useMemo(
       () =>
         isTurnActive || bottomTurnFooterHost ? (
           <TurnFooter
             isRunning={isTurnActive}
             inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
+            workingLabel={summarisingLabel}
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
             supportsTimelineCursor={supportsAgentForkContextCursor}
@@ -1054,6 +1061,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         ) : null,
       [
         isTurnActive,
+        summarisingLabel,
         baseRenderModel.turnTiming.runningStartedAt,
         bottomTurnFooterHost,
         streamRenderStrategy,

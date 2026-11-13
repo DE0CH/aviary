@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useMemo, type ReactNode } from "react";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { SPACING, type Theme } from "@/styles/theme";
 import type { TurnTiming } from "@/timeline/turn-time";
@@ -44,6 +44,7 @@ export type InFlightTurnForkHandler = (target: AssistantForkTarget) => Promise<v
 export const TurnFooter = memo(function TurnFooter({
   isRunning,
   inFlightTurnStartedAt,
+  workingLabel,
   host,
   strategy,
   supportsTimelineCursor,
@@ -52,6 +53,8 @@ export const TurnFooter = memo(function TurnFooter({
 }: {
   isRunning: boolean;
   inFlightTurnStartedAt: Date | null;
+  /** What the running turn is doing, when there is something to say beside the loader. */
+  workingLabel?: string | null;
   host: TurnFooterHost | null;
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
@@ -63,6 +66,7 @@ export const TurnFooter = memo(function TurnFooter({
       <TurnFooterRow>
         <RunningTurnFooter
           inFlightTurnStartedAt={inFlightTurnStartedAt}
+          workingLabel={workingLabel}
           onForkInFlightTurn={onForkInFlightTurn}
         />
       </TurnFooterRow>
@@ -114,9 +118,11 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
 
 const WorkingIndicator = memo(function WorkingIndicator({
   inFlightTurnStartedAt = null,
+  workingLabel = null,
   onForkInFlightTurn,
 }: {
   inFlightTurnStartedAt?: Date | null;
+  workingLabel?: string | null;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
   const active = useRetainedPanelActive();
@@ -125,6 +131,11 @@ const WorkingIndicator = memo(function WorkingIndicator({
       <View style={stylesheet.workingLoader}>
         <ThemedSyncedLoader size={14} uniProps={workingIndicatorColorMapping} />
       </View>
+      {workingLabel ? (
+        <Text style={stylesheet.workingElapsed} numberOfLines={1} testID="turn-working-label">
+          {workingLabel}
+        </Text>
+      ) : null}
       {/* Match the completed-turn footer: actions precede timing metadata. */}
       {onForkInFlightTurn ? <AssistantForkMenu onFork={onForkInFlightTurn} /> : null}
       {inFlightTurnStartedAt ? (
@@ -141,15 +152,18 @@ const WorkingIndicator = memo(function WorkingIndicator({
 
 function RunningTurnFooter({
   inFlightTurnStartedAt,
+  workingLabel,
   onForkInFlightTurn,
 }: {
   inFlightTurnStartedAt: Date | null;
+  workingLabel?: string | null;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
   return (
     <View style={stylesheet.turnFooterSlot} testID="turn-working-indicator">
       <WorkingIndicator
         inFlightTurnStartedAt={inFlightTurnStartedAt}
+        workingLabel={workingLabel}
         onForkInFlightTurn={onForkInFlightTurn}
       />
     </View>

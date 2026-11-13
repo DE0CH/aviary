@@ -20,6 +20,7 @@ import { WorktreeSetupCalloutSource } from "@/components/worktree-setup-callout-
 import { RosettaCalloutSource } from "@/desktop/updates/rosetta-callout-source";
 import { UpdateCalloutSource } from "@/desktop/updates/update-callout-source";
 import { ConversationDialogsHost } from "@/yyc/conversation-dialogs";
+import { HarnessSwitchDialogHost } from "@/yyc/harness-switch-dialog";
 import { HostChooserModal } from "@/hosts/host-chooser-modal";
 import { HostConfirmationSheet } from "@/hosts/host-confirmation-sheet";
 
@@ -45,6 +46,7 @@ export function AppHosts() {
       <AppDiagnosticHost />
       <ChangelogHost />
       <ConversationDialogsHost />
+      <HarnessSwitchDialogHost />
     </>
   );
 }

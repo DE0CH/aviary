@@ -3114,6 +3114,13 @@ export const zhHK: TranslationResources = {
       info: "如需更多模型，請聯絡管理員。",
       thinking: "思考",
       thinkingUnavailable: "此模型不適用",
+      move: {
+        title: "切換至 {{model}}？",
+        message:
+          "此模型會根據至今對話的摘要繼續。它會在下一個回覆開頭寫出摘要，完整對話亦會以檔案形式供它查閱。你的檔案會保留。",
+        continue: "繼續",
+        summarising: "正在總結至今的對話…",
+      },
       level: {
         none: "無",
         low: "輕量",
