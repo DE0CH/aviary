@@ -78,7 +78,7 @@ def fail(name, text):
     save_ui(f"fail-{name}")
     # the device's log goes with the screenshots (encrypted in CI): what Chrome and the launcher said
     with open(os.path.join(OUT, f"fail-{name}.logcat.txt"), "wb") as fh:
-        fh.write(adb("logcat", "-d", "-t", "4000", check=False))
+        fh.write(adb("logcat", "-d", check=False))
     try:
         text = f"{text} ({where()})"
     except Exception:
@@ -242,6 +242,7 @@ note(f"Chrome {version.group(1)}, Android {sh('getprop ro.build.version.release'
 sh("echo 'chrome --disable-fre --no-default-browser-check --no-first-run' > /data/local/tmp/chrome-command-line")
 sh(f"am set-debug-app --persistent {CHROME}")
 sh("settings put system accelerometer_rotation 0; settings put system user_rotation 0; cmd uimode night no")
+sh("logcat -G 32M")  # room for the whole run's log (fail() keeps it)
 before = webapks()
 # let a freshly booted emulator settle (its launcher's "isn't responding" comes in the first minute)
 for _ in range(10):
