@@ -74,6 +74,28 @@ pub fn text(prompt: &str, files: &[Attached], images: &[Attached]) -> String {
     out
 }
 
+/// The text with `<earlier_conversation>`: a turn in a harness that did not run the conversation's earlier turns
+/// (`start_turn.carryOver`) is told where they are and to sum them up before it answers. The summary is the reply's
+/// first part, so the person sees it and the harness keeps it in its own session.
+#[must_use]
+pub fn carried(text: &str, path: &str) -> String {
+    [
+        text,
+        "",
+        "<earlier_conversation>",
+        &format!(
+            "This conversation began in another agent program, so its earlier turns are not in your context. \
+             They are in the file {path}: the user's messages, the replies, and the tool calls with their results."
+        ),
+        "Before you answer the message above, read that file from start to end. Begin your reply with a summary of \
+         it under the heading \"Summary of the conversation so far\": what the user asked for, what was done, what \
+         was decided, the files in /workspace that matter, and anything left open. Then answer the message. Go back \
+         to the file whenever you need a detail. The files and folders in /workspace are the same ones as before.",
+        "</earlier_conversation>",
+    ]
+    .join("\n")
+}
+
 /// `message.content`: the text as a string, or a text block and one image block per image.
 #[must_use]
 pub fn content(text: String, images: &[ImageBlock]) -> Value {

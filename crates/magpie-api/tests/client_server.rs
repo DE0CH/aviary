@@ -519,6 +519,17 @@ impl Server for FixtureServer {
         self.answer_raw("sandbox_blob_get")
     }
 
+    async fn earlier(&self, ctx: Ctx, query: EarlierQuery) -> Result<Response, ApiError> {
+        self.received(
+            "earlier",
+            &ctx,
+            &json!({}),
+            Some(serde_json::to_value(query).unwrap()),
+            None,
+        );
+        self.answer_raw("earlier")
+    }
+
     async fn sandbox_blob_put(&self, ctx: Ctx, sha: String, body: Body) -> Result<Admitted<Empty>, ApiError> {
         self.check_bytes("sandbox_blob_put", body).await;
         self.received("sandbox_blob_put", &ctx, &json!({"sha": sha.to_string()}), None, None);
@@ -1091,6 +1102,7 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             )
             .await
         }
+        "earlier" => raw_value(c.sandbox(Some(LEASE)).earlier(&query::<EarlierQuery>(&f)).await).await,
         "sandbox_blob_put" => c
             .sandbox(Some(LEASE))
             .sandbox_blob_put(&param_str(&f, "sha"), request_bytes(&f))

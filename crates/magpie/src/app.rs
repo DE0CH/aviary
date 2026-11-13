@@ -406,6 +406,10 @@ impl Server for Magpie {
         http::blobs::sandbox_get(self, ctx, sha, query).await
     }
 
+    async fn earlier(&self, ctx: Ctx, query: magpie_api::sandbox::EarlierQuery) -> Answer<Response> {
+        http::blobs::earlier(self, ctx, query).await
+    }
+
     async fn upload(&self, ctx: Ctx, meta: UploadMeta, body: Body) -> Answer<UploadResponse> {
         http::uploads::upload(self, ctx, meta, body).await
     }

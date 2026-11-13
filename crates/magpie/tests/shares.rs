@@ -431,6 +431,46 @@ async fn a_failed_clone_stores_nothing() {
     assert_eq!(theirs.conversations.len(), 0);
 }
 
+/// A share of a conversation that is in Qwen Code: the conversation continued from it is in Qwen Code too, with
+/// that session's transcript where Qwen Code keeps it, Claude Code's session kept for a pick back, and what each
+/// harness had seen.
+#[tokio::test]
+async fn a_continued_conversation_is_in_the_harness_the_shared_one_was_in() {
+    let hermit = FakeHermit::unguarded(HermitConfig::default());
+    let running = hermit.serve().await.unwrap();
+    let db = common::fresh_db("shares_harness").await;
+    let t = common::Tokens::new();
+    let r = common::replica_with(&db.url, &t, &running.url(), common::idle()).await;
+    let (c, _) = conversation_with_turns(&r, &hermit).await;
+    let conn = r.pool().get().await.unwrap();
+    // the conversation as a turn in Qwen Code leaves it
+    conn.execute(
+        "update conversations set harness = 'qwen', provider_session_id = 'q-1',
+                harness_sessions = '{\"claude\": \"s1\"}', carried = '{\"claude\": 3}' where id = $1",
+        &[&c],
+    )
+    .await
+    .unwrap();
+    let share = r.pigeon().person(ALICE).create_share(c).await.unwrap();
+    let cont = r.pigeon().person(BOB).continue_share(&share.id).await.unwrap();
+    let row = conn
+        .query_one(
+            "select harness, provider_session_id, main_transcript, harness_sessions, carried
+               from conversations where id = $1",
+            &[&cont.conversation_id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, String>(0), "qwen");
+    assert_eq!(row.get::<_, Option<String>>(1).as_deref(), Some("q-1"));
+    assert_eq!(
+        row.get::<_, Option<String>>(2).as_deref(),
+        Some("qwen/projects/-workspace/chats/q-1.jsonl")
+    );
+    assert_eq!(row.get::<_, serde_json::Value>(3), json!({"claude": "s1"}));
+    assert_eq!(row.get::<_, serde_json::Value>(4), json!({"claude": 3}));
+}
+
 #[tokio::test]
 async fn a_share_freezes_only_rows_of_finished_events_and_continue_takes_the_frozen_state() {
     let hermit = FakeHermit::unguarded(HermitConfig::default());

@@ -6,6 +6,9 @@ types, route constants and protocol numbers; this page states the conventions ar
 Status: the conventions, the endpoint names, the gateway contract and the hermit, supervisor and magpie contracts are
 complete (`hermit-api`, `supervisor-api`, `gateway-api`, `magpie-api`); sandboxd's is filled in with `sandboxd-api`.
 
+The two harnesses a sandbox runs (Claude Code and Qwen Code), who picks one, and what each layer does about it:
+[HARNESSES.md](HARNESSES.md).
+
 ## Conventions (every service)
 
 `crates/aviary-core` implements these once; another implementation of hermit or of the gateway must follow them on

@@ -294,6 +294,11 @@ pub fn providers_snapshot(request_id: &str, cwd: Option<&str>, models: Option<&V
                         });
                         model.insert("thinkingSet".into(), json!(index));
                     }
+                    // a model that runs in another harness than Claude Code says so: the app asks before a
+                    // conversation moves between harnesses (it is carried over as a summary)
+                    if let Some(h) = o.get("harness").and_then(Value::as_str) {
+                        model.insert("metadata".into(), json!({"harness": h}));
+                    }
                     Some(Value::Object(model))
                 })
                 .collect()
@@ -347,6 +352,18 @@ pub fn sandbox_status_type() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A model of another harness names it in its `metadata`; a Claude Code model reads as it always did.
+    #[test]
+    fn a_snapshot_names_the_harness_of_a_model_that_is_not_claude_codes() {
+        let models = json!({"DEFAULT": "vendor/a", "OPTIONS": [
+            {"value": "vendor/a", "label": "A"},
+            {"value": "vendor/video", "label": "Video", "harness": "qwen"}]});
+        let snap = providers_snapshot("r1", None, Some(&models));
+        let listed = &snap["compactSnapshot"]["entries"][0]["models"];
+        assert_eq!(listed[0].get("metadata"), None);
+        assert_eq!(listed[1]["metadata"], json!({"harness": "qwen"}));
+    }
 
     #[test]
     fn subscription_splice_is_valid_json() {

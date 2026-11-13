@@ -1,0 +1,20 @@
+{
+  "route": "earlier",
+  "query": {
+    "after": 0,
+    "before": 41
+  },
+  "responses": [
+    {
+      "status": 200,
+      "bytes": "# Earlier conversation\n\n## User\n\nhello\n"
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "this sandbox does not hold the lease"
+      }
+    }
+  ]
+}

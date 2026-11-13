@@ -2990,6 +2990,13 @@ async fn a_turns_start_names_the_picked_models_harness_and_resumes_its_session()
             .expect("start_turn");
         (st.harness, st.resume.provider_session_id)
     };
+    // what a turn in a harness that did not run the turns before it is handed: their range, and its text
+    let carried = |cmds: &CommandsResponse, turn: Uuid| {
+        cmds.commands.iter().find_map(|c| match &c.body {
+            CommandBody::StartTurn(st) if c.turn_id == Some(turn) => st.carry_over.clone(),
+            _ => None,
+        })
+    };
     let claude_session = "279aabf0-1111-4222-8333-444455556666";
     let conv = w.conversation().await;
     let me = w.a.pigeon();
@@ -2998,6 +3005,11 @@ async fn a_turns_start_names_the_picked_models_harness_and_resumes_its_session()
     assert!(w.state_is(turn, "starting").await);
     let sup = w.supervisor(conv).await;
     assert_eq!(start(&sup.poll(0, 0).await, turn), (Harness::Claude, None));
+    assert_eq!(
+        carried(&sup.poll(0, 0).await, turn),
+        None,
+        "the first turn has nothing before it"
+    );
     sup.run(turn).await;
     sup.report(turn, ReportedState::Completed).await.unwrap();
     assert!(w.state_is(turn, "completed").await);
@@ -3017,6 +3029,23 @@ async fn a_turns_start_names_the_picked_models_harness_and_resumes_its_session()
     let turn = w.send(conv, "m2", "two").await;
     assert!(w.state_is(turn, "starting").await);
     assert_eq!(start(&sup.poll(0, 0).await, turn), (Harness::Qwen, None));
+    // Qwen Code has seen nothing of the conversation: all of it goes with the turn
+    let first = carried(&sup.poll(0, 0).await, turn).expect("a carry-over");
+    assert_eq!((first.from, first.after), (Harness::Claude, 0));
+    assert_eq!(first.name, format!("earlier-{}.md", first.before));
+    let read = |c: magpie_api::sandbox::CarryOver| {
+        let calls = sup.calls();
+        async move {
+            let q = magpie_api::sandbox::EarlierQuery {
+                after: c.after,
+                before: c.before,
+            };
+            calls.earlier(&q).await.unwrap().text().await.unwrap()
+        }
+    };
+    let text = read(first.clone()).await;
+    assert!(text.starts_with("# Earlier conversation\n"), "{text}");
+    assert!(text.contains("## User\n\none\n") && !text.contains("two"), "{text}");
     sup.take(turn).await;
     let mut running = report(ReportedState::Running);
     running.harness = Harness::Qwen;
@@ -3047,6 +3076,14 @@ async fn a_turns_start_names_the_picked_models_harness_and_resumes_its_session()
         start(&sup.poll(0, 0).await, turn),
         (Harness::Claude, Some(claude_session.into()))
     );
+    // Claude Code ran the first turn: only what came after it
+    let back = carried(&sup.poll(0, 0).await, turn).expect("a carry-over");
+    assert_eq!((back.from, back.after), (Harness::Qwen, first.before - 1));
+    let text = read(back.clone()).await;
+    assert!(
+        text.contains("## User\n\ntwo\n") && !text.contains("## User\n\none\n"),
+        "{text}"
+    );
     sup.run(turn).await;
     sup.report(turn, ReportedState::Completed).await.unwrap();
     assert!(w.state_is(turn, "completed").await);
@@ -3059,6 +3096,26 @@ async fn a_turns_start_names_the_picked_models_harness_and_resumes_its_session()
     let turn = w.send(conv, "m4", "four").await;
     assert!(w.state_is(turn, "starting").await);
     assert_eq!(start(&sup.poll(0, 0).await, turn), (Harness::Qwen, Some("q-1".into())));
+    let again = carried(&sup.poll(0, 0).await, turn).expect("a carry-over");
+    assert_eq!((again.from, again.after), (Harness::Claude, back.before - 1));
+    let text = read(again).await;
+    assert!(
+        text.contains("## User\n\nthree\n") && !text.contains("## User\n\ntwo\n"),
+        "{text}"
+    );
+
+    // the same harness as the turn before: nothing is carried
+    sup.take(turn).await;
+    let mut running = report(ReportedState::Running);
+    running.harness = Harness::Qwen;
+    running.provider_session_id = Some("q-1".into());
+    running.transcript_path = Some("qwen/projects/-workspace/chats/q-1.jsonl".into());
+    sup.calls().turn_state(turn, &running).await.unwrap();
+    sup.report(turn, ReportedState::Completed).await.unwrap();
+    assert!(w.state_is(turn, "completed").await);
+    let turn = w.send(conv, "m5", "five").await;
+    assert!(w.state_is(turn, "starting").await);
+    assert_eq!(carried(&sup.poll(0, 0).await, turn), None);
 }
 
 /// A turn in Qwen Code: its transcript, written under Qwen Code's home in Qwen Code's own record shape, makes the

@@ -50,17 +50,18 @@ use crate::routes::{
     HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS,
     PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME,
     SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE,
-    SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES,
-    SANDBOX_SENT_FILES, SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS,
-    SEARCH, SHARE, SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
+    SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_EARLIER, SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SCHEDULE,
+    SANDBOX_SCHEDULES, SANDBOX_SENT_FILES, SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE,
+    SANDBOX_TURN_STATE, SANDBOX_TURNS, SEARCH, SHARE, SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS,
+    UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
 };
 use crate::rows::{
     PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery,
 };
 use crate::sandbox::{
     AckRequest, AgentTurnRequest, AskReport, AskResolvedReport, CcFileQuery, CcMkdir, CcPathOp, CcRename, CcSetattr,
-    CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery, CommandsQuery, CommandsResponse, Heartbeat,
-    LeaseResponse, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport, TurnStateReport,
+    CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery, CommandsQuery, CommandsResponse, EarlierQuery,
+    Heartbeat, LeaseResponse, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport, TurnStateReport,
 };
 use crate::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
 use crate::shares::{ContinueResponse, ShareRef, ShareView, SharesList};
@@ -635,6 +636,11 @@ pub trait Server: Send + Sync + 'static {
         async move { Err(not_implemented("sandbox_blob_get")) }
     }
 
+    /// Route `earlier`.
+    fn earlier(&self, ctx: Ctx, query: EarlierQuery) -> impl Future<Output = Result<Response, ApiError>> + Send {
+        async move { Err(not_implemented("earlier")) }
+    }
+
     /// Route `sandbox_blob_put`.
     fn sandbox_blob_put(
         &self,
@@ -1159,6 +1165,10 @@ async fn h_heartbeat<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, J(body): J<He
     reply_empty(s.heartbeat(ctx, body).await)
 }
 
+async fn h_earlier<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, Q(query): Q<EarlierQuery>) -> Response {
+    reply_raw(s.earlier(ctx, query).await)
+}
+
 async fn h_sandbox_blob_get<S: Server>(
     State(s): State<Arc<S>>,
     ctx: Ctx,
@@ -1413,6 +1423,7 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
         .route(SANDBOX_ASK_RESOLVED, post(h_ask_resolved::<S>))
         .route(SANDBOX_HEARTBEAT, post(h_heartbeat::<S>))
         .route(SANDBOX_BLOB, get(h_sandbox_blob_get::<S>).put(h_sandbox_blob_put::<S>))
+        .route(SANDBOX_EARLIER, get(h_earlier::<S>))
         .route(SANDBOX_SENT_FILES, post(h_sent_files::<S>))
         .route(SANDBOX_SENT_FILES_COMMIT, post(h_sent_files_commit::<S>))
         .route(

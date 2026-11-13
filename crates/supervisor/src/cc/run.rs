@@ -2523,6 +2523,21 @@ impl Driver {
         } else {
             prompt::answers(&s.answers)
         };
+        // a turn in a harness that did not run the earlier turns: they are written into the workspace for it
+        let text = match &s.carry_over {
+            Some(c) => {
+                let q = magpie_api::sandbox::EarlierQuery {
+                    after: c.after,
+                    before: c.before,
+                };
+                let deadline = Instant::now() + uploads::BLOB_RETRY_FOR;
+                let earlier = uploads::earlier(&self.reporter.calls(), &q, deadline).await?;
+                let path = self.cfg.uploads.write(&c.name, earlier).await?;
+                tracing::info!(from = %c.from, file = %path, "the conversation carried over from another harness");
+                prompt::carried(&text, &path)
+            }
+            None => text,
+        };
         Ok(prompt::user_line(&prompt::content(text, &images), &s.sent_at.to_wire()))
     }
 

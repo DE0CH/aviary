@@ -10,6 +10,7 @@
 pub mod admission;
 pub mod caller;
 pub mod cancel;
+pub mod carry;
 pub mod commands;
 pub mod driver;
 pub mod end;

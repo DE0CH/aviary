@@ -161,6 +161,8 @@ pub const SANDBOX_ASK_RESOLVED: &str = "/v1/sandbox/asks/{askId}/resolved";
 pub const SANDBOX_HEARTBEAT: &str = "/v1/sandbox/heartbeat";
 /// `GET` and `PUT` a blob.
 pub const SANDBOX_BLOB: &str = "/v1/sandbox/blobs/{sha}";
+/// `GET` the conversation's earlier turns as text (for a harness that has not seen them).
+pub const SANDBOX_EARLIER: &str = "/v1/sandbox/earlier";
 /// `POST` sent-file staging.
 pub const SANDBOX_SENT_FILES: &str = "/v1/sandbox/sent-files";
 /// `POST` sent-file commit.
@@ -376,6 +378,7 @@ pub const ROUTES: &[Route] = &[
     sandbox("heartbeat", Post, SANDBOX_HEARTBEAT, &[204], true),
     sandbox("sandbox_blob_get", Get, SANDBOX_BLOB, &[200], false),
     sandbox("sandbox_blob_put", Put, SANDBOX_BLOB, &[201, 200], true),
+    sandbox("earlier", Get, SANDBOX_EARLIER, &[200], true),
     sandbox("sent_files", Post, SANDBOX_SENT_FILES, &[200], true),
     sandbox("sent_files_commit", Post, SANDBOX_SENT_FILES_COMMIT, &[200], true),
     // schedules: Claude Code itself calls these with curl (no lease: it is not the supervisor)
@@ -577,7 +580,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 80);
+        assert_eq!(ROUTES.len(), 81);
     }
 
     #[test]

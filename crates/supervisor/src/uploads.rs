@@ -103,6 +103,29 @@ pub async fn blob(
     .await
 }
 
+/// The conversation's earlier turns as text (`start_turn.carryOver`), retried as a blob is until `deadline`.
+///
+/// # Errors
+/// A read no retry cured, or one that cannot succeed.
+pub async fn earlier(
+    magpie: &magpie_api::client::SandboxCalls<'_>,
+    q: &magpie_api::sandbox::EarlierQuery,
+    deadline: Instant,
+) -> Result<Vec<u8>, String> {
+    retrying("the earlier conversation", deadline, || async {
+        let res = magpie
+            .earlier(q)
+            .await
+            .map_err(|e| get_failure("the earlier conversation", &e))?;
+        let b = res
+            .bytes()
+            .await
+            .map_err(|e| Failure::Retry(format!("the earlier conversation: {e}")))?;
+        Ok(b.to_vec())
+    })
+    .await
+}
+
 /// The message a full workspace fails the turn with.
 pub const NO_SPACE: &str = "the attachment does not fit in the workspace";
 
@@ -425,6 +448,38 @@ impl Uploads {
             .join(&name)
             .to_string_lossy()
             .into_owned())
+    }
+
+    /// Writes `bytes` as `uploads/<name>` (as the agent, over a file of that name); the absolute path.
+    ///
+    /// # Errors
+    /// Why the file could not be written.
+    pub async fn write(&self, name: &str, bytes: Vec<u8>) -> Result<String, String> {
+        let name = upload_name(&format!("uploads/{name}"))
+            .ok_or_else(|| format!("bad file name {name:?}"))?
+            .to_owned();
+        let me = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let dir = me.open_dir()?;
+            let part = format!("{PART_PREFIX}{}", uuid::Uuid::new_v4().simple());
+            let mut file = me.create_part(&dir, &part).map_err(|e| reason(&e))?;
+            let done = file
+                .write_all(&bytes)
+                .and_then(|()| me.rename(&dir, &part, &name))
+                .map_err(|e| reason(&e));
+            if done.is_err() {
+                Self::unlink(&dir, &part);
+            }
+            done.map(|()| {
+                Path::new(&me.workspace)
+                    .join("uploads")
+                    .join(&name)
+                    .to_string_lossy()
+                    .into_owned()
+            })
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
 }
 

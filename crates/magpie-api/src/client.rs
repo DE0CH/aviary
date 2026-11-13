@@ -39,8 +39,8 @@ use crate::rows::{
 };
 use crate::sandbox::{
     AckRequest, AgentTurnRequest, AskReport, AskResolvedReport, CcFileQuery, CcMkdir, CcPathOp, CcRename, CcSetattr,
-    CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery, CommandsQuery, CommandsResponse, Heartbeat,
-    LeaseResponse, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport, TurnStateReport,
+    CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery, CommandsQuery, CommandsResponse, EarlierQuery,
+    Heartbeat, LeaseResponse, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport, TurnStateReport,
 };
 use crate::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
 use crate::shares::{ContinueResponse, ShareRef, ShareView, SharesList};
@@ -900,6 +900,13 @@ impl SandboxCalls<'_> {
                 Body::None,
                 None,
             )
+            .await
+    }
+
+    /// The conversation's earlier turns as text (streams).
+    pub async fn earlier(&self, q: &EarlierQuery) -> Result<reqwest::Response, ClientError> {
+        self.client
+            .exec(&self.scope, route("earlier"), &[], Some(q), Body::None, None)
             .await
     }
 

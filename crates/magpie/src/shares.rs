@@ -324,8 +324,9 @@ pub async fn create(app: &Magpie, person: &Person, conversation: Uuid) -> Result
         let row = t
             .query_one(
                 "insert into shares (id, conversation_id, owner, owner_name, title, upto_seq, snapshot,
-                                     provider_session_id, workspace_id, model)
-                 select $1, c.id, c.person, $3, c.title, $4, $5, c.provider_session_id, $6, c.model
+                                     provider_session_id, workspace_id, model, harness, harness_sessions, carried)
+                 select $1, c.id, c.person, $3, c.title, $4, $5, c.provider_session_id, $6, c.model, c.harness,
+                        c.harness_sessions, c.carried
                  from conversations c where c.id = $2
                  returning created_at",
                 &[idr, &conversation, &owner_name, &f.upto, &snapshot, &workspace],
@@ -425,6 +426,10 @@ struct Live {
     provider_session_id: Option<String>,
     workspace: Uuid,
     created_at: OffsetDateTime,
+    /// The harness `provider_session_id` is a session of, the other harnesses' sessions, and what each had seen.
+    harness: String,
+    harness_sessions: serde_json::Value,
+    carried: serde_json::Value,
 }
 
 async fn live(db: &impl Db, share_id: &str) -> Result<Live> {
@@ -434,7 +439,7 @@ async fn live(db: &impl Db, share_id: &str) -> Result<Live> {
     let r = db
         .query_opt(
             "select s.id, s.conversation_id, s.owner, s.owner_name, s.title, s.upto_seq, s.snapshot,
-                    s.provider_session_id, s.workspace_id, s.created_at
+                    s.provider_session_id, s.workspace_id, s.created_at, s.harness, s.harness_sessions, s.carried
              from shares s join conversations c on c.id = s.conversation_id
              where s.id = $1 and s.revoked_at is null and c.deleted_at is null",
             &[&share_id],
@@ -452,6 +457,9 @@ async fn live(db: &impl Db, share_id: &str) -> Result<Live> {
         provider_session_id: r.get(7),
         workspace: r.get(8),
         created_at: r.get(9),
+        harness: r.get(10),
+        harness_sessions: r.get(11),
+        carried: r.get(12),
     })
 }
 
@@ -563,7 +571,7 @@ pub async fn continue_share(app: &Magpie, person: &Person, share_id: &str) -> Re
     let main = s
         .provider_session_id
         .as_ref()
-        .map(|sid| format!("projects/-workspace/{sid}.jsonl"));
+        .map(|sid| crate::turns::harness::main_transcript(&s.harness, sid));
     let origin = serde_json::json!({"kind": "continue", "shareId": s.id});
     let sr = &s;
     let (main_r, origin_r) = (&main, &origin);
@@ -595,8 +603,9 @@ pub async fn continue_share(app: &Magpie, person: &Person, share_id: &str) -> Re
             .get(0);
         t.execute(
             "insert into conversations (id, person, title, name_source, created_at, activity_at, head_seq, row_head,
-                                        provider_session_id, main_transcript, model, origin)
-             values ($1, $2, $3, 'title', now(), now(), $4, $5, $6, $7, $8, $9)",
+                                        provider_session_id, main_transcript, model, origin, harness,
+                                        harness_sessions, carried)
+             values ($1, $2, $3, 'title', now(), now(), $4, $5, $6, $7, $8, $9, $10, $11, $12)",
             &[
                 &id,
                 &person.email,
@@ -607,6 +616,9 @@ pub async fn continue_share(app: &Magpie, person: &Person, share_id: &str) -> Re
                 main_r,
                 &model,
                 origin_r,
+                &sr.harness,
+                &sr.harness_sessions,
+                &sr.carried,
             ],
         )
         .await?;

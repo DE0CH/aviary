@@ -78,8 +78,8 @@ use magpie_api::rows::{
 use magpie_api::sandbox::{
     AckRequest, AckResult, AgentTurnRequest, AskReport, AskResolvedReport, CC_FILE_MAX_BYTES, CC_QUOTA_BYTES,
     CC_WRITE_MAX_BYTES, CcEntry, CcFileQuery, CcKind, CcMkdir, CcPathOp, CcRename, CcSetattr, CcSizeVersion, CcTree,
-    CcTruncate, CcVersion, CcWriteQuery, Command, CommandBody, CommandsQuery, CommandsResponse, Heartbeat,
-    LeaseResponse, ReportedState, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport,
+    CcTruncate, CcVersion, CcWriteQuery, Command, CommandBody, CommandsQuery, CommandsResponse, EarlierQuery,
+    Heartbeat, LeaseResponse, ReportedState, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport,
     TurnStateReport,
 };
 use magpie_api::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
@@ -1471,6 +1471,23 @@ impl Server for FakeMagpie {
             Some(r) => r.response(),
             None => self.model_blob_get(&sha),
         }
+    }
+
+    async fn earlier(&self, ctx: Ctx, query: EarlierQuery) -> Result<Response, ApiError> {
+        if let Some(r) = self.record("earlier", &ctx, json!({}), ser(&query), None, None) {
+            return r.response();
+        }
+        // the model: the range it was asked for, so a test sees what the supervisor read
+        let text = format!(
+            "# Earlier conversation\n\n(events {} to {})\n",
+            query.after, query.before
+        );
+        let mut res = (StatusCode::OK, text).into_response();
+        res.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/markdown; charset=utf-8"),
+        );
+        Ok(res)
     }
 
     async fn sandbox_blob_put(&self, ctx: Ctx, sha: String, body: Body) -> Result<Admitted<Empty>, ApiError> {

@@ -1,7 +1,8 @@
 # images/sandbox: `ghcr.io/de0ch/hermit-sandbox:<sha12>`
 
-The sandbox image (hermit spec 17, supervisor spec 3, platform 5.2): where Claude Code runs for a conversation, as
-uid 1000 in `/workspace`, under the supervisor and keeper of the same aviary commit. Ported from jarvis3's
+The sandbox image (hermit spec 17, supervisor spec 3, platform 5.2): where a conversation's harness (Claude Code or
+Qwen Code, [docs/HARNESSES.md](../../docs/HARNESSES.md)) runs, as uid 1000 in `/workspace`, under the supervisor and
+keeper of the same aviary commit. Ported from jarvis3's
 `chat/sandbox/` with the in-sandbox Node agent replaced by the supervisor.
 
 | File | Installed as | What |
@@ -15,15 +16,24 @@ uid 1000 in `/workspace`, under the supervisor and keeper of the same aviary com
 | `profile` | `/etc/profile.d/00-sandbox-path.sh` | a login shell's PATH and `VIRTUAL_ENV` |
 | `npmrc`, `pip.conf` | `/home/sandbox/.npmrc` (uid 1000's), `/etc/pip.conf` | uid 1000's npm prefix and pip's settings, whatever the environment; root's npm keeps `/usr/local` |
 | `line-buffered.pth` | `sbx-line-buffered.pth` in the venv | Python's stdout and stderr line-buffered when not a terminal (what `PYTHONUNBUFFERED` did for Claude Code's tools) |
+| `video/engine/` | `/opt/engine`, `/usr/local/bin/edit` | the video edit engine: an edit plan (JSON, with HTML blocks) rendered by HyperFrames with a pinned headless Chrome; `GUIDE.md` is what the agent reads |
+| `video/clip`, `video/speech-times` | `/usr/local/bin/` | a stretch of footage as a small picture file and a sound file the model can open; where speech starts and stops |
+| `video/assets-manifest.json`, `video/fetch-assets.py`, `video/fonts.txt` | `/opt/assets`, `/usr/local/share/fonts/edit` | music, sound effects and animated emoji (Mixkit and Noto, fetched at build by URL and sha256: Mixkit's licence allows use, not redistribution) and Cantonese-complete fonts |
 | `build.sh` | | the build, with platform 5.3's labels |
 | `smoke.sh` | | the image smoke test (`ci.yml` job `sandbox-smoke`) |
 
 What is in it: Debian trixie with Node 22; documents, PDF and spreadsheet tools, CJK fonts, a Python venv `/opt/py`
 owned by uid 1000; Docker (dockerd started on demand); Claude Code 2.1.304 root-owned at `/opt/claude-code` (the
 supervisor runs `/opt/claude-code/bin/claude` by that path; `/usr/local/bin/claude` links to it for shells);
-`/usr/local/bin/supervisor`, `supervisor-keeper` and `sandbox-secret -> supervisor`. `ENTRYPOINT
-["/usr/local/bin/supervisor-keeper"]`, no CMD, no tini: the keeper is PID 1. `/home/sandbox/.claude` is an empty
-directory (the supervisor's FUSE mount point); `/var/lib/supervisor` is root's, 0700.
+Qwen Code (a release of DE0CH/qwen-code pinned by sha256: `QWEN_CODE_RELEASE`, `QWEN_CODE_SHA256`) root-owned at
+`/opt/qwen-code` (`/opt/qwen-code/bin/qwen`, `/usr/local/bin/qwen`); the video edit engine, its tools and its asset
+library; `/usr/local/bin/supervisor`, `supervisor-keeper`, and `sandbox-secret` and `send-file`, both `-> supervisor`.
+`ENTRYPOINT ["/usr/local/bin/supervisor-keeper"]`, no CMD, no tini: the keeper is PID 1. `/home/sandbox/.harness` is
+an empty directory (the supervisor's FUSE mount point); `/home/sandbox/.claude` and `/home/sandbox/.qwen` link to
+`.harness/claude` and `.harness/qwen`; `/var/lib/supervisor` is root's, 0700.
+
+A new Qwen Code: push to DE0CH/qwen-code's branch `de0ch` (its workflow `de0ch-release` tests, packs and releases
+`qwen-code-de0ch.tgz` as `de0ch-<sha12>`), then put the tag and the tarball's sha256 in the Dockerfile.
 
 The runtime starts it with the sandbox's proxy URL in `HTTP_PROXY` (the sandbox token as its password, DESIGN 12
 D1) and root's capabilities inside the sandbox (`/dev/fuse`, mounts, dockerd). Without a proxy credential the keeper

@@ -546,6 +546,8 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
         ],
     )
     .await?;
+    // a turn in another harness than the one before: what that harness has not seen goes with it
+    let carry_over = super::carry::range(tx, conversation, conv.get(5), user_seq).await?;
     let payload = StartTurn {
         text: m.text.clone(),
         files: start_files,
@@ -558,7 +560,7 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
         model: conv.get(3),
         thinking: conv.get(4),
         harness: magpie_api::Harness::parse(conv.get(5)).unwrap_or_default(),
-        carry_over: None,
+        carry_over,
     };
     let cmd = command(
         tx,

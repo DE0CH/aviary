@@ -347,6 +347,7 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             )
             .await
         }
+        "earlier" => raw_value(c.sandbox(Some(LEASE)).earlier(&query::<EarlierQuery>(&f)).await).await,
         "sandbox_blob_put" => c
             .sandbox(Some(LEASE))
             .sandbox_blob_put(&param_str(&f, "sha"), request_bytes(&f))

@@ -420,19 +420,27 @@ pub struct StartTurn {
     pub carry_over: Option<CarryOver>,
 }
 
-/// The earlier conversation handed to a harness that has not seen it (`start_turn.carryOver`).
+/// The earlier conversation handed to a harness that has not seen it (`start_turn.carryOver`): the supervisor
+/// reads its text (`GET /v1/sandbox/earlier`) and writes it into the workspace for the harness to read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CarryOver {
     /// The harness the earlier turns ran in.
     pub from: Harness,
-    /// The blob holding those turns as plain text (the person's messages, the replies, the tool calls and their
-    /// results in order), which the supervisor writes into the workspace.
-    pub blob_id: BlobId,
-    /// Its size.
-    pub bytes: u64,
-    /// The file name under `/workspace/.conversation/` (`earlier-<n>.md`; one per change of harness).
+    /// The file's name in `/workspace/uploads/` (`earlier-<n>.md`; one per change of harness).
     pub name: String,
+    /// What the harness has not seen: the rows made from the events after this seq …
+    pub after: u64,
+    /// … and before this one (the turn's own message).
+    pub before: u64,
+}
+
+/// `GET /v1/sandbox/earlier`'s query: the rows of the events between the two seqs, as text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EarlierQuery {
+    pub after: u64,
+    pub before: u64,
 }
 
 /// One answer of a parked turn's `start_turn`: the question as it was asked, and the person's answer.

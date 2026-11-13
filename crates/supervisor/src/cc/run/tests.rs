@@ -1120,6 +1120,71 @@ async fn a_turn_in_another_harness_starts_that_harness() {
     w.idle(&sup).await;
 }
 
+/// Every file under `dir`.
+fn files_under(dir: &Path, out: &mut Vec<PathBuf>) {
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        if e.path().is_dir() {
+            files_under(&e.path(), out);
+        } else {
+            out.push(e.path());
+        }
+    }
+}
+
+/// A turn in a harness that did not run the conversation's earlier turns: the supervisor reads them from magpie,
+/// writes them into the workspace, and the message tells the harness where they are and to sum them up first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_carried_over_conversation_is_written_into_the_workspace_for_the_new_harness() {
+    use magpie_api::Harness;
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let t = Uuid::now_v7();
+    w.magpie.push_command(
+        w.cid,
+        Some(t),
+        CommandBody::StartTurn(StartTurn {
+            harness: Harness::Qwen,
+            carry_over: Some(magpie_api::sandbox::CarryOver {
+                from: Harness::Claude,
+                name: "earlier-41.md".into(),
+                after: 0,
+                before: 41,
+            }),
+            text: "echo".into(),
+            files: vec![],
+            images: vec![],
+            resume: Resume {
+                provider_session_id: None,
+            },
+            sent_at: magpie_api::Timestamp::now(),
+            answers: Vec::new(),
+            model: Some("vendor/video".into()),
+            thinking: None,
+        }),
+    );
+    assert_eq!(w.ended(t).await["state"], "completed");
+    let file = w.ws.join("uploads/earlier-41.md");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "# Earlier conversation\n\n(events 0 to 41)\n"
+    );
+    // the harness was given the message, then where the earlier turns are (the message as it was written to it)
+    let mut kept = Vec::new();
+    files_under(&w.dir.join("gens"), &mut kept);
+    let said = kept
+        .iter()
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .find(|t| t.contains("<earlier_conversation>"))
+        .unwrap_or_default();
+    assert!(said.contains("<earlier_conversation>"), "{said}");
+    assert!(
+        said.contains(&format!("They are in the file {}", file.display())),
+        "{said}"
+    );
+    assert!(said.contains("Summary of the conversation so far"), "{said}");
+    w.idle(&sup).await;
+}
+
 /// Qwen Code has no `SendUserFile` tool: its shell runs `send-file`, which names no tool call, and the files land
 /// on the shell call that runs it. A `send-file` no shell call runs is refused.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
