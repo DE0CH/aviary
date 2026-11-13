@@ -280,7 +280,8 @@ fn queued(d: &Value) -> Class {
     if s(a, "commandMode").is_some_and(|m| m != "prompt") {
         return Class::Internal;
     }
-    let Some(text) = a.get("prompt").and_then(text_of).map(str::to_owned) else {
+    // a string, or the blocks of a message with images (its text blocks are the text)
+    let Some(text) = content_text(a.get("prompt")) else {
         return Class::Internal;
     };
     if text.trim().is_empty() || INTERNAL_PREFIXES.iter().any(|p| text.starts_with(p)) {

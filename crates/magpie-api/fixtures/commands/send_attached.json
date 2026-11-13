@@ -1,0 +1,29 @@
+{
+  "cmdSeq": 48,
+  "turnId": "0190f6c2-0000-7000-8000-00000000a001",
+  "type": "send_attached",
+  "payload": {
+    "text": "睇下呢份報告同張圖",
+    "files": [
+      {
+        "uploadId": "0190f6c2-0000-7000-8000-00000000b001",
+        "name": "Q3 report.pdf",
+        "mimeType": "application/pdf",
+        "size": 48213,
+        "workspacePath": "uploads/Q3 report.pdf",
+        "blob": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+      }
+    ],
+    "images": [
+      {
+        "uploadId": "0190f6c2-0000-7000-8000-00000000b002",
+        "mimeType": "image/heic",
+        "workspacePath": "uploads/IMG_0042.heic",
+        "blob": "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752",
+        "modelBlob": "fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13",
+        "modelMime": "image/jpeg"
+      }
+    ],
+    "sentAt": "2026-11-13T10:04:38.278Z"
+  }
+}

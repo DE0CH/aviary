@@ -2360,7 +2360,10 @@ impl Driver {
                     },
                 );
             }
-            CommandBody::SendMessage(m) => self.send_message(seq, c.turn_id, &m.text).await,
+            CommandBody::SendMessage(m) => {
+                self.send_message(seq, c.turn_id, Value::String(m.text)).await;
+            }
+            CommandBody::SendAttached(m) => self.send_attached(seq, c.turn_id, &m).await,
             CommandBody::Unknown => self.ack(seq, err_ack("unsupported")),
         }
     }
@@ -2502,14 +2505,33 @@ impl Driver {
             }
         }
         // 3: uploads
+        let (text, images) = self.attachments(&s.text, &s.files, &s.images).await?;
+        // a parked turn's resumption: its answers are the message (a resumed Claude Code no longer takes an answer to
+        // its predecessor's question, supervisor 7.6)
+        let text = if s.answers.is_empty() {
+            text
+        } else {
+            prompt::answers(&s.answers)
+        };
+        Ok(prompt::user_line(&prompt::content(text, &images), &s.sent_at.to_wire()))
+    }
+
+    /// A message's attachments: its files and its images' originals written into `/workspace/uploads`, and what
+    /// Claude Code gets: the text with their paths, and the images' model copies.
+    async fn attachments(
+        &self,
+        text: &str,
+        files: &[magpie_api::sandbox::StartFile],
+        images: &[magpie_api::sandbox::StartImage],
+    ) -> Result<(String, Vec<prompt::ImageBlock>), String> {
         let mut items = Vec::new();
-        for f in &s.files {
+        for f in files {
             items.push(uploads::Item {
                 workspace_path: f.workspace_path.clone(),
                 sha: f.blob.clone(),
             });
         }
-        for i in &s.images {
+        for i in images {
             items.push(uploads::Item {
                 workspace_path: i.workspace_path.clone(),
                 sha: i.blob.clone(),
@@ -2521,15 +2543,14 @@ impl Driver {
             .uploads
             .materialise(&self.reporter.calls(), &items, blob_deadline)
             .await?;
-        let mut images = Vec::new();
-        for i in &s.images {
-            images.push(prompt::ImageBlock {
+        let mut blocks = Vec::new();
+        for i in images {
+            blocks.push(prompt::ImageBlock {
                 media_type: i.model_mime.clone(),
                 bytes: uploads::blob(&self.reporter.calls(), &i.model_blob, blob_deadline).await?,
             });
         }
-        let files: Vec<prompt::Attached> = s
-            .files
+        let listed: Vec<prompt::Attached> = files
             .iter()
             .zip(&paths)
             .map(|(f, p)| prompt::Attached {
@@ -2537,23 +2558,15 @@ impl Driver {
                 name: Some(f.name.clone()),
             })
             .collect();
-        let shown: Vec<prompt::Attached> = s
-            .images
+        let shown: Vec<prompt::Attached> = images
             .iter()
-            .zip(&paths[s.files.len()..])
+            .zip(&paths[files.len()..])
             .map(|(i, p)| prompt::Attached {
                 path: p.clone(),
                 name: i.workspace_path.rsplit('/').next().map(str::to_owned),
             })
             .collect();
-        // a parked turn's resumption: its answers are the message (a resumed Claude Code no longer takes an answer to
-        // its predecessor's question, supervisor 7.6)
-        let text = if s.answers.is_empty() {
-            prompt::text(&s.text, &files, &shown)
-        } else {
-            prompt::answers(&s.answers)
-        };
-        Ok(prompt::user_line(&prompt::content(text, &images), &s.sent_at.to_wire()))
+        Ok((prompt::text(text, &listed, &shown), blocks))
     }
 
     #[allow(clippy::too_many_lines)] // the steps of 10.2 in order
@@ -2994,15 +3007,54 @@ impl Driver {
     /// that `result`, Claude Code answers it in a run of its own, which opens an agent turn as any output with no
     /// pending input does. Acked `delivered: false` when `turn_id` is not the running turn (magpie then
     /// sends it as a new turn); a repeat of a written one (a restarted supervisor) is acked again, never rewritten.
-    async fn send_message(&self, seq: u64, turn_id: Option<Uuid>, text: &str) {
+    async fn send_message(&self, seq: u64, turn_id: Option<Uuid>, content: Value) {
         // after the turn's own start_turn, which holds the lane while it writes the person's message
         let _lane = self.turn_lane.lock().await;
+        if self.injected(seq) {
+            return;
+        }
+        self.inject(seq, turn_id, &content);
+    }
+
+    /// `send_attached` (a person's message with attachments while a turn runs): its files are written into the
+    /// workspace, then the message goes to the turn's generation as [`Self::send_message`]'s does, its images as
+    /// image blocks. Acked `delivered: false` without writing a file when `turn_id` is not the running turn, and
+    /// with the error when a file cannot be written (magpie then holds the message until the turn has ended).
+    async fn send_attached(&self, seq: u64, turn_id: Option<Uuid>, m: &magpie_api::sandbox::SendAttached) {
+        let _lane = self.turn_lane.lock().await;
+        if self.injected(seq) {
+            return;
+        }
+        let running = {
+            let st = lock(&self.st);
+            st.turn.as_ref().is_some_and(|t| Some(t.id) == turn_id && t.handed)
+        };
+        if !running {
+            return self.ack(
+                seq,
+                AckResult {
+                    delivered: Some(false),
+                    ..AckResult::default()
+                },
+            );
+        }
+        match self.attachments(&m.text, &m.files, &m.images).await {
+            Ok((text, images)) => self.inject(seq, turn_id, &prompt::content(text, &images)),
+            Err(e) => {
+                tracing::warn!(error = %e, "a message's attachments were not written");
+                self.ack(seq, err_ack(&e));
+            }
+        }
+    }
+
+    /// Whether `seq`'s message was written already (a restarted supervisor's repeat): acked again, never rewritten.
+    fn injected(&self, seq: u64) -> bool {
         let already = lock(&self.st)
             .delivered
             .get(&seq)
             .is_some_and(|d| d.state == "injected");
         if already {
-            return self.ack(
+            self.ack(
                 seq,
                 AckResult {
                     delivered: Some(true),
@@ -3010,7 +3062,13 @@ impl Driver {
                 },
             );
         }
-        let message = prompt::user_line(&Value::String(text.to_owned()), &rfc3339(now()));
+        already
+    }
+
+    /// Writes a message into the running turn `turn_id` and acks `seq` (`delivered: false` when that turn no longer
+    /// runs).
+    fn inject(&self, seq: u64, turn_id: Option<Uuid>, content: &Value) {
+        let message = prompt::user_line(content, &rfc3339(now()));
         let lane = self.with(Change::State, |st, fx| {
             let t = st.turn.as_ref()?;
             let running = turn_id == Some(t.id)

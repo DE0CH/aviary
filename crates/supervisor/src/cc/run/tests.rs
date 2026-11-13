@@ -1548,6 +1548,97 @@ async fn the_prompt_carries_the_tags_and_the_image_block() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_message_with_attachments_joins_the_running_turn() {
+    let w = world().await;
+    let _sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let pdf = b"%PDF-1.4 report".to_vec();
+    let (pdf_sha, img, small) = (
+        w.magpie.seed_blob(&pdf),
+        w.magpie.seed_blob(b"orig"),
+        w.magpie.seed_blob(b"copy"),
+    );
+    let message = |file: &str, image: &str| {
+        CommandBody::SendAttached(magpie_api::sandbox::SendAttached {
+            text: "echo".into(),
+            files: vec![StartFile {
+                upload_id: Uuid::new_v4(),
+                name: "Q3 report.pdf".into(),
+                mime_type: "application/pdf".into(),
+                size: pdf.len() as u64,
+                workspace_path: format!("uploads/{file}"),
+                blob: pdf_sha.clone(),
+            }],
+            images: vec![StartImage {
+                upload_id: Uuid::new_v4(),
+                mime_type: "image/png".into(),
+                workspace_path: format!("uploads/{image}"),
+                blob: img.clone(),
+                model_blob: small.clone(),
+                model_mime: "image/png".into(),
+            }],
+            sent_at: magpie_api::Timestamp(time::OffsetDateTime::now_utc()),
+        })
+    };
+    let (t, _) = w.turn("ask;say:after");
+    let calls = w.magpie.clone();
+    until("the ask", || !calls.script().calls_to("ask_open").is_empty()).await;
+    // for a turn that is not the running one: not delivered, and no file is written
+    let other = w
+        .magpie
+        .push_command(w.cid, Some(Uuid::now_v7()), message("no.pdf", "no.png"));
+    assert_eq!(w.acked(other).await.delivered, Some(false));
+    assert!(!w.ws.join("uploads/no.pdf").exists());
+    // for the running turn: its files are in the workspace, then it is written to Claude Code
+    let sent = w.magpie.push_command(w.cid, Some(t), message("Q3 report.pdf", "a.png"));
+    assert_eq!(w.acked(sent).await.delivered, Some(true));
+    assert_eq!(std::fs::read(w.ws.join("uploads/Q3 report.pdf")).unwrap(), pdf);
+    assert_eq!(std::fs::read(w.ws.join("uploads/a.png")).unwrap(), b"orig");
+    until("the message on Claude Code's stdin", || {
+        w.fake_log().iter().filter(|l| l.as_str() == "stdin user").count() == 2
+    })
+    .await;
+    assert!(
+        w.states(t).iter().all(|s| s["state"] == "running"),
+        "the turn still runs"
+    );
+    // a file that cannot be written: the error, nothing written to Claude Code (magpie holds the message)
+    crate::uploads::FAIL_WRITES_WITH.store(libc::EDQUOT, std::sync::atomic::Ordering::SeqCst);
+    let failed = w.magpie.push_command(w.cid, Some(t), message("b.pdf", "b.png"));
+    let ack = w.acked(failed).await;
+    crate::uploads::FAIL_WRITES_WITH.store(0, std::sync::atomic::Ordering::SeqCst);
+    assert!(ack.error.is_some() && ack.delivered.is_none(), "{ack:?}");
+    assert_eq!(w.fake_log().iter().filter(|l| l.as_str() == "stdin user").count(), 2);
+    // what Claude Code got (this fake answers it in a run of its own after the turn, echoing it): the text with
+    // the paths, and the image's model copy as a block
+    let id = calls.script().calls_to("ask_open")[0].body.clone().unwrap()["askId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let a = w.magpie.push_command(
+        w.cid,
+        None,
+        CommandBody::AnswerAsk(AnswerAsk {
+            ask_id: id,
+            allow: true,
+            updated_input: None,
+            message: None,
+        }),
+    );
+    w.acked(a).await;
+    assert_eq!(w.ended(t).await["state"], "completed");
+    until("the message's own run", || {
+        std::fs::read_to_string(w.dir.join("gens/1/stdout.ndjson")).is_ok_and(|o| o.contains("images=1"))
+    })
+    .await;
+    let out = std::fs::read_to_string(w.dir.join("gens/1/stdout.ndjson")).unwrap();
+    assert!(
+        out.contains("<files_input>") && out.contains("/workspace/uploads/Q3 report.pdf"),
+        "{out}"
+    );
+    assert!(out.contains("<image_uploads>"), "{out}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn titles_go_to_the_model_and_back_in_the_ack() {
     let w = world().await;
     let sup = w.attach(None, crate::start::Reattach::Nothing).await;

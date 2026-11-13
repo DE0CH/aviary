@@ -344,13 +344,34 @@ async fn uploads(tx: &Tx<'_>, person: &str, m: &SendRequest) -> Result<(Vec<Uplo
     Ok((images, files))
 }
 
-/// Admits `m` as a person turn of `conversation`, whose row the caller has locked and checked (magpie 8.2 steps 4-5).
+/// A message's uploads, placed in the conversation's workspace.
+#[derive(Debug)]
+pub struct Placed {
+    /// `user.sent`'s images.
+    pub ev_images: Vec<AttachedImage>,
+    /// `user.sent`'s files.
+    pub ev_files: Vec<Attachment>,
+    /// The supervisor's images.
+    pub start_images: Vec<StartImage>,
+    /// The supervisor's files.
+    pub start_files: Vec<StartFile>,
+}
+
+/// Places the uploads `m` names (the person's, unattached, locked) under `uploads/` of the conversation's
+/// workspace: each gets a name no upload of the conversation has, nor any path in `planned` (the paths of messages
+/// on their way into the running turn, src/turns/midturn.rs). Nothing is written: [`attach`] makes them the
+/// conversation's.
 ///
 /// # Errors
 /// 400 `unknown_upload`; a statement error.
-#[allow(clippy::too_many_lines)] // the steps of magpie 8.2, in its order
-pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendRequest) -> Result<TurnStarted> {
-    let (images, files) = uploads(tx, &person.email, m).await?;
+pub async fn place(
+    tx: &Tx<'_>,
+    conversation: Uuid,
+    person: &str,
+    m: &SendRequest,
+    planned: &[String],
+) -> Result<Placed> {
+    let (images, files) = uploads(tx, person, m).await?;
     let mut taken: HashSet<String> = tx
         .query(
             "select workspace_path from uploads where conversation_id = $1 and workspace_path is not null",
@@ -358,7 +379,9 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
         )
         .await?
         .iter()
-        .filter_map(|r| r.get::<_, String>(0).strip_prefix("uploads/").map(str::to_owned))
+        .map(|r| r.get::<_, String>(0))
+        .chain(planned.iter().cloned())
+        .filter_map(|p| p.strip_prefix("uploads/").map(str::to_owned))
         .collect();
     let mut placed = Vec::new();
     for u in images.iter().chain(&files) {
@@ -366,16 +389,18 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
         taken.insert(name.clone());
         placed.push((u, format!("uploads/{name}")));
     }
-    let mut ev_images = Vec::new();
-    let mut ev_files = Vec::new();
-    let mut start_images = Vec::new();
-    let mut start_files = Vec::new();
+    let mut out = Placed {
+        ev_images: Vec::new(),
+        ev_files: Vec::new(),
+        start_images: Vec::new(),
+        start_files: Vec::new(),
+    };
     for (u, path) in &placed {
         let blob = blob_pointer(tx, &u.blob).await?;
         let size = u64::try_from(u.size).unwrap_or(0);
         if let (true, Some(model)) = (u.role == "image" && images.iter().any(|i| i.id == u.id), &u.model_blob) {
             let model_ptr = blob_pointer(tx, model).await?;
-            start_images.push(StartImage {
+            out.start_images.push(StartImage {
                 upload_id: u.id,
                 mime_type: u.mime.clone(),
                 workspace_path: path.clone(),
@@ -383,7 +408,7 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
                 model_blob: hex(model),
                 model_mime: model_ptr.blob.mime.clone().unwrap_or_else(|| u.mime.clone()),
             });
-            ev_images.push(AttachedImage {
+            out.ev_images.push(AttachedImage {
                 upload_id: u.id,
                 mime_type: u.mime.clone(),
                 size,
@@ -394,7 +419,7 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
                 model_blob: model_ptr,
             });
         } else {
-            start_files.push(StartFile {
+            out.start_files.push(StartFile {
                 upload_id: u.id,
                 name: u.name.clone(),
                 mime_type: u.mime.clone(),
@@ -402,7 +427,7 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
                 workspace_path: path.clone(),
                 blob: hex(&u.blob),
             });
-            ev_files.push(Attachment {
+            out.ev_files.push(Attachment {
                 upload_id: u.id,
                 name: u.name.clone(),
                 mime_type: u.mime.clone(),
@@ -412,6 +437,60 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
             });
         }
     }
+    Ok(out)
+}
+
+/// Makes the placed uploads the conversation's: attached by the event `seq` (the message's row), at their
+/// workspace paths, their blobs held by the conversation. An upload that is gone by now (retention) is skipped.
+///
+/// # Errors
+/// When a statement fails.
+pub async fn attach(
+    tx: &Tx<'_>,
+    conversation: Uuid,
+    files: &[StartFile],
+    images: &[StartImage],
+    seq: i64,
+) -> Result<()> {
+    let all = files
+        .iter()
+        .map(|f| (f.upload_id, &f.workspace_path))
+        .chain(images.iter().map(|i| (i.upload_id, &i.workspace_path)));
+    for (id, path) in all {
+        let row = tx
+            .query_opt(
+                "update uploads set conversation_id = $2, workspace_path = $3, attached_seq = $4
+                 where id = $1 and conversation_id is null returning blob, model_blob",
+                &[&id, &conversation, path, &seq],
+            )
+            .await?;
+        let Some(row) = row else { continue };
+        let blob: Vec<u8> = row.get(0);
+        let model: Option<Vec<u8>> = row.get(1);
+        for sha in std::iter::once(&blob).chain(model.as_ref()) {
+            tx.execute(
+                "insert into blob_refs (owner, owner_kind, blob) values ($1, 'conversation', $2)
+                 on conflict do nothing",
+                &[&conversation, sha],
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// Admits `m` as a person turn of `conversation`, whose row the caller has locked and checked (magpie 8.2 steps 4-5).
+///
+/// # Errors
+/// 400 `unknown_upload`; a statement error.
+#[allow(clippy::too_many_lines)] // the steps of magpie 8.2, in its order
+pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendRequest) -> Result<TurnStarted> {
+    let Placed {
+        ev_images,
+        ev_files,
+        start_images,
+        start_files,
+    } = place(tx, conversation, &person.email, m, &[]).await?;
     let now = OffsetDateTime::now_utc();
     let sent = EventBody::UserSent(UserSent {
         client_message_id: m.client_message_id.clone(),
@@ -427,21 +506,7 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
     ev.is_prompt = true;
     ev.at = now;
     let user_seq = events::append(tx, conversation, ev).await?;
-    for (u, path) in &placed {
-        tx.execute(
-            "update uploads set conversation_id = $2, workspace_path = $3, attached_seq = $4 where id = $1",
-            &[&u.id, &conversation, path, &user_seq],
-        )
-        .await?;
-        for sha in std::iter::once(&u.blob).chain(u.model_blob.as_ref()) {
-            tx.execute(
-                "insert into blob_refs (owner, owner_kind, blob) values ($1, 'conversation', $2)
-                 on conflict do nothing",
-                &[&conversation, sha],
-            )
-            .await?;
-        }
-    }
+    attach(tx, conversation, &start_files, &start_images, user_seq).await?;
     if let Some(v) = &person.viewer {
         let chars = i32::try_from(m.text.chars().count()).unwrap_or(i32::MAX);
         tx.execute(

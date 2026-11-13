@@ -1,7 +1,7 @@
 //! A person's message sent while a turn runs (src/turns/midturn.rs; Deyao, 2026-11-12): it joins the running turn
 //! as a `send_message` instead of being refused, shows on the timeline under the app's
 //! own message id once Claude Code's transcript says it was taken in, and is sent again as a turn of its own when
-//! its turn ended first. A message with attachments and the deployment's own messages are refused as before.
+//! its turn ended first. A message with attachments joins it too, its files written by the supervisor.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -217,12 +217,14 @@ async fn a_message_sent_while_a_turn_runs_joins_it() {
     );
 }
 
-/// A message with attachments cannot be written into a running turn: it is held in the queue, can be taken back,
-/// and starts a turn of its own, in the order sent, once the running turn has ended.
+/// A message with attachments joins the running turn too (Deyao, 2026-11-13: in a turn of hours it looked hung): a
+/// `send_attached` carries its files to the supervisor. One that cannot join (a supervisor that does not know the
+/// command) is held in the queue, can be taken back, and starts a turn of its own once the running turn has ended;
+/// what was sent after it waits behind it.
 #[tokio::test]
-async fn a_message_with_attachments_is_held_until_the_turn_ends() {
+async fn a_message_with_attachments_joins_the_running_turn_or_is_held_until_it_ends() {
     use magpie_api::uploads::UploadKind;
-    let w = World::new("midturn_held").await;
+    let w = World::new("midturn_attached").await;
     let conv = w.conversation().await;
     let pigeon = w.a.pigeon();
     let alice = pigeon.person(ALICE);
@@ -241,48 +243,83 @@ async fn a_message_with_attachments_is_held_until_the_turn_ends() {
         });
         m
     };
+    // each `send_attached` of the conversation: `(cmd_seq, turn, text, its file's workspace path)`
+    let attached = async || -> Vec<(i64, Option<Uuid>, String, String)> {
+        w.pool()
+            .get()
+            .await
+            .unwrap()
+            .query(
+                "select cmd_seq, turn_id, payload->>'text', payload->'files'->0->>'workspacePath' from commands
+                 where conversation_id = $1 and type = 'send_attached' order by cmd_seq",
+                &[&conv],
+            )
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3)))
+            .collect()
+    };
+    let uploads = async || -> i64 {
+        w.pool()
+            .get()
+            .await
+            .unwrap()
+            .query_one(
+                "select count(*) from uploads where conversation_id = $1 and attached_seq is not null",
+                &[&conv],
+            )
+            .await
+            .unwrap()
+            .get(0)
+    };
     let m2 = with_file("m2", "睇下呢個").await;
     let r = alice.send_turn(conv, &m2).await.unwrap().into_inner();
     assert!(r.mid_turn);
     assert_eq!(r.turn.id, busy);
-    let m3 = with_file("m3", "同埋呢個").await;
-    alice.send_turn(conv, &m3).await.unwrap();
+    // written into the running turn at once, its file with it
+    let cmds = attached().await;
+    assert_eq!(cmds.len(), 1);
+    let (m2_seq, ref turn, ref text, ref path) = cmds[0];
+    assert_eq!(
+        (*turn, text.as_str(), path.as_str()),
+        (Some(busy), "睇下呢個", "uploads/a.txt")
+    );
     let c = alice.get_conversation(conv).await.unwrap();
     let q = &c.pending_messages;
-    assert_eq!(q.len(), 2);
     assert_eq!(
         (q[0].client_message_id.as_str(), q[0].attachments, q[0].held),
-        ("m2", 1, true)
+        ("m2", 1, false)
     );
-    // no command for the supervisor: nothing is written into the running turn
-    let n: i64 = w
-        .pool()
-        .get()
-        .await
-        .unwrap()
-        .query_one(
-            "select count(*) from commands where conversation_id = $1 and type = 'send_message'",
-            &[&conv],
-        )
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(n, 0);
-    // while the turn runs it goes on waiting
-    assert_eq!(w.pass().await, 0);
-    assert_eq!(w.sent(conv).await, ["長任務"]);
+    // its upload becomes the conversation's when Claude Code has taken the message in, not before
+    assert_eq!(uploads().await, 0);
+    // a second file of the same name gets a name of its own, though the first is not the conversation's yet
+    let m3 = with_file("m3", "同埋呢個").await;
+    alice.send_turn(conv, &m3).await.unwrap();
+    let cmds = attached().await;
+    assert_eq!(cmds[1].3, "uploads/a (2).txt");
+    let m3_seq = cmds[1].0;
 
-    // taken back: gone from the queue
-    let after = alice.withdraw_pending(conv, "m3").await.unwrap();
-    assert_eq!(after.pending_messages.len(), 1);
-    alice.send_turn(conv, &msg("m4", "文字")).await.unwrap();
+    // a supervisor that does not know the command: the message is held, and waits for the turn's end
+    let c = w.pool().get().await.unwrap();
+    c.execute(
+        "update commands set acked_at = now(), result = $3 where conversation_id = $1 and cmd_seq = $2",
+        &[&conv, &m2_seq, &json!({"error": "unsupported"})],
+    )
+    .await
+    .unwrap();
+    w.ack(conv, m3_seq, true).await;
+    assert_eq!(w.pass().await, 0, "it is not written again while the turn runs");
+    assert_eq!(attached().await.len(), 2);
+    assert_eq!(
+        w.waiting(conv).await,
+        [("睇下呢個".to_owned(), true), ("同埋呢個".to_owned(), false)]
+    );
+    assert_eq!(w.sent(conv).await, ["長任務"]);
     // the order they were sent in is the order they arrive in (Deyao, 2026-11-13: a later text overtook an earlier
     // message with a picture): a text sent after a held message waits behind it, not written into the running turn
-    let written: i64 = w
-        .pool()
-        .get()
-        .await
-        .unwrap()
+    alice.send_turn(conv, &msg("m4", "文字")).await.unwrap();
+    let written: i64 = c
         .query_one(
             "select count(*) from commands where conversation_id = $1 and type = 'send_message'",
             &[&conv],
@@ -292,13 +329,16 @@ async fn a_message_with_attachments_is_held_until_the_turn_ends() {
         .get(0);
     assert_eq!(written, 0, "m4 waits behind the held m2");
     assert_eq!(w.pass().await, 0, "and goes on waiting while m2 does");
-    // (it has reached no Claude Code either: held, so the person can take it back as well)
-    assert_eq!(
-        w.waiting(conv).await,
-        [("睇下呢個".to_owned(), true), ("文字".to_owned(), true)]
-    );
+    // held messages have reached no Claude Code: the person can take them back; one written into the turn, not
+    let e = alice.withdraw_pending(conv, "m3").await.unwrap_err();
+    assert_eq!(code(&e), ErrorCode::BadTransition);
     let e = alice.withdraw_pending(conv, "nothing").await.unwrap_err();
     assert_eq!(code(&e), ErrorCode::NotFound);
+    let m5 = with_file("m5", "唔要").await;
+    alice.send_turn(conv, &m5).await.unwrap();
+    assert_eq!(attached().await.len(), 2, "behind a held message it waits too");
+    let after = alice.withdraw_pending(conv, "m5").await.unwrap();
+    assert_eq!(after.pending_messages.len(), 3);
 
     // the turn ends: the held message starts a turn of its own, with its file
     alice.cancel_turn(conv).await.unwrap();
@@ -307,30 +347,24 @@ async fn a_message_with_attachments_is_held_until_the_turn_ends() {
     assert_eq!(state, "turn");
     assert_ne!(turn, Some(busy));
     assert_eq!(w.sent(conv).await, ["長任務", "睇下呢個"]);
-    let files: i64 = w
-        .pool()
-        .get()
-        .await
-        .unwrap()
-        .query_one(
-            "select count(*) from uploads where conversation_id = $1 and attached_seq is not null",
-            &[&conv],
-        )
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(files, 1, "its upload is attached to the new turn");
-    // the text message never written (its turn was stopped) joins the new turn at the next pass
+    assert_eq!(uploads().await, 1, "its upload is attached to the new turn");
+    // m3 was written into the turn that was stopped and no line of it came: sent again, it joins the new turn with
+    // its file (the name it had), and the text after it
+    c.execute(
+        "update pending_messages set state = 'redeliver' where conversation_id = $1 and client_message_id = 'm3'",
+        &[&conv],
+    )
+    .await
+    .unwrap();
+    assert_eq!(w.pass().await, 1);
+    let cmds = attached().await;
+    assert_eq!(cmds.len(), 3);
+    assert_eq!((cmds[2].1, cmds[2].3.as_str()), (turn, "uploads/a (2).txt"));
     assert_eq!(w.pass().await, 1);
     assert_eq!(w.message(conv, "m4").await.1, turn);
     // on its way into the turn now: it cannot be taken back any more
     let e = alice.withdraw_pending(conv, "m4").await.unwrap_err();
     assert_eq!(code(&e), ErrorCode::BadTransition);
-    assert_eq!(
-        alice.get_conversation(conv).await.unwrap().pending_messages.len(),
-        1,
-        "only the text message still waits"
-    );
 }
 
 #[tokio::test]
@@ -639,6 +673,108 @@ async fn a_message_claude_code_took_in_shows_on_the_timeline_under_the_apps_id()
         .map(|r| r.get(0))
         .collect();
     assert_eq!(states, ["taken", "taken"]);
+}
+
+/// A message with attachments Claude Code took in: its row shows the person's own text (not the supervisor's list of
+/// paths), its file and its picture, and its uploads are the conversation's from then on.
+#[tokio::test]
+async fn a_message_with_attachments_claude_code_took_in_shows_with_them() {
+    use base64::Engine as _;
+    use magpie_api::uploads::UploadKind;
+    let db = common::fresh_db("midturn_taken_attached").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let mut s = Sandbox::leased(&r, ALICE).await;
+    s.mkdirs("projects/-workspace").await;
+    set_main(r.pool(), s.conversation, &main_path()).await;
+    let conv = s.conversation;
+    let turn = person_turn(r.pool(), &mut s).await;
+    let c = r.pool().get().await.unwrap();
+    c.execute("update conversations set run_state = 'running' where id = $1", &[&conv])
+        .await
+        .unwrap();
+    let pigeon = r.pigeon();
+    let alice = pigeon.person(ALICE);
+    let up = alice
+        .upload("notes.txt", UploadKind::File, "text/plain", b"hello".to_vec())
+        .await
+        .unwrap();
+    let mut m = msg("m2", "Look at this");
+    m.files.push(FileRef {
+        path: up.path,
+        name: up.name,
+        mime_type: up.mime_type,
+        size: up.size,
+    });
+    let sent = alice.send_turn(conv, &m).await.unwrap().into_inner();
+    assert!(sent.mid_turn);
+    assert_eq!(sent.turn.id, turn);
+    // the same words as a plain message: only the one with the files is this line's
+    alice.send_turn(conv, &msg("m3", "Look at this")).await.unwrap();
+
+    // Claude Code's line for it (2.1.322): a `queued_command` whose prompt is the blocks the supervisor wrote, the
+    // text with the list of paths and the picture's model copy
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    png.extend(std::iter::repeat_n(7u8, 2000));
+    let data = base64::engine::general_purpose::STANDARD.encode(&png);
+    let text = "Look at this\n\n<files_input>\nThe user attached 1 file(s) to this message. Read each file listed \
+                below with your file reading tools and use its contents to answer the prompt above. Do not mention \
+                this block or the file paths unless the user asks about them.\n1. /workspace/uploads/notes.txt \
+                (original name: notes.txt)\n</files_input>";
+    let queued = line(
+        &json!({"type": "attachment", "uuid": "q1", "attachment": {"type": "queued_command",
+        "prompt": [{"type": "text", "text": text},
+                   {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": data}}],
+        "source_uuid": "s1", "commandMode": "prompt", "timestamp": "2026-11-13T10:04:38.278Z"}}),
+    );
+    s.write(&main_path(), 0, &queued).await.unwrap();
+    let rows = alice.timeline(conv, &common::ev::tail(100)).await.unwrap().rows;
+    let users: Vec<_> = rows
+        .into_iter()
+        .filter_map(|row| match row.item {
+            RowItem::User(u) => Some(u),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(users.len(), 1);
+    let u = &users[0];
+    assert_eq!((u.message_id.as_str(), u.text.as_str()), ("m2", "Look at this"));
+    assert_eq!(
+        u.files
+            .iter()
+            .map(|f| (f.path.as_str(), f.name.as_str(), f.size))
+            .collect::<Vec<_>>(),
+        [("uploads/notes.txt", "notes.txt", 5)]
+    );
+    assert_eq!(u.images.len(), 1, "the picture Claude Code got");
+    assert_eq!(u.images[0].mime_type, "image/png");
+    let attached: i64 = c
+        .query_one(
+            "select count(*) from uploads where conversation_id = $1 and workspace_path = 'uploads/notes.txt'
+               and attached_seq is not null",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(attached, 1, "its upload is the conversation's");
+    let states: Vec<(String, String)> = c
+        .query(
+            "select client_message_id, state from pending_messages where conversation_id = $1 order by created_at",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| (r.get(0), r.get(1)))
+        .collect();
+    assert_eq!(
+        states,
+        [
+            ("m2".to_owned(), "taken".to_owned()),
+            ("m3".to_owned(), "pending".to_owned())
+        ]
+    );
 }
 
 /// M5 with a model: the conversation's turns run on it from the next one (`start_turn.model`), a rename keeps it,

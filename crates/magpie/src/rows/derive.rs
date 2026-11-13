@@ -57,7 +57,12 @@ pub fn chars(s: &str, n: usize) -> &str {
 /// The content blocks of a transcript line's `message.content` (a string reads as one text block).
 #[must_use]
 pub fn content(line: &Value) -> Vec<Value> {
-    match line.get("message").and_then(|m| m.get("content")) {
+    // a message Claude Code took in mid-turn is a `queued_command` attachment: its `prompt` is the content
+    let queued = line
+        .get("attachment")
+        .filter(|a| a.get("type").and_then(Value::as_str) == Some("queued_command"))
+        .and_then(|a| a.get("prompt"));
+    match line.get("message").and_then(|m| m.get("content")).or(queued) {
         Some(Value::Array(a)) => a.clone(),
         Some(Value::String(s)) => vec![serde_json::json!({"type": "text", "text": s})],
         _ => Vec::new(),

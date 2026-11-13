@@ -103,9 +103,14 @@ reads and their once-a-day audit. `tests/legacy_paths.rs`: the legacy-path set (
   and the message waits in the conversation's `pendingMessages`. A text message is written into the turn (a
   `send_message`): Claude Code takes it in after its next tool result, or answers it in a run of its own right after
   the reply, and the transcript's prompt line with its text is its `user` row, under the app's `clientMessageId`
-  (`meta.clientMessageId`). A message with attachments is held (`held`), can be taken back
-  (`DELETE /v1/conversations/{id}/pending/{clientMessageId}`), and starts a turn of its own once the turn has ended,
-  as does a text message its turn never took. The job leader settles and sends again every second. hermit's
+  (`meta.clientMessageId`). A message with attachments joins the turn too (Deyao, 2026-11-13: held, it looked hung
+  in a turn of hours): a `send_attached` carries its files, the supervisor writes them into the workspace and the
+  message into the turn (its images as image blocks), and the prompt line's row shows the person's text
+  (`meta.displayText`), its files (`meta.attachments`) and the line's own image blocks; its uploads become the
+  conversation's then. A message that cannot join (a supervisor that does not know `send_attached`, a file it could
+  not write) is held (`held`), as is every message sent after a held one; a held message can be taken back
+  (`DELETE /v1/conversations/{id}/pending/{clientMessageId}`) and starts a turn of its own once the turn has ended,
+  as does a message its turn never took. The job leader settles and sends again every second. hermit's
   messages and an admin's view-as send are refused as before.
 - **A conversation's model** (Deyao, 2026-11-12): M5 takes `model` beside `title` (`pickedModel`, kept in
   `conversations.picked_model`), hermit's create takes `model` for the conversation's first, and every `start_turn`

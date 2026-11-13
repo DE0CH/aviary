@@ -490,6 +490,30 @@ async fn class_of(tx: &Tx<'_>, op: &Op<'_>, sha: &Sha, data: Option<&Value>) -> 
     Ok(class)
 }
 
+/// A prompt line that is a person's mid-turn message taken in (src/turns/midturn.rs): its row carries the app's id,
+/// and for a message with attachments the person's text and files (the line's text has the supervisor's list of
+/// paths; its image blocks are the row's images). The attachments, for the caller to attach once the event has
+/// its seq.
+async fn taken_in(
+    tx: &Tx<'_>,
+    op: &mut Op<'_>,
+    text: &str,
+    m: &mut magpie_api::events::EventMeta,
+) -> Result<Option<crate::turns::midturn::Attached>> {
+    let Some(t) = crate::turns::midturn::taken(tx, op.conv.id, text).await? else {
+        return Ok(None);
+    };
+    m.client_message_id = Some(t.client_message_id);
+    if let Some(a) = &t.attached {
+        m.display_text = Some(a.text.clone());
+        let files = a.files();
+        m.attachments = (!files.is_empty()).then_some(files);
+    }
+    // it has left the conversation's queue
+    op.upserted(tx).await?;
+    Ok(t.attached)
+}
+
 /// Makes the event (or the internal effect) of a main-transcript line with sha256 `sha`; its event seq.
 async fn apply(
     tx: &Tx<'_>,
@@ -541,16 +565,10 @@ async fn apply(
                 }
                 m.replaces = r.and_then(|(s, _)| u64::try_from(s).ok());
             }
-            if e.is_prompt
-                && let Some(text) = e.text.as_deref()
-            {
-                // a person's mid-turn message taken in (src/turns/midturn.rs): its row carries the app's id
-                m.client_message_id = crate::turns::midturn::taken(tx, op.conv.id, text).await?;
-                if m.client_message_id.is_some() {
-                    // it has left the conversation's queue
-                    op.upserted(tx).await?;
-                }
-            }
+            let attached = match e.text.as_deref() {
+                Some(text) if e.is_prompt => taken_in(tx, op, text, &mut m).await?,
+                _ => None,
+            };
             let at = OffsetDateTime::now_utc();
             let meta_json = serde_json::to_value(&m)?;
             let meta_json = meta_json
@@ -562,12 +580,15 @@ async fn apply(
                 data: data.unwrap_or(Value::Null),
                 meta: meta_json,
                 turn_id: op.turn_id(),
-                text: e.text,
+                text: attached.as_ref().map(|a| a.text.clone()).or(e.text),
                 is_prompt: e.is_prompt,
                 viewer: None,
                 at,
             };
             let seq = events::append(tx, op.conv.id, ev).await?;
+            if let Some(a) = &attached {
+                a.attach(tx, op.conv.id, seq).await?;
+            }
             for (id, name) in &e.tool_uses {
                 tx.execute(
                     "insert into tool_links (conversation_id, tool_use_id, use_seq, name) values ($1, $2, $3, $4)

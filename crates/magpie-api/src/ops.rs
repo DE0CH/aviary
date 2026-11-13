@@ -75,7 +75,7 @@ pub struct HermitSendRequest {
     pub message: crate::turns::SendRequest,
     /// While a turn runs, the message joins it as a person's does (M7 `midTurn`: it reaches Claude Code after its
     /// next tool result) instead of being refused: for a message that must not wait for a long turn to end (a
-    /// deployment's warning to the agent). A message with attachments is still held until the turn ends.
+    /// deployment's warning to the agent). A message with attachments joins it too (`send_attached`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub join_running: bool,
 }

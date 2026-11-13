@@ -96,8 +96,8 @@ pub struct PendingMessage {
     pub attachments: u32,
     /// When the person sent it.
     pub sent_at: Timestamp,
-    /// It waits for the running turn to end and then starts a turn of its own (it has attachments, or the turn
-    /// could not take it), so it can still be taken back (`DELETE …/pending/{clientMessageId}`). False: it is on
+    /// It waits for the running turn to end and then starts a turn of its own (the turn could not take it, or it
+    /// was sent after one that waits), so it can still be taken back (`DELETE …/pending/{clientMessageId}`). False: it is on
     /// its way into the running turn.
     pub held: bool,
 }

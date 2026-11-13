@@ -278,6 +278,10 @@ pub enum CommandBody {
     /// written to the turn's generation, `delivered: false` when that turn no longer runs (magpie then sends it as a
     /// new turn).
     SendMessage(SendMessage),
+    /// A person's message with attachments for the running turn: its files are written into the workspace first,
+    /// then it is written to Claude Code as `send_message` is (its images as image blocks). Acked as `send_message`
+    /// is; a supervisor that does not know it answers `unsupported` and the message waits for the turn's end.
+    SendAttached(SendAttached),
     /// A type this build does not know (its payload is dropped; it cannot be written back).
     #[serde(skip_serializing)]
     Unknown,
@@ -307,6 +311,7 @@ impl<'de> Deserialize<'de> for CommandBody {
             "stop_tasks" => CommandBody::StopTasks(payload(raw.payload)?),
             "stop_task" => CommandBody::StopTask(payload(raw.payload)?),
             "send_message" => CommandBody::SendMessage(payload(raw.payload)?),
+            "send_attached" => CommandBody::SendAttached(payload(raw.payload)?),
             _ => CommandBody::Unknown,
         })
     }
@@ -322,6 +327,7 @@ pub const COMMAND_TYPES: &[&str] = &[
     "stop_tasks",
     "stop_task",
     "send_message",
+    "send_attached",
 ];
 
 impl CommandBody {
@@ -337,6 +343,7 @@ impl CommandBody {
             CommandBody::StopTasks(_) => "stop_tasks",
             CommandBody::StopTask(_) => "stop_task",
             CommandBody::SendMessage(_) => "send_message",
+            CommandBody::SendAttached(_) => "send_attached",
             CommandBody::Unknown => return None,
         })
     }
@@ -356,6 +363,22 @@ pub struct StopTask {
 pub struct SendMessage {
     /// The message, as Claude Code gets it.
     pub text: String,
+}
+
+/// `send_attached`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendAttached {
+    /// The person's text.
+    pub text: String,
+    /// Files to write into `/workspace`.
+    #[serde(default)]
+    pub files: Vec<StartFile>,
+    /// Images: the original into `/workspace`, the model copy as an image block.
+    #[serde(default)]
+    pub images: Vec<StartImage>,
+    /// When the person sent it.
+    pub sent_at: Timestamp,
 }
 
 /// `start_turn`.

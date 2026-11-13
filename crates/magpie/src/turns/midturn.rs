@@ -10,9 +10,13 @@
 //!   message ([`taken`]). By its text, not by an id on the line: a supervisor of any version writes the message the
 //!   same way, so a sandbox started before this keeps working.
 //!   Behind a held message (below) it waits too, so messages arrive in the order they were sent.
-//! - **A message with attachments** cannot be written into a running turn (its files go into the workspace when a
-//!   turn starts): it is held (`redeliver`, its request kept) and starts a turn of its own once the conversation is
-//!   idle. While it is held the person can take it back ([`withdraw`]).
+//! - **A message with attachments** joins the running turn too (Deyao, 2026-11-13: in a turn of hours it looked
+//!   hung): a `send_attached` command carries its files, the supervisor writes them into the workspace and the
+//!   message into the turn, its images as image blocks. Its uploads stay unattached until its prompt line comes:
+//!   that line's row shows the person's text and the attachments, and the uploads become the conversation's. When
+//!   it cannot join (a supervisor that does not know `send_attached`, a file it could not write: `hold`), it is
+//!   held (`redeliver`, its request kept) and starts a turn of its own once the conversation is idle. While it is
+//!   held the person can take it back ([`withdraw`]).
 //!
 //! A text message its turn never took is sent again ([`settle`], [`redeliver`], on the job leader every
 //! [`EVERY`]): the supervisor said it did not write it (the turn was being stopped, or had ended), the turn
@@ -32,7 +36,8 @@ use aviary_pg::{Leader, Pool, Tx};
 use magpie_api::Timestamp;
 use magpie_api::conversations::{Conversation, PendingMessage};
 use magpie_api::errors::ErrorCode;
-use magpie_api::sandbox::SendMessage;
+use magpie_api::rows::RowFile;
+use magpie_api::sandbox::{SendAttached, SendMessage};
 use magpie_api::turns::{SendRequest, SendResponse, TurnStarted};
 use time::OffsetDateTime;
 use tokio::task::JoinHandle;
@@ -78,7 +83,7 @@ pub async fn repeat(tx: &Tx<'_>, conversation: Uuid, client_message_id: &str) ->
 }
 
 /// Queues `m` behind the conversation's running turn (the caller holds the conversation's row lock and has found
-/// it busy): a text message is written into the turn, one with attachments is held until the turn has ended.
+/// it busy): it is written into the turn (one with attachments: its files first, by the supervisor).
 /// `None` when it cannot wait: an admin sends it viewing as the person, or no turn row is active (the caller
 /// answers 409 `turn_running`).
 ///
@@ -91,9 +96,9 @@ pub async fn join(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendRequ
     let Some(turn) = active(tx, conversation).await?.filter(|t| !t.state.is_ended()) else {
         return Ok(None);
     };
-    // the order they were sent in is the order they arrive in: behind a held message (one with attachments, which
-    // waits for the turn to end) a text message waits too, and joins the turn that message starts (`pass` sends
-    // each conversation's oldest waiting message first)
+    // the order they were sent in is the order they arrive in: behind a held message (one with attachments that
+    // waits for the turn to end) a message waits too, and joins the turn that message starts (`pass` sends each
+    // conversation's oldest waiting message first)
     let behind_held: bool = tx
         .query_one(
             "select exists (select 1 from pending_messages
@@ -102,32 +107,38 @@ pub async fn join(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendRequ
         )
         .await?
         .get(0);
-    if m.images.is_empty() && m.files.is_empty() && behind_held {
-        tx.execute(
-            "insert into pending_messages (conversation_id, client_message_id, text, state, turn_id)
-             values ($1, $2, $3, 'redeliver', $4)",
-            &[&conversation, &m.client_message_id, &m.text, &turn.id],
-        )
-        .await?;
-    } else if m.images.is_empty() && m.files.is_empty() {
-        let seq = write(tx, conversation, turn.id, &m.text).await?;
-        tx.execute(
-            "insert into pending_messages (conversation_id, client_message_id, text, state, turn_id, cmd_seq)
-             values ($1, $2, $3, 'pending', $4, $5)",
-            &[&conversation, &m.client_message_id, &m.text, &turn.id, &seq],
-        )
-        .await?;
-    } else {
+    let attached = !(m.images.is_empty() && m.files.is_empty());
+    let request = attached.then(|| serde_json::to_value(m)).transpose()?;
+    if behind_held {
         tx.execute(
             "insert into pending_messages (conversation_id, client_message_id, text, state, turn_id, request)
              values ($1, $2, $3, 'redeliver', $4, $5)",
+            &[&conversation, &m.client_message_id, &m.text, &turn.id, &request],
+        )
+        .await?;
+    } else if attached {
+        let (seq, placed) = write_attached(tx, conversation, turn.id, &person.email, m).await?;
+        tx.execute(
+            "insert into pending_messages
+               (conversation_id, client_message_id, text, state, turn_id, cmd_seq, request, placed)
+             values ($1, $2, $3, 'pending', $4, $5, $6, $7)",
             &[
                 &conversation,
                 &m.client_message_id,
                 &m.text,
                 &turn.id,
-                &serde_json::to_value(m)?,
+                &seq,
+                &request,
+                &placed,
             ],
+        )
+        .await?;
+    } else {
+        let seq = write(tx, conversation, turn.id, &m.text).await?;
+        tx.execute(
+            "insert into pending_messages (conversation_id, client_message_id, text, state, turn_id, cmd_seq)
+             values ($1, $2, $3, 'pending', $4, $5)",
+            &[&conversation, &m.client_message_id, &m.text, &turn.id, &seq],
         )
         .await?;
     }
@@ -239,13 +250,146 @@ async fn write(tx: &Tx<'_>, conversation: Uuid, turn: Uuid, text: &str) -> Resul
     .await
 }
 
+/// Queues the `send_attached` that writes the message `m`, with its files, into `turn`; the command's seq and its
+/// payload (`placed`: where each file goes).
+///
+/// # Errors
+/// 400 `unknown_upload`; a statement error.
+async fn write_attached(
+    tx: &Tx<'_>,
+    conversation: Uuid,
+    turn: Uuid,
+    person: &str,
+    m: &SendRequest,
+) -> Result<(i64, serde_json::Value)> {
+    // the paths of the other messages on their way into the turn: their uploads are not the conversation's yet
+    let mut planned = Vec::new();
+    for r in tx
+        .query(
+            &format!(
+                "select placed from pending_messages
+                 where conversation_id = $1 and placed is not null and state in {OPEN}
+                   and client_message_id <> $2"
+            ),
+            &[&conversation, &m.client_message_id],
+        )
+        .await?
+    {
+        if let Ok(p) = serde_json::from_value::<SendAttached>(r.get(0)) {
+            planned.extend(p.files.into_iter().map(|f| f.workspace_path));
+            planned.extend(p.images.into_iter().map(|i| i.workspace_path));
+        }
+    }
+    let placed = admission::place(tx, conversation, person, m, &planned).await?;
+    let payload = serde_json::to_value(SendAttached {
+        text: m.text.clone(),
+        files: placed.start_files,
+        images: placed.start_images,
+        sent_at: Timestamp(OffsetDateTime::now_utc()),
+    })?;
+    let seq = command(tx, conversation, "send_attached", Some(turn), &payload).await?;
+    Ok((seq, payload))
+}
+
+/// A waiting message Claude Code took in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Taken {
+    /// The app's id of the message (`clientMessageId`), which the line's `user` row carries.
+    pub client_message_id: String,
+    /// A message with attachments: what its row shows, and its uploads.
+    pub attached: Option<Attached>,
+}
+
+/// A taken message's attachments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attached {
+    /// The person's text (the line's has the supervisor's list of paths after it).
+    pub text: String,
+    /// What the supervisor wrote.
+    pub placed: SendAttached,
+}
+
+impl Attached {
+    /// The row's files (its images are the line's own image blocks).
+    #[must_use]
+    pub fn files(&self) -> Vec<RowFile> {
+        self.placed
+            .files
+            .iter()
+            .map(|f| RowFile {
+                path: f.workspace_path.clone(),
+                name: f.name.clone(),
+                mime_type: f.mime_type.clone(),
+                size: f.size,
+                missing: None,
+            })
+            .collect()
+    }
+
+    /// Makes the uploads the conversation's, attached by the row's event `seq`.
+    ///
+    /// # Errors
+    /// When a statement fails.
+    pub async fn attach(&self, tx: &Tx<'_>, conversation: Uuid, seq: i64) -> Result<()> {
+        admission::attach(tx, conversation, &self.placed.files, &self.placed.images, seq).await
+    }
+}
+
+/// Whether the prompt line `line` is the message `text` as the supervisor writes it with attachments
+/// (supervisor `cc/prompt.rs` `text`): the text, then the `<files_input>` and `<image_uploads>` lists.
+#[must_use]
+pub fn is_attached_line(text: &str, line: &str) -> bool {
+    let Some(rest) = line.strip_prefix(text) else {
+        return false;
+    };
+    // (Claude Code may trim a message that is only the lists)
+    let rest = rest.trim_start_matches('\n');
+    rest.starts_with("<files_input>\n") || rest.starts_with("<image_uploads>\n")
+}
+
+/// The oldest message with attachments on its way into a turn whose line `text` is.
+async fn taken_attached(tx: &Tx<'_>, conversation: Uuid, text: &str) -> Result<Option<Taken>> {
+    let rows = tx
+        .query(
+            "select client_message_id, text, placed from pending_messages
+             where conversation_id = $1 and state in ('pending', 'written') and placed is not null
+             order by created_at, client_message_id",
+            &[&conversation],
+        )
+        .await?;
+    for r in rows {
+        let mine: String = r.get(1);
+        if !is_attached_line(&mine, text) {
+            continue;
+        }
+        let Ok(placed) = serde_json::from_value::<SendAttached>(r.get(2)) else {
+            continue;
+        };
+        let id: String = r.get(0);
+        tx.execute(
+            "update pending_messages set state = 'taken', at = now()
+             where conversation_id = $1 and client_message_id = $2",
+            &[&conversation, &id],
+        )
+        .await?;
+        return Ok(Some(Taken {
+            client_message_id: id,
+            attached: Some(Attached { text: mine, placed }),
+        }));
+    }
+    Ok(None)
+}
+
 /// A prompt line of the transcript with the text of a waiting message is that message taken in (the oldest such
-/// one): it waits no more. The app's id of the message (`clientMessageId`), which the line's `user` row then
-/// carries; `None` when the line is no waiting message's (a schedule's fire, a prompt Claude Code queued itself).
+/// one): it waits no more. `None` when the line is no waiting message's (a schedule's fire, a prompt Claude Code
+/// queued itself).
 ///
 /// # Errors
 /// When a statement fails.
-pub async fn taken(tx: &Tx<'_>, conversation: Uuid, text: &str) -> Result<Option<String>> {
+pub async fn taken(tx: &Tx<'_>, conversation: Uuid, text: &str) -> Result<Option<Taken>> {
+    if let Some(t) = taken_attached(tx, conversation, text).await? {
+        return Ok(Some(t));
+    }
     // only a message written into a turn: a held one has reached no Claude Code
     let row = tx
         .query_opt(
@@ -261,9 +405,15 @@ pub async fn taken(tx: &Tx<'_>, conversation: Uuid, text: &str) -> Result<Option
         )
         .await?;
     if let Some(r) = row {
-        return Ok(Some(r.get(0)));
+        return Ok(Some(Taken {
+            client_message_id: r.get(0),
+            attached: None,
+        }));
     }
-    taken_together(tx, conversation, text).await
+    Ok(taken_together(tx, conversation, text).await?.map(|id| Taken {
+        client_message_id: id,
+        attached: None,
+    }))
 }
 
 /// Claude Code takes every message that waits when it next looks as ONE prompt, their texts joined by a newline in
@@ -326,6 +476,8 @@ pub async fn settle(pool: &Pool) -> Result<()> {
             "update pending_messages p
              set state = case when m.acked_at is not null and m.result->>'delivered' = 'true' then 'written'
                               else 'redeliver' end,
+                 -- it could not join the turn (an old supervisor: `unsupported`; a file not written)
+                 hold = p.hold or (m.acked_at is not null and m.result->>'error' is not null),
                  at = now()
              from commands m
              where p.state = 'pending' and m.conversation_id = p.conversation_id and m.cmd_seq = p.cmd_seq
@@ -414,9 +566,41 @@ pub async fn pass(driver: &Driver) -> Result<usize> {
     Ok(n)
 }
 
-/// Sends the waiting message again: a text message into the turn that runs now, any message as a turn of its own
-/// in an idle conversation (`Some(Some(turn))`: the caller starts its driver). `None`: it goes on waiting (a
-/// message with attachments while a turn runs; a conversation busy without a turn row).
+/// Writes the waiting message `m`, with its files, into `turn` (it is `pending` again), or drops it when its
+/// uploads are gone (retention: nothing is left to send). `None` either way: no turn was started.
+async fn rejoin_attached(
+    t: &Tx<'_>,
+    conversation: Uuid,
+    turn: Uuid,
+    person: &str,
+    m: &SendRequest,
+) -> Result<Option<Uuid>> {
+    match write_attached(t, conversation, turn, person, m).await {
+        Ok((seq, placed)) => {
+            t.execute(
+                "update pending_messages
+                 set state = 'pending', turn_id = $3, cmd_seq = $4, placed = $5, at = now()
+                 where conversation_id = $1 and client_message_id = $2",
+                &[&conversation, &m.client_message_id, &turn, &seq, &placed],
+            )
+            .await?;
+        }
+        Err(e) if e.is(&ErrorCode::UnknownUpload) => {
+            t.execute(
+                "update pending_messages set state = 'dropped', cmd_seq = null, at = now()
+                 where conversation_id = $1 and client_message_id = $2",
+                &[&conversation, &m.client_message_id],
+            )
+            .await?;
+        }
+        Err(e) => return Err(e),
+    }
+    Ok(None)
+}
+
+/// Sends the waiting message again: into the turn that runs now, or as a turn of its own in an idle conversation
+/// (`Some(Some(turn))`: the caller starts its driver). `None`: it goes on waiting (a held message with
+/// attachments while a turn runs; a conversation busy without a turn row).
 ///
 /// # Errors
 /// When a statement fails.
@@ -424,7 +608,7 @@ async fn redeliver(pool: &Pool, conversation: Uuid, client_message_id: &str) -> 
     aviary_pg::tx!(pool, |t| -> Result<Option<Option<Uuid>>> {
         let Some(r) = t
             .query_opt(
-                "select p.text, p.request, c.person
+                "select p.text, p.request, c.person, p.hold
                  from pending_messages p join conversations c on c.id = p.conversation_id
                  where p.conversation_id = $1 and p.client_message_id = $2 and p.state = 'redeliver'
                  for update of p skip locked",
@@ -439,6 +623,7 @@ async fn redeliver(pool: &Pool, conversation: Uuid, client_message_id: &str) -> 
             .get::<_, Option<serde_json::Value>>(1)
             .and_then(|v| serde_json::from_value(v).ok());
         let person: String = r.get(2);
+        let hold: bool = r.get(3);
         let set = |state: &'static str, turn: Option<Uuid>, cmd: Option<i64>| async move {
             t.execute(
                 "update pending_messages
@@ -462,9 +647,14 @@ async fn redeliver(pool: &Pool, conversation: Uuid, client_message_id: &str) -> 
             return Ok(Some(None));
         }
         if let Some(turn) = active(t, conversation).await?.filter(|a| !a.state.is_ended()) {
-            if request.is_some() {
-                // attachments: it waits for the turn to end
-                return Ok(None);
+            if let Some(m) = &request {
+                if hold {
+                    // it could not join a turn of this sandbox: it waits for the turn to end
+                    return Ok(None);
+                }
+                let state = rejoin_attached(t, conversation, turn.id, &person, m).await?;
+                changes::upserted(t, &person, conversation).await?;
+                return Ok(Some(state));
             }
             // a turn runs by now: the text joins it
             let seq = write(t, conversation, turn.id, &text).await?;
