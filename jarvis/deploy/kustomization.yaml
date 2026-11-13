@@ -6,3 +6,10 @@ kind: Kustomization
 # branding.yaml: the chat's own look (DE0CH/claudecodeui paseo/packages/app src/yyc/brand.ts: the app bundle holds
 # neutral files under /branding/, pigeon mounts these over them), written by infra/branding.py from branding/
 resources: [db.yaml, magpie.yaml, pigeon.yaml, hermit.yaml, network.yaml, branding.yaml]
+# settings.json: what is Deyao's own about the chat (its name and language, the model menu, each model's thinking
+# levels, context window and OpenRouter hosts), read by hermit-jarvis at its start (HERMIT_SETTINGS; DE0CH/jarvis4
+# aviary/src/settings.rs) and handed to each session machine's gateway at boot. Hashed: a change rolls hermit.
+configMapGenerator:
+  - name: hermit-settings
+    namespace: services
+    files: [settings.json]

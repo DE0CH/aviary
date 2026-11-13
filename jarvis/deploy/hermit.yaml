@@ -25,7 +25,11 @@ spec:
         - name: hermit
           image: ghcr.io/de0ch/hermit-jarvis:sha-8e5c9b880b7b@sha256:c5f098fd6433e6f85073c8abf1aed9591520b5718e51aa83f438799d1c647844
           envFrom: [{ secretRef: { name: chat-hermit } }]
-          env: [{ name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }]
+          env:
+            - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
+            # the deployment's settings (settings.json here, ConfigMap hermit-settings)
+            - { name: HERMIT_SETTINGS, value: /etc/hermit-jarvis/settings.json }
+          volumeMounts: [{ name: settings, mountPath: /etc/hermit-jarvis, readOnly: true }]
           ports: [{ containerPort: 8080 }, { containerPort: 8081 }, { containerPort: 8082 }, { containerPort: 9090 }]
           lifecycle: { preStop: { sleep: { seconds: 5 } } }
           startupProbe: { httpGet: { path: /healthz, port: 9090 }, periodSeconds: 2, failureThreshold: 150 }
@@ -33,6 +37,7 @@ spec:
           readinessProbe: { httpGet: { path: /readyz, port: 9090 }, periodSeconds: 2, failureThreshold: 2 }
           resources: { requests: { cpu: 30m, memory: 64Mi }, limits: { cpu: 500m, memory: 256Mi } }
           securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
+      volumes: [{ name: settings, configMap: { name: hermit-settings } }]
 ---
 apiVersion: v1
 kind: Service
