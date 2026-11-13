@@ -1078,7 +1078,11 @@ function createMediaContentPart(
         return {
           type: 'input_audio' as const,
           input_audio: {
-            data: `data:${mimeType};base64,${part.inlineData.data}`,
+            // DE0CH fork: the bare base64 the OpenAI chat completions API
+            // defines for `input_audio.data`. Upstream sends a data: URI,
+            // which DashScope takes but OpenRouter refuses (400), and
+            // OpenRouter is the only endpoint this fork is run against.
+            data: part.inlineData.data,
             // DashScope accepts flac/ogg/m4a beyond the OpenAI SDK's
             // wav|mp3 union; the request wire format is identical.
             format: format as 'wav' | 'mp3',

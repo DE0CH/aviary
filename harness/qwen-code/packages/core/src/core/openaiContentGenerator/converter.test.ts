@@ -1500,7 +1500,7 @@ describe('OpenAIContentConverter', () => {
         inline('audio/wav', 'audiobase64data'),
         {
           type: 'input_audio',
-          'input_audio.data': 'data:audio/wav;base64,audiobase64data',
+          'input_audio.data': 'audiobase64data',
           'input_audio.format': 'wav',
         },
       ],
@@ -1883,7 +1883,7 @@ describe('OpenAIContentConverter', () => {
         const audioPart = partOf(contentArray, 'input_audio');
         expect(audioPart?.input_audio?.format).toBe(format);
         expect(audioPart?.input_audio?.data).toBe(
-          `data:${mime};base64,YXVkaW8=`,
+          'YXVkaW8=',
         );
         expect(
           contentArray.some((p) =>

@@ -1,0 +1,51 @@
+# DE0CH fork: build the CLI as upstream publishes it to npm and release the tarball as de0ch-<sha12>, with its
+# sha256. aviary's sandbox image installs it pinned by that sha256 (de0ch/README.md). Upstream's own workflows do not
+# run in this fork (Actions are enabled for this workflow only).
+name: de0ch-release
+on:
+  push:
+    branches: [de0ch]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: de0ch-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: install
+        run: |
+          corepack enable
+          corepack pnpm install --frozen-lockfile
+      - name: the test of what this fork changes
+        working-directory: packages/core
+        run: corepack pnpm exec vitest run src/core/openaiContentGenerator/converter.test.ts
+      - name: build, bundle, pack
+        run: |
+          npm run build
+          npm run bundle
+          npm run prepare:package
+          cd dist
+          npm pack
+          mv qwen-code-qwen-code-*.tgz ../qwen-code-de0ch.tgz
+      - name: the packed CLI installs and starts
+        run: |
+          npm install --no-audit --no-fund --prefix "$RUNNER_TEMP/qwen" -g ./qwen-code-de0ch.tgz
+          "$RUNNER_TEMP/qwen/bin/qwen" --version
+      - name: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="de0ch-$(git rev-parse --short=12 HEAD)"
+          sha=$(sha256sum qwen-code-de0ch.tgz | cut -d' ' -f1)
+          printf '%s  qwen-code-de0ch.tgz\n' "$sha" > qwen-code-de0ch.tgz.sha256
+          gh release create "$tag" qwen-code-de0ch.tgz qwen-code-de0ch.tgz.sha256 \
+            --target "$GITHUB_SHA" --title "$tag" \
+            --notes "Qwen Code $(node -p "require('./package.json').version") + DE0CH changes (de0ch/README.md). sha256 $sha"
