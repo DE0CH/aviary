@@ -205,8 +205,14 @@ sh("settings put system accelerometer_rotation 0; settings put system user_rotat
 before = webapks()
 
 # ---- 1. the site in Chrome
-sh(f"am start -a android.intent.action.VIEW -d '{SITE}/' {CHROME} >/dev/null")
-if not wait_for(SIGN_IN, 150):
+# a freshly booted emulator sometimes drops the first start (Chrome never comes up): ask again
+loaded = None
+for attempt in range(5):
+    sh(f"am start -a android.intent.action.VIEW -d '{SITE}/' {CHROME} >/dev/null")
+    loaded = wait_for(SIGN_IN, 50)
+    if loaded:
+        break
+if not loaded:
     fail("1-site", "the signed-out site (Sign in) did not appear in Chrome")
 shot("1-site-in-chrome")
 
