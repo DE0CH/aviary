@@ -66,16 +66,19 @@ async fn main() -> anyhow::Result<()> {
         gateway_to_magpie: aviary_core::auth::outbound_token("GATEWAY", "MAGPIE"),
         gateway_to_hermit: aviary_core::auth::outbound_token("GATEWAY", "HERMIT"),
         http,
+        settings: jarvis_aviary::settings::Settings::load(&env.settings)?,
     }));
+    let models_route = app.settings.models_route();
     let api = guarded_router(Arc::new(app.clone()), RouteGuard::new(callers));
     let gw = jarvis_aviary::central::router(app.clone());
     let models = axum::Router::new().route(
         gateway_api::models::MODELS,
         axum::routing::get(move |headers: axum::http::HeaderMap| {
             let ok = model_callers.identify_headers(&headers).is_some();
+            let models_route = models_route.clone();
             async move {
                 if ok {
-                    axum::response::IntoResponse::into_response(axum::Json(jarvis_aviary::central::models()))
+                    axum::response::IntoResponse::into_response(axum::Json(models_route))
                 } else {
                     axum::response::IntoResponse::into_response((
                         axum::http::StatusCode::UNAUTHORIZED,

@@ -206,6 +206,7 @@ async fn do_boot(app: &App, machine: &str, req: &BootRequest) -> anyhow::Result<
         conversation_id: row.conversation_id,
         token,
         control_token: app.keys.control_token(row.id),
+        settings: Some(app.settings.clone()),
     })
 }
 

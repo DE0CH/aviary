@@ -933,6 +933,7 @@ mod tests {
                 conversation_id: uuid::Uuid::new_v4(),
                 token: "hst1.test".to_owned(),
                 control_token: "hct_test".to_owned(),
+                settings: None,
             },
             http: http_client().unwrap(),
             health: std::sync::Mutex::new(None),

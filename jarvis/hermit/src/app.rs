@@ -79,6 +79,8 @@ pub struct Inner {
     pub gateway_to_magpie: String,
     pub gateway_to_hermit: String,
     pub http: reqwest::Client,
+    /// The deployment's settings (the product, the model menu, how each model is routed).
+    pub settings: crate::settings::Settings,
 }
 
 impl std::ops::Deref for App {
@@ -166,6 +168,8 @@ pub struct Env {
     pub owner: String,
     pub access_team: String,
     pub access_aud: String,
+    /// The path of the deployment's settings file (src/settings.rs).
+    pub settings: String,
 }
 
 impl Env {
@@ -181,6 +185,7 @@ impl Env {
             owner: env::required("HERMIT_OWNER").trim().to_lowercase(),
             access_team: env::required("HERMIT_ACCESS_TEAM"),
             access_aud: env::required("HERMIT_ACCESS_AUD"),
+            settings: env::required("HERMIT_SETTINGS"),
         }
     }
 }

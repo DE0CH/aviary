@@ -12,4 +12,5 @@ pub mod hermit;
 pub mod jarvis;
 pub mod machine;
 pub mod reconcile;
+pub mod settings;
 pub mod wire;

@@ -67,6 +67,10 @@ pub struct BootReply {
     pub token: String,
     /// `hct_…`: what the machine presents to the supervisor's `:7070` (its health).
     pub control_token: String,
+    /// The deployment's settings (src/settings.rs): the model menu and each model's routing, for the machine's
+    /// gateway. Absent from a hermit-jarvis that predates them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<crate::settings::Settings>,
 }
 
 impl std::fmt::Debug for BootReply {

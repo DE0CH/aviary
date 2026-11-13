@@ -61,8 +61,8 @@ impl Server for App {
     async fn deployment(&self, _ctx: Ctx) -> Answer<Deployment> {
         Ok(Deployment {
             product: Product {
-                name: "Jarvis 4".into(),
-                locale: "en".into(),
+                name: self.settings.product.name.clone(),
+                locale: self.settings.product.locale.clone(),
             },
             sign_in: SignIn {
                 access: vec![AccessApp {

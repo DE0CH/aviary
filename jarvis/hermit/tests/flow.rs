@@ -163,6 +163,7 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         gateway_to_magpie: "t-gw-magpie".into(),
         gateway_to_hermit: "t-gw-hermit".into(),
         http: http.clone(),
+        settings: jarvis_aviary::settings::Settings::parse(include_str!("settings.json")).unwrap(),
     }));
     let hermit_router = hermit_api::server::router(Arc::new(app.clone()));
     tokio::spawn(async move { axum::serve(hermit_l, hermit_router).await.unwrap() });

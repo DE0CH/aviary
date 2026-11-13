@@ -1,0 +1,15 @@
+{
+  "product": { "name": "Jarvis 4", "locale": "en" },
+  "smallModel": "claude-haiku-5-5",
+  "models": [
+    { "id": "claude-fable-5-2", "label": "Fable 5.2", "thinking": ["none", "low", "medium", "high", "xhigh", "max"] },
+    { "id": "claude-opus-5-5", "label": "Opus 5.5", "thinking": ["none", "low", "medium", "high", "xhigh", "max"] },
+    {
+      "id": "z-ai/glm-5.3",
+      "label": "GLM 5.3",
+      "thinking": ["low", "medium", "high", "xhigh", "max"],
+      "contextTokens": 1000000,
+      "openrouter": { "providers": ["z-ai/fp8"] }
+    }
+  ]
+}
