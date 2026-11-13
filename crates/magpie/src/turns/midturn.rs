@@ -260,7 +260,58 @@ pub async fn taken(tx: &Tx<'_>, conversation: Uuid, text: &str) -> Result<Option
             &[&conversation, &text],
         )
         .await?;
-    Ok(row.map(|r| r.get(0)))
+    if let Some(r) = row {
+        return Ok(Some(r.get(0)));
+    }
+    taken_together(tx, conversation, text).await
+}
+
+/// Claude Code takes every message that waits when it next looks as ONE prompt, their texts joined by a newline in
+/// the order they were sent. `text` read as such a line: the waiting messages, oldest first, whose texts make it up
+/// are all taken in; the id is the first one's (the line's one row shows under it). `None` when the line is not made
+/// of waiting messages.
+async fn taken_together(tx: &Tx<'_>, conversation: Uuid, text: &str) -> Result<Option<String>> {
+    if !text.contains('\n') {
+        return Ok(None);
+    }
+    let waiting = tx
+        .query(
+            &format!(
+                "select client_message_id, text from pending_messages
+                 where conversation_id = $1 and state in {OPEN} and request is null
+                 order by created_at, client_message_id"
+            ),
+            &[&conversation],
+        )
+        .await?;
+    let mut rest = text;
+    let mut ids: Vec<String> = Vec::new();
+    for r in &waiting {
+        let t: String = r.get(1);
+        if t.is_empty() {
+            continue;
+        }
+        if rest == t {
+            ids.push(r.get(0));
+            rest = "";
+            break;
+        }
+        // (a message that is not this line's next part still waits: an older one never written, say)
+        if let Some(after) = rest.strip_prefix(t.as_str()).and_then(|a| a.strip_prefix('\n')) {
+            ids.push(r.get(0));
+            rest = after;
+        }
+    }
+    if !rest.is_empty() || ids.len() < 2 {
+        return Ok(None);
+    }
+    tx.execute(
+        "update pending_messages set state = 'taken', at = now()
+         where conversation_id = $1 and client_message_id = any($2)",
+        &[&conversation, &ids],
+    )
+    .await?;
+    Ok(ids.into_iter().next())
 }
 
 /// Settles the waiting messages: an acknowledged `send_message` makes its message `written` (delivered) or

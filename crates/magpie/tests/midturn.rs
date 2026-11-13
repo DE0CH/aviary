@@ -470,6 +470,72 @@ async fn a_message_its_turn_never_took_becomes_a_turn_of_its_own() {
     assert_eq!(w.sent(conv).await.len(), 4);
 }
 
+/// Claude Code takes every message that waits when it next looks, as ONE prompt: their texts joined by a newline
+/// (2026-11-13: two messages queued in a row came in as one line; neither was known as taken, their rows stayed in
+/// the queue, and both were sent again, one by one, when the conversation went idle two hours later).
+#[tokio::test]
+async fn messages_claude_code_took_in_together_are_all_taken() {
+    let db = common::fresh_db("midturn_taken_joined").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let mut s = Sandbox::leased(&r, ALICE).await;
+    s.mkdirs("projects/-workspace").await;
+    set_main(r.pool(), s.conversation, &main_path()).await;
+    let conv = s.conversation;
+    person_turn(r.pool(), &mut s).await;
+    let c = r.pool().get().await.unwrap();
+    c.execute("update conversations set run_state = 'running' where id = $1", &[&conv])
+        .await
+        .unwrap();
+    let pigeon = r.pigeon();
+    let alice = pigeon.person(ALICE);
+    for (id, text) in [("m2", "Also say KIWI"), ("m3", "Then say MANGO"), ("m4", "And PLUM")] {
+        alice.send_turn(conv, &msg(id, text)).await.unwrap();
+    }
+    // the first two in one prompt line; the third still waits
+    let lines = [
+        json!({"type": "user", "uuid": "u1", "message": {"role": "user", "content": "Run sleep"}}),
+        json!({"type": "user", "uuid": "u2", "message": {"role": "user",
+               "content": "Also say KIWI\nThen say MANGO"}}),
+    ];
+    let bytes: Vec<u8> = lines.iter().flat_map(line).collect();
+    s.write(&main_path(), 0, &bytes).await.unwrap();
+    let states: Vec<(String, String)> = c
+        .query(
+            "select client_message_id, state from pending_messages where conversation_id = $1 order by created_at",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| (r.get(0), r.get(1)))
+        .collect();
+    assert_eq!(
+        states
+            .iter()
+            .map(|(id, st)| (id.as_str(), st.as_str()))
+            .collect::<Vec<_>>(),
+        [("m2", "taken"), ("m3", "taken"), ("m4", "pending")]
+    );
+    // the one row shows under the first message's id
+    let users: Vec<(String, String)> = alice
+        .timeline(conv, &common::ev::tail(100))
+        .await
+        .unwrap()
+        .rows
+        .into_iter()
+        .filter_map(|row| match row.item {
+            RowItem::User(u) => Some((u.message_id, u.text)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        users.contains(&("m2".to_owned(), "Also say KIWI\nThen say MANGO".to_owned())),
+        "{users:?}"
+    );
+    assert_eq!(alice.get_conversation(conv).await.unwrap().pending_messages.len(), 1);
+}
+
 #[tokio::test]
 async fn a_message_claude_code_took_in_shows_on_the_timeline_under_the_apps_id() {
     let db = common::fresh_db("midturn_taken").await;
