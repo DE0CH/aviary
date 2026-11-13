@@ -57,6 +57,7 @@ configMapGenerator:
       - newswatch.SKILL.md=hermit/skills/newswatch/SKILL.md
       - schedules.SKILL.md=hermit/skills/schedules/SKILL.md
       - telegram.SKILL.md=hermit/skills/telegram/SKILL.md
+      - video.SKILL.md=hermit/skills/video/SKILL.md
       - web.SKILL.md=hermit/skills/web/SKILL.md
   # YYC's look (check item B): the app bundle holds neutral files under /branding/ (the logo, the tab and home-screen
   # icons, the manifest); pigeon mounts these over them. Hashed, so a change rolls pigeon
