@@ -59,6 +59,7 @@ Jarvis 4 session machine (harness aviary)                                     �
 | `hermit-jarvis` | `src/bin/hermit-jarvis.rs`, image `ghcr.io/de0ch/hermit-jarvis` | :8080 the hermit contract (`src/hermit.rs`), :8081 the gateway listener (`src/central.rs`), :8082 pigeon's models route, :9090 ops; the router as the sessions' truth (`src/reconcile.rs`, `src/jarvis.rs`) |
 | `aviary-gateway` | `src/bin/aviary-gateway.rs` → `src/machine.rs`, in the session image | the machine's half of the gateway, the signed boot, the supervisor's health, deliveries |
 | `harness-aviary.sh`, `aviary-sandbox` | `session-image/base/` | the harness launcher and the supervisor's namespace |
+| the session's tunnel agent | `harness-aviary.sh` `run_tunnel` (`cf-tunnel-agent.js`) | `https://<session id>-s.deyaochen.com/` → 127.0.0.1:8899 on the machine, which the sandbox shares: its drop pages and content. The agent runs on the machine's side because the tunnel proof never enters the sandbox |
 | supervisor, keeper | DE0CH/aviary release assets, pinned in `session-image/aviary.json` | |
 | pigeon, magpie, pigeon-app | DE0CH/services `k8s/chat/` | pinned by DE0CH/services `chat-pin.yml` |
 | router | `router/machinesig.go`, harness `aviary` in `router/harness.go`, `router/remote.go` | |
