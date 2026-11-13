@@ -24,6 +24,7 @@ pub mod limbo;
 pub mod lines;
 pub mod ops;
 pub mod pages;
+pub mod qwen;
 pub mod reconstruct;
 pub mod scan;
 pub mod transcript;

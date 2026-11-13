@@ -258,7 +258,8 @@ fn media(content: &[u8]) -> Option<(&'static str, Option<(u32, u32)>)> {
     } else if head.starts_with(b"%PDF-") {
         "application/pdf"
     } else {
-        return None;
+        // what a harness that gives its model sound and video keeps in its transcript (Qwen Code)
+        sound_or_video(&head)?
     };
     let dims = match mime {
         "image/png" => png(&head),
@@ -268,6 +269,34 @@ fn media(content: &[u8]) -> Option<(&'static str, Option<(u32, u32)>)> {
         _ => None,
     };
     Some((mime, dims))
+}
+
+/// The mime of a sound or video file by its first bytes: MP4 and its kin (`ftyp`: `M4A ` is sound), `WebM`, WAV,
+/// Ogg, FLAC, MP3 (an `ID3` tag or a frame sync).
+fn sound_or_video(head: &[u8]) -> Option<&'static str> {
+    if head.len() >= 12 && &head[4..8] == b"ftyp" {
+        return Some(if &head[8..12] == b"M4A " {
+            "audio/mp4"
+        } else {
+            "video/mp4"
+        });
+    }
+    if head.starts_with(&[0x1a, 0x45, 0xdf, 0xa3]) {
+        return Some("video/webm");
+    }
+    if head.len() >= 12 && head.starts_with(b"RIFF") && &head[8..12] == b"WAVE" {
+        return Some("audio/wav");
+    }
+    if head.starts_with(b"OggS") {
+        return Some("audio/ogg");
+    }
+    if head.starts_with(b"fLaC") {
+        return Some("audio/flac");
+    }
+    if head.starts_with(b"ID3") || (head.len() >= 2 && head[0] == 0xff && head[1] & 0xe0 == 0xe0) {
+        return Some("audio/mpeg");
+    }
+    None
 }
 
 fn be16(b: &[u8], at: usize) -> Option<u32> {
@@ -473,6 +502,34 @@ mod tests {
             assert_eq!(x.blobs.len(), 1, "{mime}");
             assert_eq!(x.blobs[0].mime, Some(mime));
             assert_eq!(x.blobs[0].width.zip(x.blobs[0].height), dims, "{mime}");
+        }
+    }
+
+    /// Sound and video a harness keeps in its transcript are media too: stored once as a blob with their kind,
+    /// never as a text with a preview of base64.
+    #[test]
+    fn sound_and_video_signatures() {
+        let enc = |b: Vec<u8>| base64::engine::general_purpose::STANDARD.encode(b);
+        let file = |head: &[u8]| {
+            let mut b = head.to_vec();
+            b.resize(2000, 1);
+            b
+        };
+        for (bytes, mime) in [
+            (file(b"\0\0\0\x20ftypisom\0\0\x02\0"), "video/mp4"),
+            (file(b"\0\0\0\x20ftypM4A \0\0\x02\0"), "audio/mp4"),
+            (file(&[0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3, 4]), "video/webm"),
+            (file(b"RIFF\0\0\0\0WAVEfmt "), "audio/wav"),
+            (file(b"OggS\0\x02"), "audio/ogg"),
+            (file(b"fLaC\0\0\0\x22"), "audio/flac"),
+            (file(b"ID3\x04\0\0"), "audio/mpeg"),
+            (file(&[0xff, 0xfb, 0x90, 0x64]), "audio/mpeg"),
+        ] {
+            let line = format!(r#"{{"inlineData":{{"data":"{}","mimeType":"x"}}}}"#, enc(bytes));
+            let x = roundtrip(line.as_bytes());
+            assert_eq!(x.blobs.len(), 1, "{mime}");
+            assert_eq!(x.blobs[0].mime, Some(mime));
+            assert_eq!(x.blobs[0].width, None, "{mime}");
         }
     }
 

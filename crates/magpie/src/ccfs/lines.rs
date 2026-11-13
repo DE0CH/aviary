@@ -35,7 +35,7 @@ use uuid::Uuid;
 
 use super::classify::{self, Class, Context};
 use super::extract::{self, Kind as BlobKindX, Sha, hex};
-use super::{File, Op, limbo, n64, nus};
+use super::{File, Op, limbo, n64, nus, qwen};
 use crate::blobs::{self, staging};
 use crate::error::{Error, Result};
 use crate::events::{self, NewEvent};
@@ -350,6 +350,16 @@ fn event_data(stub: &[u8], spans: &[(usize, Sha)], meta: &HashMap<Sha, blobs::Me
     serde_json::from_slice(&out).ok()
 }
 
+/// A main-transcript line's event data in the shape the classifier and the projection read: Claude Code's line as
+/// it is, Qwen Code's (a main transcript under `qwen/`) turned into that shape, `None` when that makes it internal.
+fn line_data(op: &Op<'_>, stub: &[u8], spans: &[(usize, Sha)], meta: &HashMap<Sha, blobs::Meta>) -> Option<Value> {
+    let data = event_data(stub, spans, meta);
+    if qwen::is_qwen(op.conv.main.as_deref()) {
+        return data.as_ref().and_then(qwen::normalise);
+    }
+    data
+}
+
 /// Whether a line with `sha` (or with `uuid`) was once classified as the echo of a person's prompt in
 /// `conversation` (6.5): the same bytes, or the same message written again with other bytes.
 async fn was_echo(tx: &Tx<'_>, conversation: Uuid, sha: &Sha, uuid: Option<&str>) -> Result<bool> {
@@ -490,7 +500,7 @@ async fn apply(
     meta: &HashMap<Sha, blobs::Meta>,
     w: Option<&mut Writer>,
 ) -> Result<Option<i64>> {
-    let data = event_data(stub, spans, meta);
+    let data = line_data(op, stub, spans, meta);
     match class_in(tx, op, sha, data.as_ref()).await? {
         Class::Internal | Class::Answer(_) => Ok(None),
         Class::Echo => {

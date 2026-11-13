@@ -3061,6 +3061,134 @@ async fn a_turns_start_names_the_picked_models_harness_and_resumes_its_session()
     assert_eq!(start(&sup.poll(0, 0).await, turn), (Harness::Qwen, Some("q-1".into())));
 }
 
+/// A turn in Qwen Code: its transcript, written under Qwen Code's home in Qwen Code's own record shape, makes the
+/// same events and timeline rows a Claude Code transcript does: the person's message once (its echo is no second
+/// prompt), the reply's text, the tool call with its result, and none of Qwen Code's own bookkeeping records.
+#[tokio::test]
+async fn a_qwen_code_turn_shows_on_the_timeline_like_any_other() {
+    use magpie_api::Harness;
+    use magpie_api::conversations::RenameRequest;
+    let w = World::new("turn_qwen", Some(Duration::ZERO)).await;
+    let conv = w.conversation().await;
+    w.a.pigeon()
+        .person(ALICE)
+        .rename_conversation(
+            conv,
+            &RenameRequest {
+                model: Some("vendor/video".into()),
+                harness: Some(Harness::Qwen),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let turn = w.send(conv, "m1", "cut the video").await;
+    assert!(w.state_is(turn, "starting").await);
+    let sup = w.supervisor(conv).await;
+    sup.take(turn).await;
+    let path = "qwen/projects/-workspace/chats/q-1.jsonl";
+    let mut running = report(ReportedState::Running);
+    running.harness = Harness::Qwen;
+    running.provider_session_id = Some("q-1".into());
+    running.transcript_path = Some(path.into());
+    sup.calls().turn_state(turn, &running).await.unwrap();
+    for dir in [
+        "qwen/projects",
+        "qwen/projects/-workspace",
+        "qwen/projects/-workspace/chats",
+    ] {
+        sup.calls()
+            .cc_mkdir(&magpie_api::sandbox::CcMkdir {
+                path: dir.to_owned(),
+                mode: 0o700,
+                mtime_ns: 1,
+                op_id: Uuid::new_v4(),
+            })
+            .await
+            .unwrap();
+    }
+    // as Qwen Code 0.27.3 writes them
+    let lines = [
+        json!({"uuid": "u1", "parentUuid": null, "sessionId": "q-1", "type": "user", "provenance": "real_user",
+               "message": {"role": "user", "parts": [{"text": "cut the video"}]}}),
+        json!({"uuid": "s1", "parentUuid": "u1", "sessionId": "q-1", "type": "system", "provenance": "system",
+               "subtype": "ui_telemetry", "systemPayload": {"uiEvent": {"v": 1}}}),
+        json!({"uuid": "a1", "parentUuid": "s1", "sessionId": "q-1", "type": "assistant", "model": "vendor/video",
+               "message": {"role": "model", "parts": [
+                   {"text": "I should look at the clip.", "thought": true},
+                   {"text": "Let me look."},
+                   {"functionCall": {"id": "call-1", "name": "run_shell_command", "args": {"command": "ls videos"}}}]},
+               "usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 9, "cachedContentTokenCount": 0}}),
+        json!({"uuid": "r1", "parentUuid": "a1", "sessionId": "q-1", "type": "tool_result",
+               "message": {"role": "user", "parts": [{"functionResponse": {"id": "call-1", "name": "run_shell_command",
+                   "response": {"output": "a.mp4"}}}]},
+               "toolCallResult": {"callId": "call-1", "status": "success"}}),
+        json!({"uuid": "a2", "parentUuid": "r1", "sessionId": "q-1", "type": "assistant", "model": "vendor/video",
+               "message": {"role": "model", "parts": [{"text": "Done: one clip."}]},
+               "usageMetadata": {"promptTokenCount": 130, "candidatesTokenCount": 5, "cachedContentTokenCount": 100}}),
+    ];
+    let mut offset = 0u64;
+    for l in &lines {
+        let bytes = format!("{l}\n").into_bytes();
+        let n = bytes.len() as u64;
+        sup.calls()
+            .cc_write(
+                &magpie_api::sandbox::CcWriteQuery {
+                    path: path.to_owned(),
+                    offset,
+                    mtime_ns: 1,
+                    op_id: Uuid::new_v4(),
+                    create: true,
+                    mode: 0o600,
+                    turn_id: Some(turn),
+                    append: false,
+                },
+                bytes,
+            )
+            .await
+            .unwrap();
+        offset += n;
+    }
+    let mut end = report(ReportedState::Completed);
+    end.last_uuid = Some("a2".into());
+    sup.calls().turn_state(turn, &end).await.unwrap();
+    assert!(w.state_is(turn, "completed").await);
+
+    // the events: the two replies and the tool result; the echo and the telemetry record make none
+    let kinds = w.kinds(conv).await;
+    let count = |k: &str| kinds.iter().filter(|x| x.as_str() == k).count();
+    assert_eq!((count("cc.assistant"), count("cc.user")), (2, 1), "{kinds:?}");
+    // the rows a person sees
+    let rows: Vec<(String, serde_json::Value)> = w
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query(
+            "select kind, item from rows where conversation_id = $1 order by row_id",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| (r.get(0), r.get(1)))
+        .collect();
+    let of =
+        |k: &str| -> Vec<&serde_json::Value> { rows.iter().filter(|(kind, _)| kind == k).map(|(_, i)| i).collect() };
+    assert_eq!(of("user").len(), 1, "the person's message once: {rows:?}");
+    let texts: Vec<&str> = of("assistant").iter().filter_map(|i| i["text"].as_str()).collect();
+    assert_eq!(texts, ["Let me look.", "Done: one clip."], "{rows:?}");
+    let tools = of("tool");
+    assert_eq!(tools.len(), 1, "{rows:?}");
+    assert_eq!(tools[0]["name"], "run_shell_command");
+    assert_eq!(tools[0]["input"]["command"], "ls videos");
+    assert_eq!(tools[0]["status"], "completed", "{}", tools[0]);
+    // the conversation's model and context are the reply's
+    let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
+    assert_eq!(c.model.as_deref(), Some("vendor/video"));
+    assert_eq!(c.context_tokens, Some(130));
+}
+
 #[tokio::test]
 async fn a_turns_start_carries_the_conversations_picked_thinking_level() {
     let w = World::new("turn_thinking", Some(Duration::ZERO)).await;

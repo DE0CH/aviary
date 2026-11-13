@@ -109,7 +109,7 @@ pub fn workspace_descriptor(c: &Conversation, v: &View<'_>) -> Value {
 #[must_use]
 pub fn ask_kind(tool: &str) -> &'static str {
     match tool {
-        "AskUserQuestion" => "question",
+        "AskUserQuestion" | "ask_user_question" => "question",
         "ExitPlanMode" => "plan",
         _ => "tool",
     }
@@ -138,7 +138,7 @@ pub fn permission_request(ask: &magpie_api::conversations::Ask) -> Value {
 /// its text field only where a question says `allowOther`. So every question with options says it here.
 fn question_input(ask: &magpie_api::conversations::Ask) -> Map<String, Value> {
     let mut input = ask.input.clone();
-    if ask.tool_name != "AskUserQuestion" {
+    if ask_kind(&ask.tool_name) != "question" {
         return input;
     }
     if let Some(questions) = input.get_mut("questions").and_then(Value::as_array_mut) {
@@ -713,7 +713,7 @@ fn detail_speak(input: Option<&Value>) -> Result<Option<Value>, ()> {
 pub fn derive_detail(name: &str, input: &Value, output: Option<&str>) -> Value {
     let inp = if input.is_null() { None } else { Some(input) };
     let derived = match name {
-        "Bash" | "bash" | "shell" | "exec_command" => detail_shell(inp, output),
+        "Bash" | "bash" | "shell" | "exec_command" | "run_shell_command" => detail_shell(inp, output),
         "Read" | "read" | "read_file" | "view_file" => detail_read(inp, output),
         "Write" | "write" | "write_file" | "create_file" => detail_write(inp, output),
         "Edit" | "MultiEdit" | "multi_edit" | "edit" | "apply_patch" | "apply_diff" | "str_replace_editor" => {
@@ -721,10 +721,10 @@ pub fn derive_detail(name: &str, input: &Value, output: Option<&str>) -> Value {
         }
         "WebSearch" | "web_search" => detail_search(inp, output.is_none(), "web_search"),
         "search" => detail_search(inp, true, "search"),
-        "Grep" | "grep" => detail_search(inp, output.is_none(), "grep"),
+        "Grep" | "grep" | "grep_search" => detail_search(inp, output.is_none(), "grep"),
         "Glob" | "glob" => detail_search(inp, output.is_none(), "glob"),
         "WebFetch" | "web_fetch" | "WebFetchTool" | "web_fetch_tool" | "webfetch" => detail_fetch(inp, output),
-        "Skill" => detail_skill(inp, output),
+        "Skill" | "skill" => detail_skill(inp, output),
         "speak" => detail_speak(inp),
         _ => Err(()),
     };
@@ -749,13 +749,13 @@ enum ToolKind {
 
 fn tool_kind(name: &str) -> ToolKind {
     match name {
-        "Bash" | "bash" | "shell" | "exec_command" => ToolKind::Shell,
+        "Bash" | "bash" | "shell" | "exec_command" | "run_shell_command" => ToolKind::Shell,
         "Read" | "read" | "read_file" | "view_file" => ToolKind::Read,
         "Write" | "write" | "write_file" | "create_file" => ToolKind::Write,
         "Edit" | "MultiEdit" | "multi_edit" | "edit" | "apply_patch" | "apply_diff" | "str_replace_editor" => {
             ToolKind::Edit
         }
-        "WebSearch" | "web_search" | "search" | "Grep" | "grep" | "Glob" | "glob" => ToolKind::Search,
+        "WebSearch" | "web_search" | "search" | "Grep" | "grep" | "grep_search" | "Glob" | "glob" => ToolKind::Search,
         "WebFetch" | "web_fetch" | "WebFetchTool" | "web_fetch_tool" | "webfetch" => ToolKind::Fetch,
         n if is_speak(n) => ToolKind::Speak,
         _ => ToolKind::Unknown,
@@ -1046,6 +1046,27 @@ impl RowProjector for PaseoProjector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Qwen Code's tools show as the same kinds of card as Claude Code's of the same job.
+    #[test]
+    fn qwen_codes_tool_names_are_the_same_kinds() {
+        for (qwen, claude) in [
+            ("run_shell_command", "Bash"),
+            ("read_file", "Read"),
+            ("write_file", "Write"),
+            ("edit", "Edit"),
+            ("grep_search", "Grep"),
+            ("glob", "Glob"),
+            ("web_fetch", "WebFetch"),
+        ] {
+            assert_eq!(tool_kind(qwen), tool_kind(claude), "{qwen}");
+            assert_ne!(tool_kind(qwen), ToolKind::Unknown, "{qwen}");
+        }
+        let shell = derive_detail("run_shell_command", &json!({"command": "ls videos"}), Some("a.mp4"));
+        assert_eq!(shell["type"], "shell");
+        assert_eq!(shell["command"], "ls videos");
+        assert_eq!(ask_kind("ask_user_question"), "question");
+    }
 
     /// DECISIONS 17: the working-time counter stands still while a question is open and leaves out the time
     /// answered questions waited.
