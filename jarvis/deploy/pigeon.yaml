@@ -11,7 +11,7 @@ spec:
   strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
   selector: { matchLabels: { app: pigeon } }
   template:
-    metadata: { labels: { app: pigeon }, annotations: { services/secrets-rev-chat-pigeon: "ce64243dcfb8" } }
+    metadata: { labels: { app: pigeon }, annotations: { services/secrets-rev-chat-pigeon: "ce64243dcfb8", services/branding-rev: "11599c121b0d" } }
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
@@ -37,8 +37,8 @@ spec:
           readinessProbe: { httpGet: { path: /readyz, port: 9090 }, periodSeconds: 2, failureThreshold: 2 }
           resources: { requests: { cpu: 30m, memory: 64Mi }, limits: { cpu: 500m, memory: 256Mi } }
           securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
-          # this deployment's branding in place of the bundle's neutral files (ConfigMap pigeon-branding,
-          # k8s/chat/branding/: the logo, the tab and home-screen icons, the manifest), mounted over the bundle's
+          # this deployment's branding in place of the bundle's neutral files (ConfigMap pigeon-branding in branding.yaml,
+          # from k8s/chat/branding/ by infra/branding.py: the logo, the tab and home-screen icons, the manifest), mounted over the bundle's
           # /branding/ (pigeon reads the bundle's file list once, at its start, and follows a ConfigMap's links)
           volumeMounts: [{ name: app, mountPath: /srv/app, readOnly: true }, { name: branding, mountPath: /srv/app/branding, readOnly: true }]
       volumes: [{ name: app, emptyDir: { sizeLimit: 512Mi } }, { name: branding, configMap: { name: pigeon-branding } }]
