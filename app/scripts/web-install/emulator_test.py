@@ -59,6 +59,7 @@ KNOWN_SCREENS = {  # fixed words for what is on the screen at a failure (never a
     "Chrome's Install dialog": r"Install app|Install",
     "the launcher's Add to home screen sheet": r"Add to home screen|Add automatically",
     "Sign in": SIGN_IN,
+    "the home-screen icon": r"YYC AI",
 }
 
 
@@ -304,6 +305,10 @@ for _ in range(90):
                 and node["cls"].endswith("Button") and node["pkg"] != CHROME), None)
     if pin:
         tap(pin)
+        pinned = True
+        break
+    # the sheet can come and go between two looks: the icon on the home screen says the same
+    if any(match(node, r"YYC AI") and node["pkg"] != CHROME for node in seen):
         pinned = True
         break
     time.sleep(2)
