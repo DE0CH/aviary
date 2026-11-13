@@ -272,8 +272,14 @@ sh(f"am force-stop {CHROME}")
 if package:
     sh(f"monkey -p {package} -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1")
 else:
-    sh("input keyevent KEYCODE_HOME")
-    icon = wait_for(r"YYC AI", 20, clear=False)
+    # the launcher puts the new icon on its next page and stays there; a second Home would go back to the first
+    icon = wait_for(r"YYC AI", 10, clear=False)
+    for _ in range(3):
+        if icon:
+            break
+        width, height = png_size(shot("3-home-page"))
+        sh(f"input swipe {width * 4 // 5} {height // 2} {width // 5} {height // 2} 200")
+        icon = wait_for(r"YYC AI", 6, clear=False)
     if not icon:
         fail("3-app", "the home screen has no YYC AI icon after the install")
     tap(icon)
