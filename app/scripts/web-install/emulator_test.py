@@ -242,23 +242,41 @@ for _ in range(3):
     shot(f"2-dialog-after-{taps}")
 if taps == 0:
     fail("2-install", f"after {label}, Chrome showed no Install button (it offers only a shortcut)")
+# A phone signed in to Google gets a WebAPK (its own package). Without an account (this emulator) Chrome cannot have
+# one minted and pins a home-screen shortcut instead, which opens the same standalone window from the same manifest.
 package = None
+pinned = False
 for _ in range(90):
     new = [name for name in webapks() if name not in before]
     if new:
         package = new[0]
         break
+    pin = next((node for node in nodes() if match(node, r"Add to home screen|Add automatically|Add")
+                and node["cls"].endswith("Button") and node["pkg"] != CHROME), None)
+    if pin:
+        tap(pin)
+        pinned = True
+        break
     time.sleep(2)
-if not package:
-    fail("2-install", f"{label} then Install gave no installed app within 180 s (no WebAPK package)")
-note(f"ok: Chrome's menu ({label}) installed the site as an app")
+if not package and not pinned:
+    fail("2-install", f"{label} then Install gave neither an installed app nor a home-screen icon within 180 s")
+kind = "an app (WebAPK)" if package else "a home-screen icon (no Google account here, so no WebAPK)"
+note(f"ok: Chrome's menu ({label}) installed the site as {kind}")
+time.sleep(3)
 sh("input keyevent KEYCODE_HOME")
 time.sleep(3)
 shot("2-home-screen")
 
 # ---- 3. the installed app: its own window
 sh(f"am force-stop {CHROME}")
-sh(f"monkey -p {package} -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1")
+if package:
+    sh(f"monkey -p {package} -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1")
+else:
+    sh("input keyevent KEYCODE_HOME")
+    icon = wait_for(r"YYC AI", 20, clear=False)
+    if not icon:
+        fail("3-app", "the home screen has no YYC AI icon after the install")
+    tap(icon)
 time.sleep(2)
 shot("3-splash")
 if not wait_for(SIGN_IN, 120):
