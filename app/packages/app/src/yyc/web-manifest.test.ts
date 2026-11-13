@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { darkTheme } from "@/styles/theme";
 
 // The web app manifest behind Chrome's "Install app" on Android (docs/paseo-ui.md "Installed on a phone").
-const manifest = JSON.parse(readFileSync(path.resolve(__dirname, "../../public/manifest.json"), "utf8"));
+const manifest = JSON.parse(readFileSync(path.resolve(__dirname, "../../public/branding/manifest.json"), "utf8"));
 
 /** Width and height from a PNG's IHDR. */
 function pngSize(file: string): string {
@@ -13,7 +13,7 @@ function pngSize(file: string): string {
   return `${bytes.readUInt32BE(16)}x${bytes.readUInt32BE(20)}`;
 }
 
-describe("public/manifest.json", () => {
+describe("public/branding/manifest.json (the bundle's neutral one)", () => {
   it("meets Chrome's install criteria", () => {
     expect(manifest.name).toBeTruthy();
     expect(manifest.short_name).toBeTruthy();

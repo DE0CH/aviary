@@ -446,7 +446,8 @@ describe("translation resources", () => {
     expect(en.message.dictation.failedRetry).toBe("Dictation failed. Tap retry.");
     expect(en.message.question.submit).toBe("Submit");
     expect(en.message.question.answerPlaceholder).toBe("Type your answer...");
-    expect(en.message.question.otherPlaceholder).toBe("Other...");
+    expect(en.message.question.other).toBe("Other");
+    expect(en.message.question.otherPlaceholder).toBe("Type your own answer...");
     expect(en.message.todo.title).toBe("Tasks");
     expect(en.message.todo.empty).toBe("No tasks yet.");
     expect(en.message.todo.tasksProgress).toBe("{{completed}}/{{total}} tasks");
