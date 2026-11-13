@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 
+pub use aviary_core::harness::Harness;
 use serde::{Deserialize, Serialize};
 
 pub const MESSAGES: &str = "/v1/messages";
@@ -48,9 +49,22 @@ pub struct Model {
     /// a 1M model beside 200k ones). Absent: the route's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_tokens: Option<u64>,
+    /// The harness a conversation on this model runs in. Absent: Claude Code.
+    #[serde(default, skip_serializing_if = "Harness::is_default")]
+    pub harness: Harness,
 }
 
 impl Models {
+    /// The harness of the model `id` (an id the route does not list: the default harness).
+    #[must_use]
+    pub fn harness_of(&self, id: &str) -> Harness {
+        self.models
+            .iter()
+            .find(|m| m.id == id)
+            .map(|m| m.harness)
+            .unwrap_or_default()
+    }
+
     /// The context window of the model `id`: its own when it names one, else the route's `contextTokens` (0: none
     /// named, Claude Code keeps its own for the model).
     #[must_use]
@@ -122,5 +136,27 @@ mod tests {
         let v = serde_json::to_value(&m).unwrap();
         assert_eq!(v["models"][0].get("contextTokens"), None);
         assert_eq!(v["models"][1]["contextTokens"], 1_000_000);
+    }
+
+    /// A model names the harness its conversations run in; one that names none runs in Claude Code, and says
+    /// nothing on the wire.
+    #[test]
+    fn a_model_names_its_harness() {
+        let m: Models = serde_json::from_str(
+            r#"{"default":"a","small":"a","title":"a","contextTokens":200000,"models":[
+                {"id":"a","label":"A","reasoning":null},
+                {"id":"video","label":"Video","reasoning":null,"harness":"qwen"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(m.harness_of("a"), Harness::Claude);
+        assert_eq!(m.harness_of("video"), Harness::Qwen);
+        assert_eq!(m.harness_of("unknown"), Harness::Claude);
+        let v = serde_json::to_value(&m).unwrap();
+        assert_eq!(v["models"][0].get("harness"), None);
+        assert_eq!(v["models"][1]["harness"], "qwen");
+        assert!(serde_json::from_str::<Models>(
+            r#"{"default":"a","small":"a","title":"a","contextTokens":1,"models":[{"id":"a","label":"A","reasoning":null,"harness":"codex"}]}"#
+        )
+        .is_err());
     }
 }

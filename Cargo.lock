@@ -1919,6 +1919,7 @@ dependencies = [
 name = "gateway-api"
 version = "0.0.0"
 dependencies = [
+ "aviary-core",
  "axum",
  "base64 0.23.1",
  "hermit-api",

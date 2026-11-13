@@ -9,6 +9,7 @@
 //! - [`http`]: the error envelope, the `Aviary-*` headers, request ids, response defaults, the outbound client and
 //!   the retry helper.
 //! - [`version`]: the build facts and protocol numbers.
+//! - [`harness`]: the agent programs a conversation can run in.
 //!
 //! A service's `main` in outline:
 //!
@@ -38,6 +39,7 @@
 pub mod auth;
 pub mod drain;
 pub mod env;
+pub mod harness;
 pub mod http;
 pub mod log;
 pub mod ops;
