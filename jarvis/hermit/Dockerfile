@@ -1,5 +1,5 @@
 # ghcr.io/de0ch/hermit-jarvis (aviary/README.md): hermit-jarvis alone, as uid 65532, on distroless (glibc, CA
-# certificates). Built by .github/workflows/aviary.yml; DE0CH/services pins it (its chat-pin workflow).
+# certificates). Built by .github/workflows/aviary.yml; DE0CH/deyao-ai pins it (its chat-pin workflow).
 FROM rust:1.99.1-bookworm AS build
 WORKDIR /src
 # the commit it is built from (aviary-core's `ver` in every log line and /version; `dev` when unset)

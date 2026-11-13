@@ -6,7 +6,7 @@ builds as YYC AI's, at **https://chat.deyaochen.com**. Nothing in aviary is conf
 only behind the contracts (DE0CH/aviary docs/CONTRACTS.md), through this directory's hermit and gateway.
 
 ```
-chat.deyaochen.com (Access "Jarvis 4 chat", Deyao)                     DE0CH/services k8s/chat, namespace services
+chat.deyaochen.com (Access "Jarvis 4 chat", Deyao)                     DE0CH/deyao-ai k8s/chat, namespace services
   pigeon ─▶ magpie (Postgres chat-db, bucket deyao-chat-magpie)
      │         │
      └──────▶ hermit-jarvis ──(its service token: /api/remotes, /api/sessions/:id/start,
@@ -46,7 +46,7 @@ Jarvis 4 session machine (harness aviary)                                     �
   report, aviary-gateway serves it in `/jarvis/state`, and the harness's shim writes it as an `ai-title` line beside
   the mirrored transcripts (`aviary-title.jsonl`), where the machine's status reads a Claude session's title.
 - hermit and the gateway are Rust, here; the gateway's sandbox-facing half runs on each session machine.
-- pigeon and magpie are a DE0CH/services tenant.
+- pigeon and magpie are a DE0CH/deyao-ai tenant.
 - The session image's user `claude` is uid 1000 (the supervisor runs the agent as uid 1000).
 - hermit learns which session a machine is from the router (the machine signs its boot; the router checks the
   signature for hermit), never from the machine's word.
@@ -61,7 +61,7 @@ Jarvis 4 session machine (harness aviary)                                     �
 | `harness-aviary.sh`, `aviary-sandbox` | `session-image/base/` | the harness launcher and the supervisor's namespace |
 | the session's tunnel agent | `harness-aviary.sh` `run_tunnel` (`cf-tunnel-agent.js`) | `https://<session id>-s.deyaochen.com/` → 127.0.0.1:8899 on the machine, which the sandbox shares: its drop pages and content. The agent runs on the machine's side because the tunnel proof never enters the sandbox |
 | supervisor, keeper | DE0CH/aviary release assets, pinned in `session-image/aviary.json` | |
-| pigeon, magpie, pigeon-app | DE0CH/services `k8s/chat/` | pinned by DE0CH/services `chat-pin.yml` |
+| pigeon, magpie, pigeon-app | DE0CH/deyao-ai `k8s/chat/` | pinned by DE0CH/deyao-ai `chat-pin.yml` |
 | router | `router/machinesig.go`, harness `aviary` in `router/harness.go`, `router/remote.go` | |
 
 ## A session's life
@@ -107,7 +107,7 @@ Jarvis 4 session machine (harness aviary)                                     �
 
 hermit-jarvis reaches the router's device routes (`/api/remotes`, `/api/sessions/:id/start`,
 `/api/machine-signatures/verify`, behind the Access app "Jarvis 4 devices") with its own Access service token
-`hermit-jarvis` (DE0CH/services infra/cloudflare.py mints it; its values are `HERMIT_JARVIS_ACCESS_ID/SECRET` in the
+`hermit-jarvis` (DE0CH/deyao-ai infra/cloudflare.py mints it; its values are `HERMIT_JARVIS_ACCESS_ID/SECRET` in the
 Secret `chat-hermit`). The router admits it by client id, named in git (`HERMIT_CLIENT_ID` in
 k8s/cluster/router/router.yaml), as it admits the health probe's: no browser login, and removing the line (or the token
 at Cloudflare) cuts it off.
@@ -115,7 +115,7 @@ at Cloudflare) cuts it off.
 ## Bumping aviary (dogfooding)
 
 `aviary-pin.yml` (every 15 min) pins DE0CH/aviary's newest release into `session-image/aviary.json` and this crate's
-`Cargo.toml`; DE0CH/services `chat-pin.yml` pins the same release's pigeon and magpie, the newest pigeon-app and
+`Cargo.toml`; DE0CH/deyao-ai `chat-pin.yml` pins the same release's pigeon and magpie, the newest pigeon-app and
 hermit-jarvis. A release exists only when aviary's CI passed, so every green aviary commit reaches Jarvis 4 within
 the hour, before YYC AI (whose pins move by hand).
 
