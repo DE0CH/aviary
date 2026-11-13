@@ -144,7 +144,7 @@ impl Started {
             .map(|s| {
                 s.children
                     .iter()
-                    .filter(|(_, n)| n == "claude")
+                    .filter(|(_, n)| crate::harness::of_process(n).is_some())
                     .map(|(p, _)| *p)
                     .collect()
             })
@@ -169,9 +169,11 @@ pub fn reattach(keeper: &keeper::Client, prior: Option<&RunState>, same_boot: bo
     if !same_boot {
         return Reattach::Exited { n: g.n, exit: None };
     }
-    let alive = keeper
-        .status()
-        .is_ok_and(|s| s.children.iter().any(|(pid, name)| *pid == g.pid && name == "claude"));
+    let alive = keeper.status().is_ok_and(|s| {
+        s.children
+            .iter()
+            .any(|(pid, name)| *pid == g.pid && crate::harness::of_process(name) == Some(g.harness))
+    });
     if alive {
         return Reattach::Alive { n: g.n, pid: g.pid };
     }

@@ -62,6 +62,78 @@ pub fn write(dir: &Path, claude: &hermit_api::sandbox_surface::Claude) -> std::i
     write_skills(&dir.join(SKILLS), &claude.managed_skills)
 }
 
+/// Qwen Code's managed directory: its system settings file's place on Linux.
+pub const QWEN_MANAGED_DIR: &str = "/etc/qwen-code";
+/// The managed skills' folder under [`QWEN_MANAGED_DIR`] (the settings name it in `skills.directories`).
+pub const QWEN_SKILLS: &str = "skills";
+
+/// Qwen Code's system settings: the models of its harness on the model route (`OpenAI` chat completions at
+/// `http://model/v1`, the placeholder key, each model's context window, every kind of media taken as it is: Qwen
+/// Code puts an image, a sound or a video file its agent opens into the conversation), the model this generation
+/// runs, every tool allowed, no telemetry and no update check, and the managed skills' folder.
+#[must_use]
+pub fn qwen_settings(models: &gateway_api::models::Models, model: &str, skills: &Path) -> serde_json::Value {
+    use crate::harness::Harness;
+    let provider = |id: &str, label: &str| {
+        let window = models.context_of(id);
+        let mut generation = serde_json::json!({
+            "timeout": 600_000,
+            "modalities": {"image": true, "audio": true, "video": true},
+        });
+        if window > 0 {
+            generation["contextWindowSize"] = window.into();
+        }
+        serde_json::json!({
+            "id": id, "name": label, "envKey": super::launch::QWEN_KEY_ENV, "baseUrl": "http://model/v1",
+            "generationConfig": generation,
+        })
+    };
+    let mut listed: Vec<serde_json::Value> = models
+        .models
+        .iter()
+        .filter(|m| m.harness == Harness::Qwen)
+        .map(|m| provider(&m.id, &m.label))
+        .collect();
+    if !models
+        .models
+        .iter()
+        .any(|m| m.harness == Harness::Qwen && m.id == model)
+    {
+        // the generation's model always has its entry, or Qwen Code would not start
+        listed.push(provider(model, model));
+    }
+    serde_json::json!({
+        "modelProviders": {"openai": listed},
+        "security": {"auth": {"selectedType": "openai"}},
+        "model": {"name": model},
+        "tools": {"approvalMode": "yolo"},
+        "telemetry": {"enabled": false},
+        "general": {"disableAutoUpdate": true, "disableUpdateNag": true},
+        "skills": {"directories": [skills.to_string_lossy()]},
+    })
+}
+
+/// Writes Qwen Code's managed files into `dir`: `settings.json` for `model` and the descriptor's managed skills
+/// (the same skills Claude Code gets) in `skills/<skill>/<file>`. Root, 0644, replaced atomically, stale skill
+/// files removed.
+///
+/// # Errors
+/// The first write error.
+pub fn write_qwen(
+    dir: &Path,
+    claude: &hermit_api::sandbox_surface::Claude,
+    models: &gateway_api::models::Models,
+    model: &str,
+) -> std::io::Result<()> {
+    mkdir(dir)?;
+    let skills = dir.join(QWEN_SKILLS);
+    let mut text =
+        serde_json::to_string_pretty(&qwen_settings(models, model, &skills)).map_err(std::io::Error::other)?;
+    text.push('\n');
+    put(dir, "settings.json", text.as_bytes())?;
+    write_skills(&skills, &claude.managed_skills)
+}
+
 fn mkdir(dir: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))
@@ -136,6 +208,71 @@ mod tests {
     use hermit_api::sandbox_surface::Claude;
 
     use super::*;
+
+    /// Qwen Code's settings list the models of its harness only, on the model route, and name the generation's
+    /// model and the managed skills' folder.
+    #[test]
+    fn qwen_codes_settings() {
+        let models: gateway_api::models::Models = serde_json::from_str(
+            r#"{"default":"a","small":"a","title":"a","contextTokens":200000,"models":[
+                {"id":"a","label":"A","reasoning":null},
+                {"id":"video","label":"Video","reasoning":null,"harness":"qwen","contextTokens":1000000}]}"#,
+        )
+        .unwrap();
+        let s = qwen_settings(&models, "video", Path::new("/etc/qwen-code/skills"));
+        let listed = s["modelProviders"]["openai"].as_array().unwrap();
+        assert_eq!(listed.len(), 1, "Claude Code's models are not Qwen Code's");
+        assert_eq!(listed[0]["id"], "video");
+        assert_eq!(listed[0]["baseUrl"], "http://model/v1");
+        assert_eq!(listed[0]["envKey"], crate::cc::launch::QWEN_KEY_ENV);
+        assert_eq!(listed[0]["generationConfig"]["contextWindowSize"], 1_000_000);
+        for kind in ["image", "audio", "video"] {
+            assert_eq!(listed[0]["generationConfig"]["modalities"][kind], true, "{kind}");
+        }
+        assert_eq!(s["model"]["name"], "video");
+        assert_eq!(s["security"]["auth"]["selectedType"], "openai");
+        assert_eq!(s["tools"]["approvalMode"], "yolo");
+        assert_eq!(s["telemetry"]["enabled"], false);
+        assert_eq!(s["skills"]["directories"][0], "/etc/qwen-code/skills");
+        // a model the route does not list for this harness still gets its entry
+        let other = qwen_settings(&models, "other", Path::new("/s"));
+        assert!(
+            other["modelProviders"]["openai"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["id"] == "other")
+        );
+    }
+
+    #[test]
+    fn qwen_codes_managed_files() {
+        let d = std::env::temp_dir().join(format!("qwen-managed-{}", uuid::Uuid::new_v4().simple()));
+        let models: gateway_api::models::Models = serde_json::from_str(
+            r#"{"default":"a","small":"a","title":"a","contextTokens":0,"models":[
+                {"id":"video","label":"Video","reasoning":null,"harness":"qwen"}]}"#,
+        )
+        .unwrap();
+        let mut claude: hermit_api::sandbox_surface::Claude =
+            serde_json::from_str(r#"{"managedClaudeMd":"x","managedSkills":{}}"#).unwrap();
+        claude.managed_skills.insert("web/SKILL.md".into(), "search".into());
+        write_qwen(&d, &claude, &models, "video").unwrap();
+        let s: serde_json::Value = serde_json::from_slice(&std::fs::read(d.join("settings.json")).unwrap()).unwrap();
+        assert_eq!(s["model"]["name"], "video");
+        assert_eq!(
+            s["skills"]["directories"][0],
+            d.join("skills").to_string_lossy().as_ref()
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.join("skills/web/SKILL.md")).unwrap(),
+            "search"
+        );
+        // a skill the descriptor no longer names goes
+        claude.managed_skills.clear();
+        write_qwen(&d, &claude, &models, "video").unwrap();
+        assert!(!d.join("skills/web").exists());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
 
     fn claude(md: &str, skills: &[(&str, &str)]) -> Claude {
         Claude {

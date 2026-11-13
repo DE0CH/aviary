@@ -133,7 +133,7 @@ pub async fn lease(app: &Magpie, caller: &Caller) -> Result<LeaseResponse> {
                         cc_resync = false, lease_granted_at = now()
                    from (select cc_resync from conversations where id = $1) old
                   where c.id = $1
-                  returning c.lease_epoch, c.provider_session_id, c.main_transcript, old.cc_resync",
+                  returning c.lease_epoch, c.provider_session_id, c.main_transcript, old.cc_resync, c.harness",
                 &[&caller.conversation, &lease, &caller.sandbox],
             )
             .await?;
@@ -143,6 +143,7 @@ pub async fn lease(app: &Magpie, caller: &Caller) -> Result<LeaseResponse> {
             conversation_id: caller.conversation,
             provider_session_id: row.get(1),
             main_transcript: row.get(2),
+            harness: magpie_api::Harness::parse(row.get(4)).unwrap_or_default(),
             resync: row.get(3),
         })
     })

@@ -54,6 +54,8 @@ pub struct GenState {
     pub n: u32,
     pub pid: i32,
     pub started_at: String,
+    /// The harness it is (absent in a `run.json` written before harnesses: Claude Code).
+    pub harness: aviary_core::harness::Harness,
     pub session_id: Option<String>,
     pub stdout: String,
     pub stdout_offset: u64,

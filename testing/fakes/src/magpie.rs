@@ -195,6 +195,8 @@ struct Conv {
     current_sandbox: Option<String>,
     provider_session_id: Option<String>,
     main_transcript: Option<String>,
+    /// The harness the session and the main transcript belong to.
+    harness: aviary_core::harness::Harness,
     resync: bool,
     nodes: BTreeMap<String, CcNode>,
     ops: HashMap<Uuid, Value>,
@@ -658,6 +660,7 @@ impl FakeMagpie {
                 conversation_id: Uuid::nil(),
                 provider_session_id: c.provider_session_id.clone(),
                 main_transcript: c.main_transcript.clone(),
+                harness: c.harness,
                 resync,
             })
         })
@@ -1074,6 +1077,7 @@ impl FakeMagpie {
                 && let Some(sid) = &body.provider_session_id
             {
                 c.provider_session_id = Some(sid.clone());
+                c.harness = body.harness;
                 c.main_transcript = Some(
                     body.transcript_path
                         .clone()

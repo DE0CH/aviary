@@ -48,11 +48,12 @@ use uuid::Uuid;
 
 use crate::boot::BootEnv;
 use crate::cc::control::{self, Answer};
-use crate::cc::launch::{self, Launch, Session};
+use crate::cc::launch::{self, Launch, Session, Start};
 use crate::cc::report::{Item, Reporter, Wait};
 use crate::cc::stream::{Line, Out, Partial, ResultMsg, Step, Tail, TaskKind, TaskMsg};
 use crate::cc::tasks::{Change as TaskChange, Tracker};
 use crate::cc::{Transcript, managed, prompt};
+use crate::harness::{self, Harness};
 use crate::hermit::Hermit;
 use crate::hermit::activity::Activity;
 use crate::keeper::{self, ExitRecord, StdinOutcome};
@@ -89,6 +90,8 @@ pub struct DriverConfig {
     pub uploads: Uploads,
     /// Claude Code's `~/.claude` (the main transcript is `projects/-workspace/<session>.jsonl` under it).
     pub claude_dir: PathBuf,
+    /// Qwen Code's managed directory (`/etc/qwen-code`).
+    pub qwen_managed_dir: PathBuf,
 }
 
 impl DriverConfig {
@@ -100,6 +103,7 @@ impl DriverConfig {
             gen_dir: crate::state::GEN_DIR.into(),
             uploads: Uploads::sandbox(),
             claude_dir: PathBuf::from(crate::boot::AGENT_HOME).join(".claude"),
+            qwen_managed_dir: PathBuf::from(managed::QWEN_MANAGED_DIR),
         }
     }
 }
@@ -221,6 +225,8 @@ struct Gen {
     stdout: PathBuf,
     stderr: PathBuf,
     offset: u64,
+    /// The harness it is (Claude Code or Qwen Code) and its session there.
+    harness: Harness,
     session_id: String,
     initialized: bool,
     started_at: OffsetDateTime,
@@ -974,6 +980,7 @@ impl Driver {
                 n: g.n,
                 pid: g.pid,
                 started_at: rfc3339(g.started_at),
+                harness: g.harness,
                 session_id: Some(g.session_id.clone()),
                 stdout: g.stdout.to_string_lossy().into_owned(),
                 stdout_offset: g.offset,
@@ -1596,10 +1603,14 @@ impl Driver {
         };
         let live = {
             let st = lock(&self.st);
-            st.live.as_ref().map(|g| (g.n, g.session_id.clone(), g.initialized))
+            st.live
+                .as_ref()
+                .map(|g| (g.n, g.harness, g.session_id.clone(), g.initialized))
         };
-        if let Some((n, sid, init)) = live {
-            if sid == session.id() {
+        if let Some((n, h, sid, init)) = live {
+            // the same session id in another harness is another session (a conversation's first session in each
+            // harness is named after the conversation)
+            if h == session.harness && sid == session.id() {
                 if init {
                     return Ok(n);
                 }
@@ -1618,7 +1629,7 @@ impl Driver {
                 tracing::warn!(gen = n, "a generation that did not initialise is killed");
                 self.kill_gen(n, Why::Init).await;
             } else {
-                tracing::info!(live = %sid, wanted = %session.id(), "another session: generation ended");
+                tracing::info!(live = %sid, harness = %h, wanted = %session.id(), wanted_harness = %session.harness, "another session: generation ended");
                 self.end_generation(
                     Why::Graceful,
                     Instant::now() + STDIN_CLOSE_GRACE + KILL_AFTER_TERM + Duration::from_secs(2),
@@ -1633,9 +1644,10 @@ impl Driver {
         if !counted {
             // the first generation on this session here (a conversation resumed on a new sandbox, or another
             // session): what its transcript already holds counts
-            let n = match session {
-                Session::Resume(id) => self.transcript_images(id).await,
-                Session::New(_) => 0,
+            let n = if session.resume {
+                self.transcript_images(session).await
+            } else {
+                0
             };
             self.with(Change::State, |st, _| {
                 st.images = Some(n);
@@ -1664,10 +1676,10 @@ impl Driver {
     /// (`apply_flag_settings` `effortLevel`). Claude Code sends both with every model call (`thinking` present or
     /// not, `output_config.effort`), and the gateway applies the level.
     async fn apply_thinking(&self, n: u32, thinking: Option<&str>) -> Result<(), String> {
-        let (model, applied) = {
+        let (model, applied, gen_harness) = {
             let st = lock(&self.st);
             match st.live.as_ref().filter(|g| g.n == n) {
-                Some(g) => (g.model.clone(), g.thinking.clone()),
+                Some(g) => (g.model.clone(), g.thinking.clone(), g.harness),
                 None => return Err("Claude Code exited before the prompt was written".into()),
             }
         };
@@ -1684,7 +1696,20 @@ impl Driver {
         if applied == Thinking::Level(level.clone()) {
             return Ok(());
         }
-        tracing::info!(gen = n, thinking = ?level, "claude switched to the conversation's thinking level");
+        tracing::info!(gen = n, thinking = ?level, "generation switched to the conversation's thinking level");
+        if gen_harness == Harness::Qwen {
+            // Qwen Code has one control for it, its effort; it has no "thinking off" of its own, so `none` and no
+            // level leave it where it is
+            if let Some(l) = level.as_deref().filter(|l| *l != "none") {
+                self.control_call(n, |id| control::qwen_set_effort(id, l)).await?;
+            }
+            self.with(Change::Progress, |st, _| {
+                if let Some(g) = st.live.as_mut().filter(|g| g.n == n) {
+                    g.thinking = Thinking::Level(level);
+                }
+            });
+            return Ok(());
+        }
         match level.as_deref() {
             Some("none") => {
                 self.control_call(n, |id| control::set_max_thinking_tokens(id, Some(0)))
@@ -1761,7 +1786,31 @@ impl Driver {
             .hermit
             .descriptor()
             .ok_or_else(|| GenError::Failed("no descriptor".into()))?;
-        let env = launch::env(&ctx.boot, &descriptor.env, &models);
+        let mut models = models;
+        if session.harness == Harness::Qwen && models.harness_of(&models.default) != Harness::Qwen {
+            // no model picked yet (a generation started ahead of the first turn): a model of this harness
+            if let Some(m) = models.models.iter().find(|m| m.harness == Harness::Qwen) {
+                models.default.clone_from(&m.id);
+            }
+        }
+        let env = launch::env(session.harness, &ctx.boot, &descriptor.env, &models);
+        let start = Start {
+            project_settings: descriptor.claude.project_settings,
+            instructions: descriptor.claude.managed_claude_md.clone(),
+            model: models.default.clone(),
+        };
+        if session.harness == Harness::Qwen {
+            // its settings name the model it runs, so they are written at each start
+            let (dir, claude, m) = (
+                self.cfg.qwen_managed_dir.clone(),
+                descriptor.claude.clone(),
+                models.clone(),
+            );
+            tokio::task::spawn_blocking(move || managed::write_qwen(&dir, &claude, &m, &m.default))
+                .await
+                .map_err(|e| GenError::Failed(format!("Qwen Code's managed files: {e}")))?
+                .map_err(|e| GenError::Failed(format!("Qwen Code's managed files: {e}")))?;
+        }
         let n = {
             let mut st = lock(&self.st);
             if st.cancelled(turn) {
@@ -1777,7 +1826,7 @@ impl Driver {
         let stderr = dir.join("stderr.log");
         let spec = self.cfg.launch.spec(
             session,
-            descriptor.claude.project_settings,
+            &start,
             env,
             stdout.to_string_lossy().into_owned(),
             stderr.to_string_lossy().into_owned(),
@@ -1787,7 +1836,7 @@ impl Driver {
             .keeper_call(move |k| k.spawn_tracked(&spec))
             .await
             .map_err(GenError::Failed)?;
-        tracing::info!(gen = n, pid = spawned.pid, session = %session.id(), resume = matches!(session, Session::Resume(_)), model = %models.default, "claude started");
+        tracing::info!(gen = n, pid = spawned.pid, harness = %session.harness, session = %session.id(), resume = session.resume, model = %models.default, "generation started");
         let (tx, rx) = mpsc::unbounded_channel();
         let (init_tx, init_rx) = oneshot::channel();
         let init_id = format!("init-{n}");
@@ -1799,6 +1848,7 @@ impl Driver {
                 stdout: stdout.clone(),
                 stderr: stderr.clone(),
                 offset: 0,
+                harness: session.harness,
                 session_id: session.id().to_owned(),
                 initialized: false,
                 started_at: now(),
@@ -2087,12 +2137,13 @@ impl Driver {
             };
             tracing::info!(images, at, "the conversation holds too many images: compacting");
             let id = agent_turn_id(&boot, g.n, g.offset, g.started_at);
+            let command = harness::compact_command(g.harness);
             st.compact_tried = Some(images);
             // as a wake-up's turn, it is no pending input: it ends at its own `result`, and a person's message written
             // meanwhile is answered by the next one
             Self::open_agent_turn(st, fx, id);
             fx.push(Fx::Stdin(prompt::user_line(
-                &Value::String("/compact".to_owned()),
+                &Value::String(command.to_owned()),
                 &rfc3339(now()),
             )));
         });
@@ -2100,8 +2151,16 @@ impl Driver {
 
     /// The image blocks of the main transcript since its last compaction: what a resumed Claude Code sends with
     /// every model call. A transcript that cannot be read counts as none.
-    async fn transcript_images(&self, session: &str) -> u32 {
-        let path = self.cfg.claude_dir.join(format!("projects/-workspace/{session}.jsonl"));
+    async fn transcript_images(&self, session: &Session) -> u32 {
+        if session.harness != Harness::Claude {
+            // Qwen Code's transcript keeps media in its own record shape; nothing is counted for it yet, so a Qwen
+            // Code conversation is compacted only by Qwen Code itself (at its token limit)
+            return 0;
+        }
+        let path = self
+            .cfg
+            .claude_dir
+            .join(format!("projects/-workspace/{}.jsonl", session.id()));
         let counted = tokio::time::timeout(
             Duration::from_secs(30),
             tokio::task::spawn_blocking(move || count_images(&path)),
@@ -2599,8 +2658,8 @@ impl Driver {
             delivered_ack(me, false);
         };
         let session = match &s.resume.provider_session_id {
-            Some(id) => Session::Resume(id.clone()),
-            None => Session::New(conversation.to_string()),
+            Some(id) => Session::resume(s.harness, id.clone()),
+            None => Session::new(s.harness, conversation.to_string()),
         };
         // a replay sends the bytes it recorded: nothing is downloaded or renamed onto the workspace again (the
         // agent may have changed those files since)
@@ -2721,14 +2780,14 @@ impl Driver {
                     fx.push(Fx::SetTurn(Some(turn_id)));
                 }
                 tracing::info!(turn = %turn_id, origin = "person", "turn started");
-                fx.push(Fx::MainTranscript(format!("claude/projects/-workspace/{sid}.jsonl")));
+                fx.push(Fx::MainTranscript(harness::main_transcript(session.harness, &sid)));
                 // the generation's slash commands ride its first turn's report
                 let commands = st.live.as_mut().and_then(|g| g.commands.take());
                 fx.push(Fx::Report(Item::state(
                     turn_id,
                     TurnStateReport {
                         commands,
-                        ..running_report(&sid)
+                        ..running_report(session.harness, &sid)
                     },
                 )));
             }
@@ -3192,6 +3251,7 @@ impl Driver {
                     stdout: PathBuf::from(&g.stdout),
                     stderr: PathBuf::from(&g.stdout).with_file_name("stderr.log"),
                     offset: g.stdout_offset,
+                    harness: g.harness,
                     session_id: sid.clone(),
                     initialized: g.initialized,
                     started_at: OffsetDateTime::parse(&g.started_at, &time::format_description::well_known::Rfc3339)
@@ -3220,7 +3280,7 @@ impl Driver {
                             origin: magpie_api::turns::TurnOrigin::Agent,
                             at: wire(now()),
                         }),
-                        _ => Item::state(t.id, running_report(&sid)),
+                        _ => Item::state(t.id, running_report(g.harness, &sid)),
                     }));
                 }
                 let lane = turn.as_ref().map(|t| t.id);
@@ -3302,10 +3362,11 @@ enum Prepared {
     Answered,
 }
 
-fn running_report(sid: &str) -> TurnStateReport {
+fn running_report(harness: Harness, sid: &str) -> TurnStateReport {
     TurnStateReport {
+        harness,
         provider_session_id: Some(sid.to_owned()),
-        transcript_path: Some(format!("claude/projects/-workspace/{sid}.jsonl")),
+        transcript_path: Some(harness::main_transcript(harness, sid)),
         ..end_report(ReportedState::Running, None)
     }
 }
@@ -3462,8 +3523,8 @@ impl Agent for Driver {
             // pre-spawn (4.3 step 8) so the first turn does not pay for start-up and resume
             if alive.is_none() || stale.is_some() {
                 let session = match &ctx.lease.provider_session_id {
-                    Some(s) => Session::Resume(s.clone()),
-                    None => Session::New(conversation.to_string()),
+                    Some(s) => Session::resume(ctx.lease.harness, s.clone()),
+                    None => Session::new(ctx.lease.harness, conversation.to_string()),
                 };
                 let me = self.arc();
                 self.go(async move {

@@ -43,6 +43,13 @@ pub fn set_effort(request_id: &str, level: &str) -> Vec<u8> {
                  "request": {"subtype": "apply_flag_settings", "settings": {"effortLevel": level}}}))
 }
 
+/// Qwen Code's `set_effort`: its reasoning effort for the model calls from the next one.
+#[must_use]
+pub fn qwen_set_effort(request_id: &str, level: &str) -> Vec<u8> {
+    line(&json!({"type": "control_request", "request_id": request_id,
+                 "request": {"subtype": "set_effort", "effort": level}}))
+}
+
 fn success(request_id: &str, response: &Value) -> Vec<u8> {
     line(&json!({"type": "control_response",
                  "response": {"subtype": "success", "request_id": request_id, "response": response}}))
@@ -168,5 +175,10 @@ mod tests {
         );
         assert_eq!(v(&stop_task("s1", "t9"))["request"]["task_id"], "t9");
         assert_eq!(v(&initialize("init-1"))["request"]["subtype"], "initialize");
+        let e = v(&qwen_set_effort("c1", "high"));
+        assert_eq!(
+            (e["request"]["subtype"].as_str(), e["request"]["effort"].as_str()),
+            (Some("set_effort"), Some("high"))
+        );
     }
 }

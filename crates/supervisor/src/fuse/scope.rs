@@ -68,23 +68,25 @@ pub const CLAUDE: Table = Table {
     ],
 };
 
-/// Qwen Code's `~/.qwen`: `projects/<cwd>/chats/<sid>.jsonl` are the transcripts (with their `.ledger.jsonl` and
-/// `.title.json`), `projects/<cwd>/memory` and `memories` its memory.
+/// Qwen Code's `~/.qwen` (measured on 0.27.3 with `QWEN_HOME`): `projects/<cwd>/chats/<sid>.jsonl` are the
+/// transcripts (with `<sid>.title.json`), `projects/<cwd>/memory`, `meta.json`, `extract-cursor.json` and
+/// `memories/` its memory. It makes an empty `skills/` at every start, so that name is local, not refused: the
+/// managed skills are in `/etc/qwen-code/skills`, and what a conversation writes there goes with the sandbox.
 pub const QWEN: Table = Table {
-    magpie: &["projects", "memories", "todos"],
+    magpie: &["projects", "memories"],
     local: &[
+        "skills",
         "usage",
         "usage_record.jsonl",
         "tmp",
-        "logs",
-        "cache",
+        "extensions",
+        "extension-store",
+        "model-registry.json",
+        "output-language.md",
         "installation_id",
-        "sessions",
-        "session-registry",
+        "logs",
         "debug",
         "ide",
-        "extensions",
-        "mcp-oauth-tokens.json",
     ],
     refused: &[
         "settings.json",
@@ -92,10 +94,8 @@ pub const QWEN: Table = Table {
         "AGENTS.md",
         "commands",
         "agents",
-        "skills",
         "hooks",
         "output-styles",
-        "oauth_creds.json",
     ],
 };
 
@@ -276,6 +276,8 @@ mod tests {
             "claude/.ccr-tip.json",
             "qwen/usage/token-usage-2026-11.jsonl",
             "qwen/usage_record.jsonl",
+            "qwen/skills/x/SKILL.md",
+            "qwen/.openai-logs-cleanup-b98b",
             "qwen/something-new",
             // one harness's names mean nothing in the other's home
             "qwen/file-history/x",
@@ -291,7 +293,7 @@ mod tests {
             "claude/rules/a.md",
             "qwen/settings.json",
             "qwen/QWEN.md",
-            "qwen/skills/x/SKILL.md",
+            "qwen/hooks/x",
             // the mount holds the harness homes and nothing else
             "projects",
             "projects/-workspace/abc.jsonl",

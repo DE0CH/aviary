@@ -557,10 +557,12 @@ async fn world_with(hermit: HermitConfig) -> World {
         d = dir.display(),
         exe = exe.display()
     );
-    let bin = dir.join("claude");
-    std::fs::write(&bin, script).unwrap();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut std::fs::metadata(&bin).unwrap().permissions(), 0o755);
-    std::fs::set_permissions(&bin, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    // the same stand-in is both harnesses: they speak one protocol, and the argv file says how each was started
+    for name in ["claude", "qwen"] {
+        let bin = dir.join(name);
+        std::fs::write(&bin, &script).unwrap();
+        std::fs::set_permissions(&bin, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    }
     World {
         dir,
         ws,
@@ -611,6 +613,7 @@ impl World {
         DriverConfig {
             launch: Launch {
                 bin: self.dir.join("claude").to_string_lossy().into_owned(),
+                qwen_bin: self.dir.join("qwen").to_string_lossy().into_owned(),
                 cwd: self.ws.to_string_lossy().into_owned(),
                 uid,
                 gid,
@@ -618,6 +621,7 @@ impl World {
             managed_dir: self.dir.join("managed"),
             gen_dir: self.dir.join("gens"),
             claude_dir: self.dir.join("dot-claude"),
+            qwen_managed_dir: self.dir.join("managed-qwen"),
             uploads: Uploads {
                 workspace: self.ws.clone(),
                 uid,
@@ -726,6 +730,36 @@ impl World {
             .into_iter()
             .filter_map(|l| l.strip_prefix("model ").map(str::to_owned))
             .collect()
+    }
+
+    /// A turn in `harness` on `model`, resuming that harness's session `resume` (`None`: it has none yet).
+    fn turn_in(
+        &self,
+        text: &str,
+        harness: magpie_api::Harness,
+        model: Option<&str>,
+        resume: Option<String>,
+    ) -> (Uuid, u64) {
+        let id = Uuid::now_v7();
+        let seq = self.magpie.push_command(
+            self.cid,
+            Some(id),
+            CommandBody::StartTurn(StartTurn {
+                harness,
+                carry_over: None,
+                text: text.into(),
+                files: vec![],
+                images: vec![],
+                resume: Resume {
+                    provider_session_id: resume,
+                },
+                sent_at: magpie_api::Timestamp::now(),
+                answers: Vec::new(),
+                model: model.map(str::to_owned),
+                thinking: None,
+            }),
+        );
+        (id, seq)
     }
 
     fn turn_with(
@@ -1015,6 +1049,64 @@ async fn a_turn_runs_on_the_conversations_picked_model() {
         "none picked any more: the default again"
     );
     assert_eq!(w.prompts().len(), 4);
+}
+
+/// A turn in the other harness ends the running generation and starts that harness: Qwen Code with its own argv,
+/// its managed settings written for the turn's model, its session reported with its own transcript's place. A turn
+/// back in Claude Code starts Claude Code again on its session.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_turn_in_another_harness_starts_that_harness() {
+    use magpie_api::Harness;
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    until("pre-spawn", || !w.spawns().is_empty()).await;
+    assert!(
+        w.spawns()[0].contains("--permission-mode bypassPermissions"),
+        "Claude Code first"
+    );
+
+    let (t1, _) = w.turn_in("say:one", Harness::Qwen, Some("vendor/video"), None);
+    assert_eq!(w.ended(t1).await["state"], "completed");
+    let spawns = w.spawns();
+    assert_eq!(spawns.len(), 2, "{spawns:?}");
+    let q = &spawns[1];
+    for part in [
+        "--approval-mode yolo".to_owned(),
+        "--model vendor/video".to_owned(),
+        format!("--session-id {}", w.cid),
+        "--exclude-tools=cron_create".to_owned(),
+        "--append-system-prompt".to_owned(),
+    ] {
+        assert!(q.contains(&part), "{part} in {q}");
+    }
+    assert!(!q.contains("--permission-mode"), "{q}");
+    let running = &w.states(t1)[0];
+    assert_eq!(running["state"], "running");
+    assert_eq!(running["harness"], "qwen");
+    assert_eq!(running["providerSessionId"], w.cid.to_string());
+    assert_eq!(
+        running["transcriptPath"],
+        format!("qwen/projects/-workspace/chats/{}.jsonl", w.cid)
+    );
+    let settings: Value =
+        serde_json::from_slice(&std::fs::read(w.dir.join("managed-qwen/settings.json")).unwrap()).unwrap();
+    assert_eq!(settings["model"]["name"], "vendor/video");
+    assert!(w.dir.join("managed-qwen/skills").is_dir());
+    w.idle(&sup).await;
+
+    // back in Claude Code: the Qwen Code generation ends, Claude Code resumes its own session
+    let (t2, _) = w.turn_in("say:two", Harness::Claude, None, Some(w.cid.to_string()));
+    assert_eq!(w.ended(t2).await["state"], "completed");
+    let spawns = w.spawns();
+    assert_eq!(spawns.len(), 3, "{spawns:?}");
+    assert!(spawns[2].contains(&format!("--resume {}", w.cid)) && spawns[2].contains("--permission-mode"));
+    let running = &w.states(t2)[0];
+    assert_eq!(running.get("harness"), None, "Claude Code is the unnamed harness");
+    assert_eq!(
+        running["transcriptPath"],
+        format!("claude/projects/-workspace/{}.jsonl", w.cid)
+    );
+    w.idle(&sup).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -75,7 +75,10 @@ impl Leftovers {
         self.status().await.map_or_else(Vec::new, |s| {
             s.children
                 .into_iter()
-                .filter(|(pid, name)| name != "supervisor" && !(name == "claude" && (attached || Some(*pid) == own)))
+                .filter(|(pid, name)| {
+                    name != "supervisor"
+                        && !(crate::harness::of_process(name).is_some() && (attached || Some(*pid) == own))
+                })
                 .collect()
         })
     }
@@ -117,7 +120,11 @@ impl Leftovers {
             return;
         }
         tracing::info!(processes = ?targets, "release: ending what the agent does not own");
-        let claude: Vec<i32> = targets.iter().filter(|(_, n)| n == "claude").map(|(p, _)| *p).collect();
+        let claude: Vec<i32> = targets
+            .iter()
+            .filter(|(_, n)| crate::harness::of_process(n).is_some())
+            .map(|(p, _)| *p)
+            .collect();
         let all: Vec<i32> = targets.iter().map(|(p, _)| *p).collect();
         if !claude.is_empty() {
             // a generation's end (4.5): stdin closed first, so Claude Code can finish its transcript

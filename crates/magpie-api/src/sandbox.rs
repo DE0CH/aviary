@@ -43,6 +43,10 @@ pub struct LeaseResponse {
     pub provider_session_id: Option<String>,
     /// The main transcript path, if known.
     pub main_transcript: Option<String>,
+    /// The harness `provider_session_id` and `main_transcript` belong to: the one that ran last (absent: Claude
+    /// Code).
+    #[serde(default, skip_serializing_if = "Harness::is_default")]
+    pub harness: Harness,
     /// Refetch the tree and re-send any suffix magpie lacks before starting Claude Code (magpie 6.12).
     pub resync: bool,
 }
