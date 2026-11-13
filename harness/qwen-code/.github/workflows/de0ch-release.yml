@@ -15,6 +15,10 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      # corepack fetches the pinned pnpm without asking (a prompt nobody answers hangs the job)
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      CI: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
