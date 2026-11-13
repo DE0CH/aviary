@@ -101,11 +101,24 @@ NUISANCE = (r"Wait|Use without an account|No thanks|No, thanks|Not now|Got it|Ac
             r"Don.t allow|Dismiss|Close|Skip")
 
 
+def answer_anr(seen):
+    """The emulator's "… isn't responding" dialog (its launcher, on a slow runner) covers everything: Wait."""
+    if not any("isn't responding" in node["text"] for node in seen):
+        return False
+    wait = next((node for node in seen if node["text"] == "Wait"), None)
+    if wait:
+        tap(wait)
+        time.sleep(3)
+    return True
+
+
 def wait_for(pattern, seconds, by=("text", "desc"), clear=True):
     """The first node matching `pattern` within `seconds`; nuisance dialogs are answered on the way."""
     end = time.time() + seconds
     while time.time() < end:
         seen = nodes()
+        if answer_anr(seen):
+            continue
         for node in seen:
             if match(node, pattern, by):
                 return node
@@ -203,6 +216,10 @@ sh("echo 'chrome --disable-fre --no-default-browser-check --no-first-run' > /dat
 sh(f"am set-debug-app --persistent {CHROME}")
 sh("settings put system accelerometer_rotation 0; settings put system user_rotation 0; cmd uimode night no")
 before = webapks()
+# let a freshly booted emulator settle (its launcher's "isn't responding" comes in the first minute)
+for _ in range(10):
+    answer_anr(nodes())
+    time.sleep(3)
 
 # ---- 1. the site in Chrome
 # a freshly booted emulator sometimes drops the first start (Chrome never comes up): ask again
@@ -257,7 +274,10 @@ for _ in range(90):
     if new:
         package = new[0]
         break
-    pin = next((node for node in nodes() if match(node, r"Add to home screen|Add automatically|Add")
+    seen = nodes()
+    if answer_anr(seen):
+        continue
+    pin = next((node for node in seen if match(node, r"Add to home screen|Add automatically|Add")
                 and node["cls"].endswith("Button") and node["pkg"] != CHROME), None)
     if pin:
         tap(pin)
