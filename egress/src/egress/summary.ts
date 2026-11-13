@@ -20,7 +20,7 @@ const GLITCH = (e = "") => `(${e}decision = 'allow' and (${e}status = 429 or ${e
  *  agent sent (bad arguments 400, an unknown tool or path 404, the wrong method 405, 409, too large 413, 415, the
  *  tool's own "change this" 422). As an API provider is not alerted when a client misuses an endpoint. Still ours:
  *  401 and 403 (the pair token, the catalogue), a call egress itself refused (deny…), every model call */
-const CALLER = (e = "") => `(${e}kind in ('inject', 'tools') and ${e}decision = 'allow' and ${e}status in (400, 404, 405, 409, 413, 415, 422))`;
+const CALLER = (e = "") => `(${e}kind in ('inject', 'tools', 'route') and ${e}decision = 'allow' and ${e}status in (400, 404, 405, 409, 413, 415, 422))`;
 const QUIET = (e = "") => `(${NOISE(e)} or ${GLITCH(e)} or ${CALLER(e)})`;
 /** model, tools and sandbox route calls (`inject` is the old stack's kind for its tools route, in copied rows) */
 const CALLS = "('model', 'inject', 'tools', 'route')";

@@ -1689,12 +1689,17 @@ test("in-cluster API: models for pigeon, the ops summary for hermit, the egress 
     const before = sum.recent.modelErrors;
     const callers = [400, 404, 405, 409, 413, 415, 422];
     for (const st of callers) await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('tools', 'tools', '/v1/tools/web_search', 'allow', $1, 'staff@example.org')", [st]);
+    // a sandbox route (kind route: labels, telegram, …) is the same: the agent's wrong method is the agent's
+    await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('route', 'herald', '/v1/channels/x/messages', 'allow', 405, 'staff@example.org')");
+    await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('route', 'herald', '/v1/channels/x/messages', 'allow', 400, 'staff@example.org')");
     await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('tools', 'tools', '/v1/tools/web_search', 'allow', 401, 'staff@example.org')");
     await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('tools', 'tools', '/v1/nope', 'deny:path', 403, 'staff@example.org')");
     await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('model', 'openrouter.ai', '/v1/messages', 'allow', 400, 'staff@example.org')");
     const sum2 = JSON.parse((await get("/v1/ops/summary?tz=Asia%2FHong_Kong&recentMinutes=15", "her")).body);
     assert.equal(sum2.recent.modelErrors, before + 3, "only the three that are ours count");
-    assert.equal(sum2.recent.callerErrors, callers.length);
+    assert.equal(sum2.recent.callerErrors, callers.length + 2);
+    assert.ok(sum2.recent.list.every((r: { what: string }) => r.what !== "route 405" && r.what !== "route 400"), "no route caller mistake in the recent list");
+    assert.ok(sum2.egress.recent.filter((r: { kind: string; host: string }) => r.kind === "route" && r.host === "herald").every((r: { quiet: boolean }) => r.quiet));
     assert.ok(sum2.recent.list.every((r: { what: string }) => !callers.some((st) => r.what === `tools ${st}`)), "no caller mistake in the recent list");
     for (const what of ["tools 401", "tools 403", "model 400"]) assert.ok(sum2.recent.list.some((r: { what: string }) => r.what === what), what);
     const rec = sum2.egress.recent.filter((r: { path: string | null }) => r.path === "/v1/tools/web_search");
