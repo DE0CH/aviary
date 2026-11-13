@@ -16,7 +16,12 @@ const NOISE = (e = "") => `((${e}kind in ('inject', 'tools') and ${e}status = 40
 /** a glitch, not an error: the provider busy or its upstream down for a moment (429, 5xx, no answer at all); Claude
  *  Code retries it */
 const GLITCH = (e = "") => `(${e}decision = 'allow' and (${e}status = 429 or ${e}status >= 500 or ${e}status is null))`;
-const QUIET = (e = "") => `(${NOISE(e)} or ${GLITCH(e)})`;
+/** the caller's mistake, not ours: a tools or route call that reached its service and was turned down for what the
+ *  agent sent (bad arguments 400, an unknown tool or path 404, the wrong method 405, 409, too large 413, 415, the
+ *  tool's own "change this" 422). As an API provider is not alerted when a client misuses an endpoint. Still ours:
+ *  401 and 403 (the pair token, the catalogue), a call egress itself refused (deny…), every model call */
+const CALLER = (e = "") => `(${e}kind in ('inject', 'tools') and ${e}decision = 'allow' and ${e}status in (400, 404, 405, 409, 413, 415, 422))`;
+const QUIET = (e = "") => `(${NOISE(e)} or ${GLITCH(e)} or ${CALLER(e)})`;
 /** model, tools and sandbox route calls (`inject` is the old stack's kind for its tools route, in copied rows) */
 const CALLS = "('model', 'inject', 'tools', 'route')";
 const OWNER = (e = "") => `lower(trim(coalesce(${e}person, ${e}owner)))`;
@@ -86,13 +91,14 @@ async function spend(db: Db, gate: BudgetGate | null, cfg: BudgetConfig | undefi
   };
 }
 
-/** Refusals and errors over 24 h: model and tools calls that failed (402 budget, 503, …) and blocked hosts. */
+/** Refusals and errors over 24 h: model and tools calls that failed (402 budget, 503, …) and blocked hosts. A
+ *  caller's mistake (CALLER) is not among the errors by kind; in `recent` it is marked quiet. */
 async function refusals(db: Db): Promise<Row> {
   const [{ rows: byStatus }, { rows: recent }, { rows: denied }] = await Promise.all([
     db.query(
       `select kind, status, decision, count(*)::int as n, max(at) as "lastAt"
          from egress_log where at > now() - interval '24 hours' and kind in ${CALLS}
-          and (status >= 400 or status is null or decision like 'deny%')
+          and (status >= 400 or status is null or decision like 'deny%') and not ${CALLER()}
         group by 1, 2, 3 order by n desc limit 20`,
     ),
     db.query(
@@ -115,13 +121,15 @@ async function refusals(db: Db): Promise<Row> {
   };
 }
 
-/** The last `minutes`: failed model and tools calls (not the quiet ones) and blocked internet requests. */
+/** The last `minutes`: failed model and tools calls (not the quiet ones), the callers' own mistakes as a separate
+ *  count, and blocked internet requests. */
 async function lately(db: Db, minutes: number): Promise<Row> {
   const win = `now() - make_interval(mins => ${minutes})`;
   const [{ rows: c }, { rows: list }] = await Promise.all([
     db.query(
       `select (select count(*) from egress_log where at > ${win} and kind in ${CALLS} and (status >= 400 or decision like 'deny%') and not ${QUIET()})::int as "modelErrors",
               (select count(*) from egress_log where at > ${win} and kind = 'model' and ${GLITCH()})::int as "glitches",
+              (select count(*) from egress_log where at > ${win} and ${CALLER()})::int as "callerErrors",
               (select count(*) from egress_log where at > ${win} and kind not in ${CALLS} and decision like 'deny%')::int as "blocked"`,
     ),
     db.query(
@@ -131,7 +139,7 @@ async function lately(db: Db, minutes: number): Promise<Row> {
         order by e.at desc limit 20`,
     ),
   ]);
-  return { ...(c[0] ?? { modelErrors: 0, glitches: 0, blocked: 0 }), list: list.map((r) => ({ ...r, at: iso(r.at), detail: String(r.detail ?? "").slice(0, 300) })) };
+  return { ...(c[0] ?? { modelErrors: 0, glitches: 0, callerErrors: 0, blocked: 0 }), list: list.map((r) => ({ ...r, at: iso(r.at), detail: String(r.detail ?? "").slice(0, 300) })) };
 }
 
 /** `GET /v1/admin/egress-log?conversation=&since=&limit=`: newest first. */

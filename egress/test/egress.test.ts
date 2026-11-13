@@ -1683,6 +1683,25 @@ test("in-cluster API: models for pigeon, the ops summary for hermit, the egress 
     assert.ok(sum.egress.byStatus.every((x: { status: unknown }) => x.status === null || typeof x.status === "number"));
     assert.ok(sum.budget.total.callsMonth >= 2);
 
+    // a call the agent made wrong (bad arguments, an unknown tool or path, the tool's own "change this") is the
+    // caller's mistake, not a failure of ours: out of the recent count and list, marked quiet in the 24 h rows.
+    // What is ours to fix still counts: the pair token refused (401), a call egress turned down, a model 4xx.
+    const before = sum.recent.modelErrors;
+    const callers = [400, 404, 405, 409, 413, 415, 422];
+    for (const st of callers) await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('tools', 'tools', '/v1/tools/web_search', 'allow', $1, 'staff@example.org')", [st]);
+    await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('tools', 'tools', '/v1/tools/web_search', 'allow', 401, 'staff@example.org')");
+    await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('tools', 'tools', '/v1/nope', 'deny:path', 403, 'staff@example.org')");
+    await t.db.query("insert into egress_log (kind, host, path, decision, status, person) values ('model', 'openrouter.ai', '/v1/messages', 'allow', 400, 'staff@example.org')");
+    const sum2 = JSON.parse((await get("/v1/ops/summary?tz=Asia%2FHong_Kong&recentMinutes=15", "her")).body);
+    assert.equal(sum2.recent.modelErrors, before + 3, "only the three that are ours count");
+    assert.equal(sum2.recent.callerErrors, callers.length);
+    assert.ok(sum2.recent.list.every((r: { what: string }) => !callers.some((st) => r.what === `tools ${st}`)), "no caller mistake in the recent list");
+    for (const what of ["tools 401", "tools 403", "model 400"]) assert.ok(sum2.recent.list.some((r: { what: string }) => r.what === what), what);
+    const rec = sum2.egress.recent.filter((r: { path: string | null }) => r.path === "/v1/tools/web_search");
+    assert.equal(rec.length, callers.length + 1);
+    for (const r of rec) assert.equal(r.quiet, r.status !== 401, `tools ${r.status}`);
+    assert.ok(sum2.egress.byStatus.every((x: { kind: string; status: number }) => !(x.kind === "tools" && callers.includes(x.status))), "not among the errors by kind");
+
     const log = await get(`/v1/admin/egress-log?conversation=${sb.claims.conversationId}&limit=5`, "adm");
     assert.equal(log.status, 200);
     const lr = JSON.parse(log.body).rows;
