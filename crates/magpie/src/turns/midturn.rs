@@ -9,6 +9,7 @@
 //!   line, known by its text, is where the message shows on the timeline, as a `user` row with the app's id of the
 //!   message ([`taken`]). By its text, not by an id on the line: a supervisor of any version writes the message the
 //!   same way, so a sandbox started before this keeps working.
+//!   Behind a held message (below) it waits too, so messages arrive in the order they were sent.
 //! - **A message with attachments** cannot be written into a running turn (its files go into the workspace when a
 //!   turn starts): it is held (`redeliver`, its request kept) and starts a turn of its own once the conversation is
 //!   idle. While it is held the person can take it back ([`withdraw`]).
@@ -90,7 +91,25 @@ pub async fn join(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendRequ
     let Some(turn) = active(tx, conversation).await?.filter(|t| !t.state.is_ended()) else {
         return Ok(None);
     };
-    if m.images.is_empty() && m.files.is_empty() {
+    // the order they were sent in is the order they arrive in: behind a held message (one with attachments, which
+    // waits for the turn to end) a text message waits too, and joins the turn that message starts (`pass` sends
+    // each conversation's oldest waiting message first)
+    let behind_held: bool = tx
+        .query_one(
+            "select exists (select 1 from pending_messages
+               where conversation_id = $1 and state = 'redeliver' and request is not null)",
+            &[&conversation],
+        )
+        .await?
+        .get(0);
+    if m.images.is_empty() && m.files.is_empty() && behind_held {
+        tx.execute(
+            "insert into pending_messages (conversation_id, client_message_id, text, state, turn_id)
+             values ($1, $2, $3, 'redeliver', $4)",
+            &[&conversation, &m.client_message_id, &m.text, &turn.id],
+        )
+        .await?;
+    } else if m.images.is_empty() && m.files.is_empty() {
         let seq = write(tx, conversation, turn.id, &m.text).await?;
         tx.execute(
             "insert into pending_messages (conversation_id, client_message_id, text, state, turn_id, cmd_seq)

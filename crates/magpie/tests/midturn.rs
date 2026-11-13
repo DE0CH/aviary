@@ -277,6 +277,30 @@ async fn a_message_with_attachments_is_held_until_the_turn_ends() {
     alice.send_turn(conv, &msg("m4", "文字")).await.unwrap();
     let e = alice.withdraw_pending(conv, "m4").await.unwrap_err();
     assert_eq!(code(&e), ErrorCode::BadTransition);
+    // the order they were sent in is the order they arrive in (Deyao, 2026-11-13: a later text overtook an earlier
+    // message with a picture): a text sent after a held message waits behind it, not written into the running turn
+    let written: i64 = w
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select count(*) from commands where conversation_id = $1 and type = 'send_message'",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(written, 0, "m4 waits behind the held m2");
+    assert_eq!(w.pass().await, 0, "and goes on waiting while m2 does");
+    assert_eq!(
+        w.waiting(conv)
+            .await
+            .iter()
+            .map(|(t, _)| t.as_str())
+            .collect::<Vec<_>>(),
+        ["睇下呢個", "文字"]
+    );
     let e = alice.withdraw_pending(conv, "nothing").await.unwrap_err();
     assert_eq!(code(&e), ErrorCode::NotFound);
 
