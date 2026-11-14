@@ -236,13 +236,10 @@ async fn a_session_boots_turns_pauses_and_resumes() {
             .unwrap()
             .contains("@127.0.0.1:3128")
     );
-    // Claude Code's home, as the machine named it: the supervisor's mount (magpie), not the machine's ~/.claude. A
-    // session whose Claude Code wrote beside the mount showed no tool calls and never ended its turn in the chat
-    // (2026-11-14)
-    assert_eq!(
-        d["env"]["CLAUDE_CONFIG_DIR"], "/home/sandbox/.harness/claude",
-        "{d}"
-    );
+    // dogfooding (Deyao, 2026-11-14): Claude Code runs as it does in an aviary sandbox, with nothing telling it
+    // where its home is. The session's sandbox has aviary's layout (~/.claude a link into the supervisor's mount,
+    // session-image/base/aviary-sandbox), so a machine's CLAUDE_CONFIG_DIR never reaches the descriptor
+    assert!(d["env"].get("CLAUDE_CONFIG_DIR").is_none(), "{d}");
     assert_eq!(d["resources"]["memoryBytes"], 8u64 << 30);
     // no token, or a forged one: refused
     let r = c
