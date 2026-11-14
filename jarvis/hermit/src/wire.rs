@@ -25,7 +25,7 @@ pub const HEALTH: &str = "/jarvis/health";
 pub const DELIVER: &str = "/jarvis/deliver";
 
 /// The environment names a machine may hand to its sandbox's descriptor: Jarvis 4's own non-secret values, which
-/// Jarvis's scripts read. Anything else is refused (no secret ever travels to hermit).
+/// Jarvis's scripts read, and where the machine's sandbox keeps Claude Code's home. Anything else is refused (no secret ever travels to hermit).
 pub const BOOT_ENV_NAMES: &[&str] = &[
     "SESSION_ID",
     "SESSION_HARNESS",
@@ -38,6 +38,11 @@ pub const BOOT_ENV_NAMES: &[&str] = &[
     "LOBSTER_CHANNEL",
     "SESSION_API_TOKEN",
     "TZ",
+    // Claude Code's home in this machine's sandbox, named by the image that mounts it (harness-aviary.sh): the
+    // `claude` home of the supervisor's mount. An aviary sandbox image links `~/.claude` there; a session's sandbox
+    // shares the machine's home, where `~/.claude` is the machine's own directory. A machine whose supervisor
+    // mounts on `~/.claude` itself (images before 2026-11-14) sends none.
+    "CLAUDE_CONFIG_DIR",
 ];
 
 /// `POST /jarvis/boot` body (signed with the machine key over `"POST /jarvis/boot <time> <sha256 hex of body>"`, in

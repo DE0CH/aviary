@@ -183,6 +183,10 @@ async fn a_session_boots_turns_pauses_and_resumes() {
                 env: [
                     ("SESSION_ID".into(), "s1".into()),
                     ("SECRET_THING".into(), "never".into()),
+                    (
+                        "CLAUDE_CONFIG_DIR".into(),
+                        "/home/sandbox/.harness/claude".into(),
+                    ),
                 ]
                 .into_iter()
                 .collect(),
@@ -231,6 +235,13 @@ async fn a_session_boots_turns_pauses_and_resumes() {
             .as_str()
             .unwrap()
             .contains("@127.0.0.1:3128")
+    );
+    // Claude Code's home, as the machine named it: the supervisor's mount (magpie), not the machine's ~/.claude. A
+    // session whose Claude Code wrote beside the mount showed no tool calls and never ended its turn in the chat
+    // (2026-11-14)
+    assert_eq!(
+        d["env"]["CLAUDE_CONFIG_DIR"], "/home/sandbox/.harness/claude",
+        "{d}"
     );
     assert_eq!(d["resources"]["memoryBytes"], 8u64 << 30);
     // no token, or a forged one: refused
