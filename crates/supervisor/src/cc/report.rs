@@ -1,5 +1,6 @@
 //! Reports to magpie (supervisor 11): turn states, agent-started turns, asks and command acks, task events in
-//! 250 ms batches. Reports are ordered per lane: one lane per turn (its agent-turn open, its states, the asks opened
+//! 250 ms batches (a turn's state report sends the task events read before it first, so magpie never ends a turn
+//! ahead of a task's completion in it). Reports are ordered per lane: one lane per turn (its agent-turn open, its states, the asks opened
 //! during it and the acks of the commands about it, so `running` precedes the end and an interrupt's ack follows
 //! the outcome) and one lane for everything else; lanes do not wait for each other, so a turn whose end waits for
 //! its transcript lines (8.2) holds back nothing but itself. Every report is retried on 5xx, connection errors,
@@ -201,6 +202,8 @@ pub struct Reporter {
     pending: watch::Sender<usize>,
     tasks: Mutex<Vec<TaskReportEvent>>,
     tasks_pending: watch::Sender<usize>,
+    /// Held while a batch of task events is taken and sent: batches reach magpie in the order they were read.
+    tasks_sending: tokio::sync::Mutex<()>,
     live: Mutex<LiveQueue>,
     /// The highest generation that has exited.
     gone: watch::Sender<u32>,
@@ -229,6 +232,7 @@ impl Reporter {
             pending: watch::channel(0).0,
             tasks: Mutex::new(Vec::new()),
             tasks_pending: watch::channel(0).0,
+            tasks_sending: tokio::sync::Mutex::new(()),
             live: Mutex::new(LiveQueue::default()),
             gone: watch::channel(0).0,
             refused: Mutex::new(HashSet::new()),
@@ -438,6 +442,32 @@ impl Reporter {
         self.refused.lock().unwrap_or_else(PoisonError::into_inner).insert(turn);
     }
 
+    /// What a state report waits for before it is sent (8.2); a write that stayed stuck makes it a failure.
+    async fn wait_for(&self, turn: Uuid, wait: Wait, report: &mut TurnStateReport) {
+        let stuck = match wait {
+            Wait::Nothing => false,
+            Wait::Uuids { uuids, generation } => {
+                let (stuck, keep) = self.wait_uuids(turn, uuids, generation).await;
+                if !keep {
+                    report.last_uuid = None;
+                }
+                stuck
+            }
+            Wait::Settle => {
+                self.transcript.settle().await;
+                false
+            }
+        };
+        if stuck {
+            report.state = ReportedState::Failed;
+            report.error = Some(ReportError {
+                code: magpie_api::errors::DataCode::CcWriteStuck,
+                message: "a transcript write kept failing for 10 min while magpie answered".into(),
+            });
+            report.last_uuid = None;
+        }
+    }
+
     async fn send(&self, item: Item) {
         let what = format!("{item:?}");
         match item {
@@ -447,28 +477,10 @@ impl Reporter {
                 wait,
                 done,
             } => {
-                let stuck = match wait {
-                    Wait::Nothing => false,
-                    Wait::Uuids { uuids, generation } => {
-                        let (stuck, keep) = self.wait_uuids(turn, uuids, generation).await;
-                        if !keep {
-                            report.last_uuid = None;
-                        }
-                        stuck
-                    }
-                    Wait::Settle => {
-                        self.transcript.settle().await;
-                        false
-                    }
-                };
-                if stuck {
-                    report.state = ReportedState::Failed;
-                    report.error = Some(ReportError {
-                        code: magpie_api::errors::DataCode::CcWriteStuck,
-                        message: "a transcript write kept failing for 10 min while magpie answered".into(),
-                    });
-                    report.last_uuid = None;
-                }
+                self.wait_for(turn, wait, &mut report).await;
+                // what Claude Code said of its tasks before this state: magpie ends a turn's tasks that it was not
+                // told the end of, so a completion sent after the turn's end would find its task already `stopped`
+                self.flush_tasks().await;
                 let refused = self.refused(turn);
                 let ok = self
                     .retry(&what, || async {
@@ -589,21 +601,27 @@ impl Reporter {
     pub async fn run_tasks(self: Arc<Self>) {
         loop {
             tokio::time::sleep(TASKS_BATCH).await;
-            let batch = std::mem::take(&mut *self.tasks.lock().unwrap_or_else(PoisonError::into_inner));
-            if batch.is_empty() {
-                continue;
-            }
-            let n = batch.len();
-            let req = TasksReport { events: batch };
-            self.retry("tasks", || async {
-                match self.calls().tasks(&req).await {
-                    Ok(()) => Attempt::Done,
-                    Err(e) => classify(&e),
-                }
-            })
-            .await;
-            self.tasks_pending.send_modify(|p| *p = p.saturating_sub(n));
+            self.flush_tasks().await;
         }
+    }
+
+    /// Sends the task events queued so far as one batch, after any batch already on its way.
+    async fn flush_tasks(&self) {
+        let _sending = self.tasks_sending.lock().await;
+        let batch = std::mem::take(&mut *self.tasks.lock().unwrap_or_else(PoisonError::into_inner));
+        if batch.is_empty() {
+            return;
+        }
+        let n = batch.len();
+        let req = TasksReport { events: batch };
+        self.retry("tasks", || async {
+            match self.calls().tasks(&req).await {
+                Ok(()) => Attempt::Done,
+                Err(e) => classify(&e),
+            }
+        })
+        .await;
+        self.tasks_pending.send_modify(|p| *p = p.saturating_sub(n));
     }
 }
 
@@ -820,6 +838,69 @@ mod tests {
         r.push(Item::state(Uuid::now_v7(), end()));
         assert!(r.drain(Instant::now() + Duration::from_secs(10)).await);
         assert_eq!(r.given_up(), 1);
+    }
+
+    /// A task's events read before a turn's end reach magpie before the end does. They go in batches, the end at
+    /// once: sent after it, magpie's end of the turn finds the task it was told had started and nothing of its
+    /// completion, and writes a `stopped` of its own for a task that completed.
+    #[tokio::test]
+    async fn a_turns_end_follows_the_task_events_read_before_it() {
+        use magpie_api::events::{TaskEvent, TaskState};
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let fake = aviary_fakes::magpie::FakeMagpie::unguarded();
+        let served = fake.serve().await.unwrap();
+        let client = magpie_api::client::Client::new(reqwest::Client::new(), served.url(), "t");
+        let r = Reporter::new(client, Arc::new(crate::cc::Stored0));
+        r.set_lease(Uuid::new_v4());
+        tokio::spawn(r.clone().run());
+        tokio::spawn(r.clone().run_tasks());
+        let at = magpie_api::Timestamp::now();
+        let event = |id: &str, event, status| TaskReportEvent {
+            id: id.to_owned(),
+            task_id: "a1".into(),
+            tool_use_id: Some("toolu_1".into()),
+            event,
+            status,
+            description: None,
+            summary: None,
+            output_file: None,
+            at,
+        };
+        let turn = Uuid::now_v7();
+        r.task_event(event("1:10", TaskEvent::Updated, TaskState::Completed));
+        r.task_event(event("1:20", TaskEvent::Notification, TaskState::Completed));
+        r.push(Item::state(
+            turn,
+            TurnStateReport {
+                harness: magpie_api::Harness::default(),
+                state: ReportedState::Completed,
+                at,
+                provider_session_id: None,
+                transcript_path: None,
+                exit_code: None,
+                error: None,
+                held: None,
+                tasks: None,
+                last_uuid: None,
+                usage: None,
+                duration_ms: None,
+                commands: None,
+            },
+        ));
+        assert!(r.drain(Instant::now() + Duration::from_secs(10)).await);
+        let routes: Vec<&str> = fake.script().calls().iter().map(|c| c.route).collect();
+        assert_eq!(routes, ["tasks", "turn_state"], "the task events, then the end");
+        let sent = fake.script().calls_to("tasks");
+        let ids: Vec<&str> = sent[0].body.as_ref().unwrap()["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["1:10", "1:20"], "in the order read");
+        // the batch task finds nothing left to send
+        tokio::time::sleep(TASKS_BATCH * 2).await;
+        assert_eq!(fake.script().calls_to("tasks").len(), 1);
     }
 
     /// No report is dropped across a 20 min outage: the retry keeps going at the 10 s cap (paused time).

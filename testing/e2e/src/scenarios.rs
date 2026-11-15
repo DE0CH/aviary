@@ -599,8 +599,8 @@ async fn cc(h: &Harness) -> anyhow::Result<()> {
         );
         // what claude-code-gate compares between the pinned and the newest Claude Code (nightly.yml): the events
         // magpie derived, by kind (the timing-dependent `sandbox.*` and the title aside), and the rows. `task.status`
-        // is counted by its event and status, so a drift names what changed (2.1.318 sends no `updated/stopped`
-        // after a task's `completed`, 2.1.304 does), without `progress`, whose count follows the subagent's run time
+        // is counted by its event and status, so a drift names what changed, without `progress`, whose count follows
+        // the subagent's run time
         let mut kinds = std::collections::BTreeMap::<String, u64>::new();
         for e in &evs {
             let k = e["kind"].as_str().unwrap_or_default();

@@ -271,7 +271,9 @@ Claude Code's answer is never read without its turn; an interrupt arriving meanw
 message. Reports go through `cc::report::Reporter` in lanes: one per turn (its agent-turn open, states, the asks
 opened during it and the acks of commands about it) and one for the rest, so an end report that waits for its
 uuids (`Transcript::wait_stored`, 8.2) or for the filesystem to settle (a generation that exited) holds back only
-its own turn. Task events go in 250 ms batches. Everything is retried at 0.5 s doubling to 10 s (or magpie's
+its own turn. Task events go in 250 ms batches, and a state report sends the ones read before it first: magpie
+writes a `stopped` of its own for every task it knows of that a turn's end does not hold, so a completion that
+arrived after the end would leave a completed task with a `stopped` event. Everything is retried at 0.5 s doubling to 10 s (or magpie's
 `retryAfterMs`) on 5xx, connection errors, 429, `transcript_pending` and `conversation_migrating` until the lease is
 lost; any other refusal is logged as `report_given_up` and counted.
 
