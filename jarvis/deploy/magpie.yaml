@@ -19,7 +19,7 @@ spec:
       terminationGracePeriodSeconds: 60
       containers:
         - name: magpie
-          image: ghcr.io/de0ch/magpie:f17612d8254b@sha256:4a6f69b55443cd01fa05a04f805bfeb7d5b95abcbf0a9d2782c08edcd78182d5
+          image: ghcr.io/de0ch/magpie:c49b00d050ab@sha256:9937425683a42bb9e45beddc8494e3452942820ab25f8e85645f59b843828365
           args: [serve]
           envFrom: [{ secretRef: { name: chat-magpie } }]
           env: [{ name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }]
