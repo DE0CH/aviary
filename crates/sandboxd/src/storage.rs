@@ -48,6 +48,10 @@ pub fn jfs_root() -> P {
 pub fn workspace_dir(ws: &str) -> P {
     path!("/var/lib/sbx/jfs/ws/{ws}")
 }
+/// The deployment's shared folder (`/drive` in every sandbox): a folder at the top of the JuiceFS mount.
+pub fn drive_dir(folder: &str) -> P {
+    path!("/var/lib/sbx/jfs/{folder}")
+}
 
 fn is_mount(dir: &str) -> bool {
     quiet(&["mountpoint", "-q", dir]) == 0
@@ -108,6 +112,9 @@ pub fn setup(spec: &Spec) -> Res<P> {
     if !spec.workspace.is_empty() {
         workspace(spec.workspace.as_str())?;
     }
+    if !spec.drive.is_empty() {
+        drive(spec.drive.as_str())?;
+    }
     let img = scratch_img(name);
     let sd = scratch_dir(name);
     crate::util::mkdir(path!("/var/lib/sbx/scratch").as_str(), 0o700)?;
@@ -156,8 +163,17 @@ pub fn setup(spec: &Spec) -> Res<P> {
 /// before the source's upper layer is copied in under the mounted overlay, and a directory cached as lower-only
 /// (pinned by the bind mount on it) would hide everything copied into its upper twin. With the upper directory
 /// there from the start, the overlay looks into it on every lookup.
-const MOUNT_PATHS: [&str; 8] =
-    ["/tmp", "/var", "/var/lib", "/var/lib/docker", "/workspace", "/home", "/home/sandbox", "/home/sandbox/.claude"];
+const MOUNT_PATHS: [&str; 9] = [
+    "/tmp",
+    "/var",
+    "/var/lib",
+    "/var/lib/docker",
+    "/workspace",
+    "/drive",
+    "/home",
+    "/home/sandbox",
+    "/home/sandbox/.claude",
+];
 
 fn premake_upper(image: &str, upper: &str) -> Res<()> {
     use std::os::unix::fs::MetadataExt;
@@ -302,6 +318,18 @@ fn parse_stats(text: &str) -> SyncStats {
 
 /// The conversation's `/workspace` folder must be there: the JuiceFS mount (503 without it, after waiting for a
 /// remount) and ws/<ws> in it, made with its quota by hermit (409 `workspace missing` otherwise; nothing is created).
+/// The shared folder `/drive` is folder `<folder>` of the JuiceFS mount; hermit makes it (409 `drive missing`
+/// otherwise; nothing is created here).
+fn drive(folder: &str) -> Res<()> {
+    if !jfs_mounted() {
+        return Err(Error::new(503, "the workspace store (JuiceFS) is not mounted on this host"));
+    }
+    match std::fs::metadata(drive_dir(folder).as_str()) {
+        Ok(m) if m.is_dir() => Ok(()),
+        _ => Err(Error::new(409, "drive missing")),
+    }
+}
+
 fn workspace(ws: &str) -> Res<()> {
     if !jfs_mounted() {
         return Err(Error::new(503, "the workspace store (JuiceFS) is not mounted on this host"));
@@ -325,6 +353,14 @@ pub fn teardown(name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_shared_folder_is_beside_the_workspaces_and_has_its_mount_point() {
+        assert_eq!(drive_dir("drive").as_str(), "/var/lib/sbx/jfs/drive");
+        assert_eq!(workspace_dir("c0ffee-1").as_str(), "/var/lib/sbx/jfs/ws/c0ffee-1");
+        // /drive is made in the upper layer like /workspace (a migration's destination, see MOUNT_PATHS)
+        assert!(MOUNT_PATHS.contains(&"/drive") && MOUNT_PATHS.contains(&"/workspace"));
+    }
 
     #[test]
     fn scratch_is_the_specs_size() {

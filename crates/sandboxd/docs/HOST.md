@@ -126,7 +126,10 @@ reached over the node's IPv6; the egress VIP translation; the image source for b
   `fabric.aws.diskGiB`, the launch template's volume) must hold every sandbox's scratch in full, which hermit checks
   when it loads its configuration. `/workspace` = `ws/<workspace>` of the host's JuiceFS
   mount (`sbx-jfs`). hermit makes `ws/<workspace>` and sets its quota (hermit spec 15.5); sandboxd makes, chowns and
-  quotas nothing there and refuses a create whose folder is missing (409 `workspace missing`). No `~/.claude` bind
+  quotas nothing there and refuses a create whose folder is missing (409 `workspace missing`). A spec that names
+  `drive` also gets `/drive` = folder `<drive>` at the top of the same mount, the same folder in every sandbox of the
+  deployment (hermit.json `sandbox.drive`; hermit makes it; 409 `drive missing` otherwise). It travels in the spec, so
+  a migration's destination mounts it too. No `~/.claude` bind
   (the supervisor mounts its FUSE filesystem on the pre-made `/home/sandbox/.claude`) and no `/etc/hosts` bind (the
   supervisor writes it).
 - Scratch in use: `Listed.scratchUsed` (bytes, statvfs of the scratch mount, read by the 10 s sampler; absent for a

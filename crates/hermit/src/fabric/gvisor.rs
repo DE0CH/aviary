@@ -283,6 +283,8 @@ impl Fabric for Gvisor {
                 memory: spec.memory_bytes,
                 cpu_features: core.cfg.file.fabric.cpu_features.clone(),
                 workspace: Some(spec.workspace.to_string()),
+                // named only when the deployment has one (a host on an older sandboxd refuses the field)
+                drive: core.cfg.file.sandbox.drive.clone(),
                 pids: Some(spec.pids),
                 // named only when it is not sandboxd's default, so a host still on a sandboxd that predates the
                 // field (and refuses unknown ones) keeps taking default-sized sandboxes

@@ -294,6 +294,14 @@ async fn serve() -> ExitCode {
         return ExitCode::FAILURE;
     };
     let ws = &config.file.sandbox.workspace;
+    if let Some(d) = &config.file.sandbox.drive {
+        // the shared folder is there before a sandbox asks for it (sandboxd creates nothing: 409 `drive missing`)
+        let dir = std::path::Path::new(MOUNT).join(d);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::error!(error = %e, dir = %dir.display(), "the shared folder could not be made");
+            return ExitCode::FAILURE;
+        }
+    }
     let workspaces = Arc::new(JuiceFs::new(MOUNT, Arc::new(juicefs), ws.quota_gib, ws.quota_inodes));
     // the Kubernetes client builds its TLS from the process's provider: ring, the workspace's only one
     let _ = rustls::crypto::ring::default_provider().install_default();

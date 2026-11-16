@@ -105,6 +105,11 @@ pub struct SandboxJson {
     /// many images (at least 1). Absent = never.
     #[serde(default)]
     pub compact_at_images: Option<u32>,
+    /// The deployment's shared folder: folder `<drive>` at the top of the JuiceFS volume, mounted at `/drive` in
+    /// every sandbox (one folder all conversations share; a deployment's own file page may serve the same folder).
+    /// Absent = none. Lowercase letters, digits and `-`, never `ws`.
+    #[serde(default)]
+    pub drive: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -331,6 +336,19 @@ impl Config {
             &file.fabric.aws.fallback_host.reserve,
         ] {
             parse_quantity(m).ok_or_else(|| invalid(format!("fabric: {m:?} is not a quantity")))?;
+        }
+        if let Some(d) = &s.drive {
+            // sandboxd's rule for a spec's `drive`
+            let ok = !d.is_empty()
+                && d.len() <= 64
+                && d != "ws"
+                && d.bytes()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-');
+            if !ok {
+                return Err(invalid(
+                    "sandbox.drive must be lowercase letters, digits and -, and not ws",
+                ));
+            }
         }
         let workspace_quota_bytes = u64::from(s.workspace.quota_gib) << 30;
         // sandboxd's range for a spec's `scratchBytes`
@@ -573,6 +591,20 @@ mod tests {
         assert!(load(&|v| v["sandbox"]["tmpGiB"] = 100.into()).is_ok());
         // sandboxd refuses a scratch outside [1 GiB, 1 TiB]
         assert!(load(&|v| v["sandbox"]["tmpGiB"] = 0.into()).is_err());
+        // the shared folder: none unless named, and a name sandboxd takes
+        assert_eq!(load(&|_| {}).unwrap().file.sandbox.drive, None);
+        assert_eq!(
+            load(&|v| v["sandbox"]["drive"] = "drive".into())
+                .unwrap()
+                .file
+                .sandbox
+                .drive
+                .as_deref(),
+            Some("drive")
+        );
+        for no in ["ws", "", "a/b", "..", "Drive"] {
+            assert!(load(&move |v| v["sandbox"]["drive"] = no.into()).is_err(), "{no}");
+        }
         assert!(load(&|v| v["sandbox"]["tmpGiB"] = 1025.into()).is_err());
     }
 

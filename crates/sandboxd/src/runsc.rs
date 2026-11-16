@@ -157,6 +157,11 @@ pub fn bundle_spec(b: &mut Buf, spec: &Spec, image_env: &[&str], args: &[&str], 
         let ws = crate::storage::workspace_dir(spec.workspace.as_str());
         mount(&mut w, "/workspace", "bind", ws.as_str(), &["rbind", "rw"]);
     }
+    // the deployment's shared folder, the same one in every sandbox
+    if !spec.drive.is_empty() {
+        let d = crate::storage::drive_dir(spec.drive.as_str());
+        mount(&mut w, "/drive", "bind", d.as_str(), &["rbind", "rw"]);
+    }
     w.end_arr();
     w.key("linux").obj().key("namespaces").arr();
     for t in ["pid", "ipc", "uts", "mount"] {
@@ -228,7 +233,7 @@ mod tests {
 
     #[test]
     fn bundle() {
-        let body = br#"{"name":"sbx-abc","ip":"10.98.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"HTTP_PROXY":"http://sbx:t@10.99.1.1:3128","EXEC_TOKEN":"e","PATH":"/x"},"cpu":1.5,"memory":2147483648,"cpuFeatures":"fpu,sse2","workspace":"c0ffee-1"}"#;
+        let body = br#"{"name":"sbx-abc","ip":"10.98.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{"HTTP_PROXY":"http://sbx:t@10.99.1.1:3128","EXEC_TOKEN":"e","PATH":"/x"},"cpu":1.5,"memory":2147483648,"cpuFeatures":"fpu,sse2","workspace":"c0ffee-1","drive":"drive"}"#;
         let spec = Spec::parse(body, "10.98.0.0/16").ok().unwrap();
         let mut mem = [0u8; 16384];
         let mut b = Buf::new(&mut mem);
@@ -261,6 +266,8 @@ mod tests {
             s.contains(r#"{"destination":"/workspace","type":"bind","source":"/var/lib/sbx/jfs/ws/c0ffee-1""#),
             "{s}"
         );
+        // the deployment's shared folder, at /drive in every sandbox
+        assert!(s.contains(r#"{"destination":"/drive","type":"bind","source":"/var/lib/sbx/jfs/drive""#), "{s}");
         // hermit spec 13.2 items 2, 4: no ~/.claude bind, no /etc/hosts
         assert!(!s.contains(".claude") && !s.contains("/etc/hosts") && !s.contains("users/"), "{s}");
         // item 7: /dev/fuse in the sandbox and on the device allow-list

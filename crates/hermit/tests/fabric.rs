@@ -708,6 +708,7 @@ impl Rig {
             workspace: None,
             pids: None,
             scratch_bytes: None,
+            drive: None,
         };
         self.fleet.sim(host).sandboxes.lock().unwrap().insert(
             name.clone(),
@@ -1463,6 +1464,7 @@ async fn ec2_reconcile_and_orphans() {
                 workspace: None,
                 pids: None,
                 scratch_bytes: None,
+                drive: None,
             },
             state: HostState::Running,
             alive: Some(true),

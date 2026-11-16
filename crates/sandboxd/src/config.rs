@@ -317,6 +317,9 @@ pub struct Spec {
     /// the conversation's `/workspace` (docs/HOST.md): folder `ws/<workspace>` of the host's JuiceFS mount;
     /// empty = none (a plain folder in scratch)
     pub workspace: Str<64>,
+    /// the deployment's shared folder `/drive` (docs/HOST.md): folder `<drive>` of the host's JuiceFS mount, the same
+    /// one in every sandbox; empty = none
+    pub drive: Str<64>,
     /// the pids limit (hermit spec 13.2 item 9); 0 = not given (the bundle uses [`DEFAULT_PIDS`])
     pub pids: u64,
     /// the size of the scratch filesystem, bytes (docs/HOST.md "Storage"); 0 = not given ([`DEFAULT_SCRATCH_BYTES`])
@@ -334,6 +337,11 @@ unsafe impl crate::fixed::Zeroed for Spec {}
 
 pub fn valid_workspace(w: &str) -> bool {
     !w.is_empty() && w.len() <= 64 && w.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+}
+
+/// A shared folder's name: a folder at the top of the JuiceFS mount, never `ws` (the conversations' workspaces).
+pub fn valid_drive(d: &str) -> bool {
+    valid_workspace(d) && d != "ws"
 }
 
 pub fn valid_name(n: &str) -> bool {
@@ -373,6 +381,7 @@ impl Spec {
             memory: 0,
             cpu_features: Str::new(),
             workspace: Str::new(),
+            drive: Str::new(),
             pids: 0,
             scratch: 0,
         };
@@ -462,6 +471,15 @@ impl Spec {
                     return Err(e400("spec: bad workspace"));
                 }
                 sp.workspace = ws;
+            } else if k.is("drive") {
+                if matches!(v, Val::Null) {
+                    return Ok(());
+                }
+                let d: Str<64> = spec_str(v).ok_or_else(|| e400("spec: bad drive"))?;
+                if !valid_drive(d.as_str()) {
+                    return Err(e400("spec: bad drive"));
+                }
+                sp.drive = d;
             } else if k.is("pids") {
                 pids = match v {
                     Val::Null => f64::NAN,
@@ -545,6 +563,10 @@ impl Spec {
         if !self.workspace.is_empty() {
             w.kstr("workspace", self.workspace.as_str());
         }
+        // the shared folder travels like the workspace: a migration's destination must mount it too
+        if !self.drive.is_empty() {
+            w.kstr("drive", self.drive.as_str());
+        }
         if self.pids != 0 {
             w.ku64("pids", self.pids);
         }
@@ -613,6 +635,26 @@ mod tests {
         let mut out2 = [0u8; 4096];
         let back2 = Spec::parse(s2.write_json(&mut out2).unwrap(), "10.98.0.0/16").ok().unwrap();
         assert_eq!(back2.workspace.as_str(), "c0ffee-1");
+        // the shared folder: absent by default, kept through the round trip, never `ws` or a path
+        assert!(s2.drive.is_empty() && back2.drive.is_empty());
+        let with = |d: &str| {
+            let mut t = String::from(r#"{"name":"sbx-abc","ip":"10.98.0.10","image":""#);
+            t.push_str(&"b".repeat(64));
+            t.push_str(r#"","cpu":1,"memory":2147483648,"workspace":"c0ffee-1","drive":"#);
+            t.push_str(d);
+            t.push('}');
+            Spec::parse(t.as_bytes(), "10.98.0.0/16")
+        };
+        let s3 = with("\"drive\"").ok().unwrap();
+        assert_eq!(s3.drive.as_str(), "drive");
+        let mut out3 = [0u8; 4096];
+        let back3 = Spec::parse(s3.write_json(&mut out3).unwrap(), "10.98.0.0/16").ok().unwrap();
+        assert_eq!((back3.drive.as_str(), back3.workspace.as_str()), ("drive", "c0ffee-1"));
+        assert!(with("null").ok().unwrap().drive.is_empty());
+        for no in ["\"ws\"", "\"../etc\"", "\"a/b\"", "\"\"", "\"Drive\"", "7", "true"] {
+            let e = with(no).err().unwrap();
+            assert!(e.status == 400 && e.msg.as_str().contains("bad drive"), "{no}: {}", e.msg);
+        }
         let bad = |b: &[u8], m: &str| {
             let e = Spec::parse(b, "10.98.0.0/16").err().unwrap();
             assert_eq!(e.status, 400);

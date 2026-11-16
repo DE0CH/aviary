@@ -394,7 +394,9 @@ unknown path and for a known path with another method: 404 `not found`).
   …/receive` without `wait` with the state `none` (item 11, `ReceiveResult::None`). `Spec.scratchBytes` (the scratch
   filesystem's size; absent = sandboxd's 5 GiB) is the same, with one difference: a sandboxd that predates it refuses
   the field, so hermit names it only when `sandbox.tmpGiB` is not 5, and a deployment that changes `tmpGiB` moves its
-  sandboxes onto hosts of the new AMI (the fresh-host switch, then retire the old hosts). `Spec.user` stays in the type
+  sandboxes onto hosts of the new AMI (the fresh-host switch, then retire the old hosts). `Spec.drive` (the
+  deployment's shared folder, `/drive` in every sandbox; hermit.json `sandbox.drive`, absent = none) is like it: named
+  only by a deployment that has one, after its hosts run a sandboxd that knows the field. `Spec.user` stays in the type
   until sandboxd drops the bind (item 2); hermit never sends it.
 - **The router reads bodies as sandboxd does,** except for one leniency: the content type is ignored, an empty or
   whitespace body and a JSON value that is not an object are `{}`, a body that is not JSON is 400, over 64 KiB is
