@@ -1871,6 +1871,29 @@ test("allowlist: exact and suffix entries, most specific wins, an equal deny win
   assert.deepEqual(p.check("unknown.example"), { allow: true }, "a host no list names passes");
 });
 
+test("allowlist: a * in an entry's first label stands for any run of characters inside that label", () => {
+  const r = new HostRules([".oss-*.cloud.test", "img-*.exact.test"]);
+  assert.equal(r.size, 2);
+  assert.ok(r.match("oss-cn-hangzhou.cloud.test") > 0);
+  assert.ok(r.match("bucket.oss-cn-hangzhou.cloud.test") > 0, "a .domain pattern covers the names under it");
+  assert.ok(r.match("a.b.OSS-accelerate.cloud.test.") > 0);
+  assert.ok(r.match("oss-.cloud.test") > 0, "* may be empty");
+  assert.equal(r.match("oss.cloud.test"), 0);
+  assert.equal(r.match("api.cloud.test"), 0);
+  assert.equal(r.match("oss-cn.evil.cloud.test"), 0, "* never crosses a dot");
+  assert.equal(r.match("xoss-cn.cloud.test"), 0, "the label is matched whole");
+  assert.equal(r.match("cloud.test"), 0);
+  assert.ok(r.match("img-1.exact.test") > 0);
+  assert.equal(r.match("a.img-1.exact.test"), 0, "a pattern without the leading dot is that name only");
+  assert.equal(r.match("bucket.oss-cn-hangzhou.cloud.test"), "oss-cn-hangzhou.cloud.test".length, "as specific as the name it matched");
+  assert.throws(() => new HostRules([".a.oss-*.cloud.test"]), /first label/);
+  assert.throws(() => new HostRules(["*"]), /first label/);
+  const p = new HostPolicy({ allow: [".cloud.test", "open.oss-x.cloud.test"], deny: [".oss-*.cloud.test"] });
+  assert.deepEqual(p.check("api.cloud.test"), { allow: true });
+  assert.deepEqual(p.check("bucket.oss-cn-hangzhou.cloud.test"), { allow: false, reason: "deny:denylist" }, "the pattern is more specific than the allowed domain");
+  assert.deepEqual(p.check("open.oss-x.cloud.test"), { allow: true }, "an exact allow beats the pattern");
+});
+
 test("allowlist: the generated lists shipped with the image", () => {
   const p = HostPolicy.load({ defaultAllowedHosts: ["extra.example"], denyHosts: ["www.bbc.com"], generated: true });
   assert.ok(p.allow.size > 100 && p.deny.size > 100_000, `${p.allow.size} / ${p.deny.size}`);
@@ -1878,10 +1901,16 @@ test("allowlist: the generated lists shipped with the image", () => {
   const allowed = ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "deb.debian.org", "github.com", "raw.githubusercontent.com",
     "registry-1.docker.io", "auth.docker.io", "production.cloudflare.docker.com", "ghcr.io", "pkg-containers.githubusercontent.com",
     "www.scmp.com", "news.rthk.hk", "data.gov.hk", "www.censtatd.gov.hk", "www.info.gov.hk", "www.reuters.com", "extra.example",
-    "random-unknown-zz9q.com", "www.acnnewswire.com", "images.weserv.nl"];
+    "random-unknown-zz9q.com", "www.acnnewswire.com", "images.weserv.nl",
+    // Alibaba Cloud's own endpoints (UT1 lists the bare aliyuncs.com as dynamic DNS)
+    "dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com", "ecs.cn-hongkong.aliyuncs.com"];
   for (const h of allowed) assert.deepEqual(p.check(h), { allow: true }, h);
   const denied = ["pastebin.com", "transfer.sh", "webhook.site", "drive.google.com", "docs.google.com", "mega.nz", "dropbox.com",
-    "foo.workers.dev", "x.ngrok-free.app", "s3.amazonaws.com", "bit.ly", "gist.github.com", "discord.com", "corsproxy.io", "foo.blogspot.com", "www.bbc.com"];
+    "foo.workers.dev", "x.ngrok-free.app", "s3.amazonaws.com", "bit.ly", "gist.github.com", "discord.com", "corsproxy.io", "foo.blogspot.com", "www.bbc.com",
+    // OSS, Alibaba Cloud's object storage, stays refused like S3: every region, the accelerate, dual-stack and legacy endpoints
+    "oss-cn-hangzhou.aliyuncs.com", "bucket.oss-cn-hangzhou.aliyuncs.com", "bucket.oss-ap-southeast-1.aliyuncs.com",
+    "bucket.oss-some-future-region-9.aliyuncs.com", "bucket.oss-accelerate.aliyuncs.com", "bucket.s3.oss-cn-shenzhen.aliyuncs.com",
+    "bucket.cn-hangzhou.oss.aliyuncs.com", "bucket.oss.aliyuncs.com", "bucket.cn-shanghai.oss-dls.aliyuncs.com", "www.aliyundrive.com"];
   for (const h of denied) assert.equal(p.check(h).allow, false, h);
   assert.equal(p.check("www.bbc.com").allow === false && (p.check("www.bbc.com") as { reason: string }).reason, "deny:config");
   const off = HostPolicy.load({ defaultAllowedHosts: ["pypi.org"], denyHosts: [], generated: false });

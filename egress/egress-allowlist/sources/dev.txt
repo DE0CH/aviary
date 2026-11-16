@@ -128,3 +128,8 @@ fonts.gstatic.com
 cloud.google.com
 developer.apple.com
 developer.android.com
+
+# --- cloud APIs a UT1 category lists by mistake
+# Alibaba Cloud's service endpoints (its APIs, DashScope): UT1 has the bare domain under dynamic-dns. OSS, its object
+# storage, stays refused like S3 (deny.txt).
+.aliyuncs.com

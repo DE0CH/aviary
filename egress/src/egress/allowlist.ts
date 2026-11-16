@@ -1,7 +1,8 @@
 // The sandbox internet rules (docs/CHAT.md, "The sandbox internet rules"): which hosts a sandbox may reach, decided
 // automatically with no per-conversation or staff override. Every host passes except those the deny list names
 // (Deyao, 2026-11-10: fewer false refusals). Entries are `host` (that name only) or `.domain` (the domain and every
-// name under it). A denied host still passes when an allow entry is more specific than its most specific deny entry
+// name under it); a `*` in an entry's first label stands for any characters inside that label (`.oss-*.aliyuncs.com`).
+// A denied host still passes when an allow entry is more specific than its most specific deny entry
 // (so the exact raw.githubusercontent.com passes under the denied `.githubusercontent.com`, and an equally specific
 // deny wins); config `egress.denyHosts` wins over everything.
 import { readFileSync } from "node:fs";
@@ -11,9 +12,14 @@ import { normHost } from "./netguard.ts";
 /** The generated lists shipped with the image (chat/egress-allowlist/, built by generate.py). */
 export const ALLOWLIST_DIR = fileURLToPath(new URL("../../egress-allowlist/", import.meta.url));
 
+/** A pattern entry's first label (`oss-*`), kept under the rest of its name (`aliyuncs.com`). */
+type LabelPattern = { label: RegExp; suffix: boolean };
+
 export class HostRules {
   readonly #exact = new Set<string>();
   readonly #suffix = new Set<string>();
+  readonly #patterns = new Map<string, LabelPattern[]>();
+  #patternCount = 0;
   constructor(entries: Iterable<string> = []) {
     this.add(entries);
   }
@@ -21,13 +27,30 @@ export class HostRules {
     for (const raw of entries) {
       const e = normHost(raw.replace(/^\*\./, "."));
       if (!e || e === ".") continue;
-      if (e.startsWith(".")) this.#suffix.add(e.slice(1));
+      if (e.includes("*")) this.#addPattern(e);
+      else if (e.startsWith(".")) this.#suffix.add(e.slice(1));
       else this.#exact.add(e);
     }
     return this;
   }
+  /**
+   * `.oss-*.aliyuncs.com`: a `*` in the entry's first label stands for any run of characters inside that label (a
+   * provider's per-region endpoints, whose list grows). Anywhere else it is a mistake, refused rather than left as an
+   * entry that matches nothing.
+   */
+  #addPattern(e: string): void {
+    const name = e.replace(/^\./, "");
+    const dot = name.indexOf(".");
+    if (dot <= 0 || name.indexOf("*", dot) >= 0) throw new Error(`host entry ${JSON.stringify(e)}: a * may only be in the first label of a name with a domain after it`);
+    const label = new RegExp("^" + name.slice(0, dot).split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join("[^.]*") + "$");
+    const rest = name.slice(dot + 1);
+    const list = this.#patterns.get(rest) ?? [];
+    list.push({ label, suffix: e.startsWith(".") });
+    this.#patterns.set(rest, list);
+    this.#patternCount++;
+  }
   get size(): number {
-    return this.#exact.size + this.#suffix.size;
+    return this.#exact.size + this.#suffix.size + this.#patternCount;
   }
   /** How specific the best entry matching `host` is: 0 = none; an exact entry beats a suffix entry of the same name. */
   match(host: string): number {
@@ -40,6 +63,13 @@ export class HostRules {
       if (this.#suffix.has(s)) return s.length;
       const dot = h.indexOf(".", i);
       if (dot < 0) return 0;
+      const patterns = this.#patterns.get(h.slice(dot + 1));
+      if (patterns) {
+        const label = h.slice(i, dot);
+        // a pattern without the leading dot is that name only, like an exact entry
+        if (i === 0 && patterns.some((p) => !p.suffix && p.label.test(label))) return h.length + 1;
+        if (patterns.some((p) => p.suffix && p.label.test(label))) return s.length;
+      }
       i = dot + 1;
     }
   }

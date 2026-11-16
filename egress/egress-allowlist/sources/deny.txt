@@ -2,7 +2,8 @@
 # anonymous file drops, request catchers, tunnels, form builders, webhooks, public storage endpoints, and hosting
 # platforms where anyone runs a server on a subdomain). Wins over any broader allow entry (most specific match wins;
 # config egress.denyHosts wins over everything).
-# Syntax: `host` = exactly that name; `.domain` = the domain and every name under it.
+# Syntax: `host` = exactly that name; `.domain` = the domain and every name under it; a `*` in the first label
+# stands for any characters inside that label.
 
 # --- pastebins and code-sharing with anonymous upload
 .pastebin.com
@@ -102,6 +103,10 @@ gist.githubusercontent.com
 .wasabisys.com
 .your-objectstorage.com
 .supabase.co
+# Alibaba Cloud OSS, under the allowed .aliyuncs.com: every oss-<region>, oss-accelerate, oss-dls and oss-cloudbox
+# endpoint (regions are added over time, hence the pattern), and the <region>.oss and legacy oss ones
+.oss-*.aliyuncs.com
+.oss.aliyuncs.com
 
 # --- request catchers, webhooks, out-of-band test endpoints
 .webhook.site
