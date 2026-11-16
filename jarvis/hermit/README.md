@@ -40,9 +40,12 @@ Jarvis 4 session machine (harness aviary)                                     â”
   `output_config.effort` â†’ `reasoning.effort`, and a `thinking: {type: "disabled"}` is dropped (GLM 5.3's hosts answer
   it 400 "Reasoning is mandatory for this endpoint", so its `thinking` in the settings has no "none"). OpenRouter has no `count_tokens`
   (404; Claude Code estimates). Every model runs at a 1M context window (the models route's `contextTokens`,
-  `src/settings.rs` `DEFAULT_CONTEXT_TOKENS`; Deyao, 2026-11-16: most models have it now; the supervisor sets
-  `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, since Claude Code takes a model it does not know as 200k); a model whose window
-  is smaller names its own (`contextTokens` in the settings).
+  `src/settings.rs` `DEFAULT_CONTEXT_TOKENS`; Deyao, 2026-11-16: most models have it now); a model whose window
+  is smaller names its own (`contextTokens` in the settings). The supervisor sets `CLAUDE_CODE_MAX_CONTEXT_TOKENS`
+  to it, which Claude Code takes only for a model id it does not recognise (a `claude-` one from 2.1.324 on; a
+  model it recognises runs at Claude Code's own window for it). The window a conversation really has is the one
+  Claude Code states (a `result`'s `modelUsage[<id>].contextWindow`, kept by magpie as the conversation's
+  `contextWindow`): it compacts there.
   Anthropic takes a subscription login's call only when its system prompt begins with Claude Code's identity line,
   so aviary-gateway puts that line first on a call that is not Claude Code's own (the supervisor's title call:
   `machine.rs` `with_identity`).
@@ -155,7 +158,7 @@ hermit-jarvis, magpie of the pinned aviary release from its image, a TLS Postgre
 model (Claude Code's calls arrive with the account's token as on a real machine), and a real Fly machine on the
 current session image. Checked: the machine boots a sandbox through hermit-jarvis, the supervisor runs Claude Code on
 magpie's ~/.claude, the first prompt arrives, a Bash tool call runs in the sandbox and its output comes back in the
-answer (and ran in aviary's sandbox image, with Jarvis's session commands there), the wakeup that command armed through the session's Jarvis API arrives as a later turn (all read back
+answer (and ran in aviary's sandbox image, with Jarvis's session commands there), Claude Code runs the conversation at a 1M context window (the window Claude Code states, read from magpie; not the variable the supervisor sets), the wakeup that command armed through the session's Jarvis API arrives as a later turn (all read back
 through magpie's admin API), and destroy burns the source. Nothing of production's is touched; the machine is
 destroyed with its volume at the end (or on Ctrl-C).
 
@@ -168,6 +171,9 @@ destroyed with its volume at the end (or on Ctrl-C).
 - The test store `aviary-gw` names the run's chat front (`AVIARY_GW_URL`) and the stand-in models (`AVIARY_MODEL_URL`,
   `AVIARY_OPENROUTER_URL` with its `OPENROUTER_API`): the same keys a production store leaves unset
   (chat-gw.deyaochen.com, api.anthropic.com, openrouter.ai).
+- The session runs on `aviary/claude-fable-5-2`, the newest Claude model of the menu: the one a pinned Claude Code
+  is the likeliest not to recognise (2.1.304 ran it at 200k while the variable said 1M, and the run passed because
+  it read the variable; 2026-11-16).
 - `E2E_MODEL=aviary/z-ai/glm-5.3` runs the session on an OpenRouter model: the agent's turns must reach the stand-in
   OpenRouter (its key, the hosts named, thinking never switched off), the title call the Claude stand-in; a turn at
   the wrong one fails the run.

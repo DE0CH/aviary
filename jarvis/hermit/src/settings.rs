@@ -7,8 +7,8 @@
 use serde::{Deserialize, Serialize};
 
 /// The context window of a model that names none in the settings file: 1M (Deyao, 2026-11-16: most models have it
-/// now, and those to come start there). Claude Code takes a model it does not know as 200k and would compact a
-/// conversation at a fifth of its room; a model whose window is smaller names it (`contextTokens`).
+/// now, and those to come start there); a model whose window is smaller names it (`contextTokens`). The supervisor
+/// hands it to Claude Code, which takes it for a model id it does not recognise (README "Decisions", the models).
 pub const DEFAULT_CONTEXT_TOKENS: u64 = 1_000_000;
 
 /// The settings file.
