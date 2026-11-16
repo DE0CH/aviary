@@ -14,8 +14,13 @@ export interface SentFile {
   sent?: string;
 }
 
-/** The caption Claude gave the files (SendUserFile's `caption` input), if any. */
-export function readSendUserFileCaption(detail: unknown): string | null {
+/**
+ * The caption of the files a call sent, if any: the one the server puts on the call's metadata (`sentCaption`,
+ * whichever tool sent them), else the SendUserFile call's own `caption` input (a server that sends no caption).
+ */
+export function readSentCaption(metadata: unknown, detail: unknown): string | null {
+  const sent = (metadata as { sentCaption?: unknown } | undefined)?.sentCaption;
+  if (typeof sent === "string" && sent.trim()) return sent.trim();
   const input = (detail as { input?: unknown } | undefined)?.input;
   const caption = (input as { caption?: unknown } | null)?.caption;
   return typeof caption === "string" && caption.trim() ? caption.trim() : null;

@@ -1,4 +1,4 @@
-import { isSentFilesCall, openConversationFile, readSendUserFileCaption, readSentFiles, SentFilesCards, useConversationFileUrl } from "@/yyc/sent-files";
+import { isSentFilesCall, openConversationFile, readSentCaption, readSentFiles, SentFilesCards, useConversationFileUrl } from "@/yyc/sent-files";
 import { useSummarisingLabel } from "@/yyc/harness-switch-label";
 import { parseScheduledMessage, readScheduleCall, ScheduledMessage, ScheduleToolCard } from "@/yyc/schedules";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
@@ -860,7 +860,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               <SentFilesCards
                 sessionId={agentId}
                 files={readSentFiles(data.metadata)}
-                caption={readSendUserFileCaption(data.detail)}
+                caption={readSentCaption(data.metadata, data.detail)}
                 isLastInSequence={isLastInSequence}
               />
             );

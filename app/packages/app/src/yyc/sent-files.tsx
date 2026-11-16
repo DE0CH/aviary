@@ -9,7 +9,7 @@ import { useToast } from "@/contexts/toast-api-context";
 import type { Theme } from "@/styles/theme";
 import type { SentFile } from "@/yyc/sent-files-text";
 
-export { isSentFilesCall, readSendUserFileCaption, readSentFiles, type SentFile } from "@/yyc/sent-files-text";
+export { isSentFilesCall, readSentCaption, readSentFiles, type SentFile } from "@/yyc/sent-files-text";
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const ThemedFile = withUnistyles(FileText);
