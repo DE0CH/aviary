@@ -7,7 +7,7 @@
 #
 # Kinds (one or more, comma-separated):
 #   web        the commit of a ui web bundle image served within the Access session lifetime (720 h), from the ui image
-#              pin history in DE0CH/YYC; later, each pigeon-app build.
+#              pin history in DE0CH/yyc-code; later, each pigeon-app build.
 #   ios        the source commit of a build uploaded to TestFlight (the head_sha of each iOS workflow run whose upload
 #              step succeeded).
 #   web-legacy a ui image from before the Paseo apps (before claudecodeui 3968b730, 2026-10-26): it served the CloudCLI

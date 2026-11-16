@@ -12,7 +12,7 @@ Every address is the deployment's: sandboxd reads them from host.json (below), w
 gateway's from hermit's ConfigMap, mounted into its pod, a burst host's from the user data hermit's scaler
 gives it, a test hub's through `setup.sh hub`). aviary's scripts carry none. The table shows the layout with
 placeholder ranges (the sandboxd-api fixtures use the same); a deployment's own ranges live in its config (YYC's: hermit
-spec 13.1, in DE0CH/YYC):
+spec 13.1, in DE0CH/yyc-code):
 
 | What | host.json | Example (placeholders) |
 |---|---|---|
