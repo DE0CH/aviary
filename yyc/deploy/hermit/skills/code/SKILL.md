@@ -10,26 +10,25 @@ Everything YYC runs is in four git repositories. You can clone and read all of t
 
 | Repository | What it holds | Clone |
 |---|---|---|
-| `DE0CH/YYC` (private) | YYC's deployment and its own systems: `yyc-ai/` (YYC AI's deploy tree `yyc-ai/deploy/`, runbook `yyc-ai/README.md`, design `yyc-ai/refactor/`), `news-stream/` (the news stream, yyc-mcp, the clusters and Cloudflare under `news-stream/deploy/`), `labels/`, `nametags/`, `feishu-index/`, `socks/`, `tools/`, `infra/`, `.github/workflows/` (what deploys each part) | `git clone --depth 1 http://code/DE0CH/YYC /tmp/code/YYC` |
+| `DE0CH/yyc-code` | YYC's deployment and its own systems: `yyc-ai/` (YYC AI's deploy tree `yyc-ai/deploy/`, runbook `yyc-ai/README.md`, design `yyc-ai/refactor/`), `news-stream/` (the news stream, yyc-mcp, the clusters and Cloudflare under `news-stream/deploy/`), `labels/`, `nametags/`, `feishu-index/`, `socks/`, `tools/`, `infra/`, `.github/workflows/` (what deploys each part) | `git clone --depth 1 http://code/DE0CH/yyc-code /tmp/code/yyc-code` |
 | `DE0CH/aviary` | YYC AI's services, in Rust: `crates/pigeon` (gateway), `magpie` (conversations), `hermit` (sandboxes), `sandboxd`, `supervisor` (runs Claude Code in the sandbox), `herald` (Telegram channels); the sandbox image `images/sandbox/` | `git clone --depth 1 https://github.com/DE0CH/aviary /tmp/code/aviary` |
 | `DE0CH/jarvis3` | `chat/src/egress` (the sandbox's proxy and the routes `http://tools/`, `http://labels/`, …) and `chat/src/tools` (the web, social and data tools) | `git clone --depth 1 https://github.com/DE0CH/jarvis3 /tmp/code/jarvis3` |
 | `DE0CH/claudecodeui` | the web and iOS apps staff use: `paseo/` (on Android the site is installed from Chrome; there is no Android app) | `git clone --depth 1 https://github.com/DE0CH/claudecodeui /tmp/code/claudecodeui` |
 
 - **Clone into `/tmp/code/`, never into /workspace:** a repository has thousands of files, more than /workspace
   holds. A clone is gone when the sandbox is released; clone again when you need it.
-- `http://code/DE0CH/YYC` is the only address on `http://code/`. It needs no token or login, and `git pull` there
+- `http://code/DE0CH/yyc-code` is the only address on `http://code/`. It needs no token or login, and `git pull` there
   gets the latest commit. Use `git` on it, not a browser or `curl`.
 - For history (`git log`, `git blame`, an older version), leave out `--depth 1` or run `git fetch --unshallow`.
-  The full `DE0CH/YYC` is about 200 MB.
 
 ## What is running now
 
-The `main` branch of `DE0CH/YYC` is what is deployed: a push there is applied by the workflows in
+The `main` branch of `DE0CH/yyc-code` is what is deployed: a push there is applied by the workflows in
 `.github/workflows/` (YYC AI: `yyc-ai.yml`). The versions of the other three repositories that YYC AI runs are the
 image tags in `yyc-ai/deploy/kustomization.yaml`, each the first 12 characters of a commit:
 
 ```sh
-grep -n 'newTag' /tmp/code/YYC/yyc-ai/deploy/kustomization.yaml
+grep -n 'newTag' /tmp/code/yyc-code/yyc-ai/deploy/kustomization.yaml
 # pigeon, magpie, hermit, sandboxd and herald: DE0CH/aviary; pigeon-app: DE0CH/claudecodeui; jarvis3-chat: DE0CH/jarvis3
 git -C /tmp/code/aviary fetch --depth 1 origin <full commit> && git -C /tmp/code/aviary checkout FETCH_HEAD
 ```

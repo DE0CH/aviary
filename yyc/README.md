@@ -135,15 +135,15 @@ restarts Claude Code at an idle point).
 ## Code access: YYC AI reads its own source and deployment (Deyao, 2026-11-12)
 
 Every conversation can clone, read-only, the four repositories YYC's systems are made of (managed skill `code`):
-this repository through egress's sandbox route `code` (`git clone --depth 1 http://code/DE0CH/YYC /tmp/code/YYC`),
-and the public DE0CH/aviary, DE0CH/jarvis3 and DE0CH/claudecodeui straight from github.com. Whatever is committed
-here is readable by every staff member through YYC AI: write this repository with that in mind.
+this repository through egress's sandbox route `code` (`git clone --depth 1 http://code/DE0CH/yyc-code /tmp/code/yyc-code`),
+and DE0CH/aviary, DE0CH/jarvis3 and DE0CH/claudecodeui straight from github.com. All four are public: whatever is
+committed here is readable by anyone.
 
 - **The route:** `egress.json` route `code` → `https://github.com` (through the socks pool), `allowPaths`
-  `/DE0CH/YYC/`, `identity: false` (no `Aviary-*` header, so no staff e-mail reaches GitHub; egress's log row still
+  `/DE0CH/yyc-code/`, `identity: false` (no `Aviary-*` header, so no staff e-mail reaches GitHub; egress's log row still
   names the person), `inject` `Authorization: Basic ${CODE_GITHUB_BASIC}`. Check item 8 keeps those three.
-- **The credential:** the fine-grained GitHub token `yyc-ai-code-read` on DE0CH (Contents: read, this repository
-  only, no expiry); store `yyc` key `YYC_CODE_GITHUB_BASIC` = base64 of `x-access-token:<token>`, in Secret
+- **The credential:** the fine-grained GitHub token `yyc-ai-code-read` on DE0CH (Contents: read on the private
+  DE0CH/YYC only, no expiry; here it reads what anyone can); store `yyc` key `YYC_CODE_GITHUB_BASIC` = base64 of `x-access-token:<token>`, in Secret
   `yyc-ai/egress`. Read-only is the token's: GitHub answers a push 403. Re-mint (claude-env `github-web` skill):
   `github_web.js pat-create-repo yyc-ai-code-read YYC OUT Contents=read`, base64 as above, `store-put.py yyc
   YYC_CODE_GITHUB_BASIC=file:…`, `infra/seal.py yyc-ai/egress`, bump egress's `yyc/secrets-rev`.

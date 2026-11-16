@@ -94,7 +94,7 @@ def random_keys(o):
     for caller, callee in PAIRS:
         o.put(f"YYC_TOKEN_{caller}_{callee}", b64url32(),
               f"YYC AI pair token: {caller.lower()} calling {callee.lower()}; sealed into the caller's and the callee's "
-              "Secrets in namespace yyc-ai (DE0CH/YYC infra/secrets.txt)")
+              "Secrets in namespace yyc-ai (DE0CH/yyc-code infra/secrets.txt)")
     for k, e in WINDOW.items():
         o.put(k, b64url32(), e)
     o.put("YYC_PIGEON_VIEW_AS_KEY", b64url32(), "YYC AI pigeon's view-as HMAC key (pigeon spec 3.3); rotation: new "

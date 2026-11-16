@@ -106,7 +106,7 @@
         "Authorization": "Basic ${CODE_GITHUB_BASIC}"
       },
       "allowPaths": [
-        "/DE0CH/YYC/"
+        "/DE0CH/yyc-code/"
       ],
       "identity": false,
       "timeoutSeconds": 300
