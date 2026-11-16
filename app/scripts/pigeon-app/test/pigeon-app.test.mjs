@@ -63,6 +63,23 @@ test('pinsInKustomization reads only the yyc-ai-ui entry', () => {
   assert.deepEqual(pinsInKustomization(kustomization('488a7736ef2c'), 'jarvis3-chat'), ['52c9b8c498b6']);
 });
 
+test('pinsInKustomization reads an entry written on one line, the way the deploy repository writes pigeon-app', () => {
+  const text = `images:
+  - name: hermit
+    newTag: 0123456789ab
+  # the app bundle
+  - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "ac2fe924bca1"}
+  - { name: 'other', newTag: bbbbbbbbbbb1 }   # a comment
+  - {name: untagged, newName: x}
+`;
+  assert.deepEqual(pinsInKustomization(text, 'pigeon-app'), ['ac2fe924bca1']);
+  assert.deepEqual(pinsInKustomization(text, 'other'), ['bbbbbbbbbbb1']);
+  assert.deepEqual(pinsInKustomization(text, 'untagged'), []);
+  assert.deepEqual(pinsInKustomization(text, 'hermit'), ['0123456789ab']);
+  // a name inside another key's value is not the entry's name
+  assert.deepEqual(pinsInKustomization('images:\n  - {name: a, newName: pigeon-app, newTag: cccccccccccc}\n', 'pigeon-app'), []);
+});
+
 test('servedImages reads the pigeon-app pins the same way', () => {
   const withApp = (ui, app) => `${kustomization(ui)}  - name: pigeon-app\n    newName: ghcr.io/de0ch/pigeon-app\n    newTag: ${app}\n`.replace('configMapGenerator:\n  - name: jarvis-config\n', '');
   const repo = deployRepo([
@@ -728,7 +745,7 @@ test('a1-ready: the A1 image exists, was built from the A1 commit, seeds its own
   const other = '2'.repeat(40);
   const late = '3'.repeat(40);
   const ago = (days) => new Date(Date.now() - days * DAY).toISOString();
-  // DE0CH/YYC: `other` pinned 40 to 3 days ago (served within 744 h), an older pin long gone
+  // DE0CH/yyc-code: `other` pinned 40 to 3 days ago (served within 744 h), an older pin long gone
   const yyc = deployRepo([
     { date: ago(90), files: { 'yyc-ai/deploy/kustomization.yaml': kustomization('999999999999') } },
     { date: ago(40), files: { 'yyc-ai/deploy/kustomization.yaml': kustomization(other.slice(0, 12)) } },

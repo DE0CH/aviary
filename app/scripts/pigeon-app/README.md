@@ -3,7 +3,7 @@
 The Paseo web app as an image for pigeon, DE0CH/aviary's front service. `.github/workflows/pigeon-app.yml` builds
 `ghcr.io/de0ch/pigeon-app:<commit 12>` on every push to main that touches the app (`paseo/**`, `public/sw.js`, the build
 scripts). The image is `FROM scratch`: the files sit under `/app`,
-plus a static `/cp` (busybox's cp). pigeon's initContainer runs `/cp -a /app/. /srv/app/` into the emptyDir that pigeon serves. DE0CH/YYC pins the tag by hand,
+plus a static `/cp` (busybox's cp). pigeon's initContainer runs `/cp -a /app/. /srv/app/` into the emptyDir that pigeon serves. DE0CH/yyc-code pins the tag by hand,
 next to pigeon's own tag. The workflow deploys nothing.
 
 ## Why the image holds old chunks
@@ -17,7 +17,7 @@ build is deployed. So each image holds:
   the last 30 days (pigeon spec 17.1), merged in from the previous image (`:main`). A served build that `:main` no
   longer holds (a rollback to a pruned build) is restored from its own image `pigeon-app:<tag>`;
 - the hashed files of **every** `yyc-ai-ui` image served within the 720 h Access session lifetime. That list is the ui
-  pin history in DE0CH/YYC's git log (`pins.mjs`); the ui image is no longer built (its workflow left with the old
+  pin history in DE0CH/yyc-code's git log (`pins.mjs`); the ui image is no longer built (its workflow left with the old
   stack, A6). The files are copied out of the images themselves (`fetch-seeds.mjs`), so builds do not need to be deterministic. When
   a tag was re-pushed (a re-run of jarvis-image), the files of its earlier digest stay too.
 
@@ -109,7 +109,7 @@ commits a week, so spec 17.1's "every build of the last 30 days, or the last 5" 
 | `fetch-seeds.mjs` | `/app/dist/_expo/static/**` and `/app/dist/assets/**` of each ui image, via `crane export`. The CI cache is a download cache only: a cached tag is used only at the tag's current digest and with exactly the files and sha256 that the previous image's `meta/seeds.json` records (any job of the branch can write a cache entry, the build job included) |
 | `assemble.mjs` | the new export + `sw.js` + kept, restored and seeded files, pruning (by age and under the budget), `.br` (q11) and `.gz` (9) siblings (reused when the bytes are unchanged), the size budget; writes `meta/assets-history.json` (`{file: firstSeenISO}`), `meta/builds.json` and `meta/seeds.json` |
 | `verify-seeds.mjs` | every seeded file present byte for byte |
-| `a1-ready.sh` | for the cutover runner before A1 (`a1-ready.sh <A1 commit> <DE0CH/YYC clone>`): `pigeon-app:<A1 sha12>` exists, was built from the A1 commit, seeds `yyc-ai-ui:<A1 sha12>` and every `yyc-ai-ui` tag YYC served within 744 h as of the check |
+| `a1-ready.sh` | for the cutover runner before A1 (`a1-ready.sh <A1 commit> <DE0CH/yyc-code clone>`): `pigeon-app:<A1 sha12>` exists, was built from the A1 commit, seeds `yyc-ai-ui:<A1 sha12>` and every `yyc-ai-ui` tag YYC served within 744 h as of the check |
 | `check-frames.sh` | the contract check against pigeon: pigeon's frame corpus (`pigeon-frames.ndjson` of the newest `aviary-*` release), plus the harness's bridge and pigeon-only fixtures, validated against this checkout's `paseo/packages/protocol` with aviary's `testing/paseo-contract` harness. Until aviary publishes a release, it checks the fixtures of aviary main and prints a warning |
 | `unpack-harness.sh` | the release's `paseo-contract.tgz`, with the harness at its root or in one top directory (npm pack's `package/`) |
 | `self-test-verdict.sh` | the frame check's self-test passes only when the validator ran and rejected the seeded frame and nothing else |
@@ -122,8 +122,8 @@ commits a week, so spec 17.1's "every build of the last 30 days, or the last 5" 
 1. **build** (no secrets, read-only token: it runs the app's dependencies): the scripts' tests, `npm --prefix paseo
    ci`, the `@expo/metro-config` patch assertion, `scripts/build-paseo-ui.mjs`, `scripts/check-chunks.mjs --strict`
    (the budgets), the frame check, and the frame check's self-test.
-2. **image** (one at a time; runs no dependency code): reads the pin history with `YYC_PIN_HISTORY_KEY`, a read-only
-   deploy key of DE0CH/YYC. Then it exports `:main` (and the image of any served build `:main` no longer holds), fetches the seeds (checking any cached one against `:main`'s
+2. **image** (one at a time; runs no dependency code): reads the pin history from a clone of DE0CH/yyc-code (public,
+   no key). Then it exports `:main` (and the image of any served build `:main` no longer holds), fetches the seeds (checking any cached one against `:main`'s
    record), assembles (with the budget), pushes `:<commit 12>`, checks the pushed image and that `/cp` works as uid
    65532 on a read-only root, and moves `:main` (also after a run of an older commit that waited behind a newer one:
    its image holds everything the newer one kept). Finally it sends ONE `paseo-client` dispatch to DE0CH/aviary with
@@ -162,12 +162,12 @@ that window (DESIGN 9.6).
   moment, which need not be the A1 commit, so it is not the way to build A1. If the A1 commit's image job was cancelled
   (the middle of three quick pushes, "The workflow" above), re-run the A1 commit's pigeon-app run (Actions, that run,
   Re-run all jobs): a re-run builds at that commit. Before A1's pins are pushed, the cutover runner checks
-  `scripts/pigeon-app/a1-ready.sh <A1 commit> <DE0CH/YYC clone>`: the image exists, was built from that commit, seeds
+  `scripts/pigeon-app/a1-ready.sh <A1 commit> <DE0CH/yyc-code clone>`: the image exists, was built from that commit, seeds
   its own ui image, and seeds every ui image YYC served within 744 h as of the check (a ui pin made after the A1 build
   read the pin history, such as a rollback, fails it; re-running the A1 run then reads the pins again).
 - **Nothing else ships.** Pushes to `paseo/**` between A1 and A5 still build images and move `:main` (harmless:
   `:main` is only the next build's merge base), but YYC must not pin them. The check for that belongs to cutover's
-  `freeze-check` in DE0CH/YYC (WP-35, an acceptance item there; until it lands nothing enforces it): a change of the `pigeon-app` `newTag` in `yyc-ai/deploy/` between
+  `freeze-check` in DE0CH/yyc-code (WP-35, an acceptance item there; until it lands nothing enforces it): a change of the `pigeon-app` `newTag` in `yyc-ai/deploy/` between
   A1 and A5 is allowed only to a claudecodeui commit whose diff from the A1 commit touches nothing outside
   `scripts/pigeon-app/` and `.github/workflows/pigeon-app.yml`.
 - **A fix ships from a branch cut from A1.** Main moves on during the window, and a build of main carries every app

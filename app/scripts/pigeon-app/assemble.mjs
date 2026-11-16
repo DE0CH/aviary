@@ -12,7 +12,7 @@
 // --previous      the filesystem of the previous pigeon-app image (its app/ and meta/), absent on the first build
 // --seeds         a directory of fetch-seeds.mjs output, one <tag>/ per yyc-ai-ui image; --seed names each image served
 //                 within the Access session lifetime with its claudecodeui commit
-// --served-build  the commit of a pigeon-app image served within the Access session lifetime (DE0CH/YYC's pigeon-app
+// --served-build  the commit of a pigeon-app image served within the Access session lifetime (DE0CH/yyc-code's pigeon-app
 //                 pin history); its build stays whatever its age
 // --restore       the filesystem of the pigeon-app image of a served build that the previous image no longer holds (a
 //                 rollback to a pruned build): its build's files are taken from there

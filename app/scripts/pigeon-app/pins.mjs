@@ -32,7 +32,15 @@ function git(repo, args) {
 export function pinsInKustomization(text, image = 'yyc-ai-ui') {
   const tags = [];
   const lines = text.split('\n');
+  // a key's value inside an entry written on one line: `- {name: pigeon-app, newName: …, newTag: "…"}`
+  const inline = (body, key) => body.match(new RegExp(`(?:^|,)\\s*${key}:\\s*["']?([^"',\\s}]+)["']?\\s*(?:,|$)`))?.[1];
   for (let i = 0; i < lines.length; i++) {
+    const flow = lines[i].match(/^\s*-\s*\{(.*)\}\s*(#.*)?$/);
+    if (flow) {
+      const tag = inline(flow[1], 'name') === image && inline(flow[1], 'newTag');
+      if (tag) tags.push(tag);
+      continue;
+    }
     const start = lines[i].match(/^(\s*)-\s+name:\s*["']?([^"'\s#]+)["']?\s*(#.*)?$/);
     if (!start || start[2] !== image) continue;
     const indent = start[1].length;

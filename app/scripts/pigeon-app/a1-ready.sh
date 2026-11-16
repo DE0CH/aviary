@@ -7,14 +7,14 @@
 # its tabs. For the cutover runner before A1's pins are pushed; needs crane, jq, node and git (and a registry login
 # only if the package is private).
 #
-#   a1-ready.sh <A1 commit, 40 hex> <DE0CH/YYC clone, up to date with its main>
+#   a1-ready.sh <A1 commit, 40 hex> <DE0CH/yyc-code clone, up to date with its main>
 #
 # Exit 0: ready. 1: the image is missing, or does not seed its own ui image or a served one. 2: usage.
 set -euo pipefail
 commit=${1:-}
 yyc=${2:-}
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] && [ -n "$yyc" ] && git -C "$yyc" rev-parse --verify --quiet HEAD >/dev/null \
-  || { echo "usage: a1-ready.sh <commit, 40 hex> <DE0CH/YYC clone>" >&2; exit 2; }
+  || { echo "usage: a1-ready.sh <commit, 40 hex> <DE0CH/yyc-code clone>" >&2; exit 2; }
 here=$(cd "$(dirname "$0")" && pwd)
 tag=${commit::12}
 image=ghcr.io/de0ch/pigeon-app:$tag
