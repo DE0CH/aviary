@@ -844,7 +844,7 @@ async fn sandbox_surface(s: &Suite) -> Outcome {
     );
     ensure!(
         a.body.len() <= hermit_api::sandbox_surface::SELF_MAX_BYTES,
-        "descriptor over 64 KiB"
+        "descriptor over 256 KiB"
     );
     let header_etag = a
         .headers

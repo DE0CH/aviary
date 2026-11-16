@@ -668,6 +668,10 @@ mod tests {
         let mut bad = BTreeMap::new();
         bad.insert("../x".to_owned(), String::new());
         assert!(c.clone().with_skills(bad).is_err());
+        // a deployment's prompt and skills together run to tens of KiB (YYC's were 24 bytes under a 40 KiB bound)
+        let mut roomy = BTreeMap::new();
+        roomy.insert("a/b".to_owned(), "x".repeat(100 * 1024));
+        assert!(c.clone().with_skills(roomy).is_ok());
         let mut big = BTreeMap::new();
         big.insert(
             "a/b".to_owned(),

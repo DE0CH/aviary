@@ -52,7 +52,7 @@ impl std::fmt::Debug for SandboxSelf {
 }
 
 /// The descriptor's size bound.
-pub const SELF_MAX_BYTES: usize = 64 * 1024;
+pub const SELF_MAX_BYTES: usize = 256 * 1024;
 /// At most this many `env` + `envPrivate` entries, together at most [`ENV_MAX_BYTES`].
 pub const ENV_MAX_ENTRIES: usize = 128;
 pub const ENV_MAX_BYTES: usize = 16 * 1024;

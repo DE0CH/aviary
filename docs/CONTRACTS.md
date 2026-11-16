@@ -288,7 +288,7 @@ What an implementation must do, beyond the shapes:
   `error::range_not_satisfiable`); there is no write route; `clone` copies `from` (after asking a ready
   sandbox of it to flush); `DELETE` releases the conversation's live sandbox first and answers 204 also when absent.
 - **The sandbox's own routes** answer only with the gateway's credential and three headers matching a live row (else
-  404 `no_sandbox`). `GET /v1/sandbox/self` is the descriptor (at most 64 KiB; `etag` is `"` + the first 32 hex of
+  404 `no_sandbox`). `GET /v1/sandbox/self` is the descriptor (at most 256 KiB; `etag` is `"` + the first 32 hex of
   SHA-256 over the canonical JSON, keys sorted, of every other field + `"`, also sent as `ETag`; `If-None-Match` →
   304). Its `claude` holds `managedClaudeMd` and `managedSkills` (`{"<skill>/<file>": text}`, from hermit's
   `prompt.skills` folder; `valid_skill_path`; with the CLAUDE.md and the title instructions at most
