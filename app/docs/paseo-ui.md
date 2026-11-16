@@ -84,8 +84,8 @@ server (`server/`) serves no deployment.
   `sentFiles` (an agent program without that tool sends from a shell command). The cards stand for the call (a
   command that sent files shows as its cards, not as a command row), and the call is treated the same wherever it
   is drawn (`yyc/sent-files-text.ts` `isSentFilesCall`): never folded into a group of tool calls
-  (`tool-calls/detail-level/grouping.ts`) nor into a finished turn's summary, where its cards stay under the reply
-  (`agent-stream/turn-collapse/model.ts`), live and from the history alike.
+  (`tool-calls/detail-level/grouping.ts`) nor into a finished turn's summary, where its cards stay under the reply,
+  the turn folded or opened (`agent-stream/turn-collapse/model.ts`), live and from the history alike.
 - **Sent files keep their version** (Deyao, 2026-10-28): each file card carries the id of the call that sent it
   (`sent` on the tool call's `sentFiles`, paseo-timeline.ts) and downloads with `files/raw?…&sent=<id>`, so a server
   that keeps a snapshot of each send can serve the file as it was sent (this server, in Jarvis mode, reads the live
