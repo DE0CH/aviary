@@ -22,7 +22,7 @@ import { modelPlan, modelsAnswer, parseEgressConfig, type EgressConfig } from ".
 import { EgressLog } from "../src/egress/egresslog.ts";
 import { isRequestId, uuidv7 } from "../src/egress/ids.ts";
 import { AddressGuard } from "../src/egress/netguard.ts";
-import { CostSniffer, denyText, Egress, FIXED_BODY_MAX, MODEL_BODY_MAX, parseTarget, routed, routedOn, type EgressOptions } from "../src/egress/proxy.ts";
+import { CostSniffer, denyText, Egress, FIXED_BODY_MAX, MODEL_BODY_MAX, parseTarget, replacer, routed, routedOn, SNIFF_MAX, type EgressOptions } from "../src/egress/proxy.ts";
 import { DnsRefusal, ThreatResolver } from "../src/egress/threatdns.ts";
 import { exitConnect, ExitHttpsAgent, ExitRefusal, internalHost, parseExit } from "../src/egress/exit.ts";
 import { createServer as createNetServer } from "node:net";
@@ -48,6 +48,8 @@ const upHits: Record<string, number> = {};
 const upDone: Record<string, number> = {};
 /** stalled upstream answers (x-stall) whose connection is still open */
 let upStalled = 0;
+const MIB = 1024 * 1024;
+let upBig = 0;
 let upLastHeaders: IncomingMessage["headers"] = {};
 let tls: ReturnType<typeof createTlsServer>;
 let tlsPort: number;
@@ -217,6 +219,23 @@ before(async () => {
       if (p === "/api/v1/messages" || p === "/api/v1/messages/count_tokens") {
         res.writeHead(200, { "content-type": "application/json" });
         return res.end(JSON.stringify({ echo: JSON.parse(body || "{}"), usage: { cost: 0.0123 } }));
+      }
+      // x-big: <MiB> plays a large file, sent as fast as the reader takes it; upBig counts what the reader took
+      const big = Number(req.headers["x-big"] ?? 0);
+      if (big) {
+        res.writeHead(200, { "content-type": "video/mp4", "content-length": String(big * MIB) });
+        const piece = Buffer.alloc(MIB, 7);
+        let left = big;
+        const pump = (): void => {
+          while (left > 0) {
+            left--;
+            upBig += MIB;
+            if (!res.write(piece)) return void res.once("drain", pump);
+          }
+          res.end();
+        };
+        res.on("close", () => (left = 0));
+        return pump();
       }
       if (p.startsWith("/v1/tools") || p === "/v1/openapi.json" || p.startsWith("/labels-up/") || p.startsWith("/code-up/")) {
         res.writeHead(200, { "content-type": "application/json" });
@@ -973,8 +992,8 @@ test("CONNECT: identity, deny list, ports and addresses are enforced", async () 
   assert.equal((await connectVia(`allowed.test:${tlsPort}`, basic("wrong"))).status, 403);
   const denied = await connectVia(`other.test:${tlsPort}`, basic(sb.token));
   assert.equal(denied.status, 403);
-  assert.ok(denied.head.includes(denyText("other.test").trim()), denied.head);
-  assert.match(denied.head, /cannot be enabled from the chat/);
+  assert.equal(denyText("YYC AI"), "YYC AI egress has denied this network request because the domain name is on the blocklist.\n", "this sentence and nothing else");
+  assert.ok(denied.head.endsWith("\r\n\r\nYYC AI egress has denied this network request because the domain name is on the blocklist.\n"), denied.head);
   assert.doesNotMatch(denied.head, /request_network_access|ask the user|permission/i);
   assert.equal((await connectVia("allowed.test:22", basic(sb.token))).status, 403);
   const evil = await connectVia(`evil.test:${tlsPort}`, basic(sb.token));
@@ -1015,14 +1034,14 @@ test("the sandbox internet rules through the proxy: unlisted passes, deny list, 
   unlisted.sock.destroy();
   const paste = await connectVia(`paste.ranked.test:${tlsPort}`, basic(sb.token));
   assert.equal(paste.status, 403);
-  assert.match(paste.head, /is blocked for the sandbox/);
+  assert.ok(paste.head.endsWith("\r\n\r\nYYC AI egress has denied this network request because the domain name is on the blocklist.\n"), paste.head);
   assert.equal((await connectVia(`nope.ranked.test:${tlsPort}`, basic(sb.token))).status, 403);
   const mal = await connectVia(`malware.test:${tlsPort}`, basic(sb.token));
   assert.equal(mal.status, 403);
   assert.match(mal.head, /security threat/);
   const h = await http(`http://unknown.test:${upPort}/plain`, { headers: pa() });
   assert.equal(h.status, 403);
-  assert.match(h.body, /cannot be enabled from the chat/);
+  assert.equal(h.body, "YYC AI egress has denied this network request because the domain name is on the blocklist.\n");
   const r = await rows();
   const decision = (host: string) => r.filter((x) => x.host === host).map((x) => x.decision);
   assert.deepEqual(decision("paste.ranked.test"), ["deny:denylist"]);
@@ -1270,6 +1289,66 @@ test("pypi mirror: index links rewritten, files cached; a gzipped .metadata arri
   assert.equal(md.body, want);
   const m = await http("http://vip.egress.test:3128/mirror/npm/left-pad", { headers: { ...pa(), host: "vip.egress.test:3128" } });
   assert.equal(JSON.parse(m.body).versions["1.0.0"].dist.tarball, "http://vip.egress.test:3128/mirror/npm/left-pad/-/left-pad-1.0.0.tgz");
+});
+
+test("sandbox route: a large download passes at the reader's pace; egress never holds what the reader has not taken", async () => {
+  upBig = 0;
+  const total = 256;
+  const s = netConnect(port, "127.0.0.1");
+  await new Promise<void>((r) => s.once("connect", () => r()));
+  s.pause(); // a sandbox slower than the upstream: it reads nothing yet
+  s.write(`GET http://code/DE0CH/YYC/big HTTP/1.1\r\nHost: code\r\nProxy-Authorization: ${basic(sb.token)}\r\nx-big: ${total}\r\nConnection: close\r\n\r\n`);
+  await sleep(1500);
+  const held = upBig;
+  await sleep(1500);
+  assert.equal(upBig, held, `the upstream is held back while the reader waits (it went on from ${held / MIB} to ${upBig / MIB} MiB)`);
+  assert.ok(held <= 64 * MIB, `only what the sockets hold was taken (${held / MIB} MiB of ${total})`);
+  let got = 0;
+  s.on("data", (c: Buffer) => (got += c.length));
+  s.resume();
+  await new Promise<void>((r) => s.once("close", () => r()));
+  assert.equal(upBig, total * MIB);
+  assert.ok(got >= total * MIB && got < total * MIB + 4096, `the whole file arrived (${got})`);
+  const row = (await rows()).filter((x) => x.kind === "route" && x.path === "/DE0CH/YYC/big").at(-1);
+  assert.deepEqual([row.status, Number(row.bytes_down)], [200, total * MIB]);
+});
+
+test("CostSniffer holds a bounded amount: a line with no end and a JSON answer too large to be a model's are dropped", () => {
+  const s = new CostSniffer();
+  s.contentType = "text/event-stream";
+  s.push(Buffer.from("data: "));
+  for (let i = 0; i < 8; i++) {
+    s.push(Buffer.alloc(MIB, 120));
+    assert.ok(s.held <= SNIFF_MAX + MIB, `an endless line is not kept (${s.held})`);
+  }
+  s.push(Buffer.from('still the long line\ndata: {"usage":{"cost":0.7}}\n'));
+  assert.equal(s.cost(), 0.7, "the lines after it are read again");
+  const j = new CostSniffer();
+  j.contentType = "application/json";
+  for (let i = 0; i < 6; i++) j.push(Buffer.alloc(MIB, 120));
+  assert.equal(j.held, 0, "an answer over the bound is let go, not kept to its end");
+  assert.equal(j.cost(), null);
+});
+
+test("replacer: every occurrence is replaced wherever the pieces are cut", async () => {
+  const text = "a http://up/files/x b http://up/files/y http://up/fil http://up/files/";
+  const want = text.split("http://up/files/").join("/m/");
+  for (let cut = 1; cut < text.length; cut++) {
+    const r = replacer("http://up/files/", "/m/");
+    const out: Buffer[] = [];
+    r.on("data", (c: Buffer) => out.push(c));
+    r.write(Buffer.from(text.slice(0, cut)));
+    r.end(Buffer.from(text.slice(cut)));
+    await new Promise((res) => r.once("end", res));
+    assert.equal(Buffer.concat(out).toString(), want, `cut at ${cut}`);
+  }
+  const one = replacer("http://up/files/", "/m/");
+  const out: Buffer[] = [];
+  one.on("data", (c: Buffer) => out.push(c));
+  for (const ch of text) one.write(Buffer.from(ch));
+  one.end();
+  await new Promise((res) => one.once("end", res));
+  assert.equal(Buffer.concat(out).toString(), want, "one byte at a time");
 });
 
 test("CostSniffer reads the last cost in a stream split across chunks", () => {

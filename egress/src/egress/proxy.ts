@@ -16,7 +16,7 @@ import { Agent, createServer, request as httpRequest, type ClientRequest, type I
 import { request as httpsRequest } from "node:https";
 import { connect as netConnect, type Socket } from "node:net";
 import { createReadStream } from "node:fs";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import type { Duplex } from "node:stream";
 import { expandEnv, type ModelPlan } from "../common/config.ts";
 import { logError } from "../common/log.ts";
@@ -92,10 +92,10 @@ const HOP = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-au
 const CALLER_AUTH = new Set(["authorization", "proxy-authorization", "x-api-key", "cookie", "host"]);
 const INDEX_MAX_AGE = 5 * 60_000;
 
-/** What a sandbox (and so the agent) reads when a host is refused: plain, final, no one to ask. */
-export const denyText = (host: string): string =>
-  `egress: ${host} is blocked for the sandbox (a file-sharing, upload, anonymiser or similar service), and it cannot be ` +
-  "enabled from the chat. To read a web page, use the web_fetch and web_search tools instead of the sandbox.\n";
+/** What a sandbox (and so the agent) reads when a host is refused: this one sentence, nothing after it (Deyao,
+ * 2026-11-16). */
+export const denyText = (product: string): string =>
+  `${product} egress has denied this network request because the domain name is on the blocklist.\n`;
 
 /** A request's target: the absolute-form authority split up, or (origin form, `host` null) a request to the proxy. */
 interface Target {
@@ -607,8 +607,13 @@ export class Egress {
           res.flushHeaders();
           ures.on("data", (c: Buffer) => {
             bytesDown += c.length;
-            sniff.push(c);
-            res.write(c);
+            // only a model's answer carries a cost; any other route's is passed on unread
+            if (isModel) sniff.push(c);
+            // at the reader's pace: what the caller has not taken stays with the upstream, never in egress's memory
+            if (!res.write(c)) {
+              ures.pause();
+              res.once("drain", () => ures.resume());
+            }
           });
           ures.on("end", () => res.end());
           ures.on("error", () => res.destroy());
@@ -756,7 +761,7 @@ export class Egress {
     }
     const verdict = this.#o.policy.check(host);
     if (!verdict.allow) {
-      deny(403, denyText(normHost(host)));
+      deny(403, denyText(this.#o.config.product.name));
       this.#deny(row, verdict.reason, 403);
       return null;
     }
@@ -1003,13 +1008,14 @@ export class Egress {
     const selfBase = `http://${req.headers.host || "egress"}`;
     let upstream: string;
     let immutable = false;
-    let rewrite: ((body: string) => string) | null = null;
+    /** index pages: the upstream's file links become the mirror's own, replaced as the page streams */
+    let rewrite: [needle: string, put: string] | null = null;
     const accept = String(req.headers.accept || "");
     let m: RegExpExecArray | null;
     if ((m = /^\/mirror\/pypi\/simple(\/.*)?$/.exec(pathOnly))) {
       row.host = new URL(this.#up.pypi).hostname;
       upstream = `${this.#up.pypi}/simple${m[1] ?? "/"}${q}`;
-      rewrite = (b) => b.split(`${this.#up.pypiFiles}/`).join("/mirror/pypi/files/");
+      rewrite = [`${this.#up.pypiFiles}/`, "/mirror/pypi/files/"];
     } else if ((m = /^\/mirror\/pypi\/files\/(.+)$/.exec(pathOnly))) {
       row.host = new URL(this.#up.pypiFiles).hostname;
       upstream = `${this.#up.pypiFiles}/${m[1]}${q}`;
@@ -1018,7 +1024,7 @@ export class Egress {
       row.host = new URL(this.#up.npm).hostname;
       upstream = `${this.#up.npm}/${m[1]}${q}`;
       immutable = m[1]!.includes("/-/");
-      if (!immutable) rewrite = (b) => b.split(`${this.#up.npm}/`).join(`${selfBase}/mirror/npm/`);
+      if (!immutable) rewrite = [`${this.#up.npm}/`, `${selfBase}/mirror/npm/`];
     } else {
       return this.#text(res, 404, "egress: unknown mirror path (use /mirror/pypi/simple/ or /mirror/npm/)\n");
     }
@@ -1037,14 +1043,9 @@ export class Egress {
       return this.log.add({ ...row, status: 502, ms: Date.now() - t0 });
     }
     const contentType = ures.headers.get("content-type") || "application/octet-stream";
-    if (rewrite) {
-      const body = Buffer.from(ures.ok ? rewrite(await ures.text()) : await ures.text());
-      if (ures.ok) this.cache.putBuffer({ url: key, status: ures.status, contentType, storedAt: Date.now() }, body);
-      this.#head(res, ures.status, { "content-type": contentType, "content-length": String(body.length) });
-      res.end(req.method === "HEAD" ? undefined : body);
-      return this.log.add({ ...row, status: ures.status, bytes_down: body.length, ms: Date.now() - t0 });
-    }
-    const len = ures.headers.get("content-encoding") ? null : ures.headers.get("content-length");
+    // a rewritten page's length is known only at its end: it goes out chunked
+    const rw = rewrite && ures.ok ? rewrite : null;
+    const len = rw || ures.headers.get("content-encoding") ? null : ures.headers.get("content-length");
     this.#head(res, ures.status, { "content-type": contentType, ...(len ? { "content-length": len } : {}) });
     if (!ures.body || req.method === "HEAD") {
       res.end();
@@ -1052,17 +1053,20 @@ export class Egress {
     }
     const w = ures.ok ? this.cache.writer({ url: key, status: ures.status, contentType, storedAt: Date.now() }) : null;
     let down = 0;
-    const body = Readable.fromWeb(ures.body as any);
+    const source = Readable.fromWeb(ures.body as any);
+    const body = rw ? source.pipe(replacer(rw[0], rw[1])) : source;
     body.on("data", (c: Buffer) => {
       down += c.length;
       w?.write(c);
     });
     await new Promise<void>((resolve) => {
       body.on("end", () => void w?.end());
-      body.on("error", () => {
+      const failed = (): void => {
         w?.abort();
         res.destroy();
-      });
+      };
+      body.on("error", failed);
+      if (rw) source.on("error", failed);
       res.on("close", () => {
         if (!body.readableEnded) w?.abort();
         resolve();
@@ -1156,14 +1160,52 @@ function declaredLength(req: IncomingMessage): number | null {
   return Number.isSafeInteger(n) && n >= 0 ? n : null;
 }
 
+/** The most a CostSniffer keeps of one answer (a JSON answer whole, or one event-stream line): a model's answer is
+ * far under it, and what a sniffer keeps is egress's own memory. */
+export const SNIFF_MAX = 4 * 1024 * 1024;
+
+/** Replaces every `needle` in a byte stream, piece by piece (a needle cut across two pieces is found): for the mirror's
+ * index pages, which are never held whole. */
+export function replacer(needle: string, put: string): Transform {
+  const n = Buffer.from(needle);
+  const p = Buffer.from(put);
+  let tail: Buffer = Buffer.alloc(0);
+  return new Transform({
+    transform(c: Buffer, _enc, done) {
+      const buf = tail.length ? Buffer.concat([tail, c]) : c;
+      let from = 0;
+      for (let i = buf.indexOf(n, from); i >= 0; i = buf.indexOf(n, from)) {
+        if (i > from) this.push(buf.subarray(from, i));
+        this.push(p);
+        from = i + n.length;
+      }
+      // the last bytes may begin a needle that the next piece ends
+      const keep = Math.min(n.length - 1, buf.length - from);
+      if (buf.length - keep > from) this.push(buf.subarray(from, buf.length - keep));
+      tail = Buffer.from(buf.subarray(buf.length - keep));
+      done();
+    },
+    flush(done) {
+      if (tail.length) this.push(tail);
+      done();
+    },
+  });
+}
+
 /** Collects usage.cost from a model response, a JSON body or the SSE events of a streamed one: the Messages API's
  * (`usage.cost`, `message.usage.cost`) and a chat completion's (`usage.cost` on the answer or on the stream's last chunk). */
 export class CostSniffer {
   contentType = "";
   #buf = "";
+  /** inside an event-stream line longer than SNIFF_MAX: thrown away up to its end */
+  #skipping = false;
   #json: Buffer[] = [];
   #jsonBytes = 0;
   #cost: number | null = null;
+  /** What is kept right now (tests): never more than SNIFF_MAX plus the piece just pushed. */
+  get held(): number {
+    return this.#buf.length + Math.max(0, this.#jsonBytes);
+  }
   push(c: Buffer): void {
     if (this.contentType.includes("text/event-stream")) {
       this.#buf += c.toString("utf8");
@@ -1171,11 +1213,21 @@ export class CostSniffer {
       while ((i = this.#buf.indexOf("\n")) >= 0) {
         const line = this.#buf.slice(0, i).trim();
         this.#buf = this.#buf.slice(i + 1);
-        if (line.startsWith("data:")) this.#take(line.slice(5).trim());
+        if (this.#skipping) this.#skipping = false;
+        else if (line.startsWith("data:")) this.#take(line.slice(5).trim());
       }
-    } else if (this.contentType.includes("json") && this.#jsonBytes < 20 * 1024 * 1024) {
+      if (this.#skipping || this.#buf.length > SNIFF_MAX) {
+        this.#skipping = true;
+        this.#buf = "";
+      }
+    } else if (this.contentType.includes("json") && this.#jsonBytes >= 0) {
       this.#json.push(c);
       this.#jsonBytes += c.length;
+      if (this.#jsonBytes > SNIFF_MAX) {
+        // no model's answer: let it go now, and keep nothing more of it
+        this.#json = [];
+        this.#jsonBytes = -1;
+      }
     }
   }
   #take(s: string): void {
