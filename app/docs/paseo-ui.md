@@ -33,7 +33,7 @@ server (`server/`) serves no deployment.
 - **Layout**: a flat list of conversations (no project row, `components/sidebar-workspace-list.tsx`), home is a new
   chat (`utils/host-routes.ts` `buildOpenProjectRoute`), no tab row (`WorkspaceDesktopTabsRow` renders nothing), no
   project/host/mode pickers, explorer, editor, scripts, hover card or fork button; the composer has no voice,
-  autocomplete or model/mode chips (`composer/input-mode.ts`) and picks the one provider and model by itself
+  `@` file completion or model/mode chips (`composer/input-mode.ts`) and picks the one provider and model by itself
   (`provider-selection/resolve-agent-form.ts`); where the model chip was, one button names the conversation's model and thinking
   level and opens a menu (`yyc/model-menu.tsx`, its state in `yyc/model-menu-state.ts`): the models of the provider
   snapshot with an (i) beside the title (ask the admin for more), then a thinking row with one position for every
@@ -108,8 +108,19 @@ server (`server/`) serves no deployment.
   screen with a back arrow on a phone): one section per task with its type, how long it has run, what it does now, a
   subagent's step count and Stop; the finished ones below with their result. Nothing in it moves except the clock.
   Data: `GET /api/jarvis/sessions/<id>/tasks`, `POST …/tasks/<taskId>/stop` (aviary's pigeon); a server without the
-  route shows no chip. Slash commands: the message box's `/` completion lists what the server answers to
-  `list_commands_request` (aviary: the commands the conversation's Claude Code names).
+  route shows no chip.
+- **Slash commands**: a message that starts with `/` opens a list over the message box of what the server answers
+  to `list_commands_request` (aviary: the commands and skills the conversation's Claude Code names, known once its
+  first reply has started), narrowed as the name is typed; ↑/↓ move, Enter, Tab or a click write the name into the
+  message, which is sent as any other. The list shows only when it has something in it: a new chat, a `/` further
+  into the text and a name no command has show no box, and Enter sends. The names the app runs itself when they are
+  sent (`client-slash-commands/`: `/clear`, `/new`, `/exit`, `/quit`, `/q` end the conversation) are not in the list,
+  the server's commands of those names included. The mode's switches are `showCommandAutocomplete`,
+  `showFileAutocomplete` and `showClientCommands` (`composer/input-mode.ts`); the wiring is
+  `composer/autocomplete-binding.tsx`, whose browser test mounts it against a server that answers as pigeon does.
+  A browser test of anything that reads the host runtime replaces `@/runtime/host-runtime` with `vi.mock`, as that
+  one does: the tests' server neither scans nor compiles past it (`vitest.config.ts`), since the host runtime imports
+  most of the app.
 - **Conversations a deployment ends itself** (Deyao, 2026-11-12; Jarvis 4, where a conversation is a session):
   `/api/jarvis/me` `conversationDelete: false` removes Delete (the ⋯ menu, the sidebar row) and the Recently deleted
   entry; an agent's `closed` (a sentence: its session is paused) makes the message box read-only with that sentence
