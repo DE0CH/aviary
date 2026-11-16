@@ -111,6 +111,37 @@ spec:
     - {name: proxy, port: 3128, targetPort: proxy}
     - {name: http, port: 80, targetPort: api}
 ---
+# The proxy's one stable address for the sandboxes: a Hetzner load balancer in network yyc only (no public address),
+# made and kept by the Hetzner cloud controller from this Service. It health-checks the proxy's NodePort on the apps
+# nodes and sends connections only to nodes that run a ready egress pod (externalTrafficPolicy Local, which also
+# keeps the balancer's own address as the source: NetworkPolicy egress-in admits exactly that). The sandbox gateway
+# forwards the sandboxes' proxy connections here and balances nothing itself (Deyao, 2026-11-16: the single point
+# only passes packets). egress identifies a sandbox by its token alone, so the balancer hiding the sandbox's
+# address changes nothing. Type lb11 (EUR 6.99 a month net; EXPENSES.md).
+apiVersion: v1
+kind: Service
+metadata:
+  name: egress-lb
+  namespace: yyc-ai
+  annotations:
+    load-balancer.hetzner.cloud/name: yyc-ai-egress
+    load-balancer.hetzner.cloud/type: lb11
+    load-balancer.hetzner.cloud/location: nbg1
+    load-balancer.hetzner.cloud/use-private-ip: "true"
+    load-balancer.hetzner.cloud/disable-public-network: "true"
+    load-balancer.hetzner.cloud/private-ipv4: 10.0.0.50
+    load-balancer.hetzner.cloud/node-selector: pool=apps
+    load-balancer.hetzner.cloud/health-check-interval: 5s
+    load-balancer.hetzner.cloud/health-check-timeout: 3s
+    load-balancer.hetzner.cloud/health-check-retries: "2"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  allocateLoadBalancerNodePorts: true
+  selector: {app: egress}
+  ports:
+    - {name: proxy, port: 3128, targetPort: proxy, protocol: TCP}
+---
 # the fixed endpoint name `model` for in-cluster callers (pigeon's models list)
 apiVersion: v1
 kind: Service
@@ -136,6 +167,9 @@ spec:
   ingress:
     # the sandboxes, through the gateway with their own source (R32): the proxy port only
     - from: [{ipBlock: {cidr: 10.203.0.0/16}}]
+      ports: [{port: 3128, protocol: TCP}]
+    # the load balancer of Service egress-lb (its address in network yyc)
+    - from: [{ipBlock: {cidr: 10.0.0.50/32}}]
       ports: [{port: 3128, protocol: TCP}]
     - from: [{podSelector: {matchLabels: {app: pigeon}}}, {podSelector: {matchLabels: {app: hermit}}}]
       ports: [{port: 8082, protocol: TCP}]
