@@ -14,7 +14,7 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 | `src/auth.rs` | callers from `MAGPIE_ACCEPT_*`, the route layer that checks them against `magpie_api::routes::ROUTES` |
 | `src/limits.rs` | every limit and timeout (magpie 17) |
 | `src/error.rs` | the one error type; Postgres unreachable answers 503 `unavailable` with `retry-after` |
-| `src/db/` | the migrations (`0001_init.sql`: every table of magpie 4 and the importer's of cutover 7.3, which `0028_a6_contraction.sql` drops but for the legacy-path set; `0005_timeline.sql`: the projection's lookups; `0008_timeline_derivation.sql`: `rows.derivation`, `line_pos`, the live delta index) and `Db` |
+| `src/db/` | the migrations (`0001_init.sql`: every table of magpie 4 and the importer's of cutover 7.3, which `0028_a6_contraction.sql` drops but for the legacy-path set; `0005_timeline.sql`: the projection's lookups; `0008_timeline_derivation.sql`: `rows.derivation`, `line_pos`, the live delta index; `0040_sent_caption.sql`: a send's caption on the tool rows made before rule 6 kept it) and `Db` |
 | `src/conversations/` | the Conversation object, the person row, the row lock; create, list, rename, delete, restore, purge |
 | `src/events/` | `events::append` (seq allocation), which calls the projection |
 | `src/rows/` | the timeline projection (magpie 7.3): `project` (rules 1-10, row seqs, the epoch), `derive` (what each event makes of a row, pure), `read` (M9 pages and the long-poll, M10, search) |
@@ -186,8 +186,12 @@ reads and their once-a-day audit. `tests/legacy_paths.rs`: the legacy-path set (
     keeps its `row_id` and block index.
   - No `derivationVersion` lazy rebuild (pigeon 14.1.18 item 3): magpie 7.3 changes the epoch only under rule 9.
     Each row records the derivation version it was made or last updated by (`rows.derivation`,
-    `rows::DERIVATION`, now 1): a release that changes the rules raises it and ships a job that rebuilds the rows
+    `rows::DERIVATION`, now 2): a release that changes the rules raises it and ships a job that rebuilds the rows
     below it from their events (the importer and shares project with the same code, so they carry the version too).
+    Version 2 is rule 6 keeping the send's caption on the row (`sentCaption`, beside `sentFiles`, on the row of
+    whichever call sent the files): its job is migration `0040_sent_caption.sql`, which puts the caption the send
+    kept (`sent_files.caption`) on the tool rows made before and on the copies shares froze, so a row still at 1 is
+    the same under 2 (`tests/shares.rs`).
   - M9: `minSeq` is 0 when the conversation has no rows; `after` entries carry `seqs` up to their own `seqEnd`;
     for an `after` page `hasOlder` means a row with `seqStart <= after` exists. `waitMs`/`liveAfter` without
     `after` answer 400. A held `after` poll also answers when the epoch changed (a retract that only deleted rows

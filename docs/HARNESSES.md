@@ -44,7 +44,9 @@ ran before, for a pick back.
 - **Files to the person.** Claude Code has the `SendUserFile` tool and its hook. Qwen Code has no such tool: its
   shell runs `send-file [--caption TEXT] PATH…` (the supervisor binary under that name), which names no tool call;
   the driver puts the files on the open shell call that runs it, one send per call. Its instructions say so
-  (`launch::QWEN_SEND_FILE`).
+  (`launch::QWEN_SEND_FILE`). Either way the app gets the files and the send's caption on the call that sent them:
+  magpie's rule 6 puts the snapshot and the caption on that call's row (`sentFiles`, `sentCaption`), pigeon on the
+  call's metadata under the same names.
 - **The reply as it is written.** Live frames are keyed by the message id and block index the transcript's rows
   will have (magpie 7.5). Claude Code's `stream_event` lines carry them. Qwen Code upstream names a reply's stream
   by an id of its own and numbers every block 0; the fork names it by the uuid of the record it is about to write

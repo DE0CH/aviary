@@ -247,7 +247,7 @@ pub struct TitleChanged {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FilesSent {
-    /// The `SendUserFile` call.
+    /// The call that sent them.
     pub tool_use_id: String,
     /// The event seq of the assistant line with that call, when already stored.
     pub tool_use_seq: Option<u64>,

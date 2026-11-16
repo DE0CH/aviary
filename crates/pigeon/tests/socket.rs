@@ -79,6 +79,7 @@ fn tool(call: &str, name: &str, input: Value) -> RowItem {
         status: ToolStatus::Running,
         result: None,
         sent_files: None,
+        sent_caption: None,
         task: None,
         error: None,
         answered_at: None,
@@ -1524,6 +1525,29 @@ async fn tour(e: &Env, log: &std::sync::Arc<std::sync::Mutex<Vec<common::ws::Rec
                 mime_type: "text/csv".into(),
                 is_image: false,
             }]);
+        }
+    });
+    // a file sent by a shell call (a harness without a send tool runs `send-file`), with the send's caption
+    let shell_sent = e.m.row(
+        c,
+        Some(turn),
+        tool(
+            "toolu_c",
+            "run_shell_command",
+            json!({"command": "send-file --caption Totals out.csv"}),
+        ),
+    );
+    e.m.update(c, shell_sent, |i| {
+        complete(i, "sent");
+        if let RowItem::Tool(t) = i {
+            t.sent_files = Some(vec![magpie_api::rows::RowSentFile {
+                path: "out.csv".into(),
+                name: "out.csv".into(),
+                size: 10,
+                mime_type: "text/csv".into(),
+                is_image: false,
+            }]);
+            t.sent_caption = Some("Totals".into());
         }
     });
     e.m.row(c, Some(turn), assistant("The total is 42."));

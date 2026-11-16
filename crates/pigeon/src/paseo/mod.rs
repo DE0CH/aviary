@@ -20,7 +20,7 @@ use std::pin::Pin;
 use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::response::Response;
-use magpie_api::rows::{Row, RowItem, ToolStatus, seq_ranges};
+use magpie_api::rows::{Row, RowItem, ToolItem, ToolStatus, seq_ranges};
 use magpie_api::uploads::BlobVariant;
 use serde_json::{Map, Value, json};
 
@@ -99,6 +99,27 @@ pub fn safe_path(p: &str) -> bool {
     !p.is_empty() && !p.starts_with('/') && !p.contains('\0') && !p.split('/').any(|s| s == "..")
 }
 
+/// What a tool row's send gives the app in the call's metadata: the files (`sentFiles`, each with the call that
+/// sent it) and the send's caption when it has one (`sentCaption`), whichever tool sent them.
+#[must_use]
+pub fn sent_metadata(t: &ToolItem) -> Option<Map<String, Value>> {
+    let sent = t.sent_files.as_ref()?;
+    let files: Vec<Value> = sent
+        .iter()
+        .filter(|f| safe_path(&f.path))
+        .map(|f| {
+            json!({"path": f.path, "name": f.name, "size": f.size, "mediaType": f.mime_type,
+                   "isImage": f.is_image, "sent": t.call_id})
+        })
+        .collect();
+    let mut m = Map::new();
+    m.insert("sentFiles".into(), Value::Array(files));
+    if let Some(caption) = t.sent_caption.as_deref().filter(|c| !c.trim().is_empty()) {
+        m.insert("sentCaption".into(), json!(caption));
+    }
+    Some(m)
+}
+
 impl RowProjector for BasicProjector {
     fn project(&self, row: &Row, ctx: &ProjectCtx<'_>) -> Option<Value> {
         let item = match &row.item {
@@ -160,16 +181,8 @@ impl RowProjector for BasicProjector {
                     "detail".into(),
                     json!({"type": "unknown", "input": t.input, "output": output}),
                 );
-                if let Some(sent) = &t.sent_files {
-                    let files: Vec<Value> = sent
-                        .iter()
-                        .filter(|f| safe_path(&f.path))
-                        .map(|f| {
-                            json!({"path": f.path, "name": f.name, "size": f.size, "mediaType": f.mime_type,
-                                   "isImage": f.is_image, "sent": t.call_id})
-                        })
-                        .collect();
-                    m.insert("metadata".into(), json!({"sentFiles": files}));
+                if let Some(sent) = sent_metadata(t) {
+                    m.insert("metadata".into(), Value::Object(sent));
                 }
                 Value::Object(m)
             }

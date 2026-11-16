@@ -314,6 +314,7 @@ pub fn assistant(line: &Value, meta: &EventMeta, first: u32) -> Vec<BlockRow> {
                         status: ToolStatus::Running,
                         result: None,
                         sent_files: None,
+                        sent_caption: None,
                         task: None,
                         error: None,
                         answered_at: None,
@@ -480,8 +481,10 @@ pub fn apply_notification(t: &mut ToolItem, n: &TaskNotification) {
     }
 }
 
-/// Rule 6: a sent-file snapshot on the `SendUserFile` row.
+/// Rule 6: a sent-file snapshot and the send's caption on the row of the call that sent the files (`SendUserFile`,
+/// or the shell call that ran `send-file`); a blank caption is none.
 pub fn apply_sent(t: &mut ToolItem, f: &FilesSent) {
+    t.sent_caption = f.caption.clone().filter(|c| !c.trim().is_empty());
     t.sent_files = Some(
         f.files
             .iter()
@@ -621,6 +624,7 @@ pub fn tool_from_line(line: &Value, call_id: &str, block_index: u32) -> Option<T
         status: ToolStatus::Running,
         result: None,
         sent_files: None,
+        sent_caption: None,
         task: None,
         error: None,
         answered_at: None,
@@ -770,6 +774,28 @@ mod tests {
             0,
         )
         .unwrap()
+    }
+
+    /// Rule 6 on a call of any tool: the snapshot with the send's caption; a blank caption is none.
+    #[test]
+    fn a_send_puts_its_files_and_caption_on_the_call() {
+        let sent = |caption: Value| -> FilesSent {
+            serde_json::from_value(
+                json!({"toolUseId": "t", "toolUseSeq": null, "caption": caption, "files": [
+                {"path": "out/a.pdf", "name": "a.pdf", "size": 3, "mimeType": "application/pdf", "isImage": false,
+                 "blob": {"$blob": {"blobId": "ab", "bytes": 3, "kind": "file"}}}]}),
+            )
+            .unwrap()
+        };
+        let mut t = launch();
+        apply_sent(&mut t, &sent(json!("the report")));
+        assert_eq!(t.sent_files.as_ref().unwrap()[0].path, "out/a.pdf");
+        assert_eq!(t.sent_caption.as_deref(), Some("the report"));
+        for none in [json!(null), json!(""), json!(" \n")] {
+            apply_sent(&mut t, &sent(none));
+            assert_eq!(t.sent_caption, None);
+            assert_eq!(t.sent_files.as_ref().unwrap().len(), 1);
+        }
     }
 
     #[test]

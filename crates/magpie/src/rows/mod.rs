@@ -51,8 +51,9 @@ pub fn meta_of(meta: Option<&Value>) -> EventMeta {
 /// The version of the derivation (rules 1-10) a row was made or last updated by, stored in `rows.derivation`. A
 /// release that changes what an event makes of a row raises it and ships a job that rebuilds the rows below it
 /// from their events (the projection never re-derives stored rows by itself; magpie 7.3 changes them only on an
-/// event).
-pub const DERIVATION: i16 = 1;
+/// event). Version 2 added the send's caption to rule 6 (`sentCaption`): migration `0040_sent_caption.sql` put it
+/// on the rows made before, so a row still at 1 is the same under 2.
+pub const DERIVATION: i16 = 2;
 
 /// A new row.
 struct NewRow {

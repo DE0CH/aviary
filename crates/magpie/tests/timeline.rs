@@ -197,6 +197,50 @@ async fn rules_1_to_8_make_and_update_rows() {
     let late = tool(&p.rows[6]);
     assert_eq!(late.sent_files.as_ref().unwrap()[0].path, "out/late.txt");
     assert!(p.rows[6].updated);
+    assert_eq!((&early.sent_caption, &late.sent_caption), (&None, &None));
+    // the send's caption is on the row too, whichever tool sent the files (a shell command that ran `send-file`)
+    ev::append1(
+        pool,
+        ALICE,
+        id,
+        ev::files_sent_captioned("tu5", "out/q3.txt", "Q3, early"),
+    )
+    .await;
+    ev::append1(
+        pool,
+        ALICE,
+        id,
+        ev::in_turn(
+            ev::assistant(
+                "m4s",
+                json!([
+                    ev::tool_use("tu5", "run_shell_command"),
+                    ev::tool_use("tu6", "run_shell_command")
+                ]),
+            ),
+            turn,
+        ),
+    )
+    .await;
+    ev::append1(
+        pool,
+        ALICE,
+        id,
+        ev::files_sent_captioned("tu6", "out/q4.txt", "Q4, late"),
+    )
+    .await;
+    let p = alice.timeline(id, &ev::tail(500)).await.unwrap();
+    let (early, late) = (tool(&p.rows[7]), tool(&p.rows[8]));
+    assert_eq!(
+        (early.name.as_str(), early.sent_caption.as_deref()),
+        ("run_shell_command", Some("Q3, early"))
+    );
+    assert_eq!(early.sent_files.as_ref().unwrap()[0].path, "out/q3.txt");
+    assert_eq!(late.sent_caption.as_deref(), Some("Q4, late"));
+    assert_eq!(
+        serde_json::to_value(&p.rows[8].item).unwrap()["sentCaption"],
+        "Q4, late"
+    );
 
     // rule 3: a task notification folds onto its launch; rule 7: a task report updates the row
     ev::append1(

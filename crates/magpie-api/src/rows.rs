@@ -285,9 +285,12 @@ pub struct ToolItem {
     /// The result, once it lands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<ToolResult>,
-    /// `SendUserFile`'s snapshot.
+    /// The files the call sent to the person (its `files.sent` snapshot).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sent_files: Option<Vec<RowSentFile>>,
+    /// The caption of that send, when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sent_caption: Option<String>,
     /// A background task launched by the call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task: Option<TaskInfo>,

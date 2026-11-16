@@ -765,3 +765,169 @@ async fn clones_not_yet_committed_count_as_referenced_and_expire() {
     assert_eq!(queued.len(), 1, "{queued:?}");
     assert!(queued[0].to_string().contains(&stale.to_string()), "{queued:?}");
 }
+
+/// Sends `bytes` as a file of the call `tool_use_id` with `caption`, all three steps.
+async fn send_file(r: &common::Replica, c: Uuid, lease: Uuid, tool_use_id: &str, caption: Option<&str>, bytes: &[u8]) {
+    let hex = blobs::to_hex(&blobs::sha256(bytes));
+    let file = json!({"path": format!("/workspace/{tool_use_id}.txt"), "size": bytes.len(), "sha256": hex,
+                      "mimeType": "text/plain"});
+    let st = gateway(
+        r,
+        reqwest::Method::POST,
+        "/v1/sandbox/sent-files",
+        c,
+        ALICE,
+        Some(lease),
+    )
+    .json(&json!({"toolUseId": tool_use_id, "caption": caption, "files": [file]}))
+    .send()
+    .await
+    .unwrap()
+    .status();
+    assert_eq!(st, 200);
+    let st = gateway(
+        r,
+        reqwest::Method::PUT,
+        &format!("/v1/sandbox/blobs/{hex}"),
+        c,
+        ALICE,
+        Some(lease),
+    )
+    .body(bytes.to_vec())
+    .send()
+    .await
+    .unwrap()
+    .status();
+    assert_eq!(st, 201);
+    let st = gateway(
+        r,
+        reqwest::Method::POST,
+        &format!("/v1/sandbox/sent-files/{tool_use_id}/commit"),
+        c,
+        ALICE,
+        Some(lease),
+    )
+    .send()
+    .await
+    .unwrap()
+    .status();
+    assert_eq!(st, 200);
+}
+
+/// Migration 0040: a tool row made before rule 6 kept the send's caption (derivation 1) gets it from the send
+/// (`sent_files.caption`), and so does a share's frozen copy of it, whichever tool sent the files; a send without
+/// a caption and a call that sent nothing stay as they are.
+#[tokio::test]
+async fn rows_made_before_rule_6_kept_the_caption_get_it_from_the_send() {
+    let hermit = FakeHermit::unguarded(HermitConfig::default());
+    let running = hermit.serve().await.unwrap();
+    let db = common::fresh_db("shares").await;
+    let t = common::Tokens::new();
+    let r = common::replica_with(&db.url, &t, &running.url(), common::idle()).await;
+    let c = ev::conversation(&r.pigeon(), ALICE).await;
+    hermit.write_file(c, "report.txt", b"v1");
+    let turn = Uuid::new_v4();
+    let calls = json!([
+        tool_use("call_shell", "run_shell_command"),
+        tool_use("call_tool", "SendUserFile"),
+        tool_use("call_bare", "run_shell_command"),
+        tool_use("call_none", "run_shell_command"),
+    ]);
+    ev::append(
+        r.pool(),
+        ALICE,
+        c,
+        vec![
+            user_sent("m1", "send them"),
+            ev::in_turn(turn_started(turn), turn),
+            ev::in_turn(assistant("msg_1", calls), turn),
+        ],
+    )
+    .await;
+    let lease = grant_lease(r.pool(), c).await;
+    send_file(&r, c, lease, "call_shell", Some("the report"), b"report").await;
+    send_file(&r, c, lease, "call_tool", Some("the totals"), b"totals").await;
+    send_file(&r, c, lease, "call_bare", None, b"bare").await;
+    ev::append(
+        r.pool(),
+        ALICE,
+        c,
+        vec![
+            ev::in_turn(assistant("msg_2", json!([text("sent")])), turn),
+            ev::in_turn(turn_ended(turn, "completed"), turn),
+        ],
+    )
+    .await;
+    let share = r.pigeon().person(ALICE).create_share(c).await.unwrap();
+
+    let sql = r.pool().get().await.unwrap();
+    // each call's caption on its row and on the share's copy, with the row's derivation
+    let captions = async || -> Vec<(String, Option<String>, Option<String>, i16)> {
+        sql.query(
+            "select r.tool_use_id, r.item->>'sentCaption', s.item->>'sentCaption', r.derivation
+             from rows r join share_rows s on s.share_id = $2 and s.row_id = r.row_id
+             where r.conversation_id = $1 and r.kind = 'tool' order by r.row_id",
+            &[&c, &share.id],
+        )
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3)))
+        .collect()
+    };
+    let call = |id: &str, caption: Option<&str>, derivation: i16| {
+        let caption = caption.map(str::to_owned);
+        (id.to_owned(), caption.clone(), caption, derivation)
+    };
+    // rule 6 as this build applies it
+    assert_eq!(
+        captions().await,
+        vec![
+            call("call_shell", Some("the report"), 2),
+            call("call_tool", Some("the totals"), 2),
+            call("call_bare", None, 2),
+            call("call_none", None, 2),
+        ]
+    );
+
+    // the rows as the build before left them
+    sql.execute(
+        "update rows set item = item - 'sentCaption', derivation = 1 where conversation_id = $1",
+        &[&c],
+    )
+    .await
+    .unwrap();
+    sql.execute(
+        "update share_rows set item = item - 'sentCaption' where share_id = $1",
+        &[&share.id],
+    )
+    .await
+    .unwrap();
+    assert!(captions().await.iter().all(|x| x.1.is_none() && x.2.is_none()));
+    let list = magpie::db::migrations().unwrap();
+    let migration = list.iter().find(|m| m.name == "sent_caption").unwrap();
+    sql.batch_execute(migration.sql).await.unwrap();
+    assert_eq!(
+        captions().await,
+        vec![
+            call("call_shell", Some("the report"), 2),
+            call("call_tool", Some("the totals"), 2),
+            call("call_bare", None, 1),
+            call("call_none", None, 1),
+        ]
+    );
+    // the shared view shows it
+    let view = r.pigeon().person(BOB).get_share(&share.id).await.unwrap();
+    let shown: Vec<Option<String>> = view
+        .rows
+        .iter()
+        .filter_map(|e| match &e.item {
+            magpie_api::rows::RowItem::Tool(t) => Some(t.sent_caption.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        vec![Some("the report".to_owned()), Some("the totals".to_owned()), None, None]
+    );
+}

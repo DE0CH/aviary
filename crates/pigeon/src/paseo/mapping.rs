@@ -27,7 +27,7 @@ use magpie_api::uploads::BlobVariant;
 use serde_json::{Map, Value, json};
 
 use super::strings::Locale;
-use super::{ProjectCtx, RowProjector, safe_path};
+use super::{ProjectCtx, RowProjector, safe_path, sent_metadata};
 
 /// The one host's server id (7.4): cached hosts and replica rows are keyed by it, so it never changes.
 pub const SERVER_ID: &str = "srv_conversations";
@@ -804,19 +804,7 @@ pub fn tool_call_item(t: &ToolItem, locale: Locale) -> Option<Value> {
         return None;
     }
     let call_id = t.call_id.clone();
-    let mut metadata: Option<Map<String, Value>> = t.sent_files.as_ref().map(|sent| {
-        let files: Vec<Value> = sent
-            .iter()
-            .filter(|f| safe_path(&f.path))
-            .map(|f| {
-                json!({"path": f.path, "name": f.name, "size": f.size, "mediaType": f.mime_type,
-                       "isImage": f.is_image, "sent": t.call_id})
-            })
-            .collect();
-        let mut m = Map::new();
-        m.insert("sentFiles".into(), Value::Array(files));
-        m
-    });
+    let mut metadata = sent_metadata(t);
     if let Some(at) = &t.answered_at {
         // when the person answered the question this call asked: the app leaves the wait out of the turn's working
         // time (DECISIONS 17)
@@ -1282,6 +1270,7 @@ mod tests {
                 images: None,
             }),
             sent_files: None,
+            sent_caption: None,
             task: None,
             error: None,
             answered_at: None,
@@ -1334,6 +1323,45 @@ mod tests {
         )
         .unwrap();
         assert!(other.get("metadata").is_none(), "{other}");
+    }
+
+    /// The files a call sent reach the app in the row's metadata with the send's caption, whichever tool sent them
+    /// (a harness without a send tool runs `send-file` in its shell); a send without a caption carries none.
+    #[test]
+    fn a_row_with_sent_files_carries_them_and_the_caption() {
+        let sent = |name: &str, input: Value, caption: Option<&str>| {
+            let mut t = tool(name, input, ToolStatus::Completed, Some("sent"));
+            t.sent_files = Some(vec![magpie_api::rows::RowSentFile {
+                path: "out.csv".into(),
+                name: "out.csv".into(),
+                size: 10,
+                mime_type: "text/csv".into(),
+                is_image: false,
+            }]);
+            t.sent_caption = caption.map(str::to_owned);
+            tool_call_item(&t, Locale::En).unwrap()["metadata"].clone()
+        };
+        let files = json!([{"path": "out.csv", "name": "out.csv", "size": 10, "mediaType": "text/csv",
+                            "isImage": false, "sent": "toolu_1"}]);
+        let shell = json!({"command": "send-file --caption Totals out.csv"});
+        assert_eq!(
+            sent("run_shell_command", shell.clone(), Some("Totals")),
+            json!({"sentFiles": files, "sentCaption": "Totals"})
+        );
+        assert_eq!(
+            sent(
+                "SendUserFile",
+                json!({"path": "out.csv", "caption": "Totals"}),
+                Some("Totals")
+            ),
+            json!({"sentFiles": files, "sentCaption": "Totals"})
+        );
+        for none in [None, Some(" ")] {
+            assert_eq!(
+                sent("run_shell_command", shell.clone(), none),
+                json!({"sentFiles": files})
+            );
+        }
     }
 
     #[test]

@@ -126,6 +126,7 @@ fn row_of(call: &Value, status: ToolStatus) -> ToolItem {
         status,
         result,
         sent_files: None,
+        sent_caption: None,
         task: None,
         error: None,
         answered_at: None,

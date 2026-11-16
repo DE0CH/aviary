@@ -153,6 +153,13 @@ pub fn files_sent(tool_use_id: &str, path: &str) -> NewEvent {
     )
 }
 
+/// [`files_sent`] with the send's caption.
+pub fn files_sent_captioned(tool_use_id: &str, path: &str, caption: &str) -> NewEvent {
+    let mut e = files_sent(tool_use_id, path);
+    e.data["caption"] = json!(caption);
+    e
+}
+
 pub fn task_status(tool_use_id: &str, status: &str) -> NewEvent {
     ev(
         "task.status",
