@@ -31,7 +31,7 @@ export interface Claims {
   person: string;
 }
 
-export type VerifyError = "malformed" | "unknown_kid" | "bad_signature" | "expired" | "wrong_source";
+export type VerifyError = "malformed" | "unknown_kid" | "bad_signature" | "expired";
 
 /** The token in a `Proxy-Authorization` (or, on self-host paths, `Authorization`) value: "missing" answers 407,
  * "malformed" (Basic, but not `sbx:<token>`) 403. */
@@ -142,8 +142,10 @@ export class KeySet {
     return this.#keys.has(kid);
   }
 
-  /** 3.11.2 step 2: parses, kid known, signature, not expired (`now < expiresAt`), source address. */
-  verify(token: string, nowSec: number, from: string | undefined): { claims: Claims } | { error: VerifyError } {
+  /** 3.11.2 step 2: parses, kid known, signature, not expired (`now < expiresAt`). The token alone is the caller's
+   * identity: the address a request comes from is never checked (Deyao, 2026-11-16; the claim `source` stays in
+   * hermit's codec and is not read), so the proxy may sit behind a load balancer. */
+  verify(token: string, nowSec: number): { claims: Claims } | { error: VerifyError } {
     const parts = split(token);
     if (!parts) return { error: "malformed" };
     const key = this.#keys.get(parts.kid);
@@ -152,7 +154,6 @@ export class KeySet {
     const claims = decodeClaims(parts.payload);
     if (!claims) return { error: "malformed" };
     if (nowSec >= claims.expiresAt) return { error: "expired" };
-    if (claims.source !== "0.0.0.0" && ipv4Of(from) !== claims.source) return { error: "wrong_source" };
     return { claims };
   }
 }
@@ -373,13 +374,13 @@ export class SandboxTokens {
   /** Steps 2 and 3: the token verified locally (an unknown kid waits for at most one refetch), then the cached
    * liveness view. A hermit problem never refuses a valid token: with no answer yet it is admitted and the lookup runs
    * in the background. */
-  async verify(token: string, from: string | undefined): Promise<Verified> {
-    let r = this.#keys.verify(token, Math.floor(this.#now() / 1000), from);
+  async verify(token: string): Promise<Verified> {
+    let r = this.#keys.verify(token, Math.floor(this.#now() / 1000));
     const kid = "error" in r && r.error === "unknown_kid" ? peekKid(token) : null;
     if (kid !== null) {
       const fetch = this.#refetchForKid();
       if (fetch) await fetch;
-      r = this.#keys.verify(token, Math.floor(this.#now() / 1000), from);
+      r = this.#keys.verify(token, Math.floor(this.#now() / 1000));
     }
     if ("error" in r) return r;
     return this.admits(r.claims.sandboxId) ? r : { error: "not_live" };
