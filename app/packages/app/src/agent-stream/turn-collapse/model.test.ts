@@ -72,6 +72,51 @@ describe("collapseTurns", () => {
     expect(result.turnsByHostId.get("u1")?.summary.tools).toEqual(expect.objectContaining({ commandCount: 1 }));
   });
 
+  it("keeps a call that sent files (its cards) under the reply when the turn folds", () => {
+    const file = { path: "out/report.pdf", name: "report.pdf", size: 1024, mediaType: "application/pdf", isImage: false };
+    // the tool that sends files, and a shell command that sent some: its files are on the call's metadata
+    const sendTool: ToolCallItem = {
+      ...shell("f1"),
+      payload: {
+        source: "agent",
+        data: {
+          provider: "claude",
+          callId: "f1",
+          name: "SendUserFile",
+          status: "completed",
+          error: null,
+          detail: { type: "unknown", input: { files: ["out/report.pdf"] }, output: null },
+          metadata: { sentFiles: [{ ...file, sent: "f1" }] },
+        },
+      },
+    };
+    const sendCommand: ToolCallItem = {
+      ...shell("f2"),
+      payload: {
+        source: "agent",
+        data: {
+          provider: "claude",
+          callId: "f2",
+          name: "run_shell_command",
+          status: "completed",
+          error: null,
+          detail: { type: "shell", command: "send-file out/report.pdf", output: "sent 1 file" },
+          metadata: { sentFiles: [{ ...file, sent: "f2" }] },
+        },
+      },
+    };
+    for (const sent of [sendTool, sendCommand]) {
+      const result = collapse([user("u1"), shell("c1"), sent, reply("final")]);
+      expect(ids(result.tail)).toEqual(["u1", "final", sent.id]);
+      expect(result.turnsByHostId.get("u1")?.summary.tools).toEqual(
+        expect.objectContaining({ commandCount: 1, otherToolCount: 0 }),
+      );
+    }
+    // a command that sent nothing folds with the rest
+    const plain = collapse([user("u1"), shell("c1"), shell("c2"), reply("final")]);
+    expect(ids(plain.tail)).toEqual(["u1", "final"]);
+  });
+
   it("folds a finished turn's work into its user message and keeps the reply", () => {
     const result = collapse([
       user("u1"),

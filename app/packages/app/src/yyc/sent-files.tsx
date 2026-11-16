@@ -7,29 +7,9 @@ import { apiUrl } from "@/yyc/api";
 import { openServerFile, serverImageSource } from "@/yyc/open-file";
 import { useToast } from "@/contexts/toast-api-context";
 import type { Theme } from "@/styles/theme";
+import type { SentFile } from "@/yyc/sent-files-text";
 
-/** One file Claude sent with SendUserFile (the bridge puts these on the tool call's metadata). */
-export interface SentFile {
-  path: string;
-  name: string;
-  size: number | null;
-  mediaType: string | null;
-  isImage: boolean;
-  /** The SendUserFile call it came with: the download reads the file as that send kept it. */
-  sent?: string;
-}
-
-/** The caption Claude gave the files (SendUserFile's `caption` input), if any. */
-export function readSendUserFileCaption(detail: unknown): string | null {
-  const input = (detail as { input?: unknown } | undefined)?.input;
-  const caption = (input as { caption?: unknown } | null)?.caption;
-  return typeof caption === "string" && caption.trim() ? caption.trim() : null;
-}
-
-export function readSentFiles(metadata: unknown): SentFile[] {
-  const files = (metadata as { sentFiles?: unknown } | undefined)?.sentFiles;
-  return Array.isArray(files) ? (files as SentFile[]) : [];
-}
+export { isSentFilesCall, readSendUserFileCaption, readSentFiles, type SentFile } from "@/yyc/sent-files-text";
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const ThemedFile = withUnistyles(FileText);

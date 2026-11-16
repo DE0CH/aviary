@@ -1,4 +1,4 @@
-import { openConversationFile, readSendUserFileCaption, readSentFiles, SentFilesCards, useConversationFileUrl } from "@/yyc/sent-files";
+import { isSentFilesCall, openConversationFile, readSendUserFileCaption, readSentFiles, SentFilesCards, useConversationFileUrl } from "@/yyc/sent-files";
 import { useSummarisingLabel } from "@/yyc/harness-switch-label";
 import { parseScheduledMessage, readScheduleCall, ScheduledMessage, ScheduleToolCard } from "@/yyc/schedules";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
@@ -855,12 +855,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
           // files sent to the person: the SendUserFile call, or whichever call sent them (a harness without
           // that tool sends from a shell command)
-          const sentFiles = readSentFiles(data.metadata);
-          if (data.name === "SendUserFile" || sentFiles.length > 0) {
+          if (isSentFilesCall(data.name, data.metadata)) {
             return (
               <SentFilesCards
                 sessionId={agentId}
-                files={sentFiles}
+                files={readSentFiles(data.metadata)}
                 caption={readSendUserFileCaption(data.detail)}
                 isLastInSequence={isLastInSequence}
               />

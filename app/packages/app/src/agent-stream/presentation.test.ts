@@ -588,3 +588,154 @@ describe("timeline presentation", () => {
     expect(projectTimelineItems([source], () => [])).toEqual([]);
   });
 });
+
+// The server puts the files a call sent on its metadata (`sentFiles`): on the tool that sends files, or on the
+// shell command that sent them where the agent has no such tool. Either way the cards are part of the reply.
+describe("a call that sent files to the person", () => {
+  const timeline = (
+    item: Extract<AgentStreamEventPayload, { type: "timeline" }>["item"],
+  ): AgentStreamEventPayload => ({ type: "timeline", provider: "claude", item });
+  const sentFiles = (callId: string) => [
+    {
+      path: "out/report.pdf",
+      name: "report.pdf",
+      size: 1024,
+      mediaType: "application/pdf",
+      isImage: false,
+      sent: callId,
+    },
+  ];
+  const before: AgentStreamEventPayload[] = [
+    timeline({ type: "user_message", messageId: "prompt", text: "Send me the report" }),
+    timeline({
+      type: "tool_call",
+      callId: "read",
+      name: "read_file",
+      status: "completed",
+      error: null,
+      detail: { type: "read", filePath: "notes.md" },
+    }),
+  ];
+  const after: AgentStreamEventPayload[] = [
+    assistant("Here is the report.", "reply"),
+    { type: "turn_completed", provider: "claude" },
+  ];
+  const senders: Record<string, AgentStreamEventPayload[]> = {
+    "the tool that sends files": [
+      timeline({
+        type: "tool_call",
+        callId: "send",
+        name: "SendUserFile",
+        status: "running",
+        error: null,
+        detail: { type: "unknown", input: { files: ["out/report.pdf"] }, output: null },
+      }),
+      timeline({
+        type: "tool_call",
+        callId: "send",
+        name: "SendUserFile",
+        status: "completed",
+        error: null,
+        detail: { type: "unknown", input: { files: ["out/report.pdf"] }, output: "sent" },
+        metadata: { sentFiles: sentFiles("send") },
+      }),
+    ],
+    "a shell command": [
+      timeline({
+        type: "tool_call",
+        callId: "send",
+        name: "run_shell_command",
+        status: "running",
+        error: null,
+        detail: { type: "shell", command: "send-file out/report.pdf" },
+      }),
+      // the files land on the call while the command still runs
+      timeline({
+        type: "tool_call",
+        callId: "send",
+        name: "run_shell_command",
+        status: "running",
+        error: null,
+        detail: { type: "shell", command: "send-file out/report.pdf" },
+        metadata: { sentFiles: sentFiles("send") },
+      }),
+      timeline({
+        type: "tool_call",
+        callId: "send",
+        name: "run_shell_command",
+        status: "completed",
+        error: null,
+        detail: { type: "shell", command: "send-file out/report.pdf", output: "sent 1 file" },
+        metadata: { sentFiles: sentFiles("send") },
+      }),
+    ],
+  };
+
+  function label(item: StreamItem): string {
+    if (item.kind === "tool_call" && item.payload.source === "agent") return item.payload.data.callId;
+    if (item.kind === "user_message") return "prompt";
+    return item.kind === "assistant_message" ? "reply" : item.kind;
+  }
+
+  function present(
+    source: { tail: StreamItem[]; head: StreamItem[] },
+    display: "collapseToolCalls" | "collapseTurns",
+  ) {
+    return createStreamPresentation()({
+      ...source,
+      display,
+      expandedTurnHostIds: new Set<string>(),
+      isTurnActive: false,
+      transform: undefined,
+    });
+  }
+
+  // watched as it arrives, and opened afterwards from the history
+  const arrivals = {
+    live: (events: AgentStreamEventPayload[]) =>
+      events.reduce<{ tail: StreamItem[]; head: StreamItem[] }>(
+        (state, event) => applyStreamEvent({ ...state, event, timestamp: new Date(1000) }),
+        { tail: [], head: [] },
+      ),
+    reloaded: (events: AgentStreamEventPayload[]) => ({
+      tail: hydrateStreamState(events.map((event) => ({ event, timestamp: new Date(1000) }))),
+      head: [],
+    }),
+  };
+
+  const cases = Object.entries(senders).flatMap(([sender, events]) =>
+    (["live", "reloaded"] as const).map((arrival) => ({ sender, arrival, events })),
+  );
+
+  it.each(cases)("from $sender, $arrival: stays out of the group of tool calls", ({ arrival, events }) => {
+    const result = present(arrivals[arrival]([...before, ...events, ...after]), "collapseToolCalls");
+    const shown = rows(result);
+    expect(shown.map(label)).toEqual(["prompt", "read", "send", "reply"]);
+    expect(result.groupsByHostId.has(shown[1]!.id)).toBe(true);
+    expect(result.groupsByHostId.has(shown[2]!.id)).toBe(false);
+  });
+
+  it.each(cases)("from $sender, $arrival: stays under the reply when the turn folds", ({ arrival, events }) => {
+    const folded = present(arrivals[arrival]([...before, ...events, ...after]), "collapseTurns");
+    expect(rows(folded).map(label)).toEqual(["prompt", "reply", "send"]);
+    expect(folded.groupsByHostId.has(rows(folded)[2]!.id)).toBe(false);
+    expect(folded.turns.turnsByHostId.get("prompt")?.summary.tools).toMatchObject({
+      readFileCount: 1,
+      commandCount: 0,
+      otherToolCount: 0,
+    });
+  });
+
+  it("shows the cards while the turn is still running", () => {
+    const running = arrivals.live([...before, ...senders["a shell command"]!.slice(0, 2)]);
+    const result = createStreamPresentation()({
+      ...running,
+      display: "collapseTurns",
+      expandedTurnHostIds: new Set<string>(),
+      isTurnActive: true,
+      transform: undefined,
+    });
+    expect(rows(result).map(label)).toEqual(["prompt", "read", "send"]);
+    expect(result.groupsByHostId.has(rows(result)[2]!.id)).toBe(false);
+  });
+});

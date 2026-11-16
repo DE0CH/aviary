@@ -1,4 +1,5 @@
 import { isScheduleCallDetail } from "@/yyc/schedules-text";
+import { isSentFilesCall } from "@/yyc/sent-files-text";
 import { getStreamItemMessageId, type StreamItem, type ToolCallItem } from "@/types/stream";
 import { summarizeToolCalls, type OverviewSummary } from "@/tool-calls/detail-level/overview/model";
 
@@ -55,11 +56,9 @@ function summarizeTurn(
 }
 
 function isSentFileCall(item: StreamItem): boolean {
-  return (
-    item.kind === "tool_call" &&
-    item.payload.source === "agent" &&
-    (item.payload.data.name === "SendUserFile" || isScheduleCallDetail(item.payload.data.detail))
-  );
+  if (item.kind !== "tool_call" || item.payload.source !== "agent") return false;
+  const { name, metadata, detail } = item.payload.data;
+  return isSentFilesCall(name, metadata) || isScheduleCallDetail(detail);
 }
 
 function hasWork(summary: TurnSummary): boolean {

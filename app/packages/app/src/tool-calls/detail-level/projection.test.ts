@@ -479,4 +479,52 @@ describe("tool call detail-level projection", () => {
     expect(result.groupsByHostId.get(singleCall.id)?.run.calls).toEqual([singleCall]);
     expect(result.groupsByHostId.size).toBe(1);
   });
+
+  it("leaves a call that sent files ungrouped, whichever tool sent them", () => {
+    const sentFiles = [
+      { path: "out/report.pdf", name: "report.pdf", size: 1024, mediaType: "application/pdf", isImage: false },
+    ];
+    const withFiles = (call: ToolCallItem): ToolCallItem => {
+      if (call.payload.source !== "agent") throw new Error("Expected an agent tool call");
+      return {
+        ...call,
+        payload: { source: "agent", data: { ...call.payload.data, metadata: { sentFiles } } },
+      };
+    };
+    const before = toolCall("1", { type: "shell", command: "make report" });
+    const sendTool = withFiles(
+      toolCall("2", { type: "unknown", input: { files: ["out/report.pdf"] }, output: null }, { name: "SendUserFile" }),
+    );
+    const sendCommand = withFiles(
+      toolCall("3", { type: "shell", command: "send-file out/report.pdf" }, { name: "run_shell_command" }),
+    );
+    const after = toolCall("4", { type: "shell", command: "ls" });
+
+    const calls = [before, sendTool, sendCommand, after];
+    for (const placement of ["tail", "head"] as const) {
+      const result =
+        placement === "tail"
+          ? project({ level: "overview", tail: calls })
+          : project({ level: "overview", head: calls });
+      expect(result[placement]).toEqual(calls);
+      expect(result.groupsByHostId.get(before.id)?.run.calls).toEqual([before]);
+      expect(result.groupsByHostId.get(after.id)?.run.calls).toEqual([after]);
+      expect(result.groupsByHostId.size).toBe(2);
+    }
+
+    // the files arrive on a call that is already running in a group: it leaves the group
+    const running = toolCall(
+      "3",
+      { type: "shell", command: "send-file out/report.pdf" },
+      { name: "run_shell_command", status: "running" },
+    );
+    const grouped = project({ level: "overview", tail: [before, running], isTurnActive: true });
+    expect(grouped.tail).toEqual([expect.objectContaining({ id: before.id })]);
+    expect(grouped.groupsByHostId.get(before.id)?.run.calls).toEqual([before, running]);
+    const sending = withFiles(running);
+    const split = project({ level: "overview", tail: [before, sending], isTurnActive: true });
+    expect(split.tail).toEqual([before, sending]);
+    expect(split.groupsByHostId.get(before.id)?.run.calls).toEqual([before]);
+    expect(split.groupsByHostId.has(sending.id)).toBe(false);
+  });
 });
