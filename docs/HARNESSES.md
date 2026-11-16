@@ -45,6 +45,12 @@ ran before, for a pick back.
   shell runs `send-file [--caption TEXT] PATH…` (the supervisor binary under that name), which names no tool call;
   the driver puts the files on the open shell call that runs it, one send per call. Its instructions say so
   (`launch::QWEN_SEND_FILE`).
+- **Background tasks.** Both write `system` lines `task_started` and `task_notification` for a background shell, a
+  monitor and a subagent, and take the `stop_task` control request; Claude Code writes a task's fields on the line,
+  Qwen Code (the fork) under `data` (`cc/stream.rs` reads both). A Qwen Code monitor's event is a
+  `task_notification` whose status is `running`: the task goes on and the event starts a turn. A task Qwen Code
+  stopped says `cancelled`. Qwen Code's tools are `run_shell_command` (`is_background: true`), `monitor` and `agent`
+  (`TaskType::of_tool`), so its tasks hold the run, show in the Activity panel and wake the agent as Claude Code's do.
 
 ## In the store
 
@@ -65,6 +71,5 @@ ran before, for a pick back.
 
 ## Not there yet for Qwen Code
 
-- Background tasks of Qwen Code's tools are not tracked (the Activity panel lists Claude Code's).
 - A conversation is compacted for its media count only in Claude Code (`compactAtImages`); Qwen Code compacts
   itself at its token limit.

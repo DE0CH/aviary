@@ -844,7 +844,7 @@ fn task_state(m: &TaskMsg) -> WireTaskState {
     match m.status.as_deref() {
         Some("completed") => WireTaskState::Completed,
         Some("failed") => WireTaskState::Failed,
-        Some("killed" | "stopped") => WireTaskState::Stopped,
+        Some("killed" | "stopped" | "cancelled") => WireTaskState::Stopped,
         None if m.kind == TaskKind::Notification => WireTaskState::Completed,
         _ => WireTaskState::Running,
     }

@@ -393,6 +393,8 @@ struct Envelope {
     patch: Option<Patch>,
     summary: Option<String>,
     output_file: Option<String>,
+    /// A `system` line's payload as Qwen Code writes it: a task line's fields are under it, not on the line.
+    data: Option<Value>,
     #[serde(default)]
     is_error: bool,
     result: Option<String>,
@@ -570,19 +572,22 @@ pub fn parse(line: &[u8]) -> Out {
                 "compact_boundary" => return Out::Compacted,
                 _ => return Out::Logged(sub),
             };
-            let Some(task_id) = e.task_id else {
+            // Claude Code writes a task line's fields on the line, Qwen Code under `data`
+            let data = e.data.as_ref();
+            let field = |own: Option<String>, name: &str| own.or_else(|| data?.get(name)?.as_str().map(str::to_owned));
+            let Some(task_id) = field(e.task_id, "task_id") else {
                 return Out::Logged(sub);
             };
             Out::Task(TaskMsg {
                 kind,
                 task_id,
-                tool_use_id: e.tool_use_id,
-                task_type: e.task_type,
-                description: e.description,
-                workflow_name: e.workflow_name,
-                status: e.status.or_else(|| e.patch.and_then(|p| p.status)),
-                summary: e.summary,
-                output_file: e.output_file,
+                tool_use_id: field(e.tool_use_id, "tool_use_id"),
+                task_type: field(e.task_type, "task_type"),
+                description: field(e.description, "description"),
+                workflow_name: field(e.workflow_name, "workflow_name"),
+                status: field(e.status.or_else(|| e.patch.and_then(|p| p.status)), "status"),
+                summary: field(e.summary, "summary"),
+                output_file: field(e.output_file, "output_file"),
             })
         }
         other => Out::Other(other.to_owned()),
@@ -864,6 +869,71 @@ mod tests {
             panic!("not a result")
         };
         assert_eq!(r.result.as_deref(), Some("boom"));
+    }
+
+    /// Qwen Code's task lines (the fork DE0CH/qwen-code, as its stdout wrote them): the fields are under `data`,
+    /// and the wake-up of a task that ended is a `user` line holding the `<task-notification>`.
+    #[test]
+    fn qwen_codes_task_lines() {
+        let Out::Task(t) = parse(br#"{"type":"system","subtype":"task_started","uuid":"5b8e8104-632d-465a-9e4b-bf38cfddcd5e","session_id":"49b655f9-e260-43ff-974d-3e53da34c0de","parent_tool_use_id":null,"data":{"task_id":"bg_8cd4da3b","tool_use_id":"call_e2e_1","description":"sleep 2; echo e2e-finished","task_type":"local_bash"}}"#) else {
+            panic!()
+        };
+        assert_eq!(
+            t,
+            TaskMsg {
+                kind: TaskKind::Started,
+                task_id: "bg_8cd4da3b".into(),
+                tool_use_id: Some("call_e2e_1".into()),
+                task_type: Some("local_bash".into()),
+                description: Some("sleep 2; echo e2e-finished".into()),
+                workflow_name: None,
+                status: None,
+                summary: None,
+                output_file: None,
+            }
+        );
+        let Out::Task(t) = parse(br#"{"type":"system","subtype":"task_notification","uuid":"fe1d50bd-101d-46ca-bdae-74183211559d","session_id":"49b655f9-e260-43ff-974d-3e53da34c0de","parent_tool_use_id":null,"data":{"task_id":"bg_8cd4da3b","tool_use_id":"call_e2e_1","status":"completed","summary":"Background shell \"sleep 2; echo e2e-finished\" completed.","output_file":"/home/sandbox/.qwen/tmp/shell-bg_8cd4da3b.output"}}"#) else {
+            panic!()
+        };
+        assert_eq!(
+            (
+                t.kind,
+                t.task_id.as_str(),
+                t.status.as_deref(),
+                t.output_file.as_deref()
+            ),
+            (
+                TaskKind::Notification,
+                "bg_8cd4da3b",
+                Some("completed"),
+                Some("/home/sandbox/.qwen/tmp/shell-bg_8cd4da3b.output")
+            )
+        );
+        assert_eq!(
+            t.summary.as_deref(),
+            Some(r#"Background shell "sleep 2; echo e2e-finished" completed."#)
+        );
+        // a monitor's event: the monitor goes on
+        let Out::Task(t) = parse(br#"{"type":"system","subtype":"task_notification","uuid":"8d33f059","session_id":"s","parent_tool_use_id":null,"data":{"task_id":"mon_31404d2c063b4d2a","tool_use_id":"call_e2e_8","status":"running"}}"#) else {
+            panic!()
+        };
+        assert_eq!((t.kind, t.status.as_deref()), (TaskKind::Notification, Some("running")));
+        // a `system` line of Qwen Code's that is no task's stays a logged one
+        assert_eq!(
+            parse(br#"{"type":"system","subtype":"task_started","uuid":"u","session_id":"s","data":{"note":"x"}}"#),
+            Out::Logged("task_started".into())
+        );
+        let Out::Message {
+            assistant,
+            main,
+            task_notification,
+            ..
+        } = parse(br#"{"type":"user","uuid":"d72c5d83-2e86-4903-bd83-d2e106546499","session_id":"49b655f9-e260-43ff-974d-3e53da34c0de","parent_tool_use_id":null,"message":{"role":"user","content":[{"type":"text","text":"<task-notification>\n<task-id>bg_8cd4da3b</task-id>\n<tool-use-id>call_e2e_1</tool-use-id>\n<kind>shell</kind>\n<status>completed</status>\n<summary>Shell command \"sleep 2\" completed.</summary>\n</task-notification>"}]}}"#)
+        else {
+            panic!()
+        };
+        assert!(!assistant && main);
+        assert!(task_notification.is_some_and(|t| t.contains("<task-id>bg_8cd4da3b</task-id>")));
     }
 
     #[test]

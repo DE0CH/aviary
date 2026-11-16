@@ -5,7 +5,8 @@
 //! The fake reads the person's text up to the first blank line as a script of `;`-separated steps:
 //! `say:X`, `echo` (the whole text and the image count), `fail`, `hang` (until an interrupt), `deaf` (ignores
 //! interrupts), `crash:N`, `bg:ID` (a background Bash task), `bgdone:ID:MS` (one that completes after MS and wakes
-//! the agent), `wake:MS` (an agent turn after MS), `slowwake:MS` (an agent turn after MS whose result comes 1.5 s
+//! the agent), `qbg:ID`, `qbgdone:ID:MS` and `qmon:ID:MS` (Qwen Code's: a background shell, one that ends after MS, a
+//! monitor that has an event after MS and goes on; the lines as the fork writes them), `wake:MS` (an agent turn after MS), `slowwake:MS` (an agent turn after MS whose result comes 1.5 s
 //! later), `ask` (an `AskUserQuestion` that needs a person: its `tool_use`, then the `can_use_tool`), `askbash` (the
 //! same beside a Bash call still running), `sendsh` (a shell call running `send-file`, until an interrupt), `img:N` (a tool result carrying N images). The text `/compact` is the
 //! command: `status`, 300 ms, then a second `init`, `compact_boundary`, the summary and a `result`. Like Claude Code 2.1.304, the fake answers an open question itself when
@@ -59,6 +60,8 @@ struct Fake {
     timers: Vec<(std::time::Instant, String)>,
     inited: bool,
     bg: Vec<String>,
+    /// The tasks of `bg` that are Qwen Code's.
+    qwen: Vec<String>,
 }
 
 impl Fake {
@@ -197,6 +200,37 @@ impl Fake {
                         ));
                     }
                 }
+                "qbg" | "qbgdone" | "qmon" => {
+                    // as the fork DE0CH/qwen-code writes them: the task's fields under `data`
+                    let mut parts = arg.split(':');
+                    let id = parts.next().unwrap().to_owned();
+                    let tool = format!("call_{id}");
+                    let (name, kind) = if cmd == "qmon" {
+                        ("monitor", "monitor")
+                    } else {
+                        ("run_shell_command", "local_bash")
+                    };
+                    self.assistant(
+                        "started",
+                        &[json!({"type": "tool_use", "id": tool, "name": name,
+                                  "input": {"command": "sleep 100", "is_background": true, "description": "sleep"}})],
+                    );
+                    self.system(
+                        json!({"type": "system", "subtype": "task_started", "uuid": Uuid::new_v4().to_string(),
+                                       "session_id": self.session, "parent_tool_use_id": null,
+                                       "data": {"task_id": id, "tool_use_id": tool, "description": "sleep",
+                                                "task_type": kind}}),
+                    );
+                    self.bg.push(id.clone());
+                    self.qwen.push(id.clone());
+                    if let Some(ms) = parts.next() {
+                        let what = if cmd == "qmon" { "qevent" } else { "qdone" };
+                        self.timers.push((
+                            std::time::Instant::now() + Duration::from_millis(ms.parse().unwrap()),
+                            format!("{what}:{id}"),
+                        ));
+                    }
+                }
                 "img" => {
                     let n: usize = arg.parse().unwrap();
                     self.assistant(
@@ -259,6 +293,40 @@ impl Fake {
                                "message": {"role": "user", "content": format!("<task-notification><task-id>{arg}</task-id></task-notification>")}});
                 out_line(&mut self.out, &v);
                 self.assistant(&format!("task {arg} done"), &[]);
+                self.result(true, "agent");
+                self.next_queued();
+            }
+            "qdone" | "qevent" => {
+                if !self.bg.iter().any(|b| b == arg) {
+                    return;
+                }
+                if self.busy {
+                    // Qwen Code tells the model after the running turn
+                    self.timers
+                        .push((std::time::Instant::now() + Duration::from_millis(50), what.to_owned()));
+                    return;
+                }
+                let status = if cmd == "qdone" { "completed" } else { "running" };
+                if cmd == "qdone" {
+                    self.bg.retain(|b| b != arg);
+                }
+                self.busy = true;
+                let text = format!(
+                    "<task-notification>\n<task-id>{arg}</task-id>\n<tool-use-id>call_{arg}</tool-use-id>\n\
+                     <status>{status}</status>\n<summary>It is {status}.</summary>\n</task-notification>"
+                );
+                let v = json!({"type": "user", "uuid": Uuid::new_v4().to_string(), "session_id": self.session,
+                               "parent_tool_use_id": null,
+                               "message": {"role": "user", "content": [{"type": "text", "text": text}]}});
+                out_line(&mut self.out, &v);
+                self.system(
+                    json!({"type": "system", "subtype": "task_notification", "uuid": Uuid::new_v4().to_string(),
+                                   "session_id": self.session, "parent_tool_use_id": null,
+                                   "data": {"task_id": arg, "tool_use_id": format!("call_{arg}"), "status": status}}),
+                );
+                // Qwen Code writes an `init` at the start of every turn
+                self.system(json!({"type": "system", "subtype": "init", "session_id": self.session, "model": "m"}));
+                self.assistant(&format!("task {arg} {status}"), &[]);
                 self.result(true, "agent");
                 self.next_queued();
             }
@@ -350,6 +418,22 @@ impl Fake {
             }
             "stop_task" => {
                 let t = v["request"]["task_id"].as_str().unwrap_or("").to_owned();
+                if self.qwen.contains(&t) {
+                    // Qwen Code: whether it stopped one, then the task's end as `cancelled`; the model is not told
+                    let stopped = self.bg.contains(&t);
+                    self.bg.retain(|b| *b != t);
+                    self.system(json!({"type": "control_response", "response": {
+                        "subtype": "success", "request_id": id,
+                        "response": {"subtype": "stop_task", "stopped": stopped}}}));
+                    if stopped {
+                        self.system(json!({"type": "system", "subtype": "task_notification",
+                                           "uuid": Uuid::new_v4().to_string(), "session_id": self.session,
+                                           "parent_tool_use_id": null,
+                                           "data": {"task_id": t, "tool_use_id": format!("call_{t}"),
+                                                    "status": "cancelled", "summary": "It was cancelled."}}));
+                    }
+                    return;
+                }
                 self.system(json!({"type": "control_response",
                                    "response": {"subtype": "success", "request_id": id, "response": {}}}));
                 if self.bg.contains(&t) {
@@ -424,6 +508,7 @@ fn fake_claude() {
         timers: Vec::new(),
         inited: false,
         bg: Vec::new(),
+        qwen: Vec::new(),
     };
     fake.note(&format!("argv {}", argv.join(" ")));
     fake.note(&format!(
@@ -1517,6 +1602,105 @@ async fn the_hold_supersede_stop_tasks_and_a_task_that_ends() {
                     .unwrap_or_default()
             })
             .any(|e| e["taskId"] == "t3" && e["event"] == "notification")
+    })
+    .await;
+}
+
+/// The task events magpie was told of, in order.
+fn task_events(w: &World) -> Vec<Value> {
+    w.magpie
+        .script()
+        .calls_to("tasks")
+        .iter()
+        .flat_map(|c| {
+            c.body.clone().unwrap()["events"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// The `n`th agent turn magpie was told of.
+async fn agent_turn(w: &World, n: usize) -> Uuid {
+    until("an agent turn", || w.magpie.script().calls_to("agent_turn").len() > n).await;
+    serde_json::from_value(w.magpie.script().calls_to("agent_turn")[n].body.as_ref().unwrap()["turnId"].clone())
+        .unwrap()
+}
+
+/// Qwen Code's background shell (the fork's lines, their fields under `data`): the turn that started it ends
+/// held with the task, the shell's end opens an agent turn, and after that turn the run is idle.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn qwen_codes_background_shell_holds_the_run_and_wakes_the_agent() {
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let (t, _) = w.turn_in("qbgdone:s1:1500", magpie_api::Harness::Qwen, Some("vendor/video"), None);
+    let end = w.ended(t).await;
+    assert_eq!(end["state"], "completed");
+    assert_eq!(end["held"], true, "{end}\n{}", texts(&w));
+    assert_eq!(end["tasks"][0]["taskId"], "s1");
+    assert_eq!(end["tasks"][0]["toolUseId"], "call_s1");
+    assert_eq!(end["tasks"][0]["type"], "local_bash");
+    let d = sup.driver.clone();
+    until("held", || d.status().borrow().state == ActivityState::Held).await;
+    let agent = agent_turn(&w, 0).await;
+    let end = w.ended(agent).await;
+    assert_eq!(end["state"], "completed");
+    assert_eq!(end["held"], false, "the shell is over: {end}");
+    w.idle(&sup).await;
+    let events = task_events(&w);
+    let of = |event: &str| {
+        events
+            .iter()
+            .find(|e| e["taskId"] == "s1" && e["event"] == event)
+            .cloned()
+    };
+    let started = of("started").expect("the start reached magpie");
+    assert_eq!(started["toolUseId"], "call_s1");
+    assert_eq!(started["status"], "running");
+    assert_eq!(started["description"], "sleep");
+    assert_eq!(
+        of("notification").expect("the end reached magpie")["status"],
+        "completed"
+    );
+}
+
+/// Qwen Code's monitor: an event of it (a notification that says `running`) opens an agent turn and the monitor
+/// goes on, so the run is held again; a send then stops it, and its end comes as `cancelled`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn qwen_codes_monitor_goes_on_after_an_event_and_a_send_stops_it() {
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let qsid = crate::cc::launch::qwen_session_id(&w.cid.to_string());
+    let (t, _) = w.turn_in("qmon:m1:1500", magpie_api::Harness::Qwen, Some("vendor/video"), None);
+    let end = w.ended(t).await;
+    assert_eq!(end["held"], true, "{end}\n{}", texts(&w));
+    assert_eq!(end["tasks"][0]["type"], "monitor");
+    let agent = agent_turn(&w, 0).await;
+    let end = w.ended(agent).await;
+    assert_eq!(end["held"], true, "the monitor goes on: {end}");
+    assert_eq!(end["tasks"][0]["taskId"], "m1");
+    let d = sup.driver.clone();
+    until("held", || d.status().borrow().state == ActivityState::Held).await;
+    let events = task_events(&w);
+    let event = events
+        .iter()
+        .find(|e| e["taskId"] == "m1" && e["event"] == "notification")
+        .expect("the monitor's event reached magpie");
+    assert_eq!(event["status"], "running");
+
+    let (t2, _) = w.turn_in("say:next", magpie_api::Harness::Qwen, Some("vendor/video"), Some(qsid));
+    let end = w.ended(t2).await;
+    assert_eq!(end["state"], "completed");
+    assert_eq!(end["held"], false, "{end}");
+    let log = texts(&w);
+    let stop = log.find("control stop_task").expect("stop_task sent");
+    assert!(stop < log.find("prompt say:next").unwrap(), "{log}");
+    w.idle(&sup).await;
+    until("the monitor's end", || {
+        task_events(&w)
+            .iter()
+            .any(|e| e["taskId"] == "m1" && e["event"] == "notification" && e["status"] == "stopped")
     })
     .await;
 }

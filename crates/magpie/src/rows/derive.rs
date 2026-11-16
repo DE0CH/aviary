@@ -427,19 +427,29 @@ fn notification_state(status: &str) -> (TaskState, ToolStatus) {
 /// the launch's own result text (today's history folding, done once at write time). A launch whose output was
 /// extracted keeps its `blobId` and `bytes` (the link to that full output), with `truncated` set.
 pub fn apply_notification(t: &mut ToolItem, n: &TaskNotification) {
-    let (task_state, status) = notification_state(&n.status);
     let task_id = n
         .task_id
         .clone()
         .or_else(|| t.task.as_ref().map(|k| k.task_id.clone()))
         .unwrap_or_default();
+    let summary = n
+        .summary
+        .clone()
+        .or_else(|| t.task.as_ref().and_then(|k| k.summary.clone()));
+    if n.status == "running" {
+        // an event of a task that goes on (Qwen Code's monitor): the row and its result stay as they are
+        t.task = Some(TaskInfo {
+            task_id,
+            status: TaskState::Running,
+            summary,
+        });
+        return;
+    }
+    let (task_state, status) = notification_state(&n.status);
     t.task = Some(TaskInfo {
         task_id,
         status: task_state,
-        summary: n
-            .summary
-            .clone()
-            .or_else(|| t.task.as_ref().and_then(|k| k.summary.clone())),
+        summary,
     });
     t.status = status;
     if let Some(summary) = &n.summary {
@@ -803,6 +813,31 @@ mod tests {
             (r.text.as_str(), r.blob_id, r.bytes, r.truncated),
             ("done", None, 4, false)
         );
+    }
+
+    /// Qwen Code's monitor tells the model of each event with a notification that says `running`: the monitor's
+    /// row goes on with its launch result, and ends with the notification of its end.
+    #[test]
+    fn a_running_notification_leaves_the_row_running() {
+        let mut t = launch();
+        apply_result(
+            &mut t,
+            &json!({"type": "tool_result", "tool_use_id": "t", "content": "Monitor started."}),
+        );
+        let before = t.status;
+        let n = |status: &str, summary: &str| -> TaskNotification {
+            serde_json::from_value(json!({"toolUseId": "t", "taskId": "mon_1", "status": status, "summary": summary}))
+                .unwrap()
+        };
+        apply_notification(&mut t, &n("running", "Monitor \"log\" emitted event #1."));
+        assert_eq!(t.status, before);
+        assert_eq!(t.result.as_ref().unwrap().text, "Monitor started.");
+        let task = t.task.clone().unwrap();
+        assert_eq!((task.task_id.as_str(), task.status), ("mon_1", TaskState::Running));
+        apply_notification(&mut t, &n("completed", "Monitor \"log\" completed. Total events: 1."));
+        assert_eq!(t.status, ToolStatus::Completed);
+        assert_eq!(t.task.unwrap().status, TaskState::Completed);
+        assert_eq!(t.result.unwrap().text, "Monitor \"log\" completed. Total events: 1.");
     }
 
     #[test]

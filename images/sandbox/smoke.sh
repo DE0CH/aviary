@@ -110,6 +110,13 @@ check "Qwen Code rolls a conversation back when its provider refuses a request" 
 # harness); upstream Qwen Code names none there, so the list was empty for every Qwen Code conversation.
 check "Qwen Code names its slash commands in its initialize answer" img_run "$img" -c '
   grep -rqE "commands: ?await this\.loadSlashCommands\(signal\)" /opt/qwen-code/lib/node_modules/@qwen-code/qwen-code'
+# The supervisor learns of a background task from the harness's `task_started` / `task_notification` lines and ends
+# one with `stop_task`; upstream Qwen Code writes none for a background shell or a monitor, so those held no run,
+# showed nowhere and woke nobody when they ended.
+check "Qwen Code reports its background shells and takes stop_task" img_run "$img" -c '
+  d=/opt/qwen-code/lib/node_modules/@qwen-code/qwen-code
+  grep -rqE "task_type: ?.local_bash." "$d" || exit 1
+  grep -rqF "stop_task needs a task_id" "$d"'
 # The fork sends no usage statistics (DE0CH/qwen-code de0ch/README.md). Upstream posts a record of every session,
 # prompt, tool call and model request to Alibaba Cloud RUM unless `privacy.usageStatisticsEnabled` is false, which the
 # managed settings never said: sandboxes tried the upload on every turn.

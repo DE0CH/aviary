@@ -10,13 +10,13 @@ use crate::events::TaskState;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TaskType {
-    /// A command (`Bash`).
+    /// A command (`Bash`; Qwen Code's `run_shell_command`).
     Command,
-    /// A subagent (`Agent`, `Task`).
+    /// A subagent (`Agent`, `Task`; Qwen Code's `agent`).
     Subagent,
     /// A workflow (`Workflow`).
     Workflow,
-    /// A monitor (`Monitor`).
+    /// A monitor (`Monitor`; Qwen Code's `monitor`).
     Monitor,
     /// Anything else, or a launch magpie has not seen.
     Other,
@@ -27,10 +27,10 @@ impl TaskType {
     #[must_use]
     pub fn of_tool(name: Option<&str>) -> Self {
         match name {
-            Some("Bash") => Self::Command,
-            Some("Agent" | "Task") => Self::Subagent,
+            Some("Bash" | "run_shell_command") => Self::Command,
+            Some("Agent" | "Task" | "agent") => Self::Subagent,
             Some("Workflow") => Self::Workflow,
-            Some("Monitor") => Self::Monitor,
+            Some("Monitor" | "monitor") => Self::Monitor,
             _ => Self::Other,
         }
     }
@@ -77,4 +77,27 @@ pub struct Task {
 pub struct TasksList {
     /// The tasks.
     pub tasks: Vec<Task>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TaskType;
+
+    #[test]
+    fn a_task_is_what_the_tool_that_launched_it_makes() {
+        for (tool, kind) in [
+            ("Bash", TaskType::Command),
+            ("run_shell_command", TaskType::Command),
+            ("Agent", TaskType::Subagent),
+            ("Task", TaskType::Subagent),
+            ("agent", TaskType::Subagent),
+            ("Workflow", TaskType::Workflow),
+            ("Monitor", TaskType::Monitor),
+            ("monitor", TaskType::Monitor),
+            ("Read", TaskType::Other),
+        ] {
+            assert_eq!(TaskType::of_tool(Some(tool)), kind, "{tool}");
+        }
+        assert_eq!(TaskType::of_tool(None), TaskType::Other);
+    }
 }

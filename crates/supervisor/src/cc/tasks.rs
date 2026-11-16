@@ -92,6 +92,12 @@ pub fn wakeup_at(input: &Value, now: OffsetDateTime) -> Option<OffsetDateTime> {
     None
 }
 
+/// Whether a task message's `status` says the task is over (`cancelled` is Qwen Code's word for a stopped one).
+#[must_use]
+pub fn ended(status: &str) -> bool {
+    matches!(status, "completed" | "failed" | "killed" | "stopped" | "cancelled")
+}
+
 impl Tracker {
     /// The tracker of a restarted supervisor.
     #[must_use]
@@ -233,11 +239,10 @@ impl Tracker {
                 });
                 Change::Added
             }
-            TaskKind::Notification => self.remove(&m.task_id),
-            TaskKind::Updated if matches!(m.status.as_deref(), Some("completed" | "failed" | "killed" | "stopped")) => {
-                self.remove(&m.task_id)
-            }
-            TaskKind::Updated | TaskKind::Progress => Change::None,
+            // a notification that says `running` is an event of a task that goes on (Qwen Code's monitor)
+            TaskKind::Notification if m.status.as_deref() != Some("running") => self.remove(&m.task_id),
+            TaskKind::Updated if m.status.as_deref().is_some_and(ended) => self.remove(&m.task_id),
+            TaskKind::Notification | TaskKind::Updated | TaskKind::Progress => Change::None,
         }
     }
 
@@ -347,6 +352,45 @@ mod tests {
             t.on_task(&task(TaskKind::Notification, "n1", None, Some("completed")), now),
             Change::Removed
         );
+    }
+
+    /// Qwen Code's tasks: a monitor's event is a notification with `running` and the monitor goes on; a task the
+    /// host stopped ends `cancelled`.
+    #[test]
+    fn a_running_notification_keeps_its_task_and_cancelled_ends_one() {
+        let now = OffsetDateTime::now_utc();
+        let mut t = Tracker::default();
+        t.on_tool_use(&tu("call_1", "monitor", json!({"command": "tail -f log"})), now);
+        t.on_tool_use(&tu("call_2", "run_shell_command", json!({"is_background": true})), now);
+        assert!(t.is_empty(), "Qwen Code's tools report their tasks themselves");
+        t.on_task(&task(TaskKind::Started, "mon_1", Some("call_1"), None), now);
+        t.on_task(&task(TaskKind::Started, "bg_1", Some("call_2"), None), now);
+        assert!(!t.tasks()[0].nested && !t.tasks()[1].nested);
+        assert_eq!(
+            t.on_task(
+                &task(TaskKind::Notification, "mon_1", Some("call_1"), Some("running")),
+                now
+            ),
+            Change::None
+        );
+        // the wake-up's `user` line names the tool call: only a pseudo-task ends by that
+        assert_eq!(
+            t.on_notification("<task-notification><tool-use-id>call_1</tool-use-id></task-notification>"),
+            0
+        );
+        assert_eq!(t.event_ids(), ["mon_1", "bg_1"]);
+        assert_eq!(
+            t.on_task(
+                &task(TaskKind::Notification, "bg_1", Some("call_2"), Some("cancelled")),
+                now
+            ),
+            Change::Removed
+        );
+        assert_eq!(
+            t.on_task(&task(TaskKind::Updated, "mon_1", None, Some("cancelled")), now),
+            Change::Removed
+        );
+        assert!(t.is_empty());
     }
 
     #[test]

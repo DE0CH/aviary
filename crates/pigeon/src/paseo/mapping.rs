@@ -869,8 +869,10 @@ pub fn tool_call_item(t: &ToolItem, locale: Locale) -> Option<Value> {
                 .get_or_insert_with(Map::new)
                 .insert("description".into(), json!(d));
         }
-        // a command left running in the background (the call returns at once; the activity panel has the task)
-        if t.task.is_some() || t.input.get("run_in_background") == Some(&Value::Bool(true)) {
+        // a command left running in the background (the call returns at once; the activity panel has the task):
+        // Claude Code's `run_in_background`, Qwen Code's `is_background`
+        let asked = |flag: &str| t.input.get(flag) == Some(&Value::Bool(true));
+        if t.task.is_some() || asked("run_in_background") || asked("is_background") {
             metadata
                 .get_or_insert_with(Map::new)
                 .insert("background".into(), json!(true));
@@ -1259,6 +1261,18 @@ mod tests {
             background["metadata"],
             json!({"description": "Install", "background": true})
         );
+        // Qwen Code's shell call
+        let qwen = tool_call_item(
+            &tool(
+                "run_shell_command",
+                json!({"command": "edit render plan.json", "description": "Render", "is_background": true}),
+                ToolStatus::Running,
+                None,
+            ),
+            Locale::En,
+        )
+        .unwrap();
+        assert_eq!(qwen["metadata"], json!({"description": "Render", "background": true}));
         assert!(
             item(json!({"command": "ls", "description": "  "}))
                 .get("metadata")
