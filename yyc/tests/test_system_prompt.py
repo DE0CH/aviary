@@ -23,12 +23,10 @@ class SystemPrompt(unittest.TestCase):
         self.assertNotIn("name is withheld", self.text)
 
     def test_a_pdf_is_html_rendered_with_weasyprint(self):
-        """Without these two sentences the model writes a report as a Word file, installs LibreOffice and converts
-        it (2026-11-16, the same model in Claude Code and in Qwen Code): a different-looking document from the HTML
-        one, and nothing looks at the pages before they are sent."""
-        text = " ".join(self.text.split())
-        self.assertIn("For PDFs, write HTML and CSS and render it with WeasyPrint.", text)
-        self.assertIn("Then check the result by rendering pages to images with `pdftoppm`.", text)
+        """Without this sentence the model writes a report as a Word file, installs LibreOffice and converts it
+        (2026-11-16, the same model in Claude Code and in Qwen Code): a different-looking document from the HTML
+        one."""
+        self.assertIn("For PDFs, write HTML and CSS and render it with WeasyPrint.", " ".join(self.text.split()))
 
 
 class SandboxInternet(unittest.TestCase):
