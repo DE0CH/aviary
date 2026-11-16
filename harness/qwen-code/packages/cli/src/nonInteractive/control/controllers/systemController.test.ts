@@ -709,6 +709,68 @@ describe('SystemController', () => {
     });
   });
 
+  describe('initialize names the slash commands (DE0CH fork)', () => {
+    it('lists each command with its description and argument hint, sorted by name', async () => {
+      const context = createContext();
+      const controller = new SystemController(
+        context,
+        createRegistry(),
+        'SystemController',
+      );
+      vi.mocked(getAvailableCommands).mockResolvedValueOnce([
+        {
+          name: 'video',
+          description: 'Edit videos',
+          argumentHint: '[file]',
+          kind: CommandKind.SKILL,
+        },
+        {
+          name: 'compress',
+          description: 'Compress the context',
+          kind: CommandKind.BUILT_IN,
+        },
+      ]);
+
+      const result = await controller.handleRequest(
+        { subtype: 'initialize' },
+        'init-commands-1',
+      );
+
+      expect(result).toHaveProperty('commands', [
+        {
+          name: 'compress',
+          description: 'Compress the context',
+          argumentHint: '',
+        },
+        { name: 'video', description: 'Edit videos', argumentHint: '[file]' },
+      ]);
+      expect(getAvailableCommands).toHaveBeenCalledWith(
+        context.config,
+        expect.any(AbortSignal),
+        'non_interactive',
+        context.settings,
+      );
+    });
+
+    it('answers with an empty list when the commands cannot be loaded', async () => {
+      const context = createContext();
+      const controller = new SystemController(
+        context,
+        createRegistry(),
+        'SystemController',
+      );
+      vi.mocked(getAvailableCommands).mockRejectedValueOnce(new Error('no'));
+
+      const result = await controller.handleRequest(
+        { subtype: 'initialize' },
+        'init-commands-2',
+      );
+
+      expect(result).toHaveProperty('subtype', 'initialize');
+      expect(result).toHaveProperty('commands', []);
+    });
+  });
+
   describe('initialize with effort', () => {
     it('sets effort during initialize when provided', async () => {
       const context = createContext();

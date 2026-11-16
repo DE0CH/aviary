@@ -367,8 +367,51 @@ export class SystemController extends BaseController {
       subtype: 'initialize',
       session_id: this.context.config.getSessionId(),
       capabilities,
+      // DE0CH fork: the slash commands, as Claude Code's initialize answer
+      // names them, so a host that fills its "/" list from that answer
+      // (aviary's supervisor) fills it for Qwen Code too.
+      commands: await this.loadSlashCommands(signal),
       ...(effortStatus ? { effort_status: effortStatus } : {}),
     };
+  }
+
+  /**
+   * DE0CH fork: the slash commands with what a host shows beside each name.
+   */
+  private async loadSlashCommands(
+    signal: AbortSignal,
+  ): Promise<
+    Array<{ name: string; description: string; argumentHint: string }>
+  > {
+    if (signal.aborted) {
+      return [];
+    }
+    try {
+      const commands = await getAvailableCommands(
+        this.context.config,
+        signal,
+        'non_interactive',
+        this.context.settings,
+      );
+      if (signal.aborted) {
+        return [];
+      }
+      return commands
+        .map((cmd) => ({
+          name: cmd.name,
+          description: cmd.description ?? '',
+          argumentHint: cmd.argumentHint ?? '',
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    } catch (error) {
+      if (!signal.aborted) {
+        debugLogger.error(
+          '[SystemController] Failed to load slash commands:',
+          error,
+        );
+      }
+      return [];
+    }
   }
 
   /**

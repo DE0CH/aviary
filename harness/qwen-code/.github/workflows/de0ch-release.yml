@@ -33,7 +33,7 @@ jobs:
         run: corepack pnpm exec vitest run src/core/openaiContentGenerator/converter.test.ts src/core/openaiContentGenerator/media-budget.test.ts src/utils/runtimeFetchOptions.test.ts
       - name: the test of what this fork changes in the CLI
         working-directory: packages/cli
-        run: corepack pnpm exec vitest run src/nonInteractive/control/controllers/permissionController.test.ts
+        run: corepack pnpm exec vitest run src/nonInteractive/control/controllers/permissionController.test.ts src/nonInteractive/control/controllers/systemController.test.ts
       - name: build, bundle, pack
         run: |
           npm run build
