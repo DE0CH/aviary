@@ -1,0 +1,153 @@
+# hermit's fabric on the new cluster (hermit spec 14.2, 21.1, 30; DESIGN 15.6), namespace yyc-ai-fabric (PSS
+# privileged, nothing else in it).
+#
+# hermit-gateway: sandboxd in gateway mode as the pod's main process, on the one node labelled hermit.yyc/gateway=true
+# (aviary fabric/host/gateway-net.sh sets the label, the Hetzner route 10.202.0.0/15 -> that node and the firewall's
+# udp 51821). Its host.json is ConfigMap hermit-gateway (gateway-host.json, generated with a hash in this folder's
+# kustomization, so a change rolls the pod). The data plane (wg0, nft table ip sbxhost, table 51822 and its rules)
+# lives in the host's network namespace and outlives the process: a restart or update stops only :7443 and :7444
+# for seconds (aviary crates/sandboxd/docs/HOST.md "Gateway"). State and the image cache: hostPath
+# /var/lib/hermit-gateway.
+#
+# hermit-overlay-route: on every node in network yyc, the route 10.202.0.0/15 via 10.0.0.1 (the hosts and the
+# sandboxes, through network yyc's route to the gateway node) and rto_min 20ms for 10.203.0.0/16 in each egress pod's
+# network namespace (A7.F33). Talos has no shell or crictl, so it carries its own iproute2 (the sandboxd image) and
+# finds egress pods by their command line through the host's /proc.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: hermit-gateway
+  namespace: yyc-ai-fabric
+  labels: {app: hermit-gateway}
+spec:
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels: {app: hermit-gateway}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 1}
+  template:
+    metadata:
+      labels: {app: hermit-gateway}
+    spec:
+      nodeSelector: {hermit.yyc/gateway: "true", yyc.hetzner/network: "yyc"}
+      hostNetwork: true
+      dnsPolicy: Default             # the node's resolvers: crane pulls sandbox images from the registry
+      priorityClassName: serving
+      tolerations: [{operator: Exists}]
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: sandboxd
+          image: sandboxd
+          env:
+            - {name: SBX_CONFIG, value: /etc/sbx/host.json}
+          ports:
+            - {name: api, containerPort: 7443, protocol: TCP}
+            - {name: images, containerPort: 7444, protocol: TCP}
+            - {name: wireguard, containerPort: 51821, protocol: UDP}
+          readinessProbe:
+            tcpSocket: {host: 10.202.0.1, port: 7443}
+            periodSeconds: 5
+          resources:
+            # ephemeral-storage: over it the kubelet evicts this pod alone and empties its image store; before, the
+            # store was a host folder with no size, the node went into disk pressure and the gateway was evicted on
+            # every start (2026-11-16)
+            requests: {cpu: 50m, memory: 256Mi, ephemeral-storage: 13Gi}
+            limits: {memory: 256Mi, ephemeral-storage: 13Gi}
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - {name: config, mountPath: /etc/sbx/host.json, subPath: host.json, readOnly: true}
+            - {name: tls, mountPath: /etc/sbx/tls, readOnly: true}
+            - {name: wg, mountPath: /etc/sbx/wg.key, subPath: wg.key, readOnly: true}
+            - {name: state, mountPath: /var/lib/sbx}
+            - {name: images, mountPath: /var/lib/sbx/images}
+      volumes:
+        - name: config
+          configMap:
+            name: hermit-gateway
+            items: [{key: gateway-host.json, path: host.json}]
+        - name: tls
+          secret:
+            secretName: hermit-gateway
+            defaultMode: 0400
+            items:
+              - {key: ca.crt, path: ca.crt}
+              - {key: host.crt, path: host.crt}
+              - {key: host.key, path: host.key}
+        - name: wg
+          secret:
+            secretName: hermit-gateway
+            defaultMode: 0400
+            items: [{key: wg.key, path: wg.key}]
+        # the peer list and the egress targets: a few hundred bytes that must outlive the pod
+        - name: state
+          hostPath: {path: /var/lib/hermit-gateway, type: DirectoryOrCreate}
+        # the sandbox images the gateway serves to hosts: a cache (every image can be fetched again), the pod's own
+        # scratch space with a size. Room for the image in use, the next one and a fetch under way (2.6 GB each).
+        - name: images
+          emptyDir: {sizeLimit: 12Gi}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: hermit-overlay-route
+  namespace: yyc-ai-fabric
+  labels: {app: hermit-overlay-route}
+spec:
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels: {app: hermit-overlay-route}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 1}
+  template:
+    metadata:
+      labels: {app: hermit-overlay-route}
+    spec:
+      nodeSelector: {yyc.hetzner/network: "yyc"}
+      hostNetwork: true
+      hostPID: true                  # to enter egress pods' network namespaces through their processes
+      priorityClassName: serving
+      tolerations: [{operator: Exists}]
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 2
+      containers:
+        - name: route
+          image: sandboxd
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              trap 'exit 0' TERM INT
+              mkdir -p /run/netns
+              while :; do
+                dev=$(ip -o route get 10.0.0.1 | sed -n 's/.* dev \([^ ]*\).*/\1/p')
+                [ -n "$dev" ] && ip route replace 10.202.0.0/15 via 10.0.0.1 dev "$dev"
+                # the gateway node: the AWS hosts' JuiceFS metadata (pg-shared's NodePort 30433, DNAT'd to Cluster pg's
+                # primary pod on 5432) follows Cilium's own routes (main: the pod's /24 via cilium_host), not sandboxd's
+                # table 51822 (the private network): kube-proxy masquerades it to this node's address, and the db node
+                # sends replies to a node address through KubeSpan, which drops them (2026-11-08, lessons/96)
+                if ip link show wg0 >/dev/null 2>&1 && ! ip rule show pref 998 | grep -q .; then
+                  ip rule add pref 998 iif wg0 to 10.210.0.0/16 ipproto tcp dport 5432 lookup main
+                fi
+                # each egress serving process (jarvis3-chat, args [egress]; not `egress import-jarvis`)
+                for d in /proc/[0-9]*; do
+                  case "$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)" in
+                    *"src/main.ts egress ") ;;
+                    *) continue ;;
+                  esac
+                  ip netns attach hermit-eg "${d#/proc/}" 2>/dev/null || continue
+                  gw=$(ip -n hermit-eg -o route show default | awk '{print $3; exit}')
+                  [ -n "$gw" ] && ip -n hermit-eg route replace 10.203.0.0/16 via "$gw" dev eth0 rto_min 20ms
+                  ip netns delete hermit-eg 2>/dev/null
+                done
+                sleep 15 & wait $!
+              done
+          securityContext:
+            privileged: true
+          resources:
+            requests: {cpu: 5m, memory: 32Mi}
+            limits: {memory: 96Mi}

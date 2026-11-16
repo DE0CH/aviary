@@ -1,0 +1,218 @@
+# hermit (aviary crates/hermit, hermit spec 21.1; spec-platform 9.6): sandboxes, workspaces, people and the fabric.
+# Configuration: ConfigMap hermit-config (hashed: hermit.json and the prompt files), hermit-skills (hashed: the managed
+# skills, decision 15) and Secret catalogue (the access catalogue, sealed from the store's YYC_CATALOGUE_JSON; in place); env is
+# Secret hermit plus the downward API. /jfs is the JuiceFS volume yyc-ai through PV hermit-jfs (juicefs.yaml).
+#
+# Placement: nodes in network yyc only (the overlay route, pg-hosts, the JuiceFS CSI node plugin), fsn1 preferred
+# (DESIGN 15.7). preStop 12 s: hermit is bridge B4's callee (DESIGN 15.5 R6).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hermit
+  namespace: yyc-ai
+  labels: {app: hermit}
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  minReadySeconds: 5
+  selector:
+    matchLabels: {app: hermit}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  template:
+    metadata:
+      labels: {app: hermit}
+    spec:
+      serviceAccountName: hermit
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      priorityClassName: serving
+      terminationGracePeriodSeconds: 90
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms: [{matchExpressions: [{key: yyc.hetzner/network, operator: In, values: ["yyc"]}, {key: pool, operator: In, values: ["apps"]}]}]
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - {weight: 50, preference: {matchExpressions: [{key: topology.kubernetes.io/region, operator: In, values: [fsn1]}]}}
+      topologySpreadConstraints:
+        - {maxSkew: 1, topologyKey: kubernetes.io/hostname, whenUnsatisfiable: DoNotSchedule,
+           labelSelector: {matchLabels: {app: hermit}}, matchLabelKeys: [pod-template-hash]}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: hermit
+          image: hermit
+          args: [serve]
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: ops, containerPort: 9090}
+          env:
+            - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: HERMIT_POD, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: HERMIT_NAMESPACE, valueFrom: {fieldRef: {fieldPath: metadata.namespace}}}
+            - {name: HERMIT_DATABASE_URL, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_DATABASE_URL}}}
+            - {name: HERMIT_TOKEN_KEYS, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_TOKEN_KEYS}}}
+            - {name: HERMIT_ACCEPT_PIGEON, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_ACCEPT_PIGEON}}}
+            - {name: HERMIT_ACCEPT_MAGPIE, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_ACCEPT_MAGPIE}}}
+            - {name: HERMIT_ACCEPT_GATEWAY, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_ACCEPT_GATEWAY}}}
+            - {name: HERMIT_ACCEPT_TOOLS, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_ACCEPT_TOOLS}}}
+            - {name: HERMIT_ACCEPT_MONITOR, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_ACCEPT_MONITOR}}}
+            - {name: HERMIT_ACCEPT_ADMIN, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_ACCEPT_ADMIN}}}
+            - {name: HERMIT_TOKEN_MAGPIE, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_TOKEN_MAGPIE}}}
+            - {name: HERMIT_TOKEN_EGRESS, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_TOKEN_EGRESS}}}
+            - {name: HERMIT_FABRIC_CA, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_FABRIC_CA}}}
+            - {name: HERMIT_FABRIC_CLIENT_CERT, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_FABRIC_CLIENT_CERT}}}
+            - {name: HERMIT_FABRIC_CLIENT_KEY, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_FABRIC_CLIENT_KEY}}}
+            - {name: HERMIT_FABRIC_HOST_CERT, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_FABRIC_HOST_CERT}}}
+            - {name: HERMIT_FABRIC_HOST_KEY, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_FABRIC_HOST_KEY}}}
+            - {name: HERMIT_AWS_ACCESS_KEY_ID, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_AWS_ACCESS_KEY_ID}}}
+            - {name: HERMIT_AWS_SECRET_ACCESS_KEY, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_AWS_SECRET_ACCESS_KEY}}}
+            - {name: HERMIT_JUICEFS_META_URL, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_JUICEFS_META_URL}}}
+            - {name: HERMIT_JUICEFS_META_PASSWORD, valueFrom: {secretKeyRef: {name: hermit, key: HERMIT_JUICEFS_META_PASSWORD}}}
+            # the ops page's OpenRouter balance: GET /api/v1/key with the models' key yyc-chat (egress's own Secret key)
+            - {name: HERMIT_OPENROUTER_KEY, valueFrom: {secretKeyRef: {name: egress, key: OPENROUTER_API_KEY}}}
+          readinessProbe:
+            httpGet: {path: /readyz, port: ops}
+            periodSeconds: 3
+            failureThreshold: 1
+          livenessProbe:
+            httpGet: {path: /healthz, port: ops}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 6
+          lifecycle:
+            preStop:
+              sleep: {seconds: 12}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi}
+            limits: {cpu: "1", memory: 384Mi, ephemeral-storage: 320Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/hermit/config, readOnly: true}
+            - {name: catalogue, mountPath: /etc/hermit/catalogue, readOnly: true}
+            - {name: skills, mountPath: /etc/hermit/skills, readOnly: true}
+            # a restarted JuiceFS mount pod's new mount reaches the running Pod (hermit 15.6)
+            - {name: jfs, mountPath: /jfs, mountPropagation: HostToContainer}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: config, configMap: {name: hermit-config}}
+        - {name: catalogue, secret: {secretName: catalogue}}
+        - name: skills
+          configMap:
+            name: hermit-skills
+            items:
+              - {key: code.SKILL.md, path: code/SKILL.md}
+              - {key: feishu-files.SKILL.md, path: feishu-files/SKILL.md}
+              - {key: labels.SKILL.md, path: labels/SKILL.md}
+              - {key: newswatch.SKILL.md, path: newswatch/SKILL.md}
+              - {key: schedules.SKILL.md, path: schedules/SKILL.md}
+              - {key: telegram.SKILL.md, path: telegram/SKILL.md}
+              - {key: video.SKILL.md, path: video/SKILL.md}
+              - {key: web.SKILL.md, path: web/SKILL.md}
+        - {name: jfs, persistentVolumeClaim: {claimName: hermit-jfs}}
+        - {name: tmp, emptyDir: {sizeLimit: 256Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: hermit, namespace: yyc-ai}
+spec:
+  selector: {app: hermit}
+  ports: [{name: http, port: 80, targetPort: http}]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: hermit, namespace: yyc-ai}
+---
+# the ops page's deployment facts and pods (hermit 18.5), the egress targets from the egress Service's EndpointSlices
+# (13.8)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: hermit-read, namespace: yyc-ai}
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: hermit-read, namespace: yyc-ai}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: hermit-read}
+subjects: [{kind: ServiceAccount, name: hermit, namespace: yyc-ai}]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: hermit, namespace: yyc-ai}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: hermit}
+---
+# The news-stream monitor reaches hermit through bridge B4 (bridges.yaml, hermit-from-bridge) until it moves (T4);
+# then this policy gains yyc/monitor by selector.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: hermit-in, namespace: yyc-ai}
+spec:
+  podSelector: {matchLabels: {app: hermit}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: pigeon}}
+        - podSelector: {matchLabels: {app: magpie}}
+        - podSelector: {matchLabels: {app: egress}}
+        - podSelector: {matchLabels: {app: tools}}
+        # the news stream's monitor reads /ops/snapshot (on this cluster since T4b; B4 was its bridge)
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: yyc}}
+          podSelector: {matchLabels: {app: monitor}}
+      ports: [{port: 8080, protocol: TCP}]
+---
+# hermit is the only pod in yyc-ai that may reach the sandboxes' :7070 (magpie's policy does not, hermit 3.10)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: hermit-out, namespace: yyc-ai}
+spec:
+  podSelector: {matchLabels: {app: hermit}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: magpie}}}]
+      ports: [{port: 8080, protocol: TCP}]
+    - to: [{podSelector: {matchLabels: {app: egress}}}]
+      ports: [{port: 8082, protocol: TCP}]
+    # the fabric's hosts (sandboxd's API) and the sandboxes (the supervisor), through the gateway (10.202.0.0/15 via
+    # 10.0.0.1, hermit-overlay-route)
+    - to: [{ipBlock: {cidr: 10.202.0.0/24}}]
+      ports: [{port: 7443, protocol: TCP}]
+    - to: [{ipBlock: {cidr: 10.203.0.0/16}}]
+      ports: [{port: 7070, protocol: TCP}]
+    # the EC2 API
+    - to:
+        - ipBlock: {cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16]}
+        - ipBlock: {cidr: "::/0", except: ["fc00::/7", "fe80::/10", "::1/128"]}
+      ports: [{port: 443, protocol: TCP}]
+---
+# Under Cilium the API server and this cluster's nodes are entities, not addresses (DESIGN 15.2 N3): the API for the
+# EndpointSlice watch and the ops reads; the gateway node's NodePort 30433 (db/pg-shared) for hermit's juicefs CLI,
+# whose metadata URL is the hosts' one (<gw private IP>:30433, HERMIT_JUICEFS_META_URL)
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: {name: hermit-out-api, namespace: yyc-ai}
+spec:
+  endpointSelector: {matchLabels: {app: hermit}}
+  egress:
+    - toEntities: [kube-apiserver]
+      toPorts: [{ports: [{port: "6443", protocol: TCP}]}]
+    - toEntities: [host, remote-node]
+      toPorts: [{ports: [{port: "30433", protocol: TCP}]}]

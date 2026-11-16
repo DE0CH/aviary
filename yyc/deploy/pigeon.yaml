@@ -1,0 +1,170 @@
+# pigeon (aviary crates/pigeon, pigeon spec; spec-platform 9.4): the stateless gateway the web and iOS apps talk to,
+# behind tunnel yyc-ai-pigeon. Env is Secret pigeon only (no behaviour configuration, check item 2). The app bundle
+# (image pigeon-app, DE0CH/claudecodeui) is copied into an emptyDir by the initContainer.
+#
+# Sizes (WP-31, from WP-27's review): kubelet counts the disk-backed emptyDir against the containers' ephemeral-storage
+# limits, so the pigeon container's limit is above the emptyDir's 512Mi plus its own 128Mi; the copy's dirty page cache
+# is charged to the initContainer, which therefore gets the emptyDir's size as memory (claudecodeui pigeon-app.yml
+# CP_MEMORY_MIB). check asserts both. Resizing for the seeds' growth (WP-27 gap 1) changes sizeLimit, both limits and
+# pigeon-app's --budget-mib together.
+#
+# preStop 12 s (DESIGN 15.5 R6): pigeon is bridge B2's callee; the load balancer takes a node out after 3 checks of
+# 3 s plus its 2 s timeout, so a terminating pod keeps serving that long. Grace: 12 s + the 300 s transfer bound from
+# SIGTERM + margin.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pigeon
+  namespace: yyc-ai
+  labels: {app: pigeon}
+spec:
+  revisionHistoryLimit: 3
+  minReadySeconds: 5
+  selector:
+    matchLabels: {app: pigeon}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  template:
+    metadata:
+      labels: {app: pigeon}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      priorityClassName: serving
+      terminationGracePeriodSeconds: 330
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms: [{matchExpressions: [{key: yyc.hetzner/network, operator: In, values: ["yyc"]}, {key: pool, operator: In, values: ["apps"]}]}]
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - {weight: 50, preference: {matchExpressions: [{key: topology.kubernetes.io/region, operator: In, values: [fsn1]}]}}
+      topologySpreadConstraints:
+        - {maxSkew: 1, topologyKey: kubernetes.io/hostname, whenUnsatisfiable: DoNotSchedule,
+           labelSelector: {matchLabels: {app: pigeon}}, matchLabelKeys: [pod-template-hash]}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        - name: app
+          image: pigeon-app
+          command: ["/cp", "-a", "/app/.", "/srv/app/"]
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts: [{name: app, mountPath: /srv/app}]
+        # YYC's branding over the bundle's neutral files (ConfigMap pigeon-branding, deploy/branding/; check item B),
+        # copied into the bundle's /branding/, which an app from before it had one lacks (-L: a ConfigMap's files are
+        # links). Never a mount over it in pigeon: the bundle is read-only there and the mount point cannot be made
+        - name: branding
+          image: pigeon-app
+          command: ["/cp", "-rL", "/branding", "/srv/app/"]
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts: [{name: app, mountPath: /srv/app}, {name: branding, mountPath: /branding, readOnly: true}]
+      containers:
+        - name: pigeon
+          image: pigeon
+          args: [serve]
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: ops, containerPort: 9090}
+          env:
+            - {name: POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: PIGEON_TOKEN_MAGPIE, valueFrom: {secretKeyRef: {name: pigeon, key: PIGEON_TOKEN_MAGPIE}}}
+            - {name: PIGEON_TOKEN_HERMIT, valueFrom: {secretKeyRef: {name: pigeon, key: PIGEON_TOKEN_HERMIT}}}
+            - {name: PIGEON_TOKEN_MODEL, valueFrom: {secretKeyRef: {name: pigeon, key: PIGEON_TOKEN_MODEL}}}
+            - {name: PIGEON_VIEW_AS_KEYS, valueFrom: {secretKeyRef: {name: pigeon, key: PIGEON_VIEW_AS_KEYS}}}
+            - {name: PIGEON_BLOB_KEYS, valueFrom: {secretKeyRef: {name: pigeon, key: PIGEON_BLOB_KEYS}}}
+            # the switch window (A1 to A6, WP-50): the legacy upstream's pair token and the old router's view-as key
+            - {name: PIGEON_TOKEN_UI, valueFrom: {secretKeyRef: {name: pigeon, key: PIGEON_TOKEN_UI}}}
+            - {name: PIGEON_LEGACY_VIEW_AS_KEY, valueFrom: {secretKeyRef: {name: pigeon, key: PIGEON_LEGACY_VIEW_AS_KEY}}}
+          readinessProbe:
+            httpGet: {path: /readyz, port: ops}
+            periodSeconds: 2
+            failureThreshold: 1
+          livenessProbe:
+            httpGet: {path: /healthz, port: ops}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              sleep: {seconds: 12}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi, ephemeral-storage: 576Mi}
+            limits: {cpu: "1", memory: 384Mi, ephemeral-storage: 640Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts: [{name: app, mountPath: /srv/app, readOnly: true}]
+      volumes:
+        - {name: app, emptyDir: {sizeLimit: 512Mi}}
+        - {name: branding, configMap: {name: pigeon-branding}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: pigeon, namespace: yyc-ai}
+spec:
+  selector: {app: pigeon}
+  ports: [{name: http, port: 80, targetPort: http}]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: pigeon, namespace: yyc-ai}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: pigeon}
+  minReplicas: 2
+  maxReplicas: 6
+  metrics: [{type: Resource, resource: {name: cpu, target: {type: Utilization, averageUtilization: 70}}}]
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies: [{type: Pods, value: 1, periodSeconds: 120}]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: pigeon, namespace: yyc-ai}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: pigeon}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: pigeon-in, namespace: yyc-ai}
+spec:
+  podSelector: {matchLabels: {app: pigeon}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: cloudflared}}}]
+      ports: [{port: 8080, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: pigeon-out, namespace: yyc-ai}
+spec:
+  podSelector: {matchLabels: {app: pigeon}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: magpie}}}, {podSelector: {matchLabels: {app: hermit}}}]
+      ports: [{port: 8080, protocol: TCP}]
+    - to: [{podSelector: {matchLabels: {app: egress}}}]
+      ports: [{port: 8082, protocol: TCP}]
+    # Access's JWKS and get-identity
+    - to:
+        - ipBlock: {cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16]}
+        - ipBlock: {cidr: "::/0", except: ["fc00::/7", "fe80::/10", "::1/128"]}
+      ports: [{port: 443, protocol: TCP}]
