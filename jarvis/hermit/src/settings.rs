@@ -6,6 +6,11 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The context window of a model that names none in the settings file: 1M (Deyao, 2026-11-16: most models have it
+/// now, and those to come start there). Claude Code takes a model it does not know as 200k and would compact a
+/// conversation at a fifth of its room; a model whose window is smaller names it (`contextTokens`).
+pub const DEFAULT_CONTEXT_TOKENS: u64 = 1_000_000;
+
 /// The settings file.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -39,8 +44,7 @@ pub struct Model {
     /// The thinking levels a person may choose, lowest first (`none` = thinking off, then Claude Code's effort
     /// levels). A model whose hosts refuse thinking switched off lists no `none`.
     pub thinking: Vec<String>,
-    /// The model's context window when Claude Code does not know it (it takes an unknown model as 200k): the
-    /// supervisor runs Claude Code at it. Absent: Claude Code's own.
+    /// The model's context window when it is not [`DEFAULT_CONTEXT_TOKENS`]: the supervisor runs Claude Code at it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_tokens: Option<u64>,
     /// How an OpenRouter model is routed.
@@ -116,7 +120,7 @@ impl Settings {
                 .unwrap_or_default(),
             small: self.small_model.clone(),
             title: self.small_model.clone(),
-            context_tokens: 0,
+            context_tokens: DEFAULT_CONTEXT_TOKENS,
             // each entry through its JSON: a member a newer aviary adds to `Model` (an optional one, as the
             // contract's are) then needs no change here, so the pin job's bump of the aviary crates never breaks
             // this build
@@ -176,7 +180,7 @@ mod tests {
         );
         assert_eq!(
             route.models[0].context_tokens, None,
-            "a Claude model keeps Claude Code's window"
+            "a model that names no window has the default"
         );
         assert_eq!(
             s.model("z-ai/glm-5.3")
@@ -190,7 +194,11 @@ mod tests {
         // none is named as a model's own level: with nothing picked, Claude Code keeps its default for the model
         assert!(route.models.iter().all(|m| m.reasoning.is_none()));
         assert_eq!(route.context_of("z-ai/glm-5.3"), 1_000_000);
-        assert_eq!(route.context_of("claude-fable-5-2"), 0);
+        // the default is 1M (Deyao, 2026-11-16): a model with a smaller window names it
+        assert_eq!(route.context_of("claude-fable-5-2"), 1_000_000);
+        let mut small = s.clone();
+        small.models[0].context_tokens = Some(200_000);
+        assert_eq!(small.models_route().context_of("claude-fable-5-2"), 200_000);
         // what a machine's gateway gets in the boot reply is the same settings
         let again: Settings = serde_json::from_value(serde_json::to_value(&s).unwrap()).unwrap();
         assert_eq!(again, s);
