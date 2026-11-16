@@ -7,6 +7,10 @@
 //! in Jarvis 4, not in the chat): a session that is not up has its conversation closed to its person's messages, with
 //! a sentence saying where to resume it; one that is up again is opened; a destroyed one's conversation leaves the
 //! chat. magpie's calls are idempotent, so two replicas doing the same one agree too.
+//!
+//! A conversation that left the chat comes back when its session is in the router's list again: the session was not
+//! destroyed, the list had left it out (2026-11-16: the router hid a paused session while its resume waited for
+//! Deyao's approval, and three restarted sessions lost their conversations until this pass learnt to restore).
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -85,6 +89,22 @@ pub async fn pass(app: &App) -> anyhow::Result<()> {
             continue;
         }
         let magpie = app.magpie.service(None);
+        if told == Chat::Ended.name() {
+            match magpie
+                .hermit_restore_conversation(session.conversation_id)
+                .await
+            {
+                Ok(_) => {
+                    tracing::warn!(session = %session.session_id, "the session is alive: its conversation is back in the chat");
+                }
+                // purged from magpie meanwhile: there is no conversation to bring back
+                Err(e) if e.code() == Some(&magpie_api::errors::ErrorCode::NotFound) => continue,
+                Err(e) => {
+                    tracing::warn!(session = %session.session_id, error = %e, "the conversation was not restored; next pass");
+                    continue;
+                }
+            }
+        }
         let done = match want {
             Chat::Open => {
                 magpie

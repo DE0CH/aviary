@@ -84,8 +84,7 @@ pub async fn session_of_conversation(
         .map(SessionRow::of))
 }
 
-/// Every session whose conversation is still in the chat, with what magpie was last told about it (`open` or
-/// `closed`).
+/// Every session with what magpie was last told about its conversation (`open`, `closed` or `ended`).
 ///
 /// # Errors
 /// A statement error.
@@ -93,7 +92,7 @@ pub async fn chats(pool: &Pool) -> Result<Vec<(SessionRow, String)>, aviary_pg::
     Ok(pool
         .get()
         .await?
-        .query("select * from sessions where chat <> 'ended'", &[])
+        .query("select * from sessions", &[])
         .await?
         .iter()
         .map(|r| (SessionRow::of(r), r.get("chat")))

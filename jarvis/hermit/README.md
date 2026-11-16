@@ -116,6 +116,9 @@ Jarvis 4 session machine (harness aviary)                                     â”
    crons resume the session in the router, as for every harness. A destroyed session's
    conversation leaves the chat (`POST /v1/hermit/conversations/{id}/delete`); the chat offers no Delete and no
    Recently deleted (`conversations.peopleDelete: false`), since a session's life is managed in the Jarvis 4 app.
+   A session the router lists again after its conversation left the chat was not destroyed (its list had left it
+   out): the same pass puts the conversation back (`POST /v1/hermit/conversations/{id}/restore`) in the state the
+   session is in.
    `sessions.chat` records what magpie was last told (`open`, `closed`, `ended`). The conversation (Claude Code's `~/.claude`) is magpie's, so nothing of it rides in the snapshot; the
    harness copies its transcripts into `~/.claude/projects/-home-claude-workspace/` every 30 s for live sync,
    archives and transcript search.

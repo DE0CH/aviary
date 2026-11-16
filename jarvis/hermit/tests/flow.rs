@@ -86,7 +86,11 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         Reply::error(409, "turn_running", "a turn is running"),
     );
     // the chat follows the session: closed while it is paused, open when it is up, gone when it is destroyed
-    for route in ["hermit_close_conversation", "hermit_delete_conversation"] {
+    for route in [
+        "hermit_close_conversation",
+        "hermit_delete_conversation",
+        "hermit_restore_conversation",
+    ] {
         magpie
             .fake
             .script()
@@ -456,4 +460,39 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     let ended = magpie.fake.script().calls_to("hermit_delete_conversation");
     assert_eq!(ended.len(), 1);
     assert_eq!(ended[0].params["id"], cid.to_string());
+    assert!(
+        magpie
+            .fake
+            .script()
+            .calls_to("hermit_restore_conversation")
+            .is_empty()
+    );
+
+    // 10. the session was not destroyed after all (the router's list had left it out): its conversation comes back
+    // into the chat, once, in the state the session is in
+    *jr.state.lock().unwrap() = "paused".into();
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    let restored = magpie.fake.script().calls_to("hermit_restore_conversation");
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].params["id"], cid.to_string());
+    let closes = magpie.fake.script().calls_to("hermit_close_conversation");
+    assert_eq!(closes.len(), 3);
+    assert_eq!(
+        closes[2].body,
+        Some(json!({"reason": jarvis_aviary::reconcile::PAUSED}))
+    );
+    *jr.state.lock().unwrap() = "started".into();
+    jarvis_aviary::reconcile::pass(&app).await.unwrap();
+    let closes = magpie.fake.script().calls_to("hermit_close_conversation");
+    assert_eq!(closes.len(), 4);
+    assert_eq!(closes[3].body, Some(json!({"reason": null})));
+    assert_eq!(
+        magpie
+            .fake
+            .script()
+            .calls_to("hermit_restore_conversation")
+            .len(),
+        1
+    );
 }
