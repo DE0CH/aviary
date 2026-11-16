@@ -128,6 +128,10 @@ pub struct TurnRef {
     /// `now - startedAt - askWaitMs` while no question is open, and stands still while one is.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub ask_wait_ms: u64,
+    /// The model the turn runs on: the conversation's `pickedModel` when the turn was admitted (none: the
+    /// deployment's default). A pick made while it runs changes `pickedModel` and not this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if signature

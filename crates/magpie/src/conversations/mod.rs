@@ -121,7 +121,7 @@ pub async fn person_row(db: &impl Db, person: &str) -> Result<PersonRow> {
 pub const SELECT: &str = "select c.id, c.title, c.name_source, c.created_at, c.activity_at, c.last_user_message_at,
     c.deleted_at, c.provider_session_id, c.run_state, c.background, c.sandbox_phase, c.model, c.context_tokens, c.context_window,
     c.origin, c.person, c.picked_model, c.picked_thinking, c.picked_harness, c.closed_reason,
-    t.id as t_id, t.created_at as t_at, t.origin as t_origin,
+    t.id as t_id, t.created_at as t_at, t.origin as t_origin, t.model as t_model,
     l.id as l_id, l.state as l_state, l.ended_at as l_ended, l.created_at as l_created, l.error_code as l_code,
     l.error_detail as l_detail
   from conversations c
@@ -170,6 +170,7 @@ pub fn conversation_from_row(row: &Row) -> Result<Conversation> {
         started_at: ts(row.get("t_at")),
         origin: turn_origin(row.get("t_origin")),
         ask_wait_ms: 0,
+        model: row.get("t_model"),
     });
     let last_turn = match row.get::<_, Option<Uuid>>("l_id") {
         None => None,

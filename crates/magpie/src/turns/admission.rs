@@ -533,8 +533,9 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
         .await?;
     tx.execute(
         "insert into turns (id, conversation_id, origin, state, client_message_id, user_seq, start_seq, created_at,
-                            deadline)
-         values ($1, $2, 'person', 'admitted', $3, $4, $5, $6, $6::timestamptz + make_interval(secs => $7::float8))",
+                            deadline, model)
+         values ($1, $2, 'person', 'admitted', $3, $4, $5, $6, $6::timestamptz + make_interval(secs => $7::float8),
+                 $8)",
         &[
             &turn_id,
             &conversation,
@@ -543,6 +544,8 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
             &start_seq,
             &now,
             &secs(limits::ADMIT_TIMEOUT),
+            // the model this turn runs on (its `start_turn.model`)
+            &conv.get::<_, Option<String>>(3),
         ],
     )
     .await?;

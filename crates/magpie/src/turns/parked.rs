@@ -249,9 +249,17 @@ async fn resume(tx: &Tx<'_>, turn: &Turn) -> Result<()> {
     tx.execute(
         "update turns set state = 'admitted', start_cmd_seq = $2, resumed_at = $3, sandbox_id = null, ready_at = null,
                 deadline = $3::timestamptz + make_interval(secs => $4::float8), driver = null, driver_until = null,
-                parked_asks = null, answer_tool_uses = $5
+                parked_asks = null, answer_tool_uses = $5, model = $6
          where id = $1",
-        &[&turn.id, &cmd, &now, &secs(limits::ADMIT_TIMEOUT), &tool_uses],
+        &[
+            &turn.id,
+            &cmd,
+            &now,
+            &secs(limits::ADMIT_TIMEOUT),
+            &tool_uses,
+            // the model it goes on with (this `start_turn.model`)
+            &row.get::<_, Option<String>>(2),
+        ],
     )
     .await?;
     tx.execute(

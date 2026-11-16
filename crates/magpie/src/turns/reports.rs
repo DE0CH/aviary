@@ -257,8 +257,11 @@ async fn open_agent(tx: &Tx<'_>, c: &Locked, caller: &Sandbox, id: Uuid, at: Off
     });
     let seq = events::append(tx, c.id, NewEvent::of(&body)?.turn(Some(id))).await?;
     tx.execute(
-        "insert into turns (id, conversation_id, origin, state, start_seq, created_at, ready_at, started_at, sandbox_id)
-         values ($1, $2, 'agent', 'running', $3, now(), now(), $4, $5)",
+        // it runs on the model Claude Code is on: the one of the conversation's turn before it
+        "insert into turns (id, conversation_id, origin, state, start_seq, created_at, ready_at, started_at, sandbox_id,
+                            model)
+         values ($1, $2, 'agent', 'running', $3, now(), now(), $4, $5,
+                 (select model from turns where conversation_id = $2 order by created_at desc limit 1))",
         &[&id, &c.id, &seq, &at, &caller.sandbox],
     )
     .await?;

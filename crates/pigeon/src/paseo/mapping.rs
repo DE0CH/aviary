@@ -171,6 +171,12 @@ pub fn agent_snapshot(c: &Conversation, v: &View<'_>) -> Value {
     let attention = c.asks.first();
     // the model the person picked for this conversation, else the deployment's default
     let model = c.picked_model.as_deref().or(v.model);
+    // the model the running turn is on (`runtimeInfo.model`): the conversation's when the turn was admitted, so a
+    // pick made during the reply shows beside it until the reply ends; with no turn, the conversation's model
+    let running_model = match &c.turn {
+        Some(t) => t.model.as_deref().or(v.model),
+        None => model,
+    };
     // the conversation's queue (magpie's `pendingMessages`): messages sent during the reply that have not reached it
     // yet. `held`: it waits for the reply to end and can still be taken back.
     let queue: Vec<Value> = c
@@ -188,7 +194,7 @@ pub fn agent_snapshot(c: &Conversation, v: &View<'_>) -> Value {
         "closed": c.closed,
         // the thinking level the person picked (none: the app shows the model's own)
         "thinkingOptionId": c.picked_thinking, "effectiveThinkingOptionId": c.picked_thinking,
-        "runtimeInfo": {"provider": PROVIDER, "sessionId": c.claude_session_id, "model": model, "modeId": null},
+        "runtimeInfo": {"provider": PROVIDER, "sessionId": c.claude_session_id, "model": running_model, "modeId": null},
 
         "createdAt": c.created_at, "updatedAt": c.updated_at, "lastUserMessageAt": last_user,
         "status": if running { "running" } else { "idle" },
@@ -1099,6 +1105,44 @@ mod tests {
     }
 
     /// A conversation whose person picked a model shows it instead of the deployment's default.
+    /// A model picked while a reply runs is the next reply's: the snapshot says the model the running turn is on
+    /// (`runtimeInfo.model`) beside the pick (`model`), so the app can show both until the reply ends. Before, both
+    /// said the pick the moment it was made, while the reply went on in the old model.
+    #[test]
+    fn a_pick_during_a_reply_shows_beside_the_running_turns_model() {
+        let view = View {
+            product: "Chat",
+            locale: Locale::En,
+            model: Some("claude-fable-5-2"),
+        };
+        let conv = |turn_model: Option<&str>| -> Conversation {
+            let mut turn = json!({"id": uuid::Uuid::nil(), "startedAt": "2026-11-16T04:00:00Z", "origin": "person"});
+            if let Some(m) = turn_model {
+                turn["model"] = json!(m);
+            }
+            serde_json::from_value(json!({"id": uuid::Uuid::nil(), "title": null, "titleSource": null,
+                "createdAt": "2026-11-16T04:00:00Z", "updatedAt": "2026-11-16T04:00:00Z", "lastUserMessageAt": null,
+                "deletedAt": null, "purgeAt": null, "claudeSessionId": null, "lastTurn": null, "sandbox": null,
+                "model": null, "contextTokens": null, "turn": turn, "pickedModel": "claude-opus-5-5",
+                "run": {"state": "running", "background": []}, "origin": {"kind": "new"}}))
+            .unwrap()
+        };
+        let a = agent_snapshot(&conv(Some("z-ai/glm-5.3")), &view);
+        assert_eq!(
+            (&a["model"], &a["runtimeInfo"]["model"]),
+            (&json!("claude-opus-5-5"), &json!("z-ai/glm-5.3"))
+        );
+        // a turn admitted with none picked runs on the deployment's default
+        let a = agent_snapshot(&conv(None), &view);
+        assert_eq!(
+            (&a["model"], &a["runtimeInfo"]["model"]),
+            (&json!("claude-opus-5-5"), &json!("claude-fable-5-2"))
+        );
+        // no pick since the turn began: one model
+        let a = agent_snapshot(&conv(Some("claude-opus-5-5")), &view);
+        assert_eq!(a["runtimeInfo"]["model"], a["model"]);
+    }
+
     #[test]
     fn the_agent_shows_the_picked_model() {
         let base = json!({"id": uuid::Uuid::nil(), "title": null, "titleSource": null,

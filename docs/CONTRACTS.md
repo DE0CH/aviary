@@ -212,6 +212,9 @@ switches the running Claude Code to it before it writes the prompt (`set_model`,
 terminal: the same process, its session and background tasks go on). A new Claude Code is started only for a model
 with another context window (Claude Code reads `CLAUDE_CODE_MAX_CONTEXT_TOKENS` at its start) or another harness. A
 message that joins a running turn does not change the turn's model: the pick is the next turn's.
+magpie keeps the model each turn was admitted on (`turns.model`, the conversation's `turn.model`), and pigeon's agent
+snapshot says it as `runtimeInfo.model` while the turn runs, beside the pick (`model`): the app shows both until the
+reply ends.
 **A conversation's thinking level** goes the way of its picked model (where the deployment says
 `conversations.peoplePickModel`): pigeon lists every model with its levels in the provider snapshot (a thinking set
 per distinct list, the level ids as labels) and in `/api/providers/claude/models` (`thinking`, `reasoning` on each

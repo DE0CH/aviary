@@ -429,6 +429,22 @@ async fn the_deployment_names_the_model_and_reads_the_conversation() {
     // pigeon may not use hermit's route
     let e = r.pigeon().service(None).hermit_conversation(id).await.unwrap_err();
     assert_eq!(e.code(), Some(&ErrorCode::WrongCaller));
+
+    // a model picked while the first turn runs is the next turn's: the running turn keeps the model it was admitted
+    // on (the app shows both until the reply ends)
+    assert_eq!(
+        made.conversation.turn.as_ref().and_then(|t| t.model.as_deref()),
+        Some("claude-opus-5-5"),
+        "the turn says the model it runs on"
+    );
+    let picked = r
+        .pigeon()
+        .person(STAFF)
+        .rename_conversation(id, &RenameRequest::model("claude-fable-5-2"))
+        .await
+        .unwrap();
+    assert_eq!(picked.picked_model.as_deref(), Some("claude-fable-5-2"));
+    assert_eq!(picked.turn.and_then(|t| t.model).as_deref(), Some("claude-opus-5-5"));
 }
 
 #[tokio::test]
