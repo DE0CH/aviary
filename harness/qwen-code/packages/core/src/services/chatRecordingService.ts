@@ -3171,6 +3171,23 @@ export class ChatRecordingService {
    * @param data.contextWindowSize Context window size of the model
    * @param data.toolCallsMetadata Enriched tool call info for UI recovery
    */
+  /**
+   * de0ch: the uuid the main agent's next assistant record will have, told ahead so a stream-json host
+   * can name the reply it shows live by the record it will find in the transcript. A new reservation
+   * replaces one that was never used.
+   */
+  reserveAssistantRecordUuid(): string {
+    this.reservedAssistantRecordUuid = randomUUID();
+    return this.reservedAssistantRecordUuid;
+  }
+
+  /** de0ch: forgets a reserved uuid whose record was not written (the reply was given up). */
+  releaseAssistantRecordUuid(): void {
+    this.reservedAssistantRecordUuid = null;
+  }
+
+  private reservedAssistantRecordUuid: string | null = null;
+
   recordAssistantTurn(data: {
     model: string;
     message?: PartListUnion;
@@ -3179,8 +3196,14 @@ export class ChatRecordingService {
     goalContext?: GoalTurnPermit;
   }): void {
     try {
+      const base = this.createBaseRecord('assistant');
+      // de0ch: a subagent's turn recorded here is not the reply the main agent is streaming
+      if (this.reservedAssistantRecordUuid !== null && !getCurrentAgentId()) {
+        base.uuid = this.reservedAssistantRecordUuid;
+        this.reservedAssistantRecordUuid = null;
+      }
       const record: ChatRecord = {
-        ...this.createBaseRecord('assistant'),
+        ...base,
         model: data.model,
         ...(data.goalContext
           ? { goalContext: copyGoalContext(data.goalContext) }

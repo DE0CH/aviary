@@ -81,6 +81,19 @@ refs/tags/vX.Y.Z` and `git merge`, never a rebase), tested against aviary's supe
   provider's refusal) never reached it. Its test `http400-media-wedge.test.ts` went with it.
   `de0ch/upstream-refusal.e2e.mjs` drives the packed CLI through a refused video, "continue" and a resume against
   a stand-in model; the release build runs it.
+- `packages/cli/src/nonInteractive/io/StreamJsonOutputAdapter.ts`, `packages/core/src/services/chatRecordingService.ts`
+  (`reserveAssistantRecordUuid`): **the stream names a reply as the transcript records it.** aviary shows a reply
+  as it is written from the `stream_event` lines and then finds it in the transcript, matching the two by (message
+  id, block index), as Claude Code's stream and transcript allow. Upstream names a reply's stream by an id of its
+  own (that of the reply's first part: it cuts a reply into one message per block type) and numbers every block 0,
+  while the transcript has one record per reply with its own uuid and its parts in order. Nothing matched: in YYC AI
+  every answer stood twice in the chat for a moment (the streamed text and the finished message), the chat jumped
+  down and back, and aviary never learned that a streamed block was finished. Here `message_start` carries the uuid
+  the reply's record will have (reserved in the recording service, taken by the main agent's next assistant record,
+  dropped when the reply is finalized or its attempt given up), and the main agent's blocks are numbered through the
+  reply as the record's parts are. The `assistant` lines on stdout are as upstream's.
+  `de0ch/stream-record-ids.e2e.mjs` compares the packed CLI's stream with the transcript it wrote; the release
+  build runs it.
 - `de0ch/` and `.github/workflows/de0ch-release.yml`: this file, the end-to-end check and the release build.
 
 Everything else aviary needs is configuration, not a change here: the system settings file

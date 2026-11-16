@@ -2214,6 +2214,26 @@ describe('ChatRecordingService', () => {
       expect(record.toolCallResult).toBeUndefined();
     });
 
+    it("de0ch: gives the record the uuid reserved for it, once", async () => {
+      const reserved = svc.reserveAssistantRecordUuid();
+      reply([{ text: 'Hello!' }]);
+      const first = await flushed();
+      expect(first.uuid).toBe(reserved);
+
+      vi.mocked(jsonl.writeLine).mockClear();
+      reply([{ text: 'Again.' }]);
+      const second = await flushed();
+      expect(second.uuid).not.toBe(reserved);
+
+      // a reply that was given up: its reservation names no later record
+      const abandoned = svc.reserveAssistantRecordUuid();
+      svc.releaseAssistantRecordUuid();
+      vi.mocked(jsonl.writeLine).mockClear();
+      reply([{ text: 'Later.' }]);
+      const third = await flushed();
+      expect(third.uuid).not.toBe(abandoned);
+    });
+
     it('should record assistant turn with all data', async () => {
       const parts: Part[] = [
         { thought: true, text: 'Thinking...' },

@@ -31,12 +31,15 @@ jobs:
       - name: the test of what this fork changes
         working-directory: packages/core
         run: corepack pnpm exec vitest run src/core/openaiContentGenerator/converter.test.ts src/core/openaiContentGenerator/media-budget.test.ts src/core/upstream-refusal.test.ts src/utils/runtimeFetchOptions.test.ts src/telemetry/qwen-logger/no-usage-statistics.test.ts src/services/backgroundShellRegistry.test.ts src/tools/shell.test.ts
+      - name: an assistant record takes the uuid reserved for it
+        working-directory: packages/core
+        run: corepack pnpm exec vitest run src/services/chatRecordingService.test.ts -t "de0ch"
       - name: the chat rolls back after a refusal
         working-directory: packages/core
         run: corepack pnpm exec vitest run src/core/llm-chat.test.ts -t "DE0CH fork"
       - name: the test of what this fork changes in the CLI
         working-directory: packages/cli
-        run: corepack pnpm exec vitest run src/nonInteractive/control/controllers/permissionController.test.ts src/nonInteractive/control/controllers/systemController.test.ts src/nonInteractive/control/ControlDispatcher.test.ts src/nonInteractive/session.test.ts
+        run: corepack pnpm exec vitest run src/nonInteractive/control/controllers/permissionController.test.ts src/nonInteractive/control/controllers/systemController.test.ts src/nonInteractive/control/ControlDispatcher.test.ts src/nonInteractive/session.test.ts src/nonInteractive/io/StreamJsonOutputAdapter.recordIdentity.test.ts src/nonInteractive/io/StreamJsonOutputAdapter.test.ts src/nonInteractive/io/StreamJsonOutputAdapter.dualOutput.test.ts
       - name: build, bundle, pack
         run: |
           npm run build
@@ -59,6 +62,8 @@ jobs:
         run: node de0ch/background-tasks.e2e.mjs "$RUNNER_TEMP/qwen/bin/qwen"
       - name: the packed CLI goes on after its provider refuses a video
         run: node de0ch/upstream-refusal.e2e.mjs "$RUNNER_TEMP/qwen/bin/qwen"
+      - name: the packed CLI's stream names a reply as its transcript records it
+        run: node de0ch/stream-record-ids.e2e.mjs "$RUNNER_TEMP/qwen/bin/qwen"
       - name: release
         env:
           GH_TOKEN: ${{ github.token }}

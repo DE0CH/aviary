@@ -41,6 +41,13 @@ export class StreamJsonOutputAdapter
   implements JsonOutputAdapterInterface
 {
   private mainTurnMessageStartEmitted = false;
+  // de0ch: a host that shows the reply as it is written matches a streamed block to the transcript's
+  // record by (message id, block index). A reply is one record whose parts are numbered in order,
+  // while this adapter cuts it into one message per block type, each numbered from 0: the stream
+  // names the reply by its record's uuid and numbers its blocks as the record's parts.
+  private mainStreamMessageId: string | null = null;
+  private mainStreamBlockCount = 0;
+  private readonly mainStreamBlockIndexes = new Map<string, number>();
   private lastGoalStateSignature: string | undefined;
   private readonly outputStream: NodeJS.WritableStream;
 
@@ -112,6 +119,7 @@ export class StreamJsonOutputAdapter
       this.finalizeAssistantMessage();
     }
     this.emitDiscardedAttemptToolResults(discardedToolCalls);
+    this.releaseStreamMessageId();
     super.restartAttempt(false, discardedToolCalls);
   }
 
@@ -131,6 +139,7 @@ export class StreamJsonOutputAdapter
       this.emitMessageImpl(partial);
     }
     this.mainTurnMessageStartEmitted = false;
+    this.releaseStreamMessageId();
     return message;
   }
 
@@ -185,7 +194,7 @@ export class StreamJsonOutputAdapter
     this.emitStreamEventIfEnabled(
       {
         type: 'content_block_start',
-        index,
+        index: this.streamBlockIndex(state, index, parentToolUseId),
         content_block: block,
       },
       parentToolUseId,
@@ -204,7 +213,7 @@ export class StreamJsonOutputAdapter
     this.emitStreamEventIfEnabled(
       {
         type: 'content_block_delta',
-        index,
+        index: this.streamBlockIndex(state, index, parentToolUseId),
         delta: { type: 'text_delta', text: fragment },
       },
       parentToolUseId,
@@ -223,7 +232,7 @@ export class StreamJsonOutputAdapter
     this.emitStreamEventIfEnabled(
       {
         type: 'content_block_start',
-        index,
+        index: this.streamBlockIndex(state, index, parentToolUseId),
         content_block: block,
       },
       parentToolUseId,
@@ -242,7 +251,7 @@ export class StreamJsonOutputAdapter
     this.emitStreamEventIfEnabled(
       {
         type: 'content_block_delta',
-        index,
+        index: this.streamBlockIndex(state, index, parentToolUseId),
         delta: { type: 'thinking_delta', thinking: fragment },
       },
       parentToolUseId,
@@ -261,7 +270,7 @@ export class StreamJsonOutputAdapter
     this.emitStreamEventIfEnabled(
       {
         type: 'content_block_start',
-        index,
+        index: this.streamBlockIndex(state, index, parentToolUseId),
         content_block: block,
       },
       parentToolUseId,
@@ -280,7 +289,7 @@ export class StreamJsonOutputAdapter
     this.emitStreamEventIfEnabled(
       {
         type: 'content_block_delta',
-        index,
+        index: this.streamBlockIndex(state, index, parentToolUseId),
         delta: {
           type: 'input_json_delta',
           partial_json: JSON.stringify(input),
@@ -302,7 +311,7 @@ export class StreamJsonOutputAdapter
       this.emitStreamEventIfEnabled(
         {
           type: 'content_block_stop',
-          index,
+          index: this.streamBlockIndex(state, index, parentToolUseId),
         },
         parentToolUseId,
       );
@@ -320,11 +329,18 @@ export class StreamJsonOutputAdapter
   ): void {
     if (parentToolUseId === null && !this.mainTurnMessageStartEmitted) {
       this.mainTurnMessageStartEmitted = true;
+      this.mainStreamBlockCount = 0;
+      this.mainStreamBlockIndexes.clear();
+      this.mainStreamMessageId = this.includePartialMessages
+        ? (this.config
+            .getChatRecordingService?.()
+            ?.reserveAssistantRecordUuid() ?? null)
+        : null;
       this.emitStreamEventIfEnabled(
         {
           type: 'message_start',
           message: {
-            id: state.messageId!,
+            id: this.mainStreamMessageId ?? state.messageId!,
             role: 'assistant',
             model: this.config.getModel(),
             content: [],
@@ -332,6 +348,38 @@ export class StreamJsonOutputAdapter
         },
         null,
       );
+    }
+  }
+
+  /**
+   * de0ch: a block's index in the stream. The main agent's blocks count on through the reply, as the
+   * parts of its transcript record do; a subagent's keep the index within their own message.
+   */
+  private streamBlockIndex(
+    state: MessageState,
+    index: number,
+    parentToolUseId: string | null,
+  ): number {
+    if (parentToolUseId !== null) {
+      return index;
+    }
+    const key = `${state.messageId}:${index}`;
+    let mapped = this.mainStreamBlockIndexes.get(key);
+    if (mapped === undefined) {
+      mapped = this.mainStreamBlockCount++;
+      this.mainStreamBlockIndexes.set(key, mapped);
+    }
+    return mapped;
+  }
+
+  /**
+   * de0ch: the reply's record is written before the reply is finalized or its attempt is given up; a
+   * uuid still reserved then names a record that was never written and must not name a later one.
+   */
+  private releaseStreamMessageId(): void {
+    if (this.mainStreamMessageId !== null) {
+      this.mainStreamMessageId = null;
+      this.config.getChatRecordingService?.()?.releaseAssistantRecordUuid();
     }
   }
 
