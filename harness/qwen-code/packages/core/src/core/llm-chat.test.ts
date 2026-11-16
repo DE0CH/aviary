@@ -12187,6 +12187,203 @@ describe('LlmChat', async () => {
     expectRecordedOnce(recordAssistantTurn, [{ text: FINAL }]);
   }
 
+  describe('DE0CH fork: an upstream refusal rolls the conversation back', () => {
+    const REASON = 'Upstream error from DeepInfra: Could not open video stream';
+    const refused = () => Object.assign(new Error(REASON), { status: 400 });
+    const HALF_WRITTEN = 'AAAAIGZ0eXBpc29t-half-written-clip';
+    const videoResult = (): Part =>
+      ({
+        functionResponse: {
+          id: 'call-video',
+          name: 'read_file',
+          response: { output: '' },
+          parts: [
+            {
+              inlineData: {
+                mimeType: 'video/mp4',
+                data: HALF_WRITTEN,
+                displayName: 'clip_0-92s.mp4',
+              },
+            },
+          ],
+        },
+      }) as Part;
+    const shellResult = (): Part =>
+      ({
+        functionResponse: {
+          id: 'call-ls',
+          name: 'run_shell_command',
+          response: { output: 'clip_0-92s.mp4' },
+        },
+      }) as Part;
+    const calledTools: Content = {
+      role: 'model',
+      parts: [
+        { functionCall: { id: 'call-video', name: 'read_file', args: {} } },
+        {
+          functionCall: { id: 'call-ls', name: 'run_shell_command', args: {} },
+        },
+      ],
+    };
+    const opening: Content[] = [
+      { role: 'user', parts: [{ text: 'watch the clip' }] },
+      calledTools,
+    ];
+    // what each request carried when it was made (the chat replaces parts later)
+    let sentRequests: string[] = [];
+    const sent = (index: number) => sentRequests[index]!;
+    const answerWith = (
+      ...answers: Array<() => AsyncGenerator<GenerateContentResponse>>
+    ) => {
+      let call = 0;
+      streamMock().mockImplementation(async (request) => {
+        sentRequests.push(JSON.stringify(request.contents));
+        const answer = answers[Math.min(call++, answers.length - 1)]!;
+        return answer();
+      });
+    };
+    const refuse = () => streamThenThrow([], refused());
+    beforeEach(() => {
+      sentRequests = [];
+      vi.mocked(mockConfig.getEffectiveInputModalities).mockReturnValue({
+        image: true,
+        video: true,
+        audio: true,
+      });
+    });
+    const recorder = () => ({
+      recordAssistantTurn: vi.fn(),
+      recordChatCompression: vi.fn(),
+      supersedeRefusedParts: vi.fn(),
+    });
+
+    it('a refused tool result becomes a tool error and the model answers that', async () => {
+      const rec = recorder();
+      const target = newChat({
+        history: structuredClone(opening),
+        recorder: rec,
+      });
+      // the provider reports it inside the stream it had already opened
+      answerWith(refuse, () => textStream('I will cut it again'));
+
+      const events = await sendCollect(
+        [videoResult(), shellResult()],
+        'refusal-delta',
+        target,
+      );
+
+      expectStreamCalls(2);
+      expect(hasRetry(events)).toBe(true);
+      expect(sent(0)).toContain(HALF_WRITTEN);
+      expect(sent(1)).not.toContain(HALF_WRITTEN);
+      expect(sent(1)).toContain(REASON);
+      // the other result of the same step is still there, and both calls keep a result
+      expect(sent(1)).toContain('"output":"clip_0-92s.mp4"');
+      const history = JSON.stringify(target.getHistory());
+      expect(history).not.toContain(HALF_WRITTEN);
+      expect(history).toContain('"id":"call-video"');
+      expect(target.getLastModelMessageText()).toBe('I will cut it again');
+      expect(rec.supersedeRefusedParts).toHaveBeenCalledTimes(1);
+      expect(rec.supersedeRefusedParts.mock.calls[0][0][0]).toMatchObject({
+        stage: 'delta-media',
+        reason: REASON,
+      });
+    });
+
+    it('a refusal as the HTTP status is handled the same way', async () => {
+      const target = newChat({
+        history: structuredClone(opening),
+        recorder: recorder(),
+      });
+      answerWith(
+        () => {
+          throw refused();
+        },
+        () => textStream('ok'),
+      );
+      await sendDrain([videoResult(), shellResult()], 'refusal-status', target);
+      expectStreamCalls(2);
+      expect(sent(0)).toContain(HALF_WRITTEN);
+      expect(sent(1)).not.toContain(HALF_WRITTEN);
+      expect(sent(1)).toContain(REASON);
+    });
+
+    it('"continue" brings back a conversation that already holds the refused video', async () => {
+      const rec = recorder();
+      const dead: Content[] = [
+        ...structuredClone(opening),
+        { role: 'user', parts: [videoResult(), shellResult()] },
+      ];
+      const target = newChat({ history: dead, recorder: rec });
+      answerWith(refuse, () => textStream('back'));
+
+      await sendDrain('continue', 'refusal-continue', target);
+
+      expectStreamCalls(2);
+      expect(sent(0)).toContain(HALF_WRITTEN);
+      expect(sent(1)).not.toContain(HALF_WRITTEN);
+      expect(sent(1)).toContain('continue');
+      expect(JSON.stringify(target.getHistory())).not.toContain(HALF_WRITTEN);
+      expect(rec.supersedeRefusedParts.mock.calls[0][0][0]).toMatchObject({
+        stage: 'history-media',
+      });
+    });
+
+    it("a request refused at every stage keeps its data and fails with the provider's words", async () => {
+      const rec = recorder();
+      const target = newChat({
+        history: structuredClone(opening),
+        recorder: rec,
+      });
+      answerWith(refuse);
+
+      const stream = await send(
+        [videoResult(), shellResult()],
+        'refusal-all',
+        target,
+      );
+      await expect(drain(stream)).rejects.toThrow(REASON);
+
+      // the request as it was, then the media replaced, then every result replaced
+      expectStreamCalls(3);
+      expect(sent(1)).not.toContain(HALF_WRITTEN);
+      expect(sent(1)).toContain('"output":"clip_0-92s.mp4"');
+      expect(sent(2)).not.toContain('"output":"clip_0-92s.mp4"');
+      expect(JSON.stringify(target.getHistory())).toContain(HALF_WRITTEN);
+      expect(rec.supersedeRefusedParts).not.toHaveBeenCalled();
+    });
+
+    it(
+      'a server error never replaces anything',
+      fakeTimers(async () => {
+        const target = newChat({
+          history: structuredClone(opening),
+          recorder: recorder(),
+        });
+        answerWith(() => {
+          throw Object.assign(new Error('Service Unavailable'), {
+            status: 503,
+          });
+        });
+        const stream = await send(
+          [videoResult(), shellResult()],
+          'refusal-503',
+          target,
+        );
+        const failure = drain(stream).then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        for (let i = 0; i < 60; i++) await vi.advanceTimersByTimeAsync(60_000);
+        expect(String(await failure)).toContain('Service Unavailable');
+        expect(sentRequests.length).toBeGreaterThan(0);
+        for (const request of sentRequests)
+          expect(request).toContain(HALF_WRITTEN);
+        expect(JSON.stringify(target.getHistory())).toContain(HALF_WRITTEN);
+      }),
+    );
+  });
+
   it.each([false, true])(
     'discards failed partials on retry with an un-aborted signal present: %s',
     async (withSignal) => {

@@ -37,6 +37,10 @@ import type {
 } from '@google/genai';
 import { createModelContent, createUserContent } from '../core/genai-compat.js';
 import { getToolCallFingerprint } from '../core/toolCallIdUtils.js';
+import {
+  rewriteRefusedParts,
+  type RefusalPlan,
+} from '../core/upstream-refusal.js';
 import { canonicalToolName } from '../tools/tool-names.js';
 import * as jsonl from '../utils/jsonl-utils.js';
 import { getGitBranch } from '../utils/gitUtils.js';
@@ -3685,6 +3689,68 @@ export class ChatRecordingService {
    * history clean while allowing resume to replay UI output for commands like
    * /about.
    */
+  /**
+   * DE0CH fork (core/upstream-refusal.ts): the provider refused data of this
+   * conversation and answered once the chat had replaced it. The transcript
+   * follows: from the first record that holds a replaced part on, the active
+   * branch is written again under that record's parent, with the harness's
+   * notices where the refused data was. The refused records stay in the file
+   * as a branch no later record descends from, so a resume reads the
+   * replacements and an audit can still read what was refused.
+   *
+   * Returns how many records were rewritten; 0 when this recorder does not
+   * hold the records (a session resumed from a projection): the chat then
+   * replaces the data again the first time a request carries it.
+   */
+  supersedeRefusedParts(plans: readonly RefusalPlan[]): number {
+    try {
+      if (plans.length === 0 || this.managedSink || this.topologyFence)
+        return 0;
+      const rewrite = (record: ChatRecord): Part[] | undefined => {
+        let parts = record.message?.parts;
+        let changed = false;
+        for (const plan of plans) {
+          const rewritten = rewriteRefusedParts(parts, plan);
+          if (rewritten) {
+            parts = rewritten.parts;
+            changed = true;
+          }
+        }
+        return changed ? parts : undefined;
+      };
+      const first = this.activeBranchRecords.findIndex(
+        (record) => rewrite(record) !== undefined,
+      );
+      if (first < 0) return 0;
+      const tail = this.activeBranchRecords.slice(first);
+      const renamed = new Map<string, string>();
+      this.lastRecordUuid = tail[0].parentUuid ?? null;
+      let rewrittenRecords = 0;
+      for (const record of tail) {
+        const parts = rewrite(record);
+        const copy: ChatRecord = {
+          ...record,
+          uuid: randomUUID(),
+          parentUuid: this.lastRecordUuid,
+          ...(parts && record.message
+            ? { message: { ...record.message, parts } }
+            : {}),
+        };
+        if (parts) rewrittenRecords++;
+        renamed.set(record.uuid, copy.uuid);
+        this.appendRecord(copy);
+      }
+      // A later rewind must land on the branch that is read, not the refused one.
+      this.turnParentUuids = this.turnParentUuids.map((uuid) =>
+        uuid === null ? null : (renamed.get(uuid) ?? uuid),
+      );
+      return rewrittenRecords;
+    } catch (error) {
+      debugLogger.error('Error superseding refused records:', error);
+      return 0;
+    }
+  }
+
   recordSlashCommand(payload: SlashCommandRecordPayload): void {
     try {
       const record: ChatRecord = {

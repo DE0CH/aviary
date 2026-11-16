@@ -209,6 +209,7 @@ import {
   setToolCallPreparations,
 } from './tool-call-preparation.js';
 import { InvalidStreamError } from './invalid-stream-error.js';
+import { RefusalRollback, upstreamRefusalReason } from './upstream-refusal.js';
 import type { GoalTurnPermit } from '../goals/goal-protocol.js';
 import {
   markApiHistoryPrompt,
@@ -4468,6 +4469,13 @@ export class LlmChat {
         };
 
         let acceptQuietToolResultCompletionOnNextAttempt = false;
+        // DE0CH fork (upstream-refusal.ts): what this send replaces when the
+        // provider refuses the request for the data it carries.
+        const refusalRollback = new RefusalRollback(
+          () => self.history,
+          currentUserContent,
+        );
+        let refusalRollbackSpent = false;
         for (;;) {
           transportAttemptParts = [];
           let streamEstablished = false;
@@ -4581,6 +4589,19 @@ export class LlmChat {
               yield { type: StreamEventType.CHUNK, value: chunk };
             }
 
+            if (refusalRollback.active) {
+              // The provider answered the request without the refused data:
+              // the replacements stay, and the transcript follows them.
+              const plans = refusalRollback.accept();
+              try {
+                self.chatRecordingService?.supersedeRefusedParts(plans);
+              } catch (recordErr) {
+                debugLogger.error(
+                  'Failed to supersede refused transcript records:',
+                  recordErr,
+                );
+              }
+            }
             lastError = null;
             // The merge itself now happens inside `processStreamResponse`,
             // which folds the prefix into the parts before it writes either
@@ -4711,6 +4732,54 @@ export class LlmChat {
             // threshold; it recovers through the same one-shot path (#10380).
             const contextOverflow = getContextLengthExceededInfo(error);
             const requestPayloadOverflow = getRequestPayloadTooLargeInfo(error);
+
+            // DE0CH fork (upstream-refusal.ts): the provider refused the
+            // request for what it carries, as an HTTP status or inside the
+            // stream it had opened. Sending the same conversation again can
+            // never succeed, now or in any later turn, so roll back to the
+            // last request it answered: replace what was added since (then,
+            // if that was not it, the newest earlier media) by the harness's
+            // notice of the refusal, and send that. Overflow keeps its own
+            // recovery below (compaction shrinks what a notice cannot).
+            const refusalReason =
+              !refusalRollbackSpent &&
+              !isRateLimit &&
+              !contextOverflow.isExceeded &&
+              !requestPayloadOverflow.isTooLarge &&
+              !streamYieldedContentChunk
+                ? upstreamRefusalReason(error)
+                : undefined;
+            if (refusalReason !== undefined) {
+              const step = refusalRollback.next(refusalReason);
+              if (step) {
+                self.popPendingPartialAssistantTurn();
+                requestContents = self.getRequestHistoryForRoute(
+                  currentUserContent,
+                  requestModalities,
+                );
+                debugLogger.warn(
+                  `Upstream refused the request (${refusalReason}); ` +
+                    `replaced ${step.replaced} part(s) at stage ` +
+                    `${step.plan.stage} and retrying.`,
+                );
+                resetTransportContinuation();
+                yield { type: StreamEventType.RETRY };
+                suppressNextRetryEvent = true;
+                rearmQuietAcceptanceIfBudgetSpent();
+                continue;
+              }
+              // Refused with everything replaceable replaced: the data was
+              // not the reason. The conversation gets it back and the error
+              // takes the path it always took.
+              refusalRollbackSpent = true;
+              if (refusalRollback.active) {
+                refusalRollback.giveUp();
+                requestContents = self.getRequestHistoryForRoute(
+                  currentUserContent,
+                  requestModalities,
+                );
+              }
+            }
 
             // HTTP establishment failures already exhausted retryWithBackoff;
             // only server errors raised while reading the stream join replay.

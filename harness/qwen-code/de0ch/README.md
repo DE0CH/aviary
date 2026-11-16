@@ -57,6 +57,29 @@ refs/tags/vX.Y.Z` and `git merge`, never a rebase), tested against aviary's supe
     turn for it.
   - `de0ch/background-tasks.e2e.mjs` drives the packed CLI through all of it against a stand-in model; the
     release build runs it.
+- `packages/core/src/core/upstream-refusal.ts` (called from `llm-chat.ts`),
+  `services/chatRecordingService.ts` (`supersedeRefusedParts`): **a request the provider refuses rolls the
+  conversation back** (Deyao, 2026-11-16). The model keeps no state and every request is rebuilt from the
+  conversation, so data the provider cannot take is refused again with every later request: in YYC AI the agent
+  opened a half-written `.mp4` with `read_file`, DeepInfra answered "Could not open video stream", and every
+  "continue" after that failed in 2 s. Here a refusal (400, 413, 415 or 422, as the HTTP status or as an `error`
+  frame inside an opened stream; never a rate limit, a server error, a timeout or a sign-in error) is blamed on
+  what was added since the last request the provider answered, in stages of one more request each:
+  1. the videos, sounds, images and files of the newest entry (this step's tool results, or the person's message)
+     are replaced by a line from the harness that names the provider's error;
+  2. every tool result of that entry is replaced the same way (each call keeps its result);
+  3. the newest earlier entry that carries media, at most five entries (this is what brings back a conversation
+     that was already dead when this version started).
+  The model then answers the replaced entry: it sees a tool result that failed and decides what to do. A request
+  refused after every stage was not refused for its data: the conversation gets its data back and the error goes
+  out as before. In the transcript the refused records stay as a branch no later record descends from; the
+  records after them are written again with the notices, so `--resume` reads the replacements.
+  Upstream's own answer to a 400 on a request with media is gone from `openaiContentGenerator/pipeline.ts`: it sent
+  the request again with every modality off, for that one request, so the refused data stayed and every later
+  request was refused and resent the same way; and an error inside an opened stream (how OpenRouter passes on its
+  provider's refusal) never reached it. Its test `http400-media-wedge.test.ts` went with it.
+  `de0ch/upstream-refusal.e2e.mjs` drives the packed CLI through a refused video, "continue" and a resume against
+  a stand-in model; the release build runs it.
 - `de0ch/` and `.github/workflows/de0ch-release.yml`: this file, the end-to-end check and the release build.
 
 Everything else aviary needs is configuration, not a change here: the system settings file
