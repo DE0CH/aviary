@@ -211,7 +211,9 @@ Which hosts a sandbox may reach is decided automatically; there is no per-conver
 **Every host passes except those the deny list names** (Deyao, 2026-11-10: fewer false refusals; until then only
 about 48,700 listed sites passed).
 
-- **Matching.** Entries are `host` (that name only) or `.domain` (the domain and every name under it). A host is
+- **Matching.** Entries are `host` (that name only) or `.domain` (the domain and every name under it); a `*` in an
+  entry's first label stands for any characters inside that label (`.oss-*.aliyuncs.com`: endpoints named per region,
+  whose list grows; a `*` anywhere else is refused when the lists load). A host is
   refused (`deny:denylist`) when a deny entry names it, unless an allow entry is more specific than its most specific
   deny entry (an exact entry beats a suffix entry of the same name; equally specific → deny). So `.drive.google.com`
   refuses Drive while `www.google.com` passes, and the exact `raw.githubusercontent.com` passes under the denied
@@ -219,7 +221,7 @@ about 48,700 listed sites passed).
 - **Deny = generated `deny.txt`**, built by `chat/egress-allowlist/generate.py` (Python standard library) from:
   - `sources/deny.txt` (curated: pastebins and code-sharing with anonymous upload, anonymous file drops and file
     sharing incl. Google Drive/Docs/Forms and Apps Script, public object storage (`.amazonaws.com`,
-    `.storage.googleapis.com`, `.r2.cloudflarestorage.com`, …), request catchers and webhooks incl. Discord/Slack/
+    `.storage.googleapis.com`, `.r2.cloudflarestorage.com`, Alibaba Cloud OSS, …), request catchers and webhooks incl. Discord/Slack/
     Telegram bot APIs, tunnels, anyone-runs-a-server hosting, form builders, webmail);
   - every domain in these categories of the UT1 web classification (Université Toulouse Capitole, CC BY-SA 4.0,
     https://dsi.ut-capitole.fr/blacklists/): ddos, dialer, stalkerware, hacking, warez, filehosting, webhosting,
@@ -234,8 +236,10 @@ about 48,700 listed sites passed).
 - **Allow = generated `allow.txt` + config `egress.defaultAllowedHosts`:** exceptions to the deny list only.
   `allow.txt` is the curated `sources/dev.txt` (package registries, code hosts, toolchains, container registries,
   distro mirrors, from OpenAI Codex cloud's "Common dependencies" preset and Claude Code on the web's "Default allowed
-  domains", plus the hosts `docker pull` really uses) and `sources/yyc.txt` (the news and data sources YYC staff use).
-- **Size and version (2026-11-10):** deny 129,250 entries (curated 194, UT1 128,245, platforms 3,458), allow 183.
+  domains", plus the hosts `docker pull` really uses, and `.aliyuncs.com`: Alibaba Cloud's APIs and DashScope, which
+  UT1 lists whole under dynamic-dns; its OSS endpoints stay denied by the curated set; Deyao, 2026-11-16) and
+  `sources/yyc.txt` (the news and data sources YYC staff use).
+- **Size and version (2026-11-16):** deny 129,288 entries (curated 196, UT1 128,242, platforms 3,502), allow 184.
   Each file's header carries `# version: <date> <digest>` and the sources; egress logs the version at start.
 - **Refresh:** workflow `egress-allowlist` (Mondays) runs `generate.py`, commits to main only when an entry changed,
   and dispatches the `chat` workflow so the images carry the new lists; an instance takes them with its next jarvis3
