@@ -111,6 +111,17 @@ async fn boot(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Respon
     }
 }
 
+/// The session's model as the chat's menu names it (`SESSION_MODEL` is `aviary/<model id>`); none when the menu does
+/// not hold it (the conversation then starts on the menu's default).
+fn session_model(
+    settings: &crate::settings::Settings,
+    env: &std::collections::BTreeMap<String, String>,
+) -> Option<String> {
+    let model = env.get("SESSION_MODEL")?;
+    let id = model.strip_prefix("aviary/").unwrap_or(model);
+    settings.model(id).map(|m| m.id.clone())
+}
+
 async fn do_boot(app: &App, machine: &str, req: &BootRequest) -> anyhow::Result<BootReply> {
     let session = match db::session(&app.pool, &req.session).await? {
         Some(s) => s,
@@ -128,7 +139,9 @@ async fn do_boot(app: &App, machine: &str, req: &BootRequest) -> anyhow::Result<
                         images: vec![],
                         files: vec![],
                     },
-                    model: None,
+                    // the model the session was made on in the Jarvis 4 app: the conversation starts on it, and
+                    // from then on the chat's menu is the one place it is changed (Deyao, 2026-11-16)
+                    model: session_model(&app.settings, &req.env),
                 })
                 .await
                 .map_err(|e| anyhow::anyhow!("magpie refused the conversation: {e}"))?

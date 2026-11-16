@@ -186,6 +186,7 @@ async fn a_session_boots_turns_pauses_and_resumes() {
                 cpus: 4,
                 env: [
                     ("SESSION_ID".into(), "s1".into()),
+                    ("SESSION_MODEL".into(), "aviary/claude-opus-5-5".into()),
                     ("SECRET_THING".into(), "never".into()),
                     (
                         "CLAUDE_CONFIG_DIR".into(),
@@ -211,6 +212,10 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     let b: BootReply = r.json().await.unwrap();
     assert_eq!(b.conversation_id, cid);
     assert!(b.token.starts_with("hst1."));
+    // the conversation starts on the model the session was made on (the chat showed its menu's default, whatever
+    // the machine ran, until someone picked there)
+    let made = magpie.fake.script().calls_to("hermit_create_conversation");
+    assert_eq!(made[0].body.as_ref().unwrap()["model"], "claude-opus-5-5");
     // an unknown machine is refused
     assert_eq!(boot("mX").await.status(), 403);
     // the same machine again keeps its sandbox
