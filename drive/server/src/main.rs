@@ -51,23 +51,39 @@ fn drive_id() -> String {
     format!("{STORAGE}${STORAGE}")
 }
 
+/// A setting: `--name value` on the command line, else the environment variable `DRIVE_NAME`.
+fn setting(flag: &str) -> Option<String> {
+    let args: Vec<String> = env::args().collect();
+    let name = format!("--{flag}");
+    args.iter()
+        .position(|a| *a == name)
+        .and_then(|i| args.get(i + 1).cloned())
+        .or_else(|| env::var(format!("DRIVE_{}", flag.replace('-', "_").to_uppercase())).ok())
+        .filter(|v| !v.is_empty())
+}
+
 #[tokio::main]
 async fn main() {
-    let get = |k: &str| env::var(k).ok().filter(|v| !v.is_empty());
     let cfg = Arc::new(Cfg {
-        root: PathBuf::from(get("DRIVE_ROOT").expect("DRIVE_ROOT: the folder to serve")).canonicalize().expect("DRIVE_ROOT"),
-        web: PathBuf::from(get("DRIVE_WEB").expect("DRIVE_WEB: the built page")),
-        name: get("DRIVE_NAME").unwrap_or_else(|| "Drive".into()),
-        user_header: get("DRIVE_USER_HEADER").unwrap_or_else(|| "cf-access-authenticated-user-email".into()),
-        dev_user: get("DRIVE_DEV_USER"),
-        url: get("DRIVE_URL").map(|u| u.trim_end_matches('/').to_string()),
+        root: PathBuf::from(setting("root").expect("--root or DRIVE_ROOT: the folder to serve")).canonicalize().expect("the folder to serve"),
+        web: PathBuf::from(setting("web").expect("--web or DRIVE_WEB: the built page")),
+        name: setting("name").unwrap_or_else(|| "Drive".into()),
+        user_header: setting("user-header").unwrap_or_else(|| "cf-access-authenticated-user-email".into()),
+        dev_user: setting("dev-user"),
+        url: setting("url").map(|u| u.trim_end_matches('/').to_string()),
     });
     tokio::fs::create_dir_all(cfg.root.join(UPLOADS)).await.expect("uploads folder");
-    let listen = get("DRIVE_LISTEN").unwrap_or_else(|| "0.0.0.0:8080".into());
+    let listen = setting("listen").unwrap_or_else(|| "0.0.0.0:8080".into());
     let app = Router::new().fallback(handle).with_state(cfg);
     let listener = tokio::net::TcpListener::bind(&listen).await.expect("listen");
     eprintln!("yyc-drive on {listen}");
-    axum::serve(listener, app).await.expect("serve");
+    // Asked to stop (a rolling update): no new connections, and the transfers in flight run to their end.
+    let stop = async {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM");
+        tokio::select! { _ = term.recv() => {}, _ = tokio::signal::ctrl_c() => {} }
+        eprintln!("yyc-drive stopping: finishing what is in flight");
+    };
+    axum::serve(listener, app).with_graceful_shutdown(stop).await.expect("serve");
 }
 
 async fn handle(State(s): State<S>, req: Request) -> Res {
@@ -88,6 +104,12 @@ async fn route(s: &S, req: Request) -> Result<Res, Res> {
 
     // The page and its settings: no person needed.
     match (method.as_str(), path.as_str()) {
+        // for the cluster: alive, and ready while the folder is there (a lost mount takes the pod out of service)
+        ("GET", "/healthz") => return Ok(status(StatusCode::OK)),
+        ("GET", "/readyz") => {
+            let there = tokio::fs::metadata(&s.root).await.map(|m| m.is_dir()).unwrap_or(false);
+            return Ok(status(if there { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE }));
+        }
         ("GET", "/config.json") => return Ok(json_res(StatusCode::OK, config(&base))),
         ("GET", "/.well-known/openid-configuration") => return Ok(json_res(StatusCode::OK, oidc_meta(&base))),
         ("GET", "/oidc/jwks") => return Ok(json_res(StatusCode::OK, json!({"keys": []}))),

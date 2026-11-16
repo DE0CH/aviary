@@ -27,15 +27,20 @@ One program and one folder. No database, no per-person folders, no sharing.
 - Search by name.
 - Names that start with a dot are hidden and refused; a path cannot leave the folder.
 
-| Variable | Meaning |
-|---|---|
-| `DRIVE_ROOT` | the folder to serve |
-| `DRIVE_WEB` | the built page (`dist/`, with the theme copied to `dist/themes/opencloud/`) |
-| `DRIVE_NAME` | the drive's name in the page (default `Drive`) |
-| `DRIVE_LISTEN` | address to listen on (default `0.0.0.0:8080`) |
-| `DRIVE_USER_HEADER` | the header that names the signed-in person (default `cf-access-authenticated-user-email`) |
-| `DRIVE_DEV_USER` | a person to assume when the header is absent: local runs only |
-| `DRIVE_URL` | the public address, when it cannot be read from the request |
+Each setting is a flag or, without it, an environment variable:
+
+| Flag | Variable | Meaning |
+|---|---|---|
+| `--root` | `DRIVE_ROOT` | the folder to serve |
+| `--web` | `DRIVE_WEB` | the built page (`dist/`, with the theme copied to `dist/themes/opencloud/`) |
+| `--name` | `DRIVE_NAME` | the drive's name in the page (default `Drive`) |
+| `--listen` | `DRIVE_LISTEN` | address to listen on (default `0.0.0.0:8080`) |
+| `--user-header` | `DRIVE_USER_HEADER` | the header that names the signed-in person (default `cf-access-authenticated-user-email`) |
+| `--dev-user` | `DRIVE_DEV_USER` | a person to assume when the header is absent: local runs only |
+| `--url` | `DRIVE_URL` | the public address, when it cannot be read from the request |
+
+`GET /healthz` answers 200 while the program runs; `GET /readyz` answers 200 while the folder is there. On SIGTERM
+it takes no new connections, lets the transfers in flight finish, and exits 0.
 
 ## Run it locally
 

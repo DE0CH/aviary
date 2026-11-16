@@ -34,6 +34,11 @@ impl Drop for Server {
 impl Server {
     /// `dev_user`: the person assumed when no header names one (None: a request without the header is refused).
     fn start(dev_user: Option<&str>) -> Server {
+        Server::start_with(dev_user, false)
+    }
+
+    /// `flags`: the settings go on the command line instead of the environment (how the deployment starts it).
+    fn start_with(dev_user: Option<&str>, flags: bool) -> Server {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("root");
         let web = dir.path().join("web");
@@ -43,15 +48,21 @@ impl Server {
         fs::write(web.join("js/app.js"), "js").unwrap();
         let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_yyc-drive"));
-        cmd.env("DRIVE_ROOT", &root)
-            .env("DRIVE_WEB", &web)
-            .env("DRIVE_NAME", "Test Drive")
-            .env("DRIVE_LISTEN", format!("127.0.0.1:{port}"))
-            .env_remove("DRIVE_DEV_USER")
-            .env_remove("DRIVE_URL")
-            .stderr(Stdio::null());
-        if let Some(u) = dev_user {
-            cmd.env("DRIVE_DEV_USER", u);
+        for k in ["DRIVE_ROOT", "DRIVE_WEB", "DRIVE_NAME", "DRIVE_LISTEN", "DRIVE_DEV_USER", "DRIVE_URL", "DRIVE_USER_HEADER"] {
+            cmd.env_remove(k);
+        }
+        cmd.stderr(Stdio::null());
+        let listen = format!("127.0.0.1:{port}");
+        if flags {
+            cmd.args(["--root", root.to_str().unwrap(), "--web", web.to_str().unwrap(), "--name", "Test Drive", "--listen", &listen]);
+            if let Some(u) = dev_user {
+                cmd.args(["--dev-user", u]);
+            }
+        } else {
+            cmd.env("DRIVE_ROOT", &root).env("DRIVE_WEB", &web).env("DRIVE_NAME", "Test Drive").env("DRIVE_LISTEN", &listen);
+            if let Some(u) = dev_user {
+                cmd.env("DRIVE_DEV_USER", u);
+            }
         }
         let mut child = cmd.spawn().unwrap();
         let http = Client::builder().redirect(Policy::none()).timeout(Duration::from_secs(20)).build().unwrap();
@@ -296,4 +307,52 @@ fn search_finds_names_anywhere_in_the_folder() {
     // Any letter case.
     assert!(ask("STAGE").contains("<oc:name>Stage notes.txt</oc:name>"));
     assert_eq!(ask("nothing-like-this").matches("<d:response>").count(), 0);
+}
+
+#[test]
+fn settings_can_come_from_the_command_line() {
+    let s = Server::start_with(Some("amy@example.com"), true);
+    let mine = text(s.req("GET", "/graph/v1beta1/me/drives").send().unwrap());
+    assert!(mine.contains("\"name\":\"Test Drive\""), "{mine}");
+    fs::write(s.root.join("a.txt"), b"a").unwrap();
+    assert_eq!(text(s.dav("GET", "a.txt").send().unwrap()), "a");
+}
+
+#[test]
+fn it_says_when_it_is_ready_and_stops_being_ready_without_its_folder() {
+    let s = Server::start(None);
+    // no person needed: the cluster asks, not a browser
+    assert_eq!(s.req("GET", "/healthz").send().unwrap().status(), StatusCode::OK);
+    assert_eq!(s.req("GET", "/readyz").send().unwrap().status(), StatusCode::OK);
+    // the folder gone (a lost mount): alive, not ready
+    fs::remove_dir_all(&s.root).unwrap();
+    assert_eq!(s.req("GET", "/healthz").send().unwrap().status(), StatusCode::OK);
+    assert_eq!(s.req("GET", "/readyz").send().unwrap().status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[test]
+fn asked_to_stop_it_finishes_the_transfer_in_flight_and_exits_cleanly() {
+    use std::io::Read;
+    let mut s = Server::start(Some("amy@example.com"));
+    let big = vec![7u8; 64 * 1024 * 1024];
+    fs::write(s.root.join("big.bin"), &big).unwrap();
+    let mut r = s.dav("GET", "big.bin").send().unwrap();
+    let mut first = [0u8; 4096];
+    r.read_exact(&mut first).unwrap();
+    // SIGTERM while the download is under way (a rolling update)
+    assert!(Command::new("kill").args(["-TERM", &s.child.id().to_string()]).status().unwrap().success());
+    std::thread::sleep(Duration::from_millis(300));
+    let mut rest = Vec::new();
+    r.read_to_end(&mut rest).unwrap();
+    assert_eq!(first.len() + rest.len(), big.len());
+    // then it is gone, with exit status 0
+    let mut code = None;
+    for _ in 0..100 {
+        if let Some(st) = s.child.try_wait().unwrap() {
+            code = st.code();
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(code, Some(0));
 }
