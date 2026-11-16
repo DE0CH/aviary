@@ -3453,6 +3453,29 @@ describe('ShellTool', () => {
       expectSpawned(command, { background: true });
     });
 
+    it('registers a background shell under the id of its tool call', async () => {
+      const invocation = build('npm run dev', { is_background: true });
+      (invocation as ShellToolInvocation).setCallId('call_42');
+      await invocation.execute(mockAbortSignal);
+
+      expect(registeredEntry().toolUseId).toBe('call_42');
+    });
+
+    it('registers a promoted shell under the id of its tool call', async () => {
+      const invocation = build('tail -f /tmp/never.log');
+      (invocation as ShellToolInvocation).setCallId('call_43');
+      const promise = invocation.execute(mockAbortSignal);
+      resolveShellExecution({
+        output: '',
+        exitCode: null,
+        promoted: true,
+        pid: 4242,
+      });
+      await promise;
+
+      expect(registeredEntry().toolUseId).toBe('call_43');
+    });
+
     it('does not forward the turn signal into the background shell', async () => {
       // Cancelling the turn must not kill an intentionally backgrounded dev
       // server / watcher: the service gets the entry's own controller.

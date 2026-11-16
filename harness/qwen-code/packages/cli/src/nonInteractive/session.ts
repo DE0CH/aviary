@@ -58,12 +58,10 @@ import {
 const debugLogger = createDebugLogger('NON_INTERACTIVE_SESSION');
 const EOF_MEMORY_WAIT_TIMEOUT_MS = 5_000;
 
-interface MonitorStartedQueueItem {
-  task_id: string;
-  tool_use_id?: string;
-  description: string;
-}
-
+/**
+ * A background task's notification waiting for its own model turn: a
+ * monitor's event or end, or a background shell's end.
+ */
 interface MonitorQueueItem {
   displayText: string;
   modelText: string;
@@ -71,13 +69,18 @@ interface MonitorQueueItem {
     task_id: string;
     tool_use_id?: string;
     status: string;
+    summary?: string;
+    output_file?: string;
   };
 }
 
 class Session {
   private userMessageQueue: CLIUserMessage[] = [];
-  private monitorStartedQueue: MonitorStartedQueueItem[] = [];
   private monitorQueue: MonitorQueueItem[] = [];
+  /** Monitors the host was told have started and not yet that they ended. */
+  private readonly openMonitors = new Set<string>();
+  /** Shells the host stopped with `stop_task`: their end starts no turn. */
+  private readonly hostStoppedShells = new Set<string>();
   private pendingContinueTurn: boolean = false;
   private continueTurnInProgress: boolean = false;
   private readonly sessionAbortController: AbortController;
@@ -100,6 +103,7 @@ class Session {
   private configInitialized: boolean = false;
   private monitorNotificationsRegistered: boolean = false;
   private monitorRegistrationsRegistered: boolean = false;
+  private shellCallbacksRegistered: boolean = false;
   private settings: LoadedSettings;
   private readonly unsubscribeRecordingFailure: () => void;
 
@@ -250,6 +254,7 @@ class Session {
       this.configInitialized = true;
       this.registerMonitorRegistrations();
       this.registerMonitorNotifications();
+      this.registerShellCallbacks();
     } catch (error) {
       debugLogger.error('[Session] Failed to initialize config:', error);
       throw error;
@@ -269,6 +274,9 @@ class Session {
       if (meta.status === 'running' && typeof registry.get === 'function') {
         const entry = registry.get(meta.monitorId);
         if (!entry || entry.status !== 'running') return;
+      }
+      if (meta.status !== 'running') {
+        this.openMonitors.delete(meta.monitorId);
       }
       this.enqueueMonitorNotification({
         displayText,
@@ -293,13 +301,133 @@ class Session {
       if (this.isShuttingDown || this.sessionAbortController.signal.aborted) {
         return;
       }
-      this.enqueueMonitorStarted({
+      // Written at once, inside the turn that started the monitor: a host
+      // that reads the task after the turn's result takes the turn as the
+      // end of all work.
+      this.openMonitors.add(entry.monitorId);
+      this.outputAdapter.emitSystemMessage('task_started', {
         task_id: entry.monitorId,
         tool_use_id: entry.toolUseId,
         description: entry.description,
+        task_type: 'monitor',
+      });
+    });
+    registry.setStatusChangeCallback((entry) => {
+      if (!entry || entry.status === 'running') {
+        return;
+      }
+      const ended = {
+        task_id: entry.monitorId,
+        tool_use_id: entry.toolUseId,
+        status: entry.status,
+      };
+      // A monitor that ends with a notification is closed by it, within the
+      // registry call that settled it. One cancelled silently (task_stop,
+      // stop_task) or owned by a subagent sends this session none, so its
+      // end is written here.
+      queueMicrotask(() => {
+        if (
+          !this.openMonitors.delete(ended.task_id) ||
+          this.isShuttingDown ||
+          this.sessionAbortController.signal.aborted
+        ) {
+          return;
+        }
+        this.outputAdapter.emitSystemMessage('task_notification', ended);
       });
     });
     this.monitorRegistrationsRegistered = true;
+  }
+
+  /**
+   * Reports background shells to the host: `task_started` when one is put in
+   * the background, and its end as a notification turn of its own, queued
+   * behind the running turn like a monitor's.
+   */
+  private registerShellCallbacks(): void {
+    if (this.shellCallbacksRegistered) {
+      return;
+    }
+
+    const registry = this.config.getBackgroundShellRegistry();
+    registry.setRegisterCallback((entry) => {
+      if (this.isShuttingDown || this.sessionAbortController.signal.aborted) {
+        return;
+      }
+      this.outputAdapter.emitSystemMessage('task_started', {
+        task_id: entry.shellId,
+        tool_use_id: entry.toolUseId,
+        description: entry.description,
+        task_type: 'local_bash',
+      });
+    });
+    registry.setNotificationCallback((displayText, modelText, meta) => {
+      if (this.isShuttingDown || this.sessionAbortController.signal.aborted) {
+        return;
+      }
+      const sdkNotification = {
+        task_id: meta.shellId,
+        tool_use_id: meta.toolUseId,
+        status: meta.status,
+        summary: displayText,
+        output_file: registry.get(meta.shellId)?.outputFile,
+      };
+      if (this.hostStoppedShells.delete(meta.shellId)) {
+        this.outputAdapter.emitSystemMessage(
+          'task_notification',
+          sdkNotification,
+        );
+        return;
+      }
+      this.enqueueMonitorNotification({
+        displayText,
+        modelText,
+        sdkNotification,
+      });
+    });
+    this.shellCallbacksRegistered = true;
+  }
+
+  /**
+   * Handle a stop_task control request: stop the background shell, monitor
+   * or background agent with this id. The task's end reaches the host as a
+   * `task_notification`; the model gets no turn for it.
+   */
+  private stopTask(taskId: string): Record<string, unknown> {
+    const shells = this.config.getBackgroundShellRegistry();
+    const shell = shells.get(taskId);
+    if (shell) {
+      if (shell.status !== 'running') {
+        return { stopped: false };
+      }
+      this.hostStoppedShells.add(taskId);
+      // Aborts only: the registry settles the shell, and notifies, once the
+      // process has drained.
+      shells.requestCancel(taskId);
+      return { stopped: true };
+    }
+
+    const monitors = this.config.getMonitorRegistry();
+    const monitor = monitors.get(taskId);
+    if (monitor) {
+      if (monitor.status !== 'running') {
+        return { stopped: false };
+      }
+      monitors.cancel(taskId, { notify: false });
+      return { stopped: true };
+    }
+
+    const agents = this.config.getBackgroundTaskRegistry();
+    const agent = agents.get(taskId);
+    if (agent) {
+      if (agent.status !== 'running') {
+        return { stopped: false };
+      }
+      agents.cancel(taskId);
+      return { stopped: true };
+    }
+
+    throw new Error(`No background task "${taskId}"`);
   }
 
   /**
@@ -351,6 +479,7 @@ class Session {
       waitForInitialization: () => this.waitForInitialization(),
       onInterrupt: () => this.handleInterrupt(),
       onContinueLastTurn: () => this.requestContinueLastTurn(),
+      onStopTask: (taskId) => this.stopTask(taskId),
     });
     this.dispatcher = new ControlDispatcher(this.controlContext);
     this.controlService = new ControlService(
@@ -720,7 +849,10 @@ class Session {
     }
 
     for (const item of batch) {
-      this.outputAdapter.emitUserMessage([{ text: item.displayText }]);
+      // The user line carries the <task-notification> the model is about to
+      // read and comes first: a host opens the notification turn on it, then
+      // reads what became of the task.
+      this.outputAdapter.emitUserMessage([{ text: item.modelText }]);
       this.outputAdapter.emitSystemMessage(
         'task_notification',
         item.sdkNotification,
@@ -764,7 +896,6 @@ class Session {
     while (
       (this.pendingContinueTurn ||
         this.userMessageQueue.length > 0 ||
-        this.monitorStartedQueue.length > 0 ||
         this.monitorQueue.length > 0) &&
       !this.isShuttingDown &&
       !this.sessionAbortController.signal.aborted
@@ -791,12 +922,6 @@ class Session {
         continue;
       }
 
-      const started = this.monitorStartedQueue.shift();
-      if (started) {
-        this.outputAdapter.emitSystemMessage('task_started', started);
-        continue;
-      }
-
       if (this.monitorQueue.length === 0) {
         continue;
       }
@@ -818,11 +943,6 @@ class Session {
     this.ensureProcessingStarted();
   }
 
-  private enqueueMonitorStarted(started: MonitorStartedQueueItem): void {
-    this.monitorStartedQueue.push(started);
-    this.ensureProcessingStarted();
-  }
-
   private enqueueMonitorNotification(notification: MonitorQueueItem): void {
     this.monitorQueue.push(notification);
     this.ensureProcessingStarted();
@@ -838,7 +958,6 @@ class Session {
       if (
         (this.pendingContinueTurn ||
           this.userMessageQueue.length > 0 ||
-          this.monitorStartedQueue.length > 0 ||
           this.monitorQueue.length > 0) &&
         !this.isShuttingDown &&
         !this.sessionAbortController.signal.aborted
@@ -956,6 +1075,7 @@ class Session {
     this.abortSession();
     this.abortTaskRegistries();
     this.stopMonitorCallbacks();
+    this.stopShellCallbacks();
 
     // Wait for all pending work
     await this.waitForAllPendingWork();
@@ -979,6 +1099,7 @@ class Session {
     // queued so EOF does not remain coupled to monitor process lifetime.
     this.abortTaskRegistries();
     this.stopMonitorCallbacks();
+    this.stopShellCallbacks();
     await this.waitForAllPendingWork();
     try {
       if (
@@ -1038,8 +1159,20 @@ class Session {
     }
     if (this.monitorRegistrationsRegistered) {
       registry.setRegisterCallback(undefined);
+      registry.setStatusChangeCallback(undefined);
       this.monitorRegistrationsRegistered = false;
     }
+  }
+
+  private stopShellCallbacks(): void {
+    if (!this.shellCallbacksRegistered) {
+      return;
+    }
+
+    const registry = this.config.getBackgroundShellRegistry();
+    registry.setNotificationCallback(undefined);
+    registry.setRegisterCallback(undefined);
+    this.shellCallbacksRegistered = false;
   }
 
   private cleanupSignalHandlers(): void {

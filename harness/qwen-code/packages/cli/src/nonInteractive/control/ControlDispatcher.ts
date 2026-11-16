@@ -383,6 +383,7 @@ export class ControlDispatcher implements IPendingRequestRegistry {
       case 'initialize':
       case 'interrupt':
       case 'continue_last_turn':
+      case 'stop_task':
       case 'set_model':
       case 'get_workflow_mode':
       case 'set_workflow_mode':

@@ -49,6 +49,12 @@ export interface IControlContext {
    * turn's output flows through the regular stream afterwards.
    */
   onContinueLastTurn?: () => Promise<Record<string, unknown>>;
+  /**
+   * Stop one background task by id (stop_task control request). Returns
+   * `{ stopped }`: false when the task had already ended. Throws for an id
+   * no task has.
+   */
+  onStopTask?: (taskId: string) => Record<string, unknown>;
 }
 
 /**
@@ -72,6 +78,7 @@ export class ControlContext implements IControlContext {
   waitForInitialization?: () => Promise<void>;
   onInterrupt?: () => void;
   onContinueLastTurn?: () => Promise<Record<string, unknown>>;
+  onStopTask?: (taskId: string) => Record<string, unknown>;
 
   constructor(options: {
     config: Config;
@@ -84,6 +91,7 @@ export class ControlContext implements IControlContext {
     waitForInitialization?: () => Promise<void>;
     onInterrupt?: () => void;
     onContinueLastTurn?: () => Promise<Record<string, unknown>>;
+    onStopTask?: (taskId: string) => Record<string, unknown>;
   }) {
     this.config = options.config;
     this.streamJson = options.streamJson;
@@ -99,5 +107,6 @@ export class ControlContext implements IControlContext {
     this.waitForInitialization = options.waitForInitialization;
     this.onInterrupt = options.onInterrupt;
     this.onContinueLastTurn = options.onContinueLastTurn;
+    this.onStopTask = options.onStopTask;
   }
 }

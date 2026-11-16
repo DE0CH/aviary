@@ -1826,6 +1826,7 @@ export async function runNonInteractive(
           task_id: entry.agentId,
           tool_use_id: entry.toolUseId,
           description: entry.description,
+          task_type: 'local_agent',
           subagent_type: entry.subagentType,
         });
       });

@@ -10132,6 +10132,7 @@ describe('runNonInteractive', () => {
         data: expect.objectContaining({
           task_id: 'fork-tool-fork-1',
           tool_use_id: 'tool-fork-1',
+          task_type: 'local_agent',
           subagent_type: 'fork',
         }),
       }),

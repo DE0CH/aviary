@@ -184,6 +184,12 @@ export interface ShellTask extends TaskBase {
    */
   sourceTurnId?: string;
   /**
+   * Id of the tool call that put this shell in the background. A
+   * stream-json host pairs the shell's `task_started` and
+   * `task_notification` with that call by it.
+   */
+  toolUseId?: string;
+  /**
    * @deprecated Read `id` instead; kept as a synonym during the back-compat
    * window. Always equals `id`.
    */
@@ -247,6 +253,7 @@ export interface ShellNotificationMeta {
   shellId: string;
   status: BackgroundShellStatus;
   exitCode?: number;
+  toolUseId?: string;
   todoWorkChainId?: string;
   sourceTurnId?: string;
 }
@@ -551,6 +558,9 @@ export class BackgroundShellRegistry {
     const xmlParts: string[] = [
       '<task-notification>',
       `<task-id>${escapeXml(entry.shellId)}</task-id>`,
+      ...(entry.toolUseId
+        ? [`<tool-use-id>${escapeXml(entry.toolUseId)}</tool-use-id>`]
+        : []),
       '<kind>shell</kind>',
       `<status>${escapeXml(entry.status)}</status>`,
       `<summary>Shell command "${escapeXml(commandLabel)}" ${statusText}.</summary>`,
@@ -589,6 +599,7 @@ export class BackgroundShellRegistry {
       shellId: entry.shellId,
       status: entry.status,
       exitCode: entry.exitCode,
+      toolUseId: entry.toolUseId,
       todoWorkChainId: entry.todoWorkChainId,
       sourceTurnId: entry.sourceTurnId,
     };

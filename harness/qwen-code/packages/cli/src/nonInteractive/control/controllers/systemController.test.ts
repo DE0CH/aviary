@@ -497,6 +497,54 @@ describe('SystemController', () => {
     });
   });
 
+  describe('stop_task', () => {
+    it('hands the task id to the session and merges its answer', async () => {
+      const onStopTask = vi.fn().mockReturnValue({ stopped: true });
+      const controller = new SystemController(
+        createContext({ onStopTask }),
+        createRegistry(),
+        'SystemController',
+      );
+
+      const result = await controller.handleRequest(
+        { subtype: 'stop_task', task_id: 'bg_1' },
+        'stop-1',
+      );
+
+      expect(onStopTask).toHaveBeenCalledExactlyOnceWith('bg_1');
+      expect(result).toEqual({ subtype: 'stop_task', stopped: true });
+    });
+
+    it('fails loudly when no session callback is registered', async () => {
+      const controller = new SystemController(
+        createContext(),
+        createRegistry(),
+        'SystemController',
+      );
+
+      await expect(
+        controller.handleRequest(
+          { subtype: 'stop_task', task_id: 'bg_1' },
+          'stop-2',
+        ),
+      ).rejects.toThrow(/was not registered on ControlContext/);
+    });
+
+    it('refuses a request that names no task', async () => {
+      const onStopTask = vi.fn();
+      const controller = new SystemController(
+        createContext({ onStopTask }),
+        createRegistry(),
+        'SystemController',
+      );
+
+      await expect(
+        controller.handleRequest({ subtype: 'stop_task' } as never, 'stop-3'),
+      ).rejects.toThrow(/task_id/);
+      expect(onStopTask).not.toHaveBeenCalled();
+    });
+  });
+
   describe('set_effort', () => {
     it('sets effort and returns applied=true when read-back matches', async () => {
       const context = createContext();

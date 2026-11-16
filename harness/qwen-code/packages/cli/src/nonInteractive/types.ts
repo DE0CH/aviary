@@ -317,6 +317,16 @@ export interface CLIControlContinueLastTurnRequest {
   subtype: 'continue_last_turn';
 }
 
+/**
+ * Stop one background task (a background shell, a monitor or a background
+ * agent) by the id its `task_started` message carried. The task's end is
+ * reported as a `task_notification` system message; the model is not told.
+ */
+export interface CLIControlStopTaskRequest {
+  subtype: 'stop_task';
+  task_id: string;
+}
+
 export interface CLIControlPermissionRequest {
   subtype: 'can_use_tool';
   tool_name: string;
@@ -470,6 +480,7 @@ export interface CLIControlGetContextUsageRequest {
 export type ControlRequestPayload =
   | CLIControlInterruptRequest
   | CLIControlContinueLastTurnRequest
+  | CLIControlStopTaskRequest
   | CLIControlPermissionRequest
   | CLIControlInitializeRequest
   | CLIControlSetPermissionModeRequest

@@ -37,7 +37,27 @@ refs/tags/vX.Y.Z` and `git merge`, never a rebase), tested against aviary's supe
   `QwenLogger` to be called (`telemetry/loggers.test.ts` and others) do not hold in this fork. The setting itself
   still gates what else upstream hangs on it (the models.dev catalogue refresh). OpenTelemetry export
   (`telemetry.*` settings) is upstream's: off unless configured, and aviary's settings turn it off.
-- `de0ch/` and `.github/workflows/de0ch-release.yml`: this file and the release build.
+- `packages/cli/src/nonInteractive/session.ts` and `control/` (`stop_task`),
+  `packages/core/src/services/backgroundShellRegistry.ts`, `tools/shell.ts`: a stream-json host is told of
+  background work as it is of Claude Code's. Upstream's headless session never listened to the background shell registry, so a shell started with
+  `is_background` was invisible to the host: aviary took the conversation for idle, showed no task and released the
+  sandbox under the shell (YYC AI, 2026-11-16), and nothing woke the model when the shell ended. Here:
+  - a background shell is a `system` line `task_started` (`data`: `task_id`, `tool_use_id` of the
+    `run_shell_command` call, `description`, `task_type: "local_bash"`), written at once, inside the turn that
+    started it. Its end waits for the running turn, then: a `user` line with the model's `<task-notification>`, a
+    `system` line `task_notification` (`data`: `task_id`, `tool_use_id`, `status`, `summary`, `output_file`), and a
+    turn of the model's own on that notification.
+  - a monitor's `task_started` is written at once as well (upstream held it back to the end of the turn) with
+    `task_type: "monitor"`; a monitor that ends with no notification for the session (cancelled silently, or owned
+    by a subagent) still gets its `task_notification`. A background agent's `task_started` names
+    `task_type: "local_agent"`.
+  - the control request `stop_task` (`task_id`) stops a background shell, a monitor or a background agent, as
+    Claude Code's does. The answer is `{stopped: true}`, `{stopped: false}` for a task that had already ended, an
+    error for an id no task has. The stopped task's `task_notification` (`cancelled`) follows; the model gets no
+    turn for it.
+  - `de0ch/background-tasks.e2e.mjs` drives the packed CLI through all of it against a stand-in model; the
+    release build runs it.
+- `de0ch/` and `.github/workflows/de0ch-release.yml`: this file, the end-to-end check and the release build.
 
 Everything else aviary needs is configuration, not a change here: the system settings file
 (`/etc/qwen-code/settings.json`: the models on the model route, `skills.directories` for the managed skills),

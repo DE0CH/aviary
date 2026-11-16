@@ -18,6 +18,7 @@ import type {
   ControlRequestPayload,
   CLIControlInitializeRequest,
   CLIControlSetModelRequest,
+  CLIControlStopTaskRequest,
   CLIControlSetEffortRequest,
   CLIControlGetUsageInfoRequest,
   CLIMcpServerConfig,
@@ -69,6 +70,9 @@ export class SystemController extends BaseController {
 
       case 'continue_last_turn':
         return this.handleContinueLastTurn();
+
+      case 'stop_task':
+        return this.handleStopTask(payload as CLIControlStopTaskRequest);
 
       case 'set_model':
         return this.handleSetModel(
@@ -573,6 +577,33 @@ export class SystemController extends BaseController {
     debugLogger.debug('[SystemController] continue_last_turn handled:', result);
 
     return { subtype: 'continue_last_turn', ...result };
+  }
+
+  /**
+   * Handle stop_task request
+   *
+   * Delegates to the session-provided callback, which stops the background
+   * shell, monitor or background agent with that id. The response reports
+   * `{ stopped }`; the task's end follows as a `task_notification` system
+   * message.
+   */
+  private handleStopTask(
+    payload: CLIControlStopTaskRequest,
+  ): Record<string, unknown> {
+    if (!this.context.onStopTask) {
+      throw new Error(
+        'stop_task callback (onStopTask) was not registered on ' +
+          'ControlContext — check session wiring',
+      );
+    }
+    if (typeof payload.task_id !== 'string' || payload.task_id.length === 0) {
+      throw new Error('stop_task needs a task_id');
+    }
+
+    const result = this.context.onStopTask(payload.task_id);
+    debugLogger.debug('[SystemController] stop_task handled:', result);
+
+    return { subtype: 'stop_task', ...result };
   }
 
   /**

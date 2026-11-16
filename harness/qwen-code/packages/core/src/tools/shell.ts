@@ -2916,12 +2916,17 @@ export class ShellToolInvocation extends BaseToolInvocation<
   private preparedSedEdit: PreparedSedEdit | undefined;
   private confirmedSedNewContent: string | undefined;
   private sedEditPreviewFailed = false;
+  private callId?: string;
 
   constructor(
     private readonly config: Config,
     params: ShellToolParams,
   ) {
     super(params);
+  }
+
+  setCallId(callId: string): void {
+    this.callId = callId;
   }
 
   private getSedEditInfo(): SedEditInfo | null {
@@ -5090,6 +5095,7 @@ export class ShellToolInvocation extends BaseToolInvocation<
       startTime,
       outputPath,
       abortController: entryAc,
+      toolUseId: this.callId,
     };
     // Reference `abortController` so it's not unused — the parameter
     // is kept on the signature so a future PR-2.5 that needs to
@@ -5513,6 +5519,7 @@ export class ShellToolInvocation extends BaseToolInvocation<
       startTime,
       outputPath,
       abortController: entryAc,
+      toolUseId: this.callId,
     };
 
     let executionHandle;

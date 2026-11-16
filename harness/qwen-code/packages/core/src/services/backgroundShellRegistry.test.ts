@@ -334,6 +334,24 @@ describe('BackgroundShellRegistry', () => {
       });
     });
 
+    it('names the tool call that launched the shell', () => {
+      const { modelText, meta } = notify({ shellId: 'a', toolUseId: 'call_7' });
+
+      // A stream-json host finds the launching call by this element and by
+      // the meta's id; it follows the task id, as a monitor's does.
+      expect(modelText).toContain(
+        '<task-id>a</task-id>\n<tool-use-id>call_7</tool-use-id>\n<kind>shell</kind>',
+      );
+      expect(meta.toolUseId).toBe('call_7');
+    });
+
+    it('leaves <tool-use-id> out for a shell no tool call launched', () => {
+      const { modelText, meta } = notify({ shellId: 'a' });
+
+      expect(modelText).not.toContain('<tool-use-id>');
+      expect(meta.toolUseId).toBeUndefined();
+    });
+
     it('carries the registering turn on the completion notification', () => {
       const callback = vi.fn();
       reg.setNotificationCallback(callback);

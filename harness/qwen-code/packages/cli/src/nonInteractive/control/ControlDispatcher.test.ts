@@ -176,6 +176,29 @@ describe('ControlDispatcher', () => {
       });
     });
 
+    it('should route stop_task request to system controller', async () => {
+      const request: CLIControlRequest = {
+        type: 'control_request',
+        request_id: 'req-stop',
+        request: {
+          subtype: 'stop_task',
+          task_id: 'bg_1',
+        },
+      };
+
+      vi.mocked(mockSystemController.handleRequest).mockResolvedValue({
+        subtype: 'stop_task',
+        stopped: true,
+      });
+
+      await dispatcher.dispatch(request);
+
+      expect(mockSystemController.handleRequest).toHaveBeenCalledWith(
+        request.request,
+        'req-stop',
+      );
+    });
+
     it('should route continue_last_turn request to system controller', async () => {
       const request: CLIControlRequest = {
         type: 'control_request',

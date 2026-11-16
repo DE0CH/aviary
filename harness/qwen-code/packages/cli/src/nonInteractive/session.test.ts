@@ -71,13 +71,21 @@ interface ConfigOverrides {
 let mockMonitorRegistry: {
   setNotificationCallback: ReturnType<typeof vi.fn>;
   setRegisterCallback: ReturnType<typeof vi.fn>;
+  setStatusChangeCallback: ReturnType<typeof vi.fn>;
   get: ReturnType<typeof vi.fn>;
+  cancel: ReturnType<typeof vi.fn>;
   abortAll: ReturnType<typeof vi.fn>;
 };
 let mockBackgroundShellRegistry: {
+  setNotificationCallback: ReturnType<typeof vi.fn>;
+  setRegisterCallback: ReturnType<typeof vi.fn>;
+  get: ReturnType<typeof vi.fn>;
+  requestCancel: ReturnType<typeof vi.fn>;
   abortAll: ReturnType<typeof vi.fn>;
 };
 let mockBackgroundTaskRegistry: {
+  get: ReturnType<typeof vi.fn>;
+  cancel: ReturnType<typeof vi.fn>;
   abortAll: ReturnType<typeof vi.fn>;
 };
 
@@ -234,13 +242,21 @@ describe('runNonInteractiveStreamJson', () => {
     mockMonitorRegistry = {
       setNotificationCallback: vi.fn(),
       setRegisterCallback: vi.fn(),
+      setStatusChangeCallback: vi.fn(),
       get: vi.fn().mockReturnValue({ status: 'running' }),
+      cancel: vi.fn(),
       abortAll: vi.fn(),
     };
     mockBackgroundShellRegistry = {
+      setNotificationCallback: vi.fn(),
+      setRegisterCallback: vi.fn(),
+      get: vi.fn().mockReturnValue(undefined),
+      requestCancel: vi.fn(),
       abortAll: vi.fn(),
     };
     mockBackgroundTaskRegistry = {
+      get: vi.fn().mockReturnValue(undefined),
+      cancel: vi.fn(),
       abortAll: vi.fn(),
     };
     config = createConfig();
@@ -306,6 +322,7 @@ describe('runNonInteractiveStreamJson', () => {
 
   type CapturedControlContext = {
     onContinueLastTurn?: () => Promise<Record<string, unknown>>;
+    onStopTask?: (taskId: string) => Record<string, unknown>;
     onInterrupt?: () => void;
     abortSignal?: AbortSignal;
     getActiveTurnAbortSignal?: () => AbortSignal | undefined;
@@ -1921,10 +1938,11 @@ describe('runNonInteractiveStreamJson', () => {
         task_id: 'mon_1',
         tool_use_id: 'tool_mon_1',
         description: 'logs',
+        task_type: 'monitor',
       },
     );
     expect(mockOutputAdapter.emitUserMessage).toHaveBeenCalledWith([
-      { text: 'Monitor "logs" event #1: ready' },
+      { text: notificationXml },
     ]);
     expect(mockOutputAdapter.emitSystemMessage).toHaveBeenCalledWith(
       'task_notification',
@@ -2109,6 +2127,7 @@ describe('runNonInteractiveStreamJson', () => {
         task_id: 'mon_before_eof',
         tool_use_id: 'tool_mon_before_eof',
         description: 'before eof',
+        task_type: 'monitor',
       },
     );
     expect(mockOutputAdapter.emitSystemMessage).not.toHaveBeenCalledWith(
@@ -2136,6 +2155,469 @@ describe('runNonInteractiveStreamJson', () => {
     expect(mockMonitorRegistry.setRegisterCallback).toHaveBeenLastCalledWith(
       undefined,
     );
+  });
+
+  describe('background tasks', () => {
+    type ShellEntry = {
+      shellId: string;
+      toolUseId?: string;
+      description: string;
+    };
+    type ShellMeta = { shellId: string; toolUseId?: string; status: string };
+    type MonitorEntry = {
+      monitorId: string;
+      toolUseId?: string;
+      description: string;
+      status?: string;
+    };
+    type MonitorMeta = {
+      monitorId: string;
+      toolUseId?: string;
+      status: string;
+    };
+
+    const shellXml =
+      '<task-notification>\n' +
+      '<task-id>bg_1</task-id>\n' +
+      '<tool-use-id>call_1</tool-use-id>\n' +
+      '<kind>shell</kind>\n' +
+      '<status>completed</status>\n' +
+      '<summary>Shell command "npm run render" completed.</summary>\n' +
+      '</task-notification>';
+    const shellDisplay = 'Background shell "npm run render" completed.';
+
+    function captureShellCallbacks() {
+      const shell: {
+        register?: (entry: ShellEntry) => void;
+        notify?: (display: string, model: string, meta: ShellMeta) => void;
+      } = {};
+      mockBackgroundShellRegistry.setRegisterCallback.mockImplementation(
+        (cb) => {
+          shell.register = cb;
+        },
+      );
+      mockBackgroundShellRegistry.setNotificationCallback.mockImplementation(
+        (cb) => {
+          shell.notify = cb;
+        },
+      );
+      return shell;
+    }
+
+    function captureMonitorCallbacks() {
+      const monitor: {
+        register?: (entry: MonitorEntry) => void;
+        notify?: (display: string, model: string, meta: MonitorMeta) => void;
+        statusChange?: (entry?: MonitorEntry) => void;
+      } = {};
+      mockMonitorRegistry.setRegisterCallback.mockImplementation((cb) => {
+        monitor.register = cb;
+      });
+      mockMonitorRegistry.setNotificationCallback.mockImplementation((cb) => {
+        monitor.notify = cb;
+      });
+      mockMonitorRegistry.setStatusChangeCallback.mockImplementation((cb) => {
+        monitor.statusChange = cb;
+      });
+      return monitor;
+    }
+
+    /** Starts a session whose input stays open until `close()`. */
+    function openSession(...messages: unknown[]) {
+      let closeInput: (() => void) | undefined;
+      mockInputReader.read = async function* () {
+        yield* messages;
+        await new Promise<void>((resolve) => {
+          closeInput = resolve;
+        });
+      };
+      const done = runNonInteractiveStreamJson(config, '');
+      return {
+        close: async () => {
+          closeInput?.();
+          await done;
+        },
+      };
+    }
+
+    const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+    function systemMessages(subtype: string): unknown[] {
+      return mockOutputAdapter.emitSystemMessage.mock.calls
+        .filter(([sent]) => sent === subtype)
+        .map(([, data]) => data);
+    }
+
+    function callOrder(
+      mock: ReturnType<typeof vi.fn>,
+      matches: (args: unknown[]) => boolean,
+    ): number {
+      const index = mock.mock.calls.findIndex((args) => matches(args));
+      expect(index).toBeGreaterThanOrEqual(0);
+      return mock.mock.invocationCallOrder[index]!;
+    }
+
+    it('reports a background shell when it starts and wakes the model when it ends', async () => {
+      const shell = captureShellCallbacks();
+      mockBackgroundShellRegistry.get.mockReturnValue({
+        shellId: 'bg_1',
+        status: 'completed',
+        outputFile: '/tmp/shells/bg_1.output',
+      });
+      let startedDuringTurn: unknown[] = [];
+      runNonInteractiveMock.mockImplementationOnce(async () => {
+        shell.register?.({
+          shellId: 'bg_1',
+          toolUseId: 'call_1',
+          description: 'npm run render',
+        });
+        startedDuringTurn = systemMessages('task_started');
+      });
+
+      const session = openSession(
+        createControlRequest('initialize'),
+        createUserMessage('Render it in the background'),
+      );
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+      });
+      await tick();
+      expect(mockOutputAdapter.emitUserMessage).not.toHaveBeenCalled();
+
+      shell.notify?.(shellDisplay, shellXml, {
+        shellId: 'bg_1',
+        toolUseId: 'call_1',
+        status: 'completed',
+      });
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(2);
+      });
+      await session.close();
+
+      expect(startedDuringTurn).toEqual([
+        {
+          task_id: 'bg_1',
+          tool_use_id: 'call_1',
+          description: 'npm run render',
+          task_type: 'local_bash',
+        },
+      ]);
+      expect(systemMessages('task_started')).toHaveLength(1);
+      expect(mockOutputAdapter.emitUserMessage.mock.calls).toEqual([
+        [[{ text: shellXml }]],
+      ]);
+      expect(systemMessages('task_notification')).toEqual([
+        {
+          task_id: 'bg_1',
+          tool_use_id: 'call_1',
+          status: 'completed',
+          summary: shellDisplay,
+          output_file: '/tmp/shells/bg_1.output',
+        },
+      ]);
+      expect(runNonInteractiveMock).toHaveBeenNthCalledWith(
+        2,
+        config,
+        expect.objectContaining({ merged: expect.any(Object) }),
+        shellXml,
+        expect.stringContaining('test-session'),
+        expect.objectContaining({
+          adapter: mockOutputAdapter,
+          sendMessageType: SendMessageType.Notification,
+          notificationDisplayText: shellDisplay,
+        }),
+      );
+
+      // The user line opens the host's turn, so it comes before the line
+      // that ends the task, and both before the model runs.
+      const userLine = callOrder(mockOutputAdapter.emitUserMessage, () => true);
+      const taskLine = callOrder(
+        mockOutputAdapter.emitSystemMessage,
+        ([sent]) => sent === 'task_notification',
+      );
+      const notificationTurn =
+        runNonInteractiveMock.mock.invocationCallOrder[1]!;
+      expect(userLine).toBeLessThan(taskLine);
+      expect(taskLine).toBeLessThan(notificationTurn);
+    });
+
+    it('keeps a shell that ends during a turn open until that turn is over', async () => {
+      const shell = captureShellCallbacks();
+      let endedDuringTurn: unknown[] = [{}];
+      let userLinesDuringTurn = -1;
+      runNonInteractiveMock.mockImplementationOnce(async () => {
+        shell.register?.({
+          shellId: 'bg_1',
+          toolUseId: 'call_1',
+          description: 'npm run render',
+        });
+        shell.notify?.(shellDisplay, shellXml, {
+          shellId: 'bg_1',
+          toolUseId: 'call_1',
+          status: 'completed',
+        });
+        await tick();
+        endedDuringTurn = systemMessages('task_notification');
+        userLinesDuringTurn =
+          mockOutputAdapter.emitUserMessage.mock.calls.length;
+      });
+
+      const session = openSession(
+        createControlRequest('initialize'),
+        createUserMessage('Render it in the background'),
+      );
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(2);
+      });
+      await session.close();
+
+      expect(endedDuringTurn).toEqual([]);
+      expect(userLinesDuringTurn).toBe(0);
+      expect(systemMessages('task_notification')).toEqual([
+        expect.objectContaining({ task_id: 'bg_1', status: 'completed' }),
+      ]);
+      expect(runNonInteractiveMock.mock.calls[1]?.[2]).toBe(shellXml);
+    });
+
+    it('stops a background shell for the host without a model turn', async () => {
+      const shell = captureShellCallbacks();
+      const { getControlContext } = installContinueDispatch();
+      mockBackgroundShellRegistry.get.mockReturnValue({
+        shellId: 'bg_1',
+        status: 'running',
+        outputFile: '/tmp/shells/bg_1.output',
+      });
+      runNonInteractiveMock.mockImplementationOnce(async () => {
+        shell.register?.({
+          shellId: 'bg_1',
+          toolUseId: 'call_1',
+          description: 'npm run render',
+        });
+      });
+
+      const session = openSession(
+        createControlRequest('initialize'),
+        createUserMessage('Render it in the background'),
+      );
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+      });
+      await tick();
+
+      expect(getControlContext()?.onStopTask?.('bg_1')).toEqual({
+        stopped: true,
+      });
+      expect(mockBackgroundShellRegistry.requestCancel).toHaveBeenCalledWith(
+        'bg_1',
+      );
+      expect(systemMessages('task_notification')).toEqual([]);
+
+      // The process has drained: the registry settles the shell.
+      shell.notify?.(
+        'Background shell "npm run render" was cancelled.',
+        shellXml.replace('completed', 'cancelled'),
+        { shellId: 'bg_1', toolUseId: 'call_1', status: 'cancelled' },
+      );
+      await tick();
+      await session.close();
+
+      expect(systemMessages('task_notification')).toEqual([
+        {
+          task_id: 'bg_1',
+          tool_use_id: 'call_1',
+          status: 'cancelled',
+          summary: 'Background shell "npm run render" was cancelled.',
+          output_file: '/tmp/shells/bg_1.output',
+        },
+      ]);
+      expect(mockOutputAdapter.emitUserMessage).not.toHaveBeenCalled();
+      expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('answers stop_task for a shell that has already ended', async () => {
+      const { getControlContext } = installContinueDispatch();
+      mockBackgroundShellRegistry.get.mockReturnValue({
+        shellId: 'bg_1',
+        status: 'completed',
+      });
+
+      const session = openSession(createControlRequest('initialize'));
+      await vi.waitFor(() => {
+        expect(getControlContext()?.onStopTask).toBeDefined();
+      });
+
+      expect(getControlContext()?.onStopTask?.('bg_1')).toEqual({
+        stopped: false,
+      });
+      expect(mockBackgroundShellRegistry.requestCancel).not.toHaveBeenCalled();
+      await session.close();
+    });
+
+    it('stops a monitor and a background agent for the host', async () => {
+      const { getControlContext } = installContinueDispatch();
+      mockMonitorRegistry.get.mockImplementation((id: string) =>
+        id === 'mon_1' ? { monitorId: 'mon_1', status: 'running' } : undefined,
+      );
+      mockBackgroundTaskRegistry.get.mockImplementation((id: string) =>
+        id === 'agent_1'
+          ? { agentId: 'agent_1', status: 'running' }
+          : undefined,
+      );
+
+      const session = openSession(createControlRequest('initialize'));
+      await vi.waitFor(() => {
+        expect(getControlContext()?.onStopTask).toBeDefined();
+      });
+      const stopTask = getControlContext()!.onStopTask!;
+
+      expect(stopTask('mon_1')).toEqual({ stopped: true });
+      expect(mockMonitorRegistry.cancel).toHaveBeenCalledWith('mon_1', {
+        notify: false,
+      });
+      expect(stopTask('agent_1')).toEqual({ stopped: true });
+      expect(mockBackgroundTaskRegistry.cancel).toHaveBeenCalledWith('agent_1');
+      expect(() => stopTask('nope')).toThrow('No background task "nope"');
+      await session.close();
+    });
+
+    it('reports a monitor when it starts, inside the turn that started it', async () => {
+      const monitor = captureMonitorCallbacks();
+      let startedDuringTurn: unknown[] = [];
+      runNonInteractiveMock.mockImplementationOnce(async () => {
+        monitor.register?.({
+          monitorId: 'mon_1',
+          toolUseId: 'tool_mon_1',
+          description: 'logs',
+        });
+        startedDuringTurn = systemMessages('task_started');
+      });
+
+      const session = openSession(
+        createControlRequest('initialize'),
+        createUserMessage('Start a monitor'),
+      );
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+      });
+      await session.close();
+
+      expect(startedDuringTurn).toEqual([
+        {
+          task_id: 'mon_1',
+          tool_use_id: 'tool_mon_1',
+          description: 'logs',
+          task_type: 'monitor',
+        },
+      ]);
+      expect(systemMessages('task_started')).toHaveLength(1);
+    });
+
+    it('ends a monitor that was cancelled without a notification', async () => {
+      const monitor = captureMonitorCallbacks();
+      runNonInteractiveMock.mockImplementationOnce(async () => {
+        monitor.register?.({
+          monitorId: 'mon_1',
+          toolUseId: 'tool_mon_1',
+          description: 'logs',
+        });
+      });
+
+      const session = openSession(
+        createControlRequest('initialize'),
+        createUserMessage('Start a monitor'),
+      );
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+      });
+      await tick();
+
+      // task_stop and the host's stop_task settle a monitor silently.
+      monitor.statusChange?.({
+        monitorId: 'mon_1',
+        toolUseId: 'tool_mon_1',
+        description: 'logs',
+        status: 'cancelled',
+      });
+      await tick();
+      await session.close();
+
+      expect(systemMessages('task_notification')).toEqual([
+        { task_id: 'mon_1', tool_use_id: 'tool_mon_1', status: 'cancelled' },
+      ]);
+      expect(mockOutputAdapter.emitUserMessage).not.toHaveBeenCalled();
+      expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('ends a monitor once when its end comes with a notification', async () => {
+      const monitor = captureMonitorCallbacks();
+      const endXml =
+        '<task-notification>\n' +
+        '<task-id>mon_1</task-id>\n' +
+        '<kind>monitor</kind>\n' +
+        '<status>completed</status>\n' +
+        '</task-notification>';
+      runNonInteractiveMock.mockImplementationOnce(async () => {
+        monitor.register?.({
+          monitorId: 'mon_1',
+          toolUseId: 'tool_mon_1',
+          description: 'logs',
+        });
+      });
+
+      const session = openSession(
+        createControlRequest('initialize'),
+        createUserMessage('Start a monitor'),
+      );
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(1);
+      });
+      await tick();
+
+      // The registry settles the monitor, then notifies, in one call.
+      mockMonitorRegistry.get.mockReturnValue({ status: 'completed' });
+      monitor.statusChange?.({
+        monitorId: 'mon_1',
+        toolUseId: 'tool_mon_1',
+        description: 'logs',
+        status: 'completed',
+      });
+      monitor.notify?.('Monitor "logs" completed. (0 events)', endXml, {
+        monitorId: 'mon_1',
+        toolUseId: 'tool_mon_1',
+        status: 'completed',
+      });
+      await vi.waitFor(() => {
+        expect(runNonInteractiveMock).toHaveBeenCalledTimes(2);
+      });
+      await session.close();
+
+      expect(systemMessages('task_notification')).toEqual([
+        { task_id: 'mon_1', tool_use_id: 'tool_mon_1', status: 'completed' },
+      ]);
+      expect(mockOutputAdapter.emitUserMessage.mock.calls).toEqual([
+        [[{ text: endXml }]],
+      ]);
+    });
+
+    it('stops listening to background shells at the end of input', async () => {
+      const session = openSession(createControlRequest('initialize'));
+      await vi.waitFor(() => {
+        expect(
+          mockBackgroundShellRegistry.setNotificationCallback,
+        ).toHaveBeenCalledWith(expect.any(Function));
+      });
+      expect(
+        mockBackgroundShellRegistry.setRegisterCallback,
+      ).toHaveBeenCalledWith(expect.any(Function));
+      await session.close();
+
+      expect(
+        mockBackgroundShellRegistry.setNotificationCallback,
+      ).toHaveBeenLastCalledWith(undefined);
+      expect(
+        mockBackgroundShellRegistry.setRegisterCallback,
+      ).toHaveBeenLastCalledWith(undefined);
+    });
   });
 
   it('enqueues user messages received during processing', async () => {
