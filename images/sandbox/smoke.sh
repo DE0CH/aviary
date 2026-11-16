@@ -99,6 +99,10 @@ check "Qwen Code keeps one video and two sounds per request and waits for a pers
   grep -rqF "An earlier video was here" "$d" || exit 1
   grep -rqF "An earlier sound clip was here" "$d" || exit 1
   grep -rqE "DEFAULT_CAN_USE_TOOL_TIMEOUT_MS ?= ?(2147483647|2_147_483_647)" "$d"'
+# The chat page fills its "/" list from the initialize answer's commands (the supervisor reads them from either
+# harness); upstream Qwen Code names none there, so the list was empty for every Qwen Code conversation.
+check "Qwen Code names its slash commands in its initialize answer" img_run "$img" -c '
+  grep -rqE "commands: ?await this\.loadSlashCommands\(signal\)" /opt/qwen-code/lib/node_modules/@qwen-code/qwen-code'
 check "Qwen Code runs as uid 1000, root-owned and not writable by it" img_run -u 1000 "$img" -c '
   /opt/qwen-code/bin/qwen --version | grep -Eq "^[0-9]+\.[0-9]+\.[0-9]+" || exit 1
   test "$(stat -c %u /opt/qwen-code/bin/qwen)" = 0 && test -d /etc/qwen-code
