@@ -214,7 +214,8 @@ pub fn fixed_env(harness: Harness, models: &Models) -> Vec<(&'static str, String
         ("API_TIMEOUT_MS", "600000".to_owned()),
     ];
     // the window of the model this Claude Code runs (`models.default`: the conversation's picked model, else the
-    // route's default): its own when the route names one for it
+    // route's default): its own when the route names one for it. Claude Code takes the variable for a model id it
+    // does not recognise (a `claude-` one from 2.1.324 on; images/sandbox/smoke.sh checks the window it states)
     let context = models.context_of(&models.default);
     if context > 0 {
         v.push(("CLAUDE_CODE_MAX_CONTEXT_TOKENS", context.to_string()));

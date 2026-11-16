@@ -52,7 +52,8 @@ wrappers, sudo, apt as uid 1000 and without root, the keeper without a credentia
 and supervisor (`--network host --privileged`) against `fuse-rig`'s world (fake hermit and fake magpie behind the
 reference test gateway) and `mock-model`: a magpie `start_turn` runs Claude Code with the descriptor's managed skill
 `echo`, and its Bash `curl`s the tools REST API (decision 15); its Messages API calls and that `curl` reach mock-model
-and fake-tools only through the gateway's proxy as `http://model/…` and `http://tools/v1/tools/echo`; then
+and fake-tools only through the gateway's proxy as `http://model/…` and `http://tools/v1/tools/echo`; Claude Code's
+model is a `claude-` id it does not recognise and it must state the models route's window for it (below); then
 Docker on demand as uid 1000 and a runtime stop (exit 0). On a host whose Docker bridge has no route out (an
 IPv6-only host), build with `SANDBOX_BUILD_FLAGS=--network=host` and smoke with `SMOKE_INTERNET_NETWORK=host`.
 `build.sh` exports with `rewrite-timestamp=true` (platform 5.2: the layers' file times from the commit), which needs a
@@ -89,6 +90,12 @@ driver on the containerd image store refuses it ("conflicts with unpack"). Elsew
   transcript. The managed files (`CLAUDE.md`, `managed-settings.json`, `.claude/skills/echo/SKILL.md`) are root's
   0644, there is no `managed-mcp.json`, Claude Code's init message lists no MCP server and no `mcp__*` tool, and its
   init message lists the skill `echo` among its `skills` (managed skills load under `--setting-sources=`).
+- **The window Claude Code runs a model at is read from Claude Code, not from its environment.** The supervisor
+  sets `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to the models route's window for the conversation's model; Claude Code takes
+  it for an id it does not recognise (a `claude-` one only from 2.1.324: before, such an id ran at 200k whatever
+  the variable said) and states the window it runs at in each `result` (`modelUsage[<id>].contextWindow`), which is
+  where it compacts. The smoke's models route names a `claude-` id no Claude Code recognises at 600000 and requires
+  that figure in the turn's `result`.
 - **Docker on demand under runc** needs `/var/lib/docker` on a volume (overlay snapshots cannot sit on the
   container's overlay root); in a sandbox it is on the scratch disk.
 - **Built in the images job.** ci.yml's `images` job builds it as `hermit-sandbox:<sha12>` from `build`'s `dist`

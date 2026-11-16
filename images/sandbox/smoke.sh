@@ -10,7 +10,9 @@
 #    `curl http://tools/v1/tools/echo` its Bash runs (decision 15: tools are REST, no MCP), must reach mock-model and
 #    fake-tools through the gateway's proxy as absolute-form `http://model/…` and `http://tools/v1/tools/echo`
 #    requests (the container has no address for either name, and only the gateway adds the verified
-#    `Aviary-Sandbox-*` headers mock-model and fake-tools file them under). Then Docker on demand through
+#    `Aviary-Sandbox-*` headers mock-model and fake-tools file them under). The models route names Claude Code's
+#    model as a `claude-` id no Claude Code recognises, with a window of its own: Claude Code must state that window
+#    in its `result` (it compacts a conversation at the window it states). Then Docker on demand through
 #    /run/supervisor/docker.sock, and a runtime stop.
 # Usage: smoke.sh <image> <dir with the static mock-model and fuse-rig of the same commit>
 # SMOKE_RUNTIME names a Docker runtime for part 2's sandbox container (ci.yml's `gvisor` job: runsc, the fork's
@@ -210,7 +212,16 @@ done
 fi
 
 echo "== the keeper and the supervisor against the test gateway${SMOKE_RUNTIME:+ (runtime $SMOKE_RUNTIME)}"
-"$bin/mock-model" --listen 127.0.0.1:7200 > "$work/mock-model.log" 2>&1 &
+# The models route: Claude Code's model is a `claude-` id it cannot recognise, at a window that is neither of the ones
+# Claude Code assumes for such an id (1M; 200k before 2.1.324, which did not take CLAUDE_CODE_MAX_CONTEXT_TOKENS for a
+# `claude-` id: a Jarvis 4 conversation on Fable 5.2 was compacted at 200k under 2.1.304, 2026-11-16).
+model_window=600000
+cat > "$work/models.json" <<JSON
+{"default": "claude-smoke-0", "small": "claude-smoke-0", "title": "example/model-small-0901", "contextTokens": 200000,
+ "models": [{"id": "claude-smoke-0", "label": "Smoke", "reasoning": "medium", "contextTokens": $model_window},
+            {"id": "example/model-small-0901", "label": "Small", "reasoning": null}]}
+JSON
+"$bin/mock-model" --listen 127.0.0.1:7200 --models "$work/models.json" > "$work/mock-model.log" 2>&1 &
 # the descriptor's memoryBytes: 16 GiB, since under runc the guard (supervisor 5) measures an unsized container on
 # a shared host, not a sandbox of hermit's size
 "$bin/fuse-rig" world "$work/rig" http://127.0.0.1:7200 17179869184 > "$work/fuse-rig.log" 2>&1 &
@@ -309,6 +320,10 @@ check "Claude Code has no MCP servers and no mcp__ tools" \
 check "Claude Code loaded the descriptor's managed skill echo (its init message's skills)" \
   jq -se '[.[] | select(.type == "system" and .subtype == "init")] | first | .skills | index("echo") != null' \
   "$work/stdout.ndjson"
+stated=$(jq -sr --arg m "$default_model" '[.[] | select(.type == "result") | .modelUsage[$m].contextWindow] | map(tostring) | join(" ")' "$work/stdout.ndjson")
+check "Claude Code runs $default_model, a claude- id it does not recognise, at the models route's window for it ($model_window; it states ${stated:-none})" \
+  jq -se --arg m "$default_model" --argjson w "$model_window" \
+    '[.[] | select(.type == "result") | .modelUsage[$m].contextWindow] | length > 0 and all(. == $w)' "$work/stdout.ndjson"
 check "mock-model filed Claude Code's Messages calls under the conversation the gateway adds ($(jq length "$work/requests.json"))" \
   jq -e 'length > 0' "$work/requests.json"
 check "the memory guard runs (the keeper is PID 1)" sh -c "! docker logs '$name' 2>&1 | grep -q 'memory guard off'"

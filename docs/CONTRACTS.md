@@ -203,7 +203,9 @@ counted in `<gw>_drain_cut_total{kind}`.
 A model may carry `thinking`, the levels a person may pick for it, lowest first (`none` = thinking off, then Claude
 Code's effort level names such as `low`, `high`, `max`); `reasoning` is then the level a conversation starts on.
 A model may carry its own `contextTokens` when its window is not the route's (a 1M model beside 200k ones): the
-supervisor runs Claude Code at the window of the model the conversation runs, the route's when the model names none.
+supervisor runs Claude Code at the window of the model the conversation runs, the route's when the model names none
+(`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, which Claude Code takes for a model id it does not recognise; one it recognises
+runs at Claude Code's own window for it).
 **A conversation's thinking level** goes the way of its picked model (where the deployment says
 `conversations.peoplePickModel`): pigeon lists every model with its levels in the provider snapshot (a thinking set
 per distinct list, the level ids as labels) and in `/api/providers/claude/models` (`thinking`, `reasoning` on each
