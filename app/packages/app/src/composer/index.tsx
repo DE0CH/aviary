@@ -7,8 +7,7 @@ import {
   type ComposerEditingSession,
 } from "./editing-session";
 import type { ComposerTextSource } from "./text-source";
-import { createStore, type StoreApi } from "zustand/vanilla";
-import { useStore } from "zustand";
+import { createStore } from "zustand/vanilla";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
@@ -97,9 +96,10 @@ import { useToast } from "@/contexts/toast-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
-import { AutocompletePopover } from "@/components/ui/autocomplete-popover";
-import type { AutocompleteOption } from "@/components/ui/autocomplete";
-import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
+import {
+  ComposerAutocompleteBinding,
+  type ComposerAutocompleteHandle,
+} from "@/composer/autocomplete-binding";
 import { usePluginClientSlashCommands } from "@/plugins/client-slash-commands";
 import {
   executePluginClientSlashCommand,
@@ -693,11 +693,6 @@ function ComposerKeyboardRegistration({
   return null;
 }
 
-function ComposerAutocomplete(props: React.ComponentProps<typeof AutocompletePopover>) {
-  const { isActiveComposer } = useComposerKeyboardScope();
-  return <AutocompletePopover {...props} visible={isActiveComposer && props.visible} />;
-}
-
 function resolveMessageInputPassthroughAction(
   actionId: string,
 ): MessageInputKeyboardActionKind | null {
@@ -1059,71 +1054,6 @@ interface ComposerProps {
 
 const EMPTY_ARRAY: readonly QueuedMessage[] = [];
 const StableMessageInput = memo(MessageInput);
-
-interface ComposerAutocompleteHandle {
-  onKeyPress: (event: ComposerKeyPressEvent) => boolean;
-}
-
-function ComposerAutocompleteBinding({
-  text,
-  cursor,
-  recall,
-  configuration,
-  inputRef,
-  children,
-  anchorStyle,
-  show,
-  ref,
-}: {
-  text: ComposerTextSource;
-  cursor: StoreApi<number>;
-  recall: ComposerRecall;
-  configuration: Omit<
-    Parameters<typeof useAgentAutocomplete>[0],
-    "userInput" | "cursorIndex" | "onAutocompleteApplied"
-  >;
-  inputRef: React.RefObject<MessageInputRef | null>;
-  children: React.ReactNode;
-  anchorStyle: React.ComponentProps<typeof View>["style"];
-  show: boolean;
-  ref: React.Ref<ComposerAutocompleteHandle>;
-}) {
-  const userInput = useSyncExternalStore(text.subscribe, text.getSnapshot, text.getSnapshot);
-  const cursorIndex = useStore(cursor);
-  const autocomplete = useAgentAutocomplete({
-    ...configuration,
-    userInput,
-    cursorIndex: Math.min(cursorIndex, userInput.length),
-    onAutocompleteApplied: () => inputRef.current?.focus(),
-  });
-  // A recalled message is sent as is; its leading `/command` must not open the picker.
-  const isShown = show && !recall.isShowing(userInput);
-  const handleKeyPress = autocomplete.onKeyPress;
-  useImperativeHandle(ref, () => ({ onKeyPress: (event) => isShown && handleKeyPress(event) }), [
-    isShown,
-    handleKeyPress,
-  ]);
-  const selectOption = autocomplete.onSelectOption;
-  const onSelect = useCallback(
-    (option: AutocompleteOption) => selectOption(option, inputRef.current?.getInputSnapshot()),
-    [selectOption, inputRef],
-  );
-  return (
-    <ComposerAutocomplete
-      visible={autocomplete.isVisible && isShown}
-      anchorStyle={anchorStyle}
-      options={autocomplete.options}
-      selectedIndex={autocomplete.selectedIndex}
-      onSelect={onSelect}
-      isLoading={autocomplete.isLoading}
-      errorMessage={autocomplete.errorMessage}
-      loadingText={autocomplete.loadingText}
-      emptyText={autocomplete.emptyText}
-    >
-      {children}
-    </ComposerAutocomplete>
-  );
-}
 
 function ComposerForgeBinding({
   text,
@@ -2672,7 +2602,8 @@ function ComposerContentImpl({
               recall={recall}
               inputRef={messageInputRef}
               anchorStyle={messageInputContainerStyle}
-              show={mode.showAutocomplete && !isFullscreen}
+              mode={mode}
+              show={!isFullscreen}
               ref={autocompleteRef}
               configuration={autocompleteConfiguration}
             >

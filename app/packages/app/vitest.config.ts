@@ -34,6 +34,22 @@ export default defineConfig({
       },
     },
     {
+      name: "reanimated-web-utils-esm",
+      // Reanimated loads react-native-web's style compiler with `require`, which Vite does not
+      // have: without the compiler an animated style on a mounted view throws. Metro resolves it.
+      transform(_source, id) {
+        if (!id.split("?")[0].endsWith("/ReanimatedModule/js-reanimated/webUtils.web.js")) return;
+        return {
+          code: [
+            'import createReactDOMStyle from "react-native-web/dist/exports/StyleSheet/compiler/createReactDOMStyle";',
+            'import { createTransformValue, createTextShadowValue } from "react-native-web/dist/exports/StyleSheet/preprocess";',
+            "export { createReactDOMStyle, createTransformValue, createTextShadowValue };",
+          ].join("\n"),
+          map: null,
+        };
+      },
+    },
+    {
       name: "compile-usage-components",
       enforce: "pre",
       transform(source, id) {
@@ -149,6 +165,22 @@ export default defineConfig({
         ".tsx",
         ".json",
       ],
+      plugins: [
+        {
+          name: "scan-stops-at-host-runtime",
+          // The scan for dependencies to bundle follows every static import of every browser test,
+          // `vi.mock` or not. The host runtime imports most of the app (the panels, the plugins,
+          // every icon), which the stubs below do not cover: one name a stub lacks fails the scan,
+          // and then every browser test's dependencies are found one reload at a time. A browser
+          // test of something that reads the host runtime mocks it, so the scan stops there too.
+          setup(build) {
+            build.onResolve({ filter: /^@\/runtime\/host-runtime$/ }, (args) => ({
+              path: args.path,
+              external: true,
+            }));
+          },
+        },
+      ],
     },
     // Bundle the CJS dependencies of the excluded gesture-handler package for the browser.
     include: [
@@ -162,6 +194,9 @@ export default defineConfig({
       "@marijn/find-cluster-break",
       "tiny-invariant",
       "react/jsx-dev-runtime",
+      // What the reanimated-web-utils-esm plugin above imports.
+      "react-native-web/dist/exports/StyleSheet/compiler/createReactDOMStyle",
+      "react-native-web/dist/exports/StyleSheet/preprocess",
       "react-native-gesture-handler > hoist-non-react-statics",
       "react-native-gesture-handler > invariant",
     ],
@@ -172,6 +207,10 @@ export default defineConfig({
       "react-native-keyboard-controller",
     ],
   },
+  // The browser tests' server compiles a module when the page asks for it, not ahead of that: a
+  // module a test mocks is never asked for, and compiling it ahead (the host runtime, then all it
+  // imports) finds dependencies in the middle of a test and reloads the page.
+  server: { preTransformRequests: false },
   // babel-preset-expo compiles JSX with the automatic runtime, so app modules don't import React.
   esbuild: { jsx: "automatic" },
   // The globals a React Native bundler defines, which esbuild is no longer there to supply for

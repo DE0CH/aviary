@@ -40,6 +40,11 @@ interface UseAgentAutocompleteInput {
   onClientSlashCommand?: (command: ClientSlashCommand) => void;
   canExecuteClientSlashCommand?: boolean;
   pluginClientSlashCommands?: readonly PluginClientSlashCommand[];
+  /** `@` completes the workspace's files. Off where the server lists none. Default: on. */
+  fileMentions?: boolean;
+  /** The app's own commands (`/clear`, `/exit`) are listed with the server's. Off: the list names only what the
+   * server answers, less the names the app runs itself when they are sent. Default: on. */
+  clientCommands?: boolean;
 }
 
 interface AgentAutocompleteKeyPressEvent {
@@ -196,6 +201,7 @@ interface BuildAutocompleteOptionsInput {
   commands: AgentSlashCommand[];
   pluginCommands: readonly PluginClientSlashCommand[];
   isDraftContext: boolean;
+  clientCommands: boolean;
   commandFilterQuery: string;
   activeSlashCommand: SlashCommandRange | null;
   activeFileMention: FileMentionRange | null;
@@ -223,7 +229,10 @@ function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
         );
       },
     })
-      .filter((entry) => !input.isDraftContext || entry.source !== "built-in")
+      // a built-in wins its name over the server's command, so leaving it out leaves that name out
+      .filter(
+        (entry) => (input.clientCommands && !input.isDraftContext) || entry.source !== "built-in",
+      )
       .map((entry): AvailableCommand => {
         if (entry.source === "built-in") return { source: "client", command: entry.command };
         return entry;
@@ -374,6 +383,8 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     onAutocompleteApplied,
     onClientSlashCommand,
     canExecuteClientSlashCommand,
+    fileMentions = true,
+    clientCommands = true,
     pluginClientSlashCommands = [],
   } = input;
 
@@ -396,7 +407,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
       }),
     [cursorIndex, userInput],
   );
-  const showFileAutocomplete = activeFileMention !== null;
+  const showFileAutocomplete = fileMentions && activeFileMention !== null;
   const fileFilterQuery = activeFileMention?.query ?? "";
   const [debouncedFileFilterQuery, setDebouncedFileFilterQuery] = useState(fileFilterQuery);
 
@@ -489,6 +500,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
         activeSlashCommand,
         fileSuggestions: fileSuggestionsQuery.data ?? [],
         isDraftContext,
+        clientCommands,
         isVisible,
         mode,
         t,
@@ -501,6 +513,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
       pluginClientSlashCommands,
       fileSuggestionsQuery.data,
       isDraftContext,
+      clientCommands,
       isVisible,
       mode,
       t,

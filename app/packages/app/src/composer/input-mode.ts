@@ -14,7 +14,12 @@ export interface ComposerInputModePresentation {
    * chips are all chat-agent affordances. A terminal prompt becomes argv. */
   showAttachments: boolean;
   showVoice: boolean;
-  showAutocomplete: boolean;
+  /** `/` lists the conversation's slash commands, as the server answers them. */
+  showCommandAutocomplete: boolean;
+  /** `@` completes the workspace's files. */
+  showFileAutocomplete: boolean;
+  /** The app's own commands (`/clear`, `/exit`) are in the `/` list, and run when picked. */
+  showClientCommands: boolean;
   showAgentControls: boolean;
   /** YYC AI: the model and thinking menu, where the model chip would be (yyc/model-menu.tsx). */
   showModelLabel: boolean;
@@ -25,12 +30,14 @@ export interface ComposerInputModePresentation {
 }
 
 const PRESENTATION_BY_MODE: Record<ComposerInputMode, ComposerInputModePresentation> = {
-  // CloudCLI's server: no dictation, no slash commands or @files, one model and no modes, so the
-  // chat composer is text and attachments only (docs/paseo-ui.md).
+  // The chat's server: no dictation, no @files and no modes. `/` lists the conversation's slash
+  // commands; picking one only writes its name into the message (docs/paseo-ui.md).
   chat: {
     showAttachments: true,
     showVoice: false,
-    showAutocomplete: false,
+    showCommandAutocomplete: true,
+    showFileAutocomplete: false,
+    showClientCommands: false,
     showAgentControls: false,
     showModelLabel: true,
     isMonospace: false,
@@ -39,7 +46,9 @@ const PRESENTATION_BY_MODE: Record<ComposerInputMode, ComposerInputModePresentat
   terminal: {
     showAttachments: false,
     showVoice: false,
-    showAutocomplete: false,
+    showCommandAutocomplete: false,
+    showFileAutocomplete: false,
+    showClientCommands: false,
     showAgentControls: false,
     showModelLabel: false,
     isMonospace: true,
