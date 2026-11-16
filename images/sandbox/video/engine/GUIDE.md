@@ -24,8 +24,11 @@ clip footage/NAME.MP4 --start 20 --end 50   # a stretch;  --fps 4 for fast actio
 ```
 
 It prints two files, the picture (`.mp4`, no sound) and the sound (`.mp3`). Open BOTH with read_file in the same
-step; they then stay in the conversation and you can look and listen again while you plan. A sound track inside a
-video file is not heard, which is why the sound is its own file. Second 0 of a clip is its `--start` in the original:
+step. A sound track inside a video file is not heard, which is why the sound is its own file.
+
+Only the clip you opened last stays in view: one video at a time (and the two newest sounds). Opening the next clip
+takes the previous video out of view, so before you move on, write down what you saw and heard in the clip (what
+happens at which second, what is said) in a notes file in `work/`. To look at an earlier clip again, open it again. Second 0 of a clip is its `--start` in the original:
 add `--start` to every time you take from it.
 
 Never read_file a source video or a finished one directly: cut it with `clip` first.

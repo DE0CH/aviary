@@ -91,6 +91,14 @@ check "Claude Code $claude_version runs as uid 1000" \
   img_run -u 1000 "$img" -c "/opt/claude-code/bin/claude --version | grep -qF '$claude_version'"
 check "a login shell's claude is the same binary" \
   img_run -u 1000 "$img" -lc 'test "$(readlink -f "$(command -v claude)")" = "$(readlink -f /opt/claude-code/bin/claude)"'
+# The fork's fixes YYC AI's video editing needs (DE0CH/qwen-code de0ch/README.md): a request carries the newest video
+# and the two newest sounds only (the model endpoint refuses more, and upstream then strips every picture and sound),
+# and a question to the person does not give up after 60 s.
+check "Qwen Code keeps one video and two sounds per request and waits for a person's answer" img_run "$img" -c '
+  d=/opt/qwen-code/lib/node_modules/@qwen-code/qwen-code
+  grep -rqF "An earlier video was here" "$d" || exit 1
+  grep -rqF "An earlier sound clip was here" "$d" || exit 1
+  grep -rqE "DEFAULT_CAN_USE_TOOL_TIMEOUT_MS ?= ?(2147483647|2_147_483_647)" "$d"'
 check "Qwen Code runs as uid 1000, root-owned and not writable by it" img_run -u 1000 "$img" -c '
   /opt/qwen-code/bin/qwen --version | grep -Eq "^[0-9]+\.[0-9]+\.[0-9]+" || exit 1
   test "$(stat -c %u /opt/qwen-code/bin/qwen)" = 0 && test -d /etc/qwen-code
