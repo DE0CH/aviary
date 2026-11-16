@@ -17,20 +17,20 @@ jobs:
     timeout-minutes: 45
     env:
       # corepack fetches the pinned pnpm without asking (a prompt nobody answers hangs the job)
-      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
-      CI: "true"
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+      CI: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: '22'
       - name: install
         run: |
           corepack enable
           corepack pnpm install --frozen-lockfile
       - name: the test of what this fork changes
         working-directory: packages/core
-        run: corepack pnpm exec vitest run src/core/openaiContentGenerator/converter.test.ts src/core/openaiContentGenerator/media-budget.test.ts src/utils/runtimeFetchOptions.test.ts
+        run: corepack pnpm exec vitest run src/core/openaiContentGenerator/converter.test.ts src/core/openaiContentGenerator/media-budget.test.ts src/utils/runtimeFetchOptions.test.ts src/telemetry/qwen-logger/no-usage-statistics.test.ts
       - name: the test of what this fork changes in the CLI
         working-directory: packages/cli
         run: corepack pnpm exec vitest run src/nonInteractive/control/controllers/permissionController.test.ts src/nonInteractive/control/controllers/systemController.test.ts
@@ -42,6 +42,12 @@ jobs:
           cd dist
           npm pack
           mv qwen-code-qwen-code-*.tgz ../qwen-code-de0ch.tgz
+      - name: the packed CLI names no usage statistics endpoint
+        run: |
+          mkdir "$RUNNER_TEMP/packed" && tar -xzf qwen-code-de0ch.tgz -C "$RUNNER_TEMP/packed"
+          if grep -rlE 'rum\.aliyuncs\.com' "$RUNNER_TEMP/packed"; then
+            echo "the usage statistics upload is back (de0ch/README.md)"; exit 1
+          fi
       - name: the packed CLI installs and starts
         run: |
           npm install --no-audit --no-fund --prefix "$RUNNER_TEMP/qwen" -g ./qwen-code-de0ch.tgz

@@ -28,6 +28,15 @@ refs/tags/vX.Y.Z` and `git merge`, never a rebase), tested against aviary's supe
 - `packages/cli/src/nonInteractive/control/controllers/systemController.ts`: the `initialize` answer names the slash
   commands (`commands`: name, description, argumentHint), as Claude Code's does. aviary's supervisor fills the chat
   page's "/" list from that answer; without it the list was empty for every Qwen Code conversation.
+- `packages/core/src/telemetry/qwen-logger/qwen-logger.ts`: no usage statistics (Deyao, 2026-11-16). Upstream posts
+  a record of every session, prompt, tool call and model request to Alibaba Cloud RUM
+  (`gb4w8c3ygj-default-sea.rum.aliyuncs.com`) unless `privacy.usageStatisticsEnabled` is false. Here
+  `QwenLogger.getInstance()` hands out no logger whatever that setting says, and the request, its endpoint and its
+  proxy and retry handling are gone from `flushToRum`. The release build refuses a bundle that names the endpoint.
+  `no-usage-statistics.test.ts` replaces upstream's `qwen-logger.test.ts`; upstream's tests that expect a
+  `QwenLogger` to be called (`telemetry/loggers.test.ts` and others) do not hold in this fork. The setting itself
+  still gates what else upstream hangs on it (the models.dev catalogue refresh). OpenTelemetry export
+  (`telemetry.*` settings) is upstream's: off unless configured, and aviary's settings turn it off.
 - `de0ch/` and `.github/workflows/de0ch-release.yml`: this file and the release build.
 
 Everything else aviary needs is configuration, not a change here: the system settings file

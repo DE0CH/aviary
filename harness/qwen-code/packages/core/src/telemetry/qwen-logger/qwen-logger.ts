@@ -4,12 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Buffer } from 'buffer';
-import * as https from 'https';
 import * as os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
-import { HttpsProxyAgent } from 'https-proxy-agent';
 import { Storage } from '../../config/storage.js';
 
 import type {
@@ -73,56 +70,17 @@ import {
   createDebugLogger,
   type DebugLogger,
 } from '../../utils/debugLogger.js';
-import { safeJsonStringify } from '../../utils/safeJsonStringify.js';
 import { sanitizeHookName } from '../sanitize.js';
 import { InstallationManager } from '../../config/installationManager.js';
 import { FixedDeque } from 'mnemonist';
 import { AuthType } from '../../core/contentGenerator.js';
 
-// Usage statistics collection endpoint
-const USAGE_STATS_HOSTNAME = 'gb4w8c3ygj-default-sea.rum.aliyuncs.com';
-const USAGE_STATS_PATH = '/';
-
-/**
- * Port the upload reaches {@link USAGE_STATS_HOSTNAME} on: the request sets no
- * explicit port, so `https.request` falls back to the scheme default.
- */
-const USAGE_STATS_PORT = 443;
+// DE0CH: this fork sends no usage statistics (de0ch/README.md). Upstream
+// posts every queued event to Alibaba Cloud RUM from this file; the endpoint,
+// the request and its proxy and retry handling are taken out, and
+// getInstance() hands out no logger, so nothing is queued either.
 
 const RUN_APP_ID = 'gb4w8c3ygj@851d5d500f08f92';
-
-/**
- * Whether `NO_PROXY` / `no_proxy` excludes a host from proxying, mirroring
- * undici's `EnvHttpProxyAgent#shouldProxy` — the dispatcher the session's own
- * egress installs, and the reason `NO_PROXY` is honored there.
- * `HttpsProxyAgent` has no such notion, so the rule has to be applied at the
- * point the agent is chosen or uploads ignore an explicit exclusion.
- *
- * Mirrored details: lowercase `no_proxy` wins over `NO_PROXY`; a bare `*`
- * disables proxying entirely; entries split on comma/whitespace; a leading `.`
- * or `*.` is stripped so an entry matches the host and its subdomains; a
- * port-qualified entry only matches that port.
- */
-function isExcludedByNoProxy(hostname: string, port: number): boolean {
-  const noProxy = process.env['no_proxy'] ?? process.env['NO_PROXY'] ?? '';
-  if (!noProxy) return false;
-  if (noProxy === '*') return true;
-
-  for (const entry of noProxy.split(/[,\s]/)) {
-    if (!entry) continue;
-    const withPort = entry.match(/^(.+):(\d+)$/);
-    const entryPort = withPort ? Number.parseInt(withPort[2], 10) : 0;
-    if (entryPort && entryPort !== port) continue;
-    const entryHost = (withPort ? withPort[1] : entry)
-      .replace(/^\*?\./, '')
-      .toLowerCase();
-    if (hostname === entryHost) return true;
-    if (hostname.slice(-(entryHost.length + 1)) === `.${entryHost}`)
-      return true;
-  }
-
-  return false;
-}
 
 /**
  * Interval in which buffered events are sent to RUM.
@@ -130,21 +88,11 @@ function isExcludedByNoProxy(hostname: string, port: number): boolean {
 const FLUSH_INTERVAL_MS = 1000 * 60;
 
 /**
- * Minimum interval between logging network errors to avoid log spam.
- */
-const ERROR_LOG_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-
-/**
  * Maximum amount of events to keep in memory. Events added after this amount
  * are dropped until the next flush to RUM, which happens periodically as
  * defined by {@link FLUSH_INTERVAL_MS}.
  */
 const MAX_EVENTS = 1000;
-
-/**
- * Maximum events to retry after a failed RUM flush
- */
-const MAX_RETRY_EVENTS = 100;
 
 const ERROR_TEXT_PROPERTY_KEYS = ['error_message', 'error_excerpt'];
 const REDACTED_ERROR_TEXT = '***REDACTED***';
@@ -156,7 +104,6 @@ export interface LogResponse {
 // Singleton class for batch posting log events to RUM. When a new event comes in, the elapsed time
 // is checked and events are flushed to RUM if at least a minute has passed since the last flush.
 export class QwenLogger {
-  private static instance: QwenLogger;
   private config?: Config;
   private debugLogger: DebugLogger;
   private readonly installationManager: InstallationManager;
@@ -182,22 +129,6 @@ export class QwenLogger {
    */
   private sourceInfo: string = '';
 
-  /**
-   * The value is true when there is a pending flush happening. This prevents
-   * concurrent flush operations.
-   */
-  private isFlushInProgress: boolean = false;
-
-  /**
-   * This value is true when a flush was requested during an ongoing flush.
-   */
-  private pendingFlush: boolean = false;
-
-  /**
-   * Timestamp of the last network error log to prevent log spam.
-   */
-  private lastErrorLogTime: number = 0;
-
   private constructor(config: Config) {
     this.config = config;
     this.debugLogger = createDebugLogger('QWEN_LOGGER');
@@ -215,14 +146,10 @@ export class QwenLogger {
     return `user-${installationId ?? 'unknown'}`;
   }
 
-  static getInstance(config?: Config): QwenLogger | undefined {
-    if (config === undefined || !config?.getUsageStatisticsEnabled())
-      return undefined;
-    if (!QwenLogger.instance) {
-      QwenLogger.instance = new QwenLogger(config);
-    }
-
-    return QwenLogger.instance;
+  // DE0CH: never a logger, whatever privacy.usageStatisticsEnabled says: every
+  // caller is `QwenLogger.getInstance(config)?.log…`, so no event is built.
+  static getInstance(_config?: Config): QwenLogger | undefined {
+    return undefined;
   }
 
   enqueueLogEvent(event: RumEvent): void {
@@ -402,87 +329,12 @@ export class QwenLogger {
     return '';
   }
 
+  // DE0CH: upstream posts the queue to Alibaba Cloud RUM here; this fork
+  // drops it.
   async flushToRum(): Promise<LogResponse> {
-    if (this.isFlushInProgress) {
-      this.debugLogger.debug(
-        'QwenLogger: Flush already in progress, marking pending flush.',
-      );
-      this.pendingFlush = true;
-      return Promise.resolve({});
-    }
-    this.isFlushInProgress = true;
-
-    if (this.events.size === 0) {
-      this.isFlushInProgress = false;
-      return {};
-    }
-
-    const eventsToSend = this.events.toArray() as RumEvent[];
     this.events.clear();
-
-    const rumPayload = await this.createRumPayload();
-    // Override events with the ones we're sending
-    rumPayload.events = eventsToSend;
-    try {
-      await new Promise<Buffer>((resolve, reject) => {
-        const body = safeJsonStringify(rumPayload);
-        const options = {
-          hostname: USAGE_STATS_HOSTNAME,
-          path: USAGE_STATS_PATH,
-          method: 'POST',
-          headers: {
-            'Content-Length': Buffer.byteLength(body),
-            'Content-Type': 'text/plain;charset=UTF-8',
-          },
-        };
-        const bufs: Buffer[] = [];
-        const req = https.request(
-          {
-            ...options,
-            agent: this.getProxyAgent(),
-          },
-          (res) => {
-            if (
-              res.statusCode &&
-              (res.statusCode < 200 || res.statusCode >= 300)
-            ) {
-              const err = new Error(
-                `Request failed with status ${res.statusCode}`,
-              );
-              res.resume();
-              return reject(err);
-            }
-            res.on('data', (buf) => bufs.push(buf));
-            res.on('end', () => resolve(Buffer.concat(bufs)));
-          },
-        );
-        req.on('error', reject);
-        req.end(body);
-      });
-
-      this.lastFlushTime = Date.now();
-      return {};
-    } catch (error) {
-      // Only log network errors if sufficient time has passed to avoid spam
-      const now = Date.now();
-      if (now - this.lastErrorLogTime > ERROR_LOG_INTERVAL_MS) {
-        this.debugLogger.error('RUM flush failed.', error);
-        this.lastErrorLogTime = now;
-      }
-
-      // Re-queue failed events for retry
-      this.requeueFailedEvents(eventsToSend);
-      return {};
-    } finally {
-      this.isFlushInProgress = false;
-
-      // If a flush was requested while we were flushing, flush again
-      if (this.pendingFlush) {
-        this.pendingFlush = false;
-        // Fire and forget the pending flush
-        void this.flushToRum();
-      }
-    }
+    this.lastFlushTime = Date.now();
+    return {};
   }
 
   // session events
@@ -1266,68 +1118,9 @@ export class QwenLogger {
     this.enqueueLogEvent(rumEvent);
     this.flushIfNeeded();
   }
-
-  getProxyAgent() {
-    const proxyUrl = this.config?.getProxy();
-    if (!proxyUrl) return undefined;
-    if (isExcludedByNoProxy(USAGE_STATS_HOSTNAME, USAGE_STATS_PORT)) {
-      return undefined;
-    }
-    // undici which is widely used in the repo can only support http & https proxy protocol,
-    // https://github.com/nodejs/undici/issues/2224
-    if (/^https?:\/\//i.test(proxyUrl)) {
-      return new HttpsProxyAgent(proxyUrl);
-    } else {
-      throw new Error('Unsupported proxy type');
-    }
-  }
-
-  private requeueFailedEvents(eventsToSend: RumEvent[]): void {
-    // Add the events back to the front of the queue to be retried, but limit retry queue size
-    const eventsToRetry = eventsToSend.slice(-MAX_RETRY_EVENTS); // Keep only the most recent events
-
-    // Log a warning if we're dropping events
-    if (eventsToSend.length > MAX_RETRY_EVENTS) {
-      this.debugLogger.warn(
-        `QwenLogger: Dropping ${
-          eventsToSend.length - MAX_RETRY_EVENTS
-        } events due to retry queue limit. Total events: ${
-          eventsToSend.length
-        }, keeping: ${MAX_RETRY_EVENTS}`,
-      );
-    }
-
-    // Determine how many events can be re-queued
-    const availableSpace = MAX_EVENTS - this.events.size;
-    const numEventsToRequeue = Math.min(eventsToRetry.length, availableSpace);
-
-    if (numEventsToRequeue === 0) {
-      return;
-    }
-
-    // Get the most recent events to re-queue
-    const eventsToRequeue = eventsToRetry.slice(
-      eventsToRetry.length - numEventsToRequeue,
-    );
-
-    // Prepend events to the front of the deque to be retried first.
-    // We iterate backwards to maintain the original order of the failed events.
-    for (let i = eventsToRequeue.length - 1; i >= 0; i--) {
-      this.events.unshift(eventsToRequeue[i]);
-    }
-    // Clear any potential overflow
-    while (this.events.size > MAX_EVENTS) {
-      this.events.pop();
-    }
-
-    this.debugLogger.debug(
-      `QwenLogger: Re-queued ${numEventsToRequeue} events for retry (queue size: ${this.events.size})`,
-    );
-  }
 }
 
 export const TEST_ONLY = {
-  MAX_RETRY_EVENTS,
   MAX_EVENTS,
   FLUSH_INTERVAL_MS,
 };
