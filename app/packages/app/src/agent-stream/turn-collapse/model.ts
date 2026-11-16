@@ -90,6 +90,8 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
   const hostIdByFoldedMessageId = new Map<string, string>();
 
   let runStart = 0;
+  // an opened turn hides no row, but its pinned cards still moved under the reply
+  let reordered = false;
   const flushRun = (runEnd: number) => {
     const prompt = tail[runStart - 1];
     const isClosed = runEnd < tail.length || !input.isLatestTurnOpen;
@@ -124,6 +126,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
     if (expanded) output.push(...folded);
     output.push(...tail.slice(replyIndex, runEnd));
     output.push(...pinned);
+    if (pinned.length > 0) reordered = true;
   };
 
   for (let index = 0; index < tail.length; index += 1) {
@@ -143,7 +146,7 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
     };
   }
   return {
-    tail: output.length === tail.length ? tail : output,
+    tail: output.length === tail.length && !reordered ? tail : output,
     turnsByHostId,
     nestedItemIds,
     hostIdByFoldedMessageId,

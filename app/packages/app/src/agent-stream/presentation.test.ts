@@ -680,11 +680,12 @@ describe("a call that sent files to the person", () => {
   function present(
     source: { tail: StreamItem[]; head: StreamItem[] },
     display: "collapseToolCalls" | "collapseTurns",
+    expandedTurnHostIds: ReadonlySet<string> = new Set<string>(),
   ) {
     return createStreamPresentation()({
       ...source,
       display,
-      expandedTurnHostIds: new Set<string>(),
+      expandedTurnHostIds,
       isTurnActive: false,
       transform: undefined,
     });
@@ -716,7 +717,8 @@ describe("a call that sent files to the person", () => {
   });
 
   it.each(cases)("from $sender, $arrival: stays under the reply when the turn folds", ({ arrival, events }) => {
-    const folded = present(arrivals[arrival]([...before, ...events, ...after]), "collapseTurns");
+    const source = arrivals[arrival]([...before, ...events, ...after]);
+    const folded = present(source, "collapseTurns");
     expect(rows(folded).map(label)).toEqual(["prompt", "reply", "send"]);
     expect(folded.groupsByHostId.has(rows(folded)[2]!.id)).toBe(false);
     expect(folded.turns.turnsByHostId.get("prompt")?.summary.tools).toMatchObject({
@@ -724,6 +726,9 @@ describe("a call that sent files to the person", () => {
       commandCount: 0,
       otherToolCount: 0,
     });
+    // opened, the turn's steps show above the reply and the cards stay where they were
+    const opened = present(source, "collapseTurns", new Set(["prompt"]));
+    expect(rows(opened).map(label)).toEqual(["prompt", "read", "reply", "send"]);
   });
 
   it("shows the cards while the turn is still running", () => {

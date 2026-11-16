@@ -111,6 +111,10 @@ describe("collapseTurns", () => {
       expect(result.turnsByHostId.get("u1")?.summary.tools).toEqual(
         expect.objectContaining({ commandCount: 1, otherToolCount: 0 }),
       );
+      // opened, the turn's steps show above the reply and the cards stay under it
+      const opened = collapse([user("u1"), shell("c1"), sent, reply("final")], { expandedHostIds: new Set(["u1"]) });
+      expect(ids(opened.tail)).toEqual(["u1", "c1", "final", sent.id]);
+      expect([...opened.nestedItemIds]).toEqual(["c1"]);
     }
     // a command that sent nothing folds with the rest
     const plain = collapse([user("u1"), shell("c1"), shell("c2"), reply("final")]);
