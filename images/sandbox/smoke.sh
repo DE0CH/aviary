@@ -117,6 +117,14 @@ check "Qwen Code reports its background shells and takes stop_task" img_run "$im
   d=/opt/qwen-code/lib/node_modules/@qwen-code/qwen-code
   grep -rqE "task_type: ?.local_bash." "$d" || exit 1
   grep -rqF "stop_task needs a task_id" "$d"'
+# The chat shows a reply as it is written and then finds it in the transcript by (message id, block index). The fork
+# names the stream of a reply by the uuid its transcript record will have and numbers the blocks as the record's
+# parts; upstream Qwen Code names it otherwise, so every answer stood twice in the chat for a moment and the chat
+# jumped down and back (DE0CH/qwen-code de0ch/README.md; its release runs the comparison on the packed CLI).
+check "Qwen Code names a reply in its stream as its transcript records it" img_run "$img" -c '
+  d=/opt/qwen-code/lib/node_modules/@qwen-code/qwen-code
+  grep -rqF "reserveAssistantRecordUuid" "$d"'
+
 # The fork sends no usage statistics (DE0CH/qwen-code de0ch/README.md). Upstream posts a record of every session,
 # prompt, tool call and model request to Alibaba Cloud RUM unless `privacy.usageStatisticsEnabled` is false, which the
 # managed settings never said: sandboxes tried the upload on every turn.

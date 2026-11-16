@@ -45,6 +45,10 @@ ran before, for a pick back.
   shell runs `send-file [--caption TEXT] PATH…` (the supervisor binary under that name), which names no tool call;
   the driver puts the files on the open shell call that runs it, one send per call. Its instructions say so
   (`launch::QWEN_SEND_FILE`).
+- **The reply as it is written.** Live frames are keyed by the message id and block index the transcript's rows
+  will have (magpie 7.5). Claude Code's `stream_event` lines carry them. Qwen Code upstream names a reply's stream
+  by an id of its own and numbers every block 0; the fork names it by the uuid of the record it is about to write
+  and numbers the blocks as the record's parts, so the driver reads both harnesses' streams the same way.
 - **Background tasks.** Both write `system` lines `task_started` and `task_notification` for a background shell, a
   monitor and a subagent, and take the `stop_task` control request; Claude Code writes a task's fields on the line,
   Qwen Code (the fork) under `data` (`cc/stream.rs` reads both). A Qwen Code monitor's event is a
