@@ -105,7 +105,7 @@ pub struct SandboxJson {
     /// many images (at least 1). Absent = never.
     #[serde(default)]
     pub compact_at_images: Option<u32>,
-    /// The deployment's shared folder: folder `<drive>` at the top of the JuiceFS volume, mounted at `/drive` in
+    /// The deployment's shared folder: folder `<drive>` at the top of the `JuiceFS` volume, mounted at `/drive` in
     /// every sandbox (one folder all conversations share; a deployment's own file page may serve the same folder).
     /// Absent = none. Lowercase letters, digits and `-`, never `ws`.
     #[serde(default)]
@@ -352,18 +352,10 @@ impl Config {
         ] {
             parse_quantity(m).ok_or_else(|| invalid(format!("fabric: {m:?} is not a quantity")))?;
         }
-        if let Some(d) = &s.drive {
-            // sandboxd's rule for a spec's `drive`
-            let ok = !d.is_empty()
-                && d.len() <= 64
-                && d != "ws"
-                && d.bytes()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-');
-            if !ok {
-                return Err(invalid(
-                    "sandbox.drive must be lowercase letters, digits and -, and not ws",
-                ));
-            }
+        if s.drive.as_deref().is_some_and(|d| !valid_drive(d)) {
+            return Err(invalid(
+                "sandbox.drive must be lowercase letters, digits and -, and not ws",
+            ));
         }
         let workspace_quota_bytes = u64::from(s.workspace.quota_gib) << 30;
         // sandboxd's range for a spec's `scratchBytes`
@@ -480,6 +472,15 @@ fn read(path: &Path) -> Result<String, ConfigError> {
         path: path.display().to_string(),
         source,
     })
+}
+
+/// sandboxd's rule for a spec's `drive`: a folder name, never `ws` (the conversations' workspaces).
+fn valid_drive(d: &str) -> bool {
+    !d.is_empty()
+        && d.len() <= 64
+        && d != "ws"
+        && d.bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
 }
 
 /// `sha256:<64 hex>` from `<repo>@sha256:<64 hex>`.
