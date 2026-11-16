@@ -1,7 +1,7 @@
 # testing/e2e: the integration harness (platform 7)
 
 The real turn path on one machine: the app protocol into pigeon, magpie, hermit, the supervisor in the real sandbox
-image, Claude Code 2.1.304, the reference gateway and mock-model, with real Postgres, a real S3, real JuiceFS for
+image, Claude Code 2.1.325, the reference gateway and mock-model, with real Postgres, a real S3, real JuiceFS for
 `/workspace`, real NetworkPolicies and real rollouts. No cloud account, no model cost. ci.yml's `e2e` job runs it on
 every push; the same script runs on a laptop with Docker.
 
@@ -71,7 +71,7 @@ acceptance on the real binary (WP-12's carried item): person turns with a foregr
 call, `/compact` with `CLAUDE_CODE_TRANSCRIPT_LOCAL_GC=1` (in hermit.json's `sandbox.env`), and a turn after it;
 every turn completes, the compaction and the subagent's transcript and meta file are in magpie, no line has two
 events, every user or assistant line that is not a prompt's echo (a slash command's `<command-name>` form included)
-has its event, and the subagent's lines made none. The tombstone stays unreproduced by 2.1.304 (supervisor GATE.md
+has its event, and the subagent's lines made none. The tombstone stays unreproduced by 2.1.325 (supervisor GATE.md
 open item 3). Then E6 (120 turns, then `tail` and `before` pages of 40: no gap, no repeat, no page slower than
 twice the first), E7 (the socket closed at the first live row and reopened: the catch-up after the last seen seq and
 the live rows end every row where the timeline ends it), E8 (Stop during a 60 s stream: canceled at once, the next turn works), E10 (`kill -9` of the

@@ -473,14 +473,14 @@ async fn events(h: &Harness, id: &str) -> anyhow::Result<Vec<Value>> {
     }
 }
 
-/// magpie 20's Claude Code acceptance on the real binary (WP-12's carried item): Claude Code 2.1.304 in the sandbox
+/// magpie 20's Claude Code acceptance on the real binary (WP-12's carried item): Claude Code 2.1.325 in the sandbox
 /// image, its transcript written through the supervisor's FUSE mount into magpie, person turns (each prompt the echo
 /// of its `user.sent`): a foreground subagent with its own tool call, `/compact` (with
 /// `CLAUDE_CODE_TRANSCRIPT_LOCAL_GC=1` from hermit.json's `sandbox.env`, the compaction's temp file renamed over the
 /// transcript), and a turn after it. Passes when every turn completes, magpie's main transcript holds the compaction,
 /// the subagent's transcript and its meta file are in magpie, no two `cc.*` events carry one line `uuid` (a retract's
 /// replacement aside), every user or assistant line of the final transcript that is not a prompt echo has its event,
-/// and no event comes from the subagent's transcript. The tombstone of 9.1's script is not reproduced by 2.1.304
+/// and no event comes from the subagent's transcript. The tombstone of 9.1's script is not reproduced by 2.1.325
 /// (crates/supervisor/GATE.md, open item 3).
 #[allow(clippy::too_many_lines)] // one scenario: its turns, then its checks in the order of the doc
 async fn cc(h: &Harness) -> anyhow::Result<()> {

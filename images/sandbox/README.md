@@ -23,7 +23,7 @@ keeper of the same aviary commit. Ported from jarvis3's
 | `smoke.sh` | | the image smoke test (`ci.yml` job `sandbox-smoke`) |
 
 What is in it: Debian trixie with Node 22; documents, PDF and spreadsheet tools, CJK fonts, a Python venv `/opt/py`
-owned by uid 1000; Docker (dockerd started on demand); Claude Code 2.1.304 root-owned at `/opt/claude-code` (the
+owned by uid 1000; Docker (dockerd started on demand); Claude Code 2.1.325 root-owned at `/opt/claude-code` (the
 supervisor runs `/opt/claude-code/bin/claude` by that path; `/usr/local/bin/claude` links to it for shells);
 Qwen Code (a release of DE0CH/qwen-code pinned by sha256: `QWEN_CODE_RELEASE`, `QWEN_CODE_SHA256`) root-owned at
 `/opt/qwen-code` (`/opt/qwen-code/bin/qwen`, `/usr/local/bin/qwen`); the video edit engine, its tools and its asset

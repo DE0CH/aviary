@@ -70,10 +70,10 @@ RUN install -m 0755 -d /etc/apt/keyrings \
 COPY --chmod=755 docker-wrapper.sh /usr/local/bin/docker
 
 # Claude Code at the version supervisor spec 3 pins, root-owned outside every directory uid 1000 can write (A11.F13):
-# the supervisor runs /opt/claude-code/bin/claude by that absolute path (in 2.1.304 the package's native
+# the supervisor runs /opt/claude-code/bin/claude by that absolute path (in 2.1.325 the package's native
 # bin/claude.exe). /usr/local/bin/claude is a root-owned link to it for shells. The managed files in /etc/claude-code
 # are the supervisor's (supervisor spec 6.4), written at its first start.
-ARG CLAUDE_CODE_VERSION=2.1.304
+ARG CLAUDE_CODE_VERSION=2.1.325
 RUN npm install --prefix /opt/claude-code -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
  && npm cache clean --force \
  && rm -rf /root/.npm \

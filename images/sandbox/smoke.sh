@@ -22,7 +22,7 @@
 set -uo pipefail
 img=${1:?image}
 bin=$(cd "${2:?dir with mock-model and fuse-rig}" && pwd)
-claude_version=2.1.304
+claude_version=2.1.325
 work=$(mktemp -d)
 name=sandbox-smoke-$$
 status=0
