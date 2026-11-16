@@ -83,9 +83,13 @@ decided in this order:
      endpoints differ in how they render a long tool-and-image conversation), applies the thinking level (a chat
      turn, i.e. a request with tools: `models[].reasoning`; on a model with `models[].thinking`, the levels a person
      may choose, the one its caller asks for among them: none when the request has no `thinking` or a disabled one,
-     else `output_config.effort`, which is how Claude Code sends its thinking switch and effort level; brought down to
-     the nearest level offered, the lowest when the model cannot switch thinking off. A request without tools:
-     `titleReasoning` on the title model), refuses a model outside `models[].id`, `defaultModel`,
+     else `output_config.effort`, which is how Claude Code sends its thinking switch and effort level; a chat
+     completions request names it in its own `reasoning.effort`, which is how Qwen Code sends it, and none there is
+     never taken from a missing member; brought down to the nearest level offered, the lowest when the model cannot
+     switch thinking off. A request without tools: `titleReasoning` on the title model. The level goes out in the
+     request's own API's words, since OpenRouter reads no other: on `/v1/messages` `reasoning.effort`, and Anthropic's
+     `thinking: {type: "disabled"}` for none; on `/v1/chat/completions` `reasoning.effort` for every level, none
+     included, and `thinking` is not passed on), refuses a model outside `models[].id`, `defaultModel`,
      `smallModel`, `titleModel` (400 `deny:model`) and every call once the budget is used up (402 `budget_exceeded`,
      `deny:budget`), streams the answer back and logs its `usage.cost` (kind `model`). No `Aviary-*` header (no staff
      identity) reaches OpenRouter. **Memory:** a request carries the whole conversation, base64 images included, and
