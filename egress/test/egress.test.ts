@@ -82,7 +82,7 @@ function config(upstream: string, extra: Record<string, unknown> = {}): EgressCo
       // a sandbox route (platform 3.11.8), as YYC's label store: its own credential and conversation header
       { name: "labels", upstream: `${upstream}/labels-up`, inject: { "CF-Access-Client-Id": "${LABELS_ID}", "CF-Access-Client-Secret": "${LABELS_SECRET}" }, allowPaths: ["/api/v1/"], identityHeaders: { "X-Jarvis-Conversation": "conversation" }, timeoutSeconds: 180 },
       // a sandbox route to an outside service (YYC's `code`: a private GitHub repo, read-only): no staff identity
-      { name: "code", upstream: `${upstream}/code-up`, inject: { Authorization: "Basic ${CODE_BASIC}" }, allowPaths: ["/DE0CH/YYC/"], identity: false, timeoutSeconds: 600 },
+      { name: "code", upstream: `${upstream}/code-up`, inject: { Authorization: "Basic ${CODE_BASIC}" }, allowPaths: ["/DE0CH/yyc-code/"], identity: false, timeoutSeconds: 600 },
     ],
     selfHosts: ["vip.egress.test"],
     maxUploadBytes: 256 * 1024,
@@ -972,15 +972,15 @@ test("sandbox route (labels): its credential injected, the conversation header s
 
 test("sandbox route without identity (code): its credential injected, no Aviary-* header or caller credential reaches the upstream; git's paths pass", async () => {
   const forged = { ...FORGED, "aviary-sandbox-person": "forged@example.org", authorization: "Basic Zm9yZ2VkOmZvcmdlZA==" };
-  const r = await http("http://code/DE0CH/YYC/info/refs?service=git-upload-pack", { headers: { ...pa(), ...forged, "git-protocol": "version=2" } });
+  const r = await http("http://code/DE0CH/yyc-code/info/refs?service=git-upload-pack", { headers: { ...pa(), ...forged, "git-protocol": "version=2" } });
   assert.equal(r.status, 200);
   const got = JSON.parse(r.body);
-  assert.equal(got.url, "/code-up/DE0CH/YYC/info/refs?service=git-upload-pack");
+  assert.equal(got.url, "/code-up/DE0CH/yyc-code/info/refs?service=git-upload-pack");
   assert.equal(got.headers.authorization, "Basic eDpyZWFkb25seQ==");
   assert.equal(got.headers["git-protocol"], "version=2");
   assert.deepEqual(Object.keys(got.headers).filter((k) => k.startsWith("aviary-")), []);
   assert.ok(!JSON.stringify(got.headers).includes("staff@example.org") && !JSON.stringify(got.headers).includes(sb.claims.conversationId));
-  const p = await http("http://code/DE0CH/YYC/git-upload-pack", { method: "POST", headers: { ...pa(), "content-type": "application/x-git-upload-pack-request" }, body: "0011command=fetch0000" });
+  const p = await http("http://code/DE0CH/yyc-code/git-upload-pack", { method: "POST", headers: { ...pa(), "content-type": "application/x-git-upload-pack-request" }, body: "0011command=fetch0000" });
   assert.equal(p.status, 200);
   assert.equal(JSON.parse(p.body).body, "0011command=fetch0000");
   // another repository is not on the route
@@ -1303,7 +1303,7 @@ test("sandbox route: a large download passes at the reader's pace; egress never 
   const s = netConnect(port, "127.0.0.1");
   await new Promise<void>((r) => s.once("connect", () => r()));
   s.pause(); // a sandbox slower than the upstream: it reads nothing yet
-  s.write(`GET http://code/DE0CH/YYC/big HTTP/1.1\r\nHost: code\r\nProxy-Authorization: ${basic(sb.token)}\r\nx-big: ${total}\r\nConnection: close\r\n\r\n`);
+  s.write(`GET http://code/DE0CH/yyc-code/big HTTP/1.1\r\nHost: code\r\nProxy-Authorization: ${basic(sb.token)}\r\nx-big: ${total}\r\nConnection: close\r\n\r\n`);
   await sleep(1500);
   const held = upBig;
   await sleep(1500);
@@ -1315,7 +1315,7 @@ test("sandbox route: a large download passes at the reader's pace; egress never 
   await new Promise<void>((r) => s.once("close", () => r()));
   assert.equal(upBig, total * MIB);
   assert.ok(got >= total * MIB && got < total * MIB + 4096, `the whole file arrived (${got})`);
-  const row = (await rows()).filter((x) => x.kind === "route" && x.path === "/DE0CH/YYC/big").at(-1);
+  const row = (await rows()).filter((x) => x.kind === "route" && x.path === "/DE0CH/yyc-code/big").at(-1);
   assert.deepEqual([row.status, Number(row.bytes_down)], [200, total * MIB]);
 });
 

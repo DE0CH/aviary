@@ -1,5 +1,5 @@
 # YYC set: the news and data sources YYC staff work with (curated from the hosts YYC's news-stream collects from,
-# DE0CH/YYC news-stream/, and the outlets YYC AI's tools name). Short on purpose: most of these are also in the
+# DE0CH/yyc-code news-stream/, and the outlets YYC AI's tools name). Short on purpose: most of these are also in the
 # ranked set; listing them here keeps them reachable whatever the ranking does.
 # Syntax: `host` = exactly that name; `.domain` = the domain and every name under it.
 

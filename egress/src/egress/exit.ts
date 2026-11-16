@@ -1,5 +1,5 @@
 // The deployment's way out (egress.json `exit`): egress hands every internet connection to a SOCKS5 server by host
-// name, and that server resolves the name, checks the address and connects (YYC: its yyc-socks pool, DE0CH/YYC
+// name, and that server resolves the name, checks the address and connects (YYC: its yyc-socks pool, DE0CH/yyc-code
 // socks/README.md). With an exit, egress neither resolves internet names nor checks addresses itself: the exit's
 // `sandbox` profile does both (malware-blocking DNS, public addresses only) and answers why it refused, which egress
 // logs as the same decisions it logs when it resolves on its own (deny:threat, deny:nxdomain, deny:dns, deny:address).
