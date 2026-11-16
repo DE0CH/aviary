@@ -17,7 +17,7 @@ Jarvis 4 session machine (harness aviary)                                     �
       ├─ model ─▶ api.anthropic.com with the session's current Claude login (a Claude model)
       │          openrouter.ai with OPENROUTER_API (an OpenRouter model: GLM 5.3)
       └─ internet (CONNECT, absolute-form HTTP)
-  supervisor-keeper (PID 1 of its own PID + mount namespace: aviary-sandbox) ─▶ supervisor ─▶ Claude Code in /workspace
+  aviary's sandbox image (aviary-sandbox): supervisor-keeper (PID 1) ─▶ supervisor ─▶ Claude Code in /workspace
 ```
 
 ## Decisions (Deyao, 2026-11-11)
@@ -64,7 +64,7 @@ Jarvis 4 session machine (harness aviary)                                     �
 | `aviary-gateway` | `src/bin/aviary-gateway.rs` → `src/machine.rs`, in the session image | the machine's half of the gateway, the signed boot, the supervisor's health, deliveries |
 | `harness-aviary.sh`, `aviary-sandbox` | `session-image/base/` | the harness launcher and the supervisor's namespace |
 | the session's tunnel agent | `harness-aviary.sh` `run_tunnel` (`cf-tunnel-agent.js`) | `https://<session id>-s.deyaochen.com/` → 127.0.0.1:8899 on the machine, which the sandbox shares: its drop pages and content. The agent runs on the machine's side because the tunnel proof never enters the sandbox |
-| supervisor, keeper | DE0CH/aviary release assets, pinned in `session-image/aviary.json` | |
+| the sandbox: supervisor, keeper, Claude Code, the agent's tools | DE0CH/aviary's sandbox image `ghcr.io/de0ch/hermit-sandbox`, pinned by digest in `session-image/aviary.json`, unpacked on the session's volume and entered by `aviary-sandbox` | the image YYC AI's sandboxes run, unmodified |
 | pigeon, magpie, pigeon-app | DE0CH/deyao-ai `k8s/chat/` | pinned by DE0CH/deyao-ai `chat-pin.yml` |
 | router | `router/machinesig.go`, harness `aviary` in `router/harness.go`, `router/remote.go` | |
 
@@ -77,12 +77,22 @@ Jarvis 4 session machine (harness aviary)                                     �
    `POST /v1/hermit/conversations`, idempotent by `session:<id>`), and a sandbox row for this boot. It answers the
    sandbox token (`hst1`, Ed25519, `HERMIT_TOKEN_KEYS`) and the control token. The same machine booting again (a
    gateway restart) keeps its sandbox.
-2. **The supervisor** starts as root through `sudo aviary-sandbox <boot env>`: PID 1 of a new PID namespace, `/proc`
-   its own (the memory guard sees only the agent's processes), `/home/sandbox` a bind of `/home/claude` with an empty
-   tmpfs on `.claude` (magpie's FUSE goes there), `/workspace` a bind of `~/workspace`, `/etc/claude-code` a tmpfs.
-   The network is the machine's: the agent reaches `$JARVIS_URL`, `session-secret`'s socket and the ssh agent as in
-   any session. Its descriptor (through the gateway) carries the machine's non-secret Jarvis values
-   (`src/wire.rs` `BOOT_ENV_NAMES`) and the proxy variables; no secret travels through hermit.
+2. **The sandbox** starts as root through `sudo aviary-sandbox <boot env>`, in DE0CH/aviary's own sandbox image
+   (`ghcr.io/de0ch/hermit-sandbox`, the image YYC AI's sandboxes run, pinned by digest in
+   `session-image/aviary.json`; Deyao, 2026-11-16: dogfooding means the same build, the sandbox included). The first
+   start unpacks it on the session's volume (1.4 GB to fetch, 3.3 GB on disk, a few minutes); the root is an overlay
+   over it (what the agent installs stays while the session lives), entered with `pivot_root`, and the image's
+   entrypoint (supervisor-keeper) runs as PID 1 of a new PID namespace with the image's environment plus the boot
+   environment. The supervisor, Claude Code and the agent's tools are the image's; the machine's own root is not
+   visible. Jarvis 4 puts in only what a deployment implements: `/home/sandbox` is the machine's `/home/claude` with
+   the volume's `~/workspace` and `~/artifacts` (and an empty `.harness`, where the supervisor mounts magpie's FUSE;
+   `aviary-home` gives the home what the image's home holds, the `~/.claude` link above all), `/workspace` the
+   harness's working directory, `/run/jarvis` (`session-secret`'s socket, the ssh agent), and Jarvis's session
+   commands in `/usr/local/bin` (`jarvis`, `jarvis-request`, `jarvis-message`, `session-secret`, `pull-secrets`,
+   `content-sync`). The network is the machine's: the agent reaches `$JARVIS_URL` as in any session. Its descriptor
+   (through the gateway) carries the machine's non-secret Jarvis values (`src/wire.rs` `BOOT_ENV_NAMES`) and the
+   proxy variables; no secret travels through hermit. What the session image has and aviary's image has not (a
+   browser, `gh`, `ssh`, Go, Rust) the agent installs with `apt-get` as in any aviary sandbox.
 3. **Ready**: `aviary-gateway` reads the supervisor's `GET :7070/v1/health` every 2 s and reports it to hermit
    (`POST /jarvis/health`), which marks the sandbox `ready`. The session's status on its card is the supervisor's
    run state in the registry's words (`src/machine.rs` `jarvis_status`, served in `/jarvis/state`, written by the
@@ -119,8 +129,10 @@ at Cloudflare) cuts it off.
 
 ## Bumping aviary (dogfooding)
 
-`aviary-pin.yml` (every 15 min) pins DE0CH/aviary's newest release into `session-image/aviary.json` and this crate's
-`Cargo.toml`; DE0CH/deyao-ai `chat-pin.yml` pins the same release's pigeon and magpie, the newest pigeon-app and
+`aviary-pin.yml` (every 15 min) pins DE0CH/aviary's newest release into `session-image/aviary.json` (the release
+and its sandbox image by digest) and this crate's `Cargo.toml`, once the replica below passed on the candidate (its
+session image built as `jarvis4-session:pin-<release>`, on a real Fly machine): a release that breaks a session's
+sandbox stays unpinned, with the run red. DE0CH/deyao-ai `chat-pin.yml` pins the same release's pigeon and magpie, the newest pigeon-app and
 hermit-jarvis. A release exists only when aviary's CI passed, so every green aviary commit reaches Jarvis 4 within
 the hour, before YYC AI (whose pins move by hand).
 
@@ -142,7 +154,7 @@ hermit-jarvis, magpie of the pinned aviary release from its image, a TLS Postgre
 model (Claude Code's calls arrive with the account's token as on a real machine), and a real Fly machine on the
 current session image. Checked: the machine boots a sandbox through hermit-jarvis, the supervisor runs Claude Code on
 magpie's ~/.claude, the first prompt arrives, a Bash tool call runs in the sandbox and its output comes back in the
-answer, the wakeup that command armed through the session's Jarvis API arrives as a later turn (all read back
+answer (and ran in aviary's sandbox image, with Jarvis's session commands there), the wakeup that command armed through the session's Jarvis API arrives as a later turn (all read back
 through magpie's admin API), and destroy burns the source. Nothing of production's is touched; the machine is
 destroyed with its volume at the end (or on Ctrl-C).
 
