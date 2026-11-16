@@ -3003,6 +3003,7 @@ export class Config {
   private fileSystemService: FileSystemService;
   private contentGeneratorConfig!: ContentGeneratorConfig;
   private contentGeneratorConfigSources: ContentGeneratorConfigSources = {};
+  private thinkingOff = false;
   private contentGenerator?: ContentGenerator;
   private subscriptionPlan?: 'plus' | 'pro';
   private subscriptionModelIdentity?: string;
@@ -7672,6 +7673,20 @@ export class Config {
     }
     // Keep the rebuildable source in sync so a later refreshAuth keeps the tier.
     applyEffort(this.modelsConfig?.getGenerationConfig());
+  }
+
+  /**
+   * de0ch: the host's "thinking off" (`set_effort` `none`). Kept beside the
+   * tier, not as `reasoning: false`: every request then names
+   * `reasoning.effort: "none"` (see the pipeline), whatever the model switch
+   * or auth refresh in between did to the generation config.
+   */
+  setThinkingOff(off: boolean): void {
+    this.thinkingOff = off;
+  }
+
+  getThinkingOff(): boolean {
+    return this.thinkingOff;
   }
 
   /**

@@ -4027,6 +4027,47 @@ describe('ContentGenerationPipeline', () => {
     });
   });
 
+  describe('thinking switched off by the host (de0ch)', () => {
+    // The model as aviary's settings list it, through the real provider.
+    const MODEL = 'deepseek/deepseek-v4.1-flash-1017';
+    const wire = (
+      thinkingOff: boolean,
+      reasoning: ContentGeneratorConfig['reasoning'],
+    ) => {
+      mockCliConfig = {
+        getThinkingOff: () => thinkingOff,
+      } as unknown as Config;
+      mockConfig = { ...mockConfig, cliConfig: mockCliConfig };
+      return executeWith(
+        {
+          baseUrl: 'http://model/v1',
+          model: MODEL,
+          samplingParams: undefined,
+          reasoning,
+        },
+        userRequest(MODEL),
+        'prompt-id',
+        DefaultOpenAICompatibleProvider,
+      );
+    };
+
+    it('names the tier while thinking is on', async () => {
+      expectFields(await wire(false, { effort: 'high' }), {
+        reasoning: { effort: 'high' },
+      });
+    });
+
+    it.each([
+      ['a tier is set', { effort: 'high' as const }],
+      ['no tier is set', undefined],
+    ])('names none when %s', async (_name, reasoning) => {
+      expectFields(await wire(true, reasoning), {
+        reasoning: { effort: 'none' },
+        reasoning_effort: undefined,
+      });
+    });
+  });
+
   describe('buildResponseFormat endpoint gate', () => {
     /** response_format for a JSON-mode request with `responseJsonSchema`. */
     const formatFor = (responseJsonSchema?: Record<string, unknown>) =>

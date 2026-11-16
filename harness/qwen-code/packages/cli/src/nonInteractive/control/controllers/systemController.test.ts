@@ -49,6 +49,7 @@ function createContext(
       setApprovalMode: vi.fn(),
       setModel: vi.fn(),
       setReasoningEffort: vi.fn(),
+      setThinkingOff: vi.fn(),
       getReasoningEffort: vi.fn().mockReturnValue(undefined),
       getReasoningEffortOverride: vi.fn().mockReturnValue(undefined),
       getAvailableModels: vi.fn().mockReturnValue([]),
@@ -626,6 +627,49 @@ describe('SystemController', () => {
           field: 'enable_thinking',
         },
       });
+    });
+
+    it('takes none as thinking off and leaves the tier alone', async () => {
+      const context = createContext();
+      const controller = new SystemController(
+        context,
+        createRegistry(),
+        'SystemController',
+      );
+
+      const result = await controller.handleRequest(
+        { subtype: 'set_effort', effort: 'none' },
+        'effort-none',
+      );
+
+      expect(context.config.setThinkingOff).toHaveBeenCalledWith(true);
+      expect(context.config.setReasoningEffort).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        subtype: 'set_effort',
+        effort: 'none',
+        applied: true,
+        override: null,
+      });
+    });
+
+    it('switches thinking on again when a tier is set', async () => {
+      const context = createContext();
+      (
+        context.config.getReasoningEffort as ReturnType<typeof vi.fn>
+      ).mockReturnValue('low');
+      const controller = new SystemController(
+        context,
+        createRegistry(),
+        'SystemController',
+      );
+
+      await controller.handleRequest(
+        { subtype: 'set_effort', effort: 'low' },
+        'effort-on',
+      );
+
+      expect(context.config.setThinkingOff).toHaveBeenCalledWith(false);
+      expect(context.config.setReasoningEffort).toHaveBeenCalledWith('low');
     });
 
     it('rejects invalid effort value', async () => {

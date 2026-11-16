@@ -1579,6 +1579,14 @@ export class ContentGenerationPipeline {
     }
 
     const typed = providerRequest as unknown as Record<string, unknown>;
+    // de0ch: the host switched thinking off (`set_effort` `none`). aviary's
+    // gateway reads the level from `reasoning.effort` and gives a request
+    // that names none the model's default, so "off" has to be named there;
+    // the disable shapes above are not levels and the gateway reads none.
+    if (this.config.cliConfig.getThinkingOff?.()) {
+      delete typed['reasoning_effort'];
+      typed['reasoning'] = { effort: 'none' };
+    }
     const reasoningEffort = typed['reasoning_effort'];
     const thinkingBudget = typed['thinking_budget'];
     // DashScope rejects forced tool selection while thinking is enabled

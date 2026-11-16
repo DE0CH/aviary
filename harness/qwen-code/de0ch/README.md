@@ -94,7 +94,18 @@ refs/tags/vX.Y.Z` and `git merge`, never a rebase), tested against aviary's supe
   reply as the record's parts are. The `assistant` lines on stdout are as upstream's.
   `de0ch/stream-record-ids.e2e.mjs` compares the packed CLI's stream with the transcript it wrote; the release
   build runs it.
-- `de0ch/` and `.github/workflows/de0ch-release.yml`: this file, the end-to-end check and the release build.
+- `packages/cli/src/nonInteractive/control/controllers/systemController.ts` (`set_effort`),
+  `packages/core/src/config/config.ts` (`setThinkingOff`), `core/openaiContentGenerator/pipeline.ts`: **the control
+  request `set_effort` takes `none`, thinking off** (YYC AI, 2026-11-16). Upstream's `set_effort` takes only its
+  tiers (low to max), and its own "thinking off" (`reasoning: false`) names no level in the request, in shapes
+  (`enable_thinking`, `thinking.type`, `reasoning.enabled` on an openrouter.ai host) that aviary's gateway does not
+  read: the gateway takes the level from `reasoning.effort` and gives a request that names none the model's
+  default (`high` for YYC AI's), so its host had no way to switch thinking off. Here, after `set_effort` `none`
+  every request carries `reasoning: {effort: "none"}` (which switches thinking off at OpenRouter) until
+  `set_effort` names a tier again; the tier set before is kept underneath and is not sent.
+  `de0ch/thinking-level.e2e.mjs` drives the packed CLI through a tier, `none`, a tier and `none` again against a
+  stand-in model; the release build runs it.
+- `de0ch/` and `.github/workflows/de0ch-release.yml`: this file, the end-to-end checks and the release build.
 
 Everything else aviary needs is configuration, not a change here: the system settings file
 (`/etc/qwen-code/settings.json`: the models on the model route, `skills.directories` for the managed skills),

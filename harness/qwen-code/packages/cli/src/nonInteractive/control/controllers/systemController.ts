@@ -652,7 +652,8 @@ export class SystemController extends BaseController {
   /**
    * Handle set_effort request
    *
-   * Sets the reasoning effort tier at runtime.
+   * Sets the reasoning effort tier at runtime, or switches thinking off
+   * (`none`).
    */
   private async handleSetEffort(
     payload: CLIControlSetEffortRequest,
@@ -667,14 +668,28 @@ export class SystemController extends BaseController {
       throw new Error('Invalid effort specified for set_effort request');
     }
 
+    // de0ch: `none` is thinking off. It is not a tier of the ladder: the tier
+    // stays as it was, and a tier set later switches thinking on again.
+    if (effort.trim().toLowerCase() === 'none') {
+      this.context.config.setThinkingOff(true);
+      debugLogger.info('[SystemController] Thinking switched off');
+      return {
+        subtype: 'set_effort',
+        effort: 'none',
+        applied: true,
+        override: null,
+      };
+    }
+
     const normalized = normalizeReasoningEffort(effort);
     if (!normalized) {
       throw new Error(
-        'Invalid effort value. Supported: low, medium, high, xhigh, max',
+        'Invalid effort value. Supported: none, low, medium, high, xhigh, max',
       );
     }
 
     try {
+      this.context.config.setThinkingOff(false);
       const effortMatches = applyReasoningEffort(
         this.context.config,
         normalized,
