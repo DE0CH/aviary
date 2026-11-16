@@ -848,8 +848,8 @@ mod tests {
         );
     }
 
-    /// Qwen Code names a failed turn's reason in `error.message`, not in `result` (YYC AI, 2026-11-16: every failed
-    /// turn of a Qwen Code conversation showed `error_during_execution:` and nothing after it).
+    /// Qwen Code names a failed turn's reason in `error.message`, not in `result` (2026-11-16: every failed turn
+    /// of a Qwen Code conversation showed `error_during_execution:` and nothing after it).
     #[test]
     fn a_failed_results_reason_is_read_from_error_message_too() {
         let Out::Result(r) = parse(
