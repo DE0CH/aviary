@@ -101,6 +101,11 @@ check "Qwen Code keeps one video and two sounds per request and waits for a pers
   grep -rqF "An earlier video was here" "$d" || exit 1
   grep -rqF "An earlier sound clip was here" "$d" || exit 1
   grep -rqE "DEFAULT_CAN_USE_TOOL_TIMEOUT_MS ?= ?(2147483647|2_147_483_647)" "$d"'
+# A request the model provider refuses must not end the conversation (the fork replaces what was refused by its own
+# notice and sends that; before, a video the provider could not open was refused again with every later message).
+check "Qwen Code rolls a conversation back when its provider refuses a request" img_run "$img" -c '
+  d=/opt/qwen-code/lib/node_modules/@qwen-code/qwen-code
+  grep -rqF "provider refused the request that carried it" "$d"'
 # The chat page fills its "/" list from the initialize answer's commands (the supervisor reads them from either
 # harness); upstream Qwen Code names none there, so the list was empty for every Qwen Code conversation.
 check "Qwen Code names its slash commands in its initialize answer" img_run "$img" -c '
