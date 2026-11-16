@@ -95,6 +95,7 @@
     "aws": {
       "region": "eu-central-1",
       "launchTemplate": "hermit-host",
+      "imageBucket": "yyc-ai-sandbox-images-551897326524",
       "maxHosts": 5,
       "diskGiB": 220,
       "subnet": "subnet-009eab323e09d6338",
