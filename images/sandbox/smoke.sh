@@ -124,7 +124,10 @@ check "Qwen Code reports its background shells and takes stop_task" img_run "$im
 check "Qwen Code names a reply in its stream as its transcript records it" img_run "$img" -c '
   d=/opt/qwen-code/lib/node_modules/@qwen-code/qwen-code
   grep -rqF "reserveAssistantRecordUuid" "$d"'
-
+# The supervisor sets a Qwen Code conversation's thinking level with `set_effort`, `none` (thinking off) included.
+# Upstream Qwen Code refuses `none`, and the supervisor then fails the turn it was sent for.
+check "Qwen Code takes the thinking level none" img_run "$img" -c '
+  grep -rqF "setThinkingOff(true)" /opt/qwen-code/lib/node_modules/@qwen-code/qwen-code'
 # The fork sends no usage statistics (DE0CH/qwen-code de0ch/README.md). Upstream posts a record of every session,
 # prompt, tool call and model request to Alibaba Cloud RUM unless `privacy.usageStatisticsEnabled` is false, which the
 # managed settings never said: sandboxes tried the upload on every turn.

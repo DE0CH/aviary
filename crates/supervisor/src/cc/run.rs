@@ -1732,7 +1732,8 @@ impl Driver {
     /// models route names for the generation's model, else Claude Code's own for it) when it is not on it already:
     /// thinking off for `none` (`set_max_thinking_tokens` 0), else on at Claude Code's effort level of that name
     /// (`apply_flag_settings` `effortLevel`). Claude Code sends both with every model call (`thinking` present or
-    /// not, `output_config.effort`), and the gateway applies the level.
+    /// not, `output_config.effort`), and the gateway applies the level. Qwen Code gets every level, `none` included,
+    /// as its effort (`set_effort`) and sends it with every model call (`reasoning.effort`).
     async fn apply_thinking(&self, n: u32, thinking: Option<&str>) -> Result<(), String> {
         let (model, applied, gen_harness) = {
             let st = lock(&self.st);
@@ -1756,9 +1757,9 @@ impl Driver {
         }
         tracing::info!(gen = n, thinking = ?level, "generation switched to the conversation's thinking level");
         if gen_harness == Harness::Qwen {
-            // Qwen Code has one control for it, its effort; it has no "thinking off" of its own, so `none` and no
-            // level leave it where it is
-            if let Some(l) = level.as_deref().filter(|l| *l != "none") {
+            // Qwen Code has one control for it, its effort, and `none` is a level of it (thinking off); no level
+            // leaves it where it is
+            if let Some(l) = level.as_deref() {
                 self.control_call(n, |id| control::qwen_set_effort(id, l)).await?;
             }
             self.with(Change::Progress, |st, _| {

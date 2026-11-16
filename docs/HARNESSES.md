@@ -31,8 +31,11 @@ ran before, for a pick back.
   `cc/launch.rs` hold what differs: the binary and its arguments, the environment, the managed files
   (`/etc/claude-code`; `/etc/qwen-code/settings.json` with the model route and the managed skills' folder), the main
   transcript's path, the compaction command (`/compact`, `/compress`), the tool that asks the person a question
-  (`AskUserQuestion`, `ask_user_question`; Qwen Code's answers are keyed by the question's index), and how the
-  thinking level is set, and how a turn's end waits for its transcript (Claude Code's lines carry the uuids its
+  (`AskUserQuestion`, `ask_user_question`; Qwen Code's answers are keyed by the question's index), how the
+  thinking level is set (Claude Code: thinking on or off, `set_max_thinking_tokens`, and its effort level; Qwen
+  Code: its effort, `set_effort`, for every level, `none` (thinking off) included, which it sends with each model
+  call as `reasoning.effort`; the gateway applies the level either way), and how a turn's end waits for its
+  transcript (Claude Code's lines carry the uuids its
   stdout shows, so the end waits for those lines; Qwen Code's records have their own, so its end waits for the
   writes in flight). Qwen Code takes only a UUID of version 1 to 5 as a session id: a conversation whose id is
   another kind gets the version 5 UUID made from it (`launch::qwen_session_id`). A generation is reused only by a turn of the same harness and session; a turn in the other

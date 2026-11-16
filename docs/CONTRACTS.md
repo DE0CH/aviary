@@ -225,7 +225,8 @@ again), and a `set_agent_model_request` to a model that lacks the picked level c
 magpie puts `pickedThinking` into each `start_turn` (`thinking`); the supervisor switches Claude Code before it
 writes the prompt (`set_max_thinking_tokens` 0 for `none`, else thinking on and `apply_flag_settings` `effortLevel`;
 with no level picked, the one the models route names for the model, else Claude Code's own), so every model call of
-the turn carries it (`thinking` present or not, `output_config.effort`) and the gateway applies the level.
+the turn carries it (`thinking` present or not, `output_config.effort`) and the gateway applies the level. Qwen Code
+is switched with `set_effort` to the level, `none` included, and its model calls carry it as `reasoning.effort`.
 
 **In-cluster API.** On the implementation's in-cluster port (YYC: egress 8082): the models route for pigeon's pair
 bearer, and `GET /v1/ops/summary?tz=&recentMinutes=` for hermit's (`ops::OpsSummary`, platform 15.3's shape:
