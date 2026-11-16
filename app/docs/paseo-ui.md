@@ -81,8 +81,12 @@ server (`server/`) serves no deployment.
   out the sidebar's 新對話, drops it from the palette and the shortcut, and `/new` says where conversations start
   (`me.ts` `useNewConversationsAvailable`, `new-workspace-screen.tsx`).
 - **Sent files show on the call that sent them**: the SendUserFile call, or any tool call whose metadata carries
-  `sentFiles` (an agent program without that tool sends from a shell command).
-- **Sent files keep their version** (Deyao, 2026-10-28): each file card carries its SendUserFile call's id
+  `sentFiles` (an agent program without that tool sends from a shell command). The cards stand for the call (a
+  command that sent files shows as its cards, not as a command row), and the call is treated the same wherever it
+  is drawn (`yyc/sent-files-text.ts` `isSentFilesCall`): never folded into a group of tool calls
+  (`tool-calls/detail-level/grouping.ts`) nor into a finished turn's summary, where its cards stay under the reply
+  (`agent-stream/turn-collapse/model.ts`), live and from the history alike.
+- **Sent files keep their version** (Deyao, 2026-10-28): each file card carries the id of the call that sent it
   (`sent` on the tool call's `sentFiles`, paseo-timeline.ts) and downloads with `files/raw?…&sent=<id>`, so a server
   that keeps a snapshot of each send can serve the file as it was sent (this server, in Jarvis mode, reads the live
   file).
@@ -134,7 +138,7 @@ go through the chat):
 
 - the API call (a `curl` the AI runs) as a card, 「已設定排程：每個工作日 08:30」 and the next time
   (`yyc/schedules.tsx` ScheduleToolCard, read by `yyc/schedules-text.ts` readScheduleCall from the call's output);
-  like SendUserFile's cards it is never folded into a group or a finished turn's summary (isScheduleCallDetail);
+  like sent-file cards it is never folded into a group or a finished turn's summary (isScheduleCallDetail);
 - a fired message, `<scheduled-message rule="…">prompt</scheduled-message>`, as a 排程訊息 bubble under a divider
   (ScheduledMessage);
 - 「n 個排程」 in the conversation's header, opening a panel beside the chat (full screen with a back arrow on a phone)
