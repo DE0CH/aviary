@@ -46,6 +46,7 @@ import { InvalidStreamError } from '../invalid-stream-error.js';
 import { normalizeMcpToolName } from '../../utils/tool-name-utils.js';
 import { isDisclosureText } from '../../omni/disclosure.js';
 import { evictOldestImagesBeyondCap } from './image-budget.js';
+import { evictOldestAudioVideoBeyondCaps } from './media-budget.js';
 import { setGenAiUsageProvenance } from '../../telemetry/gen-ai-usage.js';
 import { SchemaValidator } from '../../utils/schemaValidator.js';
 import { TrailingThinkingTagFilter } from './trailing-thinking-tag-filter.js';
@@ -540,6 +541,10 @@ export function convertLlmRequestToOpenAI(
   // accumulate across turns; without this a long look-closer trajectory
   // eventually sends >256 image parts and the API rejects the whole request.
   evictOldestImagesBeyondCap(messages);
+
+  // DE0CH fork: the endpoint takes one video and two audio parts per request;
+  // only the newest clips ride along (media-budget.ts).
+  evictOldestAudioVideoBeyondCaps(messages);
 
   return messages;
 }

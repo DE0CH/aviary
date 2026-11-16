@@ -15,6 +15,16 @@ refs/tags/vX.Y.Z` and `git merge`, never a rebase), tested against aviary's supe
   through an http proxy goes to the proxy itself (absolute-form), not through a `CONNECT` tunnel. aviary's sandbox
   proxy serves its named routes (`http://model/v1`) only that way and answers `CONNECT model:80` with 403; upstream
   tunnels every origin, so every model call failed ("Proxy response (403) !== 200 when HTTP Tunneling").
+- `packages/core/src/core/openaiContentGenerator/media-budget.ts` (called from `converter.ts`): a request carries at
+  most one video and two audio parts, the newest; an older one is replaced where it was by a line saying it can be
+  opened again with `read_file`. DeepInfra's MiMo endpoint refuses more ("Too many videos in request: 2 > 1", "At most
+  2 audio(s) may be provided in one prompt"), and upstream's answer to that 400 is to resend with every video, sound
+  and image replaced by "[Unsupported … file]": from the second clip of a conversation on, the model was told it takes
+  no media at all (YYC AI, 2026-11-16).
+- `packages/cli/src/nonInteractive/control/controllers/permissionController.ts`: a permission request to the host
+  (`can_use_tool`, which carries the agent's question to the person) waits as long as a timer can (24.8 days), not
+  60 s. Upstream cancelled the tool call with "The host could not present the required approval" while the host
+  still showed the question.
 - `de0ch/` and `.github/workflows/de0ch-release.yml`: this file and the release build.
 
 Everything else aviary needs is configuration, not a change here: the system settings file

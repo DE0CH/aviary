@@ -843,7 +843,7 @@ describe('PermissionController', () => {
     },
   );
 
-  it('uses default timeout when SDK canUseTool timeout is undefined', async () => {
+  it('waits for a person as long as a timer can when SDK canUseTool timeout is undefined', async () => {
     const context = createContext(); // undefined timeout
     const controller = new PermissionController(
       context,
@@ -881,7 +881,7 @@ describe('PermissionController', () => {
           subtype: 'can_use_tool',
           tool_name: 'ask_user_question',
         }),
-        60_000, // DEFAULT_CAN_USE_TOOL_TIMEOUT_MS
+        2_147_483_647, // DEFAULT_CAN_USE_TOOL_TIMEOUT_MS: not upstream's 60 s
         context.abortSignal,
       );
     });

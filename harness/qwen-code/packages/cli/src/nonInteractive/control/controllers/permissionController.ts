@@ -39,7 +39,12 @@ import type {
 import { BaseController } from './baseController.js';
 import { buildPermissionSuggestions } from '../../permission-suggestions.js';
 
-const DEFAULT_CAN_USE_TOOL_TIMEOUT_MS = 60_000;
+// DE0CH fork: the host's answer to a permission request comes from a person
+// (a question the agent asks them, shown in the host's page), who may answer
+// in a minute or after lunch. Upstream gave up after 60 s and told the model
+// "The host could not present the required approval", while the host went on
+// showing the question. This is the longest delay a timer holds (24.8 days).
+const DEFAULT_CAN_USE_TOOL_TIMEOUT_MS = 2_147_483_647;
 
 export class PermissionController extends BaseController {
   private pendingOutgoingRequests = new Set<string>();
