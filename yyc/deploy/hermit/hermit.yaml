@@ -130,8 +130,8 @@ apiVersion: v1
 kind: ServiceAccount
 metadata: {name: hermit, namespace: yyc-ai}
 ---
-# the ops page's deployment facts and pods (hermit 18.5), the egress targets from the egress Service's EndpointSlices
-# (13.8)
+# the ops page's deployment facts and pods (hermit 18.5). The gateway's egress target is fabric.egressTarget (the load
+# balancer of Service egress-lb): hermit watches no EndpointSlices.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata: {name: hermit-read, namespace: yyc-ai}
@@ -142,9 +142,6 @@ rules:
   - apiGroups: [""]
     resources: [pods]
     verbs: [get, list]
-  - apiGroups: [discovery.k8s.io]
-    resources: [endpointslices]
-    verbs: [get, list, watch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -204,7 +201,7 @@ spec:
       ports: [{port: 443, protocol: TCP}]
 ---
 # Under Cilium the API server and this cluster's nodes are entities, not addresses (DESIGN 15.2 N3): the API for the
-# EndpointSlice watch and the ops reads; the gateway node's NodePort 30433 (db/pg-shared) for hermit's juicefs CLI,
+# ops reads; the gateway node's NodePort 30433 (db/pg-shared) for hermit's juicefs CLI,
 # whose metadata URL is the hosts' one (<gw private IP>:30433, HERMIT_JUICEFS_META_URL)
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy

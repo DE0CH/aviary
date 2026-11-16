@@ -1,6 +1,6 @@
 # egress (DE0CH/jarvis3 chat, `args: [egress]`; spec-platform 9.7, 17.2; jarvis3 docs/CHAT.md "egress"): YYC's sandbox
 # gateway. The sandboxes' only way out: the proxy on 3128 (reached at the egress VIP 10.202.1.1 through hermit-gateway,
-# which DNATs to these pods with the sandbox's source kept), the fixed names model/tools/magpie/hermit, the package
+# which forwards to the load balancer of Service egress-lb below; a sandbox is known by its token alone), the fixed names model/tools/magpie/hermit, the package
 # mirror; the in-cluster API on 8082 (pigeon's models list, hermit's ops summary); health on 9090. Configuration:
 # egress.json (ConfigMap egress-config, hashed). Internet connections and OpenRouter go out by name through YYC's socks
 # pool (egress.json `exit`, Deyao 2026-11-04).
@@ -169,10 +169,8 @@ spec:
   podSelector: {matchLabels: {app: egress}}
   policyTypes: [Ingress]
   ingress:
-    # the sandboxes, through the gateway with their own source (R32): the proxy port only
-    - from: [{ipBlock: {cidr: 10.203.0.0/16}}]
-      ports: [{port: 3128, protocol: TCP}]
-    # the load balancer of Service egress-lb (its address in network yyc)
+    # the sandboxes' proxy connections arrive from the load balancer of Service egress-lb (its address in network
+    # yyc): the proxy port only
     - from: [{ipBlock: {cidr: 10.0.0.50/32}}]
       ports: [{port: 3128, protocol: TCP}]
     - from: [{podSelector: {matchLabels: {app: pigeon}}}, {podSelector: {matchLabels: {app: hermit}}}]

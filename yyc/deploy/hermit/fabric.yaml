@@ -10,9 +10,8 @@
 # /var/lib/hermit-gateway.
 #
 # hermit-overlay-route: on every node in network yyc, the route 10.202.0.0/15 via 10.0.0.1 (the hosts and the
-# sandboxes, through network yyc's route to the gateway node) and rto_min 20ms for 10.203.0.0/16 in each egress pod's
-# network namespace (A7.F33). Talos has no shell or crictl, so it carries its own iproute2 (the sandboxd image) and
-# finds egress pods by their command line through the host's /proc.
+# sandboxes, through network yyc's route to the gateway node). Talos has no shell, so it carries its own iproute2 (the
+# sandboxd image).
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -109,7 +108,6 @@ spec:
     spec:
       nodeSelector: {yyc.hetzner/network: "yyc"}
       hostNetwork: true
-      hostPID: true                  # to enter egress pods' network namespaces through their processes
       priorityClassName: serving
       tolerations: [{operator: Exists}]
       automountServiceAccountToken: false
@@ -122,7 +120,6 @@ spec:
           args:
             - |
               trap 'exit 0' TERM INT
-              mkdir -p /run/netns
               while :; do
                 dev=$(ip -o route get 10.0.0.1 | sed -n 's/.* dev \([^ ]*\).*/\1/p')
                 [ -n "$dev" ] && ip route replace 10.202.0.0/15 via 10.0.0.1 dev "$dev"
@@ -133,17 +130,6 @@ spec:
                 if ip link show wg0 >/dev/null 2>&1 && ! ip rule show pref 998 | grep -q .; then
                   ip rule add pref 998 iif wg0 to 10.210.0.0/16 ipproto tcp dport 5432 lookup main
                 fi
-                # each egress serving process (jarvis3-chat, args [egress]; not `egress import-jarvis`)
-                for d in /proc/[0-9]*; do
-                  case "$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)" in
-                    *"src/main.ts egress ") ;;
-                    *) continue ;;
-                  esac
-                  ip netns attach hermit-eg "${d#/proc/}" 2>/dev/null || continue
-                  gw=$(ip -n hermit-eg -o route show default | awk '{print $3; exit}')
-                  [ -n "$gw" ] && ip -n hermit-eg route replace 10.203.0.0/16 via "$gw" dev eth0 rto_min 20ms
-                  ip netns delete hermit-eg 2>/dev/null
-                done
                 sleep 15 & wait $!
               done
           securityContext:
