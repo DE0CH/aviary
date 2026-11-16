@@ -2223,7 +2223,14 @@ describe('runNonInteractiveStreamJson', () => {
     }
 
     /** Starts a session whose input stays open until `close()`. */
-    function openSession(...messages: unknown[]) {
+    function openSession(
+      ...messages: Array<
+        | CLIUserMessage
+        | CLIControlRequest
+        | CLIControlResponse
+        | ControlCancelRequest
+      >
+    ) {
       let closeInput: (() => void) | undefined;
       mockInputReader.read = async function* () {
         yield* messages;
