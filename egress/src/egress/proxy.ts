@@ -548,7 +548,7 @@ export class Egress {
     // conversation can route a model call to an endpoint that retains or collects prompts. The body is rewritten as
     // it streams through (modelbody.ts): egress holds a few small members of it, never the body, so a conversation of
     // any size costs no memory here. The upstream sees no complete request until the whole body has been checked.
-    const rewrite = isModel && req.method !== "GET" && req.method !== "HEAD" ? new ModelBodyRewriter(this.#modelPlan) : null;
+    const rewrite = isModel && req.method !== "GET" && req.method !== "HEAD" ? new ModelBodyRewriter(this.#modelPlan, rest === "/v1/chat/completions" ? "chat" : "messages") : null;
     if (rewrite) {
       const declared = declaredLength(req);
       if (declared !== null && declared > MODEL_BODY_MAX) {

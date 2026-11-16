@@ -77,7 +77,7 @@ function config(upstream: string, extra: Record<string, unknown> = {}): EgressCo
     titleModel: "vendor/claude-x",
     contextTokens: 1048576,
     routes: [
-      { name: "model", upstream: `${upstream}/api`, model: true, inject: { Authorization: "Bearer ${REAL_KEY}" }, allowPaths: ["/v1/messages"] },
+      { name: "model", upstream: `${upstream}/api`, model: true, inject: { Authorization: "Bearer ${REAL_KEY}" }, allowPaths: ["/v1/messages", "/v1/chat/completions"] },
       { name: "tools", upstream, inject: { Authorization: "Bearer ${EGRESS_TOKEN_TOOLS}" }, allowPaths: ["/v1/"], timeoutSeconds: 180 },
       // a sandbox route (platform 3.11.8), as YYC's label store: its own credential and conversation header
       { name: "labels", upstream: `${upstream}/labels-up`, inject: { "CF-Access-Client-Id": "${LABELS_ID}", "CF-Access-Client-Secret": "${LABELS_SECRET}" }, allowPaths: ["/api/v1/"], identityHeaders: { "X-Jarvis-Conversation": "conversation" }, timeoutSeconds: 180 },
@@ -216,7 +216,7 @@ before(async () => {
         setTimeout(() => res.end('event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":2,"cost":0.0042}}\n\n'), 20);
         return;
       }
-      if (p === "/api/v1/messages" || p === "/api/v1/messages/count_tokens") {
+      if (p === "/api/v1/messages" || p === "/api/v1/messages/count_tokens" || p === "/api/v1/chat/completions") {
         res.writeHead(200, { "content-type": "application/json" });
         return res.end(JSON.stringify({ echo: JSON.parse(body || "{}"), usage: { cost: 0.0123 } }));
       }
@@ -749,6 +749,12 @@ test("model route: zero data retention is forced into every request body, whatev
   // the configured thinking level for a chat turn (a request with tools)
   const turn = await send(JSON.stringify({ model: "vendor/claude-x", tools: [{ name: "t" }] }));
   assert.ok(JSON.stringify(JSON.parse(turn.body).echo).includes("high"));
+  // the same turn as chat completions (Qwen Code): the level in that API's words, Anthropic's `thinking` not passed on
+  const asked = { model: "vendor/claude-x", tools: [{ type: "function", function: { name: "t" } }], thinking: { type: "enabled" }, reasoning: { effort: "low" } };
+  const chat = await http("http://model/v1/chat/completions", { method: "POST", headers: { ...pa(), "content-type": "application/json" }, body: JSON.stringify(asked) });
+  assert.equal(chat.status, 200);
+  assert.deepEqual(JSON.parse(chat.body).echo, { tools: asked.tools, model: asked.model, provider: { zdr: true, data_collection: "deny" }, reasoning: { effort: "high" } });
+  assert.deepEqual(JSON.parse((await send(JSON.stringify(asked))).body).echo.thinking, { type: "enabled" }, "a Messages request keeps its `thinking`");
   for (const bad of ["not json", "[1]", "null", ""]) {
     const r = await send(bad);
     assert.equal(r.status, 400, `body ${JSON.stringify(bad)} must be refused`);

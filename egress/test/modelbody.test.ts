@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { FORCED_PROVIDER, HELD_MAX, InvalidBody, ModelBodyRewriter } from "../src/egress/modelbody.ts";
+import { FORCED_PROVIDER, HELD_MAX, InvalidBody, ModelBodyRewriter, type ModelApi } from "../src/egress/modelbody.ts";
 import type { ModelPlan } from "../src/common/config.ts";
 
 /** The body through the streaming rewriter in chunks of `chunk` bytes (0: all at once); null when it is refused. */
-function rewrite(raw: Buffer, plan?: ModelPlan, chunk = 0): { model: unknown; body: Buffer } | null {
-  const rw = new ModelBodyRewriter(plan);
+function rewrite(raw: Buffer, plan?: ModelPlan, chunk = 0, api?: ModelApi): { model: unknown; body: Buffer } | null {
+  const rw = new ModelBodyRewriter(plan, api);
   const parts: Buffer[] = [];
   try {
     for (let i = 0; i < raw.length; i += chunk || raw.length) parts.push(...rw.push(raw.subarray(i, i + (chunk || raw.length))));
@@ -18,9 +18,9 @@ function rewrite(raw: Buffer, plan?: ModelPlan, chunk = 0): { model: unknown; bo
 }
 
 /** The rewritten body as an object; the same whatever the chunking (all at once, byte by byte, 7 bytes at a time). */
-const out = (raw: string | Buffer, plan?: ModelPlan) => {
+const out = (raw: string | Buffer, plan?: ModelPlan, api?: ModelApi) => {
   const b = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
-  const [whole, ...rest] = [0, 1, 7].map((c) => rewrite(b, plan, c));
+  const [whole, ...rest] = [0, 1, 7].map((c) => rewrite(b, plan, c, api));
   for (const r of rest) assert.deepEqual(r && { model: r.model, body: r.body.toString("latin1") }, whole && { model: whole.model, body: whole.body.toString("latin1") }, "chunking changes nothing");
   return whole ? (JSON.parse(whole.body.toString("utf8")) as Record<string, unknown>) : null;
 };
@@ -226,4 +226,47 @@ test("rewrite: a model with thinking levels takes the level the caller asks for,
   // a model without levels is as before: the plan's level whatever the caller asks
   const fixed = out(JSON.stringify({ model: D, tools, thinking: on, output_config: { effort: "low" } }), PLAN)!;
   assert.deepEqual(fixed.reasoning, { effort: "high" });
+});
+
+test("rewrite: a chat completions request (Qwen Code) names its level in `reasoning.effort`, and it reaches the model", () => {
+  const plan: ModelPlan = {
+    "deepseek/deepseek-v4.1-flash-1017": { withTools: "high", withoutTools: "none", levels: ["none", "low", "high", "max"] },
+    "z-ai/glm-5.3": { withTools: "high", levels: ["low", "high", "max"] },
+    "xiaomi/mimo-v2.6-pro": { withTools: "high", withoutTools: "none" },
+  };
+  const tools = [{ type: "function", function: { name: "run_shell_command" } }];
+  const turn = (model: string, extra: object) => out(JSON.stringify({ model, messages: [], tools, ...extra }), plan, "chat")!;
+  const D = "deepseek/deepseek-v4.1-flash-1017";
+  // Qwen Code's request has no `thinking` and no `output_config`: the level is its `reasoning.effort`, within what the
+  // model offers
+  for (const [effort, want] of [["low", "low"], ["high", "high"], ["max", "max"], ["medium", "low"], ["xhigh", "high"]] as const) {
+    const r = turn(D, { reasoning: { effort } });
+    assert.deepEqual(r.reasoning, { effort: want }, `effort ${effort}`);
+    assert.equal(r.thinking, undefined, "nothing switches thinking off");
+  }
+  // no level named: the model's own (`reasoning`), never off
+  for (const none of [{}, { reasoning: {} }, { reasoning: { effort: "nonsense" } }, { reasoning: "high" }]) {
+    const r = turn(D, none);
+    assert.deepEqual(r.reasoning, { effort: "high" }, JSON.stringify(none));
+    assert.equal(r.thinking, undefined);
+  }
+  // thinking off: chat completions takes `reasoning.effort: "none"` (Anthropic's `thinking: disabled` means nothing there)
+  const off = turn(D, { reasoning: { effort: "none" } });
+  assert.deepEqual(off.reasoning, { effort: "none" });
+  assert.equal(off.thinking, undefined);
+  // Anthropic's members are not this API's: they neither set the level nor pass
+  const mixed = turn(D, { reasoning: { effort: "max" }, thinking: { type: "disabled" }, output_config: { effort: "low" } });
+  assert.deepEqual(mixed.reasoning, { effort: "max" });
+  assert.equal(mixed.thinking, undefined);
+  // a model that cannot switch thinking off takes its lowest level instead
+  assert.deepEqual(turn("z-ai/glm-5.3", { reasoning: { effort: "none" } }).reasoning, { effort: "low" });
+  // a call without tools keeps the plan's level, said this API's way
+  const quick = out(JSON.stringify({ model: D, messages: [], reasoning: { effort: "max" } }), plan, "chat")!;
+  assert.deepEqual(quick.reasoning, { effort: "none" });
+  assert.equal(quick.thinking, undefined);
+  // a model without levels: the plan's level whatever the caller asks
+  assert.deepEqual(turn("xiaomi/mimo-v2.6-pro", { reasoning: { effort: "low" } }).reasoning, { effort: "high" });
+  assert.deepEqual(out(JSON.stringify({ model: "xiaomi/mimo-v2.6-pro", messages: [] }), plan, "chat")!.reasoning, { effort: "none" });
+  // the rest of the rewrite is the same on both APIs
+  assert.deepEqual(turn(D, { provider: { zdr: false } }).provider, FORCED_PROVIDER);
 });

@@ -11,6 +11,10 @@ import type { ModelPlan } from "../common/config.ts";
  * caller sent, so `zdr: false` or `data_collection: "deny"` in a request can't loosen it. */
 export const FORCED_PROVIDER = { zdr: true, data_collection: "deny" } as const;
 
+/** The API a model request speaks: Anthropic's Messages (Claude Code) or OpenAI chat completions (Qwen Code). They
+ * name the thinking level differently, and OpenRouter reads each API's own members only. */
+export type ModelApi = "messages" | "chat";
+
 /** The body is not exactly one valid JSON object (RFC 8259, UTF-8), or its held members are too large. */
 export class InvalidBody extends Error {}
 
@@ -38,12 +42,13 @@ const COMMA = Buffer.from(",");
 /** A model request body rewritten as it streams: push() takes the next bytes and gives back the bytes to send on
  * (views of the chunk, never copies of it), end() the closing bytes. The result is the body with FORCED_PROVIDER merged
  * into `provider`, the model's pinned providers from `plan` set as OpenRouter's `order` + `only` with no fallback (over
- * the caller's), and its thinking level applied. Both throw InvalidBody when the body is not exactly one valid JSON
+ * the caller's), and its thinking level applied in the words of the request's API (`api`). Both throw InvalidBody when the body is not exactly one valid JSON
  * object: strings are checked (escapes, no raw control characters, well-formed UTF-8 only: no overlong forms,
  * surrogates or code points past U+10FFFF), so no reader can disagree with this one about where a member ends. Nesting
  * depth costs one array entry per level, no stack. */
 export class ModelBodyRewriter {
   readonly #plan: ModelPlan | undefined;
+  readonly #chat: boolean;
   #st = START;
   readonly #stack: number[] = []; // 0x7d (in an object) or 0x5d (in an array); [0] is the body's own object
   #strIsKey = false;
@@ -68,8 +73,9 @@ export class ModelBodyRewriter {
   #model: unknown = undefined;
   #modelSeen = false;
 
-  constructor(plan?: ModelPlan) {
+  constructor(plan?: ModelPlan, api: ModelApi = "messages") {
     this.#plan = plan;
+    this.#chat = api === "chat";
   }
 
   /** The body's "model" as JSON.parse would give it, from the last complete `model` member so far (undefined: none). */
@@ -385,8 +391,14 @@ export class ModelBodyRewriter {
     };
     const keep = new Set(["model", "thinking", "reasoning", "output_config"]);
     const add: Record<string, unknown> = { provider };
-    const effort = typeof model === "string" ? planned(this.#plan, model, this.#hasTools, value("thinking"), value("output_config")) : undefined;
-    if (effort === "none") {
+    const effort = typeof model === "string" ? planned(this.#plan, model, this.#hasTools, this.#chat ? asked(value("reasoning")) : askedOfMessages(value("thinking"), value("output_config"))) : undefined;
+    if (effort && this.#chat) {
+      // Chat completions: the level is `reasoning.effort`, "none" included (measured on OpenRouter: it switches
+      // thinking off there, and Anthropic's `thinking: {type: "disabled"}` is ignored), so `thinking` never passes.
+      keep.delete("thinking");
+      keep.delete("reasoning");
+      add.reasoning = { effort };
+    } else if (effort === "none") {
       // On OpenRouter's Messages API only Anthropic's `thinking: {type: "disabled"}` turns a reasoning model's thinking
       // off (`reasoning.effort: "none"` is ignored there).
       keep.delete("thinking");
@@ -422,17 +434,28 @@ const ORDER = ["none", "low", "medium", "high", "xhigh", "max"];
 
 const isDisabled = (thinking: unknown): boolean => !!thinking && typeof thinking === "object" && (thinking as { type?: unknown }).type === "disabled";
 
-/** The thinking level for a request: chat turns carry tools, titles and Claude Code's quick calls don't. A chat turn
- * on a model with `levels` takes the level its caller asks for: none when the request has no `thinking` or a disabled
- * one (Claude Code with thinking switched off), else `output_config.effort` (Claude Code's effort level), else the
- * plan's; brought to the nearest level the model offers at or below it (its lowest when there is none below). */
-function planned(plan: ModelPlan | undefined, model: string, withTools: boolean, thinking: unknown, outputConfig: unknown): string | undefined {
+/** A level named in an object's `effort` (chat completions' `reasoning`, the Messages API's `output_config`). */
+function asked(o: unknown): string | undefined {
+  const effort = o && typeof o === "object" ? (o as { effort?: unknown }).effort : undefined;
+  return typeof effort === "string" && ORDER.includes(effort) ? effort : undefined;
+}
+
+/** The level a Messages request asks for: none when it has no `thinking` or a disabled one (Claude Code with thinking
+ * switched off), else `output_config.effort` (Claude Code's effort level). Its `reasoning` never counts. */
+function askedOfMessages(thinking: unknown, outputConfig: unknown): string | undefined {
+  return thinking === undefined || thinking === null || isDisabled(thinking) ? "none" : asked(outputConfig);
+}
+
+/** The thinking level for a request: chat turns carry tools, titles and a harness's quick calls don't. A chat turn
+ * on a model with `levels` takes the level its caller asks for (`want`: askedOfMessages for Claude Code, the
+ * request's own `reasoning.effort` for Qwen Code), else the plan's; brought to the nearest level the model offers at
+ * or below it (its lowest when there is none below). */
+function planned(plan: ModelPlan | undefined, model: string, withTools: boolean, want: string | undefined): string | undefined {
   const entry = entryOf(plan, model);
   if (!withTools) return entry?.withoutTools;
   const levels = entry?.levels;
   if (!levels?.length) return entry?.withTools;
-  const asked = outputConfig && typeof outputConfig === "object" ? (outputConfig as { effort?: unknown }).effort : undefined;
-  const want = thinking === undefined || thinking === null || isDisabled(thinking) ? "none" : typeof asked === "string" && ORDER.includes(asked) ? asked : entry?.withTools;
+  want ??= entry?.withTools;
   if (!want) return levels.at(-1);
   const at = ORDER.indexOf(want);
   return levels.findLast((l) => ORDER.indexOf(l) <= at) ?? levels[0];
