@@ -130,6 +130,11 @@ pub struct FabricJson {
     pub pod_cidr: String,
     pub egress_ports: Vec<EgressPort>,
     pub egress_service: String,
+    /// The one address the gateway sends the sandboxes' proxy connections to: a load balancer in front of the
+    /// `fabric.egressService` pods, which balances and health-checks them. Absent: the gateway balances over the
+    /// Service's ready pods itself (hermit watches its `EndpointSlices`).
+    #[serde(default)]
+    pub egress_target: Option<std::net::Ipv4Addr>,
     pub gateway: GatewayJson,
     pub sandboxd: String,
     pub runsc: String,
@@ -607,6 +612,16 @@ mod tests {
         assert!(load(&|v| v["sandbox"]["tmpGiB"] = 100.into()).is_ok());
         // sandboxd refuses a scratch outside [1 GiB, 1 TiB]
         assert!(load(&|v| v["sandbox"]["tmpGiB"] = 0.into()).is_err());
+        // the gateway's one egress target (a load balancer): none unless set, and an IPv4 address
+        assert_eq!(load(&|_| {}).unwrap().file.fabric.egress_target, None);
+        assert_eq!(
+            load(&|v| v["fabric"]["egressTarget"] = "10.0.0.50".into())
+                .unwrap()
+                .file
+                .fabric
+                .egress_target,
+            Some(std::net::Ipv4Addr::new(10, 0, 0, 50))
+        );
         // the shared folder: none unless named, and a name sandboxd takes
         assert_eq!(load(&|_| {}).unwrap().file.sandbox.drive, None);
         assert_eq!(

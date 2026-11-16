@@ -42,8 +42,11 @@ item 5).
 
 - **Sandbox → egress:** sandbox → its host's veth → wg0 → gateway, which DNATs VIP:3128 to one egress pod (`numgen
   random` over the targets hermit pushes with `PUT /v1/egress`) → private network → egress pod. The **source is never
-  NATed**: egress sees the sandbox's own /32 and accepts its token only from there. A moved sandbox's connections keep
-  their conntrack entry on the gateway, which is on every path, and survive the move.
+  NATed** towards a pod: egress sees the sandbox's own /32 (it knows a sandbox by its token alone, never by its
+  address). A target that is no pod, a load balancer in the private network in front of the proxy (hermit
+  `fabric.egressTarget`, the one target pushed), gets the gateway's private address as the source instead, so its
+  answers come back whatever its own routes are; the gateway then balances nothing. A moved sandbox's connections
+  keep their conntrack entry on the gateway, which is on every path, and survive the move.
 - **hermit → sandboxd / sandbox:** pod → node (masqueraded to the node's private address, the `controlCidr` that each
   sandbox's nft lock admits on :7070) → gateway → wg0 → host.
 - Burst hosts peer the gateway (its public IPv6, host.json `wgPort`, 51821 in hermit's deployment) and each other (VPC addresses, for host-to-host

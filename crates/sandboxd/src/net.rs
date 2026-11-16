@@ -208,10 +208,17 @@ pub fn host_rules(
         // sandboxCidr). An identity SNAT, earlier than iptables' nat (priority srcnat), binds the connection's NAT
         // so the later masquerade never applies; such packets leave over the private network (policy route, init).
         let sbx = cfg.sandbox_cidr.as_str();
-        let _ = write!(
-            b,
-            "\n  chain keep_source {{\n    type nat hook postrouting priority srcnat - 10; policy accept;\n    iifname \"wg0\" ip saddr {sbx} snat ip prefix to ip saddr map {{ {sbx} : {sbx} }}"
-        );
+        b.s("\n  chain keep_source {\n    type nat hook postrouting priority srcnat - 10; policy accept;");
+        // an egress target that is no pod (a load balancer in the private network, in front of the proxy): it gets
+        // this node's private address as the source and answers there, wherever its own route for the sandboxes'
+        // range points. The proxy knows a sandbox by its token, never by its address. First: a packet takes the
+        // first NAT rule that matches.
+        if !private_addr.is_empty() {
+            for t in targets.iter().filter(|t| !crate::util::in_cidr(t.as_str(), cfg.pod_cidr.as_str())) {
+                let _ = write!(b, "\n    iifname \"wg0\" ip daddr {t} tcp dport 3128 snat to {private_addr}");
+            }
+        }
+        let _ = write!(b, "\n    iifname \"wg0\" ip saddr {sbx} snat ip prefix to ip saddr map {{ {sbx} : {sbx} }}");
         // this node's own pods reaching a sandbox (the ui pod's Claude Code runs, the controller): they leave through
         // wg0, where flannel's masquerade would give them wg0's own address, which a sandbox's lock drops (it
         // admits the controlCidr only); other nodes' pods arrive masqueraded to their node's private address. So
@@ -908,6 +915,17 @@ mod tests {
         );
         let g = b.as_str();
         assert!(g.contains("dnat to numgen random mod 1 map { 0 : 10.96.3.5 }"));
+        // a pod target keeps the sandbox's source; no rule for it
+        assert!(!g.contains("tcp dport 3128 snat to"), "{g}");
+        // a target that is no pod (a load balancer in the private network): the node's private address as source,
+        // before the rule that keeps the sandbox's
+        let mut mem = [0u8; 4096];
+        let mut lb = Buf::new(&mut mem);
+        host_rules(&mut lb, &gw, "eth0", Some("enp7s0"), "10.97.0.6", &[Str::lossy("10.97.0.50")]);
+        let l = lb.as_str();
+        assert!(l.contains("dnat to numgen random mod 1 map { 0 : 10.97.0.50 }"), "{l}");
+        let own = l.find("iifname \"wg0\" ip daddr 10.97.0.50 tcp dport 3128 snat to 10.97.0.6").expect(l);
+        assert!(own < l.find("snat ip prefix to").unwrap(), "{l}");
         assert!(
             g.contains("iifname \"wg0\" oifname \"eth0\" drop") && g.contains("iifname \"eth0\" oifname \"wg0\" drop")
         );

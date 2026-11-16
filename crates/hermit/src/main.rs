@@ -305,12 +305,17 @@ async fn serve() -> ExitCode {
     let workspaces = Arc::new(JuiceFs::new(MOUNT, Arc::new(juicefs), ws.quota_gib, ws.quota_inodes));
     // the Kubernetes client builds its TLS from the process's provider: ring, the workspace's only one
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let egress: Arc<dyn EgressSource> = match Watched::start(&namespace, &config.file.fabric.egress_service).await {
-        Ok(w) => Arc::new(w),
-        Err(e) => {
-            // the gateway keeps its last targets; the ops page shows that none were read
-            tracing::error!(error = %e, "egress endpoint watch not started");
-            Arc::new(Fixed::default())
+    let egress: Arc<dyn EgressSource> = if let Some(t) = config.file.fabric.egress_target {
+        // a load balancer in front of the proxy: the gateway's one target, nothing to watch
+        Arc::new(Fixed::new(Some(vec![t.to_string()])))
+    } else {
+        match Watched::start(&namespace, &config.file.fabric.egress_service).await {
+            Ok(w) => Arc::new(w),
+            Err(e) => {
+                // the gateway keeps its last targets; the ops page shows that none were read
+                tracing::error!(error = %e, "egress endpoint watch not started");
+                Arc::new(Fixed::default())
+            }
         }
     };
     let fabric = Arc::new(Gvisor::new(Deps {
