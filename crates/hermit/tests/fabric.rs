@@ -502,6 +502,8 @@ struct FakeEc2 {
     /// Hosts come up with their `JuiceFS` mount missing.
     unmounted: AtomicBool,
     n: AtomicU32,
+    /// `bucket/key` of the objects S3 holds (the image bucket).
+    objects: Mutex<Vec<String>>,
 }
 
 impl FakeEc2 {
@@ -514,6 +516,7 @@ impl FakeEc2 {
             fail: Mutex::default(),
             unmounted: AtomicBool::new(false),
             n: AtomicU32::new(0),
+            objects: Mutex::default(),
         })
     }
 
@@ -596,6 +599,10 @@ impl Ec2 for FakeEc2 {
             );
             Ok(out)
         })
+    }
+
+    fn has_object<'a>(&'a self, bucket: &'a str, key: &'a str) -> Fut<'a, Result<bool, Ec2Error>> {
+        Box::pin(async move { Ok(self.objects.lock().unwrap().contains(&format!("{bucket}/{key}"))) })
     }
 }
 
@@ -2037,6 +2044,112 @@ async fn a_new_image_waits_until_the_gateway_holds_it() {
         .await,
         "the configured image once the gateway holds it"
     );
+}
+
+/// With an image bucket (`fabric.aws.imageBucket`) the gateway only passes packets: hosts are sent to the bucket for
+/// an image they lack, the gateway is never asked for one, and a new `sandbox.image` reaches new sandboxes once it is
+/// published in the bucket.
+#[tokio::test]
+async fn with_an_image_bucket_the_gateway_serves_no_image() {
+    let rig = Rig::new(
+        "fabric_image_bucket",
+        |v| v["fabric"]["aws"]["imageBucket"] = json!("imgs"),
+        Timings {
+            scaler: Duration::from_millis(200),
+            ..manual()
+        },
+    )
+    .await;
+    let (r, _g) = rig.replica("hermit-a").await;
+    assert!(eventually(|| async { rig.host_status(GATEWAY).await == "active" }).await);
+    let (old, old_ref) = (
+        format!("sha256:{}", "5a".repeat(32)),
+        format!("r.example/sbx@sha256:{}", "5a".repeat(32)),
+    );
+    rig.h
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            "insert into sandboxes (id, conversation_id, person, status, name, token_kid, image, image_ref, cpu,
+               memory_bytes, start_deadline, expires_at, hard_expires_at, created_at, ready_at, released_at)
+             values ($1, $2, $3, 'gone', 'sbx-before', 1, $4, $5, 1, $6, now(), now(), now(),
+               now() - interval '2 hours', now() - interval '2 hours', now() - interval '1 hour')",
+            &[
+                &Uuid::now_v7(),
+                &Uuid::now_v7(),
+                &STAFF,
+                &old,
+                &old_ref,
+                &i64::try_from(2 * GIB).unwrap(),
+            ],
+        )
+        .await
+        .unwrap();
+    let start = |cid: Uuid| {
+        let (h, url) = (&rig.h, r.url.clone());
+        async move {
+            let path = routes::fill(routes::SANDBOX, &[&cid.to_string()]);
+            let a = h
+                .client(Caller::Magpie)
+                .call(&url, "PUT", &path, Some(json!({"person": STAFF})), &[])
+                .await;
+            assert!(matches!(a.status, 200 | 202), "{}: {}", a.status, a.body);
+        }
+    };
+    let image_of = |cid: Uuid| {
+        let h = &rig.h;
+        async move {
+            let row = db::latest_of(&h.pool(), cid).await.unwrap().unwrap();
+            (row.image.unwrap_or_default(), row.image_ref.unwrap_or_default())
+        }
+    };
+    // not published yet: the image before
+    let first = Uuid::now_v7();
+    start(first).await;
+    assert_eq!(image_of(first).await, (old, old_ref));
+    assert!(
+        eventually(|| async {
+            db::latest_of(&rig.h.pool(), first)
+                .await
+                .unwrap()
+                .is_some_and(|r| r.status == SandboxState::Ready)
+        })
+        .await
+    );
+    // the host it launched fetches images from the bucket, in the fabric's region
+    let ud = rig.ec2.launched.lock().unwrap()[0].1.clone();
+    assert_eq!(ud["host"]["imageSource"], "https://imgs.s3.eu-central-1.amazonaws.com");
+    // published: the next start is on the configured image
+    let digest = rig.h.config.image_digest.trim_start_matches("sha256:").to_owned();
+    rig.ec2
+        .objects
+        .lock()
+        .unwrap()
+        .push(format!("imgs/images/{digest}.tar.zst"));
+    assert!(
+        eventually(|| async {
+            let c = Uuid::now_v7();
+            start(c).await;
+            image_of(c).await
+                == (
+                    rig.h.config.image_digest.clone(),
+                    rig.h.config.file.sandbox.image.clone(),
+                )
+        })
+        .await,
+        "the configured image once it is in the bucket"
+    );
+    // the gateway was never asked for an image
+    let asked = rig
+        .fleet
+        .sim(GATEWAY)
+        .calls()
+        .iter()
+        .filter(|c| c.starts_with("image "))
+        .count();
+    assert_eq!(asked, 0, "{:?}", rig.fleet.sim(GATEWAY).calls());
 }
 
 /// A start through the whole core on this fabric: `PUT` -> placed on the AWS host, created with the spec hermit

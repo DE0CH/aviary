@@ -439,7 +439,8 @@ async fn heartbeat(
     let mut status = h.status;
     let mut retire_by = h.retire_by.clone();
     if h.is_gateway() {
-        if !info.has_image(&core.cfg.image_digest) {
+        // with an image bucket the gateway serves no image and is never asked for one
+        if f.aws.image_bucket.is_none() && !info.has_image(&core.cfg.image_digest) {
             images::warm_gateway(g, h, &core.cfg.file.sandbox.image, &core.cfg.image_digest);
         }
         return (info, status, retire_by);
@@ -1054,7 +1055,8 @@ pub fn user_data(
             "egressVip": f.egress_vip.to_string(),
             "egressPorts": f.egress_ports.iter().map(|p| [p.vip, p.target]).collect::<Vec<_>>(),
             "reserveMemory": parse_quantity(&f.aws.fallback_host.reserve).unwrap_or(1 << 30),
-            "imageSource": format!("http://{gw_ip}:{}", sandboxd_api::IMAGE_PORT),
+            // the image bucket when the deployment has one, else the gateway's image server
+            "imageSource": f.aws.image_source().unwrap_or_else(|| format!("http://{gw_ip}:{}", sandboxd_api::IMAGE_PORT)),
             // sandboxd's host.json names the hub peer `hub` (crates/sandboxd/src/config.rs)
             "hub": {
                 "publicKey": gateway_key,

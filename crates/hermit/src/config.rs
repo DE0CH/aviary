@@ -200,6 +200,21 @@ pub struct AwsJson {
     /// absent). It must hold every sandbox of a host at `sandbox.tmpGiB` in full, plus the system and the image.
     #[serde(default, rename = "diskGiB")]
     pub disk_gib: Option<u32>,
+    /// The S3 bucket (in `region`) that holds the sandbox images as `images/<digest>.tar.zst`, which
+    /// `fabric/aws/infra.sh publish-image` puts there: hosts fetch an image they lack from it and the gateway serves
+    /// none. Absent: the gateway is the hosts' image server.
+    #[serde(default)]
+    pub image_bucket: Option<String>,
+}
+
+impl AwsJson {
+    /// Where a host fetches an image it lacks (sandboxd's `imageSource`), when the images are in a bucket.
+    #[must_use]
+    pub fn image_source(&self) -> Option<String> {
+        self.image_bucket
+            .as_ref()
+            .map(|b| format!("https://{b}.s3.{}.amazonaws.com", self.region))
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

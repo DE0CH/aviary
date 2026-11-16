@@ -91,6 +91,8 @@ pub struct Gvisor {
     /// The sandbox image digest the gateway is being asked to pull right now ([`super::images::warm_gateway`]);
     /// `None` when no ask is under way
     pub(crate) gateway_image: Arc<Mutex<Option<String>>>,
+    /// The configured image digest once it was seen in the image bucket ([`Fabric::image_ready`])
+    pub(crate) published: Mutex<Option<String>>,
 }
 
 impl std::fmt::Debug for Gvisor {
@@ -114,6 +116,7 @@ impl Gvisor {
             last_reconcile: Mutex::new(None),
             fresh_migrations: Mutex::default(),
             gateway_image: Arc::default(),
+            published: Mutex::default(),
         }
     }
 
@@ -248,9 +251,35 @@ impl Fabric for Gvisor {
 
     fn image_ready<'a>(&'a self, digest: &'a str) -> Fut<'a, bool> {
         Box::pin(async move {
-            // the gateway is the hosts' image server: its last answer lists what it holds. No gateway row (or no
-            // answer from the database): nothing to wait for
             let Ok(core) = self.core() else { return true };
+            // the hosts' image bucket: the image is there once it is published. An image seen there stays (nothing
+            // deletes from the bucket), so one yes per digest is kept; a bucket that does not answer is a no
+            if let (Some(bucket), Some(ec2)) = (&core.cfg.file.fabric.aws.image_bucket, &self.ec2) {
+                if self
+                    .published
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .as_deref()
+                    == Some(digest)
+                {
+                    return true;
+                }
+                let key = format!("images/{}.tar.zst", bare_digest(digest));
+                return match ec2.has_object(bucket, &key).await {
+                    Ok(true) => {
+                        *self.published.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                            Some(digest.to_owned());
+                        true
+                    }
+                    Ok(false) => false,
+                    Err(e) => {
+                        tracing::warn!(error = %e.message, code = %e.code, "image bucket");
+                        false
+                    }
+                };
+            }
+            // else the gateway is the hosts' image server: its last answer lists what it holds. No gateway row (or
+            // no answer from the database): nothing to wait for
             let Ok(hosts) = hosts::live(&core.pool).await else {
                 return true;
             };

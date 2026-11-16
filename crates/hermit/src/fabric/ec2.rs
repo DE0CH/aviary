@@ -43,12 +43,15 @@ pub trait Ec2: Send + Sync + 'static {
     fn terminate<'a>(&'a self, ids: &'a [String]) -> Fut<'a, Result<(), Ec2Error>>;
     /// `DescribeInstances` filtered by `tags` and the states pending, running, stopping, stopped, shutting-down.
     fn describe<'a>(&'a self, tags: &'a [(String, String)]) -> Fut<'a, Result<Vec<Instance>, Ec2Error>>;
+    /// Whether S3 object `key` of `bucket` is there (`HeadObject`): a sandbox image in the hosts' image bucket.
+    fn has_object<'a>(&'a self, bucket: &'a str, key: &'a str) -> Fut<'a, Result<bool, Ec2Error>>;
 }
 
 /// The real client.
 #[derive(Debug, Clone)]
 pub struct Aws {
     client: aws_sdk_ec2::Client,
+    s3: aws_sdk_s3::Client,
 }
 
 impl Aws {
@@ -76,8 +79,33 @@ impl Aws {
                     .build(),
             )
             .build();
+        // the same account's image bucket, with the same bounds
+        let s3 = aws_sdk_s3::Config::builder()
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .region(aws_sdk_s3::config::Region::new(region.to_owned()))
+            .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                access_key_id,
+                secret_access_key,
+                None,
+                None,
+                "hermit",
+            ))
+            .http_client(
+                aws_smithy_http_client::Builder::new()
+                    .tls_provider(tls::Provider::Rustls(tls::rustls_provider::CryptoMode::Ring))
+                    .build_https(),
+            )
+            .timeout_config(
+                TimeoutConfig::builder()
+                    .connect_timeout(Duration::from_millis(3100))
+                    .operation_attempt_timeout(Duration::from_secs(20))
+                    .operation_timeout(Duration::from_secs(60))
+                    .build(),
+            )
+            .build();
         Self {
             client: aws_sdk_ec2::Client::from_conf(conf),
+            s3: aws_sdk_s3::Client::from_conf(s3),
         }
     }
 }
@@ -201,6 +229,28 @@ impl Ec2 for Aws {
                 }
             }
             Ok(out)
+        })
+    }
+
+    fn has_object<'a>(&'a self, bucket: &'a str, key: &'a str) -> Fut<'a, Result<bool, Ec2Error>> {
+        use aws_sdk_s3::error::ProvideErrorMetadata as _;
+        Box::pin(async move {
+            match self.s3.head_object().bucket(bucket).key(key).send().await {
+                Ok(_) => Ok(true),
+                // a HEAD has no body: a missing key is the modelled NotFound (with s3:ListBucket; 403 without it)
+                Err(e)
+                    if e.as_service_error()
+                        .is_some_and(aws_sdk_s3::operation::head_object::HeadObjectError::is_not_found) =>
+                {
+                    Ok(false)
+                }
+                Err(e) => Err(Ec2Error {
+                    code: e.code().unwrap_or("unknown").to_owned(),
+                    message: e
+                        .message()
+                        .map_or_else(|| aws_sdk_s3::error::DisplayErrorContext(&e).to_string(), str::to_owned),
+                }),
+            }
         })
     }
 }

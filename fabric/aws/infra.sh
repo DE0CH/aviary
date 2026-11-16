@@ -42,6 +42,16 @@
 #                                      template, pruning tagged AMIs); `ci-iam-key` writes a new access key to
 #                                      $KEY_OUT (mode 600)
 #   infra.sh --config F prune-amis     deregisters every AMI tagged app=<tags.app> but the template's (and snapshots)
+#   infra.sh --config F image-bucket   the image store of hosts (fabric.aws.imageBucket): a private S3 bucket in the
+#                                      config's region, an S3 gateway endpoint on the hosts' route table (free), and
+#                                      the bucket's policy: anyone may read images/* through that endpoint only (the
+#                                      hosts: they have no instance profile, sandboxd fetches with plain curl), the
+#                                      scaler user may read (hermit asks whether an image is there), the AMI
+#                                      workflow's user may write. No public access. Nothing is ever deleted from it.
+#   infra.sh --config F publish-image [image]   puts the sandbox image (sandbox.image unless given) in the bucket as
+#                                      images/<digest>.tar.zst, unpacked as sandboxd keeps it (rootfs/, config.json,
+#                                      .done); nothing when it is already there. Needs crane, zstd and root (sudo)
+#                                      for the files' owners; a private image needs GHCR_USER/GHCR_TOKEN.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 usage() { sed -n '3,/^set -euo/p' "$0" | head -n -1; exit 2; }
@@ -224,6 +234,64 @@ template)
       --tag-specifications "$(tagspec launch-template)" >/dev/null
   fi
   aws ec2 describe-launch-templates --launch-template-names "$NAME" --query 'LaunchTemplates[0].[LaunchTemplateId,DefaultVersionNumber]' --output text
+  ;;
+image-bucket)
+  bucket=$(cfg .fabric.aws.imageBucket)
+  [[ $bucket =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]] || { echo "fabric.aws.imageBucket '$bucket' is not a bucket name" >&2; exit 2; }
+  acct=$(aws sts get-caller-identity --query Account --output text)
+  vpc=$(aws ec2 describe-subnets --subnet-ids "$SUBNET" --query 'Subnets[0].VpcId' --output text)
+  rt=$(aws ec2 describe-route-tables --filters Name=association.subnet-id,Values="$SUBNET" --query 'RouteTables[0].RouteTableId' --output text)
+  [ -n "$rt" ] && [ "$rt" != None ] || rt=$(aws ec2 describe-route-tables --filters Name=vpc-id,Values="$vpc" Name=association.main,Values=true --query 'RouteTables[0].RouteTableId' --output text)
+  aws s3api head-bucket --bucket "$bucket" >/dev/null 2>&1 \
+    || aws s3api create-bucket --bucket "$bucket" --create-bucket-configuration "LocationConstraint=$REGION" >/dev/null
+  aws s3api put-public-access-block --bucket "$bucket" \
+    --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+  aws s3api put-bucket-tagging --bucket "$bucket" --tagging "$(jq -cn --argjson t "$TAGS_JSON" '{TagSet: $t}')"
+  svc="com.amazonaws.$REGION.s3"
+  ep=$(aws ec2 describe-vpc-endpoints --filters Name=vpc-id,Values="$vpc" Name=service-name,Values="$svc" Name=vpc-endpoint-type,Values=Gateway \
+    --query 'VpcEndpoints[0].VpcEndpointId' --output text)
+  if [ -z "$ep" ] || [ "$ep" = None ]; then
+    ep=$(aws ec2 create-vpc-endpoint --vpc-id "$vpc" --vpc-endpoint-type Gateway --service-name "$svc" --route-table-ids "$rt" \
+      --tag-specifications "$(tagspec vpc-endpoint)" --query 'VpcEndpoint.VpcEndpointId' --output text)
+  else
+    aws ec2 modify-vpc-endpoint --vpc-endpoint-id "$ep" --add-route-table-ids "$rt" >/dev/null 2>&1 || true
+  fi
+  pol=$(jq -cn --arg b "$bucket" --arg ep "$ep" --arg acct "$acct" --arg scaler "$SCALER_USER" --arg ci "$CI_USER" '{
+    Version: "2012-10-17",
+    Statement: [
+      {Sid: "HostsReadThroughTheEndpoint", Effect: "Allow", Principal: "*", Action: "s3:GetObject",
+       Resource: "arn:aws:s3:::\($b)/images/*", Condition: {StringEquals: {"aws:SourceVpce": $ep}}},
+      {Sid: "TheScalerAsksWhetherAnImageIsThere", Effect: "Allow", Principal: {AWS: "arn:aws:iam::\($acct):user/\($scaler)"},
+       Action: ["s3:GetObject", "s3:ListBucket"], Resource: ["arn:aws:s3:::\($b)", "arn:aws:s3:::\($b)/images/*"]},
+      {Sid: "TheAmiWorkflowPublishes", Effect: "Allow", Principal: {AWS: "arn:aws:iam::\($acct):user/\($ci)"},
+       Action: ["s3:PutObject", "s3:GetObject", "s3:ListBucket", "s3:AbortMultipartUpload", "s3:ListBucketMultipartUploads", "s3:ListMultipartUploadParts"],
+       Resource: ["arn:aws:s3:::\($b)", "arn:aws:s3:::\($b)/images/*"]}
+    ]}')
+  aws s3api put-bucket-policy --bucket "$bucket" --policy "$pol"
+  echo "bucket $bucket ($REGION), endpoint $ep on $rt, policy: hosts read images/* through the endpoint, $SCALER_USER reads, $CI_USER writes"
+  ;;
+publish-image)
+  bucket=$(cfg .fabric.aws.imageBucket)
+  image=${2:-$PIN_IMAGE}
+  d=$(digest_of "$image")
+  [[ $d =~ ^[0-9a-f]{64}$ ]] || { echo "no digest for $image" >&2; exit 1; }
+  key="images/$d.tar.zst"
+  if aws s3api head-object --bucket "$bucket" --key "$key" >/dev/null 2>&1; then
+    echo "s3://$bucket/$key is there"; exit 0
+  fi
+  as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi; }
+  tmp=$(mktemp -d)
+  trap 'as_root rm -rf "$tmp"' EXIT
+  mkdir "$tmp/rootfs"
+  src="${image%%[:@]*}@sha256:$d"
+  # as sandboxd unpacks an image (crates/sandboxd/src/images.rs) and as its hub serves one (api.rs): rootfs/ with
+  # the files' own owners and modes, config.json, .done
+  with_login crane export "$src" - | as_root tar -x -C "$tmp/rootfs"
+  with_login crane config "$src" > "$tmp/config.json"
+  : > "$tmp/.done"
+  # S3 shows an object only once its upload is whole: a host never reads half an image
+  as_root tar --zstd -C "$tmp" -cf - . | aws s3 cp - "s3://$bucket/$key" --no-progress
+  echo "s3://$bucket/$key published ($(aws s3api head-object --bucket "$bucket" --key "$key" --query ContentLength --output text) bytes)"
   ;;
 iam)
   acct=$(aws sts get-caller-identity --query Account --output text)

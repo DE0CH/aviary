@@ -34,7 +34,7 @@ hermit spec sections 3-12, 19, 20, 23 and 24.1-24.2 (WP-18, the core) and 13 (WP
 | `fabric::migrate` | 13.10: the resumable `migrate` task and its takeover |
 | `fabric::network` | 13.8: gateway and mesh peers, the egress targets from the `EndpointSlices` watch |
 | `fabric::ec2` | 13.5, 14.4: `RunInstances`/`TerminateInstances`/`DescribeInstances` (`aws-sdk-ec2`), `WireGuard` keys |
-| `fabric::images` | 13.14: the warm-up of a host that just became active; the gateway is asked for the configured image whenever its answer does not list it (it serves hosts without registry access only images it holds, and its store is a cache); a new sandbox is created on the configured image once the gateway holds it, and on the image of the last ready sandbox until then (`Fabric::image_ready`) |
+| `fabric::images` | 13.14: the warm-up of a host that just became active; the gateway is asked for the configured image whenever its answer does not list it (it serves hosts without registry access only images it holds, and its store is a cache); a new sandbox is created on the configured image once the gateway holds it, and on the image of the last ready sandbox until then (`Fabric::image_ready`). With `fabric.aws.imageBucket` the gateway serves no image: hosts fetch from the bucket (`fabric/aws/infra.sh image-bucket`, `publish-image`), and an image is ready once it is published there |
 | `server`, `app` | the `hermit_api::Server` implementation; start, loops, drain (20.2), kill |
 | `legacy` | 15.4, 22.3: `jfs-owner`, `legacy-cleanup`, deleted after P6 (`import-jarvis` went in A6) |
 

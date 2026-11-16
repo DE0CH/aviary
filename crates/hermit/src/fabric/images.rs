@@ -4,7 +4,9 @@
 //! scaler's pass whenever its answer does not list the configured digest (it serves only images it holds, and its
 //! store is a cache: a new pod starts without any). Running sandboxes keep their image; new ones use the configured
 //! one once the gateway holds it, and the image of the last ready sandbox until then (`Fabric::image_ready`: a new
-//! `sandbox.image` the gateway could not fetch failed every start, 2026-11-06, 2026-11-12, 2026-11-16). sandboxd's 4-slot pull table and 20 min
+//! `sandbox.image` the gateway could not fetch failed every start, 2026-11-06, 2026-11-12, 2026-11-16).
+//! With an image bucket (`fabric.aws.imageBucket`) the gateway serves no image and is never asked: hosts fetch from
+//! the bucket, and "hosts can get it" is "it is published there". sandboxd's 4-slot pull table and 20 min
 //! wait are its own.
 
 use std::sync::PoisonError;
