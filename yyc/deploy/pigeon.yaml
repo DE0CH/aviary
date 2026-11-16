@@ -3,10 +3,11 @@
 # (image pigeon-app, DE0CH/claudecodeui) is copied into an emptyDir by the initContainer.
 #
 # Sizes (WP-31, from WP-27's review): kubelet counts the disk-backed emptyDir against the containers' ephemeral-storage
-# limits, so the pigeon container's limit is above the emptyDir's 512Mi plus its own 128Mi; the copy's dirty page cache
+# limits, so the pigeon container's limit is above the emptyDir's 2Gi plus its own 128Mi; the copy's dirty page cache
 # is charged to the initContainer, which therefore gets the emptyDir's size as memory (claudecodeui pigeon-app.yml
 # CP_MEMORY_MIB). check asserts both. Resizing for the seeds' growth (WP-27 gap 1) changes sizeLimit, both limits and
-# pigeon-app's --budget-mib together.
+# pigeon-app's --budget-mib together. 2Gi: every pigeon-app build YYC served within 720 h stays in the bundle (a tab
+# opened on it still fetches its chunks), 687.5 MiB on 2026-11-16 at 21 pins in 12 days.
 #
 # preStop 12 s (DESIGN 15.5 R6): pigeon is bridge B2's callee; the load balancer takes a node out after 3 checks of
 # 3 s plus its 2 s timeout, so a terminating pod keeps serving that long. Grace: 12 s + the 300 s transfer bound from
@@ -53,7 +54,7 @@ spec:
           command: ["/cp", "-a", "/app/.", "/srv/app/"]
           resources:
             requests: {cpu: 50m, memory: 128Mi}
-            limits: {memory: 512Mi}
+            limits: {memory: 2Gi}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -67,7 +68,7 @@ spec:
           command: ["/cp", "-rL", "/branding", "/srv/app/"]
           resources:
             requests: {cpu: 50m, memory: 128Mi}
-            limits: {memory: 512Mi}
+            limits: {memory: 2Gi}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -103,15 +104,15 @@ spec:
             preStop:
               sleep: {seconds: 12}
           resources:
-            requests: {cpu: 100m, memory: 128Mi, ephemeral-storage: 576Mi}
-            limits: {cpu: "1", memory: 384Mi, ephemeral-storage: 640Mi}
+            requests: {cpu: 100m, memory: 128Mi, ephemeral-storage: 2112Mi}
+            limits: {cpu: "1", memory: 384Mi, ephemeral-storage: 2176Mi}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: {drop: [ALL]}
           volumeMounts: [{name: app, mountPath: /srv/app, readOnly: true}]
       volumes:
-        - {name: app, emptyDir: {sizeLimit: 512Mi}}
+        - {name: app, emptyDir: {sizeLimit: 2Gi}}
         - {name: branding, configMap: {name: pigeon-branding}}
 ---
 apiVersion: v1
