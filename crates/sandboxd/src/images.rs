@@ -2,6 +2,8 @@
 //! every sandbox shares it read-only. Pulled with crane from the registry (a hub, or any host with
 //! `registryConfigDir`), else fetched unpacked from `imageSource` (an image server: the gateway's).
 //! Data never passes through sandboxd: `crane export | tar -x` and `curl | tar -x` are piped child to child.
+//! A hub's store is a cache: once it holds the image it was asked for, it keeps that one and the one before it and
+//! removes the rest ([`prune`]).
 use crate::config::HostConfig;
 use crate::fixed::Str;
 use crate::json::{self, Val};
@@ -128,6 +130,54 @@ impl Pulls {
     }
 }
 
+/// The newest image in `dir` other than `keep`, by the time it was unpacked (its `.done`).
+fn newest_other(dir: &str, keep: &str) -> Str<64> {
+    let mut newest: (Str<64>, Option<std::time::SystemTime>) = (Str::new(), None);
+    let _ = each_dir_entry(dir, |d| {
+        if !valid_digest(d) || d == keep {
+            return;
+        }
+        let done = crate::paths::join(crate::paths::join(dir, "/").as_str(), d);
+        let at =
+            std::fs::metadata(crate::paths::join(done.as_str(), "/.done").as_str()).and_then(|m| m.modified()).ok();
+        if at.is_some() && at > newest.1 {
+            newest = (Str::lossy(d), at);
+        }
+    });
+    newest.0
+}
+
+/// A hub's image store is a cache in a space with a size (the gateway pod's scratch space): once the hub holds
+/// `keep`, the image hosts are sent to, every other image goes except the newest of them, the image before it, which
+/// new sandboxes still use until the hub holds a new one (hermit 13.14). Returns how many it removed. A hub that
+/// kept every image it ever pulled filled its node's disk (2026-11-16). Names that are not a digest (a pull under
+/// way, `.tmp-…`) are left alone.
+pub fn prune(dir: &str, keep: &str) -> usize {
+    let before = newest_other(dir, keep);
+    let mut removed = 0;
+    // one at a time: nothing is removed while the directory is being read
+    loop {
+        let mut victim: Str<64> = Str::new();
+        let _ = each_dir_entry(dir, |d| {
+            if victim.is_empty() && valid_digest(d) && d != keep && d != before.as_str() {
+                victim = Str::lossy(d);
+            }
+        });
+        if victim.is_empty() {
+            return removed;
+        }
+        let path = crate::paths::join(crate::paths::join(dir, "/").as_str(), victim.as_str());
+        crate::proc::quiet(&["rm", "-rf", path.as_str()]);
+        if exists(path.as_str()) {
+            // it would be found again for ever
+            Log::info("image not removed").s("digest", victim.as_str()).emit();
+            return removed;
+        }
+        Log::info("image removed").s("digest", victim.as_str()).s("kept", keep).emit();
+        removed += 1;
+    }
+}
+
 fn from_registry(cfg: &HostConfig) -> bool {
     cfg.pulls_from_registry()
 }
@@ -157,13 +207,16 @@ pub fn ensure_image(cfg: &HostConfig, pulls: &Pulls, digest: Option<&str>, image
     if !valid_digest(d.as_str()) {
         return Err(Error::new(500, "image: bad digest"));
     }
-    if have_image(d.as_str()) {
-        return Ok(d);
+    if !have_image(d.as_str()) {
+        let slot = pulls.acquire(d.as_str())?;
+        let r = unpack(cfg, env, d.as_str(), image_ref);
+        pulls.release(slot);
+        r?;
     }
-    let slot = pulls.acquire(d.as_str())?;
-    let r = unpack(cfg, env, d.as_str(), image_ref);
-    pulls.release(slot);
-    r.map(|()| d)
+    if cfg.gateway {
+        prune(paths::images().as_str(), d.as_str());
+    }
+    Ok(d)
 }
 
 fn unpack(cfg: &HostConfig, env: &[&str], d: &str, image_ref: Option<&str>) -> Res<()> {
@@ -227,6 +280,49 @@ fn unpack(cfg: &HostConfig, env: &[&str], d: &str, image_ref: Option<&str>) -> R
             crate::proc::quiet(&["rm", "-rf", tmp.as_str()]);
             Err(e)
         }
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+
+    #[test]
+    fn a_hub_keeps_the_image_it_was_asked_for_and_the_one_before() {
+        let dir = std::env::temp_dir().join(format!("sbx-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let digest = |c: char| c.to_string().repeat(64);
+        // unpacked an hour apart: a (oldest), b, c, d (newest)
+        for (i, c) in ['a', 'b', 'c', 'd'].into_iter().enumerate() {
+            let image = dir.join(digest(c));
+            std::fs::create_dir_all(image.join("rootfs")).unwrap();
+            std::fs::write(image.join("rootfs/file"), b"x").unwrap();
+            let done = std::fs::File::create(image.join(".done")).unwrap();
+            let at =
+                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000 + 3600 * i as u64);
+            done.set_modified(at).unwrap();
+        }
+        // a pull under way, and something that is no image
+        std::fs::create_dir_all(dir.join(format!(".tmp-{}-1", digest('e')))).unwrap();
+        std::fs::create_dir_all(dir.join("lost+found")).unwrap();
+        let names = || {
+            let mut v: Vec<String> =
+                std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+            v.sort();
+            v
+        };
+        // asked for b: the newest other image (d) stays with it, a and c go
+        assert_eq!(prune(dir.to_str().unwrap(), &digest('b')), 2);
+        assert_eq!(
+            names(),
+            vec![format!(".tmp-{}-1", digest('e')), digest('b'), digest('d'), "lost+found".to_string()]
+        );
+        // again: nothing more to remove
+        assert_eq!(prune(dir.to_str().unwrap(), &digest('b')), 0);
+        // asked for an image that is the only one: nothing goes
+        assert_eq!(prune(dir.to_str().unwrap(), &digest('d')), 0);
+        assert_eq!(names().len(), 4);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
 
