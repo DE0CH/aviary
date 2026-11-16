@@ -386,6 +386,11 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .hermit_delete_conversation(param_uuid(&f, "id"))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
+        "hermit_restore_conversation" => c
+            .service(Some(ADMIN))
+            .hermit_restore_conversation(param_uuid(&f, "id"))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
         "hermit_send_turn" => c
             .service(Some(ADMIN))
             .hermit_send_turn(param_uuid(&f, "id"), &request::<HermitSendRequest>(&f))

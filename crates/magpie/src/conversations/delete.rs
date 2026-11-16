@@ -70,6 +70,21 @@ pub async fn delete_as_deployment(pool: &Pool, id: Uuid) -> Result<Conversation>
     delete(pool, &Person { email, viewer: None }, id).await
 }
 
+/// hermit's restore: [`restore`] for whoever the conversation's person is.
+///
+/// # Errors
+/// 404; a statement error.
+pub async fn restore_as_deployment(pool: &Pool, id: Uuid) -> Result<Conversation> {
+    let conn = pool.get().await?;
+    let email: String = conn
+        .query_opt("select person from conversations where id = $1", &[&id])
+        .await?
+        .ok_or_else(Error::not_found)?
+        .get(0);
+    drop(conn);
+    restore(pool, &Person { email, viewer: None }, id).await
+}
+
 /// M6 `POST …/delete`: into Recently deleted (idempotent).
 ///
 /// # Errors

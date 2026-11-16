@@ -81,6 +81,11 @@ pub async fn delete_conversation(app: &Magpie, _ctx: Ctx, id: Uuid) -> Answer<Co
     answer(crate::conversations::delete::delete_as_deployment(&app.pool, id).await)
 }
 
+/// `POST /v1/hermit/conversations/{id}/restore`.
+pub async fn restore_conversation(app: &Magpie, _ctx: Ctx, id: Uuid) -> Answer<Conversation> {
+    answer(crate::conversations::delete::restore_as_deployment(&app.pool, id).await)
+}
+
 /// `POST /v1/hermit/conversations/{id}/turns`: M7 as the person hermit names (404 for another's conversation). A
 /// turn that runs refuses it (409 `turn_running`) unless the request says `joinRunning`: then the message joins the
 /// running turn as a person's does.

@@ -79,7 +79,8 @@ The seams in `feeds` (built for the switch window, WP-50, whose legacy upstream 
   (`PUT /v1/hermit/conversations/{id}/closed`): the agent snapshot carries `closed`, the sentence the app shows in
   its message box, which takes nothing meanwhile, and a send is refused with that sentence (magpie 409
   `conversation_closed`). It ends one with `POST /v1/hermit/conversations/{id}/delete`, which takes it out of the
-  person's list.
+  person's list, and puts one it ended back with `POST /v1/hermit/conversations/{id}/restore` (the session it
+  belongs to was alive after all).
 - **Slash commands** (Deyao, 2026-11-12): `list_commands_request` is answered with the slash commands the
   conversation's Claude Code names (magpie `GET /v1/conversations/{id}/commands`: the supervisor reports Claude
   Code's `initialize` answer with a turn's `running` report), so the app's message box completes and lists them

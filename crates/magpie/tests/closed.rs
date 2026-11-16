@@ -96,6 +96,24 @@ async fn a_closed_conversation_refuses_its_person_and_an_ended_one_leaves_the_li
     assert!(c.deleted_at.is_some());
     let list = alice.list_conversations(&ListQuery::default()).await.unwrap();
     assert!(list.conversations.iter().all(|c| c.id != conv));
+    // its session was alive after all (the deployment had lost sight of it): back in the person's list, and their
+    // message starts a turn again
+    let c = deployment.hermit_restore_conversation(conv).await.unwrap();
+    assert_eq!(c.deleted_at, None);
+    let list = alice.list_conversations(&ListQuery::default()).await.unwrap();
+    assert!(list.conversations.iter().any(|c| c.id == conv));
+    alice.send_turn(conv, &msg("m4", "still here")).await.unwrap();
+    alice.cancel_turn(conv).await.unwrap();
+    // restoring one that is not deleted changes nothing
+    let c = deployment.hermit_restore_conversation(conv).await.unwrap();
+    assert_eq!(c.deleted_at, None);
+    let e = deployment
+        .hermit_restore_conversation(Uuid::new_v4())
+        .await
+        .unwrap_err();
+    assert_eq!(code(&e), ErrorCode::NotFound);
+    let c = deployment.hermit_delete_conversation(conv).await.unwrap();
+    assert!(c.deleted_at.is_some());
     // someone else's id is not found
     let e = deployment.hermit_delete_conversation(Uuid::new_v4()).await.unwrap_err();
     assert_eq!(code(&e), ErrorCode::NotFound);

@@ -196,6 +196,8 @@ pub const HERMIT_CONVERSATION: &str = "/v1/hermit/conversations/{id}";
 pub const HERMIT_CONVERSATION_CLOSED: &str = "/v1/hermit/conversations/{id}/closed";
 /// `POST`: the deployment ends the conversation (into Recently deleted, as its person's delete does).
 pub const HERMIT_CONVERSATION_DELETE: &str = "/v1/hermit/conversations/{id}/delete";
+/// `POST`: the deployment takes a conversation it ended out of Recently deleted (as its person's restore does).
+pub const HERMIT_CONVERSATION_RESTORE: &str = "/v1/hermit/conversations/{id}/restore";
 /// A turn the deployment sends into such a conversation as its person.
 pub const HERMIT_CONVERSATION_TURNS: &str = "/v1/hermit/conversations/{id}/turns";
 /// `POST` workspace references (hermit).
@@ -415,6 +417,14 @@ pub const ROUTES: &[Route] = &[
         false,
     ),
     service(
+        "hermit_restore_conversation",
+        Post,
+        HERMIT_CONVERSATION_RESTORE,
+        HERMIT,
+        &[200],
+        false,
+    ),
+    service(
         "hermit_send_turn",
         Post,
         HERMIT_CONVERSATION_TURNS,
@@ -580,7 +590,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 81);
+        assert_eq!(ROUTES.len(), 82);
     }
 
     #[test]

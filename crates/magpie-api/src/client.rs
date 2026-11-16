@@ -1050,6 +1050,20 @@ impl ServiceCalls<'_> {
             .await
     }
 
+    /// Takes a conversation the deployment ended out of Recently deleted, as its person's restore does (caller
+    /// hermit): the deployment found the session it belongs to alive after all.
+    pub async fn hermit_restore_conversation(&self, id: Uuid) -> Result<Conversation, ClientError> {
+        self.client
+            .exec_json(
+                &self.scope,
+                route("hermit_restore_conversation"),
+                &[&id.to_string()],
+                NO_QUERY,
+                json(&Empty {})?,
+            )
+            .await
+    }
+
     /// A turn the deployment sends into a conversation as its person (caller hermit).
     pub async fn hermit_send_turn(
         &self,

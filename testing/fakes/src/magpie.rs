@@ -1561,6 +1561,18 @@ impl Server for FakeMagpie {
         )
     }
 
+    async fn hermit_restore_conversation(&self, ctx: Ctx, id_: Uuid) -> Result<Conversation, ApiError> {
+        scripted!(
+            self,
+            "hermit_restore_conversation",
+            ctx,
+            id(id_),
+            None,
+            Some(json!({})),
+            typed
+        )
+    }
+
     async fn hermit_send_turn(
         &self,
         ctx: Ctx,
