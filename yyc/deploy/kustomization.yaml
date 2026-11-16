@@ -37,17 +37,10 @@ images:
   # egress and tools (DE0CH/jarvis3 chat.yml); the ZDR guard reads this tag (yyc-ai/tests/test_zdr.py)
   - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "c564e0a55f6c"}
 configMapGenerator:
-  # yyc-mcp's access catalogue (news-stream/deploy/apps/yyc-mcp.yaml checks it on every call): catalogue.json under the
-  # old key config.json, a fixed name so the mounted file changes in place (DESIGN 15.4; on yyc-talos since T4b)
-  - name: yyc-catalogue
-    namespace: yyc
-    files: [config.json=catalogue.json]
-    options: {disableNameSuffixHash: true}
   # hermit's YYC configuration (hermit spec 9): hashed, so a change rolls hermit
   - name: hermit-config
     namespace: yyc-ai
     files: [hermit/hermit.json, hermit/system-prompt.md, hermit/sandbox-rules.md, hermit/title-system.md]
-  # who may use YYC AI, and admins (hermit 3.4.1): a fixed name, so hermit and tools see a change in place (no roll)
   # the managed skills (decision 15; hermit's prompt.skills, the descriptor's claude.managedSkills): hermit/skills/<skill>/
   # <file> as key <skill>.<file>, mounted back at <skill>/<file> by hermit.yaml's items (check_deploy.py item K keeps the
   # three lists equal); hashed, so a change rolls hermit and new sandboxes get it
@@ -75,10 +68,6 @@ configMapGenerator:
       - branding/icon-192.png
       - branding/icon-512.png
       - branding/manifest.json
-  - name: catalogue
-    namespace: yyc-ai
-    files: [catalogue.json]
-    options: {disableNameSuffixHash: true}
   # the gateway's host.json (hermit 14.2): hashed, so a change rolls the gateway pod (the data plane stays, HOST.md)
   - name: hermit-gateway
     namespace: yyc-ai-fabric
