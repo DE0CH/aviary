@@ -4,6 +4,9 @@
 //! proxy in front, which names the person in a header), and answers the page's WebDAV, upload and search calls on
 //! one folder of the disk. No database, no per-person folders, no sharing.
 
+// A refusal is a whole response; boxing it would buy nothing here.
+#![allow(clippy::result_large_err)]
+
 use std::{
     env,
     path::{Component, Path, PathBuf},
@@ -152,8 +155,8 @@ async fn route(s: &S, req: Request) -> Result<Res, Res> {
         ("POST", "/api/v0/settings/values-list") => Ok(json_res(StatusCode::CREATED, json!({"values": []}))),
         ("GET", "/app/list") => Ok(json_res(StatusCode::OK, json!({"mime-types": []}))),
         ("REPORT", p) if p.starts_with("/dav/spaces") => search(s, req).await,
-        (_, p) if p.starts_with("/dav/spaces/") => dav(s, &user, &p["/dav/spaces/".len()..].to_string(), req).await,
-        (_, p) if p.starts_with("/data/tus/") => tus_chunk(s, &p["/data/tus/".len()..].to_string(), req).await,
+        (_, p) if p.starts_with("/dav/spaces/") => dav(s, &user, &p["/dav/spaces/".len()..], req).await,
+        (_, p) if p.starts_with("/data/tus/") => tus_chunk(s, &p["/data/tus/".len()..], req).await,
         _ => Err(status(StatusCode::NOT_FOUND)),
     }
 }

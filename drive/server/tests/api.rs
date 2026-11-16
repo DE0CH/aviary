@@ -53,7 +53,7 @@ impl Server {
         if let Some(u) = dev_user {
             cmd.env("DRIVE_DEV_USER", u);
         }
-        let child = cmd.spawn().unwrap();
+        let mut child = cmd.spawn().unwrap();
         let http = Client::builder().redirect(Policy::none()).timeout(Duration::from_secs(20)).build().unwrap();
         let base = format!("http://127.0.0.1:{port}");
         for _ in 0..100 {
@@ -62,6 +62,8 @@ impl Server {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
+        let _ = child.kill();
+        let _ = child.wait();
         panic!("the server did not start");
     }
 

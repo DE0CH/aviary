@@ -1,0 +1,74 @@
+# YYC Drive (YYC-DRIVE.md). server: clippy and the server's tests (the real program on a temporary folder).
+# page: the page's unit tests. image: both in one image, ghcr.io/de0ch/yyc-drive:<sha12>, only when both passed.
+name: yyc-drive
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: yyc-drive-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+env:
+  IMAGE: ghcr.io/de0ch/yyc-drive
+jobs:
+  server:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      - name: clippy
+        working-directory: server
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: tests
+        working-directory: server
+        run: cargo test --locked
+
+  page:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install -g pnpm@11.28.11
+      - run: pnpm install --frozen-lockfile
+      - name: unit tests
+        run: pnpm test:unit run
+
+  image:
+    needs: [server, page]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: tag
+        run: echo "TAG=${GITHUB_SHA::12}" >> "$GITHUB_ENV"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: server/Dockerfile
+          push: true
+          tags: ${{ env.IMAGE }}:${{ env.TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

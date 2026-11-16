@@ -1,8 +1,6 @@
-**/node_modules
-**/dist
 .git
-.pnpm-store
-release
-reports
-tests/e2e/.features-gen
-third-party-licenses
+node_modules
+**/node_modules
+dist
+server/target
+tests/e2e
