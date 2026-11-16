@@ -340,7 +340,7 @@ export class Egress {
       this.#deny(internetRow(), "deny:auth", 407);
       return this.#text(res, 407, "egress: proxy authentication required\n", { "proxy-authenticate": PROXY_REALM });
     }
-    const v = tok === "malformed" ? ({ error: "malformed" } as const) : await this.#o.tokens.verify(tok);
+    const v = tok === "malformed" ? ({ error: "malformed" } as const) : await this.#o.tokens.verify(tok, req.socket.remoteAddress);
     if ("error" in v) {
       if (fixed || named) {
         if (fixed === "magpie" || fixed === "hermit") this.#countFixed(fixed, 403);
@@ -836,7 +836,7 @@ export class Egress {
       this.#deny(row, "deny:auth", 407);
       return deny(407, "egress: proxy authentication required\n", { "proxy-authenticate": PROXY_REALM });
     }
-    const v = tok === "malformed" ? ({ error: "malformed" } as const) : await this.#o.tokens.verify(tok);
+    const v = tok === "malformed" ? ({ error: "malformed" } as const) : await this.#o.tokens.verify(tok, req.socket.remoteAddress);
     if ("error" in v) {
       this.#deny(row, "deny:auth", 403);
       return deny(403, "egress: unknown or expired sandbox token\n");

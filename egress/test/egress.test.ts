@@ -380,7 +380,7 @@ test("targets and fixed names: exact host, no port or port 80; dot and encoded p
 
 // ---- the credential ---------------------------------------------------------------------------------------------
 
-test("tokens: hermit's hst1 codec, expiry, kid and signature; the address a request comes from is not checked", async () => {
+test("tokens: hermit's hst1 codec, the source address, expiry, kid and signature", async () => {
   assert.equal(credentialToken(undefined), "missing");
   assert.equal(credentialToken("Bearer x"), "missing");
   assert.equal(credentialToken(basic("abc")), "abc");
@@ -391,13 +391,14 @@ test("tokens: hermit's hst1 codec, expiry, kid and signature; the address a requ
   const h = new FakeHermit("b", masterKey(7));
   const now = Math.floor(Date.now() / 1000);
   const { token, claims } = h.token({ key, person: "staff@example.org", source: "192.0.2.9" });
-  // signed for 192.0.2.9: valid from anywhere (behind a load balancer every request comes from the balancer)
-  assert.deepEqual(keys.verify(token, now), { claims });
-  assert.deepEqual(keys.verify(h.token({ key, expiresAt: now }).token, now), { error: "expired" });
+  assert.deepEqual(keys.verify(token, now, "::ffff:192.0.2.9"), { claims });
+  assert.deepEqual(keys.verify(token, now, "192.0.2.8"), { error: "wrong_source" });
+  assert.deepEqual(keys.verify(h.token({ key, expiresAt: now }).token, now, "127.0.0.1"), { error: "expired" });
+  assert.equal("claims" in keys.verify(h.token({ key, source: "0.0.0.0" }).token, now, "192.0.2.1"), true, "0.0.0.0: any source");
   const flipped = token.slice(0, -3) + (token.at(-3) === "A" ? "B" : "A") + token.slice(-2);
-  assert.deepEqual(keys.verify(flipped, now), { error: "bad_signature" });
-  assert.deepEqual(keys.verify(h.token({ key: signingKey(masterKey(8)) }).token, now), { error: "unknown_kid" });
-  for (const bad of ["", "hst1", "hst1.07.AA.AA", "hst2.7.AA.AA", token + ".x", token.replace("hst1.7.", "hst1.7.!")]) assert.deepEqual(keys.verify(bad, now), { error: "malformed" }, bad);
+  assert.deepEqual(keys.verify(flipped, now, "192.0.2.9"), { error: "bad_signature" });
+  assert.deepEqual(keys.verify(h.token({ key: signingKey(masterKey(8)) }).token, now, "127.0.0.1"), { error: "unknown_kid" });
+  for (const bad of ["", "hst1", "hst1.07.AA.AA", "hst2.7.AA.AA", token + ".x", token.replace("hst1.7.", "hst1.7.!")]) assert.deepEqual(keys.verify(bad, now, "192.0.2.9"), { error: "malformed" }, bad);
 });
 
 test("liveness: revoked within 30 s, a 404 refuses, a hermit outage never refuses a valid token, a new kid is learnt, an empty key set is a failed fetch", async () => {
@@ -408,36 +409,36 @@ test("liveness: revoked within 30 s, a 404 refuses, a hermit outage never refuse
   try {
     assert.equal(await st.refreshKeys(false), true);
     const a = h.token();
-    assert.ok("claims" in (await st.verify(a.token)), "admitted before any liveness answer");
+    assert.ok("claims" in (await st.verify(a.token, "127.0.0.1")), "admitted before any liveness answer");
     await sleep(50);
     assert.equal(h.lookups.get(a.claims.sandboxId), 1);
     h.live.set(a.claims.sandboxId, false);
-    assert.ok("claims" in (await st.verify(a.token)), "the cached answer holds for 30 s");
+    assert.ok("claims" in (await st.verify(a.token, "127.0.0.1")), "the cached answer holds for 30 s");
     clock += 30_000;
-    await st.verify(a.token);
+    await st.verify(a.token, "127.0.0.1");
     await sleep(50);
-    assert.deepEqual(await st.verify(a.token), { error: "not_live" });
+    assert.deepEqual(await st.verify(a.token, "127.0.0.1"), { error: "not_live" });
 
     const u = h.token();
     h.live.set(u.claims.sandboxId, "unknown");
-    await st.verify(u.token);
+    await st.verify(u.token, "127.0.0.1");
     await sleep(50);
-    assert.deepEqual(await st.verify(u.token), { error: "not_live" }, "hermit's 404 is definitive");
+    assert.deepEqual(await st.verify(u.token, "127.0.0.1"), { error: "not_live" }, "hermit's 404 is definitive");
 
     const seen = h.token();
-    await st.verify(seen.token);
+    await st.verify(seen.token, "127.0.0.1");
     await sleep(50);
     for (const o of ["reset", "hang", "unavailable"] as const) {
       h.outage = o;
       clock += 31_000;
       const never = h.token();
       for (let i = 0; i < 3; i++) {
-        assert.ok("claims" in (await st.verify(seen.token)), `${o}: a token seen before`);
-        assert.ok("claims" in (await st.verify(never.token)), `${o}: a token never seen`);
+        assert.ok("claims" in (await st.verify(seen.token, "127.0.0.1")), `${o}: a token seen before`);
+        assert.ok("claims" in (await st.verify(never.token, "127.0.0.1")), `${o}: a token never seen`);
         await sleep(400);
       }
     }
-    assert.deepEqual(await st.verify(a.token), { error: "not_live" }, "a refusal is kept while hermit fails");
+    assert.deepEqual(await st.verify(a.token, "127.0.0.1"), { error: "not_live" }, "a refusal is kept while hermit fails");
     h.outage = "up";
 
     // a key published after the last fetch: the first token naming it refetches at once, even right after a routine
@@ -447,17 +448,17 @@ test("liveness: revoked within 30 s, a 404 refuses, a hermit outage never refuse
     h.keys.push(k2);
     let fetches = h.keyFetches;
     let t0 = Date.now();
-    assert.ok("claims" in (await st.verify(h.token({ key: k2 }).token)));
+    assert.ok("claims" in (await st.verify(h.token({ key: k2 }).token, "127.0.0.1")));
     assert.equal(h.keyFetches, fetches + 1);
     const k3 = signingKey(masterKey(3));
     h.keys.push(k3);
     fetches = h.keyFetches;
     const tok3 = h.token({ key: k3 }).token;
     clock += 9_000;
-    assert.deepEqual(await st.verify(tok3), { error: "unknown_kid" }, "within 10 s of the last unknown-kid refetch: 403 at once");
+    assert.deepEqual(await st.verify(tok3, "127.0.0.1"), { error: "unknown_kid" }, "within 10 s of the last unknown-kid refetch: 403 at once");
     assert.equal(h.keyFetches, fetches, "no refetch inside the window");
     clock += 1_000;
-    assert.ok("claims" in (await st.verify(tok3)), "the retry after the 10 s mark refetches and is admitted");
+    assert.ok("claims" in (await st.verify(tok3, "127.0.0.1")), "the retry after the 10 s mark refetches and is admitted");
     assert.equal(h.keyFetches, fetches + 1);
 
     // a hermit key rotation: the refetch lands on a replica that does not publish the new kid yet: 403 after that one
@@ -473,12 +474,12 @@ test("liveness: revoked within 30 s, a 404 refuses, a hermit outage never refuse
       if (req.url === "/v1/sandbox-token-keys" && ++calls === 2) h.keys.push(k4);
       orig(req, res);
     });
-    assert.deepEqual(await st.verify(tok4), { error: "unknown_kid" }, "one refetch, without the kid: 403");
+    assert.deepEqual(await st.verify(tok4, "127.0.0.1"), { error: "unknown_kid" }, "one refetch, without the kid: 403");
     assert.equal(h.keyFetches, fetches + 1);
-    assert.deepEqual(await st.verify(tok4), { error: "unknown_kid" }, "a retry inside the window: 403 at once");
+    assert.deepEqual(await st.verify(tok4, "127.0.0.1"), { error: "unknown_kid" }, "a retry inside the window: 403 at once");
     assert.equal(h.keyFetches, fetches + 1);
     clock += 10_000;
-    assert.ok("claims" in (await st.verify(tok4)), "learnt by the retry's refetch");
+    assert.ok("claims" in (await st.verify(tok4, "127.0.0.1")), "learnt by the retry's refetch");
     assert.equal(h.keyFetches, fetches + 2);
 
     // a kid hermit never publishes: concurrent requests share one refetch, then the definitive 403; nobody waits more
@@ -486,7 +487,7 @@ test("liveness: revoked within 30 s, a 404 refuses, a hermit outage never refuse
     fetches = h.keyFetches;
     const bogus = h.token({ key: signingKey(masterKey(99)) }).token;
     t0 = Date.now();
-    const [x, y] = await Promise.all([st.verify(bogus), st.verify(bogus)]);
+    const [x, y] = await Promise.all([st.verify(bogus, "127.0.0.1"), st.verify(bogus, "127.0.0.1")]);
     assert.deepEqual([x, y], [{ error: "unknown_kid" }, { error: "unknown_kid" }]);
     assert.equal(h.keyFetches, fetches + 1, "concurrent requests share the one refetch");
     assert.ok(Date.now() - t0 < 1000, "the wait is that one fetch");
@@ -502,7 +503,7 @@ test("liveness: revoked within 30 s, a 404 refuses, a hermit outage never refuse
         orig(req, res);
       });
       assert.equal(await st.refreshKeys(false), false, `${body}: a failed fetch`);
-      assert.ok("claims" in (await st.verify(valid)), `${body}: the last set kept`);
+      assert.ok("claims" in (await st.verify(valid, "127.0.0.1")), `${body}: the last set kept`);
     }
     h.server.removeAllListeners("request");
     h.server.on("request", orig);
@@ -545,7 +546,7 @@ test("token keys: the last set hermit published is stored, and a start while her
     assert.equal(await b.loadStored(), true);
     assert.equal(b.usable, true);
     assert.equal(b.loaded, false);
-    assert.ok("claims" in (await b.verify(tok.token)), "a valid token verifies with the stored set");
+    assert.ok("claims" in (await b.verify(tok.token, "127.0.0.1")), "a valid token verifies with the stored set");
     h.outage = "up";
     assert.equal(await b.refreshKeys(false), true);
     assert.equal(b.loaded, true);
