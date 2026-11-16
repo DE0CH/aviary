@@ -33,7 +33,8 @@ byte.
 
 ## Size
 
-pigeon's emptyDir is 512 MiB (pigeon spec 17.1). The assembled `/app` may take 480 MiB of it, counted as the filesystem
+pigeon's emptyDir is 2 GiB (DE0CH/yyc-code `yyc-ai/deploy/pigeon.yaml`; 512 MiB until 2026-11-16, the size the
+figures below were measured against). The assembled `/app` may take 2016 MiB of it, counted as the filesystem
 stores it (4 KiB blocks). Measured (`test/sizes-0b3a5c6f5028.json`, the first image's real file sizes): the build and
 its 39 seeds take 319.5 MiB, and a build whose every file changed adds 36 MiB (two real builds, 0b3a5c6f and 140ed041,
 differ in 58 of 82 files, so that is the usual case). That leaves room for 5 such builds, while the app gets dozens of
@@ -57,8 +58,8 @@ commits a week, so spec 17.1's "every build of the last 30 days, or the last 5" 
   seeds are served as they are (pigeon serves the file itself when no sibling exists, pigeon spec 5.2.1). Those are the
   old ui builds' chunks, mostly 21.5 MB entry bundles from before the chunk split, which a running tab never fetches
   again. This saves 110 MiB on the first image.
-- The image job checks that `/cp` copies the whole tree as uid 65532 within `CP_MEMORY_MIB` (512 MiB, `docker run
-  --memory`) and logs the lowest of 32 to 512 MiB that worked: under cgroup v2 the page cache the copy dirties is
+- The image job checks that `/cp` copies the whole tree as uid 65532 within `CP_MEMORY_MIB` (2048 MiB, `docker run
+  --memory`) and logs the lowest of 32 to 2048 MiB that worked: under cgroup v2 the page cache the copy dirties is
   charged to the initContainer (gap 4).
 
 ## Design gaps and deviations
