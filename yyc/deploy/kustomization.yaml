@@ -18,6 +18,7 @@ resources:
   - egress/egress.yaml
   - tools/tools.yaml
   - herald/herald.yaml
+  - drive/drive.yaml
   # the one-shot Jobs (hermit-jfs-owner) are not here: a Job's image is immutable, so each re-pin of the tags below
   # would refuse them; they run from yyc-ai/oneshot/ with oneshot/run.sh, on the images pinned here, outside the inventory
 # one aviary commit for pigeon, magpie, hermit and sandboxd (check item 4); sandboxd's tag is hermit.json's
@@ -31,6 +32,8 @@ images:
   - {name: herald, newName: ghcr.io/de0ch/herald, newTag: "e90075c4fcc1"}
   # the app bundle (DE0CH/claudecodeui pigeon-app.yml)
   - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "ac2fe924bca1"}
+  # YYC Drive: the page and its server in one image (DE0CH/yyc-drive yyc-drive.yml)
+  - {name: yyc-drive, newName: ghcr.io/de0ch/yyc-drive, newTag: "05161af0ad72"}
   # egress and tools (DE0CH/jarvis3 chat.yml); the ZDR guard reads this tag (yyc-ai/tests/test_zdr.py)
   - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "c564e0a55f6c"}
 configMapGenerator:
