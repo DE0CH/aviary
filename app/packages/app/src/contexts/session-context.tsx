@@ -13,6 +13,7 @@ import {
 } from "@/hooks/use-agent-initialization";
 import type { StreamItem } from "@/types/stream";
 import { deriveAgentStreamTurnLiveness } from "@/timeline/session-stream-reducers";
+import { getSendingClientMessageIds } from "@/composer/submission/model";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { requestTimelineReplacement } from "@/timeline/timeline-replacement";
 import { type ViewedTimelineOwner } from "@/timeline/viewed-timeline-sync";
@@ -370,9 +371,14 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       ) {
         voiceRuntime?.onTurnEvent(serverId, agentId, event.type);
       }
-      const turnLiveness = deriveAgentStreamTurnLiveness([
-        { event: streamEvent, seq, epoch, timestamp: parsedTimestamp },
-      ]);
+      const turnLiveness = deriveAgentStreamTurnLiveness(
+        [{ event: streamEvent, seq, epoch, timestamp: parsedTimestamp }],
+        {
+          sendingClientMessageIds: getSendingClientMessageIds(
+            useSessionStore.getState().sessions[serverId]?.messageSubmissions.get(agentId),
+          ),
+        },
+      );
       if (turnLiveness.length > 0) {
         getHostRuntimeStore().applyAgentTurnLiveness(serverId, agentId, turnLiveness);
       }

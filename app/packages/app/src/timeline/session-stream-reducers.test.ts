@@ -203,6 +203,37 @@ describe("deriveAgentStreamTurnLiveness", () => {
     ).toEqual([{ type: "stream_close", turnId: null }]);
   });
 
+  it("opens the turn at the server's row of a message this client is sending", () => {
+    // pigeon sends the message's row first and `turn_started` from another feed about 100 ms later: with the
+    // submission settled by the row and no open turn, the footer left the chat for a frame and came back
+    const row = makeStreamReducerEvent(
+      {
+        type: "timeline",
+        provider: "claude",
+        turnId: "turn-1",
+        item: { type: "user_message", text: "hello", messageId: "msg-1", clientMessageId: "msg-1" },
+      } as AgentStreamEventPayload,
+      1,
+    );
+    expect(deriveAgentStreamTurnLiveness([row], { sendingClientMessageIds: ["msg-1"] })).toEqual([
+      { type: "stream_open", turn: { turnId: "turn-1", startedAt: row.timestamp } },
+    ]);
+    // a row of a message nobody here is sending (another tab's, an older one) says nothing about a turn
+    expect(deriveAgentStreamTurnLiveness([row], { sendingClientMessageIds: ["msg-2"] })).toEqual([]);
+    expect(deriveAgentStreamTurnLiveness([row])).toEqual([]);
+    const noTurn = makeStreamReducerEvent(
+      {
+        type: "timeline",
+        provider: "claude",
+        item: { type: "user_message", text: "hello", messageId: "msg-1", clientMessageId: "msg-1" },
+      } as AgentStreamEventPayload,
+      1,
+    );
+    expect(deriveAgentStreamTurnLiveness([noTurn], { sendingClientMessageIds: ["msg-1"] })).toEqual(
+      [],
+    );
+  });
+
   it("restarts timing when a terminal event and the next start share one reducer batch", () => {
     const completed = makeStreamReducerEvent(
       { type: "turn_completed", provider: "claude", turnId: "turn-1" },

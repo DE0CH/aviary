@@ -1809,10 +1809,26 @@ interface StreamStatePatch {
 
 export function deriveAgentStreamTurnLiveness(
   events: readonly AgentStreamReducerEvent[],
+  options?: { sendingClientMessageIds?: readonly string[] },
 ): TurnLivenessTransition[] {
+  const sending = options?.sendingClientMessageIds ?? [];
   const transitions: TurnLivenessTransition[] = [];
   for (const { event, timestamp } of events) {
-    if (event.type === "turn_started") {
+    if (
+      event.type === "timeline" &&
+      event.item.type === "user_message" &&
+      event.turnId &&
+      event.item.clientMessageId &&
+      sending.includes(event.item.clientMessageId)
+    ) {
+      // The server's row of a message this client is sending names the message's turn. The row settles the
+      // submission, and `turn_started` comes from another feed a moment later: the turn is open from the row
+      // on, or the chat has a moment with neither and the footer leaves and comes back.
+      transitions.push({
+        type: "stream_open",
+        turn: { turnId: event.turnId, startedAt: timestamp },
+      });
+    } else if (event.type === "turn_started") {
       transitions.push({
         type: "stream_open",
         turn: { turnId: event.turnId ?? null, startedAt: timestamp },
