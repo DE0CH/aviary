@@ -529,6 +529,9 @@ async fn tus_create(s: &S, dir: &Path, req: Request) -> Result<Res, Res> {
         .and_then(|b| String::from_utf8(b).ok())
         .ok_or_else(|| status(StatusCode::BAD_REQUEST))?;
     // A dropped folder arrives as files named with their path below it.
+    if name.starts_with('/') {
+        return Err(status(StatusCode::BAD_REQUEST));
+    }
     let target = dir.join(clean(&name).ok_or_else(|| status(StatusCode::BAD_REQUEST))?);
     let id = unique();
     let up = s.root.join(UPLOADS);
