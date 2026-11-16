@@ -21,7 +21,7 @@ server (`server/`) serves no deployment.
 - **Connection**: the page connects back to its own origin (`runtime/host-runtime.ts`
   `readPageOriginConnectionHint`) on `/paseo-ws` (`protocol/src/daemon-endpoints.ts`); no host setup, no pairing. When
   the server cannot be reached, `app/welcome.tsx` says so and offers a retry.
-- **Signed out (web, YYC AI)**: only some paths are behind Cloudflare Access (DE0CH/YYC tofu `access.tf`
+- **Signed out (web, YYC AI)**: only some paths are behind Cloudflare Access (DE0CH/yyc-code tofu `access.tf`
   `staff_ai_paths`); a visitor without a valid Access token gets the built app and nothing else, its `index.html`
   marked `<meta name="yyc-signed-out" content="1">`. `yyc/access-gate.tsx` then renders `yyc/signed-out-shell.tsx`
   instead of the app: the new-chat layout with the composer disabled and 「登入」 buttons, with no host runtime, socket
@@ -352,7 +352,7 @@ launch frame, the welcome and sign-in screens, the new-chat page), `favicon.png`
 `favicon-attention.png` (the tab icon and its two states), `apple-touch-icon.png`, `icon-192.png`, `icon-512.png`
 (home screen) and `manifest.json` (the name on the home screen, the colours). The bundle's own
 (`paseo/packages/app/public/branding/`) are neutral; a deployment mounts its files over the bundle's `/branding/`
-when it deploys pigeon (YYC: DE0CH/YYC `yyc-ai/deploy/branding/`; Jarvis 4's chat: DE0CH/deyao-ai
+when it deploys pigeon (YYC: DE0CH/yyc-code `yyc-ai/deploy/branding/`; Jarvis 4's chat: DE0CH/deyao-ai
 `k8s/chat/branding/`). The product's name comes from the server too (`src/yyc/product.ts`). Only the native builds'
 app icon and launch image are build-time files (`app.config.js`): those builds are YYC's apps.
 
