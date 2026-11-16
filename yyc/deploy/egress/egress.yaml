@@ -130,6 +130,10 @@ metadata:
     load-balancer.hetzner.cloud/use-private-ip: "true"
     load-balancer.hetzner.cloud/disable-public-network: "true"
     load-balancer.hetzner.cloud/private-ipv4: 10.0.0.50
+    # the address is not written into the Service's status: kube-proxy takes a listed address for itself on every
+    # node and, with externalTrafficPolicy Local, drops connections to it on a node without an egress pod. That
+    # node is the sandbox gateway while it is still a cluster node (trial of 2026-11-16: every connection dropped)
+    load-balancer.hetzner.cloud/disable-private-ingress: "true"
     load-balancer.hetzner.cloud/node-selector: pool=apps
     load-balancer.hetzner.cloud/health-check-interval: 5s
     load-balancer.hetzner.cloud/health-check-timeout: 3s
