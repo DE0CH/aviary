@@ -36,11 +36,26 @@ os.makedirs(a.out, exist_ok=True)
 stem = re.sub(r"[^\w.-]+", "_", os.path.splitext(os.path.basename(a.file))[0])[:60]
 base = os.path.join(a.out, f"{stem}_{a.start:g}-{end:g}s")
 cut = ["ffmpeg", "-v", "error", "-y", "-ss", str(a.start), "-to", str(end), "-i", a.file]
-subprocess.run(cut + ["-vf", f"scale=-2:{a.height},fps={a.fps}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-an",
-                      "-movflags", "+faststart", base + ".mp4"], check=True)
+
+
+def write(ext, args):
+    """ffmpeg writes beside the result and the whole file takes its name at the end: a clip that is still being
+    written is never there to open (a model opened a half-written .mp4 and its provider refused the conversation
+    from then on; YYC AI, 2026-11-16)."""
+    part = f"{base}.part{os.getpid()}{ext}"
+    try:
+        subprocess.run(cut + args + [part], check=True)
+        os.replace(part, base + ext)
+    finally:
+        if os.path.exists(part):
+            os.remove(part)
+
+
+write(".mp4", ["-vf", f"scale=-2:{a.height},fps={a.fps}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-an",
+               "-movflags", "+faststart"])
 print(f"{base}.mp4   picture of {a.file} from {a.start:g} s to {end:g} s, {a.fps:g} frames per second")
 if has_audio:
-    subprocess.run(cut + ["-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", base + ".mp3"], check=True)
+    write(".mp3", ["-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k"])
     print(f"{base}.mp3   its sound")
     print("Open both with read_file in the same step. Second 0 of these files is second "
           f"{a.start:g} of the original: add {a.start:g} to any time you take from them.")

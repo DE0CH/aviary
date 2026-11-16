@@ -396,6 +396,8 @@ struct Envelope {
     #[serde(default)]
     is_error: bool,
     result: Option<String>,
+    /// A failed `result`'s reason as Qwen Code writes it (`{"message": …}`); Claude Code writes `result`.
+    error: Option<Value>,
     usage: Option<Value>,
     /// A `result`'s usage per model (`{"<model>": {"inputTokens": …, "contextWindow": …}}`).
     #[serde(default, rename = "modelUsage")]
@@ -527,7 +529,10 @@ pub fn parse(line: &[u8]) -> Out {
         "result" => Out::Result(ResultMsg {
             subtype: e.subtype.unwrap_or_default(),
             is_error: e.is_error,
-            result: e.result,
+            result: e.result.or_else(|| {
+                let message = e.error.as_ref()?.get("message")?.as_str()?;
+                Some(message.to_owned())
+            }),
             usage: e.usage.as_ref().map(|u| usage(u, e.model_usage.as_ref())),
             duration_ms: e.duration_ms,
         }),
@@ -841,6 +846,24 @@ mod tests {
                 ("dataviz", "Use this skill for any chart.", ""),
             ]
         );
+    }
+
+    /// Qwen Code names a failed turn's reason in `error.message`, not in `result` (YYC AI, 2026-11-16: every failed
+    /// turn of a Qwen Code conversation showed `error_during_execution:` and nothing after it).
+    #[test]
+    fn a_failed_results_reason_is_read_from_error_message_too() {
+        let Out::Result(r) = parse(
+            br#"{"type":"result","subtype":"error_during_execution","is_error":true,"error":{"message":"[API Error: Could not open video stream]"}}"#,
+        ) else {
+            panic!("not a result")
+        };
+        assert_eq!(r.result.as_deref(), Some("[API Error: Could not open video stream]"));
+        // Claude Code's own field wins when both are there
+        let Out::Result(r) = parse(br#"{"type":"result","subtype":"error_during_execution","is_error":true,"result":"boom","error":{"message":"other"}}"#)
+        else {
+            panic!("not a result")
+        };
+        assert_eq!(r.result.as_deref(), Some("boom"));
     }
 
     #[test]

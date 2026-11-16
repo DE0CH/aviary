@@ -123,6 +123,18 @@ check "video editing: the library is whole and the fonts cover Cantonese" img_ru
     fc-list "$fam:charset=5605" family | grep -q . || { echo "no $fam with 嘅"; exit 1; }
   done
   command -v ffmpeg clip speech-times aubiotrack >/dev/null'
+# a model opened a clip that ffmpeg was still writing and its provider refused the conversation from then on (YYC
+# AI, 2026-11-16): ffmpeg is never asked to write under the name the clip will have
+check "video editing: clip gives a file its name only once it is whole" img_run -u 1000 "$img" -c '
+  t=$(mktemp -d) && cd "$t" && mkdir shim || exit 1
+  ffmpeg -v error -f lavfi -i testsrc=duration=2:size=320x240:rate=10 -f lavfi -i sine=duration=2 -shortest src.mp4 || exit 1
+  real=$(command -v ffmpeg)
+  printf "#!/bin/sh\nfor a; do out=\$a; done\ncase \"\$out\" in */src_0-2s.mp4|*/src_0-2s.mp3) echo \"\$out\" >> $t/direct;; esac\nexec $real \"\$@\"\n" > shim/ffmpeg
+  chmod +x shim/ffmpeg
+  PATH="$t/shim:$PATH" clip src.mp4 >/dev/null || exit 1
+  test ! -e direct || { echo "ffmpeg wrote straight to $(cat direct)"; exit 1; }
+  for f in work/watch/src_0-2s.mp4 work/watch/src_0-2s.mp3; do ffprobe -v error "$f" || exit 1; done
+  test "$(ls work/watch | wc -l)" = 2'
 # one frame of a card through the whole engine as the sandbox user: ffmpeg, the composition's build and headless
 # Chrome under HyperFrames, with the pinned browser and no network
 check "video editing: edit renders a frame as uid 1000 (HyperFrames with the pinned Chrome, no network)" \
