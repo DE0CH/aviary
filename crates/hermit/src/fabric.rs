@@ -132,6 +132,12 @@ pub trait Fabric: Send + Sync + 'static {
     fn place(&self, id: Uuid, memory_bytes: u64) -> Fut<'_, Result<Place, FabricError>>;
     /// Asks for a host because a start found no slot (13.5).
     fn request_host(&self) -> Fut<'_, Launch>;
+    /// Whether hosts can get sandbox image `digest` now (13.14): a fabric whose hosts fetch images from an image
+    /// server says no until that server holds it, and a new sandbox is created on the image before it meanwhile
+    /// ([`crate::sandboxes`]). A fabric with no such server: always.
+    fn image_ready<'a>(&'a self, _digest: &'a str) -> Fut<'a, bool> {
+        Box::pin(async { true })
+    }
     /// Creates the sandbox on its host (sandboxd `POST /v1/sandboxes`, plus the gateway's peers). Creating a
     /// running sandbox of the same name and address again is a success.
     fn create<'a>(&'a self, spec: &'a CreateSpec) -> Fut<'a, Result<(), CreateError>>;

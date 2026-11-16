@@ -88,8 +88,8 @@ pub struct Gvisor {
     pub(crate) last_reconcile: Mutex<Option<tokio::time::Instant>>,
     /// Migrations the scaler just started on this replica (the task runs from step 2; a takeover asks the target).
     pub(crate) fresh_migrations: Mutex<HashSet<Uuid>>,
-    /// The sandbox image digest the gateway holds or is pulling ([`super::images::warm_gateway`]); `None` until then
-    /// and again after a failed pull, so the next pass asks again.
+    /// The sandbox image digest the gateway is being asked to pull right now ([`super::images::warm_gateway`]);
+    /// `None` when no ask is under way
     pub(crate) gateway_image: Arc<Mutex<Option<String>>>,
 }
 
@@ -243,6 +243,21 @@ impl Fabric for Gvisor {
                     Launch::Planned
                 }
             }
+        })
+    }
+
+    fn image_ready<'a>(&'a self, digest: &'a str) -> Fut<'a, bool> {
+        Box::pin(async move {
+            // the gateway is the hosts' image server: its last answer lists what it holds. No gateway row (or no
+            // answer from the database): nothing to wait for
+            let Ok(core) = self.core() else { return true };
+            let Ok(hosts) = hosts::live(&core.pool).await else {
+                return true;
+            };
+            hosts
+                .iter()
+                .find(|h| h.is_gateway())
+                .is_none_or(|gw| gw.info.as_ref().is_some_and(|i| i.has_image(digest)))
         })
     }
 

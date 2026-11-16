@@ -1,9 +1,10 @@
 //! Image digests (hermit 13.14): `sandbox.image` is pinned by digest, so the digest is the pin and hermit needs no
 //! registry lookup. A host that just became active gets `POST /v1/images {digest}` (the warm-up), in the background;
 //! the gateway, the image server of hosts without registry access, gets `POST /v1/images {ref, digest}` from the
-//! scaler's pass until it holds the configured digest (it serves only images it holds: without this a new
-//! `sandbox.image` failed every start on a host that lacked it, 404 from the gateway, 2026-11-06);
-//! running sandboxes keep their image and new ones use the configured one. sandboxd's 4-slot pull table and 20 min
+//! scaler's pass whenever its answer does not list the configured digest (it serves only images it holds, and its
+//! store is a cache: a new pod starts without any). Running sandboxes keep their image; new ones use the configured
+//! one once the gateway holds it, and the image of the last ready sandbox until then (`Fabric::image_ready`: a new
+//! `sandbox.image` the gateway could not fetch failed every start, 2026-11-06, 2026-11-12, 2026-11-16). sandboxd's 4-slot pull table and 20 min
 //! wait are its own.
 
 use std::sync::PoisonError;
@@ -29,16 +30,18 @@ pub fn warm(g: &Gvisor, h: &HostRow, digest: &str) {
     });
 }
 
-/// Makes the gateway pull the configured image (`reference` = `sandbox.image`, pinned by digest) once per digest, in
-/// the background; a failure clears the mark so the next pass asks again. sandboxd answers at once when it holds it.
+/// Makes the gateway pull the configured image (`reference` = `sandbox.image`, pinned by digest), in the background,
+/// one ask at a time. Called on every pass whose answer from the gateway does not list the image: a gateway's store
+/// is a cache, so a gateway that comes back without the image is asked again, and a failed pull is asked again on
+/// the next pass.
 pub fn warm_gateway(g: &Gvisor, h: &HostRow, reference: &str, digest: &str) {
     let digest = bare_digest(digest).to_owned();
     {
-        let mut held = g.gateway_image.lock().unwrap_or_else(PoisonError::into_inner);
-        if held.as_deref() == Some(digest.as_str()) {
+        let mut asking = g.gateway_image.lock().unwrap_or_else(PoisonError::into_inner);
+        if asking.as_deref() == Some(digest.as_str()) {
             return;
         }
-        *held = Some(digest.clone());
+        *asking = Some(digest.clone());
     }
     let Ok(c) = g.client(h) else {
         *g.gateway_image.lock().unwrap_or_else(PoisonError::into_inner) = None;
@@ -52,13 +55,12 @@ pub fn warm_gateway(g: &Gvisor, h: &HostRow, reference: &str, digest: &str) {
         };
         match c.ensure_image(&req).await {
             Ok(d) => tracing::info!(digest = %d.digest, "gateway holds the sandbox image"),
-            Err(e) => {
-                tracing::warn!(error = %e, "gateway image pull (asked again next pass)");
-                let mut held = mark.lock().unwrap_or_else(PoisonError::into_inner);
-                if held.as_deref() == Some(digest.as_str()) {
-                    *held = None;
-                }
-            }
+            Err(e) => tracing::warn!(error = %e, "gateway image pull (asked again next pass)"),
+        }
+        // the ask is over: whether the gateway holds the image is read from its next answer
+        let mut asking = mark.lock().unwrap_or_else(PoisonError::into_inner);
+        if asking.as_deref() == Some(digest.as_str()) {
+            *asking = None;
         }
     });
 }

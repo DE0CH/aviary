@@ -171,6 +171,41 @@ fn still_releasing(core: &Core, since: tokio::time::Instant) -> Result<Duration,
     Ok(left)
 }
 
+/// The image a new sandbox is created with, digest and reference (13.14): the configured one once hosts can get it
+/// ([`crate::fabric::Fabric::image_ready`]), and until then the image the last ready sandbox ran, so that a new
+/// `sandbox.image` its image server cannot fetch costs no start. When that last sandbox ran the configured image
+/// (hosts have had it), or nothing has run yet, there is nothing to wait for: the configured one.
+async fn new_sandbox_image(core: &Core) -> (String, String) {
+    let cfg = &core.cfg;
+    let configured = (cfg.image_digest.clone(), cfg.sandbox().image.clone());
+    if core.providers.fabric.image_ready(&cfg.image_digest).await {
+        return configured;
+    }
+    let last = async {
+        core.pool
+            .get()
+            .await?
+            .query_opt(
+                "select image, image_ref from sandboxes
+                 where image is not null and image_ref is not null and ready_at is not null
+                 order by created_at desc limit 1",
+                &[],
+            )
+            .await
+    };
+    match last.await {
+        Ok(Some(r)) => {
+            let before: (String, String) = (r.get(0), r.get(1));
+            if before.0 == configured.0 {
+                return configured;
+            }
+            tracing::info!(configured = %configured.0, image = %before.0, "the image server does not hold the configured image yet: the image before it");
+            before
+        }
+        _ => configured,
+    }
+}
+
 #[allow(clippy::too_many_lines)] // one transaction: the live row's cases, then the new row with its parameters
 async fn put_once(core: &Arc<Core>, cid: Uuid, person: &str) -> Result<PutStep, ApiError> {
     let cfg = &core.cfg;
@@ -188,7 +223,7 @@ async fn put_once(core: &Arc<Core>, cid: Uuid, person: &str) -> Result<PutStep, 
     let kid = i16::try_from(core.keys.newest()).unwrap_or(i16::MAX);
     let owner = person.to_owned();
     // the image this start creates is fixed here, whichever replica drives it (migration 0004)
-    let (image, image_ref) = (cfg.image_digest.clone(), s.image.clone());
+    let (image, image_ref) = new_sandbox_image(core).await;
     let c = core.clone();
     // borrowed: the transaction may run more than once (aviary_pg::tx!)
     let (pod, owner, image, image_ref, c) = (&pod, &owner, &image, &image_ref, &c);

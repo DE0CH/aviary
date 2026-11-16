@@ -86,6 +86,8 @@ struct HostSim {
     lose_answer_keep_sending: AtomicBool,
     /// This many deletes answer 500 and remove nothing (a host that does not answer one).
     fail_deletes: AtomicU32,
+    /// Image pulls answer 500 and hold nothing (a gateway that cannot fetch: no room, no route to the registry).
+    fail_images: AtomicBool,
 }
 
 impl HostSim {
@@ -165,6 +167,9 @@ impl Server for HostSim {
         match req.reference {
             Some(r) => self.saw(format!("image {d} ref {r}")),
             None => self.saw(format!("image {d}")),
+        }
+        if self.fail_images.load(Ordering::SeqCst) {
+            return Err(ApiError::new(500, "image: no space left on device"));
         }
         self.images.lock().unwrap().push(d.clone());
         Ok(ImageDigest { digest: d })
@@ -408,6 +413,7 @@ impl Fleet {
             stop_and_lose_answer: AtomicBool::new(false),
             lose_answer_keep_sending: AtomicBool::new(false),
             fail_deletes: AtomicU32::new(0),
+            fail_images: AtomicBool::new(false),
         });
         let host = Arc::new(FakeHost {
             sim: sim.clone(),
@@ -1898,6 +1904,137 @@ async fn a_full_scratch_is_not_moved() {
     set(100);
     let p = pass(&g1, &r1).await;
     assert!(p.migration.is_some(), "{p:?}");
+}
+
+/// The gateway is the hosts' image server and its store is a cache: a gateway that comes back without the image (a
+/// new pod, an emptied store) is asked for it again. Asked once per digest, it was never asked again, and a host
+/// without the image got 404 (2026-11-16).
+#[tokio::test]
+async fn a_gateway_that_lost_the_image_is_asked_again() {
+    let rig = Rig::new("fabric_image_again", |_| {}, manual()).await;
+    let (r, g) = rig.replica("hermit-a").await;
+    let digest = rig.h.config.image_digest.trim_start_matches("sha256:").to_owned();
+    let pulled = format!("image {digest} ref {}", rig.h.config.file.sandbox.image);
+    let asked = || rig.fleet.sim(GATEWAY).calls().iter().filter(|c| **c == pulled).count();
+    assert!(
+        eventually(|| async {
+            let _ = pass(&g, &r).await;
+            asked() == 1 && !rig.fleet.sim(GATEWAY).images.lock().unwrap().is_empty()
+        })
+        .await
+    );
+    // it holds the image: passes ask nothing more
+    for _ in 0..3 {
+        let _ = pass(&g, &r).await;
+    }
+    assert_eq!(asked(), 1, "a gateway that holds the image is not asked again");
+    // its store is emptied
+    rig.fleet.sim(GATEWAY).images.lock().unwrap().clear();
+    assert!(
+        eventually(|| async {
+            let _ = pass(&g, &r).await;
+            asked() == 2
+        })
+        .await,
+        "the gateway is asked again once it reports no image"
+    );
+}
+
+/// A new `sandbox.image` reaches new sandboxes only once the gateway holds it: until then a start is created on the
+/// image the last ready sandbox ran. The switch was immediate, and with a gateway that could not fetch the image
+/// every new sandbox failed (2026-11-12, 2026-11-16).
+#[tokio::test]
+async fn a_new_image_waits_until_the_gateway_holds_it() {
+    let rig = Rig::new(
+        "fabric_image_gate",
+        |_| {},
+        Timings {
+            scaler: Duration::from_millis(200),
+            ..manual()
+        },
+    )
+    .await;
+    // the gateway cannot fetch the configured image
+    rig.fleet.sim(GATEWAY).fail_images.store(true, Ordering::SeqCst);
+    let (r, _g) = rig.replica("hermit-a").await;
+    assert!(eventually(|| async { rig.host_status(GATEWAY).await == "active" }).await);
+    // the image before it: a sandbox that ran on it
+    let (old, old_ref) = (
+        format!("sha256:{}", "5a".repeat(32)),
+        format!("r.example/sbx@sha256:{}", "5a".repeat(32)),
+    );
+    rig.h
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            "insert into sandboxes (id, conversation_id, person, status, name, token_kid, image, image_ref, cpu,
+               memory_bytes, start_deadline, expires_at, hard_expires_at, created_at, ready_at, released_at)
+             values ($1, $2, $3, 'gone', 'sbx-before', 1, $4, $5, 1, $6, now(), now(), now(),
+               now() - interval '2 hours', now() - interval '2 hours', now() - interval '1 hour')",
+            &[
+                &Uuid::now_v7(),
+                &Uuid::now_v7(),
+                &STAFF,
+                &old,
+                &old_ref,
+                &i64::try_from(2 * GIB).unwrap(),
+            ],
+        )
+        .await
+        .unwrap();
+    let start = |cid: Uuid| {
+        let (h, url) = (&rig.h, r.url.clone());
+        async move {
+            let path = routes::fill(routes::SANDBOX, &[&cid.to_string()]);
+            let a = h
+                .client(Caller::Magpie)
+                .call(&url, "PUT", &path, Some(json!({"person": STAFF})), &[])
+                .await;
+            assert!(matches!(a.status, 200 | 202), "{}: {}", a.status, a.body);
+        }
+    };
+    let image_of = |cid: Uuid| {
+        let h = &rig.h;
+        async move {
+            let row = db::latest_of(&h.pool(), cid).await.unwrap().unwrap();
+            (row.image.unwrap_or_default(), row.image_ref.unwrap_or_default())
+        }
+    };
+    let first = Uuid::now_v7();
+    start(first).await;
+    assert_eq!(
+        image_of(first).await,
+        (old.clone(), old_ref.clone()),
+        "the image before, while the gateway lacks the new one"
+    );
+    assert!(
+        eventually(|| async {
+            db::latest_of(&rig.h.pool(), first)
+                .await
+                .unwrap()
+                .is_some_and(|r| r.status == SandboxState::Ready)
+        })
+        .await
+    );
+    // the gateway fetches it: the next start is on the configured image
+    rig.fleet.sim(GATEWAY).fail_images.store(false, Ordering::SeqCst);
+    let digest = rig.h.config.image_digest.trim_start_matches("sha256:").to_owned();
+    assert!(eventually(|| async { rig.fleet.sim(GATEWAY).images.lock().unwrap().contains(&digest) }).await);
+    assert!(
+        eventually(|| async {
+            let c = Uuid::now_v7();
+            start(c).await;
+            image_of(c).await
+                == (
+                    rig.h.config.image_digest.clone(),
+                    rig.h.config.file.sandbox.image.clone(),
+                )
+        })
+        .await,
+        "the configured image once the gateway holds it"
+    );
 }
 
 /// A start through the whole core on this fabric: `PUT` -> placed on the AWS host, created with the spec hermit
