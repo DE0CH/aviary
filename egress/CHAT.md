@@ -2,7 +2,7 @@
 
 Two services of YYC AI (`ai.yyc-internal.com`), the staff AI chat whose stack is DE0CH/aviary (pigeon, magpie,
 hermit): **egress**, YYC's sandbox gateway, and **tools**, the read-only tools Claude Code in a sandbox calls. The code
-is in `chat/`; the instance writes their manifests itself (YYC: DE0CH/YYC `yyc-ai/deploy/egress/`, `tools/`) and pins
+is in `chat/`; the instance writes their manifests itself (YYC: DE0CH/yyc-code `yyc-ai/deploy/egress/`, `tools/`) and pins
 an image of this repo. It is a second runtime next to the task runtime in `server/` (OpenCode in Fly machines).
 
 **What it is (Deyao, 2026-10-21): a read-only data-analysis tool, not an assistant that acts.** It searches, reads
@@ -112,7 +112,7 @@ decided in this order:
    replacing a caller's copy; YYC: `X-Jarvis-Conversation`, which the label store keys on). An outside upstream goes
    through the exit like the model route. `identity: false` (no `identityHeaders` with it) is for an upstream outside
    the instance: it gets no `Aviary-*` header, so no staff identity leaves (YYC: `code`, the private repository
-   DE0CH/YYC on github.com with a read-only token, `git clone http://code/DE0CH/YYC`); its log row still names who asked. Timeout and drain as `tools`; one log row per call (kind `route`).
+   DE0CH/yyc-code on github.com with a read-only token, `git clone http://code/DE0CH/yyc-code`); its log row still names who asked. Timeout and drain as `tools`; one log row per call (kind `route`).
 3. **Self hosts** (`selfHosts` in egress.json, plus `127.0.0.1` and `localhost`; any port; also origin-form requests to
    the proxy): local paths only, the **package mirror** (cache on the pod's volume, LRU at `cacheGiB`):
    `GET /mirror/pypi/simple/...` (pypi.org, links rewritten to `/mirror/pypi/files/...` = files.pythonhosted.org),
@@ -254,7 +254,7 @@ about 48,700 listed sites passed).
   `0x01` → `deny:dns`, `0x02` → `deny:address`; any other failure is a 502 (`allow`, status 502). The routes' outside
   https upstreams (the model route's OpenRouter) go through it too, on its default profile (no username); upstreams
   inside the cluster (`*.cluster.local`, `*.svc`, single-label names, private addresses) are reached directly. YYC:
-  its yyc-socks pool (DE0CH/YYC `socks/`), which resolves over its nodes' IPv6 and connects IPv6 first, IPv4 after.
+  its yyc-socks pool (DE0CH/yyc-code `socks/`), which resolves over its nodes' IPv6 and connects IPv6 first, IPv4 after.
 - **Residual risk, accepted:** an allowed site that takes uploads with credentials the attacker supplies (an API
   token planted in injected content, e.g. for GitHub) is still reachable; the sandbox holds no secrets, staff data in
   the workspace is what such an upload could carry, and the upload cap bounds it.
@@ -265,7 +265,7 @@ about 48,700 listed sites passed).
 ### `tools` (`node src/main.ts tools`; ports 8080 REST, 9090 health)
 
 aviary platform spec 17.2 tools: a REST API Claude Code in a sandbox calls with `curl`, as its managed skills say
-(the instance's skills; YYC: DE0CH/YYC `yyc-ai/deploy/hermit/skills/`): `GET /v1/tools` (each tool's name, title, description and
+(the instance's skills; YYC: DE0CH/yyc-code `yyc-ai/deploy/hermit/skills/`): `GET /v1/tools` (each tool's name, title, description and
 inputSchema), `POST /v1/tools/<name>` (the JSON body is the arguments; the answer is the tool's text as `text/plain`,
 or its JSON when it has no text, e.g. an upstream API's; bad arguments 400 `bad_request`, the tool's own error 422
 `{error}`, a failure 502 `tool_failed`), `GET /v1/openapi.json` (the same as OpenAPI 3.1); the new stack's gateway
@@ -367,7 +367,7 @@ routes exactly these paths on `tools` (aviary platform 3.11.3, decision 15).
 
 ## Deploying an instance
 
-An instance writes egress's and tools' manifests itself (YYC: DE0CH/YYC `yyc-ai/deploy/egress/`, `yyc-ai/deploy/tools/`,
+An instance writes egress's and tools' manifests itself (YYC: DE0CH/yyc-code `yyc-ai/deploy/egress/`, `yyc-ai/deploy/tools/`,
 `args: [egress]` and `args: [tools]`, each with its own config file, database and Secrets) and pins
 `ghcr.io/de0ch/jarvis3-chat:<sha12>`. A new version = bump that tag to a commit whose `chat` workflow pushed the image.
 
