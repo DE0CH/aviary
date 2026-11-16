@@ -39,7 +39,8 @@ server (`server/`) serves no deployment.
   snapshot with an (i) beside the title (ask the admin for more), then a thinking row with one position for every
   level any model has. The row is the same for every model, so nothing moves when the model changes: a level the
   chosen model lacks is disabled in place, and a model with no levels greys the whole row. A conversation keeps its
-  own choice (`setAgentModel`, `setAgentThinkingOption`; used from its next message on); a new conversation starts
+  own choice (`setAgentModel`, `setAgentThinkingOption`; used from its next reply on: while a reply still runs on
+  another model the button says both, 「Fable 5.2 → Opus 5.5」, from the snapshot's `runtimeInfo.model`); a new conversation starts
   on the default model at that model's own level, whatever was chosen last. A model may run in another agent
   program than the others (the snapshot's `metadata.harness`; the programs keep separate sessions): picking one that
   moves a conversation with messages asks first (`yyc/harness-switch-store.ts`, the dialog
