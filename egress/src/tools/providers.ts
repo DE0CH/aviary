@@ -1,14 +1,14 @@
 // The outside services behind the built-in tools: Exa (web search, page text), TikHub (social platforms) and AnyAPI.
 // Each call reports its cost
 // where the provider says it (Exa's costDollars; TikHub's list price per successful request).
-import type { Deps } from "./types.ts";
+import { readCapped, type Deps } from "./types.ts";
 
 async function callJson<T>(f: typeof fetch, what: string, url: string, init: RequestInit, timeoutMs = 80_000): Promise<T> {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
   try {
     const r = await f(url, { ...init, signal: ac.signal });
-    const body = await r.text();
+    const body = await readCapped(r, what);
     if (!r.ok) throw new Error(`${what} answered HTTP ${r.status}: ${body.slice(0, 300)}`);
     try {
       return JSON.parse(body) as T;
@@ -380,7 +380,7 @@ async function anyapiCall<T>(deps: Deps, path: string, init: RequestInit, timeou
       headers: { authorization: `Bearer ${k}`, accept: "application/json", "user-agent": "yyc-ai/1", ...(init.body ? { "content-type": "application/json" } : {}) },
       signal: ac.signal,
     });
-    const body = await r.text();
+    const body = await readCapped(r, "AnyAPI");
     let j: unknown;
     try {
       j = JSON.parse(body);

@@ -3,7 +3,7 @@
 // saying when to use each and what comes back.
 import { BlockedAddress, decodePage, htmlToText, safeGet } from "./netguard.ts";
 import { ANYAPI_SKU, anyapiDescribe, anyapiResult, anyapiRun, anyapiSearch, exaContents, exaSearch, PLATFORMS, tikhubSearch, type AnyapiRun, type AnyapiShape } from "./providers.ts";
-import { int, str, text, ToolInputError, type Deps, type ToolDef, type ToolResult } from "./types.ts";
+import { int, readCapped, str, text, ToolInputError, type Deps, type ToolDef, type ToolResult } from "./types.ts";
 
 const DATE = { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" };
 const isDate = (s: string) => !s || /^\d{4}-\d{2}-\d{2}$/.test(s);
@@ -87,7 +87,7 @@ async function ownCapture(deps: Deps, cfg: { url: string; tokenEnv: string }, ur
     signal: AbortSignal.timeout(90_000),
   });
   if (!r.ok) throw new Error(`capture answered HTTP ${r.status}`);
-  return (await r.json()) as OwnCapture;
+  return JSON.parse(await readCapped(r, "The capture")) as OwnCapture;
 }
 
 /** web_fetch's answer from the instance's own copy or capture: labelled as such on its first line and in structuredContent. */

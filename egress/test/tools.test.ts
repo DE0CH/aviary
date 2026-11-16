@@ -20,7 +20,7 @@ import { Liveness } from "../src/tools/liveness.ts";
 import { isPrivateAddress, htmlToText } from "../src/tools/netguard.ts";
 import { iso } from "../src/tools/providers.ts";
 import { acceptList, createToolsServer, DRAIN_MS, FLUSH_MS, POOL_END_MS, toolList, type ToolsServer } from "../src/tools/server.ts";
-import type { Deps, ToolDef } from "../src/tools/types.ts";
+import { readCapped, ToolInputError, type Deps, type ToolDef } from "../src/tools/types.ts";
 import { offered, startRefresh, toolsOfOpenApi, Upstream } from "../src/tools/upstream.ts";
 import { startFakes, type Fakes } from "./fakes/tools-upstreams.ts";
 
@@ -783,4 +783,31 @@ test("helpers: private addresses, hostnames, dates, SSE answers, HTML text", () 
   assert.equal(iso("garbage"), null);
   assert.deepEqual(htmlToText("<html><title>T &amp; U</title><script>x()</script><p>一</p><p>二&nbsp;三</p></html>"), { title: "T & U", text: "T & U 一\n二 三" });
   assert.deepEqual(toolList({ ...deps, config: { upstreams: [] } }, []).map((d) => d.name), ["web_fetch"]);
+});
+
+test("an outside answer is read piece by piece and given up at the bound, never taken whole", async () => {
+  // an answer with no end: 1 MiB pieces for as long as they are asked for
+  let sent = 0;
+  let cancelled = false;
+  const endless = () =>
+    new Response(
+      new ReadableStream({
+        pull(c) {
+          sent++;
+          c.enqueue(new Uint8Array(1024 * 1024));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+    );
+  await assert.rejects(readCapped(endless(), "The data service", 3 * 1024 * 1024), (e: Error) => {
+    assert.ok(e instanceof ToolInputError, "the caller's to fix: ask for less");
+    assert.equal(e.message, "The data service answered more than 3 MB, which is too much to pass on: ask for less (fewer rows, a narrower search).");
+    return true;
+  });
+  assert.ok(sent <= 5, `reading stopped at the bound (${sent} MiB taken)`);
+  assert.equal(cancelled, true, "the rest of the answer is let go");
+  assert.equal(await readCapped(new Response("短い answer"), "x"), "短い answer");
+  assert.equal(await readCapped(new Response(null, { status: 204 }), "x"), "");
 });

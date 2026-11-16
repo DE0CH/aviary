@@ -81,3 +81,27 @@ export function int(args: Record<string, unknown>, key: string, def: number, min
 }
 
 export class ToolInputError extends Error {}
+
+/** The most of one outside answer (a provider's, an upstream tool's, the capture's) that tools takes: an answer is
+ * copied several times while it is parsed and written out again, and the pod has 128 Mi. */
+export const ANSWER_MAX = 8 * 1024 * 1024;
+
+/** A fetch answer's text, read piece by piece and given up at `max` bytes (never `await r.text()`: that takes whatever
+ * the other side sends). Over the bound is the caller's to fix, in words the agent can act on. */
+export async function readCapped(r: Response, what: string, max = ANSWER_MAX): Promise<string> {
+  if (!r.body) return "";
+  const pieces: Uint8Array[] = [];
+  let n = 0;
+  const reader = r.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.length;
+    if (n > max) {
+      await reader.cancel().catch(() => {});
+      throw new ToolInputError(`${what} answered more than ${Math.round(max / (1024 * 1024))} MB, which is too much to pass on: ask for less (fewer rows, a narrower search).`);
+    }
+    pieces.push(value);
+  }
+  return Buffer.concat(pieces).toString("utf8");
+}

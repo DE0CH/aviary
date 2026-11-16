@@ -10,7 +10,7 @@
 import { expandEnv } from "../common/config.ts";
 import type { UpstreamApi } from "./config.ts";
 import { logError, log } from "../common/log.ts";
-import type { Deps, ToolDef, ToolResult } from "./types.ts";
+import { readCapped, type Deps, type ToolDef, type ToolResult } from "./types.ts";
 
 const CALL_TIMEOUT_MS = 120_000;
 /** The first tool-list read of each upstream at start; then each periodic read as a whole. */
@@ -72,7 +72,7 @@ export class Upstream {
    * out of time keeps the last list. */
   async refresh(listUser = this.cfg.listAs, boundMs = LIST_MS): Promise<void> {
     const r = await this.#deps.fetch(`${this.#base()}/openapi.json`, { headers: { ...this.#headers(listUser), accept: "application/json" }, signal: AbortSignal.timeout(boundMs) });
-    const body = await r.text();
+    const body = await readCapped(r, this.cfg.prefix);
     if (!r.ok) throw new Error(`${this.cfg.prefix} answered HTTP ${r.status}: ${body.slice(0, 300)}`);
     const all = toolsOfOpenApi(JSON.parse(body));
     this.#tools = all.filter((t) => offered(this.cfg, t));
@@ -100,7 +100,7 @@ export class Upstream {
           body: JSON.stringify(args),
           signal: ctx.signal ? AbortSignal.any([timeout, ctx.signal]) : timeout,
         });
-        const body = await r.text();
+        const body = await readCapped(r, this.cfg.prefix);
         let v: unknown;
         try {
           v = JSON.parse(body);
