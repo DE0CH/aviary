@@ -28,6 +28,14 @@ pub fn stop_task(request_id: &str, task_id: &str) -> Vec<u8> {
                  "request": {"subtype": "stop_task", "task_id": task_id}}))
 }
 
+/// `set_model`: the model of Claude Code's model calls from the next one (what `/model` does in its terminal); the
+/// conversation and its background tasks go on in the same process.
+#[must_use]
+pub fn set_model(request_id: &str, model: &str) -> Vec<u8> {
+    line(&json!({"type": "control_request", "request_id": request_id,
+                 "request": {"subtype": "set_model", "model": model}}))
+}
+
 /// `set_max_thinking_tokens`: `Some(0)` switches thinking off (requests carry no `thinking`), `None` on again.
 #[must_use]
 pub fn set_max_thinking_tokens(request_id: &str, tokens: Option<u32>) -> Vec<u8> {

@@ -442,6 +442,11 @@ impl Fake {
                                        "status": "stopped"}));
                 }
             }
+            "set_model" => {
+                self.note(&format!("set_model {}", v["request"]["model"].as_str().unwrap_or("")));
+                self.system(json!({"type": "control_response",
+                                   "response": {"subtype": "success", "request_id": id, "response": {}}}));
+            }
             "set_max_thinking_tokens" | "apply_flag_settings" => {
                 let r = &v["request"];
                 let what = if sub == "set_max_thinking_tokens" {
@@ -1095,9 +1100,10 @@ fn stream_events_become_live_frames() {
     assert_eq!((c.message_id.as_deref(), c.offset), (Some("msg_2"), Some(0)));
 }
 
-/// The conversation's picked model (`start_turn.model`): a generation that runs another model ends before the turn,
-/// which resumes the conversation on a new one started on the pick; the same pick again keeps the generation; with
-/// none picked the next turn is back on the models route's default.
+/// The conversation's picked model (`start_turn.model`): a generation that runs another model is switched to it in
+/// place before the turn's message is written (`set_model`, as `/model` in Claude Code's terminal: the same process,
+/// no resume); the same pick again sends nothing; with none picked the next turn is back on the models route's
+/// default. Before, each change of model ended Claude Code and resumed the conversation on a new one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_turn_runs_on_the_conversations_picked_model() {
     let w = world().await;
@@ -1105,33 +1111,36 @@ async fn a_turn_runs_on_the_conversations_picked_model() {
     until("pre-spawn", || !w.spawns().is_empty()).await;
     let default = w.gen_models()[0].clone();
     assert!(!default.is_empty(), "the models route's default");
+    let switches = || -> Vec<String> {
+        w.fake_log()
+            .into_iter()
+            .filter_map(|l| l.strip_prefix("set_model ").map(str::to_owned))
+            .collect()
+    };
     let (t1, _) = w.turn_on("say:one", None);
     assert_eq!(w.ended(t1).await["state"], "completed");
     w.idle(&sup).await;
-    assert_eq!(
-        w.gen_models().as_slice(),
-        std::slice::from_ref(&default),
-        "none picked: the pre-spawned generation runs it"
+    assert!(
+        switches().is_empty(),
+        "none picked: the pre-spawned generation runs the default"
     );
 
     let (t2, _) = w.turn_on("say:two", Some("picked/model-b"));
     assert_eq!(w.ended(t2).await["state"], "completed", "{}", texts(&w));
     w.idle(&sup).await;
-    assert_eq!(
-        w.gen_models(),
-        [default.clone(), "picked/model-b".to_owned()],
-        "{}",
-        texts(&w)
-    );
+    assert_eq!(switches(), ["picked/model-b"], "{}", texts(&w));
+    assert_eq!(w.spawns().len(), 1, "the same Claude Code goes on: {}", texts(&w));
+    let log = w.fake_log();
+    let at = |what: &str| log.iter().position(|l| l.starts_with(what)).unwrap_or(usize::MAX);
     assert!(
-        w.spawns()[1].contains(&format!("--resume {}", w.cid)),
-        "the conversation goes on"
+        at("set_model picked/model-b") < at("prompt say:two"),
+        "before the turn's message: {log:?}"
     );
 
     let (t3, _) = w.turn_on("say:three", Some("picked/model-b"));
     assert_eq!(w.ended(t3).await["state"], "completed");
     w.idle(&sup).await;
-    assert_eq!(w.spawns().len(), 2, "the same pick keeps the generation");
+    assert_eq!(switches().len(), 1, "the same pick sends nothing");
     sup.persisted.flush().await;
     let saved = StateFile::new(w.dir.join("state")).load().unwrap().unwrap();
     let g = saved.generation.unwrap();
@@ -1140,11 +1149,33 @@ async fn a_turn_runs_on_the_conversations_picked_model() {
     let (t4, _) = w.turn_on("say:four", None);
     assert_eq!(w.ended(t4).await["state"], "completed");
     assert_eq!(
-        w.gen_models(),
-        [default.clone(), "picked/model-b".to_owned(), default],
+        switches(),
+        ["picked/model-b".to_owned(), default],
         "none picked any more: the default again"
     );
+    assert_eq!(w.spawns().len(), 1);
     assert_eq!(w.prompts().len(), 4);
+}
+
+/// Which changes of model need a new Claude Code: one to a model with another context window (Claude Code reads
+/// its window at its start), and any that involves Qwen Code (its model is in its argv and settings).
+#[test]
+fn a_model_with_another_window_or_harness_is_not_switched_in_place() {
+    let mut m: Models = serde_json::from_str(mock_model::DEFAULT_MODELS).unwrap();
+    let (large, small) = (m.models[0].id.clone(), m.models[1].id.clone());
+    assert!(super::in_place(&m, Harness::Claude, &large, Some(&small)));
+    assert!(
+        super::in_place(&m, Harness::Claude, &small, None),
+        "back to the default"
+    );
+    assert!(super::in_place(&m, Harness::Claude, &large, Some("not/listed")));
+    m.models[1].context_tokens = Some(1_000_000);
+    assert!(!super::in_place(&m, Harness::Claude, &large, Some(&small)));
+    assert!(!super::in_place(&m, Harness::Claude, &small, None));
+    m.models[1].context_tokens = None;
+    m.models[1].harness = Harness::Qwen;
+    assert!(!super::in_place(&m, Harness::Claude, &large, Some(&small)));
+    assert!(!super::in_place(&m, Harness::Qwen, &small, Some(&large)));
 }
 
 /// A turn in the other harness ends the running generation and starts that harness: Qwen Code with its own argv,

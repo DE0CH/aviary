@@ -92,7 +92,8 @@ see every row once with no seq gap, which is what makes the app refetch, and exa
 after which the tail no longer has the retracted text), E13 (a share seen by another person stops at the share point; continuing it
 makes the viewer's conversation with the shared `/workspace`), E15 (view as: an admin's view of Alice lists her
 conversations and refuses a rename and a delete; staff cannot start one; the link is refused to anyone else), E24 (hermit at 0 replicas for 3 minutes during a turn with a tool call: the turn
-completes), E12 (the idle release, then a new sandbox that resumes the history) and E17 (seven starts with six slots:
+completes), E25 (a model picked in the menu: the snapshot shows it and Claude Code's next request to the model carries it,
+with the history), E12 (the idle release, then a new sandbox that resumes the history) and E17 (seven starts with six slots:
 never more than six sandboxes, the seventh waits and completes once a pool victim frees a slot; the harness's
 `reserveSeconds` and `poolVictimIdleSeconds` are 20 so that happens inside `capacityWaitSeconds`, 240 s: on a hosted runner the slot frees 100-110 s after the creates, and at 120 s E17 failed one run in three). Last, `stale`: magpie 6.10's stale append end to end (WP-12's carried item),
 from inside a sandbox through the gateway: an append, its retry under a new `opId` at the same offset (rule 0: 200,

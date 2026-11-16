@@ -245,6 +245,17 @@ struct Gen {
     commands: Option<Vec<magpie_api::sandbox::SlashCommand>>,
 }
 
+/// Whether a generation of `harness` on `current` can be switched to the model a turn wants (`picked`, else the
+/// route's default) without a new process: Claude Code takes `set_model`, but reads its context window at its start
+/// (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`), so a model with another window needs a new generation; Qwen Code's model is in
+/// its argv and settings.
+fn in_place(models: &Models, harness: Harness, current: &str, picked: Option<&str>) -> bool {
+    let wanted = picked.unwrap_or(&models.default);
+    harness == Harness::Claude
+        && models.harness_of(wanted) == Harness::Claude
+        && models.context_of(current) == models.context_of(wanted)
+}
+
 impl Gen {
     /// Whether it runs the model a turn wants: the picked one, or with none picked the route's default.
     fn runs(&self, wanted: Option<&str>) -> bool {
@@ -423,7 +434,7 @@ struct St {
     /// The descriptor `etag` the managed files were written from.
     etag: String,
     /// The model the conversation's person picked, as the last `start_turn` said (`None`: the route's default): a
-    /// generation is started on it, and one that runs another model ends before the next turn.
+    /// generation is started on it, and one that runs another model is switched to it before the next turn.
     model: Option<String>,
     /// The release reason, once a forced release ends the turn.
     release: Option<String>,
@@ -1686,6 +1697,37 @@ impl Driver {
         self.spawn(session, turn).await
     }
 
+    /// Switches generation `n` to the conversation's model (`start_turn.model`; absent: the models route's default)
+    /// when it runs another one: `set_model`, as `/model` in Claude Code's terminal, so the process, its session and
+    /// its background tasks go on. Only where [`in_place`] says so; a generation it leaves alone was ended before
+    /// the turn ([`Driver::prepare`]) or waits for a turn that finds it free.
+    async fn apply_model(&self, n: u32, picked: Option<&str>) -> Result<(), String> {
+        let (harness, current) = {
+            let st = lock(&self.st);
+            match st.live.as_ref().filter(|g| g.n == n) {
+                Some(g) if g.runs(picked) => return Ok(()),
+                Some(g) => (g.harness, g.model.clone()),
+                None => return Err("Claude Code exited before the prompt was written".into()),
+            }
+        };
+        let models = self.models().await?;
+        if !in_place(&models, harness, &current, picked) {
+            return Ok(());
+        }
+        let wanted = picked.map_or_else(|| models.default.clone(), str::to_owned);
+        if wanted != current {
+            self.control_call(n, |id| control::set_model(id, &wanted)).await?;
+        }
+        tracing::info!(gen = n, from = %current, model = %wanted, "generation switched to the conversation's model");
+        self.with(Change::State, |st, _| {
+            if let Some(g) = st.live.as_mut().filter(|g| g.n == n) {
+                g.model = wanted;
+                g.picked = picked.is_some();
+            }
+        });
+        Ok(())
+    }
+
     /// Switches generation `n` to the conversation's thinking level (`start_turn.thinking`; absent: the level the
     /// models route names for the generation's model, else Claude Code's own for it) when it is not on it already:
     /// thinking off for `none` (`set_max_thinking_tokens` 0), else on at Claude Code's effort level of that name
@@ -2496,18 +2538,33 @@ impl Driver {
                 Ok(d) => self.apply_descriptor(&d),
                 Err(e) => tracing::info!(error = %e, "descriptor not re-read"),
             }
-            // the model this turn runs on: a generation on another model (or on other managed files) ends here and
-            // the turn resumes the conversation on a new one. While a turn or background tasks run, the generation
-            // stays: the change waits for the next turn that finds it free.
-            let end = self.with(Change::State, |st, _| {
+            // a hold is superseded first, so that what follows finds the generation free
+            if lock(&self.st).run == RunKind::Held {
+                self.stop_tasks(Instant::now() + SUPERSEDE_WAIT, "supersede").await;
+            }
+            // the model this turn runs on. A generation on other managed files ends here and the turn resumes the
+            // conversation on a new one; so does one on another model that it cannot be switched to in place
+            // ([`Driver::apply_model`] switches the others once the generation is there). While a turn or
+            // background tasks run, the generation stays: the change waits for the next turn that finds it free.
+            let (free, stale, other) = self.with(Change::State, |st, _| {
                 st.model.clone_from(&s.model);
-                st.turn.is_none()
-                    && st.tracker.is_empty()
-                    && st
-                        .live
-                        .as_ref()
-                        .is_some_and(|g| g.etag != st.etag || !g.runs(st.model.as_deref()))
+                let free = st.turn.is_none() && st.tracker.is_empty();
+                let stale = st.live.as_ref().is_some_and(|g| g.etag != st.etag);
+                let other = st
+                    .live
+                    .as_ref()
+                    .filter(|g| !g.runs(st.model.as_deref()))
+                    .map(|g| (g.harness, g.model.clone()));
+                (free, stale, other)
             });
+            let mut end = free && stale;
+            if free
+                && !end
+                && let Some((harness, current)) = other
+            {
+                let models = self.models().await?;
+                end = !in_place(&models, harness, &current, s.model.as_deref());
+            }
             if end {
                 tracing::info!("configuration or model changed: generation ended before the turn");
                 self.end_generation(
@@ -2515,9 +2572,6 @@ impl Driver {
                     Instant::now() + STDIN_CLOSE_GRACE + KILL_AFTER_TERM + Duration::from_secs(2),
                 )
                 .await;
-            }
-            if lock(&self.st).run == RunKind::Held {
-                self.stop_tasks(Instant::now() + SUPERSEDE_WAIT, "supersede").await;
             }
         }
         // 3: uploads
@@ -2732,7 +2786,10 @@ impl Driver {
             };
             match self.ensure_gen(&session, Some(turn_id)).await {
                 Ok(n) => {
-                    // the conversation's thinking level, before its message is written
+                    // the conversation's model, then its thinking level, before its message is written
+                    if let Err(e) = self.apply_model(n, s.model.as_deref()).await {
+                        return fail(self, e);
+                    }
                     if let Err(e) = self.apply_thinking(n, s.thinking.as_deref()).await {
                         return fail(self, e);
                     }

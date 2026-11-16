@@ -206,6 +206,12 @@ A model may carry its own `contextTokens` when its window is not the route's (a 
 supervisor runs Claude Code at the window of the model the conversation runs, the route's when the model names none
 (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, which Claude Code takes for a model id it does not recognise; one it recognises
 runs at Claude Code's own window for it).
+**A conversation's model** is its `pickedModel` (the person's pick in the menu, or the model the deployment created
+the conversation on; none: the route's default). magpie puts it into each `start_turn` (`model`); the supervisor
+switches the running Claude Code to it before it writes the prompt (`set_model`, what `/model` does in Claude Code's
+terminal: the same process, its session and background tasks go on). A new Claude Code is started only for a model
+with another context window (Claude Code reads `CLAUDE_CODE_MAX_CONTEXT_TOKENS` at its start) or another harness. A
+message that joins a running turn does not change the turn's model: the pick is the next turn's.
 **A conversation's thinking level** goes the way of its picked model (where the deployment says
 `conversations.peoplePickModel`): pigeon lists every model with its levels in the provider snapshot (a thinking set
 per distinct list, the level ids as labels) and in `/api/providers/claude/models` (`thinking`, `reasoning` on each

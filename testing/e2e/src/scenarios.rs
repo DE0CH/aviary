@@ -14,7 +14,7 @@ use crate::{ADMIN, ALICE, Harness, JFS, PIGEON, STRANGER, TURN_MODEL, eventually
 /// The scenarios in the order `aviary-e2e` runs them when none is named.
 pub const ALL: &[&str] = &[
     "e1", "e2", "e3", "e4", "e5", "e19", "e16", "e14", "cc", "e6", "e7", "e8", "e10", "e11", "e18", "e9", "e23", "e20",
-    "e21", "e22", "e13", "e15", "e24", "e12", "e17", "stale",
+    "e21", "e22", "e13", "e15", "e24", "e25", "e12", "e17", "stale",
 ];
 
 /// How long a turn may take, sandbox start included (the image is local; the first start makes the host).
@@ -37,6 +37,7 @@ pub async fn run(h: &Harness, name: &str) -> anyhow::Result<()> {
         "e17" => e17(h).await,
         "e18" => e18(h).await,
         "e24" => e24(h).await,
+        "e25" => e25(h).await,
         "e6" => e6(h).await,
         "stale" => stale(h).await,
         "e9" => e9(h).await,
@@ -991,6 +992,62 @@ async fn scale(h: &Harness, name: &str, replicas: i32) -> anyhow::Result<()> {
     )
     .await?;
     Ok(())
+}
+
+/// The model a person picks in the menu instead of the route's default (the route lists it).
+const PICKED_MODEL: &str = "example/model-small-0901";
+
+/// E25: a model picked in the composer's menu (`set_agent_model_request`) is the model of the conversation's next
+/// turn: the snapshot shows it, and the real Claude Code's next request to the model carries it, with the earlier
+/// messages (the conversation goes on). No link of the path had a test that reached the model: the pick was saved and
+/// shown, and what Claude Code then asked for was checked nowhere.
+async fn e25(h: &Harness) -> anyhow::Result<()> {
+    let token = h.mint(ALICE, 3600, None).await?;
+    let (mut ws, _) = Ws::open(PIGEON, &token).await?;
+    let m = marker("E25");
+    let (one, two) = (format!("{m}-one"), format!("{m}-two"));
+    h.script(json!({"match": {"textContains": one, "model": TURN_MODEL},
+                    "reply": [{"text": "On the default."}], "times": 1}))
+        .await?;
+    h.script(json!({"match": {"textContains": two, "model": PICKED_MODEL},
+                    "reply": [{"text": "On the picked model."}], "times": 1}))
+        .await?;
+    let r = async {
+        let id = create(&mut ws, &format!("Say where you are ({one})")).await?;
+        turn_end(&mut ws, &id).await?;
+        let (kind, p) = ws
+            .rpc(
+                "set_agent_model_request",
+                json!({"agentId": id, "modelId": PICKED_MODEL}),
+            )
+            .await?;
+        ensure!(
+            kind == "set_agent_model_response" && p["accepted"] == true,
+            "the pick answered {kind}: {p}"
+        );
+        let a = agent(&mut ws, &id).await?;
+        ensure!(a["model"] == PICKED_MODEL, "the snapshot's model is {}", a["model"]);
+        send(&mut ws, &id, &format!("And now ({two})")).await?;
+        turn_end_nth(&mut ws, &id, 2).await?;
+        let said = texts_of(&timeline(&mut ws, &id).await?, "assistant_message");
+        ensure!(
+            said.iter().any(|t| t == "On the picked model."),
+            "the turn after the pick did not reach the picked model: {said:?}"
+        );
+        let reqs = h.model_requests(&id).await?;
+        ensure!(
+            reqs.iter()
+                .any(|r| r["model"] == PICKED_MODEL && r["messages"].as_u64().unwrap_or(0) >= 3),
+            "no request on the picked model with the history: {reqs:?}"
+        );
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    if r.is_err() {
+        eprintln!("{}", ws.tail(40));
+    }
+    ws.close().await;
+    r
 }
 
 /// E24: hermit at 0 replicas for 3 minutes during a turn: the turn completes (model, tools and FUSE writes flow
