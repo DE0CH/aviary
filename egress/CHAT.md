@@ -118,12 +118,16 @@ decided in this order:
 4. **The internet**: ports 80 and 443 (`deny:port`), the sandbox internet rules (below; `deny:denylist`,
    `deny:config`), the threat-intel resolvers (`deny:threat`, `deny:nxdomain`, `deny:dns`), public addresses only
    (`deny:address`; private, loopback, link-local, cluster and `blockCidrs` ranges refused after resolution). A refusal
-   is a 403 with a plain-text body: "egress: <host> is blocked for the sandbox (a file-sharing, upload, anonymiser or similar service), and it cannot be enabled
-   from the chat. … To read a web page, use the web_fetch and web_search tools instead of the sandbox." Plain-HTTP
+   is a 403 with a plain-text body, one sentence: "<product name> egress has denied this network request because
+   the domain name is on the blocklist." Plain-HTTP
    GETs to `deb.debian.org`/`security.debian.org` are cached (apt). **The upload cap** (`maxUploadBytes`, 8 MiB) counts
    only internet traffic, a CONNECT tunnel's or a forward request's client-to-upstream bytes (`deny:upload`, the
    connection cut): the fixed names and the mirror are never counted against it, so the supervisor's kept-alive
    connection carrying transcript writes and uploads is never cut.
+
+**Nothing that passes through is held whole:** every answer (a route's, the internet's, the mirror's files and index
+pages) goes to the caller piece by piece at the caller's pace, so a download's size costs egress no memory. The only
+things kept are a model answer's JSON or one event-stream line for its cost, each at most 4 MiB (`SNIFF_MAX`).
 
 Every request except the magpie and hermit calls → one `egress_log` row (kind `connect`, `http`, `mirror`, `model`,
 `tools`; decision `allow`, `allow:cache` or `deny:<reason>`; the sandbox, conversation, `person` and `request`).
