@@ -66,6 +66,7 @@
       }
     ],
     "egressService": "egress",
+    "egressTarget": "10.0.0.50",
     "gateway": {
       "name": "hermit-gw",
       "url": "https://10.202.0.1:7443",
