@@ -26,16 +26,6 @@
         <custom-component-target :extension-point="topBarRightExtensionPoint" />
         <feedback-link v-if="isFeedbackLinkEnabled" v-bind="feedbackLinkOptions" />
         <notifications v-if="isNotificationBellEnabled" />
-        <side-bar-toggle
-          v-if="isSideBarToggleVisible"
-          :disabled="isSideBarToggleDisabled"
-          class="hidden sm:flex"
-        />
-        <applications-menu
-          v-if="appMenuExtensions.length && !isEmbedModeEnabled && !authStore.isGuestContext"
-          :menu-items="appMenuExtensions"
-        />
-        <user-menu />
       </template>
     </div>
   </header>
@@ -45,10 +35,8 @@
 import { storeToRefs } from 'pinia'
 import { computed, unref } from 'vue'
 import { addVersionToAssetUrl } from '@opencloud-eu/design-system/helpers'
-import UserMenu from './UserMenu.vue'
 import Notifications from './Notifications.vue'
 import FeedbackLink from './FeedbackLink.vue'
-import SideBarToggle from './SideBarToggle.vue'
 import {
   CustomComponentTarget,
   createLocationGuest,
@@ -56,7 +44,6 @@ import {
   useCapabilityStore,
   useConfigStore,
   useEmbedMode,
-  useExtensionRegistry,
   useIsAppActive,
   useRouter,
   useThemeStore
@@ -64,14 +51,12 @@ import {
 import SidebarNavMobile from '../SidebarNav/SidebarNavMobile.vue'
 import { routeNames } from '../../router/names'
 import {
-  appMenuExtensionPoint,
   topBarCenterExtensionPoint,
   topBarLeftExtensionPoint,
   topBarRightExtensionPoint
 } from '../../extensionPoints'
 import { RouteRecordNormalized } from 'vue-router'
 import { useGettext } from 'vue3-gettext'
-import ApplicationsMenu from './ApplicationsMenu.vue'
 
 const { $gettext } = useGettext()
 const capabilityStore = useCapabilityStore()
@@ -79,16 +64,11 @@ const themeStore = useThemeStore()
 const { currentTheme } = storeToRefs(themeStore)
 const configStore = useConfigStore()
 const { options: configOptions } = storeToRefs(configStore)
-const extensionRegistry = useExtensionRegistry()
 const isAppActive = useIsAppActive()
 
 const authStore = useAuthStore()
 const router = useRouter()
 const { isEnabled: isEmbedModeEnabled } = useEmbedMode()
-
-const appMenuExtensions = computed(() => {
-  return extensionRegistry.requestExtensions(appMenuExtensionPoint)
-})
 
 const isRuntimeRoute = (route: Pick<RouteRecordNormalized, 'name'>) => {
   return Object.values(routeNames).includes(route.name?.toString())
@@ -121,13 +101,6 @@ const homeLink = computed(() => {
   }
 
   return '/'
-})
-
-const isSideBarToggleVisible = computed(() => {
-  return authStore.userContextReady || authStore.publicLinkContextReady || authStore.isGuestContext
-})
-const isSideBarToggleDisabled = computed(() => {
-  return isRuntimeRoute(unref(router.currentRoute))
 })
 
 const sidebarLogoAlt = computed(() => {

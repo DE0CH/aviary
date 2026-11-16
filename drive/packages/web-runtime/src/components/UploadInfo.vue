@@ -501,7 +501,7 @@ function parentFolderName(file: UploadResult) {
   }
 
   if (meta.driveType === 'personal') {
-    return $gettext('Personal')
+    return meta.spaceName || $gettext('Personal')
   }
 
   if (meta.driveType === 'public') {

@@ -18,9 +18,10 @@ vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
 }))
 
 describe('Top Bar component', () => {
-  it('Displays applications menu', () => {
+  // YYC Drive: the top bar has nothing on the right but what the server switches on.
+  it.each(['applications-menu', 'user-menu', 'side-bar-toggle'])('never shows %s', (component) => {
     const { wrapper } = getWrapper()
-    expect(wrapper.find('applications-menu-stub').exists()).toBeTruthy()
+    expect(wrapper.find(`${component}-stub`).exists()).toBeFalsy()
   })
   it('hides the applications menu in a guest context', () => {
     const { wrapper } = getWrapper({ userContextReady: false, guestContextReady: true })
@@ -95,7 +96,7 @@ describe('Top Bar component', () => {
       expect(wrapper.find(`${componentName}-stub`).exists()).toBeFalsy()
     }
   )
-  it.each(['applications-menu', 'feedback-link', 'notifications', 'user-menu'])(
+  it.each(['feedback-link', 'notifications'])(
     'should not hide %s when mode is not "embed"',
     (componentName) => {
       mockUseEmbedMode.mockReturnValue({

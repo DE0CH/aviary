@@ -45,7 +45,10 @@ export const navItems: ClassicApplicationScript['navItems'] = ({ $ability, $gett
   return [
     {
       name() {
-        return $gettext('Personal')
+        return (
+          spacesStores.spaces.find((drive) => isPersonalSpaceResource(drive))?.name ||
+          $gettext('Personal')
+        )
       },
       icon: appInfo.icon,
       route: {

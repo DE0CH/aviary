@@ -86,7 +86,7 @@ export const useFolderLink = (options: ResourceRouteResolverOptions = {}) => {
       }
     }
 
-    return $gettext('Personal')
+    return space?.name || $gettext('Personal')
   }
 
   const getParentFolderLinkIconAdditionalAttributes = (resource: Resource) => {

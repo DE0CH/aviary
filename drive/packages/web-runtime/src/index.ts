@@ -226,14 +226,6 @@ export const bootstrapApp = async (configurationPath: string, appsReadyCallback:
       }
 
       sharesStore.setGraphRoles(graphRoleDefinitions)
-      const personalSpace = spacesStore.spaces.find((s) => s.driveType === 'personal')
-      if (personalSpace) {
-        spacesStore.updateSpaceField({
-          id: personalSpace.id,
-          field: 'name',
-          value: app.config.globalProperties.$gettext('Personal')
-        })
-      }
       spacesStore.setSpacesInitialized(true)
     },
     {
