@@ -38,8 +38,12 @@ import { getErrorMessage } from '../utils/errors.js';
  * nothing reads on resume (ChatRecordingService.supersedeRefusedParts).
  */
 
-/** Statuses that say "this request, as it is, will never be accepted". */
-const REFUSAL_STATUSES = new Set([400, 413, 415, 422]);
+/**
+ * Statuses that say "this request, as it is, will never be accepted". 404 is among them: OpenRouter answers
+ * "No endpoints found that support input video" with it when the conversation holds a video and the model it
+ * is now sent to takes none.
+ */
+const REFUSAL_STATUSES = new Set([400, 404, 413, 415, 422]);
 
 /** How many earlier entries stage 3 may try, one request each. */
 export const MAX_HISTORY_MEDIA_STEPS = 5;

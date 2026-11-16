@@ -32,7 +32,7 @@ const model = (text: string): Content => ({ role: 'model', parts: [{ text }] });
 const texts = (content: Content): string => JSON.stringify(content.parts);
 
 describe('upstreamRefusalReason', () => {
-  it.each([400, 413, 415, 422])('takes HTTP %i as a refusal', (status) => {
+  it.each([400, 404, 413, 415, 422])('takes HTTP %i as a refusal', (status) => {
     expect(
       upstreamRefusalReason(Object.assign(new Error(REASON), { status })),
     ).toBe(REASON);

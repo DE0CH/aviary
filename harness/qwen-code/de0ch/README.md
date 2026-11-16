@@ -62,8 +62,9 @@ refs/tags/vX.Y.Z` and `git merge`, never a rebase), tested against aviary's supe
   conversation back** (Deyao, 2026-11-16). The model keeps no state and every request is rebuilt from the
   conversation, so data the provider cannot take is refused again with every later request: in YYC AI the agent
   opened a half-written `.mp4` with `read_file`, DeepInfra answered "Could not open video stream", and every
-  "continue" after that failed in 2 s. Here a refusal (400, 413, 415 or 422, as the HTTP status or as an `error`
-  frame inside an opened stream; never a rate limit, a server error, a timeout or a sign-in error) is blamed on
+  "continue" after that failed in 2 s. Here a refusal (400, 404, 413, 415 or 422, as the HTTP status or as an `error`
+  frame inside an opened stream; 404 because OpenRouter answers "No endpoints found that support input video" with
+  it; never a rate limit, a server error, a timeout or a sign-in error) is blamed on
   what was added since the last request the provider answered, in stages of one more request each:
   1. the videos, sounds, images and files of the newest entry (this step's tool results, or the person's message)
      are replaced by a line from the harness that names the provider's error;
