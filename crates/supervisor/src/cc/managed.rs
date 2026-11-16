@@ -70,7 +70,8 @@ pub const QWEN_SKILLS: &str = "skills";
 /// Qwen Code's system settings: the models of its harness on the model route (`OpenAI` chat completions at
 /// `http://model/v1`, the placeholder key, each model's context window, every kind of media taken as it is: Qwen
 /// Code puts an image, a sound or a video file its agent opens into the conversation), the model this generation
-/// runs, every tool allowed, no telemetry and no update check, and the managed skills' folder.
+/// runs, every tool allowed, no OpenTelemetry export (usage statistics are not in the fork at all) and no update
+/// check, and the managed skills' folder.
 #[must_use]
 pub fn qwen_settings(models: &gateway_api::models::Models, model: &str, skills: &Path) -> serde_json::Value {
     use crate::harness::Harness;

@@ -103,6 +103,13 @@ check "Qwen Code keeps one video and two sounds per request and waits for a pers
 # harness); upstream Qwen Code names none there, so the list was empty for every Qwen Code conversation.
 check "Qwen Code names its slash commands in its initialize answer" img_run "$img" -c '
   grep -rqE "commands: ?await this\.loadSlashCommands\(signal\)" /opt/qwen-code/lib/node_modules/@qwen-code/qwen-code'
+# The fork sends no usage statistics (DE0CH/qwen-code de0ch/README.md). Upstream posts a record of every session,
+# prompt, tool call and model request to Alibaba Cloud RUM unless `privacy.usageStatisticsEnabled` is false, which the
+# managed settings never said: sandboxes tried the upload on every turn.
+check "Qwen Code names no usage statistics endpoint" img_run "$img" -c '
+  d=/opt/qwen-code/lib/node_modules/@qwen-code/qwen-code
+  test -d "$d" || exit 1
+  ! grep -rqF "rum.aliyuncs.com" "$d"'
 check "Qwen Code runs as uid 1000, root-owned and not writable by it" img_run -u 1000 "$img" -c '
   /opt/qwen-code/bin/qwen --version | grep -Eq "^[0-9]+\.[0-9]+\.[0-9]+" || exit 1
   test "$(stat -c %u /opt/qwen-code/bin/qwen)" = 0 && test -d /etc/qwen-code
