@@ -20,6 +20,7 @@ const callableNavItems = navItems as (args: GlobalProperties) => AppNavigationIt
 
 const personalSpace = mock<SpaceResource>({
   id: '1',
+  name: 'Personal',
   driveType: 'personal',
   driveAlias: 'personal/admin',
   isOwner: () => true
@@ -48,6 +49,26 @@ describe('Web app files', () => {
 
   describe('navItems', () => {
     describe('Personal', () => {
+      // YYC Drive: the item carries the name the server gives the drive.
+      it('is named after the drive', () => {
+        const spacesStore = useSpacesStore()
+        spacesStore.spaces = [
+          mock<SpaceResource>({
+            id: '1',
+            name: 'YYC Drive',
+            driveType: 'personal',
+            isOwner: () => true
+          })
+        ]
+        const items = callableNavItems(mock<GlobalProperties>({ $gettext: (t: string) => t }))
+        expect((items[0].name as () => string)()).toBe('YYC Drive')
+      })
+      it('is named "Personal" while the drive is not known yet', () => {
+        const spacesStore = useSpacesStore()
+        spacesStore.spaces = []
+        const items = callableNavItems(mock<GlobalProperties>({ $gettext: (t: string) => t }))
+        expect((items[0].name as () => string)()).toBe('Personal')
+      })
       it('should be enabled if user has a personal space', () => {
         const spacesStore = useSpacesStore()
         spacesStore.spaces = [
