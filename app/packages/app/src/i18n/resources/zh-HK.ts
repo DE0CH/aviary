@@ -3110,6 +3110,7 @@ export const zhHK: TranslationResources = {
     model: {
       title: "模型",
       menuLabel: "模型與思考：{{model}}",
+      runningThenPicked: "今次回覆用 {{running}}，之後用 {{picked}}",
       infoLabel: "關於模型",
       info: "如需更多模型，請聯絡管理員。",
       thinking: "思考",

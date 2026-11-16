@@ -28,6 +28,7 @@ import {
   movesHarness,
   pickSettled,
   rememberLevel,
+  runningModel,
   shownChoice,
   type LevelsByModel,
   type MenuModel,
@@ -44,6 +45,8 @@ interface Choice {
   level: string | null | undefined;
   selectModel: (modelId: string) => void;
   selectLevel: (level: string) => void;
+  /** The running reply's model, when a model picked during the reply waits for the next one. */
+  running?: MenuModel | null;
 }
 
 // The level last picked for each model (Deyao, 2026-11-13: a thinking level per model), kept on this device.
@@ -178,7 +181,9 @@ function useConversationChoice(serverId: string, agentId: string): Choice {
     },
     [agentId, client, models, refused, shown.modelId],
   );
-  return { models, modelId: shown.modelId, level: shown.level, selectModel, selectLevel };
+  // a model picked during a reply is the next reply's: until this one ends, the model it runs on shows before it
+  const running = runningModel(models, agent?.status === "running", agent?.runtimeInfo?.model, shown.modelId);
+  return { models, modelId: shown.modelId, level: shown.level, selectModel, selectLevel, running };
 }
 
 function DraftModelMenu({ agentId, draft }: { agentId: string; draft: DraftAgentControlsProps }) {
@@ -217,7 +222,9 @@ function ModelMenu({ choice }: { choice: Choice }) {
       </View>
     );
   }
-  const summary = state.level ? `${model.label} · ${levelLabel(state.level)}` : model.label;
+  const running = choice.running ?? null;
+  const picked = state.level ? `${model.label} · ${levelLabel(state.level)}` : model.label;
+  const summary = running ? t("conversation.model.runningThenPicked", { running: running.label, picked }) : picked;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -226,6 +233,11 @@ function ModelMenu({ choice }: { choice: Choice }) {
         accessibilityRole="button"
         accessibilityLabel={t("conversation.model.menuLabel", { model: summary })}
       >
+        {running ? (
+          <Text style={styles.running} numberOfLines={1} testID="yyc-model-running">
+            {`${running.label} →`}
+          </Text>
+        ) : null}
         <Text style={styles.label} numberOfLines={1}>
           {model.label}
         </Text>
@@ -318,6 +330,15 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     flexShrink: 1,
+    minWidth: 0,
+  },
+  // the running reply's model, before the picked one: quieter than it, and the first to give way in a narrow composer
+  running: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.normal,
+    opacity: 0.6,
+    flexShrink: 2,
     minWidth: 0,
   },
   level: {

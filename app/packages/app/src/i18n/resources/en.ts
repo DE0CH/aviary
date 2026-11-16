@@ -3164,6 +3164,7 @@ export const en = {
     model: {
       title: "Model",
       menuLabel: "Model and thinking: {{model}}",
+      runningThenPicked: "{{running}} for this reply, then {{picked}}",
       infoLabel: "About the models",
       info: "For more models, ask your admin.",
       thinking: "Thinking",

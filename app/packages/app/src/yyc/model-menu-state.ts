@@ -128,3 +128,20 @@ export function levelForModel(model: MenuModel, remembered: LevelsByModel): stri
 export function rememberLevel(remembered: LevelsByModel, modelId: string, level: string): LevelsByModel {
   return { ...remembered, [modelId]: level };
 }
+
+/**
+ * The model of the reply that is running, when it is not the conversation's (picked) model: a model picked during a
+ * reply is the next reply's, so until this one ends the menu shows both (Deyao, 2026-11-16: "Fable 5.2 → Opus 5.5").
+ * `runtimeModelId` is the server's word for the running reply's model. Null: nothing runs, or one model.
+ */
+export function runningModel(
+  models: MenuModel[],
+  running: boolean,
+  runtimeModelId: string | null | undefined,
+  shownModelId: string | null | undefined,
+): MenuModel | null {
+  if (!running || !runtimeModelId) return null;
+  const shown = menuState(models, shownModelId, null).model;
+  if (!shown || shown.id === runtimeModelId) return null;
+  return models.find((entry) => entry.id === runtimeModelId) ?? null;
+}

@@ -5,6 +5,7 @@ import {
   menuModels,
   menuState,
   movesHarness,
+  runningModel,
   pickSettled,
   rememberLevel,
   shownChoice,
@@ -112,5 +113,28 @@ describe("a model of another harness", () => {
     expect(movesHarness(models, null, "mimo")).toBe(true);
     expect(movesHarness(models, null, "glm")).toBe(false);
     expect(movesHarness(models, "deepseek", "gone")).toBe(false);
+  });
+});
+
+// Deyao, 2026-11-16: a model picked while a reply runs is the next reply's; until the reply ends the menu shows the
+// model it runs on, then the pick. Before, the menu showed the pick alone, as if the running reply were on it.
+describe("a pick made while a reply runs", () => {
+  const models = menuModels([
+    { provider: "claude", id: "fable", label: "Fable 5.2", isDefault: true },
+    { provider: "claude", id: "opus", label: "Opus 5.5" },
+  ]);
+
+  it("shows the running reply's model beside the pick", () => {
+    expect(runningModel(models, true, "fable", "opus")?.label).toBe("Fable 5.2");
+  });
+
+  it("shows one model when nothing runs, or the reply is on the pick", () => {
+    expect(runningModel(models, false, "fable", "opus")).toBeNull();
+    expect(runningModel(models, true, "opus", "opus")).toBeNull();
+    expect(runningModel(models, true, null, "opus")).toBeNull();
+    // none picked: the conversation is on the default, and so is the reply
+    expect(runningModel(models, true, "fable", null)).toBeNull();
+    // a model the list no longer holds has no name to show
+    expect(runningModel(models, true, "gone", "opus")).toBeNull();
   });
 });
