@@ -136,29 +136,21 @@ mod tests {
         // deterministic: any replica derives the same token
         assert_eq!(both.sandbox_token(1, &facts("a@example.org")).unwrap(), old);
         let set = KeySet::from_keys(both.published());
-        let from = IpAddr::V4(Ipv4Addr::new(198, 18, 0, 10));
-        let c = set.verify(&old, 1_000, from).unwrap();
+        let c = set.verify(&old, 1_000).unwrap();
         assert_eq!(c.person, "a@example.org");
         let new = both.sandbox_token(2, &facts("a@example.org")).unwrap();
-        assert!(set.verify(&new, 1_000, from).is_ok());
+        assert!(set.verify(&new, 1_000).is_ok());
         assert_eq!(
-            KeySet::from_keys(one.published()).verify(&new, 1_000, from),
+            KeySet::from_keys(one.published()).verify(&new, 1_000),
             Err(VerifyError::UnknownKid(2))
         );
         // wrong source, expired, tampered
-        assert_eq!(
-            set.verify(&old, 1_000, IpAddr::V4(Ipv4Addr::new(198, 18, 0, 11))),
-            Err(VerifyError::WrongSource)
-        );
-        assert_eq!(set.verify(&old, 4_000_000_000, from), Err(VerifyError::Expired));
+        assert_eq!(set.verify(&old, 4_000_000_000), Err(VerifyError::Expired));
         let mut parts: Vec<&str> = old.split('.').collect();
         let other = one.sandbox_token(1, &facts("b@example.org")).unwrap();
         let other_payload = other.split('.').nth(2).unwrap().to_owned();
         parts[2] = &other_payload;
-        assert_eq!(
-            set.verify(&parts.join("."), 1_000, from),
-            Err(VerifyError::BadSignature)
-        );
+        assert_eq!(set.verify(&parts.join("."), 1_000), Err(VerifyError::BadSignature));
         assert!(one.sandbox_token(9, &facts("a@example.org")).is_none());
     }
 

@@ -127,9 +127,9 @@ Missing: 407 with `Proxy-Authenticate: Basic realm="aviary-gateway"`.
 **Token.** `hst1.<kid>.<payload>.<sig>`: `kid` decimal; `payload` base64url (no padding) of `version 1 (1 byte) |
 sandbox id (16) | conversation id (16) | source IPv4 (4; 0.0.0.0 = any) | expiry (u64 big-endian Unix seconds) |
 person (UTF-8, 1-254 bytes)`; `sig` base64url of the Ed25519 signature over `"hermit-sandbox-token\0"` followed by
-the binary payload. Verify locally (`KeySet::verify`): it parses, the kid is in the key set, the signature verifies,
-`now < expiry`, and the connection's source address (an IPv4-mapped IPv6 address counts as its IPv4) equals the
-token's unless that is 0.0.0.0. Any failure is definitive: 403 `{"code": "not_allowed"}`. The key set is `GET
+the binary payload. Verify locally (`KeySet::verify`): it parses, the kid is in the key set, the signature verifies
+and `now < expiry`. The token alone is the caller's identity: the connection's source address is never checked and
+the payload's source IPv4 is not read (a gateway may sit behind a load balancer). Any failure is definitive: 403 `{"code": "not_allowed"}`. The key set is `GET
 http://hermit/v1/sandbox-token-keys` → `{"keys": [{"kid", "alg": "Ed25519", "publicKey": "<base64url 32 bytes>"}]}`,
 refetched every 5 min and at most every 10 s on an unknown kid, the last set kept on a failed fetch.
 

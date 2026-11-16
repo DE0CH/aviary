@@ -41,7 +41,8 @@ gateway's 1 s timeout, 503); the drain (`--sigterm`), which ends the replica. Ch
 
 | Check | Platform 8.2 row |
 |---|---|
-| `credential.missing`, `credential.not-sbx`, `credential.bad-signature`, `credential.expired`, `credential.wrong-source`, `credential.unknown-kid` | 407 / 403 for a missing, foreign, forged, expired, misplaced or unknown-kid credential, never forwarded |
+| `credential.missing`, `credential.not-sbx`, `credential.bad-signature`, `credential.expired`, `credential.unknown-kid` | 407 / 403 for a missing, foreign, forged, expired or unknown-kid credential, never forwarded |
+| `credential.any-source` | a valid token signed for another address is served: the source address is never checked |
 | `credential.new-kid` | a key published after the gateway's last fetch is learnt on the first token naming it (the refetch of an unknown kid) |
 | `liveness.revoked`, `liveness.unknown-sandbox` | `live: false` → 403 within 30 s; hermit's 404 → 403 |
 | `liveness.hermit-outage` | a token seen before and one never seen are admitted on every request for the whole outage |

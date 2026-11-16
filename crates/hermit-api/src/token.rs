@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::Ipv4Addr;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
@@ -124,8 +124,6 @@ pub enum VerifyError {
     BadSignature,
     #[error("expired")]
     Expired,
-    #[error("presented from another address")]
-    WrongSource,
 }
 
 /// A master key from hermit's key list.
@@ -341,13 +339,13 @@ impl KeySet {
         self.keys.is_empty()
     }
 
-    /// Verifies a token presented from `from` at Unix second `now` (6.3 step 2): it parses, its kid is known, the
-    /// signature verifies, it has not expired (`now < expiresAt`), and its source address equals `from` (an
-    /// IPv4-mapped IPv6 address counts as its IPv4; skipped when the token carries 0.0.0.0).
+    /// Verifies a token at Unix second `now` (6.3 step 2): it parses, its kid is known, the signature verifies and it
+    /// has not expired (`now < expiresAt`). The token alone is the caller's identity: the address it is presented
+    /// from is never checked (a gateway may sit behind a load balancer), and the claim `source` is not read.
     ///
     /// # Errors
     /// The first check that fails.
-    pub fn verify(&self, token: &str, now: u64, from: IpAddr) -> Result<Claims, VerifyError> {
+    pub fn verify(&self, token: &str, now: u64) -> Result<Claims, VerifyError> {
         let parts = split(token)?;
         let public = self.keys.get(&parts.kid).ok_or(VerifyError::UnknownKid(parts.kid))?;
         let mut msg = Vec::with_capacity(SIGNING_CONTEXT.len() + parts.payload.len());
@@ -359,15 +357,6 @@ impl KeySet {
         let claims = Claims::decode(&parts.payload)?;
         if now >= claims.expires_at {
             return Err(VerifyError::Expired);
-        }
-        if !claims.source.is_unspecified() {
-            let from = match from {
-                IpAddr::V4(v4) => Some(v4),
-                IpAddr::V6(v6) => v6.to_ipv4_mapped(),
-            };
-            if from != Some(claims.source) {
-                return Err(VerifyError::WrongSource);
-            }
         }
         Ok(claims)
     }
@@ -465,32 +454,13 @@ mod tests {
         let set = KeySet::from_keys(&TokenKeys {
             keys: vec![k.public_key()],
         });
-        let from = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 7));
-        assert_eq!(set.verify(&t, 1_700_000_000, from).unwrap(), claims());
-        // ::ffff:192.0.2.7
-        let mapped: IpAddr = "::ffff:192.0.2.7".parse().unwrap();
-        assert!(set.verify(&t, 1_700_000_000, mapped).is_ok());
-        assert_eq!(set.verify(&t, 1_800_000_000, from), Err(VerifyError::Expired));
-        assert_eq!(
-            set.verify(&t, 1, IpAddr::V4(Ipv4Addr::new(192, 0, 2, 8))),
-            Err(VerifyError::WrongSource)
-        );
-        assert_eq!(KeySet::default().verify(&t, 1, from), Err(VerifyError::UnknownKid(1)));
+        // signed for 192.0.2.7: the address it is presented from is no part of the check
+        assert_eq!(set.verify(&t, 1_700_000_000).unwrap(), claims());
+        assert_eq!(set.verify(&t, 1_800_000_000), Err(VerifyError::Expired));
+        assert_eq!(KeySet::default().verify(&t, 1), Err(VerifyError::UnknownKid(1)));
         assert_eq!(peek_kid(&t), Ok(1));
         // deterministic: any replica re-derives the same token
         assert_eq!(key(1, 7).signing_key().unwrap().sign(&claims()).unwrap(), t);
-    }
-
-    #[test]
-    fn any_source_when_unspecified() {
-        let k = key(3, 9).signing_key().unwrap();
-        let mut c = claims();
-        c.source = Ipv4Addr::UNSPECIFIED;
-        let t = k.sign(&c).unwrap();
-        let set = KeySet::from_keys(&TokenKeys {
-            keys: vec![k.public_key()],
-        });
-        assert!(set.verify(&t, 1, "2001:db8::1".parse().unwrap()).is_ok());
     }
 
     #[test]
@@ -501,10 +471,7 @@ mod tests {
         let set = KeySet::from_keys(&TokenKeys {
             keys: vec![b.public_key()],
         });
-        assert_eq!(
-            set.verify(&t, 1, IpAddr::V4(claims().source)),
-            Err(VerifyError::BadSignature)
-        );
+        assert_eq!(set.verify(&t, 1), Err(VerifyError::BadSignature));
     }
 
     #[test]
@@ -568,8 +535,7 @@ mod tests {
             "hst1.1.!!.AA",
             "hst1.1.AA.AA.AA",
         ] {
-            let from = IpAddr::V4(Ipv4Addr::LOCALHOST);
-            assert_eq!(KeySet::default().verify(t, 0, from), Err(VerifyError::Malformed), "{t}");
+            assert_eq!(KeySet::default().verify(t, 0), Err(VerifyError::Malformed), "{t}");
         }
     }
 }

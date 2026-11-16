@@ -5,14 +5,13 @@
 //! token (`--token-command`), and in the suite's own tests a pending release and a feed retention cut. A check
 //! that needs a hook it does not have is skipped and says so.
 
-use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use hermit_api::people::{People, Person, Role};
 use hermit_api::sandbox::{Sandbox, SandboxEvents, SandboxState};
 use hermit_api::sandbox_surface::{ActivityReply, ActivityReplyState, SandboxSelf, SecretKeys};
-use hermit_api::token::{KeySet, TokenKeys, TokenLiveness, VerifyError};
+use hermit_api::token::{KeySet, TokenKeys, TokenLiveness};
 use hermit_api::workspaces::{Entries, Workspace};
 use hermit_api::{CORE, SANDBOX, routes};
 use reqwest::StatusCode;
@@ -1020,7 +1019,7 @@ async fn tokens(s: &Suite) -> Outcome {
     let Some(token) = hook(sbx.id, sbx.conversation_id) else {
         fail!("the token hook gave no token for {}", sbx.id);
     };
-    match set.verify(&token, unix_now(), IpAddr::V4(Ipv4Addr::UNSPECIFIED)) {
+    match set.verify(&token, unix_now()) {
         Ok(c) => {
             ensure!(
                 c.sandbox_id == sbx.id && c.conversation_id == sbx.conversation_id,
@@ -1028,8 +1027,6 @@ async fn tokens(s: &Suite) -> Outcome {
             );
             ensure!(c.person == sbx.person, "the token's person {:?}", c.person);
         }
-        // the signature and expiry verified; only the source address (the sandbox's own) differs
-        Err(VerifyError::WrongSource) => {}
         Err(e) => fail!("the sandbox's token does not verify with the published keys: {e}"),
     }
     Ok(())

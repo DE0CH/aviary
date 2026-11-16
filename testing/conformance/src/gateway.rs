@@ -334,7 +334,7 @@ async fn run_suite(o: Options, fakes: Fakes, report: &Report) {
         report.check("credential.not-sbx", credential_not_sbx(&s)),
         report.check("credential.bad-signature", credential_bad_signature(&s)),
         report.check("credential.expired", credential_expired(&s)),
-        report.check("credential.wrong-source", credential_wrong_source(&s)),
+        report.check("credential.any-source", credential_any_source(&s)),
         // in order: the unknown kid's refetch starts the gateway's 10 s between refetches, which new-kid waits out
         async {
             report.check("credential.unknown-kid", credential_unknown_kid(&s)).await;
@@ -467,6 +467,27 @@ async fn refused_with(s: &Suite, case: &str, token: &str) -> Outcome {
     Ok(())
 }
 
+/// A request with `token` as its credential is served: it reaches the fake magpie once.
+async fn admitted_with(s: &Suite, case: &str, token: &str) -> Outcome {
+    let (st, _, b) = s
+        .once(
+            "GET",
+            "http://magpie/v1/sandbox/x",
+            Some(&proxy_authorization(token)),
+            &[(CASE, case)],
+            empty(),
+            Duration::from_secs(20),
+        )
+        .await?;
+    ensure!(
+        st != StatusCode::FORBIDDEN && st != StatusCode::PROXY_AUTHENTICATION_REQUIRED,
+        "{case}: refused with {st} {}",
+        String::from_utf8_lossy(&b)
+    );
+    s.the_one(case)?;
+    Ok(())
+}
+
 async fn credential_bad_signature(s: &Suite) -> Outcome {
     let c = s.claims(Some(Live::Live));
     let token = Suite::sign(&s.o.signing_key, &c)?;
@@ -484,14 +505,16 @@ async fn credential_expired(s: &Suite) -> Outcome {
     refused_with(s, "credential.expired", &Suite::sign(&s.o.signing_key, &c)?).await
 }
 
-async fn credential_wrong_source(s: &Suite) -> Outcome {
+async fn credential_any_source(s: &Suite) -> Outcome {
     let mut c = s.claims(Some(Live::Live));
     c.source = if s.o.sandbox_ip == Ipv4Addr::new(192, 0, 2, 99) {
         Ipv4Addr::new(192, 0, 2, 98)
     } else {
         Ipv4Addr::new(192, 0, 2, 99)
     };
-    refused_with(s, "credential.wrong-source", &Suite::sign(&s.o.signing_key, &c)?).await
+    // the token alone is the identity: one signed for another address is served (a gateway may sit behind a load
+    // balancer, where every request comes from the balancer)
+    admitted_with(s, "credential.any-source", &Suite::sign(&s.o.signing_key, &c)?).await
 }
 
 /// The least time a gateway may leave between two key-set fetches (3.11.2).

@@ -5,7 +5,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::Ipv4Addr;
 use std::path::Path;
 
 use base64::Engine as _;
@@ -87,9 +87,8 @@ fn the_vector_verifies_with_the_published_key_alone() {
     .unwrap();
     let set = KeySet::from_keys(&keys);
     assert_eq!(peek_kid(TOKEN), Ok(1));
-    let from = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 7));
-    assert_eq!(set.verify(TOKEN, 1_799_999_999, from).unwrap(), claims());
-    assert!(set.verify(TOKEN, 1_800_000_000, from).is_err());
+    assert_eq!(set.verify(TOKEN, 1_799_999_999).unwrap(), claims());
+    assert!(set.verify(TOKEN, 1_800_000_000).is_err());
 }
 
 #[test]

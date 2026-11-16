@@ -2,7 +2,7 @@
 //! the contract clients the way the other packages' tests use them.
 #![allow(clippy::unwrap_used, clippy::too_many_lines, clippy::many_single_char_names)] // tests
 
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use aviary_core::auth::Caller;
@@ -634,9 +634,7 @@ async fn hermit_tokens_descriptor_secrets_activity_and_workspaces() {
     // a minted token verifies with the published keys; liveness follows the sandbox
     let keys = gw.token_keys().await.unwrap();
     let token = fake.mint_token(CONV, Ipv4Addr::new(10, 0, 0, 7)).unwrap();
-    let claims = KeySet::from_keys(&keys)
-        .verify(&token, 0, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7)))
-        .unwrap();
+    let claims = KeySet::from_keys(&keys).verify(&token, 0).unwrap();
     assert_eq!((claims.sandbox_id, claims.person.as_str()), (s.id, "staff@example.org"));
     assert!(gw.token_liveness(s.id, Duration::from_secs(1)).await.unwrap().live);
     assert_eq!(

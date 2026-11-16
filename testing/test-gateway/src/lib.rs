@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -636,9 +636,9 @@ async fn accept(inner: Arc<Inner>, listener: TcpListener) {
         tokio::select! {
             () = wait_true(&mut draining) => break,
             accepted = listener.accept() => match accepted {
-                Ok((stream, peer)) => {
+                Ok((stream, _)) => {
                     let _ = stream.set_nodelay(true);
-                    conns.spawn(connection(inner.clone(), stream, peer));
+                    conns.spawn(connection(inner.clone(), stream));
                 }
                 Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
             },
@@ -650,13 +650,13 @@ async fn accept(inner: Arc<Inner>, listener: TcpListener) {
     while conns.join_next().await.is_some() {}
 }
 
-async fn connection(inner: Arc<Inner>, stream: tokio::net::TcpStream, peer: SocketAddr) {
+async fn connection(inner: Arc<Inner>, stream: tokio::net::TcpStream) {
     let uploaded = Arc::new(AtomicU64::new(0));
     let svc_inner = inner.clone();
     let svc = hyper::service::service_fn(move |req: Request<Incoming>| {
         let inner = svc_inner.clone();
         let uploaded = uploaded.clone();
-        async move { Ok::<_, Infallible>(handle(inner, peer, uploaded, req).await) }
+        async move { Ok::<_, Infallible>(handle(inner, uploaded, req).await) }
     });
     let conn = hyper::server::conn::http1::Builder::new()
         .timer(TokioTimer::new())
@@ -721,19 +721,14 @@ fn route_of(routes: &[ConfiguredRoute], host: &str) -> Option<usize> {
     routes.iter().position(|r| std::ptr::eq(r, found))
 }
 
-async fn handle(
-    inner: Arc<Inner>,
-    peer: SocketAddr,
-    uploaded: Arc<AtomicU64>,
-    req: Request<Incoming>,
-) -> Response<Body> {
+async fn handle(inner: Arc<Inner>, uploaded: Arc<AtomicU64>, req: Request<Incoming>) -> Response<Body> {
     let method = req.method().to_string();
     let target = req.uri().to_string();
     let user_agent = req
         .headers()
         .get(header::USER_AGENT)
         .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned());
-    let mut resp = route(&inner, peer, &uploaded, req).await;
+    let mut resp = route(&inner, &uploaded, req).await;
     {
         let mut seen = lock(&inner.seen);
         if seen.len() == SEEN_KEPT {
@@ -764,7 +759,7 @@ fn refuse(inner: &Inner, e: &ApiError) -> Response<Body> {
     refusal(e)
 }
 
-async fn route(inner: &Arc<Inner>, peer: SocketAddr, uploaded: &AtomicU64, req: Request<Incoming>) -> Response<Body> {
+async fn route(inner: &Arc<Inner>, uploaded: &AtomicU64, req: Request<Incoming>) -> Response<Body> {
     let target = target_of(inner, &req);
     // (1) the credential
     let presented = req.headers().get(header::PROXY_AUTHORIZATION).or_else(|| {
@@ -789,7 +784,7 @@ async fn route(inner: &Arc<Inner>, peer: SocketAddr, uploaded: &AtomicU64, req: 
             return r;
         }
     };
-    let claims = match verify(inner, &token, peer.ip()).await {
+    let claims = match verify(inner, &token).await {
         Ok(c) => c,
         Err(e) => {
             tracing::info!(why = %e, "sandbox token refused");
@@ -829,13 +824,13 @@ async fn route(inner: &Arc<Inner>, peer: SocketAddr, uploaded: &AtomicU64, req: 
     }
 }
 
-async fn verify(inner: &Inner, token: &str, from: IpAddr) -> Result<Claims, VerifyError> {
+async fn verify(inner: &Inner, token: &str) -> Result<Claims, VerifyError> {
     let first = inner
         .keys
         .set
         .read()
         .unwrap_or_else(PoisonError::into_inner)
-        .verify(token, unix_now(), from);
+        .verify(token, unix_now());
     match first {
         Err(VerifyError::UnknownKid(_)) => {
             refetch_keys(inner, true).await;
@@ -844,7 +839,7 @@ async fn verify(inner: &Inner, token: &str, from: IpAddr) -> Result<Claims, Veri
                 .set
                 .read()
                 .unwrap_or_else(PoisonError::into_inner)
-                .verify(token, unix_now(), from)
+                .verify(token, unix_now())
         }
         other => other,
     }

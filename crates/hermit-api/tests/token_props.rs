@@ -1,9 +1,9 @@
 //! Property tests of the `hst1.` codec (hermit 6.1): sign then verify gives the claims back; any change to a signed
-//! token, a wrong key, an expired time or another source address is refused.
+//! token, a wrong key, or an expired time is refused.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::Ipv4Addr;
 
 use hermit_api::token::{Claims, KeySet, MasterKey, TokenKeys, VerifyError, peek_kid};
 use proptest::prelude::*;
@@ -42,9 +42,8 @@ proptest! {
         prop_assert!(token.is_ascii() && !token.contains([':', '@', '/', '%']), "userinfo safe");
         prop_assert_eq!(peek_kid(&token), Ok(kid));
         let set = set_for(&[key]);
-        let from = IpAddr::V4(c.source);
-        prop_assert_eq!(set.verify(&token, c.expires_at - 1, from), Ok(c.clone()));
-        prop_assert_eq!(set.verify(&token, c.expires_at, from), Err(VerifyError::Expired));
+        prop_assert_eq!(set.verify(&token, c.expires_at - 1), Ok(c.clone()));
+        prop_assert_eq!(set.verify(&token, c.expires_at), Err(VerifyError::Expired));
     }
 
     #[test]
@@ -55,7 +54,7 @@ proptest! {
         let i = at.index(bytes.len());
         bytes[i] ^= flip;
         if let Ok(tampered) = String::from_utf8(bytes) {
-            let r = set_for(&[key]).verify(&tampered, 0, IpAddr::V4(c.source));
+            let r = set_for(&[key]).verify(&tampered, 0);
             prop_assert!(r.is_err(), "tampered at {} still verifies", i);
         }
     }
@@ -64,30 +63,13 @@ proptest! {
     fn wrong_key_or_unknown_kid(c in claims(), a in any::<[u8; 32]>(), b in any::<[u8; 32]>()) {
         prop_assume!(a != b);
         let token = MasterKey::new(1, a).signing_key().unwrap().sign(&c).unwrap();
-        let from = IpAddr::V4(c.source);
-        prop_assert_eq!(set_for(&[MasterKey::new(1, b)]).verify(&token, 0, from), Err(VerifyError::BadSignature));
-        prop_assert_eq!(set_for(&[MasterKey::new(2, a)]).verify(&token, 0, from), Err(VerifyError::UnknownKid(1)));
-    }
-
-    #[test]
-    fn source_address_binding(c in claims(), other in any::<u32>(), secret in any::<[u8; 32]>()) {
-        let key = MasterKey::new(1, secret);
-        let token = key.signing_key().unwrap().sign(&c).unwrap();
-        let set = set_for(&[key]);
-        let other = Ipv4Addr::from(other);
-        let r = set.verify(&token, 0, IpAddr::V4(other));
-        if c.source.is_unspecified() || other == c.source {
-            prop_assert!(r.is_ok());
-        } else {
-            prop_assert_eq!(r, Err(VerifyError::WrongSource));
-        }
-        // the IPv4-mapped IPv6 form of the right address passes
-        prop_assert!(set.verify(&token, 0, IpAddr::V6(c.source.to_ipv6_mapped())).is_ok());
+        prop_assert_eq!(set_for(&[MasterKey::new(1, b)]).verify(&token, 0), Err(VerifyError::BadSignature));
+        prop_assert_eq!(set_for(&[MasterKey::new(2, a)]).verify(&token, 0), Err(VerifyError::UnknownKid(1)));
     }
 
     #[test]
     fn random_strings_never_verify(s in "\\PC{0,300}") {
         let set = set_for(&[MasterKey::new(1, [7; 32])]);
-        prop_assert!(set.verify(&s, 0, IpAddr::V4(Ipv4Addr::UNSPECIFIED)).is_err());
+        prop_assert!(set.verify(&s, 0).is_err());
     }
 }

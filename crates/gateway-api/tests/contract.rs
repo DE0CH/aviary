@@ -5,7 +5,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::BTreeSet;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 
 use gateway_api::credential::{boot_env, parse_proxy_authorization, proxy_authorization, token_from_proxy_url};
@@ -101,9 +101,7 @@ fn a_sandbox_request_from_boot_environment_to_identity_headers() {
     let set = KeySet::from_keys(&TokenKeys {
         keys: vec![signing.public_key()],
     });
-    let verified = set
-        .verify(&presented, 1_800_000_000, IpAddr::V4(Ipv4Addr::new(192, 0, 2, 9)))
-        .unwrap();
+    let verified = set.verify(&presented, 1_800_000_000).unwrap();
     assert_eq!(verified, claims());
 
     // routed to a fixed name with the identity headers from the token
