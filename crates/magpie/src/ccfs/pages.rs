@@ -44,9 +44,11 @@ pub async fn read(db: &impl Db, file: i64, size: i64, from: i64, to: i64) -> Res
         let lo = from.max(start) - start;
         let hi = to.min(start + PAGE) - start;
         let page = pages.get(&no).map_or(&[][..], Vec::as_slice);
-        for i in lo..hi {
-            out.push(page.get(nus(i)).copied().unwrap_or(0));
-        }
+        // what the page holds of [lo, hi), then zeros up to hi (a missing page, a short last page)
+        let (lo, hi) = (nus(lo), nus(hi));
+        let got = page.get(lo..hi.min(page.len())).unwrap_or(&[]);
+        out.extend_from_slice(got);
+        out.resize(out.len() + (hi - lo) - got.len(), 0);
     }
     Ok(out)
 }

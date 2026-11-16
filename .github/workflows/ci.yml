@@ -150,6 +150,11 @@ jobs:
           CARGO_PROFILE_RELEASE_LTO: "false"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
         run: cargo test --release --locked -p magpie --test bodies_perf -- --ignored --nocapture
+      - name: three whole reads of a 200 MiB byte file at once stay under 512 MiB of RSS (read and streamed in slices)
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+        run: cargo test --release --locked -p magpie --test ccfs_mem -- --ignored --nocapture
 
   sandboxd-soak:
     # hermit spec 14.6: two daemons with stand-ins for runsc/ip/nft/wg, every endpoint, a migration, hostile clients,

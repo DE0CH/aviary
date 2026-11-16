@@ -62,6 +62,9 @@ pub const LIMBO_SWEEP_EVERY: Duration = Duration::from_secs(2);
 pub const LEASE_HERMIT_TIMEOUT: Duration = Duration::from_secs(2);
 /// One in this many reconstructed lines has its sha256 checked in a release build (every line in a debug build).
 pub const CC_SHA_SAMPLE: u64 = 1000;
+/// A byte file is read and streamed this many bytes at a time (16 pages): a whole file of up to [`CC_FILE_MAX`] read
+/// in one statement was alive three times over (its rows, its pages, the answer), outside every memory budget.
+pub const CC_BYTES_SLICE: i64 = 4 << 20;
 /// A file read streams lines in batches of this many.
 pub const CC_READ_BATCH: i64 = 256;
 /// Blobs fetched from the bucket at a time by one request (a read batch, a write's [`crate::error::Error::NeedBlobs`];

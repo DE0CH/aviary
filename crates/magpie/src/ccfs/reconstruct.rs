@@ -208,7 +208,12 @@ pub async fn scope_file(app: Arc<Magpie>, scope: Uuid, q: &CcFileQuery) -> Resul
             start.saturating_add(i64::try_from(l).unwrap_or(i64::MAX)).min(f.size)
         });
         let (first, next) = if f.kind == Kind::Bytes {
-            (pages::read(&conn, f.id, f.size, start, end).await?, None)
+            // the first slice now, the rest streamed slice by slice ([`stream_bytes`]): never the whole file at once
+            let stop = end.min(start.saturating_add(limits::CC_BYTES_SLICE));
+            (
+                pages::read(&conn, f.id, f.size, start, stop).await?,
+                (stop < end).then_some(stop),
+            )
         } else if start >= end {
             (Vec::new(), None)
         } else {
@@ -244,7 +249,11 @@ pub async fn scope_file(app: Arc<Magpie>, scope: Uuid, q: &CcFileQuery) -> Resul
         Err((first, next)) => {
             let (tx, rx) = mpsc::channel::<std::result::Result<Bytes, std::io::Error>>(4);
             let _ = tx.send(Ok(Bytes::from(first))).await;
-            tokio::spawn(stream(app.clone(), f, next, end, tx));
+            if f.kind == Kind::Bytes {
+                tokio::spawn(stream_bytes(app.clone(), f, next, end, tx));
+            } else {
+                tokio::spawn(stream(app.clone(), f, next, end, tx));
+            }
             Body::from_stream(tokio_stream_of(rx))
         }
     };
@@ -335,6 +344,48 @@ async fn stream(
                 return;
             }
         }
+    }
+}
+
+/// A byte file's slices after the first, in order, [`limits::CC_BYTES_SLICE`] at a time, each read when the one
+/// before has been taken (the channel holds 4). The slices are separate statements: the version is compared after
+/// the last, and a file that changed while it streamed ends early rather than hand out a mix of two versions.
+async fn stream_bytes(
+    app: Arc<Magpie>,
+    f: File,
+    mut off: i64,
+    end: i64,
+    tx: mpsc::Sender<std::result::Result<Bytes, std::io::Error>>,
+) {
+    while off < end {
+        let stop = end.min(off.saturating_add(limits::CC_BYTES_SLICE));
+        let r = async {
+            let conn = app.pool.get().await?;
+            let bytes = pages::read(&conn, f.id, f.size, off, stop).await?;
+            if stop >= end {
+                let row = conn
+                    .query_opt("select version from cc_files where id = $1", &[&f.id])
+                    .await?;
+                if row.map(|r| r.get::<_, i64>(0)) != Some(f.version) {
+                    return Err(Error::Internal("the file changed while it was read".into()));
+                }
+            }
+            Ok::<_, Error>(bytes)
+        }
+        .await;
+        match r {
+            Ok(bytes) => {
+                if tx.send(Ok(Bytes::from(bytes))).await.is_err() {
+                    return;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "cc file read ended early");
+                let _ = tx.send(Err(std::io::Error::other(e.to_string()))).await;
+                return;
+            }
+        }
+        off = stop;
     }
 }
 
