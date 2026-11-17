@@ -6,8 +6,10 @@
 //!   it is, what the descriptor should say about this boot. Answers the sandbox token and control token.
 //! - `POST /jarvis/health`: the supervisor's `:7070` health as the machine read it, while it starts and then now and
 //!   again; hermit marks the sandbox ready from it.
+//! - `POST /jarvis/upload`: an image of a prompt Jarvis delivers (the first prompt's attachments), uploaded to magpie
+//!   for the session's person (magpie's M13 headers, body and answer); the delivery names it by its `uploadId`.
 //! - `POST /jarvis/deliver`: a prompt Jarvis delivers into the session's conversation (the first prompt, wakeups,
-//!   watches, peer messages): a turn as the session's person.
+//!   watches, peer messages): a turn as the session's person, with the images uploaded for it.
 //! - `ANY /magpie/<path>`, `ANY /hermit/<path>`: the sandbox's fixed names, forwarded as the contract's gateway does.
 //!
 //! All but the boot carry the sandbox token in [`TOKEN_HEADER`].
@@ -23,6 +25,7 @@ pub const TOKEN_HEADER: &str = "x-aviary-sandbox-token";
 pub const BOOT: &str = "/jarvis/boot";
 pub const HEALTH: &str = "/jarvis/health";
 pub const DELIVER: &str = "/jarvis/deliver";
+pub const UPLOAD: &str = "/jarvis/upload";
 
 /// The environment names a machine may hand to its sandbox's descriptor: Jarvis 4's own non-secret values, which
 /// Jarvis's scripts read. Anything else is refused (no secret ever travels to hermit).
@@ -125,4 +128,7 @@ pub struct DeliverRequest {
     /// The delivery's id: a repeat is the same turn (magpie's `clientMessageId`).
     pub id: String,
     pub text: String,
+    /// The turn's images: the `uploadId`s `POST /jarvis/upload` answered.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<Uuid>,
 }

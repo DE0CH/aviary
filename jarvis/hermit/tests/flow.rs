@@ -366,6 +366,72 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         .await
         .unwrap();
     assert_eq!(r.status(), 409);
+    // an image of Jarvis's delivery (the screenshots of the New session form) is uploaded for the owner and is an image
+    // of the turn, as Deyao's own in the chat: never a path in the text
+    let up = Uuid::now_v7();
+    magpie.fake.script().always(
+        "hermit_upload",
+        Reply::json(
+            201,
+            json!({"uploadId": up, "path": format!("uploads/{up}/Screenshot 17.06.png"),
+                "name": "Screenshot 17.06.png", "size": 9, "mimeType": "image/png", "width": 1, "height": 1}),
+        ),
+    );
+    let r = c
+        .post(format!("{gw}/jarvis/upload"))
+        .header(TOKEN_HEADER, &b.token)
+        .header("aviary-upload-name", "Screenshot%2017.06.png")
+        .header("aviary-upload-kind", "image")
+        .header("content-type", "image/png")
+        .body(b"png bytes".to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    let u: Value = r.json().await.unwrap();
+    assert_eq!(u["uploadId"], up.to_string());
+    let ups = magpie.fake.script().calls_to("hermit_upload");
+    assert_eq!(ups[0].param("person"), Some(OWNER));
+    assert_eq!(ups[0].bytes.as_deref(), Some(&b"png bytes"[..]));
+    assert_eq!(
+        ups[0].header("aviary-upload-name"),
+        Some("Screenshot%2017.06.png")
+    );
+    assert_eq!(ups[0].header("aviary-upload-kind"), Some("image"));
+    assert_eq!(
+        ups[0].header("authorization"),
+        Some("Bearer t-hermit-magpie")
+    );
+    // no sandbox token, no upload
+    let r = c
+        .post(format!("{gw}/jarvis/upload"))
+        .header("aviary-upload-name", "x.png")
+        .header("aviary-upload-kind", "image")
+        .body(b"png bytes".to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+    assert_eq!(magpie.fake.script().calls_to("hermit_upload").len(), 1);
+    magpie.fake.script().once(
+        "hermit_send_turn",
+        Reply::json(
+            202,
+            json!({"turn": {"id": Uuid::now_v7(), "startedAt": "2026-11-11T03:00:02.000Z"}}),
+        ),
+    );
+    let r = c
+        .post(format!("{gw}/jarvis/deliver"))
+        .header(TOKEN_HEADER, &b.token)
+        .json(&json!({"id": "jarvis-3", "text": "This page is broken", "images": [up]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 202);
+    let sent = magpie.fake.script().calls_to("hermit_send_turn");
+    let m = &sent.last().unwrap().body.as_ref().unwrap()["message"];
+    assert_eq!(m["text"], "This page is broken");
+    assert_eq!(m["images"], json!([{"uploadId": up}]));
 
     // 5. a fixed-name call: the identity headers and the gateway's bearer replace whatever the sandbox sent
     let r = c
