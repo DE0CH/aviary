@@ -4,6 +4,8 @@
 //! (`HERMIT_SETTINGS`, a path) and hands it to each machine's gateway in the boot reply, so the gateway routes a
 //! model the way the deployment says without holding a copy of its own.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// The context window of a model that names none in the settings file: 1M (Deyao, 2026-11-16: most models have it
@@ -59,6 +61,14 @@ pub struct Model {
     /// The thinking levels a person may choose, lowest first (`none` = thinking off, then Claude Code's effort
     /// levels). A model whose hosts refuse thinking switched off lists no `none`.
     pub thinking: Vec<String>,
+    /// The level a conversation on this model runs at until a person picks another (the menu's preselected level).
+    /// Every model names its own, one of its `thinking` (Deyao, 2026-11-17: a per-model choice, no default): a file
+    /// that leaves it out is refused at the start, and DE0CH/deyao-ai's CI refuses it before that
+    /// (`hermit-jarvis check-settings`). Never serialized: a machine gets the levels as the boot reply's own
+    /// `reasoning` ([`Settings::reasoning`]), since a session on an older image refuses a model member it does not
+    /// know.
+    #[serde(default, skip_serializing)]
+    pub reasoning: Option<String>,
     /// The model's context window when it is not [`DEFAULT_CONTEXT_TOKENS`]: the supervisor runs Claude Code at it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_tokens: Option<u64>,
@@ -114,6 +124,24 @@ impl Settings {
                 m.id
             );
             anyhow::ensure!(
+                !m.thinking.is_empty(),
+                "models[{i}] {}: no thinking levels",
+                m.id
+            );
+            let Some(level) = m.reasoning.as_deref() else {
+                anyhow::bail!(
+                    "models[{i}] {}: no `reasoning` (the level its conversations run at until a person picks \
+                     another; every model names its own, there is no default)",
+                    m.id
+                );
+            };
+            anyhow::ensure!(
+                m.thinking.iter().any(|l| l == level),
+                "models[{i}] {}: `reasoning` {level:?} is not one of its thinking levels {:?}",
+                m.id,
+                m.thinking
+            );
+            anyhow::ensure!(
                 m.openrouter.is_none() || openrouter(&m.id),
                 "models[{i}] {}: openrouter routing on a model that is not OpenRouter's (no `/` in its id)",
                 m.id
@@ -126,6 +154,26 @@ impl Settings {
     #[must_use]
     pub fn model(&self, id: &str) -> Option<&Model> {
         self.models.iter().find(|m| m.id == id)
+    }
+
+    /// Each model's level (`reasoning`), as the boot reply hands it to a machine.
+    #[must_use]
+    pub fn reasoning(&self) -> BTreeMap<String, String> {
+        self.models
+            .iter()
+            .filter_map(|m| Some((m.id.clone(), m.reasoning.clone()?)))
+            .collect()
+    }
+
+    /// The settings with the boot reply's levels put back on their models (a machine's gateway, after its boot).
+    #[must_use]
+    pub fn with_reasoning(mut self, levels: &BTreeMap<String, String>) -> Self {
+        for m in &mut self.models {
+            if let Some(l) = levels.get(&m.id) {
+                m.reasoning = Some(l.clone());
+            }
+        }
+        self
     }
 
     /// The models route's answer (the cluster's `model` name for pigeon; the machine's for its supervisor).
@@ -148,7 +196,7 @@ impl Settings {
                 .iter()
                 .filter_map(|m| {
                     let mut v = serde_json::json!({
-                        "id": m.id, "label": m.label, "reasoning": null, "thinking": m.thinking,
+                        "id": m.id, "label": m.label, "reasoning": m.reasoning, "thinking": m.thinking,
                     });
                     if let Some(tokens) = m.context_tokens {
                         v["contextTokens"] = serde_json::json!(tokens);
@@ -217,18 +265,40 @@ mod tests {
                 .providers,
             ["z-ai/fp8"]
         );
-        // none is named as a model's own level: with nothing picked, Claude Code keeps its default for the model
-        assert!(route.models.iter().all(|m| m.reasoning.is_none()));
+        // every model's own level is the file's: a conversation runs at it until a person picks another
+        let levels: Vec<_> = route
+            .models
+            .iter()
+            .map(|m| (m.id.as_str(), m.reasoning.as_deref()))
+            .collect();
+        assert_eq!(
+            levels,
+            [
+                ("claude-opus-5-5", Some("high")),
+                ("claude-fable-5-2", Some("medium")),
+                ("z-ai/glm-5.3", Some("low"))
+            ]
+        );
         assert_eq!(route.context_of("z-ai/glm-5.3"), 1_000_000);
         // the default is 1M (Deyao, 2026-11-16): a model with a smaller window names it
         assert_eq!(route.context_of("claude-fable-5-2"), 1_000_000);
         let mut small = s.clone();
         small.models[0].context_tokens = Some(200_000);
         assert_eq!(small.models_route().context_of("claude-opus-5-5"), 200_000);
-        // what a machine's gateway gets in the boot reply is the same settings, less the sign-in (pigeon's)
-        let again: Settings = serde_json::from_value(serde_json::to_value(&s).unwrap()).unwrap();
+        // what a machine's gateway gets in the boot reply is the same settings, less the sign-in (pigeon's), with
+        // the levels beside them (a session on an older image refuses a model member it does not know)
+        let sent = serde_json::to_value(&s).unwrap();
+        assert!(
+            sent["models"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|m| m.get("reasoning").is_none()),
+            "{sent}"
+        );
+        let again: Settings = serde_json::from_value(sent).unwrap();
         assert_eq!(
-            again,
+            again.with_reasoning(&s.reasoning()),
             Settings {
                 sign_in: SignIn::default(),
                 ..s.clone()
@@ -252,6 +322,22 @@ mod tests {
         assert!(
             bad(&|v| v["models"][0]["openrouter"] = serde_json::json!({"providers": ["x"]}))
                 .contains("not OpenRouter's")
+        );
+        // every model names its own level, one of its thinking levels: there is no default (Deyao, 2026-11-17)
+        let missing = bad(&|v| {
+            v["models"][1].as_object_mut().unwrap().remove("reasoning");
+        });
+        assert!(
+            missing.contains("claude-fable-5-2") && missing.contains("no `reasoning`"),
+            "{missing}"
+        );
+        assert!(
+            bad(&|v| v["models"][2]["reasoning"] = serde_json::json!("none"))
+                .contains("not one of its thinking levels")
+        );
+        assert!(
+            bad(&|v| v["models"][0]["thinking"] = serde_json::json!([]))
+                .contains("no thinking levels")
         );
         // a key this build does not know is a mistake in the file, not something to skip
         assert!(bad(&|v| v["modles"] = serde_json::json!([])).contains("unknown field"));

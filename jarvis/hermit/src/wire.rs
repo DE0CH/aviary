@@ -71,6 +71,10 @@ pub struct BootReply {
     /// gateway. Absent from a hermit-jarvis that predates them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings: Option<crate::settings::Settings>,
+    /// Each model's level (the settings' `reasoning`, model id → level), beside the settings rather than in them: a
+    /// session on an older image refuses a model member it does not know, and ignores this one.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub reasoning: BTreeMap<String, String>,
 }
 
 impl std::fmt::Debug for BootReply {

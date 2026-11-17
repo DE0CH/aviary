@@ -26,6 +26,19 @@ async fn main() -> anyhow::Result<()> {
         )?;
         return Ok(());
     }
+    // `hermit-jarvis check-settings PATH`: whether this build starts on the settings file at PATH (DE0CH/deyao-ai's
+    // CI runs it with the pinned image on k8s/chat/settings.json, and chat-pin.yml with an image before pinning it)
+    if std::env::args().nth(1).as_deref() == Some("check-settings") {
+        let path = std::env::args()
+            .nth(2)
+            .ok_or_else(|| anyhow::anyhow!("usage: hermit-jarvis check-settings PATH"))?;
+        jarvis_aviary::settings::Settings::load(&path)?;
+        std::io::Write::write_all(
+            &mut std::io::stdout(),
+            format!("{path}: the settings are fine\n").as_bytes(),
+        )?;
+        return Ok(());
+    }
     log::init_in_pod(&build, log::Output::Stdout);
     let env = Env::read();
     let callers = Callers::from_env(

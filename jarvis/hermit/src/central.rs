@@ -220,6 +220,7 @@ async fn do_boot(app: &App, machine: &str, req: &BootRequest) -> anyhow::Result<
         token,
         control_token: app.keys.control_token(row.id),
         settings: Some(app.settings.clone()),
+        reasoning: app.settings.reasoning(),
     })
 }
 

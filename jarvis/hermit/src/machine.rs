@@ -213,6 +213,14 @@ fn boot_env(b: &BootReply) -> String {
     s
 }
 
+/// The deployment's settings as the boot reply gives them, each model's level put back on it.
+fn settings_of(b: &BootReply) -> crate::settings::Settings {
+    b.settings
+        .clone()
+        .unwrap_or_else(|| unreachable!("boot() returns only a reply with settings"))
+        .with_reasoning(&b.reasoning)
+}
+
 /// Runs the gateway for ever.
 ///
 /// # Errors
@@ -224,10 +232,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     tracing::info!(sandbox = %b.sandbox_id, conversation = %b.conversation_id, "booted");
     write_private(&cfg.boot_file, boot_env(&b).as_bytes())?;
     let state = Arc::new(State {
-        settings: b
-            .settings
-            .clone()
-            .unwrap_or_else(|| unreachable!("boot() returns only a reply with settings")),
+        settings: settings_of(&b),
         cfg,
         boot: b,
         http,
@@ -943,6 +948,19 @@ mod tests {
             r#"{"claudeAiOauth": {"accessToken": "claude-login"}}"#,
         )
         .unwrap();
+        // the boot reply as a machine reads it off the wire
+        let boot: BootReply = serde_json::from_value(
+            serde_json::to_value(BootReply {
+                sandbox_id: uuid::Uuid::new_v4(),
+                conversation_id: uuid::Uuid::new_v4(),
+                token: "hst1.test".to_owned(),
+                control_token: "hct_test".to_owned(),
+                settings: Some(settings()),
+                reasoning: settings().reasoning(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
         let state = Arc::new(State {
             cfg: Config {
                 gateway_url: "http://127.0.0.1:1".to_owned(),
@@ -957,14 +975,8 @@ mod tests {
                 openrouter_url: openrouter,
                 openrouter_key: openrouter_key.map(str::to_owned),
             },
-            boot: BootReply {
-                sandbox_id: uuid::Uuid::new_v4(),
-                conversation_id: uuid::Uuid::new_v4(),
-                token: "hst1.test".to_owned(),
-                control_token: "hct_test".to_owned(),
-                settings: Some(settings()),
-            },
-            settings: settings(),
+            settings: settings_of(&boot),
+            boot,
             http: http_client().unwrap(),
             health: std::sync::Mutex::new(None),
             title: std::sync::Mutex::new(None),
@@ -1012,6 +1024,9 @@ mod tests {
             m["models"].as_array().unwrap().len(),
             settings().models.len()
         );
+        // each model's own level, which the supervisor applies while nobody has picked one
+        assert_eq!(m["models"][0]["reasoning"], "high");
+        assert_eq!(m["models"][2]["reasoning"], "low");
     }
 
     /// GLM 5.3 on the chat's menu (Deyao, 2026-11-12): a turn on it reaches OpenRouter with the machine's key and

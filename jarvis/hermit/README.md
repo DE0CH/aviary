@@ -34,7 +34,11 @@ Jarvis 4 session machine (harness aviary)                                     â”
 - The models are the deployment's settings (`HERMIT_SETTINGS`, DE0CH/deyao-ai `k8s/chat/settings.json`,
   `src/settings.rs`: the product name, the menu, each model's thinking levels, context window and OpenRouter hosts;
   hermit-jarvis refuses to start on a file that cannot work and hands the settings to each machine's gateway in the
-  boot reply). The Jarvis 4 app's picker is `router/harness.go` `modelCatalog`: a model is added in both. One owner of
+  boot reply). Each model names its own thinking level, `reasoning` (one of its `thinking`; Deyao, 2026-11-17: a
+  per-model choice, no default): a conversation runs at it until a person picks another, and a file where a model
+  leaves it out is refused (`hermit-jarvis check-settings PATH`, which DE0CH/deyao-ai's chat-settings.yml runs with
+  the pinned image and chat-pin.yml before pinning a new one). The levels reach a machine as the boot reply's own
+  `reasoning` member, not inside the settings: a session on an older image refuses a model member it does not know. The Jarvis 4 app's picker is `router/harness.go` `modelCatalog`: a model is added in both. One owner of
   a conversation's model (Deyao, 2026-11-16): the chat's menu (magpie's `pickedModel`). The session's model
   (`SESSION_MODEL`) is only where its conversation starts: hermit-jarvis creates the conversation with it
   (`central.rs` `session_model`), every `start_turn` carries the conversation's model, and the supervisor switches
