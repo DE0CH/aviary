@@ -46,10 +46,14 @@ spec:
           startupProbe: { httpGet: { path: /healthz, port: 9090 }, periodSeconds: 2, failureThreshold: 150 }
           livenessProbe: { httpGet: { path: /healthz, port: 9090 }, periodSeconds: 10, failureThreshold: 6 }
           readinessProbe: { httpGet: { path: /readyz, port: 9090 }, periodSeconds: 2, failureThreshold: 2 }
-          resources: { requests: { cpu: 30m, memory: 64Mi }, limits: { cpu: 500m, memory: 256Mi } }
+          resources: { requests: { cpu: 30m, memory: 64Mi, ephemeral-storage: 768Mi }, limits: { cpu: 500m, memory: 256Mi, ephemeral-storage: 2176Mi } }
           securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
           volumeMounts: [{ name: app, mountPath: /srv/app, readOnly: true }]
-      volumes: [{ name: app, emptyDir: { sizeLimit: 512Mi } }, { name: branding, configMap: { name: pigeon-branding } }]
+      # the app volume is 2Gi, the size the bundle is built to (DE0CH/claudecodeui pigeon-app.yml --budget-mib 2016: it
+      # keeps every build served within 30 days; 711.6 MiB on 2026-11-17). kubelet evicts a pod whose emptyDir is over
+      # its sizeLimit (at 512Mi: both pods, every minute, Bad gateway), and counts it against the container's
+      # ephemeral-storage limit, which is therefore above it. A change of the budget changes both here
+      volumes: [{ name: app, emptyDir: { sizeLimit: 2Gi } }, { name: branding, configMap: { name: pigeon-branding } }]
 ---
 apiVersion: v1
 kind: Service
