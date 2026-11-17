@@ -93,6 +93,7 @@ async fn the_transcript_is_read_whole_in_order_only_while_viewing_as() {
             &TranscriptQuery {
                 after: None,
                 limit: Some(1),
+                path: None,
             },
         )
         .await
@@ -105,6 +106,7 @@ async fn the_transcript_is_read_whole_in_order_only_while_viewing_as() {
             &TranscriptQuery {
                 after: first.next,
                 limit: None,
+                path: None,
             },
         )
         .await
@@ -121,6 +123,7 @@ async fn the_transcript_is_read_whole_in_order_only_while_viewing_as() {
             &TranscriptQuery {
                 after: p.next,
                 limit: None,
+                path: None,
             },
         )
         .await
@@ -133,6 +136,7 @@ async fn the_transcript_is_read_whole_in_order_only_while_viewing_as() {
             &TranscriptQuery {
                 after: tail.next,
                 limit: None,
+                path: None,
             },
         )
         .await
@@ -176,6 +180,7 @@ async fn an_admin_reads_any_transcript_without_view_as_and_the_read_is_audited()
             &TranscriptQuery {
                 after: Some(p.lines[0].ord),
                 limit: None,
+                path: None,
             },
         )
         .await
@@ -276,4 +281,103 @@ async fn a_transcript_page_fetches_only_the_text_blobs_of_the_lines_it_sends() {
     assert!(p.more);
     let first: Value = serde_json::from_str(&p.lines[0].line).unwrap();
     assert_eq!(first["message"]["content"][0]["content"], texts[0].as_str());
+}
+
+#[tokio::test]
+async fn a_conversation_that_ran_in_two_harnesses_lists_both_transcripts_and_reads_either() {
+    // a conversation began in Claude Code and went on in Qwen Code: the raw view showed only Qwen Code's
+    // transcript, and the earlier part was nowhere to be read. The page lists every main transcript the
+    // conversation has (the current one first) and reads the one named by `path`
+    let db = common::fresh_db("raw_transcript_harnesses").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let s = Sandbox::leased(&r, ALICE).await;
+    s.mkdirs("projects/-workspace").await;
+    s.mkdirs("qwen/projects/-workspace/chats").await;
+    let claude = main_path();
+    let qwen = "qwen/projects/-workspace/chats/q-1.jsonl";
+    s.write(
+        &claude,
+        0,
+        &line(&json!({"type": "user", "uuid": "u1", "message": {"role": "user", "content": "first, in Claude Code"}})),
+    )
+    .await
+    .unwrap();
+    s.write(
+        qwen,
+        0,
+        &line(&json!({"type": "user", "uuid": "q1", "provenance": "real_user",
+                      "message": {"role": "user", "parts": [{"text": "then, in Qwen Code"}]}})),
+    )
+    .await
+    .unwrap();
+    let cid = s.conversation;
+    let sid = claude
+        .strip_prefix("projects/-workspace/")
+        .and_then(|p| p.strip_suffix(".jsonl"))
+        .unwrap()
+        .to_owned();
+    // the harness and its session first: magpie takes a main transcript only as the current session's
+    r.pool()
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            "update conversations set harness = 'qwen', provider_session_id = 'q-1',
+                    harness_sessions = jsonb_build_object('claude', $2::text) where id = $1",
+            &[&cid, &sid],
+        )
+        .await
+        .unwrap();
+    aviary_pg::tx!(r.pool(), |t| -> magpie::error::Result<()> {
+        magpie::ccfs::lines::set_main_transcript(t, cid, qwen).await
+    })
+    .await
+    .unwrap();
+
+    let pigeon = r.pigeon();
+    let calls = pigeon.service(Some("root@example.com"));
+    let current = calls.admin_transcript(cid, &TranscriptQuery::default()).await.unwrap();
+    assert_eq!(current.path.as_deref(), Some(qwen));
+    assert_eq!(current.transcripts, [qwen.to_owned(), claude.clone()]);
+    assert!(current.lines[0].line.contains("then, in Qwen Code"));
+    let earlier = calls
+        .admin_transcript(
+            cid,
+            &TranscriptQuery {
+                path: Some(claude.clone()),
+                ..TranscriptQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(earlier.path.as_deref(), Some(claude.as_str()));
+    assert_eq!(earlier.transcripts, current.transcripts);
+    assert_eq!(earlier.lines.len(), 1);
+    assert!(earlier.lines[0].line.contains("first, in Claude Code"));
+    // a path that is not one of the conversation's transcripts: 404, nothing read
+    let e = calls
+        .admin_transcript(
+            cid,
+            &TranscriptQuery {
+                path: Some("projects/-workspace/someone-else.jsonl".into()),
+                ..TranscriptQuery::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(code(&e), ErrorCode::NotFound.as_str());
+    // the view-as route reads the same way
+    let view = pigeon.viewing_as(ALICE, "admin@example.com", "s1");
+    let p = view
+        .transcript(
+            cid,
+            &TranscriptQuery {
+                path: Some(claude.clone()),
+                ..TranscriptQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(p.lines[0].line.contains("first, in Claude Code"));
 }

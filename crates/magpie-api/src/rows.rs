@@ -469,14 +469,22 @@ pub struct TranscriptQuery {
     /// Default 200, at most 500.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// Which of the conversation's transcripts (one of the page's `transcripts`); absent: the main one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// A page of the main transcript's lines, in file order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptPage {
-    /// The main transcript's path (`projects/-workspace/<sid>.jsonl`); `None` when the conversation has none yet.
+    /// The path of the transcript read (`projects/-workspace/<sid>.jsonl`, Qwen Code's under `qwen/`): the main one
+    /// unless the query named another; `None` when the conversation has none yet.
     pub path: Option<String>,
+    /// Every main transcript the conversation has, the current one first, then those of the harnesses it ran in
+    /// before (a conversation that moved from Claude Code to Qwen Code has both).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transcripts: Vec<String>,
     /// The lines, each reconstructed (long text put back; base64 media replaced by `[media <mime> <size> bytes]`).
     pub lines: Vec<TranscriptLine>,
     /// The `ord` to ask `after` next (the last line's, or the query's `after` when no line came).

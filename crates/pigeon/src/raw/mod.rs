@@ -12,7 +12,8 @@
 //!   route: every 2 s while a turn runs, every 10 s otherwise). Signed out, it sends the browser once through the
 //!   Access-covered sign-in route and back (`?signin=1` marks the return, so it never loops); a signed-in non-admin
 //!   gets the admins-only page.
-//! - `GET /raw/<id>/lines?after=<ord>`: one page of cells with the owner and title, from magpie's
+//! - `GET /raw/<id>/lines?after=<ord>[&path=<transcript>]`: one page of cells with the owner and title and the
+//!   conversation's transcripts (one per harness it ran in; `path` picks one, the main one by default), from magpie's
 //!   `GET /v1/admin/conversations/{id}/transcript` (pigeon names the admin in `Aviary-Admin`; magpie records the
 //!   admin's first read per conversation and day in the view-as log).
 //! - `GET <compat::SESSIONS><id>/transcript?after=<ord>&<compat::VIEW_AS_QUERY>=…`: the same cells for a view-as
@@ -189,6 +190,7 @@ fn query_of(query: Option<&str>) -> TranscriptQuery {
     TranscriptQuery {
         after: query_param(query, "after").and_then(|a| a.parse().ok()),
         limit: query_param(query, "limit").and_then(|a| a.parse().ok()),
+        path: query_param(query, "path").filter(|p| !p.is_empty()),
     }
 }
 
@@ -212,8 +214,8 @@ async fn lines(app: &App, headers: &HeaderMap, cid: uuid::Uuid, query: Option<&s
             let shown = shown(p.path.as_deref(), &p.lines);
             no_store(json(
                 StatusCode::OK,
-                &json!({"path": p.path, "cells": shown, "next": p.next, "more": p.more, "running": p.running,
-                        "person": p.person, "title": p.title}),
+                &json!({"path": p.path, "transcripts": p.transcripts, "cells": shown, "next": p.next, "more": p.more,
+                        "running": p.running, "person": p.person, "title": p.title}),
             ))
         }
         Err(e) if e.code() == Some(&ErrorCode::NotFound) => {
@@ -242,7 +244,8 @@ pub async fn transcript(app: &App, id: &Identity, conversation: &str, query: Opt
             let shown = shown(p.path.as_deref(), &p.lines);
             let mut r = json(
                 StatusCode::OK,
-                &json!({"path": p.path, "cells": shown, "next": p.next, "more": p.more, "running": p.running}),
+                &json!({"path": p.path, "transcripts": p.transcripts, "cells": shown, "next": p.next, "more": p.more,
+                        "running": p.running}),
             );
             r.headers_mut()
                 .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -290,6 +293,15 @@ mod tests {
         // a Claude Code transcript is read as before
         let c = shown(Some("projects/-workspace/f3f05d67.jsonl"), &[line]);
         assert_eq!(c[0].text, "");
+    }
+
+    #[test]
+    fn the_lines_route_names_which_transcript() {
+        let q = query_of(Some("after=7&path=projects%2F-workspace%2Fs-1.jsonl"));
+        assert_eq!(q.after, Some(7));
+        assert_eq!(q.path.as_deref(), Some("projects/-workspace/s-1.jsonl"));
+        assert_eq!(query_of(Some("path=")).path, None);
+        assert_eq!(query_of(None).path, None);
     }
 
     #[test]

@@ -467,7 +467,9 @@ reads and their once-a-day audit. `tests/legacy_paths.rs`: the legacy-path set (
 - `GET /v1/admin/conversations/{id}/transcript` (Deyao, 2026-11-05: pigeon's raw page works with the admin's own
   sign-in, no view-as): the raw view's lines of any conversation with its owner and title, audited like the other
   admin reads (`admin_read`). Its callers are pigeon and admin; on an admin route pigeon may set only `Aviary-Admin`
-  (`auth::allowed_on`), the admin it verified.
+  (`auth::allowed_on`), the admin it verified. A page lists the conversation's `transcripts` (the main one first, then
+  the one of each harness it ran in before, from `harness_sessions`) and reads the one its query's `path` names, on
+  this route and the view-as one alike; any other path is 404.
 - A person purge goes ahead only on hermit's 200 `allowed: false`; any other answer from hermit, a 404 included
   (hermit answers 200 for every well-formed address), is 503 and purges nothing.
 - A person purge also deletes the leaver's unattached uploads.

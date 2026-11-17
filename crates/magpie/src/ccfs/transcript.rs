@@ -72,7 +72,7 @@ async fn read(app: &Magpie, owner: Option<&str>, id: Uuid, q: &TranscriptQuery) 
     let conn = app.pool.get().await?;
     let row = conn
         .query_opt(
-            "select person, main_transcript, active_turn from conversations where id = $1",
+            "select person, main_transcript, active_turn, harness_sessions from conversations where id = $1",
             &[&id],
         )
         .await?
@@ -83,9 +83,11 @@ async fn read(app: &Magpie, owner: Option<&str>, id: Uuid, q: &TranscriptQuery) 
     }
     let main: Option<String> = row.get(1);
     let running = row.get::<_, Option<Uuid>>(2).is_some();
+    let transcripts = transcripts(main.as_deref(), &row.get(3));
     let after = q.after.unwrap_or(-1);
     let empty = |path| TranscriptPage {
         path,
+        transcripts: transcripts.clone(),
         lines: Vec::new(),
         next: q.after,
         more: false,
@@ -93,8 +95,13 @@ async fn read(app: &Magpie, owner: Option<&str>, id: Uuid, q: &TranscriptQuery) 
         person: None,
         title: None,
     };
-    let Some(path) = main else {
-        return Ok(empty(None));
+    let path = match &q.path {
+        Some(p) if transcripts.contains(p) => p.clone(),
+        Some(_) => return Err(Error::not_found()),
+        None => match main {
+            Some(p) => p,
+            None => return Ok(empty(None)),
+        },
     };
     let Some(file) = super::load_file(&conn, id, &path).await? else {
         return Ok(empty(Some(path)));
@@ -152,6 +159,7 @@ async fn read(app: &Magpie, owner: Option<&str>, id: Uuid, q: &TranscriptQuery) 
     let next = out.last().map(|l| l.ord).or(q.after);
     Ok(TranscriptPage {
         path: Some(path),
+        transcripts,
         lines: out,
         next,
         more,
@@ -159,6 +167,22 @@ async fn read(app: &Magpie, owner: Option<&str>, id: Uuid, q: &TranscriptQuery) 
         person: None,
         title: None,
     })
+}
+
+/// Every main transcript of a conversation: the current one (`main`) first, then the one of each harness it ran in
+/// before (`harness_sessions`: harness → its session), in the harnesses' order.
+fn transcripts(main: Option<&str>, kept: &serde_json::Value) -> Vec<String> {
+    let mut out: Vec<String> = main.into_iter().map(str::to_owned).collect();
+    if let Some(kept) = kept.as_object() {
+        let mut earlier: Vec<String> = kept
+            .iter()
+            .filter_map(|(harness, session)| Some(crate::turns::harness::main_transcript(harness, session.as_str()?)))
+            .filter(|p| !out.contains(p))
+            .collect();
+        earlier.sort();
+        out.extend(earlier);
+    }
+    out
 }
 
 /// The placeholders of the media blobs among `shas`, and every blob's size as a page holds it (a media blob's
