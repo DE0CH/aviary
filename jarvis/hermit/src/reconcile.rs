@@ -123,7 +123,11 @@ pub async fn pass(app: &App) -> anyhow::Result<()> {
             }
         };
         match done {
-            Ok(_) => {}
+            // the state the session pauses with: its next schedule, for the router
+            Ok(c) => {
+                app.report_chat_schedule(&session.session_id, c.next_schedule_at)
+                    .await
+            }
             // the conversation is already gone from magpie: nothing left to keep in step
             Err(e) if e.code() == Some(&magpie_api::errors::ErrorCode::NotFound) => {}
             Err(e) => {

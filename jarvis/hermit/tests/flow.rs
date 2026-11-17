@@ -44,6 +44,8 @@ async fn fresh_db() -> String {
 struct Router {
     state: Mutex<String>,
     resumes: Mutex<Vec<String>>,
+    /// Each chat-schedule report: (session, its `nextAt`).
+    chat: Mutex<Vec<(String, Value)>>,
 }
 
 async fn serve(router: axum::Router) -> String {
@@ -70,6 +72,8 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     let mut titled = conv["conversation"].clone();
     titled["title"] = json!("Model picker");
     titled["titleSource"] = json!("user");
+    // and the AI armed a schedule in it (an aviary session's wakeup)
+    titled["nextScheduleAt"] = json!("2026-11-17T06:30:00.000Z");
     magpie
         .fake
         .script()
@@ -109,6 +113,7 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     let jr2 = jr.clone();
     let jr3 = jr.clone();
     let jr4 = jr.clone();
+    let jr5 = jr.clone();
     let router_url = serve(
         axum::Router::new()
             .route(
@@ -135,6 +140,18 @@ async fn a_session_boots_turns_pauses_and_resumes() {
                         Json(json!({"sessions": [{"id": "s1", "state": state, "model": "aviary/claude-opus-5-5"}]}))
                     }
                 }),
+            )
+            .route(
+                "/api/sessions/{id}/chat-schedule",
+                axum::routing::put(
+                    move |axum::extract::Path(id): axum::extract::Path<String>, Json(b): Json<Value>| {
+                        let jr = jr5.clone();
+                        async move {
+                            jr.chat.lock().unwrap().push((id, b["nextAt"].clone()));
+                            Json(json!({"ok": true}))
+                        }
+                    },
+                ),
             )
             .route(
                 "/api/sessions/{id}/start",
@@ -169,6 +186,7 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         http: http.clone(),
         settings: jarvis_aviary::settings::Settings::parse(include_str!("settings.json")).unwrap(),
         fabric: None,
+        chat_schedules: std::sync::Mutex::default(),
     }));
     let hermit_router = hermit_api::server::router(Arc::new(app.clone()));
     tokio::spawn(async move { axum::serve(hermit_l, hermit_router).await.unwrap() });
@@ -292,6 +310,12 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     // the answer names the conversation's title (the machine shows it on the session's card in the Jarvis 4 app)
     let told: Value = r.json().await.unwrap();
     assert_eq!(told, json!({"state": "ready", "title": "Model picker"}));
+    // and the router hears when its next schedule fires (Deyao, 2026-11-17: an aviary session's wakeups are
+    // magpie's schedules; the router keeps a paused session's runners for one)
+    assert_eq!(
+        *jr.chat.lock().unwrap(),
+        vec![("s1".to_owned(), json!("2026-11-17T06:30:00Z"))]
+    );
     let put = c
         .put(format!("{hermit_url}/v1/conversations/{cid}/sandbox"))
         .header("aviary-protocol", "hermit-core=1")
@@ -381,6 +405,11 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     assert_eq!(
         closes[0].body,
         Some(json!({"reason": jarvis_aviary::reconcile::PAUSED}))
+    );
+    // the conversation as it pauses has no schedule left: the router hears it once
+    assert_eq!(
+        jr.chat.lock().unwrap().last().cloned(),
+        Some(("s1".to_owned(), Value::Null))
     );
     // a second pass tells magpie nothing new
     jarvis_aviary::reconcile::pass(&app).await.unwrap();
