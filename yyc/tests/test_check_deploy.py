@@ -257,25 +257,6 @@ class Seeded(unittest.TestCase):
             cm["data"]["web.SKILL.md"] += "x" * 240000
         self.expect(m, "K", "hermit refuses them")
 
-    def test_gateway_image_store_is_fenced(self):
-        # the gateway's image store was a host folder with no size: it filled the node's disk, the node went into disk
-        # pressure and the gateway was evicted on every start (2026-11-16)
-        def host_folder(o):
-            ps = find(o, "DaemonSet", "hermit-gateway")["spec"]["template"]["spec"]
-            ps["volumes"] = [v for v in ps["volumes"] if v["name"] != "images"]
-            c = ps["containers"][0]
-            c["volumeMounts"] = [m for m in c["volumeMounts"] if m["name"] != "images"]
-        self.expect(host_folder, "D", "/var/lib/sbx/images")
-
-        def no_size(o):
-            ps = find(o, "DaemonSet", "hermit-gateway")["spec"]["template"]["spec"]
-            next(v for v in ps["volumes"] if v["name"] == "images")["emptyDir"] = {}
-        self.expect(no_size, "D", "sizeLimit")
-
-        def no_limit(o):
-            del container(find(o, "DaemonSet", "hermit-gateway"), "sandboxd")["resources"]["limits"]["ephemeral-storage"]
-        self.expect(no_limit, "D", "ephemeral-storage")
-
     def test_host_folder_needs_a_reason(self):
         def m(o):
             find(o, "Deployment", "tools")["spec"]["template"]["spec"]["volumes"].append(

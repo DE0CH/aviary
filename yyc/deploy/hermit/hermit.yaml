@@ -204,9 +204,7 @@ spec:
         - ipBlock: {cidr: "::/0", except: ["fc00::/7", "fe80::/10", "::1/128"]}
       ports: [{port: 443, protocol: TCP}]
 ---
-# Under Cilium the API server and this cluster's nodes are entities, not addresses (DESIGN 15.2 N3): the API for the
-# ops reads; the gateway node's NodePort 30433 (db/pg-shared), the juicefs CLI's metadata address of hermit pods
-# started before HERMIT_JUICEFS_META_URL named the balancer (removed with the gateway node)
+# Under Cilium the API server is an entity, not an address (DESIGN 15.2 N3): the API for the ops reads
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata: {name: hermit-out-api, namespace: yyc-ai}
@@ -215,5 +213,3 @@ spec:
   egress:
     - toEntities: [kube-apiserver]
       toPorts: [{ports: [{port: "6443", protocol: TCP}]}]
-    - toEntities: [host, remote-node]
-      toPorts: [{ports: [{port: "30433", protocol: TCP}]}]

@@ -166,7 +166,7 @@ def fabric(o, aviary):
     k[0] &= 248
     k[31] = (k[31] & 127) | 64
     o.put("YYC_HERMIT_GATEWAY_WG_KEY", base64.b64encode(bytes(k)).decode(),
-          "WireGuard private key of hermit's gateway hermit-gw (udp 51821; Secret yyc-ai-fabric/hermit-gateway wg.key)")
+          "WireGuard private key of hermit's gateway hermit-gw (udp 51821; installed on the gateway server by infra/gateway.sh setup --keys)")
 
 
 def main():

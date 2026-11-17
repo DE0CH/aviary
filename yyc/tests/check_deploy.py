@@ -33,8 +33,9 @@ Each failure prints one line `<item> <object>: <why>`; exit 1 on any. What it as
      prefer it; pigeon and hermit preStop 12 s (bridge callees, R6)
   S  sizes (WP-27's review): pigeon's container ephemeral-storage limit >= its app emptyDir sizeLimit + 128Mi, its
      initContainer's memory limit >= the sizeLimit
-  D  disk: no host folder without a reason (HOST_FOLDERS): it has no size and fills the node's disk; the gateway's image
-     store is an emptyDir with a sizeLimit and its container has an ephemeral-storage limit no smaller;
+  D  disk: no host folder without a reason (HOST_FOLDERS): it has no size and fills the node's disk (the gateway's
+     image store did, 2026-11-16); scratch space listed in FENCED is an emptyDir with a sizeLimit under its
+     container's ephemeral-storage limit
   G  the gateway's host.json has every field sandboxd requires (hermit 14.2); its podCidr and egressVip equal hermit.json's
      fabric; hermit/gateway.release, the gateway server's own pin, names an aviary release (--online: with sandboxd)
   H  hosts (hermit.json): a host of fabric.aws.fallbackHost takes N sandboxes (memory less the reserve over
@@ -499,17 +500,14 @@ def check_gateway(folder, h, online=False):
             fail("G", "gateway.release", f"release {rel} has no sandboxd binary")
     if "2001:db8:" in h["fabric"]["gateway"]["endpoint"]:
         print(f"::warning::hermit.json fabric.gateway.endpoint is a placeholder ({h['fabric']['gateway']['endpoint']}): "
-              "set the gateway node's public IPv6 (gateway-net.sh) before A1")
+              "set the gateway server's public IPv6")
 
 
 # A host folder has no size and no accounting: what a pod writes there fills the node's disk, and the kubelet answers
 # with disk pressure on the whole node. Only these, each with why it cannot be a pod's own scratch space.
-HOST_FOLDERS = {
-    ("DaemonSet", "hermit-gateway", "/var/lib/hermit-gateway"):
-        "the gateway's peer list and egress targets: a few hundred bytes that must outlive the pod",
-}
+HOST_FOLDERS = {}
 # Scratch space that must be the pod's own, with a size: (kind, name, container, mount path).
-FENCED = [("DaemonSet", "hermit-gateway", "sandboxd", "/var/lib/sbx/images")]
+FENCED = []
 
 
 def check_disk(objs):

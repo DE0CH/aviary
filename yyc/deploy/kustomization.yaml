@@ -69,10 +69,6 @@ configMapGenerator:
       - branding/icon-192.png
       - branding/icon-512.png
       - branding/manifest.json
-  # the gateway's host.json (hermit 14.2): hashed, so a change rolls the gateway pod (the data plane stays, HOST.md)
-  - name: hermit-gateway
-    namespace: yyc-ai-fabric
-    files: [hermit/gateway-host.json]
   # pg-forward's HAProxy configuration: hashed, so a change rolls it
   - name: pg-forward-config
     namespace: yyc-ai

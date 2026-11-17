@@ -1,5 +1,5 @@
 # egress (DE0CH/jarvis3 chat, `args: [egress]`; spec-platform 9.7, 17.2; jarvis3 docs/CHAT.md "egress"): YYC's sandbox
-# gateway. The sandboxes' only way out: the proxy on 3128 (reached at the egress VIP 10.202.1.1 through hermit-gateway,
+# gateway. The sandboxes' only way out: the proxy on 3128 (reached at the egress VIP 10.202.1.1 through the sandbox gateway,
 # which forwards to the load balancer of Service egress-lb below; a sandbox is known by its token alone), the fixed names model/tools/magpie/hermit, the package
 # mirror; the in-cluster API on 8082 (pigeon's models list, hermit's ops summary); health on 9090. Configuration:
 # egress.json (ConfigMap egress-config, hashed). Internet connections and OpenRouter go out by name through YYC's socks
@@ -135,8 +135,8 @@ metadata:
     load-balancer.hetzner.cloud/disable-public-network: "true"
     load-balancer.hetzner.cloud/private-ipv4: 10.0.0.50
     # the address is not written into the Service's status: kube-proxy takes a listed address for itself on every
-    # node and, with externalTrafficPolicy Local, drops connections to it on a node without an egress pod. That
-    # node is the sandbox gateway while it is still a cluster node (trial of 2026-11-16: every connection dropped)
+    # node and, with externalTrafficPolicy Local, drops connections to it on a node without a pod of that port
+    # (trial of 2026-11-16, when the sandbox gateway was a cluster node: every connection dropped)
     load-balancer.hetzner.cloud/disable-private-ingress: "true"
     load-balancer.hetzner.cloud/node-selector: pool=apps
     load-balancer.hetzner.cloud/health-check-interval: 5s

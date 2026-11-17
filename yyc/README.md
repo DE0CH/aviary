@@ -12,10 +12,11 @@ What runs where (the Talos cluster `yyc-talos`, `../news-stream/deploy/clusters/
   under `/api`, the app bundle, the operator page's front), **magpie** (the store of record for conversations: events,
   transcripts, blobs, schedules), **hermit** (sandboxes, workspaces, people, the fabric of AWS hosts, the ops snapshot
   and `/ops/`), **egress** (the sandboxes' only way out and the model gateway), **tools** (YYC's read-only tools as a
-  REST API), **cloudflared** (tunnel `yyc-ai-pigeon`);
-- namespace `yyc-ai-fabric`: **hermit-gateway** (sandboxd in gateway mode on the node labelled
-  `hermit.yyc/gateway=true`: WireGuard hub for the AWS hosts, the egress VIP 10.202.1.1, the image source) and the
-  DaemonSet **hermit-overlay-route** (route 10.202.0.0/15 via the gateway on every node in network `yyc`);
+  REST API), **pg-forward** (the sandbox hosts' way to the JuiceFS database), **cloudflared** (tunnel
+  `yyc-ai-pigeon`);
+- namespace `yyc-ai-fabric`: the DaemonSet **hermit-overlay-route** (route 10.202.0.0/15 via the sandbox gateway, and
+  the rule that puts it ahead of KubeSpan's, on every node in network `yyc`);
+- the **sandbox gateway**, outside the cluster: the plain server `yyc-sbx-gw1` (below, "Sandboxes");
 - sandboxes: one per conversation on AWS m7i.xlarge hosts (launch template `hermit-host`, eu-central-1), started and
   ended by hermit's scaler, with live migration (packing);
 - state: Cluster `magpie-pg` (namespace `db`, three instances, magpie only) and bucket `yyc-ai-magpie` (magpie's
@@ -70,8 +71,8 @@ YYC's Cloudflare account: `/news-stream/deploy/cloudflare/tofu/` (`access.tf`, `
 - `kustomization.yaml`: image pins (one aviary sha12 for pigeon, magpie, hermit and sandboxd; `pigeon-app` at a
   claudecodeui sha12; `jarvis3-chat` at a jarvis3 sha12) and the ConfigMap generators: `hermit-config` (hashed:
   `hermit/hermit.json`, `system-prompt.md`, `sandbox-rules.md`, `title-system.md`), `hermit-skills` (hashed: the
-  managed skills), `catalogue` (fixed name: a change reaches hermit and tools in place), `hermit-gateway` (hashed: the
-  gateway's `gateway-host.json`), `egress-config`, `tools-config`. The patches carry each Deployment's
+  managed skills), `catalogue` (fixed name: a change reaches hermit and tools in place), `pg-forward-config`,
+  `egress-config`, `tools-config`. The patches carry each Deployment's
   `yyc/secrets-rev`: bump it for the readers of a resealed Secret.
 - `limits.yaml`, `network.yaml` (namespace-wide policies; per-component ones sit beside each component),
   `cloudflared.yaml`, `pigeon.yaml`, `magpie.yaml`, `hermit/` (`hermit.yaml`, `fabric.yaml`, `juicefs.yaml` with PV
@@ -82,9 +83,8 @@ YYC's Cloudflare account: `/news-stream/deploy/cloudflare/tofu/` (`access.tf`, `
   `hermit.json` (sign-in, sandbox sizes and image by digest, fabric, AWS, ops); egress's `egress.json` (models,
   routes, allowlist options, budget, `exit` = YYC's socks pool); tools' `tools.json` (keys by env name, the capture
   route, yyc-mcp as upstream `data` with its tool list).
-- Every Deployment that serves rolls with `maxUnavailable: 0` and at least two replicas; the gateway and the overlay
-  route are DaemonSets on their nodes (a gateway pod restart is not an outage: the data plane stays in the host's
-  network namespace, aviary `crates/sandboxd/docs/HOST.md` "Gateway").
+- Every Deployment that serves rolls with `maxUnavailable: 0` and at least two replicas; the overlay route is a
+  DaemonSet on its nodes.
 
 ## Deploying (`.github/workflows/yyc-ai.yml`, `tools/yyc-apply/README.md`)
 
@@ -113,8 +113,8 @@ jarvis3 `chat`, claudecodeui `paseo-ui`, which `pigeon-app` and `yyc-ios` run be
   `aviary-<sha12>`; the sandbox image by digest in `hermit.json` `sandbox.image`; `jarvis3-chat` at a jarvis3 commit
   whose `chat` workflow passed (the ZDR guard reads that tag; `check_pins_green.py` refuses any other).
 - **The AMI** follows `hermit.json` by itself: `.github/workflows/hermit-ami.yml` bakes a new `hermit-host` AMI when
-  `sandbox.image`, `fabric.sandboxd` or `fabric.runsc` changed (about 15 min); hosts launched meanwhile fetch the
-  image from the gateway.
+  `sandbox.image`, `fabric.sandboxd` or `fabric.runsc` changed (about 15 min) and publishes the sandbox image to the bucket
+  `fabric.aws.imageBucket` first; hermit starts a sandbox on a new image only once the bucket holds it.
 - **After a deploy** (spec-platform 15.6): `kubectl -n yyc-ai rollout status
   deploy/{pigeon,magpie,hermit,egress,tools,cloudflared}` and the ops snapshot's `health.state` `ok`.
 
@@ -187,16 +187,34 @@ schedules), but it never acts outside YYC: nothing that sends, posts, pays or re
   most `maxLifetimeHours` 8. After a change of `tmpGiB` or `diskGiB`, hosts launched before it keep their old disk:
   `hermit-admin.sh fresh-host 60`, then `retire` each of them.
 - **Network:** sandboxes 10.203.0.0/16, hosts 10.202.0.0/24, the gateway `hermit-gw` at 10.202.0.1 (WireGuard on udp
-  51821 over the gateway node's IPv6), egress VIP 10.202.1.1:3128 (the gateway DNATs to an egress pod, source kept);
-  Hetzner network route 10.202.0.0/15 → the gateway node (aviary `fabric/host/gateway-net.sh`).
+  51821 over the gateway server's IPv6, `hermit.json` `fabric.gateway.endpoint`), egress VIP 10.202.1.1:3128; Hetzner
+  network route 10.202.0.0/15 → the gateway server (10.0.0.8).
+- **The sandbox gateway only passes packets** (Deyao, 2026-11-16: a Hetzner route has one next hop, so the gateway
+  is single by nature and is kept as simple as possible; every other job is off it). It is the plain server
+  `yyc-sbx-gw1` (cx23, fsn1, Ubuntu; no cluster node, no container runtime): WireGuard, sandboxd's fixed rules and
+  sandboxd in gateway mode as a systemd unit (aviary `crates/sandboxd/docs/HOST.md` "Gateway on a plain server").
+  What it forwards to, all at the one balancer `yyc-ai-egress` (10.0.0.50, Service `egress-lb`): the sandboxes'
+  proxy connections (VIP:3128 → 10.0.0.50:3128 → the egress pods) and the hosts' JuiceFS metadata (10.0.0.50:5432 →
+  `pg-forward` → `db/pg-shared`). The hosts fetch sandbox images from the S3 bucket, not through it. Its firewall
+  `yyc-sandbox-gateway` admits udp 51821 and ICMP from outside; SSH and the API (:7443, hermit's client certificate)
+  only over network `yyc`.
+- **Changing the gateway** is `infra/gateway.sh`, run from a session, never a workflow: `setup` installs the aviary
+  release pinned in `deploy/hermit/gateway.release` (its own pin, not the cluster's aviary pin) and
+  `deploy/hermit/gateway-host.json` without losing a packet; `status`; `ssh`. Its WireGuard key and TLS files come
+  from the store (`setup --keys`). A reboot or replacement of the server takes every sandbox's network away for its
+  duration: run it as the node work of `hermit-admin.sh gateway-maintenance` (below). Replacing the server:
+  `gateway.sh move OLD` from the new one's side (the old server's primary IPv6 and the route move; 45 s on
+  2026-11-17), with the firewall applied to the new server by id beforehand: applied by label it did not attach when
+  the server got its public interface.
 - **Operations:** aviary `crates/hermit/scripts/hermit-admin.sh` with `HERMIT_ADMIN_TOKEN` (store
   `YYC_TOKEN_ADMIN_HERMIT`) and `HERMIT_ADMIN` (the operator's email) through `kubectl -n yyc-ai port-forward
   svc/hermit 18080:80`: `hosts`, `cap <host> N|null`, `retire`/`reactivate <host>`, `disable <reason>`/`enable` (new
   sandboxes), `fresh-host`, `sandboxes`, `log`, `release`, `exec`, `recycle <digest>`, `purge <email>` (a leaver),
   `events`; every call is audited in `admin_events`.
-- **Gateway node maintenance** (hermit 14.7): only through `hermit-admin.sh gateway-maintenance --node-work
-  news-stream/deploy/clusters/talos/gateway-node-work.sh` (new sandboxes off, wait for no busy sandbox, the node's
-  upgrade through `talos-nodes.yml`, wait for the gateway, sandboxes on). Every other node upgrade skips that node.
+- **Gateway maintenance** (hermit 14.7): work that stops the gateway server (a reboot, a kernel upgrade) only through
+  `hermit-admin.sh gateway-maintenance --node-work "<command>"` (new sandboxes off, wait for no busy sandbox, the
+  command, wait for the gateway, sandboxes on; it leaves new sandboxes off when the gateway does not come back:
+  `hermit-admin.sh enable`). Keep the port-forward to hermit alive across it (a hermit roll ends it).
 - **JuiceFS:** hermit mounts the volume at `/jfs` (PV `hermit-jfs`, its own CSI mount pods); everything under `ws/` is
   uid/gid 1000 (`oneshot/jfs-owner.yaml` sets it once).
 

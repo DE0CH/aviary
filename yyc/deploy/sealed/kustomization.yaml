@@ -7,7 +7,6 @@ resources:
   - catalogue.yaml
   - herald.yaml
   - tunnel.yaml
-  - hermit-gateway.yaml
   - hermit.yaml
   - tools.yaml
   - egress.yaml
