@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Generates the YYC AI iOS project (docs/paseo-ui.md) and installs pods. Run from paseo/ on macOS after `npm ci`.
-# Env: YYC_SITE (the server, a build secret), BUILD_NUMBER (CFBundleVersion).
+# Generates an iOS project (docs/paseo-ui.md "The iOS app") and installs pods. Run from paseo/ on macOS after `npm ci`.
+# Env: APP_VARIANT (which app: app.config.js), YYC_SITE (its server), BUILD_NUMBER (CFBundleVersion).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export CI=1
-: "${YYC_SITE:?YYC_SITE (the YYC AI server) is required}"
+: "${YYC_SITE:?YYC_SITE (the app's server) is required}"
 
 npm run build:app-deps
 

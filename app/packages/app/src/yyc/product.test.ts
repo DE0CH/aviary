@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_PRODUCT_NAME,
+  initialProductName,
   onProductNameChange,
   productName,
   setProductName,
@@ -30,5 +31,13 @@ describe("the product's name", () => {
     expect(productName()).toBe("Jarvis 4");
     expect(changes).toBe(1);
     off();
+  });
+
+  it("starts as the page's name on the web, the build's in a native app, YYC AI otherwise", () => {
+    expect(initialProductName("Jarvis 4", "YYC AI")).toBe("Jarvis 4");
+    // a native app has no page: its sign-in screen names the product its build was made for
+    expect(initialProductName(null, "Jarvis 4")).toBe("Jarvis 4");
+    expect(initialProductName(null, "  ")).toBe("YYC AI");
+    expect(initialProductName(null, undefined)).toBe("YYC AI");
   });
 });

@@ -67,16 +67,29 @@ function resolveSecretFile(params) {
   return undefined;
 }
 
-// YYC AI (docs/paseo-ui.md): the iOS app is "YYC AI" (dev.de0ch.yycai, the TestFlight app the SwiftUI client
-// shipped as before), and the URL scheme the router's sign-in returns to is the bundle id.
+// The native apps (docs/paseo-ui.md "The iOS app"), one per deployment: what a build cannot ask its server is here
+// (the home-screen name, the bundle id, which is also the URL scheme the server's sign-in returns to, the icon and
+// launch image, the product's name before the server has said it, and the texts of iOS's permission prompts).
+// YYC AI is dev.de0ch.yycai, the TestFlight app the SwiftUI client shipped as before.
+const yyc = {
+  productName: "YYC AI",
+  icon: "./assets/images/yyc-icon.png",
+  splash: "./assets/images/yyc-splash.png",
+  cameraPermission: "允許 $(PRODUCT_NAME) 使用相機，以拍攝相片並附加到訊息。",
+  photosPermission: "允許 $(PRODUCT_NAME) 讀取相片，以將圖片附加到訊息。",
+};
 const variants = {
-  production: {
-    name: "YYC AI",
-    packageId: "dev.de0ch.yycai",
-  },
-  development: {
-    name: "YYC AI Debug",
-    packageId: "dev.de0ch.yycai.debug",
+  production: { ...yyc, name: "YYC AI", packageId: "dev.de0ch.yycai" },
+  development: { ...yyc, name: "YYC AI Debug", packageId: "dev.de0ch.yycai.debug" },
+  // Jarvis 4's chat (DE0CH/jarvis4 aviary/README.md), the TestFlight app "Jarvis 4 Chat"
+  "jarvis-chat": {
+    name: "Jarvis Chat",
+    packageId: "dev.de0ch.jarvis4chat",
+    productName: "Jarvis 4",
+    icon: "./assets/images/jarvis-chat-icon.png",
+    splash: "./assets/images/jarvis-chat-splash.png",
+    cameraPermission: "Allow $(PRODUCT_NAME) to use the camera to take photos for a message.",
+    photosPermission: "Allow $(PRODUCT_NAME) to read your photos to attach images to a message.",
   },
 };
 
@@ -92,7 +105,7 @@ export default {
     slug: "voice-mobile",
     version: nativeReleaseVersion.appVersion,
     orientation: "portrait",
-    icon: "./assets/images/yyc-icon.png",
+    icon: variant.icon,
     scheme: variant.packageId,
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
@@ -131,12 +144,21 @@ export default {
       withNoPushEntitlement,
       withAndroidScroll,
       [withAndroidAsyncStorageSize, 64],
-      // No QR pairing and no push (one server, no APNs key): no camera or notifications plugin
+      // No QR pairing and no push (one server, no APNs key): no expo-camera or notifications plugin. The message
+      // box attaches from the photo library and the system camera (expo-image-picker).
       withAndroidOptionalCamera,
+      [
+        "expo-image-picker",
+        {
+          cameraPermission: variant.cameraPermission,
+          photosPermission: variant.photosPermission,
+          microphonePermission: false,
+        },
+      ],
       [
         "expo-splash-screen",
         {
-          image: "./assets/images/yyc-splash.png",
+          image: variant.splash,
           imageWidth: 200,
           resizeMode: "contain",
           backgroundColor: "#ffffff",
@@ -176,6 +198,9 @@ export default {
     extra: {
       // The YYC AI server (yyc/site.ts): a build secret, not in this public repo
       yycSite: process.env.YYC_SITE,
+      // The product's name until the server says it (yyc/product.ts), and the bundled logo (yyc/native-brand.ts)
+      productName: variant.productName,
+      brand: appVariant === "jarvis-chat" ? "jarvis-chat" : "yyc",
       fdroidBuild: isFdroidBuild,
       profileBuild: isProfileBuild,
       watchdogBuild: isWatchdogBuild,

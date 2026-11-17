@@ -157,6 +157,7 @@ export const zhHK: TranslationResources = {
       interruptBeforeVoice: "啟動語音模式前請先中斷 Agent",
     },
     attachments: {
+      takePhoto: "影相",
       addImage: "新增圖片",
       pasteImage: "貼上圖片",
       addFile: "Upload file",
@@ -1627,6 +1628,8 @@ export const zhHK: TranslationResources = {
     permissionMessage: "請允許訪問照片相簿以附加圖片。",
     errorTitle: "錯誤",
     failedToSelect: "選擇圖片失敗",
+    cameraPermissionMessage: "請允許使用相機以拍攝相片。",
+    failedToTakePhoto: "無法拍攝相片",
     dialogTitle: "附加圖片",
     dialogFilterName: "圖片",
   },

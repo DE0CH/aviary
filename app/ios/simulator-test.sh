@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Simulator smoke test of the YYC AI iOS build: install, launch, and check with Maestro that it reaches its sign-in
-# screen (CI has no Access login, so the chat itself is not reached here). Usage: simulator-test.sh <path to .app>
+# Simulator smoke test of an iOS build (YYC AI, Jarvis Chat): install, launch, and check with Maestro that it reaches
+# its sign-in screen showing its product's name (CI has no Access login, so the chat itself is not reached here).
+# Usage: PRODUCT_NAME="YYC AI" simulator-test.sh <path to .app>
 set -euo pipefail
 APP="$1"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="${GITHUB_WORKSPACE:-$PWD}/yyc-ios-test-output"
 mkdir -p "$OUT"
+: "${PRODUCT_NAME:?PRODUCT_NAME (the name the sign-in screen shows) is required}"
+APP_ID="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist")"
+FLOW_ENV=(-e "APP_ID=$APP_ID" -e "PRODUCT_NAME=$PRODUCT_NAME")
 
 if ! command -v maestro >/dev/null; then
   curl -fsSL "https://get.maestro.mobile.dev" | bash
@@ -32,11 +36,11 @@ xcrun simctl install "$UDID" "$APP"
 # Ten minutes, and one more try when the driver never came up (not when the app failed the flow).
 export MAESTRO_DRIVER_STARTUP_TIMEOUT=600000
 status=0
-maestro --device "$UDID" test --test-output-dir "$OUT/sign-in" "$HERE/maestro/sign-in-screen.yaml" 2>&1 | tee "$OUT/maestro-1.log" || status=$?
+maestro --device "$UDID" test "${FLOW_ENV[@]}" --test-output-dir "$OUT/sign-in" "$HERE/maestro/sign-in-screen.yaml" 2>&1 | tee "$OUT/maestro-1.log" || status=$?
 if [ "$status" -ne 0 ] && grep -q "IOSDriverTimeoutException" "$OUT/maestro-1.log"; then
   echo "Maestro's driver did not start; trying once more"
   status=0
-  maestro --device "$UDID" test --test-output-dir "$OUT/sign-in-2" "$HERE/maestro/sign-in-screen.yaml" || status=$?
+  maestro --device "$UDID" test "${FLOW_ENV[@]}" --test-output-dir "$OUT/sign-in-2" "$HERE/maestro/sign-in-screen.yaml" || status=$?
 fi
 xcrun simctl io "$UDID" screenshot "$OUT/final.png" || true
 xcrun simctl shutdown "$UDID" || true

@@ -45,6 +45,7 @@ import {
   FileText,
   GitPullRequest,
   Image as ImageIcon,
+  Camera,
   ClipboardPaste,
   Paperclip,
 } from "lucide-react-native";
@@ -144,6 +145,7 @@ import { useAppSettings } from "@/hooks/use-settings";
 import { RenderProfile } from "@/utils/render-profiler";
 import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { isWeb, isNative } from "@/constants/platform";
+import { playChatHaptic, replyEnded } from "@/yyc/haptics";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type {
   AttachmentMetadata,
@@ -1480,7 +1482,7 @@ function ComposerContentImpl({
     [blurOnSubmit, clearDraft, replaceUserInput, resetSuppression, setSelectedAttachments],
   );
 
-  const { pickImages } = useImageAttachmentPicker();
+  const { pickImages, takePhoto } = useImageAttachmentPicker();
   const { pickFiles } = useFilePicker();
   const agentIdRef = useRef(agentId);
   const sendAgentMessageRef = useRef<
@@ -1641,6 +1643,16 @@ function ComposerContentImpl({
     midTurnRef.current = midTurn;
     isAgentRunningRef.current = isAgentRunning;
   }, [isAgentRunning, midTurn]);
+
+  // The phone taps when the reply of the conversation on screen ends (not when another conversation is opened)
+  const lastRunningRef = useRef({ agentId, running: isAgentRunning });
+  useEffect(() => {
+    const last = lastRunningRef.current;
+    lastRunningRef.current = { agentId, running: isAgentRunning };
+    if (last.agentId === agentId && replyEnded(last.running, isAgentRunning)) {
+      playChatHaptic("reply-ended");
+    }
+  }, [agentId, isAgentRunning]);
   // the server's queue of this conversation, and what this page has just sent into it
   const serverQueue = useSessionStore(
     (state) => state.sessions[serverId]?.agents.get(agentId)?.pendingMessages,
@@ -1779,6 +1791,7 @@ function ComposerContentImpl({
           if (submitBehavior !== "preserve-and-lock") {
             beginSubmit(submitAttachments);
           }
+          playChatHaptic("send");
           await submitMessage(submitText, submitAttachments);
         },
         clearDraft,
@@ -1855,6 +1868,15 @@ function ComposerContentImpl({
     if (newImages.length === 0) return;
     addImages(newImages);
   }, [addImages, pickImages]);
+
+  const handleTakePhoto = useCallback(async () => {
+    const newImages = await pickAndPersistImages({
+      pickImages: takePhoto,
+      persister: composerImageAttachmentPersister,
+    });
+    if (newImages.length === 0) return;
+    addImages(newImages);
+  }, [addImages, takePhoto]);
 
   const handlePasteImage = useCallback(async () => {
     try {
@@ -2003,6 +2025,7 @@ function ComposerContentImpl({
       isConnected,
     });
     if (!cancellation) return;
+    playChatHaptic("stop");
     const requestId = getHostRuntimeStore().beginAgentCancellation(serverId, targetAgentId);
     void cancellation
       .catch((error) => {
@@ -2305,6 +2328,14 @@ function ComposerContentImpl({
       },
     ];
     if (isNative) {
+      items.unshift({
+        id: "take-photo",
+        label: t("composer.attachments.takePhoto"),
+        icon: <ThemedCamera size={ICON_SIZE.md} uniProps={iconForegroundMutedMapping} />,
+        onSelect: () => {
+          void handleTakePhoto();
+        },
+      });
       items.push({
         id: "paste-image",
         label: t("composer.attachments.pasteImage"),
@@ -2341,6 +2372,7 @@ function ComposerContentImpl({
     handlePasteImage,
     handlePickFile,
     handlePickImage,
+    handleTakePhoto,
     pluginAttachments.menuItems,
     supportsForgeSearch,
     t,
@@ -2863,6 +2895,7 @@ const ThemedAudioLines = withUnistyles(AudioLines);
 const ThemedPaperclip = withUnistyles(Paperclip);
 const ThemedImageIcon = withUnistyles(ImageIcon);
 const ThemedClipboardPaste = withUnistyles(ClipboardPaste);
+const ThemedCamera = withUnistyles(Camera);
 const ThemedFileText = withUnistyles(FileText);
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });

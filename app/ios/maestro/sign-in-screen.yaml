@@ -1,9 +1,11 @@
-# The app starts on its sign-in screen (no Access token on a fresh install): the YYC AI title and the button.
-appId: dev.de0ch.yycai
+# The app starts on its sign-in screen (no Access token on a fresh install): the product's name and the button.
+# APP_ID and PRODUCT_NAME are the build's (ios/simulator-test.sh reads them from the built app's Info.plist and the
+# variant).
+appId: ${APP_ID}
 ---
 - launchApp
 - extendedWaitUntil:
     visible: "登入|Sign in"
     timeout: 60000
-- assertVisible: "YYC AI"
+- assertVisible: "${PRODUCT_NAME}"
 - takeScreenshot: sign-in

@@ -154,6 +154,7 @@ export const en = {
       interruptBeforeVoice: "Interrupt the agent before starting voice mode",
     },
     attachments: {
+      takePhoto: "Take photo",
       addImage: "Add image",
       pasteImage: "Paste image",
       addFile: "Upload file",
@@ -1656,6 +1657,8 @@ export const en = {
     permissionMessage: "Please allow access to your photo library to attach images.",
     errorTitle: "Error",
     failedToSelect: "Failed to select image",
+    cameraPermissionMessage: "Please allow access to the camera to take a photo.",
+    failedToTakePhoto: "Failed to take a photo",
     dialogTitle: "Attach images",
     dialogFilterName: "Images",
   },

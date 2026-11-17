@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import Constants from "expo-constants";
 
 /**
  * The product's name. The app's text says "YYC AI" (i18n/resources/yyc.ts); a deployment with another name says so
@@ -21,7 +22,24 @@ function pageProductName(): string | null {
   return name || null;
 }
 
-let current = pageProductName() ?? DEFAULT_PRODUCT_NAME;
+/**
+ * The name a native build was given (app.config.js `extra.productName`): a native app has no page for the server to
+ * write its name into, and its sign-in screen shows before any server has answered.
+ */
+function buildProductName(): string | null {
+  return cleanName((Constants.expoConfig?.extra as { productName?: unknown } | undefined)?.productName);
+}
+
+function cleanName(name: unknown): string | null {
+  return typeof name === "string" && name.trim() ? name.trim() : null;
+}
+
+/** The name before /api/jarvis/me has answered: the page's (web), else the build's (native), else YYC AI. */
+export function initialProductName(page: unknown, build: unknown): string {
+  return cleanName(page) ?? cleanName(build) ?? DEFAULT_PRODUCT_NAME;
+}
+
+let current = initialProductName(pageProductName(), buildProductName());
 const listeners = new Set<() => void>();
 
 export function productName(): string {

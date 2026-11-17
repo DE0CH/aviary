@@ -9,9 +9,12 @@ import {
   type PickedImageAttachmentInput,
 } from "@/hooks/image-attachment-picker";
 import { isWeb } from "@/constants/platform";
+import { takeCameraPhoto } from "@/hooks/camera-photo";
 
 interface UseImageAttachmentPickerResult {
   pickImages: () => Promise<PickedImageAttachmentInput[] | null>;
+  /** One photo from the system camera (native only). */
+  takePhoto: () => Promise<PickedImageAttachmentInput[] | null>;
 }
 
 export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
@@ -88,5 +91,34 @@ export function useImageAttachmentPicker(): UseImageAttachmentPickerResult {
     }
   }, [ensurePermission, t]);
 
-  return { pickImages };
+  const takePhoto = useCallback(async () => {
+    if (isPickingRef.current) {
+      return null;
+    }
+
+    isPickingRef.current = true;
+
+    try {
+      const result = await takeCameraPhoto(ImagePicker);
+      if (result.kind === "denied") {
+        Alert.alert(
+          t("imageAttachmentPicker.permissionTitle"),
+          t("imageAttachmentPicker.cameraPermissionMessage"),
+        );
+        return null;
+      }
+      if (result.kind === "cancelled") {
+        return null;
+      }
+      return await normalizePickedImageAssets(result.assets);
+    } catch (error) {
+      console.error("[ImageAttachmentPicker] Failed to take a photo:", error);
+      Alert.alert(t("imageAttachmentPicker.errorTitle"), t("imageAttachmentPicker.failedToTakePhoto"));
+      return null;
+    } finally {
+      isPickingRef.current = false;
+    }
+  }, [t]);
+
+  return { pickImages, takePhoto };
 }
