@@ -30,6 +30,10 @@ server (`server/`) serves no deployment.
 - **Language**: zh-HK (generated from Paseo's zh-CN with OpenCC, HK vocabulary) and English only; any Chinese or
   unknown system locale gets zh-HK. YYC's own wording is an override layer, `i18n/resources/yyc.ts`; new strings of
   this fork live under `conversation.*` in `en.ts`/`zh-HK.ts`.
+- **A conversation's status spot** in the list (`components/sidebar/workspace-status-indicator.tsx`; Deyao,
+  2026-11-17, design A): the ring while a reply runs, a blue dot while background tasks run after it (pigeon's
+  `backgroundTasks`, magpie's `held`), a clock while a schedule is armed (`nextScheduleAt`), the grey dot otherwise;
+  background tasks win over the clock.
 - **Layout**: a flat list of conversations (no project row, `components/sidebar-workspace-list.tsx`), home is a new
   chat (`utils/host-routes.ts` `buildOpenProjectRoute`), no tab row (`WorkspaceDesktopTabsRow` renders nothing), no
   project/host/mode pickers, explorer, editor, scripts, hover card or fork button; the composer has no voice,
