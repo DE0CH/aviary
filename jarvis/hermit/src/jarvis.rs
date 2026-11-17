@@ -128,6 +128,34 @@ impl Jarvis {
         Ok(r.json::<Remotes>().await?.sessions)
     }
 
+    /// Tells the router when the soonest of a session's chat schedules fires next (`None`: none armed). An aviary
+    /// session's wakeups are magpie's schedules (Deyao, 2026-11-17); the router counts one as armed (a paused session
+    /// keeps its runners) and never fires it: magpie does, and [`Self::resume`] wakes the session for the turn.
+    ///
+    /// # Errors
+    /// The router unreachable or refusing.
+    pub async fn set_chat_schedule(
+        &self,
+        session: &str,
+        next_at: Option<time::OffsetDateTime>,
+    ) -> anyhow::Result<()> {
+        let next = next_at
+            .map(|t| t.format(&time::format_description::well_known::Rfc3339))
+            .transpose()?;
+        let r = self
+            .req(
+                reqwest::Method::PUT,
+                &format!("/api/sessions/{session}/chat-schedule"),
+            )
+            .json(&serde_json::json!({ "nextAt": next }))
+            .send()
+            .await?;
+        if !r.status().is_success() {
+            anyhow::bail!("router answered {} to a chat schedule", r.status());
+        }
+        Ok(())
+    }
+
     /// Resumes a paused session (no prompt, no Face ID, as the Jarvis 4 Chat app did).
     ///
     /// # Errors

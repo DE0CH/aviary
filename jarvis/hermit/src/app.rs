@@ -42,6 +42,37 @@ pub struct Inner {
     pub settings: crate::settings::Settings,
     /// The fabric hermit, for session machines on aviary's fabric (src/fabric.rs); `None`: none
     pub fabric: Option<crate::fabric::FabricHermit>,
+    /// The next chat schedule this replica last told the router of, per session ([`App::report_chat_schedule`]).
+    pub chat_schedules: std::sync::Mutex<std::collections::HashMap<String, Option<i64>>>,
+}
+
+impl App {
+    /// Tells the router when `session`'s soonest chat schedule fires next, when it differs from what this replica
+    /// told it last (a failure is told again at the next report).
+    pub async fn report_chat_schedule(&self, session: &str, next: Option<magpie_api::Timestamp>) {
+        let key = next.map(|t| t.0.unix_timestamp());
+        let told = self
+            .chat_schedules
+            .lock()
+            .map(|m| m.get(session).copied())
+            .unwrap_or_default();
+        if told == Some(key) {
+            return;
+        }
+        match self
+            .jarvis
+            .set_chat_schedule(session, next.map(|t| t.0))
+            .await
+        {
+            Ok(()) => {
+                if let Ok(mut m) = self.chat_schedules.lock() {
+                    m.insert(session.to_owned(), key);
+                }
+                tracing::info!(session, next = ?key, "chat schedule told to the router");
+            }
+            Err(e) => tracing::warn!(session, error = %e, "chat schedule not told; next report"),
+        }
+    }
 }
 
 impl std::ops::Deref for App {

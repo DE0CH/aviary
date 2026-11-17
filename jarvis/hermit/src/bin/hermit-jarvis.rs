@@ -81,6 +81,7 @@ async fn main() -> anyhow::Result<()> {
         http,
         settings: jarvis_aviary::settings::Settings::load(&env.settings)?,
         fabric: jarvis_aviary::fabric::FabricHermit::from_env(),
+        chat_schedules: std::sync::Mutex::default(),
     }));
     let models_route = app.settings.models_route();
     let openrouter_key = env.openrouter_key.clone();

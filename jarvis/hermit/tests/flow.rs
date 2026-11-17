@@ -44,6 +44,8 @@ async fn fresh_db() -> String {
 struct Router {
     state: Mutex<String>,
     resumes: Mutex<Vec<String>>,
+    /// Each chat-schedule report: (session, its `nextAt`).
+    chat: Mutex<Vec<(String, Value)>>,
 }
 
 async fn serve(router: axum::Router) -> String {
@@ -70,6 +72,8 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     let mut titled = conv["conversation"].clone();
     titled["title"] = json!("Model picker");
     titled["titleSource"] = json!("user");
+    // and the AI armed a schedule in it (an aviary session's wakeup)
+    titled["nextScheduleAt"] = json!("2026-11-17T06:30:00.000Z");
     magpie
         .fake
         .script()
@@ -109,6 +113,7 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     let jr2 = jr.clone();
     let jr3 = jr.clone();
     let jr4 = jr.clone();
+    let jr5 = jr.clone();
     let router_url = serve(
         axum::Router::new()
             .route(
@@ -135,6 +140,18 @@ async fn a_session_boots_turns_pauses_and_resumes() {
                         Json(json!({"sessions": [{"id": "s1", "state": state, "model": "aviary/claude-opus-5-5"}]}))
                     }
                 }),
+            )
+            .route(
+                "/api/sessions/{id}/chat-schedule",
+                axum::routing::put(
+                    move |axum::extract::Path(id): axum::extract::Path<String>, Json(b): Json<Value>| {
+                        let jr = jr5.clone();
+                        async move {
+                            jr.chat.lock().unwrap().push((id, b["nextAt"].clone()));
+                            Json(json!({"ok": true}))
+                        }
+                    },
+                ),
             )
             .route(
                 "/api/sessions/{id}/start",
@@ -169,6 +186,7 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         http: http.clone(),
         settings: jarvis_aviary::settings::Settings::parse(include_str!("settings.json")).unwrap(),
         fabric: None,
+        chat_schedules: std::sync::Mutex::default(),
     }));
     let hermit_router = hermit_api::server::router(Arc::new(app.clone()));
     tokio::spawn(async move { axum::serve(hermit_l, hermit_router).await.unwrap() });
@@ -188,6 +206,7 @@ async fn a_session_boots_turns_pauses_and_resumes() {
                 env: [
                     ("SESSION_ID".into(), "s1".into()),
                     ("SESSION_MODEL".into(), "aviary/claude-opus-5-5".into()),
+                    ("SESSION_LABEL".into(), "chat.deyaochen.com error".into()),
                     ("SECRET_THING".into(), "never".into()),
                     (
                         "CLAUDE_CONFIG_DIR".into(),
@@ -217,6 +236,8 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     // the machine ran, until someone picked there)
     let made = magpie.fake.script().calls_to("hermit_create_conversation");
     assert_eq!(made[0].body.as_ref().unwrap()["model"], "claude-opus-5-5");
+    // and under the name the session was given on the New session page (the chat showed a generated title)
+    assert_eq!(made[0].body.as_ref().unwrap()["title"], "chat.deyaochen.com error");
     // an unknown machine is refused
     assert_eq!(boot("mX").await.status(), 403);
     // the same machine again keeps its sandbox
@@ -292,6 +313,12 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     // the answer names the conversation's title (the machine shows it on the session's card in the Jarvis 4 app)
     let told: Value = r.json().await.unwrap();
     assert_eq!(told, json!({"state": "ready", "title": "Model picker"}));
+    // and the router hears when its next schedule fires (Deyao, 2026-11-17: an aviary session's wakeups are
+    // magpie's schedules; the router keeps a paused session's runners for one)
+    assert_eq!(
+        *jr.chat.lock().unwrap(),
+        vec![("s1".to_owned(), json!("2026-11-17T06:30:00Z"))]
+    );
     let put = c
         .put(format!("{hermit_url}/v1/conversations/{cid}/sandbox"))
         .header("aviary-protocol", "hermit-core=1")
@@ -447,6 +474,11 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     assert_eq!(
         closes[0].body,
         Some(json!({"reason": jarvis_aviary::reconcile::PAUSED}))
+    );
+    // the conversation as it pauses has no schedule left: the router hears it once
+    assert_eq!(
+        jr.chat.lock().unwrap().last().cloned(),
+        Some(("s1".to_owned(), Value::Null))
     );
     // a second pass tells magpie nothing new
     jarvis_aviary::reconcile::pass(&app).await.unwrap();

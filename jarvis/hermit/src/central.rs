@@ -312,13 +312,18 @@ async fn health(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Resp
         Ok(Some(r)) => {
             // the conversation's title for the session's card (a failure is no title this time: the next report asks
             // again)
-            let title = app
+            // and when its next schedule fires, for the router (a paused session with one keeps its runners)
+            let conversation = app
                 .magpie
                 .service(None)
                 .hermit_conversation(r.conversation_id)
                 .await
-                .ok()
-                .and_then(|c| c.title);
+                .ok();
+            if let Some(c) = &conversation {
+                app.report_chat_schedule(&r.session_id, c.next_schedule_at)
+                    .await;
+            }
+            let title = conversation.and_then(|c| c.title);
             let reply = wire::HealthReply {
                 state: r.state.as_str().to_owned(),
                 title,

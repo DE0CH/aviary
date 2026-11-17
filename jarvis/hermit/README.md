@@ -70,8 +70,9 @@ Jarvis 4 session machine (harness aviary)                                     â”
   `embedding`, beside the settings, as `reasoning` does. pigeon embeds a search's query through :8082
   (`src/embeddings.rs`, `HERMIT_OPENROUTER_KEY`; without it a search matches words only). magpie keeps the vectors in
   chat-db with pgvector (DE0CH/deyao-ai `k8s/chat/db.yaml` creates the extension).
-- The conversation's title (magpie's: generated from the first message, or renamed in the chat) is the session's
-  title on its card: hermit-jarvis reads it (`GET /v1/hermit/conversations/{id}`) and answers it to each health
+- The conversation's title is the session's name from the New session page (`SESSION_LABEL`, sent with hermit's
+  create as `title`: magpie keeps it as a rename, so the title model leaves it alone), else magpie's, generated from
+  the first message; a rename in the chat wins over both. It is the session's title on its card: hermit-jarvis reads it (`GET /v1/hermit/conversations/{id}`) and answers it to each health
   report, aviary-gateway serves it in `/jarvis/state`, and the harness's shim writes it as an `ai-title` line beside
   the mirrored transcripts (`aviary-title.jsonl`), where the machine's status reads a Claude session's title.
 - hermit and the gateway are Rust, here; the gateway's sandbox-facing half runs on each session machine.
@@ -99,7 +100,7 @@ Jarvis 4 session machine (harness aviary)                                     â”
    (`AVIARY_GW_ACCESS_ID/SECRET`). `harness-aviary.sh` starts `aviary-gateway`, which signs `POST /jarvis/boot`
    with the machine key (`jarvis-machine sign-request`). hermit asks the router whose signature it is
    (`POST /api/machine-signatures/verify`), makes the session's conversation in magpie once (magpie's
-   `POST /v1/hermit/conversations`, idempotent by `session:<id>`), and a sandbox row for this boot. It answers the
+   `POST /v1/hermit/conversations`, idempotent by `session:<id>`, with the session's model and name), and a sandbox row for this boot. It answers the
    sandbox token (`hst1`, Ed25519, `HERMIT_TOKEN_KEYS`) and the control token. The same machine booting again (a
    gateway restart) keeps its sandbox.
 2. **The sandbox** starts as root through `sudo aviary-sandbox <boot env>`, in DE0CH/aviary's own sandbox image
