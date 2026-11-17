@@ -45,7 +45,8 @@ pub async fn migrate(pool: &Pool) -> Result<Vec<i32>, aviary_pg::Error> {
         "0005_legacy_shares.sql",
         "0006_legacy_share_deletes.sql",
         "0007_legacy_share_tombstones.sql",
-        "0008_start_person_limit.sql"
+        "0008_start_person_limit.sql",
+        "0009_frozen.sql"
     ]?;
     aviary_pg::migrate(pool, &LOCK_MIGRATIONS, &list).await
 }
@@ -237,6 +238,8 @@ pub struct SandboxRow {
     pub release_note: Option<String>,
     pub release_code: Option<String>,
     pub release_message: Option<String>,
+    /// While frozen with an `until` (migration 0009).
+    pub frozen_until: Option<OffsetDateTime>,
 }
 
 fn wire<T: serde::de::DeserializeOwned>(s: &str) -> Option<T> {
@@ -293,6 +296,7 @@ impl SandboxRow {
             release_note: r.try_get("release_note")?,
             release_code: r.try_get("release_code")?,
             release_message: r.try_get("release_message")?,
+            frozen_until: r.try_get("frozen_until")?,
         })
     }
 
@@ -355,6 +359,11 @@ impl SandboxRow {
             image: self.image.clone(),
             supervisor,
             release: self.release(),
+            frozen_until: if self.status == SandboxState::Frozen {
+                self.frozen_until.map(Into::into)
+            } else {
+                None
+            },
         }
     }
 

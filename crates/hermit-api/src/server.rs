@@ -39,8 +39,8 @@ use crate::ops::SnapshotQuery;
 use crate::people::{People, Person, WarmReply, WarmRequest};
 use crate::routes;
 use crate::sandbox::{
-    PutSandbox, PutSandboxRequest, ReleaseSandboxReply, ReleaseSandboxRequest, Sandbox, SandboxEvents,
-    SandboxEventsQuery, SandboxQuery, SnapshotReply,
+    FreezeSandboxRequest, PutSandbox, PutSandboxRequest, ReleaseSandboxReply, ReleaseSandboxRequest, Sandbox,
+    SandboxEvents, SandboxEventsQuery, SandboxQuery, SnapshotReply,
 };
 use crate::sandbox_surface::{ActivityReply, ActivityReport, SandboxSelf, SecretKeys, SecretValue};
 use crate::token::{TokenKeys, TokenLiveness};
@@ -229,11 +229,16 @@ pub trait Server: Send + Sync + 'static {
         unsupported()
     }
     /// 202.
-    fn pause_sandbox(&self, ctx: Ctx, cid: Uuid) -> impl Future<Output = Answer<Sandbox>> + Send {
+    fn freeze_sandbox(
+        &self,
+        ctx: Ctx,
+        cid: Uuid,
+        body: FreezeSandboxRequest,
+    ) -> impl Future<Output = Answer<Sandbox>> + Send {
         unsupported()
     }
     /// 202.
-    fn resume_sandbox(&self, ctx: Ctx, cid: Uuid) -> impl Future<Output = Answer<Sandbox>> + Send {
+    fn thaw_sandbox(&self, ctx: Ctx, cid: Uuid) -> impl Future<Output = Answer<Sandbox>> + Send {
         unsupported()
     }
     /// 201.
@@ -635,16 +640,16 @@ fn routes_of<S: Server>() -> Router<Arc<S>> {
             }),
         )
         .route(
-            r::SANDBOX_PAUSE,
-            post(|State(s): St<S>, c: Req, p: P<Uuid>| async move {
-                let r = async { s.pause_sandbox(ctx!(c, r::SANDBOX_PAUSE), path(p)?).await }.await;
+            r::SANDBOX_FREEZE,
+            post(|State(s): St<S>, c: Req, p: P<Uuid>, b: B| async move {
+                let r = async { s.freeze_sandbox(ctx!(c, r::SANDBOX_FREEZE), path(p)?, body(b)?).await }.await;
                 reply(202, r)
             }),
         )
         .route(
-            r::SANDBOX_RESUME,
+            r::SANDBOX_THAW,
             post(|State(s): St<S>, c: Req, p: P<Uuid>| async move {
-                let r = async { s.resume_sandbox(ctx!(c, r::SANDBOX_RESUME), path(p)?).await }.await;
+                let r = async { s.thaw_sandbox(ctx!(c, r::SANDBOX_THAW), path(p)?).await }.await;
                 reply(202, r)
             }),
         )

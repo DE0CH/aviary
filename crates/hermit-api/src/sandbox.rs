@@ -16,7 +16,9 @@ use crate::wire::wire_enum;
 pub enum SandboxState {
     Starting,
     Ready,
-    Paused,
+    /// Frozen (jarvis4 docs/PLAN-fabric.md): RAM, processes and scratch kept off any host; a thaw (or a get-or-start)
+    /// brings back the same sandbox, its processes going on where they stopped.
+    Frozen,
     Releasing,
     Gone,
     #[serde(other)]
@@ -26,7 +28,7 @@ pub enum SandboxState {
 wire_enum!(SandboxState {
     Starting => "starting",
     Ready => "ready",
-    Paused => "paused",
+    Frozen => "frozen",
     Releasing => "releasing",
     Gone => "gone",
 });
@@ -247,6 +249,18 @@ pub struct Sandbox {
     pub image: Option<String>,
     pub supervisor: Option<SupervisorInfo>,
     pub release: Option<Release>,
+    /// While `frozen` with an `until`: when it thaws by itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frozen_until: Option<Timestamp>,
+}
+
+/// `POST /v1/conversations/{cid}/sandbox/freeze` body: freeze it, until `until` when given (it thaws then by itself;
+/// a get-or-start, a thaw or a release ends the freeze earlier).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FreezeSandboxRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<Timestamp>,
 }
 
 /// `PUT /v1/conversations/{cid}/sandbox` body.

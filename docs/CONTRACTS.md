@@ -288,7 +288,12 @@ What an implementation must do, beyond the shapes:
   carries `release {reason, note, code, message}`: `reason` is one `ReleaseReason` and `code` follows from it
   (`ReleaseReason::code`): `sandbox_released` for an orderly end, `sandbox_lost` when it died, `sandbox_busy` when it
   never became ready for want of capacity, `sandbox_failed` when its start failed otherwise.
-- **Pause, resume, snapshot** either work as typed (202, 202, 201) or answer 501 `not_supported`, consistently.
+- **Freeze, thaw, snapshot** either work as typed (202, 202, 201) or answer 501 `not_supported`, consistently.
+  `POST …/sandbox/freeze {"until"?}` keeps the sandbox, RAM, processes and scratch included, off any host: state
+  `frozen` (`frozenUntil` when it has an `until`), holding no host and no slot. `POST …/sandbox/thaw`, a get-or-start,
+  or the `until` passing brings back the same sandbox (same `id`), its processes going on where they stopped; a thaw
+  that cannot restore it ends it as a release does (the persistent folders stay, the next get-or-start starts a new
+  one). A frozen sandbox is kept until it is thawed or released; it runs nothing, so it makes no calls of its own.
 - **Feed.** `GET /v1/sandbox-events?after=<seq>|latest&limit=1..500&waitMs=0..25000` → `{headSeq, events}`: one
   event per visible change, in commit order (seq may have holes), `latest` answers at once; 410 `cursor_expired` for a
   cursor older than the retention. The feed is the only path from hermit to magpie for sandbox state.

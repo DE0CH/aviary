@@ -718,10 +718,10 @@ async fn hermit_tokens_descriptor_secrets_activity_and_workspaces() {
     magpie.delete_workspace(w).await.unwrap();
     assert_eq!(magpie.get_workspace(w).await.unwrap_err().code(), Some("no_workspace"));
 
-    // pause, resume and snapshot answer 501 consistently
+    // freeze, thaw and snapshot answer 501 consistently
     for r in [
-        magpie.pause_sandbox(CONV).await.map(|_| ()),
-        magpie.resume_sandbox(CONV).await.map(|_| ()),
+        magpie.freeze_sandbox(CONV, None).await.map(|_| ()),
+        magpie.thaw_sandbox(CONV).await.map(|_| ()),
         magpie.snapshot_sandbox(CONV).await.map(|_| ()),
     ] {
         assert_eq!(r.unwrap_err().code(), Some("not_supported"));

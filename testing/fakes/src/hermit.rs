@@ -40,9 +40,9 @@ use hermit_api::exec::{ExecRequest, ExecResult};
 use hermit_api::ops::SnapshotQuery;
 use hermit_api::people::{ExplicitPerson, People, Person, Role, WarmReply, WarmRequest, normalise_email};
 use hermit_api::sandbox::{
-    Cursor, MAX_WAIT_MS, PutSandbox, PutSandboxRequest, Release, ReleaseReason, ReleaseSandboxReply,
-    ReleaseSandboxRequest, Sandbox, SandboxEvent, SandboxEvents, SandboxEventsQuery, SandboxPhase, SandboxQuery,
-    SandboxState, SnapshotReply, SupervisorInfo,
+    Cursor, FreezeSandboxRequest, MAX_WAIT_MS, PutSandbox, PutSandboxRequest, Release, ReleaseReason,
+    ReleaseSandboxReply, ReleaseSandboxRequest, Sandbox, SandboxEvent, SandboxEvents, SandboxEventsQuery, SandboxPhase,
+    SandboxQuery, SandboxState, SnapshotReply, SupervisorInfo,
 };
 use hermit_api::sandbox_surface::{
     ActivityReply, ActivityReplyState, ActivityReport, PendingRelease, SandboxSelf, SecretKeys, SecretValue,
@@ -228,8 +228,8 @@ pub const NAMES: &[(&str, &str, &str)] = &[
     ("PUT", routes::SANDBOX, "put_sandbox"),
     ("GET", routes::SANDBOX, "get_sandbox"),
     ("POST", routes::SANDBOX_RELEASE, "release_sandbox"),
-    ("POST", routes::SANDBOX_PAUSE, "pause_sandbox"),
-    ("POST", routes::SANDBOX_RESUME, "resume_sandbox"),
+    ("POST", routes::SANDBOX_FREEZE, "freeze_sandbox"),
+    ("POST", routes::SANDBOX_THAW, "thaw_sandbox"),
     ("POST", routes::SANDBOX_SNAPSHOT, "snapshot_sandbox"),
     ("GET", routes::SANDBOX_EVENTS, "sandbox_events"),
     ("PUT", routes::WORKSPACE, "put_workspace"),
@@ -665,6 +665,7 @@ impl FakeHermit {
             image: Some(config.descriptor.sandbox.image.clone()),
             supervisor: None,
             release: None,
+            frozen_until: None,
         };
         Self::event(&mut m, &s);
         m.sandboxes.push(Sbx {
@@ -1074,22 +1075,22 @@ impl Server for FakeHermit {
         )
     }
 
-    async fn pause_sandbox(&self, ctx: Ctx, cid_: Uuid) -> Result<Sandbox, ApiError> {
+    async fn freeze_sandbox(&self, ctx: Ctx, cid_: Uuid, body: FreezeSandboxRequest) -> Result<Sandbox, ApiError> {
         answer!(
             self,
-            "pause_sandbox",
+            "freeze_sandbox",
             ctx,
             cid(cid_),
             None,
-            None,
+            ser(&body),
             Err(error::not_supported())
         )
     }
 
-    async fn resume_sandbox(&self, ctx: Ctx, cid_: Uuid) -> Result<Sandbox, ApiError> {
+    async fn thaw_sandbox(&self, ctx: Ctx, cid_: Uuid) -> Result<Sandbox, ApiError> {
         answer!(
             self,
-            "resume_sandbox",
+            "thaw_sandbox",
             ctx,
             cid(cid_),
             None,

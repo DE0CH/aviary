@@ -115,7 +115,7 @@ pub async fn pass(core: &Arc<Core>) -> Result<Pass, aviary_pg::Error> {
     if let Some(cat) = core.catalogue.get() {
         for r in rows(
             core,
-            "select * from sandboxes where status in ('ready', 'starting', 'paused')",
+            "select * from sandboxes where status in ('ready', 'starting', 'frozen')",
             &[],
         )
         .await?

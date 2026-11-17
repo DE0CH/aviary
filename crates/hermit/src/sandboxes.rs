@@ -241,7 +241,7 @@ async fn put_once(core: &Arc<Core>, cid: Uuid, person: &str) -> Result<PutStep, 
                 SandboxState::Releasing => return Ok(PutStep::WaitGone(row.id)),
                 // a forced or lost release is ending this sandbox: never hand it out
                 _ if pending.is_some_and(|k| k != ReleaseKind::Soft) => return Ok(PutStep::WaitGone(row.id)),
-                SandboxState::Ready | SandboxState::Starting | SandboxState::Paused | SandboxState::Unknown => {
+                SandboxState::Ready | SandboxState::Starting | SandboxState::Frozen | SandboxState::Unknown => {
                     // a pending soft release not yet answered is cancelled by the use (3.6.2, 13.12). One no task
                     // runs and none sent is cleared. One a task runs, or one already sent, may be out at the
                     // supervisor: it is marked cancelled, never cleared, so the task (or the takeover) stays if the

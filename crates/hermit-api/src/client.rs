@@ -381,25 +381,25 @@ impl Client {
         Ok(self.call(rb).await?.1)
     }
 
-    /// `POST …/sandbox/pause` (202; 501 in implementations without pause).
+    /// `POST …/sandbox/freeze` (202; 501 in implementations without freezing): freeze it, until `until` when given.
     ///
     /// # Errors
     /// As [`Client::deployment`]; 501 `not_supported`.
-    pub async fn pause_sandbox(&self, cid: Uuid) -> R<Sandbox> {
-        let p = fill(r::SANDBOX_PAUSE, &[&cid.to_string()]);
+    pub async fn freeze_sandbox(&self, cid: Uuid, until: Option<Timestamp>) -> R<Sandbox> {
+        let p = fill(r::SANDBOX_FREEZE, &[&cid.to_string()]);
         let rb = Self::json(
             self.build(Method::POST, &p, CORE, DEFAULT_TIMEOUT),
-            &serde_json::json!({}),
+            &crate::sandbox::FreezeSandboxRequest { until },
         );
         Ok(self.call(rb).await?.1)
     }
 
-    /// `POST …/sandbox/resume` (202).
+    /// `POST …/sandbox/thaw` (202): bring a frozen sandbox back.
     ///
     /// # Errors
-    /// As [`Client::pause_sandbox`].
-    pub async fn resume_sandbox(&self, cid: Uuid) -> R<Sandbox> {
-        let p = fill(r::SANDBOX_RESUME, &[&cid.to_string()]);
+    /// As [`Client::freeze_sandbox`].
+    pub async fn thaw_sandbox(&self, cid: Uuid) -> R<Sandbox> {
+        let p = fill(r::SANDBOX_THAW, &[&cid.to_string()]);
         let rb = Self::json(
             self.build(Method::POST, &p, CORE, DEFAULT_TIMEOUT),
             &serde_json::json!({}),
@@ -410,7 +410,7 @@ impl Client {
     /// `POST …/sandbox/snapshot` (201).
     ///
     /// # Errors
-    /// As [`Client::pause_sandbox`].
+    /// As [`Client::freeze_sandbox`].
     pub async fn snapshot_sandbox(&self, cid: Uuid) -> R<SnapshotReply> {
         let p = fill(r::SANDBOX_SNAPSHOT, &[&cid.to_string()]);
         let rb = Self::json(

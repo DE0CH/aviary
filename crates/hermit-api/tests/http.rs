@@ -297,9 +297,9 @@ async fn every_route_through_client_and_router() {
         fx::<ReleaseSandboxReply>("release-sandbox-reply")
     );
     // not implemented by the stub: the trait's default
-    let e = c.pause_sandbox(cid()).await.unwrap_err();
+    let e = c.freeze_sandbox(cid(), None).await.unwrap_err();
     assert_eq!((e.status(), e.code()), (Some(501), Some("not_supported")));
-    assert_eq!(c.resume_sandbox(cid()).await.unwrap_err().status(), Some(501));
+    assert_eq!(c.thaw_sandbox(cid()).await.unwrap_err().status(), Some(501));
     assert_eq!(
         c.snapshot_sandbox(cid()).await.unwrap(),
         fx::<SnapshotReply>("snapshot-reply")

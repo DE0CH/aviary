@@ -60,7 +60,7 @@ async fn fake_hermit_passes() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_hermit_answering_pause_while_claiming_none_fails() {
+async fn a_hermit_answering_freeze_while_claiming_none_fails() {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let fake = FakeHermit::new();
     let running = fake.serve().await.unwrap();
@@ -69,14 +69,14 @@ async fn a_hermit_answering_pause_while_claiming_none_fails() {
         gateway: fake.token(Caller::Gateway),
         ..Tokens::default()
     };
-    // the fake answers 501 to pause; a suite told the implementation claims pause must fail it
+    // the fake answers 501 to freeze; a suite told the implementation claims freeze must fail it
     let report = Report::new("hermit", vec!["sandbox.capabilities".into()], true);
     hermit::run(
         Options {
             target: running.url(),
             tokens,
             capabilities: Capabilities {
-                pause: true,
+                freeze: true,
                 snapshot: false,
             },
             hooks: Hooks::default(),

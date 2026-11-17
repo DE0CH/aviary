@@ -13,8 +13,8 @@ pub const WARM: &str = "/v1/warm";
 /// `PUT` get-or-start, `GET` read or long-poll (3.6.2, 3.6.3).
 pub const SANDBOX: &str = "/v1/conversations/{cid}/sandbox";
 pub const SANDBOX_RELEASE: &str = "/v1/conversations/{cid}/sandbox/release";
-pub const SANDBOX_PAUSE: &str = "/v1/conversations/{cid}/sandbox/pause";
-pub const SANDBOX_RESUME: &str = "/v1/conversations/{cid}/sandbox/resume";
+pub const SANDBOX_FREEZE: &str = "/v1/conversations/{cid}/sandbox/freeze";
+pub const SANDBOX_THAW: &str = "/v1/conversations/{cid}/sandbox/thaw";
 pub const SANDBOX_SNAPSHOT: &str = "/v1/conversations/{cid}/sandbox/snapshot";
 /// The change feed (3.6.5).
 pub const SANDBOX_EVENTS: &str = "/v1/sandbox-events";
@@ -81,8 +81,8 @@ pub const RULES: &[RouteRule] = &[
     rule("PUT", SANDBOX, &[Magpie]),
     rule("GET", SANDBOX, &[Magpie]),
     rule("POST", SANDBOX_RELEASE, &[Magpie]),
-    rule("POST", SANDBOX_PAUSE, &[Magpie]),
-    rule("POST", SANDBOX_RESUME, &[Magpie]),
+    rule("POST", SANDBOX_FREEZE, &[Magpie]),
+    rule("POST", SANDBOX_THAW, &[Magpie]),
     rule("POST", SANDBOX_SNAPSHOT, &[Magpie]),
     rule("GET", SANDBOX_EVENTS, &[Magpie]),
     rule("PUT", WORKSPACE, &[Magpie]),

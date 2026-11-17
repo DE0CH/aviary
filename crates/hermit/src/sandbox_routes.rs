@@ -37,7 +37,8 @@ pub fn identify(core: &Core, ctx: &Ctx) -> Result<(SandboxIdentity, Entry), ApiE
     let person = id.person.trim().to_lowercase();
     let live = matches!(
         e.state,
-        SandboxState::Starting | SandboxState::Ready | SandboxState::Paused | SandboxState::Releasing
+        // a frozen sandbox runs nothing: none of its processes can be calling
+        SandboxState::Starting | SandboxState::Ready | SandboxState::Releasing
     );
     if !live || e.conversation_id != id.conversation || e.person != person {
         return Err(no_sandbox());

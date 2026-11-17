@@ -69,7 +69,8 @@ impl std::fmt::Debug for Hooks {
 /// What the implementation claims (`--capabilities`); it publishes no flags itself.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Capabilities {
-    pub pause: bool,
+    /// Freeze and thaw (jarvis4 docs/PLAN-fabric.md).
+    pub freeze: bool,
     pub snapshot: bool,
 }
 
@@ -775,22 +776,22 @@ async fn capabilities(s: &Suite) -> Outcome {
         let path = routes::fill(route, &[&cid]);
         async move { s.call(As::Magpie, "POST", &path, None).await }
     };
-    if s.o.capabilities.pause {
-        let p = call(routes::SANDBOX_PAUSE).await?;
-        p.expect(202, None, "pause")?;
-        let x: Sandbox = p.typed("pause")?;
-        ensure!(x.state == SandboxState::Paused, "pause: state {:?}", x.state);
-        let r = call(routes::SANDBOX_RESUME).await?;
-        r.expect(202, None, "resume")?;
-        let y: Sandbox = r.typed("resume")?;
-        ensure!(y.id == x.id, "resume made another sandbox");
+    if s.o.capabilities.freeze {
+        let p = call(routes::SANDBOX_FREEZE).await?;
+        p.expect(202, None, "freeze")?;
+        let x: Sandbox = p.typed("freeze")?;
+        ensure!(x.state == SandboxState::Frozen, "freeze: state {:?}", x.state);
+        let r = call(routes::SANDBOX_THAW).await?;
+        r.expect(202, None, "thaw")?;
+        let y: Sandbox = r.typed("thaw")?;
+        ensure!(y.id == x.id, "thaw made another sandbox");
     } else {
-        call(routes::SANDBOX_PAUSE)
+        call(routes::SANDBOX_FREEZE)
             .await?
-            .expect(501, Some("not_supported"), "pause (not claimed)")?;
-        call(routes::SANDBOX_RESUME)
+            .expect(501, Some("not_supported"), "freeze (not claimed)")?;
+        call(routes::SANDBOX_THAW)
             .await?
-            .expect(501, Some("not_supported"), "resume (not claimed)")?;
+            .expect(501, Some("not_supported"), "thaw (not claimed)")?;
     }
     if s.o.capabilities.snapshot {
         let a = call(routes::SANDBOX_SNAPSHOT).await?;
@@ -1241,7 +1242,7 @@ async fn workspaces(s: &Suite) -> Outcome {
     Ok(())
 }
 
-/// Parses `--capabilities pause,snapshot`.
+/// Parses `--capabilities freeze,snapshot`.
 ///
 /// # Errors
 /// On an unknown name.
@@ -1249,9 +1250,9 @@ pub fn parse_capabilities(v: &str) -> Result<Capabilities, String> {
     let mut c = Capabilities::default();
     for part in v.split(',').map(str::trim).filter(|p| !p.is_empty()) {
         match part {
-            "pause" | "resume" => c.pause = true,
+            "freeze" | "thaw" => c.freeze = true,
             "snapshot" => c.snapshot = true,
-            other => return Err(format!("unknown capability {other:?} (pause, snapshot)")),
+            other => return Err(format!("unknown capability {other:?} (freeze, snapshot)")),
         }
     }
     Ok(c)
