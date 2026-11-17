@@ -11,6 +11,7 @@ import { isWeb } from "@/constants/platform";
 import { accessHeaders, accessToken, loadAccessToken, saveAccessToken, subscribeAccessToken } from "@/yyc/access-token";
 import { appScheme, siteOrigin } from "@/yyc/site";
 import { applyBuildProductName } from "@/yyc/native-product";
+import { useHideLaunchScreen } from "@/yyc/launch-screen";
 import { isSignedOutPage, SignedOutShell } from "@/yyc/signed-out-shell";
 import { YYC_HERO_LOGO_SIZE } from "@/yyc/hero";
 import type { Theme } from "@/styles/theme";
@@ -88,6 +89,9 @@ function NativeAccessGate({ children }: { children: ReactNode }) {
     });
     return () => subscription.remove();
   }, [state]);
+
+  // The router hides iOS's launch screen once it is mounted; the sign-in screen comes before it (launch-screen.ts)
+  useHideLaunchScreen(state === "signed-out");
 
   if (state === "signed-in") return <>{children}</>;
   if (state === "checking") {

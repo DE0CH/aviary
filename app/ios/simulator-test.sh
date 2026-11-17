@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Simulator smoke test of an iOS build (YYC AI, Jarvis Chat): install, launch, and check with Maestro that it reaches
-# its sign-in screen showing its product's name (CI has no Access login, so the chat itself is not reached here).
+# its sign-in screen showing its product's name, whose button a tap reaches (CI has no Access login, so the chat itself is not reached here).
 # Usage: PRODUCT_NAME="YYC AI" simulator-test.sh <path to .app>
 set -euo pipefail
 APP="$1"
@@ -43,6 +43,12 @@ if [ "$status" -ne 0 ] && grep -q "IOSDriverTimeoutException" "$OUT/maestro-1.lo
   maestro --device "$UDID" test "${FLOW_ENV[@]}" --test-output-dir "$OUT/sign-in-2" "$HERE/maestro/sign-in-screen.yaml" || status=$?
 fi
 xcrun simctl io "$UDID" screenshot "$OUT/final.png" || true
+# The flow opens iOS's sign-in prompt, which names the server's domain: when the address is a build secret (YYC AI:
+# no SITE_IS_PUBLIC) a failed run's screenshots may show it, and the artifacts of this public repo are not private
+if [ "$status" -ne 0 ] && [ "${SITE_IS_PUBLIC:-}" != "1" ]; then
+  find "$OUT" -name '*.png' -delete
+  echo "screenshots of the failed run removed (the server's address is a build secret)"
+fi
 xcrun simctl shutdown "$UDID" || true
 xcrun simctl delete "$UDID" || true
 exit $status
