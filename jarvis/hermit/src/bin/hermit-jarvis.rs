@@ -1,5 +1,5 @@
 //! `hermit-jarvis serve`: the hermit contract on :8080, the gateway listener on :8081, pigeon's models route on
-//! :8082, ops on :9090 (aviary/README.md).
+//! :8082 (the menu, and the conversation search's query embeddings), ops on :9090 (aviary/README.md).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -83,9 +83,38 @@ async fn main() -> anyhow::Result<()> {
         fabric: jarvis_aviary::fabric::FabricHermit::from_env(),
     }));
     let models_route = app.settings.models_route();
+    let openrouter_key = env.openrouter_key.clone();
     let api = guarded_router(Arc::new(app.clone()), RouteGuard::new(callers));
     let gw = jarvis_aviary::central::router(app.clone());
-    let models = axum::Router::new().route(
+    let embed_callers = model_callers.clone();
+    let embed_http = app.http.clone();
+    let models = axum::Router::new()
+        .route(
+            gateway_api::models::EMBEDDINGS,
+            // pigeon's query embedding (the conversation search): to OpenRouter with the deployment's key
+            axum::routing::post(move |headers: axum::http::HeaderMap, body: axum::body::Bytes| {
+                let ok = embed_callers.identify_headers(&headers).is_some();
+                let http = embed_http.clone();
+                let key = openrouter_key.clone();
+                async move {
+                    if !ok {
+                        return jarvis_aviary::embeddings::refusal(
+                            axum::http::StatusCode::UNAUTHORIZED,
+                            "unauthenticated",
+                            "a pair token is required",
+                        );
+                    }
+                    jarvis_aviary::embeddings::relay(
+                        &http,
+                        jarvis_aviary::machine::OPENROUTER,
+                        key.as_deref(),
+                        body,
+                    )
+                    .await
+                }
+            }),
+        )
+        .route(
         gateway_api::models::MODELS,
         axum::routing::get(move |headers: axum::http::HeaderMap| {
             let ok = model_callers.identify_headers(&headers).is_some();

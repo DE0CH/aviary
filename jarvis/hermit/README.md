@@ -63,6 +63,13 @@ Jarvis 4 session machine (harness aviary)                                     â”
   Anthropic takes a subscription login's call only when its system prompt begins with Claude Code's identity line,
   so aviary-gateway puts that line first on a call that is not Claude Code's own (the supervisor's title call:
   `machine.rs` `with_identity`).
+- The conversation search (Deyao, 2026-11-17): the settings' `embedding` (`{"id", "queryInstruction"}`; OpenRouter's
+  `qwen/qwen3-embedding-8b`) is the models route's embedding model. Each session's supervisor embeds its own
+  conversation's messages through the machine's gateway, which sends `POST /v1/embeddings` to OpenRouter's embeddings
+  API with `OPENROUTER_API`, the body as it came (`machine.rs`); the model reaches a machine as the boot reply's own
+  `embedding`, beside the settings, as `reasoning` does. pigeon embeds a search's query through :8082
+  (`src/embeddings.rs`, `HERMIT_OPENROUTER_KEY`; without it a search matches words only). magpie keeps the vectors in
+  chat-db with pgvector (DE0CH/deyao-ai `k8s/chat/db.yaml` creates the extension).
 - The conversation's title (magpie's: generated from the first message, or renamed in the chat) is the session's
   title on its card: hermit-jarvis reads it (`GET /v1/hermit/conversations/{id}`) and answers it to each health
   report, aviary-gateway serves it in `/jarvis/state`, and the harness's shim writes it as an `ai-title` line beside

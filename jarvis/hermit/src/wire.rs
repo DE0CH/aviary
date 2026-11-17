@@ -75,6 +75,10 @@ pub struct BootReply {
     /// session on an older image refuses a model member it does not know, and ignores this one.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub reasoning: BTreeMap<String, String>,
+    /// The conversation search's embedding model (the settings' `embedding`), beside the settings for the same
+    /// reason as `reasoning`: the machine's models route names it to the supervisor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding: Option<gateway_api::models::Embedding>,
 }
 
 impl std::fmt::Debug for BootReply {

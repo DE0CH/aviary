@@ -142,6 +142,9 @@ async fn do_boot(app: &App, machine: &str, req: &BootRequest) -> anyhow::Result<
                     // the model the session was made on in the Jarvis 4 app: the conversation starts on it, and
                     // from then on the chat's menu is the one place it is changed (Deyao, 2026-11-16)
                     model: session_model(&app.settings, &req.env),
+                    // the name the session was given on the New session page: the conversation's title, kept as a
+                    // rename so the title model leaves it alone (Deyao, 2026-11-17)
+                    title: req.env.get("SESSION_LABEL").cloned(),
                 })
                 .await
                 .map_err(|e| anyhow::anyhow!("magpie refused the conversation: {e}"))?
@@ -227,6 +230,7 @@ async fn do_boot(app: &App, machine: &str, req: &BootRequest) -> anyhow::Result<
         control_token: app.keys.control_token(row.id),
         settings: Some(app.settings.clone()),
         reasoning: app.settings.reasoning(),
+        embedding: app.settings.embedding.clone(),
     })
 }
 

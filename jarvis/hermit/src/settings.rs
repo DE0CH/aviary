@@ -29,6 +29,13 @@ pub struct Settings {
     /// know, and a change here must not reach running sessions.
     #[serde(default, skip_serializing)]
     pub sign_in: SignIn,
+    /// The conversation search's embedding model (`{"id", "queryInstruction"?}`; Deyao, 2026-11-17): the models
+    /// route names it, the supervisor embeds its conversation's messages with it through the machine's gateway, and
+    /// pigeon a query through :8082. Absent: the search matches words only. Never serialized: a machine gets it as
+    /// the boot reply's own `embedding`, since a session on an older image refuses a settings member it does not
+    /// know.
+    #[serde(default, skip_serializing)]
+    pub embedding: Option<gateway_api::models::Embedding>,
 }
 
 /// `signIn`.
@@ -204,6 +211,7 @@ impl Settings {
                     serde_json::from_value(v).ok()
                 })
                 .collect(),
+            embedding: self.embedding.clone(),
         }
     }
 }
@@ -296,11 +304,18 @@ mod tests {
                 .all(|m| m.get("reasoning").is_none()),
             "{sent}"
         );
+        // the search's embedding model: the models route names it; a machine gets it beside the settings too
+        assert_eq!(
+            route.embedding.as_ref().map(|e| e.id.as_str()),
+            Some("qwen/qwen3-embedding-8b")
+        );
+        assert!(sent.get("embedding").is_none(), "{sent}");
         let again: Settings = serde_json::from_value(sent).unwrap();
         assert_eq!(
             again.with_reasoning(&s.reasoning()),
             Settings {
                 sign_in: SignIn::default(),
+                embedding: None,
                 ..s.clone()
             }
         );

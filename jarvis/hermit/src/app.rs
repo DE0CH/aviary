@@ -131,10 +131,13 @@ pub struct Env {
     pub access_aud: String,
     /// The path of the deployment's settings file (src/settings.rs).
     pub settings: String,
+    /// The OpenRouter key of pigeon's query embeddings (the conversation search, `POST :8082/v1/embeddings`);
+    /// optional: without it a search matches words only.
+    pub openrouter_key: Option<String>,
 }
 
 impl Env {
-    /// Every variable is required (a missing or empty one aborts the start).
+    /// Every variable but `HERMIT_OPENROUTER_KEY` is required (a missing or empty one aborts the start).
     #[must_use]
     pub fn read() -> Self {
         Self {
@@ -147,6 +150,7 @@ impl Env {
             access_team: env::required("HERMIT_ACCESS_TEAM"),
             access_aud: env::required("HERMIT_ACCESS_AUD"),
             settings: env::required("HERMIT_SETTINGS"),
+            openrouter_key: env::try_required("HERMIT_OPENROUTER_KEY").ok(),
         }
     }
 }

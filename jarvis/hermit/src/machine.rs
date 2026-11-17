@@ -10,6 +10,8 @@
 //!   effect at the next request) and the OAuth beta that Claude Code sends only with its own OAuth login (the
 //!   supervisor gives it a placeholder API token). An OpenRouter model (`maker/model`, app.rs): to OpenRouter's
 //!   Messages API with `OPENROUTER_API` (store `openrouter`), the body as [`for_openrouter`] makes it.
+//!   `POST /v1/embeddings` (the conversation search's vectors, which the supervisor makes): to OpenRouter's
+//!   embeddings API with the same key, the body as it came.
 //! - `http://tools/…`: none in Jarvis 4 (404).
 //! - anything else, and `CONNECT host:port`: the internet, directly (a session machine's egress is open).
 //! - origin-form `POST /jarvis/deliver` (from harness-send on this machine): Jarvis's prompt into the conversation.
@@ -213,12 +215,16 @@ fn boot_env(b: &BootReply) -> String {
     s
 }
 
-/// The deployment's settings as the boot reply gives them, each model's level put back on it.
+/// The deployment's settings as the boot reply gives them, each model's level and the search's embedding model put
+/// back on them.
 fn settings_of(b: &BootReply) -> crate::settings::Settings {
-    b.settings
+    let mut s = b
+        .settings
         .clone()
         .unwrap_or_else(|| unreachable!("boot() returns only a reply with settings"))
-        .with_reasoning(&b.reasoning)
+        .with_reasoning(&b.reasoning);
+    s.embedding.clone_from(&b.embedding);
+    s
 }
 
 /// Runs the gateway for ever.
@@ -457,6 +463,11 @@ async fn model(state: &State, pq: &str, req: Request<Incoming>) -> Response<Body
     else {
         return refuse(StatusCode::BAD_REQUEST, "bad_request", "no body");
     };
+    let path = pq.split_once('?').map_or(pq, |(p, _)| p);
+    if path == gateway_api::models::EMBEDDINGS {
+        // the search's embedding model is OpenRouter's whatever its id looks like, and its body is no Messages body
+        return openrouter_as_is(state, method, pq, &parts.headers, body).await;
+    }
     if model_of(&body).is_some_and(|m| crate::settings::openrouter(&m)) {
         return openrouter(state, method, pq, &parts.headers, &body).await;
     }
@@ -529,6 +540,18 @@ async fn openrouter(
     headers: &hyper::HeaderMap,
     body: &Bytes,
 ) -> Response<Body> {
+    let body = for_openrouter(body, &state.settings).map_or_else(|| body.clone(), Bytes::from);
+    openrouter_as_is(state, method, pq, headers, body).await
+}
+
+/// A call to OpenRouter with the machine's key, the body as given.
+async fn openrouter_as_is(
+    state: &State,
+    method: Method,
+    pq: &str,
+    headers: &hyper::HeaderMap,
+    body: Bytes,
+) -> Response<Body> {
     let Some(key) = state.cfg.openrouter_key.as_deref() else {
         return refuse(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -536,7 +559,6 @@ async fn openrouter(
             "no OpenRouter key on this machine (OPENROUTER_API, store openrouter)",
         );
     };
-    let body = for_openrouter(body, &state.settings).map_or_else(|| body.clone(), Bytes::from);
     let mut r = state
         .http
         .request(method, format!("{}{pq}", state.cfg.openrouter_url));
@@ -908,7 +930,7 @@ mod tests {
         let seen: Seen = Arc::default();
         let s = seen.clone();
         let app = axum::Router::new().route(
-            "/v1/messages",
+            "/v1/{*api}",
             axum::routing::post(move |h: axum::http::HeaderMap, b: Bytes| {
                 let s = s.clone();
                 async move {
@@ -957,6 +979,7 @@ mod tests {
                 control_token: "hct_test".to_owned(),
                 settings: Some(settings()),
                 reasoning: settings().reasoning(),
+                embedding: settings().embedding,
             })
             .unwrap(),
         )
@@ -1057,6 +1080,49 @@ mod tests {
         assert!(a[0].1.split(',').any(|b| b == OAUTH_BETA));
         assert!(a[0].1.split(',').any(|b| b == "claude-code-20250219"));
         assert_eq!(a[0].2, claude);
+    }
+
+    /// The conversation search (Deyao, 2026-11-17): the models route names the embedding model, and the
+    /// supervisor's embeddings call reaches OpenRouter with the machine's key and its body as it came; nothing of it
+    /// reaches Anthropic.
+    #[tokio::test]
+    async fn an_embeddings_call_goes_to_openrouter_as_it_came() {
+        let (client, seen_a, seen_o) = gateway(Some("or-key")).await;
+        let m: serde_json::Value = client
+            .get("http://model/v1/aviary/models")
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(m["embedding"]["id"], "qwen/qwen3-embedding-8b");
+        let body = json!({"model": "qwen/qwen3-embedding-8b", "input": ["the shuttle bus"], "dimensions": 1024,
+            "encoding_format": "float"});
+        let status = client
+            .post("http://model/v1/embeddings")
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(status, StatusCode::OK);
+        let o = seen_o.lock().unwrap().clone();
+        assert_eq!(o.len(), 1);
+        assert_eq!(o[0].0, "Bearer or-key");
+        assert_eq!(o[0].2, body);
+        assert!(seen_a.lock().unwrap().is_empty());
+        // no key: refused here
+        let (client, _, seen_o) = gateway(None).await;
+        let status = client
+            .post("http://model/v1/embeddings")
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(seen_o.lock().unwrap().is_empty());
     }
 
     /// A machine without the store `openrouter` (a session made before the model was offered): the turn is refused
