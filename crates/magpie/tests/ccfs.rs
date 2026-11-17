@@ -913,6 +913,82 @@ async fn a_persons_prompt_echo_is_never_a_prompt_again() {
     assert_eq!(prompts, 0, "no cc.user prompt event was ever made for an echo");
 }
 
+/// A person turn's `user.sent` with `text`, as admission appends it.
+async fn sent(pool: &aviary_pg::Pool, conv: Uuid, turn: Uuid, text: &str) {
+    let e = common::ev::in_turn(common::ev::user_sent("cm-1", text), turn);
+    let e = &e; // borrowed: the transaction may run more than once
+    aviary_pg::tx!(pool, |t| -> magpie::error::Result<i64> {
+        magpie::events::append(t, conv, e.clone()).await
+    })
+    .await
+    .unwrap();
+}
+
+/// The supervisor switches the model in place before a person's message (`set_model`); Claude Code 2.1.325 then
+/// writes its `/model` record ahead of the message. The record is not the message's echo: the message stays one row
+/// (2026-11-17: "you are idle" showed twice after a pick in Jarvis 4's chat). A `/compact` the person typed is the
+/// echo as before.
+#[tokio::test]
+async fn claude_codes_model_switch_record_is_not_the_persons_message() {
+    let (db, _r, mut s) = setup("cc_model_switch_echo").await;
+    let sql = common::sql(&db.url);
+    let p = main_path();
+    let conv = s.conversation;
+    set_main(&sql, conv, &p).await;
+    let t1 = person_turn(&sql, &mut s).await;
+    sent(&sql, conv, t1, "hello").await;
+    let first = [prompt("p1", "hello"), assistant("a1", "hi")].concat();
+    s.write(&p, 0, &first).await.unwrap();
+
+    let t2 = person_turn(&sql, &mut s).await;
+    sent(&sql, conv, t2, "you are idle").await;
+    let switch = [
+        line(&json!({"type": "user", "uuid": "c1", "isMeta": true, "message": {"role": "user",
+            "content": "<local-command-caveat>The command below was run directly in Claude Code.</local-command-caveat>"}})),
+        prompt(
+            "c2",
+            "<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args>claude-opus-5-5</command-args>",
+        ),
+        prompt("c3", "<local-command-stdout>Set model to `claude-opus-5-5`</local-command-stdout>"),
+        prompt("p2", "you are idle"),
+        assistant("a2", "back"),
+    ]
+    .concat();
+    s.write(&p, first.len() as u64, &switch).await.unwrap();
+    let names = |v: Vec<(i64, String, Option<String>)>| v.into_iter().map(|e| (e.1, e.2)).collect::<Vec<_>>();
+    let replies = vec![
+        ("cc.assistant".to_owned(), Some("a1".to_owned())),
+        ("cc.assistant".to_owned(), Some("a2".to_owned())),
+    ];
+    assert_eq!(
+        names(visible(&sql, conv).await),
+        replies,
+        "the message is t2's echo, no prompt row of its own"
+    );
+
+    // a person's own `/compact`: its command record is the echo
+    let t3 = person_turn(&sql, &mut s).await;
+    sent(&sql, conv, t3, "/compact").await;
+    let compact = [
+        prompt(
+            "c4",
+            "<command-name>/compact</command-name>\n            <command-message>compact</command-message>\n            <command-args></command-args>",
+        ),
+        prompt("c5", "<local-command-stdout>Compacted </local-command-stdout>"),
+        prompt("p3", "and then"),
+    ]
+    .concat();
+    let at = (first.len() + switch.len()) as u64;
+    s.write(&p, at, &compact).await.unwrap();
+    let mut with_prompt = replies.clone();
+    with_prompt.push(("cc.user".to_owned(), Some("p3".to_owned())));
+    assert_eq!(
+        names(visible(&sql, conv).await),
+        with_prompt,
+        "/compact is t3's echo, the next line a prompt"
+    );
+}
+
 #[tokio::test]
 async fn an_echo_rewritten_after_its_limbo_flushed_is_still_no_prompt() {
     let (db, _r, mut s) = setup("cc_echo_flushed").await;

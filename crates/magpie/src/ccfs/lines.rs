@@ -470,6 +470,14 @@ async fn class_of(tx: &Tx<'_>, op: &Op<'_>, sha: &Sha, data: Option<&Value>) -> 
             answering,
         },
     );
+    // a command record of Claude Code's own (the `/model` of an in-place switch) is not the person's message: the echo
+    // stays pending for the message's line after it
+    if class == Class::Echo
+        && let Some(record) = classify::command_record(data)
+        && !echoes_as_command(tx, op, &record).await?
+    {
+        return Ok(Class::Internal);
+    }
     let prompt_like = match &class {
         Class::Echo => true,
         Class::Event(e) => e.is_prompt,
@@ -488,6 +496,26 @@ async fn class_of(tx: &Tx<'_>, op: &Op<'_>, sha: &Sha, data: Option<&Value>) -> 
         ));
     }
     Ok(class)
+}
+
+/// Whether a command record (`record`) is the echo of its turn's `user.sent`: a command's name line when the person's
+/// message runs that command (they typed `/compact`), never its output line.
+async fn echoes_as_command(tx: &Tx<'_>, op: &Op<'_>, record: &classify::CommandRecord) -> Result<bool> {
+    let classify::CommandRecord::Name(name) = record else {
+        return Ok(false);
+    };
+    let Some(turn) = op.turn_id() else {
+        return Ok(false);
+    };
+    let sent: Option<String> = tx
+        .query_opt(
+            "select data->>'text' from events where conversation_id = $1 and is_prompt and turn_id = $2
+               and kind = 'user.sent' order by seq limit 1",
+            &[&op.conv.id, &turn],
+        )
+        .await?
+        .and_then(|r| r.get(0));
+    Ok(sent.is_some_and(|t| classify::runs_command(&t, name)))
 }
 
 /// A prompt line that is a person's mid-turn message taken in (src/turns/midturn.rs): its row carries the app's id,

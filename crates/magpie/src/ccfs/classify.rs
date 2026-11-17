@@ -115,6 +115,44 @@ pub const INTERNAL_PREFIXES: [&str; 6] = [
     "<local-command-stdout>",
 ];
 
+/// A line Claude Code writes for a command run in it, rather than for a message ([`command_record`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandRecord {
+    /// `<command-name>/NAME</command-name>…`: the command (`/NAME`).
+    Name(String),
+    /// `<local-command-stdout>…` or `<local-command-stderr>…`: its output.
+    Output,
+}
+
+/// The command record a `user` line is, if it is one. Claude Code writes these for a command a person typed (the
+/// first is then the echo of the turn's message) and for the supervisor's own commands, among them the `/model`
+/// it writes when the model is switched in place (`set_model`; 2.1.325, once the conversation has messages): a meta
+/// caveat, `<command-name>/model</command-name>…` and `<local-command-stdout>Set model to …`, just before the
+/// turn's message. So such a line is the echo only when the turn's message runs that command ([`runs_command`]).
+#[must_use]
+pub fn command_record(data: Option<&Value>) -> Option<CommandRecord> {
+    let d = data.filter(|d| s(d, "type") == Some("user") && !truthy(d, "isMeta"))?;
+    let text = content_text(d.get("message").and_then(|m| m.get("content")))?;
+    let text = text.trim_start();
+    if text.starts_with("<local-command-stdout>") || text.starts_with("<local-command-stderr>") {
+        return Some(CommandRecord::Output);
+    }
+    let rest = text.strip_prefix("<command-name>")?;
+    let name = rest.split_once("</command-name>").map_or(rest, |(n, _)| n).trim();
+    Some(CommandRecord::Name(name.to_owned()))
+}
+
+/// Whether a message a person sent (`sent`, the turn's `user.sent` text) runs the command `/NAME` (`name`, as
+/// [`CommandRecord::Name`] has it): the text is the command, alone or followed by its arguments.
+#[must_use]
+pub fn runs_command(sent: &str, name: &str) -> bool {
+    !name.is_empty()
+        && sent
+            .trim_start()
+            .strip_prefix(name)
+            .is_some_and(|r| r.is_empty() || r.starts_with(char::is_whitespace))
+}
+
 fn blocks(content: Option<&Value>) -> impl Iterator<Item = &Value> {
     content.and_then(Value::as_array).into_iter().flatten()
 }
@@ -613,6 +651,29 @@ mod tests {
         let e = event(classify(Some(&summary), ECHO));
         assert!(!e.is_prompt);
         assert_eq!(e.meta.compact_summary, Some(true));
+    }
+
+    /// The lines Claude Code 2.1.325 writes when the supervisor switches the model in place, and a person's own
+    /// `/compact`.
+    #[test]
+    fn command_records_and_the_commands_a_message_runs() {
+        let user = |text: &str| json!({"type": "user", "message": {"role": "user", "content": text}});
+        let model = user(
+            "<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args>claude-opus-5-5</command-args>",
+        );
+        assert_eq!(command_record(Some(&model)), Some(CommandRecord::Name("/model".into())));
+        let out = user("<local-command-stdout>Set model to `claude-opus-5-5`</local-command-stdout>");
+        assert_eq!(command_record(Some(&out)), Some(CommandRecord::Output));
+        let caveat = json!({"type": "user", "isMeta": true, "message": {"content": "<local-command-caveat>x</local-command-caveat>"}});
+        assert_eq!(command_record(Some(&caveat)), None);
+        assert_eq!(command_record(Some(&user("you are idle"))), None);
+        assert_eq!(command_record(Some(&user("see <command-name>/x</command-name>"))), None);
+
+        assert!(runs_command("/compact", "/compact"));
+        assert!(runs_command("  /model claude-opus-5-5", "/model"));
+        assert!(!runs_command("you are idle", "/model"));
+        assert!(!runs_command("/models", "/model"));
+        assert!(!runs_command("/compact", ""));
     }
 
     /// What the old stack's history left out is internal (cutover 10.2 R6).
