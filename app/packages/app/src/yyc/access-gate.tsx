@@ -10,6 +10,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { isWeb } from "@/constants/platform";
 import { accessHeaders, accessToken, loadAccessToken, saveAccessToken, subscribeAccessToken } from "@/yyc/access-token";
 import { appScheme, siteOrigin } from "@/yyc/site";
+import { applyBuildProductName } from "@/yyc/native-product";
 import { isSignedOutPage, SignedOutShell } from "@/yyc/signed-out-shell";
 import { YYC_HERO_LOGO_SIZE } from "@/yyc/hero";
 import type { Theme } from "@/styles/theme";
@@ -17,6 +18,9 @@ import type { Theme } from "@/styles/theme";
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const accentColorMapping = (theme: Theme) => ({ color: theme.colors.accent });
 
+
+// the sign-in screen is the first thing a native app shows: it names the build's product
+applyBuildProductName();
 
 type GateState = "checking" | "signed-out" | "signed-in";
 
