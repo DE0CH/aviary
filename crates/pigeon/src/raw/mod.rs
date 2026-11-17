@@ -1,7 +1,8 @@
 //! The raw view (Deyao, 2026-11-05: "a more raw outputs like the transcript view or the subagent view, in addition to
-//! the normal ui"): beside the normal conversation of a view-as tab, every line of the Claude Code transcript in
-//! order, each as a typed cell (user, assistant, thinking, tool call, tool result, system, compaction, interrupt…)
-//! with its time and its content as text. Admin only and read-only. English, as everything only Deyao sees.
+//! the normal ui"): beside the normal conversation of a view-as tab, every line of the agent's transcript (Claude
+//! Code's, or Qwen Code's read by [`qwen`]) in order, each as a typed cell (user, assistant, thinking, tool call,
+//! tool result, system, compaction, interrupt…) with its time and its content as text. Admin only and read-only.
+//! English, as everything only Deyao sees.
 //!
 //! Standalone (Deyao, 2026-11-05: "just work standalone just with the admin identity"): the page and its data need
 //! only the admin's own Cloudflare Access sign-in (the assertion header, the `CF_Authorization` cookie or the app's
@@ -20,11 +21,12 @@
 //!   address names a conversation; nothing shows in a normal tab.
 
 pub mod cells;
+pub mod qwen;
 
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use magpie_api::errors::ErrorCode;
-use magpie_api::rows::TranscriptQuery;
+use magpie_api::rows::{TranscriptLine, TranscriptQuery};
 use serde_json::json;
 
 use crate::App;
@@ -75,6 +77,17 @@ fn not_available() -> Response {
 /// (the address an admin copies from a view-as tab's path).
 fn conversation_id(s: &str) -> Option<uuid::Uuid> {
     uuid::Uuid::parse_str(s.strip_prefix("wks_").unwrap_or(s)).ok()
+}
+
+/// Whether a main transcript path is Qwen Code's (under its home `qwen/`; magpie's `ccfs::qwen::is_qwen`).
+fn is_qwen(path: Option<&str>) -> bool {
+    path.is_some_and(|p| p.starts_with("qwen/"))
+}
+
+/// The cells of a page of transcript lines, read in the shape of the harness that wrote them.
+fn shown(path: Option<&str>, lines: &[TranscriptLine]) -> Vec<cells::Cell> {
+    let of_line = if is_qwen(path) { qwen::of_line } else { cells::of_line };
+    lines.iter().flat_map(|l| of_line(l.ord, &l.line)).collect()
 }
 
 /// The lines route's suffix after the conversation id.
@@ -196,7 +209,7 @@ async fn lines(app: &App, headers: &HeaderMap, cid: uuid::Uuid, query: Option<&s
     };
     match calls.admin_transcript(cid, &query_of(query)).await {
         Ok(p) => {
-            let shown: Vec<_> = p.lines.iter().flat_map(|l| cells::of_line(l.ord, &l.line)).collect();
+            let shown = shown(p.path.as_deref(), &p.lines);
             no_store(json(
                 StatusCode::OK,
                 &json!({"path": p.path, "cells": shown, "next": p.next, "more": p.more, "running": p.running,
@@ -226,7 +239,7 @@ pub async fn transcript(app: &App, id: &Identity, conversation: &str, query: Opt
     };
     match calls.transcript(cid, &query_of(query)).await {
         Ok(p) => {
-            let shown: Vec<_> = p.lines.iter().flat_map(|l| cells::of_line(l.ord, &l.line)).collect();
+            let shown = shown(p.path.as_deref(), &p.lines);
             let mut r = json(
                 StatusCode::OK,
                 &json!({"path": p.path, "cells": shown, "next": p.next, "more": p.more, "running": p.running}),
@@ -260,6 +273,23 @@ mod tests {
             "and needs no view-as token"
         );
         assert!(toggle_script().contains(compat::VIEW_AS_STORAGE));
+    }
+
+    #[test]
+    fn a_qwen_code_transcript_is_read_as_qwen_codes() {
+        let line = TranscriptLine {
+            ord: 1,
+            line: r#"{"type":"user","provenance":"real_user","message":{"role":"user","parts":[{"text":"cut the video"}]}}"#
+                .to_owned(),
+        };
+        let c = shown(
+            Some("qwen/projects/-workspace/chats/f3f05d67.jsonl"),
+            std::slice::from_ref(&line),
+        );
+        assert_eq!((c[0].kind.as_str(), c[0].text.as_str()), ("user", "cut the video"));
+        // a Claude Code transcript is read as before
+        let c = shown(Some("projects/-workspace/f3f05d67.jsonl"), &[line]);
+        assert_eq!(c[0].text, "");
     }
 
     #[test]

@@ -40,7 +40,7 @@ pub struct Cell {
 }
 
 impl Cell {
-    fn new(ord: i64, at: Option<&str>, kind: &str, text: String) -> Self {
+    pub(super) fn new(ord: i64, at: Option<&str>, kind: &str, text: String) -> Self {
         Self {
             ord,
             at: at.map(str::to_owned),
