@@ -80,6 +80,20 @@ class Seeded(unittest.TestCase):
             return subprocess.run([sys.executable, "-I", os.path.join(HERE, "check_deploy.py"), "--folder", folder,
                                    "--render", f.name], capture_output=True, text=True)
 
+    def test_the_test_account_holds_at_most_three_sandboxes(self):
+        # bot@deyaochen.com (tests/e2e, the operator's checks) once held nine of the ten sandboxes
+        r = self.hermit_json(lambda h: h["sandbox"].pop("maxActiveByPerson"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("::error::H ", r.stdout)
+        self.assertIn("bot@deyaochen.com", r.stdout)
+        r = self.hermit_json(lambda h: h["sandbox"]["maxActiveByPerson"].update({"bot@deyaochen.com": 4}))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("at most 3", r.stdout)
+        # a number above the pool limits nobody
+        r = self.hermit_json(lambda h: h["sandbox"]["maxActiveByPerson"].update({"*": 11}))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("above sandbox.maxActive", r.stdout)
+
     def test_hosts_hold_the_sandboxes(self):
         # 7Gi sandboxes: 2 a host. 3 hosts hold 6, fewer than maxActive 10; and two 100 GiB scratch filesystems
         # do not fit a 40 GiB disk (they are sparse files: nothing fails until a sandbox's /tmp runs short)

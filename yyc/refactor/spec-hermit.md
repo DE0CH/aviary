@@ -1167,6 +1167,9 @@ transaction:
    for its soft release (`pool`); a victim whose supervisor refuses (409) is skipped for 60 s and the next is tried; no
    victim: wait 2 s and retry until `created_at + capacityWaitSeconds`, then `gone` (`pool_full`, `sandbox_busy`).
    Waiting rows are served oldest first (a row only claims if no older unclaimed `starting` row exists).
+   A person's own number (`sandbox.maxActiveByPerson`: an address or `*` to a number; absent = none): a row whose
+   person already holds that many live claimed sandboxes does not claim, counts as no older row for the others, takes
+   only that person's sandboxes as victims, and ends the same way (`pool_full`, `sandbox_busy`).
 2. **workspace**: ensure workspace `<conversation id>` (15.5). A failure on this replica's mount (15.6) hands the start
    to another replica (the claim is released with `task_until = now()`, at most 3 hand-overs); other failures retry 3
    times 2 s apart, then `gone` (`workspace_unavailable`, `sandbox_failed`).

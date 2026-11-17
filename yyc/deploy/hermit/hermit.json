@@ -26,6 +26,7 @@
     "pids": 4096,
     "openFiles": 65536,
     "maxActive": 10,
+    "maxActiveByPerson": {"bot@deyaochen.com": 3},
     "idleMinutes": 30,
     "maxLifetimeHours": 8,
     "lifetimeGraceMinutes": 60,

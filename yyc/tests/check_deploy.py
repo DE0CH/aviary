@@ -42,6 +42,8 @@ Each failure prints one line `<item> <object>: <why>`; exit 1 on any. What it as
      sandbox.memory, or CPUs x cpuOvercommit over sandbox.cpu, the smaller); fabric.aws.maxHosts x N holds
      sandbox.maxActive, and the host's disk fabric.aws.diskGiB (aviary infra.sh's 40 when absent) holds N scratch
      filesystems of sandbox.tmpGiB in full beside 16 GiB for the system and the image
+     sandbox.maxActiveByPerson (a person's own number of sandboxes): none above sandbox.maxActive, and the test
+     account bot@deyaochen.com (tests/e2e, the operator's checks) holds at most 3
   W  magpie-pg (news-stream/deploy/clusters/talos/db/magpie-pg.yaml) keeps min_wal_size >= 1GB and max_wal_size >= 2GB
   L  the balancer (a Service of type LoadBalancer): each port's targetPort is a name, and exactly one of the
      workloads its selector takes declares a container port of that name: the ports of one balancer lead to
@@ -59,6 +61,7 @@ GRACE = {"pigeon": 320, "magpie": 75, "hermit": 90, "egress": 625, "tools": 180,
 NO_PRESTOP = {"cloudflared"}
 BRIDGE_CALLEES = {"pigeon": 12, "hermit": 12}
 GATEWAY_FIELDS = ["name", "wgAddress", "hostCidr", "controlCidr", "sandboxCidr", "egressVip", "privateGateway", "podCidr"]
+TEST_ACCOUNT, TEST_ACCOUNT_MAX = "bot@deyaochen.com", 3
 FAIL = []
 
 
@@ -474,6 +477,13 @@ def check_hosts(h):
     if f["aws"]["maxHosts"] * n < s["maxActive"]:
         fail("H", "hermit.json", f"fabric.aws.maxHosts {f['aws']['maxHosts']} x {n} sandboxes a host holds fewer than "
              f"sandbox.maxActive {s['maxActive']}")
+    by = s.get("maxActiveByPerson", {})
+    for who, m in by.items():
+        if m > s["maxActive"]:
+            fail("H", "hermit.json", f"sandbox.maxActiveByPerson {who}: {m} is above sandbox.maxActive {s['maxActive']}")
+    if not 1 <= by.get(TEST_ACCOUNT, by.get("*", 0)) <= TEST_ACCOUNT_MAX:
+        fail("H", "hermit.json", f"sandbox.maxActiveByPerson: the test account {TEST_ACCOUNT} holds at most "
+             f"{TEST_ACCOUNT_MAX} sandboxes (its conversations once held nine of the ten)")
     disk, need = f["aws"].get("diskGiB", 40), n * s["tmpGiB"] + 16
     if disk < need:
         fail("H", "hermit.json", f"fabric.aws.diskGiB {disk} holds fewer than {n} sandboxes of sandbox.tmpGiB "
