@@ -237,7 +237,10 @@ async fn a_session_boots_turns_pauses_and_resumes() {
     let made = magpie.fake.script().calls_to("hermit_create_conversation");
     assert_eq!(made[0].body.as_ref().unwrap()["model"], "claude-opus-5-5");
     // and under the name the session was given on the New session page (the chat showed a generated title)
-    assert_eq!(made[0].body.as_ref().unwrap()["title"], "chat.deyaochen.com error");
+    assert_eq!(
+        made[0].body.as_ref().unwrap()["title"],
+        "chat.deyaochen.com error"
+    );
     // an unknown machine is refused
     assert_eq!(boot("mX").await.status(), 403);
     // the same machine again keeps its sandbox
