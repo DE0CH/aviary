@@ -1367,3 +1367,29 @@ async fn the_main_transcript_is_the_provider_sessions_path() {
     let e = s.unlink(&other).await.unwrap_err();
     assert_eq!(code(&e), "protected");
 }
+
+#[tokio::test]
+async fn a_cc_write_takes_its_body_from_the_buffered_body_budget() {
+    // a cc write's body (up to 16 MiB) was read whole outside magpie's buffered-body budget, with no bound on how many
+    // at once (audit of 2026-11-16, finding 7): with the budget all taken, a write now waits for its share
+    let (_db, r, s) = setup("ccwritebudget").await;
+    let all = r.app().blobs.hold_body(256 << 20).await.unwrap();
+    assert_eq!(r.app().blobs.memory_free().0, 0);
+    let w = tokio::spawn(async move {
+        s.write("projects/-workspace/notes.md", 0, &vec![b'x'; 4 << 20])
+            .await
+            .map(|v| v.size)
+            .map_err(|e| e.to_string())
+    });
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert!(!w.is_finished(), "a cc write was read with the body budget all taken");
+    drop(all);
+    let size = tokio::time::timeout(Duration::from_secs(20), w)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(size, 4 << 20);
+    // what the write held is given back once it is answered
+    assert_eq!(r.app().blobs.memory_free().0, 256);
+}

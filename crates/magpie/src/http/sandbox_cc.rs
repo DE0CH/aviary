@@ -60,10 +60,9 @@ pub async fn write(app: &Magpie, ctx: Ctx, mut q: CcWriteQuery, body: Body) -> A
         async {
             let c = caller(&ctx)?;
             q.path = homes::stored(&ctx, &q.path)?;
-            // one byte over the cap is enough to refuse with 413
-            let data = axum::body::to_bytes(body, limits::CC_WRITE_MAX + 1)
-                .await
-                .map_err(|_| Error::code(magpie_api::errors::ErrorCode::TooLarge, "a cc write is over 16 MiB"))?;
+            // under the buffered-body budget (limits::BODY_MEMORY_BYTES) for as long as the write runs: over the cap
+            // is 413 `too_large`, before a byte is read when the length is declared
+            let (data, _held) = crate::files::read_body_held(app, body, limits::CC_WRITE_MAX as u64).await?;
             ops::write(app, &c, &q, &data).await
         }
         .await,
