@@ -95,8 +95,8 @@ RUN npm install --prefix /opt/claude-code -g @anthropic-ai/claude-code@${CLAUDE_
 # Qwen Code, the second harness (the supervisor runs /opt/qwen-code/bin/qwen by that absolute path): the DE0CH fork's
 # release (github.com/DE0CH/qwen-code, de0ch/README.md), pinned by its sha256, root-owned like Claude Code. The
 # managed files in /etc/qwen-code are the supervisor's, written at each Qwen Code start.
-ARG QWEN_CODE_RELEASE=de0ch-6198d290c36a
-ARG QWEN_CODE_SHA256=38d62b798a27d2ed9c3d13054c4228e1eca497bd0db3b3000030731b5e21260a
+ARG QWEN_CODE_RELEASE=de0ch-d781c42ebf20
+ARG QWEN_CODE_SHA256=630ec620307771d1f53cd6cde0d9c0f24b5945c23808721c8b8ec5bf61a5ef41
 RUN curl -fsSL -o /tmp/qwen-code.tgz "https://github.com/DE0CH/qwen-code/releases/download/${QWEN_CODE_RELEASE}/qwen-code-de0ch.tgz" \
  && printf '%s  %s\n' "${QWEN_CODE_SHA256}" /tmp/qwen-code.tgz | sha256sum -c - \
  && npm install --prefix /opt/qwen-code -g /tmp/qwen-code.tgz \

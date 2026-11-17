@@ -132,6 +132,10 @@ check "Qwen Code names a reply in its stream as its transcript records it" img_r
 # Upstream Qwen Code refuses `none`, and the supervisor then fails the turn it was sent for.
 check "Qwen Code takes the thinking level none" img_run "$img" -c '
   grep -rqF "setThinkingOff(true)" /opt/qwen-code/lib/node_modules/@qwen-code/qwen-code'
+# A page render the agent looks at reaches the model as the PNG itself, as under Claude Code; upstream Qwen Code
+# re-encodes every image to JPEG, which softened the type the model judged a report's layout by.
+check "Qwen Code hands a PNG inside the budget over as it is" img_run "$img" -c '
+  grep -rqF "prepared.metadata.format===\"png\"&&(prepared.metadata.orientation??1)===1" /opt/qwen-code/lib/node_modules/@qwen-code/qwen-code'
 # The fork sends no usage statistics (DE0CH/qwen-code de0ch/README.md). Upstream posts a record of every session,
 # prompt, tool call and model request to Alibaba Cloud RUM unless `privacy.usageStatisticsEnabled` is false, which the
 # managed settings never said: sandboxes tried the upload on every turn.
