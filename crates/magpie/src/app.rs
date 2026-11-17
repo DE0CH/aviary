@@ -34,7 +34,10 @@ use magpie_api::sandbox::{
     CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery, CommandsQuery, CommandsResponse, Heartbeat,
     LeaseResponse, TasksReport, TurnStateReport,
 };
-use magpie_api::sandbox::{SentFilesCommitted, SentFilesRequest, SentFilesResponse};
+use magpie_api::sandbox::{
+    QuestionCreated, QuestionQuery, QuestionRequest, QuestionState, SentFilesCommitted, SentFilesRequest,
+    SentFilesResponse,
+};
 use magpie_api::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
 use magpie_api::server::{Ctx, Server};
 use magpie_api::shares::{ContinueResponse, ShareRef, ShareView, SharesList};
@@ -476,6 +479,14 @@ impl Server for Magpie {
 
     async fn ask_open(&self, ctx: Ctx, body: AskReport) -> Answer<()> {
         http::sandbox_turns::ask_open(self, ctx, body).await
+    }
+
+    async fn question_open(&self, ctx: Ctx, body: QuestionRequest) -> Answer<QuestionCreated> {
+        http::sandbox_turns::question_open(self, ctx, body).await
+    }
+
+    async fn question_get(&self, ctx: Ctx, ask_id: String, query: QuestionQuery) -> Answer<QuestionState> {
+        http::sandbox_turns::question_get(self, ctx, ask_id, query).await
     }
 
     async fn ask_resolved(&self, ctx: Ctx, ask_id: String, body: AskResolvedReport) -> Answer<()> {

@@ -17,18 +17,21 @@ pub const AGENT_UID: u32 = 1000;
 pub const AGENT_GID: u32 = 1000;
 /// Claude Code's `oom_score_adj` (5.2).
 pub const CLAUDE_OOM_SCORE_ADJ: i32 = 100;
-/// Plan mode is never offered to the model (Deyao, 2026-11-05). `AskUserQuestion` is: a question nobody answers parks the
-/// turn and frees the sandbox (DECISIONS 17), so it no longer hangs a turn (A11.F11). Nor are Claude Code's own
+/// Plan mode is never offered to the model (Deyao, 2026-11-05), nor `AskUserQuestion`: a question is the `ask`
+/// command ([`ASK_COMMAND`]), which blocks like any long command until the person answers (Deyao, 2026-11-17). Nor are
+/// Claude Code's own
 /// timers (`CronCreate`, `CronList`, `CronDelete`, `ScheduleWakeup`; Deyao, 2026-11-06): they live in the Claude Code
 /// process and vanish when an idle sandbox is released; the AI arms magpie's schedules through the managed skill.
-pub const DISALLOWED_TOOLS: &str = "EnterPlanMode,ExitPlanMode,CronCreate,CronList,CronDelete,ScheduleWakeup";
+pub const DISALLOWED_TOOLS: &str =
+    "AskUserQuestion,EnterPlanMode,ExitPlanMode,CronCreate,CronList,CronDelete,ScheduleWakeup";
 
 /// Qwen Code, root-owned as Claude Code is, executed by absolute path.
 pub const QWEN_BIN: &str = "/opt/qwen-code/bin/qwen";
-/// Qwen Code's tools that are never offered to the model, for the reasons of [`DISALLOWED_TOOLS`]: its own timers
-/// (they live in the process and vanish with an idle sandbox) and its git worktree and pull-request helpers (the
-/// workspace is no repository).
+/// Qwen Code's tools that are never offered to the model, for the reasons of [`DISALLOWED_TOOLS`]: its question tool
+/// (the `ask` command is it), its own timers (they live in the process and vanish with an idle sandbox) and its git
+/// worktree and pull-request helpers (the workspace is no repository).
 pub const QWEN_EXCLUDED_TOOLS: &[&str] = &[
+    "ask_user_question",
     "cron_create",
     "cron_list",
     "cron_delete",
@@ -123,6 +126,14 @@ pub const QWEN_SEND_FILE: &str = "Sending files to the user: run the shell comma
 as a command of its own, with every file to send in that one command. Where these instructions name the SendUserFile \
 tool, this command is it.";
 
+/// How every harness asks the person a question (neither has a question tool): added to its instructions.
+pub const ASK_COMMAND: &str = "Asking the user a question: run the shell command `ask` with the questions as JSON on \
+stdin, `{\"questions\": [{\"question\": \"…?\", \"header\": \"≤12 chars\", \"options\": [{\"label\": \"…\", \
+\"description\": \"…\"}], \"multiSelect\": false}]}`. It shows the question to the user and blocks until they answer, \
+then prints the answer. Only the user's answer ends the question: if the command is cancelled or moved to the \
+background, the question stays open, `ask wait ID` waits for it again and `ask status ID` looks once. Where these \
+instructions name AskUserQuestion, this command is it.";
+
 /// The argv of 6.1 (`bin` is the harness's binary in a sandbox).
 #[must_use]
 pub fn argv(bin: &str, session: &Session, start: &Start) -> Vec<String> {
@@ -148,6 +159,8 @@ pub fn argv(bin: &str, session: &Session, start: &Start) -> Vec<String> {
             },
             "--disallowedTools",
             DISALLOWED_TOOLS,
+            "--append-system-prompt",
+            ASK_COMMAND,
         ]),
         Harness::Qwen => {
             let mut a = own(&[
@@ -163,9 +176,9 @@ pub fn argv(bin: &str, session: &Session, start: &Start) -> Vec<String> {
             a.extend(QWEN_EXCLUDED_TOOLS.iter().map(|t| format!("--exclude-tools={t}")));
             a.extend(["--model".to_owned(), start.model.clone()]);
             let instructions = if start.instructions.is_empty() {
-                QWEN_SEND_FILE.to_owned()
+                format!("{QWEN_SEND_FILE}\n\n{ASK_COMMAND}")
             } else {
-                format!("{}\n\n{QWEN_SEND_FILE}", start.instructions)
+                format!("{}\n\n{QWEN_SEND_FILE}\n\n{ASK_COMMAND}", start.instructions)
             };
             a.extend(["--append-system-prompt".to_owned(), instructions]);
             a
@@ -345,6 +358,11 @@ mod tests {
         assert!(a.windows(2).any(|w| w == ["--permission-mode", "bypassPermissions"]));
         assert!(a.iter().any(|x| x == "--setting-sources="));
         assert!(a.windows(2).any(|w| w == ["--disallowedTools", DISALLOWED_TOOLS]));
+        // a question is the `ask` command, which the model learns from its instructions
+        for t in ["AskUserQuestion", "ExitPlanMode", "EnterPlanMode"] {
+            assert!(DISALLOWED_TOOLS.split(',').any(|d| d == t), "{t}");
+        }
+        assert!(a.windows(2).any(|w| w == ["--append-system-prompt", ASK_COMMAND]));
         assert_eq!(a[a.len() - 2..], ["--session-id".to_owned(), "c1".to_owned()]);
         assert!(a.iter().any(|x| x == "--include-partial-messages"));
         for absent in ["--model", "--mcp-config", "--resume-session-at"] {
@@ -387,7 +405,14 @@ mod tests {
         }
         // the managed instructions, then how this harness sends files
         let at = a.iter().position(|x| x == "--append-system-prompt").unwrap();
-        assert_eq!(a[at + 1], format!("You help the staff.\n\n{QWEN_SEND_FILE}"));
+        assert_eq!(
+            a[at + 1],
+            format!("You help the staff.\n\n{QWEN_SEND_FILE}\n\n{ASK_COMMAND}")
+        );
+        assert!(
+            a.iter().any(|x| x == "--exclude-tools=ask_user_question"),
+            "the question tool is the command"
+        );
         assert!(a.iter().any(|x| x == "--include-partial-messages"));
         for t in QWEN_EXCLUDED_TOOLS {
             assert!(a.iter().any(|x| x == &format!("--exclude-tools={t}")), "{t}");
@@ -407,7 +432,7 @@ mod tests {
         // no managed instructions: how it sends files alone
         let bare = argv(QWEN_BIN, &Session::new(Harness::Qwen, "c1"), &Start::default());
         let at = bare.iter().position(|x| x == "--append-system-prompt").unwrap();
-        assert_eq!(bare[at + 1], QWEN_SEND_FILE);
+        assert_eq!(bare[at + 1], format!("{QWEN_SEND_FILE}\n\n{ASK_COMMAND}"));
     }
 
     /// Qwen Code refuses a session id that is not a UUID of version 1 to 5 (it prints its usage and exits): a

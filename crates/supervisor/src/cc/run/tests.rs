@@ -2415,6 +2415,51 @@ async fn the_hook_passes_descriptors_and_magpie_keeps_the_files() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_ask_command_blocks_until_the_person_answers() {
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let local = Arc::new(crate::local::Local {
+        hermit: sup.driver.hermit.clone(),
+        agent: sup.driver.clone(),
+    });
+    let sock = w.dir.join("agent.sock");
+    let _srv = crate::sent_files::serve_with_fds(&sock, 0o666, supervisor_api::server::local_router(local)).unwrap();
+    let input = crate::ask::questions(
+        r#"{"questions":[{"question":"Which colour?","header":"Colour","options":[{"label":"Blue"},{"label":"Red"}],"multiSelect":false}]}"#,
+    )
+    .unwrap();
+    // the command opens the question with magpie, with the supervisor's lease, and no turn takes part
+    let id = crate::ask::open(&sock, input.clone()).await.unwrap();
+    assert_eq!(w.magpie.questions(w.cid)[&id].0, input);
+    let waiting = {
+        let (sock, id) = (sock.clone(), id.clone());
+        tokio::spawn(async move { crate::ask::wait(&sock, &id).await })
+    };
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert!(!waiting.is_finished(), "it blocks while the question waits");
+    // a cancelled command leaves the question open: a second wait on its id gets the same answer
+    let again = {
+        let (sock, id) = (sock.clone(), id.clone());
+        tokio::spawn(async move { crate::ask::wait(&sock, &id).await })
+    };
+    let answer: magpie_api::turns::AgentPermissionResponse = serde_json::from_value(json!({
+        "behavior": "allow", "updatedInput": {"answers": {"Which colour?": "Blue"}}}))
+    .unwrap();
+    assert!(w.magpie.answer_question(w.cid, &id, answer));
+    for t in [waiting, again] {
+        let a = tokio::time::timeout(Duration::from_secs(5), t)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(crate::ask::render(&a), ("Which colour?\n→ Blue".to_owned(), 0));
+    }
+    // an id no `ask` opened
+    let unknown = crate::ask::wait(&sock, "q-unknown").await;
+    assert!(unknown.unwrap_err().starts_with("no question"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_forced_release_during_a_turn_reports_sandbox_lost() {
     let w = world().await;
     let sup = w.attach(None, crate::start::Reattach::Nothing).await;

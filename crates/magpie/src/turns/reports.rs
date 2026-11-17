@@ -19,8 +19,8 @@ use magpie_api::conversations::{Ask, BackgroundTask, SandboxPhase};
 use magpie_api::errors::{DataCode, ErrorCode, ErrorInfo, Refusal};
 use magpie_api::events::{AskPending, AskResolved, EventBody, TaskState, TaskStatus, TurnStartedData};
 use magpie_api::sandbox::{
-    AgentTurnRequest, AskOutcome, AskReport, AskResolvedReport, Heartbeat, HeartbeatState, ReportedState, TasksReport,
-    TurnStateReport,
+    AgentTurnRequest, AskOutcome, AskReport, AskResolvedReport, Heartbeat, HeartbeatState, QuestionCreated,
+    QuestionQuery, QuestionRequest, QuestionState, ReportedState, TasksReport, TurnStateReport,
 };
 use magpie_api::turns::{AgentPermissionResponse, TurnOrigin, TurnOutcome, TurnPhase};
 use magpie_api::{Admitted, Empty, Timestamp};
@@ -425,6 +425,88 @@ pub async fn ask_open(pool: &Pool, caller: &Sandbox, r: AskReport) -> Result<()>
         Ok(())
     })
     .await
+}
+
+pub use magpie_api::sandbox::QUESTION_TOOL;
+
+/// `POST /v1/sandbox/questions`: a question the `ask` command shows the person, `ask.pending` (tool `ask`) with no turn,
+/// change `ask`. It is a component of that command: open until the person answers, turn or no turn.
+///
+/// # Errors
+/// 409 `lease_lost`; a statement error.
+pub async fn question_open(pool: &Pool, caller: &Sandbox, r: QuestionRequest) -> Result<QuestionCreated> {
+    let r = &r;
+    let ask_id = format!("q-{}", Uuid::now_v7());
+    let ask_id = &ask_id;
+    aviary_pg::tx!(pool, |t| -> Result<QuestionCreated> {
+        let c = caller::lock(t, caller).await?;
+        let now = OffsetDateTime::now_utc();
+        let body = EventBody::AskPending(AskPending {
+            ask_id: ask_id.clone(),
+            tool_name: QUESTION_TOOL.into(),
+            tool_use_id: None,
+            input: r.input.clone(),
+        });
+        let mut ev = NewEvent::of(&body)?;
+        ev.at = now;
+        events::append(t, c.id, ev).await?;
+        let ask = Ask {
+            id: ask_id.clone(),
+            tool_name: QUESTION_TOOL.into(),
+            tool_use_id: None,
+            input: r.input.clone(),
+            title: None,
+            description: None,
+            created_at: Timestamp(now),
+        };
+        changes::emit(t, &c.person, c.id, &ChangeBody::Ask { ask }).await?;
+        changes::upserted(t, &c.person, c.id).await?;
+        Ok(QuestionCreated { ask_id: ask_id.clone() })
+    })
+    .await
+}
+
+/// `GET /v1/sandbox/questions/{askId}`: the question's answer once the person gave it; held up to `waitMs` (at most
+/// 25 s) while it waits.
+///
+/// # Errors
+/// 404 for a question this conversation never opened; 409 `lease_lost`; a statement error.
+pub async fn question_get(pool: &Pool, caller: &Sandbox, ask_id: &str, q: QuestionQuery) -> Result<QuestionState> {
+    let deadline =
+        tokio::time::Instant::now() + std::time::Duration::from_millis(u64::from(q.wait_ms.unwrap_or(0).min(25_000)));
+    loop {
+        let answer = aviary_pg::tx!(pool, |t| -> Result<Option<Option<AgentPermissionResponse>>> {
+            let c = caller::lock(t, caller).await?;
+            let opened = t
+                .query_opt(
+                    "select 1 from events where conversation_id = $1 and kind = 'ask.pending'
+                       and data->>'askId' = $2 and data->>'toolName' = $3",
+                    &[&c.id, &ask_id, &QUESTION_TOOL],
+                )
+                .await?;
+            if opened.is_none() {
+                return Ok(None);
+            }
+            let resolved = t
+                .query_opt(
+                    "select data from events where conversation_id = $1 and kind = 'ask.resolved' and data->>'askId' = $2",
+                    &[&c.id, &ask_id],
+                )
+                .await?;
+            Ok(Some(resolved.and_then(|r| serde_json::from_value::<AskResolved>(r.get(0)).ok()).map(|r| r.resolution)))
+        })
+        .await?;
+        let Some(answer) = answer else {
+            return Err(Error::not_found());
+        };
+        if answer.is_some() || tokio::time::Instant::now() >= deadline {
+            return Ok(QuestionState {
+                ask_id: ask_id.to_owned(),
+                answer,
+            });
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
 }
 
 /// `POST /v1/sandbox/asks/{askId}/resolved`: `ask.resolved` with the person's answer (or the cancel resolution),

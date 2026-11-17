@@ -29,8 +29,8 @@ use magpie_api::conversations::{CreateRequest, RunState, SandboxPhase};
 use magpie_api::errors::{DataCode, ErrorCode};
 use magpie_api::sandbox::{
     AckRequest, AckResult, AgentTurnRequest, AskOutcome, AskReport, AskResolvedReport, CcFacts, CommandBody,
-    CommandsQuery, CommandsResponse, Heartbeat, HeartbeatLastTurn, HeartbeatState, KillReason, ReportError,
-    ReportedState, SupervisorFacts, TaskReportEvent, TasksReport, TurnStateReport,
+    CommandsQuery, CommandsResponse, Heartbeat, HeartbeatLastTurn, HeartbeatState, KillReason, QuestionQuery,
+    QuestionRequest, ReportError, ReportedState, SupervisorFacts, TaskReportEvent, TasksReport, TurnStateReport,
 };
 use magpie_api::turns::{AgentPermissionResponse, Behavior, SendRequest, TurnOrigin, TurnOutcome, TurnPhase};
 use magpie_api::{Admitted, Timestamp};
@@ -1421,6 +1421,91 @@ async fn a_background_launch_whose_task_never_reports_ends_with_its_tracking() {
     };
     sup.calls().tasks(&done).await.unwrap();
     assert_eq!(status("toolu_a").await, ToolStatus::Completed);
+}
+
+/// A question the sandbox's `ask` command shows (Deyao, 2026-11-17): a component of that command, not of the turn. It
+/// is open, turn or no turn, until the person answers; the answer goes to the question (no command to the supervisor,
+/// no parked turn) and its long poll returns it; nothing dismisses it for the person.
+#[tokio::test]
+async fn a_question_belongs_to_the_command_that_asked_it() {
+    let w = World::new("turn_questions", Some(Duration::ZERO)).await;
+    let conv = w.conversation().await;
+    let turn = w.send(conv, "m1", "ask me later").await;
+    let sup = w.supervisor(conv).await;
+    sup.run(turn).await;
+    sup.report(turn, ReportedState::Completed).await.unwrap();
+    // the turn has ended (the command went on in the background): the question still opens and shows
+    let input: serde_json::Map<String, serde_json::Value> = serde_json::from_value(
+        json!({"questions": [{"question": "Which?", "options": [{"label": "A"}, {"label": "B"}]}]}),
+    )
+    .unwrap();
+    let q = sup
+        .calls()
+        .question_open(&QuestionRequest { input: input.clone() })
+        .await
+        .unwrap();
+    let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
+    assert!(c.turn.is_none(), "no turn runs");
+    assert_eq!(c.asks.len(), 1, "the question shows with no turn");
+    assert_eq!((c.asks[0].id.as_str(), &c.asks[0].input), (q.ask_id.as_str(), &input));
+    // waiting: no answer yet, also after a short hold
+    let st = sup
+        .calls()
+        .question_get(&q.ask_id, &QuestionQuery { wait_ms: Some(50) })
+        .await
+        .unwrap();
+    assert_eq!(st.answer, None);
+    // a long poll that the answer ends
+    let calls = sup.calls();
+    let poll = calls.question_get(&q.ask_id, &QuestionQuery { wait_ms: Some(20_000) });
+    let answer = AgentPermissionResponse {
+        behavior: Behavior::Allow,
+        selected_action_id: None,
+        updated_input: Some(serde_json::from_value(json!({"answers": {"Which?": "B"}})).unwrap()),
+        updated_permissions: None,
+        message: None,
+        interrupt: None,
+    };
+    let pigeon = w.a.pigeon();
+    let person = pigeon.person(ALICE);
+    let answering = async {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        person.answer_ask(conv, &q.ask_id, &answer).await.unwrap();
+    };
+    let (got, ()) = tokio::join!(poll, answering);
+    assert_eq!(got.unwrap().answer, Some(answer.clone()));
+    // answered once; the answer stays readable (`ask status`); the question has left the conversation
+    let e =
+        w.a.pigeon()
+            .person(ALICE)
+            .answer_ask(conv, &q.ask_id, &answer)
+            .await
+            .unwrap_err();
+    assert_eq!(code(&e), ErrorCode::AlreadyResolved);
+    let st = sup
+        .calls()
+        .question_get(&q.ask_id, &QuestionQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(st.answer, Some(answer));
+    let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
+    assert!(c.asks.is_empty());
+    // no command reached the supervisor for it: the answer belongs to the question, not to the agent loop
+    let cmds = sup.poll(0, 0).await;
+    assert!(
+        !cmds
+            .commands
+            .iter()
+            .any(|c| matches!(c.body, CommandBody::AnswerAsk(_))),
+        "{cmds:?}"
+    );
+    // another sandbox's question is not this one's
+    let e = sup
+        .calls()
+        .question_get("no-such-question", &QuestionQuery::default())
+        .await
+        .unwrap_err();
+    assert_eq!(code(&e), ErrorCode::NotFound);
 }
 
 #[tokio::test]

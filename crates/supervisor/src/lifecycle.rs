@@ -177,6 +177,10 @@ pub trait Agent: Send + Sync + 'static {
     ) -> BoxFuture<'_, Result<supervisor_api::local::SendUserFileReply, String>> {
         Box::pin(async { Err("no Claude Code driver in this build".to_owned()) })
     }
+    /// The `ask` command's magpie calls, with the current lease: open a question, or read (and wait on) its state.
+    fn magpie_calls(&self) -> Option<magpie_api::client::SandboxCalls<'_>> {
+        None
+    }
 }
 
 /// What the `~/.claude` filesystem (WP-22) reports for `GET /v1/state`.

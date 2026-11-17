@@ -79,8 +79,8 @@ use magpie_api::sandbox::{
     AckRequest, AckResult, AgentTurnRequest, AskReport, AskResolvedReport, CC_FILE_MAX_BYTES, CC_QUOTA_BYTES,
     CC_WRITE_MAX_BYTES, CcEntry, CcFileQuery, CcKind, CcMkdir, CcPathOp, CcRename, CcSetattr, CcSizeVersion, CcTree,
     CcTruncate, CcVersion, CcWriteQuery, Command, CommandBody, CommandsQuery, CommandsResponse, EarlierQuery,
-    Heartbeat, LeaseResponse, ReportedState, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport,
-    TurnStateReport,
+    Heartbeat, LeaseResponse, QuestionCreated, QuestionQuery, QuestionRequest, QuestionState, ReportedState,
+    SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport, TurnStateReport,
 };
 use magpie_api::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
 use magpie_api::server::{Ctx, Server};
@@ -209,6 +209,8 @@ struct Conv {
     sent: BTreeMap<String, SentSend>,
     /// The last `seq` a commit answered (the fake keeps no events; commits count from 1).
     sent_seq: u64,
+    /// The `ask` command's questions, by `askId`: the input and the answer once given.
+    questions: BTreeMap<String, (serde_json::Map<String, Value>, Option<AgentPermissionResponse>)>,
 }
 
 impl Conv {
@@ -588,6 +590,31 @@ impl FakeMagpie {
             .get(&conversation)
             .map(|c| c.sent.clone())
             .unwrap_or_default()
+    }
+
+    /// The `ask` command's questions of `conversation`, by `askId`: the input and the answer once given.
+    #[must_use]
+    pub fn questions(
+        &self,
+        conversation: Uuid,
+    ) -> BTreeMap<String, (serde_json::Map<String, Value>, Option<AgentPermissionResponse>)> {
+        self.lock()
+            .convs
+            .get(&conversation)
+            .map(|c| c.questions.clone())
+            .unwrap_or_default()
+    }
+
+    /// The person answers a question (`false`: no such question, or already answered).
+    pub fn answer_question(&self, conversation: Uuid, ask_id: &str, answer: AgentPermissionResponse) -> bool {
+        let mut m = self.lock();
+        match m.convs.get_mut(&conversation).and_then(|c| c.questions.get_mut(ask_id)) {
+            Some((_, a @ None)) => {
+                *a = Some(answer);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// A stored blob.
@@ -1468,6 +1495,38 @@ impl Server for FakeMagpie {
         match self.record("ask_resolved", &ctx, json!({"askId": ask_id}), None, ser(&body), None) {
             Some(r) => r.unit(),
             None => self.model_report(&ctx),
+        }
+    }
+
+    async fn question_open(&self, ctx: Ctx, body: QuestionRequest) -> Result<QuestionCreated, ApiError> {
+        if let Some(r) = self.record("question_open", &ctx, json!({}), None, ser(&body), None) {
+            return r.typed("question_open");
+        }
+        self.with_conv(&ctx, true, |c, _| {
+            let ask_id = format!("q-{}", Uuid::now_v7());
+            c.questions.insert(ask_id.clone(), (body.input, None));
+            Ok(QuestionCreated { ask_id })
+        })
+    }
+
+    async fn question_get(&self, ctx: Ctx, ask_id: String, query: QuestionQuery) -> Result<QuestionState, ApiError> {
+        if let Some(r) = self.record("question_get", &ctx, json!({"askId": ask_id}), ser(&query), None, None) {
+            return r.typed("question_get");
+        }
+        // the model holds the poll a moment while it waits (not the whole waitMs: tests answer within it)
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_millis(u64::from(query.wait_ms.unwrap_or(0)).min(200));
+        loop {
+            let answer = self.with_conv(&ctx, true, |c, _| {
+                c.questions
+                    .get(&ask_id)
+                    .map(|(_, a)| a.clone())
+                    .ok_or_else(|| ApiError::not_found("no such question"))
+            })?;
+            if answer.is_some() || tokio::time::Instant::now() >= deadline {
+                return Ok(QuestionState { ask_id, answer });
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
 

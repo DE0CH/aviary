@@ -4019,6 +4019,10 @@ impl Agent for Driver {
         })
     }
 
+    fn magpie_calls(&self) -> Option<magpie_api::client::SandboxCalls<'_>> {
+        Some(self.reporter.calls())
+    }
+
     fn asks(&self) -> Vec<Value> {
         lock(&self.st)
             .asks

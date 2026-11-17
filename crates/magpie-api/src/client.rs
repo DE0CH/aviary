@@ -40,7 +40,8 @@ use crate::rows::{
 use crate::sandbox::{
     AckRequest, AgentTurnRequest, AskReport, AskResolvedReport, CcFileQuery, CcMkdir, CcPathOp, CcRename, CcSetattr,
     CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery, CommandsQuery, CommandsResponse, EarlierQuery,
-    Heartbeat, LeaseResponse, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport, TurnStateReport,
+    Heartbeat, LeaseResponse, QuestionCreated, QuestionQuery, QuestionRequest, QuestionState, SentFilesCommitted,
+    SentFilesRequest, SentFilesResponse, TasksReport, TurnStateReport,
 };
 use crate::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
 use crate::search::{
@@ -905,6 +906,18 @@ impl SandboxCalls<'_> {
     /// An ask ended.
     pub async fn ask_resolved(&self, ask_id: &str, req: &AskResolvedReport) -> Result<(), ClientError> {
         self.post_empty("ask_resolved", &[ask_id], req).await
+    }
+
+    /// Open a question the `ask` command shows the person.
+    pub async fn question_open(&self, req: &QuestionRequest) -> Result<QuestionCreated, ClientError> {
+        self.post("question_open", &[], req).await
+    }
+
+    /// A question's state (`wait_ms`: hold up to that long while it waits).
+    pub async fn question_get(&self, ask_id: &str, q: &QuestionQuery) -> Result<QuestionState, ClientError> {
+        self.client
+            .exec_json(&self.scope, route("question_get"), &[ask_id], Some(q), Body::None)
+            .await
     }
 
     /// The heartbeat.

@@ -1,0 +1,38 @@
+{
+  "route": "question_get",
+  "params": {
+    "askId": "q-019a8f2e-7c41-7d3e-9b2a-5f6e7d8c9b0a"
+  },
+  "query": {
+    "waitMs": 25000
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "askId": "q-019a8f2e-7c41-7d3e-9b2a-5f6e7d8c9b0a",
+        "answer": {
+          "behavior": "allow",
+          "updatedInput": {
+            "answers": {
+              "邊個日期？": "今日"
+            }
+          }
+        }
+      }
+    },
+    {
+      "status": 200,
+      "body": {
+        "askId": "q-019a8f2e-7c41-7d3e-9b2a-5f6e7d8c9b0a"
+      }
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "no such question"
+      }
+    }
+  ]
+}

@@ -793,6 +793,47 @@ pub struct AskReport {
     pub input: Map<String, Value>,
 }
 
+/// The tool name a question of the `ask` command carries in `ask.pending` and `Conversation.asks`.
+pub const QUESTION_TOOL: &str = "ask";
+
+/// `POST /v1/sandbox/questions` → 201: a question the sandbox's `ask` command shows the person. It is a component of
+/// that command, not of the turn: it stays open, turn or no turn, until the person answers it; nothing dismisses it
+/// for the person.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionRequest {
+    /// The questions, in `AskUserQuestion`'s shape (`{"questions": [{question, header, options, multiSelect}]}`).
+    pub input: Map<String, Value>,
+}
+
+/// The answer of `POST /v1/sandbox/questions`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionCreated {
+    /// The question's id: `ask status <id>` and `GET /v1/sandbox/questions/{askId}` name it.
+    pub ask_id: String,
+}
+
+/// `GET /v1/sandbox/questions/{askId}` query.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionQuery {
+    /// Hold the request up to this long (at most 25 000 ms) while the question waits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_ms: Option<u32>,
+}
+
+/// A question's state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionState {
+    /// The question.
+    pub ask_id: String,
+    /// The person's answer, once given (`None` while it waits).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<crate::turns::AgentPermissionResponse>,
+}
+
 /// How an ask ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

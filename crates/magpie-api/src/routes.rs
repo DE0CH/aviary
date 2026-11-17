@@ -159,6 +159,10 @@ pub const SANDBOX_TASKS: &str = "/v1/sandbox/tasks";
 pub const SANDBOX_ASKS: &str = "/v1/sandbox/asks";
 /// `POST` ask resolved.
 pub const SANDBOX_ASK_RESOLVED: &str = "/v1/sandbox/asks/{askId}/resolved";
+/// `POST` a question the sandbox's `ask` command shows the person (a component of that command, not of the turn).
+pub const SANDBOX_QUESTIONS: &str = "/v1/sandbox/questions";
+/// `GET` a question's state and answer (`?waitMs=` long-polls for the answer).
+pub const SANDBOX_QUESTION: &str = "/v1/sandbox/questions/{askId}";
 /// `POST` heartbeat.
 pub const SANDBOX_HEARTBEAT: &str = "/v1/sandbox/heartbeat";
 /// `GET` and `PUT` a blob.
@@ -390,6 +394,8 @@ pub const ROUTES: &[Route] = &[
     sandbox("tasks", Post, SANDBOX_TASKS, &[204], true),
     sandbox("ask_open", Post, SANDBOX_ASKS, &[201], true),
     sandbox("ask_resolved", Post, SANDBOX_ASK_RESOLVED, &[204], true),
+    sandbox("question_open", Post, SANDBOX_QUESTIONS, &[201], true),
+    sandbox("question_get", Get, SANDBOX_QUESTION, &[200], true),
     sandbox("heartbeat", Post, SANDBOX_HEARTBEAT, &[204], true),
     sandbox("sandbox_blob_get", Get, SANDBOX_BLOB, &[200], false),
     sandbox("sandbox_blob_put", Put, SANDBOX_BLOB, &[201, 200], true),
@@ -607,7 +613,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 87);
+        assert_eq!(ROUTES.len(), 89);
     }
 
     #[test]

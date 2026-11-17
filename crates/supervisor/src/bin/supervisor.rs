@@ -2,6 +2,7 @@
 //!
 //! - `supervisor run`: the supervisor, started by the keeper (exit 0 after a release, 70 on an internal error);
 //! - `sandbox-secret <KEY>` (a symlink to this binary): a secret from hermit, through the supervisor;
+//! - `ask` (a link to this binary): a question for the person, blocking until the answer ([`supervisor::ask`]);
 //! - `supervisor hook send-user-file`: Claude Code's `SendUserFile` hook (supervisor 13);
 //! - as `send-file` (a link to this binary): the same send from a shell command, for Qwen Code;
 //! - `supervisor --version`;
@@ -31,6 +32,9 @@ fn main() {
         .unwrap_or_default();
     if argv0 == supervisor::harness::SEND_FILE {
         std::process::exit(supervisor::sent_files::send_file_cli(&args[1..]));
+    }
+    if argv0 == "ask" {
+        std::process::exit(supervisor::ask::cli(&args[1..]));
     }
     if argv0 == "sandbox-secret" {
         std::process::exit(supervisor::local::secret_cli(&args[1..]));

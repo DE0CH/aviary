@@ -7,6 +7,10 @@
 //!   is the reason the hook prints. The acceptor reads the descriptors and attaches them to the request as
 //!   [`ReceivedFds`] before routing.
 //! - `GET /v1/secrets/{key}`: 200 [`crate::SecretValue`] or 404 `not_granted`, answered from hermit at that moment.
+//! - `POST /v1/questions`: the `ask` command opens a question ([`QuestionOpen`]); 200 [`QuestionOpened`]. The
+//!   supervisor passes it to magpie with its lease and takes no other part: the question belongs to the command.
+//! - `GET /v1/questions/{askId}?waitMs=`: the question's state ([`QuestionAnswer`]), held up to `waitMs` (at most
+//!   [`QUESTION_WAIT_MAX`]) while it waits; 404 `not_found` for an id no `ask` opened.
 
 use std::os::fd::OwnedFd;
 use std::sync::{Arc, Mutex};
@@ -21,6 +25,11 @@ pub const DOCKER_SOCKET: &str = "/run/supervisor/docker.sock";
 
 pub const SEND_USER_FILE: &str = "/v1/hooks/send-user-file";
 pub const SECRET: &str = "/v1/secrets/{key}";
+pub const QUESTIONS: &str = "/v1/questions";
+pub const QUESTION: &str = "/v1/questions/{askId}";
+
+/// The longest a question poll is held.
+pub const QUESTION_WAIT_MAX: Duration = Duration::from_secs(25);
 
 /// The most descriptors one hook call carries.
 pub const MAX_FDS: usize = 100;
@@ -87,4 +96,37 @@ impl ReceivedFds {
     pub fn take(&self) -> Vec<OwnedFd> {
         self.0.lock().map(|mut v| std::mem::take(&mut *v)).unwrap_or_default()
     }
+}
+
+/// The body of `POST /v1/questions`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionOpen {
+    /// `AskUserQuestion`'s shape: `{"questions": [{question, header, options: [{label, description}], multiSelect}]}`.
+    pub input: serde_json::Map<String, serde_json::Value>,
+}
+
+/// 200 of `POST /v1/questions`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionOpened {
+    pub ask_id: String,
+}
+
+/// The query of `GET /v1/questions/{askId}`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionWait {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_ms: Option<u32>,
+}
+
+/// 200 of `GET /v1/questions/{askId}`: `answer` is magpie's resolution (`{"behavior", "updatedInput", "message"}`),
+/// absent while the question waits.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionAnswer {
+    pub ask_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<serde_json::Value>,
 }

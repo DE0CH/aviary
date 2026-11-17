@@ -121,7 +121,8 @@ pub fn background_tasks(c: &Conversation) -> usize {
 #[must_use]
 pub fn ask_kind(tool: &str) -> &'static str {
     match tool {
-        "AskUserQuestion" | "ask_user_question" => "question",
+        // the `ask` command's questions; the harnesses' own question tools in conversations from before it
+        magpie_api::sandbox::QUESTION_TOOL | "AskUserQuestion" | "ask_user_question" => "question",
         "ExitPlanMode" => "plan",
         _ => "tool",
     }
@@ -1110,6 +1111,11 @@ mod tests {
         assert_eq!(shell["type"], "shell");
         assert_eq!(shell["command"], "ls videos");
         assert_eq!(ask_kind("ask_user_question"), "question");
+        assert_eq!(
+            ask_kind("ask"),
+            "question",
+            "the `ask` command's question is a question card"
+        );
     }
 
     /// DECISIONS 17: the working-time counter stands still while a question is open and leaves out the time

@@ -334,6 +334,16 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .ask_resolved(&param_str(&f, "askId"), &request::<AskResolvedReport>(&f))
             .await
             .map(|()| Value::Null),
+        "question_open" => c
+            .sandbox(Some(LEASE))
+            .question_open(&request::<QuestionRequest>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "question_get" => c
+            .sandbox(Some(LEASE))
+            .question_get(&param_str(&f, "askId"), &query::<QuestionQuery>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
         "heartbeat" => c
             .sandbox(Some(LEASE))
             .heartbeat(&request::<Heartbeat>(&f))

@@ -6,8 +6,9 @@
 //! (`stop.forced`, [`super::sweeper`]). A held conversation gets `stop_tasks`.
 
 use aviary_pg::Pool;
+use magpie_api::changes::{AskResolvedChange, ChangeBody};
 use magpie_api::errors::ErrorCode;
-use magpie_api::events::{EventBody, TurnStopRequested};
+use magpie_api::events::{AskResolved, EventBody, TurnStopRequested};
 use magpie_api::sandbox::AnswerAsk;
 use magpie_api::turns::{AgentPermissionResponse, Behavior, CancelResponse};
 use serde_json::{Value, json};
@@ -108,7 +109,8 @@ pub async fn answer(
         lock(t, &person.email, id).await?;
         let Some(pending) = t
             .query_opt(
-                "select turn_id from events where conversation_id = $1 and kind = 'ask.pending' and data->>'askId' = $2",
+                "select turn_id, data->>'toolName' from events
+                 where conversation_id = $1 and kind = 'ask.pending' and data->>'askId' = $2",
                 &[&id, &ask_id],
             )
             .await?
@@ -116,6 +118,7 @@ pub async fn answer(
             return Err(Error::not_found());
         };
         let ask_turn: Option<Uuid> = pending.get(0);
+        let tool: Option<String> = pending.get(1);
         let done = t
             .query_opt(
                 "select 1 from events where conversation_id = $1 and kind = 'ask.resolved' and data->>'askId' = $2
@@ -128,6 +131,27 @@ pub async fn answer(
             .await?;
         if done.is_some() {
             return Err(already_resolved());
+        }
+        // a question of the `ask` command: the answer is the question's own (its command reads it), never a command
+        // to the supervisor or a turn's (Deyao, 2026-11-17)
+        if tool.as_deref() == Some(super::reports::QUESTION_TOOL) {
+            let body = EventBody::AskResolved(AskResolved {
+                ask_id: ask_id.to_owned(),
+                resolution: resp.clone(),
+            });
+            events::append(t, id, NewEvent::of(&body)?).await?;
+            changes::emit(
+                t,
+                &person.email,
+                id,
+                &ChangeBody::AskResolved(AskResolvedChange {
+                    ask_id: ask_id.to_owned(),
+                    resolution: resp.clone(),
+                }),
+            )
+            .await?;
+            changes::upserted(t, &person.email, id).await?;
+            return Ok(None);
         }
         if let Some(turn) = active(t, id)
             .await?

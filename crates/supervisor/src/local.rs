@@ -5,6 +5,8 @@
 //!   The key is logged, never the value, and no value is written to disk or an environment.
 //! - `POST /v1/hooks/send-user-file`: the `SendUserFile` hook, with its descriptors, handed to the driver
 //!   ([`crate::lifecycle::Agent::send_user_file`]); 502 `upstream_failed` with the reason when the files were not kept.
+//! - `POST /v1/questions`, `GET /v1/questions/{askId}`: the `ask` command's question, passed to magpie with the
+//!   lease ([`crate::ask`]).
 
 use std::io::Write as _;
 use std::path::Path;
@@ -15,7 +17,9 @@ use hermit_api::server::{Answer, Ctx};
 use http_body_util::{BodyExt as _, Empty};
 use hyper::body::Bytes;
 use hyper_util::rt::TokioIo;
-use supervisor_api::local::{AGENT_SOCKET, SECRET_NOT_GRANTED_EXIT};
+use supervisor_api::local::{
+    AGENT_SOCKET, QuestionAnswer, QuestionOpen, QuestionOpened, QuestionWait, SECRET_NOT_GRANTED_EXIT,
+};
 use supervisor_api::server::LocalServer;
 
 use crate::hermit::Hermit;
@@ -45,6 +49,30 @@ impl LocalServer for Local {
         })
     }
 
+    async fn question_open(&self, _ctx: Ctx, body: QuestionOpen) -> Answer<QuestionOpened> {
+        let calls = self.agent.magpie_calls().ok_or_else(no_magpie)?;
+        let r = calls
+            .question_open(&magpie_api::sandbox::QuestionRequest { input: body.input })
+            .await
+            .map_err(|e| upstream(&e))?;
+        Ok(QuestionOpened { ask_id: r.ask_id })
+    }
+
+    async fn question_get(&self, _ctx: Ctx, ask_id: String, q: QuestionWait) -> Answer<QuestionAnswer> {
+        let calls = self.agent.magpie_calls().ok_or_else(no_magpie)?;
+        let r = calls
+            .question_get(&ask_id, &magpie_api::sandbox::QuestionQuery { wait_ms: q.wait_ms })
+            .await
+            .map_err(|e| match e.api().map(|r| r.status) {
+                Some(404) => aviary_core::http::ApiError::not_found("no such question"),
+                _ => upstream(&e),
+            })?;
+        Ok(QuestionAnswer {
+            ask_id: r.ask_id,
+            answer: r.answer.and_then(|a| serde_json::to_value(a).ok()),
+        })
+    }
+
     async fn secret(&self, _ctx: Ctx, key: String) -> Answer<SecretValue> {
         if !valid_secret_key(&key) {
             return Err(hermit_api::error::api(
@@ -58,6 +86,14 @@ impl LocalServer for Local {
             _ => aviary_core::http::ApiError::unavailable("hermit unavailable", 1),
         })
     }
+}
+
+fn no_magpie() -> aviary_core::http::ApiError {
+    aviary_core::http::ApiError::unavailable("no agent driver", 1)
+}
+
+fn upstream(e: &magpie_api::client::ClientError) -> aviary_core::http::ApiError {
+    aviary_core::http::ApiError::new(axum::http::StatusCode::BAD_GATEWAY, "upstream_failed", e.to_string())
 }
 
 /// Serves `router` on a Unix socket at `path` with `mode` (an old socket removed first).

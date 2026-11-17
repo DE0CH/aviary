@@ -498,6 +498,28 @@ impl Server for FixtureServer {
         self.answer_empty("ask_resolved")
     }
 
+    async fn question_open(&self, ctx: Ctx, body: QuestionRequest) -> Result<QuestionCreated, ApiError> {
+        self.received(
+            "question_open",
+            &ctx,
+            &json!({}),
+            None,
+            Some(serde_json::to_value(&body).unwrap()),
+        );
+        self.answer_json("question_open")
+    }
+
+    async fn question_get(&self, ctx: Ctx, ask_id: String, query: QuestionQuery) -> Result<QuestionState, ApiError> {
+        self.received(
+            "question_get",
+            &ctx,
+            &json!({"askId": ask_id}),
+            Some(serde_json::to_value(&query).unwrap()),
+            None,
+        );
+        self.answer_json("question_get")
+    }
+
     async fn heartbeat(&self, ctx: Ctx, body: Heartbeat) -> Result<(), ApiError> {
         self.received(
             "heartbeat",
@@ -1162,6 +1184,16 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .ask_resolved(&param_str(&f, "askId"), &request::<AskResolvedReport>(&f))
             .await
             .map(|()| Value::Null),
+        "question_open" => c
+            .sandbox(Some(LEASE))
+            .question_open(&request::<QuestionRequest>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "question_get" => c
+            .sandbox(Some(LEASE))
+            .question_get(&param_str(&f, "askId"), &query::<QuestionQuery>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
         "heartbeat" => c
             .sandbox(Some(LEASE))
             .heartbeat(&request::<Heartbeat>(&f))

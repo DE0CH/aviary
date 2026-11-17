@@ -52,9 +52,9 @@ use crate::routes::{
     PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME,
     SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE,
     SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_EARLIER, SANDBOX_EMBEDDINGS, SANDBOX_EMBEDDINGS_TODO,
-    SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES, SANDBOX_SENT_FILES,
-    SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS, SEARCH, SHARE,
-    SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
+    SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_QUESTION, SANDBOX_QUESTIONS, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES,
+    SANDBOX_SENT_FILES, SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS,
+    SEARCH, SHARE, SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
 };
 use crate::rows::{
     PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery,
@@ -62,7 +62,8 @@ use crate::rows::{
 use crate::sandbox::{
     AckRequest, AgentTurnRequest, AskReport, AskResolvedReport, CcFileQuery, CcMkdir, CcPathOp, CcRename, CcSetattr,
     CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery, CommandsQuery, CommandsResponse, EarlierQuery,
-    Heartbeat, LeaseResponse, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport, TurnStateReport,
+    Heartbeat, LeaseResponse, QuestionCreated, QuestionQuery, QuestionRequest, QuestionState, SentFilesCommitted,
+    SentFilesRequest, SentFilesResponse, TasksReport, TurnStateReport,
 };
 use crate::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
 use crate::search::{
@@ -640,6 +641,25 @@ pub trait Server: Send + Sync + 'static {
     /// Route `ask_open`.
     fn ask_open(&self, ctx: Ctx, body: AskReport) -> impl Future<Output = Result<(), ApiError>> + Send {
         async move { Err(not_implemented("ask_open")) }
+    }
+
+    /// Route `question_open`.
+    fn question_open(
+        &self,
+        ctx: Ctx,
+        body: QuestionRequest,
+    ) -> impl Future<Output = Result<QuestionCreated, ApiError>> + Send {
+        async move { Err(not_implemented("question_open")) }
+    }
+
+    /// Route `question_get`.
+    fn question_get(
+        &self,
+        ctx: Ctx,
+        ask_id: String,
+        query: QuestionQuery,
+    ) -> impl Future<Output = Result<QuestionState, ApiError>> + Send {
+        async move { Err(not_implemented("question_get")) }
     }
 
     /// Route `ask_resolved`.
@@ -1231,6 +1251,19 @@ async fn h_ask_open<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, J(body): J<Ask
     reply_unit("ask_open", s.ask_open(ctx, body).await)
 }
 
+async fn h_question_open<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, J(body): J<QuestionRequest>) -> Response {
+    reply("question_open", s.question_open(ctx, body).await)
+}
+
+async fn h_question_get<S: Server>(
+    State(s): State<Arc<S>>,
+    ctx: Ctx,
+    P(ask_id): P<String>,
+    Q(query): Q<QuestionQuery>,
+) -> Response {
+    reply("question_get", s.question_get(ctx, ask_id, query).await)
+}
+
 async fn h_ask_resolved<S: Server>(
     State(s): State<Arc<S>>,
     ctx: Ctx,
@@ -1541,6 +1574,8 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
         .route(SANDBOX_TASKS, post(h_tasks::<S>))
         .route(SANDBOX_ASKS, post(h_ask_open::<S>))
         .route(SANDBOX_ASK_RESOLVED, post(h_ask_resolved::<S>))
+        .route(SANDBOX_QUESTIONS, post(h_question_open::<S>))
+        .route(SANDBOX_QUESTION, get(h_question_get::<S>))
         .route(SANDBOX_HEARTBEAT, post(h_heartbeat::<S>))
         .route(SANDBOX_BLOB, get(h_sandbox_blob_get::<S>).put(h_sandbox_blob_put::<S>))
         .route(SANDBOX_EARLIER, get(h_earlier::<S>))

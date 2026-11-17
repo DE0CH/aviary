@@ -3,7 +3,7 @@
 
 use magpie_api::sandbox::{
     AckRequest, AgentTurnRequest, AskReport, AskResolvedReport, CommandsQuery, CommandsResponse, Heartbeat,
-    TasksReport, TurnStateReport,
+    QuestionCreated, QuestionQuery, QuestionRequest, QuestionState, TasksReport, TurnStateReport,
 };
 use magpie_api::server::Ctx;
 use magpie_api::{Admitted, Empty};
@@ -50,6 +50,16 @@ pub async fn tasks(app: &Magpie, ctx: Ctx, body: TasksReport) -> Answer<()> {
 /// `POST /v1/sandbox/asks`.
 pub async fn ask_open(app: &Magpie, ctx: Ctx, body: AskReport) -> Answer<()> {
     answer(async { reports::ask_open(&app.pool, &Sandbox::from_ctx(&ctx)?, body).await }.await)
+}
+
+/// `POST /v1/sandbox/questions`.
+pub async fn question_open(app: &Magpie, ctx: Ctx, body: QuestionRequest) -> Answer<QuestionCreated> {
+    answer(async { reports::question_open(&app.pool, &Sandbox::from_ctx(&ctx)?, body).await }.await)
+}
+
+/// `GET /v1/sandbox/questions/{askId}`.
+pub async fn question_get(app: &Magpie, ctx: Ctx, ask_id: String, q: QuestionQuery) -> Answer<QuestionState> {
+    answer(async { reports::question_get(&app.pool, &Sandbox::from_ctx(&ctx)?, &ask_id, q).await }.await)
 }
 
 /// `POST /v1/sandbox/asks/{askId}/resolved`.

@@ -27,11 +27,17 @@ ran before, for a pick back.
   is named with its home first (`claude/projects/…`, `qwen/projects/…`). magpie stores Claude Code's files without
   the prefix and Qwen Code's under `qwen/` (`ccfs/homes.rs`), so what was stored before the second harness is
   unchanged.
+- **Questions are a command, in every harness.** Neither harness's question tool is offered (`AskUserQuestion`,
+  `ask_user_question`, plan mode's `ExitPlanMode`): the model runs `ask` (a link to the supervisor binary) with the
+  questions as JSON, which opens the question with magpie through agent.sock (`POST /v1/questions`, the
+  supervisor adding its lease) and blocks on a long poll until the person answers, then prints the answer. The
+  question belongs to the command, not to the turn: it shows in `Conversation.asks` (tool `ask`) with or without a
+  turn, nothing but the person's answer resolves it, and a cancelled or backgrounded command leaves it open
+  (`ask wait ID`, `ask status ID`). A message the person sends meanwhile is delivered as during any long command.
 - **One driver.** Both speak stream-json on stdin and stdout, so `cc/run.rs` runs either; `supervisor::harness` and
   `cc/launch.rs` hold what differs: the binary and its arguments, the environment, the managed files
   (`/etc/claude-code`; `/etc/qwen-code/settings.json` with the model route and the managed skills' folder), the main
-  transcript's path, the compaction command (`/compact`, `/compress`), the tool that asks the person a question
-  (`AskUserQuestion`, `ask_user_question`; Qwen Code's answers are keyed by the question's index), how the
+  transcript's path, the compaction command (`/compact`, `/compress`), how the
   thinking level is set (Claude Code: thinking on or off, `set_max_thinking_tokens`, and its effort level; Qwen
   Code: its effort, `set_effort`, for every level, `none` (thinking off) included, which it sends with each model
   call as `reasoning.effort`; the gateway applies the level either way), and how a turn's end waits for its

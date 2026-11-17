@@ -244,13 +244,14 @@ pub fn conversation_from_row(row: &Row) -> Result<Conversation> {
     })
 }
 
-/// Fills `asks` of the conversations that have a turn: the `ask.pending` events not followed by their
-/// `ask.resolved`; and the turn's `askWaitMs`, the time its answered questions waited (DECISIONS 17).
+/// Fills `asks` of the conversations: the `ask.pending` events not followed by their `ask.resolved`, turn or no turn
+/// (a question of the `ask` command belongs to that command, not to a turn: Deyao, 2026-11-17); and the turn's
+/// `askWaitMs`, the time its answered questions waited (DECISIONS 17).
 ///
 /// # Errors
 /// When a statement fails.
 pub async fn attach_asks(db: &impl Db, convs: &mut [Conversation]) -> Result<()> {
-    let ids: Vec<Uuid> = convs.iter().filter(|c| c.turn.is_some()).map(|c| c.id).collect();
+    let ids: Vec<Uuid> = convs.iter().map(|c| c.id).collect();
     if ids.is_empty() {
         return Ok(());
     }

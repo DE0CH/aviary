@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::rejection::{BytesRejection, PathRejection};
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::extract::rejection::{BytesRejection, PathRejection, QueryRejection};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -19,7 +19,10 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::control::{Health, PrepareAnswer, PrepareRequest, ReleaseAnswer, ReleaseRequest, Resumed, StateReport};
-use crate::local::{ReceivedFds, SECRET, SEND_USER_FILE, SendUserFileReply, SendUserFileRequest};
+use crate::local::{
+    QUESTION, QUESTIONS, QuestionAnswer, QuestionOpen, QuestionOpened, QuestionWait, ReceivedFds, SECRET,
+    SEND_USER_FILE, SendUserFileReply, SendUserFileRequest,
+};
 use crate::{ExecRequest, ExecResult, SecretValue, routes};
 
 /// Request bodies on both listeners: exec's stdin is at most 1 MiB of base64.
@@ -68,6 +71,17 @@ pub trait LocalServer: Send + Sync + 'static {
         unsupported()
     }
     fn secret(&self, ctx: Ctx, key: String) -> impl Future<Output = Answer<SecretValue>> + Send {
+        unsupported()
+    }
+    fn question_open(&self, ctx: Ctx, body: QuestionOpen) -> impl Future<Output = Answer<QuestionOpened>> + Send {
+        unsupported()
+    }
+    fn question_get(
+        &self,
+        ctx: Ctx,
+        ask_id: String,
+        q: QuestionWait,
+    ) -> impl Future<Output = Answer<QuestionAnswer>> + Send {
         unsupported()
     }
 }
@@ -183,6 +197,31 @@ pub fn local_router<S: LocalServer>(server: Arc<S>) -> Router {
                         async {
                             let key = p.map(|Path(k)| k).map_err(|e| ApiError::bad_request(e.body_text()))?;
                             s.secret(Ctx::new(m, SECRET, h), key).await
+                        }
+                        .await,
+                    )
+                },
+            ),
+        )
+        .route(
+            QUESTIONS,
+            post(|State(s): St<S>, m: Method, h: HeaderMap, b: B| async move {
+                reply(async { s.question_open(Ctx::new(m, QUESTIONS, h), body(b)?).await }.await)
+            }),
+        )
+        .route(
+            QUESTION,
+            get(
+                |State(s): St<S>,
+                 m: Method,
+                 h: HeaderMap,
+                 p: Result<Path<String>, PathRejection>,
+                 q: Result<Query<QuestionWait>, QueryRejection>| async move {
+                    reply(
+                        async {
+                            let id = p.map(|Path(k)| k).map_err(|e| ApiError::bad_request(e.body_text()))?;
+                            let Query(q) = q.map_err(|e| ApiError::bad_request(e.body_text()))?;
+                            s.question_get(Ctx::new(m, QUESTION, h), id, q).await
                         }
                         .await,
                     )
