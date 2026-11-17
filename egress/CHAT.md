@@ -69,9 +69,14 @@ decided in this order:
      `egress_fixed_bytes_total{route,dir}` instead; a gateway-side failure (502 unreachable, 504 idle, an answer cut)
      is logged (`egress fixed-name upstream`: route, status, request, conversation, `person_key`, never the path),
      at most one line per route per second with the left-out count in the next.
-   - `model`: `POST /v1/messages`, `POST /v1/messages/count_tokens` (the Messages API, Claude Code) and
-     `POST /v1/chat/completions` (OpenAI chat completions, Qwen Code) to egress.json's route `model` (OpenRouter;
-     the route's `allowPaths` must list both), and `GET /v1/aviary/models` answered by egress itself (below). A
+   - `model`: `POST /v1/messages`, `POST /v1/messages/count_tokens` (the Messages API, Claude Code),
+     `POST /v1/chat/completions` (OpenAI chat completions, Qwen Code) and `POST /v1/embeddings` (the conversation
+     search's vectors of a conversation's messages, which its supervisor makes) to egress.json's route `model`
+     (OpenRouter; the route's `allowPaths` must list them), and `GET /v1/aviary/models` answered by egress itself
+     (below). egress.json's `embedding` (`{id, queryInstruction?}`, an OpenRouter model giving 1024 values) is the
+     search's model: it is in the models answer and among the allowed models, and the in-cluster API's
+     `POST /v1/embeddings` (pigeon only) embeds a search's query with it (`Egress.embedQuery`: that model only, zero
+     data retention forced, the cost counted in the budget). A
      model names its harness (`models[].harness`: `qwen`; absent = Claude Code) and may be limited to some people
      (`models[].visibleTo`: emails; absent = everyone; never the default model); both are in the models answer when
      set, and pigeon shows and lets pick a limited model only to those people. The route injects `Authorization: Bearer
