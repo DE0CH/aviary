@@ -282,7 +282,8 @@ const MODELS_JSON: &str = r#"{"default":"vendor/model-a","small":"vendor/model-s
 "contextTokens":200000,"models":[{"id":"vendor/model-a","label":"Model A","reasoning":"high",
 "thinking":["none","low","high","max"]},{"id":"vendor/model-b","label":"","reasoning":null},
 {"id":"vendor/model-c","label":"Model C","reasoning":"high","thinking":["low","high"]},
-{"id":"vendor/video","label":"Video","reasoning":null,"harness":"qwen","visibleTo":["other@example.org"]}]}"#;
+{"id":"vendor/video","label":"Video","reasoning":null,"harness":"qwen","visibleTo":["other@example.org"]}],
+"embedding":{"id":"vendor/embed","queryInstruction":"Query: "}}"#;
 
 fn model_stub(
     hits: Arc<AtomicUsize>,
@@ -290,29 +291,57 @@ fn model_stub(
     hang: Arc<std::sync::atomic::AtomicBool>,
     token: String,
 ) -> Router {
-    Router::new().route(
-        gateway_api::models::MODELS,
-        axum::routing::get(move |h: axum::http::HeaderMap| {
-            let hits = hits.clone();
-            let up = up.clone();
-            let hang = hang.clone();
-            let token = token.clone();
-            async move {
-                hits.fetch_add(1, Ordering::SeqCst);
-                if hang.load(Ordering::SeqCst) {
-                    tokio::time::sleep(Duration::from_secs(30)).await;
+    let embed_token = token.clone();
+    Router::new()
+        .route(
+            gateway_api::models::EMBEDDINGS,
+            // the conversation search's query: mock-model's vector of each input, for pigeon's token only
+            axum::routing::post(move |h: axum::http::HeaderMap, body: axum::body::Bytes| {
+                let token = embed_token.clone();
+                async move {
+                    let auth = h.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("");
+                    let v: Value = serde_json::from_slice(&body).unwrap_or_default();
+                    if auth != format!("Bearer {token}") || v["model"] != "vendor/embed" {
+                        return Response::builder().status(403).body(axum::body::Body::empty()).unwrap();
+                    }
+                    let data: Vec<Value> = v["input"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .enumerate()
+                        .map(|(i, t)| json!({"index": i, "embedding": mock_model::mock_embedding(t.as_str().unwrap())}))
+                        .collect();
+                    Response::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from(json!({"data": data}).to_string()))
+                        .unwrap()
                 }
-                let auth = h.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("");
-                let ok = up.load(Ordering::SeqCst) && auth == format!("Bearer {token}");
-                let (status, body) = if ok { (200, MODELS_JSON) } else { (503, "{}") };
-                Response::builder()
-                    .status(status)
-                    .header("content-type", "application/json")
-                    .body(axum::body::Body::from(body))
-                    .unwrap()
-            }
-        }),
-    )
+            }),
+        )
+        .route(
+            gateway_api::models::MODELS,
+            axum::routing::get(move |h: axum::http::HeaderMap| {
+                let hits = hits.clone();
+                let up = up.clone();
+                let hang = hang.clone();
+                let token = token.clone();
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    if hang.load(Ordering::SeqCst) {
+                        tokio::time::sleep(Duration::from_secs(30)).await;
+                    }
+                    let auth = h.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("");
+                    let ok = up.load(Ordering::SeqCst) && auth == format!("Bearer {token}");
+                    let (status, body) = if ok { (200, MODELS_JSON) } else { (503, "{}") };
+                    Response::builder()
+                        .status(status)
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from(body))
+                        .unwrap()
+                }
+            }),
+        )
 }
 
 impl Harness {

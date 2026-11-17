@@ -334,6 +334,26 @@ impl Server for Magpie {
         http::timeline::search(self, ctx, id, query).await
     }
 
+    async fn conversation_search(
+        &self,
+        ctx: Ctx,
+        body: magpie_api::search::ConversationSearchRequest,
+    ) -> Answer<magpie_api::search::ConversationSearchResponse> {
+        http::search::conversation_search(self, ctx, body).await
+    }
+
+    async fn embeddings_todo(
+        &self,
+        ctx: Ctx,
+        query: magpie_api::search::EmbeddingsTodoQuery,
+    ) -> Answer<magpie_api::search::EmbeddingsTodo> {
+        http::search::todo(self, ctx, query).await
+    }
+
+    async fn embeddings_put(&self, ctx: Ctx, body: magpie_api::search::EmbeddingsPut) -> Answer<()> {
+        http::search::put(self, ctx, body).await
+    }
+
     async fn transcript(&self, ctx: Ctx, id: Uuid, query: TranscriptQuery) -> Answer<TranscriptPage> {
         http::timeline::transcript(self, ctx, id, query).await
     }

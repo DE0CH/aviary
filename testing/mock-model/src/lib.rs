@@ -8,6 +8,9 @@
 //! - `POST /v1/messages/count_tokens`: a fixed estimate (`ceil(request bytes / 4)`);
 //! - `POST /v1/chat/completions`: the `OpenAI` chat completions API as Qwen Code calls it; always the text `ok`;
 //! - `GET /v1/aviary/models`: the configured [`gateway_api::models::Models`];
+//! - `POST /v1/embeddings`: the `OpenAI` embeddings API, a vector per input from its words (each word, and each CJK
+//!   character, adds to one of the vector's numbers by its hash; then the vector is made unit length), so texts
+//!   that share words are near each other ([`mock_embedding`]); counted in [`MockModel::embedding_calls`];
 //! - `POST /__script`: queue a reply for requests that match (`conversation` from `Aviary-Sandbox-Conversation`,
 //!   `textContains` in the last user message, `nth` request of the conversation, `model`), used `times` times
 //!   (0: always);
@@ -297,6 +300,7 @@ struct Inner {
     scripts: Vec<ScriptEntry>,
     seen: Vec<Seen>,
     counts: HashMap<Option<Uuid>, u32>,
+    embedding_calls: Vec<Vec<String>>,
 }
 
 /// The mock's state.
@@ -358,6 +362,12 @@ impl MockModel {
             .collect()
     }
 
+    /// The inputs of each embeddings call so far, in order.
+    #[must_use]
+    pub fn embedding_calls(&self) -> Vec<Vec<String>> {
+        self.lock().embedding_calls.clone()
+    }
+
     /// Forget everything.
     pub fn reset(&self) {
         *self.lock() = Inner::default();
@@ -370,6 +380,7 @@ impl MockModel {
             .route(gateway_api::models::COUNT_TOKENS, post(count_tokens))
             .route(gateway_api::models::CHAT_COMPLETIONS, post(chat_completions))
             .route(gateway_api::models::MODELS, get(models))
+            .route(gateway_api::models::EMBEDDINGS, post(embeddings))
             .route("/__script", post(script))
             .route("/__requests", get(requests))
             .route("/__reset", post(reset))
@@ -791,6 +802,72 @@ async fn chat_completions(body: Bytes) -> Response {
     ]
     .concat();
     ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], text).into_response()
+}
+
+/// The mock's vector for `text` ([`gateway_api::models::EMBEDDING_DIMENSIONS`] numbers, unit length): each
+/// lowercase word of letters and digits, and each CJK character on its own, adds 1 at its FNV-1a hash.
+#[must_use]
+pub fn mock_embedding(text: &str) -> Vec<f32> {
+    fn slot(token: &str) -> usize {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in token.as_bytes() {
+            h ^= u64::from(*b);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+        usize::try_from(h % gateway_api::models::EMBEDDING_DIMENSIONS as u64).unwrap_or(0)
+    }
+    let mut v = vec![0.0_f32; gateway_api::models::EMBEDDING_DIMENSIONS];
+    let mut word = String::new();
+    let flush = |w: &mut String, v: &mut Vec<f32>| {
+        if !w.is_empty() {
+            v[slot(w)] += 1.0;
+            w.clear();
+        }
+    };
+    for c in text.chars().flat_map(char::to_lowercase) {
+        let cjk = matches!(c as u32, 0x3400..=0x9fff | 0xf900..=0xfaff | 0x3040..=0x30ff | 0xac00..=0xd7af);
+        if cjk {
+            flush(&mut word, &mut v);
+            v[slot(c.encode_utf8(&mut [0; 4]))] += 1.0;
+        } else if c.is_alphanumeric() {
+            word.push(c);
+        } else {
+            flush(&mut word, &mut v);
+        }
+    }
+    flush(&mut word, &mut v);
+    let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm == 0.0 {
+        v[0] = 1.0;
+    } else {
+        for x in &mut v {
+            *x /= norm;
+        }
+    }
+    v
+}
+
+async fn embeddings(State(m): State<Arc<MockModel>>, body: Bytes) -> Response {
+    let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let inputs: Vec<String> = match v.get("input") {
+        Some(Value::String(s)) => vec![s.clone()],
+        Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).map(str::to_owned).collect(),
+        _ => return bad_request("embeddings: input must be a string or an array of strings"),
+    };
+    if v.get("dimensions").and_then(Value::as_u64) != Some(gateway_api::models::EMBEDDING_DIMENSIONS as u64) {
+        return bad_request("embeddings: dimensions must be the contract's");
+    }
+    m.lock().embedding_calls.push(inputs.clone());
+    let data: Vec<Value> = inputs
+        .iter()
+        .enumerate()
+        .map(|(i, t)| json!({"object": "embedding", "index": i, "embedding": mock_embedding(t)}))
+        .collect();
+    aviary_core::http::json(
+        StatusCode::OK,
+        &json!({"object": "list", "data": data, "model": v.get("model").cloned().unwrap_or(Value::Null),
+                "usage": {"prompt_tokens": inputs.len(), "total_tokens": inputs.len()}}),
+    )
 }
 
 async fn models(State(m): State<Arc<MockModel>>) -> Response {

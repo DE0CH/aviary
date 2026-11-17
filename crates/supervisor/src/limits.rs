@@ -110,6 +110,16 @@ pub const STDERR_TAIL: usize = 4 * 1024;
 pub const HOOK_BUDGET: Duration = Duration::from_secs(110);
 pub const TITLE_TIMEOUT: Duration = Duration::from_secs(60);
 pub const TITLE_MAX_BYTES: usize = 1024 * 1024;
+/// The conversation search's embeddings (Deyao, 2026-11-17): one call's time and answer size (64 vectors of 1024 numbers
+/// are about 1.4 MB of JSON).
+pub const EMBED_TIMEOUT: Duration = Duration::from_secs(60);
+pub const EMBED_MAX_BYTES: usize = 16 * 1024 * 1024;
+/// Pieces per embeddings call (magpie's todo page).
+pub const EMBED_BATCH: u32 = 32;
+/// Calls per catch-up: a conversation with more to embed continues after its next turn (or the next start).
+pub const EMBED_ROUNDS: usize = 50;
+/// A catch-up waits this long after the supervisor starts, so the start's own work goes first.
+pub const EMBED_START_DELAY: Duration = Duration::from_secs(20);
 
 // run state (4.4)
 

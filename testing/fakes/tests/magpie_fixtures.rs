@@ -358,6 +358,21 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .sent_files(&request::<SentFilesRequest>(&f))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
+        "embeddings_todo" => c
+            .sandbox(Some(LEASE))
+            .embeddings_todo(&query::<magpie_api::search::EmbeddingsTodoQuery>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "embeddings_put" => c
+            .sandbox(Some(LEASE))
+            .embeddings_put(&request::<magpie_api::search::EmbeddingsPut>(&f))
+            .await
+            .map(|()| Value::Null),
+        "conversation_search" => c
+            .person(PERSON)
+            .conversation_search(&request::<magpie_api::search::ConversationSearchRequest>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
         "sent_files_commit" => c
             .sandbox(Some(LEASE))
             .sent_files_commit(&param_str(&f, "toolUseId"))

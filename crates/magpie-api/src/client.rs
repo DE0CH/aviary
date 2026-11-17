@@ -43,6 +43,9 @@ use crate::sandbox::{
     Heartbeat, LeaseResponse, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport, TurnStateReport,
 };
 use crate::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
+use crate::search::{
+    ConversationSearchRequest, ConversationSearchResponse, EmbeddingsPut, EmbeddingsTodo, EmbeddingsTodoQuery,
+};
 use crate::shares::{ContinueResponse, ShareRef, ShareView, SharesList};
 use crate::turns::{AgentPermissionResponse, CancelResponse, SendRequest, SendResponse};
 use crate::uploads::{BlobQuery, SandboxBlobQuery, UploadKind, UploadResponse};
@@ -544,6 +547,14 @@ impl PersonCalls<'_> {
         self.get("search", &[&id.to_string()], Some(q)).await
     }
 
+    /// The conversation search: the person's messages across their conversations (Deyao, 2026-11-17).
+    pub async fn conversation_search(
+        &self,
+        req: &ConversationSearchRequest,
+    ) -> Result<ConversationSearchResponse, ClientError> {
+        self.send_json("conversation_search", &[], req).await
+    }
+
     /// The main transcript's lines (the raw view; only while viewing as).
     pub async fn transcript(&self, id: Uuid, q: &TranscriptQuery) -> Result<TranscriptPage, ClientError> {
         self.get("transcript", &[&id.to_string()], Some(q)).await
@@ -936,6 +947,18 @@ impl SandboxCalls<'_> {
     /// Commit a staged send.
     pub async fn sent_files_commit(&self, tool_use_id: &str) -> Result<SentFilesCommitted, ClientError> {
         self.post("sent_files_commit", &[tool_use_id], &Empty {}).await
+    }
+
+    /// The conversation's message pieces with no vector of `q.model` yet (Deyao, 2026-11-17).
+    pub async fn embeddings_todo(&self, q: &EmbeddingsTodoQuery) -> Result<EmbeddingsTodo, ClientError> {
+        self.client
+            .exec_json(&self.scope, route("embeddings_todo"), &[], Some(q), Body::None)
+            .await
+    }
+
+    /// Store vectors of the conversation's message pieces.
+    pub async fn embeddings_put(&self, req: &EmbeddingsPut) -> Result<(), ClientError> {
+        self.post_empty("embeddings_put", &[], req).await
     }
 
     /// The person's schedules (every conversation).

@@ -90,7 +90,7 @@ proxy, never by DNS:
 |---|---|---|
 | `magpie` | the store of record | `/v1/sandbox/**` |
 | `hermit` | sandboxes, people and secrets | `/v1/sandbox/**` (`self`, `secrets`, `secrets/{key}`, `activity`) |
-| `model` | the deployment's model | `POST /v1/messages`, `POST /v1/messages/count_tokens`, `GET /v1/aviary/models` |
+| `model` | the deployment's model | `POST /v1/messages`, `POST /v1/messages/count_tokens`, `POST /v1/chat/completions`, `POST /v1/embeddings`, `GET /v1/aviary/models` |
 | `tools` | the deployment's tools, a REST API (no MCP) | `GET /v1/tools`, `POST /v1/tools/<name>`, `GET /v1/openapi.json` |
 
 In the cluster the services are `http://pigeon`, `http://magpie`, `http://hermit`, `http://model` (the gateway's
@@ -206,6 +206,20 @@ A model may carry its own `contextTokens` when its window is not the route's (a 
 supervisor runs Claude Code at the window of the model the conversation runs, the route's when the model names none
 (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, which Claude Code takes for a model id it does not recognise; one it recognises
 runs at Claude Code's own window for it).
+**The conversation search** (Deyao, 2026-11-17) finds a person's messages across their conversations by their words
+and by their meaning. The models route may name an `embedding` model (`{"id", "queryInstruction"?}`; absent: words
+only), served on the model name as the `OpenAI` embeddings API (`POST /v1/embeddings`, `{model, input: [text…],
+dimensions: 1024, encoding_format: "float"}` → `{data: [{index, embedding}]}`; `gateway_api::models::EMBEDDINGS`),
+relayed with the model's credential like the other model paths, to a sandbox through the proxy and to pigeon on the
+in-cluster API with its pair token. The vectors are made in each conversation's own sandbox: after a turn's end has
+reached magpie (and once at a start) the supervisor reads the message pieces without a vector of that model
+(`GET http://magpie/v1/sandbox/embeddings/todo?model=`), embeds them and stores them
+(`POST http://magpie/v1/sandbox/embeddings`), both with its lease. pigeon embeds a query with the model's
+`queryInstruction` before it and sends the words and the vector to magpie (`POST /v1/search`, for the person); the app
+calls pigeon's `POST /api/jarvis/search`. magpie keeps the vectors in Postgres with pgvector (0.8 or later): the
+deployment's superuser creates the extension in magpie's database before a magpie with migration
+`0042_embeddings.sql` starts, as magpie's role cannot.
+
 **A conversation's model** is its `pickedModel` (the person's pick in the menu, or the model the deployment created
 the conversation on; none: the route's default). magpie puts it into each `start_turn` (`model`); the supervisor
 switches the running Claude Code to it before it writes the prompt (`set_model`, what `/model` does in Claude Code's

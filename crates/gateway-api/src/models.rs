@@ -2,8 +2,9 @@
 //!
 //! `GET http://model/v1/aviary/models` serves both pigeon (in-cluster with its pair token) and the supervisor
 //! (through the gateway); `POST /v1/messages` and `/v1/messages/count_tokens` are the Messages API (Claude Code's
-//! calls) and `POST /v1/chat/completions` the `OpenAI` chat completions API (Qwen Code's), each relayed with the
-//! implementation's credential.
+//! calls), `POST /v1/chat/completions` the `OpenAI` chat completions API (Qwen Code's) and `POST /v1/embeddings` the
+//! `OpenAI` embeddings API (the supervisor's embeddings of its conversation's messages, pigeon's of a search), each
+//! relayed with the implementation's credential.
 
 use std::time::Duration;
 
@@ -14,6 +15,12 @@ pub const MESSAGES: &str = "/v1/messages";
 pub const COUNT_TOKENS: &str = "/v1/messages/count_tokens";
 pub const CHAT_COMPLETIONS: &str = "/v1/chat/completions";
 pub const MODELS: &str = "/v1/aviary/models";
+/// The `OpenAI` embeddings API: `{model, input: [text…], dimensions, encoding_format: "float"}` →
+/// `{data: [{index, embedding: [f32…]}]}`. The model is the models route's [`Models::embedding`]; a sandbox calls it
+/// through the proxy, pigeon in-cluster with its pair token.
+pub const EMBEDDINGS: &str = "/v1/embeddings";
+/// The length of every embedding (the request's `dimensions`): magpie's vector column has this many.
+pub const EMBEDDING_DIMENSIONS: usize = 1024;
 /// `tools` (decision 15: REST, no MCP): `GET /v1/tools` lists the tools, `POST /v1/tools/<name>` calls one with its
 /// JSON arguments, `GET /v1/openapi.json` describes both.
 pub const TOOLS_LIST: &str = "/v1/tools";
@@ -33,6 +40,69 @@ pub struct Models {
     /// The models' context window (a model may name its own: [`Model::context_tokens`]).
     pub context_tokens: u64,
     pub models: Vec<Model>,
+    /// The embedding model of the conversation search (its messages' vectors and a query's). Absent: the deployment
+    /// has none, and the search matches words only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding: Option<Embedding>,
+}
+
+/// The models route's embedding model.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Embedding {
+    /// The id sent as the embeddings call's `model` (`qwen/qwen3-embedding-8b`). It must give
+    /// [`EMBEDDING_DIMENSIONS`] numbers when asked for them.
+    pub id: String,
+    /// Put before a search query (not before a message) when the model wants one (Qwen3's
+    /// `Instruct: …\nQuery:`). Absent: the query as typed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_instruction: Option<String>,
+}
+
+/// One embeddings answer item.
+#[derive(Clone, Debug, Deserialize)]
+struct EmbeddingItem {
+    #[serde(default)]
+    index: usize,
+    embedding: Vec<f32>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct EmbeddingsAnswer {
+    data: Vec<EmbeddingItem>,
+}
+
+/// The embeddings call's body for `texts`.
+#[must_use]
+pub fn embeddings_request(model: &str, texts: &[String]) -> serde_json::Value {
+    serde_json::json!({
+        "model": model,
+        "input": texts,
+        "dimensions": EMBEDDING_DIMENSIONS,
+        "encoding_format": "float",
+    })
+}
+
+/// The vectors of an embeddings answer, in the order of the request's `input` (by `index`). `None` when the answer
+/// does not parse, has another count than `n`, or a vector is not [`EMBEDDING_DIMENSIONS`] long or not finite.
+#[must_use]
+pub fn embeddings_from(body: &[u8], n: usize) -> Option<Vec<Vec<f32>>> {
+    let a: EmbeddingsAnswer = serde_json::from_slice(body).ok()?;
+    if a.data.len() != n {
+        return None;
+    }
+    let mut out: Vec<Option<Vec<f32>>> = vec![None; n];
+    for item in a.data {
+        if item.embedding.len() != EMBEDDING_DIMENSIONS || !item.embedding.iter().all(|x| x.is_finite()) {
+            return None;
+        }
+        let slot = out.get_mut(item.index)?;
+        if slot.is_some() {
+            return None;
+        }
+        *slot = Some(item.embedding);
+    }
+    out.into_iter().collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,6 +212,36 @@ mod tests {
         let v = serde_json::to_value(&m).unwrap();
         assert_eq!(v["models"][0].get("contextTokens"), None);
         assert_eq!(v["models"][1]["contextTokens"], 1_000_000);
+    }
+
+    /// The embedding model is optional and says nothing on the wire when absent; an answer's vectors come back in the
+    /// input's order whatever order the provider lists them in, and a short or extra vector refuses the answer.
+    #[test]
+    fn the_embedding_model_and_its_answers() {
+        let none: Models =
+            serde_json::from_str(r#"{"default":"a","small":"a","title":"a","contextTokens":1,"models":[]}"#).unwrap();
+        assert_eq!(none.embedding, None);
+        assert_eq!(serde_json::to_value(&none).unwrap().get("embedding"), None);
+        let some: Models = serde_json::from_str(
+            r#"{"default":"a","small":"a","title":"a","contextTokens":1,"models":[],
+                "embedding":{"id":"qwen/qwen3-embedding-8b","queryInstruction":"Instruct: find\nQuery:"}}"#,
+        )
+        .unwrap();
+        let e = some.embedding.unwrap();
+        assert_eq!(e.id, "qwen/qwen3-embedding-8b");
+        assert_eq!(e.query_instruction.as_deref(), Some("Instruct: find\nQuery:"));
+        let req = embeddings_request("m", &["a".into(), "b".into()]);
+        assert_eq!(req["dimensions"], EMBEDDING_DIMENSIONS);
+        assert_eq!(req["input"][1], "b");
+        let v = |x: f32| vec![x; EMBEDDING_DIMENSIONS];
+        let body = serde_json::json!({"data": [{"index": 1, "embedding": v(2.0)}, {"index": 0, "embedding": v(1.0)}]});
+        let got = embeddings_from(&serde_json::to_vec(&body).unwrap(), 2).unwrap();
+        assert!((got[0][0] - 1.0).abs() < f32::EPSILON && (got[1][0] - 2.0).abs() < f32::EPSILON);
+        assert!(embeddings_from(&serde_json::to_vec(&body).unwrap(), 3).is_none());
+        let short = serde_json::json!({"data": [{"index": 0, "embedding": [1.0, 2.0]}]});
+        assert!(embeddings_from(&serde_json::to_vec(&short).unwrap(), 1).is_none());
+        let twice = serde_json::json!({"data": [{"index": 0, "embedding": v(1.0)}, {"index": 0, "embedding": v(1.0)}]});
+        assert!(embeddings_from(&serde_json::to_vec(&twice).unwrap(), 2).is_none());
     }
 
     /// A model names the harness its conversations run in; one that names none runs in Claude Code, and says

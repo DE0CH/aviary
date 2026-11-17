@@ -1524,6 +1524,33 @@ impl Server for FakeMagpie {
         }
     }
 
+    async fn embeddings_todo(
+        &self,
+        ctx: Ctx,
+        query: magpie_api::search::EmbeddingsTodoQuery,
+    ) -> Result<magpie_api::search::EmbeddingsTodo, ApiError> {
+        // unscripted: nothing to embed
+        match self.record("embeddings_todo", &ctx, json!({}), ser(&query), None, None) {
+            Some(r) => r.typed("embeddings_todo"),
+            None => Ok(magpie_api::search::EmbeddingsTodo { items: Vec::new() }),
+        }
+    }
+
+    async fn embeddings_put(&self, ctx: Ctx, body: magpie_api::search::EmbeddingsPut) -> Result<(), ApiError> {
+        match self.record("embeddings_put", &ctx, json!({}), None, ser(&body), None) {
+            Some(r) => r.unit(),
+            None => Ok(()),
+        }
+    }
+
+    async fn conversation_search(
+        &self,
+        ctx: Ctx,
+        body: magpie_api::search::ConversationSearchRequest,
+    ) -> Result<magpie_api::search::ConversationSearchResponse, ApiError> {
+        scripted!(self, "conversation_search", ctx, json!({}), None, ser(&body), typed)
+    }
+
     async fn sent_files_commit(&self, ctx: Ctx, tool_use_id: String) -> Result<SentFilesCommitted, ApiError> {
         let params = json!({"toolUseId": tool_use_id});
         match self.record("sent_files_commit", &ctx, params, None, Some(json!({})), None) {

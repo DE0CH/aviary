@@ -30,6 +30,7 @@ pub mod routes;
 pub mod rows;
 pub mod sandbox;
 pub mod schedules;
+pub mod search;
 pub mod server;
 pub mod shares;
 pub mod tasks;

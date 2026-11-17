@@ -17,6 +17,8 @@ pub const APP_SIGNIN: &str = "/api/jarvis/app-signin";
 pub const ME: &str = "/api/jarvis/me";
 /// `POST /api/jarvis/view-as` (6.1).
 pub const VIEW_AS: &str = "/api/jarvis/view-as";
+/// `POST /api/jarvis/search`: the conversation search (Deyao, 2026-11-17).
+pub const SEARCH: &str = "/api/jarvis/search";
 /// `POST /api/jarvis/warm` (5.6).
 pub const WARM: &str = "/api/jarvis/warm";
 /// `/api/jarvis/sessions/{id}/…` (5.8, 5.10).

@@ -1,11 +1,12 @@
-//! The `model` endpoint (supervisor 14, 17.3): the model ids Claude Code runs with, and the title call.
+//! The `model` endpoint (supervisor 14, 17.3): the model ids Claude Code runs with, the title call, and the
+//! embeddings of the conversation search (Deyao, 2026-11-17; [`crate::embed`]).
 
 use futures_util::StreamExt as _;
 use gateway_api::models::Models;
 use magpie_api::sandbox::{AckResult, TitleCommand};
 use serde_json::{Value, json};
 
-use crate::limits::{TITLE_MAX_BYTES, TITLE_TIMEOUT};
+use crate::limits::{EMBED_MAX_BYTES, EMBED_TIMEOUT, TITLE_MAX_BYTES, TITLE_TIMEOUT};
 
 /// The fixed name.
 pub const BASE: &str = "http://model";
@@ -40,6 +41,38 @@ impl Model {
         gateway_api::models::fetch(&self.http, &self.base, None)
             .await
             .map_err(|e| e.to_string())
+    }
+
+    /// The embeddings call: `POST /v1/embeddings` with `model` and `texts`; their vectors in order.
+    ///
+    /// # Errors
+    /// The route's refusal (`<status> <first 500 bytes>`), the transport's, or an answer that is not one vector of
+    /// the contract's length per text.
+    pub async fn embed(&self, model: &str, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        let res = self
+            .http
+            .post(format!("{}{}", self.base, gateway_api::models::EMBEDDINGS))
+            .timeout(EMBED_TIMEOUT)
+            .json(&gateway_api::models::embeddings_request(model, texts))
+            .send()
+            .await
+            .map_err(|e| format!("unreachable: {e}"))?;
+        let status = res.status();
+        let mut bytes = Vec::new();
+        let mut stream = res.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let c = chunk.map_err(|e| format!("{} {e}", status.as_u16()))?;
+            if bytes.len() + c.len() > EMBED_MAX_BYTES {
+                return Err(format!("{} response over {EMBED_MAX_BYTES} bytes", status.as_u16()));
+            }
+            bytes.extend_from_slice(&c);
+        }
+        if !status.is_success() {
+            let head = String::from_utf8_lossy(&bytes[..bytes.len().min(500)]).into_owned();
+            return Err(format!("{} {head}", status.as_u16()));
+        }
+        gateway_api::models::embeddings_from(&bytes, texts.len())
+            .ok_or_else(|| format!("{} not one vector per text", status.as_u16()))
     }
 
     /// The title call: `POST /v1/messages` with the title model, the deployment's title instructions and magpie's

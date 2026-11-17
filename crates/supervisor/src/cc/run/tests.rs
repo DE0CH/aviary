@@ -612,10 +612,15 @@ async fn world_compacting(images: u32) -> World {
 }
 
 async fn world_with(hermit: HermitConfig) -> World {
+    world_models(hermit, serde_json::from_str(mock_model::DEFAULT_MODELS).unwrap()).await
+}
+
+/// A world whose models route is `models`.
+async fn world_models(hermit: HermitConfig, models: gateway_api::models::Models) -> World {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let hermit = FakeHermit::with_config(hermit);
     let magpie = FakeMagpie::new();
-    let model = mock_model::MockModel::with_default_models();
+    let model = mock_model::MockModel::new(models);
     let hs = hermit.serve().await.unwrap();
     let ms = magpie.serve().await.unwrap();
     let ml = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2132,6 +2137,68 @@ async fn titles_go_to_the_model_and_back_in_the_ack() {
             .any(|c| c.param("cmdSeq") == Some("100") && c.body.as_ref().unwrap()["result"]["error"] == "unsupported")
     })
     .await;
+}
+
+/// The conversation search's vectors (Deyao, 2026-11-17): the pieces magpie names go to the models route's embedding model
+/// through the gateway and back to magpie, page after page until magpie names none; a deployment with no embedding
+/// model makes no call at all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_conversations_messages_are_embedded_through_the_gateway() {
+    let mut models: gateway_api::models::Models = serde_json::from_str(mock_model::DEFAULT_MODELS).unwrap();
+    models.embedding = Some(gateway_api::models::Embedding {
+        id: "test/embedding".into(),
+        query_instruction: None,
+    });
+    let w = world_models(HermitConfig::default(), models).await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let page = |items: Value| aviary_fakes::script::Reply::ok(json!({ "items": items }));
+    w.magpie.script().once(
+        "embeddings_todo",
+        page(json!([{"seq": 3, "chunk": 0, "text": "the shuttle bus"}, {"seq": 3, "chunk": 1, "text": "every 15 minutes"}])),
+    );
+    w.magpie.script().once(
+        "embeddings_todo",
+        page(json!([{"seq": 9, "chunk": 0, "text": "穿梭巴士"}])),
+    );
+    let n = crate::embed::catch_up(&sup.driver.reporter, &sup.driver.model)
+        .await
+        .unwrap();
+    assert_eq!(n, 3);
+    assert_eq!(
+        w.model.embedding_calls(),
+        vec![
+            vec!["the shuttle bus".to_owned(), "every 15 minutes".to_owned()],
+            vec!["穿梭巴士".to_owned()]
+        ]
+    );
+    let todos = w.magpie.script().calls_to("embeddings_todo");
+    assert_eq!(todos.len(), 3, "until magpie names nothing");
+    assert_eq!(todos[0].query.as_ref().unwrap()["model"], "test/embedding");
+    let puts = w.magpie.script().calls_to("embeddings_put");
+    assert_eq!(puts.len(), 2);
+    let first = puts[0].body.as_ref().unwrap();
+    assert_eq!(first["model"], "test/embedding");
+    assert_eq!(first["items"][1]["chunk"], 1);
+    assert_eq!(
+        first["items"][0]["vector"].as_array().unwrap().len(),
+        gateway_api::models::EMBEDDING_DIMENSIONS
+    );
+    let v: Vec<f32> = serde_json::from_value(puts[1].body.as_ref().unwrap()["items"][0]["vector"].clone()).unwrap();
+    let m = mock_model::mock_embedding("穿梭巴士");
+    assert!(v.iter().zip(&m).all(|(a, b)| (a - b).abs() < 1e-6));
+    // the calls carry the lease
+    assert!(puts.iter().all(|c| c.headers.contains_key("aviary-lease")));
+
+    // no embedding model: nothing asked of magpie
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    assert_eq!(
+        crate::embed::catch_up(&sup.driver.reporter, &sup.driver.model)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(w.magpie.script().calls_to("embeddings_todo").is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

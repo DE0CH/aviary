@@ -45,13 +45,14 @@ use crate::routes::{
     self, ADMIN_CONTINUE, ADMIN_CONVERSATION, ADMIN_CONVERSATIONS, ADMIN_EVENTS, ADMIN_SCHEDULES,
     ADMIN_SCHEDULES_PAUSE, ADMIN_TIMELINE, ADMIN_TRANSCRIPT, ASK_ANSWER, BLOB, CANCEL, CHANGES, CONVERSATION,
     CONVERSATION_COMMANDS, CONVERSATION_DELETE, CONVERSATION_PENDING, CONVERSATION_RESTORE, CONVERSATION_SCHEDULES,
-    CONVERSATION_SHARES, CONVERSATION_TASK_STOP, CONVERSATION_TASKS, CONVERSATIONS, CREATION, FILES, FILES_RAW,
-    HERMIT_CONVERSATION, HERMIT_CONVERSATION_CLOSED, HERMIT_CONVERSATION_DELETE, HERMIT_CONVERSATION_RESTORE,
-    HERMIT_CONVERSATION_TURNS, HERMIT_CONVERSATIONS, HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE,
-    HERMIT_WORKSPACES_EXISTS, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS, PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS,
-    SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME, SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR,
-    SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE, SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS,
-    SANDBOX_EARLIER, SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES, SANDBOX_SENT_FILES,
+    CONVERSATION_SEARCH, CONVERSATION_SHARES, CONVERSATION_TASK_STOP, CONVERSATION_TASKS, CONVERSATIONS, CREATION,
+    FILES, FILES_RAW, HERMIT_CONVERSATION, HERMIT_CONVERSATION_CLOSED, HERMIT_CONVERSATION_DELETE,
+    HERMIT_CONVERSATION_RESTORE, HERMIT_CONVERSATION_TURNS, HERMIT_CONVERSATIONS, HERMIT_LEGACY_IMPORT,
+    HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS, PROMPTS,
+    SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME,
+    SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE,
+    SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_EARLIER, SANDBOX_EMBEDDINGS, SANDBOX_EMBEDDINGS_TODO,
+    SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES, SANDBOX_SENT_FILES,
     SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS, SEARCH, SHARE,
     SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
 };
@@ -64,6 +65,9 @@ use crate::sandbox::{
     Heartbeat, LeaseResponse, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport, TurnStateReport,
 };
 use crate::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
+use crate::search::{
+    ConversationSearchRequest, ConversationSearchResponse, EmbeddingsPut, EmbeddingsTodo, EmbeddingsTodoQuery,
+};
 use crate::shares::{ContinueResponse, ShareRef, ShareView, SharesList};
 use crate::turns::{AgentPermissionResponse, CancelResponse, SendRequest, SendResponse};
 use crate::uploads::{BlobQuery, SandboxBlobQuery, UploadKind, UploadMeta, UploadResponse};
@@ -687,6 +691,29 @@ pub trait Server: Send + Sync + 'static {
         async move { Err(not_implemented("sent_files")) }
     }
 
+    /// Route `embeddings_todo`.
+    fn embeddings_todo(
+        &self,
+        ctx: Ctx,
+        query: EmbeddingsTodoQuery,
+    ) -> impl Future<Output = Result<EmbeddingsTodo, ApiError>> + Send {
+        async move { Err(not_implemented("embeddings_todo")) }
+    }
+
+    /// Route `embeddings_put`.
+    fn embeddings_put(&self, ctx: Ctx, body: EmbeddingsPut) -> impl Future<Output = Result<(), ApiError>> + Send {
+        async move { Err(not_implemented("embeddings_put")) }
+    }
+
+    /// Route `conversation_search`.
+    fn conversation_search(
+        &self,
+        ctx: Ctx,
+        body: ConversationSearchRequest,
+    ) -> impl Future<Output = Result<ConversationSearchResponse, ApiError>> + Send {
+        async move { Err(not_implemented("conversation_search")) }
+    }
+
     /// Route `sent_files_commit`.
     fn sent_files_commit(
         &self,
@@ -1227,6 +1254,22 @@ async fn h_sent_files<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, J(body): J<S
     reply("sent_files", s.sent_files(ctx, body).await)
 }
 
+async fn h_embeddings_todo<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, Q(query): Q<EmbeddingsTodoQuery>) -> Response {
+    reply("embeddings_todo", s.embeddings_todo(ctx, query).await)
+}
+
+async fn h_embeddings_put<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, J(body): J<EmbeddingsPut>) -> Response {
+    reply_empty(s.embeddings_put(ctx, body).await)
+}
+
+async fn h_conversation_search<S: Server>(
+    State(s): State<Arc<S>>,
+    ctx: Ctx,
+    J(body): J<ConversationSearchRequest>,
+) -> Response {
+    reply("conversation_search", s.conversation_search(ctx, body).await)
+}
+
 async fn h_sent_files_commit<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, P(tool_use_id): P<String>) -> Response {
     reply("sent_files_commit", s.sent_files_commit(ctx, tool_use_id).await)
 }
@@ -1447,6 +1490,7 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
         .route(LIVE, get(h_live::<S>))
         .route(PROMPTS, get(h_prompts::<S>))
         .route(SEARCH, get(h_search::<S>))
+        .route(CONVERSATION_SEARCH, post(h_conversation_search::<S>))
         .route(TRANSCRIPT, get(h_transcript::<S>))
         .route(ASK_ANSWER, post(h_answer_ask::<S>))
         .route(CHANGES, get(h_changes::<S>))
@@ -1483,6 +1527,8 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
         .route(SANDBOX_EARLIER, get(h_earlier::<S>))
         .route(SANDBOX_SENT_FILES, post(h_sent_files::<S>))
         .route(SANDBOX_SENT_FILES_COMMIT, post(h_sent_files_commit::<S>))
+        .route(SANDBOX_EMBEDDINGS_TODO, get(h_embeddings_todo::<S>))
+        .route(SANDBOX_EMBEDDINGS, post(h_embeddings_put::<S>))
         .route(
             SANDBOX_SCHEDULES,
             get(h_list_schedules::<S>).post(h_create_schedule::<S>),

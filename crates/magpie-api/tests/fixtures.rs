@@ -26,6 +26,7 @@ use magpie_api::ops::*;
 use magpie_api::rows::*;
 use magpie_api::sandbox::*;
 use magpie_api::schedules::*;
+use magpie_api::search::*;
 use magpie_api::shares::*;
 use magpie_api::turns::*;
 use magpie_api::uploads::*;
@@ -86,6 +87,11 @@ fn check_route(id: &str, f: &serde_json::Value) {
         "sandbox_blob_put" => check::<NoQuery, RawBody, Json<Empty>>(id, f),
         "sent_files" => check::<NoQuery, Json<SentFilesRequest>, Json<SentFilesResponse>>(id, f),
         "sent_files_commit" => check::<NoQuery, Json<Empty>, Json<SentFilesCommitted>>(id, f),
+        "embeddings_todo" => check::<Json<EmbeddingsTodoQuery>, NoBody, Json<EmbeddingsTodo>>(id, f),
+        "embeddings_put" => check::<NoQuery, Json<EmbeddingsPut>, NoContent>(id, f),
+        "conversation_search" => {
+            check::<NoQuery, Json<ConversationSearchRequest>, Json<ConversationSearchResponse>>(id, f);
+        }
         "person_purge" => check::<NoQuery, Json<PersonPurgeRequest>, Json<PersonPurgeResponse>>(id, f),
         "hermit_create_conversation" => check::<NoQuery, Json<HermitCreateRequest>, Json<CreateResponse>>(id, f),
         "hermit_conversation" => check::<NoQuery, NoBody, Json<Conversation>>(id, f),

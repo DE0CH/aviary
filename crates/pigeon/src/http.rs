@@ -379,6 +379,8 @@ enum ApiRoute {
     Me,
     ViewAsStart,
     Warm,
+    /// `POST` [`compat::SEARCH`]: the person's messages across their conversations.
+    Search,
     Models,
     Upload,
     FilesRaw(String),
@@ -410,6 +412,7 @@ impl ApiRoute {
             p if p == compat::ME && get => return Self::Me,
             p if p == compat::VIEW_AS => return Self::ViewAsStart,
             p if p == compat::WARM && post => return Self::Warm,
+            p if p == compat::SEARCH && post => return Self::Search,
             "/api/providers/claude/models" if get => return Self::Models,
             "/api/assets/files" if post => return Self::Upload,
             _ => {}
@@ -499,6 +502,7 @@ impl ApiRoute {
             Self::Me => "me",
             Self::ViewAsStart => "view_as",
             Self::Warm => "warm",
+            Self::Search => "search",
             Self::Models => "models",
             Self::Upload => "upload",
             Self::FilesRaw(_) => "files_raw",
@@ -688,6 +692,7 @@ async fn api(app: &App, req: Request, path: &str, upgrade: bool) -> (&'static st
         ApiRoute::SignIn => signin::signin(query.as_deref()),
         ApiRoute::Me => signin::me(app, &id).await,
         ApiRoute::Warm => warm(app, body, &id).await,
+        ApiRoute::Search => search(app, body, &id).await,
         ApiRoute::Models => models(app, id.subject()).await,
         ApiRoute::Upload => uploads::upload(app, Request::from_parts(parts, body), &id).await,
         ApiRoute::FilesRaw(cid) => blobs::files_raw(app, &parts, &id, &cid, query.as_deref()).await,
@@ -824,6 +829,57 @@ async fn warm(app: &App, body: Body, id: &Identity) -> Response {
     ok
 }
 
+/// `POST` [`compat::SEARCH`] `{query, limit?}`: the conversation search (Deyao, 2026-11-17), the person's messages across
+/// their conversations by their words and, where the deployment has an embedding model, by their meaning (the query
+/// embedded here, [`query_embedding`]). 200 `{query, hits: [{conversationId, title, epoch, seq, kind, at, snippet,
+/// matched}], semantic}`, best first; an empty query answers no hits without asking magpie.
+async fn search(app: &App, body: Body, id: &Identity) -> Response {
+    let bad = || api_error(StatusCode::BAD_REQUEST, "BAD_SEARCH", "The search could not be read.");
+    let Some(bytes) = small_body(body, SMALL_BODY).await else {
+        return bad();
+    };
+    let Ok(v) = serde_json::from_slice::<Value>(&bytes) else {
+        return bad();
+    };
+    let query: String = v
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .chars()
+        .take(500)
+        .collect();
+    let limit = v
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map_or(20, |l| u32::try_from(l.clamp(1, 50)).unwrap_or(50));
+    if query.is_empty() {
+        return json(StatusCode::OK, &json!({"query": query, "hits": [], "semantic": false}));
+    }
+    let Some(calls) = person_calls(&app.0.magpie, id) else {
+        return api_error(StatusCode::UNAUTHORIZED, "SIGNED_OUT", "Sign in to search.");
+    };
+    let req = magpie_api::search::ConversationSearchRequest {
+        embedding: query_embedding(app, &query).await,
+        q: query.clone(),
+        limit: Some(limit),
+    };
+    match calls.conversation_search(&req).await {
+        Ok(r) => json(
+            StatusCode::OK,
+            &json!({"query": query, "hits": r.hits, "semantic": r.semantic}),
+        ),
+        Err(e) => {
+            tracing::warn!(error = %e, "search: magpie failed");
+            api_error(
+                StatusCode::BAD_GATEWAY,
+                "SEARCH_FAILED",
+                "The search could not be done.",
+            )
+        }
+    }
+}
+
 /// `DELETE <sessions>/{id}/pending/{messageId}`: the person takes back a message that waits for the running reply to
 /// end (the conversation's queue, magpie's `pendingMessages` with `held`). 200 `{}`; 409 `MESSAGE_SENT` once it is on
 /// its way into the reply; 404 when there is no such waiting message.
@@ -943,10 +999,13 @@ async fn models(app: &App, person: Option<&str>) -> Response {
 }
 
 /// The model list as `person` sees it: without the models that are other people's only (a model's `visibleTo`),
-/// and without that list itself.
+/// and without that list itself or the search's embedding model (pigeon's own).
 #[must_use]
 pub(crate) fn visible_models(models: &Value, person: &str) -> Value {
     let mut out = models.clone();
+    if let Some(o) = out.as_object_mut() {
+        o.remove("EMBEDDING");
+    }
     if let Some(options) = out.get_mut("OPTIONS").and_then(Value::as_array_mut) {
         options.retain(|m| {
             m.get("visibleTo").and_then(Value::as_array).is_none_or(|to| {
@@ -1032,6 +1091,49 @@ pub(crate) async fn models_value(app: &App) -> Option<Value> {
         .and_then(|st| st.value.as_ref().map(|(_, v)| v.clone()))
 }
 
+/// A search query's vector from the models route's embedding model (in-cluster, pigeon's pair token), with the
+/// model's query instruction before it; `None` when the deployment has no embedding model or the call fails (the
+/// search then matches words only).
+pub(crate) async fn query_embedding(app: &App, query: &str) -> Option<magpie_api::search::QueryEmbedding> {
+    let models = models_value(app).await?;
+    let e: gateway_api::models::Embedding = serde_json::from_value(models.get("EMBEDDING")?.clone()).ok()?;
+    let text = match e.query_instruction.as_deref() {
+        Some(i) => format!("{i}{query}"),
+        None => query.to_owned(),
+    };
+    let sent = app
+        .0
+        .model_http
+        .post(format!(
+            "{}{}",
+            app.0.upstreams.model.trim_end_matches('/'),
+            gateway_api::models::EMBEDDINGS
+        ))
+        .bearer_auth(&app.0.secrets.token_model)
+        .header(
+            hermit_api::headers::PROTOCOL,
+            format!("{}={}", gateway_api::GATEWAY.0, gateway_api::GATEWAY.1),
+        )
+        .json(&gateway_api::models::embeddings_request(&e.id, &[text]))
+        .send()
+        .await;
+    let res = match sent {
+        Ok(r) => r,
+        Err(err) => {
+            tracing::warn!(error = %err, "search: the query's embedding failed");
+            return None;
+        }
+    };
+    let status = res.status();
+    let body = res.bytes().await.ok()?;
+    if !status.is_success() {
+        tracing::warn!(status = status.as_u16(), "search: the query's embedding was refused");
+        return None;
+    }
+    let vector = gateway_api::models::embeddings_from(&body, 1)?.pop()?;
+    Some(magpie_api::search::QueryEmbedding { model: e.id, vector })
+}
+
 async fn refresh_models(app: App) {
     let fetched = tokio::time::timeout(
         MODEL_TIMEOUT,
@@ -1063,7 +1165,8 @@ async fn refresh_models(app: App) {
                     o
                 })
                 .collect();
-            Some(json!({"OPTIONS": options, "DEFAULT": m.default}))
+            // `EMBEDDING`: the conversation search's model (`null`: none), for pigeon's own query embeddings
+            Some(json!({"OPTIONS": options, "DEFAULT": m.default, "EMBEDDING": m.embedding}))
         }
         Ok(Err(e)) => {
             tracing::warn!(error = %e, "model list refresh failed");

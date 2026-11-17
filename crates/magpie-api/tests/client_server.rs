@@ -32,6 +32,7 @@ use magpie_api::ops::*;
 use magpie_api::rows::*;
 use magpie_api::sandbox::*;
 use magpie_api::schedules::*;
+use magpie_api::search::*;
 use magpie_api::server::{Ctx, Server, router};
 use magpie_api::shares::*;
 use magpie_api::turns::*;
@@ -545,6 +546,43 @@ impl Server for FixtureServer {
             Some(serde_json::to_value(&body).unwrap()),
         );
         self.answer_json("sent_files")
+    }
+
+    async fn embeddings_todo(&self, ctx: Ctx, query: EmbeddingsTodoQuery) -> Result<EmbeddingsTodo, ApiError> {
+        self.received(
+            "embeddings_todo",
+            &ctx,
+            &json!({}),
+            Some(serde_json::to_value(&query).unwrap()),
+            None,
+        );
+        self.answer_json("embeddings_todo")
+    }
+
+    async fn embeddings_put(&self, ctx: Ctx, body: EmbeddingsPut) -> Result<(), ApiError> {
+        self.received(
+            "embeddings_put",
+            &ctx,
+            &json!({}),
+            None,
+            Some(serde_json::to_value(&body).unwrap()),
+        );
+        self.answer_empty("embeddings_put")
+    }
+
+    async fn conversation_search(
+        &self,
+        ctx: Ctx,
+        body: ConversationSearchRequest,
+    ) -> Result<ConversationSearchResponse, ApiError> {
+        self.received(
+            "conversation_search",
+            &ctx,
+            &json!({}),
+            None,
+            Some(serde_json::to_value(&body).unwrap()),
+        );
+        self.answer_json("conversation_search")
     }
 
     async fn sent_files_commit(&self, ctx: Ctx, tool_use_id: String) -> Result<SentFilesCommitted, ApiError> {
@@ -1133,6 +1171,21 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
         "sent_files" => c
             .sandbox(Some(LEASE))
             .sent_files(&request::<SentFilesRequest>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "embeddings_todo" => c
+            .sandbox(Some(LEASE))
+            .embeddings_todo(&query::<EmbeddingsTodoQuery>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "embeddings_put" => c
+            .sandbox(Some(LEASE))
+            .embeddings_put(&request::<EmbeddingsPut>(&f))
+            .await
+            .map(|()| Value::Null),
+        "conversation_search" => c
+            .person(PERSON)
+            .conversation_search(&request::<ConversationSearchRequest>(&f))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
         "sent_files_commit" => c

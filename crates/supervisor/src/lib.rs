@@ -7,6 +7,7 @@
 pub mod boot;
 pub mod cc;
 pub mod docker;
+pub mod embed;
 pub mod fuse;
 pub mod harness;
 pub mod hermit;

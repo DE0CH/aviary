@@ -3792,6 +3792,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "magpie-api",
+ "mock-model",
  "moka",
  "multer",
  "prometheus-client",

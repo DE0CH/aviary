@@ -63,6 +63,8 @@ pub struct State {
     pub epochs: u64,
     /// A native turn ends as soon as it starts (the fuzz).
     pub auto_end: bool,
+    /// Each conversation search as magpie got it.
+    pub searches: Vec<magpie_api::search::ConversationSearchRequest>,
 }
 
 #[derive(Clone, Default)]
@@ -444,6 +446,38 @@ impl Model {
 }
 
 impl Server for Model {
+    /// The person's conversations whose title holds the query, each as one hit on row 7.
+    async fn conversation_search(
+        &self,
+        ctx: Ctx,
+        body: magpie_api::search::ConversationSearchRequest,
+    ) -> Result<magpie_api::search::ConversationSearchResponse, ApiError> {
+        self.record("conversation_search", &ctx)?;
+        let mut st = self.st();
+        let person = ctx.person.clone().unwrap_or_default();
+        let q = body.q.to_lowercase();
+        let hits = st
+            .convs
+            .values()
+            .filter(|c| c.person == person && c.conv.deleted_at.is_none())
+            .filter(|c| c.conv.title.as_deref().unwrap_or("").to_lowercase().contains(&q))
+            .map(|c| magpie_api::search::ConversationSearchHit {
+                conversation_id: c.conv.id,
+                title: c.conv.title.clone(),
+                epoch: "e1".into(),
+                seq: 7,
+                kind: "assistant".into(),
+                at: c.conv.updated_at,
+                snippet: format!("…about {}…", body.q),
+                matched: "both".into(),
+                score: 0.03,
+            })
+            .collect();
+        let semantic = body.embedding.is_some();
+        st.searches.push(body);
+        Ok(magpie_api::search::ConversationSearchResponse { hits, semantic })
+    }
+
     async fn list_conversations(&self, ctx: Ctx, query: ListQuery) -> Result<ListResponse, ApiError> {
         self.record("list_conversations", &ctx)?;
         self.held("list_conversations").await;

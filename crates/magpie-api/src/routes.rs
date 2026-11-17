@@ -94,6 +94,8 @@ pub const LIVE: &str = "/v1/conversations/{id}/live";
 pub const PROMPTS: &str = "/v1/conversations/{id}/prompts";
 /// `GET` search.
 pub const SEARCH: &str = "/v1/conversations/{id}/search";
+/// `POST` the conversation search: a person's messages across their conversations (Deyao, 2026-11-17).
+pub const CONVERSATION_SEARCH: &str = "/v1/search";
 /// The raw view's transcript lines (view-as only).
 pub const TRANSCRIPT: &str = "/v1/conversations/{id}/transcript";
 /// `POST` ask answer (M11).
@@ -169,6 +171,10 @@ pub const SANDBOX_SENT_FILES: &str = "/v1/sandbox/sent-files";
 pub const SANDBOX_SENT_FILES_COMMIT: &str = "/v1/sandbox/sent-files/{toolUseId}/commit";
 /// `GET` the person's schedules, `POST` arm one (the AI, [`crate::schedules`]).
 pub const SANDBOX_SCHEDULES: &str = "/v1/sandbox/schedules";
+/// `GET` the caller's message pieces with no vector of a model yet (Deyao, 2026-11-17).
+pub const SANDBOX_EMBEDDINGS_TODO: &str = "/v1/sandbox/embeddings/todo";
+/// `POST` vectors of the caller's message pieces.
+pub const SANDBOX_EMBEDDINGS: &str = "/v1/sandbox/embeddings";
 /// `GET` one with its last runs, `PATCH` change, `DELETE` remove (the AI).
 pub const SANDBOX_SCHEDULE: &str = "/v1/sandbox/schedules/{scheduleId}";
 /// `GET` a conversation's schedules with their last runs (the app's panel).
@@ -318,6 +324,7 @@ pub const ROUTES: &[Route] = &[
     pigeon_extra("live", Get, LIVE, &[200, 204]),
     person("prompts", "M10", Get, PROMPTS, &[200]),
     pigeon_extra("search", Get, SEARCH, &[200]),
+    pigeon_extra("conversation_search", Post, CONVERSATION_SEARCH, &[200]),
     pigeon_extra("transcript", Get, TRANSCRIPT, &[200]),
     person("answer_ask", "M11", Post, ASK_ANSWER, &[202]),
     person("changes", "M12", Get, CHANGES, &[200]),
@@ -386,6 +393,8 @@ pub const ROUTES: &[Route] = &[
     sandbox("earlier", Get, SANDBOX_EARLIER, &[200], true),
     sandbox("sent_files", Post, SANDBOX_SENT_FILES, &[200], true),
     sandbox("sent_files_commit", Post, SANDBOX_SENT_FILES_COMMIT, &[200], true),
+    sandbox("embeddings_todo", Get, SANDBOX_EMBEDDINGS_TODO, &[200], true),
+    sandbox("embeddings_put", Post, SANDBOX_EMBEDDINGS, &[204], true),
     // schedules: Claude Code itself calls these with curl (no lease: it is not the supervisor)
     sandbox("list_schedules", Get, SANDBOX_SCHEDULES, &[200], false),
     sandbox("create_schedule", Post, SANDBOX_SCHEDULES, &[201], false),
@@ -594,7 +603,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 83);
+        assert_eq!(ROUTES.len(), 86);
     }
 
     #[test]

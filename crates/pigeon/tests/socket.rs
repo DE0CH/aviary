@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use common::model::{self, Model};
 use common::ws::Ws;
-use common::{ADMIN, Harness, Opts, STAFF, STAFF2};
+use common::{ADMIN, Harness, Opts, STAFF, STAFF2, body_json};
 use magpie_api::changes::ChangeBody;
 use magpie_api::conversations::{Ask, SandboxPhase};
 use magpie_api::errors::{DataCode, ErrorCode, ErrorInfo, Refusal};
@@ -236,6 +236,55 @@ async fn static_stubs_unknown_requests_and_malformed_frames() {
         .await;
     assert_eq!(k, "subscription.release.response");
     assert_eq!(p["subscriptionId"], sub);
+}
+
+/// The conversation search (Deyao, 2026-11-17; `POST compat::SEARCH`): pigeon embeds the query with the models route's
+/// embedding model (its instruction first, pigeon's pair token), sends the words and the vector to magpie, and answers
+/// magpie's hits; an empty query asks nothing, and the app's model list does not carry the search's model.
+#[tokio::test]
+async fn the_conversation_search_sends_the_query_and_its_vector() {
+    let e = env().await;
+    let c = e.m.add(STAFF, Some("Shuttle bus to Macau"));
+    e.m.add(STAFF, Some("Something else"));
+    e.m.add(STAFF2, Some("Shuttle of someone else"));
+    let search = |body: Value| {
+        e.h.as_token(e.h.post(pigeon::paseo::compat::SEARCH), &e.h.token(STAFF))
+            .json(&body)
+            .send()
+    };
+    let r = search(json!({"query": "  shuttle ", "limit": 5})).await.unwrap();
+    assert_eq!(r.status(), 200);
+    let r = body_json(r).await;
+    assert_eq!(r["query"], "shuttle");
+    assert_eq!(r["semantic"], true);
+    assert_eq!(r["hits"].as_array().unwrap().len(), 1, "{r}");
+    let hit = &r["hits"][0];
+    assert_eq!(hit["conversationId"], c.to_string());
+    assert_eq!((hit["seq"].as_u64(), hit["epoch"].as_str()), (Some(7), Some("e1")));
+    assert_eq!(hit["title"], "Shuttle bus to Macau");
+    assert_eq!(hit["matched"], "both");
+    let sent = e.m.st().searches.clone();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].q, "shuttle");
+    assert_eq!(sent[0].limit, Some(5));
+    let emb = sent[0].embedding.as_ref().expect("the query's vector");
+    assert_eq!(emb.model, "vendor/embed");
+    assert_eq!(emb.vector, mock_model::mock_embedding("Query: shuttle"));
+    // nothing typed: no search
+    let r = body_json(search(json!({"query": "  "})).await.unwrap()).await;
+    assert_eq!(r["hits"], json!([]));
+    assert_eq!(e.m.st().searches.len(), 1);
+    // not JSON
+    let r =
+        e.h.as_token(e.h.post(pigeon::paseo::compat::SEARCH), &e.h.token(STAFF))
+            .body("nope")
+            .send()
+            .await
+            .unwrap();
+    assert_eq!(r.status(), 400);
+    // the app's model list does not carry the search's model
+    let models = body_json(e.h.get_as("/api/providers/claude/models", STAFF).await).await;
+    assert!(models["data"]["models"].get("EMBEDDING").is_none(), "{models}");
 }
 
 #[tokio::test]

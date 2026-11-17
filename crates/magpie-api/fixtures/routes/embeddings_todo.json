@@ -1,0 +1,33 @@
+{
+  "route": "embeddings_todo",
+  "query": {
+    "model": "qwen/qwen3-embedding-8b",
+    "limit": 64
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "items": [
+          {
+            "seq": 12,
+            "chunk": 0,
+            "text": "幫我查一下港珠澳大橋穿梭巴士的班次"
+          },
+          {
+            "seq": 18,
+            "chunk": 0,
+            "text": "The shuttle bus runs every 15 minutes during the day."
+          }
+        ]
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

@@ -116,7 +116,7 @@ impl FixedName {
                 (method, path),
                 (
                     "POST",
-                    models::MESSAGES | models::COUNT_TOKENS | models::CHAT_COMPLETIONS
+                    models::MESSAGES | models::COUNT_TOKENS | models::CHAT_COMPLETIONS | models::EMBEDDINGS
                 ) | ("GET", models::MODELS)
             ),
             Self::Tools => match method {
@@ -192,6 +192,9 @@ mod tests {
         // Qwen Code's model calls
         assert!(Model.allows("POST", "/v1/chat/completions"));
         assert!(!Model.allows("GET", "/v1/chat/completions"));
+        // the conversation search's embeddings
+        assert!(Model.allows("POST", "/v1/embeddings"));
+        assert!(!Model.allows("GET", "/v1/embeddings"));
         assert!(Model.allows("GET", "/v1/aviary/models"));
         assert!(!Model.allows("GET", "/v1/messages"));
         assert!(!Model.allows("GET", "/v1/models"));

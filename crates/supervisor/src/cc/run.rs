@@ -624,6 +624,8 @@ struct Ctx {
 pub struct Driver {
     cfg: DriverConfig,
     model: Model,
+    /// The conversation search's vectors of this conversation (Deyao, 2026-11-17), made after each turn's end.
+    embedder: Arc<crate::embed::Embedder>,
     hermit: Hermit,
     transcript: Arc<dyn Transcript>,
     reporter: Arc<Reporter>,
@@ -911,6 +913,7 @@ impl Driver {
         Arc::new_cyclic(|me| Self {
             cfg,
             model,
+            embedder: crate::embed::Embedder::new(),
             hermit,
             transcript,
             reporter,
@@ -1233,6 +1236,10 @@ impl Driver {
                             st.last_turn = Some(last);
                         }
                     });
+                    if ok {
+                        // the turn's messages are in magpie now: their vectors for the conversation search
+                        d.embedder.poke(d.reporter.clone(), d.model.clone(), Duration::ZERO);
+                    }
                 }
             })),
         }
@@ -3690,6 +3697,12 @@ impl Agent for Driver {
                 .await
                 .unwrap_or(0);
             self.reporter.set_lease(ctx.lease.lease_id);
+            // what earlier turns (an older supervisor, a sandbox that ended) left without vectors
+            self.embedder.poke(
+                self.reporter.clone(),
+                self.model.clone(),
+                crate::limits::EMBED_START_DELAY,
+            );
             let conversation = ctx.lease.conversation_id;
             let first = ctx.prior.is_none();
             let _ = self.ctx.set(Ctx {

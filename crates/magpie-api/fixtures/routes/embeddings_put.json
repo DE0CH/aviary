@@ -1,0 +1,32 @@
+{
+  "route": "embeddings_put",
+  "request": {
+    "model": "qwen/qwen3-embedding-8b",
+    "items": [
+      {
+        "seq": 12,
+        "chunk": 0,
+        "vector": [0.5, -0.25, 0.125]
+      }
+    ]
+  },
+  "responses": [
+    {
+      "status": 204
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "bad_request",
+        "message": "a vector must have 1024 values"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

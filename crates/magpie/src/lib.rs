@@ -26,6 +26,7 @@ pub mod live;
 pub mod rows;
 pub mod sandbox;
 pub mod schedules;
+pub mod search;
 pub mod shares;
 pub mod stats;
 pub mod turns;
