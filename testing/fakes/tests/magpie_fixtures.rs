@@ -416,6 +416,17 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .hermit_send_turn(param_uuid(&f, "id"), &request::<HermitSendRequest>(&f))
             .await
             .map(|a| json!({"new": a.is_new(), "body": a.into_inner()})),
+        "hermit_upload" => c
+            .service(Some(ADMIN))
+            .hermit_upload(
+                &param_str(&f, "person"),
+                &header(&f, "aviary-upload-name"),
+                UploadKind::parse(&header(&f, "aviary-upload-kind")).unwrap(),
+                &header(&f, "content-type"),
+                request_bytes(&f),
+            )
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
         "person_purge" => c
             .service(Some(ADMIN))
             .person_purge(&param_str(&f, "person"), &request::<PersonPurgeRequest>(&f))

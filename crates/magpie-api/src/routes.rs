@@ -194,6 +194,9 @@ pub const ADMIN_SCHEDULES_PAUSE: &str = "/v1/admin/schedules/pause";
 
 /// `POST` person purge (hermit).
 pub const HERMIT_PERSON_PURGE: &str = "/v1/hermit/persons/{person}/purge";
+/// `POST` an upload the deployment makes for a person (hermit's: an image of a message it sends as that person; M13's
+/// headers, body and answer).
+pub const HERMIT_PERSON_UPLOADS: &str = "/v1/hermit/persons/{person}/uploads";
 /// A conversation the deployment starts for a person (hermit's, where `conversations.peopleCreate` is false).
 pub const HERMIT_CONVERSATIONS: &str = "/v1/hermit/conversations";
 /// `GET` a conversation as the deployment reads it (hermit: the title and the picked model of a session's conversation).
@@ -403,6 +406,7 @@ pub const ROUTES: &[Route] = &[
     sandbox("delete_schedule", Delete, SANDBOX_SCHEDULE, &[204], false),
     // 16.3 hermit
     service("person_purge", Post, HERMIT_PERSON_PURGE, HERMIT, &[202], false),
+    service("hermit_upload", Post, HERMIT_PERSON_UPLOADS, HERMIT, &[201], false),
     service(
         "hermit_create_conversation",
         Post,
@@ -603,7 +607,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 86);
+        assert_eq!(ROUTES.len(), 87);
     }
 
     #[test]

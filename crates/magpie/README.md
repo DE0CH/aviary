@@ -122,6 +122,10 @@ reads and their once-a-day audit. `tests/legacy_paths.rs`: the legacy-path set (
   message's provisional title and the title model, as before); a repeat keeps the first create's.
 - `GET /v1/hermit/conversations/{id}` (caller hermit) answers the Conversation whoever its person is: a deployment
   that starts its conversations itself reads their titles (for its own list of sessions).
+- `POST /v1/hermit/persons/{person}/uploads` (caller hermit, Deyao, 2026-11-17): M13 for the person hermit names
+  (same headers, body and answer). A message the deployment sends as the person (`/v1/hermit/conversations/{id}/turns`)
+  attaches it by `images[].uploadId` as the app does, so a deployment's prompt with screenshots shows them as the
+  turn's images instead of paths in its text.
 - `POST /v1/conversations/{id}/delete` answers the Conversation, as `magpie-api` (the contract) has it, not
   `{deletedAt}` (magpie 9.6).
 - The applied migrations are recorded in aviary-pg's `_migrations`, not `schema_migrations` (platform 4.3).

@@ -359,6 +359,44 @@ impl Client {
         let t = decode(route, resp).await?;
         Ok(if repeat { Admitted::Repeat(t) } else { Admitted::New(t) })
     }
+
+    /// An upload's request (M13 and hermit's for a person): `body` streams to magpie; `name` is percent-encoded into
+    /// `Aviary-Upload-Name`.
+    #[allow(clippy::too_many_arguments)]
+    async fn upload_to(
+        &self,
+        scope: &Scope,
+        r: &'static Route,
+        params: &[&str],
+        name: &str,
+        kind: UploadKind,
+        content_type: &str,
+        body: reqwest::Body,
+    ) -> Result<UploadResponse, ClientError> {
+        let url = format!("{}{}", self.base, routes::fill(r.path, params));
+        let request_id = scope.request_id.clone().unwrap_or_else(|| Uuid::now_v7().to_string());
+        let mut b = self
+            .http
+            .post(url)
+            .bearer_auth(&self.token)
+            .header(AVIARY_REQUEST, request_id)
+            .header(AVIARY_PROTOCOL, format!("{SURFACE_PERSON}={PROTOCOL_PERSON}"))
+            .header(AVIARY_UPLOAD_NAME, routes::encode_segment(name))
+            .header(AVIARY_UPLOAD_KIND, kind.as_str())
+            .header(reqwest::header::CONTENT_TYPE, content_type);
+        if let Some(p) = &scope.person {
+            b = b.header(AVIARY_PERSON, p);
+        }
+        if let Some((viewer, session)) = &scope.viewer {
+            b = b.header(AVIARY_VIEWER, viewer).header(AVIARY_VIEW_SESSION, session);
+        }
+        let resp = b.body(body).send().await?;
+        let status = resp.status().as_u16();
+        if !r.ok.contains(&status) {
+            return Err(ClientError::Api(refusal(resp).await?));
+        }
+        decode(r, resp).await
+    }
 }
 
 /// Read an answer outside the route's success list as a [`Refusal`]: the envelope, or one made from the status when
@@ -584,35 +622,9 @@ impl PersonCalls<'_> {
         content_type: &str,
         body: impl Into<reqwest::Body>,
     ) -> Result<UploadResponse, ClientError> {
-        let r = route("upload");
-        let url = format!("{}{}", self.client.base, r.path);
-        let request_id = self
-            .scope
-            .request_id
-            .clone()
-            .unwrap_or_else(|| Uuid::now_v7().to_string());
-        let mut b = self
-            .client
-            .http
-            .post(url)
-            .bearer_auth(&self.client.token)
-            .header(AVIARY_REQUEST, request_id)
-            .header(AVIARY_PROTOCOL, format!("{SURFACE_PERSON}={PROTOCOL_PERSON}"))
-            .header(AVIARY_UPLOAD_NAME, routes::encode_segment(name))
-            .header(AVIARY_UPLOAD_KIND, kind.as_str())
-            .header(reqwest::header::CONTENT_TYPE, content_type);
-        if let Some(p) = &self.scope.person {
-            b = b.header(AVIARY_PERSON, p);
-        }
-        if let Some((viewer, session)) = &self.scope.viewer {
-            b = b.header(AVIARY_VIEWER, viewer).header(AVIARY_VIEW_SESSION, session);
-        }
-        let resp = b.body(body).send().await?;
-        let status = resp.status().as_u16();
-        if !r.ok.contains(&status) {
-            return Err(ClientError::Api(refusal(resp).await?));
-        }
-        decode(r, resp).await
+        self.client
+            .upload_to(&self.scope, route("upload"), &[], name, kind, content_type, body.into())
+            .await
     }
 
     /// M14: a workspace file or a sent-file snapshot. The response streams; `range` is passed as `Range`.
@@ -1100,6 +1112,29 @@ impl ServiceCalls<'_> {
                 &[&id.to_string()],
                 NO_QUERY,
                 json(req)?,
+            )
+            .await
+    }
+
+    /// An upload the deployment makes for a person (caller hermit), to attach to a turn it sends as that person: M13's
+    /// headers and answer.
+    pub async fn hermit_upload(
+        &self,
+        person: &str,
+        name: &str,
+        kind: UploadKind,
+        content_type: &str,
+        body: impl Into<reqwest::Body>,
+    ) -> Result<UploadResponse, ClientError> {
+        self.client
+            .upload_to(
+                &self.scope,
+                route("hermit_upload"),
+                &[person],
+                name,
+                kind,
+                content_type,
+                body.into(),
             )
             .await
     }

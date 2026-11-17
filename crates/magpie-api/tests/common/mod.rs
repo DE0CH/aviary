@@ -365,8 +365,8 @@ impl FixtureServer {
         self.seen.lock().unwrap().insert(id.to_owned());
     }
 
-    pub fn check_upload(&self, meta: &magpie_api::uploads::UploadMeta) {
-        let f = route_fixture("upload");
+    pub fn check_upload(&self, id: &str, meta: &magpie_api::uploads::UploadMeta) {
+        let f = route_fixture(id);
         assert_eq!(meta.name, header(&f, "aviary-upload-name"));
         assert_eq!(meta.kind.as_str(), header(&f, "aviary-upload-kind"));
         assert_eq!(meta.content_type, header(&f, "content-type"));

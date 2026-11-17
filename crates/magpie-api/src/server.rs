@@ -48,8 +48,8 @@ use crate::routes::{
     CONVERSATION_SEARCH, CONVERSATION_SHARES, CONVERSATION_TASK_STOP, CONVERSATION_TASKS, CONVERSATIONS, CREATION,
     FILES, FILES_RAW, HERMIT_CONVERSATION, HERMIT_CONVERSATION_CLOSED, HERMIT_CONVERSATION_DELETE,
     HERMIT_CONVERSATION_RESTORE, HERMIT_CONVERSATION_TURNS, HERMIT_CONVERSATIONS, HERMIT_LEGACY_IMPORT,
-    HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS, PROMPTS,
-    SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME,
+    HERMIT_PERSON_PURGE, HERMIT_PERSON_UPLOADS, HERMIT_WORKSPACES_EXISTS, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS,
+    PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME,
     SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE,
     SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_EARLIER, SANDBOX_EMBEDDINGS, SANDBOX_EMBEDDINGS_TODO,
     SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES, SANDBOX_SENT_FILES,
@@ -775,6 +775,17 @@ pub trait Server: Send + Sync + 'static {
         async move { Err(not_implemented("hermit_send_turn")) }
     }
 
+    /// Route `hermit_upload`.
+    fn hermit_upload(
+        &self,
+        ctx: Ctx,
+        person: String,
+        meta: UploadMeta,
+        body: Body,
+    ) -> impl Future<Output = Result<UploadResponse, ApiError>> + Send {
+        async move { Err(not_implemented("hermit_upload")) }
+    }
+
     /// Route `person_purge`.
     fn person_purge(
         &self,
@@ -1334,6 +1345,14 @@ async fn h_hermit_send_turn<S: Server>(
     reply_admitted("hermit_send_turn", s.hermit_send_turn(ctx, id, body).await)
 }
 
+async fn h_hermit_upload<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, P(person): P<String>, body: Body) -> Response {
+    let meta = match upload_meta(&ctx) {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    reply("hermit_upload", s.hermit_upload(ctx, person, meta, body).await)
+}
+
 async fn h_person_purge<S: Server>(
     State(s): State<Arc<S>>,
     ctx: Ctx,
@@ -1547,6 +1566,7 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
         .route(ADMIN_SCHEDULES, get(h_admin_schedules::<S>))
         .route(ADMIN_SCHEDULES_PAUSE, put(h_admin_schedules_pause::<S>))
         .route(HERMIT_PERSON_PURGE, post(h_person_purge::<S>))
+        .route(HERMIT_PERSON_UPLOADS, post(h_hermit_upload::<S>))
         .route(HERMIT_CONVERSATIONS, post(h_hermit_create_conversation::<S>))
         .route(HERMIT_CONVERSATION, get(h_hermit_conversation::<S>))
         .route(HERMIT_CONVERSATION_CLOSED, put(h_hermit_close_conversation::<S>))

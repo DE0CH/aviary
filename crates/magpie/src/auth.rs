@@ -33,11 +33,15 @@ pub fn callers_from_env() -> Callers {
 static ADMIN: [HeaderName; 1] = [AVIARY_ADMIN];
 
 /// The `Aviary-*` headers `caller` may set on `route`: its [`allowed_headers`], except that on an admin route pigeon
-/// sets only `Aviary-Admin` (the admin it verified: the raw view, Deyao 2026-11-05).
+/// sets only `Aviary-Admin` (the admin it verified: the raw view, Deyao 2026-11-05), and hermit names its upload on
+/// its upload route.
 #[must_use]
 pub fn allowed_on(caller: Caller, route: &Route) -> &'static [HeaderName] {
+    static UPLOAD: [HeaderName; 2] = [AVIARY_UPLOAD_NAME, AVIARY_UPLOAD_KIND];
     if caller == Caller::Pigeon && route.admin {
         &ADMIN
+    } else if caller == Caller::Hermit && route.id == "hermit_upload" {
+        &UPLOAD
     } else {
         allowed_headers(caller)
     }

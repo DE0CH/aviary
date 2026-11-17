@@ -1,0 +1,40 @@
+{
+  "route": "hermit_upload",
+  "params": {
+    "person": "owner@example.com"
+  },
+  "requestBytes": "(image bytes)",
+  "headers": {
+    "aviary-upload-name": "Screenshot 2026-11-17 at 17.06.00.png",
+    "aviary-upload-kind": "image",
+    "content-type": "image/png"
+  },
+  "responses": [
+    {
+      "status": 201,
+      "body": {
+        "uploadId": "0190f6c2-6b1a-7c2d-8e3f-4a5b6c7d8e9f",
+        "path": "uploads/0190f6c2-6b1a-7c2d-8e3f-4a5b6c7d8e9f/Screenshot 2026-11-17 at 17.06.00.png",
+        "name": "Screenshot 2026-11-17 at 17.06.00.png",
+        "size": 186562,
+        "mimeType": "image/png",
+        "width": 2130,
+        "height": 1208
+      }
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "bad_request",
+        "message": "person is not an email"
+      }
+    },
+    {
+      "status": 415,
+      "body": {
+        "code": "unsupported_type",
+        "message": "not a supported image"
+      }
+    }
+  ]
+}

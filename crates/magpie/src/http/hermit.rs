@@ -1,5 +1,6 @@
 //! hermit's routes (magpie 16.3).
 
+use axum::body::Body;
 use magpie_api::Admitted;
 use magpie_api::conversations::{Conversation, CreateRequest, CreateResponse};
 use magpie_api::ops::{
@@ -8,6 +9,7 @@ use magpie_api::ops::{
 };
 use magpie_api::server::Ctx;
 use magpie_api::turns::SendResponse;
+use magpie_api::uploads::{UploadMeta, UploadResponse};
 use uuid::Uuid;
 
 use super::{Answer, answer};
@@ -17,6 +19,7 @@ use crate::conversations::{Person, create};
 use crate::error::{Error, Result};
 use crate::turns::admission;
 use crate::turns::driver::{self, Driver};
+use crate::uploads;
 
 /// The person hermit names, `lower(btrim())` as everywhere (no viewer: the deployment acts, not an admin).
 fn person_of(email: &str) -> Result<Person> {
@@ -109,6 +112,12 @@ pub async fn send_turn(app: &Magpie, _ctx: Ctx, id: Uuid, body: HermitSendReques
         }
         .await,
     )
+}
+
+/// `POST /v1/hermit/persons/{person}/uploads`: M13 for the person hermit names, to attach to a turn hermit sends as
+/// that person (Jarvis 4's first prompt with the images of its New session form).
+pub async fn upload(app: &Magpie, _ctx: Ctx, person: String, meta: UploadMeta, body: Body) -> Answer<UploadResponse> {
+    answer(async { uploads::upload(app, &person_of(&person)?, meta, body).await }.await)
 }
 
 /// `POST /v1/hermit/persons/{person}/purge`.

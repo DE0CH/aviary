@@ -1625,6 +1625,29 @@ impl Server for FakeMagpie {
         scripted!(self, "hermit_send_turn", ctx, id(id_), None, ser(&body), admitted)
     }
 
+    async fn hermit_upload(
+        &self,
+        ctx: Ctx,
+        person: String,
+        meta: UploadMeta,
+        body: Body,
+    ) -> Result<UploadResponse, ApiError> {
+        // the name, kind and content type are in the recorded headers
+        let _ = meta;
+        let bytes = bytes_of(body).await?;
+        match self.record(
+            "hermit_upload",
+            &ctx,
+            json!({"person": person}),
+            None,
+            None,
+            Some(bytes),
+        ) {
+            Some(r) => r.typed("hermit_upload"),
+            None => Err(not_supported("hermit_upload")),
+        }
+    }
+
     async fn person_purge(
         &self,
         ctx: Ctx,

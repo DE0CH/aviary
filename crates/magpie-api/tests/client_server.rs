@@ -213,7 +213,7 @@ impl Server for FixtureServer {
     }
 
     async fn upload(&self, ctx: Ctx, meta: UploadMeta, body: Body) -> Result<UploadResponse, ApiError> {
-        self.check_upload(&meta);
+        self.check_upload("upload", &meta);
         self.check_bytes("upload", body).await;
         self.received("upload", &ctx, &json!({}), None, None);
         self.answer_json("upload")
@@ -679,6 +679,19 @@ impl Server for FixtureServer {
             Some(serde_json::to_value(&body).unwrap()),
         );
         self.answer_admitted("hermit_send_turn")
+    }
+
+    async fn hermit_upload(
+        &self,
+        ctx: Ctx,
+        person: String,
+        meta: UploadMeta,
+        body: Body,
+    ) -> Result<UploadResponse, ApiError> {
+        self.check_upload("hermit_upload", &meta);
+        self.check_bytes("hermit_upload", body).await;
+        self.received("hermit_upload", &ctx, &json!({"person": person}), None, None);
+        self.answer_json("hermit_upload")
     }
 
     async fn person_purge(
@@ -1231,6 +1244,17 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .hermit_send_turn(param_uuid(&f, "id"), &request::<HermitSendRequest>(&f))
             .await
             .map(|a| json!({"new": a.is_new(), "body": a.into_inner()})),
+        "hermit_upload" => c
+            .service(Some(ADMIN))
+            .hermit_upload(
+                &param_str(&f, "person"),
+                &header(&f, "aviary-upload-name"),
+                UploadKind::parse(&header(&f, "aviary-upload-kind")).unwrap(),
+                &header(&f, "content-type"),
+                request_bytes(&f),
+            )
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
         "person_purge" => c
             .service(Some(ADMIN))
             .person_purge(&param_str(&f, "person"), &request::<PersonPurgeRequest>(&f))

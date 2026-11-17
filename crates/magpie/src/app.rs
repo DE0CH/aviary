@@ -559,6 +559,10 @@ impl Server for Magpie {
         http::hermit::send_turn(self, ctx, id, body).await
     }
 
+    async fn hermit_upload(&self, ctx: Ctx, person: String, meta: UploadMeta, body: Body) -> Answer<UploadResponse> {
+        http::hermit::upload(self, ctx, person, meta, body).await
+    }
+
     async fn person_purge(&self, ctx: Ctx, person: String, body: PersonPurgeRequest) -> Answer<PersonPurgeResponse> {
         http::hermit::person_purge(self, ctx, person, body).await
     }

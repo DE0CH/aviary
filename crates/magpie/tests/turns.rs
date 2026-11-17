@@ -2093,6 +2093,90 @@ async fn a_send_attaches_the_persons_uploads_with_unique_workspace_names() {
     );
 }
 
+/// A deployment's message with an image (Jarvis 4's first prompt with the screenshots of its New session form) is an
+/// image of the turn, as a person's is, not a path in its text: hermit uploads it for the conversation's person.
+#[tokio::test]
+async fn the_deployment_sends_an_image_it_uploaded_for_the_person() {
+    use magpie_api::ops::HermitSendRequest;
+    use magpie_api::turns::ImageRef;
+    use magpie_api::uploads::UploadKind;
+    let w = World::new("turn_hermit_image", Some(Duration::ZERO)).await;
+    let hermit = w.a.hermit();
+    let hermit = hermit.service(None);
+    let pic = hermit
+        .hermit_upload(
+            ALICE,
+            "Screenshot 17.06.png",
+            UploadKind::Image,
+            "image/png",
+            small_png(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(pic.mime_type, "image/png");
+    assert_eq!(pic.name, "Screenshot 17.06.png");
+    // pigeon cannot upload as the deployment
+    let e =
+        w.a.pigeon()
+            .service(None)
+            .hermit_upload(ALICE, "x.png", UploadKind::Image, "image/png", small_png())
+            .await
+            .unwrap_err();
+    assert_eq!(code(&e), ErrorCode::WrongCaller);
+    // not an image
+    let e = hermit
+        .hermit_upload(ALICE, "x.png", UploadKind::Image, "image/png", b"not a png".to_vec())
+        .await
+        .unwrap_err();
+    assert_eq!(code(&e), ErrorCode::UnsupportedType);
+    let conv = w.conversation().await;
+    let mut m = msg("first-prompt-m1", "This page is broken");
+    m.images = vec![ImageRef {
+        upload_id: pic.upload_id,
+    }];
+    let send = |m: SendRequest| HermitSendRequest {
+        person: ALICE.into(),
+        message: m,
+        join_running: true,
+    };
+    let turn = hermit.hermit_send_turn(conv, &send(m)).await.unwrap().get().turn.id;
+    let sent: serde_json::Value = w
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "select data from events where conversation_id = $1 and kind = 'user.sent'",
+            &[&conv],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(sent["text"], "This page is broken");
+    assert_eq!(sent["images"][0]["path"], "uploads/Screenshot 17.06.png");
+    assert!(w.state_is(turn, "starting").await);
+    let sup = w.supervisor(conv).await;
+    let cmds = sup.poll(0, 0).await;
+    let CommandBody::StartTurn(st) = &cmds.commands[0].body else {
+        panic!()
+    };
+    assert_eq!(st.images[0].workspace_path, "uploads/Screenshot 17.06.png");
+    // another person's upload is no upload of this conversation's person
+    let bobs = hermit
+        .hermit_upload("bob@example.org", "b.png", UploadKind::Image, "image/png", small_png())
+        .await
+        .unwrap();
+    let other = w.conversation().await;
+    let mut again = msg("first-prompt-m2", "again");
+    again.images = vec![ImageRef {
+        upload_id: bobs.upload_id,
+    }];
+    assert_eq!(
+        code(&hermit.hermit_send_turn(other, &send(again)).await.unwrap_err()),
+        ErrorCode::UnknownUpload
+    );
+}
+
 #[tokio::test]
 async fn a_reacquire_late_in_the_wait_gets_a_fresh_deadline() {
     let w = World::new("turn_late_reacquire", None).await;
