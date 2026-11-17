@@ -239,7 +239,7 @@ class Seeded(unittest.TestCase):
     def test_managed_size(self):
         def m(o):
             cm = next(x for x in o if x and x["kind"] == "ConfigMap" and x["metadata"]["name"].startswith("hermit-skills"))
-            cm["data"]["web.SKILL.md"] += "x" * 8000
+            cm["data"]["web.SKILL.md"] += "x" * 240000
         self.expect(m, "K", "hermit refuses them")
 
     def test_gateway_image_store_is_fenced(self):
