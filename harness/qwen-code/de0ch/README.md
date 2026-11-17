@@ -26,7 +26,8 @@ refs/tags/vX.Y.Z` and `git merge`, never a rebase), tested against aviary's supe
   60 s. Upstream cancelled the tool call with "The host could not present the required approval" while the host
   still showed the question.
 - `packages/cli/src/nonInteractive/control/controllers/systemController.ts`: the `initialize` answer names the slash
-  commands (`commands`: name, description, argumentHint), as Claude Code's does. aviary's supervisor fills the chat
+  commands (`commands`: name, description, argumentHint, and `builtin: true` on Qwen Code's own), as Claude Code's
+  does. aviary's supervisor fills the chat
   page's "/" list from that answer; without it the list was empty for every Qwen Code conversation.
 - `packages/core/src/telemetry/qwen-logger/qwen-logger.ts`: no usage statistics (Deyao, 2026-11-16). Upstream posts
   a record of every session, prompt, tool call and model request to Alibaba Cloud RUM

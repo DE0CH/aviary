@@ -833,6 +833,7 @@ describe('SystemController', () => {
           name: 'compress',
           description: 'Compress the context',
           argumentHint: '',
+          builtin: true,
         },
         { name: 'video', description: 'Edit videos', argumentHint: '[file]' },
       ]);

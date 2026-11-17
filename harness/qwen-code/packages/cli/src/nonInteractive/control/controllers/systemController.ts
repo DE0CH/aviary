@@ -25,6 +25,7 @@ import type {
   CLIControlGetContextUsageRequest,
 } from '../../types.js';
 import { getAvailableCommands } from '../../../nonInteractiveCliCommands.js';
+import { CommandKind } from '../../../ui/commands/types.js';
 import {
   createDebugLogger,
   MCPServerConfig,
@@ -381,11 +382,19 @@ export class SystemController extends BaseController {
 
   /**
    * DE0CH fork: the slash commands with what a host shows beside each name.
+   * Qwen Code's own commands are marked `builtin`, as Claude Code marks its
+   * own: the rest (skills, file commands, MCP prompts) a message may name
+   * anywhere, and a host completes them there too.
    */
   private async loadSlashCommands(
     signal: AbortSignal,
   ): Promise<
-    Array<{ name: string; description: string; argumentHint: string }>
+    Array<{
+      name: string;
+      description: string;
+      argumentHint: string;
+      builtin?: true;
+    }>
   > {
     if (signal.aborted) {
       return [];
@@ -405,6 +414,9 @@ export class SystemController extends BaseController {
           name: cmd.name,
           description: cmd.description ?? '',
           argumentHint: cmd.argumentHint ?? '',
+          ...(cmd.kind === CommandKind.BUILT_IN
+            ? { builtin: true as const }
+            : {}),
         }))
         .sort((a, b) => a.name.localeCompare(b.name));
     } catch (error) {
