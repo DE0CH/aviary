@@ -286,10 +286,10 @@ fn relay(mut src: TcpStream, restore: &str, buf: &mut [u8], deadline: Instant) -
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
-    fn stream() -> Vec<u8> {
+    pub fn stream() -> Vec<u8> {
         let mut s = MAGIC.to_vec();
         // Pages: offset, length 5000, payload
         s.push(REC_PAGES);

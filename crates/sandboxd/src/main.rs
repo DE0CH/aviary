@@ -69,6 +69,7 @@ mod sock;
 mod stack;
 #[allow(unsafe_code)] // syscalls and fixed memory; every block has a SAFETY comment
 mod storage;
+mod stream;
 #[allow(unsafe_code)] // syscalls and fixed memory; every block has a SAFETY comment
 mod util;
 
@@ -354,6 +355,12 @@ fn main() {
     }
     if let Some(stage @ ("seal" | "open")) = args.get(1).map(String::as_str) {
         std::process::exit(seal::main(stage == "open"));
+    }
+    if args.get(1).map(String::as_str) == Some("stream-sink") {
+        std::process::exit(stream::sink_main(&args[2..]));
+    }
+    if args.get(1).map(String::as_str) == Some("stream-source") {
+        std::process::exit(stream::source_main(&args[2..]));
     }
     if args.get(1).map(String::as_str) == Some("migrate-relay") {
         std::process::exit(relay::main(&args[2..]));
