@@ -71,7 +71,8 @@ class Out:
         args = [f"{k}=file:{os.path.join(self.d, k)}" for k in self.keys]
         for k, e in self.keys.items():
             args += ["--explain", f"{k}={e}"]
-        print("\nscripts/store-put.py yyc " + " ".join(f"'{a}'" for a in args))
+        import shlex   # an explanation may hold an apostrophe
+        print("\nscripts/store-put.py yyc " + " ".join(shlex.quote(a) for a in args))
 
 
 def need(name):
