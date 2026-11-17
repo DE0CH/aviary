@@ -8,11 +8,17 @@
 # The gateway is down from OLD's power-off until NEW has booted and the hosts' next handshake (measured on a replica,
 # 2026-11-17: see crates/sandboxd/docs/HOST.md "Gateway on a plain server"). Running it with OLD and NEW swapped moves
 # everything back. Each step is skipped when already done, so a run that stopped half way is run again.
-# Env: HCLOUD_TOKEN (the project's read-write token).
+# FIREWALL (a Hetzner firewall's name, required): applied to NEW by its id as soon as NEW holds the address and
+# before it is powered on. A server without a public interface takes no firewall, and one applied by label
+# selector did not attach when the interface appeared (2026-11-17: ten minutes with no firewall).
+# Where NEW is not a node of the cluster OLD was one of: a cluster's own mesh may go on sending the gateway's
+# addresses to OLD (crates/sandboxd/docs/HOST.md "Gateway on a plain server").
+# Env: HCLOUD_TOKEN (the project's read-write token), FIREWALL.
 set -euo pipefail
 old=${1:?usage: gateway-move.sh OLD NEW}; new=${2:?usage: gateway-move.sh OLD NEW}
 NETWORK=${NETWORK:-yyc} NET_ROUTE=${NET_ROUTE:-10.202.0.0/15}
-: "${HCLOUD_TOKEN:?}"
+: "${HCLOUD_TOKEN:?}" "${FIREWALL:?the firewall NEW gets with its public address}"
+hcloud firewall describe "$FIREWALL" >/dev/null
 t0=$(date +%s)
 say() { echo "[$(( $(date +%s) - t0 )) s] $*"; }
 srv() { hcloud server describe "$1" -o json; }
@@ -36,6 +42,14 @@ else
   hcloud primary-ip unassign "$pip" >/dev/null
   hcloud primary-ip assign "$pip" --server "$new" >/dev/null; say "primary IPv6 $pip moved to $new"
 fi
+# before NEW is on the network with a public address
+if ! srv "$new" | jq -e --argjson f "$(hcloud firewall describe "$FIREWALL" -o json | jq .id)" \
+    'any(.public_net.firewalls[]?; .id == $f and .status == "applied")' >/dev/null; then
+  hcloud firewall apply-to-resource "$FIREWALL" --type server --server "$new" >/dev/null
+fi
+srv "$new" | jq -e 'any(.public_net.firewalls[]?; .status == "applied")' >/dev/null \
+  || { echo "gateway-move: firewall $FIREWALL is not applied to $new: it stays powered off" >&2; exit 1; }
+say "firewall $FIREWALL on $new"
 # NEW boots while the route moves
 [ "$(srv "$new" | jq -r .status)" = running ] || { hcloud server poweron "$new" >/dev/null; say "$new powered on"; }
 cur=$(hcloud network describe "$NETWORK" -o json | jq -r --arg d "$NET_ROUTE" '.routes[] | select(.destination == $d) | .gateway')

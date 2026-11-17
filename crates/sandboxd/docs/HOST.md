@@ -136,8 +136,15 @@ deployment's bucket, hermit `fabric.aws.imageBucket`; the proxy is balanced by a
   powers both off, moves OLD's primary IPv6 to NEW (the address the hosts were given at launch, so running hosts find
   the gateway again by themselves), powers NEW on and moves the network's route. Measured on a replica (2026-11-17,
   cx23 servers): the hosts' traffic stops for 38 to 67 s, then goes on without anything done on a host; the same
-  script with the names swapped moves it back. While it runs every sandbox is without egress and control path, so
+  script with the names swapped moves it back. The firewall named in `FIREWALL` is applied to NEW by its id before
+  NEW is powered on (a firewall applied by label selector did not attach when the public interface appeared). While it runs every sandbox is without egress and control path, so
   it is run as the node work of the gateway maintenance runbook (`fabric/host/gateway-maintenance.md`).
+- **A gateway that was a cluster node** (2026-11-17): a mesh between a cluster's nodes (Talos KubeSpan) lists every
+  address of a node as that node's, `wgAddress` on wg0 included, and keeps the list after the node is powered off.
+  The other nodes then send hermit's calls to the gateway's API into the mesh, to the old node, whatever the
+  private network's route says: the hosts' traffic works, hermit sees no gateway. Before the move, every node that
+  reaches the fabric gets a rule ahead of the mesh's (`ip rule add pref 997 to <hostCidr and sandboxCidr> lookup
+  main`), and the old node is removed from the cluster after it.
 
 ## sandboxd
 
