@@ -105,6 +105,13 @@ refs/tags/vX.Y.Z` and `git merge`, never a rebase), tested against aviary's supe
   `set_effort` names a tier again; the tier set before is kept underneath and is not sent.
   `de0ch/thinking-level.e2e.mjs` drives the packed CLI through a tier, `none`, a tier and `none` again against a
   stand-in model; the release build runs it.
+- `de0ch/continue-last-turn.e2e.mjs` (no change to the code: upstream's control request `continue_last_turn`,
+  `packages/cli/src/nonInteractive/session.ts`): **what aviary's supervisor relies on when an operator continues a
+  conversation whose turn was cut off** (Deyao, 2026-11-17). The request has the agent go on with no message from
+  anyone: tool results whose reply never came are sent again, the messages that failed after them are left out and
+  do not come back with the next message, a second request is not accepted, and data the provider refuses on the
+  way is replaced as above. The release build runs it, so a merge of upstream that changes any of this fails here
+  and not in a conversation.
 - `de0ch/` and `.github/workflows/de0ch-release.yml`: this file, the end-to-end checks and the release build.
 
 Everything else aviary needs is configuration, not a change here: the system settings file

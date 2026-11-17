@@ -21,14 +21,7 @@ import { Buffer } from 'node:buffer';
 import { spawn } from 'node:child_process';
 import console from 'node:console';
 import { randomUUID } from 'node:crypto';
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
