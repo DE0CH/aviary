@@ -378,6 +378,10 @@ Jarvis 4 ring as a badge) is drawn by DE0CH/deyao-ai `infra/chat-icon.py --app-i
   `signIn.appScheme`); it is kept in the Keychain (`yyc/access-token.ts`) and sent as `cf-access-token` and the
   `CF_Authorization` cookie on REST and the socket (`runtime/websocket-factory.ts`). An expired token sends the app
   back to the sign-in screen.
+- **Launch screen**: expo-router hides iOS's launch screen once its navigator is ready, and the sign-in screen is drawn
+  before the router mounts, so the gate hides it itself when it shows sign-in (`yyc/launch-screen.ts`); without that
+  Jarvis Chat's launch image stayed over its sign-in screen. The simulator test taps Sign in for this reason: covered
+  views are still in the accessibility tree, so a text check passes under the launch screen.
 - **Name and logo before sign-in**: the sign-in screen shows before any server has answered, and a server may sit
   behind Access as a whole (Jarvis 4's chat). The name starts as the variant's `productName` (`yyc/product.ts`
   `initialProductName`); the logo is the build's launch image until somebody is signed in, then the server's
@@ -393,7 +397,8 @@ Jarvis 4 ring as a badge) is drawn by DE0CH/deyao-ai `infra/chat-icon.py --app-i
   run.
 
 `.github/workflows/yyc-ios.yml` builds both (a matrix) on GitHub macOS runners on every push touching `paseo/`
-(`paseo/ios/`: prebuild, a simulator launch to the sign-in screen with Maestro, which checks the product's name there,
+(`paseo/ios/`: prebuild, a simulator launch to the sign-in screen with Maestro, which checks the product's name there
+and taps Sign in up to iOS's sign-in prompt,
 an unsigned archive signed at export with the App Store Connect key) and uploads to TestFlight. Its secrets:
 `YYC_SITE`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_PRIVATE_KEY`. CI cannot pass Access, so the chat itself is first
 exercised on TestFlight.
