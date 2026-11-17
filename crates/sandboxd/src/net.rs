@@ -218,6 +218,13 @@ pub fn host_rules(
                 let _ = write!(b, "\n    iifname \"wg0\" ip daddr {t} tcp dport 3128 snat to {private_addr}");
             }
         }
+        // what a host itself sends into the private network (its JuiceFS metadata connections, to a load balancer
+        // in front of the database): this node's private address as the source too, so the answer never depends on
+        // a route for the hosts' range at the other end
+        if !private_addr.is_empty() {
+            let (hosts, control) = (cfg.host_cidr.as_str(), cfg.control_cidr.as_str());
+            let _ = write!(b, "\n    iifname \"wg0\" ip saddr {hosts} ip daddr {control} snat to {private_addr}");
+        }
         let _ = write!(b, "\n    iifname \"wg0\" ip saddr {sbx} snat ip prefix to ip saddr map {{ {sbx} : {sbx} }}");
         // this node's own pods reaching a sandbox (the ui pod's Claude Code runs, the controller): they leave through
         // wg0, where flannel's masquerade would give them wg0's own address, which a sandbox's lock drops (it
@@ -926,6 +933,8 @@ mod tests {
         assert!(l.contains("dnat to numgen random mod 1 map { 0 : 10.97.0.50 }"), "{l}");
         let own = l.find("iifname \"wg0\" ip daddr 10.97.0.50 tcp dport 3128 snat to 10.97.0.6").expect(l);
         assert!(own < l.find("snat ip prefix to").unwrap(), "{l}");
+        // a host's own connections into the private network leave with the node's private address
+        assert!(l.contains("iifname \"wg0\" ip saddr 10.99.0.0/24 ip daddr 10.97.0.0/16 snat to 10.97.0.6"), "{l}");
         assert!(
             g.contains("iifname \"wg0\" oifname \"eth0\" drop") && g.contains("iifname \"eth0\" oifname \"wg0\" drop")
         );

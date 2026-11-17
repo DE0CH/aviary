@@ -1,8 +1,9 @@
 # Gateway node maintenance
 
 The sandbox gateway (sandboxd in gateway mode: the WireGuard hub, the egress VIP's DNAT, the route into the overlay)
-runs as the `hermit-gateway` DaemonSet pod on the one Kubernetes node labelled `hermit.yyc/gateway=true`
-(`gateway-net.sh` sets the label, the network route and checks the firewall). While that node is down every sandbox
+runs either on a plain server of its own (`gateway-setup.sh`; replaced with `gateway-move.sh`) or as the
+`hermit-gateway` DaemonSet pod on the one Kubernetes node labelled `hermit.yyc/gateway=true` (`gateway-net.sh` sets
+the label, the network route and checks the firewall); "the node" below is whichever of the two it is. While that node is down every sandbox
 has lost its egress and control path: running turns stall on model calls and FUSE writes, new starts wait and end
 `sandbox_busy` after `hostWaitSeconds`. A reboot, an OS upgrade or a replacement of that node is therefore not
 zero-downtime for running turns (hermit spec 14.7, the stated gap). This runbook keeps it small and orderly.

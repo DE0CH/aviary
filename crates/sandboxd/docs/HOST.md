@@ -47,6 +47,9 @@ item 5).
   `fabric.egressTarget`, the one target pushed), gets the gateway's private address as the source instead, so its
   answers come back whatever its own routes are; the gateway then balances nothing. A moved sandbox's connections
   keep their conntrack entry on the gateway, which is on every path, and survive the move.
+- **Host → private network:** what a host itself sends into `controlCidr` (its JuiceFS metadata connections, e.g.
+  to a load balancer in front of the database) leaves the gateway with the gateway's private address as the source,
+  so the answer needs no route for `hostCidr` at the other end.
 - **hermit → sandboxd / sandbox:** pod → node (masqueraded to the node's private address, the `controlCidr` that each
   sandbox's nft lock admits on :7070) → gateway → wg0 → host.
 - Burst hosts peer the gateway (its public IPv6, host.json `wgPort`, 51821 in hermit's deployment) and each other (VPC addresses, for host-to-host
@@ -109,6 +112,32 @@ reached over the node's IPv6; the egress VIP translation; the image source for b
   had not made, cutting every sandbox off. sandboxd checks its routes (and each sandbox's /32) every 10 s and re-makes
   missing ones (logged "host routes were removed"); setup.sh sets networkd's `ManageForeignRoutes=no` /
   `ManageForeignRoutingPolicyRules=no` on the hosts it sets up.
+
+## Gateway on a plain server
+
+The gateway is the one box every sandbox's traffic passes: a cloud network's route has one next hop, so it is single
+by nature. It is therefore kept to that one job. `fabric/host/gateway-setup.sh` makes a plain Ubuntu 24.04 server the
+gateway: WireGuard, nftables and sandboxd in gateway mode as `sandboxd.service` (`MemoryMax=256M`, restarted for
+ever), with the same host.json, WireGuard key and TLS files a gateway pod gets. Nothing else is installed: no
+container runtime, no cluster agent, no gVisor, no JuiceFS, no crane (the hosts fetch sandbox images from the
+deployment's bucket, hermit `fabric.aws.imageBucket`; the proxy is balanced by a load balancer, `fabric.egressTarget`).
+
+- The server needs the private network (its address there is what the network's route for the hosts' and sandboxes'
+  ranges points at) and one public address for the hosts' WireGuard (`wgPort`, udp). Its firewall admits that port
+  and nothing else from outside; the API (:7443, hermit's client certificate) is reached over the private network.
+- A second run of the script is the upgrade: it installs the binary and host.json it is given and restarts the unit;
+  sandboxd adopts the data plane it left (above), so no packet is lost. A host.json that is not a gateway's, or that
+  sandboxd refuses, changes nothing. After a reboot the unit makes wg0, the rules and the saved peers again before
+  hermit's next push. `sbx-gateway-routes` (the unit's `ExecStartPre`) routes `podCidr` through `privateGateway` in
+  the main table: the answers to hermit's API calls, which arrive from pod addresses where the cluster does not
+  masquerade them. `tests/gateway/server.sh` checks all of it on a machine with systemd (ci.yml `sandboxd-soak`).
+- **Replacing the gateway** (Hetzner): `fabric/host/gateway-move.sh OLD NEW`. NEW is prepared beforehand with
+  `gateway-setup.sh`, OLD's WireGuard key and OLD's `peers.json`, with no public address of its own. The script
+  powers both off, moves OLD's primary IPv6 to NEW (the address the hosts were given at launch, so running hosts find
+  the gateway again by themselves), powers NEW on and moves the network's route. Measured on a replica (2026-11-17,
+  cx23 servers): the hosts' traffic stops for 38 to 67 s, then goes on without anything done on a host; the same
+  script with the names swapped moves it back. While it runs every sandbox is without egress and control path, so
+  it is run as the node work of the gateway maintenance runbook (`fabric/host/gateway-maintenance.md`).
 
 ## sandboxd
 

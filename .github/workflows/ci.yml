@@ -160,7 +160,8 @@ jobs:
     # hermit spec 14.6: two daemons with stand-ins for runsc/ip/nft/wg, every endpoint, a migration, hostile clients,
     # RSS flat and under the budget; then every answer of the functional part parsed as sandboxd-api's types. Then
     # hermit spec 14.2: the gateway's data plane across its process, with the real ip, wg and nft in network
-    # namespaces (kill -9 under traffic, a refused host.json, wg0 made again from the saved state)
+    # namespaces (kill -9 under traffic, a refused host.json, wg0 made again from the saved state), and the runner
+    # itself set up as a gateway on a plain server by fabric/host/gateway-setup.sh
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -183,6 +184,8 @@ jobs:
         run: |
           sudo apt-get install -y -q --no-install-recommends wireguard-tools nftables
           sudo timeout -k 10 300 bash crates/sandboxd/tests/gateway/adopt.sh target/x86_64-unknown-linux-musl/sandboxd/sandboxd
+      - name: the gateway on a plain server (fabric/host/gateway-setup.sh, crates/sandboxd/tests/gateway/server.sh)
+        run: sudo timeout -k 10 300 bash crates/sandboxd/tests/gateway/server.sh target/x86_64-unknown-linux-musl/sandboxd/sandboxd
 
   build:
     # 5.1 for both architectures of the service images (linux/amd64, linux/arm64): each natively on its own runner
