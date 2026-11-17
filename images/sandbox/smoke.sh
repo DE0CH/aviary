@@ -114,6 +114,15 @@ check "Qwen Code names its slash commands in its initialize answer" img_run "$im
 # inside a message too; without the mark every Qwen Code command, its own included, was offered there.
 check "Qwen Code marks its own slash commands builtin" img_run "$img" -c '
   grep -rqE "builtin: ?true" /opt/qwen-code/lib/node_modules/@qwen-code/qwen-code/chunks'
+# Qwen Code answers the supervisor's initialize before its config has a skill manager; the answer named no skill
+# (YYC AI's chat listed none of its managed skills for a Qwen Code conversation) until de0ch-d781c42ebf20.
+check "Qwen Code names the managed skills in its initialize answer" img_run "$img" -c '
+  h=$(mktemp -d); mkdir -p "$h/skills/report-test" "$h/.qwen"
+  printf -- "---\nname: report-test\ndescription: x\n---\nBody.\n" > "$h/skills/report-test/SKILL.md"
+  printf "{\"modelProviders\":{\"openai\":[{\"id\":\"m\",\"name\":\"m\",\"envKey\":\"K\",\"baseUrl\":\"http://127.0.0.1:9/v1\"}]},\"security\":{\"auth\":{\"selectedType\":\"openai\"}},\"model\":{\"name\":\"m\"},\"skills\":{\"directories\":[\"%s/skills\"]}}" "$h" > "$h/.qwen/settings.json"
+  (echo "{\"type\":\"control_request\",\"request_id\":\"i\",\"request\":{\"subtype\":\"initialize\"}}"; sleep 15) |
+    HOME=$h K=x QWEN_CODE_SUPPRESS_YOLO_WARNING=1 timeout 40 /opt/qwen-code/bin/qwen --output-format stream-json \
+      --input-format stream-json --approval-mode yolo --model m 2>/dev/null | grep -qF "\"name\":\"report-test\""'
 # The supervisor learns of a background task from the harness's `task_started` / `task_notification` lines and ends
 # one with `stop_task`; upstream Qwen Code writes none for a background shell or a monitor, so those held no run,
 # showed nowhere and woke nobody when they ended.
