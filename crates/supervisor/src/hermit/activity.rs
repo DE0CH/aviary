@@ -99,8 +99,7 @@ impl Activity {
                 state: s.state,
                 turn_id: s.turn_id,
                 tasks: s.tasks,
-                // a run that waits only on a person's answer is idle for hermit (DECISIONS 17)
-                idle_since: if matches!(s.state, ActivityState::Idle | ActivityState::Asking) {
+                idle_since: if s.state == ActivityState::Idle {
                     s.idle_since
                 } else {
                     None

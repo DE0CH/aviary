@@ -181,9 +181,6 @@ pub enum Out {
         /// `response.accepted` of a `continue_last_turn` answer; `None` on any other answer.
         accepted: Option<bool>,
     },
-    ControlCancel {
-        request_id: String,
-    },
     KeepAlive,
     /// `system`/`compact_boundary`: Claude Code replaced the conversation so far by a summary (its images are gone
     /// from the context).
@@ -567,9 +564,8 @@ pub fn parse(line: &[u8]) -> Out {
             }
         }
         "control_response" => control_response(&e.response.unwrap_or(Value::Null)),
-        "control_cancel_request" => Out::ControlCancel {
-            request_id: e.request_id.unwrap_or_default(),
-        },
+        // the cancel of a control request: every one is answered at once, so nothing waits on it
+        "control_cancel_request" => Out::Logged("control_cancel_request".into()),
         "system" => {
             let sub = e.subtype.unwrap_or_default();
             let kind = match sub.as_str() {

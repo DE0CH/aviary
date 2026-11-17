@@ -37,7 +37,6 @@ pub struct RunState {
     pub run: RunPart,
     pub last_turn: Option<LastTurn>,
     pub tasks: Vec<TaskState>,
-    pub asks: Vec<AskState>,
     /// Per `cmdSeq`: how far its delivery got (10.2).
     pub delivered: BTreeMap<String, Delivered>,
     /// Turns that ended and whose end report magpie has not answered yet: the heartbeat still names them, and a
@@ -89,8 +88,6 @@ pub struct RunPart {
     /// The queued turn's interrupt, as the turn's, and whether its message is with the writer.
     pub queued_interrupt_elapsed_ms: Option<u64>,
     pub queued_handed: Option<bool>,
-    /// The main thread's tool calls without a result yet (an `asking` run's open calls are all its questions).
-    pub open_tools: Vec<String>,
     /// The images Claude Code's context holds since its last compaction (absent: not counted yet, the next
     /// generation counts them from the transcript).
     pub images: Option<u32>,
@@ -109,7 +106,6 @@ impl Default for RunPart {
             last_uuid: None,
             queued_turn_id: None,
             handed: None,
-            open_tools: Vec::new(),
             images: None,
             queued_interrupt_elapsed_ms: None,
             queued_handed: None,
@@ -139,20 +135,6 @@ pub struct TaskState {
     pub until: Option<String>,
     /// Started inside a subagent or workflow.
     pub nested: bool,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct AskState {
-    pub ask_id: String,
-    pub cli_request_id: String,
-    pub tool_name: String,
-    pub since: String,
-    pub tool_use_id: Option<String>,
-    /// How long it has been open, on the monotonic clock (its 30 min timeout goes on from here after a restart).
-    pub elapsed_ms: Option<u64>,
-    /// The turn it was opened in (its reports' lane).
-    pub lane: Option<String>,
 }
 
 /// A turn whose end report is not answered yet.

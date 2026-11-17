@@ -59,6 +59,7 @@ impl LocalServer for Local {
     }
 
     async fn question_get(&self, _ctx: Ctx, ask_id: String, q: QuestionWait) -> Answer<QuestionAnswer> {
+        self.agent.waiting_on_the_person();
         let calls = self.agent.magpie_calls().ok_or_else(no_magpie)?;
         let r = calls
             .question_get(&ask_id, &magpie_api::sandbox::QuestionQuery { wait_ms: q.wait_ms })

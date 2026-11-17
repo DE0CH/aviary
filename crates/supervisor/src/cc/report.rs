@@ -17,8 +17,7 @@ use magpie_api::client::ClientError;
 use magpie_api::errors::ErrorCode;
 use magpie_api::live::{FrameOp, LiveFrame, LiveFramesRequest};
 use magpie_api::sandbox::{
-    AckRequest, AckResult, AgentTurnRequest, AskReport, AskResolvedReport, ReportError, ReportedState, TaskReportEvent,
-    TasksReport, TurnStateReport,
+    AckRequest, AckResult, AgentTurnRequest, ReportError, ReportedState, TaskReportEvent, TasksReport, TurnStateReport,
 };
 use tokio::sync::{Notify, watch};
 use tokio::time::Instant;
@@ -73,8 +72,6 @@ pub enum Item {
         done: Option<Done>,
     },
     AgentTurn(AgentTurnRequest),
-    AskOpen(AskReport),
-    AskResolved(String, AskResolvedReport),
     Ack {
         seq: u64,
         result: AckResult,
@@ -99,7 +96,7 @@ impl Item {
         match self {
             Item::State { turn, .. } => Some(*turn),
             Item::AgentTurn(r) => Some(r.turn_id),
-            _ => None,
+            Item::Ack { .. } => None,
         }
     }
 }
@@ -109,8 +106,6 @@ impl std::fmt::Debug for Item {
         match self {
             Item::State { turn, report, .. } => write!(f, "state {turn} {:?}", report.state),
             Item::AgentTurn(r) => write!(f, "agent turn {}", r.turn_id),
-            Item::AskOpen(r) => write!(f, "ask {}", r.ask_id),
-            Item::AskResolved(id, _) => write!(f, "ask resolved {id}"),
             Item::Ack { seq, .. } => write!(f, "ack {seq}"),
         }
     }
@@ -521,24 +516,6 @@ impl Reporter {
                 })
                 .await;
             }
-            Item::AskOpen(r) => {
-                self.retry(&what, || async {
-                    match self.calls().ask_open(&r).await {
-                        Ok(()) => Attempt::Done,
-                        Err(e) => classify(&e),
-                    }
-                })
-                .await;
-            }
-            Item::AskResolved(id, r) => {
-                self.retry(&what, || async {
-                    match self.calls().ask_resolved(&id, &r).await {
-                        Ok(()) => Attempt::Done,
-                        Err(e) => classify(&e),
-                    }
-                })
-                .await;
-            }
             Item::Ack { seq, result, done } => {
                 let req = AckRequest { result };
                 let ok = self
@@ -728,15 +705,6 @@ mod tests {
             at,
         }));
         r.push(Item::state(turn, state(ReportedState::Running)));
-        r.push_in(
-            Some(turn),
-            Item::AskOpen(AskReport {
-                ask_id: "ask-outage".into(),
-                tool_name: "AskUserQuestion".into(),
-                tool_use_id: Some("toolu_1".into()),
-                input: serde_json::Map::new(),
-            }),
-        );
         r.push(Item::state(turn, state(ReportedState::Completed)));
         r.push(Item::Ack {
             seq,
@@ -768,7 +736,6 @@ mod tests {
         let count = |n: &str| routes.iter().filter(|x| **x == n).count();
         assert_eq!(count("agent_turn"), 1, "{routes:?}");
         assert_eq!(count("turn_state"), 2, "{routes:?}");
-        assert_eq!(count("ask_open"), 1, "{routes:?}");
         assert_eq!(count("ack_command"), 1, "{routes:?}");
         let states: Vec<String> = magpie
             .script()
@@ -780,7 +747,7 @@ mod tests {
         let lane: Vec<&str> = routes.iter().copied().filter(|x| *x != "ack_command").collect();
         assert_eq!(
             lane,
-            ["agent_turn", "turn_state", "ask_open", "turn_state"],
+            ["agent_turn", "turn_state", "turn_state"],
             "the turn's lane in order"
         );
         assert!(magpie.acks(cid).contains_key(&seq));

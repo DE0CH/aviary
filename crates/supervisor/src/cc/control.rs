@@ -1,7 +1,7 @@
 //! Control messages on Claude Code's stdin (supervisor 7.2, 7.3, 7.6) in the Agent SDK's shapes, and the answer to
 //! each control request Claude Code sends.
 
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 fn line(v: &Value) -> Vec<u8> {
     let mut b = serde_json::to_vec(v).unwrap_or_default();
@@ -85,31 +85,6 @@ pub fn allow(request_id: &str, updated_input: &Value, tool_use_id: Option<&str>)
     )
 }
 
-/// The answered input as Qwen Code's question tool reads it: `answers` keyed by each question's index (`"0"`,
-/// `"1"`), where the app (as Claude Code's tool) keys them by the question's text. A key that is already an index,
-/// or names no question, is kept as it is.
-#[must_use]
-pub fn qwen_answers(updated_input: &Value) -> Value {
-    let mut out = updated_input.clone();
-    let questions: Vec<String> = updated_input
-        .get("questions")
-        .and_then(Value::as_array)
-        .map(|qs| {
-            qs.iter()
-                .map(|q| q.get("question").and_then(Value::as_str).unwrap_or("").to_owned())
-                .collect()
-        })
-        .unwrap_or_default();
-    if let Some(answers) = out.get_mut("answers").and_then(Value::as_object_mut) {
-        let given = std::mem::take(answers);
-        for (k, v) in given {
-            let key = questions.iter().position(|q| *q == k).map_or(k, |i| i.to_string());
-            answers.insert(key, v);
-        }
-    }
-    out
-}
-
 /// `can_use_tool` answered `deny`.
 #[must_use]
 pub fn deny(request_id: &str, message: &str, tool_use_id: Option<&str>) -> Vec<u8> {
@@ -126,54 +101,37 @@ pub fn error(request_id: &str, message: &str) -> Vec<u8> {
                  "response": {"subtype": "error", "request_id": request_id, "error": message}}))
 }
 
-/// What to do with a control request from Claude Code.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Answer {
-    /// Write this line now.
-    Now(Vec<u8>),
-    /// A tool that needs a person: open an ask (7.6).
-    Ask {
-        tool_name: String,
-        tool_use_id: Option<String>,
-        input: Map<String, Value>,
-    },
-}
+/// What a tool call that would need the person is told: nobody answers a harness's own prompts, a question is the
+/// `ask` command.
+pub const NEEDS_THE_PERSON: &str = "Nobody answers this tool here: ask the user with the `ask` shell command.";
 
-/// The answer to `control_request {subtype, …}` (7.3, 7.6).
+/// The line that answers `control_request {subtype, …}` (7.3). Every tool is allowed with its input unchanged
+/// (bypass semantics), except one that would wait on the person (a harness's own question or plan tool, which the
+/// launch does not offer): it is denied with [`NEEDS_THE_PERSON`], so no turn waits on a prompt nobody shows.
 #[must_use]
-pub fn answer(request_id: &str, subtype: &str, request: &Value) -> Answer {
+pub fn answer(request_id: &str, subtype: &str, request: &Value) -> Vec<u8> {
     match subtype {
         "can_use_tool" => {
             let tool_use_id = request.get("tool_use_id").and_then(Value::as_str);
             let input = request.get("input").cloned().unwrap_or_else(|| json!({}));
             // Claude Code marks a tool that needs the person; Qwen Code asks permission only for its question
             // tool when every tool is allowed, and does not mark it
-            let asks = request
+            let needs_person = request
                 .get("requires_user_interaction")
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
-                || request.get("tool_name").and_then(Value::as_str)
-                    == Some(crate::harness::ask_tool(crate::harness::Harness::Qwen));
-            if asks {
-                Answer::Ask {
-                    tool_name: request
-                        .get("tool_name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_owned(),
-                    tool_use_id: tool_use_id.map(str::to_owned),
-                    input: input.as_object().cloned().unwrap_or_default(),
-                }
+                || request.get("tool_name").and_then(Value::as_str) == Some("ask_user_question");
+            if needs_person {
+                deny(request_id, NEEDS_THE_PERSON, tool_use_id)
             } else {
-                // bypass semantics: the input unchanged
-                Answer::Now(allow(request_id, &input, tool_use_id))
+                allow(request_id, &input, tool_use_id)
             }
         }
-        "elicitation" => Answer::Now(success(request_id, &json!({"action": "decline"}))),
-        "request_user_dialog" => Answer::Now(success(request_id, &json!({"behavior": "cancelled"}))),
-        "hook_callback" => Answer::Now(error(request_id, "no hooks registered")),
-        "mcp_message" => Answer::Now(error(request_id, "no SDK MCP servers")),
-        _ => Answer::Now(error(request_id, "unsupported")),
+        "elicitation" => success(request_id, &json!({"action": "decline"})),
+        "request_user_dialog" => success(request_id, &json!({"behavior": "cancelled"})),
+        "hook_callback" => error(request_id, "no hooks registered"),
+        "mcp_message" => error(request_id, "no SDK MCP servers"),
+        _ => error(request_id, "unsupported"),
     }
 }
 
@@ -188,36 +146,37 @@ mod tests {
 
     #[test]
     fn answers() {
-        let Answer::Now(b) = answer(
+        let b = answer(
             "r1",
             "can_use_tool",
             &json!({"tool_name": "Bash", "input": {"command": "ls"}, "tool_use_id": "t1"}),
-        ) else {
-            panic!()
-        };
+        );
         let a = v(&b);
         assert_eq!(a["response"]["subtype"], "success");
         assert_eq!(a["response"]["request_id"], "r1");
         assert_eq!(a["response"]["response"]["behavior"], "allow");
         assert_eq!(a["response"]["response"]["updatedInput"]["command"], "ls");
         assert_eq!(a["response"]["response"]["toolUseID"], "t1");
-        assert!(matches!(
-            answer("r2", "can_use_tool", &json!({"tool_name": "AskUserQuestion", "requires_user_interaction": true, "input": {"q": 1}})),
-            Answer::Ask { tool_name, .. } if tool_name == "AskUserQuestion"
-        ));
-        let Answer::Now(b) = answer("r3", "elicitation", &json!({})) else {
-            panic!()
-        };
-        assert_eq!(v(&b)["response"]["response"]["action"], "decline");
-        let Answer::Now(b) = answer("r4", "request_user_dialog", &json!({})) else {
-            panic!()
-        };
-        assert_eq!(v(&b)["response"]["response"]["behavior"], "cancelled");
+        // a tool that would wait on the person is denied at once, pointing at the `ask` command: Claude Code marks
+        // it, Qwen Code's question tool carries no mark
+        for req in [
+            json!({"tool_name": "AskUserQuestion", "requires_user_interaction": true, "input": {"q": 1}}),
+            json!({"tool_name": "ask_user_question", "tool_use_id": "t9", "input": {"questions": []}}),
+        ] {
+            let r = v(&answer("r2", "can_use_tool", &req));
+            assert_eq!(r["response"]["response"]["behavior"], "deny", "{req}");
+            assert_eq!(r["response"]["response"]["message"], NEEDS_THE_PERSON);
+        }
+        assert_eq!(
+            v(&answer("r3", "elicitation", &json!({})))["response"]["response"]["action"],
+            "decline"
+        );
+        assert_eq!(
+            v(&answer("r4", "request_user_dialog", &json!({})))["response"]["response"]["behavior"],
+            "cancelled"
+        );
         for s in ["hook_callback", "mcp_message", "set_model_please"] {
-            let Answer::Now(b) = answer("r5", s, &json!({})) else {
-                panic!()
-            };
-            assert_eq!(v(&b)["response"]["subtype"], "error", "{s}");
+            assert_eq!(v(&answer("r5", s, &json!({})))["response"]["subtype"], "error", "{s}");
         }
         assert_eq!(
             v(&deny("r6", "No answer was given.", None))["response"]["response"]["behavior"],
@@ -225,18 +184,6 @@ mod tests {
         );
         assert_eq!(v(&stop_task("s1", "t9"))["request"]["task_id"], "t9");
         assert_eq!(v(&initialize("init-1"))["request"]["subtype"], "initialize");
-        // Qwen Code's question tool is an ask though it carries no mark, and its answers go back by index
-        assert!(matches!(
-            answer("r9", "can_use_tool", &json!({"tool_name": "ask_user_question", "tool_use_id": "t9", "input": {"questions": []}})),
-            Answer::Ask { tool_name, .. } if tool_name == "ask_user_question"
-        ));
-        let given = json!({"questions": [{"question": "Colour?"}, {"question": "Size?"}],
-                           "answers": {"Size?": "L", "Colour?": "Blue", "1x": "kept"}});
-        assert_eq!(
-            qwen_answers(&given)["answers"],
-            json!({"0": "Blue", "1": "L", "1x": "kept"})
-        );
-        assert_eq!(qwen_answers(&json!({"a": 1})), json!({"a": 1}));
         let e = v(&qwen_set_effort("c1", "high"));
         assert_eq!(
             (e["request"]["subtype"].as_str(), e["request"]["effort"].as_str()),

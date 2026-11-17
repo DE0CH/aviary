@@ -33,9 +33,8 @@ use hermit_api::sandbox_surface::{ActivityEvent, ActivityEventKind, ActivityStat
 use magpie_api::errors::DataCode;
 use magpie_api::events::{TaskEvent, TaskState as WireTaskState};
 use magpie_api::sandbox::{
-    AckResult, AgentTurnRequest, AnswerAsk, AskOutcome, AskReport, AskResolvedReport, Command, CommandBody,
-    CommandsQuery, Heartbeat, HeartbeatLastTurn, HeartbeatState, KillReason, ReportError, ReportedState, ReportedTask,
-    StartTurn, SupervisorFacts, TaskReportEvent, TurnStateReport,
+    AckResult, AgentTurnRequest, Command, CommandBody, CommandsQuery, Heartbeat, HeartbeatLastTurn, HeartbeatState,
+    KillReason, ReportError, ReportedState, ReportedTask, StartTurn, SupervisorFacts, TaskReportEvent, TurnStateReport,
 };
 use magpie_api::turns::TurnOutcome;
 use serde_json::{Value, json};
@@ -47,7 +46,7 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::boot::BootEnv;
-use crate::cc::control::{self, Answer};
+use crate::cc::control;
 use crate::cc::launch::{self, Launch, Session, Start};
 use crate::cc::report::{Item, Reporter, Wait};
 use crate::cc::stream::{Line, Out, Partial, ResultMsg, Step, Tail, TaskKind, TaskMsg};
@@ -59,12 +58,12 @@ use crate::hermit::activity::Activity;
 use crate::keeper::{self, ExitRecord, StdinOutcome};
 use crate::lifecycle::{Agent, AttachContext, BoxFuture, Lifecycle, RunStatus};
 use crate::limits::{
-    ASK_TIMEOUT, CANCEL_HOLD_WAIT, COMMAND_REQUEST_TIMEOUT, COMMAND_WAIT_MS, CRASH_LOOP_EXITS, CRASH_LOOP_PAUSE,
-    CRASH_LOOP_WINDOW, HEARTBEAT_EVERY, HOLD_SILENCE, INIT_WAIT, INTERRUPT_GRACE, KILL_AFTER_TERM, STDERR_TAIL,
-    STDIN_CLOSE_GRACE, STDOUT_ROTATE, SUPERSEDE_WAIT,
+    CANCEL_HOLD_WAIT, COMMAND_REQUEST_TIMEOUT, COMMAND_WAIT_MS, CRASH_LOOP_EXITS, CRASH_LOOP_PAUSE, CRASH_LOOP_WINDOW,
+    HEARTBEAT_EVERY, HOLD_SILENCE, INIT_WAIT, INTERRUPT_GRACE, KILL_AFTER_TERM, STDERR_TAIL, STDIN_CLOSE_GRACE,
+    STDOUT_ROTATE, SUPERSEDE_WAIT,
 };
 use crate::model::Model;
-use crate::state::{AskState, Change, Delivered, EndingState, GenState, LastTurn, Persisted, RunPart, RunState};
+use crate::state::{Change, Delivered, EndingState, GenState, LastTurn, Persisted, RunPart, RunState};
 use crate::uploads::{self, Uploads};
 
 /// The namespace of the supervisor's derived ids: the stdin `msg_id` = `UUIDv5`(namespace, `boot_id` ‖ "stdin" ‖
@@ -153,9 +152,6 @@ enum Why {
     Oom,
     /// A release.
     Release,
-    /// A release of a run that waited only on its questions (DECISIONS 17): its turn is parked, and the generation
-    /// ends by SIGTERM with stdin left open (a closed stdin makes Claude Code fail the question and call the model).
-    Park,
     /// An idle-point end (configuration change, stdout rotation, another session).
     Graceful,
     /// Initialisation did not complete.
@@ -184,8 +180,6 @@ struct Turn {
     /// uuids of the main-thread messages stdout showed during the turn (8.2).
     uuids: Vec<String>,
     usage: Option<magpie_api::sandbox::Usage>,
-    /// How long its questions waited for the person (not working time: DECISIONS 17).
-    ask_wait: Duration,
     /// The person's message is with the writer (a turn is installed before its message is handed over, so stdout
     /// can never open an agent turn for its answer; an interrupt meanwhile is written right after the message).
     handed: bool,
@@ -201,7 +195,6 @@ impl Turn {
             interrupt_mono: None,
             uuids: Vec::new(),
             usage: None,
-            ask_wait: Duration::ZERO,
             handed: true,
         }
     }
@@ -360,30 +353,6 @@ struct Write {
     done: Option<oneshot::Sender<Result<StdinOutcome, String>>>,
 }
 
-/// An open ask (7.6).
-#[derive(Clone, Debug)]
-#[allow(clippy::struct_field_names)]
-struct Ask {
-    ask_id: String,
-    cli_request_id: String,
-    tool_name: String,
-    tool_use_id: Option<String>,
-    since: OffsetDateTime,
-    since_mono: Instant,
-    /// The report lane of the turn it was opened in.
-    lane: Option<Uuid>,
-}
-
-impl Ask {
-    /// Its resolved report, in the lane it was opened in.
-    fn resolved(&self, outcome: AskOutcome) -> Fx {
-        Fx::ReportIn(
-            self.lane,
-            Item::AskResolved(self.ask_id.clone(), AskResolvedReport { outcome }),
-        )
-    }
-}
-
 /// The state behind the lock.
 struct St {
     run: RunKind,
@@ -408,17 +377,9 @@ struct St {
     live: Option<Gen>,
     last_gen: u32,
     tracker: Tracker,
-    asks: Vec<Ask>,
-    /// Since when a question has been open (the monotonic and the wall clock): no turn timer runs meanwhile.
-    asks_since: Option<(Instant, OffsetDateTime)>,
-    /// The main thread's tool calls without a result yet: a run whose open calls are all its questions waits only
-    /// on the person (`asking`).
-    open_tools: HashSet<String>,
     /// The main thread's open shell calls that run `send-file`, oldest first: the next `send-file` without a tool
     /// call of its own (Qwen Code) puts its files on the first one.
     open_sends: Vec<String>,
-    /// A parked turn whose `parked` report magpie has not answered: the heartbeat still names it.
-    parking: Option<Uuid>,
     delivered: BTreeMap<u64, Delivered>,
     cmd_after: u64,
     last_turn: Option<LastTurn>,
@@ -464,11 +425,7 @@ impl St {
             live: None,
             last_gen: 0,
             tracker: Tracker::default(),
-            asks: Vec::new(),
-            asks_since: None,
-            open_tools: HashSet::new(),
             open_sends: Vec::new(),
-            parking: None,
             delivered: BTreeMap::new(),
             cmd_after: 0,
             last_turn: None,
@@ -496,64 +453,9 @@ impl St {
         self.release.is_some() || self.quiesced || turn.is_some_and(|t| self.cancel_starting == Some(t))
     }
 
-    /// The run waits only on the person: questions are open, no tool call but theirs runs, no background task,
-    /// nothing queued or being stopped (DECISIONS 17).
-    fn asking(&self) -> bool {
-        !self.asks.is_empty()
-            && self.run == RunKind::Running
-            && self.starting.is_none()
-            && self.queued.is_none()
-            && self.live.is_some()
-            && self.tracker.is_empty()
-            && self
-                .turn
-                .as_ref()
-                .is_some_and(|t| t.interrupt_sent.is_none() && self.asks.iter().all(|a| a.lane == Some(t.id)))
-            && self
-                .open_tools
-                .iter()
-                .all(|id| self.asks.iter().any(|a| a.tool_use_id.as_deref() == Some(id.as_str())))
-    }
-
-    /// Keeps the question clock: when the last open question closes, its wait is added to the turn's (not working
-    /// time) and the silence ceiling's clock moves past it, so neither counts the time the person took.
-    fn sync_asks(&mut self) {
-        match (self.asks.is_empty(), self.asks_since) {
-            (false, None) => {
-                let mono = self
-                    .asks
-                    .iter()
-                    .map(|a| a.since_mono)
-                    .min()
-                    .unwrap_or_else(Instant::now);
-                let wall = self.asks.iter().map(|a| a.since).min().unwrap_or_else(now);
-                self.asks_since = Some((mono, wall));
-            }
-            (true, Some((opened, _))) => {
-                self.asks_since = None;
-                if let Some(t) = self.turn.as_mut() {
-                    t.ask_wait += opened.elapsed();
-                }
-                // the silence counted is what came before the question
-                let counted = opened.max(self.last_output_mono).duration_since(self.last_output_mono);
-                self.last_output_mono = Instant::now().checked_sub(counted).unwrap_or(self.last_output_mono);
-            }
-            _ => {}
-        }
-    }
-
-    /// The turn's working time so far: its time less the time its questions waited.
-    fn worked(&self, turn: &Turn) -> Duration {
-        let open = self.asks_since.map_or(Duration::ZERO, |(o, _)| o.elapsed());
-        turn.started.elapsed().saturating_sub(turn.ask_wait + open)
-    }
-
     fn status(&self) -> RunStatus {
-        let asking = self.asking();
         let state = if self.starting.is_some() && self.run == RunKind::Idle {
             ActivityState::Starting
-        } else if asking {
-            ActivityState::Asking
         } else {
             self.run.activity()
         };
@@ -562,14 +464,8 @@ impl St {
             turn_id: self.turn.as_ref().map(|t| t.id).or(self.starting),
             origin: self.turn.as_ref().map(|t| t.origin),
             tasks: u32::try_from(self.tracker.len()).unwrap_or(u32::MAX),
-            asks: u32::try_from(self.asks.len()).unwrap_or(u32::MAX),
             last_output_at: Some(self.last_output.into()),
-            // waiting for a person is idle time for hermit, counted from the question
-            idle_since: if asking {
-                self.asks_since.map(|(_, wall)| wall.into())
-            } else {
-                self.idle_since.map(Into::into)
-            },
+            idle_since: self.idle_since.map(Into::into),
         }
     }
 
@@ -590,8 +486,6 @@ pub(crate) static STDIN_ACK_DELAY_MS: std::sync::atomic::AtomicU64 = std::sync::
 /// What to do once the lock is released.
 enum Fx {
     Report(Item),
-    /// A report in a named lane (asks: their turn's).
-    ReportIn(Option<Uuid>, Item),
     Task(TaskReportEvent),
     /// A live frame of the turn (8.3).
     Live(Uuid, magpie_api::live::LiveFrame),
@@ -982,7 +876,6 @@ impl Driver {
         let r = {
             let mut st = lock(&self.st);
             let (r, change) = f(&mut st, &mut fx);
-            st.sync_asks();
             self.save(&st, change);
             let s = st.status();
             self.status.send_if_modified(|old| {
@@ -1032,24 +925,10 @@ impl Driver {
                 handed: t.map(|t| t.handed),
                 queued_interrupt_elapsed_ms: st.queued.as_ref().and_then(|q| q.interrupt_mono).map(elapsed_ms),
                 queued_handed: st.queued.as_ref().map(|q| q.handed),
-                open_tools: st.open_tools.iter().cloned().collect(),
                 images: st.images,
             };
             s.last_turn.clone_from(&st.last_turn);
             s.tasks = st.tracker.saved();
-            s.asks = st
-                .asks
-                .iter()
-                .map(|a| AskState {
-                    ask_id: a.ask_id.clone(),
-                    cli_request_id: a.cli_request_id.clone(),
-                    tool_name: a.tool_name.clone(),
-                    since: rfc3339(a.since),
-                    tool_use_id: a.tool_use_id.clone(),
-                    elapsed_ms: Some(elapsed_ms(a.since_mono)),
-                    lane: a.lane.map(|l| l.to_string()),
-                })
-                .collect();
             s.ending = st
                 .ending
                 .iter()
@@ -1070,7 +949,6 @@ impl Driver {
         for f in fx {
             match f {
                 Fx::Report(item) => self.reporter.push(item),
-                Fx::ReportIn(lane, item) => self.reporter.push_in(lane, item),
                 Fx::Task(ev) => self.reporter.task_event(ev),
                 Fx::Live(turn, frame) => self.reporter.live_frame(turn, frame),
                 Fx::Stdin(bytes) => {
@@ -1153,9 +1031,8 @@ impl Driver {
             Outcome::Failed(e) => (ReportedState::Failed, Some(e.clone()), TurnOutcome::Failed),
             Outcome::Canceled => (ReportedState::Canceled, None, TurnOutcome::Canceled),
         };
-        st.open_tools.clear();
         st.open_sends.clear();
-        let ms = u64::try_from(st.worked(&turn).as_millis()).unwrap_or(u64::MAX);
+        let ms = u64::try_from(turn.started.elapsed().as_millis()).unwrap_or(u64::MAX);
         tracing::info!(turn = %turn.id, origin = origin_str(turn.origin), outcome = ?out, ms, held, "turn ended");
         let report = TurnStateReport {
             state,
@@ -1292,12 +1169,9 @@ impl Driver {
             st.last_output_mono = Instant::now();
         }
         let mut change = match &line.out {
-            Out::Init { .. }
-            | Out::Task(_)
-            | Out::Result(_)
-            | Out::Compacted
-            | Out::ControlRequest { .. }
-            | Out::ControlCancel { .. } => Change::State,
+            Out::Init { .. } | Out::Task(_) | Out::Result(_) | Out::Compacted | Out::ControlRequest { .. } => {
+                Change::State
+            }
             Out::Message {
                 tool_uses,
                 task_notification,
@@ -1350,13 +1224,11 @@ impl Driver {
                     let t = now();
                     for tu in &tool_uses {
                         st.tracker.on_tool_use(tu, t);
-                        st.open_tools.insert(tu.id.clone());
                         if harness::runs_send_file(tu) {
                             st.open_sends.push(tu.id.clone());
                         }
                     }
                     for id in &tool_results {
-                        st.open_tools.remove(id);
                         st.open_sends.retain(|s| s != id);
                     }
                     if let (Some(u), Some(turn)) = (uuid, st.turn.as_mut())
@@ -1406,36 +1278,7 @@ impl Driver {
                 request_id,
                 subtype,
                 request,
-            } => match control::answer(&request_id, &subtype, &request) {
-                Answer::Now(bytes) => fx.push(Fx::Stdin(bytes)),
-                Answer::Ask {
-                    tool_name,
-                    tool_use_id,
-                    input,
-                } => {
-                    let ask_id = ask_id(boot, gen_n, line.end).to_string();
-                    let ask_lane = st.turn.as_ref().map(|t| t.id);
-                    tracing::info!(ask = %ask_id, tool = %tool_name, "ask opened");
-                    st.asks.push(Ask {
-                        ask_id: ask_id.clone(),
-                        cli_request_id: request_id,
-                        tool_name: tool_name.clone(),
-                        tool_use_id: tool_use_id.clone(),
-                        since: now(),
-                        since_mono: Instant::now(),
-                        lane: ask_lane,
-                    });
-                    fx.push(Fx::ReportIn(
-                        ask_lane,
-                        Item::AskOpen(AskReport {
-                            ask_id,
-                            tool_name,
-                            tool_use_id,
-                            input,
-                        }),
-                    ));
-                }
-            },
+            } => fx.push(Fx::Stdin(control::answer(&request_id, &subtype, &request))),
             Out::ControlResponse {
                 request_id,
                 ok,
@@ -1469,12 +1312,6 @@ impl Driver {
                 }
                 if let Some(w) = st.control_waiters.remove(&request_id) {
                     let _ = w.send(if ok { Ok(()) } else { Err(error.unwrap_or_default()) });
-                }
-            }
-            Out::ControlCancel { request_id } => {
-                if let Some(i) = st.asks.iter().position(|a| a.cli_request_id == request_id) {
-                    let a = st.asks.remove(i);
-                    fx.push(a.resolved(AskOutcome::Canceled));
                 }
             }
             Out::Logged(kind) => tracing::debug!(kind = %kind, "claude system message"),
@@ -1551,12 +1388,8 @@ impl Driver {
                 self.end_turn_now(st, fx, o, false, code);
             }
             st.tracker.clear();
-            st.open_tools.clear();
             st.open_sends.clear();
             st.pending_inputs = 0;
-            for a in st.asks.drain(..) {
-                fx.push(a.resolved(AskOutcome::Canceled));
-            }
             if st.run != RunKind::Idle {
                 st.set_run(RunKind::Idle);
             }
@@ -1581,28 +1414,11 @@ impl Driver {
                 g.why = Some(Why::Interrupt);
                 fx.push(Fx::Terminate(g.pid));
             }
-            // asks
-            let expired: Vec<Ask> = st
-                .asks
-                .iter()
-                .filter(|a| mono.duration_since(a.since_mono) > ASK_TIMEOUT)
-                .cloned()
-                .collect();
-            for a in expired {
-                st.asks.retain(|x| x.ask_id != a.ask_id);
-                fx.push(Fx::Stdin(control::deny(
-                    &a.cli_request_id,
-                    &ask_timeout_answer(),
-                    a.tool_use_id.as_deref(),
-                )));
-                fx.push(a.resolved(AskOutcome::Canceled));
-            }
             // pseudo-tasks and the silence ceiling
             if st.tracker.expire(t) > 0 {
                 Self::hold_check(st, fx, "tasks done");
             }
             if st.run == RunKind::Held
-                && st.asks.is_empty()
                 && mono.duration_since(st.last_output_mono) > HOLD_SILENCE
                 && !st.tracker.until_ahead(t)
             {
@@ -2173,21 +1989,16 @@ impl Driver {
     async fn end_generation(&self, why: Why, deadline: Instant) {
         let g = self.with(Change::State, |st, _| {
             st.live.as_mut().map(|g| {
-                let why = g.why.get_or_insert(why);
-                (g.n, g.pid, matches!(why, Why::Park))
+                g.why.get_or_insert(why);
+                (g.n, g.pid)
             })
         });
-        let Some((n, pid, parked)) = g else { return };
+        let Some((n, pid)) = g else { return };
         let gone = move |s: &St| s.live.as_ref().is_none_or(|g| g.n != n);
-        // a parked turn's generation keeps its stdin: closed, Claude Code would answer the open question itself
-        // ("permission stream closed") and call the model again (supervisor 7.6)
-        if !parked {
-            let _ = self.keeper_call(move |k| k.close_stdin(pid)).await;
-            let first =
-                (Instant::now() + STDIN_CLOSE_GRACE).min(deadline.checked_sub(KILL_AFTER_TERM).unwrap_or(deadline));
-            if self.wait_until(Some(first), gone).await {
-                return;
-            }
+        let _ = self.keeper_call(move |k| k.close_stdin(pid)).await;
+        let first = (Instant::now() + STDIN_CLOSE_GRACE).min(deadline.checked_sub(KILL_AFTER_TERM).unwrap_or(deadline));
+        if self.wait_until(Some(first), gone).await {
+            return;
         }
         let _ = self.keeper_call(move |k| k.signal(-pid, libc::SIGTERM)).await;
         let second = (Instant::now() + KILL_AFTER_TERM).min(deadline);
@@ -2460,7 +2271,9 @@ impl Driver {
             }
             CommandBody::Interrupt(_) => self.interrupt(seq, c.turn_id).await,
             CommandBody::Kill(k) => self.kill(seq, c.turn_id, k.reason).await,
-            CommandBody::AnswerAsk(a) => self.answer_ask(seq, &a),
+            // a question is the `ask` command's, answered through magpie: no sandbox holds one (magpie sends this only
+            // to a sandbox of the previous protocol)
+            CommandBody::AnswerAsk(_) => self.ack(seq, err_ack("no_such_ask")),
             CommandBody::Title(t) => {
                 let system = self
                     .hermit
@@ -3136,14 +2949,6 @@ impl Driver {
                 fx.push(Fx::Stdin(control::interrupt(&format!("intr-{}", Uuid::new_v4()))));
             }
             st.set_run(RunKind::Stopping);
-            for a in st.asks.drain(..) {
-                fx.push(Fx::Stdin(control::deny(
-                    &a.cli_request_id,
-                    "The turn was stopped.",
-                    a.tool_use_id.as_deref(),
-                )));
-                fx.push(a.resolved(AskOutcome::Canceled));
-            }
             Some(id)
         });
         if let Some(id) = target {
@@ -3295,33 +3100,6 @@ impl Driver {
         }
     }
 
-    fn answer_ask(&self, seq: u64, a: &AnswerAsk) {
-        let found = self.with(Change::State, |st, fx| {
-            let i = st.asks.iter().position(|x| x.ask_id == a.ask_id)?;
-            let ask = st.asks.remove(i);
-            let line = if a.allow {
-                let mut input = a.updated_input.clone().map_or_else(|| json!({}), Value::Object);
-                if st.live.as_ref().is_some_and(|g| g.harness == Harness::Qwen) {
-                    input = control::qwen_answers(&input);
-                }
-                control::allow(&ask.cli_request_id, &input, ask.tool_use_id.as_deref())
-            } else {
-                control::deny(
-                    &ask.cli_request_id,
-                    a.message.as_deref().unwrap_or("The person declined."),
-                    ask.tool_use_id.as_deref(),
-                )
-            };
-            fx.push(Fx::Stdin(line));
-            fx.push(ask.resolved(AskOutcome::Answered));
-            Some(ask.lane)
-        });
-        match found {
-            Some(lane) => self.ack_in(lane, seq, AckResult::default()),
-            None => self.ack(seq, err_ack("no_such_ask")),
-        }
-    }
-
     // ---- the filesystem's hooks (9.5) ----
 
     fn kill_from_hook(&self, why: Why) {
@@ -3369,13 +3147,9 @@ impl Driver {
         // a turn whose end report is still on its way (waiting for its lines, 8.2, or for magpie) is still the turn:
         // magpie must neither take it for one the sandbox forgot nor end it before its last row (magpie 8.5)
         let ending = st.ending.first().filter(|_| st.turn.is_none());
-        // a parked turn whose report is on its way is still the turn, so magpie never takes it for one the sandbox
-        // forgot (DECISIONS 17)
-        let parking = st.parking.filter(|_| st.turn.is_none() && ending.is_none());
         Heartbeat {
-            turn_id: st.turn.as_ref().map(|t| t.id).or(ending.map(|e| e.id)).or(parking),
+            turn_id: st.turn.as_ref().map(|t| t.id).or(ending.map(|e| e.id)),
             state: match (ending, st.run) {
-                _ if parking.is_some() => HeartbeatState::Running,
                 (Some(e), _) if e.stopping => HeartbeatState::Stopping,
                 (Some(_), _) | (None, RunKind::Running | RunKind::Starting) => HeartbeatState::Running,
                 (None, RunKind::Stopping) => HeartbeatState::Stopping,
@@ -3527,29 +3301,12 @@ impl Driver {
                         _ => Item::state(t.id, running_report(g.harness, &sid)),
                     }));
                 }
-                let lane = turn.as_ref().map(|t| t.id);
                 st.turn = turn;
                 st.queued = queued;
                 st.pending_inputs = prior.run.pending_inputs;
                 st.images = prior.run.images;
                 st.images_session = prior.generation.as_ref().and_then(|g| g.session_id.clone());
-                st.open_tools = prior.run.open_tools.iter().cloned().collect();
                 st.tracker = Tracker::from_saved(&prior.tasks);
-                st.asks = prior
-                    .asks
-                    .iter()
-                    .map(|a| Ask {
-                        ask_id: a.ask_id.clone(),
-                        cli_request_id: a.cli_request_id.clone(),
-                        tool_name: a.tool_name.clone(),
-                        tool_use_id: a.tool_use_id.clone(),
-                        since: OffsetDateTime::parse(&a.since, &time::format_description::well_known::Rfc3339)
-                            .unwrap_or_else(|_| now()),
-                        // the 30 min timeout goes on from where it was
-                        since_mono: ago(a.elapsed_ms.unwrap_or(0)),
-                        lane: a.lane.as_deref().and_then(|l| Uuid::parse_str(l).ok()).or(lane),
-                    })
-                    .collect();
                 st.run = RunKind::parse(&prior.run.state);
                 if st.run == RunKind::Starting {
                     st.run = RunKind::Idle;
@@ -3570,14 +3327,6 @@ impl Driver {
                     st.turn = Some(t.clone());
                     let o = outcome_of_exit(None, &t, None, exit, &tail);
                     self.end_turn_now(st, fx, o, false, exit.and_then(|e| e.code));
-                }
-                for a in &prior.asks {
-                    fx.push(Fx::Report(Item::AskResolved(
-                        a.ask_id.clone(),
-                        AskResolvedReport {
-                            outcome: AskOutcome::Canceled,
-                        },
-                    )));
                 }
                 st.set_run(RunKind::Idle);
             }
@@ -3916,64 +3665,6 @@ impl Agent for Driver {
         });
     }
 
-    fn park(&self, reason: &str) -> bool {
-        let me = self.me.clone();
-        self.with(Change::State, |st, fx| {
-            if !st.asking() {
-                return false;
-            }
-            let Some(turn) = st.turn.take() else {
-                return false;
-            };
-            let worked = st.worked(&turn);
-            let asks: Vec<String> = st.asks.drain(..).map(|a| a.ask_id).collect();
-            // the wait goes on in magpie, which keeps the questions; nothing of it is this run's any more
-            st.asks_since = None;
-            st.open_tools.clear();
-            st.open_sends.clear();
-            st.pending_inputs = 0;
-            st.release = Some(reason.to_owned());
-            if let Some(g) = st.live.as_mut() {
-                g.why = Some(Why::Park);
-            }
-            st.parking = Some(turn.id);
-            tracing::info!(turn = %turn.id, asks = ?asks, ms = worked.as_millis(), reason, "turn parked: it waits only on its questions, the sandbox goes");
-            let report = TurnStateReport {
-                state: ReportedState::Parked,
-                at: wire(now()),
-                harness: magpie_api::Harness::default(),
-                provider_session_id: None,
-                transcript_path: None,
-                exit_code: None,
-                error: None,
-                held: None,
-                tasks: None,
-                last_uuid: None,
-                usage: turn.usage,
-                duration_ms: Some(u64::try_from(worked.as_millis()).unwrap_or(u64::MAX)),
-                commands: None,
-            };
-            let id = turn.id;
-            fx.push(Fx::Report(Item::State {
-                turn: id,
-                report,
-                wait: Wait::Nothing,
-                done: Some(Box::new(move |_| {
-                    if let Some(d) = me.upgrade() {
-                        d.with(Change::State, |st, _| {
-                            if st.parking == Some(id) {
-                                st.parking = None;
-                            }
-                        });
-                    }
-                })),
-            }));
-            fx.push(Fx::SetTurn(None));
-            st.set_run(RunKind::Idle);
-            true
-        })
-    }
-
     fn tasks(&self) -> Vec<Value> {
         lock(&self.st)
             .tracker
@@ -4023,12 +3714,9 @@ impl Agent for Driver {
         Some(self.reporter.calls())
     }
 
-    fn asks(&self) -> Vec<Value> {
-        lock(&self.st)
-            .asks
-            .iter()
-            .map(|a| json!({"askId": a.ask_id, "toolName": a.tool_name, "since": rfc3339(a.since)}))
-            .collect()
+    fn waiting_on_the_person(&self) {
+        // a command that waits on the person is the run's output: a held run is not silent while it waits
+        self.with(Change::Progress, |st, _| st.last_output_mono = Instant::now());
     }
 }
 
@@ -4037,28 +3725,3 @@ mod tests;
 
 /// How long a `send-file` waits for the shell call that runs it to show in the harness's output.
 const SEND_FILE_CALL_WAIT: Duration = Duration::from_secs(3);
-
-/// What the model is told when nobody answered its question within [`ASK_TIMEOUT`] (Deyao, 2026-11-05): a safety
-/// limit only, since a question that waits never holds a sandbox (its turn is parked, DECISIONS 17); the model may
-/// ask again.
-fn ask_timeout_answer() -> String {
-    format!(
-        "User has not answered in {}, the session has timed out, ask again if needed.",
-        span(ASK_TIMEOUT)
-    )
-}
-
-/// A duration in its largest whole unit: "7 days", "30 minutes", "1 hour".
-fn span(d: Duration) -> String {
-    let s = d.as_secs();
-    let (n, unit) = if s >= 86_400 && s.is_multiple_of(86_400) {
-        (s / 86_400, "day")
-    } else if s >= 3_600 && s.is_multiple_of(3_600) {
-        (s / 3_600, "hour")
-    } else if s >= 60 && s.is_multiple_of(60) {
-        (s / 60, "minute")
-    } else {
-        (s, "second")
-    };
-    format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
-}

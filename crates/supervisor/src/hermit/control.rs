@@ -64,7 +64,7 @@ impl Control {
                 turn_id: s.turn_id,
                 origin: s.origin,
                 tasks: self.lifecycle.agent().tasks(),
-                asks: self.lifecycle.agent().asks(),
+                asks: Vec::new(),
             },
             generation: self.lifecycle.agent().generation(),
             // the filesystem's (it re-takes a lost lease), else the one the start sequence took
