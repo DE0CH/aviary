@@ -482,6 +482,46 @@ async fn blobs_are_staged_and_spliced_back() {
     assert!(stub_len < 1000, "the stub holds no blob content");
 }
 
+/// A command printed the head of a binary and the output was long enough to be a blob (2026-11-17: every write of
+/// the conversation answered 500, Postgres 22021 on the blob's preview).
+#[tokio::test]
+async fn a_long_tool_output_with_nul_bytes_is_written() {
+    let (db, _r, s) = setup("cc_blob_nul").await;
+    let p = main_path();
+    set_main(&common::sql(&db.url), s.conversation, &p).await;
+    let binary = format!(
+        "\u{7f}ELF\u{2}\u{1}\u{0}\u{0}\u{0}{}",
+        "\u{0}\u{fffd}@\u{0}x".repeat(5_000)
+    );
+    let content = line(
+        &json!({"type": "user", "uuid": "u1", "message": {"content": [{"type": "tool_result",
+        "tool_use_id": "t", "content": binary}]}, "toolUseResult": {"stdout": binary}}),
+    );
+    s.write(&p, 0, &content).await.unwrap();
+    assert_eq!(s.read(&p).await.unwrap(), content, "the transcript keeps its bytes");
+    let sql = common::sql(&db.url);
+    let c = sql.get().await.unwrap();
+    let preview: String = c
+        .query_one("select preview from blobs where kind = 'text'", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(
+        preview.starts_with("\u{7f}ELF\u{2}\u{1}\u{fffd}\u{fffd}\u{fffd}"),
+        "{preview:?}"
+    );
+    let data: Value = c
+        .query_one(
+            "select data from events where conversation_id = $1 and kind = 'cc.user'",
+            &[&s.conversation],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let pointer = &data["message"]["content"][0]["content"]["$blob"];
+    assert_eq!(pointer["preview"], preview.as_str());
+}
+
 #[tokio::test]
 async fn main_transcript_events() {
     let (db, r, s) = setup("cc_events").await;

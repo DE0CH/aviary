@@ -364,7 +364,8 @@ fn jpeg(b: &[u8]) -> Option<(u32, u32)> {
 }
 
 /// A text blob's preview: the first [`PREVIEW_CHARS`] characters of its unescaped first [`PREVIEW_SCAN`] bytes, and
-/// whether that is all of it.
+/// whether that is all of it. A NUL in it is U+FFFD ([`crate::events::denul`]): the preview is a `text` column of
+/// `blobs`, and a long tool output with a NUL byte (`head` of a binary) is a blob.
 #[must_use]
 pub fn preview(escaped: &[u8]) -> (String, bool) {
     // cut at an escape and character boundary at most PREVIEW_SCAN bytes in
@@ -388,6 +389,7 @@ pub fn preview(escaped: &[u8]) -> (String, bool) {
     // a lone surrogate escape at the cut does not parse: then fall back to a lossy read of the raw bytes
     let text: String =
         serde_json::from_slice(&quoted).unwrap_or_else(|_| String::from_utf8_lossy(&escaped[..i]).into_owned());
+    let text = crate::events::denul(&text).into_owned();
     let mut chars = text.char_indices();
     let cut = chars.nth(PREVIEW_CHARS).map(|(at, _)| at);
     match cut {
@@ -591,6 +593,16 @@ mod tests {
         assert!(p.chars().all(|c| c == 'a') && more);
         let (p, more) = preview(b"short\\ttext");
         assert_eq!((p.as_str(), more), ("short\ttext", false));
+    }
+
+    #[test]
+    fn a_preview_holds_no_nul() {
+        // the head of a binary as Claude Code writes it: NUL as the escape \u0000
+        let (p, more) = preview(b"\\u007fELF\\u0000\\u0000x");
+        assert_eq!((p.as_str(), more), ("\u{7f}ELF\u{FFFD}\u{FFFD}x", false));
+        // and through the lossy fallback (a lone surrogate does not parse)
+        let (p, _) = preview(b"a\\u0000\\ud800");
+        assert!(!p.contains('\0'), "{p:?}");
     }
 
     #[test]
