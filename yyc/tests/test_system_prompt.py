@@ -28,6 +28,15 @@ class SystemPrompt(unittest.TestCase):
         one."""
         self.assertIn("For PDFs, write HTML and CSS and render it with WeasyPrint.", " ".join(self.text.split()))
 
+    def test_a_report_is_a_full_document_checked_page_by_page(self):
+        """Qwen Code makes a three to five page brief with no cover and sends it after one look (nine runs of
+        nine, 2026-11-17), where Claude Code made five to eight pages, mostly with a cover. With these sentences Qwen
+        Code's reports have the cover, six to eight pages and the page-by-page check (three runs of three)."""
+        text = " ".join(self.text.split())
+        self.assertIn("A report is a full document: a cover page", text)
+        self.assertIn("only when asked for a brief is it shorter", text)
+        self.assertIn("render every page to an image with `pdftoppm`, look at each one, and fix what looks wrong", text)
+
 
 class SandboxInternet(unittest.TestCase):
     """The sandbox reaches every site except the deny list (egress.json generatedAllowlist; Deyao, 2026-11-10): no
