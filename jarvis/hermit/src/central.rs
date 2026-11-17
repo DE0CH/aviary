@@ -18,7 +18,8 @@ use gateway_api::FixedName;
 use hermit_api::sandbox::{ReleaseReason, SandboxPhase, SandboxState};
 use hermit_api::token::Claims;
 use magpie_api::ops::{HermitCreateRequest, HermitSendRequest};
-use magpie_api::turns::SendRequest;
+use magpie_api::turns::{ImageRef, SendRequest};
+use magpie_api::uploads::{UPLOAD_MAX_BYTES, UploadKind};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use time::OffsetDateTime;
@@ -37,6 +38,7 @@ pub fn router(app: App) -> Router {
         .route(wire::BOOT, post(boot))
         .route(wire::HEALTH, post(health))
         .route(wire::DELIVER, post(deliver))
+        .route(wire::UPLOAD, post(upload))
         .route("/magpie/{*rest}", any(forward_magpie))
         .route("/hermit/{*rest}", any(forward_hermit))
         .with_state(app)
@@ -350,7 +352,11 @@ async fn deliver(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Res
                 message: SendRequest {
                     client_message_id: d.id,
                     text: d.text,
-                    images: vec![],
+                    images: d
+                        .images
+                        .into_iter()
+                        .map(|upload_id| ImageRef { upload_id })
+                        .collect(),
                     files: vec![],
                 },
                 // Jarvis's message joins a turn that runs, as Deyao's own mid-reply messages do: a warning (the
@@ -368,6 +374,66 @@ async fn deliver(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Res
             };
             (status, axum::Json(a.into_inner())).into_response()
         }
+        Err(e) => match e.api() {
+            Some(r) => {
+                let status = StatusCode::from_u16(r.status).unwrap_or(StatusCode::BAD_GATEWAY);
+                (
+                    status,
+                    axum::Json(json!({"code": r.code.as_str(), "message": r.message})),
+                )
+                    .into_response()
+            }
+            None => unavailable(e),
+        },
+    }
+}
+
+/// `POST /jarvis/upload`: an image of a delivery, streamed to magpie as an upload of the session's person (magpie's
+/// `POST /v1/hermit/persons/{person}/uploads`, M13's headers and answer), so the delivery shows it as the turn's image
+/// as Deyao's own uploads in the chat are.
+async fn upload(State(app): State<App>, req: Request) -> Response {
+    let (_, row) = match sandbox_of(&app, req.headers()).await {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let h = req.headers();
+    let Some(name) = hdr(h, "aviary-upload-name")
+        .map(magpie_api::routes::decode_percent)
+        .filter(|n| !n.is_empty())
+    else {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "missing Aviary-Upload-Name",
+        );
+    };
+    let Some(kind) = hdr(h, "aviary-upload-kind").and_then(UploadKind::parse) else {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "Aviary-Upload-Kind must be file or image",
+        );
+    };
+    let content_type = hdr(h, header::CONTENT_TYPE.as_str())
+        .unwrap_or("application/octet-stream")
+        .to_owned();
+    let limit = usize::try_from(UPLOAD_MAX_BYTES).unwrap_or(usize::MAX);
+    let stream =
+        http_body_util::BodyDataStream::new(http_body_util::Limited::new(req.into_body(), limit))
+            .map_err(|e| std::io::Error::other(e.to_string()));
+    let up = app
+        .magpie
+        .service(None)
+        .hermit_upload(
+            &row.person,
+            &name,
+            kind,
+            &content_type,
+            reqwest::Body::wrap_stream(stream),
+        )
+        .await;
+    match up {
+        Ok(u) => (StatusCode::CREATED, axum::Json(u)).into_response(),
         Err(e) => match e.api() {
             Some(r) => {
                 let status = StatusCode::from_u16(r.status).unwrap_or(StatusCode::BAD_GATEWAY);

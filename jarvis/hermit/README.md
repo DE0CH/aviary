@@ -127,7 +127,12 @@ Jarvis 4 session machine (harness aviary)                                     �
    wakeups, crons, watches, peer messages: `harness-send` → `POST 127.0.0.1:3128/jarvis/deliver` → hermit → magpie's
    `POST /v1/hermit/conversations/{id}/turns` as Deyao with `joinRunning`: while a turn runs the message joins it,
    as Deyao's own mid-reply messages do, so a watchdog's warning or an Inbox outcome arrives during a long turn; a
-   409 `turn_running` that still comes back `harness-send` turns into 75 for the inbox loop to retry).
+   409 `turn_running` that still comes back `harness-send` turns into 75 for the inbox loop to retry). The first
+   prompt's images (the New session form's) are the turn's images, as Deyao's own in the chat (Deyao, 2026-11-17):
+   `harness-send` streams each to `POST 127.0.0.1:3128/jarvis/upload` → hermit → magpie's
+   `POST /v1/hermit/persons/{person}/uploads` and names the `uploadId`s in the delivery's `images`; magpie writes
+   them to `/workspace/uploads/` and hands them to Claude Code as image blocks. One the gateway refuses goes in as a
+   `~/uploads/…` path in the text instead.
 5. **Pause**: Jarvis 4 pauses an idle session itself (its idle hour); hermit's next pass over `/api/remotes?harness=
    aviary` ends that sandbox (`idle`) and closes the conversation to Deyao's messages (magpie's
    `PUT /v1/hermit/conversations/{id}/closed`): the chat's message box says the session is paused and takes nothing

@@ -15,6 +15,7 @@
 //! - `http://tools/…`: none in Jarvis 4 (404).
 //! - anything else, and `CONNECT host:port`: the internet, directly (a session machine's egress is open).
 //! - origin-form `POST /jarvis/deliver` (from harness-send on this machine): Jarvis's prompt into the conversation.
+//! - origin-form `POST /jarvis/upload` (from harness-send): an image of that prompt, streamed to the central half.
 //!
 //! At start it boots the sandbox (`POST /jarvis/boot`, signed with the machine key by `jarvis-machine sign-request`),
 //! writes the supervisor's boot environment to a file for the harness, and keeps reading the supervisor's `:7070`
@@ -686,6 +687,21 @@ async fn own(state: &State, req: Request<Incoming>) -> Response<Body> {
                 .send()
                 .await;
             relay(r).await
+        }
+        (Method::POST, wire::UPLOAD) => {
+            let mut r = state
+                .http
+                .post(format!("{}{}", state.cfg.gateway_url, wire::UPLOAD))
+                .header("CF-Access-Client-Id", &state.cfg.access_id)
+                .header("CF-Access-Client-Secret", &state.cfg.access_secret)
+                .header(TOKEN_HEADER, &state.boot.token)
+                .timeout(Duration::from_secs(300));
+            for name in ["aviary-upload-name", "aviary-upload-kind", "content-type"] {
+                if let Some(v) = req.headers().get(name) {
+                    r = r.header(name, v);
+                }
+            }
+            relay(r.body(body_of(req)).send().await).await
         }
         (Method::GET, "/jarvis/state") => {
             let h = state.health.lock().ok().and_then(|h| h.clone());
