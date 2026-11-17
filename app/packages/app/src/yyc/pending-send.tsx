@@ -6,6 +6,8 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import { PENDING_WAIT_MS, pendingPhase } from "./outbox";
 
+export { PENDING_BUBBLE_OPACITY } from "./outbox";
+
 /**
  * The line under a message the server has not confirmed (design A, Deyao 2026-11-17): a clock and 「傳送中」, and after
  * `PENDING_WAIT_MS` 「等待網絡，連線後自動傳送」 with 取消 when the message can still be taken back. It stands where the
@@ -59,9 +61,6 @@ export function PendingSendLine({
 const ThemedClock = withUnistyles(Clock);
 const ThemedWifiOff = withUnistyles(WifiOff);
 const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-
-/** How a message the server has not confirmed is drawn: the bubble at half strength. */
-export const PENDING_BUBBLE_OPACITY = 0.5;
 
 const styles = StyleSheet.create((theme) => ({
   line: {

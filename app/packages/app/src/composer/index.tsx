@@ -1,4 +1,9 @@
-import { isReplyDisplayReady, useReplyDisplayFailed, useReplyDisplayReady } from "@/loading/stages";
+import {
+  isReplyDisplayReady,
+  loadReplyChunk,
+  useReplyDisplayFailed,
+  useReplyDisplayReady,
+} from "@/loading/stages";
 import { ReplyDisplayLoadFailed } from "@/components/loading-frame";
 import { warmSandbox } from "@/yyc/warm";
 import {
@@ -137,7 +142,7 @@ import {
   subscribeOutboxReturns,
   useOutboxEntries,
 } from "@/yyc/outbox-store";
-import { PENDING_BUBBLE_OPACITY, PendingSendLine } from "@/yyc/pending-send";
+import { PENDING_BUBBLE_OPACITY } from "@/yyc/outbox";
 import { chatSendBehavior, resolveActiveSendBehavior } from "./input/state";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
@@ -320,6 +325,14 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
 }
 
 // The forge's brand icon in the attach menu (only where the server searches a forge; never in YYC) is its own chunk
+// The line under a queued message the server has not confirmed lives in the reply chunk, which has arrived before
+// anything can be sent (loading/stages.ts), so it draws offline too and adds nothing to the first load.
+const PendingSendLine = lazyArea(
+  "pending-send",
+  loadReplyChunk,
+  (module) => module.PendingSendLine,
+  null,
+);
 const ForgeBrandIcon = lazyArea(
   "forge-icon",
   () => import("@/git/forge-icon"),

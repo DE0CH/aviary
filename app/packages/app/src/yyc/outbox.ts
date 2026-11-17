@@ -34,6 +34,9 @@ export interface OutboxEntry {
 /** How long a message waits before its line says it waits for the network (design A: "still offline after 5 s"). */
 export const PENDING_WAIT_MS = 5000;
 
+/** How a message the server has not confirmed is drawn: at half strength (design A). */
+export const PENDING_BUBBLE_OPACITY = 0.5;
+
 /** How long a delivered message stays listed while its row has not come (the row is on another feed). */
 export const DELIVERED_SHOWN_MS = 10_000;
 
