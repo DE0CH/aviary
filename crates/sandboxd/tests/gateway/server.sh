@@ -37,6 +37,13 @@ modprobe wireguard 2>/dev/null || true
 
 T=$(mktemp -d /tmp/sbx-gw-server.XXXXXX)
 pids=()
+# A machine with Docker (GitHub's runners) drops forwarded packets by iptables' policy; a gateway server has no
+# Docker. What passes wg0 is admitted for the test and the rules are taken out again at the end.
+fwd=()
+if command -v iptables >/dev/null && iptables -S FORWARD 2>/dev/null | grep -qx -- '-P FORWARD DROP'; then
+  fwd=(-i wg0 -j ACCEPT -m comment --comment sbx-gw-server)
+  iptables -I FORWARD "${fwd[@]}"; iptables -I FORWARD -o wg0 -j ACCEPT -m comment --comment sbx-gw-server
+fi
 cleanup() {
   set +e
   for p in "${pids[@]}"; do kill -9 "$p" 2>/dev/null; done
@@ -49,10 +56,13 @@ cleanup() {
   ip route flush table 51822 2>/dev/null; ip route del 10.96.0.0/16 2>/dev/null
   for n in shost spod; do ip netns pids "$n" 2>/dev/null | xargs -r kill -9; ip netns del "$n" 2>/dev/null; done
   ip link del sbxt-pub 2>/dev/null; ip link del sbxt-priv 2>/dev/null
+  if [ ${#fwd[@]} -gt 0 ]; then
+    iptables -D FORWARD "${fwd[@]}" 2>/dev/null; iptables -D FORWARD -o wg0 -j ACCEPT -m comment --comment sbx-gw-server 2>/dev/null
+  fi
   rm -rf /etc/sbx /var/lib/sbx /var/log/sbx "$T"
 }
 trap cleanup EXIT
-fail() { echo "FAIL: $*" >&2; journalctl -u sandboxd -n 30 --no-pager >&2 2>/dev/null; exit 1; }
+fail() { echo "FAIL: $*" >&2; echo "::error::gateway server test: $*"; journalctl -u sandboxd -n 30 --no-pager >&2 2>/dev/null; exit 1; }
 ok() { echo "ok: $*"; }
 nsx() { local n=$1; shift; ip netns exec "$n" "$@"; }
 
