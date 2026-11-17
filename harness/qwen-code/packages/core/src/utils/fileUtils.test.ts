@@ -1231,17 +1231,14 @@ describe('fileUtils', () => {
       const result = await read(testImageFilePath);
       const parts = result.llmContent as Part[];
       expect(parts[0]).toEqual({
-        // The shared stub declares tool_search and defers zoom_image, so the
-        // hint takes the bridge form: review through tool_search, invoke
-        // through tool_call.
-        text:
-          'Image overview: 20x10; oriented source: 20x10.' +
-          ' If details are too small, review zoom_image with tool_search and' +
-          ' invoke it through tool_call, with coordinates normalized from 0 to 1000.',
+        // At its own size the image is named as the file read; no overview
+        // text and no zoom hint send the model looking for detail that is
+        // already there (YYC AI, 2026-11-18).
+        text: 'Read image file: image.png',
       });
       expect(parts[1]).toEqual({
         inlineData: {
-          mimeType: 'image/jpeg',
+          mimeType: 'image/png',
           data: expect.any(String),
           displayName: 'image.png',
         },
@@ -1300,7 +1297,9 @@ describe('fileUtils', () => {
     ])(
       'uses only exposed tools for image guidance: $declared, code mode $codeModeOnly',
       async ({ codeModeOnly, declared, deferred, bindings, hint }) => {
-        await writePng(testImageFilePath, 20, 10);
+        // A page render over the budget: the model is told the picture was
+        // reduced and how to zoom, in the words of the tools it can reach.
+        await writePng(testImageFilePath, 2200, 1800);
         mockMimeGetType.mockReturnValue('image/png');
         const result = await read(
           testImageFilePath,
@@ -1317,15 +1316,15 @@ describe('fileUtils', () => {
           }),
         );
         const parts = result.llmContent as Part[];
-        expect(parts[0]).toEqual({
-          text: `Image overview: 20x10; oriented source: 20x10.${hint}`,
-        });
+        const text = (parts[0] as { text: string }).text;
+        expect(text).toMatch(/^Image overview: \d+x\d+; oriented source: 2200x1800\./);
+        expect(text).toContain(hint);
         expect(parts[1].inlineData?.mimeType).toBe('image/jpeg');
       },
     );
 
     it('points the zoom hint at tools.zoom_image in CodeModeOnly', async () => {
-      await writePng(testImageFilePath, 20, 10);
+      await writePng(testImageFilePath, 2200, 1800);
       mockMimeGetType.mockReturnValue('image/png');
 
       const result = await read(
@@ -1334,12 +1333,10 @@ describe('fileUtils', () => {
       );
 
       const parts = result.llmContent as Part[];
-      expect(parts[0]).toEqual({
-        text:
-          'Image overview: 20x10; oriented source: 20x10. ' +
-          'If details are too small, call tools.zoom_image with ' +
+      expect((parts[0] as { text: string }).text).toContain(
+        'If details are too small, call tools.zoom_image with ' +
           'coordinates normalized from 0 to 1000.',
-      });
+      );
     });
 
     it('returns a bounded overview when a PNG exceeds the old data URI limit', async () => {
@@ -1680,9 +1677,9 @@ describe('fileUtils', () => {
       });
       expect(typeof result.llmContent).toBe('object');
       const parts = result.llmContent as Part[];
-      expect(parts[0]?.text).toContain('Image overview');
+      expect(parts[0]?.text).toContain('Read image file');
       expect(parts[1]?.inlineData).toMatchObject({
-        mimeType: 'image/jpeg',
+        mimeType: 'image/png',
         data: expect.any(String),
         displayName: 'image.png',
       });

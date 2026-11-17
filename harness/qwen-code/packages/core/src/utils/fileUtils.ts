@@ -1827,13 +1827,21 @@ export async function processSingleFileContent(
                   ? ` If details are too small, call ${toolName} with coordinates normalized from 0 to 1000.`
                   : ' If details are too small, review zoom_image with tool_search and invoke it through tool_call, with coordinates normalized from 0 to 1000.';
             }
+            // An image handed over at its own size is not an overview: the
+            // model is told what it got, as Claude Code tells it, and neither
+            // "overview" nor a zoom hint sends it looking for detail that is
+            // already there.
+            const atSourceSize =
+              view.outputWidth === view.sourceWidth &&
+              view.outputHeight === view.sourceHeight;
             return {
               llmContent: [
                 {
-                  text:
-                    `Image overview: ${view.outputWidth}x${view.outputHeight}; ` +
-                    `oriented source: ${view.sourceWidth}x${view.sourceHeight}.` +
-                    zoomHint,
+                  text: atSourceSize
+                    ? `Read image file: ${relativePathForDisplay}`
+                    : `Image overview: ${view.outputWidth}x${view.outputHeight}; ` +
+                      `oriented source: ${view.sourceWidth}x${view.sourceHeight}.` +
+                      zoomHint,
                 },
                 {
                   inlineData: {

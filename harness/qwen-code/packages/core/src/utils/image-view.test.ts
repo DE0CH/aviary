@@ -45,8 +45,10 @@ describe('image views', () => {
     const view = await renderImageOverview(filePath, signal);
     const metadata = await sharp(view.bytes).metadata();
 
+    // Handed over as it is: a page render inside the budget reaches the model
+    // as its own PNG, not as a JPEG re-encode of it (YYC AI, 2026-11-18).
     expect(view).toMatchObject({
-      mimeType: 'image/jpeg',
+      mimeType: 'image/png',
       sourceWidth: 20,
       sourceHeight: 10,
       selectedWidth: 20,
@@ -54,7 +56,8 @@ describe('image views', () => {
       outputWidth: 20,
       outputHeight: 10,
     });
-    expect(metadata).toMatchObject({ width: 20, height: 10, format: 'jpeg' });
+    expect(view.bytes.equals(await fs.readFile(filePath))).toBe(true);
+    expect(metadata).toMatchObject({ width: 20, height: 10, format: 'png' });
   });
 
   it('bounds a large overview by the shared edge and patch budget', async () => {

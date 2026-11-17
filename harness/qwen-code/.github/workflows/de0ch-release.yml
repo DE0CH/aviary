@@ -30,7 +30,7 @@ jobs:
           corepack pnpm install --frozen-lockfile
       - name: the test of what this fork changes
         working-directory: packages/core
-        run: corepack pnpm exec vitest run src/core/openaiContentGenerator/converter.test.ts src/core/openaiContentGenerator/media-budget.test.ts src/core/upstream-refusal.test.ts src/utils/runtimeFetchOptions.test.ts src/telemetry/qwen-logger/no-usage-statistics.test.ts src/services/backgroundShellRegistry.test.ts src/tools/shell.test.ts
+        run: corepack pnpm exec vitest run src/core/openaiContentGenerator/converter.test.ts src/core/openaiContentGenerator/media-budget.test.ts src/utils/image-view.test.ts src/utils/fileUtils.test.ts src/utils/pathReader.test.ts src/tools/read-file.test.ts src/tools/readManyFiles.test.ts src/core/upstream-refusal.test.ts src/utils/runtimeFetchOptions.test.ts src/telemetry/qwen-logger/no-usage-statistics.test.ts src/services/backgroundShellRegistry.test.ts src/tools/shell.test.ts
       - name: an assistant record takes the uuid reserved for it
         working-directory: packages/core
         run: corepack pnpm exec vitest run src/services/chatRecordingService.test.ts -t "de0ch"

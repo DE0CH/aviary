@@ -134,16 +134,14 @@ describe('readPathFromWorkspace', () => {
       },
     });
     const result = await readInWorkspace('image.png');
-    // Expect overview text immediately followed by the bounded image.
+    // Expect the file read immediately followed by the image as it is.
     expect(result).toEqual([
       {
-        text: expect.stringContaining(
-          'Image overview: 20x10; oriented source: 20x10',
-        ),
+        text: expect.stringContaining('Read image file: image.png'),
       },
       {
         inlineData: {
-          mimeType: 'image/jpeg',
+          mimeType: 'image/png',
           data: expect.any(String),
           displayName: 'image.png',
         },
@@ -252,7 +250,7 @@ describe('readPathFromWorkspace', () => {
       );
       expect(imagePart).toEqual({
         inlineData: {
-          mimeType: 'image/jpeg',
+          mimeType: 'image/png',
           data: expect.any(String),
           displayName: 'photo.png',
         },

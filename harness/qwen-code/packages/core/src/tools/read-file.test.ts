@@ -1400,14 +1400,14 @@ describe('ReadFileTool', () => {
       const result = await read(await putPng('image.png', 20, 10));
       expect(result.llmContent).toEqual([
         {
-          // This suite's Config stub exposes no tool registry, so zoom_image is
-          // not reachable and the hint is withheld (#12271).
-          text: 'Image overview: 20x10; oriented source: 20x10.',
+          // An image handed over at its own size is named as the file read,
+          // as Claude Code names it (YYC AI, 2026-11-18).
+          text: 'Read image file: image.png',
         },
         {
           inlineData: {
             data: expect.any(String),
-            mimeType: 'image/jpeg',
+            mimeType: 'image/png',
             displayName: 'image.png',
           },
         },

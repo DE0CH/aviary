@@ -593,7 +593,9 @@ describe('readManyFiles', () => {
         (imagePart as { inlineData: { mimeType: string; data: string } })
           .inlineData,
       ).toMatchObject({
-        mimeType: 'image/jpeg',
+        // A page render inside the budget reaches the model as its own PNG
+        // (YYC AI, 2026-11-18).
+        mimeType: 'image/png',
         data: expect.any(String),
         displayName: 'screenshot.png',
       });
@@ -603,7 +605,7 @@ describe('readManyFiles', () => {
         `\nContent from ${absolutePath}:\n`,
       );
       expect(parts[imageIndex - 1]?.text).toContain(
-        'Image overview: 20x10; oriented source: 20x10',
+        'Read image file: screenshot.png',
       );
       expect(result.files).toHaveLength(1);
       expect(result.files[0]!.content).toEqual([

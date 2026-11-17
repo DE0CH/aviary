@@ -32,7 +32,7 @@ export interface NormalizedRegion {
 
 export interface ImageView {
   bytes: Buffer;
-  mimeType: 'image/jpeg';
+  mimeType: 'image/jpeg' | 'image/png';
   sourceWidth: number;
   sourceHeight: number;
   selectedWidth: number;
@@ -331,6 +331,29 @@ async function renderFullFrameView(
   const { width: sourceWidth, height: sourceHeight } = orientedSize(
     prepared.metadata,
   );
+  // An image already inside the budget is handed over as it is. Re-encoding a
+  // page render to JPEG softened its type, and the model judged a report's
+  // layout from the softer picture (YYC AI, 2026-11-18): Claude Code, which
+  // sends the PNG, designed noticeably fuller reports from the same model.
+  // An EXIF-rotated frame still goes through the renderer, which applies it.
+  if (
+    (prepared.metadata.format === 'png' ||
+      prepared.metadata.format === 'jpeg') &&
+    (prepared.metadata.orientation ?? 1) === 1 &&
+    fitsVisualBudget({ width: sourceWidth, height: sourceHeight })
+  ) {
+    return {
+      bytes: prepared.bytes,
+      mimeType:
+        prepared.metadata.format === 'png' ? 'image/png' : 'image/jpeg',
+      sourceWidth,
+      sourceHeight,
+      selectedWidth: sourceWidth,
+      selectedHeight: sourceHeight,
+      outputWidth: sourceWidth,
+      outputHeight: sourceHeight,
+    };
+  }
   return renderImageView(
     label,
     prepared,
