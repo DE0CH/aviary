@@ -20,7 +20,7 @@
     "skills": "/etc/hermit/skills"
   },
   "sandbox": {
-    "image": "ghcr.io/de0ch/hermit-sandbox@sha256:a674e42c4487d4ed54326a09971e6e49af33f28816f5f70438ccafd644d907a0",
+    "image": "ghcr.io/de0ch/hermit-sandbox@sha256:db0bb5e9fd9b3a16ed029c97bc25f5673339cc8cbe10f4725519ff282630210d",
     "cpu": 1,
     "memory": "7Gi",
     "pids": 4096,
@@ -73,7 +73,7 @@
       "url": "https://10.202.0.1:7443",
       "endpoint": "[2a01:4f8:c014:702d::1]:51821"
     },
-    "sandboxd": "aviary-17fd7be612aa",
+    "sandboxd": "aviary-ac8332ac4302",
     "runsc": "precopy-20261102.1",
     "cpuFeatures": "3dnowprefetch,abm,adx,aes,apic,avx,avx2,bmi1,bmi2,clflush,clwb,cmov,cx16,cx8,de,f16c,fma,fpu,fsgsbase,fxsr,ht,hypervisor,lahf_lm,lm,mca,mce,mmx,movbe,msr,mtrr,nx,osxsave,pae,pat,pclmulqdq,pdpe1gb,pge,pni,popcnt,pse,pse36,rdrand,rdseed,rdtscp,sep,smap,smep,sse,sse2,sse4_1,sse4_2,ssse3,syscall,tsc,vme,x2apic,xgetbv1,xsave,xsavec,xsaveopt",
     "cpuOvercommit": 3,
