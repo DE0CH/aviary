@@ -291,7 +291,16 @@ async fn a_start_refused_at_a_quiet_persons_own_number_is_listed_but_is_no_failu
     .await;
     let d = snapshot(h, &r.url, "UTC").await;
     assert_eq!(d["recent"]["failedStarts"], 0, "{:#}", d["recent"]);
-    assert_eq!(d["recent"]["list"], json!([]));
+    // the recent errors' failed starts (egress's blocked hosts are listed beside them)
+    let failed_listed = |d: &Value| {
+        d["recent"]["list"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|x| x["what"] == "sandbox start failed")
+            .count()
+    };
+    assert_eq!(failed_listed(&d), 0, "{:#}", d["recent"]);
     assert!(
         !d["health"]["findings"]
             .as_array()
@@ -320,7 +329,7 @@ async fn a_start_refused_at_a_quiet_persons_own_number_is_listed_but_is_no_failu
     .await;
     let d = snapshot(h, &r.url, "UTC").await;
     assert_eq!(d["recent"]["failedStarts"], 3, "{:#}", d["recent"]);
-    assert_eq!(d["recent"]["list"].as_array().unwrap().len(), 3);
+    assert_eq!(failed_listed(&d), 3, "{:#}", d["recent"]);
     assert!(
         d["health"]["findings"]
             .as_array()
