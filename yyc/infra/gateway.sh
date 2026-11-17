@@ -74,7 +74,7 @@ case "${1:-}" in
     curl -fsSL -o "$t/gateway-move.sh" "https://raw.githubusercontent.com/DE0CH/aviary/$rel/fabric/host/gateway-move.sh"
     gw 'systemctl is-active -q sandboxd && [ -s /var/lib/sbx/peers.json ]' \
       || { echo "gateway.sh: $SERVER is not set up, or has no peers.json (copy the running gateway's first)" >&2; exit 1; }
-    NETWORK=yyc bash "$t/gateway-move.sh" "$old" "$SERVER"
+    NETWORK=yyc FIREWALL=yyc-sandbox-gateway bash "$t/gateway-move.sh" "$old" "$SERVER"
     # the hosts are back when their handshakes are (none to wait for when no host runs)
     for _ in $(seq 24); do gw true 2>/dev/null && break; sleep 5; done
     if [ "$(gw 'wg show wg0 peers | wc -l')" = 0 ]; then echo "gateway.sh: $SERVER is up; no host runs"; exit 0; fi
