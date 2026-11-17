@@ -84,7 +84,10 @@ The seams in `feeds` (built for the switch window, WP-50, whose legacy upstream 
 - **Slash commands** (Deyao, 2026-11-12): `list_commands_request` is answered with the slash commands the
   conversation's Claude Code names (magpie `GET /v1/conversations/{id}/commands`: the supervisor reports Claude
   Code's `initialize` answer with a turn's `running` report), so the app's message box completes and lists them
-  after `/`; none for a draft or a conversation that has not run.
+  after `/`; none for a draft or a conversation that has not run. A skill or project command (an entry Claude Code
+  does not mark `builtin`; magpie's `skill`) is of kind `skill`, which the app also completes after a `/` inside a
+  message ("use /retire-session"); Claude Code's own commands are of kind `command`, completed only at a message's
+  start, where Claude Code reads them.
 - **A question's own answer** (2026-11-12): each question of an `AskUserQuestion` ask goes to the app with
   `allowOther: true` (the app's card shows its text field only then; Claude Code's own always offers "Other"), and
   the key is removed again from the answer's `updatedInput`.

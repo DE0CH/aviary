@@ -1078,8 +1078,9 @@ impl Handler {
         let commands: Vec<Value> = commands
             .iter()
             .map(|c| {
+                // the app completes a "skill" after a `/` anywhere in a message, a "command" only at its start
                 json!({"name": c.name, "description": c.description, "argumentHint": c.argument_hint,
-                       "kind": "command"})
+                       "kind": if c.skill { "skill" } else { "command" }})
             })
             .collect();
         self.reply(

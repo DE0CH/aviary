@@ -448,7 +448,8 @@ fn control_response(r: &Value) -> Out {
 
 /// The commands of an `initialize` answer, as magpie keeps them: named ones, at most
 /// [`magpie_api::sandbox::COMMANDS_MAX`], each description cut to its first line and
-/// [`magpie_api::sandbox::COMMAND_DESCRIPTION_MAX`] characters (a skill's is a paragraph).
+/// [`magpie_api::sandbox::COMMAND_DESCRIPTION_MAX`] characters (a skill's is a paragraph). The ones the harness does
+/// not mark `builtin` are skills.
 fn slash_commands(list: &[Value]) -> Vec<magpie_api::sandbox::SlashCommand> {
     use magpie_api::sandbox::{COMMAND_DESCRIPTION_MAX, COMMANDS_MAX, SlashCommand};
     let text = |c: &Value, k: &str| c.get(k).and_then(Value::as_str).unwrap_or("").trim().to_owned();
@@ -469,6 +470,8 @@ fn slash_commands(list: &[Value]) -> Vec<magpie_api::sandbox::SlashCommand> {
                     .take(COMMAND_DESCRIPTION_MAX)
                     .collect(),
                 argument_hint: text(c, "argumentHint").chars().take(200).collect(),
+                // Claude Code marks its own commands `builtin`; a project's skills and commands carry no mark
+                skill: c.get("builtin").and_then(Value::as_bool) != Some(true),
             })
         })
         .take(COMMANDS_MAX)
@@ -851,6 +854,8 @@ mod tests {
                 ("dataviz", "Use this skill for any chart.", ""),
             ]
         );
+        // Claude Code marks its own commands `builtin`: the rest are the project's skills and commands
+        assert_eq!(commands.iter().map(|c| c.skill).collect::<Vec<_>>(), [false, true]);
     }
 
     /// Qwen Code names a failed turn's reason in `error.message`, not in `result` (2026-11-16: every failed turn

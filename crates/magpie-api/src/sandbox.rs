@@ -684,6 +684,10 @@ pub struct SlashCommand {
     /// What it takes after its name, or empty.
     #[serde(default)]
     pub argument_hint: String,
+    /// A skill or a project command, not one of the harness's own commands: a message may name it anywhere, so the
+    /// message box completes it after a `/` inside a message too. A list kept before this field has none.
+    #[serde(default)]
+    pub skill: bool,
 }
 
 /// `GET /v1/conversations/{id}/commands` → the slash commands its Claude Code last named (empty before its first

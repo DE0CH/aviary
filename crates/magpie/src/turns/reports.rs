@@ -113,6 +113,7 @@ async fn session_facts(tx: &Tx<'_>, conversation: Uuid, r: &TurnStateReport) -> 
                     .take(magpie_api::sandbox::COMMAND_DESCRIPTION_MAX)
                     .collect(),
                 argument_hint: c.argument_hint.chars().take(200).collect(),
+                skill: c.skill,
             })
             .collect();
         tx.execute(

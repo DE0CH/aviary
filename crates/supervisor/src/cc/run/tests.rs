@@ -2427,8 +2427,8 @@ async fn a_generations_slash_commands_ride_its_first_running_report() {
     assert_eq!(
         running(first)["commands"],
         json!([
-            {"name": "compact", "description": "Keep a summary", "argumentHint": "<instructions>"},
-            {"name": "retire-session", "description": "End the session.", "argumentHint": ""}])
+            {"name": "compact", "description": "Keep a summary", "argumentHint": "<instructions>", "skill": false},
+            {"name": "retire-session", "description": "End the session.", "argumentHint": "", "skill": true}])
     );
     // the same Claude Code's next turn says nothing new
     let (second, _) = w.turn("say:two");

@@ -186,14 +186,15 @@ impl Model {
     }
 
     /// A conversation of `person` (emits its upsert).
-    /// The slash commands `id`'s Claude Code named: `(name, description, argument hint)`.
-    pub fn set_commands(&self, id: Uuid, commands: &[(&str, &str, &str)]) {
+    /// The slash commands `id`'s Claude Code named: `(name, description, argument hint, a skill)`.
+    pub fn set_commands(&self, id: Uuid, commands: &[(&str, &str, &str, bool)]) {
         let list = commands
             .iter()
-            .map(|(n, d, a)| magpie_api::sandbox::SlashCommand {
+            .map(|(n, d, a, skill)| magpie_api::sandbox::SlashCommand {
                 name: (*n).to_owned(),
                 description: (*d).to_owned(),
                 argument_hint: (*a).to_owned(),
+                skill: *skill,
             })
             .collect();
         self.st().commands.insert(id, list);

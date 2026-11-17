@@ -2072,16 +2072,18 @@ async fn the_slash_commands_of_a_conversation_are_listed() {
     e.m.set_commands(
         id,
         &[
-            ("compact", "Keep a summary", "<instructions>"),
-            ("retire-session", "End the session.", ""),
+            ("compact", "Keep a summary", "<instructions>", false),
+            ("retire-session", "End the session.", "", true),
         ],
     );
     let (_, r) = ws.rpc("list_commands_request", json!({"agentId": id})).await;
+    // a skill is of kind "skill": the app completes it after a `/` inside a message too ("use /retire-session"),
+    // Claude Code's own commands only at a message's start
     assert_eq!(
         r["commands"],
         json!([
             {"name": "compact", "description": "Keep a summary", "argumentHint": "<instructions>", "kind": "command"},
-            {"name": "retire-session", "description": "End the session.", "argumentHint": "", "kind": "command"}])
+            {"name": "retire-session", "description": "End the session.", "argumentHint": "", "kind": "skill"}])
     );
     // a draft has no conversation yet: no commands, and magpie is not asked
     let before = e.m.calls_to("conversation_commands");

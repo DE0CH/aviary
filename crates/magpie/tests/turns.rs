@@ -2335,6 +2335,8 @@ async fn a_running_report_carries_the_slash_commands_the_person_reads() {
         name: name.into(),
         description: description.into(),
         argument_hint: String::new(),
+        // the project's skill, beside Claude Code's own `compact`
+        skill: name == "retire-session",
     };
     let mut running = report(ReportedState::Running);
     running.provider_session_id = Some("279aabf0-1111-4222-8333-444455556666".into());
@@ -2351,6 +2353,11 @@ async fn a_running_report_carries_the_slash_commands_the_person_reads() {
         ["compact", "retire-session"]
     );
     assert_eq!(list[1].description.chars().count(), 300, "a long description is cut");
+    assert_eq!(
+        list.iter().map(|c| c.skill).collect::<Vec<_>>(),
+        [false, true],
+        "which ones are skills is kept"
+    );
     // a report that names none leaves the list; the conversation is not someone else's to read
     let mut again = report(ReportedState::Running);
     again.provider_session_id = running.provider_session_id.clone();
