@@ -11,7 +11,7 @@ spec:
   strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
   selector: { matchLabels: { app: pigeon } }
   template:
-    metadata: { labels: { app: pigeon }, annotations: { services/secrets-rev-chat-pigeon: "ce64243dcfb8", services/branding-rev: "11599c121b0d" } }
+    metadata: { labels: { app: pigeon }, annotations: { services/secrets-rev-chat-pigeon: "ce64243dcfb8", services/branding-rev: "e8b9c6b32d5f" } }
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
