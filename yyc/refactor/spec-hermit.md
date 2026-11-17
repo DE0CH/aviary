@@ -1943,15 +1943,19 @@ configuration of the YYC implementation, not code).
 
 ### 18.6 Health verdict (`healthOf`, ported, A3.F39)
 
-Levels `ok < warming < watch < problem`; state = the worst finding.
-- problem: a section unreadable; a Deployment missing or with `ready < desired` while not rolling; the gateway not
-  answering; no gateway registered; a host booting > 300 s; a host not answering; a sandbox starting > 180 s; the
-  budget exhausted; failed starts, model/route errors or host errors in the last 15 min; the catalogue refused; no egress
-  targets; the scaler leader's last pass older than 30 s; the workspace store unmounted in a hermit replica; a
-  workspace delete refused (15.4).
-- warming: a Deployment rolling; a host booting or retiring; a sandbox starting.
-- watch: budget used >= `ops.budgetWatch` (80 %); sandboxes disabled by the operator; a fresh-host test running; a
-  ready sandbox not reporting (silence kept by a healthy answer).
+Levels `ok < warming < watch < blind < problem`; state = the worst finding. The levels are the flight deck's colours
+(Deyao, 2026-11-17): red is only a service lost right now ("immediate loss of service"), for everyone or for one person.
+- problem (red): a Deployment missing or with no pod ready; the gateway not answering; no gateway registered; a host
+  with sandboxes on it not answering; a sandbox starting > 180 s; the budget exhausted; no egress targets; the
+  workspace store unmounted, or hermit silent, in every hermit replica.
+- blind (magenta): a section unreadable (what it covers may be fine or down).
+- watch (amber), still serving: a Deployment with `0 < ready < desired` while not rolling (its state `watch`); a host
+  booting > 300 s; an empty host not answering; the scaler leader's last pass older than 30 s; the catalogue refused
+  (the last good one is used); a hermit replica silent or without its workspace store beside a healthy one; a
+  workspace delete refused (15.4); budget used >= `ops.budgetWatch` (80 %); sandboxes disabled by the operator; a
+  fresh-host test running; a ready sandbox not reporting (silence kept by a healthy answer). And errors that are over:
+  failed starts, model/route errors or host errors in the last 15 min.
+- warming (blue): a Deployment rolling; a host booting or retiring; a sandbox starting.
 - Noise excluded as today: `inject` + 405 (MCP optional GET).
 
 ### 18.7 Budget display
@@ -1977,12 +1981,12 @@ per person/model/day (A3.F38, A6.F23, A19.F1). A reset or raise is egress's conf
 | A replica dies mid-migration | the takeover asks the target and adopts or settles the sandbox (13.10); never `vanished` | nothing |
 | sandboxd crash on a host | systemd restarts it; sandboxes keep running (`KillMode=process`); state files recover them | nothing |
 | JuiceFS down on a host | no placement there; after 120 s the host retires and its sandboxes move off (the target binds its own mount) | file tools may fail briefly |
-| JuiceFS broken in one hermit replica | that replica answers workspace calls 503 and hands starts over; verdict problem (15.6) | nothing |
+| JuiceFS broken in one hermit replica | that replica answers workspace calls 503 and hands starts over; verdict watch beside a healthy replica, problem with none (15.6) | nothing |
 | JuiceFS metadata down | workspace calls 503; starts fail at step 2 | new turns fail with `sandbox_failed` |
 | EC2 API failing / quota | `launch-failed` events; starts needing a host end `sandbox_busy` after 170 s | 「所有電腦正在使用中…」 |
 | Pool full (10 live, none idle) | waits 60 s for capacity, then `sandbox_busy` | same, instead of today's wrong `sandboxFailed` |
-| Catalogue file broken | last good list kept; verdict problem | nothing |
-| magpie or egress down (ops only) | those snapshot sections are null with an error | ops page partly empty |
+| Catalogue file broken | last good list kept; verdict watch | nothing |
+| magpie or egress down (ops only) | those snapshot sections are null with an error; verdict blind | ops page partly empty |
 | EndpointSlice watch failing | the last egress targets stay on the gateway; verdict problem after 60 s | nothing unless egress pods changed |
 | Live migration fails | source keeps the sandbox (`kept:true`), the target's copy is adopted, or it is lost (`kept:false` -> `sandbox_lost`) | nothing, or the lost-turn message |
 | A start crosses its deadline | `gone/sandbox_failed`, destroyed | 「未能啟動這個對話的電腦…」 |
