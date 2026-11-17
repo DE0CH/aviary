@@ -74,6 +74,18 @@ export interface CommandCenterAgentResult {
   run(): void;
 }
 
+/** A message the conversation search found (pigeon's `POST /api/jarvis/search`; matched on the server). */
+export interface CommandCenterMessageResult {
+  kind: "message";
+  id: string;
+  /** The conversation's title. */
+  title: string;
+  /** The message around what matched. */
+  subtitle: string;
+  activityAt: Date | null;
+  run(): void;
+}
+
 export interface CommandCenterFileResult {
   kind: "file";
   id: string;
@@ -96,6 +108,7 @@ export type CommandCenterResult =
   | CommandCenterWorkspaceResult
   | CommandCenterAgentResult
   | CommandCenterFileResult
+  | CommandCenterMessageResult
   | CommandCenterContributionResult;
 
 export interface CommandCenterResultSection {
@@ -183,7 +196,7 @@ function contributionSearchFields(
 
 /** Whether the row draws a second, subtitle line under its title. */
 function hasSubtitleLine(result: CommandCenterResult): boolean {
-  if (result.kind === "workspace" || result.kind === "agent") return true;
+  if (result.kind === "workspace" || result.kind === "agent" || result.kind === "message") return true;
   if (result.kind === "file") return false;
   const presentation = result.contribution.presentation;
   return presentation.kind === "action" && Boolean(presentation.subtitle);

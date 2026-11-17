@@ -62,6 +62,31 @@ describe("useChatOutline", () => {
     expect(runtime.listAgentTimelinePrompts).toHaveBeenCalledWith("agent-1");
   });
 
+  it("is ready to jump once the prompt index has arrived, and never while disabled", async () => {
+    const index = deferred<{ epoch: string; prompts: [] }>();
+    runtime.listAgentTimelinePrompts.mockReturnValueOnce(index.promise);
+    const viewportRef = createRef<StreamViewportHandle>();
+    const { result, rerender } = renderHook(
+      ({ enabled }) =>
+        useChatOutline({
+          agentId: "agent-1",
+          serverId: "server-1",
+          timelineEpoch: "epoch-1",
+          tail: [],
+          head: [],
+          enabled,
+          viewportRef,
+          onJumpError: vi.fn(),
+        }),
+      { initialProps: { enabled: true } },
+    );
+    expect(result.current.ready).toBe(false);
+    await act(async () => index.resolve({ epoch: "epoch-1", prompts: [] }));
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    rerender({ enabled: false });
+    expect(result.current.ready).toBe(false);
+  });
+
   it("drops a late prompt index after the authoritative timeline epoch changes", async () => {
     const first = deferred<{ epoch: string; prompts: [] }>();
     const second = deferred<{

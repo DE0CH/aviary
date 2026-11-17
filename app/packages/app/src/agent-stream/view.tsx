@@ -74,6 +74,8 @@ import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
 import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
 import { useChatOutline } from "@/agent-stream/chat-outline/use-chat-outline";
+import type { ChatOutlinePrompt } from "@/agent-stream/chat-outline/model";
+import { useSearchJumpStore } from "@/stores/search-jump-store";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import {
@@ -107,6 +109,8 @@ import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
+
+const NO_OUTLINE_PROMPTS: ChatOutlinePrompt[] = [];
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -616,18 +620,33 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           mountedHistoryMessageIds.has(messageId) || liveHeadMessageIds.has(messageId),
       };
     }, [baseRenderModel.segments.liveHead, mountedHistoryMessageIds]);
+    // A message the conversation search opened: the outline's machinery (the prompt index, the jump that loads the
+    // message's window) runs for this view from then on, whether or not the outline is shown.
+    const searchJumpPending = useSearchJumpStore((state) => state.pending?.agentId === agentId);
+    const [searchJumpedAgent, setSearchJumpedAgent] = useState<string | null>(null);
+    const searchJumped = searchJumpedAgent === agentId;
     const chatOutline = useChatOutline({
       agentId,
       serverId: resolvedServerId,
       timelineEpoch,
       tail: effectiveStreamItems,
       head: effectiveStreamHead,
-      enabled: supportsChatOutline && chatOutlineEnabled,
+      enabled: supportsChatOutline && (chatOutlineEnabled || searchJumpPending || searchJumped),
       viewportRef,
       onJumpError: handleTimelineHistoryLoadError,
       mountedHistoryMessageIds,
       revealLoadedMessage: revealLoadedHistory,
     });
+
+    const chatOutlineReady = chatOutline.ready;
+    const jumpToMessage = chatOutline.jumpToPrompt;
+    useEffect(() => {
+      if (!searchJumpPending || !chatOutlineReady) return;
+      const jump = useSearchJumpStore.getState().take(agentId);
+      if (!jump) return;
+      setSearchJumpedAgent(agentId);
+      jumpToMessage(jump.seq);
+    }, [agentId, chatOutlineReady, jumpToMessage, searchJumpPending]);
 
     useImperativeHandle(
       ref,
@@ -1246,7 +1265,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               })}
             </MessageOuterSpacingProvider>
             <ChatOutlineRail
-              prompts={chatOutline.prompts}
+              prompts={chatOutlineEnabled ? chatOutline.prompts : NO_OUTLINE_PROMPTS}
               activePrompt={chatOutline.activePrompt}
               onJumpToPrompt={chatOutline.jumpToPrompt}
             />

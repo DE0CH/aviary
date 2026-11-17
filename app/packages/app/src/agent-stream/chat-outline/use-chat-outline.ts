@@ -39,6 +39,8 @@ export interface UseChatOutlineInput {
 }
 
 export interface ChatOutline {
+  /** The prompt index has arrived: `jumpToPrompt` can reach a row that is not loaded. */
+  ready: boolean;
   prompts: ChatOutlinePrompt[];
   activePrompt: ActivePromptSource;
   jumpToPrompt: (seq: number) => void;
@@ -221,5 +223,5 @@ export function useChatOutline({
       });
   });
 
-  return { prompts, activePrompt, jumpToPrompt, reportReadingPosition };
+  return { ready: enabled && index !== null, prompts, activePrompt, jumpToPrompt, reportReadingPosition };
 }

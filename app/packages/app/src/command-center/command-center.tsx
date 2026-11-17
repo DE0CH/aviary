@@ -23,7 +23,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, ChevronRight, Folder, X } from "lucide-react-native";
+import { Check, ChevronRight, Folder, MessageSquare, X } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { BottomSheetFlatList, type BottomSheetFlatListMethods } from "@gorhom/bottom-sheet";
 import { useAgentDescriptor, resolveAgentLabel } from "@/agent-presentation";
@@ -58,6 +58,7 @@ import {
   useWebOverlayRegistration,
 } from "@/lib/overlay-root";
 import { useHosts } from "@/runtime/host-runtime";
+import { useSearchJumpStore } from "@/stores/search-jump-store";
 import {
   useKeyboardShortcutsStore,
   type CommandCenterScope,
@@ -89,6 +90,7 @@ import {
   type CommandCenterAgentResult,
   type CommandCenterFileResult,
   type CommandCenterListRow,
+  type CommandCenterMessageResult,
   type CommandCenterResult,
   type CommandCenterResultSection,
   type CommandCenterSearchFields,
@@ -96,6 +98,8 @@ import {
 } from "./results";
 import { createCommandCenterInteraction, type CommandCenterInteraction } from "./interaction";
 import { useWorkspaceFileSearch } from "./workspace-file-search";
+import { useMessageSearch } from "./message-search";
+import { conversationWorkspaceId, messageResultId } from "./message-search-model";
 
 const ThemedBottomSheetTextInput = withUnistyles(TextInput, (theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
@@ -109,6 +113,9 @@ const ThemedChevronRight = withUnistyles(ChevronRight, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
 const ThemedX = withUnistyles(X, (theme) => ({ color: theme.colors.foregroundMuted }));
+const ThemedMessageSquare = withUnistyles(MessageSquare, (theme) => ({
+  color: theme.colors.foregroundMuted,
+}));
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
@@ -269,6 +276,8 @@ interface CommandCenterState {
   inputRef: React.RefObject<EditingTextInputHandle | null>;
   fileSearchLoading: boolean;
   fileSearchError: string | null;
+  /** The conversation search is asking the server. */
+  messageSearchLoading: boolean;
   close(): void;
   select(result: CommandCenterResult): void;
   key(key: string): boolean;
@@ -325,15 +334,50 @@ function useCommandCenterState(
     () => buildContributionSections(snapshot.contributions, query),
     [query, snapshot.contributions],
   );
+  // The conversation search: messages that hold the query's words or mean what it means, found by the server
+  // (pigeon's /api/jarvis/search). The chat has one host, the page's own.
+  const searchServerId = useHosts()[0]?.serverId ?? null;
+  const requestSearchJump = useSearchJumpStore((state) => state.request);
+  const messageSearch = useMessageSearch({
+    enabled: open && scope !== "files" && searchServerId !== null,
+    query,
+  });
+  const messageSections = useMemo<CommandCenterResultSection[]>(() => {
+    if (!searchServerId) return [];
+    const results = messageSearch.hits.map<CommandCenterMessageResult>((hit) => {
+      const at = new Date(hit.at);
+      return {
+        kind: "message",
+        id: messageResultId(hit),
+        title: hit.title?.trim() || t("shell.commandCenter.untitledConversation"),
+        subtitle: hit.snippet,
+        activityAt: Number.isNaN(at.getTime()) ? null : at,
+        run: () => {
+          requestSearchJump({ agentId: hit.conversationId, seq: hit.seq });
+          createWorkspaceResultAction(searchServerId, conversationWorkspaceId(hit.conversationId))();
+        },
+      };
+    });
+    // Matched by the server, as file rows are: pinned below the conversations the palette matched by title.
+    return [
+      {
+        id: "messages",
+        band: PINNED_SECTION_BAND,
+        rank: 3,
+        title: t("shell.commandCenter.messages"),
+        results,
+      },
+    ];
+  }, [messageSearch.hits, requestSearchJump, searchServerId, t]);
   const projection = useMemo(
     () =>
       projectCommandCenterRows(
         scope === "files"
           ? fileSections
-          : [...contributionSections, ...fileSections, ...builtInSections],
+          : [...contributionSections, ...fileSections, ...builtInSections, ...messageSections],
         listMetrics,
       ),
-    [builtInSections, contributionSections, fileSections, listMetrics, scope],
+    [builtInSections, contributionSections, fileSections, listMetrics, messageSections, scope],
   );
   useLayoutEffect(() => {
     interaction.update({ open, scope, query, projection, loading: fileSearchLoading });
@@ -412,6 +456,7 @@ function useCommandCenterState(
     inputRef,
     fileSearchLoading,
     fileSearchError,
+    messageSearchLoading: messageSearch.loading,
     close,
     select,
     key,
@@ -440,7 +485,7 @@ const ResultRow = memo(function ResultRow({
       ? result.contribution.presentation
       : null;
   const accessibilityLabel =
-    result.kind === "file"
+    result.kind === "file" || result.kind === "message"
       ? [result.title, result.subtitle].filter(Boolean).join(" ")
       : choice?.path.join(" › ");
   const accessibilityState = useMemo(
@@ -650,6 +695,28 @@ function ResultContent({
   if (result.kind === "agent") {
     return <AgentResultContent result={result} query={query} backdrop={backdrop} />;
   }
+  if (result.kind === "message") {
+    return (
+      <View style={styles.rowContent} testID={`command-center-${result.id}`}>
+        <View style={styles.rowMain}>
+          <View style={styles.iconSlot}>
+            <ThemedMessageSquare size={16} />
+          </View>
+          <View style={styles.textContent}>
+            <Text style={styles.title} numberOfLines={1}>
+              {result.title}
+            </Text>
+            <SubtitleWithTimestamp
+              query={query}
+              subtitle={result.subtitle}
+              activityAt={result.activityAt}
+              testID="command-center-message-snippet"
+            />
+          </View>
+        </View>
+      </View>
+    );
+  }
   if (result.kind === "workspace") {
     const key = result.id.slice("workspace:".length);
     return (
@@ -825,10 +892,10 @@ export function CommandCenter() {
   const keyExtractor = useCallback((row: CommandCenterListRow) => row.key, []);
   const empty = useMemo(
     () =>
-      state.fileSearchError || state.fileSearchLoading ? null : (
+      state.fileSearchError || state.fileSearchLoading || state.messageSearchLoading ? null : (
         <Text style={styles.emptyText}>{t("shell.commandCenter.noMatches")}</Text>
       ),
-    [state.fileSearchError, state.fileSearchLoading, t],
+    [state.fileSearchError, state.fileSearchLoading, state.messageSearchLoading, t],
   );
   const fileSearchError = useMemo(
     () =>
@@ -928,8 +995,12 @@ export function CommandCenter() {
             autoFocus
           />
           <FileSearchLoadingIndicator
-            loading={state.fileSearchLoading}
-            label={t("shell.commandCenter.searchingFiles")}
+            loading={state.fileSearchLoading || state.messageSearchLoading}
+            label={
+              state.fileSearchLoading
+                ? t("shell.commandCenter.searchingFiles")
+                : t("shell.commandCenter.searchingMessages")
+            }
           />
         </View>
         {fileSearchError}
@@ -964,8 +1035,12 @@ export function CommandCenter() {
                 autoFocus
               />
               <FileSearchLoadingIndicator
-                loading={state.fileSearchLoading}
-                label={t("shell.commandCenter.searchingFiles")}
+                loading={state.fileSearchLoading || state.messageSearchLoading}
+                label={
+                  state.fileSearchLoading
+                    ? t("shell.commandCenter.searchingFiles")
+                    : t("shell.commandCenter.searchingMessages")
+                }
               />
             </View>
             {fileSearchError}

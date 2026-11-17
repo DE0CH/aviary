@@ -174,6 +174,38 @@ describe("Command Center result projection", () => {
     ]);
   });
 
+  it("lists the conversation search's messages, two lines each, below the conversations", () => {
+    const message = {
+      kind: "message" as const,
+      id: "message:c1:9",
+      title: "Shuttle bus",
+      subtitle: "The shuttle bus leaves every 15 minutes.",
+      activityAt: null,
+      run: () => undefined,
+    };
+    const projection = projectCommandCenterRows(
+      [
+        { id: "messages", band: PINNED_SECTION_BAND, rank: 3, title: "In messages", results: [message] },
+        {
+          id: "workspaces",
+          band: PINNED_SECTION_BAND,
+          rank: 2,
+          title: "Workspaces",
+          results: [workspace("workspace:1")],
+        },
+      ],
+      metrics,
+    );
+    expect(projection.rows.map((row) => row.key)).toEqual([
+      "section:workspaces",
+      "workspace:1",
+      "section:messages",
+      "message:c1:9",
+    ]);
+    expect(projection.rows[3]?.height).toBe(metrics.twoLineRow);
+    expect(projection.selectableResults.map((result) => result.id)).toEqual(["workspace:1", "message:c1:9"]);
+  });
+
   it("shows query-only actions only when their group matches a search", () => {
     const contributions = [
       contribution({ id: "settings", group: "actions", groupRank: 0 }),
