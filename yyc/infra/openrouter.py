@@ -5,8 +5,8 @@ shows YYC staff AI's spend on its own; EXPENSES.md) and the guardrail `yyc-chat`
   - Zero Data Retention enforced for every model group (Anthropic, OpenAI, Google, xAI, other), and no endpoint that
     keeps prompts "for safety monitoring" (allow_safety_retention_* false)
   - no endpoint that trains on or publishes prompts (enable_*_training / publication false)
-  - only the models staff can use: egress.json's models, defaultModel, smallModel and titleModel (../deploy/egress/,
-    staged ../next/egress/)
+  - only the models staff can use: egress.json's models, defaultModel, smallModel and titleModel, and the conversation
+    search's embedding model (../deploy/egress/, staged ../next/egress/; tests/test_openrouter_guardrail.py)
 
 jarvis3's egress also forces provider {zdr: true, data_collection: "deny"} into every request (../README.md "Zero
 data retention"); the guardrail holds even if that were missing. A key made here is written to OUT/openrouter-key (mode 600) for
@@ -34,6 +34,9 @@ def _models():
         if os.path.exists(p):
             e = json.load(open(p))
             ids |= {m["id"] for m in e["models"]} | {e[k] for k in ("defaultModel", "smallModel", "titleModel") if e.get(k)}
+            # the conversation search's embedding model: the sandboxes' and pigeon's /v1/embeddings on this key
+            if e.get("embedding"):
+                ids.add(e["embedding"]["id"])
             break
     if not ids:
         raise SystemExit("no model list: egress.json not found")
@@ -84,57 +87,62 @@ def verify():
     sys.exit(1 if bad else 0)
 
 
-out = sys.argv[1]
-mode = sys.argv[2] if len(sys.argv) > 2 else ""
-if mode == "--verify":
-    verify()
-os.makedirs(out, mode=0o700, exist_ok=True)
-if mode == "--finish-rotate":
+def main():
+    out = sys.argv[1]
+    mode = sys.argv[2] if len(sys.argv) > 2 else ""
+    if mode == "--verify":
+        verify()
+    os.makedirs(out, mode=0o700, exist_ok=True)
+    if mode == "--finish-rotate":
+        keys = call("GET", "/keys")["data"]
+        nxt = next(k for k in keys if k.get("name") == NAME + "-next")
+        for k in keys:
+            if k.get("name") == NAME:
+                call("DELETE", f"/keys/{k['hash']}"); print(f"deleted old key {NAME} ({k['hash'][:12]}…)")
+        call("PATCH", f"/keys/{nxt['hash']}", {"name": NAME}); print(f"renamed {NAME}-next ({nxt['hash'][:12]}…) to {NAME}")
+        sys.exit(0)
+    if mode == "--rotate":
+        NAME_KEY = NAME + "-next"
+    else:
+        NAME_KEY = NAME
+
     keys = call("GET", "/keys")["data"]
-    nxt = next(k for k in keys if k.get("name") == NAME + "-next")
-    for k in keys:
-        if k.get("name") == NAME:
-            call("DELETE", f"/keys/{k['hash']}"); print(f"deleted old key {NAME} ({k['hash'][:12]}…)")
-    call("PATCH", f"/keys/{nxt['hash']}", {"name": NAME}); print(f"renamed {NAME}-next ({nxt['hash'][:12]}…) to {NAME}")
-    sys.exit(0)
-if mode == "--rotate":
-    NAME_KEY = NAME + "-next"
-else:
-    NAME_KEY = NAME
+    key = next((k for k in keys if k.get("name") == NAME_KEY), None)
+    if key is None:
+        r = call("POST", "/keys", {"name": NAME_KEY, "limit": LIMIT_USD, "limit_reset": "monthly"})
+        path = os.path.join(out, "openrouter-key")
+        with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+            f.write(r["key"])
+        key = r["data"]
+        print(f"made key {NAME_KEY} (hash {key['hash'][:12]}…), written to {path}: store it as YYC_AI_OPENROUTER_KEY")
+    else:
+        call("PATCH", f"/keys/{key['hash']}", {"limit": LIMIT_USD, "limit_reset": "monthly"})
+        print(f"key {NAME_KEY} exists (hash {key['hash'][:12]}…)")
 
-keys = call("GET", "/keys")["data"]
-key = next((k for k in keys if k.get("name") == NAME_KEY), None)
-if key is None:
-    r = call("POST", "/keys", {"name": NAME_KEY, "limit": LIMIT_USD, "limit_reset": "monthly"})
-    path = os.path.join(out, "openrouter-key")
-    with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
-        f.write(r["key"])
-    key = r["data"]
-    print(f"made key {NAME_KEY} (hash {key['hash'][:12]}…), written to {path}: store it as YYC_AI_OPENROUTER_KEY")
-else:
-    call("PATCH", f"/keys/{key['hash']}", {"limit": LIMIT_USD, "limit_reset": "monthly"})
-    print(f"key {NAME_KEY} exists (hash {key['hash'][:12]}…)")
+    policy = {
+        "name": NAME,
+        "description": "YYC staff AI (ai.yyc-internal.com): ZDR endpoints only, no training/publication, only the listed models",
+        "enforce_zdr_anthropic": True, "enforce_zdr_openai": True, "enforce_zdr_google": True,
+        "enforce_zdr_xai": True, "enforce_zdr_other": True,
+        "allow_safety_retention_google": False, "allow_safety_retention_other": False,
+        "enable_paid_model_training": False, "enable_free_model_training": False, "enable_free_model_publication": False,
+        "allowed_models": MODELS,
+    }
+    grs = call("GET", "/guardrails")["data"]
+    gr = next((g for g in grs if g.get("name") == NAME), None)
+    if gr is None:
+        gr = call("POST", "/guardrails", policy)["data"]
+        print(f"made guardrail {NAME} ({gr['id']})")
+    else:
+        gr = call("PATCH", f"/guardrails/{gr['id']}", policy)["data"]
+        print(f"updated guardrail {NAME} ({gr['id']})")
 
-policy = {
-    "name": NAME,
-    "description": "YYC staff AI (ai.yyc-internal.com): ZDR endpoints only, no training/publication, only the listed models",
-    "enforce_zdr_anthropic": True, "enforce_zdr_openai": True, "enforce_zdr_google": True,
-    "enforce_zdr_xai": True, "enforce_zdr_other": True,
-    "allow_safety_retention_google": False, "allow_safety_retention_other": False,
-    "enable_paid_model_training": False, "enable_free_model_training": False, "enable_free_model_publication": False,
-    "allowed_models": MODELS,
-}
-grs = call("GET", "/guardrails")["data"]
-gr = next((g for g in grs if g.get("name") == NAME), None)
-if gr is None:
-    gr = call("POST", "/guardrails", policy)["data"]
-    print(f"made guardrail {NAME} ({gr['id']})")
-else:
-    gr = call("PATCH", f"/guardrails/{gr['id']}", policy)["data"]
-    print(f"updated guardrail {NAME} ({gr['id']})")
+    assigned = call("GET", f"/guardrails/{gr['id']}/assignments/keys")["data"]
+    if not any(a.get("key_hash") == key["hash"] for a in assigned):
+        call("POST", f"/guardrails/{gr['id']}/assignments/keys", {"key_hashes": [key["hash"]]})
+        print(f"assigned guardrail {NAME} to key {NAME_KEY}")
+    print(json.dumps({k: gr.get(k) for k in policy if k not in ("name", "description")}))
 
-assigned = call("GET", f"/guardrails/{gr['id']}/assignments/keys")["data"]
-if not any(a.get("key_hash") == key["hash"] for a in assigned):
-    call("POST", f"/guardrails/{gr['id']}/assignments/keys", {"key_hashes": [key["hash"]]})
-    print(f"assigned guardrail {NAME} to key {NAME_KEY}")
-print(json.dumps({k: gr.get(k) for k in policy if k not in ("name", "description")}))
+
+if __name__ == "__main__":
+    main()
