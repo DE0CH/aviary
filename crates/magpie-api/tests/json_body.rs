@@ -1,7 +1,7 @@
 //! A JSON body is at most [`magpie_api::server::JSON_BODY_MAX`]: it is read whole and parsed outside the service's
 //! memory budget for buffered bodies, so the 64 MiB the service's router admits (for the raw-body routes) must not
 //! apply to it. Before, eight sandboxes sending 64 MiB of JSON at once could hold a replica's whole gibibyte.
-#![allow(clippy::unwrap_used)] // tests
+#![allow(clippy::unwrap_used, clippy::unused_async_trait_impl)] // tests
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -54,15 +54,22 @@ async fn a_json_body_over_the_limit_is_refused_and_a_raw_body_is_not() {
     assert_eq!(s.live.load(Ordering::SeqCst), 1);
 
     // one byte over, with its length declared: 413 `too_large`, the handler never runs
-    let r = http.post(&live).body(frames_body(JSON_BODY_MAX + 1)).send().await.unwrap();
+    let r = http
+        .post(&live)
+        .body(frames_body(JSON_BODY_MAX + 1))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), 413);
     let e: serde_json::Value = r.json().await.unwrap();
     assert_eq!(e["code"], "too_large", "{e}");
     assert_eq!(s.live.load(Ordering::SeqCst), 1);
 
     // the same without a declared length (sent in chunks): cut at the limit, 413
-    let chunks: Vec<Result<Vec<u8>, std::io::Error>> =
-        frames_body(JSON_BODY_MAX + 1).chunks(1 << 20).map(|c| Ok(c.to_vec())).collect();
+    let chunks: Vec<Result<Vec<u8>, std::io::Error>> = frames_body(JSON_BODY_MAX + 1)
+        .chunks(1 << 20)
+        .map(|c| Ok(c.to_vec()))
+        .collect();
     let r = http
         .post(&live)
         .body(reqwest::Body::wrap_stream(futures_util::stream::iter(chunks)))
