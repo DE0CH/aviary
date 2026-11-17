@@ -19,7 +19,7 @@ FROM node:22-trixie-slim@sha256:2117f713a417f3aff682ac8f5bc2ebbdf1beed51f36e67ab
 # TrueType, so it gets its own fonts (below).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates bash curl wget git jq unzip zip xz-utils file less procps sudo \
+      ca-certificates bash curl wget git openssh-client jq unzip zip xz-utils file less procps sudo \
       python3 python3-venv python3-pip \
       poppler-utils pandoc fonts-noto-cjk fonts-noto-core fontconfig \
       libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0 \

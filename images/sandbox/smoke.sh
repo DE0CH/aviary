@@ -179,6 +179,8 @@ check "python3 is the venv's and imports pandas, weasyprint, pymupdf and reportl
   img_run -u 1000 "$img" -c 'test "$(command -v python3)" = /opt/py/bin/python3 && python3 -c "import pandas, weasyprint, pymupdf, reportlab, sbx_reportlab_cjk"'
 check "the TrueType Noto Sans/Serif HK fonts" \
   img_run "$img" -c 'ls /usr/share/fonts/truetype/noto-hk/Noto{Sans,Serif}HK-{Regular,Bold}.ttf >/dev/null'
+check "git pushes over SSH: ssh is on uid 1000's PATH" \
+  img_run -u 1000 "$img" -c 'command -v ssh >/dev/null && ssh -V 2>&1 | grep -q OpenSSH'
 check "dockerd, containerd and buildx present" \
   img_run "$img" -c 'test -x /usr/bin/dockerd && test -x /usr/bin/containerd && /usr/bin/docker buildx version >/dev/null'
 out=$(img_run -u 1000 "$img" -c 'docker ps' 2>&1)
