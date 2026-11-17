@@ -1676,6 +1676,37 @@ async fn agent_turn(w: &World, n: usize) -> Uuid {
         .unwrap()
 }
 
+/// A Qwen Code conversation resumed in a new sandbox runs the model its person picked (2026-11-16: a conversation on
+/// a video model ran its next turn on the models route's default). The supervisor starts a generation as soon as it is
+/// attached, before it knows the turn's model, and Qwen Code cannot switch models in place: the turn's own
+/// `start_turn`, queued before the attach so it meets that early generation, must not run on it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_resumed_qwen_conversation_runs_its_picked_model_not_the_early_generations() {
+    use magpie_api::Harness;
+    let w = world().await;
+    let qsid = crate::cc::launch::qwen_session_id(&w.cid.to_string());
+    w.magpie.set_harness_session(w.cid, Harness::Qwen, &qsid);
+    let (t, _) = w.turn_in("say:one", Harness::Qwen, Some("vendor/video"), Some(qsid.clone()));
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let end = w.ended(t).await;
+    assert_eq!(end["state"], "completed", "{end}\n{}", texts(&w));
+    let log = w.fake_log();
+    let prompt = log
+        .iter()
+        .position(|l| l.starts_with("prompt say:one"))
+        .expect("the turn's message reached a generation");
+    let argv = log[..prompt]
+        .iter()
+        .rfind(|l| l.starts_with("argv "))
+        .expect("the generation that took it");
+    assert!(
+        argv.contains("--model vendor/video"),
+        "the turn ran on the generation started ahead of it: {argv}\n{}",
+        log.join("\n")
+    );
+    w.idle(&sup).await;
+}
+
 /// A continuation (`start_turn.continueLast`, an operator's continue): no message is written. Qwen Code gets its
 /// `continue_last_turn` and what it then writes is the turn; when it has nothing to go on from, the turn fails with
 /// that. Claude Code has no such request: the turn fails before anything is written.

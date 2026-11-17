@@ -1660,22 +1660,30 @@ impl Driver {
             // harness is named after the conversation)
             if h == session.harness && sid == session.id() {
                 if init {
-                    return Ok(n);
+                    if self.runs_the_turns_model(n, turn).await {
+                        return Ok(n);
+                    }
+                    self.end_for_the_turns_model(n).await;
+                } else {
+                    // initialising (a spawn whose turn was stopped meanwhile, or the pre-spawn): wait for it
+                    self.wait_until(Some(Instant::now() + INIT_WAIT), |s| {
+                        s.live.as_ref().is_none_or(|g| g.n != n || g.initialized) || s.cancelled(turn)
+                    })
+                    .await;
+                    if lock(&self.st).cancelled(turn) {
+                        return Err(GenError::Canceled);
+                    }
+                    if lock(&self.st).live.as_ref().is_some_and(|g| g.n == n && g.initialized) {
+                        if self.runs_the_turns_model(n, turn).await {
+                            return Ok(n);
+                        }
+                        self.end_for_the_turns_model(n).await;
+                    } else {
+                        // it never initialised: it ends before another starts on the same session
+                        tracing::warn!(gen = n, "a generation that did not initialise is killed");
+                        self.kill_gen(n, Why::Init).await;
+                    }
                 }
-                // initialising (a spawn whose turn was stopped meanwhile): wait for it
-                self.wait_until(Some(Instant::now() + INIT_WAIT), |s| {
-                    s.live.as_ref().is_none_or(|g| g.n != n || g.initialized) || s.cancelled(turn)
-                })
-                .await;
-                if lock(&self.st).cancelled(turn) {
-                    return Err(GenError::Canceled);
-                }
-                if lock(&self.st).live.as_ref().is_some_and(|g| g.n == n && g.initialized) {
-                    return Ok(n);
-                }
-                // it never initialised: it ends before another starts on the same session
-                tracing::warn!(gen = n, "a generation that did not initialise is killed");
-                self.kill_gen(n, Why::Init).await;
             } else {
                 tracing::info!(live = %sid, harness = %h, wanted = %session.id(), wanted_harness = %session.harness, "another session: generation ended");
                 self.end_generation(
@@ -1716,6 +1724,42 @@ impl Driver {
             return Err(GenError::Failed("Claude Code would not start".into()));
         }
         self.spawn(session, turn).await
+    }
+
+    /// Whether generation `n` may take `turn`: a generation started before the turn's model was known (the pre-spawn
+    /// at attach, 4.3 step 8, races the first `start_turn`, and [`Driver::prepare`] only ends a generation it finds
+    /// already running) is on the models route's default. It runs the turn's model, or [`apply_model`] can switch it
+    /// in place, or it is busy (a turn or background tasks: the change waits, as in `prepare`). A pre-spawn (`turn`
+    /// `None`) takes any.
+    async fn runs_the_turns_model(&self, n: u32, turn: Option<Uuid>) -> bool {
+        if turn.is_none() {
+            return true;
+        }
+        let (harness, current, picked) = {
+            let st = lock(&self.st);
+            let Some(g) = st.live.as_ref().filter(|g| g.n == n) else {
+                return true;
+            };
+            if g.runs(st.model.as_deref()) || st.turn.is_some() || !st.tracker.is_empty() {
+                return true;
+            }
+            (g.harness, g.model.clone(), st.model.clone())
+        };
+        match self.models().await {
+            Ok(models) => in_place(&models, harness, &current, picked.as_deref()),
+            // the models route is down: the spawn that would replace it needs it too
+            Err(_) => true,
+        }
+    }
+
+    /// Ends generation `n`, which runs another model than the turn's and cannot be switched in place.
+    async fn end_for_the_turns_model(&self, n: u32) {
+        tracing::info!(gen = n, "a generation on another model than the turn's: ended before the turn");
+        self.end_generation(
+            Why::Graceful,
+            Instant::now() + STDIN_CLOSE_GRACE + KILL_AFTER_TERM + Duration::from_secs(2),
+        )
+        .await;
     }
 
     /// Switches generation `n` to the conversation's model (`start_turn.model`; absent: the models route's default)

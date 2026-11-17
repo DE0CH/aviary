@@ -472,6 +472,18 @@ impl FakeMagpie {
         c.main_transcript = Some(format!("claude/projects/-workspace/{session}.jsonl"));
     }
 
+    /// Set the harness and session the conversation last ran (the lease names them), as a `running` report would.
+    pub fn set_harness_session(&self, conversation: Uuid, harness: magpie_api::Harness, session: &str) {
+        let mut m = self.lock();
+        let c = m.convs.entry(conversation).or_default();
+        c.provider_session_id = Some(session.to_owned());
+        c.harness = harness;
+        c.main_transcript = Some(match harness {
+            magpie_api::Harness::Claude => format!("claude/projects/-workspace/{session}.jsonl"),
+            magpie_api::Harness::Qwen => format!("qwen/projects/-workspace/chats/{session}.jsonl"),
+        });
+    }
+
     /// Put a file (and its parent directories) into `conversation`'s `~/.claude` without an operation.
     pub fn seed_file(&self, conversation: Uuid, path: &str, data: &[u8]) {
         let mut m = self.lock();
