@@ -43,7 +43,7 @@ pub async fn create_conversation(
                 idempotency_key: body.idempotency_key,
                 message: body.message,
             };
-            let r = create::create_with_model(&app.pool, &person, req, body.model)
+            let r = create::create_with_model(&app.pool, &person, req, body.model, body.title)
                 .await
                 .inspect_err(|e| super::turns::unknown_upload(app, e))?;
             if let Admitted::New(c) = &r

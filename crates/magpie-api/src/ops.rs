@@ -61,6 +61,10 @@ pub struct HermitCreateRequest {
     /// deployment started the session on. Kept on a repeat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The conversation's title from the start, as if the person had renamed it (the name the person gave the
+    /// session in the deployment): the title model leaves it alone. Kept on a repeat; empty or blank is no title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 /// `POST /v1/hermit/conversations/{id}/turns` → 202 (200 for a repeat): M7 as the conversation's person, sent by the

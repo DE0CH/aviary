@@ -84,10 +84,11 @@ async fn first_turn(db: &impl Db, conversation: Uuid) -> Result<Option<TurnStart
 /// 400 `bad_request` / `too_many_attachments`, 413 `too_large`; the admission's refusals; a statement error.
 pub async fn create(pool: &Pool, person: &Person, req: CreateRequest) -> Result<Admitted<CreateResponse>> {
     let model = req.model.clone();
-    create_with_model(pool, person, req, model).await
+    create_with_model(pool, person, req, model, None).await
 }
 
-/// M3 for a conversation the deployment starts (hermit's route): `model` is its `pickedModel` from the start.
+/// M3 for a conversation the deployment starts (hermit's route): `model` is its `pickedModel` from the start, `title`
+/// its title as a rename's (`name_source 'user'`: no title command; blank is none, cut to a rename's 200 characters).
 ///
 /// # Errors
 /// As [`create`]; 400 `bad_request` for a model id that is empty or over 200 characters.
@@ -96,8 +97,13 @@ pub async fn create_with_model(
     person: &Person,
     req: CreateRequest,
     model: Option<String>,
+    title: Option<String>,
 ) -> Result<Admitted<CreateResponse>> {
     validate(&req)?;
+    let named = title
+        .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|t| !t.is_empty())
+        .map(|t| t.chars().take(limits::RENAME_MAX_CHARS).collect::<String>());
     let model = model.map(|m| m.trim().to_owned());
     if model
         .as_deref()
@@ -112,9 +118,9 @@ pub async fn create_with_model(
     {
         return Err(Error::bad_request("thinking must be 1-200 characters"));
     }
-    let (req, model) = (&req, &model); // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    let (req, model, named) = (&req, &model, &named); // borrowed: the transaction may run more than once
     let (new, id) = aviary_pg::tx!(pool, |t| -> Result<(bool, Uuid)> {
-        create_tx(t, person, req, model.as_deref()).await
+        create_tx(t, person, req, model.as_deref(), named.as_deref()).await
     })
     .await?;
     let conn = pool.get().await?;
@@ -128,11 +134,18 @@ pub async fn create_with_model(
     })
 }
 
-async fn create_tx(t: &Tx<'_>, person: &Person, req: &CreateRequest, model: Option<&str>) -> Result<(bool, Uuid)> {
+async fn create_tx(
+    t: &Tx<'_>,
+    person: &Person,
+    req: &CreateRequest,
+    model: Option<&str>,
+    named: Option<&str>,
+) -> Result<(bool, Uuid)> {
     ensure_person(t, &person.email).await?;
     let id = Uuid::new_v4();
     let now = OffsetDateTime::now_utc();
-    let title = provisional_title(&req.message.text);
+    let title = named.map_or_else(|| provisional_title(&req.message.text), |n| Some(n.to_owned()));
+    let name_source = named.map(|_| "user");
     let origin = Origin {
         kind: OriginKind::New,
         share_id: None,
@@ -140,8 +153,8 @@ async fn create_tx(t: &Tx<'_>, person: &Person, req: &CreateRequest, model: Opti
     let inserted = t
         .query_opt(
             "insert into conversations (id, person, create_key, title, created_at, activity_at, origin, picked_model,
-                                        picked_thinking, picked_harness)
-             values ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9)
+                                        picked_thinking, picked_harness, name_source)
+             values ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9, $10)
              on conflict (person, create_key) do nothing
              returning id",
             &[
@@ -154,6 +167,7 @@ async fn create_tx(t: &Tx<'_>, person: &Person, req: &CreateRequest, model: Opti
                 &model,
                 &req.thinking.as_deref().map(str::trim),
                 &req.harness.as_str(),
+                &name_source,
             ],
         )
         .await?;

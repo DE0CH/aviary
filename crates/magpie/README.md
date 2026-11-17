@@ -116,6 +116,10 @@ reads and their once-a-day audit. `tests/legacy_paths.rs`: the legacy-path set (
   `conversations.picked_model`), hermit's create takes `model` for the conversation's first, and every `start_turn`
   carries it (`model`); the supervisor runs Claude Code on it instead of the models route's default. magpie does not
   check the id against the list (pigeon does).
+- **A conversation's name from the deployment** (Deyao, 2026-11-17): hermit's create takes `title`, the name the
+  person gave the session in the deployment; it is the conversation's title from the start as a rename's
+  (`name_source 'user'`, `titleSource: user`), so no `title` command is sent for it. Blank is none (the first
+  message's provisional title and the title model, as before); a repeat keeps the first create's.
 - `GET /v1/hermit/conversations/{id}` (caller hermit) answers the Conversation whoever its person is: a deployment
   that starts its conversations itself reads their titles (for its own list of sessions).
 - `POST /v1/conversations/{id}/delete` answers the Conversation, as `magpie-api` (the contract) has it, not

@@ -360,6 +360,7 @@ async fn the_deployment_names_the_model_and_reads_the_conversation() {
             files: vec![],
         },
         model: model.map(str::to_owned),
+        title: None,
     };
     let made = r
         .hermit()
@@ -447,6 +448,106 @@ async fn the_deployment_names_the_model_and_reads_the_conversation() {
     assert_eq!(picked.turn.and_then(|t| t.model).as_deref(), Some("claude-opus-5-5"));
 }
 
+/// The name the person gave the session in the deployment is the conversation's title from the start, as a rename:
+/// the title model never replaces it (the session "chat.deyaochen.com error" was shown under a generated title).
+#[tokio::test]
+async fn the_deployment_names_the_conversations_title() {
+    use magpie_api::conversations::TitleSource;
+    use magpie_api::ops::{HermitCreateRequest, HermitSendRequest};
+    use magpie_api::turns::SendRequest;
+    let hermit = FakeHermit::unguarded(HermitConfig::default());
+    let running = hermit.serve().await.unwrap();
+    let db = common::fresh_db("htitle").await;
+    let t = common::Tokens::new();
+    let r = common::replica_with(&db.url, &t, &running.url(), common::idle()).await;
+    let msg = |id: &str, text: &str| SendRequest {
+        client_message_id: id.into(),
+        text: text.into(),
+        images: vec![],
+        files: vec![],
+    };
+    // as hermit-jarvis makes a session's conversation: no first message, the session's name
+    let create = |key: &str, title: Option<&str>| HermitCreateRequest {
+        person: STAFF.into(),
+        idempotency_key: key.into(),
+        message: msg(&format!("{key}:open"), ""),
+        model: None,
+        title: title.map(str::to_owned),
+    };
+    let start = |key: &str| HermitSendRequest {
+        person: STAFF.into(),
+        message: msg(key, "look at why chat.deyaochen.com answers bad gateway"),
+        join_running: false,
+    };
+    let title_commands = |id| {
+        let pool = r.pool().clone();
+        async move {
+            let n: i64 = pool
+                .get()
+                .await
+                .unwrap()
+                .query_one(
+                    "select count(*) from commands where conversation_id = $1 and type = 'title'",
+                    &[&id],
+                )
+                .await
+                .unwrap()
+                .get(0);
+            n
+        }
+    };
+    let made = r
+        .hermit()
+        .service(None)
+        .hermit_create_conversation(&create("session:named", Some("  chat.deyaochen.com   error ")))
+        .await
+        .unwrap()
+        .into_inner();
+    let id = made.conversation.id;
+    assert_eq!(made.conversation.title.as_deref(), Some("chat.deyaochen.com error"));
+    assert_eq!(made.conversation.title_source, Some(TitleSource::User));
+    r.hermit()
+        .service(None)
+        .hermit_send_turn(id, &start("n1"))
+        .await
+        .unwrap();
+    assert_eq!(
+        title_commands(id).await,
+        0,
+        "a named conversation gets no generated title"
+    );
+    let seen = r.pigeon().person(STAFF).get_conversation(id).await.unwrap();
+    assert_eq!(seen.title.as_deref(), Some("chat.deyaochen.com error"));
+    // a repeat keeps the name it was made with
+    let again = r
+        .hermit()
+        .service(None)
+        .hermit_create_conversation(&create("session:named", Some("another name")))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(again.conversation.title.as_deref(), Some("chat.deyaochen.com error"));
+
+    // unnamed (or blank): untitled, and the first message's turn asks the title model as before
+    for (key, title) in [("session:plain", None), ("session:blank", Some("   "))] {
+        let plain = r
+            .hermit()
+            .service(None)
+            .hermit_create_conversation(&create(key, title))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(plain.conversation.title, None, "{key}");
+        let pid = plain.conversation.id;
+        r.hermit()
+            .service(None)
+            .hermit_send_turn(pid, &start(&format!("{key}:1")))
+            .await
+            .unwrap();
+        assert_eq!(title_commands(pid).await, 1, "{key}");
+    }
+}
+
 #[tokio::test]
 async fn the_deployment_starts_a_persons_conversation_and_sends_its_turns() {
     use magpie_api::ops::{HermitCreateRequest, HermitSendRequest};
@@ -468,6 +569,7 @@ async fn the_deployment_starts_a_persons_conversation_and_sends_its_turns() {
         idempotency_key: "session:s1".into(),
         message: msg("first", "the session's first prompt"),
         model: None,
+        title: None,
     };
     let made = r
         .hermit()
@@ -531,6 +633,7 @@ async fn the_deployment_starts_a_persons_conversation_and_sends_its_turns() {
             idempotency_key: "k".into(),
             message: msg("m", "x"),
             model: None,
+            title: None,
         })
         .await
         .unwrap_err();
