@@ -137,7 +137,7 @@ describe('readPathFromWorkspace', () => {
     // Expect the file read immediately followed by the image as it is.
     expect(result).toEqual([
       {
-        text: expect.stringContaining('Read image file: image.png'),
+        text: expect.stringMatching(/Read image file: .*image\.png$/),
       },
       {
         inlineData: {

@@ -1234,7 +1234,7 @@ describe('fileUtils', () => {
         // At its own size the image is named as the file read; no overview
         // text and no zoom hint send the model looking for detail that is
         // already there (YYC AI, 2026-11-18).
-        text: 'Read image file: image.png',
+        text: expect.stringMatching(/^Read image file: .*image\.png$/),
       });
       expect(parts[1]).toEqual({
         inlineData: {

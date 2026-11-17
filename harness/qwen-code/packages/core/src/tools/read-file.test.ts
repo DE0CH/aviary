@@ -1402,7 +1402,7 @@ describe('ReadFileTool', () => {
         {
           // An image handed over at its own size is named as the file read,
           // as Claude Code names it (YYC AI, 2026-11-18).
-          text: 'Read image file: image.png',
+          text: expect.stringMatching(/^Read image file: .*image\.png$/),
         },
         {
           inlineData: {

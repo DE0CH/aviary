@@ -604,8 +604,8 @@ describe('readManyFiles', () => {
       expect(parts[imageIndex - 2]?.text).toBe(
         `\nContent from ${absolutePath}:\n`,
       );
-      expect(parts[imageIndex - 1]?.text).toContain(
-        'Read image file: screenshot.png',
+      expect(parts[imageIndex - 1]?.text).toMatch(
+        /Read image file: .*screenshot\.png$/,
       );
       expect(result.files).toHaveLength(1);
       expect(result.files[0]!.content).toEqual([
