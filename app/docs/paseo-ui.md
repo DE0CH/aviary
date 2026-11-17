@@ -356,29 +356,44 @@ launch frame, the welcome and sign-in screens, the new-chat page), `favicon.png`
 (home screen) and `manifest.json` (the name on the home screen, the colours). The bundle's own
 (`paseo/packages/app/public/branding/`) are neutral; a deployment mounts its files over the bundle's `/branding/`
 when it deploys pigeon (YYC: DE0CH/yyc-code `yyc-ai/deploy/branding/`; Jarvis 4's chat: DE0CH/deyao-ai
-`k8s/chat/branding/`). The product's name comes from the server too (`src/yyc/product.ts`). Only the native builds'
-app icon and launch image are build-time files (`app.config.js`): those builds are YYC's apps.
+`k8s/chat/branding/`). The product's name comes from the server too (`src/yyc/product.ts`). Only a native build's
+home-screen name, icon and launch image are build-time files (`app.config.js` `variants`, "The iOS app").
 
 ## The iOS app
 
-The same `paseo/packages/app`, built natively as YYC AI (`dev.de0ch.yycai`, the TestFlight app the SwiftUI shell used
-to ship; it no longer builds yyc-ai). What differs from the web build:
+The same `paseo/packages/app`, built natively once per deployment (`app.config.js` `variants`, picked by
+`APP_VARIANT`): **YYC AI** (`production`, `dev.de0ch.yycai`, the TestFlight app the SwiftUI shell used to ship) and
+**Jarvis Chat** (`jarvis-chat`, `dev.de0ch.jarvis4chat`, Jarvis 4's chat; the TestFlight record "Jarvis 4 Chat").
+A variant holds only what a build cannot ask its server: the home-screen name, the bundle id (also the URL scheme
+the sign-in returns to), the icon and launch image, the product's name before the server has said it, and the texts
+of iOS's permission prompts. What differs from the web build:
 
-- **Server**: the build secret `YYC_SITE` becomes `extra.yycSite` (`app.config.js`, `yyc/site.ts`). The repo is
-  public, so the address appears nowhere in it or in CI logs.
+- **Server**: the build's `YYC_SITE` becomes `extra.yycSite` (`app.config.js`, `yyc/site.ts`). YYC AI's is a build
+  secret (the repo is public, so its address appears nowhere in it or in CI logs); Jarvis Chat's is in the workflow.
 - **Sign-in**: Cloudflare Access before anything connects (`yyc/access-gate.tsx`). The server's
-  `/api/jarvis/app-signin` hands the Access token back on the app's scheme; it is kept in the Keychain
-  (`yyc/access-token.ts`) and sent as `cf-access-token` and the `CF_Authorization` cookie on REST and the socket
-  (`runtime/websocket-factory.ts`). An expired token sends the app back to the sign-in screen.
+  `/api/jarvis/app-signin` hands the Access token back on the app's scheme (the deployment's hermit names the scheme:
+  `signIn.appScheme`); it is kept in the Keychain (`yyc/access-token.ts`) and sent as `cf-access-token` and the
+  `CF_Authorization` cookie on REST and the socket (`runtime/websocket-factory.ts`). An expired token sends the app
+  back to the sign-in screen.
+- **Name and logo before sign-in**: the sign-in screen shows before any server has answered, and a server may sit
+  behind Access as a whole (Jarvis 4's chat). The name starts as the variant's `productName` (`yyc/product.ts`
+  `initialProductName`); the logo is the build's launch image until somebody is signed in, then the server's
+  `/branding/logo.png` asked for with the Access token (`yyc/native-brand.ts`).
 - **Files**: downloaded into the app and handed to the share sheet (`yyc/open-file.ts`).
-- **Not there**: push notifications, the camera.
-- **Version**: its own, `YYC_APP_VERSION` in `app.config.js` (above the SwiftUI app's 1.0); the build number is the CI
+- **Camera**: the attach menu's first item on a phone, 「影相」 / "Take photo", opens the system camera
+  (`hooks/camera-photo.ts`, expo-image-picker; no expo-camera plugin) and attaches the photo like a picked image.
+  The prompts' texts are the variant's (`cameraPermission`, `photosPermission`).
+- **Taps** (`yyc/haptics.ts`): a light one when a message goes out, a firmer one when the reply is stopped, the
+  system's "done" when the reply of the conversation on screen ends. Nothing on the web.
+- **Not there**: push notifications.
+- **Version**: its own, `YYC_APP_VERSION` in `app.config.js` (above the SwiftUI apps' 1.0); the build number is the CI
   run.
 
-`.github/workflows/yyc-ios.yml` builds it on a GitHub macOS runner on every push touching `paseo/` (`paseo/ios/`:
-prebuild, a simulator launch to the sign-in screen with Maestro, an unsigned archive signed at export with the App
-Store Connect key) and uploads to TestFlight. Its secrets: `YYC_SITE`, `ASC_KEY_ID`, `ASC_ISSUER_ID`,
-`ASC_PRIVATE_KEY`. CI cannot pass Access, so the chat itself is first exercised on TestFlight.
+`.github/workflows/yyc-ios.yml` builds both (a matrix) on GitHub macOS runners on every push touching `paseo/`
+(`paseo/ios/`: prebuild, a simulator launch to the sign-in screen with Maestro, which checks the product's name there,
+an unsigned archive signed at export with the App Store Connect key) and uploads to TestFlight. Its secrets:
+`YYC_SITE`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_PRIVATE_KEY`. CI cannot pass Access, so the chat itself is first
+exercised on TestFlight.
 
 ## Build and run
 
