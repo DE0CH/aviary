@@ -12,6 +12,7 @@ pub mod caller;
 pub mod cancel;
 pub mod carry;
 pub mod commands;
+pub mod continued;
 pub mod driver;
 pub mod end;
 pub mod harness;

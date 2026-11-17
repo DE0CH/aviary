@@ -37,23 +37,23 @@ use crate::files::{FilesPanel, RawFileQuery};
 use crate::legacy::LegacyPathRequest;
 use crate::live::{LiveFramesRequest, LiveState};
 use crate::ops::{
-    AdminConversation, AdminConversationList, AdminListQuery, HermitCreateRequest, HermitSendRequest,
+    AdminConversation, AdminConversationList, AdminListQuery, ContinuedTurn, HermitCreateRequest, HermitSendRequest,
     LegacyImportStatus, OpsStats, PeopleQuery, PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog,
     ViewAsLogQuery, ViewAsRequest, WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
 use crate::routes::{
-    self, ADMIN_CONVERSATION, ADMIN_CONVERSATIONS, ADMIN_EVENTS, ADMIN_SCHEDULES, ADMIN_SCHEDULES_PAUSE,
-    ADMIN_TIMELINE, ADMIN_TRANSCRIPT, ASK_ANSWER, BLOB, CANCEL, CHANGES, CONVERSATION, CONVERSATION_COMMANDS,
-    CONVERSATION_DELETE, CONVERSATION_PENDING, CONVERSATION_RESTORE, CONVERSATION_SCHEDULES, CONVERSATION_SHARES,
-    CONVERSATION_TASK_STOP, CONVERSATION_TASKS, CONVERSATIONS, CREATION, FILES, FILES_RAW, HERMIT_CONVERSATION,
-    HERMIT_CONVERSATION_CLOSED, HERMIT_CONVERSATION_DELETE, HERMIT_CONVERSATION_RESTORE, HERMIT_CONVERSATION_TURNS,
-    HERMIT_CONVERSATIONS, HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE, HERMIT_WORKSPACES_EXISTS, LIVE, OPS_PEOPLE,
-    OPS_STATS, OPS_VIEW_AS, PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE,
-    SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME, SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE,
-    SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE, SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_EARLIER, SANDBOX_HEARTBEAT,
-    SANDBOX_LEASE, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES, SANDBOX_SENT_FILES, SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS,
-    SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS, SEARCH, SHARE, SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE,
-    TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
+    self, ADMIN_CONTINUE, ADMIN_CONVERSATION, ADMIN_CONVERSATIONS, ADMIN_EVENTS, ADMIN_SCHEDULES,
+    ADMIN_SCHEDULES_PAUSE, ADMIN_TIMELINE, ADMIN_TRANSCRIPT, ASK_ANSWER, BLOB, CANCEL, CHANGES, CONVERSATION,
+    CONVERSATION_COMMANDS, CONVERSATION_DELETE, CONVERSATION_PENDING, CONVERSATION_RESTORE, CONVERSATION_SCHEDULES,
+    CONVERSATION_SHARES, CONVERSATION_TASK_STOP, CONVERSATION_TASKS, CONVERSATIONS, CREATION, FILES, FILES_RAW,
+    HERMIT_CONVERSATION, HERMIT_CONVERSATION_CLOSED, HERMIT_CONVERSATION_DELETE, HERMIT_CONVERSATION_RESTORE,
+    HERMIT_CONVERSATION_TURNS, HERMIT_CONVERSATIONS, HERMIT_LEGACY_IMPORT, HERMIT_PERSON_PURGE,
+    HERMIT_WORKSPACES_EXISTS, LIVE, OPS_PEOPLE, OPS_STATS, OPS_VIEW_AS, PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS,
+    SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME, SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR,
+    SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE, SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS,
+    SANDBOX_EARLIER, SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES, SANDBOX_SENT_FILES,
+    SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS, SEARCH, SHARE,
+    SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
 };
 use crate::rows::{
     PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery,
@@ -792,6 +792,11 @@ pub trait Server: Send + Sync + 'static {
         async move { Err(not_implemented("admin_events")) }
     }
 
+    /// Route `admin_continue`.
+    fn admin_continue(&self, ctx: Ctx, id: Uuid) -> impl Future<Output = Result<ContinuedTurn, ApiError>> + Send {
+        async move { Err(not_implemented("admin_continue")) }
+    }
+
     /// Route `admin_timeline`.
     fn admin_timeline(
         &self,
@@ -1362,6 +1367,10 @@ async fn h_admin_conversation<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, P(id
     reply("admin_conversation", s.admin_conversation(ctx, id).await)
 }
 
+async fn h_admin_continue<S: Server>(State(s): State<Arc<S>>, ctx: Ctx, P(id): P<Uuid>, J(_): J<Empty>) -> Response {
+    reply("admin_continue", s.admin_continue(ctx, id).await)
+}
+
 async fn h_admin_events<S: Server>(
     State(s): State<Arc<S>>,
     ctx: Ctx,
@@ -1479,6 +1488,7 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
         .route(ADMIN_CONVERSATIONS, get(h_admin_conversations::<S>))
         .route(ADMIN_CONVERSATION, get(h_admin_conversation::<S>))
         .route(ADMIN_EVENTS, get(h_admin_events::<S>))
+        .route(ADMIN_CONTINUE, post(h_admin_continue::<S>))
         .route(ADMIN_TIMELINE, get(h_admin_timeline::<S>))
         .route(ADMIN_TRANSCRIPT, get(h_admin_transcript::<S>))
         .fallback(|| async { ApiError::not_found("no such route").into_response() })

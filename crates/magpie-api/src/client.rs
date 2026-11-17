@@ -29,7 +29,7 @@ use crate::headers::{
 use crate::legacy::LegacyPathRequest;
 use crate::live::{LiveFramesRequest, LiveState};
 use crate::ops::{
-    AdminConversation, AdminConversationList, AdminListQuery, HermitCreateRequest, HermitSendRequest,
+    AdminConversation, AdminConversationList, AdminListQuery, ContinuedTurn, HermitCreateRequest, HermitSendRequest,
     LegacyImportStatus, OpsStats, PeopleQuery, PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog,
     ViewAsLogQuery, ViewAsRequest, WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
@@ -1135,6 +1135,20 @@ impl ServiceCalls<'_> {
     /// Admin: the events page.
     pub async fn admin_events(&self, id: Uuid, q: &EventsQuery) -> Result<EventsPage, ClientError> {
         self.get("admin_events", &[&id.to_string()], Some(q)).await
+    }
+
+    /// Admin: the conversation goes on from where its last turn was cut off, with no message; the messages that
+    /// failed after it are rolled back.
+    pub async fn admin_continue(&self, id: Uuid) -> Result<ContinuedTurn, ClientError> {
+        self.client
+            .exec_json(
+                &self.scope,
+                route("admin_continue"),
+                &[&id.to_string()],
+                NO_QUERY,
+                json(&Empty {})?,
+            )
+            .await
     }
 
     /// Admin: the timeline page.

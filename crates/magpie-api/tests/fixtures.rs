@@ -92,6 +92,7 @@ fn check_route(id: &str, f: &serde_json::Value) {
         "hermit_close_conversation" => check::<NoQuery, Json<HermitCloseRequest>, Json<Conversation>>(id, f),
         "hermit_delete_conversation" => check::<NoQuery, Json<Empty>, Json<Conversation>>(id, f),
         "hermit_restore_conversation" => check::<NoQuery, Json<Empty>, Json<Conversation>>(id, f),
+        "admin_continue" => check::<NoQuery, Json<Empty>, Json<ContinuedTurn>>(id, f),
         "hermit_send_turn" => check::<NoQuery, Json<HermitSendRequest>, Json<SendResponse>>(id, f),
         "workspaces_exists" => check::<NoQuery, Json<WorkspacesExistsRequest>, Json<WorkspacesExistsResponse>>(id, f),
         "legacy_import" => check::<NoQuery, NoBody, Json<LegacyImportStatus>>(id, f),

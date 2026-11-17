@@ -21,6 +21,19 @@ pub fn interrupt(request_id: &str) -> Vec<u8> {
     line(&json!({"type": "control_request", "request_id": request_id, "request": {"subtype": "interrupt"}}))
 }
 
+/// How the id of a `continue_last_turn` request begins (its answer ends the turn when the harness has nothing to go
+/// on from).
+pub const CONTINUE_PREFIX: &str = "continue-";
+
+/// Qwen Code's `continue_last_turn`: it goes on from where its last turn was cut off, with no message (tool results
+/// whose reply never came are sent again; tool calls nothing answered are closed). Its answer says `accepted`; the
+/// turn's lines and its `result` follow as after a message.
+#[must_use]
+pub fn continue_last_turn(request_id: &str) -> Vec<u8> {
+    line(&json!({"type": "control_request", "request_id": request_id,
+                 "request": {"subtype": "continue_last_turn"}}))
+}
+
 /// `stop_task`.
 #[must_use]
 pub fn stop_task(request_id: &str, task_id: &str) -> Vec<u8> {

@@ -216,6 +216,9 @@ pub const ADMIN_CONVERSATIONS: &str = "/v1/admin/conversations";
 pub const ADMIN_CONVERSATION: &str = "/v1/admin/conversations/{id}";
 /// `GET` admin events page.
 pub const ADMIN_EVENTS: &str = "/v1/admin/conversations/{id}/events";
+/// `POST`: an operator has a conversation go on from where its last turn was cut off (no message; the messages that
+/// failed after it are rolled back).
+pub const ADMIN_CONTINUE: &str = "/v1/admin/conversations/{id}/continue";
 /// `GET` admin timeline page.
 pub const ADMIN_TIMELINE: &str = "/v1/admin/conversations/{id}/timeline";
 /// `GET` the raw view's transcript lines for an admin (pigeon's raw page, or the ops tools), any conversation.
@@ -448,6 +451,7 @@ pub const ROUTES: &[Route] = &[
     service("admin_conversations", Get, ADMIN_CONVERSATIONS, ADMIN, &[200], true),
     service("admin_conversation", Get, ADMIN_CONVERSATION, ADMIN, &[200], true),
     service("admin_events", Get, ADMIN_EVENTS, ADMIN, &[200], true),
+    service("admin_continue", Post, ADMIN_CONTINUE, ADMIN, &[200], true),
     service("admin_timeline", Get, ADMIN_TIMELINE, ADMIN, &[200], true),
     service("admin_transcript", Get, ADMIN_TRANSCRIPT, PIGEON_ADMIN, &[200], true),
     service("admin_schedules", Get, ADMIN_SCHEDULES, PIGEON_ADMIN, &[200], true),
@@ -590,7 +594,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 82);
+        assert_eq!(ROUTES.len(), 83);
     }
 
     #[test]

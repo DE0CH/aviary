@@ -176,6 +176,8 @@ pub enum Out {
         error: Option<String>,
         /// The slash commands an `initialize` answer names (`response.commands`); `None` on any other answer.
         commands: Option<Vec<magpie_api::sandbox::SlashCommand>>,
+        /// `response.accepted` of a `continue_last_turn` answer; `None` on any other answer.
+        accepted: Option<bool>,
     },
     ControlCancel {
         request_id: String,
@@ -443,6 +445,10 @@ fn control_response(r: &Value) -> Out {
             .and_then(|x| x.get("commands"))
             .and_then(Value::as_array)
             .map(|a| slash_commands(a)),
+        accepted: r
+            .get("response")
+            .and_then(|x| x.get("accepted"))
+            .and_then(Value::as_bool),
     }
 }
 
@@ -974,8 +980,16 @@ mod tests {
                 ok: true,
                 error: None,
                 commands: None,
+                accepted: None,
             }
         );
+        // Qwen Code's answer to `continue_last_turn` says whether a turn was cut off
+        assert!(matches!(
+            parse(
+                br#"{"type":"control_response","response":{"subtype":"success","request_id":"continue-1","response":{"subtype":"continue_last_turn","accepted":false,"interruption":"none"}}}"#
+            ),
+            Out::ControlResponse { ok: true, accepted: Some(false), .. }
+        ));
         assert_eq!(parse(br#"{"type":"keep_alive"}"#), Out::KeepAlive);
         // the model's answer as it comes (Claude Code 2.1.322 with --include-partial-messages)
         let partial = |line: &str| match parse(line.as_bytes()) {

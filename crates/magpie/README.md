@@ -448,6 +448,14 @@ reads and their once-a-day audit. `tests/legacy_paths.rs`: the legacy-path set (
   (migration `0012_admin_read_index.sql` builds a plain index concurrently), so no audit row is ever deleted and a
   replica on older code never meets a conflict during a rolling update. Migration `0010_shares_frozen.sql` was
   edited before any deployment (nothing of wave 1 is deployed) to drop its duplicate-deleting step and unique index.
+- `POST /v1/admin/conversations/{id}/continue` (Deyao, 2026-11-17; `turns::continued`, docs/HARNESSES.md "Going on
+  from a turn that was cut off"): the one admin route that changes a conversation. It rolls back the failed
+  messages after the turn that was cut off (a `retract` of their events and of that turn's failure: rule 9 deletes
+  their rows, the events stay) and admits a turn of origin `agent` whose `start_turn` says `continueLast`. 409
+  `nothing_to_continue` when the last turn did not fail, when the message that failed never reached the harness, or
+  when the conversation last ran in Claude Code; 409 `turn_running` while a turn runs or tasks are held. Recorded
+  as the admin's read of the conversation and logged with the admin. `tests/turns.rs`
+  (`an_operators_continue_…`, `a_continue_keeps_…`).
 - `GET /v1/admin/conversations/{id}/transcript` (Deyao, 2026-11-05: pigeon's raw page works with the admin's own
   sign-in, no view-as): the raw view's lines of any conversation with its owner and title, audited like the other
   admin reads (`admin_read`). Its callers are pigeon and admin; on an admin route pigeon may set only `Aviary-Admin`

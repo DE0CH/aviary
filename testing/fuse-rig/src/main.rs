@@ -340,6 +340,7 @@ async fn turn(State(w): State<Arc<World>>, Json(t): Json<TurnRequest>) -> Json<V
         w.cid,
         Some(turn_id),
         CommandBody::StartTurn(StartTurn {
+            continue_last: false,
             harness: t.harness,
             carry_over: None,
             text: t.text,

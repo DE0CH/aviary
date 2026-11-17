@@ -564,6 +564,7 @@ pub async fn admit(tx: &Tx<'_>, conversation: Uuid, person: &Person, m: &SendReq
         thinking: conv.get(4),
         harness: magpie_api::Harness::parse(conv.get(5)).unwrap_or_default(),
         carry_over,
+        continue_last: false,
     };
     let cmd = command(
         tx,

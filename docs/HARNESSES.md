@@ -78,6 +78,29 @@ ran before, for a pick back.
 - **Shares** keep the harness, the other harnesses' sessions and `carried`; a conversation continued from a share
   starts where the shared one stood.
 
+## Going on from a turn that was cut off (Deyao, 2026-11-17)
+
+A model keeps no state: what a turn has done is the harness's transcript. A turn that failed after its tool results
+were written (the model's provider refused the request that carried them, the sandbox was lost under a tool call)
+can be taken up there, with no message from anyone.
+
+- **Who asks:** an operator, `POST /v1/admin/conversations/{id}/continue` on magpie (caller admin, `Aviary-Admin`;
+  `magpie::turns::continued`). There is no button for it in the app.
+- **What magpie does:** the newest failed turn that wrote something is the one to go on from. The failed messages
+  after it that got no reply (a person's "continue" into a conversation that failed every message) are rolled
+  back: one `retract` event takes their rows out of the timeline, and the failure of the turn that goes on with
+  them. Then it admits a turn of origin `agent` with no `user.sent`: `start_turn` with `continueLast`, in the
+  harness and session the conversation last ran. The driver gets it a sandbox as for any turn.
+- **What the supervisor does:** it hands the harness its own request to go on instead of a message. Qwen Code has
+  one, `continue_last_turn` (tool results whose reply never came are sent again; tool calls nothing answered are
+  closed; the messages that failed after them are left out, DE0CH/qwen-code `de0ch/continue-last-turn.e2e.mjs`).
+  Its answer says whether a turn was cut off: when none was, the turn fails with that. What the harness then
+  writes is the turn, and its `result` ends it.
+- **Claude Code has no such request:** magpie refuses (409 `nothing_to_continue`), and a supervisor asked anyway
+  fails the turn before a line is written.
+- **A sandbox image from before this** takes `continueLast` for a field it does not know and writes an empty
+  message: the sandbox image goes out before the magpie that has the route.
+
 ## Not there yet for Qwen Code
 
 - A conversation is compacted for its media count only in Claude Code (`compactAtImages`); Qwen Code compacts

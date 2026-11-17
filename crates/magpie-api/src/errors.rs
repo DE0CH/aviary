@@ -75,6 +75,9 @@ open_enum! {
         AlreadyResolved = "already_resolved",
         /// 409 (M16 create): no finished assistant row to share.
         NothingToShare = "nothing_to_share",
+        /// 409 (the admin's continue): the conversation's last turn did not fail, or its harness cannot go on from a
+        /// turn that was cut off.
+        NothingToContinue = "nothing_to_continue",
         /// 500 (M16 create): hermit's workspace clone failed.
         ShareFailed = "share_failed",
         /// 500 (M16 continue): hermit's workspace clone failed.
@@ -136,6 +139,7 @@ impl ErrorCode {
             | C::TurnRunning
             | C::AlreadyResolved
             | C::NothingToShare
+            | C::NothingToContinue
             | C::PersonAllowed
             | C::NotCurrentSandbox
             | C::LeaseLost

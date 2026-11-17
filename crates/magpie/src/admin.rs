@@ -254,6 +254,17 @@ pub async fn get(pool: &Pool, ctx: &Ctx, id: Uuid) -> Result<AdminConversation> 
     admin_view(&pool.get().await?, id).await?.ok_or_else(Error::not_found)
 }
 
+/// `POST /v1/admin/conversations/{id}/continue` ([`crate::turns::continued`]): recorded as the admin's read of
+/// the conversation, and logged with the admin.
+///
+/// # Errors
+/// 400 without `Aviary-Admin`, 404, 409 (`turn_running`, `nothing_to_continue`, `conversation_deleted`,
+/// `conversation_closed`); a statement error.
+pub async fn continue_last(pool: &Pool, ctx: &Ctx, id: Uuid) -> Result<magpie_api::ops::ContinuedTurn> {
+    audited(pool, ctx, id).await?;
+    crate::turns::continued::continue_last(pool, id, &admin_of(ctx)?).await
+}
+
 /// `GET /v1/admin/conversations/{id}/events?before|after|tail&limit` (magpie 7.2's page shape).
 ///
 /// # Errors

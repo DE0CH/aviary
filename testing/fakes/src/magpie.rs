@@ -68,7 +68,7 @@ use magpie_api::files::{FilesPanel, RawFileQuery};
 use magpie_api::legacy::LegacyPathRequest;
 use magpie_api::live::{LiveFramesRequest, LiveState};
 use magpie_api::ops::{
-    AdminConversation, AdminConversationList, AdminListQuery, HermitCreateRequest, HermitSendRequest,
+    AdminConversation, AdminConversationList, AdminListQuery, ContinuedTurn, HermitCreateRequest, HermitSendRequest,
     LegacyImportStatus, OpsStats, PeopleQuery, PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog,
     ViewAsLogQuery, ViewAsRequest, WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
@@ -1559,6 +1559,10 @@ impl Server for FakeMagpie {
             Some(json!({})),
             typed
         )
+    }
+
+    async fn admin_continue(&self, ctx: Ctx, id_: Uuid) -> Result<ContinuedTurn, ApiError> {
+        scripted!(self, "admin_continue", ctx, id(id_), None, Some(json!({})), typed)
     }
 
     async fn hermit_restore_conversation(&self, ctx: Ctx, id_: Uuid) -> Result<Conversation, ApiError> {

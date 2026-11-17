@@ -279,6 +279,17 @@ pub struct AdminConversationList {
     pub conversations: Vec<AdminConversation>,
 }
 
+/// `POST /v1/admin/conversations/{id}/continue`: the turn that goes on from where the last one was cut off, and the
+/// turns rolled back to get there (messages sent after the failure that got no reply: gone from the timeline).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContinuedTurn {
+    /// The continuation: a turn of origin `agent`, with no message.
+    pub turn: crate::turns::TurnStarted,
+    /// The rolled-back turns, oldest first.
+    pub rolled_back: Vec<Uuid>,
+}
+
 /// A conversation as an admin sees it: the Conversation plus the operational fields (magpie 13).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

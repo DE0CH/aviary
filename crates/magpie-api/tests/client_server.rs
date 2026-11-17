@@ -605,6 +605,17 @@ impl Server for FixtureServer {
         self.answer_json("hermit_delete_conversation")
     }
 
+    async fn admin_continue(&self, ctx: Ctx, id: Uuid) -> Result<ContinuedTurn, ApiError> {
+        self.received(
+            "admin_continue",
+            &ctx,
+            &json!({"id": id.to_string()}),
+            None,
+            Some(json!({})),
+        );
+        self.answer_json("admin_continue")
+    }
+
     async fn hermit_restore_conversation(&self, ctx: Ctx, id: Uuid) -> Result<Conversation, ApiError> {
         self.received(
             "hermit_restore_conversation",
@@ -1150,6 +1161,11 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
         "hermit_delete_conversation" => c
             .service(Some(ADMIN))
             .hermit_delete_conversation(param_uuid(&f, "id"))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "admin_continue" => c
+            .service(Some(ADMIN))
+            .admin_continue(param_uuid(&f, "id"))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
         "hermit_restore_conversation" => c

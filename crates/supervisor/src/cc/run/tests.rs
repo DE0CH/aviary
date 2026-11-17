@@ -380,6 +380,19 @@ impl Fake {
         let sub = v["request"]["subtype"].as_str().unwrap_or("");
         self.note(&format!("control {sub}"));
         match sub {
+            // Qwen Code's continue: it answers whether a turn was cut off (`.fake-nothing-to-continue`: none was),
+            // and then goes on by itself, its lines and its `result` as after a message
+            "continue_last_turn" => {
+                let accepted = !Path::new(".fake-nothing-to-continue").exists();
+                self.system(json!({"type": "control_response",
+                                   "response": {"subtype": "success", "request_id": id,
+                                                "response": {"subtype": "continue_last_turn", "accepted": accepted,
+                                                             "interruption": if accepted { "interrupted_prompt" } else { "none" }}}}));
+                if accepted {
+                    self.assistant("going on from the tool results", &[]);
+                    self.result(true, "going on from the tool results");
+                }
+            }
             "initialize" => {
                 if Path::new(".fake-noinit").exists() {
                     return;
@@ -808,6 +821,7 @@ impl World {
             self.cid,
             Some(id),
             CommandBody::StartTurn(StartTurn {
+                continue_last: false,
                 harness: magpie_api::Harness::default(),
                 carry_over: None,
                 text: text.into(),
@@ -846,6 +860,7 @@ impl World {
             self.cid,
             Some(id),
             CommandBody::StartTurn(StartTurn {
+                continue_last: false,
                 harness,
                 carry_over: None,
                 text: text.into(),
@@ -875,6 +890,7 @@ impl World {
             self.cid,
             Some(id),
             CommandBody::StartTurn(StartTurn {
+                continue_last: false,
                 harness: magpie_api::Harness::default(),
                 carry_over: None,
                 text: text.into(),
@@ -1269,6 +1285,7 @@ async fn a_carried_over_conversation_is_written_into_the_workspace_for_the_new_h
         w.cid,
         Some(t),
         CommandBody::StartTurn(StartTurn {
+            continue_last: false,
             harness: Harness::Qwen,
             carry_over: Some(magpie_api::sandbox::CarryOver {
                 from: Harness::Claude,
@@ -1657,6 +1674,74 @@ async fn agent_turn(w: &World, n: usize) -> Uuid {
     until("an agent turn", || w.magpie.script().calls_to("agent_turn").len() > n).await;
     serde_json::from_value(w.magpie.script().calls_to("agent_turn")[n].body.as_ref().unwrap()["turnId"].clone())
         .unwrap()
+}
+
+/// A continuation (`start_turn.continueLast`, an operator's continue): no message is written. Qwen Code gets its
+/// `continue_last_turn` and what it then writes is the turn; when it has nothing to go on from, the turn fails with
+/// that. Claude Code has no such request: the turn fails before anything is written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_continuation_asks_the_harness_to_go_on_and_writes_no_message() {
+    use magpie_api::Harness;
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let go_on = |harness: Harness| {
+        let id = Uuid::now_v7();
+        w.magpie.push_command(
+            w.cid,
+            Some(id),
+            CommandBody::StartTurn(StartTurn {
+                continue_last: true,
+                harness,
+                carry_over: None,
+                text: String::new(),
+                files: vec![],
+                images: vec![],
+                resume: Resume {
+                    provider_session_id: None,
+                },
+                sent_at: magpie_api::Timestamp::now(),
+                answers: Vec::new(),
+                model: Some("vendor/video".into()),
+                thinking: None,
+            }),
+        );
+        id
+    };
+    let t = go_on(Harness::Qwen);
+    let end = w.ended(t).await;
+    assert_eq!(end["state"], "completed", "{end}\n{}", texts(&w));
+    assert!(texts(&w).contains("control continue_last_turn"));
+    assert!(
+        w.prompts().is_empty(),
+        "no message reached the harness: {:?}",
+        w.prompts()
+    );
+    w.idle(&sup).await;
+
+    // the harness has nothing to go on from: the turn fails and says so
+    std::fs::write(w.ws.join(".fake-nothing-to-continue"), b"").unwrap();
+    let t = go_on(Harness::Qwen);
+    let end = w.ended(t).await;
+    assert_eq!(end["state"], "failed", "{end}");
+    assert_eq!(end["error"]["code"], "run.error");
+    assert!(
+        end["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no turn that was cut off"),
+        "{end}"
+    );
+    w.idle(&sup).await;
+
+    // Claude Code cannot: failed before a line is written
+    let t = go_on(Harness::Claude);
+    let end = w.ended(t).await;
+    assert_eq!(end["state"], "failed", "{end}");
+    assert!(
+        end["error"]["message"].as_str().unwrap().contains("cannot go on"),
+        "{end}"
+    );
+    assert_eq!(w.prompts(), Vec::<String>::new(), "still no message");
 }
 
 /// Qwen Code's background shell (the fork's lines, their fields under `data`): the turn that started it ends
@@ -2048,6 +2133,7 @@ async fn a_restart_replays_a_written_prompt_exactly_once() {
         let id = msg_id(boot_id, seq);
         if keeper_had_it {
             let s = StartTurn {
+                continue_last: false,
                 harness: magpie_api::Harness::default(),
                 carry_over: None,
                 text: "say:once".into(),
@@ -3222,6 +3308,7 @@ async fn a_question_nobody_answers_is_parked_and_its_answer_resumes_the_turn_in_
         w.cid,
         Some(t),
         CommandBody::StartTurn(StartTurn {
+            continue_last: false,
             harness: magpie_api::Harness::default(),
             carry_over: None,
             text: String::new(),
@@ -3572,6 +3659,7 @@ async fn claude_is_switched_to_the_conversations_thinking_level_before_the_turn(
             w.cid,
             Some(id),
             CommandBody::StartTurn(StartTurn {
+                continue_last: false,
                 harness: magpie_api::Harness::default(),
                 carry_over: None,
                 text: text.into(),
@@ -3648,6 +3736,7 @@ async fn qwen_code_is_switched_to_the_conversations_thinking_level_none_included
             w.cid,
             Some(id),
             CommandBody::StartTurn(StartTurn {
+                continue_last: false,
                 harness: magpie_api::Harness::Qwen,
                 carry_over: None,
                 text: text.into(),

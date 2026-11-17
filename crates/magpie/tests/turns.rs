@@ -3368,3 +3368,224 @@ async fn a_turns_start_carries_the_conversations_picked_thinking_level() {
         (Some("vendor/other".into()), Some("low".into()))
     );
 }
+
+/// What the timeline shows of `conv`, as one JSON text.
+async fn shown(w: &World, conv: Uuid) -> String {
+    let page =
+        w.a.pigeon()
+            .person(ALICE)
+            .timeline(conv, &common::ev::tail(50))
+            .await
+            .unwrap();
+    serde_json::to_string(&page).unwrap()
+}
+
+/// A Qwen Code conversation of ALICE's with no message yet.
+async fn qwen_conversation(w: &World) -> Uuid {
+    let key = Uuid::new_v4().to_string();
+    w.a.pigeon()
+        .person(ALICE)
+        .create_conversation(&CreateRequest {
+            harness: magpie_api::Harness::Qwen,
+            model: Some("vendor/video".into()),
+            thinking: None,
+            idempotency_key: key.clone(),
+            message: msg(&format!("{key}:m"), ""),
+        })
+        .await
+        .unwrap()
+        .get()
+        .conversation
+        .id
+}
+
+fn qwen_report(state: ReportedState) -> TurnStateReport {
+    let mut r = report(state);
+    r.harness = magpie_api::Harness::Qwen;
+    if state == ReportedState::Running {
+        r.provider_session_id = Some("q-1".into());
+        r.transcript_path = Some("qwen/projects/-workspace/chats/q-1.jsonl".into());
+    }
+    if state == ReportedState::Failed {
+        r.error = Some(ReportError {
+            code: DataCode::RunError,
+            message: "error_during_execution: Could not open video stream".into(),
+        });
+    }
+    r
+}
+
+/// 2026-11-16: a turn failed after its tool results were written (the model provider refused the request that
+/// carried them), and each "continue" the person sent after it failed at once. An operator's continue rolls the
+/// conversation back to the failure (those messages and the failure leave the timeline) and admits a turn with no
+/// message, which has the harness go on from where it was cut off.
+#[tokio::test]
+async fn an_operators_continue_rolls_back_what_failed_and_resumes_the_interrupted_turn() {
+    let w = World::new("turn_continue", Some(Duration::ZERO)).await;
+    let conv = qwen_conversation(&w).await;
+    let t0 = w.send(conv, "m1", "cut the clips").await;
+    assert!(w.state_is(t0, "starting").await);
+    let sup = w.supervisor(conv).await;
+    sup.take(t0).await;
+    sup.calls()
+        .turn_state(t0, &qwen_report(ReportedState::Running))
+        .await
+        .unwrap();
+    // it called a tool and got the result; the reply to that never came
+    common::ev::append(
+        w.pool(),
+        ALICE,
+        conv,
+        vec![
+            common::ev::in_turn(
+                common::ev::assistant("msg_1", json!([common::ev::tool_use("call_1", "read_file")])),
+                t0,
+            ),
+            common::ev::in_turn(common::ev::results(&[("call_1", "[video: clip.mp4]", false)]), t0),
+        ],
+    )
+    .await;
+    sup.calls()
+        .turn_state(t0, &qwen_report(ReportedState::Failed))
+        .await
+        .unwrap();
+    let mut refused = Vec::new();
+    for m in ["m2", "m3"] {
+        let t = w.send(conv, m, "please continue").await;
+        assert!(w.state_is(t, "starting").await);
+        sup.take(t).await;
+        sup.calls()
+            .turn_state(t, &qwen_report(ReportedState::Running))
+            .await
+            .unwrap();
+        sup.calls()
+            .turn_state(t, &qwen_report(ReportedState::Failed))
+            .await
+            .unwrap();
+        refused.push(t);
+    }
+    let before = shown(&w, conv).await;
+    assert_eq!(before.matches("please continue").count(), 2, "{before}");
+    assert_eq!(before.matches("Could not open video stream").count(), 3, "{before}");
+
+    let admin = w.a.admin();
+    // an operator's call: it names the admin
+    let e = admin.service(None).admin_continue(conv).await.unwrap_err();
+    assert_eq!(code(&e), ErrorCode::BadRequest);
+    let ops = admin.service(Some("root@example.com"));
+    let out = ops.admin_continue(conv).await.unwrap();
+    assert_eq!(out.rolled_back, refused, "the two messages that got no reply");
+
+    // the timeline is back at the tool result: no message after it, no failure
+    let after = shown(&w, conv).await;
+    assert!(!after.contains("please continue"), "{after}");
+    assert!(!after.contains("Could not open video stream"), "{after}");
+    assert!(after.contains("cut the clips") && after.contains("call_1"), "{after}");
+
+    // a turn with no message, which the harness answers by going on
+    let turn = out.turn.id;
+    assert!(w.state_is(turn, "starting").await);
+    let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
+    let running = c.turn.as_ref().unwrap();
+    assert_eq!((running.id, running.origin), (turn, TurnOrigin::Agent));
+    let cmds = sup.poll(0, 0).await;
+    let st = cmds
+        .commands
+        .iter()
+        .find_map(|c| match &c.body {
+            CommandBody::StartTurn(s) if c.turn_id == Some(turn) => Some(s.clone()),
+            _ => None,
+        })
+        .expect("the continuation's start_turn");
+    assert!(st.continue_last);
+    assert_eq!(st.text, "");
+    assert_eq!(st.harness, magpie_api::Harness::Qwen);
+    assert_eq!(st.resume.provider_session_id.as_deref(), Some("q-1"));
+    assert_eq!(st.model.as_deref(), Some("vendor/video"));
+    let kinds = w.kinds(conv).await;
+    assert_eq!(kinds[kinds.len() - 2..], ["retract", "turn.started"], "{kinds:?}");
+    assert!(
+        !w.kinds(conv).await[kinds.len() - 2..].contains(&"user.sent".to_owned()),
+        "a continuation has no message"
+    );
+
+    // it runs and ends as any turn does
+    sup.take(turn).await;
+    sup.calls()
+        .turn_state(turn, &qwen_report(ReportedState::Running))
+        .await
+        .unwrap();
+    // a second continue while it runs is refused
+    let e = ops.admin_continue(conv).await.unwrap_err();
+    assert_eq!(code(&e), ErrorCode::TurnRunning);
+    sup.calls()
+        .turn_state(turn, &qwen_report(ReportedState::Completed))
+        .await
+        .unwrap();
+    assert!(w.state_is(turn, "completed").await);
+    let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
+    assert_eq!(c.run.state, RunState::Idle);
+    // and now there is nothing to continue
+    let e = ops.admin_continue(conv).await.unwrap_err();
+    assert_eq!(code(&e), ErrorCode::NothingToContinue);
+}
+
+/// A message that failed with nothing before it to go back to is itself what is continued: it stays, its failure
+/// goes, and only the messages after it are rolled back. Claude Code cannot go on from a turn that was cut off.
+#[tokio::test]
+async fn a_continue_keeps_the_first_unanswered_message_and_needs_a_harness_that_can() {
+    let w = World::new("turn_continue_first", Some(Duration::ZERO)).await;
+    let conv = qwen_conversation(&w).await;
+    let sent = |m: &'static str, text: &'static str| {
+        let w = &w;
+        async move {
+            let t = w.send(conv, m, text).await;
+            assert!(w.state_is(t, "starting").await);
+            t
+        }
+    };
+    let t0 = sent("m1", "first question").await;
+    let sup = w.supervisor(conv).await;
+    sup.take(t0).await;
+    // the harness had the message and its first model call failed
+    sup.calls()
+        .turn_state(t0, &qwen_report(ReportedState::Running))
+        .await
+        .unwrap();
+    sup.calls()
+        .turn_state(t0, &qwen_report(ReportedState::Failed))
+        .await
+        .unwrap();
+    let t1 = sent("m2", "second try").await;
+    sup.take(t1).await;
+    sup.calls()
+        .turn_state(t1, &qwen_report(ReportedState::Failed))
+        .await
+        .unwrap();
+    let ops_client = w.a.admin();
+    let ops = ops_client.service(Some("root@example.com"));
+    let out = ops.admin_continue(conv).await.unwrap();
+    assert_eq!(out.rolled_back, [t1]);
+    let after = shown(&w, conv).await;
+    assert!(
+        after.contains("first question") && !after.contains("second try"),
+        "{after}"
+    );
+    assert!(!after.contains("Could not open video stream"), "{after}");
+
+    // Claude Code: refused, and nothing is rolled back
+    let claude = w.conversation().await;
+    let t = w.send(claude, "m1", "a question").await;
+    assert!(w.state_is(t, "starting").await);
+    let sup = w.supervisor(claude).await;
+    sup.run(t).await;
+    let mut failed = report(ReportedState::Failed);
+    failed.error = Some(ReportError {
+        code: DataCode::RunError,
+        message: "it broke".into(),
+    });
+    sup.calls().turn_state(t, &failed).await.unwrap();
+    let e = ops.admin_continue(claude).await.unwrap_err();
+    assert_eq!(code(&e), ErrorCode::NothingToContinue);
+    assert!(shown(&w, claude).await.contains("it broke"));
+}

@@ -1,7 +1,7 @@
 //! The admin reads (magpie 13, 16.4).
 
 use magpie_api::events::{EventsPage, EventsQuery};
-use magpie_api::ops::{AdminConversation, AdminConversationList, AdminListQuery};
+use magpie_api::ops::{AdminConversation, AdminConversationList, AdminListQuery, ContinuedTurn};
 use magpie_api::rows::{TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery};
 use magpie_api::server::Ctx;
 use uuid::Uuid;
@@ -33,4 +33,17 @@ pub async fn timeline(app: &Magpie, ctx: Ctx, id: Uuid, q: TimelineQuery) -> Ans
 /// `GET /v1/admin/conversations/{id}/transcript` (the raw view without view-as).
 pub async fn transcript(app: &Magpie, ctx: Ctx, id: Uuid, q: TranscriptQuery) -> Answer<TranscriptPage> {
     answer(crate::ccfs::transcript::admin_page(app, &ctx, id, &q).await)
+}
+
+/// `POST /v1/admin/conversations/{id}/continue`: the conversation goes on from where its last turn was cut off
+/// ([`crate::turns::continued`]); the continuation's driver starts here, as a sent turn's does.
+pub async fn continue_last(app: &Magpie, ctx: Ctx, id: Uuid) -> Answer<ContinuedTurn> {
+    answer(
+        async {
+            let out = admin::continue_last(&app.pool, &ctx, id).await?;
+            crate::turns::driver::spawn(crate::turns::driver::Driver::of(app), out.turn.id);
+            Ok(out)
+        }
+        .await,
+    )
 }

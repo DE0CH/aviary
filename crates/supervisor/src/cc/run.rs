@@ -1424,9 +1424,30 @@ impl Driver {
                 ok,
                 error,
                 commands,
+                accepted,
             } => {
                 if let (Some(c), Some(g)) = (commands, st.live.as_mut()) {
                     g.commands = Some(c);
+                }
+                if request_id.starts_with(control::CONTINUE_PREFIX) && (!ok || accepted == Some(false)) {
+                    // the harness has nothing to go on from: no line and no `result` of its own follow, so the
+                    // continuation ends here, failed with why
+                    let why = error
+                        .clone()
+                        .filter(|e| !e.is_empty())
+                        .unwrap_or_else(|| "the harness found no turn that was cut off".to_owned());
+                    self.on_result(
+                        st,
+                        fx,
+                        &ResultMsg {
+                            subtype: "nothing_to_continue".into(),
+                            is_error: true,
+                            result: Some(why),
+                            usage: None,
+                            duration_ms: None,
+                        },
+                    );
+                    change = Change::State;
                 }
                 if let Some(w) = st.control_waiters.remove(&request_id) {
                     let _ = w.send(if ok { Ok(()) } else { Err(error.unwrap_or_default()) });
@@ -2574,6 +2595,17 @@ impl Driver {
                 )
                 .await;
             }
+        }
+        if s.continue_last {
+            // a continuation has no message: the harness is asked to go on from where its last turn was cut off
+            return match s.harness {
+                magpie_api::Harness::Qwen => Ok(control::continue_last_turn(&format!(
+                    "{}{}",
+                    control::CONTINUE_PREFIX,
+                    Uuid::new_v4()
+                ))),
+                magpie_api::Harness::Claude => Err("Claude Code cannot go on from a turn that was cut off".to_owned()),
+            };
         }
         // 3: uploads
         let (text, images) = self.attachments(&s.text, &s.files, &s.images).await?;

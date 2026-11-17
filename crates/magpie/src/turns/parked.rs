@@ -237,6 +237,7 @@ async fn resume(tx: &Tx<'_>, turn: &Turn) -> Result<()> {
         // a parked turn resumes in the harness that asked the questions
         harness: magpie_api::Harness::parse(row.get(4)).unwrap_or_default(),
         carry_over: None,
+        continue_last: false,
     };
     let cmd = command(
         tx,

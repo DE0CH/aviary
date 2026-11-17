@@ -418,6 +418,11 @@ pub struct StartTurn {
     /// new harness to read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub carry_over: Option<CarryOver>,
+    /// A continuation (`POST /v1/admin/conversations/{id}/continue`): the turn has no message. The harness goes on
+    /// from where its last turn was cut off (tool results whose reply never came, or tool calls nothing answered),
+    /// as its own `continue_last_turn` control request does. `text`, `files` and `images` are empty.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub continue_last: bool,
 }
 
 /// The earlier conversation handed to a harness that has not seen it (`start_turn.carryOver`): the supervisor

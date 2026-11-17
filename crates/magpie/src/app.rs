@@ -22,7 +22,7 @@ use magpie_api::files::{FilesPanel, RawFileQuery};
 use magpie_api::legacy::LegacyPathRequest;
 use magpie_api::live::{LiveFramesRequest, LiveState};
 use magpie_api::ops::{
-    AdminConversation, AdminConversationList, AdminListQuery, HermitCreateRequest, HermitSendRequest,
+    AdminConversation, AdminConversationList, AdminListQuery, ContinuedTurn, HermitCreateRequest, HermitSendRequest,
     LegacyImportStatus, OpsStats, PeopleQuery, PeopleResponse, PersonPurgeRequest, PersonPurgeResponse, ViewAsLog,
     ViewAsLogQuery, ViewAsRequest, WorkspacesExistsRequest, WorkspacesExistsResponse,
 };
@@ -557,6 +557,10 @@ impl Server for Magpie {
 
     async fn admin_conversation(&self, ctx: Ctx, id: Uuid) -> Answer<AdminConversation> {
         http::admin::conversation(self, ctx, id).await
+    }
+
+    async fn admin_continue(&self, ctx: Ctx, id: Uuid) -> Answer<ContinuedTurn> {
+        http::admin::continue_last(self, ctx, id).await
     }
 
     async fn admin_events(&self, ctx: Ctx, id: Uuid, query: EventsQuery) -> Answer<EventsPage> {
