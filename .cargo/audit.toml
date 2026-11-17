@@ -1,0 +1,3 @@
+# cargo audit --deny warnings (ci.yml lint): the same exceptions as deny.toml's [advisories] ignore, with its reasons
+[advisories]
+ignore = ["RUSTSEC-2026-0543", "RUSTSEC-2026-0555"]

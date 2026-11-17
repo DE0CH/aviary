@@ -7,7 +7,12 @@ targets = ["x86_64-unknown-linux-musl", "x86_64-unknown-linux-gnu", "aarch64-unk
 [advisories]
 # every advisory fails the build (yanked crates too); an exception needs an `ignore` entry with a reason
 yanked = "deny"
-ignore = []
+ignore = [
+  # chrono and chrono-tz were declared unmaintained on 2026-11-17 (chronotope/chrono#1768); no release fixes it, and
+  # neither is a vulnerability. magpie's and hermit's schedule times use them: moving them to jiff is its own change.
+  { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, no vulnerability; replacing it is its own change" },
+  { id = "RUSTSEC-2026-0555", reason = "chrono-tz unmaintained, no vulnerability; replacing it is its own change" },
+]
 
 [licenses]
 # only licences compatible with AGPL-3.0-or-later (platform 4.6). No "-only" GPL family licence: a dependency under
