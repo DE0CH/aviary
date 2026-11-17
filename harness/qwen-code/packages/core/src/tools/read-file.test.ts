@@ -647,9 +647,13 @@ describe('ReadFileTool', () => {
         const result = await boundTool
           .build({ file_path: filePath, ...nullPagination })
           .execute(abortSignal);
-        expect(JSON.stringify(result.llmContent)).toContain(
-          'oriented source: 11x7',
-        );
+        // Handed over as it is, so the picture itself shows which file was read.
+        const inline = normalizeParts(result.llmContent).find(
+          (part) => part.inlineData,
+        )?.inlineData;
+        expect(
+          await sharp(Buffer.from(inline!.data!, 'base64')).metadata(),
+        ).toMatchObject({ width: 11, height: 7 });
         expect(result.error).toBeUndefined();
       },
     );
@@ -1675,13 +1679,13 @@ describe('ReadFileTool', () => {
         const imagePath = await putPng('image.png', 8, 8);
         const result = await read(imagePath, createTextOnlyTool());
 
-        // An ordinary decodable image keeps its inline media (the rendered
-        // overview) and never routes through the vision bridge.
+        // An ordinary decodable image keeps its inline media (the PNG itself,
+        // inside the budget) and never routes through the vision bridge.
         const parts = result.llmContent as Array<{
           inlineData?: { mimeType?: string };
         }>;
         expect(
-          parts.some((part) => part.inlineData?.mimeType === 'image/jpeg'),
+          parts.some((part) => part.inlineData?.mimeType === 'image/png'),
         ).toBe(true);
         expect(visionBridgeMocks.runVisionBridge).not.toHaveBeenCalled();
       });
