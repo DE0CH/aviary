@@ -44,6 +44,36 @@ class Send(unittest.TestCase):
         self.assertEqual(len(presses), 4)
 
 
+class Delete(unittest.TestCase):
+    def test_asks_until_the_page_has_left_the_conversation(self):
+        asks = []
+        self.assertTrue(e.delete(lambda: asks.append(1), lambda: len(asks) >= 2, wait=lambda: None))
+        self.assertEqual(len(asks), 2)
+
+    def test_a_menu_that_did_not_open_is_asked_again(self):
+        asks = []
+
+        def ask():
+            asks.append(1)
+            if len(asks) == 1:
+                raise TimeoutError("no menu")
+
+        self.assertTrue(e.delete(ask, lambda: len(asks) >= 2, wait=lambda: None))
+
+    def test_gives_up(self):
+        asks = []
+        self.assertFalse(e.delete(lambda: asks.append(1), lambda: False, wait=lambda: None, tries=3))
+        self.assertEqual(len(asks), 3)
+
+    def test_the_run_deletes_its_conversation_whatever_happened(self):
+        # a conversation left behind keeps its sandbox for sandbox.idleMinutes: nine runs filled the pool of ten
+        src = open(e.__file__).read()
+        body = src[src.index("def main():"):]
+        self.assertIn("finally:", body)
+        self.assertLess(body.index("finally:"), body.index("delete("))
+        self.assertLess(body.index("try:"), body.index('step = "send"'))
+
+
 class Reply(unittest.TestCase):
     def test_prompt_alone_is_no_reply(self):
         self.assertFalse(e.answered(f"新對話\n{e.PROMPT}\n", e.PROMPT, e.EXPECT))

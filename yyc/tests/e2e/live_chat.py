@@ -2,7 +2,9 @@
 """YYC AI end to end on the live site (yyc-ai-e2e.yml, after each deploy): sign in as bot@deyaochen.com with Cloudflare
 Access's e-mailed code, check /api/jarvis/me, start a conversation, wait for the model's answer, then type `/` and
 need the list of the conversation's slash commands over the message box. Exits 1 with screenshots in OUT when any step
-fails.
+fails. Whatever happened, it deletes its conversation at the end (the header's menu), which releases the sandbox at
+once: a conversation left behind keeps its sandbox for hermit's `sandbox.idleMinutes`, and nine runs in a row held
+nine of the ten sandboxes on five hosts (2026-11-17).
 
 The code comes from the bot-mail Worker's /access-code route (claude-env email-bot skill), which serves only Access's
 YYC AI code mail to the bot, behind Access with the service token yyc-ai-e2e (E2E_CODE_CLIENT_ID/SECRET).
@@ -49,6 +51,19 @@ def send(press, sent, wait, tries=20):
         press()
         wait()
         if sent():
+            return True
+    return False
+
+
+def delete(ask, gone, wait, tries=5):
+    """Ask for the delete until the page has left the conversation (a menu that did not open is asked again)."""
+    for _ in range(tries):
+        try:
+            ask()
+        except Exception as err:  # noqa: BLE001 (Playwright's timeout: the menu or its row was not there yet)
+            print("delete:", type(err).__name__)
+        wait()
+        if gone():
             return True
     return False
 
@@ -105,43 +120,60 @@ def main():
             fail(f"/api/jarvis/me {r.status} {r.text()[:200]}")
         print("/api/jarvis/me: 200")
 
-        step = "send"
-        box = pg.locator("textarea, [contenteditable=true]").first
-        box.wait_for(timeout=60000)
-        box.click()
-        box.type(PROMPT)
-        t0 = time.time()
-        if not send(lambda: pg.keyboard.press("Enter"), lambda: "/workspace/" in pg.url,
-                    lambda: pg.wait_for_timeout(1500)):
-            fail("the message did not leave the new-chat page within 30 s of Enter")
+        try:
+            step = "send"
+            box = pg.locator("textarea, [contenteditable=true]").first
+            box.wait_for(timeout=60000)
+            box.click()
+            box.type(PROMPT)
+            t0 = time.time()
+            if not send(lambda: pg.keyboard.press("Enter"), lambda: "/workspace/" in pg.url,
+                        lambda: pg.wait_for_timeout(1500)):
+                fail("the message did not leave the new-chat page within 30 s of Enter")
 
-        step = "reply"
-        # a cold start boots an AWS host (~40-50 s) before the sandbox; 4 min covers it with room
-        while time.time() - t0 < 240:
-            pg.wait_for_timeout(3000)
-            if answered(pg.inner_text("body"), PROMPT, EXPECT):
-                break
-        else:
-            fail(f"no answer containing {EXPECT} within 240 s")
-        print(f"answered in {round(time.time() - t0)} s: {pg.url.split('?')[0]}")
-        pg.screenshot(path=os.path.join(out, "answered.png"))
+            step = "reply"
+            # a cold start boots an AWS host (~40-50 s) before the sandbox; 4 min covers it with room
+            while time.time() - t0 < 240:
+                pg.wait_for_timeout(3000)
+                if answered(pg.inner_text("body"), PROMPT, EXPECT):
+                    break
+            else:
+                fail(f"no answer containing {EXPECT} within 240 s")
+            print(f"answered in {round(time.time() - t0)} s: {pg.url.split('?')[0]}")
+            pg.screenshot(path=os.path.join(out, "answered.png"))
 
-        step = "commands"
-        # the conversation's slash commands are known once its first reply has started
-        box = pg.locator("textarea, [contenteditable=true]").first
-        box.click()
-        box.type("/")
-        listed = pg.locator('[data-testid="composer-autocomplete-popover"]')
-        t0, names = time.time(), []
-        while time.time() - t0 < 30 and not names:
-            pg.wait_for_timeout(1000)
-            if listed.count():
-                names = command_names(listed.first.inner_text())
-        if not names:
-            fail("no list of slash commands over the message box 30 s after typing /")
-        print(f"/ lists {len(names)} commands: {' '.join(names[:5])} ...")
-        pg.screenshot(path=os.path.join(out, "commands.png"))
-        pg.keyboard.press("Backspace")
+            step = "commands"
+            # the conversation's slash commands are known once its first reply has started
+            box = pg.locator("textarea, [contenteditable=true]").first
+            box.click()
+            box.type("/")
+            listed = pg.locator('[data-testid="composer-autocomplete-popover"]')
+            t0, names = time.time(), []
+            while time.time() - t0 < 30 and not names:
+                pg.wait_for_timeout(1000)
+                if listed.count():
+                    names = command_names(listed.first.inner_text())
+            if not names:
+                fail("no list of slash commands over the message box 30 s after typing /")
+            print(f"/ lists {len(names)} commands: {' '.join(names[:5])} ...")
+            pg.screenshot(path=os.path.join(out, "commands.png"))
+            pg.keyboard.press("Backspace")
+        finally:
+            # the conversation goes to Recently deleted and its sandbox is released (reason `deleted`)
+            if "/workspace/" in pg.url:
+                def ask():
+                    pg.keyboard.press("Escape")
+                    pg.locator('[data-testid="workspace-header-menu-trigger"]').first.click(timeout=5000)
+                    pg.locator('[data-testid="conversation-menu-delete"]').first.click(timeout=5000)
+
+                if delete(ask, lambda: "/workspace/" not in pg.url, lambda: pg.wait_for_timeout(2000)):
+                    print("conversation deleted")
+                else:
+                    pg.screenshot(path=os.path.join(out, "failed-delete.png"))
+                    left = "the conversation was not deleted: its sandbox stays until it is idle"
+                    if sys.exc_info()[0] is None:
+                        sys.exit("delete: " + left)
+                    print(left)
         b.close()
 
 
