@@ -44,7 +44,8 @@ def fake(zdr_models, bad_sha=None, tags=None, text_only=()):
 
 def models(root):
     e = json.load(open(os.path.join(root, "next", "egress", "egress.json")))
-    return {m["id"] for m in e["models"]} | {e["defaultModel"], e["smallModel"], e["titleModel"]}
+    return {m["id"] for m in e["models"]} | {e["defaultModel"], e["smallModel"], e["titleModel"]} \
+        | ({e["embedding"]["id"]} if e.get("embedding") else set())
 
 
 def pins(root):
@@ -69,6 +70,14 @@ class Seeded(unittest.TestCase):
         edit(root, lambda e: e.update(smallModel="vendor/no-zdr"))
         fails = test_zdr.run(root, fake(models(root) - {"vendor/no-zdr"}))
         self.assertTrue(any("vendor/no-zdr" in f for f in fails), fails)
+
+    def test_non_zdr_embedding_model(self):
+        # the conversation search's model sees every message: ZDR like the others (it takes no images)
+        root = tree()
+        edit(root, lambda e: e.update(embedding={"id": "vendor/embed-no-zdr"}))
+        fails = test_zdr.run(root, fake(models(root) - {"vendor/embed-no-zdr"}, tags=pins(root)))
+        self.assertTrue(any("vendor/embed-no-zdr" in f for f in fails), fails)
+        self.assertFalse(any("embed-no-zdr takes images" in f for f in fails), fails)
 
     def test_pinned_endpoint_not_zdr(self):
         root = tree()

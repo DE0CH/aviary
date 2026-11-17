@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """YYC AI's zero-data-retention guard (Deyao, 2026-10-20: staff get a fixed shortlist, none of it non-ZDR, and every
 request forces ZDR itself; yyc-ai/refactor spec-cutover 10.1.1, spec-platform 13.6). It checks
-yyc-ai/deploy/egress/egress.json (staged: yyc-ai/next/): `models[].id`, `defaultModel`, `smallModel`, `titleModel`, and
+yyc-ai/deploy/egress/egress.json (staged: yyc-ai/next/): `models[].id`, `defaultModel`, `smallModel`, `titleModel`,
+`embedding.id` (the conversation search's model), and
 each slug in `models[].providers` (the endpoints egress pins the model to) being a ZDR endpoint of that model; the
 route `model` goes to openrouter.ai with `model: true` and no other route names openrouter.ai; the egress source is the
 `jarvis3-chat` tag of that folder's kustomization.yaml (a sha12, resolved to the full commit through the GitHub API; a
@@ -84,7 +85,9 @@ def run(root=YYC_AI, get=http_get):
     check(new is not None, "the new stack's egress.json exists")
     if new:
         e = json.load(open(os.path.join(new, "egress", "egress.json")))
-        models_ok("new stack", {m["id"] for m in e["models"]} | {e[k] for k in ("defaultModel", "smallModel", "titleModel") if e.get(k)})
+        # the conversation search's embedding model (`embedding.id`) sees every message too: ZDR like the others
+        models_ok("new stack", {m["id"] for m in e["models"]} | {e[k] for k in ("defaultModel", "smallModel", "titleModel") if e.get(k)}
+                  | ({e["embedding"]["id"]} if e.get("embedding") else set()))
         takes = {m["id"]: (m.get("architecture") or {}).get("input_modalities") or [] for m in json.loads(get("https://openrouter.ai/api/v1/models"))["data"]}
         for m in e["models"]:
             check("image" in takes.get(m["id"], []), f"new stack: {m['id']} takes images (input: {takes.get(m['id'])})")
