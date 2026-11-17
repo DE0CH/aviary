@@ -57,8 +57,6 @@ pub struct Config {
     pub access_id: String,
     pub access_secret: String,
     pub session: String,
-    /// `claude-opus-5-5` (from `SESSION_MODEL` `aviary/<id>`).
-    pub model: String,
     pub credentials: PathBuf,
     /// Where the supervisor's boot environment goes (mode 600).
     pub boot_file: PathBuf,
@@ -441,8 +439,9 @@ async fn model(state: &State, pq: &str, req: Request<Incoming>) -> Response<Body
         return refuse(StatusCode::FORBIDDEN, "not_allowed", "not a model path");
     }
     if method == Method::GET {
-        let mut m = state.settings.models_route();
-        m.default.clone_from(&state.cfg.model);
+        // the menu as the chat has it, default included: the conversation's model is the chat's alone (magpie's
+        // `pickedModel`, which starts as the session's model and reaches the supervisor in each `start_turn`)
+        let m = state.settings.models_route();
         return full(StatusCode::OK, serde_json::to_value(m).unwrap_or_default());
     }
     let (parts, incoming) = req.into_parts();
@@ -950,7 +949,6 @@ mod tests {
                 access_id: String::new(),
                 access_secret: String::new(),
                 session: "s".to_owned(),
-                model: "z-ai/glm-5.3".to_owned(),
                 credentials,
                 boot_file: dir.join("boot.env"),
                 image: String::new(),
@@ -993,6 +991,27 @@ mod tests {
             .await
             .unwrap()
             .status()
+    }
+
+    /// The models route a machine's supervisor reads is the chat's menu, its default included. The machine used to
+    /// put the session's model there as the default: a second owner of the conversation's model, which the chat
+    /// never showed (Deyao, 2026-11-16: the chat's menu owns it; a session's model is where its conversation starts).
+    #[tokio::test]
+    async fn the_models_route_is_the_chats_menu() {
+        let (client, _, _) = gateway(None).await;
+        let m: serde_json::Value = client
+            .get("http://model/v1/aviary/models")
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(m["default"], settings().models[0].id.as_str());
+        assert_eq!(
+            m["models"].as_array().unwrap().len(),
+            settings().models.len()
+        );
     }
 
     /// GLM 5.3 on the chat's menu (Deyao, 2026-11-12): a turn on it reaches OpenRouter with the machine's key and

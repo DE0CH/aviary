@@ -34,7 +34,12 @@ Jarvis 4 session machine (harness aviary)                                     â”
 - The models are the deployment's settings (`HERMIT_SETTINGS`, DE0CH/deyao-ai `k8s/chat/settings.json`,
   `src/settings.rs`: the product name, the menu, each model's thinking levels, context window and OpenRouter hosts;
   hermit-jarvis refuses to start on a file that cannot work and hands the settings to each machine's gateway in the
-  boot reply). The Jarvis 4 app's picker is `router/harness.go` `modelCatalog`: a model is added in both. Today: the Claude models on the
+  boot reply). The Jarvis 4 app's picker is `router/harness.go` `modelCatalog`: a model is added in both. One owner of
+  a conversation's model (Deyao, 2026-11-16): the chat's menu (magpie's `pickedModel`). The session's model
+  (`SESSION_MODEL`) is only where its conversation starts: hermit-jarvis creates the conversation with it
+  (`central.rs` `session_model`), every `start_turn` carries the conversation's model, and the supervisor switches
+  the running Claude Code to it in place (`set_model`). The machine's models route is the menu as it is, default
+  included. Today: the Claude models on the
   session's Claude subscription account, and GLM 5.3 on OpenRouter (Deyao, 2026-11-12). aviary-gateway routes each
   Messages call by its `model`: an id with a `/` (`z-ai/glm-5.3`) goes to OpenRouter's Messages API
   (`https://openrouter.ai/api/v1/messages`) with `OPENROUTER_API` (store `openrouter`, which the harness's policy

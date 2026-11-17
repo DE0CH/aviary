@@ -2,7 +2,7 @@
 //! session-image/base/harness-aviary.sh as the session user.
 //!
 //! Env: `AVIARY_GW_URL`, `AVIARY_GW_ACCESS_ID`, `AVIARY_GW_ACCESS_SECRET` (store `aviary-gw`), `SESSION_ID`,
-//! `SESSION_MODEL` (`aviary/<model id>`), `OPENROUTER_API` (store `openrouter`: an OpenRouter model's calls),
+//! `OPENROUTER_API` (store `openrouter`: an OpenRouter model's calls),
 //! `AVIARY_IMAGE` (`sha256:…`), `AVIARY_BOOT_FILE`; the descriptor's
 //! Jarvis values from the machine's own env (src/wire.rs `BOOT_ENV_NAMES`).
 
@@ -16,7 +16,6 @@ use jarvis_aviary::machine::{self, Config};
 async fn main() -> anyhow::Result<()> {
     let build = version::Build::new("aviary-gateway");
     log::init_in_pod(&build, log::Output::Stdout);
-    let model = env::required("SESSION_MODEL");
     let cfg = Config {
         gateway_url: env::required("AVIARY_GW_URL")
             .trim_end_matches('/')
@@ -24,7 +23,6 @@ async fn main() -> anyhow::Result<()> {
         access_id: env::required("AVIARY_GW_ACCESS_ID"),
         access_secret: env::required("AVIARY_GW_ACCESS_SECRET"),
         session: env::required("SESSION_ID"),
-        model: model.strip_prefix("aviary/").unwrap_or(&model).to_owned(),
         credentials: PathBuf::from(env::required("HOME")).join(".claude/.credentials.json"),
         boot_file: PathBuf::from(env::required("AVIARY_BOOT_FILE")),
         image: env::required("AVIARY_IMAGE"),
