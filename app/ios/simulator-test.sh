@@ -44,10 +44,13 @@ if [ "$status" -ne 0 ] && grep -q "IOSDriverTimeoutException" "$OUT/maestro-1.lo
 fi
 xcrun simctl io "$UDID" screenshot "$OUT/final.png" || true
 # The flow opens iOS's sign-in prompt, which names the server's domain: when the address is a build secret (YYC AI:
-# no SITE_IS_PUBLIC) a failed run's screenshots may show it, and the artifacts of this public repo are not private
-if [ "$status" -ne 0 ] && [ "${SITE_IS_PUBLIC:-}" != "1" ]; then
-  find "$OUT" -name '*.png' -delete
-  echo "screenshots of the failed run removed (the server's address is a build secret)"
+# no SITE_IS_PUBLIC) the final screenshot and a failed run's may show it, and the artifacts of this public repo are not private
+if [ "${SITE_IS_PUBLIC:-}" != "1" ]; then
+  rm -f "$OUT/final.png"
+  if [ "$status" -ne 0 ]; then
+    find "$OUT" -name '*.png' -delete
+    echo "screenshots of the failed run removed (the server's address is a build secret)"
+  fi
 fi
 xcrun simctl shutdown "$UDID" || true
 xcrun simctl delete "$UDID" || true
