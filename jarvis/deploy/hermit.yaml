@@ -2,7 +2,7 @@
 # conversation, a machine boot a sandbox), the central half of the sandbox gateway (chat-gw.deyaochen.com, behind the
 # Access app "Jarvis 4 chat gateway": the service token aviary-gateway of the sessions' store `aviary`), and pigeon's
 # models route. It reaches Jarvis 4's router only as a paired device (Access app "Jarvis 4 devices"). Env: Secret
-# chat-hermit. Image: jarvis4's aviary.yml, pinned here by .github/workflows/chat-pin.yml.
+# chat-hermit, and chat-openrouter's key for the conversation search's query embeddings. Image: jarvis4's aviary.yml, pinned here by .github/workflows/chat-pin.yml.
 #   :8080 the hermit contract (Service hermit)   :8081 the gateway listener (Service hermit-gw, cloudflared only)
 #   :8082 the models route (Service model)       :9090 ops
 apiVersion: apps/v1
@@ -14,7 +14,7 @@ spec:
   strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
   selector: { matchLabels: { app: hermit } }
   template:
-    metadata: { labels: { app: hermit }, annotations: { services/secrets-rev-chat-hermit: "fcac9ea269a9" } }
+    metadata: { labels: { app: hermit }, annotations: { services/secrets-rev-chat-hermit: "fcac9ea269a9", services/secrets-rev-chat-openrouter: "77f93d85737a" } }
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
@@ -29,6 +29,8 @@ spec:
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             # the deployment's settings (settings.json here, ConfigMap hermit-settings)
             - { name: HERMIT_SETTINGS, value: /etc/hermit-jarvis/settings.json }
+            # pigeon's query embeddings for the conversation search, on :8082 (Secret chat-openrouter)
+            - { name: HERMIT_OPENROUTER_KEY, valueFrom: { secretKeyRef: { name: chat-openrouter, key: HERMIT_OPENROUTER_KEY } } }
           volumeMounts: [{ name: settings, mountPath: /etc/hermit-jarvis, readOnly: true }]
           ports: [{ containerPort: 8080 }, { containerPort: 8081 }, { containerPort: 8082 }, { containerPort: 9090 }]
           lifecycle: { preStop: { sleep: { seconds: 5 } } }
