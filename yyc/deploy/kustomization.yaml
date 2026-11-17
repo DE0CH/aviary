@@ -91,7 +91,7 @@ patches:
   - target: {kind: Deployment, name: magpie}
     patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "initial"}}]'
   - target: {kind: Deployment, name: hermit}
-    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "2026-11-17-hosts-meta"}}]'
+    patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "2026-11-17-hosts-meta-2"}}]'
   - target: {kind: Deployment, name: egress}
     patch: '[{"op": "add", "path": "/spec/template/metadata/annotations", "value": {"yyc/secrets-rev": "initial"}}]'
   - target: {kind: Deployment, name: tools}
