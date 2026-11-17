@@ -53,7 +53,7 @@ Each failure prints one line `<item> <object>: <why>`; exit 1 on any. What it as
      `catalogue` is a Secret, no ConfigMap of the render and no .json file of the folder is a catalogue (JSON with a
      list `users`)
 """
-import argparse, json, os, re, subprocess, sys
+import argparse, json, os, re, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 GRACE = {"pigeon": 320, "magpie": 75, "hermit": 90, "egress": 625, "tools": 180, "herald": 330, "drive": 120, "cloudflared": 200,
@@ -504,7 +504,7 @@ def check_gateway(folder, h, online=False):
     if not re.fullmatch(r"aviary-[0-9a-f]{12}", rel):
         fail("G", "gateway.release", f"'{rel}' is not an aviary release (aviary-<sha12>)")
     elif online:
-        r = subprocess.run(["curl", "-fsS", "-o", "/dev/null", "-w", "%{http_code}", "-I",
+        r = subprocess.run(["curl", "-fsS", "--retry", "5", "--retry-all-errors", "-o", "/dev/null", "-w", "%{http_code}", "-I",
                             f"https://github.com/DE0CH/aviary/releases/download/{rel}/sandboxd"], capture_output=True, text=True)
         if r.stdout.strip() not in ("200", "302"):
             fail("G", "gateway.release", f"release {rel} has no sandboxd binary")
@@ -551,6 +551,22 @@ def check_disk(objs):
             fail("D", sid(o), f"ephemeral-storage limit {lim} is under {mount}'s sizeLimit")
 
 
+# a lookup that never reached the registry (the runner's DNS or network), retried; a registry's answer is final
+NETWORK_ERROR = re.compile(r"dial tcp|i/o timeout|no such host|connection (refused|reset)|TLS handshake timeout|EOF$")
+
+
+def crane_config(ref, tries=6):
+    """`crane config ref`, retried while the failure is the network's (2026-11-17: the runner's DNS timed out on
+    ghcr.io for 90 s and every pin read as not pullable); CHECK_DEPLOY_RETRY_PAUSE seconds between tries (tests: 0)"""
+    pause = float(os.environ.get("CHECK_DEPLOY_RETRY_PAUSE", "20"))
+    for i in range(tries):
+        r = subprocess.run(["crane", "config", ref], capture_output=True, text=True)
+        if r.returncode == 0 or not NETWORK_ERROR.search(r.stderr) or i == tries - 1:
+            return r
+        time.sleep(pause)
+    return r
+
+
 def check_pins(folder, objs, online):
     k = open(os.path.join(folder, "kustomization.yaml")).read()
     tags = dict(re.findall(r"\{name: ([a-z0-9-]+), newName: [^,]+, newTag: \"?([0-9a-f]+)\"?\}", k))
@@ -570,12 +586,12 @@ def check_pins(folder, objs, online):
     labels = {}
     for n in ("pigeon", "magpie", "hermit", "sandboxd", "pigeon-app", "jarvis3-chat"):
         ref = f"ghcr.io/de0ch/{n}:{tags[n]}"
-        r = subprocess.run(["crane", "config", ref], capture_output=True, text=True)
+        r = crane_config(ref)
         if r.returncode:
             fail(4, ref, f"not pullable anonymously: {r.stderr.strip()[:200]}")
             continue
         labels[n] = (json.loads(r.stdout).get("config") or {}).get("Labels") or {}
-    r = subprocess.run(["crane", "config", img], capture_output=True, text=True)
+    r = crane_config(img)
     if r.returncode:
         fail(4, img, f"not pullable anonymously: {r.stderr.strip()[:200]}")
     else:
@@ -586,7 +602,7 @@ def check_pins(folder, objs, online):
                 fail(4, img, f"speaks no {proto}")
             elif speaks[proto] not in acc.get(proto, []):
                 fail(4, n, f"accepts {proto} {acc.get(proto)}, the sandbox image speaks {speaks[proto]}")
-    rel = subprocess.run(["curl", "-fsS", "-o", "/dev/null", "-w", "%{http_code}",
+    rel = subprocess.run(["curl", "-fsS", "--retry", "5", "--retry-all-errors", "-o", "/dev/null", "-w", "%{http_code}",
                           f"https://github.com/DE0CH/aviary/releases/tag/aviary-{sha}"], capture_output=True, text=True)
     if rel.stdout.strip() != "200":
         fail(4, f"aviary-{sha}", "release not found")

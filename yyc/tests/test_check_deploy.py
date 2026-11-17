@@ -24,6 +24,40 @@ def container(o, name):
     return next(c for c in o["spec"]["template"]["spec"]["containers"] if c["name"] == name)
 
 
+class OnlineLookups(unittest.TestCase):
+    """--online's registry lookups ride out a network blip (2026-11-17: the runner's DNS timed out on ghcr.io for 90 s
+    and every pin failed as "not pullable"); a refusal by the registry is still a failure at once"""
+
+    def online(self, crane_body):
+        with tempfile.TemporaryDirectory() as d:
+            # stand-ins on PATH: crane per crane_body (a counter file per ref), curl answers 200
+            open(os.path.join(d, "crane"), "w").write("#!/bin/bash\n" + crane_body)
+            open(os.path.join(d, "curl"), "w").write("#!/bin/bash\necho -n 200\n")
+            for n in ("crane", "curl"):
+                os.chmod(os.path.join(d, n), 0o755)
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                json.dump(RENDER, f)
+            env = dict(os.environ, PATH=d + ":" + os.environ["PATH"], CHECK_DEPLOY_RETRY_PAUSE="0", STATE=d)
+            return subprocess.run([sys.executable, "-I", os.path.join(HERE, "check_deploy.py"), "--folder", FOLDER,
+                                   "--render", f.name, "--online"], capture_output=True, text=True, env=env)
+
+    # the config of every image: a sandbox image that speaks what magpie and hermit accept
+    CONFIG = ('''echo '{"config":{"Labels":{"dev.de0ch.aviary.speaks":"{\\"magpie-sandbox\\":2,\\"hermit-sandbox\\":1}",'''
+              '''"dev.de0ch.aviary.accepts":"{\\"magpie-sandbox\\":[2],\\"hermit-sandbox\\":[1]}"}}}'\n''')
+
+    def test_a_dns_blip_is_retried(self):
+        body = ('k="$STATE/$(echo "$2" | md5sum | cut -c1-8)"; n=$(cat "$k" 2>/dev/null || echo 0); echo $((n+1)) > "$k"\n'
+                'if [ "$n" -lt 2 ]; then echo "dial tcp: lookup ghcr.io on 127.0.0.53:53: read udp: i/o timeout" >&2; exit 1; fi\n'
+                + self.CONFIG)
+        r = self.online(body)
+        self.assertNotIn("not pullable", r.stdout)
+
+    def test_a_missing_image_fails_at_once(self):
+        r = self.online('echo "MANIFEST_UNKNOWN: manifest unknown" >&2; exit 1\n')
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("not pullable anonymously: MANIFEST_UNKNOWN", r.stdout)
+
+
 class Seeded(unittest.TestCase):
     def expect(self, mutate, item, text):
         objs = copy.deepcopy(RENDER)
