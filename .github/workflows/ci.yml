@@ -61,6 +61,8 @@ jobs:
           shellcheck "${files[@]}"
       - name: fabric/aws/infra.sh against a stand-in aws (every value from the config)
         run: bash fabric/aws/test-infra.sh
+      - name: .github/ci/pin-dispatch.sh against a stand-in gh
+        run: bash .github/ci/test-pin-dispatch.sh
 
   test:
     runs-on: ubuntu-24.04
@@ -637,3 +639,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: .github/ci/release.sh dist "${GITHUB_SHA}" "$RUNNER_TEMP/digests.json" "$RUNNER_TEMP/release"
+      - name: start the deployments' pin workflows (repo variable PIN_DISPATCH)
+        # each deployment that pins aviary releases tries this one now rather than on its schedule
+        env:
+          PIN_DISPATCH: ${{ vars.PIN_DISPATCH }}
+          GH_TOKEN: ${{ secrets.PIN_DISPATCH_TOKEN }}
+        run: .github/ci/pin-dispatch.sh
