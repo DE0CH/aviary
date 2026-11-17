@@ -8,8 +8,10 @@ value, and print the one `scripts/store-put.py yyc …` command (claude-env) tha
   yyc-ai/infra/make-keys.py OUT --derived        the keys made from existing store keys (needs store yyc in the env):
                                                  YYC_PIGEON_LEGACY_VIEW_AS_KEY (YYC_JARVIS_CC_TOKEN), the pg-shared
                                                  forms of YYC_JARVIS_DATABASE_URL, YYC_CLOUDCLI_DATABASE_URL and
-                                                 YYC_JUICEFS_META_URL; with --gateway-ip IP also YYC_HERMIT_JUICEFS_META_URL
-                                                 (YYC_JUICEFS_HOST_META_URL's host:port -> IP:30433, DESIGN 15.6)
+                                                 YYC_JUICEFS_META_URL
+  yyc-ai/infra/make-keys.py OUT --hosts-meta     YYC_HERMIT_JUICEFS_META_URL: YYC_JUICEFS_HOST_META_URL with the host
+                                                 the sandbox hosts dial, the balancer's database port 10.0.0.50:5432
+                                                 (deploy/hermit/pg-forward.yaml)
   yyc-ai/infra/make-keys.py OUT --fabric AVIARY  the fabric PKI (AVIARY/fabric/host/make-certs.sh: CA, gateway, host,
                                                  hermit; keys as PKCS#8) and the gateway's WireGuard key
 
@@ -38,6 +40,7 @@ WINDOW = {  # switch window only (A1-A6, P1-A6)
                                "(MAGPIE_IMPORT_ACCEPT_MAGPIE); deleted at teardown",
 }
 SHARED = "pg-shared.db.svc.cluster.local:5432"
+HOSTS_PG = "10.0.0.50:5432"   # balancer yyc-ai-egress's second port -> pg-forward -> db/pg-shared
 
 
 def b64url32():
@@ -118,7 +121,7 @@ def random_keys(o):
               f"password is YYC_PG_{role.upper()}_PASSWORD. Never pg-rw.db: on the new cluster that names T5's replica")
 
 
-def derived(o, gateway_ip):
+def derived(o):
     cc = need("YYC_JARVIS_CC_TOKEN")
     o.put("YYC_PIGEON_LEGACY_VIEW_AS_KEY",
           base64.urlsafe_b64encode(hashlib.sha256(("jarvis-view-as|" + cc).encode()).digest()).decode().rstrip("="),
@@ -134,10 +137,13 @@ def derived(o, gateway_ip):
     o.put("YYC_HERMIT_JUICEFS_CSI_META_URL", rehost(need("YYC_JUICEFS_META_URL"), SHARED),
           f"YYC_JUICEFS_META_URL with host {SHARED}: the JuiceFS CSI metaurl of hermit's PV hermit-jfs on the new "
           "cluster (Secret yyc-ai/hermit-juicefs)")
-    if gateway_ip:
-        o.put("YYC_HERMIT_JUICEFS_META_URL", rehost(need("YYC_JUICEFS_HOST_META_URL"), f"{gateway_ip}:30433"),
-              "YYC AI hermit's JuiceFS metadata URL for the new fabric's AWS hosts and hermit's juicefs CLI: "
-              "YYC_JUICEFS_HOST_META_URL through the new gateway node's NodePort 30433 (db/pg-shared, DESIGN 15.6)")
+
+
+def hosts_meta(o):
+    o.put("YYC_HERMIT_JUICEFS_META_URL", rehost(need("YYC_JUICEFS_HOST_META_URL"), HOSTS_PG),
+          "YYC AI hermit's JuiceFS metadata URL for the AWS sandbox hosts and hermit's juicefs CLI: "
+          f"YYC_JUICEFS_HOST_META_URL with host {HOSTS_PG}, the balancer yyc-ai-egress's database port, which "
+          "pg-forward passes on to db/pg-shared (DE0CH/yyc-code yyc-ai/deploy/hermit/pg-forward.yaml)")
 
 
 def fabric(o, aviary):
@@ -170,7 +176,9 @@ def main():
     if "--fabric" in a:
         fabric(o, a[a.index("--fabric") + 1])
     elif "--derived" in a:
-        derived(o, a[a.index("--gateway-ip") + 1] if "--gateway-ip" in a else None)
+        derived(o)
+    elif "--hosts-meta" in a:
+        hosts_meta(o)
     else:
         random_keys(o)
     o.command()

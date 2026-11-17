@@ -112,10 +112,13 @@ spec:
     - {name: proxy, port: 3128, targetPort: proxy}
     - {name: http, port: 80, targetPort: api}
 ---
-# The proxy's one stable address for the sandboxes: a Hetzner load balancer in network yyc only (no public address),
-# made and kept by the Hetzner cloud controller from this Service. It health-checks the proxy's NodePort on the apps
-# nodes and sends connections only to nodes that run a ready egress pod (externalTrafficPolicy Local, which also
-# keeps the balancer's own address as the source: NetworkPolicy egress-in admits exactly that). The sandbox gateway
+# The one stable address in network yyc for what comes through the sandbox gateway: a Hetzner load balancer (no
+# public address), made and kept by the Hetzner cloud controller from this Service. Port 3128 is the sandboxes' proxy
+# (the egress pods), port 5432 the sandbox hosts' JuiceFS metadata (pg-forward, hermit/pg-forward.yaml; one balancer
+# for both: the controller allows one Service per balancer, and Hetzner refused a second balancer for the project's
+# primary IP limit, 2026-11-17). It health-checks each port's NodePort on the apps nodes and sends connections only
+# to nodes that run a ready pod of that port (externalTrafficPolicy Local, which also keeps the balancer's own
+# address as the source: NetworkPolicies egress-in and pg-forward-in admit exactly that). The sandbox gateway
 # forwards the sandboxes' proxy connections here and balances nothing itself (Deyao, 2026-11-16: the single point
 # only passes packets). egress identifies a sandbox by its token alone, so the balancer hiding the sandbox's
 # address changes nothing. Type lb11 (EUR 6.99 a month net; EXPENSES.md).
@@ -143,9 +146,12 @@ spec:
   type: LoadBalancer
   externalTrafficPolicy: Local
   allocateLoadBalancerNodePorts: true
-  selector: {app: egress}
+  # both workloads behind the balancer carry the label; a port reaches the one that declares its target port's name
+  # (check_deploy.py item L): 3128 the egress pods, 5432 pg-forward (hermit/pg-forward.yaml)
+  selector: {sandbox-lb: "true"}
   ports:
     - {name: proxy, port: 3128, targetPort: proxy, protocol: TCP}
+    - {name: pg, port: 5432, targetPort: pg, protocol: TCP}
 ---
 # the fixed endpoint name `model` for in-cluster callers (pigeon's models list)
 apiVersion: v1

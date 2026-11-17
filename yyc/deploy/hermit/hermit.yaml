@@ -194,6 +194,10 @@ spec:
       ports: [{port: 7443, protocol: TCP}]
     - to: [{ipBlock: {cidr: 10.203.0.0/16}}]
       ports: [{port: 7070, protocol: TCP}]
+    # hermit's juicefs CLI: its metadata URL is the sandbox hosts' one (HERMIT_JUICEFS_META_URL), the balancer's
+    # database port 10.0.0.50:5432 in network yyc (pg-forward.yaml)
+    - to: [{ipBlock: {cidr: 10.0.0.50/32}}]
+      ports: [{port: 5432, protocol: TCP}]
     # the EC2 API
     - to:
         - ipBlock: {cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16]}
@@ -201,8 +205,8 @@ spec:
       ports: [{port: 443, protocol: TCP}]
 ---
 # Under Cilium the API server and this cluster's nodes are entities, not addresses (DESIGN 15.2 N3): the API for the
-# ops reads; the gateway node's NodePort 30433 (db/pg-shared) for hermit's juicefs CLI,
-# whose metadata URL is the hosts' one (<gw private IP>:30433, HERMIT_JUICEFS_META_URL)
+# ops reads; the gateway node's NodePort 30433 (db/pg-shared), the juicefs CLI's metadata address of hermit pods
+# started before HERMIT_JUICEFS_META_URL named the balancer (removed with the gateway node)
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata: {name: hermit-out-api, namespace: yyc-ai}
