@@ -20,7 +20,6 @@
 //! `cc.user` event with `meta.compaction` (one assistant row, magpie 7.3 rule 2a), and its summary line has
 //! `meta.compactSummary` (an event, no row: the summary is written for the model).
 
-use magpie_api::errors::{DataCode, ErrorInfo};
 use magpie_api::events::{Compaction, EventMeta, TaskNotification};
 use serde_json::Value;
 
@@ -184,7 +183,7 @@ fn assistant(d: &Value) -> Class {
         .collect();
     let text = content_text(content);
     let sidechain = truthy(d, "isSidechain");
-    let error = text.as_deref().and_then(api_error);
+    let error = magpie_api::model_errors::of_line(d, text.as_deref());
     let model = if sidechain {
         None
     } else {
@@ -431,47 +430,6 @@ fn task_notification(text: &str) -> Option<TaskNotification> {
     })
 }
 
-/// The model error tag of an `API Error: …` assistant text (magpie 8.9; today's `jarvis-errors.ts` rules).
-#[must_use]
-pub fn api_error(text: &str) -> Option<ErrorInfo> {
-    let rest = text.trim().strip_prefix("API Error:")?.trim_start();
-    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-    let boundary = rest
-        .as_bytes()
-        .get(digits)
-        .is_none_or(|c| !c.is_ascii_alphanumeric() && *c != b'_');
-    let (status, body) = if digits == 3 && boundary {
-        (rest[..3].parse::<u16>().ok(), rest[3..].trim_start())
-    } else {
-        (None, rest)
-    };
-    let parsed = body
-        .find('{')
-        .and_then(|i| serde_json::from_str::<Value>(&body[i..]).ok())
-        .filter(Value::is_object);
-    let inner = parsed.as_ref().and_then(|b| b.get("error")).filter(|e| e.is_object());
-    let kind = inner.and_then(|e| s(e, "type")).unwrap_or_default();
-    let message = match (&parsed, inner.and_then(|e| s(e, "message"))) {
-        (_, Some(m)) => m.trim().to_owned(),
-        (None, None) => body.trim().to_owned(),
-        (Some(_), None) => String::new(),
-    };
-    let code = match status.unwrap_or(0) {
-        _ if kind == "budget_exceeded" => DataCode::ModelBudget,
-        402 => DataCode::ModelBudget,
-        429 => DataCode::ModelRateLimited,
-        _ if kind == "rate_limit_error" => DataCode::ModelRateLimited,
-        s if s >= 500 => DataCode::ModelUnavailable,
-        _ if kind == "overloaded_error" || kind == "api_error" => DataCode::ModelUnavailable,
-        401 | 403 => DataCode::ModelAccess,
-        s if s >= 400 => DataCode::ModelRefused,
-        _ => DataCode::ModelConnection,
-    };
-    let mut e = ErrorInfo::new(code, message);
-    e.status = status;
-    Some(e)
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -504,68 +462,24 @@ mod tests {
         assert_eq!((e.model, e.meta.sidechain), (None, Some(true)));
     }
 
+    /// Claude Code's error lines carry its own labels: a refusal by the safeguards and a usage limit are told apart
+    /// from "could not reach the model" (they were `model.connection` before).
     #[test]
-    fn api_errors_map_to_model_codes() {
-        let cases = [
-            (
-                r#"API Error: 402 {"error":{"message":"budget used up"}}"#,
-                DataCode::ModelBudget,
-                Some(402),
-                "budget used up",
-            ),
-            (
-                r#"API Error: 400 {"error":{"type":"budget_exceeded","message":"m"}}"#,
-                DataCode::ModelBudget,
-                Some(400),
-                "m",
-            ),
-            (
-                "API Error: 429 slow down",
-                DataCode::ModelRateLimited,
-                Some(429),
-                "slow down",
-            ),
-            (
-                r#"API Error: 529 {"error":{"type":"overloaded_error"}}"#,
-                DataCode::ModelUnavailable,
-                Some(529),
-                "",
-            ),
-            (
-                r#"API Error: {"error":{"type":"api_error","message":"x"}}"#,
-                DataCode::ModelUnavailable,
-                None,
-                "x",
-            ),
-            (
-                "API Error: 403 forbidden",
-                DataCode::ModelAccess,
-                Some(403),
-                "forbidden",
-            ),
-            (
-                "API Error: 404 no such model",
-                DataCode::ModelRefused,
-                Some(404),
-                "no such model",
-            ),
-            (
-                "API Error: Connection error.",
-                DataCode::ModelConnection,
-                None,
-                "Connection error.",
-            ),
-            ("API Error: 4000 tokens", DataCode::ModelConnection, None, "4000 tokens"),
-        ];
-        for (text, code, status, message) in cases {
-            let e = api_error(text).unwrap();
-            assert_eq!(
-                (e.code, e.status, e.message.as_str()),
-                (code, status, message),
-                "{text}"
-            );
-        }
-        assert!(api_error("Not an error").is_none());
+    fn claude_codes_error_lines_are_tagged_by_their_labels() {
+        let refusal = json!({"type": "assistant", "isApiErrorMessage": true, "message": {"model": "<synthetic>",
+            "stop_reason": "refusal", "stop_details": {"type": "refusal", "category": "cyber"},
+            "content": [{"type": "text", "text": "API Error: Sonnet 4.5's safeguards flagged this message. Details: `[cyber]`"}]}});
+        let e = event(classify(Some(&refusal), Context::default())).meta.error.unwrap();
+        assert_eq!(
+            (e.code, e.detail.as_deref()),
+            (magpie_api::errors::DataCode::ModelSafeguards, Some("cyber"))
+        );
+        let limit = json!({"type": "assistant", "isApiErrorMessage": true, "error": "rate_limit",
+            "apiError": "usage_limit_reached", "message": {"model": "<synthetic>",
+            "content": [{"type": "text", "text": "You've hit your weekly limit · resets Nov 20, 9am (UTC)"}]}});
+        let e = event(classify(Some(&limit), Context::default())).meta.error.unwrap();
+        assert_eq!(e.code, magpie_api::errors::DataCode::ModelUsageLimit);
+        assert_eq!(e.message, "You've hit your weekly limit · resets Nov 20, 9am (UTC)");
     }
 
     /// The lines Claude Code 2.1.304 wrote when a session whose `AskUserQuestion` was open is resumed and given the

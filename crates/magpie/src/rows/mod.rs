@@ -417,7 +417,21 @@ pub async fn project(tx: &Tx<'_>, ev: &Stored) -> Result<()> {
                     w.update(tx, r.get(0), &item, &sources).await?;
                 }
             }
-            if let Some(item) = derive::turn_error_row(e) {
+            // a model error the reply already shows in its own words (Claude Code's error line, rule 4) gets no
+            // second row saying the same
+            let shown = match e.error.as_ref() {
+                Some(err) if err.code.as_str().starts_with("model.") => tx
+                    .query_opt(
+                        "select 1 from rows
+                         where conversation_id = $1 and turn_id = $2 and kind = 'assistant' and item ? 'error'
+                         limit 1",
+                        &[&w.conversation, &e.turn_id],
+                    )
+                    .await?
+                    .is_some(),
+                _ => false,
+            };
+            if let Some(item) = derive::turn_error_row(e).filter(|_| !shown) {
                 w.insert(
                     tx,
                     NewRow {

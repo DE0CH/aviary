@@ -49,6 +49,8 @@ pub struct ResultMsg {
     pub subtype: String,
     pub is_error: bool,
     pub result: Option<String>,
+    /// The model's `stop_reason` of the last call (`refusal`: the safeguards flagged the message).
+    pub stop_reason: Option<String>,
     pub usage: Option<magpie_api::sandbox::Usage>,
     pub duration_ms: Option<u64>,
 }
@@ -400,6 +402,8 @@ struct Envelope {
     #[serde(default)]
     is_error: bool,
     result: Option<String>,
+    /// A `result`'s last `stop_reason`.
+    stop_reason: Option<String>,
     /// A failed `result`'s reason as Qwen Code writes it (`{"message": …}`); Claude Code writes `result`.
     error: Option<Value>,
     usage: Option<Value>,
@@ -544,6 +548,7 @@ pub fn parse(line: &[u8]) -> Out {
                 let message = e.error.as_ref()?.get("message")?.as_str()?;
                 Some(message.to_owned())
             }),
+            stop_reason: e.stop_reason,
             usage: e.usage.as_ref().map(|u| usage(u, e.model_usage.as_ref())),
             duration_ms: e.duration_ms,
         }),

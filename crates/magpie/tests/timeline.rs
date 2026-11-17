@@ -366,6 +366,37 @@ async fn rules_1_to_8_make_and_update_rows() {
     let p = alice.timeline(id, &ev::tail(1)).await.unwrap();
     assert_eq!(tool(&p.rows[0]).status, ToolStatus::Canceled);
     assert_eq!(p.rows[0].seqs.len(), 2, "canceled: no error row");
+    // a turn that failed on a model error its reply already shows (Claude Code's usage limit line) gets no second
+    // row saying the same
+    let t5 = Uuid::new_v4();
+    let limit = json!({"code": "model.usage_limit", "message": "You've hit your session limit · resets 3pm (UTC)"});
+    ev::append(
+        pool,
+        ALICE,
+        id,
+        vec![
+            ev::with_meta(
+                ev::in_turn(
+                    ev::assistant(
+                        "m10",
+                        json!([ev::text("You've hit your session limit · resets 3pm (UTC)")]),
+                    ),
+                    t5,
+                ),
+                json!({"error": limit}),
+            ),
+            ev::in_turn(
+                ev::ev("turn.ended", json!({"turnId": t5, "outcome": "failed", "error": limit})),
+                t5,
+            ),
+        ],
+    )
+    .await;
+    let p = alice.timeline(id, &ev::tail(1)).await.unwrap();
+    match &p.rows[0].item {
+        RowItem::Assistant(a) => assert_eq!(a.error.as_ref().unwrap().code.as_str(), "model.usage_limit"),
+        other => panic!("the last row is the reply's, no error row: {other:?}"),
+    }
     // no rule above changed the epoch
     assert_eq!(p.epoch, "1");
 }

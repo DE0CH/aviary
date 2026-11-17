@@ -3805,3 +3805,37 @@ async fn qwen_code_is_switched_to_the_conversations_thinking_level_none_included
     assert_eq!(levels()[2..], ["set_effort \"low\""]);
     w.idle(&sup).await;
 }
+
+/// A turn that ended on a model error carries the model's code and Claude Code's words, not `run.error`: the chat
+/// says the safeguards flagged the message or the usage limit is reached (with its reset time) instead of "The reply
+/// failed. Please try again."
+#[test]
+fn a_result_that_is_a_model_error_ends_the_turn_with_the_models_code() {
+    let r = |text: &str, stop: Option<&str>| ResultMsg {
+        subtype: "success".into(),
+        is_error: true,
+        result: Some(text.into()),
+        stop_reason: stop.map(str::to_owned),
+        usage: None,
+        duration_ms: None,
+    };
+    let e = result_error(&r(
+        "API Error: Sonnet 4.5's safeguards flagged this message. Details: `[cyber]`",
+        Some("refusal"),
+    ));
+    assert_eq!(e.code, DataCode::ModelSafeguards);
+    assert!(e.message.starts_with("Sonnet 4.5's safeguards"), "{}", e.message);
+    let e = result_error(&r(
+        "You've hit your session limit · resets 3pm (UTC)",
+        Some("stop_sequence"),
+    ));
+    assert_eq!(
+        (e.code, e.message.as_str()),
+        (
+            DataCode::ModelUsageLimit,
+            "You've hit your session limit · resets 3pm (UTC)"
+        )
+    );
+    let e = result_error(&r("boom", None));
+    assert_eq!((e.code, e.message.as_str()), (DataCode::RunError, "success: boom"));
+}

@@ -184,6 +184,15 @@ impl Locale {
                 "連接不到 AI 模型，請再試一次。",
                 "Could not reach the AI model. Please try again.",
             ),
+            C::ModelSafeguards => self.pick(
+                "AI 模型的安全防護攔截了這則訊息，所以沒有回覆。請改寫要求，或換一個模型再試。",
+                "The AI model's safeguards flagged this message, so it did not reply. Rephrase the request, or try \
+                 another model.",
+            ),
+            C::ModelUsageLimit => self.pick(
+                "AI 模型帳戶的用量上限已到，重設前無法回覆。",
+                "The AI model account's usage limit is reached, so it cannot reply until the limit resets.",
+            ),
             // hermit's budget refusal; magpie-api has no variant for it yet
             C::Other(s) if s == "sandbox.budget" => self.budget(),
             _ => return None,
@@ -198,11 +207,17 @@ impl Locale {
     }
 
     /// The sentence shown for an error carried as data (7.9): `model.budget` prefers magpie's (egress's) own
-    /// message, `model.refused` wraps the provider's words, a code without a sentence shows `message` as given.
+    /// message, `model.refused` wraps the provider's words, `model.safeguards` and `model.usage_limit` add Claude
+    /// Code's own words (which model, the reset time, where to learn more) under the sentence, a code without a
+    /// sentence shows `message` as given.
     #[must_use]
     pub fn error_sentence(self, e: &ErrorInfo) -> String {
         match &e.code {
             DataCode::ModelBudget if !e.message.trim().is_empty() => e.message.clone(),
+            DataCode::ModelSafeguards | DataCode::ModelUsageLimit if !e.message.trim().is_empty() => {
+                let sentence = self.code_sentence(&e.code).unwrap_or_default();
+                format!("{sentence}\n\n{}", e.message.trim())
+            }
             DataCode::ModelRefused => match self {
                 Self::Zh => format!("AI 模型拒絕了這個請求：{}", e.message),
                 Self::En => format!("The AI model refused this request: {}", e.message),
@@ -244,6 +259,8 @@ mod tests {
             DataCode::ModelUnavailable,
             DataCode::ModelAccess,
             DataCode::ModelConnection,
+            DataCode::ModelSafeguards,
+            DataCode::ModelUsageLimit,
         ] {
             let zh = Locale::Zh.code_sentence(&code).unwrap();
             let en = Locale::En.code_sentence(&code).unwrap();
@@ -260,6 +277,34 @@ mod tests {
         assert!(Locale::En.error_sentence(&e).starts_with("The usage budget"));
         let r = ErrorInfo::new(DataCode::ModelRefused, "prompt too long");
         assert_eq!(Locale::Zh.error_sentence(&r), "AI 模型拒絕了這個請求：prompt too long");
+        let limit = ErrorInfo::new(
+            DataCode::ModelUsageLimit,
+            "You've hit your session limit · resets 3pm (UTC)",
+        );
+        assert_eq!(
+            Locale::En.error_sentence(&limit),
+            "The AI model account's usage limit is reached, so it cannot reply until the limit resets.\n\n\
+             You've hit your session limit · resets 3pm (UTC)"
+        );
+        let flagged = ErrorInfo::new(
+            DataCode::ModelSafeguards,
+            "Sonnet 4.5's safeguards flagged this message.",
+        );
+        assert!(
+            Locale::Zh
+                .error_sentence(&flagged)
+                .starts_with("AI 模型的安全防護攔截了這則訊息")
+        );
+        assert!(
+            Locale::Zh
+                .error_sentence(&flagged)
+                .ends_with("\n\nSonnet 4.5's safeguards flagged this message.")
+        );
+        let bare = ErrorInfo::new(DataCode::ModelSafeguards, "");
+        assert_eq!(
+            Locale::En.error_sentence(&bare),
+            Locale::En.code_sentence(&DataCode::ModelSafeguards).unwrap()
+        );
         let other = ErrorInfo::new(DataCode::from_wire("cc.write_stuck"), "stuck");
         assert_eq!(Locale::Zh.error_sentence(&other), "stuck");
     }

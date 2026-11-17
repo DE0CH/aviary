@@ -24,6 +24,7 @@ pub mod files;
 pub mod legacy;
 pub mod live;
 pub mod mime;
+pub mod model_errors;
 pub mod ops;
 pub mod routes;
 pub mod rows;

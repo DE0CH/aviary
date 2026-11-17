@@ -795,8 +795,18 @@ fn outcome_of_result(r: &ResultMsg, turn: &Turn, release: Option<&String>) -> Ou
     if r.subtype == "success" && !r.is_error {
         return Outcome::Completed;
     }
-    let text: String = r.result.as_deref().unwrap_or("").chars().take(1000).collect();
-    Outcome::Failed(error(DataCode::RunError, format!("{}: {text}", r.subtype)))
+    Outcome::Failed(result_error(r))
+}
+
+/// The error of a failed `result`: the model's (`model.*`, Claude Code's words) when the turn ended on a model
+/// error such as a usage limit or a refusal by the safeguards, else `run.error`.
+fn result_error(r: &ResultMsg) -> ReportError {
+    let text = r.result.as_deref().unwrap_or("");
+    if let Some(e) = magpie_api::model_errors::of_result(text, r.stop_reason.as_deref()) {
+        return error(e.code, e.message.chars().take(1000).collect::<String>());
+    }
+    let text: String = text.chars().take(1000).collect();
+    error(DataCode::RunError, format!("{}: {text}", r.subtype))
 }
 
 fn signal_name(sig: i32) -> String {
@@ -1443,6 +1453,7 @@ impl Driver {
                             subtype: "nothing_to_continue".into(),
                             is_error: true,
                             result: Some(why),
+                            stop_reason: None,
                             usage: None,
                             duration_ms: None,
                         },

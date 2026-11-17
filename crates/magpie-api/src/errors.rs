@@ -286,7 +286,7 @@ open_enum! {
         StopForced = "stop.forced",
         /// A magpie bug.
         Internal = "internal",
-        /// Model errors (tags on an `API Error:` assistant line): the budget is used up (402).
+        /// Model errors (tags on Claude Code's error lines, `model_errors`): the budget is used up (402).
         ModelBudget = "model.budget",
         /// 429, `rate_limit_error`.
         ModelRateLimited = "model.rate_limited",
@@ -298,6 +298,12 @@ open_enum! {
         ModelRefused = "model.refused",
         /// No status: the model could not be reached.
         ModelConnection = "model.connection",
+        /// The model's safeguards flagged the message (`stop_reason: refusal`); `message` is Claude Code's words,
+        /// `detail` the category.
+        ModelSafeguards = "model.safeguards",
+        /// The account's usage limit is reached (a subscription's session or weekly limit, a spend limit);
+        /// `message` is Claude Code's words with the reset time.
+        ModelUsageLimit = "model.usage_limit",
     }
 }
 
