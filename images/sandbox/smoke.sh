@@ -110,6 +110,10 @@ check "Qwen Code rolls a conversation back when its provider refuses a request" 
 # harness); upstream Qwen Code names none there, so the list was empty for every Qwen Code conversation.
 check "Qwen Code names its slash commands in its initialize answer" img_run "$img" -c '
   grep -rqE "commands: ?await this\.loadSlashCommands\(signal\)" /opt/qwen-code/lib/node_modules/@qwen-code/qwen-code'
+# The supervisor takes a command the harness does not mark `builtin` for a skill, which the chat page completes
+# inside a message too; without the mark every Qwen Code command, its own included, was offered there.
+check "Qwen Code marks its own slash commands builtin" img_run "$img" -c '
+  grep -rqE "builtin: ?true" /opt/qwen-code/lib/node_modules/@qwen-code/qwen-code/chunks'
 # The supervisor learns of a background task from the harness's `task_started` / `task_notification` lines and ends
 # one with `stop_task`; upstream Qwen Code writes none for a background shell or a monitor, so those held no run,
 # showed nowhere and woke nobody when they ended.
