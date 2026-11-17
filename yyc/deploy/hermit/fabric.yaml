@@ -123,6 +123,10 @@ spec:
               while :; do
                 dev=$(ip -o route get 10.0.0.1 | sed -n 's/.* dev \([^ ]*\).*/\1/p')
                 [ -n "$dev" ] && ip route replace 10.202.0.0/15 via 10.0.0.1 dev "$dev"
+                # ahead of every other rule that could claim an address in the range: KubeSpan routes a peer's
+                # addresses into its own tunnel (rule 32500), and the gateway's 10.202.0.1 stayed listed for the old
+                # gateway node after it was powered off, so hermit's calls to the new gateway went nowhere (2026-11-17)
+                ip rule show pref 997 | grep -q . || ip rule add pref 997 to 10.202.0.0/15 lookup main
                 # the gateway node: the AWS hosts' JuiceFS metadata (pg-shared's NodePort 30433, DNAT'd to Cluster pg's
                 # primary pod on 5432) follows Cilium's own routes (main: the pod's /24 via cilium_host), not sandboxd's
                 # table 51822 (the private network): kube-proxy masquerades it to this node's address, and the db node
