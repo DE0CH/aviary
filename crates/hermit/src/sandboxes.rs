@@ -950,6 +950,8 @@ pub struct Ending<'a> {
 #[derive(Clone, Debug)]
 pub struct FailedStart {
     pub ms: i32,
+    /// Refused because the person already held their own number of sandboxes (`sandbox.maxActiveByPerson`).
+    pub person_limit: bool,
 }
 
 /// [`destroy_and_gone`], also recording a failed start. The destroy runs only under [`Claim::guard`] (10.3: a
@@ -992,9 +994,10 @@ pub async fn destroy_and_record(
         }
         if let Some(f) = start {
             t.execute(
-                "insert into sandbox_starts (ok, ms, sandbox_id, conversation_id, person, host, reason, error)
-                 values (false, $1, $2, $3, $4, $5, $6, $7)",
-                &[&f.ms, &id, &cid, &person, &host, &reason_s, &msg],
+                "insert into sandbox_starts (ok, ms, sandbox_id, conversation_id, person, host, reason, error,
+                   person_limit)
+                 values (false, $1, $2, $3, $4, $5, $6, $7, $8)",
+                &[&f.ms, &id, &cid, &person, &host, &reason_s, &msg, &f.person_limit],
             )
             .await?;
         }

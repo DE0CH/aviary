@@ -34,6 +34,8 @@ struct Fail {
     reason: ReleaseReason,
     note: Option<String>,
     message: String,
+    /// Refused at the person's own number (`sandbox.maxActiveByPerson`), recorded with the failed start.
+    person_limit: bool,
 }
 
 impl Fail {
@@ -42,6 +44,7 @@ impl Fail {
             reason,
             note: None,
             message: message.into(),
+            person_limit: false,
         }
     }
 }
@@ -138,6 +141,7 @@ impl Start {
                     reason: p.reason,
                     note: p.note.clone(),
                     message: format!("released while starting: {}", p.reason),
+                    person_limit: false,
                 };
                 let code = p.code();
                 self.fail_with(&row, f, code).await;
@@ -278,14 +282,16 @@ impl Start {
         };
         let waited = OffsetDateTime::now_utc() - row.created_at;
         if waited >= Duration::from_secs(u64::from(self.core.cfg.sandbox().capacity_wait_seconds)) {
-            return Step::Fail(Fail::new(
+            let mut f = Fail::new(
                 ReleaseReason::PoolFull,
                 if own {
                     "no capacity: this person's sandboxes are all in use"
                 } else {
                     "no capacity: every sandbox is in use"
                 },
-            ));
+            );
+            f.person_limit = own;
+            return Step::Fail(f);
         }
         self.ask_victim(row, own).await;
         tokio::time::sleep(self.core.timings.capacity_retry).await;
@@ -711,7 +717,10 @@ impl Start {
             code,
             message: &f.message,
         };
-        let start = Some(sandboxes::FailedStart { ms: ms_total });
+        let start = Some(sandboxes::FailedStart {
+            ms: ms_total,
+            person_limit: f.person_limit,
+        });
         match sandboxes::destroy_and_record(&self.core, &self.claim, row, end, start).await {
             Ok(()) if self.claim.held() => {
                 tracing::info!(sandbox = %row.id, reason = %f.reason, error = %f.message, "sandbox start failed");

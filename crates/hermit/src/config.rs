@@ -90,6 +90,12 @@ pub struct SandboxJson {
     /// `capacityWaitSeconds`. Absent or empty = no limit per person.
     #[serde(default)]
     pub max_active_by_person: BTreeMap<String, u32>,
+    /// Whether a start refused at a person's own number (`maxActiveByPerson`) counts as a failed start on the
+    /// operator page (the verdict, the recent errors, the failed count): a person's address (lowercase) to true or
+    /// false, `*` for everyone not named. Absent = true. A refusal of a person set to false is still listed with the
+    /// starts, marked `quiet`; that person's other failed starts still count.
+    #[serde(default)]
+    pub notify_person_limit: BTreeMap<String, bool>,
     pub idle_minutes: u32,
     pub max_lifetime_hours: u32,
     pub lifetime_grace_minutes: u32,
@@ -138,15 +144,23 @@ pub struct MountJson {
     pub quota_inodes: u64,
 }
 
-/// `sandbox.maxActiveByPerson`: each name a lowercase address or `*`, each number positive.
-fn by_person_rules(by: &BTreeMap<String, u32>) -> Result<(), ConfigError> {
-    for (who, n) in by {
+/// A per-person map's names (`sandbox.maxActiveByPerson`, `sandbox.notifyPersonLimit`): a lowercase address or `*`.
+fn person_names<V>(key: &str, by: &BTreeMap<String, V>) -> Result<(), ConfigError> {
+    for who in by.keys() {
         let address = who.contains('@') && *who == who.trim().to_lowercase();
         if !(who == "*" || address) {
             return Err(invalid(format!(
-                "sandbox.maxActiveByPerson: {who:?} is neither a lowercase address nor *"
+                "sandbox.{key}: {who:?} is neither a lowercase address nor *"
             )));
         }
+    }
+    Ok(())
+}
+
+/// `sandbox.maxActiveByPerson`: each name a lowercase address or `*`, each number positive.
+fn by_person_rules(by: &BTreeMap<String, u32>) -> Result<(), ConfigError> {
+    person_names("maxActiveByPerson", by)?;
+    for (who, n) in by {
         if *n == 0 {
             return Err(invalid(format!("sandbox.maxActiveByPerson: {who:?} must be positive")));
         }
@@ -378,6 +392,7 @@ impl Config {
             }
         }
         by_person_rules(&s.max_active_by_person)?;
+        person_names("notifyPersonLimit", &s.notify_person_limit)?;
         if !s.proxy.contains("{token}") || !s.proxy.contains("{vip}") {
             return Err(invalid("sandbox.proxy must contain {token} and {vip}"));
         }
@@ -725,6 +740,28 @@ mod tests {
         let none: serde_json::Value = serde_json::from_str(EXAMPLE).unwrap();
         let c = Config::from_parts(serde_json::from_value(none).unwrap(), "i", "r", "t").unwrap();
         assert!(c.sandbox().max_active_by_person.is_empty());
+    }
+
+    #[test]
+    fn notify_person_limit_names_a_lowercase_address_or_a_star_and_is_absent_by_default() {
+        let load = |by: serde_json::Value| {
+            let mut v: serde_json::Value = serde_json::from_str(EXAMPLE).unwrap();
+            v["sandbox"]["notifyPersonLimit"] = by;
+            Config::from_parts(serde_json::from_value(v).unwrap(), "i", "r", "t")
+        };
+        let c = load(serde_json::json!({"bot@example.net": false, "*": true})).unwrap();
+        assert!(!c.sandbox().notify_person_limit["bot@example.net"]);
+        assert!(c.sandbox().notify_person_limit["*"]);
+        for bad in [
+            serde_json::json!({"Bot@example.net": false}),
+            serde_json::json!({"everyone": false}),
+        ] {
+            let e = load(bad).unwrap_err().to_string();
+            assert!(e.contains("notifyPersonLimit"), "{e}");
+        }
+        let none: serde_json::Value = serde_json::from_str(EXAMPLE).unwrap();
+        let c = Config::from_parts(serde_json::from_value(none).unwrap(), "i", "r", "t").unwrap();
+        assert!(c.sandbox().notify_person_limit.is_empty());
     }
 
     #[test]

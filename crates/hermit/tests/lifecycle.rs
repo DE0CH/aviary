@@ -320,12 +320,28 @@ async fn the_pool_frees_the_least_recently_active_idle_sandbox_and_otherwise_ans
     let gone = wait_state(&h, c4, SandboxState::Gone).await;
     assert_eq!(gone.release_reason.as_deref(), Some("pool_full"));
     assert_eq!(gone.release_code.as_deref(), Some("sandbox_busy"));
+    assert_eq!(person_limit_of(&h, gone.id).await, Some(false));
     let a = h
         .client(Caller::Magpie)
         .call(&r.url, "GET", &sandbox_path(c4), None, &[])
         .await;
     assert_eq!(a.body["release"]["code"], "sandbox_busy");
     let _ = s2;
+}
+
+/// The failed start row's `person_limit` of a sandbox (None: no failed start recorded).
+async fn person_limit_of(h: &Harness, sandbox: Uuid) -> Option<bool> {
+    h.pool()
+        .get()
+        .await
+        .unwrap()
+        .query_opt(
+            "select person_limit from sandbox_starts where sandbox_id = $1 and not ok",
+            &[&sandbox],
+        )
+        .await
+        .unwrap()
+        .map(|r| r.get(0))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -348,6 +364,8 @@ async fn a_person_holds_at_most_their_own_number_of_sandboxes() {
     let gone = wait_state(&h, c3, SandboxState::Gone).await;
     assert_eq!(gone.release_reason.as_deref(), Some("pool_full"));
     assert_eq!(gone.release_code.as_deref(), Some("sandbox_busy"));
+    // recorded as refused at their own number (the operator page's notifyPersonLimit tells it from a full pool)
+    assert_eq!(person_limit_of(&h, gone.id).await, Some(true));
     assert_eq!(row(&h, c1).await.status, SandboxState::Ready);
     assert_eq!(row(&h, c2).await.status, SandboxState::Ready);
     // an idle one of their own gives way to their next; another person's idle sandbox is never taken for it

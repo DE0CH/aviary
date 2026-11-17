@@ -548,17 +548,29 @@ async fn scaler_section(core: &Core) -> Result<Value, String> {
 
 const HOST_ERROR: &str = "(e.kind like '%fail%' or e.kind like '%lost%' or e.data ? 'error')";
 
+/// A start of `sandbox_starts st` refused at its person's own number for a person whose `sandbox.notifyPersonLimit`
+/// is false (`$1` is that map as jsonb): listed with the starts, never a failure.
+const QUIET_START: &str = "(st.person_limit and not coalesce(($1::jsonb ->> lower(st.person))::boolean,
+                              ($1::jsonb ->> '*')::boolean, true))";
+
+/// `sandbox.notifyPersonLimit` as jsonb for [`QUIET_START`].
+fn notify_map(core: &Core) -> Value {
+    json!(core.cfg.sandbox().notify_person_limit)
+}
+
 /// hermit's errors of the last 15 minutes: failed starts and host errors (egress's are added by [`build`]).
 async fn recent_local(core: &Core) -> Result<Value, String> {
     let win = i64::from(RECENT_MINUTES);
+    let notify = notify_map(core);
     let counts = rows(
         core,
         &format!(
-            "select (select count(*) from sandbox_starts where not ok and at > now() - $1::bigint * interval '1 minute'),
-                    (select count(*) from host_events e where e.at > now() - $1::bigint * interval '1 minute'
+            "select (select count(*) from sandbox_starts st where not st.ok and not {QUIET_START}
+                       and st.at > now() - $2::bigint * interval '1 minute'),
+                    (select count(*) from host_events e where e.at > now() - $2::bigint * interval '1 minute'
                        and {HOST_ERROR})"
         ),
-        &[&win],
+        &[&notify, &win],
     )
     .await?;
     let list = rows(
@@ -566,14 +578,15 @@ async fn recent_local(core: &Core) -> Result<Value, String> {
         &format!(
             "(select st.at, 'sandbox start failed' as what,
                      coalesce(st.reason, '') || coalesce(': ' || st.error, '') as detail, st.person as owner
-                from sandbox_starts st where not st.ok and st.at > now() - $1::bigint * interval '1 minute')
+                from sandbox_starts st where not st.ok and not {QUIET_START}
+                 and st.at > now() - $2::bigint * interval '1 minute')
              union all
              (select e.at, e.kind, coalesce(e.host, '') || coalesce(' ' || (e.data->>'error'), ''), s.person
                 from host_events e left join sandboxes s on s.id = e.sandbox_id
-               where e.at > now() - $1::bigint * interval '1 minute' and {HOST_ERROR})
+               where e.at > now() - $2::bigint * interval '1 minute' and {HOST_ERROR})
              order by at desc limit 20"
         ),
-        &[&win],
+        &[&notify, &win],
     )
     .await?;
     let c = counts.first().ok_or("no counts")?;
@@ -653,13 +666,17 @@ async fn events_section(core: &Core) -> Result<Value, String> {
 /// Starts (with how long they took) and releases (with how long the sandbox lived) of the last 24 hours, the 80
 /// newest, and the summary (A3.F42). `what` is `start` or `release` and nothing else; `owner` is the email.
 async fn starts_section(core: &Core) -> Result<Value, String> {
+    let notify = notify_map(core);
     let sum = rows(
         core,
-        "select count(*), count(*) filter (where ok), count(*) filter (where not ok),
-                percentile_cont(0.5) within group (order by ms) filter (where ok),
-                percentile_cont(0.95) within group (order by ms) filter (where ok)
-           from sandbox_starts where at > now() - interval '24 hours'",
-        &[],
+        &format!(
+            "select count(*), count(*) filter (where st.ok), count(*) filter (where not st.ok and not {QUIET_START}),
+                    percentile_cont(0.5) within group (order by st.ms) filter (where st.ok),
+                    percentile_cont(0.95) within group (order by st.ms) filter (where st.ok),
+                    count(*) filter (where not st.ok and {QUIET_START})
+               from sandbox_starts st where st.at > now() - interval '24 hours'"
+        ),
+        &[&notify],
     )
     .await?;
     let releases = rows(
@@ -671,16 +688,19 @@ async fn starts_section(core: &Core) -> Result<Value, String> {
     .await?;
     let list = rows(
         core,
-        "(select st.at, 'start' as what, st.ok, st.ms::bigint as ms, st.host, st.conversation_id,
-                 coalesce(st.person, s.person) as owner, case when st.ok then null else coalesce(st.reason, 'failed') end
-            from sandbox_starts st left join sandboxes s on s.id = st.sandbox_id
-           where st.at > now() - interval '24 hours')
-         union all
-         (select released_at, 'release', null, (extract(epoch from released_at - created_at) * 1000)::bigint, host,
-                 conversation_id, person, left(release_reason, 120)
-            from sandboxes where status = 'gone' and released_at > now() - interval '24 hours')
-         order by at desc limit $1",
-        &[&STARTS_SHOWN],
+        &format!(
+            "(select st.at, 'start' as what, st.ok, st.ms::bigint as ms, st.host, st.conversation_id,
+                     coalesce(st.person, s.person) as owner,
+                     case when st.ok then null else coalesce(st.reason, 'failed') end, not st.ok and {QUIET_START}
+                from sandbox_starts st left join sandboxes s on s.id = st.sandbox_id
+               where st.at > now() - interval '24 hours')
+             union all
+             (select released_at, 'release', null, (extract(epoch from released_at - created_at) * 1000)::bigint,
+                     host, conversation_id, person, left(release_reason, 120), false
+                from sandboxes where status = 'gone' and released_at > now() - interval '24 hours')
+             order by at desc limit $2"
+        ),
+        &[&notify, &STARTS_SHOWN],
     )
     .await?;
     let s0 = sum.first().ok_or("no summary")?;
@@ -699,6 +719,7 @@ async fn starts_section(core: &Core) -> Result<Value, String> {
             "conversationId": col!(r, 5, Option<Uuid>),
             "owner": col!(r, 6, Option<String>),
             "reason": col!(r, 7, Option<String>),
+            "quiet": col!(r, 8, bool),
         }));
     }
     Ok(json!({
@@ -708,6 +729,7 @@ async fn starts_section(core: &Core) -> Result<Value, String> {
             "failed": col!(s0, 2, i64),
             "p50Ms": col!(s0, 3, Option<f64>),
             "p95Ms": col!(s0, 4, Option<f64>),
+            "quiet": col!(s0, 5, i64),
         },
         "releases": rel,
         "list": out,

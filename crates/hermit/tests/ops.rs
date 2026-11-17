@@ -119,7 +119,11 @@ struct World {
 }
 
 async fn world(test: &str) -> World {
-    let h = Harness::new(test).await;
+    world_with(test, common::config(|_| {})).await
+}
+
+async fn world_with(test: &str, cfg: Arc<hermit::config::Config>) -> World {
+    let h = Harness::with(test, cfg, common::timings()).await;
     let magpie = FakeMagpie::new().serve().await.unwrap();
     let egress = egress().await;
     *h.upstreams.lock().unwrap() = Upstreams::new(
@@ -261,6 +265,81 @@ async fn snapshot(h: &Harness, url: &str, tz: &str) -> Value {
         .await;
     assert_eq!(a.status, 200, "{:?}", a.body);
     a.body
+}
+
+/// `sandbox.notifyPersonLimit`: a start refused at a person's own number of sandboxes (`maxActiveByPerson`) counts
+/// as a failure unless that person is set to false; such a refusal is still listed with the starts, marked quiet, and
+/// a real failure of the same person still counts.
+#[tokio::test]
+async fn a_start_refused_at_a_quiet_persons_own_number_is_listed_but_is_no_failure() {
+    const BOT: &str = "bot@example.net";
+    let cfg = common::config(|v| {
+        v["sandbox"]["maxActiveByPerson"] = json!({ BOT: 1, STAFF: 1 });
+        v["sandbox"]["notifyPersonLimit"] = json!({ BOT: false });
+    });
+    let w = world_with("ops_quiet_person_limit", cfg).await;
+    let h = &w.h;
+    let r = h.replica("hermit-a").await;
+    hermit::app::report_replica(r.core()).await.unwrap();
+    h.sql("delete from sandbox_starts").await;
+    h.sql("delete from host_events").await;
+    let own = "no capacity: this person''s sandboxes are all in use";
+    h.sql(&format!(
+        "insert into sandbox_starts (ok, ms, person, reason, error, person_limit) values
+           (false, 60000, '{BOT}', 'pool_full', '{own}', true)"
+    ))
+    .await;
+    let d = snapshot(h, &r.url, "UTC").await;
+    assert_eq!(d["recent"]["failedStarts"], 0, "{:#}", d["recent"]);
+    assert_eq!(d["recent"]["list"], json!([]));
+    assert!(
+        !d["health"]["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["text"].as_str().unwrap().contains("sandbox start")),
+        "{:#}",
+        d["health"]
+    );
+    assert_eq!(d["starts"]["summary"]["failed"], 0);
+    assert_eq!(d["starts"]["summary"]["quiet"], 1);
+    let sl = d["starts"]["list"].as_array().unwrap();
+    assert_eq!(sl.len(), 1);
+    assert_eq!(
+        (&sl[0]["ok"], &sl[0]["quiet"], &sl[0]["owner"]),
+        (&json!(false), &json!(true), &json!(BOT))
+    );
+
+    // a person left at the default, and the quiet person's other failures, still count
+    h.sql(&format!(
+        "insert into sandbox_starts (ok, ms, person, reason, error, person_limit) values
+           (false, 60000, '{STAFF}', 'pool_full', '{own}', true),
+           (false, 60000, '{BOT}', 'pool_full', 'no capacity: every sandbox is in use', false),
+           (false, 900, '{BOT}', 'start_failed', 'placement failed', false)"
+    ))
+    .await;
+    let d = snapshot(h, &r.url, "UTC").await;
+    assert_eq!(d["recent"]["failedStarts"], 3, "{:#}", d["recent"]);
+    assert_eq!(d["recent"]["list"].as_array().unwrap().len(), 3);
+    assert!(
+        d["health"]["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["text"] == "3 sandbox starts failed in the last 15 min"),
+        "{:#}",
+        d["health"]
+    );
+    assert_eq!(d["starts"]["summary"]["failed"], 3);
+    assert_eq!(d["starts"]["summary"]["quiet"], 1);
+    let quiet: Vec<(&Value, &Value)> = d["starts"]["list"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|x| x["quiet"] == true)
+        .map(|x| (&x["owner"], &x["reason"]))
+        .collect();
+    assert_eq!(quiet, vec![(&json!(BOT), &json!("pool_full"))]);
 }
 
 #[tokio::test]

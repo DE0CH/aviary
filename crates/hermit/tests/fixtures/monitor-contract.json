@@ -84,6 +84,7 @@
     "starts.list[].ok": "boolean?",
     "starts.list[].ms": "number?",
     "starts.list[].reason": "string?",
+    "starts.list[].quiet": "boolean",
     "events": "array",
     "events[].at": "string",
     "events[].kind": "string",

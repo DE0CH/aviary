@@ -137,7 +137,7 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   a new sandbox, refused -> the same one), a forced release ending a start that waits for a host at its next poll,
   a start whose create fails after the drain handed its claim back (the new owner's sandbox is not destroyed and no
   failed start is recorded), a late forced release still asking the supervisor, the pool victim (least recently
-  active, a refusing one skipped, `pool_full` otherwise), a person's own number of sandboxes (`sandbox.maxActiveByPerson`: an address or `*` to a number; a start over it waits without holding others up, takes only that person's idle sandbox as its victim and is `pool_full` otherwise), the silence rule (`ok:true, ready:false` alive; never
+  active, a refusing one skipped, `pool_full` otherwise), a person's own number of sandboxes (`sandbox.maxActiveByPerson`: an address or `*` to a number; a start over it waits without holding others up, takes only that person's idle sandbox as its victim and is `pool_full` otherwise; the failed start is recorded `person_limit`, and the operator snapshot lists it as `quiet` and leaves it out of the failed starts, the recent errors and the verdict for a person whose `sandbox.notifyPersonLimit` is false: an address or `*` to true or false, absent = true), the silence rule (`ok:true, ready:false` alive; never
   while the gateway settles), a start killed in each phase in turn (`capacity`, `workspace`, `placing`, `host`,
   `image`, `creating`, `supervisor`) finished by another replica (one create, the same token, one start row,
   `start_ms` from `creating`), a release resumed by another replica after a kill, liveness, token keys, people and
