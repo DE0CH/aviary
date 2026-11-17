@@ -37,11 +37,32 @@ export function useMessageSearch(input: {
   useEffect(() => {
     if (!asked) return;
     let active = true;
-    api<MessageSearchBody>("/api/jarvis/search", {
-      method: "POST",
-      body: JSON.stringify({ query: asked, limit: MESSAGE_SEARCH_LIMIT }),
-    })
+    let full = false;
+    const ask = (meaning: boolean) =>
+      api<MessageSearchBody>("/api/jarvis/search", {
+        method: "POST",
+        body: JSON.stringify({
+          query: asked,
+          limit: MESSAGE_SEARCH_LIMIT,
+          ...(meaning ? {} : { meaning: false }),
+        }),
+      });
+    // by words alone first (at once), then words and meaning (the query's vector takes a moment): the first answer
+    // shows while the second is on its way, and never replaces it
+    ask(false)
       .then((body) => {
+        if (active && !full)
+          setState({
+            query: asked,
+            hits: usableHits(body, asked),
+            loading: true,
+          });
+        return undefined;
+      })
+      .catch(() => undefined);
+    ask(true)
+      .then((body) => {
+        full = true;
         if (active)
           setState({
             query: asked,
@@ -51,9 +72,15 @@ export function useMessageSearch(input: {
         return undefined;
       })
       .catch((error: unknown) => {
+        full = true;
         if (error instanceof ApiError && error.status === 404)
           unsupported = true;
-        if (active) setState({ query: asked, hits: [], loading: false });
+        if (active)
+          setState((current) => ({
+            query: asked,
+            hits: current.query === asked ? current.hits : [],
+            loading: false,
+          }));
       });
     return () => {
       active = false;
