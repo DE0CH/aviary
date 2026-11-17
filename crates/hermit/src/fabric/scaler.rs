@@ -1044,7 +1044,7 @@ pub fn user_data(
 ) -> serde_json::Value {
     let f = &cfg.file.fabric;
     let gw_ip = gateway_ip(&f.gateway.url).map(|i| i.to_string()).unwrap_or_default();
-    serde_json::json!({
+    let mut ud = serde_json::json!({
         "host": {
             "name": name,
             "role": "burst",
@@ -1067,7 +1067,12 @@ pub fn user_data(
         "wgPrivateKey": private_key,
         "tls": { "ca": s.ca, "cert": s.cert, "key": s.key },
         "juicefs": { "metaUrl": s.juicefs_meta_url, "metaPassword": s.juicefs_meta_password, "rootSquash": "1000:1000" },
-    })
+    });
+    // named only when on: a deployment without it sends the host.json it always sent
+    if f.direct_egress {
+        ud["host"]["directEgress"] = true.into();
+    }
+    ud
 }
 
 /// EC2's user data limit.

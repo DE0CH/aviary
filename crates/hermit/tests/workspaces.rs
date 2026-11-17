@@ -217,6 +217,90 @@ async fn bytes(c: hermit_api::workspaces::FileContent) -> Vec<u8> {
     axum::body::to_bytes(c.body, usize::MAX).await.unwrap().to_vec()
 }
 
+/// `sandbox.mounts` (hermit.json): each conversation's other persistent folders live and die with its workspace.
+#[tokio::test]
+async fn a_conversations_mount_folders_are_made_with_their_quota_and_removed_with_its_workspace() {
+    let root = std::env::temp_dir().join(format!("hermit-ws-{}", Uuid::new_v4().simple()));
+    std::fs::create_dir_all(root.join("ws")).unwrap();
+    let cli = Arc::new(FakeCli::default());
+    let jfs = JuiceFs::new(
+        &root,
+        Arc::new(Cli {
+            fake: cli.clone(),
+            root: root.clone(),
+        }),
+        1,
+        1000,
+    )
+    .with_mounts(vec![
+        hermit::workspaces::MountFolder {
+            name: "home".into(),
+            quota_gib: 20,
+            quota_inodes: 2_000_000,
+        },
+        hermit::workspaces::MountFolder {
+            name: "cache".into(),
+            quota_gib: 5,
+            quota_inodes: 100_000,
+        },
+    ]);
+    let s = Store {
+        root: root.clone(),
+        cli,
+        jfs: Arc::new(jfs),
+    };
+    let (wid, other) = (Uuid::new_v4(), Uuid::new_v4());
+    s.jfs.ensure(wid).await.unwrap();
+    s.jfs.ensure(other).await.unwrap();
+    // the folders sandboxd binds (it makes none: 409 `mount missing`), owned like the workspace, each with its quota
+    for (name, quota) in [("home", (20u64 << 30, 2_000_000u64)), ("cache", (5 << 30, 100_000))] {
+        assert!(root.join(name).join(wid.to_string()).is_dir(), "{name}");
+        assert_eq!(
+            s.cli.quotas.lock().unwrap().get(&format!("/{name}/{wid}")),
+            Some(&quota),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        s.cli.quotas.lock().unwrap().get(&format!("/ws/{wid}")),
+        Some(&(1 << 30, 1000))
+    );
+    // the same again: nothing to set; a quota that went missing is set again
+    let sets = s.cli.sets.lock().unwrap().len();
+    s.jfs.ensure(wid).await.unwrap();
+    assert_eq!(s.cli.sets.lock().unwrap().len(), sets);
+    s.cli.quotas.lock().unwrap().remove(&format!("/home/{wid}"));
+    s.jfs.ensure(wid).await.unwrap();
+    assert_eq!(
+        s.cli.quotas.lock().unwrap().get(&format!("/home/{wid}")),
+        Some(&(20 << 30, 2_000_000))
+    );
+    // what the sandbox wrote there goes with the workspace, the other conversation's stays
+    std::fs::write(root.join("home").join(wid.to_string()).join("notes"), b"x").unwrap();
+    s.jfs.delete(wid).await.unwrap();
+    for name in ["home", "cache"] {
+        assert!(!root.join(name).join(wid.to_string()).exists(), "{name}");
+        assert!(
+            !s.cli.quotas.lock().unwrap().contains_key(&format!("/{name}/{wid}")),
+            "{name}"
+        );
+        assert!(root.join(name).join(other.to_string()).is_dir(), "{name}");
+    }
+    assert!(!s.ws(wid).exists() && s.ws(other).is_dir());
+    // a delete of a workspace that never had the folders (made before the deployment named them) is no error
+    let old = Uuid::new_v4();
+    std::fs::create_dir(s.ws(old)).unwrap();
+    s.jfs.delete(old).await.unwrap();
+    // a refused removal of a mount folder keeps the workspace: the delete fails as a whole and is retried
+    std::fs::write(root.join("home").join(other.to_string()).join("notes"), b"x").unwrap();
+    s.cli.refuse_rmr.store(true, Ordering::SeqCst);
+    assert_eq!(code(s.jfs.delete(other).await.unwrap_err()).0, 503);
+    assert!(s.ws(other).is_dir());
+    s.cli.refuse_rmr.store(false, Ordering::SeqCst);
+    s.jfs.delete(other).await.unwrap();
+    assert!(!s.ws(other).exists() && !root.join("home").join(other.to_string()).exists());
+}
+
 #[tokio::test]
 async fn every_ensure_sets_the_quota_when_absent_or_different() {
     let s = store();

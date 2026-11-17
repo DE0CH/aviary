@@ -302,7 +302,18 @@ async fn serve() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    let workspaces = Arc::new(JuiceFs::new(MOUNT, Arc::new(juicefs), ws.quota_gib, ws.quota_inodes));
+    let mounts = config
+        .file
+        .sandbox
+        .mounts
+        .iter()
+        .map(|m| hermit::workspaces::MountFolder {
+            name: m.name.clone(),
+            quota_gib: m.quota_gib,
+            quota_inodes: m.quota_inodes,
+        });
+    let workspaces =
+        Arc::new(JuiceFs::new(MOUNT, Arc::new(juicefs), ws.quota_gib, ws.quota_inodes).with_mounts(mounts.collect()));
     // the Kubernetes client builds its TLS from the process's provider: ring, the workspace's only one
     let _ = rustls::crypto::ring::default_provider().install_default();
     let egress: Arc<dyn EgressSource> = if let Some(t) = config.file.fabric.egress_target {

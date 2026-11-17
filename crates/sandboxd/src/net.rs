@@ -47,9 +47,15 @@ pub fn nft_apply(rules: &[u8]) -> Res<()> {
 }
 
 /// The per-sandbox nftables table (pure: tested).
-pub fn sandbox_rules(b: &mut Buf, name: &str, ip: &str, egress_vip: &str, control_cidr: &str) {
+/// With the host's `directEgress` (a burst host): after the proxy and the control port, the sandbox also reaches
+/// the internet and nothing private ([`NOT_INTERNET`] and the deployment's own ranges: the cloud's metadata
+/// address, the VPC, the overlay, other sandboxes, hermit's network). Stateless like the rest: a sandbox that
+/// moved has no conntrack entry on its new host.
+pub fn sandbox_rules(b: &mut Buf, name: &str, ip: &str, cfg: &HostConfig) {
     let v = veth_of(name);
     let t = table_of(name);
+    let (egress_vip, control_cidr) = (cfg.egress_vip.as_str(), cfg.control_cidr.as_str());
+    let direct = cfg.direct_egress && !cfg.hub;
     let _ = write!(
         b,
         "table inet {t}
@@ -59,18 +65,43 @@ table inet {t} {{
     type filter hook prerouting priority -300; policy accept;
     iifname \"{v}\" ip saddr {ip} ip daddr {egress_vip} tcp dport 3128 accept
     iifname \"{v}\" ip saddr {ip} ip daddr {control_cidr} tcp sport 7070 accept
-    iifname \"{v}\" counter drop
+"
+    );
+    if direct {
+        for own in [cfg.host_cidr.as_str(), cfg.sandbox_cidr.as_str(), control_cidr, egress_vip] {
+            let _ = writeln!(b, "    iifname \"{v}\" ip daddr {own} counter drop");
+        }
+        let _ = write!(
+            b,
+            "    iifname \"{v}\" ip daddr {{ {NOT_INTERNET} }} counter drop\n    iifname \"{v}\" ip saddr {ip} accept\n"
+        );
+    }
+    let _ = write!(
+        b,
+        "    iifname \"{v}\" counter drop
   }}
   chain to_sandbox {{
     type filter hook postrouting priority 300; policy accept;
     oifname \"{v}\" ip saddr {egress_vip} tcp sport 3128 ip daddr {ip} accept
     oifname \"{v}\" ip saddr {control_cidr} tcp dport 7070 ip daddr {ip} accept
-    oifname \"{v}\" counter drop
-  }}
-}}
 "
     );
+    if direct {
+        for own in [cfg.host_cidr.as_str(), cfg.sandbox_cidr.as_str(), control_cidr, egress_vip] {
+            let _ = writeln!(b, "    oifname \"{v}\" ip saddr {own} counter drop");
+        }
+        let _ = write!(
+            b,
+            "    oifname \"{v}\" ip saddr {{ {NOT_INTERNET} }} counter drop\n    oifname \"{v}\" ip daddr {ip} accept\n"
+        );
+    }
+    let _ = write!(b, "    oifname \"{v}\" counter drop\n  }}\n}}\n");
 }
+
+/// IPv4 ranges that are never the internet (RFC 6890's private, shared, loopback, link-local, benchmark, multicast
+/// and reserved space; link-local holds the cloud's metadata address): a sandbox with direct egress reaches none.
+const NOT_INTERNET: &str = "0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, \
+                            192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/3";
 
 /// netns + veth + nft for a sandbox; the /32 route only with `route` (a migration target adds it after restore).
 pub fn add_sandbox_net(cfg: &HostConfig, name: &str, ip: &str, route: bool) -> Res<()> {
@@ -99,7 +130,7 @@ pub fn add_sandbox_net(cfg: &HostConfig, name: &str, ip: &str, route: bool) -> R
     sh(&["sysctl", "-qw", a.as_str(), b2.as_str(), c.as_str(), d.as_str()])?;
     let mut mem = [0u8; 2048];
     let mut rb = Buf::new(&mut mem);
-    sandbox_rules(&mut rb, name, ip, cfg.egress_vip.as_str(), cfg.control_cidr.as_str());
+    sandbox_rules(&mut rb, name, ip, cfg);
     if rb.full {
         return Err(Error::new(500, "nft rules too long"));
     }
@@ -246,15 +277,33 @@ pub fn host_rules(
     if cfg.hub {
         let _ = writeln!(b, "    ip daddr {} drop", cfg.egress_vip);
     }
+    // direct egress (a burst host): its sandboxes' packets leave by the public interface and their answers come
+    // back; each sandbox's own table keeps it to the internet (sandbox_rules)
+    let direct = cfg.direct_egress && !cfg.hub;
+    if direct {
+        let sbx = cfg.sandbox_cidr.as_str();
+        let _ = write!(
+            b,
+            "    oifname \"{public_if}\" ip saddr {sbx} accept\n    iifname \"{public_if}\" ip daddr {sbx} ct state established,related accept\n"
+        );
+    }
     let _ = write!(b, "    iifname \"{public_if}\" drop\n    oifname \"{public_if}\" drop\n");
     if private_if.is_none() {
         let _ = writeln!(b, "    ip daddr {} oifname != \"wg0\" drop", cfg.control_cidr);
     }
     let _ = write!(
         b,
-        "  }}\n  chain input {{\n    type filter hook input priority 0; policy accept;\n    tcp dport {{ {}, {} }} iifname \"{public_if}\" drop\n  }}\n}}\n",
+        "  }}\n  chain input {{\n    type filter hook input priority 0; policy accept;\n    tcp dport {{ {}, {} }} iifname \"{public_if}\" drop\n  }}\n",
         cfg.api_port, cfg.image_port
     );
+    if direct {
+        let _ = write!(
+            b,
+            "  chain direct_egress {{\n    type nat hook postrouting priority srcnat; policy accept;\n    oifname \"{public_if}\" ip saddr {} masquerade\n  }}\n",
+            cfg.sandbox_cidr
+        );
+    }
+    b.s("}\n");
 }
 
 /// gateway: the routing table for what comes in on wg0 (pods via the private network) and how its rule shows up
@@ -861,10 +910,107 @@ mod tests {
     }
 
     #[test]
+    fn direct_egress_rules() {
+        // host.json `directEgress` (docs/HOST.md "Direct egress"): a burst host sends its sandboxes' traffic straight
+        // to the internet from its own public address; the proxy and hermit's control port stay as they are
+        let burst = |direct: &str| {
+            let mut j = String::from(
+                r#"{"hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","imageSource":"http://10.99.0.1:7444","name":"h","role":"burst","wgAddress":"10.99.0.10","hub":{"publicKey":"k"}"#,
+            );
+            j.push_str(direct);
+            j.push('}');
+            HostConfig::parse(j.as_bytes()).ok().unwrap()
+        };
+        let (off, on) = (burst(""), burst(r#","directEgress":true"#));
+        assert!(!off.direct_egress && on.direct_egress && !burst(r#","directEgress":false"#).direct_egress);
+        let v = veth_of("sbx-abc");
+        let rules = |cfg: &HostConfig| {
+            let mut mem = [0u8; 4096];
+            let mut b = Buf::new(&mut mem);
+            sandbox_rules(&mut b, "sbx-abc", "10.98.0.10", cfg);
+            assert!(!b.full);
+            b.as_str().to_string()
+        };
+        // off (the default): exactly the rules a sandbox always had
+        let r = rules(&off);
+        assert_eq!(r.matches(" accept\n").count(), 4, "{r}");
+        assert!(!r.contains("169.254") && !r.contains("ct state"), "{r}");
+        // on: the proxy and the control port first, then nothing private (the cloud's metadata address, the VPC, the
+        // overlay, other sandboxes, hermit's network), then the internet; stateless like the rest (a moved sandbox
+        // has no conntrack entry on its new host)
+        let r = rules(&on);
+        let at = |needle: &str| r.find(needle).unwrap_or_else(|| panic!("{needle} missing in\n{r}"));
+        let vip = at(&format!("iifname \"{v}\" ip saddr 10.98.0.10 ip daddr 10.99.1.1 tcp dport 3128 accept"));
+        let private = at(&format!(
+            "iifname \"{v}\" ip daddr {{ 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/3 }} counter drop"
+        ));
+        let out = at(&format!("iifname \"{v}\" ip saddr 10.98.0.10 accept"));
+        let last = at(&format!("iifname \"{v}\" counter drop"));
+        assert!(vip < private && private < out && out < last, "{r}");
+        for own in ["10.99.0.0/24", "10.98.0.0/16", "10.97.0.0/16", "10.99.1.1"] {
+            let d = at(&format!("iifname \"{v}\" ip daddr {own} counter drop"));
+            assert!(vip < d && d < out, "{own}: {r}");
+        }
+        let back_private = at(&format!(
+            "oifname \"{v}\" ip saddr {{ 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/3 }} counter drop"
+        ));
+        let back = at(&format!("oifname \"{v}\" ip daddr 10.98.0.10 accept"));
+        let ctl = at("ip saddr 10.97.0.0/16 tcp dport 7070 ip daddr 10.98.0.10 accept");
+        assert!(
+            ctl < back_private && back_private < back && back < at(&format!("oifname \"{v}\" counter drop")),
+            "{r}"
+        );
+        assert!(!r.contains("ct state"), "{r}");
+        // no IPv6 for a sandbox either way: the table is inet and everything else on the veth is dropped
+        assert!(!r.contains("ip6"), "{r}");
+
+        // the host: off = nothing forwarded to or from the public interface
+        let host = |cfg: &HostConfig| {
+            let mut mem = [0u8; 4096];
+            let mut b = Buf::new(&mut mem);
+            host_rules(&mut b, cfg, "ens5", None, "", &[]);
+            assert!(!b.full);
+            b.as_str().to_string()
+        };
+        let h = host(&off);
+        assert!(!h.contains("masquerade") && !h.contains(" accept\n"), "{h}");
+        assert!(h.contains("iifname \"ens5\" drop") && h.contains("oifname \"ens5\" drop"), "{h}");
+        // on: sandboxes' packets leave by the public interface under the host's address, answers come back, and
+        // nothing else is forwarded there (the drops stay, after the two accepts)
+        let h = host(&on);
+        let hat = |needle: &str| h.find(needle).unwrap_or_else(|| panic!("{needle} missing in\n{h}"));
+        let o = hat("oifname \"ens5\" ip saddr 10.98.0.0/16 accept");
+        let i = hat("iifname \"ens5\" ip daddr 10.98.0.0/16 ct state established,related accept");
+        assert!(o < hat("oifname \"ens5\" drop") && i < hat("iifname \"ens5\" drop"), "{h}");
+        assert!(
+            h.contains("type nat hook postrouting priority srcnat; policy accept;\n    oifname \"ens5\" ip saddr 10.98.0.0/16 masquerade"),
+            "{h}"
+        );
+        assert!(h.contains("ip daddr 10.97.0.0/16 oifname != \"wg0\" drop"), "{h}");
+        // only a burst host has sandboxes to send out: a hub or gateway with the flag keeps its rules
+        let hub = |direct: &str| {
+            let mut j = String::from(
+                r#"{"hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","privateGateway":"10.97.0.1","name":"h","role":"hub","wgAddress":"10.99.0.1""#,
+            );
+            j.push_str(direct);
+            j.push('}');
+            HostConfig::parse(j.as_bytes()).ok().unwrap()
+        };
+        let both = |cfg: &HostConfig| {
+            let mut mem = [0u8; 4096];
+            let mut b = Buf::new(&mut mem);
+            host_rules(&mut b, cfg, "eth0", Some("enp7s0"), "", &[Str::lossy("10.96.3.5")]);
+            b.as_str().to_string()
+        };
+        assert_eq!(both(&hub("")), both(&hub(r#","directEgress":true"#)));
+    }
+
+    #[test]
     fn rules() {
         let mut mem = [0u8; 4096];
         let mut b = Buf::new(&mut mem);
-        sandbox_rules(&mut b, "sbx-abc", "10.98.0.10", "10.99.1.1", "10.97.0.0/16");
+        let plain = HostConfig::parse(br#"{"hostCidr":"10.99.0.0/24","controlCidr":"10.97.0.0/16","sandboxCidr":"10.98.0.0/16","egressVip":"10.99.1.1","privateGateway":"10.97.0.1","name":"h","role":"hub","wgAddress":"10.99.0.1"}"#).ok().unwrap();
+        sandbox_rules(&mut b, "sbx-abc", "10.98.0.10", &plain);
         let r = b.as_str();
         let v = veth_of("sbx-abc");
         assert_eq!(v.len(), 13);

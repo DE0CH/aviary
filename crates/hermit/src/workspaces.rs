@@ -297,6 +297,16 @@ fn parse_size(s: &str) -> Option<u64> {
     (n >= 0.0).then(|| (n * mult as f64).round() as u64)
 }
 
+/// One of `sandbox.mounts` as the store needs it: every conversation's folder `<name>/<conversation>` of the volume
+/// is made with this quota when its workspace is ensured, and removed when its workspace is deleted. What a sandbox
+/// keeps there is the deployment's own business: hermit neither lists, reads nor clones it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MountFolder {
+    pub name: String,
+    pub quota_gib: u32,
+    pub quota_inodes: u64,
+}
+
 /// The `JuiceFS` workspace store of one replica.
 pub struct JuiceFs {
     /// The mount (`/jfs`); workspaces are `ws/<id>` under it.
@@ -304,6 +314,8 @@ pub struct JuiceFs {
     cli: Arc<dyn JfsCli>,
     quota_gib: u32,
     quota_inodes: u64,
+    /// The deployment's other per-conversation folders (`sandbox.mounts`): `<name>/<id>` beside `ws/<id>`.
+    mounts: Vec<MountFolder>,
     usage: Mutex<HashMap<Uuid, (Instant, Option<Quota>)>>,
     reads: Arc<Semaphore>,
     health: Mutex<StoreHealth>,
@@ -404,6 +416,7 @@ impl JuiceFs {
             cli,
             quota_gib,
             quota_inodes,
+            mounts: Vec::new(),
             usage: Mutex::new(HashMap::new()),
             reads: Arc::new(Semaphore::new(MAX_READS)),
             health: Mutex::new(StoreHealth::default()),
@@ -443,6 +456,84 @@ impl JuiceFs {
 
     fn dir(&self, wid: Uuid) -> PathBuf {
         self.ws_root().join(wid.to_string())
+    }
+
+    /// The store with the deployment's other per-conversation folders (`sandbox.mounts`).
+    #[must_use]
+    pub fn with_mounts(mut self, mounts: Vec<MountFolder>) -> Self {
+        self.mounts = mounts;
+        self
+    }
+
+    /// A conversation's folder of one of the mounts, and its path within the volume (quota calls).
+    fn mount_dir(&self, m: &MountFolder, wid: Uuid) -> (PathBuf, String) {
+        (
+            self.root.join(&m.name).join(wid.to_string()),
+            format!("/{}/{wid}", m.name),
+        )
+    }
+
+    /// Makes the conversation's folder of every mount (as the workspace: 0755, hermit's squashed owner) and sets
+    /// each quota that is absent or differs, so a sandbox never gets an unquota'd folder.
+    async fn ensure_mounts(&self, wid: Uuid) -> Result<(), WorkspaceError> {
+        for m in &self.mounts {
+            let (dir, path) = self.mount_dir(m, wid);
+            let name = m.name.clone();
+            self.blocking("mkdir of a mount folder", FS_TIMEOUT, move || {
+                use std::os::unix::fs::DirBuilderExt as _;
+                std::fs::DirBuilder::new().mode(0o755).recursive(true).create(&dir)
+            })
+            .await?
+            .map_err(|e| unavailable(format!("mkdir {name}/{wid}: {e}")))?;
+            let have = self
+                .cli
+                .quota_get(&path)
+                .await
+                .map_err(|e| unavailable(e.to_string()))?;
+            let bytes = u64::from(m.quota_gib) * GIB;
+            if have.is_some_and(|q| q.capacity_bytes == bytes && q.inodes == m.quota_inodes) {
+                continue;
+            }
+            self.cli
+                .quota_set(&path, m.quota_gib, m.quota_inodes)
+                .await
+                .map_err(|e| unavailable(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// Removes the conversation's folder of every mount, before its workspace goes: a removal that is refused fails
+    /// the delete as a whole with the workspace still there, so the delete is retried and nothing is left unowned.
+    async fn delete_mounts(&self, wid: Uuid) -> Result<(), WorkspaceError> {
+        for m in &self.mounts {
+            let (dir, path) = self.mount_dir(m, wid);
+            let probe = dir.clone();
+            let there = self
+                .blocking("stat of a mount folder", FS_TIMEOUT, move || {
+                    probe.symlink_metadata().is_ok()
+                })
+                .await?;
+            if there {
+                let refused = match self.cli.rmr(&dir).await {
+                    Ok(()) => None,
+                    Err(CliError::PermissionDenied(e)) => Some(e),
+                    Err(CliError::Failed(e)) => return Err(unavailable(e)),
+                };
+                if let Some(e) = refused {
+                    let rel = format!("{}/{wid}", m.name);
+                    tracing::warn!(path = %rel, error = %e, "mount folder delete refused");
+                    self.health
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .delete_refused = Some((Timestamp::now(), rel.clone()));
+                    return Err(unavailable(format!("workspace delete refused: {rel}: {e}")));
+                }
+            }
+            if let Err(e) = self.cli.quota_delete(&path).await {
+                tracing::info!(workspace = %wid, mount = %m.name, error = %e, "quota delete after rmr");
+            }
+        }
+        Ok(())
     }
 
     /// The path of a workspace within the volume (quota calls).
@@ -1031,6 +1122,7 @@ impl Workspaces for JuiceFs {
                 .await?
                 .map_err(|e| unavailable(format!("mkdir ws/{wid}: {e}")))?;
             self.set_quota(wid).await?;
+            self.ensure_mounts(wid).await?;
             let created = self.created_at(wid).await?.unwrap_or_else(Timestamp::now);
             Ok((self.workspace(wid, created, false).await?, made))
         })
@@ -1128,6 +1220,7 @@ impl Workspaces for JuiceFs {
     fn delete(&self, wid: Uuid) -> Fut<'_, Result<(), WorkspaceError>> {
         Box::pin(async move {
             self.check().await?;
+            self.delete_mounts(wid).await?;
             let dir = self.dir(wid);
             if self.created_at(wid).await?.is_some() {
                 let refused = match self.cli.rmr(&dir).await {

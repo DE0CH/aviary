@@ -408,7 +408,14 @@ unknown path and for a known path with another method: 404 `not found`).
   the field, so hermit names it only when `sandbox.tmpGiB` is not 5, and a deployment that changes `tmpGiB` moves its
   sandboxes onto hosts of the new AMI (the fresh-host switch, then retire the old hosts). `Spec.drive` (the
   deployment's shared folder, `/drive` in every sandbox; hermit.json `sandbox.drive`, absent = none) is like it: named
-  only by a deployment that has one, after its hosts run a sandboxd that knows the field. `Spec.user` stays in the type
+  only by a deployment that has one, after its hosts run a sandboxd that knows the field. `Spec.mounts` (the
+  deployment's other persistent folders: a list of `{folder, path}`, each a folder of the host's shared filesystem
+  bound read-write at a path in the sandbox, after `/workspace` and `/drive`; at most 8; hermit.json
+  `sandbox.mounts`, absent = none) is named the same way. sandboxd knows nothing of what a path means; it checks
+  only that a folder is plain lowercase names outside `ws/`, that a path is absolute, plain and clear of its own
+  mounts (`/workspace`, `/drive`, `/tmp`, `/var/lib/docker`, `/proc`, `/dev`, `/sys`, `/run`, the supervisor's
+  `/home/sandbox/.claude`), and that no two sit on one another (400 `bad mounts`), and it refuses a create whose
+  folder is missing (409 `mount missing`). `Spec.user` stays in the type
   until sandboxd drops the bind (item 2); hermit never sends it.
 - **The router reads bodies as sandboxd does,** except for one leniency: the content type is ignored, an empty or
   whitespace body and a JSON value that is not an object are `{}`, a body that is not JSON is 400, over 64 KiB is

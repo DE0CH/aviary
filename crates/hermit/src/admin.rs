@@ -332,18 +332,23 @@ pub async fn sandboxes(core: &Arc<Core>, ctx: &Ctx, q: &AdminSandboxesQuery) -> 
     Ok(json!({ "sandboxes": out }))
 }
 
-/// `GET /v1/admin/sandboxes/{id}/log`: the stored console tail.
+/// `GET /v1/admin/sandboxes/{id}/log`: the stored console tail (kept when the sandbox was released or lost), or, for
+/// a live sandbox, which has none stored yet, its console as its host has it now (`reason` `live`; nothing is
+/// stored).
 ///
 /// # Errors
-/// 404 `not_found`, 503 `unavailable`.
+/// 404 `not_found` (no such sandbox, or a live one whose host did not answer), 503 `unavailable`.
 pub async fn sandbox_log(core: &Arc<Core>, ctx: &Ctx, id: Uuid) -> Result<Value, ApiError> {
     let who = actor(ctx)?;
     audit(core, &who, "sandbox.log", Some(&id.to_string()), &json!({})).await?;
-    let tail = crate::console::read(core, id)
-        .await
-        .or_503()?
-        .ok_or_else(|| not_found("console tail"))?;
-    Ok(serde_json::to_value(tail).unwrap_or_default())
+    if let Some(tail) = crate::console::read(core, id).await.or_503()? {
+        return Ok(serde_json::to_value(tail).unwrap_or_default());
+    }
+    let tail = match crate::db::load(&core.pool, id).await.or_503()? {
+        Some(row) if row.is_live() => crate::console::live(core, &row).await,
+        _ => None,
+    };
+    Ok(serde_json::to_value(tail.ok_or_else(|| not_found("console tail"))?).unwrap_or_default())
 }
 
 /// `POST /v1/admin/sandboxes/{id}/release`: forced release `operator` with the note.

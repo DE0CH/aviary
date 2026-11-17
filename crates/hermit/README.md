@@ -21,7 +21,7 @@ hermit spec sections 3-12, 19, 20, 23 and 24.1-24.2 (WP-18, the core) and 13 (WP
 | `supervisor_client` | 3.10: health, release, the flush before a clone |
 | `fabric` | 8.1: the `Fabric` and `Workspaces` traits (one provider each; tests inject fakes) |
 | `workspaces`, `migrations/0002` | 3.8, 15: `/workspace` on `JuiceFS` (hermit's mount `/jfs`, the `juicefs` CLI for quotas, `clone`, `rmr`; `openat2` beneath the workspace for listing and reading); each replica's own state in `replicas` (its mount, its last refused delete) for the ops verdict and the start hand-over |
-| `console` | platform 15.4: the last 64 KiB of a sandbox's console in `sandbox_logs` at its destroy (a row saying so when nothing could be fetched) |
+| `console` | platform 15.4: the last 64 KiB of a sandbox's console in `sandbox_logs` at its destroy (a row saying so when nothing could be fetched); `GET /v1/admin/sandboxes/{id}/log` answers that stored tail, or a live sandbox's console as its host has it now (`reason` `live`, nothing stored) |
 | `admin` | 16: the admin routes, each audited in `admin_events` (in the change's transaction where there is one) |
 | `ops`, `ops_page.html` | 3.11, 18.1-18.2, 18.4-18.5: who may read `/ops/*`, the page (CSP, `no-referrer`), magpie's and egress's ops reads, the Kubernetes reader (`InCluster`, the Pod's ServiceAccount) |
 | `snapshot`, `health_verdict` | 18.3, 18.6: the snapshot's sections (8 s each, `null` + `errors[name]` on failure, cached 4 s per zone) and the verdict |

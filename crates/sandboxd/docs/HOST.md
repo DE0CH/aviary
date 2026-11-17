@@ -47,6 +47,18 @@ item 5).
   `fabric.egressTarget`, the one target pushed), gets the gateway's private address as the source instead, so its
   answers come back whatever its own routes are; the gateway then balances nothing. A moved sandbox's connections
   keep their conntrack entry on the gateway, which is on every path, and survive the move.
+- **Direct egress** (host.json `directEgress: true` on a burst host; hermit.json `fabric.directEgress`; off by
+  default): the host's sandboxes also reach the internet straight from the host's public address (masqueraded on
+  the public interface), beside the proxy. A sandbox's own table then admits, after the proxy and the control
+  port, every destination that is the internet and none that is not: the deployment's ranges (`hostCidr`,
+  `sandboxCidr`, `controlCidr`, the egress VIP's other ports) and every private, shared, loopback, link-local (the
+  cloud's metadata address), benchmark, multicast and reserved range are dropped. IPv4 only: a sandbox has no IPv6.
+  The sandbox's rules stay stateless; the host's forward chain lets answers back in by connection state, so a
+  direct connection ends when its sandbox moves to another host (its packets would leave from another address),
+  while connections through the proxy survive the move as before. A deployment that turns it on therefore keeps
+  packing from moving its sandboxes (hermit.json `fabric.migration.minAgeSeconds`). The sandbox needs a resolver
+  of its own (the image's `/etc/resolv.conf`): with the proxy alone it never resolved a name. A hub or gateway
+  ignores the setting, and so does a sandboxd that predates it (unknown host.json keys are ignored).
 - **Host → private network:** what a host itself sends into `controlCidr` (its JuiceFS metadata connections, e.g.
   to a load balancer in front of the database) leaves the gateway with the gateway's private address as the source,
   so the answer needs no route for `hostCidr` at the other end.
@@ -171,6 +183,15 @@ deployment's bucket, hermit `fabric.aws.imageBucket`; the proxy is balanced by a
   a migration's destination mounts it too. No `~/.claude` bind
   (the supervisor mounts its FUSE filesystem on the pre-made `/home/sandbox/.claude`) and no `/etc/hosts` bind (the
   supervisor writes it).
+- The spec's `mounts` (optional, at most 8): the deployment's other persistent folders, each `{folder, path}`: folder
+  `<folder>` of the same JuiceFS mount (lowercase names joined by `/`, never `ws` or under it) bound read-write at
+  `<path>` in the sandbox, in the spec's order after `/workspace` and `/drive`. sandboxd knows nothing of what a path
+  means (a home, a cache): hermit makes each folder with its quota (hermit.json `sandbox.mounts`: folder
+  `<name>/<conversation>`, removed with the conversation's workspace) and sandboxd refuses a create whose folder is
+  missing (409 `mount missing`). A path is absolute and plain, never on, under or above one of sandboxd's own mounts
+  nor on or under `/home/sandbox/.claude`, and no two mounts sit on one another (400 `bad mounts`). The way to each
+  mount point is made in the upper layer before the overlay is mounted, like sandboxd's own (`MOUNT_PATHS`), and
+  the list travels with the spec to a migration's destination.
 - Scratch in use: `Listed.scratchUsed` (bytes, statvfs of the scratch mount, read by the 10 s sampler; absent for a
   receive or an unmounted scratch). hermit moves no sandbox above its `migration.maxScratchMib` (the final delta's
   stopped time, "Scratch on migration").

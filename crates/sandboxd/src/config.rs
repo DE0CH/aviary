@@ -81,6 +81,10 @@ pub struct HostConfig {
     /// gateway: the MSS of TCP SYNs forwarded from wg0 is clamped to this (`gatewayMss`, default 1280: a 1320-byte
     /// pod MTU minus 40), so a sandbox's full-size segment never meets a smaller hop behind the gateway
     pub gateway_mss: u32,
+    /// burst: the host's sandboxes also reach the internet straight from this host's public address
+    /// (`directEgress`, default false: the proxy at the egress VIP is a sandbox's only way out); docs/HOST.md
+    /// "Direct egress"
+    pub direct_egress: bool,
     pub limits: Limits,
 }
 
@@ -154,6 +158,7 @@ impl HostConfig {
             image_source: Str::new(),
             mtu: 1420,
             gateway_mss: 1280,
+            direct_egress: false,
             limits: Limits::default(),
         };
         let mut role: Str<16> = Str::new();
@@ -168,6 +173,8 @@ impl HostConfig {
                 role = s(v, "role")?;
             } else if key("gateway") {
                 c.gateway = matches!(v, Val::Bool(true));
+            } else if key("directEgress") {
+                c.direct_egress = matches!(v, Val::Bool(true));
             } else if key("wgAddress") {
                 c.wg_address = s(v, "wgAddress")?;
             } else if key("hostCidr") {
@@ -324,6 +331,44 @@ pub struct Spec {
     pub pids: u64,
     /// the size of the scratch filesystem, bytes (docs/HOST.md "Storage"); 0 = not given ([`DEFAULT_SCRATCH_BYTES`])
     pub scratch: u64,
+    /// the deployment's other persistent folders (docs/HOST.md "Storage"): "folder\0path\0" for each, in the
+    /// controller's order ([`Spec::mounts`]); empty = none
+    pub mounts: Str<MOUNTS_BYTES>,
+}
+
+/// The most mounts a spec may name (sandboxd-api's `MOUNTS_MAX`), and the bytes all of them may take.
+pub const MOUNTS_MAX: usize = 8;
+pub const MOUNTS_BYTES: usize = 2048;
+/// The paths sandboxd mounts itself: a spec's mount is never on, under or above one of them.
+const OWN_MOUNTS: [&str; 8] = ["/workspace", "/drive", "/tmp", "/var/lib/docker", "/proc", "/dev", "/sys", "/run"];
+/// The supervisor's FUSE mount point (hermit spec 13.2 item 2): a spec's mount is never on or under it (a home
+/// above it is a mount like any other).
+const CLAUDE_DIR: &str = "/home/sandbox/.claude";
+
+/// Is `a` the path `b` or a directory above it.
+fn at_or_above(a: &str, b: &str) -> bool {
+    b == a || (b.len() > a.len() && b.starts_with(a) && b.as_bytes()[a.len()] == b'/')
+}
+
+/// A mount's folder: lowercase names joined by `/`, relative to the top of the JuiceFS mount, never the
+/// conversations' `ws` tree (a workspace is mounted as the spec's `workspace` only).
+pub fn valid_mount_folder(f: &str) -> bool {
+    f.len() <= 128 && f.split('/').all(valid_workspace) && f.split('/').next() != Some("ws")
+}
+
+/// A mount's path in the sandbox: absolute and plain, not the root, and clear of sandboxd's own mounts.
+pub fn valid_mount_path(p: &str) -> bool {
+    let plain = |n: &str| {
+        !n.is_empty()
+            && n != "."
+            && n != ".."
+            && n.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'.' || c == b'_' || c == b'-')
+    };
+    p.len() <= 128
+        && p.starts_with('/')
+        && p[1..].split('/').all(plain)
+        && !OWN_MOUNTS.iter().any(|own| at_or_above(own, p) || at_or_above(p, own))
+        && !at_or_above(CLAUDE_DIR, p)
 }
 
 /// The pids limit of a spec that gives none.
@@ -359,6 +404,15 @@ fn valid_env_key(k: &str) -> bool {
 }
 
 impl Spec {
+    /// The spec's mounts as (folder, path), in the controller's order.
+    pub fn mounts(&self) -> impl Iterator<Item = (&str, &str)> {
+        let mut parts = self.mounts.as_str().split('\0');
+        core::iter::from_fn(move || match (parts.next(), parts.next()) {
+            (Some(f), Some(p)) if !f.is_empty() => Some((f, p)),
+            _ => None,
+        })
+    }
+
     pub fn env_pairs(&self) -> impl Iterator<Item = (&str, &str)> {
         self.env.as_str().split('\0').filter(|p| !p.is_empty()).map(|p| p.split_once('=').unwrap_or((p, "")))
     }
@@ -384,6 +438,7 @@ impl Spec {
             drive: Str::new(),
             pids: 0,
             scratch: 0,
+            mounts: Str::new(),
         };
         let mut memory = f64::NAN;
         let mut pids = f64::NAN;
@@ -502,6 +557,41 @@ impl Spec {
                 if !(scratch.is_nan() || (scratch == scratch.trunc() && (lo..=hi).contains(&scratch))) {
                     return Err(e400("spec: scratchBytes must be a whole number of bytes in [1 GiB, 1 TiB]"));
                 }
+            } else if k.is("mounts") {
+                let bad = || e400("spec: bad mounts");
+                let Val::Arr(list) = v else {
+                    if matches!(v, Val::Null) {
+                        return Ok(());
+                    }
+                    return Err(bad());
+                };
+                let mut n = 0usize;
+                json::array::<Error>(list, |m| {
+                    let Val::Obj(mo) = m else { return Err(bad()) };
+                    let (mut folder, mut path): (Str<128>, Str<128>) = (Str::new(), Str::new());
+                    json::object::<Error>(mo, |mk, mv| {
+                        if mk.is("folder") {
+                            folder =
+                                spec_str(mv).filter(|f: &Str<128>| valid_mount_folder(f.as_str())).ok_or_else(bad)?;
+                        } else if mk.is("path") {
+                            path = spec_str(mv).filter(|p: &Str<128>| valid_mount_path(p.as_str())).ok_or_else(bad)?;
+                        } else {
+                            return Err(bad());
+                        }
+                        Ok(())
+                    })?;
+                    n += 1;
+                    let nested =
+                        sp.mounts().any(|(_, p)| at_or_above(p, path.as_str()) || at_or_above(path.as_str(), p));
+                    if folder.is_empty() || path.is_empty() || n > MOUNTS_MAX || nested {
+                        return Err(bad());
+                    }
+                    let ok = sp.mounts.push(folder.as_str())
+                        && sp.mounts.push("\0")
+                        && sp.mounts.push(path.as_str())
+                        && sp.mounts.push("\0");
+                    if ok { Ok(()) } else { Err(bad()) }
+                })?;
             } else if k.is("cpuFeatures") {
                 if matches!(v, Val::Null) {
                     return Ok(());
@@ -574,6 +664,14 @@ impl Spec {
         if self.scratch != 0 {
             w.ku64("scratchBytes", self.scratch);
         }
+        // the other persistent folders travel like the workspace: a migration's destination must mount them too
+        if !self.mounts.is_empty() {
+            w.key("mounts").arr();
+            for (folder, path) in self.mounts() {
+                w.obj().kstr("folder", folder).kstr("path", path).end();
+            }
+            w.end_arr();
+        }
         w.end();
     }
 
@@ -617,6 +715,119 @@ fn num_from_str(s: JStr) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spec_mounts() {
+        // the deployment's other persistent folders (docs/HOST.md "Storage"): a list of (folder of the JuiceFS
+        // mount, path in the sandbox); sandboxd knows nothing of what a path means
+        let with = |m: &str| {
+            let mut t = String::from(r#"{"name":"sbx-abc","ip":"10.98.0.10","image":""#);
+            t.push_str(&"b".repeat(64));
+            t.push_str(r#"","cpu":1,"memory":2147483648,"workspace":"c0ffee-1","mounts":"#);
+            t.push_str(m);
+            t.push('}');
+            Spec::parse(t.as_bytes(), "10.98.0.0/16")
+        };
+        // absent, null and empty are the same: none, and none written (an older sandboxd refuses the field)
+        let plain = br#"{"name":"sbx-abc","ip":"10.98.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":2147483648}"#;
+        let none = Spec::parse(plain, "10.98.0.0/16").ok().unwrap();
+        assert_eq!(none.mounts().count(), 0);
+        let mut out = [0u8; 4096];
+        assert!(!core::str::from_utf8(none.write_json(&mut out).unwrap()).unwrap().contains("mounts"));
+        assert_eq!(with("null").ok().unwrap().mounts().count(), 0);
+        assert_eq!(with("[]").ok().unwrap().mounts().count(), 0);
+        // kept in order through the round trip (GET spec → a migration's receive; the state file)
+        let s =
+            with(r#"[{"folder":"home/c0ffee-1","path":"/home/claude"},{"folder":"cache","path":"/var/cache/x.y_z"}]"#)
+                .ok()
+                .unwrap();
+        let got: Vec<(&str, &str)> = s.mounts().collect();
+        assert_eq!(got, [("home/c0ffee-1", "/home/claude"), ("cache", "/var/cache/x.y_z")]);
+        let mut out2 = [0u8; 4096];
+        let j = s.write_json(&mut out2).unwrap();
+        assert!(
+            core::str::from_utf8(j).unwrap().contains(
+                r#""mounts":[{"folder":"home/c0ffee-1","path":"/home/claude"},{"folder":"cache","path":"/var/cache/x.y_z"}]"#
+            ),
+            "{}",
+            core::str::from_utf8(j).unwrap()
+        );
+        let back = Spec::parse(j, "10.98.0.0/16").ok().unwrap();
+        assert_eq!(back.mounts().collect::<Vec<_>>(), got);
+        assert_eq!(back.workspace.as_str(), "c0ffee-1");
+        let no = [
+            // not a list of objects with exactly folder and path
+            r"{}",
+            r#""home""#,
+            r"[7]",
+            r#"[{"folder":"home"}]"#,
+            r#"[{"path":"/home/claude"}]"#,
+            r#"[{"folder":"home","path":"/home/claude","mode":"ro"}]"#,
+            // a folder is lowercase names joined by /, never the conversations' `ws` tree or a way out
+            r#"[{"folder":"","path":"/home/claude"}]"#,
+            r#"[{"folder":"/home","path":"/home/claude"}]"#,
+            r#"[{"folder":"home/","path":"/home/claude"}]"#,
+            r#"[{"folder":"home/../ws","path":"/home/claude"}]"#,
+            r#"[{"folder":"ws/c0ffee-2","path":"/home/claude"}]"#,
+            r#"[{"folder":"ws","path":"/home/claude"}]"#,
+            r#"[{"folder":"Home","path":"/home/claude"}]"#,
+            // a path is absolute and plain, and neither the root nor on, under or above a mount of sandboxd's own
+            r#"[{"folder":"home","path":"home/claude"}]"#,
+            r#"[{"folder":"home","path":"/"}]"#,
+            r#"[{"folder":"home","path":"/home/claude/"}]"#,
+            r#"[{"folder":"home","path":"/home//claude"}]"#,
+            r#"[{"folder":"home","path":"/home/../etc"}]"#,
+            r#"[{"folder":"home","path":"/home/./claude"}]"#,
+            r#"[{"folder":"home","path":"/home/cl aude"}]"#,
+            r#"[{"folder":"home","path":"/workspace"}]"#,
+            r#"[{"folder":"home","path":"/workspace/sub"}]"#,
+            r#"[{"folder":"home","path":"/drive"}]"#,
+            r#"[{"folder":"home","path":"/tmp/x"}]"#,
+            r#"[{"folder":"home","path":"/var"}]"#,
+            r#"[{"folder":"home","path":"/var/lib"}]"#,
+            r#"[{"folder":"home","path":"/var/lib/docker/x"}]"#,
+            r#"[{"folder":"home","path":"/proc/1"}]"#,
+            r#"[{"folder":"home","path":"/dev"}]"#,
+            r#"[{"folder":"home","path":"/sys/fs"}]"#,
+            r#"[{"folder":"home","path":"/run"}]"#,
+            r#"[{"folder":"home","path":"/home/sandbox/.claude"}]"#,
+            r#"[{"folder":"home","path":"/home/sandbox/.claude/x"}]"#,
+            // two mounts never share a path or sit inside one another
+            r#"[{"folder":"a","path":"/home/claude"},{"folder":"b","path":"/home/claude"}]"#,
+            r#"[{"folder":"a","path":"/home/claude"},{"folder":"b","path":"/home/claude/x"}]"#,
+            r#"[{"folder":"a","path":"/home/claude/x"},{"folder":"b","path":"/home/claude"}]"#,
+        ];
+        for m in no {
+            let e = with(m).err().unwrap();
+            assert!(e.status == 400 && e.msg.as_str().contains("bad mounts"), "{m}: {}", e.msg);
+        }
+        // a home above the supervisor's FUSE mount point is a mount like any other
+        assert_eq!(with(r#"[{"folder":"home/x","path":"/home/sandbox"}]"#).ok().unwrap().mounts().count(), 1);
+        // a sibling whose name only begins like another's is no nesting
+        assert_eq!(
+            with(r#"[{"folder":"a","path":"/home/claude"},{"folder":"b","path":"/home/claude2"}]"#)
+                .ok()
+                .unwrap()
+                .mounts()
+                .count(),
+            2
+        );
+        // at most 8
+        let many = |n: usize| {
+            use std::fmt::Write as _;
+            let mut m = String::from("[");
+            for i in 0..n {
+                if i > 0 {
+                    m.push(',');
+                }
+                let _ = write!(m, r#"{{"folder":"f{i}","path":"/m/p{i}"}}"#);
+            }
+            m.push(']');
+            m
+        };
+        assert_eq!(with(&many(8)).ok().unwrap().mounts().count(), 8);
+        assert!(with(&many(9)).err().unwrap().msg.as_str().contains("bad mounts"));
+    }
 
     #[test]
     fn spec_checks() {

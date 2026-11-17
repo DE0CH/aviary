@@ -162,6 +162,11 @@ pub fn bundle_spec(b: &mut Buf, spec: &Spec, image_env: &[&str], args: &[&str], 
         let d = crate::storage::drive_dir(spec.drive.as_str());
         mount(&mut w, "/drive", "bind", d.as_str(), &["rbind", "rw"]);
     }
+    // the deployment's other persistent folders, in its order (the spec keeps them clear of the mounts above)
+    for (folder, path) in spec.mounts() {
+        let d = crate::storage::mount_dir(folder);
+        mount(&mut w, path, "bind", d.as_str(), &["rbind", "rw"]);
+    }
     w.end_arr();
     w.key("linux").obj().key("namespaces").arr();
     for t in ["pid", "ipc", "uts", "mount"] {
@@ -229,6 +234,35 @@ mod tests {
         for f in ["--allow-suid", "--host-uds=none", "--host-fifo=none", "--network=sandbox", "--overlay2=none"] {
             assert!(FLAGS.contains(&f), "{f}");
         }
+    }
+
+    #[test]
+    fn bundle_binds_the_specs_mounts() {
+        let body = br#"{"name":"sbx-abc","ip":"10.98.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{},"cpu":1,"memory":2147483648,"workspace":"c0ffee-1","mounts":[{"folder":"home/c0ffee-1","path":"/home/claude"},{"folder":"cache","path":"/var/cache/x"}]}"#;
+        let spec = Spec::parse(body, "10.98.0.0/16").ok().unwrap();
+        let mut mem = [0u8; 16384];
+        let mut b = Buf::new(&mut mem);
+        bundle_spec(
+            &mut b,
+            &spec,
+            &["PATH=/usr/bin"],
+            &["/init"],
+            "/var/lib/sbx/root/sbx-abc",
+            "/var/lib/sbx/scratch/sbx-abc",
+        );
+        assert!(!b.full);
+        let s = b.as_str();
+        assert!(json::parse(s.as_bytes()).is_ok(), "{s}");
+        // after /workspace, in the spec's order, each a read-write bind of its folder of the JuiceFS mount
+        let ws =
+            s.find(r#"{"destination":"/workspace","type":"bind","source":"/var/lib/sbx/jfs/ws/c0ffee-1""#).unwrap();
+        let home = s
+            .find(r#"{"destination":"/home/claude","type":"bind","source":"/var/lib/sbx/jfs/home/c0ffee-1","options":["rbind","rw"]}"#)
+            .unwrap();
+        let cache = s
+            .find(r#"{"destination":"/var/cache/x","type":"bind","source":"/var/lib/sbx/jfs/cache","options":["rbind","rw"]}"#)
+            .unwrap();
+        assert!(ws < home && home < cache, "{s}");
     }
 
     #[test]

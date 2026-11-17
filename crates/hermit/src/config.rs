@@ -116,6 +116,26 @@ pub struct SandboxJson {
     /// Absent = none. Lowercase letters, digits and `-`, never `ws`.
     #[serde(default)]
     pub drive: Option<String>,
+    /// The deployment's other persistent folders (at most 8): each conversation gets folder `<name>/<conversation>`
+    /// of the `JuiceFS` volume, with the quota named here, mounted at `path` in its sandbox, and removed with its
+    /// workspace. hermit and the fabric know nothing of what a path means: the deployment lays its sandbox out.
+    /// Absent or empty = none.
+    #[serde(default)]
+    pub mounts: Vec<MountJson>,
+}
+
+/// One of `sandbox.mounts`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MountJson {
+    /// The folder at the top of the volume that holds every conversation's: lowercase letters, digits and `-`,
+    /// never `ws` or the shared folder's name.
+    pub name: String,
+    /// Where it is mounted in the sandbox (sandboxd's rule for a spec's mount path).
+    pub path: String,
+    #[serde(rename = "quotaGiB")]
+    pub quota_gib: u32,
+    pub quota_inodes: u64,
 }
 
 /// `sandbox.maxActiveByPerson`: each name a lowercase address or `*`, each number positive.
@@ -157,6 +177,13 @@ pub struct FabricJson {
     /// Service's ready pods itself (hermit watches its `EndpointSlices`).
     #[serde(default)]
     pub egress_target: Option<std::net::Ipv4Addr>,
+    /// The hosts' sandboxes also reach the internet straight from their host's public address (sandboxd's host.json
+    /// `directEgress`), beside the proxy at the egress address. Absent or false: the proxy is a sandbox's only way
+    /// out. A sandbox's direct connections do not survive its move to another host (they leave from the host's
+    /// address), so a deployment that turns this on keeps its sandboxes where they are (a `fabric.migration.minAgeSeconds`
+    /// no sandbox reaches).
+    #[serde(default)]
+    pub direct_egress: bool,
     pub gateway: GatewayJson,
     pub sandboxd: String,
     pub runsc: String,
@@ -385,6 +412,7 @@ impl Config {
                 "sandbox.drive must be lowercase letters, digits and -, and not ws",
             ));
         }
+        mount_rules(&s.mounts, s.drive.as_deref())?;
         let workspace_quota_bytes = u64::from(s.workspace.quota_gib) << 30;
         // sandboxd's range for a spec's `scratchBytes`
         if !(1..=1024).contains(&s.tmp_gib) {
@@ -500,6 +528,73 @@ fn read(path: &Path) -> Result<String, ConfigError> {
         path: path.display().to_string(),
         source,
     })
+}
+
+/// `sandbox.mounts`: names and paths sandboxd takes (its rules for a spec's `mounts`), a quota on each.
+fn mount_rules(mounts: &[MountJson], drive: Option<&str>) -> Result<(), ConfigError> {
+    if mounts.len() > sandboxd_api::MOUNTS_MAX {
+        return Err(invalid(format!("sandbox.mounts: at most {}", sandboxd_api::MOUNTS_MAX)));
+    }
+    for (i, m) in mounts.iter().enumerate() {
+        if !valid_drive(&m.name) || drive == Some(m.name.as_str()) {
+            return Err(invalid(format!(
+                "sandbox.mounts: name {:?} must be lowercase letters, digits and -, and neither ws nor sandbox.drive",
+                m.name
+            )));
+        }
+        if !valid_mount_path(&m.path) {
+            return Err(invalid(format!(
+                "sandbox.mounts: path {:?} must be an absolute plain path clear of the sandbox's own mounts",
+                m.path
+            )));
+        }
+        if m.quota_gib == 0 || m.quota_inodes == 0 {
+            return Err(invalid(format!(
+                "sandbox.mounts: {} needs a quota (quotaGiB, quotaInodes)",
+                m.name
+            )));
+        }
+        for o in &mounts[..i] {
+            if o.name == m.name || at_or_above(&o.path, &m.path) || at_or_above(&m.path, &o.path) {
+                return Err(invalid(format!(
+                    "sandbox.mounts: {} and {} share a name or sit on one another",
+                    o.name, m.name
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Is `a` the path `b` or a directory above it.
+fn at_or_above(a: &str, b: &str) -> bool {
+    b == a || b.strip_prefix(a).is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// sandboxd's rule for a mount's path (`sandboxd` `config.rs` `valid_mount_path`): absolute and plain, not the
+/// root, not on, under or above one of sandboxd's own mounts, and not on or under the supervisor's `~/.claude`.
+fn valid_mount_path(p: &str) -> bool {
+    const OWN: [&str; 8] = [
+        "/workspace",
+        "/drive",
+        "/tmp",
+        "/var/lib/docker",
+        "/proc",
+        "/dev",
+        "/sys",
+        "/run",
+    ];
+    let plain = |n: &str| {
+        !n.is_empty()
+            && n != "."
+            && n != ".."
+            && n.bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'.' || c == b'_' || c == b'-')
+    };
+    p.len() <= 128
+        && p.strip_prefix('/').is_some_and(|rest| rest.split('/').all(plain))
+        && !OWN.iter().any(|own| at_or_above(own, p) || at_or_above(p, own))
+        && !at_or_above("/home/sandbox/.claude", p)
 }
 
 /// sandboxd's rule for a spec's `drive`: a folder name, never `ws` (the conversations' workspaces).
@@ -683,6 +778,103 @@ mod tests {
             assert!(load(&move |v| v["sandbox"]["drive"] = no.into()).is_err(), "{no}");
         }
         assert!(load(&|v| v["sandbox"]["tmpGiB"] = 1025.into()).is_err());
+    }
+
+    /// hermit.json with `edit` applied to the example.
+    fn load_edited(edit: &dyn Fn(&mut serde_json::Value)) -> Result<Config, ConfigError> {
+        let mut v: serde_json::Value = serde_json::from_str(EXAMPLE).unwrap();
+        edit(&mut v);
+        Config::from_parts(serde_json::from_value(v).unwrap(), "i", "r", "t")
+    }
+
+    #[test]
+    fn direct_egress_and_mounts_are_off_unless_named() {
+        let load = load_edited;
+        // direct egress: off unless named, and then a host's user data says so (sandboxd's host.json
+        // `directEgress`); a deployment that leaves it off sends the user data it always sent
+        let secrets = crate::fabric::gvisor::HostSecrets {
+            ca: String::new(),
+            cert: String::new(),
+            key: String::new(),
+            juicefs_meta_url: String::new(),
+            juicefs_meta_password: String::new(),
+        };
+        let host = |c: &Config| {
+            let ip = std::net::IpAddr::from([10, 99, 0, 10]);
+            crate::fabric::scaler::user_data(c, "h", ip, "priv", "pub", &secrets)["host"].clone()
+        };
+        let off = load(&|_| {}).unwrap();
+        assert!(!off.file.fabric.direct_egress && host(&off).get("directEgress").is_none());
+        let on = load(&|v| v["fabric"]["directEgress"] = true.into()).unwrap();
+        assert_eq!(host(&on)["directEgress"], true);
+        let named_off = load(&|v| v["fabric"]["directEgress"] = false.into()).unwrap();
+        assert_eq!(host(&named_off), host(&off));
+        // the other persistent folders: none unless named; each a per-conversation folder with its own quota
+        assert!(load(&|_| {}).unwrap().file.sandbox.mounts.is_empty());
+        let home =
+            serde_json::json!({"name": "home", "path": "/home/claude", "quotaGiB": 20, "quotaInodes": 2_000_000});
+        let h = home.clone();
+        let c = load(&move |v| v["sandbox"]["mounts"] = serde_json::json!([h])).unwrap();
+        let m = &c.file.sandbox.mounts[0];
+        assert_eq!(
+            (m.name.as_str(), m.path.as_str(), m.quota_gib, m.quota_inodes),
+            ("home", "/home/claude", 20, 2_000_000)
+        );
+        let bad: [(&str, serde_json::Value); 14] = [
+            ("name", "ws".into()),
+            ("name", "".into()),
+            ("name", "a/b".into()),
+            ("name", "Home".into()),
+            ("path", "home".into()),
+            ("path", "/".into()),
+            ("path", "/workspace".into()),
+            ("path", "/workspace/x".into()),
+            ("path", "/var/lib".into()),
+            ("path", "/tmp/x".into()),
+            ("path", "/home/../etc".into()),
+            ("path", "/home/sandbox/.claude".into()),
+            ("quotaGiB", 0.into()),
+            ("quotaInodes", 0.into()),
+        ];
+        for (k, no) in bad {
+            let mut m = home.clone();
+            m[k] = no.clone();
+            assert!(
+                load(&move |v| v["sandbox"]["mounts"] = serde_json::json!([m])).is_err(),
+                "{k}: {no}"
+            );
+        }
+        // an unknown member is refused like everywhere in hermit.json
+        let mut extra = home.clone();
+        extra["mode"] = "ro".into();
+        assert!(load(&move |v| v["sandbox"]["mounts"] = serde_json::json!([extra])).is_err());
+        // never the shared folder's name, never two with one name, never one path on or inside another, at most 8
+        let h = home.clone();
+        assert!(
+            load(&move |v| {
+                v["sandbox"]["drive"] = "home".into();
+                v["sandbox"]["mounts"] = serde_json::json!([h]);
+            })
+            .is_err()
+        );
+        let two = |name: &str, path: &str| {
+            let (mut other, h) = (home.clone(), home.clone());
+            other["name"] = name.into();
+            other["path"] = path.into();
+            load(&move |v| v["sandbox"]["mounts"] = serde_json::json!([h, other]))
+        };
+        assert!(two("home", "/home/other").is_err());
+        assert!(two("other", "/home/claude").is_err());
+        assert!(two("other", "/home/claude/x").is_err());
+        assert!(two("other", "/home").is_err());
+        assert_eq!(two("other", "/home/claude2").unwrap().file.sandbox.mounts.len(), 2);
+        let many = |n: usize| {
+            let list: Vec<serde_json::Value> = (0..n)
+                .map(|i| serde_json::json!({"name": format!("m{i}"), "path": format!("/m/p{i}"), "quotaGiB": 1, "quotaInodes": 1}))
+                .collect();
+            load(&move |v| v["sandbox"]["mounts"] = serde_json::json!(list))
+        };
+        assert!(many(8).is_ok() && many(9).is_err());
     }
 
     #[test]

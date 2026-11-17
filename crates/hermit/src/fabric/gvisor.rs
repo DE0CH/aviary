@@ -71,6 +71,19 @@ impl std::fmt::Debug for Deps {
     }
 }
 
+/// A spec's `mounts` from `sandbox.mounts`: the conversation's folder `<name>/<conversation>` at each path, in the
+/// deployment's order (the start made the folders with their quotas, as it made the workspace).
+#[must_use]
+pub fn spec_mounts(mounts: &[crate::config::MountJson], workspace: Uuid) -> Vec<sandboxd_api::Mount> {
+    mounts
+        .iter()
+        .map(|m| sandboxd_api::Mount {
+            folder: format!("{}/{workspace}", m.name),
+            path: m.path.clone(),
+        })
+        .collect()
+}
+
 /// The YYC fabric.
 pub struct Gvisor {
     core: OnceLock<Weak<Core>>,
@@ -318,6 +331,8 @@ impl Fabric for Gvisor {
                 // named only when it is not sandboxd's default, so a host still on a sandboxd that predates the
                 // field (and refuses unknown ones) keeps taking default-sized sandboxes
                 scratch_bytes: Some(core.cfg.tmp_bytes).filter(|b| *b != sandboxd_api::DEFAULT_SCRATCH_BYTES),
+                // named only when the deployment has some (a host on an older sandboxd refuses the field)
+                mounts: spec_mounts(&core.cfg.file.sandbox.mounts, spec.workspace),
             };
             client.create(&s).await.map_err(|e| sandboxd::create_error(&e))?;
             // the gateway routes the new /32 to its host
@@ -422,5 +437,38 @@ impl Fabric for Gvisor {
             .unwrap_or_else(PoisonError::into_inner)
             .remove(&claim.id);
         Box::pin(migrate::run(core, claim, fresh, self.clients.clone()))
+    }
+}
+
+#[cfg(test)]
+mod mount_tests {
+    use super::*;
+
+    #[test]
+    fn a_specs_mounts_are_the_conversations_folders_in_the_deployments_order() {
+        let wid = Uuid::from_u128(0x00c0_ffee);
+        assert!(
+            spec_mounts(&[], wid).is_empty(),
+            "none named: the field stays out of the spec"
+        );
+        let cfg: Vec<crate::config::MountJson> = serde_json::from_value(serde_json::json!([
+            {"name": "home", "path": "/home/claude", "quotaGiB": 20, "quotaInodes": 2_000_000},
+            {"name": "cache", "path": "/var/cache/x", "quotaGiB": 5, "quotaInodes": 100_000},
+        ]))
+        .unwrap();
+        let got = spec_mounts(&cfg, wid);
+        assert_eq!(
+            got,
+            [
+                sandboxd_api::Mount {
+                    folder: format!("home/{wid}"),
+                    path: "/home/claude".into()
+                },
+                sandboxd_api::Mount {
+                    folder: format!("cache/{wid}"),
+                    path: "/var/cache/x".into()
+                },
+            ]
+        );
     }
 }

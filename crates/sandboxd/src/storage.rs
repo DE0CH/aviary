@@ -53,6 +53,11 @@ pub fn drive_dir(folder: &str) -> P {
     path!("/var/lib/sbx/jfs/{folder}")
 }
 
+/// One of a spec's `mounts`: its folder of the JuiceFS mount.
+pub fn mount_dir(folder: &str) -> P {
+    path!("/var/lib/sbx/jfs/{folder}")
+}
+
 fn is_mount(dir: &str) -> bool {
     quiet(&["mountpoint", "-q", dir]) == 0
 }
@@ -115,6 +120,9 @@ pub fn setup(spec: &Spec) -> Res<P> {
     if !spec.drive.is_empty() {
         drive(spec.drive.as_str())?;
     }
+    for (folder, _) in spec.mounts() {
+        mount_folder(folder)?;
+    }
     let img = scratch_img(name);
     let sd = scratch_dir(name);
     crate::util::mkdir(path!("/var/lib/sbx/scratch").as_str(), 0o700)?;
@@ -129,7 +137,7 @@ pub fn setup(spec: &Spec) -> Res<P> {
     for d in ["/upper", "/work"] {
         crate::util::mkdir(paths::join(sd.as_str(), d).as_str(), 0o755)?;
     }
-    premake_upper(spec.image.as_str(), paths::join(sd.as_str(), "/upper").as_str())?;
+    premake_upper(spec, paths::join(sd.as_str(), "/upper").as_str())?;
     for d in ["/tmp", "/docker"] {
         let p = paths::join(sd.as_str(), d);
         crate::util::mkdir(p.as_str(), 0o755)?;
@@ -175,17 +183,48 @@ const MOUNT_PATHS: [&str; 9] = [
     "/home/sandbox/.claude",
 ];
 
-fn premake_upper(image: &str, upper: &str) -> Res<()> {
-    use std::os::unix::fs::MetadataExt;
+/// Every directory the upper layer gets before the overlay is mounted: [`MOUNT_PATHS`], then the way to each of the
+/// spec's mounts and the mount point itself, a parent before its child, none twice.
+fn upper_dirs(spec: &Spec, mut f: impl FnMut(&str)) {
     for rel in MOUNT_PATHS {
+        f(rel);
+    }
+    // the mounts' own directories made so far ("dir\0" each), so one shared by two mounts is made once
+    let mut seen: crate::fixed::Str<{ crate::config::MOUNTS_BYTES }> = crate::fixed::Str::new();
+    for (_, path) in spec.mounts() {
+        let ends = path.match_indices('/').map(|(i, _)| i).skip(1).chain(core::iter::once(path.len()));
+        for end in ends {
+            let dir = &path[..end];
+            if MOUNT_PATHS.contains(&dir) || seen.as_str().split('\0').any(|d| d == dir) {
+                continue;
+            }
+            let _ = seen.push(dir) && seen.push("\0");
+            f(dir);
+        }
+    }
+}
+
+fn premake_upper(spec: &Spec, upper: &str) -> Res<()> {
+    let mut res = Ok(());
+    upper_dirs(spec, |rel| {
+        if res.is_ok() {
+            res = premake_dir(spec.image.as_str(), upper, rel);
+        }
+    });
+    res
+}
+
+fn premake_dir(image: &str, upper: &str, rel: &str) -> Res<()> {
+    use std::os::unix::fs::MetadataExt;
+    {
         let up = paths::join(upper, rel);
         if std::fs::symlink_metadata(up.as_str()).is_ok() {
-            continue;
+            return Ok(());
         }
         let lower = path!("/var/lib/sbx/images/{image}/rootfs{rel}");
         let (mode, uid, gid) = match std::fs::symlink_metadata(lower.as_str()) {
             Ok(m) if m.is_dir() => (m.mode() & 0o7777, m.uid(), m.gid()),
-            Ok(_) => continue, // not a directory in the image: leave it to the overlay
+            Ok(_) => return Ok(()), // not a directory in the image: leave it to the overlay
             Err(_) => (0o755, 0, 0),
         };
         let mut b = [0u8; 512];
@@ -330,6 +369,18 @@ fn drive(folder: &str) -> Res<()> {
     }
 }
 
+/// One of the spec's `mounts`: its folder must be there, made by hermit (409 `mount missing` otherwise; nothing is
+/// created here).
+fn mount_folder(folder: &str) -> Res<()> {
+    if !jfs_mounted() {
+        return Err(Error::new(503, "the workspace store (JuiceFS) is not mounted on this host"));
+    }
+    match std::fs::metadata(mount_dir(folder).as_str()) {
+        Ok(m) if m.is_dir() => Ok(()),
+        _ => Err(Error::new(409, "mount missing")),
+    }
+}
+
 fn workspace(ws: &str) -> Res<()> {
     if !jfs_mounted() {
         return Err(Error::new(503, "the workspace store (JuiceFS) is not mounted on this host"));
@@ -353,6 +404,24 @@ pub fn teardown(name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_specs_mounts_get_their_mount_points_in_the_upper_layer() {
+        let body = br#"{"name":"sbx-abc","ip":"10.98.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":2147483648,"mounts":[{"folder":"home/c0ffee-1","path":"/home/claude"},{"folder":"cache","path":"/var/cache/x"}]}"#;
+        let spec = Spec::parse(body, "10.98.0.0/16").ok().unwrap();
+        assert_eq!(mount_dir("home/c0ffee-1").as_str(), "/var/lib/sbx/jfs/home/c0ffee-1");
+        // sandboxd's own first, then every directory on the way to each mount and the mount point itself, a parent
+        // before its child, none twice (see MOUNT_PATHS: a migration's destination needs them in the upper layer)
+        let mut got: Vec<String> = Vec::new();
+        upper_dirs(&spec, |d| got.push(d.to_string()));
+        assert_eq!(&got[..MOUNT_PATHS.len()], &MOUNT_PATHS[..]);
+        assert_eq!(&got[MOUNT_PATHS.len()..], ["/home/claude", "/var/cache", "/var/cache/x"]);
+        // a spec without mounts gets sandboxd's own and nothing else
+        let plain = br#"{"name":"sbx-abc","ip":"10.98.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpu":1,"memory":2147483648}"#;
+        let mut n = 0;
+        upper_dirs(&Spec::parse(plain, "10.98.0.0/16").ok().unwrap(), |_| n += 1);
+        assert_eq!(n, MOUNT_PATHS.len());
+    }
 
     #[test]
     fn the_shared_folder_is_beside_the_workspaces_and_has_its_mount_point() {

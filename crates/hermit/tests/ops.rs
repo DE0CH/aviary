@@ -980,7 +980,13 @@ async fn every_admin_call_is_audited_and_does_what_it_says() {
             &as_admin,
         )
         .await;
-    assert_eq!(a.status, 404, "no tail before the release");
+    // a live sandbox has no stored tail yet: its console is read from its host as it is now, and nothing is stored
+    assert_eq!(a.status, 200, "{:?}", a.body);
+    assert_eq!(
+        (a.body["reason"].clone(), a.body["text"].clone()),
+        (json!("live"), json!(format!("console of {}\n", row.name)))
+    );
+    assert!(hermit::console::read(r.core(), row.id).await.unwrap().is_none());
     let a = admin
         .call(
             &r.url,

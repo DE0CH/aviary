@@ -6,8 +6,8 @@ mod common;
 
 use common::{fixture, same};
 use sandboxd_api::{
-    Deleted, EgressTargets, EnsureImage, ErrorBody, Host, ImageDigest, Listed, Peers, ReceiveResult, Receiving, Role,
-    Sandboxes, SendRequest, SendResult, SetPeers, Spec,
+    Deleted, EgressTargets, EnsureImage, ErrorBody, Host, ImageDigest, Listed, Mount, Peers, ReceiveResult, Receiving,
+    Role, Sandboxes, SendRequest, SendResult, SetPeers, Spec,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -64,6 +64,17 @@ fn sandboxes() {
     assert_eq!((p.pids, p.scratch_bytes), (Some(4096), None));
     let p: Spec = round_trip("spec-scratch.json");
     assert_eq!(p.scratch_bytes, Some(100 << 30));
+    // the deployment's other persistent folders: none unless named, and then never written as an empty list (a
+    // sandboxd that predates the field refuses it)
+    assert!(p.mounts.is_empty() && m.mounts.is_empty());
+    let p: Spec = round_trip("spec-mounts.json");
+    assert_eq!(
+        p.mounts,
+        [Mount {
+            folder: "home/c0ffee-1".into(),
+            path: "/home/claude".into()
+        }]
+    );
     let _: Sandboxes = round_trip("sandboxes.json");
     let _: Deleted = round_trip("deleted.json");
 }

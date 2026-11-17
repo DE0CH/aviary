@@ -380,7 +380,31 @@ pub struct Spec {
     /// takes a default-sized sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scratch_bytes: Option<u64>,
+    /// The deployment's other persistent folders, bound in this order after `/workspace` and `/drive`. sandboxd
+    /// knows nothing of what a path means: the deployment lays its sandbox out. At most [`MOUNTS_MAX`]; a caller
+    /// names the field only when it has one, so a host on a sandboxd that predates it (which refuses unknown
+    /// fields) still takes sandboxes without.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mounts: Vec<Mount>,
 }
+
+/// One of a spec's `mounts`: a folder of the host's shared filesystem at a path in the sandbox, read-write.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Mount {
+    /// The folder, relative to the top of the host's shared filesystem: lowercase names (`a-z`, `0-9`, `-`) joined
+    /// by `/`, never `ws` or under it (the conversations' workspaces). The caller makes it (and sets its quota)
+    /// before the create; sandboxd only binds it and refuses a create whose folder is missing (409).
+    pub folder: String,
+    /// Where it is mounted: an absolute, plain path (`A-Z`, `a-z`, `0-9`, `.`, `_`, `-` in each name), not `/`, and
+    /// not on, under or above one of sandboxd's own mounts (`/workspace`, `/drive`, `/tmp`, `/var/lib/docker`,
+    /// `/proc`, `/dev`, `/sys`, `/run`) nor on or under `/home/sandbox/.claude`; two mounts never share a path or
+    /// sit inside one another.
+    pub path: String,
+}
+
+/// The most `mounts` a spec may name.
+pub const MOUNTS_MAX: usize = 8;
 
 /// The scratch filesystem of a spec that names no size: 5 GiB.
 pub const DEFAULT_SCRATCH_BYTES: u64 = 5 << 30;

@@ -715,6 +715,7 @@ impl Rig {
             workspace: None,
             pids: None,
             scratch_bytes: None,
+            mounts: Vec::new(),
             drive: None,
         };
         self.fleet.sim(host).sandboxes.lock().unwrap().insert(
@@ -1471,6 +1472,7 @@ async fn ec2_reconcile_and_orphans() {
                 workspace: None,
                 pids: None,
                 scratch_bytes: None,
+                mounts: Vec::new(),
                 drive: None,
             },
             state: HostState::Running,

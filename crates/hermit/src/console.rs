@@ -15,6 +15,8 @@ pub const TAIL_BYTES: usize = 64 * 1024;
 
 /// Why a tail was taken (`sandbox_logs.reason`).
 pub const RELEASE: &str = "release";
+/// Not stored: a live sandbox's console read from its host for the admin route ([`live`]).
+pub const LIVE: &str = "live";
 /// The host was lost: nothing could be fetched.
 pub const HOST_LOST: &str = "host_lost";
 /// The host did not answer for the tail.
@@ -108,6 +110,23 @@ pub struct Tail {
     pub size: Option<u64>,
     /// The bytes as text (the console is JSON lines; invalid UTF-8 replaced).
     pub text: Option<String>,
+}
+
+/// A live sandbox's console as its host has it now (the last [`TAIL_BYTES`]); `None` when it is on no host yet or
+/// its host does not answer. Nothing is stored: the tail kept for later is the one taken at its release.
+pub async fn live(core: &Core, row: &SandboxRow) -> Option<Tail> {
+    let host = row.host.as_deref()?;
+    let mut bytes = core.providers.fabric.console_tail(host, &row.name).await?;
+    if bytes.len() > TAIL_BYTES {
+        bytes.drain(..bytes.len() - TAIL_BYTES);
+    }
+    Some(Tail {
+        sandbox_id: row.id,
+        captured_at: Timestamp::now(),
+        reason: Some(LIVE.into()),
+        size: Some(bytes.len() as u64),
+        text: Some(String::from_utf8_lossy(&bytes).into_owned()),
+    })
 }
 
 /// The stored tail of sandbox `id`.
