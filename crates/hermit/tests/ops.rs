@@ -312,7 +312,13 @@ async fn a_start_refused_at_a_quiet_persons_own_number_is_listed_but_is_no_failu
     );
     assert_eq!(d["starts"]["summary"]["failed"], 0);
     assert_eq!(d["starts"]["summary"]["quiet"], 1);
-    let sl = d["starts"]["list"].as_array().unwrap();
+    // the starts (the world's releases are listed beside them)
+    let sl: Vec<&Value> = d["starts"]["list"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|x| x["what"] == "start")
+        .collect();
     assert_eq!(sl.len(), 1);
     assert_eq!(
         (&sl[0]["ok"], &sl[0]["quiet"], &sl[0]["owner"]),
