@@ -69,6 +69,15 @@ RUN install -m 0755 -d /etc/apt/keyrings \
  && mkdir -p /var/lib/docker
 COPY --chmod=755 docker-wrapper.sh /usr/local/bin/docker
 
+# gh (GitHub CLI): CI runs, PRs, releases and logs from a conversation; it reads GH_TOKEN/GITHUB_TOKEN when a user
+# gives one. From GitHub's own apt repository (Debian's is far behind).
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends gh \
+ && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man \
+ && gh --version
+
 # Claude Code at the version supervisor spec 3 pins, root-owned outside every directory uid 1000 can write (A11.F13):
 # the supervisor runs /opt/claude-code/bin/claude by that absolute path (in 2.1.325 the package's native
 # bin/claude.exe). /usr/local/bin/claude is a root-owned link to it for shells. The managed files in /etc/claude-code
