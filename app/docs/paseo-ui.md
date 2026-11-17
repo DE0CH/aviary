@@ -119,8 +119,10 @@ server (`server/`) serves no deployment.
 - **Slash commands**: a message that starts with `/` opens a list over the message box of what the server answers
   to `list_commands_request` (aviary: the commands and skills the conversation's Claude Code names, known once its
   first reply has started), narrowed as the name is typed; ↑/↓ move, Enter, Tab or a click write the name into the
-  message, which is sent as any other. The list shows only when it has something in it: a new chat, a `/` further
-  into the text and a name no command has show no box, and Enter sends. The names the app runs itself when they are
+  message, which is sent as any other. A `/` further into the text (after a space) lists only the entries of kind
+  `skill` (aviary: the project's skills and commands, which the agent takes by name anywhere in a message; its own
+  commands, `/compact` and the like, it reads only at a message's start). The list shows only when it has something
+  in it: a new chat, a `/` inside a path and a name no command has show no box, and Enter sends. The names the app runs itself when they are
   sent (`client-slash-commands/`: `/clear`, `/new`, `/exit`, `/quit`, `/q` end the conversation) are not in the list,
   the server's commands of those names included. The mode's switches are `showCommandAutocomplete`,
   `showFileAutocomplete` and `showClientCommands` (`composer/input-mode.ts`); the wiring is
