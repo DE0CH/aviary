@@ -24,3 +24,8 @@ pub fn path() -> Option<String> {
 pub fn config() -> Option<String> {
     std::env::var("SBX_CONFIG").ok()
 }
+
+/// `SBX_SEAL_KEY`: the freeze's key, for the `sandboxd seal` / `sandboxd open` stage only (seal.rs), 64 hex digits.
+pub fn seal_key() -> Option<String> {
+    std::env::var("SBX_SEAL_KEY").ok()
+}

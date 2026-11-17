@@ -59,6 +59,8 @@ mod relay;
 mod runsc;
 #[allow(unsafe_code)] // syscalls and fixed memory; every block has a SAFETY comment
 mod sandboxes;
+#[allow(unsafe_code)] // the stage's own frame buffer and fds; every block has a SAFETY comment
+mod seal;
 #[allow(unsafe_code)] // syscalls and fixed memory; every block has a SAFETY comment
 mod server;
 #[allow(unsafe_code)] // syscalls and fixed memory; every block has a SAFETY comment
@@ -349,6 +351,9 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("--version") {
         cli_out(&format!("sandboxd {} (rust)\n", env!("CARGO_PKG_VERSION")));
         return;
+    }
+    if let Some(stage @ ("seal" | "open")) = args.get(1).map(String::as_str) {
+        std::process::exit(seal::main(stage == "open"));
     }
     if args.get(1).map(String::as_str) == Some("migrate-relay") {
         std::process::exit(relay::main(&args[2..]));
