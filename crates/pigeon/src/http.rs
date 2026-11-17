@@ -1091,6 +1091,10 @@ pub(crate) async fn models_value(app: &App) -> Option<Value> {
         .and_then(|st| st.value.as_ref().map(|(_, v)| v.clone()))
 }
 
+/// How long a search waits for its query's vector before it answers by words alone: a cold embedding host answers in
+/// about 5 s (measured 2026-11-17: 4.9 s once, then 0.25-0.7 s), past the model client's own 5 s.
+const QUERY_EMBEDDING_TIMEOUT: Duration = Duration::from_secs(12);
+
 /// A search query's vector from the models route's embedding model (in-cluster, pigeon's pair token), with the
 /// model's query instruction before it; `None` when the deployment has no embedding model or the call fails (the
 /// search then matches words only).
@@ -1115,6 +1119,7 @@ pub(crate) async fn query_embedding(app: &App, query: &str) -> Option<magpie_api
             format!("{}={}", gateway_api::GATEWAY.0, gateway_api::GATEWAY.1),
         )
         .json(&gateway_api::models::embeddings_request(&e.id, &[text]))
+        .timeout(QUERY_EMBEDDING_TIMEOUT)
         .send()
         .await;
     let res = match sent {

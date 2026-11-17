@@ -72,7 +72,9 @@ struct EmbeddingsAnswer {
     data: Vec<EmbeddingItem>,
 }
 
-/// The embeddings call's body for `texts`.
+/// The embeddings call's body for `texts`: the fastest host first (`provider.sort`, `OpenRouter`'s routing; a search
+/// waits for its query's vector, and an embedding model's hosts answer the same vector), which a gateway may add to
+/// (YYC's forces zero data retention beside it).
 #[must_use]
 pub fn embeddings_request(model: &str, texts: &[String]) -> serde_json::Value {
     serde_json::json!({
@@ -80,6 +82,7 @@ pub fn embeddings_request(model: &str, texts: &[String]) -> serde_json::Value {
         "input": texts,
         "dimensions": EMBEDDING_DIMENSIONS,
         "encoding_format": "float",
+        "provider": {"sort": "latency"},
     })
 }
 
@@ -232,6 +235,7 @@ mod tests {
         assert_eq!(e.query_instruction.as_deref(), Some("Instruct: find\nQuery:"));
         let req = embeddings_request("m", &["a".into(), "b".into()]);
         assert_eq!(req["dimensions"], EMBEDDING_DIMENSIONS);
+        assert_eq!(req["provider"]["sort"], "latency");
         assert_eq!(req["input"][1], "b");
         let v = |x: f32| vec![x; EMBEDDING_DIMENSIONS];
         let body = serde_json::json!({"data": [{"index": 1, "embedding": v(2.0)}, {"index": 0, "embedding": v(1.0)}]});
