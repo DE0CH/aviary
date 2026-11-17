@@ -42,6 +42,17 @@ def wait_code(after, fetch=fetch_code, sleep=time.sleep, tries=45):
     sys.exit(f"no Access code mail for {BOT} within {tries * 4} s")
 
 
+def send(press, sent, wait, tries=20):
+    """Press Enter until the message has left the new-chat page. The app takes typing as soon as the page paints and
+    a send only once it is connected (claudecodeui docs/paseo-ui.md "Loading"): an Enter before that is not a send."""
+    for _ in range(tries):
+        press()
+        wait()
+        if sent():
+            return True
+    return False
+
+
 def answered(text, prompt, expect):
     """the expected answer appears in the page after the prompt (the prompt itself does not contain it)"""
     i = text.rfind(prompt)
@@ -99,8 +110,10 @@ def main():
         box.wait_for(timeout=60000)
         box.click()
         box.type(PROMPT)
-        pg.keyboard.press("Enter")
         t0 = time.time()
+        if not send(lambda: pg.keyboard.press("Enter"), lambda: "/workspace/" in pg.url,
+                    lambda: pg.wait_for_timeout(1500)):
+            fail("the message did not leave the new-chat page within 30 s of Enter")
 
         step = "reply"
         # a cold start boots an AWS host (~40-50 s) before the sandbox; 4 min covers it with room

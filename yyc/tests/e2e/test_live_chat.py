@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""live_chat.py's pieces that need no browser (stdlib only): waiting for the e-mailed code, telling a reply from the
-echoed prompt, and reading the names off a `/` list."""
+"""live_chat.py's pieces that need no browser (stdlib only): waiting for the e-mailed code, sending once the
+app takes a send, telling a reply from the echoed prompt, and reading the names off a `/` list."""
 import os, sys, unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -24,6 +24,24 @@ class Code(unittest.TestCase):
         with self.assertRaises(SystemExit):
             e.wait_code("2026-11-11T03:00:00Z", lambda a: (calls.append(a), (403, {"error": "x"}))[1], sleep=lambda s: None)
         self.assertEqual(len(calls), 1)
+
+
+class Send(unittest.TestCase):
+    def test_presses_until_the_message_has_left(self):
+        # the app takes typing before it is ready to send: the first two Enters are not sends
+        presses = []
+        self.assertTrue(e.send(lambda: presses.append(1), lambda: len(presses) >= 3, wait=lambda: None))
+        self.assertEqual(len(presses), 3)
+
+    def test_one_press_when_the_app_is_ready(self):
+        presses = []
+        self.assertTrue(e.send(lambda: presses.append(1), lambda: True, wait=lambda: None))
+        self.assertEqual(len(presses), 1)
+
+    def test_gives_up(self):
+        presses = []
+        self.assertFalse(e.send(lambda: presses.append(1), lambda: False, wait=lambda: None, tries=4))
+        self.assertEqual(len(presses), 4)
 
 
 class Reply(unittest.TestCase):
