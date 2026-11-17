@@ -36,6 +36,7 @@ Each failure prints one line `<item> <object>: <why>`; exit 1 on any. What it as
   D  disk: no host folder without a reason (HOST_FOLDERS): it has no size and fills the node's disk; the gateway's image
      store is an emptyDir with a sizeLimit and its container has an ephemeral-storage limit no smaller;
   G  the gateway's host.json has every field sandboxd requires (hermit 14.2); its podCidr and egressVip equal hermit.json's
+     fabric; hermit/gateway.release, the gateway server's own pin, names an aviary release (--online: with sandboxd)
   H  hosts (hermit.json): a host of fabric.aws.fallbackHost takes N sandboxes (memory less the reserve over
      sandbox.memory, or CPUs x cpuOvercommit over sandbox.cpu, the smaller); fabric.aws.maxHosts x N holds
      sandbox.maxActive, and the host's disk fabric.aws.diskGiB (aviary infra.sh's 40 when absent) holds N scratch
@@ -478,7 +479,7 @@ def check_hosts(h):
              f"{s['tmpGiB']} beside 16 GiB for the system ({need} GiB)")
 
 
-def check_gateway(folder, h):
+def check_gateway(folder, h, online=False):
     g = json.load(open(os.path.join(folder, "hermit", "gateway-host.json")))
     for f in GATEWAY_FIELDS:
         if not g.get(f):
@@ -487,6 +488,15 @@ def check_gateway(folder, h):
         fail("G", "gateway-host.json", "podCidr or egressVip differs from hermit.json's fabric")
     if g.get("wgPort") != 51821 or not g.get("gateway"):
         fail("G", "gateway-host.json", "not the gateway on udp 51821")
+    # the gateway server's own pin (infra/gateway.sh): it follows no cluster pin, so it changes only when meant to
+    rel = open(os.path.join(folder, "hermit", "gateway.release")).read().strip()
+    if not re.fullmatch(r"aviary-[0-9a-f]{12}", rel):
+        fail("G", "gateway.release", f"'{rel}' is not an aviary release (aviary-<sha12>)")
+    elif online:
+        r = subprocess.run(["curl", "-fsS", "-o", "/dev/null", "-w", "%{http_code}", "-I",
+                            f"https://github.com/DE0CH/aviary/releases/download/{rel}/sandboxd"], capture_output=True, text=True)
+        if r.stdout.strip() not in ("200", "302"):
+            fail("G", "gateway.release", f"release {rel} has no sandboxd binary")
     if "2001:db8:" in h["fabric"]["gateway"]["endpoint"]:
         print(f"::warning::hermit.json fabric.gateway.endpoint is a placeholder ({h['fabric']['gateway']['endpoint']}): "
               "set the gateway node's public IPv6 (gateway-net.sh) before A1")
@@ -645,7 +655,7 @@ def main():
     check_tools_out(objs)
     h = check_egress(folder, secrets)
     check_skills(folder, objs, h)
-    check_gateway(folder, h)
+    check_gateway(folder, h, a.online)
     check_hosts(h)
     check_disk(objs)
     check_branding(folder, objs)

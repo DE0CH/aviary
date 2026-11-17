@@ -206,6 +206,21 @@ class Seeded(unittest.TestCase):
     def test_pigeon_init_memory(self):
         self.expect(lambda o: find(o, "Deployment", "pigeon")["spec"]["template"]["spec"]["initContainers"][0]["resources"]["limits"].update(memory="32Mi"), "S", "page cache")
 
+    def test_gateway_release_is_an_aviary_release(self):
+        # the gateway server is set up from this pin by hand (infra/gateway.sh): a branch name or a short sha would
+        # only fail there, at the moment the gateway is being changed
+        import shutil
+        with tempfile.TemporaryDirectory() as d:
+            folder = os.path.join(d, "deploy")
+            shutil.copytree(FOLDER, folder)
+            open(os.path.join(folder, "hermit", "gateway.release"), "w").write("main\n")
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                json.dump(RENDER, f)
+            r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "check_deploy.py"), "--folder", folder,
+                                "--render", f.name], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("::error::G gateway.release", r.stdout)
+
     def test_balancer_port_is_a_name(self):
         # the balancer's ports are told apart by their target port's name: a number would reach every selected pod
         def m(objs):
