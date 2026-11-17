@@ -189,7 +189,7 @@ mod tests {
         );
         let route = s.models_route();
         assert_eq!(
-            route.default, "claude-fable-5-2",
+            route.default, "claude-opus-5-5",
             "the first model is the default"
         );
         assert_eq!(route.small, "claude-haiku-5-5");
@@ -224,7 +224,7 @@ mod tests {
         assert_eq!(route.context_of("claude-fable-5-2"), 1_000_000);
         let mut small = s.clone();
         small.models[0].context_tokens = Some(200_000);
-        assert_eq!(small.models_route().context_of("claude-fable-5-2"), 200_000);
+        assert_eq!(small.models_route().context_of("claude-opus-5-5"), 200_000);
         // what a machine's gateway gets in the boot reply is the same settings, less the sign-in (pigeon's)
         let again: Settings = serde_json::from_value(serde_json::to_value(&s).unwrap()).unwrap();
         assert_eq!(
@@ -246,7 +246,7 @@ mod tests {
         assert!(bad(&|v| v["models"] = serde_json::json!([])).contains("models is empty"));
         assert!(bad(&|v| v["product"]["name"] = serde_json::json!(" ")).contains("product.name"));
         assert!(
-            bad(&|v| v["models"][1]["id"] = serde_json::json!("claude-fable-5-2"))
+            bad(&|v| v["models"][1]["id"] = serde_json::json!("claude-opus-5-5"))
                 .contains("listed twice")
         );
         assert!(
