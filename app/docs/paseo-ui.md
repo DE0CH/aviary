@@ -368,7 +368,8 @@ The same `paseo/packages/app`, built natively once per deployment (`app.config.j
 **Jarvis Chat** (`jarvis-chat`, `dev.de0ch.jarvis4chat`, Jarvis 4's chat; the TestFlight record "Jarvis 4 Chat").
 A variant holds only what a build cannot ask its server: the home-screen name, the bundle id (also the URL scheme
 the sign-in returns to), the icon and launch image, the product's name before the server has said it, and the texts
-of iOS's permission prompts. What differs from the web build:
+of iOS's permission prompts. Jarvis Chat's icon (`assets/images/jarvis-chat-icon.png`: a chat bubble with the
+Jarvis 4 ring as a badge) is drawn by DE0CH/deyao-ai `infra/chat-icon.py --app-icon`. What differs from the web build:
 
 - **Server**: the build's `YYC_SITE` becomes `extra.yycSite` (`app.config.js`, `yyc/site.ts`). YYC AI's is a build
   secret (the repo is public, so its address appears nowhere in it or in CI logs); Jarvis Chat's is in the workflow.
