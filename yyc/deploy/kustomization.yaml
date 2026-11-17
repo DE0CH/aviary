@@ -32,7 +32,7 @@ images:
   # herald (aviary crates/herald): its own aviary commit, released with the others' CI
   - {name: herald, newName: ghcr.io/de0ch/herald, newTag: "e90075c4fcc1"}
   # the app bundle (DE0CH/claudecodeui pigeon-app.yml)
-  - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "a5e1d64e16a6"}
+  - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "22585fdaa91a"}
   # YYC Drive: the page and its server in one image (DE0CH/yyc-drive yyc-drive.yml)
   - {name: yyc-drive, newName: ghcr.io/de0ch/yyc-drive, newTag: "d2a997af87fc"}
   # egress and tools (DE0CH/jarvis3 chat.yml); the ZDR guard reads this tag (yyc-ai/tests/test_zdr.py)
