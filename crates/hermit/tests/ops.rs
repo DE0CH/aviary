@@ -333,7 +333,8 @@ async fn a_start_refused_at_a_quiet_persons_own_number_is_listed_but_is_no_failu
            (false, 900, '{BOT}', 'start_failed', 'placement failed', false)"
     ))
     .await;
-    let d = snapshot(h, &r.url, "UTC").await;
+    // another zone: the snapshot is cached 4 s per zone (ops::CACHE)
+    let d = snapshot(h, &r.url, "Asia/Hong_Kong").await;
     assert_eq!(d["recent"]["failedStarts"], 3, "{:#}", d["recent"]);
     assert_eq!(failed_listed(&d), 3, "{:#}", d["recent"]);
     assert!(
