@@ -21,6 +21,15 @@ use crate::{Core, ms};
 
 /// How a start ends when it does not reach `ready`.
 #[derive(Debug)]
+/// What a start found when it asked for its slot.
+enum Capacity {
+    Claimed(Box<SandboxRow>),
+    /// Every sandbox is in use, or an older start waits for the pool.
+    PoolFull,
+    /// The person already holds their own number of sandboxes (`sandbox.maxActiveByPerson`).
+    PersonFull,
+}
+
 struct Fail {
     reason: ReleaseReason,
     note: Option<String>,
@@ -197,23 +206,44 @@ impl Start {
             return self.next(SandboxPhase::Workspace, "", vec![]).await;
         }
         let max = i64::from(self.core.cfg.sandbox().max_active);
+        // a person's own number (`sandbox.maxActiveByPerson`), as jsonb for the queries: {address or *: number}
+        let by_person = serde_json::json!(self.core.cfg.sandbox().max_active_by_person);
+        let by_person = &by_person;
         let (id, owner) = (self.id(), self.claim.owner.clone());
         let owner = &owner; // borrowed: the transaction may run more than once (aviary_pg::tx!)
-        let claimed = aviary_pg::tx!(&self.core.pool, |t| -> Result<Option<SandboxRow>, aviary_pg::Error> {
+        let claimed = aviary_pg::tx!(&self.core.pool, |t| -> Result<Capacity, aviary_pg::Error> {
             t.execute(
                 "select pg_advisory_xact_lock($1::int4, $2::int4)",
                 &[&db::LOCK_CLASS, &db::LOCK_CAPACITY],
             )
             .await?;
-            // waiting rows are served oldest first
+            // waiting rows are served oldest first; a row that waits for its own person's number holds nobody up
             let older: i64 = t
                 .query_one(
                     "select count(*) from sandboxes s, sandboxes me where me.id = $1 and s.status = 'starting'
-                       and not s.slot_claimed and s.id <> me.id and s.created_at < me.created_at",
-                    &[&id],
+                       and not s.slot_claimed and s.id <> me.id and s.created_at < me.created_at
+                       and (select count(*) from sandboxes o
+                            where o.person = s.person and o.status <> 'gone' and o.slot_claimed)
+                           < coalesce(($2::jsonb ->> s.person)::bigint, ($2::jsonb ->> '*')::bigint,
+                                      9223372036854775807)",
+                    &[&id, by_person],
                 )
                 .await?
                 .try_get(0)?;
+            let own_full: bool = t
+                .query_one(
+                    "select (select count(*) from sandboxes o
+                             where o.person = me.person and o.status <> 'gone' and o.slot_claimed)
+                            >= coalesce(($2::jsonb ->> me.person)::bigint, ($2::jsonb ->> '*')::bigint,
+                                        9223372036854775807)
+                     from sandboxes me where me.id = $1",
+                    &[&id, by_person],
+                )
+                .await?
+                .try_get(0)?;
+            if own_full {
+                return Ok(Capacity::PersonFull);
+            }
             let live: i64 = t
                 .query_one(
                     "select count(*) from sandboxes where status <> 'gone' and slot_claimed",
@@ -222,7 +252,7 @@ impl Start {
                 .await?
                 .try_get(0)?;
             if older > 0 || live >= max {
-                return Ok(None);
+                return Ok(Capacity::PoolFull);
             }
             let n = t
                 .execute(
@@ -232,34 +262,40 @@ impl Start {
                 )
                 .await?;
             if n == 0 {
-                return Ok(None);
+                return Ok(Capacity::PoolFull);
             }
-            Ok(Some(bump(t, id).await?))
+            Ok(Capacity::Claimed(Box::new(bump(t, id).await?)))
         })
         .await;
-        match claimed {
-            Ok(Some(r)) => {
+        let own = match claimed {
+            Ok(Capacity::Claimed(r)) => {
                 self.core.live.apply(&r);
                 return Step::Next;
             }
-            Ok(None) => {}
+            Ok(Capacity::PoolFull) => false,
+            Ok(Capacity::PersonFull) => true,
             Err(e) => return e.into(),
-        }
+        };
         let waited = OffsetDateTime::now_utc() - row.created_at;
         if waited >= Duration::from_secs(u64::from(self.core.cfg.sandbox().capacity_wait_seconds)) {
             return Step::Fail(Fail::new(
                 ReleaseReason::PoolFull,
-                "no capacity: every sandbox is in use",
+                if own {
+                    "no capacity: this person's sandboxes are all in use"
+                } else {
+                    "no capacity: every sandbox is in use"
+                },
             ));
         }
-        self.ask_victim(row).await;
+        self.ask_victim(row, own).await;
         tokio::time::sleep(self.core.timings.capacity_retry).await;
         Step::Next
     }
 
     /// A pool victim (4.2): ready, not busy, no busy report for 90 s, idle for `poolVictimIdleSeconds`, its
-    /// reservation passed, no live claim, another conversation, oldest `last_active_at` first.
-    async fn ask_victim(&mut self, row: &SandboxRow) {
+    /// reservation passed, no live claim, another conversation, oldest `last_active_at` first. `own`: only a
+    /// sandbox of the same person (the start waits for that person's number, not for the pool).
+    async fn ask_victim(&mut self, row: &SandboxRow, own: bool) {
         let now = tokio::time::Instant::now();
         self.victims_skipped.retain(|_, until| *until > now);
         let skip: Vec<Uuid> = self.victims_skipped.keys().copied().collect();
@@ -280,8 +316,9 @@ impl Start {
                        and (task is null or task_until < now())
                        and release_pending is null
                        and not (id = any($4))
+                       and (not $5 or person = $6)
                      order by last_active_at limit 1",
-                    &[&row.conversation_id, &quiet, &idle, &skip],
+                    &[&row.conversation_id, &quiet, &idle, &skip, &own, &row.person],
                 )
                 .await
         }

@@ -84,6 +84,12 @@ pub struct SandboxJson {
     pub pids: u32,
     pub open_files: u32,
     pub max_active: u32,
+    /// How many live sandboxes one person may hold at a time, beside `maxActive` for everybody together: a
+    /// person's address (lowercase) to their number, `*` for everyone not named. A start over the number asks that
+    /// person's own idle sandboxes to give way, and is refused as busy when none does within
+    /// `capacityWaitSeconds`. Absent or empty = no limit per person.
+    #[serde(default)]
+    pub max_active_by_person: BTreeMap<String, u32>,
     pub idle_minutes: u32,
     pub max_lifetime_hours: u32,
     pub lifetime_grace_minutes: u32,
@@ -326,6 +332,17 @@ impl Config {
         ] {
             if v == 0 {
                 return Err(invalid(format!("sandbox.{name} must be positive")));
+            }
+        }
+        for (who, n) in &s.max_active_by_person {
+            let address = who.contains('@') && *who == who.trim().to_lowercase();
+            if !(who == "*" || address) {
+                return Err(invalid(format!(
+                    "sandbox.maxActiveByPerson: {who:?} is neither a lowercase address nor *"
+                )));
+            }
+            if *n == 0 {
+                return Err(invalid(format!("sandbox.maxActiveByPerson: {who:?} must be positive")));
             }
         }
         if !s.proxy.contains("{token}") || !s.proxy.contains("{vip}") {
@@ -584,6 +601,29 @@ mod tests {
         v["sandbox"]["idleMinute"] = 3.into();
         let e = serde_json::from_value::<HermitJson>(v).unwrap_err();
         assert!(e.to_string().contains("idleMinute"), "{e}");
+    }
+
+    #[test]
+    fn a_persons_number_of_sandboxes_is_positive_and_named_by_a_lowercase_address_or_a_star() {
+        let load = |by: serde_json::Value| {
+            let mut v: serde_json::Value = serde_json::from_str(EXAMPLE).unwrap();
+            v["sandbox"]["maxActiveByPerson"] = by;
+            Config::from_parts(serde_json::from_value(v).unwrap(), "i", "r", "t")
+        };
+        let c = load(serde_json::json!({"bot@example.net": 3, "*": 5})).unwrap();
+        assert_eq!(c.sandbox().max_active_by_person["bot@example.net"], 3);
+        assert_eq!(c.sandbox().max_active_by_person["*"], 5);
+        for bad in [
+            serde_json::json!({"bot@example.net": 0}),
+            serde_json::json!({"Bot@example.net": 3}),
+            serde_json::json!({"everyone": 3}),
+        ] {
+            let e = load(bad).unwrap_err().to_string();
+            assert!(e.contains("maxActiveByPerson"), "{e}");
+        }
+        let none: serde_json::Value = serde_json::from_str(EXAMPLE).unwrap();
+        let c = Config::from_parts(serde_json::from_value(none).unwrap(), "i", "r", "t").unwrap();
+        assert!(c.sandbox().max_active_by_person.is_empty());
     }
 
     #[test]

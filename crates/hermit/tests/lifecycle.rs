@@ -329,6 +329,44 @@ async fn the_pool_frees_the_least_recently_active_idle_sandbox_and_otherwise_ans
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_person_holds_at_most_their_own_number_of_sandboxes() {
+    const OTHER: &str = "other@example.org";
+    let cfg = common::config(|v| {
+        v["sandbox"]["maxActiveByPerson"] = json!({ STAFF: 2 });
+        v["sandbox"]["capacityWaitSeconds"] = 4.into();
+    });
+    let h = Harness::with("lifecycle_person_cap", cfg, common::timings()).await;
+    let r = h.replica("hermit-a").await;
+    let (c1, s1) = ready(&h, &r, STAFF).await;
+    let (c2, _s2) = ready(&h, &r, STAFF).await;
+    // a third of theirs waits though the pool has room; it holds nobody else up while it waits
+    let c3 = Uuid::now_v7();
+    assert_eq!(put(&h, &r, c3, STAFF).await.status, 202);
+    let (c4, _) = ready(&h, &r, OTHER).await;
+    assert_eq!(row(&h, c3).await.status, SandboxState::Starting);
+    // neither of theirs is idle (both reserved by their starts): sandbox_busy after capacityWaitSeconds
+    let gone = wait_state(&h, c3, SandboxState::Gone).await;
+    assert_eq!(gone.release_reason.as_deref(), Some("pool_full"));
+    assert_eq!(gone.release_code.as_deref(), Some("sandbox_busy"));
+    assert_eq!(row(&h, c1).await.status, SandboxState::Ready);
+    assert_eq!(row(&h, c2).await.status, SandboxState::Ready);
+    // an idle one of their own gives way to their next; another person's idle sandbox is never taken for it
+    age(&h, s1.id).await;
+    age(&h, row(&h, c4).await.id).await;
+    h.sql(&format!(
+        "update sandboxes set last_active_at = now() - interval '2 hours' where conversation_id = '{c4}'"
+    ))
+    .await;
+    let c5 = Uuid::now_v7();
+    assert_eq!(put(&h, &r, c5, STAFF).await.status, 202);
+    let gone = wait_state(&h, c1, SandboxState::Gone).await;
+    assert_eq!(gone.release_reason.as_deref(), Some("pool"));
+    wait_state(&h, c5, SandboxState::Ready).await;
+    assert_eq!(row(&h, c2).await.status, SandboxState::Ready);
+    assert_eq!(row(&h, c4).await.status, SandboxState::Ready);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn lifetime_defers_while_busy_and_the_hard_limit_forces() {
     let h = Harness::new("lifecycle_lifetime").await;
     let r = h.replica("hermit-a").await;
