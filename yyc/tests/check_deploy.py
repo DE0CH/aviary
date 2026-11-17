@@ -24,7 +24,7 @@ Each failure prints one line `<item> <object>: <why>`; exit 1 on any. What it as
      named by a managed skill as http://<name>/; tools routes only /v1/ (decision 15: REST, no /mcp); selfHosts holds
      hermit.json's egressVip; every ${VAR} in an inject is a key of Secret yyc-ai/egress; a route to a host outside
      YYC has identity: false, and a github.com one only /DE0CH/ paths and a Basic credential from the Secret
-  K  the managed CLAUDE.md, skills and title instructions fit hermit's bound (237,568 bytes as JSON);
+  K  the managed CLAUDE.md, skills and title instructions fit hermit's bound (40,960 bytes as JSON);
      managed skills (decision 15, WP-62): hermit.json prompt.skills is where hermit mounts ConfigMap hermit-skills;
      its items map each key <skill>.<file> to <skill>/<file>, and they, the ConfigMap's data and hermit/skills/ are the
      same files with the same bytes; each skill has a SKILL.md; no old-stack address (JARVIS_*, --noproxy)
@@ -370,7 +370,7 @@ def skill_files(folder):
     return out
 
 
-MANAGED_MAX_BYTES = 237568
+MANAGED_MAX_BYTES = 40960
 
 
 def check_skills(folder, objs, h):
@@ -392,7 +392,7 @@ def check_skills(folder, objs, h):
     want = {k.replace("/", ".", 1): v for k, v in files.items()}
     if data != want:
         fail("K", sid(cm), f"data {sorted(data)} differs from hermit/skills/ {sorted(want)} (keys or bytes)")
-    # hermit refuses a hermit.json whose managed CLAUDE.md, skills and title instructions are over 237,568 bytes as
+    # hermit refuses a hermit.json whose managed CLAUDE.md, skills and title instructions are over 40,960 bytes as
     # JSON (hermit-api MANAGED_MAX_BYTES; the new hermit Pod then never turns ready and the rollout fails after
     # 15 min, 2026-11-13). The same sum, from the files and the ConfigMap's skills
     base = os.path.join(folder, "hermit")
