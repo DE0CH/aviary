@@ -136,7 +136,8 @@ export async function main(): Promise<void> {
     guard: new AddressGuard(config.blockCidrs),
     budget,
   });
-  api = new EgressApi({ db, config, budget: config.budget ? budget : null, accept });
+  const proxy = egress;
+  api = new EgressApi({ db, config, budget: config.budget ? budget : null, accept, embed: (b) => proxy.embedQuery(b) });
   await egress.listen(PROXY_PORT);
   await api.listen(API_PORT);
   log("egress listening", { proxy: PROXY_PORT, api: API_PORT, selfHosts: config.selfHosts });

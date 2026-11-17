@@ -18,7 +18,7 @@ import { createSocket } from "node:dgram";
 import { HostPolicy, HostRules } from "../src/egress/allowlist.ts";
 import { EgressApi, acceptLists } from "../src/egress/api.ts";
 import { BudgetGate } from "../src/egress/budget.ts";
-import { modelPlan, modelsAnswer, parseEgressConfig, type EgressConfig } from "../src/egress/config.ts";
+import { allowedModels, modelPlan, modelsAnswer, parseEgressConfig, type EgressConfig } from "../src/egress/config.ts";
 import { EgressLog } from "../src/egress/egresslog.ts";
 import { isRequestId, uuidv7 } from "../src/egress/ids.ts";
 import { AddressGuard } from "../src/egress/netguard.ts";
@@ -77,7 +77,7 @@ function config(upstream: string, extra: Record<string, unknown> = {}): EgressCo
     titleModel: "vendor/claude-x",
     contextTokens: 1048576,
     routes: [
-      { name: "model", upstream: `${upstream}/api`, model: true, inject: { Authorization: "Bearer ${REAL_KEY}" }, allowPaths: ["/v1/messages", "/v1/chat/completions"] },
+      { name: "model", upstream: `${upstream}/api`, model: true, inject: { Authorization: "Bearer ${REAL_KEY}" }, allowPaths: ["/v1/messages", "/v1/chat/completions", "/v1/embeddings"] },
       { name: "tools", upstream, inject: { Authorization: "Bearer ${EGRESS_TOKEN_TOOLS}" }, allowPaths: ["/v1/"], timeoutSeconds: 180 },
       // a sandbox route (platform 3.11.8), as YYC's label store: its own credential and conversation header
       { name: "labels", upstream: `${upstream}/labels-up`, inject: { "CF-Access-Client-Id": "${LABELS_ID}", "CF-Access-Client-Secret": "${LABELS_SECRET}" }, allowPaths: ["/api/v1/"], identityHeaders: { "X-Jarvis-Conversation": "conversation" }, timeoutSeconds: 180 },
@@ -216,7 +216,7 @@ before(async () => {
         setTimeout(() => res.end('event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":2,"cost":0.0042}}\n\n'), 20);
         return;
       }
-      if (p === "/api/v1/messages" || p === "/api/v1/messages/count_tokens" || p === "/api/v1/chat/completions") {
+      if (p === "/api/v1/messages" || p === "/api/v1/messages/count_tokens" || p === "/api/v1/chat/completions" || p === "/api/v1/embeddings") {
         res.writeHead(200, { "content-type": "application/json" });
         return res.end(JSON.stringify({ echo: JSON.parse(body || "{}"), usage: { cost: 0.0123 } }));
       }
@@ -911,6 +911,54 @@ test("egress.json: a model's thinking levels are ordered, hold its own level, an
   assert.deepEqual(modelPlan(ok)["vendor/claude-x"]?.levels, ["none", "low", "high", "max"]);
   for (const bad of [{ reasoning: "high", thinking: [] }, { reasoning: "high", thinking: ["low", "none", "high"] }, { reasoning: "high", thinking: ["low", "low", "high"] }, { reasoning: "high", thinking: ["low", "huge", "high"] }, { reasoning: "medium", thinking: ["low", "high"] }, { thinking: ["low", "high"] }])
     assert.throws(() => parseEgressConfig(withModel(bad)), /thinking/, JSON.stringify(bad));
+});
+
+test("conversation search: egress.json's embedding model reaches the models answer and the allowed models; a sandbox's embeddings call gets zero data retention and the real key", async () => {
+  const withEmbedding = config("http://up.test", { embedding: { id: "qwen/qwen3-embedding-8b", queryInstruction: "Query: " } });
+  assert.deepEqual(modelsAnswer(withEmbedding).embedding, { id: "qwen/qwen3-embedding-8b", queryInstruction: "Query: " });
+  assert.equal("embedding" in modelsAnswer(config("http://up.test")), false, "absent: no member");
+  assert.ok(allowedModels(withEmbedding).includes("qwen/qwen3-embedding-8b"));
+  assert.throws(() => config("http://up.test", { embedding: { id: "" } }), /embedding.id/);
+  assert.throws(() => config("http://up.test", { embedding: { id: "m", queryInstruction: 3 } }), /queryInstruction/);
+  // the sandbox's call (this egress offers no embedding model, so the configured chat model stands in for the id check)
+  const r = await http("http://model/v1/embeddings", { method: "POST", headers: { ...pa(), "content-type": "application/json" }, body: JSON.stringify({ model: "vendor/claude-x", input: ["the shuttle bus"], dimensions: 1024, provider: { zdr: false } }) });
+  assert.equal(r.status, 200);
+  const echo = JSON.parse(r.body).echo;
+  assert.deepEqual(echo.provider, { zdr: true, data_collection: "deny" });
+  assert.deepEqual(echo.input, ["the shuttle bus"]);
+  assert.equal(upLastHeaders.authorization, "Bearer sk-real");
+  assert.equal((await http("http://model/v1/embeddings", { headers: pa() })).status, 403, "POST only");
+});
+
+test("conversation search: pigeon's query embedding through the in-cluster API, zero data retention forced, the embedding model only", async () => {
+  const cfgE = config(`http://127.0.0.1:${upPort}`, { embedding: { id: "qwen/qwen3-embedding-8b" } });
+  const e = new Egress(options({ db: t.db, cacheDir: join(tmp, "cache-embed"), config: cfgE }));
+  const accept = acceptLists({ EGRESS_ACCEPT_PIGEON: "pig", EGRESS_ACCEPT_HERMIT: "her", EGRESS_ACCEPT_ADMIN: "adm" });
+  const api = new EgressApi({ db: t.db, config: cfgE, budget: null, accept, embed: (b) => e.embedQuery(b) });
+  const p = await api.listen(0, "127.0.0.1");
+  const post = (bearer: string, body: unknown) => http("/v1/embeddings", { port: p, method: "POST", headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+  try {
+    const ok = await post("pig", { model: "qwen/qwen3-embedding-8b", input: ["Query: bus"], dimensions: 1024 });
+    assert.equal(ok.status, 200);
+    const echo = JSON.parse(ok.body).echo;
+    assert.deepEqual(echo.provider, { zdr: true, data_collection: "deny" });
+    assert.deepEqual(echo.input, ["Query: bus"]);
+    assert.equal(upLastHeaders.authorization, "Bearer sk-real");
+    assert.equal((await post("pig", { model: "vendor/claude-x", input: ["x"] })).status, 400, "only the embedding model");
+    assert.equal((await post("her", { model: "qwen/qwen3-embedding-8b", input: ["x"] })).status, 403);
+    assert.equal((await http("/v1/embeddings", { port: p, headers: { authorization: "Bearer pig" } })).status, 405);
+    // an egress with no embedding model
+    const plain = new EgressApi({ db: t.db, config: cfg, budget: null, accept });
+    const q = await plain.listen(0, "127.0.0.1");
+    try {
+      assert.equal((await http("/v1/embeddings", { port: q, method: "POST", headers: { authorization: "Bearer pig" }, body: "{}" })).status, 503);
+    } finally {
+      await plain.drain(100);
+    }
+  } finally {
+    await api.drain(100);
+    await e.drain();
+  }
 });
 
 test("model route: GET http://model/v1/aviary/models answers the R18 shape from egress.json", async () => {

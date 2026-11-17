@@ -8,6 +8,13 @@ import { expandEnv, type ReasoningEffort, type ModelPlan } from "../common/confi
 export const EGRESS_CONFIG_PATH = "/etc/egress/egress.json";
 const REASONING: ReadonlySet<string> = new Set(["none", "low", "medium", "high", "max"]);
 
+export interface EgressEmbedding {
+  /** an OpenRouter embedding model that gives 1024 values when asked (`dimensions`) */
+  id: string;
+  /** put before a search query (not before a message) */
+  queryInstruction?: string;
+}
+
 export interface EgressModel {
   id: string;
   label: string;
@@ -91,6 +98,9 @@ export interface EgressConfig {
   titleReasoning?: ReasoningEffort;
   /** the default model's context window in tokens (R18 `contextTokens`) */
   contextTokens: number;
+  /** the conversation search's embedding model (R18 `embedding`): the sandboxes embed their messages with it through
+   * `http://model/v1/embeddings`, pigeon a query through the in-cluster API; absent: the search matches words only */
+  embedding?: EgressEmbedding;
   routes: EgressRoute[];
   /** the proxy's own addresses: proxy-form requests to one of them (any port) are served locally (the mirror) */
   selfHosts: string[];
@@ -143,6 +153,10 @@ export function parseEgressConfig(raw: unknown): EgressConfig {
   if (!c.models.some((m: EgressModel) => m.id === c.defaultModel)) throw new Error("egress config: defaultModel must be one of models");
   if (c.titleReasoning !== undefined && !REASONING.has(c.titleReasoning)) throw new Error(`egress config: titleReasoning must be one of ${[...REASONING].join(", ")}`);
   if (!Number.isInteger(c.contextTokens) || c.contextTokens <= 0) throw new Error("egress config: contextTokens must be a positive integer");
+  if (c.embedding != null) {
+    need("embedding.id", c.embedding.id);
+    if (c.embedding.queryInstruction !== undefined && typeof c.embedding.queryInstruction !== "string") throw new Error("egress config: embedding.queryInstruction must be a string");
+  }
   if (!Array.isArray(c.routes)) throw new Error("egress config: routes must be a list");
   const routes: EgressRoute[] = [];
   for (const r of c.routes as Record<string, any>[]) {
@@ -193,6 +207,7 @@ export function parseEgressConfig(raw: unknown): EgressConfig {
     titleModel: typeof c.titleModel === "string" && c.titleModel ? c.titleModel : c.defaultModel,
     ...(c.titleReasoning ? { titleReasoning: c.titleReasoning } : {}),
     contextTokens: c.contextTokens,
+    ...(c.embedding != null ? { embedding: { id: c.embedding.id, ...(c.embedding.queryInstruction !== undefined ? { queryInstruction: c.embedding.queryInstruction } : {}) } } : {}),
     routes,
     selfHosts: strings(c.selfHosts, "selfHosts"),
     generatedAllowlist: c.generatedAllowlist !== false,
@@ -210,9 +225,10 @@ export function loadEgressConfig(path = EGRESS_CONFIG_PATH): EgressConfig {
   return parseEgressConfig(JSON.parse(readFileSync(path, "utf8")));
 }
 
-/** Every model id egress lets through (A6.F15): the offered models, the default, the small and the title model. */
+/** Every model id egress lets through (A6.F15): the offered models, the default, the small and the title model, and the
+ * conversation search's embedding model. */
 export function allowedModels(c: EgressConfig): string[] {
-  return [...new Set([...c.models.map((m) => m.id), c.defaultModel, c.smallModel, c.titleModel])];
+  return [...new Set([...c.models.map((m) => m.id), c.defaultModel, c.smallModel, c.titleModel, ...(c.embedding ? [c.embedding.id] : [])])];
 }
 
 /** Per model: thinking (`withTools` for chat turns, `withoutTools` for tool-less calls such as titles) and the pinned
@@ -227,12 +243,14 @@ export function modelPlan(c: EgressConfig): ModelPlan {
 }
 
 /** `GET /v1/aviary/models` (R18): for pigeon in-cluster and for sandboxes as `http://model/v1/aviary/models`. */
-export function modelsAnswer(c: EgressConfig): { default: string; small: string; title: string; contextTokens: number; models: Array<{ id: string; label: string; reasoning: ReasoningEffort | null; thinking: ReasoningEffort[]; harness?: Harness; visibleTo?: string[] }> } {
+export function modelsAnswer(c: EgressConfig): { default: string; small: string; title: string; contextTokens: number; models: Array<{ id: string; label: string; reasoning: ReasoningEffort | null; thinking: ReasoningEffort[]; harness?: Harness; visibleTo?: string[] }>; embedding?: EgressEmbedding } {
   return {
     default: c.defaultModel,
     small: c.smallModel,
     title: c.titleModel,
     contextTokens: c.contextTokens,
+    // the conversation search's model, only when there is one (an older reader sees no new member)
+    ...(c.embedding ? { embedding: { ...c.embedding } } : {}),
     // `thinking`: the levels a person may choose (empty: none), `reasoning` the one a conversation starts on
     // `harness` and `visibleTo` only when they say something: a Claude Code model for everyone reads as it always did
     models: c.models.map((m) => ({

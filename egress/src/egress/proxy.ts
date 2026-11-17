@@ -28,7 +28,7 @@ import { HostPolicy } from "./allowlist.ts";
 import { AddressGuard, GuardError, normHost } from "./netguard.ts";
 import { DnsRefusal, ThreatResolver } from "./threatdns.ts";
 import { exitConnect, ExitHttpsAgent, ExitRefusal, internalHost, type ExitConfig } from "./exit.ts";
-import { InvalidBody, ModelBodyRewriter } from "./modelbody.ts";
+import { FORCED_PROVIDER, InvalidBody, ModelBodyRewriter } from "./modelbody.ts";
 import { isRequestId, personKey, uuidv7 } from "./ids.ts";
 import { PROXY_REALM, presentedToken, type Claims, type SandboxTokens } from "./tokens.ts";
 
@@ -142,8 +142,9 @@ export function routed(name: FixedName, method: string, pathq: string): boolean 
     case "hermit":
       return path.startsWith("/v1/sandbox/");
     case "model":
-      // the Messages API (Claude Code) and OpenAI chat completions (Qwen Code)
-      return (method === "POST" && (path === "/v1/messages" || path === "/v1/messages/count_tokens" || path === "/v1/chat/completions")) || (method === "GET" && path === "/v1/aviary/models");
+      // the Messages API (Claude Code), OpenAI chat completions (Qwen Code) and the OpenAI embeddings API (the
+      // conversation search's vectors, which the supervisor makes)
+      return (method === "POST" && (path === "/v1/messages" || path === "/v1/messages/count_tokens" || path === "/v1/chat/completions" || path === "/v1/embeddings")) || (method === "GET" && path === "/v1/aviary/models");
     case "tools":
       // decision 15: the REST API, no MCP
       if (method === "GET") return path === "/v1/tools" || path === "/v1/openapi.json";
@@ -734,6 +735,58 @@ export class Egress {
           finish(null);
         }
       })();
+    });
+  }
+
+  /** pigeon's query embedding for the conversation search (the in-cluster API's `POST /v1/embeddings`): the
+   * configured embedding model only, zero data retention forced as on every model call, through the model route's
+   * upstream and credential (and the exit, as the sandboxes' calls). Its cost counts toward the budget. */
+  async embedQuery(body: Buffer): Promise<{ status: number; body: Buffer }> {
+    const refuse = (status: number, message: string) => ({ status, body: Buffer.from(JSON.stringify({ error: { type: "invalid_request_error", message } })) });
+    const model = this.#o.config.embedding?.id;
+    if (!model) return refuse(404, "egress: this deployment has no embedding model");
+    let req: Record<string, unknown>;
+    try {
+      const v: unknown = JSON.parse(body.toString("utf8"));
+      if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("not an object");
+      req = v as Record<string, unknown>;
+    } catch {
+      return refuse(400, "egress: the body is not a JSON object");
+    }
+    if (req.model !== model) return refuse(400, `egress: model ${String(req.model)} is not the embedding model`);
+    const refusal = await this.#modelRefusal(model);
+    if (refusal) return refuse(refusal.status, refusal.message);
+    const p = req.provider;
+    req.provider = { ...(p && typeof p === "object" && !Array.isArray(p) ? p : {}), ...FORCED_PROVIDER };
+    const route = this.#routes.model;
+    const up = new URL(route.upstream);
+    const injected = Object.fromEntries(Object.entries(route.inject).map(([k, v]) => [k.toLowerCase(), expandEnv(v, this.#o.env ?? process.env)]));
+    const out = Buffer.from(JSON.stringify(req));
+    const headers: OutgoingHttpHeaders = { ...injected, host: up.host, "content-type": "application/json", "content-length": String(out.length), "accept-encoding": "identity" };
+    const mk = up.protocol === "https:" ? httpsRequest : httpRequest;
+    const viaExit = this.#exitAgent && up.protocol === "https:" && !internalHost(up.hostname) ? { agent: this.#exitAgent } : {};
+    return await new Promise((resolve) => {
+      const r = mk({ protocol: up.protocol, hostname: up.hostname, port: up.port || undefined, method: "POST", path: `${up.pathname.replace(/\/$/, "")}/v1/embeddings`, headers, timeout: 20_000, ...viaExit }, (res) => {
+        const parts: Buffer[] = [];
+        res.on("data", (c: Buffer) => parts.push(c));
+        res.on("end", () => {
+          const answer = Buffer.concat(parts);
+          try {
+            const cost = (JSON.parse(answer.toString("utf8")) as { usage?: { cost?: unknown } }).usage?.cost;
+            if (typeof cost === "number" && Number.isFinite(cost)) this.#o.budget?.noteCost(cost);
+          } catch {
+            // an answer that is not JSON is passed on as it came
+          }
+          resolve({ status: res.statusCode ?? 502, body: answer });
+        });
+        res.on("error", () => resolve(refuse(502, "egress: the embedding model's answer broke off")));
+      });
+      r.on("timeout", () => r.destroy(new Error("timeout")));
+      r.on("error", (e) => {
+        logError("egress query embedding", e, {});
+        resolve(refuse(502, "egress: the embedding model is unreachable"));
+      });
+      r.end(out);
     });
   }
 

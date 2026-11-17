@@ -1,5 +1,6 @@
 // egress's in-cluster API on 8082 (aviary platform spec 3.11.7, 17.2 item 4), never reached by sandboxes:
 //   GET /v1/aviary/models                       pigeon, admin   (Service `model`; R18)
+//   POST /v1/embeddings                         pigeon          (the conversation search's query, Egress.embedQuery)
 //   GET /v1/ops/summary?tz=&recentMinutes=      hermit, admin   (15.3)
 //   GET /v1/admin/egress-log?conversation=&since=&limit=   admin
 // Callers present their pair tokens; egress reads EGRESS_ACCEPT_<CALLER> (comma-separated, current first) and compares
@@ -18,6 +19,7 @@ export const API_CALLERS: ApiCaller[] = ["pigeon", "hermit", "admin"];
 /** The route-to-caller table (in code, not configuration). */
 const ROUTES: Record<string, ApiCaller[]> = {
   "/v1/aviary/models": ["pigeon", "admin"],
+  "/v1/embeddings": ["pigeon"],
   "/v1/ops/summary": ["hermit", "admin"],
   "/v1/admin/egress-log": ["admin"],
 };
@@ -50,7 +52,12 @@ export interface ApiDeps {
   config: EgressConfig;
   budget: BudgetGate | null;
   accept: Record<ApiCaller, Buffer[]>;
+  /** the conversation search's query embedding (Egress.embedQuery); absent: 503 */
+  embed?: (body: Buffer) => Promise<{ status: number; body: Buffer }>;
 }
+
+/** A query embedding's request body at most: one short text. */
+const EMBED_BODY_MAX = 64 * 1024;
 
 export class EgressApi {
   readonly server: Server;
@@ -101,6 +108,22 @@ export class EgressApi {
     res.end(b);
   }
 
+  async #embeddings(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== "POST") return this.#send(res, 405, { code: "method_not_allowed", message: "POST only" }, { allow: "POST" });
+    if (!this.#d.embed) return this.#send(res, 503, { code: "unavailable", message: "no query embeddings here" });
+    const parts: Buffer[] = [];
+    let size = 0;
+    for await (const c of req) {
+      size += (c as Buffer).length;
+      if (size > EMBED_BODY_MAX) return this.#send(res, 413, { code: "too_large", message: "a query's embedding is one short text" });
+      parts.push(c as Buffer);
+    }
+    const r = await this.#d.embed(Buffer.concat(parts));
+    if (res.headersSent) return void res.destroy();
+    res.writeHead(r.status, { "content-type": "application/json", "content-length": String(r.body.length), "cache-control": "no-store", ...(this.draining ? { connection: "close" } : {}) });
+    res.end(r.body);
+  }
+
   async #handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const u = new URL(req.url ?? "/", "http://egress");
     const allowed = ROUTES[u.pathname];
@@ -108,6 +131,7 @@ export class EgressApi {
     const caller = callerOf(req, this.#d.accept);
     if (!caller) return this.#send(res, 401, { code: "unauthenticated", message: "a caller's bearer token is needed" }, { "www-authenticate": "Bearer" });
     if (!allowed.includes(caller)) return this.#send(res, 403, { code: "wrong_caller", message: `this route is not for ${caller}` });
+    if (u.pathname === "/v1/embeddings") return this.#embeddings(req, res);
     if (req.method !== "GET") return this.#send(res, 405, { code: "method_not_allowed", message: "GET only" }, { allow: "GET" });
     const q = u.searchParams;
     switch (u.pathname) {
