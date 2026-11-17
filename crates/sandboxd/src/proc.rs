@@ -133,6 +133,7 @@ fn resolve(cmd: &str, out: &mut [u8]) -> Option<()> {
     None
 }
 
+#[derive(Clone, Copy)]
 pub struct Child {
     pub pid: i32,
     pub stdout: i32,
@@ -435,57 +436,149 @@ pub fn quiet(argv: &[&str]) -> i32 {
     }
 }
 
-/// `a | b` (stdout of a into stdin of b, directly; nothing passes through sandboxd). Errors carry both stderrs.
+/// The most stages a pipeline has.
+pub const MAX_STAGES: usize = 4;
+
+/// A pipeline running in the background, `stages[0] | stages[1] | …` (each stage's stdout straight into the next one's
+/// stdin; nothing passes through sandboxd), started by [`start_pipeline`] and ended by [`Pipeline::finish`].
+pub struct Pipeline {
+    kids: [Child; MAX_STAGES],
+    names: [Str<32>; MAX_STAGES],
+    n: usize,
+}
+
+/// Starts `stages`, each `(argv, extra_env)`: a stage's environment is its own (a key for one stage only).
+pub fn start_pipeline(stages: &[(&[&str], &[&str])]) -> Res<Pipeline> {
+    if stages.is_empty() || stages.len() > MAX_STAGES {
+        return Err(Error::new(500, "bad pipeline"));
+    }
+    let mut p = Pipeline {
+        kids: [Child { pid: 0, stdout: -1, stderr: -1 }; MAX_STAGES],
+        names: [Str::new(); MAX_STAGES],
+        n: 0,
+    };
+    let mut prev_r = -1;
+    for (i, (argv, env)) in stages.iter().enumerate() {
+        let last = i + 1 == stages.len();
+        let (r, w) = if last { (-1, -1) } else { pipe()? };
+        let stdin = if prev_r >= 0 { Io::Fd(prev_r) } else { Io::Null };
+        let stdout = if last { Io::Null } else { Io::Fd(w) };
+        let c = spawn(argv, env, stdin, stdout, Io::Pipe);
+        close(prev_r);
+        close(w);
+        match c {
+            Ok(c) => {
+                p.kids[i] = c;
+                let _ = p.names[i].push(argv.first().map_or("", |a| a.rsplit('/').next().unwrap_or(a)));
+                // sandboxd's own stages (`/proc/self/exe seal`) by their subcommand
+                if argv.first().is_some_and(|a| a.ends_with("/exe"))
+                    && let Some(sub) = argv.get(1)
+                {
+                    p.names[i] = Str::new();
+                    let _ = p.names[i].push(sub);
+                }
+                p.n = i + 1;
+            }
+            Err(e) => {
+                close(r);
+                p.abort();
+                return Err(e);
+            }
+        }
+        prev_r = r;
+    }
+    Ok(p)
+}
+
+impl Pipeline {
+    /// Waits for every stage, the last first (it ends when its input ends); once one fails the earlier ones are
+    /// killed. Err names each stage's exit and stderr.
+    pub fn finish(self, timeout_ms: u64) -> Res<()> {
+        let mut codes = [0i32; MAX_STAGES];
+        let mut errs = [Str::<300>::new(); MAX_STAGES];
+        let mut failed = false;
+        for i in (0..self.n).rev() {
+            if failed {
+                kill(self.kids[i].pid);
+            }
+            let mut none = [0u8; 0];
+            let o = collect(&self.kids[i], &mut none, if failed { 5_000 } else { timeout_ms });
+            codes[i] = o.code;
+            let _ = errs[i].push(o.err.as_str().trim());
+            if o.code != 0 {
+                failed = true;
+            }
+        }
+        if !failed {
+            return Ok(());
+        }
+        let mut e = Error::new(500, "");
+        for i in 0..self.n {
+            let _ = core::fmt::Write::write_fmt(
+                &mut e.msg,
+                format_args!(
+                    "{}{}: exit {}{}{}",
+                    if i == 0 { "" } else { " | " },
+                    self.names[i].as_str(),
+                    codes[i],
+                    if errs[i].as_str().is_empty() { "" } else { ": " },
+                    errs[i].as_str()
+                ),
+            );
+        }
+        Err(e)
+    }
+
+    /// Kills every stage and reaps it.
+    pub fn abort(&self) {
+        for k in &self.kids[..self.n] {
+            kill(k.pid);
+            wait(k.pid, true);
+            close(k.stdout);
+            close(k.stderr);
+        }
+    }
+}
+
+/// `a | b`, run to its end. Errors carry both stderrs.
 pub fn pipeline(a: &[&str], a_env: &[&str], b: &[&str], timeout_ms: u64) -> Res<()> {
-    let (r, w) = pipe()?;
-    let ca = match spawn(a, a_env, Io::Null, Io::Fd(w), Io::Pipe) {
-        Ok(c) => c,
-        Err(e) => {
-            close(r);
-            close(w);
-            return Err(e);
-        }
-    };
-    close(w);
-    let cb = match spawn(b, &[], Io::Fd(r), Io::Null, Io::Pipe) {
-        Ok(c) => c,
-        Err(e) => {
-            close(r);
-            kill(ca.pid);
-            wait(ca.pid, true);
-            return Err(e);
-        }
-    };
-    close(r);
-    // b first: it ends when a's output ends (or a dies); then a
-    let mut none = [0u8; 0];
-    let ob = collect(&cb, &mut none, timeout_ms);
-    if ob.code != 0 {
-        kill(ca.pid);
-    }
-    let mut none2 = [0u8; 0];
-    let oa = collect(&ca, &mut none2, if ob.code != 0 { 5_000 } else { timeout_ms });
-    if oa.code != 0 || ob.code != 0 {
-        let mut e = Error::new(500, a[0]);
-        let _ = core::fmt::Write::write_fmt(
-            &mut e.msg,
-            format_args!(
-                " | {}: exit {}/{}: {} {}",
-                b[0],
-                oa.code,
-                ob.code,
-                oa.err.as_str().trim(),
-                ob.err.as_str().trim()
-            ),
-        );
-        return Err(e);
-    }
-    Ok(())
+    start_pipeline(&[(a, a_env), (b, &[])])?.finish(timeout_ms)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pipeline_passes_data_through_every_stage_and_names_the_one_that_failed() {
+        let dir = std::env::temp_dir().join(format!("sbx-pipe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("out");
+        let o = out.to_str().unwrap();
+        let w = format!("cat > {o}");
+        // three stages, the middle one with an environment of its own
+        start_pipeline(&[
+            (&["printf", "hello"], &[]),
+            (&["sh", "-c", "tr a-z A-Z; printf \" $K\""], &["K=only-here"]),
+            (&["sh", "-c", w.as_str()], &[]),
+        ])
+        .ok()
+        .unwrap()
+        .finish(5_000)
+        .ok()
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "HELLO only-here");
+        // a failing stage: the error names it and its stderr
+        let e =
+            start_pipeline(&[(&["printf", "x"], &[]), (&["sh", "-c", "cat >/dev/null; echo broke >&2; exit 4"], &[])])
+                .ok()
+                .unwrap()
+                .finish(5_000)
+                .err()
+                .unwrap();
+        assert!(e.msg.as_str().contains("sh: exit 4: broke"), "{}", e.msg.as_str());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn runs_and_bounds_output() {
