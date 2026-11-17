@@ -72,9 +72,9 @@ struct EmbeddingsAnswer {
     data: Vec<EmbeddingItem>,
 }
 
-/// The embeddings call's body for `texts`: the fastest host first (`provider.sort`, `OpenRouter`'s routing; a search
-/// waits for its query's vector, and an embedding model's hosts answer the same vector), which a gateway may add to
-/// (YYC's forces zero data retention beside it).
+/// The embeddings call's body for `texts`: the fastest host first (`provider.sort: latency`, the model provider's
+/// routing; a search waits for its query's vector, and an embedding model's hosts answer the same vector), which a
+/// gateway may add to (zero data retention beside it, say).
 #[must_use]
 pub fn embeddings_request(model: &str, texts: &[String]) -> serde_json::Value {
     serde_json::json!({
