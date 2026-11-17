@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 aviary-core = { path = "../aviary-core" }
 axum.workspace = true
+http-body-util.workspace = true
 reqwest = { workspace = true, features = ["query"] }
 serde.workspace = true
 serde_json.workspace = true
@@ -16,6 +17,7 @@ time.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+futures-util.workspace = true
 rustls.workspace = true
 tokio.workspace = true
 

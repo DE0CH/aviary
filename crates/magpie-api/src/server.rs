@@ -197,17 +197,44 @@ impl<S: Send + Sync, T: DeserializeOwned + Send> FromRequestParts<S> for P<T> {
     }
 }
 
-/// A JSON body parsed into a contract type, whatever its `Content-Type`; an empty body reads as `{}`.
+/// The largest JSON body a route takes: over it the answer is 413 `too_large` before the body is read. A JSON body
+/// is read whole and then parsed, both outside the service's memory budget for buffered bodies, so it must stay
+/// small: the largest the contract knows is a turn's text ([`crate::turns::TURN_TEXT_MAX_BYTES`], 1 MiB) with its
+/// references, and a batch of live frames. The service's own body limit (64 MiB in magpie) is for the routes that
+/// take a raw body (an upload, a sandbox blob, a cc write), which read it under that budget and check their own cap.
+pub const JSON_BODY_MAX: usize = 8 << 20;
+
+/// A JSON body parsed into a contract type, whatever its `Content-Type`; an empty body reads as `{}`. At most
+/// [`JSON_BODY_MAX`] bytes.
 #[derive(Debug)]
 pub struct J<T>(pub T);
 
 impl<S: Send + Sync, T: DeserializeOwned> FromRequest<S> for J<T> {
     type Rejection = ApiError;
 
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let bytes = Bytes::from_request(req, state)
-            .await
-            .map_err(|e| ApiError::bad_request(format!("body: {e}")))?;
+    async fn from_request(req: Request, _state: &S) -> Result<Self, Self::Rejection> {
+        let too_large = || ApiError::too_large(format!("a JSON body is at most {JSON_BODY_MAX} bytes"));
+        let declared = req
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok());
+        if declared.is_some_and(|n| n > JSON_BODY_MAX as u64) {
+            return Err(too_large());
+        }
+        // a body with no declared length is cut at the limit as it arrives
+        let bytes: Bytes = match axum::body::to_bytes(req.into_body(), JSON_BODY_MAX).await {
+            Ok(b) => b,
+            Err(e) => {
+                let over = std::error::Error::source(&e)
+                    .is_some_and(<dyn std::error::Error>::is::<http_body_util::LengthLimitError>);
+                return Err(if over {
+                    too_large()
+                } else {
+                    ApiError::bad_request(format!("body: {e}"))
+                });
+            }
+        };
         let bytes: &[u8] = if bytes.iter().all(u8::is_ascii_whitespace) {
             b"{}"
         } else {

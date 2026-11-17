@@ -370,6 +370,9 @@ What a caller can rely on, beyond the shapes:
   codes are lower_snake_case (`errors::ErrorCode`, each with its status). magpie returns codes, never sentences.
 - **Skew.** An unknown event kind, row kind, change type, command type or code reads as `Unknown`/`Other` and is
   skipped (an unknown command is acked `{"result": {"error": "unsupported"}}`).
+- **Body sizes.** A JSON body is at most 8 MiB (`server::JSON_BODY_MAX`; over it 413 `too_large`, before the body
+  is read when its length is declared). The routes that take a raw body (an upload, a sandbox blob, a cc write)
+  have their own caps, up to magpie's 64 MiB per request.
 
 ## The sandboxd contract
 

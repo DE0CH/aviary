@@ -3187,6 +3187,8 @@ version = "0.0.0"
 dependencies = [
  "aviary-core",
  "axum",
+ "futures-util",
+ "http-body-util",
  "reqwest",
  "rustls",
  "serde",

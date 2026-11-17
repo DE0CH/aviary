@@ -110,7 +110,8 @@ pub const STATEMENT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const UNAVAILABLE_RETRY_AFTER_S: u64 = 1;
 
 /// Request bodies, every route: the largest any route takes (an upload, 50 MiB, with headroom). Routes with a
-/// smaller limit (a cc write: 16 MiB) check their own.
+/// smaller limit check their own (a cc write: 16 MiB; every JSON body: `magpie_api::server::JSON_BODY_MAX`, 8 MiB,
+/// read and parsed outside the buffered-body budget below).
 pub const BODY_MAX: usize = 64 << 20;
 /// Drain: in-flight requests are given this long to finish (magpie 18.3).
 pub const DRAIN_IN_FLIGHT: Duration = Duration::from_secs(30);
