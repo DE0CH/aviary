@@ -778,16 +778,14 @@ async fn the_conversation_says_when_its_next_schedule_fires() {
             .filter(|c| c.conversation_id == id && matches!(c.body, ChangeBody::ConversationUpserted { .. }))
             .count()
     };
-    let feed = |after: u64| {
-        async move {
-            app.changes(&ChangesQuery {
-                after: After::Seq(after),
-                limit: None,
-                wait_ms: None,
-            })
-            .await
-            .unwrap()
-        }
+    let feed = |after: u64| async move {
+        app.changes(&ChangesQuery {
+            after: After::Seq(after),
+            limit: None,
+            wait_ms: None,
+        })
+        .await
+        .unwrap()
     };
     assert_eq!(next_of(app.get_conversation(conv).await.unwrap()), None);
     let mut seq = head(
@@ -805,17 +803,27 @@ async fn the_conversation_says_when_its_next_schedule_fires() {
     let r = feed(seq).await;
     assert_eq!(upserts_of(&r, conv), 1, "arming is a change of the conversation");
     seq = r.head_seq;
-    let daily = ai.sandbox(None).create_schedule(&cron("早報", "30 8 * * *")).await.unwrap();
+    let daily = ai
+        .sandbox(None)
+        .create_schedule(&cron("早報", "30 8 * * *"))
+        .await
+        .unwrap();
     seq = feed(seq).await.head_seq;
     let at = |s: &magpie_api::schedules::Schedule| {
-        time::OffsetDateTime::parse(s.next.as_deref().unwrap(), &time::format_description::well_known::Rfc3339)
-            .unwrap()
-            .unix_timestamp()
+        time::OffsetDateTime::parse(
+            s.next.as_deref().unwrap(),
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap()
+        .unix_timestamp()
     };
     let soonest = at(&once).min(at(&daily));
     assert_eq!(next_of(app.get_conversation(conv).await.unwrap()), Some(soonest));
     // the list says it too, and another conversation of the person has none
-    let list = app.list_conversations(&magpie_api::conversations::ListQuery::default()).await.unwrap();
+    let list = app
+        .list_conversations(&magpie_api::conversations::ListQuery::default())
+        .await
+        .unwrap();
     let in_list = |id: Uuid| list.conversations.iter().find(|c| c.id == id).cloned().unwrap();
     assert_eq!(next_of(in_list(conv)), Some(soonest));
     assert_eq!(next_of(in_list(other)), None);
@@ -832,7 +840,11 @@ async fn the_conversation_says_when_its_next_schedule_fires() {
         .await
         .unwrap();
     let r = feed(seq).await;
-    assert_eq!(upserts_of(&r, conv), 1, "a change of a schedule is a change of the conversation");
+    assert_eq!(
+        upserts_of(&r, conv),
+        1,
+        "a change of a schedule is a change of the conversation"
+    );
     seq = r.head_seq;
     assert_eq!(next_of(app.get_conversation(conv).await.unwrap()), Some(at(&daily)));
 
@@ -857,7 +869,10 @@ async fn the_conversation_says_when_its_next_schedule_fires() {
     seq = feed(seq).await.head_seq;
     w.due(&once.id, Duration::ZERO).await;
     assert_eq!(w.pass().await, 1);
-    assert!(upserts_of(&feed(seq).await, conv) >= 1, "a fire is a change of the conversation");
+    assert!(
+        upserts_of(&feed(seq).await, conv) >= 1,
+        "a fire is a change of the conversation"
+    );
     assert_eq!(next_of(app.get_conversation(conv).await.unwrap()), None);
 }
 
@@ -877,7 +892,13 @@ async fn a_repeating_schedule_can_start_later() {
     };
     // three days ahead, on the hour (UTC)
     let now = time::OffsetDateTime::now_utc();
-    let start = (now + time::Duration::days(3)).replace_minute(0).unwrap().replace_second(0).unwrap().replace_nanosecond(0).unwrap();
+    let start = (now + time::Duration::days(3))
+        .replace_minute(0)
+        .unwrap()
+        .replace_second(0)
+        .unwrap()
+        .replace_nanosecond(0)
+        .unwrap();
     let s = ai
         .sandbox(None)
         .create_schedule(&CreateSchedule {
@@ -889,14 +910,21 @@ async fn a_repeating_schedule_can_start_later() {
         })
         .await
         .unwrap();
-    assert_eq!(parse(s.next.as_deref().unwrap()), start.unix_timestamp(), "the first fire is at from");
+    assert_eq!(
+        parse(s.next.as_deref().unwrap()),
+        start.unix_timestamp(),
+        "the first fire is at from"
+    );
     assert_eq!(parse(s.from.as_deref().unwrap()), start.unix_timestamp());
     assert!(s.describe.contains("起"), "{}", s.describe);
     // fired: the next is an hour later
     w.due(&s.id, Duration::ZERO).await;
     assert_eq!(w.pass().await, 1);
     let g = ai.sandbox(None).get_schedule(&s.id).await.unwrap();
-    assert!(parse(g.next.as_deref().unwrap()) <= now.unix_timestamp() + 3600 + 60, "after a fire the rule goes on hourly");
+    assert!(
+        parse(g.next.as_deref().unwrap()) <= now.unix_timestamp() + 3600 + 60,
+        "after a fire the rule goes on hourly"
+    );
     // from removed: the next on-the-hour time from now
     let s2 = ai
         .sandbox(None)
@@ -920,7 +948,11 @@ async fn a_repeating_schedule_can_start_later() {
         )
         .await
         .unwrap();
-    assert!(parse(u.next.as_deref().unwrap()) <= now.unix_timestamp() + 3600 + 60, "{:?}", u.next);
+    assert!(
+        parse(u.next.as_deref().unwrap()) <= now.unix_timestamp() + 3600 + 60,
+        "{:?}",
+        u.next
+    );
     assert_eq!(u.from, None);
     // a one-off takes no from
     let e = ai

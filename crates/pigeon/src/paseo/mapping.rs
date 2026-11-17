@@ -1076,10 +1076,16 @@ mod tests {
         let task = |id: &str| json!({"taskId": id, "type": "local_bash", "description": "cargo test"});
         let held = json!({"state": "held", "background": [task("a"), task("b")]});
         let w = workspace_descriptor(&conv(held.clone(), Value::Null, Value::Null), &view);
-        assert_eq!((&w["status"], &w["backgroundTasks"], &w["nextScheduleAt"]), (&json!("done"), &json!(2), &Value::Null));
+        assert_eq!(
+            (&w["status"], &w["backgroundTasks"], &w["nextScheduleAt"]),
+            (&json!("done"), &json!(2), &Value::Null)
+        );
         let idle = json!({"state": "idle", "background": []});
         let w = workspace_descriptor(&conv(idle, Value::Null, json!("2026-11-17T06:30:00Z")), &view);
-        assert_eq!((&w["backgroundTasks"], &w["nextScheduleAt"]), (&json!(0), &json!("2026-11-17T06:30:00.000Z")));
+        assert_eq!(
+            (&w["backgroundTasks"], &w["nextScheduleAt"]),
+            (&json!(0), &json!("2026-11-17T06:30:00.000Z"))
+        );
         let turn = json!({"id": uuid::Uuid::nil(), "startedAt": "2026-11-17T04:00:00Z", "origin": "person"});
         let w = workspace_descriptor(&conv(held, turn, Value::Null), &view);
         assert_eq!((&w["status"], &w["backgroundTasks"]), (&json!("running"), &json!(0)));
