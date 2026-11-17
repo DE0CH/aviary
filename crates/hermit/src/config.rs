@@ -118,6 +118,22 @@ pub struct SandboxJson {
     pub drive: Option<String>,
 }
 
+/// `sandbox.maxActiveByPerson`: each name a lowercase address or `*`, each number positive.
+fn by_person_rules(by: &BTreeMap<String, u32>) -> Result<(), ConfigError> {
+    for (who, n) in by {
+        let address = who.contains('@') && *who == who.trim().to_lowercase();
+        if !(who == "*" || address) {
+            return Err(invalid(format!(
+                "sandbox.maxActiveByPerson: {who:?} is neither a lowercase address nor *"
+            )));
+        }
+        if *n == 0 {
+            return Err(invalid(format!("sandbox.maxActiveByPerson: {who:?} must be positive")));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkspaceJson {
@@ -334,17 +350,7 @@ impl Config {
                 return Err(invalid(format!("sandbox.{name} must be positive")));
             }
         }
-        for (who, n) in &s.max_active_by_person {
-            let address = who.contains('@') && *who == who.trim().to_lowercase();
-            if !(who == "*" || address) {
-                return Err(invalid(format!(
-                    "sandbox.maxActiveByPerson: {who:?} is neither a lowercase address nor *"
-                )));
-            }
-            if *n == 0 {
-                return Err(invalid(format!("sandbox.maxActiveByPerson: {who:?} must be positive")));
-            }
-        }
+        by_person_rules(&s.max_active_by_person)?;
         if !s.proxy.contains("{token}") || !s.proxy.contains("{vip}") {
             return Err(invalid("sandbox.proxy must contain {token} and {vip}"));
         }
