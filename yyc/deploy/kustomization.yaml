@@ -15,6 +15,7 @@ resources:
   - hermit/hermit.yaml
   - hermit/fabric.yaml
   - hermit/juicefs.yaml
+  - hermit/pg-forward.yaml
   - egress/egress.yaml
   - tools/tools.yaml
   - herald/herald.yaml
@@ -72,6 +73,10 @@ configMapGenerator:
   - name: hermit-gateway
     namespace: yyc-ai-fabric
     files: [hermit/gateway-host.json]
+  # pg-forward's HAProxy configuration: hashed, so a change rolls it
+  - name: pg-forward-config
+    namespace: yyc-ai
+    files: [hermit/pg-forward.cfg]
   - name: egress-config
     namespace: yyc-ai
     files: [egress/egress.json]

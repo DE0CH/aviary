@@ -41,6 +41,9 @@ Each failure prints one line `<item> <object>: <why>`; exit 1 on any. What it as
      sandbox.maxActive, and the host's disk fabric.aws.diskGiB (aviary infra.sh's 40 when absent) holds N scratch
      filesystems of sandbox.tmpGiB in full beside 16 GiB for the system and the image
   W  magpie-pg (news-stream/deploy/clusters/talos/db/magpie-pg.yaml) keeps min_wal_size >= 1GB and max_wal_size >= 2GB
+  L  the balancer (a Service of type LoadBalancer): each port's targetPort is a name, and exactly one of the
+     workloads its selector takes declares a container port of that name: the ports of one balancer lead to
+     different workloads (the proxy to egress, the hosts' database port to pg-forward), never to both or to none
   A  addresses: the access catalogue is people's mail addresses, so it is a Secret sealed from the store
      (infra/secrets.txt, YYC_CATALOGUE_JSON), never a file or a ConfigMap of this folder: a workload's volume
      `catalogue` is a Secret, no ConfigMap of the render and no .json file of the folder is a catalogue (JSON with a
@@ -49,7 +52,8 @@ Each failure prints one line `<item> <object>: <why>`; exit 1 on any. What it as
 import argparse, json, os, re, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-GRACE = {"pigeon": 320, "magpie": 75, "hermit": 90, "egress": 625, "tools": 180, "herald": 330, "drive": 120, "cloudflared": 200}
+GRACE = {"pigeon": 320, "magpie": 75, "hermit": 90, "egress": 625, "tools": 180, "herald": 330, "drive": 120, "cloudflared": 200,
+         "pg-forward": 60}
 NO_PRESTOP = {"cloudflared"}
 BRIDGE_CALLEES = {"pigeon": 12, "hermit": 12}
 GATEWAY_FIELDS = ["name", "wgAddress", "hostCidr", "controlCidr", "sandboxCidr", "egressVip", "privateGateway", "podCidr"]
@@ -262,6 +266,25 @@ def check_selectors(objs):
         elif o["kind"] == "Service" and o["spec"].get("selector"):
             if not matches(ns, o["spec"]["selector"]):
                 fail(6, sid(o), f"selector {o['spec']['selector']} matches no workload")
+
+
+def check_balancer(objs):
+    for svc in objs:
+        if svc["kind"] != "Service" or svc["spec"].get("type") != "LoadBalancer":
+            continue
+        ns, sel = svc["metadata"].get("namespace"), svc["spec"].get("selector") or {}
+        taken = [o for o in objs if pod_spec(o) is not None and o["metadata"].get("namespace") == ns
+                 and all(pod_labels(o).get(k) == v for k, v in sel.items())]
+        for port in svc["spec"].get("ports", []):
+            tp = port.get("targetPort")
+            if not isinstance(tp, str):
+                fail("L", sid(svc), f"port {port.get('port')}: targetPort {tp!r} is not a port name")
+                continue
+            have = [o["metadata"]["name"] for o in taken
+                    if any(cp.get("name") == tp for c in pod_spec(o)["containers"] for cp in c.get("ports", []))]
+            if len(have) != 1:
+                fail("L", sid(svc), f"port {port.get('port')} ({tp}): declared by {have or 'no workload'} "
+                                    "of the selected workloads (exactly one)")
 
 
 def clean_prefix(p):
@@ -618,6 +641,7 @@ def main():
         if o["kind"] == "Deployment" and o["metadata"]["name"] == "pigeon":
             check_pigeon_sizes(o)
     check_selectors(objs)
+    check_balancer(objs)
     check_tools_out(objs)
     h = check_egress(folder, secrets)
     check_skills(folder, objs, h)

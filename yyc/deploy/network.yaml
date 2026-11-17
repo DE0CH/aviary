@@ -27,7 +27,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: {name: postgres-shared, namespace: yyc-ai}
 spec:
-  podSelector: {matchExpressions: [{key: app, operator: In, values: [hermit, egress, tools]}]}
+  podSelector: {matchExpressions: [{key: app, operator: In, values: [hermit, egress, tools, pg-forward]}]}
   policyTypes: [Egress]
   egress:
     # Cluster pg on this cluster since T5 (pg-shared's endpoint is its primary pod)

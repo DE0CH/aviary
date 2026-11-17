@@ -24,7 +24,8 @@ spec:
     rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
   template:
     metadata:
-      labels: {app: egress}
+      # sandbox-lb: what Service egress-lb (the balancer in network yyc) selects, beside pg-forward's pods
+      labels: {app: egress, sandbox-lb: "true"}
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false

@@ -206,6 +206,21 @@ class Seeded(unittest.TestCase):
     def test_pigeon_init_memory(self):
         self.expect(lambda o: find(o, "Deployment", "pigeon")["spec"]["template"]["spec"]["initContainers"][0]["resources"]["limits"].update(memory="32Mi"), "S", "page cache")
 
+    def test_balancer_port_is_a_name(self):
+        # the balancer's ports are told apart by their target port's name: a number would reach every selected pod
+        def m(objs):
+            find(objs, "Service", "egress-lb")["spec"]["ports"][0]["targetPort"] = 3128
+        self.expect(m, "L", "is not a port name")
+
+    def test_balancer_port_reaches_one_workload(self):
+        # a second workload that declares the proxy's port name behind the balancer would get the sandboxes' proxy
+        # connections too
+        def m(objs):
+            f = find(objs, "Deployment", "pg-forward")
+            f["spec"]["template"]["metadata"]["labels"].update(find(objs, "Service", "egress-lb")["spec"]["selector"])
+            container(f, "haproxy")["ports"].append({"name": "proxy", "containerPort": 3128})
+        self.expect(m, "L", "exactly one")
+
     def test_policy_selector(self):
         self.expect(lambda o: find(o, "NetworkPolicy", "tools-in")["spec"]["podSelector"]["matchLabels"].update(app="toolz"), 6, "matches no workload")
 
