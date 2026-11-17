@@ -260,6 +260,15 @@ offset, its end, under the message its thread is streaming; a tool input's JSON 
 `run_live` sends them every 120 ms in one request per turn, numbered per turn. They are best effort: a batch magpie
 does not take is dropped, and the next one starts with a `gap` frame.
 
+**A continuation** (`start_turn.continueLast`, Deyao, 2026-11-17; magpie's `POST /v1/admin/conversations/{id}/continue`,
+docs/HARNESSES.md "Going on from a turn that was cut off"): the turn has no message. `prepare` writes no prompt and
+does not download attachments: for Qwen Code it writes the harness's own `control_request` `continue_last_turn`
+(request id `continue-<uuid>`, `cc::control`), and what the harness then writes is the turn, its `result` ending it
+as after a message. An answer with `accepted: false` (or an error) is turned into a failed result on the spot: the
+harness writes nothing more for it, and the turn fails with its words (`nothing_to_continue`). Claude Code has no
+such request, so a continuation in it fails before anything is written. A sandbox image from before the flag writes
+an empty message instead: the image goes out before the magpie that sends the flag.
+
 `cc::run::Driver` keeps one run state behind a lock never held across an `await`: stdout lines (tailed from the
 generation's file with inotify and a 250 ms poll), keeper exits, commands and a 1 s tick change it and return the
 effects (stdin lines through the generation's ordered writer, reports, signals). Every state change is put into
