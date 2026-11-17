@@ -780,11 +780,13 @@ mod tests {
         assert!(load(&|v| v["sandbox"]["tmpGiB"] = 1025.into()).is_err());
     }
 
-    /// hermit.json with `edit` applied to the example.
+    /// hermit.json with `edit` applied to the example, read as [`Config::load`] reads it: a member hermit.json does
+    /// not have is a parse error (`deny_unknown_fields`), returned and not a panic, so a case can expect it.
     fn load_edited(edit: &dyn Fn(&mut serde_json::Value)) -> Result<Config, ConfigError> {
         let mut v: serde_json::Value = serde_json::from_str(EXAMPLE).unwrap();
         edit(&mut v);
-        Config::from_parts(serde_json::from_value(v).unwrap(), "i", "r", "t")
+        let file = serde_json::from_value(v).map_err(|e| ConfigError::Parse(e.to_string()))?;
+        Config::from_parts(file, "i", "r", "t")
     }
 
     #[test]
