@@ -8,8 +8,8 @@ mod common;
 
 use common::{same, same_keys};
 use sandboxd_api::{
-    Deleted, EgressTargets, ErrorBody, Host, ImageDigest, Listed, Peers, ReceiveResult, Receiving, Sandboxes,
-    SendResult, Spec,
+    Deleted, EgressTargets, ErrorBody, FreezeResult, Host, ImageDigest, Listed, Peers, ReceiveResult, Receiving,
+    Sandboxes, SendResult, Spec,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -29,6 +29,7 @@ fn check<T: DeserializeOwned + Serialize>(what: &str, v: &Value, exact: bool) {
 
 #[test]
 #[ignore = "needs SANDBOXD_DUMP from the soak job"]
+#[allow(clippy::too_many_lines)] // one arm per route
 fn answers_of_a_real_sandboxd() {
     #[allow(clippy::disallowed_methods)] // test input, not configuration
     let dir = std::env::var("SANDBOXD_DUMP").expect("SANDBOXD_DUMP");
@@ -103,6 +104,14 @@ fn answers_of_a_real_sandboxd() {
                 check::<SendResult>(&what, res, true);
                 "send"
             }
+            ("POST", ["v1", "sandboxes", _, "freeze"]) => {
+                check::<FreezeResult>(&what, res, true);
+                "freeze"
+            }
+            ("POST", ["v1", "sandboxes", _, "thaw"]) => {
+                check::<Listed>(&what, res, true);
+                "thaw"
+            }
             _ => panic!("{what}: not a sandboxd route"),
         };
         seen.insert(route);
@@ -111,6 +120,7 @@ fn answers_of_a_real_sandboxd() {
         "create",
         "delete",
         "egress",
+        "freeze",
         "host",
         "images",
         "list",
@@ -119,6 +129,7 @@ fn answers_of_a_real_sandboxd() {
         "receive result",
         "send",
         "spec",
+        "thaw",
     ];
     assert_eq!(
         seen.into_iter().collect::<Vec<_>>(),

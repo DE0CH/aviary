@@ -737,6 +737,219 @@ impl Sandboxes {
             .ok_or_else(|| Error::new(503, "no free migration port"))
     }
 
+    /// `POST …/freeze` (jarvis4 docs/PLAN-fabric.md, "How a frozen image travels"): the sandbox's memory recorded as
+    /// a migration would send it (`runsc checkpoint --migrate-to` into `stream-sink | seal | aws s3 cp - <object>`),
+    /// then, stopped, its scratch file (`tar --sparse | seal | aws s3 cp - <object>.scratch`), then the sandbox is
+    /// gone from this host. 409 with it still running when the freeze failed before it stopped; 502 when it failed
+    /// after (the sandbox is lost; its persistent folders are not).
+    pub fn freeze(&self, name: &str, t: &crate::freeze::Transfer, sc: &mut Scratch) -> Res<FreezeStats> {
+        let lk = self.lock(name)?;
+        let e = match self.get(name) {
+            Some(e) if e.state == RUNNING => e,
+            _ => return Err(err!(404, "{name} is not running here")),
+        };
+        if e.orphan || e.sending {
+            return Err(err!(409, "a send of {name} runs here"));
+        }
+        self.set_sending(&lk, true);
+        let _sending = Sending { s: self, lk: &lk };
+        let t0 = mono_ms();
+        let port = self.free_port()? + RESTORE_PORT_OFFSET;
+        let mut sink_at: Str<32> = Str::new();
+        let _ = write!(sink_at, "127.0.0.1:{port}");
+        let aws_env = t.aws_env();
+        let aws: [&str; 4] = [aws_env[0].as_str(), aws_env[1].as_str(), aws_env[2].as_str(), aws_env[3].as_str()];
+        let seal_env = t.seal_env();
+        let mut expected: Str<24> = Str::new();
+        let _ = write!(expected, "{}", e.spec.memory + (64 << 20));
+        let mem = proc::start_pipeline(&[
+            (&["/proc/self/exe", "stream-sink", sink_at.as_str(), RELAY_TIMEOUT], &[]),
+            (&["/proc/self/exe", "seal"], &[seal_env.as_str()]),
+            (
+                &[
+                    "aws",
+                    "s3",
+                    "cp",
+                    "-",
+                    t.object.as_str(),
+                    "--only-show-errors",
+                    "--expected-size",
+                    expected.as_str(),
+                ],
+                &aws,
+            ),
+        ])?;
+        let mut a = [""; 40];
+        let argv = runsc::argv(
+            &mut a,
+            &[
+                "checkpoint",
+                "--migrate-to",
+                sink_at.as_str(),
+                "--migrate-downtime",
+                "300ms",
+                "--migrate-max-rounds",
+                "3",
+                name,
+            ],
+        )?;
+        let o = run(argv, sc.small, 15 * 60_000)?;
+        if o.code != 0 {
+            mem.abort();
+            let tail = tail_chars(o.err.as_str().trim(), 300);
+            if self.status(name, sc.big).as_str() == "running" {
+                return Err(err!(409, "the freeze failed before the sandbox stopped; it still runs here: {tail}"));
+            }
+            self.cleanup(&lk, name, Some(e.spec.ip.as_str()));
+            return Err(err!(502, "the freeze failed after the sandbox stopped; it is lost: {tail}"));
+        }
+        let memory_ms = mono_ms() - t0;
+        let lost = |s: &Self, why: &str| {
+            Log::error("sandbox freeze failed").s("sandbox", name).s("error", why).emit();
+            s.cleanup(&lk, name, Some(e.spec.ip.as_str()));
+            err!(502, "the freeze failed after the sandbox stopped; it is lost: {}", tail_chars(why, 300))
+        };
+        if let Err(x) = mem.finish(5 * 60_000) {
+            return Err(lost(self, x.msg.as_str()));
+        }
+        // stopped: its root and scratch filesystems come off, and the scratch file follows the memory
+        let t1 = mono_ms();
+        let (root, sd, img) =
+            (crate::storage::root_dir(name), crate::storage::scratch_dir(name), crate::storage::scratch_img(name));
+        quiet(&["umount", root.as_str()]);
+        quiet(&["umount", sd.as_str()]);
+        let scratch_obj = t.scratch_object();
+        let file = img.as_str().rsplit('/').next().unwrap_or("");
+        let scratch_root = path!("/var/lib/sbx/scratch");
+        let up = proc::start_pipeline(&[
+            (&["tar", "--sparse", "-C", scratch_root.as_str(), "-cf", "-", file], &[]),
+            (&["/proc/self/exe", "seal"], &[seal_env.as_str()]),
+            (&["aws", "s3", "cp", "-", scratch_obj.as_str(), "--only-show-errors"], &aws),
+        ])
+        .and_then(|p| p.finish(30 * 60_000));
+        if let Err(x) = up {
+            return Err(lost(self, x.msg.as_str()));
+        }
+        let scratch_ms = mono_ms() - t1;
+        self.cleanup(&lk, name, Some(e.spec.ip.as_str()));
+        let st = FreezeStats { ms: mono_ms() - t0, memory_ms, scratch_ms };
+        Log::info("sandbox frozen")
+            .s("sandbox", name)
+            .n("ms", st.ms)
+            .n("memoryMs", memory_ms)
+            .n("scratchMs", scratch_ms)
+            .emit();
+        Ok(st)
+    }
+
+    /// `POST …/thaw`: a frozen sandbox back, here: its scratch file first (`aws s3 cp <object>.scratch - | open |
+    /// tar -x`), then its network, bundle and storage as for a create, then `runsc restore --migrate-listen` with the
+    /// recorded memory replayed into it (`aws s3 cp <object> - | open | stream-source`). Nothing is left on a failure.
+    pub fn thaw(&self, spec: &Spec, t: &crate::freeze::Transfer, sc: &mut Scratch) -> Res<()> {
+        let name = spec.name.as_str();
+        let lk = self.lock(name)?;
+        if self.get(name).is_some() {
+            return Err(err!(409, "{name} is already here"));
+        }
+        self.check_ip(spec)?;
+        self.check_capacity()?;
+        let t0 = mono_ms();
+        let aws_env = t.aws_env();
+        let aws: [&str; 4] = [aws_env[0].as_str(), aws_env[1].as_str(), aws_env[2].as_str(), aws_env[3].as_str()];
+        let seal_env = t.seal_env();
+        let r = (|| -> Res<()> {
+            let scratch_root = path!("/var/lib/sbx/scratch");
+            crate::util::mkdir(scratch_root.as_str(), 0o700)?;
+            let scratch_obj = t.scratch_object();
+            proc::start_pipeline(&[
+                (&["aws", "s3", "cp", scratch_obj.as_str(), "-", "--only-show-errors"], &aws),
+                (&["/proc/self/exe", "open"], &[seal_env.as_str()]),
+                (&["tar", "--sparse", "-C", scratch_root.as_str(), "-xf", "-"], &[]),
+            ])?
+            .finish(30 * 60_000)
+            .map_err(|x| err!(502, "the scratch file did not come back: {}", tail_chars(x.msg.as_str(), 300)))?;
+            if std::fs::metadata(crate::storage::scratch_img(name).as_str()).is_err() {
+                return Err(err!(502, "the frozen scratch file is not {name}'s"));
+            }
+            let bundle = self.prepare(spec, true, sc)?;
+            let port = self.free_port()? + RESTORE_PORT_OFFSET;
+            let mut listen: Str<32> = Str::new();
+            let _ = write!(listen, "127.0.0.1:{port}");
+            let dir = path!("/run/sbx/ckpt/in-{name}");
+            quiet(&["rm", "-rf", dir.as_str()]);
+            crate::util::mkdir(dir.as_str(), 0o700)?;
+            let out = log_file(name, true)?;
+            let errf = log_file(name, false)?;
+            let mut a = [""; 40];
+            let argv = runsc::argv(
+                &mut a,
+                &[
+                    "restore",
+                    "--migrate-listen",
+                    listen.as_str(),
+                    "--image-path",
+                    dir.as_str(),
+                    "--background",
+                    "--bundle",
+                    bundle.as_str(),
+                    "--detach",
+                    name,
+                ],
+            )?;
+            use std::os::fd::AsRawFd;
+            let restore = spawn(argv, &[], Io::Null, Io::Fd(out.as_raw_fd()), Io::Fd(errf.as_raw_fd()))?;
+            drop((out, errf));
+            let replay = proc::start_pipeline(&[
+                (&["aws", "s3", "cp", t.object.as_str(), "-", "--only-show-errors"], &aws),
+                (&["/proc/self/exe", "open"], &[seal_env.as_str()]),
+                (&["/proc/self/exe", "stream-source", listen.as_str(), RELAY_TIMEOUT], &[]),
+            ]);
+            let replay = match replay {
+                Ok(p) => p,
+                Err(x) => {
+                    proc::kill(restore.pid);
+                    proc::wait(restore.pid, true);
+                    return Err(x);
+                }
+            };
+            let replayed = replay.finish(15 * 60_000);
+            if replayed.is_err() {
+                proc::kill(restore.pid);
+            }
+            let mut none = [0u8; 0];
+            let o = collect(&restore, &mut none, RESTORE_AFTER_END_MS);
+            replayed
+                .map_err(|x| err!(502, "the frozen memory did not come back: {}", tail_chars(x.msg.as_str(), 300)))?;
+            if o.code != 0 {
+                return Err(err!(502, "runsc restore exited {} (see /var/log/sbx/{name}.log)", o.code));
+            }
+            quiet(&["rm", "-rf", dir.as_str()]);
+            let e = Entry {
+                spec: *spec,
+                state: RUNNING,
+                created_at: iso(now_ms()),
+                port: 0,
+                migrated: Str::new(),
+                cpu_at: 0,
+                cpu_usec: 0,
+                cpu_rate: 0.0,
+                cpu_have: false,
+                alive: true,
+                stopped: false,
+                sending: false,
+                orphan: false,
+            };
+            self.save(&lk, &e, sc.big)
+        })();
+        if let Err(x) = r {
+            Log::error("sandbox thaw failed").s("sandbox", name).s("error", x.msg.as_str()).emit();
+            self.cleanup(&lk, name, Some(spec.ip.as_str()));
+            return Err(x);
+        }
+        Log::info("sandbox thawed").s("sandbox", name).s("ip", spec.ip.as_str()).n("ms", mono_ms() - t0).emit();
+        Ok(())
+    }
+
     /// Target side of a migration: same network (without the /32 route: traffic still goes to the source until the
     /// restore is done), bundle and storage (an empty scratch filesystem and the overlay on the same image), then
     /// `runsc restore --migrate-listen` on 127.0.0.1:<port+1000> and the migrate-relay (relay.rs) on the overlay
@@ -1237,6 +1450,21 @@ impl Sandboxes {
 }
 
 /// What a send did (its answer, additive to the old `{ms}`).
+/// What a freeze took, ms: the whole of it, the memory (until the sandbox stopped and its stream was stored) and the
+/// scratch file.
+#[derive(Clone, Copy, Default)]
+pub struct FreezeStats {
+    pub ms: u64,
+    pub memory_ms: u64,
+    pub scratch_ms: u64,
+}
+
+impl FreezeStats {
+    pub fn write(&self, w: &mut W) {
+        w.obj().ku64("ms", self.ms).ku64("memoryMs", self.memory_ms).ku64("scratchMs", self.scratch_ms).end();
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct SendStats {
     pub ms: u64,

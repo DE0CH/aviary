@@ -15,6 +15,10 @@
 //!                                          min after the sandbox ended)
 //!   POST   /v1/sandboxes/{name}/send {to, downtimeMs?, maxRounds?, maxDowntimeMs?}   migration source (scratch
 //!                                          rounds, memory pre-copy, final scratch delta; returns {ms, scratch})
+//!   POST   /v1/sandboxes/{name}/freeze {object, region, accessKeyId, secretAccessKey, sessionToken, key}   its
+//!                                          memory and scratch, sealed, to S3, then gone; returns {ms, memoryMs,
+//!                                          scratchMs} (freeze.rs)
+//!   POST   /v1/sandboxes/{name}/thaw {spec, frozen: {…the same}}   a frozen sandbox back, here; returns it listed
 //!
 //! Every handler writes its JSON answer into the worker's fixed `out` buffer.
 use crate::config::{Peer, Spec, parse_peer};
@@ -374,6 +378,36 @@ fn route(app: &App, req: &Req, w: &mut W, sc: &mut Scratch) -> Res<u16> {
                 .unwrap_or(0.0);
             let wait = wait.clamp(0.0, 120_000.0) as u64;
             app.sbx.receive_result(name, wait, w);
+            return Ok(200);
+        }
+        if np == 4 && parts[3] == "freeze" && m == "POST" {
+            let t = crate::freeze::Transfer::parse(body_obj(req)?)?;
+            let st = app.sbx.freeze(name, &t, sc)?;
+            st.write(w);
+            return Ok(200);
+        }
+        if np == 4 && parts[3] == "thaw" && m == "POST" {
+            let (mut spec_obj, mut frozen_obj): (&[u8], &[u8]) = (b"", b"");
+            json::object::<Error>(body_obj(req)?, |k, v| {
+                if let Val::Obj(o) = v {
+                    if k.is("spec") {
+                        spec_obj = o;
+                    } else if k.is("frozen") {
+                        frozen_obj = o;
+                    }
+                }
+                Ok(())
+            })?;
+            if spec_obj.is_empty() || frozen_obj.is_empty() {
+                return Err(Error::new(400, "a thaw names its spec and where it was frozen (frozen)"));
+            }
+            let spec = Spec::parse_obj(spec_obj, app.cfg.sandbox_cidr.as_str(), true)?;
+            if spec.name.as_str() != name {
+                return Err(Error::new(400, "name mismatch"));
+            }
+            let t = crate::freeze::Transfer::parse(frozen_obj)?;
+            app.sbx.thaw(&spec, &t, sc)?;
+            app.sbx.write_one(w, name);
             return Ok(200);
         }
         if np == 4 && parts[3] == "send" && m == "POST" {

@@ -52,7 +52,7 @@ class Daemon:
         json.dump({"name": name, "wgAddress": ip, **addrs, "apiPort": 17443, **role,
                    "tls": {"ca": f"{pki}/ca.crt", "cert": f"{pki}/gateway.crt", "key": f"{pki}/gateway.key"}, "limits": lim}, open(self.cfg, "w"))
         self.env = dict(SBX_ROOT=self.root, SBX_CONFIG=self.cfg, SBX_RUNSC=f"{FAKE}/runsc", SBX_FAKE=f"{self.base}/fake",
-                        PATH=f"{FAKE}:{os.environ['PATH']}", **(env_extra or {}))
+                        FAKE_S3=f"{base}/s3", PATH=f"{FAKE}:{os.environ['PATH']}", **(env_extra or {}))
         self.binary, self.node, self.proc = binary, node, None
         self.log = open(f"{self.base}/log", "a")
 
@@ -252,6 +252,37 @@ def functional(A, B, G, cl, intruder):
     del B.env["FAKE_SEND_FAIL"]
     B.stop(); B.start()
     check(cl.call(B.ip, "DELETE", "/v1/sandboxes/sbx-f1")[0] == 200, "delete")
+    # freeze on A, thaw on B (jarvis4 docs/PLAN-fabric.md "How a frozen image travels"): the memory as the pre-copy
+    # stream, the scratch file beside it, both sealed under the freeze's key; the credentials for aws only
+    base = os.path.dirname(A.base)
+    key = "5a" * 32
+    obj = "s3://fabric-images/frozen/sbx-z/01a1"
+    frozen = {"object": obj, "region": "eu-central-1", "accessKeyId": "ASIAFAKE", "secretAccessKey": "s3cr3t",
+              "sessionToken": "T" * 1500, "key": key}
+    check(cl.call(A.ip, "POST", "/v1/sandboxes", spec("z", "10.98.0.40"))[0] == 200, "create sbx-z")
+    sz = f"{A.root}/var/lib/sbx/scratch/sbx-z"
+    open(f"{sz}/upper/kept.txt", "w").write("kept across the freeze")
+    check(cl.call(A.ip, "POST", "/v1/sandboxes/sbx-nope/freeze", frozen)[0] == 404, "freeze a missing one: 404")
+    check(cl.call(A.ip, "POST", "/v1/sandboxes/sbx-z/freeze", dict(frozen, key="short"))[0] == 400, "freeze with a bad key: 400")
+    check(cl.call(A.ip, "POST", "/v1/sandboxes/sbx-z/freeze", dict(frozen, object="s3://b/../x"))[0] == 400, "freeze to a bad object: 400")
+    s, r = cl.call(A.ip, "POST", "/v1/sandboxes/sbx-z/freeze", frozen)
+    check(s == 200 and r["ms"] >= r["memoryMs"] >= 0, f"freeze {s} {r}")
+    check([x["name"] for x in cl.call(A.ip, "GET", "/v1/sandboxes")[1]["sandboxes"]] == [] and not os.path.exists(sz),
+          "frozen: gone from A, its scratch too")
+    mem = open(f"{base}/s3/fabric-images/frozen/sbx-z/01a1", "rb").read()
+    scr = open(f"{base}/s3/fabric-images/frozen/sbx-z/01a1.scratch", "rb").read()
+    check(len(mem) > (1 << 20) and b"gVprcp01" not in mem and b"kept across the freeze" not in scr,
+          "both objects stored, sealed (neither the stream nor the files readable)")
+    s, r = cl.call(B.ip, "POST", "/v1/sandboxes/sbx-z/thaw", {"spec": spec("z", "10.98.0.40"), "frozen": dict(frozen, key="a5" * 32)})
+    check(s == 502 and [x["name"] for x in cl.call(B.ip, "GET", "/v1/sandboxes")[1]["sandboxes"]] == [],
+          f"a thaw under another key: 502, nothing left ({s} {r})")
+    s, r = cl.call(B.ip, "POST", "/v1/sandboxes/sbx-z/thaw", {"spec": spec("z", "10.98.0.40")})
+    check(s == 400, "a thaw without where it was frozen: 400")
+    s, r = cl.call(B.ip, "POST", "/v1/sandboxes/sbx-z/thaw", {"spec": spec("z", "10.98.0.40"), "frozen": frozen})
+    check(s == 200 and r["name"] == "sbx-z", f"thaw on B {s} {r}")
+    check(open(f"{B.root}/var/lib/sbx/scratch/sbx-z/upper/kept.txt").read() == "kept across the freeze",
+          "its scratch came back with it")
+    check(cl.call(B.ip, "DELETE", "/v1/sandboxes/sbx-z")[0] == 200, "delete the thawed one")
 
 
 def hostile(ip, pki, stop):

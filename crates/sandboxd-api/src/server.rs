@@ -19,9 +19,9 @@ use axum::{Json, Router};
 use serde::de::DeserializeOwned;
 
 use crate::{
-    Deleted, EgressTargets, EnsureImage, ErrorBody, Host, ImageDigest, LOG_TAIL_MAX, Listed, MAX_BODY, Peers,
-    RECEIVE_WAIT_MAX_MS, ReceiveResult, Receiving, Sandboxes, SendRequest, SendResult, SetPeers, Spec, routes,
-    valid_name,
+    Deleted, EgressTargets, EnsureImage, ErrorBody, FreezeResult, Frozen, Host, ImageDigest, LOG_TAIL_MAX, Listed,
+    MAX_BODY, Peers, RECEIVE_WAIT_MAX_MS, ReceiveResult, Receiving, Sandboxes, SendRequest, SendResult, SetPeers, Spec,
+    ThawRequest, routes, valid_name,
 };
 
 /// An error answer: `status` with `{"error": error}`.
@@ -77,6 +77,16 @@ pub trait Server: Send + Sync + 'static {
     fn receive_result(&self, name: String, wait_ms: u64) -> impl Future<Output = Answer<ReceiveResult>> + Send;
     /// `POST /v1/sandboxes/{name}/send`.
     fn send(&self, name: String, req: SendRequest) -> impl Future<Output = Answer<SendResult>> + Send;
+    /// `POST /v1/sandboxes/{name}/freeze`. A server that cannot freeze answers 501.
+    fn freeze(&self, name: String, frozen: Frozen) -> impl Future<Output = Answer<FreezeResult>> + Send {
+        let _ = (name, frozen);
+        async { Err(ApiError::new(501, "freezing is not supported here")) }
+    }
+    /// `POST /v1/sandboxes/{name}/thaw` (the router has checked `req.spec.name == name`). 501 where unsupported.
+    fn thaw(&self, req: ThawRequest) -> impl Future<Output = Answer<Listed>> + Send {
+        let _ = req;
+        async { Err(ApiError::new(501, "freezing is not supported here")) }
+    }
     /// `GET /v1/sandboxes/{name}/log?tail=<bytes>` (`tail` clamped to [`LOG_TAIL_MAX`]): the console's last bytes.
     /// A server without consoles answers 404.
     fn log(&self, name: String, tail: usize) -> impl Future<Output = Answer<Vec<u8>>> + Send {
@@ -155,6 +165,7 @@ fn tail(query: Option<&str>) -> usize {
 
 /// sandboxd's routes over `server`, with its 64 KiB body limit, its reading of bodies (the module docs) and `{"error"}`
 /// answers: 404 `not found` for any other path and for a known path with another method, as sandboxd answers both.
+#[allow(clippy::too_many_lines)] // the route table, one route after another
 pub fn router<S: Server>(server: Arc<S>) -> Router {
     Router::new()
         .route(routes::HOST, get(|State(s): State<Arc<S>>| async move { s.host().await.map(Json) }))
@@ -221,6 +232,31 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
                  Path(name): Path<String>,
                  b: Body| async move {
                     s.send(name_ok(name)?, body::<SendRequest>(b)?).await.map(Json)
+                },
+            ),
+        )
+        .route(
+            routes::SANDBOX_FREEZE,
+            post(
+                |State(s): State<Arc<S>>,
+                 Path(name): Path<String>,
+                 b: Body| async move {
+                    s.freeze(name_ok(name)?, body::<Frozen>(b)?).await.map(Json)
+                },
+            ),
+        )
+        .route(
+            routes::SANDBOX_THAW,
+            post(
+                |State(s): State<Arc<S>>,
+                 Path(name): Path<String>,
+                 b: Body| async move {
+                    let name = name_ok(name)?;
+                    let req = body::<ThawRequest>(b)?;
+                    if req.spec.name != name {
+                        return Err(ApiError::new(400, "name mismatch"));
+                    }
+                    s.thaw(req).await.map(Json)
                 },
             ),
         )

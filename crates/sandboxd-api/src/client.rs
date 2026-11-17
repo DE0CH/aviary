@@ -36,8 +36,8 @@ use serde::de::DeserializeOwned;
 use tokio::sync::Semaphore;
 
 use crate::{
-    Deleted, EgressTargets, EnsureImage, ErrorBody, Host, ImageDigest, Listed, Peer, Peers, ReceiveResult, Receiving,
-    Sandboxes, SendRequest, SendResult, SetPeers, Spec, routes,
+    Deleted, EgressTargets, EnsureImage, ErrorBody, FreezeResult, Frozen, Host, ImageDigest, Listed, Peer, Peers,
+    ReceiveResult, Receiving, Sandboxes, SendRequest, SendResult, SetPeers, Spec, ThawRequest, routes,
 };
 
 /// Requests in flight per host at most: [`HEARTBEAT_SLOTS`] + [`CONTROL_SLOTS`] + [`LONG_SLOTS`].
@@ -407,6 +407,36 @@ impl Client {
             &routes::sandbox_part(name, "send"),
             Some(req),
             SEND_TIMEOUT,
+        )
+        .await
+    }
+
+    /// `POST /v1/sandboxes/{name}/freeze`: its memory and scratch to `frozen`, then gone from the host.
+    ///
+    /// # Errors
+    /// [`Error`] (409: not frozen, still running here; 502: lost after it stopped).
+    pub async fn freeze(&self, name: &str, frozen: &Frozen) -> Result<FreezeResult, Error> {
+        self.call(
+            Pool::Long,
+            Method::POST,
+            &routes::sandbox_part(name, "freeze"),
+            Some(frozen),
+            SEND_TIMEOUT,
+        )
+        .await
+    }
+
+    /// `POST /v1/sandboxes/{name}/thaw`: a frozen sandbox back, here, running.
+    ///
+    /// # Errors
+    /// [`Error`] (502: it could not be brought back; nothing is left on the host).
+    pub async fn thaw(&self, req: &ThawRequest) -> Result<Listed, Error> {
+        self.call(
+            Pool::Long,
+            Method::POST,
+            &routes::sandbox_part(&req.spec.name, "thaw"),
+            Some(req),
+            CREATE_TIMEOUT,
         )
         .await
     }

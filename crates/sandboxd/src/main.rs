@@ -47,6 +47,7 @@ mod contract;
 mod env;
 #[allow(unsafe_code)] // syscalls and fixed memory; every block has a SAFETY comment
 mod fixed;
+mod freeze;
 mod images;
 mod json;
 mod net;

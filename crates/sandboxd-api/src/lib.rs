@@ -88,6 +88,10 @@ pub mod routes {
     pub const SANDBOX_SEND: &str = "/v1/sandboxes/{name}/send";
     /// The axum path of `GET …/log?tail=<bytes>`.
     pub const SANDBOX_LOG: &str = "/v1/sandboxes/{name}/log";
+    /// The axum path of `POST …/freeze`: [`Frozen`](crate::Frozen) → [`FreezeResult`](crate::FreezeResult).
+    pub const SANDBOX_FREEZE: &str = "/v1/sandboxes/{name}/freeze";
+    /// The axum path of `POST …/thaw`: [`ThawRequest`](crate::ThawRequest) → [`Listed`](crate::Listed).
+    pub const SANDBOX_THAW: &str = "/v1/sandboxes/{name}/thaw";
 
     /// `/v1/sandboxes/<name>`.
     #[must_use]
@@ -545,6 +549,57 @@ pub struct ScratchStats {
     pub final_ms: u64,
     /// From the end of the memory stream to the target's ack: what the scratch adds to the pause.
     pub stopped_ms: u64,
+}
+
+/// Where a frozen sandbox goes or comes from (jarvis4 docs/PLAN-fabric.md, "How a frozen image travels"): its memory
+/// is `object`, its scratch file `object` + `.scratch`, both sealed under `key`; the credentials allow those objects
+/// and nothing else, and reach only the `aws` stage on the host (the key only the `seal`/`open` stage).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Frozen {
+    /// `s3://<bucket>/<key>`.
+    pub object: String,
+    /// The bucket's region.
+    pub region: String,
+    /// Short-lived credentials (STS) for the objects only.
+    pub access_key_id: String,
+    /// The credentials' secret.
+    pub secret_access_key: String,
+    /// The credentials' session token.
+    pub session_token: String,
+    /// The freeze's own key, 64 hex digits.
+    pub key: String,
+}
+
+impl std::fmt::Debug for Frozen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // never the secrets
+        f.debug_struct("Frozen")
+            .field("object", &self.object)
+            .field("region", &self.region)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The answer of `POST …/freeze`: what it took, ms.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FreezeResult {
+    /// The whole freeze.
+    pub ms: u64,
+    /// The memory, until the sandbox stopped and its stream was stored.
+    pub memory_ms: u64,
+    /// The scratch file.
+    pub scratch_ms: u64,
+}
+
+/// `POST …/thaw`: the sandbox's spec (as for a create; its name is the path's) and where it was frozen.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThawRequest {
+    /// The spec it was frozen with.
+    pub spec: Spec,
+    /// Where it was frozen.
+    pub frozen: Frozen,
 }
 
 /// Every error answer.
