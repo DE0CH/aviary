@@ -225,9 +225,15 @@ mod tests {
         let mut small = s.clone();
         small.models[0].context_tokens = Some(200_000);
         assert_eq!(small.models_route().context_of("claude-fable-5-2"), 200_000);
-        // what a machine's gateway gets in the boot reply is the same settings
+        // what a machine's gateway gets in the boot reply is the same settings, less the sign-in (pigeon's)
         let again: Settings = serde_json::from_value(serde_json::to_value(&s).unwrap()).unwrap();
-        assert_eq!(again, s);
+        assert_eq!(
+            again,
+            Settings {
+                sign_in: SignIn::default(),
+                ..s.clone()
+            }
+        );
     }
 
     #[test]
