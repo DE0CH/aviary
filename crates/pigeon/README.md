@@ -163,11 +163,15 @@ The seams in `feeds` (built for the switch window, WP-50, whose legacy upstream 
   byte until the reader has it whole. A socket with a message arriving, or with a large send (256 KiB or more) read
   and not yet handled (waiting for a large-message slot included), has a transfer: the drain waits for it up to the
   transfer bound, not the 10 s request bound. While a client sends one long frame it cannot send a pong, so inbound
-  bytes count as alive at the ping check. A reader waiting for a large-message slot keeps reading pongs and pings;
-  the client's next data message (or close) is kept for after the waiting one, and from then the reader reads
-  nothing more, so the socket counts as alive without pongs for at most the transfer bound from that moment (a dead
-  client is dropped at its missed ping, and does not hold the drain to its bound). A close asked for while waiting
-  ends the wait.
+  bytes count as alive at the ping check.
+- **Large-message slots (7.5.4)**: at most 3 messages over 8 MiB are in memory at once per replica. The listener
+  takes the slot before it reads such a message (`server::Counted`: the frame headers declare the size), and stops
+  reading that connection until one is free, so the client meets TCP backpressure and at most one read of the
+  message is in memory meanwhile; the socket's reader takes the slot over when it has the message. Before
+  (2026-11-17), the slot was taken after the whole message was in, so every socket of a person (64) could hold a
+  100 MiB message waiting. Nothing is read from a waiting connection, pongs included: it counts as alive for at most
+  the transfer bound, then it is dropped. A listener that takes no slots (a test's) leaves the wait to the reader,
+  which keeps reading pongs while it waits.
 
 ## Throughput (spec 8.6)
 
@@ -194,7 +198,8 @@ timeline pollers running) reach 1 000 sockets in 10.0 s: latency p50 16.6 / 19.4
 - `tests/transport.rs`: the transport limits (a missed ping drops and unregisters the socket, 1009, 1008 at the 65th
   socket, 4403 on re-check, the inbound rate), the drain (rows keep streaming until each socket's 1012, the 1012
   after the reply, a large send arriving across the drain, one that begins while the queue ahead of its 1012 is
-  written, and one waiting for a large-message slot; a dead client on a slot dropped), the WP-50 seams,
+  written, and one waiting for a large-message slot, its message not read until a slot is free; a socket waiting for a
+  slot dropped at the transfer bound, having read under 1 MiB of its message), the WP-50 seams,
   the list cache per viewer without kept failures, and spec 19's metric names.
 - `tests/contract_server.rs`: the pigeon `testing/paseo-contract/test/pigeon.test.mjs` drives (ignored; it serves until
   its stdin closes), with its control endpoint for magpie's side.

@@ -143,6 +143,19 @@ impl Hub {
         self.0.large.clone()
     }
 
+    /// The replica's large-message slots, for the listener ([`crate::server::serve`]), which takes one before it
+    /// reads a large message.
+    #[must_use]
+    pub fn large_slots(&self) -> Arc<tokio::sync::Semaphore> {
+        self.large()
+    }
+
+    /// Bytes of WebSocket frames read from the open sockets' clients so far (for tests and metrics).
+    #[must_use]
+    pub fn inbound_bytes(&self) -> u64 {
+        self.st().conns.values().map(|c| c.inbound_bytes()).sum()
+    }
+
     /// The delegate of a conversation, if [`Owners`] names one.
     #[must_use]
     pub fn delegate(&self, person: &str, conversation: &Uuid) -> Option<Arc<dyn Delegate>> {

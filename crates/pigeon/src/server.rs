@@ -110,6 +110,21 @@ impl InboundBytes {
     pub fn bytes(&self) -> u64 {
         self.lock().bytes
     }
+
+    /// The large-message slot the listener took for the oldest large message whose slot has not been taken yet
+    /// ([`Counted`] takes one before it reads such a message's bytes; the socket's reader takes it over when it has
+    /// the message). `None` when the listener took none (it tracks no slots, or the message was not large).
+    #[must_use]
+    pub fn take_slot(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        self.lock().slots.pop_front()
+    }
+
+    /// Since when the listener has stopped reading this connection, waiting for a large-message slot (`None`: it is
+    /// not waiting). Nothing the client sends is read meanwhile, a pong included.
+    #[must_use]
+    pub fn waiting_since(&self) -> Option<Instant> {
+        self.lock().waiting
+    }
 }
 
 /// A parser of the client's frame headers (RFC 6455 5.2) that skips the payloads: it counts whole data messages and
@@ -127,6 +142,14 @@ pub struct WsFrames {
     open: bool,
     complete: u64,
     bytes: u64,
+    /// Payload bytes the frames of the data message now arriving have declared so far.
+    msg_len: u64,
+    /// The message now arriving has its large-message slot (or needs none).
+    slotted: bool,
+    /// Slots taken for large messages, oldest first, until the socket's reader takes them over.
+    slots: std::collections::VecDeque<tokio::sync::OwnedSemaphorePermit>,
+    /// See [`InboundBytes::waiting_since`].
+    waiting: Option<Instant>,
 }
 
 impl WsFrames {
@@ -181,6 +204,7 @@ impl WsFrames {
             self.data = opcode < 8;
             if self.data {
                 self.open = true;
+                self.msg_len = self.msg_len.saturating_add(len);
             }
             self.hdr_len = 0;
             self.left = len;
@@ -194,18 +218,77 @@ impl WsFrames {
         if self.data && self.fin {
             self.open = false;
             self.complete += 1;
+            self.msg_len = 0;
+            self.slotted = false;
+        }
+    }
+
+    /// Whether the message now arriving is a large one whose bytes must not be read before a large-message slot is
+    /// had: its frames have declared more than [`crate::feeds::LARGE_MESSAGE`] so far. One over the transport's
+    /// limit needs none: it is refused (1009) when its header is read, never buffered.
+    fn needs_slot(&self) -> bool {
+        self.on
+            && self.open
+            && !self.slotted
+            && self.msg_len > crate::feeds::LARGE_MESSAGE as u64
+            && self.msg_len <= crate::paseo::transport::MAX_INBOUND as u64
+    }
+}
+
+type SlotWait =
+    Pin<Box<dyn Future<Output = Result<tokio::sync::OwnedSemaphorePermit, tokio::sync::AcquireError>> + Send>>;
+
+/// A connection's IO that feeds the bytes read to its [`InboundBytes`], and that stops reading when a large message
+/// begins until one of the replica's large-message slots is free (pigeon 7.5.4): the slots bound how many large
+/// messages are in memory at once, so the slot has to be had before the message's bytes are read, not after the
+/// whole message is in (64 sockets of one person could each hold a 100 MiB message waiting for a slot). The client
+/// meets TCP backpressure meanwhile; at most one read's bytes of the message are in before the wait.
+struct Counted<T> {
+    io: T,
+    read: InboundBytes,
+    /// The replica's large-message slots (`None`: this listener takes none, the socket's reader does).
+    large: Option<Arc<tokio::sync::Semaphore>>,
+    wait: Option<SlotWait>,
+}
+
+impl<T> Counted<T> {
+    /// `Pending` while the message now arriving waits for its large-message slot.
+    fn poll_slot(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        let Some(large) = self.large.clone() else {
+            return Poll::Ready(());
+        };
+        if self.wait.is_none() && !self.read.lock().needs_slot() {
+            return Poll::Ready(());
+        }
+        let wait = self.wait.get_or_insert_with(|| Box::pin(large.acquire_owned()));
+        match wait.as_mut().poll(cx) {
+            Poll::Pending => {
+                let mut f = self.read.lock();
+                if f.waiting.is_none() {
+                    f.waiting = Some(Instant::now());
+                }
+                Poll::Pending
+            }
+            Poll::Ready(slot) => {
+                self.wait = None;
+                let mut f = self.read.lock();
+                f.waiting = None;
+                f.slotted = true;
+                // a closed semaphore (never): the message is read without a slot, as before the listener took them
+                if let Ok(slot) = slot {
+                    f.slots.push_back(slot);
+                }
+                Poll::Ready(())
+            }
         }
     }
 }
 
-/// A connection's IO that feeds the bytes read to its [`InboundBytes`].
-struct Counted<T> {
-    io: T,
-    read: InboundBytes,
-}
-
 impl<T: AsyncRead + Unpin> AsyncRead for Counted<T> {
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+        if self.poll_slot(cx).is_pending() {
+            return Poll::Pending;
+        }
         let before = buf.filled().len();
         let r = Pin::new(&mut self.io).poll_read(cx, buf);
         if buf.filled().len() > before {
@@ -275,9 +358,10 @@ impl Listener {
     }
 }
 
-/// Serves `router` on `listener` until [`Listener::drain`].
+/// Serves `router` on `listener` until [`Listener::drain`]. `large`: the replica's large-message slots
+/// ([`crate::feeds::Hub::large_slots`]), which the listener takes for a large WebSocket message before reading it.
 #[must_use]
-pub fn serve(listener: TcpListener, router: Router) -> Listener {
+pub fn serve(listener: TcpListener, router: Router, large: Arc<tokio::sync::Semaphore>) -> Listener {
     let (stop, mut stopped) = watch::channel(false);
     let open = Arc::new(AtomicUsize::new(0));
     let open2 = open.clone();
@@ -291,9 +375,10 @@ pub fn serve(listener: TcpListener, router: Router) -> Listener {
                         let router = router.clone();
                         let stop = stopped.clone();
                         let open = open2.clone();
+                        let large = large.clone();
                         open.fetch_add(1, Ordering::SeqCst);
                         conns.spawn(async move {
-                            connection(stream, router, stop).await;
+                            connection(stream, router, stop, large).await;
                             open.fetch_sub(1, Ordering::SeqCst);
                         });
                     }
@@ -315,11 +400,18 @@ pub fn serve(listener: TcpListener, router: Router) -> Listener {
     Listener { stop, done, open }
 }
 
-async fn connection(stream: tokio::net::TcpStream, router: Router, mut stop: watch::Receiver<bool>) {
+async fn connection(
+    stream: tokio::net::TcpStream,
+    router: Router,
+    mut stop: watch::Receiver<bool>,
+    large: Arc<tokio::sync::Semaphore>,
+) {
     let inbound = InboundBytes::default();
     let io = Counted {
         io: stream,
         read: inbound.clone(),
+        large: Some(large),
+        wait: None,
     };
     let svc = hyper::service::service_fn(move |req: hyper::Request<Incoming>| {
         let mut router = router.clone();

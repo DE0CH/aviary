@@ -310,8 +310,22 @@ impl Conn {
     }
 
     /// Bytes of frames read from the client so far (0 when the listener does not track them).
-    fn inbound_bytes(&self) -> u64 {
+    pub(crate) fn inbound_bytes(&self) -> u64 {
         self.frames.as_ref().map_or(0, crate::server::InboundBytes::bytes)
+    }
+
+    /// The large-message slot the listener took before it read the large message the reader now has, if it took one.
+    fn listener_slot(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        self.frames.as_ref().and_then(crate::server::InboundBytes::take_slot)
+    }
+
+    /// Whether a socket the listener has stopped reading, waiting for a large-message slot, counts as alive without
+    /// a pong (none can be read meanwhile): for at most the transfer bound, as a parked reader does.
+    fn slot_wait_alive(&self) -> bool {
+        self.frames
+            .as_ref()
+            .and_then(crate::server::InboundBytes::waiting_since)
+            .is_some_and(|at| at.elapsed() < self.park_bound)
     }
 
     pub(crate) fn transfer(self: &Arc<Self>) -> Transfer {
@@ -750,7 +764,10 @@ async fn write_loop(
                 let now = conn.inbound_bytes();
                 let moving = now > inbound;
                 inbound = now;
-                let alive = conn.pong.swap(false, Ordering::SeqCst) || moving || conn.parked_alive();
+                let alive = conn.pong.swap(false, Ordering::SeqCst)
+                    || moving
+                    || conn.parked_alive()
+                    || conn.slot_wait_alive();
                 if !alive {
                     tracing::info!(conn = %conn.id, "socket missed a ping");
                     return GONE;
@@ -861,7 +878,14 @@ async fn read_loop(
                 continue;
             }
             Ok(Message::Close(_)) => return,
-            Ok(Message::Ping(_) | Message::Binary(_)) => continue,
+            Ok(Message::Binary(b)) => {
+                // not a frame of the protocol: dropped, and with it the slot the listener took for a large one
+                if b.len() > LARGE_MESSAGE {
+                    drop(conn.listener_slot());
+                }
+                continue;
+            }
+            Ok(Message::Ping(_)) => continue,
             Err(e) => {
                 if too_big(e) {
                     conn.close(1009, "message too big");
@@ -881,33 +905,16 @@ async fn read_loop(
             continue;
         }
         let transfer = (text.len() >= LARGE_SEND).then(|| conn.transfer());
+        // the listener took the slot before it read the message (`server::Counted`): the reader takes it over
         let permit = if text.len() > LARGE_MESSAGE {
-            // waits until one of the large-message slots is free (the socket stays busy); a close asked for
-            // meanwhile ends the wait. The reader keeps reading pongs and pings meanwhile; the client's next data
-            // message (or its close) is kept for after this one, and from then the reader reads nothing more, so
-            // the socket counts as alive without pongs for at most the transfer bound
-            let acquire = hub.large().acquire_owned();
-            tokio::pin!(acquire);
-            let permit = loop {
-                tokio::select! {
-                    p = &mut acquire => break p.ok(),
-                    _ = close_rx.changed() => break None,
-                    m = stream.next(), if next.is_none() => match m {
-                        Some(Ok(Message::Pong(_))) => conn.pong.store(true, Ordering::SeqCst),
-                        Some(Ok(Message::Ping(_))) => {}
-                        other => {
-                            next = Some(other);
-                            conn.set_parked(true);
-                        }
-                    },
-                }
-            };
-            conn.pong.store(true, Ordering::SeqCst);
-            conn.set_parked(false);
-            if permit.is_none() {
-                return;
+            // the listener took the slot before it read the message (`server::Counted`): the reader takes it over
+            match conn.listener_slot() {
+                Some(slot) => Some(slot),
+                None => match park_for_slot(hub, conn, &mut stream, &mut close_rx, &mut next).await {
+                    Some(p) => Some(p),
+                    None => return,
+                },
             }
-            permit
         } else {
             None
         };
@@ -925,6 +932,40 @@ async fn read_loop(
         handshake::frame(app, hub, conn, &frame, hold);
         drop(busy);
     }
+}
+
+/// A large message read by a listener that takes no slots (a test's, another server's): it is in memory already and
+/// waits until one of the large-message slots is free (the socket stays busy); a close asked for meanwhile ends the
+/// wait (`None`). The reader keeps reading pongs and pings meanwhile; the client's next data message (or its close) is
+/// kept in `next` for after this one, and from then the reader reads nothing more, so the socket counts as alive
+/// without pongs for at most the transfer bound.
+#[allow(clippy::option_option)] // the reader's own type for "a message kept, which may be the stream's end"
+async fn park_for_slot(
+    hub: &Hub,
+    conn: &Arc<Conn>,
+    stream: &mut futures_util::stream::SplitStream<WebSocket>,
+    close_rx: &mut watch::Receiver<Option<(u16, String)>>,
+    next: &mut Option<Option<Result<Message, axum::Error>>>,
+) -> Option<tokio::sync::OwnedSemaphorePermit> {
+    let acquire = hub.large().acquire_owned();
+    tokio::pin!(acquire);
+    let permit = loop {
+        tokio::select! {
+            p = &mut acquire => break p.ok(),
+            _ = close_rx.changed() => break None,
+            m = stream.next(), if next.is_none() => match m {
+                Some(Ok(Message::Pong(_))) => conn.pong.store(true, Ordering::SeqCst),
+                Some(Ok(Message::Ping(_))) => {}
+                other => {
+                    *next = Some(other);
+                    conn.set_parked(true);
+                }
+            },
+        }
+    };
+    conn.pong.store(true, Ordering::SeqCst);
+    conn.set_parked(false);
+    permit
 }
 
 /// An inbound message over the size limit (tungstenite's capacity error, by variant, not by its text).

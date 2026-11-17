@@ -670,17 +670,26 @@ async fn a_large_send_waiting_for_a_large_message_slot_is_not_cut() {
         socks.push(ws);
     }
     socks = idle_all(socks, Duration::from_millis(500)).await;
-    // the fourth waits for a slot, its message read but not handled
+    // the fourth waits for a slot, its message begun and not read (the listener reads it once a slot is free, so
+    // its client's send ends only then)
     let mut waiting = e.ws(STAFF).await;
     let rid = waiting.rid();
-    waiting.text(&frames[pigeon::feeds::LARGE_AT_ONCE]).await;
-    socks.push(waiting);
+    let last = frames[pigeon::feeds::LARGE_AT_ONCE].clone();
+    let sending = tokio::spawn(async move {
+        waiting.text(&last).await;
+        waiting
+    });
     socks = idle_all(socks, Duration::from_millis(500)).await;
     let drain = e.drain(Duration::from_millis(1200), Duration::from_secs(1));
     // past the whole jitter and the in-flight wait: all still open
     socks = idle_all(socks, Duration::from_millis(2500)).await;
-    let mut waiting = socks.pop().unwrap();
+    assert!(
+        !sending.is_finished(),
+        "the fourth large message was read before a slot was free"
+    );
     held.notify_waiters();
+    let mut waiting = sending.await.unwrap();
+    assert!(waiting.closed.is_none(), "the socket waiting for a slot was cut");
     let r = waiting.next_session("send_agent_message_response").await;
     assert_eq!(r["requestId"], rid.as_str());
     assert_eq!(r["accepted"], true);
@@ -693,10 +702,11 @@ async fn a_large_send_waiting_for_a_large_message_slot_is_not_cut() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_dead_client_parked_on_a_large_message_slot_is_dropped() {
-    // pings every 200 ms, the transfer bound 1.5 s: while its reader waits for a slot a socket still has to answer
-    // pings, and one whose reader has stopped reading (a further message in hand) counts as alive only up to the
-    // transfer bound
+async fn a_large_message_waiting_for_a_slot_is_not_read_and_its_socket_ends_at_the_transfer_bound() {
+    // pings every 200 ms, the transfer bound 1.5 s. While the three slots are held, a fourth large message is not
+    // read at all (pigeon 7.5.4: the slot bounds the large messages in memory, so it is had before the bytes are
+    // read; before, every socket of a person could hold a 100 MiB message waiting). Its socket reads nothing
+    // meanwhile, pongs included, so it counts as alive up to the transfer bound and is then dropped.
     let e = env_with(Tuning {
         socket_ping: Duration::from_millis(200),
         transfer_bound: Duration::from_millis(1500),
@@ -704,7 +714,7 @@ async fn a_dead_client_parked_on_a_large_message_slot_is_dropped() {
     })
     .await;
     let held = e.m.hold("send_turn");
-    let convs: Vec<Uuid> = (0..pigeon::feeds::LARGE_AT_ONCE + 2)
+    let convs: Vec<Uuid> = (0..=pigeon::feeds::LARGE_AT_ONCE)
         .map(|_| e.m.add(STAFF, None))
         .collect();
     let frames: Vec<String> = convs
@@ -732,36 +742,30 @@ async fn a_dead_client_parked_on_a_large_message_slot_is_dropped() {
     }
     tokio::time::sleep(Duration::from_millis(300)).await;
     let open = e.hub().sockets();
-    // a client that sends a large message and then reads nothing more (gone): it answers no ping, and is dropped
-    // although its reader waits for a slot
-    let mut gone = e.ws(STAFF).await;
-    gone.text(&frames[pigeon::feeds::LARGE_AT_ONCE]).await;
-    let started = Instant::now();
+    let mut waiting = e.ws(STAFF).await;
     assert!(e.sockets_become(open + 1, Duration::from_secs(1)).await);
-    assert!(
-        e.sockets_become(open, Duration::from_secs(3)).await,
-        "a parked socket that answers no ping stays"
-    );
-    assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
-    // a client whose next message the parked reader already holds (it reads nothing more, pongs included) counts as
-    // alive up to the transfer bound, and is then dropped too
-    let mut stopped = e.ws(STAFF).await;
-    stopped.text(&frames[pigeon::feeds::LARGE_AT_ONCE + 1]).await;
-    stopped.raw(json!({"type": "ping"})).await;
+    let before = e.hub().inbound_bytes();
+    let last = frames[pigeon::feeds::LARGE_AT_ONCE].clone();
     let started = Instant::now();
-    assert!(e.sockets_become(open + 1, Duration::from_secs(1)).await);
+    // its client's write fails once the socket is dropped (the helper panics on it, ending only this task)
+    let sending = tokio::spawn(async move {
+        let _ = tokio::time::timeout(Duration::from_secs(10), waiting.text(&last)).await;
+    });
     tokio::time::sleep(Duration::from_millis(1000)).await;
+    // one read's bytes at most: the 9 MiB message is not taken in while it waits
+    let read = e.hub().inbound_bytes().saturating_sub(before);
+    assert!(read < 1 << 20, "{read} bytes of a message waiting for a slot were read");
     assert_eq!(e.hub().sockets(), open + 1, "dropped before the transfer bound");
     assert!(
         e.sockets_become(open, Duration::from_secs(3)).await,
-        "a parked socket stays past the transfer bound"
+        "a socket waiting for a slot stays past the transfer bound"
     );
     assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
     held.notify_waiters();
     for h in holders {
         assert!(h.await.unwrap(), "a slot holder's send was not answered");
     }
-    drop((gone, stopped));
+    let _ = sending.await;
 }
 
 // ------------------------------------------------------------------------------------------------ WP-50's seams

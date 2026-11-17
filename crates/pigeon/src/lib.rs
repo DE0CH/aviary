@@ -434,6 +434,16 @@ impl App {
         self.0.socket.hub()
     }
 
+    /// The replica's large-message slots (pigeon 7.5.4), which [`server::serve`] takes before it reads a large
+    /// WebSocket message: the hub's, or slots of their own for a socket without a hub.
+    #[must_use]
+    pub fn large_slots(&self) -> Arc<tokio::sync::Semaphore> {
+        self.hub().map_or_else(
+            || Arc::new(tokio::sync::Semaphore::new(feeds::LARGE_AT_ONCE)),
+            |h| h.large_slots(),
+        )
+    }
+
     /// Starts the background work that gates readiness: the deployment facts (every 60 s), then every team's JWKS.
     /// `deployment` and `jwks` open once each has loaded.
     pub fn start(&self, readiness: &aviary_core::ops::Readiness) {
