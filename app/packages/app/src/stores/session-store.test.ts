@@ -13,6 +13,7 @@ import {
   type WorkspaceDescriptor,
 } from "./session-store";
 import type { StreamItem } from "../types/stream";
+import { createSidebarWorkspaceEntry } from "@/hooks/sidebar-workspaces-view-model";
 import { reduceTurnLiveness, type TurnLivenessTransition } from "@/timeline/turn-liveness";
 
 function createTestAgent(agentId: string): Agent {
@@ -472,6 +473,41 @@ describe("message submission ordering", () => {
 });
 
 describe("normalizeWorkspaceDescriptor", () => {
+  // The chat's marks (Deyao, 2026-11-17): pigeon's background-task count and next schedule reach the sidebar's row.
+  it("carries the background-task count and next schedule into the sidebar entry", () => {
+    const payload = {
+      id: "wks_1",
+      projectId: "conversations",
+      projectDisplayName: "Chat",
+      projectRootPath: "/",
+      workspaceDirectory: "/",
+      projectKind: "directory",
+      workspaceKind: "directory",
+      name: "Pigeon eviction fix",
+      archivingAt: null,
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+      backgroundTasks: 2,
+      nextScheduleAt: "2026-11-17T06:30:00.000Z",
+    } satisfies WorkspaceDescriptorPayload;
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: normalizeWorkspaceDescriptor(payload),
+    });
+    expect(entry.backgroundTasks).toBe(2);
+    expect(entry.nextScheduleAt).toEqual(new Date("2026-11-17T06:30:00.000Z"));
+    // a daemon that sends neither: no marks
+    const { backgroundTasks: _b, nextScheduleAt: _n, ...older } = payload;
+    const plain = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: normalizeWorkspaceDescriptor(older),
+    });
+    expect([plain.backgroundTasks, plain.nextScheduleAt]).toEqual([0, null]);
+  });
+
   it("normalizes workspace scripts and invalid activity timestamps", () => {
     const scripts = [
       {

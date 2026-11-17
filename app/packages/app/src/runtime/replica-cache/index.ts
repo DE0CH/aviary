@@ -320,6 +320,9 @@ const StoredWorkspaceSchema = z.strictObject({
   labels: z.array(z.string()).optional(),
   status: z.enum(["needs_input", "failed", "running", "attention", "done"]),
   statusEnteredAt: IsoDateSchema.nullable(),
+  // Optional because entries written before the chat's marks existed have none (as labels above).
+  backgroundTasks: z.number().int().nonnegative().optional(),
+  nextScheduleAt: IsoDateSchema.nullable().optional(),
   activityAt: z.null(),
   archivingAt: z.string().nullable(),
   diffStat: z.strictObject({ additions: z.number(), deletions: z.number() }).nullable(),
@@ -716,6 +719,8 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
     labels: workspace.labels,
     status: workspace.status,
     statusEnteredAt: workspace.statusEnteredAt?.toISOString() ?? null,
+    backgroundTasks: workspace.backgroundTasks,
+    nextScheduleAt: workspace.nextScheduleAt?.toISOString() ?? null,
     activityAt: null,
     archivingAt: workspace.archivingAt,
     diffStat: workspace.diffStat,

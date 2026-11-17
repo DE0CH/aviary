@@ -323,6 +323,35 @@ describe("ReplicaCache", () => {
     expect((await reader.readWorkspace(SERVER_ID, workspace.id))?.workspace).toEqual(workspace);
   });
 
+  // The chat's marks (Deyao, 2026-11-17): a reopened cache paints the blue dot and the clock it was closed with, and
+  // a row cached before the marks existed reads as none.
+  it("preserves the background-task count and next schedule across cache reopen", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const baseline = directory();
+    const workspace = normalizeWorkspaceDescriptor({
+      ...workspacePayload(),
+      backgroundTasks: 2,
+      nextScheduleAt: "2026-11-17T06:30:00.000Z",
+    });
+    baseline.workspaces.set(workspace.id, workspace);
+    commitDirectory(writer, SERVER_ID, baseline);
+    await writer.flush();
+    const restored = (await createCache(storage).readDirectory(SERVER_ID)).workspaces.get(workspace.id);
+    expect(restored?.backgroundTasks).toBe(2);
+    expect(restored?.nextScheduleAt).toEqual(new Date("2026-11-17T06:30:00.000Z"));
+
+    const key = `${SERVER_ID}:workspace:${workspace.id}`;
+    const row = storage.rows.get(key)!;
+    const payload = JSON.parse(row.payload);
+    delete payload.backgroundTasks;
+    delete payload.nextScheduleAt;
+    storage.rows.set(key, { ...row, payload: JSON.stringify(payload) });
+    const old = (await createCache(storage).readDirectory(SERVER_ID)).workspaces.get(workspace.id);
+    expect(old?.backgroundTasks).toBe(0);
+    expect(old?.nextScheduleAt).toBeNull();
+  });
+
   it.each(["createdAt", "lastUserMessageAt"])(
     "refetches workspaces cached without %s",
     async (field) => {

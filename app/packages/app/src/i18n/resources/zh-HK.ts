@@ -3100,6 +3100,12 @@ export const zhHK: TranslationResources = {
   },
   // YYC AI's own screens (docs/paseo-ui.md)
   conversation: {
+    // the status spot of a row in the conversation list (components/sidebar/workspace-status-indicator.tsx)
+    listMarks: {
+      background_one: "{{count}} 個背景工作執行中",
+      background_other: "{{count}} 個背景工作執行中",
+      scheduled: "下次排程 {{time}}",
+    },
     emptyList: "你的對話會在這裏顯示。",
     signOut: "登出",
     menu: {

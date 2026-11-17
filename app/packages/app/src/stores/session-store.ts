@@ -128,6 +128,10 @@ export interface WorkspaceDescriptor {
   labels?: string[];
   status: WorkspaceDescriptorPayload["status"];
   statusEnteredAt: Date | null;
+  /** Background tasks still running after the reply ended (the list's blue dot); 0 when none or unknown. */
+  backgroundTasks?: number;
+  /** When the soonest armed schedule fires next (the list's clock); null when none. */
+  nextScheduleAt?: Date | null;
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
   scripts: WorkspaceDescriptorPayload["scripts"];
@@ -172,6 +176,8 @@ export function normalizeWorkspaceDescriptor(
     labels: payload.labels ?? [],
     status: payload.status,
     statusEnteredAt,
+    backgroundTasks: payload.backgroundTasks ?? 0,
+    nextScheduleAt: payload.nextScheduleAt ? new Date(payload.nextScheduleAt) : null,
     archivingAt: payload.archivingAt ?? null,
     diffStat: payload.diffStat ?? null,
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),

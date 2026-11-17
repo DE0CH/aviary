@@ -4180,6 +4180,10 @@ export const WorkspaceDescriptorPayloadSchema = z
     background: z.boolean().optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
+    // The chat's marks in the conversation list (aviary's pigeon; Deyao, 2026-11-17): background tasks still running
+    // after the reply ended, and when the soonest armed schedule fires next. Other daemons omit both.
+    backgroundTasks: z.number().int().nonnegative().optional(),
+    nextScheduleAt: z.string().nullable().optional(),
     // Best-effort workspace status entry timestamp. Old daemons omit the
     // field; old clients treat missing and null equivalently. The transform
     // coerces a missing field to `null` so downstream code never has to

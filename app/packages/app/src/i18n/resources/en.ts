@@ -3154,6 +3154,12 @@ export const en = {
   },
   // YYC AI's own screens (docs/paseo-ui.md)
   conversation: {
+    // the status spot of a row in the conversation list (components/sidebar/workspace-status-indicator.tsx)
+    listMarks: {
+      background_one: "{{count}} background task running",
+      background_other: "{{count}} background tasks running",
+      scheduled: "Next wakeup {{time}}",
+    },
     emptyList: "Your conversations will show here.",
     signOut: "Sign out",
     menu: {
