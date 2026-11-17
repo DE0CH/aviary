@@ -4,7 +4,7 @@
 //! an identity happens here: the sandbox token is verified, liveness checked, the identity headers and pair bearers
 //! added. Plus the machine's boot, health and Jarvis's deliveries.
 
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use axum::Router;
@@ -234,12 +234,7 @@ async fn sandbox_of(app: &App, headers: &HeaderMap) -> Result<(Claims, SandboxRo
         ));
     };
     let now = u64::try_from(OffsetDateTime::now_utc().unix_timestamp()).unwrap_or(0);
-    // tokens are minted for any source address (the machine's half is the only presenter)
-    let Ok(claims) = app
-        .keys
-        .verify
-        .verify(token, now, IpAddr::V4(Ipv4Addr::LOCALHOST))
-    else {
+    let Ok(claims) = app.keys.verify.verify(token, now) else {
         return Err(refuse(
             StatusCode::FORBIDDEN,
             "not_allowed",
