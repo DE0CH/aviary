@@ -112,6 +112,7 @@ spec:
               - {key: feishu-files.SKILL.md, path: feishu-files/SKILL.md}
               - {key: labels.SKILL.md, path: labels/SKILL.md}
               - {key: newswatch.SKILL.md, path: newswatch/SKILL.md}
+              - {key: report.SKILL.md, path: report/SKILL.md}
               - {key: schedules.SKILL.md, path: schedules/SKILL.md}
               - {key: telegram.SKILL.md, path: telegram/SKILL.md}
               - {key: video.SKILL.md, path: video/SKILL.md}

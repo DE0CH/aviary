@@ -29,6 +29,28 @@ class SystemPrompt(unittest.TestCase):
         self.assertIn("For PDFs, write HTML and CSS and render it with WeasyPrint.", " ".join(self.text.split()))
 
 
+class ReportSkill(unittest.TestCase):
+    """The look of a report belongs to a skill, not the system prompt (Deyao, 2026-11-17): without the guidance
+    the model writes a three to five page brief with no cover and sends it after one look (Qwen Code, 2026-11-17)."""
+
+    def setUp(self):
+        with open(os.path.join(HERMIT, "skills", "report", "SKILL.md"), encoding="utf-8") as f:
+            self.text = " ".join(f.read().split())
+
+    def test_a_report_is_a_full_document(self):
+        self.assertIn("a cover page", self.text)
+        self.assertIn("only when the person asks for a brief (簡報, 快報) is it short", self.text)
+
+    def test_every_page_is_looked_at_before_sending(self):
+        self.assertIn("pdftoppm", self.text)
+        self.assertIn("look at every page", self.text)
+
+    def test_the_look_is_not_in_the_system_prompt(self):
+        with open(PROMPT, encoding="utf-8") as f:
+            prompt = " ".join(f.read().split())
+        self.assertNotIn("a cover page", prompt)
+
+
 class SandboxInternet(unittest.TestCase):
     """The sandbox reaches every site except the deny list (egress.json generatedAllowlist; Deyao, 2026-11-10): no
     managed text may still say that web sites are out of reach, which contradicts the sandbox rules."""
