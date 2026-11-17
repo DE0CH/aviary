@@ -98,6 +98,13 @@ class Commands(unittest.TestCase):
     def test_a_sentence_with_a_slash_is_no_name(self):
         self.assertEqual(e.command_names("/compact keeps a summary\nsee a/b"), [])
 
+    def test_inside_a_message_some_of_the_starts_names_are_listed(self):
+        start = ["/compact", "/retire-session", "/context"]
+        self.assertTrue(e.skills_listed(["/retire-session"], start))
+        # nothing listed (pigeon named every entry a command: 2026-11-17), or a name the start's list lacks
+        self.assertFalse(e.skills_listed([], start))
+        self.assertFalse(e.skills_listed(["/retire-session", "/other"], start))
+
 
 if __name__ == "__main__":
     unittest.main()

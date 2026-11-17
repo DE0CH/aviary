@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """YYC AI end to end on the live site (yyc-ai-e2e.yml, after each deploy): sign in as bot@deyaochen.com with Cloudflare
 Access's e-mailed code, check /api/jarvis/me, start a conversation, wait for the model's answer, then type `/` and
-need the list of the conversation's slash commands over the message box. Exits 1 with screenshots in OUT when any step
-fails. Whatever happened, it deletes its conversation at the end (the header's menu), which releases the sandbox at
+need the list of the conversation's slash commands over the message box, and `then /` and need the skills among them.
+Exits 1 with screenshots in OUT when any step fails. Whatever happened, it deletes its conversation at the end (the
+header's menu), which releases the sandbox at
 once: a conversation left behind keeps its sandbox for hermit's `sandbox.idleMinutes`, and nine runs in a row held
 nine of the ten sandboxes on five hosts (2026-11-17).
 
@@ -84,6 +85,12 @@ def command_names(text):
     return names
 
 
+def skills_listed(inside, start):
+    """what a `/` inside a message lists is right: something, and only names the list at a message's start has
+    (inside a message the box completes the skills, not the agent's own commands)"""
+    return bool(inside) and all(name in start for name in inside)
+
+
 def main():
     from playwright.sync_api import sync_playwright
     out = sys.argv[1]
@@ -158,6 +165,21 @@ def main():
             print(f"/ lists {len(names)} commands: {' '.join(names[:5])} ...")
             pg.screenshot(path=os.path.join(out, "commands.png"))
             pg.keyboard.press("Backspace")
+
+            step = "skills"
+            # a skill is completed where a message names it, not only at the message's start
+            box.type("then /")
+            t0, inside = time.time(), []
+            while time.time() - t0 < 30 and not inside:
+                pg.wait_for_timeout(1000)
+                if listed.count():
+                    inside = command_names(listed.first.inner_text())
+            if not skills_listed(inside, names):
+                fail(f"a / inside a message lists {inside or 'nothing'} 30 s after typing it; the start lists {names}")
+            print(f"a / inside a message lists {len(inside)} skills: {' '.join(inside[:5])} ...")
+            pg.screenshot(path=os.path.join(out, "skills.png"))
+            for _ in "then /":
+                pg.keyboard.press("Backspace")
         finally:
             # the conversation goes to Recently deleted and its sandbox is released (reason `deleted`)
             if "/workspace/" in pg.url:
