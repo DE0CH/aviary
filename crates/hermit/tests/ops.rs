@@ -440,7 +440,8 @@ async fn the_snapshot_now_and_history_from_every_source() {
     assert_eq!(role("pigeon")["pods"].as_array().unwrap().len(), 2);
     assert_eq!(role("pigeon")["pods"][0]["node"], "worker1");
     assert_eq!(role("magpie")["state"], "warming");
-    assert_eq!(role("egress")["state"], "problem");
+    // one of its two pods ready: the other serves, a caution ("watch"), not an outage
+    assert_eq!(role("egress")["state"], "watch");
     let bad = role("egress")["pods"]
         .as_array()
         .unwrap()
@@ -559,12 +560,12 @@ async fn the_snapshot_now_and_history_from_every_source() {
         .map(|x| format!("{} {}", x["level"].as_str().unwrap(), x["text"].as_str().unwrap()))
         .collect();
     let has = |t: &str| texts.iter().any(|x| x.starts_with(t));
-    assert!(has("problem egress: 1 of 2 pods ready"), "{texts:#?}");
+    assert!(has("watch egress: 1 of 2 pods ready"), "{texts:#?}");
     assert!(has("problem tools: no Deployment"), "{texts:#?}");
     assert!(has("warming magpie: rolling out"), "{texts:#?}");
     assert!(has("warming Host aws-2 retiring"), "{texts:#?}");
-    assert!(has("problem 1 sandbox start failed in the last 15 min"), "{texts:#?}");
-    assert!(has("problem 1 host or move error in the last 15 min"), "{texts:#?}");
+    assert!(has("watch 1 sandbox start failed in the last 15 min"), "{texts:#?}");
+    assert!(has("watch 1 host or move error in the last 15 min"), "{texts:#?}");
     assert_eq!(d["health"]["findings"][0]["level"], "problem");
 
     // the monitor's two contracts
@@ -577,7 +578,15 @@ async fn the_snapshot_now_and_history_from_every_source() {
     assert_eq!(d["budget"], Value::Null);
     assert!(d["errors"]["egress"].as_str().unwrap().starts_with("egress: bad body"));
     assert!(d["errors"]["budget"].is_string());
-    assert_eq!(d["health"]["findings"][0]["about"], "page");
+    // blind, its own level: under the problems (a missing Deployment is still listed first), never one of them
+    let page = d["health"]["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["about"] == "page")
+        .expect("the unreadable section is a finding");
+    assert_eq!(page["level"], "blind");
+    assert_eq!(d["health"]["findings"][0]["level"], "problem");
     assert!(d["sandboxes"]["list"].is_array());
     // the fabric's part is a section like the others: its failure is named, never a quiet default
     *h.fabric.ops.lock().unwrap() = Err("the pool timed out".into());

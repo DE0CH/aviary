@@ -400,6 +400,9 @@ pub fn service_of(names: &[String], deps: &[Value], pods: &[Value], node_prefix:
                 if rolling { "warming" } else { "ok" }
             } else if rolling && ready > 0 {
                 "warming"
+            } else if ready > 0 {
+                // fewer pods ready than asked, not rolling: the ready ones serve (a caution, not an outage)
+                "watch"
             } else {
                 "problem"
             };
@@ -904,10 +907,14 @@ mod tests {
                    "status": {"observedGeneration": 2, "replicas": ready, "readyReplicas": ready,
                               "updatedReplicas": ready}})
         };
-        let names = ["off".to_owned(), "down".to_owned()];
+        // settled (both pods are of the current version), one of them not ready
+        let short = json!({"metadata": {"name": "short", "generation": 2}, "spec": {"replicas": 2},
+                           "status": {"observedGeneration": 2, "replicas": 2, "readyReplicas": 1,
+                                      "updatedReplicas": 2}});
+        let names = ["off".to_owned(), "down".to_owned(), "short".to_owned()];
         let v = service_of(
             &names,
-            &[dep("off", 0, 0), dep("down", 2, 0)],
+            &[dep("off", 0, 0), dep("down", 2, 0), short],
             &[],
             "",
             datetime!(2026-11-02 00:00 UTC),
@@ -918,6 +925,7 @@ mod tests {
             .iter()
             .map(|d| d["state"].as_str().unwrap())
             .collect();
-        assert_eq!(states, ["ok", "problem"]);
+        // one of two pods ready and not rolling: the other serves, so "watch", not an outage
+        assert_eq!(states, ["ok", "problem", "watch"]);
     }
 }

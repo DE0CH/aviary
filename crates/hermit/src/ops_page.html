@@ -7,8 +7,11 @@
 <meta name="robots" content="noindex">
 <title>{{TITLE}}</title>
 <style>
-:root{--bg:#f5f5f2;--card:#fff;--fg:#1b1b1b;--mut:#6b6b6b;--line:#e4e4e0;--ok:#1f7a4d;--okbg:#e3f3ea;--warm:#8a5a00;--warmbg:#fbf0d9;--bad:#b3261e;--badbg:#fbe4e1;--chip:#efefeb;--bar:#2f6fde;--hist:#ecebe6}
-@media (prefers-color-scheme:dark){:root{--bg:#121212;--card:#1c1c1c;--fg:#ececec;--mut:#9a9a9a;--line:#2e2e2e;--ok:#4cc38a;--okbg:#15301f;--warm:#e6b04a;--warmbg:#33270f;--bad:#ff7a6e;--badbg:#3a1714;--chip:#2a2a2a;--bar:#6a9cff;--hist:#181818}}
+/* State colours, the flight deck's (hermit health_verdict Level): problem = red, a service lost right now; watch = amber,
+   still serving but degraded, or an error that is over; blind = magenta, this page could not read something, so it
+   may be fine or down; warming = blue, something that finishes by itself; ok = green. */
+:root{--bg:#f5f5f2;--card:#fff;--fg:#1b1b1b;--mut:#6b6b6b;--line:#e4e4e0;--ok:#1f7a4d;--okbg:#e3f3ea;--warm:#8a5a00;--warmbg:#fbf0d9;--bad:#b3261e;--badbg:#fbe4e1;--info:#005eb8;--infobg:#e1edf9;--blind:#a3138f;--blindbg:#f7e3f4;--chip:#efefeb;--bar:#2f6fde;--hist:#ecebe6}
+@media (prefers-color-scheme:dark){:root{--bg:#121212;--card:#1c1c1c;--fg:#ececec;--mut:#9a9a9a;--line:#2e2e2e;--ok:#4cc38a;--okbg:#15301f;--warm:#e6b04a;--warmbg:#33270f;--bad:#ff7a6e;--badbg:#3a1714;--info:#5aa9ff;--infobg:#10263d;--blind:#f472d0;--blindbg:#3a1233;--chip:#2a2a2a;--bar:#6a9cff;--hist:#181818}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans HK",sans-serif}
 header{position:sticky;top:0;z-index:2;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 16px 0}
@@ -17,7 +20,7 @@ header h1{font-size:17px;margin:0}
 .meta{color:var(--mut);font-size:12px}
 .pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:14px;font-weight:600;font-size:13px}
 .pill::before{content:"";width:9px;height:9px;border-radius:50%;background:currentColor}
-.s-ok{color:var(--ok);background:var(--okbg)}.s-warming,.s-watch{color:var(--warm);background:var(--warmbg)}.s-problem{color:var(--bad);background:var(--badbg)}.s-none{color:var(--mut);background:var(--chip)}
+.s-ok{color:var(--ok);background:var(--okbg)}.s-warming{color:var(--info);background:var(--infobg)}.s-watch{color:var(--warm);background:var(--warmbg)}.s-blind{color:var(--blind);background:var(--blindbg)}.s-problem{color:var(--bad);background:var(--badbg)}.s-none{color:var(--mut);background:var(--chip)}
 .tabs{display:flex;gap:4px;margin-top:8px}
 .tabs button{flex:1;border:0;background:none;color:var(--mut);font:600 14px system-ui,sans-serif;padding:8px 0;border-bottom:3px solid transparent;cursor:pointer}
 .tabs button.on{color:var(--fg);border-bottom-color:var(--fg)}
@@ -51,14 +54,14 @@ h4{font-size:13px;margin:12px 0 4px;color:var(--mut);font-weight:600}
 .r{margin-left:auto;font-variant-numeric:tabular-nums}
 .t{font-variant-numeric:tabular-nums;color:var(--mut);font-size:12.5px;min-width:9.5em}
 .chip{display:inline-block;padding:0 8px;border-radius:9px;background:var(--chip);font-size:12px;font-weight:600}
-.chip.s-ok,.chip.s-warming,.chip.s-watch,.chip.s-problem{font-weight:600}
+.chip.s-ok,.chip.s-warming,.chip.s-watch,.chip.s-blind,.chip.s-problem{font-weight:600}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:middle;background:var(--mut)}
-.dot.ok{background:var(--ok)}.dot.warming,.dot.watch{background:var(--warm)}.dot.problem{background:var(--bad)}
+.dot.ok{background:var(--ok)}.dot.warming{background:var(--info)}.dot.watch{background:var(--warm)}.dot.blind{background:var(--blind)}.dot.problem{background:var(--bad)}
 .find{display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--line)}
 .find:first-child{border-top:0}
 .find .dot{margin-top:6px;flex:none}
 .find .lv{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;flex:none;min-width:5.5em}
-.lv.problem{color:var(--bad)}.lv.warming,.lv.watch{color:var(--warm)}
+.lv.problem{color:var(--bad)}.lv.warming{color:var(--info)}.lv.watch{color:var(--warm)}.lv.blind{color:var(--blind)}
 .allok{color:var(--ok);font-weight:600}
 .pods{display:flex;flex-wrap:wrap;gap:4px 6px;width:100%}
 .pod{font-size:12px;padding:1px 7px;border-radius:8px;background:var(--chip)}
@@ -68,8 +71,8 @@ h4{font-size:13px;margin:12px 0 4px;color:var(--mut);font-weight:600}
 .mini{display:inline-block;width:70px;height:6px;border-radius:3px;background:var(--chip);overflow:hidden;vertical-align:middle}
 .mini i{display:block;height:100%;background:var(--bar)}
 .empty{color:var(--mut);font-size:13px}
-.err{color:var(--bad);font-size:12.5px;margin-top:6px}
-.bad{color:var(--bad)}.okc{color:var(--ok)}.warmc{color:var(--warm)}
+.err{color:var(--blind);font-size:12.5px;margin-top:6px}
+.bad{color:var(--bad)}.okc{color:var(--ok)}.warmc{color:var(--warm)}.blindc{color:var(--blind)}
 code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
 form.va{margin:0 0 0 auto}
 form.va button{font:600 12px system-ui,sans-serif;padding:3px 10px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
@@ -78,7 +81,7 @@ form.va button:hover{border-color:var(--fg)}
 </head>
 <body class="tab-now">
 <header>
-  <div class="top"><h1>{{TITLE}}</h1><span class="pill s-none" id="verdict">loading…</span><span class="meta" id="meta"></span><span class="meta bad" id="stale">· not updating</span><a class="navlink" href="/ops/schedules" title="Every person's schedules with their runs, and the pause-all switch">Schedules</a></div>
+  <div class="top"><h1>{{TITLE}}</h1><span class="pill s-none" id="verdict">loading…</span><span class="meta" id="meta"></span><span class="meta blindc" id="stale">· not updating</span><a class="navlink" href="/ops/schedules" title="Every person's schedules with their runs, and the pause-all switch">Schedules</a></div>
   <nav class="tabs"><button id="t-now" class="on" onclick="tab('now')">Now</button><button id="t-history" onclick="tab('history')">History (log)</button></nav>
 </header>
 <main>
@@ -91,8 +94,8 @@ var DEFAULT_TZ = {{TZ_JSON}};
 var PRODUCT = {{PRODUCT_JSON}};
 var TZ = (function(){ try { return Intl.DateTimeFormat().resolvedOptions().timeZone || DEFAULT_TZ; } catch (e) { return DEFAULT_TZ; } })();
 document.getElementById("tzname").textContent = TZ;
-var LABEL = {ok: "All fine", warming: "Warming up", watch: "Needs a look", problem: "Problem"};
-var LEVEL = {warming: "Warming", watch: "Watch", problem: "Problem"};
+var LABEL = {ok: "All fine", warming: "Warming up", watch: "Needs a look", blind: "Can't see", problem: "Problem"};
+var LEVEL = {warming: "Warming", watch: "Watch", blind: "Blind", problem: "Problem"};
 function tab(t){
   document.body.className = "tab-" + t;
   document.getElementById("t-now").className = t === "now" ? "on" : "";
@@ -119,7 +122,12 @@ function card(title, sub, body, err){ return "<section><h3>" + esc(title) + (sub
 function rows(list, fn, empty){ return list && list.length ? list.map(fn).join("") : '<div class="empty">' + esc(empty) + "</div>"; }
 function kpi(v, label){ return '<div class="kpi"><b>' + v + "</b><span>" + esc(label) + "</span></div>"; }
 function t(at){ return '<span class="t">' + when(at) + "</span>"; }
-function hostLevel(x){ if (x.status === "booting" || x.status === "retiring") return "warming"; return x.reachable ? "ok" : "problem"; }
+// a host not answering: red with a sandbox on it (someone is stopped), amber when empty
+function hostLevel(x){ if (x.status === "booting" || x.status === "retiring") return "warming"; return x.reachable ? "ok" : x.sandboxes ? "problem" : "watch"; }
+// a pod not ready: amber while its Deployment still serves, red when the Deployment is down
+function podLevel(p, dep){ return p.ready ? "ok" : p.phase === "Terminating" ? "warming" : dep.state === "problem" ? "problem" : "watch"; }
+// a hermit replica down or without its store: amber beside a healthy one, red with none
+function replicaLevel(list){ return (list || []).some(function(r){ return r.reporting !== false && !r.storeError; }) ? "watch" : "problem"; }
 function hostWord(x){
   if (x.status === "booting") return "booting";
   if (x.status === "retiring") return "retiring";
@@ -147,7 +155,7 @@ function renderNow(d){
     sb += svc.deployments.map(function(x){
       var lv = x.state, word = x.missing ? "missing" : x.ready + " / " + x.desired + " ready" + (x.rolling ? ", rolling out" : "");
       return '<div class="row"><span class="main">' + esc(x.name) + "</span>" + chip(lv, word) + '<div class="pods">' + (x.pods || []).map(function(p){
-        return '<span class="pod"><span class="dot ' + (p.ready ? "ok" : p.phase === "Terminating" ? "warming" : "problem") + '"></span>' + esc(p.name.split("-").pop()) + " · " + esc(p.ready ? "ready" : p.phase) + " · " + dur(p.ageS) + (p.restarts ? ' · <b class="warmc">' + p.restarts + " restarts</b>" : "") + (p.node ? " · " + esc(p.node) : "") + "</span>";
+        return '<span class="pod"><span class="dot ' + podLevel(p, x) + '"></span>' + esc(p.name.split("-").pop()) + " · " + esc(p.ready ? "ready" : p.phase) + " · " + dur(p.ageS) + (p.restarts ? ' · <b class="warmc">' + p.restarts + " restarts</b>" : "") + (p.node ? " · " + esc(p.node) : "") + "</span>";
       }).join("") + "</div></div>";
     }).join("");
   } else if (svc) sb += '<div class="empty">Pod status is not available here (not in a cluster).</div>';
@@ -182,7 +190,7 @@ function renderNow(d){
     lb += rows(s.list, function(x){
       var lv = x.status === "ready" ? "ok" : x.status === "starting" || x.status === "releasing" ? "warming" : "problem";
       var rp = x.releasePending;
-      return '<div class="row"><span class="main">' + who(x.owner) + "</span>" + chip(lv, x.status + (x.phase ? " · " + x.phase : "")) + (x.busy ? chip("watch", "busy") : "") + (x.status === "ready" && !x.reporting ? chip("watch", "not reporting") : "") + f("host", esc(x.host || "–")) + f("up", dur(x.ageS)) + f("last used", dur(x.idleS) + " ago") + f("conversation", "<code>" + short(x.conversationId) + "</code>") + (x.migrations ? f("moved", x.migrations + "×") : "") + (rp ? f("release", esc(rp.reason) + (rp.force ? " (forced)" : "") + (rp.refusals ? ", refused " + rp.refusals + "×" : "")) : "") + "</div>";
+      return '<div class="row"><span class="main">' + who(x.owner) + "</span>" + chip(lv, x.status + (x.phase ? " · " + x.phase : "")) + (x.busy ? chip("none", "busy") : "") + (x.status === "ready" && !x.reporting ? chip("watch", "not reporting") : "") + f("host", esc(x.host || "–")) + f("up", dur(x.ageS)) + f("last used", dur(x.idleS) + " ago") + f("conversation", "<code>" + short(x.conversationId) + "</code>") + (x.migrations ? f("moved", x.migrations + "×") : "") + (rp ? f("release", esc(rp.reason) + (rp.force ? " (forced)" : "") + (rp.refusals ? ", refused " + rp.refusals + "×" : "")) : "") + "</div>";
     }, "No live sandboxes.");
   }
   out.push(card("Live sandboxes", "who has one now", lb, E.sandboxes));
@@ -233,14 +241,15 @@ function renderNow(d){
     ob += '<div class="row"><span class="main">New sandboxes</span>' + (c.sandboxesEnabled ? chip("ok", "enabled") : chip("watch", "disabled by the operator") + (c.disabledReason ? f("why", esc(c.disabledReason)) : "")) + "</div>";
     if (c.freshHostUntil && Date.parse(c.freshHostUntil) > Date.now()) ob += '<div class="row"><span class="main">Fresh-host test</span>' + chip("watch", "running") + f("until", when(c.freshHostUntil)) + "</div>";
   }
-  ob += rows(d.replicas, function(x){ return '<div class="row"><span class="main">hermit ' + esc(x.pod) + "</span>" + (x.reporting === false ? chip("problem", "stopped reporting") + f("last seen", when(x.seenAt)) : x.storeError ? chip("problem", "workspace store not mounted") + f("", esc(x.storeError)) : chip("ok", "workspace store mounted")) + (x.deleteRefusedAt ? f("delete refused", when(x.deleteRefusedAt) + " · " + esc(x.deleteRefusedPath || "")) : "") + "</div>"; }, "No hermit replica has reported.");
-  if (d.catalogue && d.catalogue.refused) ob += '<div class="row"><span class="main bad">Staff catalogue refused</span>' + f("", esc(d.catalogue.refused)) + "</div>";
+  var repLv = replicaLevel(d.replicas);
+  ob += rows(d.replicas, function(x){ return '<div class="row"><span class="main">hermit ' + esc(x.pod) + "</span>" + (x.reporting === false ? chip(repLv, "stopped reporting") + f("last seen", when(x.seenAt)) : x.storeError ? chip(repLv, "workspace store not mounted") + f("", esc(x.storeError)) : chip("ok", "workspace store mounted")) + (x.deleteRefusedAt ? f("delete refused", when(x.deleteRefusedAt) + " · " + esc(x.deleteRefusedPath || "")) : "") + "</div>"; }, "No hermit replica has reported.");
+  if (d.catalogue && d.catalogue.refused) ob += '<div class="row"><span class="main warmc">Staff catalogue refused</span>' + f("", esc(d.catalogue.refused)) + "</div>";
   out.push(card("Operator switches", "sandboxes, the fresh-host test, workspace stores", ob, E.controls || E.replicas));
 
   // 8. errors of the last 15 minutes
   var r = d.recent, rb = "";
   if (r) {
-    rb += rows(r.list, function(x){ return '<div class="row">' + t(x.at) + '<span class="main bad">' + esc(x.what) + "</span>" + (x.detail ? f("", esc(x.detail)) : "") + (x.owner ? f("who", who(x.owner)) : "") + "</div>"; }, "No errors in the last " + d.recentMinutes + " minutes.");
+    rb += rows(r.list, function(x){ return '<div class="row">' + t(x.at) + '<span class="main warmc">' + esc(x.what) + "</span>" + (x.detail ? f("", esc(x.detail)) : "") + (x.owner ? f("who", who(x.owner)) : "") + "</div>"; }, "No errors in the last " + d.recentMinutes + " minutes.");
     if (r.blocked) rb += '<div class="row">' + f("blocked internet requests (normal; listed in History)", r.blocked) + "</div>";
   }
   out.push(card("Current errors", "last " + d.recentMinutes + " min; the 24 h log is in History", rb, E["recent errors"]));
@@ -256,7 +265,7 @@ function renderHistory(d){
     sb += '<div class="kpis">' + kpi(m.n, "starts (" + m.failed + " failed)") + kpi(m.p50Ms == null ? "–" : secs(m.p50Ms), "start time p50") + kpi(m.p95Ms == null ? "–" : secs(m.p95Ms), "p95") + "</div>";
     if (s.releases && s.releases.length) sb += '<div class="row">' + f("released", s.releases.map(function(x){ return esc(x.reason) + " " + x.n; }).join(", ")) + "</div>";
     sb += rows(s.list, function(x){
-      var what = x.what === "start" ? (x.ok ? '<span class="main okc">start</span>' + f("took", secs(x.ms)) : '<span class="main bad">start failed</span>' + f("after", secs(x.ms)) + f("why", esc(x.reason || ""))) :
+      var what = x.what === "start" ? (x.ok ? '<span class="main okc">start</span>' + f("took", secs(x.ms)) : '<span class="main warmc">start failed</span>' + f("after", secs(x.ms)) + f("why", esc(x.reason || ""))) :
         '<span class="main">release</span>' + f("lived", dur(x.ms / 1000)) + f("why", esc(x.reason || "?"));
       return '<div class="row">' + t(x.at) + what + f("who", who(x.owner)) + (x.host ? f("host", esc(x.host)) : "") + "</div>";
     }, "No sandbox starts or releases in 24 h.");
@@ -267,7 +276,7 @@ function renderHistory(d){
   out.push(card("Host and sandbox events", "latest 60", rows(d.events, function(x){
     var data = x.data && Object.keys(x.data).length ? JSON.stringify(x.data) : "";
     var bad = /error|lost|fail/.test(x.kind) || (x.data && x.data.error);
-    return '<div class="row">' + t(x.at) + '<span class="main ' + (bad ? "bad" : "") + '">' + esc(x.kind) + "</span>" + (x.host ? f("host", esc(x.host)) : "") + (x.sandboxId ? f("sandbox", short(x.sandboxId) + (x.owner ? " · " + who(x.owner) : "")) : "") + (data ? '<span class="f"><code>' + esc(data.length > 300 ? data.slice(0, 300) + "…" : data) + "</code></span>" : "") + "</div>";
+    return '<div class="row">' + t(x.at) + '<span class="main ' + (bad ? "warmc" : "") + '">' + esc(x.kind) + "</span>" + (x.host ? f("host", esc(x.host)) : "") + (x.sandboxId ? f("sandbox", short(x.sandboxId) + (x.owner ? " · " + who(x.owner) : "")) : "") + (data ? '<span class="f"><code>' + esc(data.length > 300 ? data.slice(0, 300) + "…" : data) + "</code></span>" : "") + "</div>";
   }, "No events."), E.events));
 
   // hosts gone
@@ -328,8 +337,8 @@ function load(){
   fetch("snapshot?tz=" + encodeURIComponent(TZ), {cache: "no-store", credentials: "same-origin"}).then(function(r){
     if (!r.ok) throw new Error("HTTP " + r.status);
     return r.json();
-  }).then(function(d){ last = Date.now(); render(d); document.getElementById("stale").className = "meta bad"; })
-    .catch(function(){ if (Date.now() - last > 30000) document.getElementById("stale").className = "meta bad on"; });
+  }).then(function(d){ last = Date.now(); render(d); document.getElementById("stale").className = "meta blindc"; })
+    .catch(function(){ if (Date.now() - last > 30000) document.getElementById("stale").className = "meta blindc on"; });
 }
 load();
 setInterval(function(){ if (!document.hidden) load(); }, 10000);

@@ -237,7 +237,17 @@ and replicas started in-process with short timings (`Timings` is code, not confi
   the egress target count, slots per host), a default method answering "nothing known"; the gVisor fabric (WP-19)
   answers it from the database (the plan as a launch would compute it, the leader's last pass and the gateway's
   egress targets from the gateway's row).
-- **A workspace delete refused** (15.4) is a problem in the verdict while the refusal is younger than
+- **The verdict's levels (Deyao, 2026-11-17)** are `ok < warming < watch < blind < problem`, the flight deck's colours on
+  the page (and on any page that reads the snapshot): `problem` (red) only for a service lost right now, for everyone
+  or for one person (a Deployment with no pod ready or missing, the gateway gone, no egress targets, the budget used
+  up, a host with sandboxes on it not answering, a sandbox starting for over 180 s, no healthy hermit replica);
+  `watch` (amber) for what still serves (a Deployment short of pods whose others serve, state `watch` in `service`; a
+  hermit replica silent or without its store beside a healthy one; an empty host not answering; a host booting for
+  over 300 s; the scaler's pass late; the catalogue refused; a workspace delete refused) and for errors that are over
+  (failed starts, model, route and host errors of the last `recentMinutes`); `blind` (magenta) for a section that could
+  not be read, which may be fine or down; `warming` (blue) for what finishes by itself. Tests: `health_verdict`'s
+  `problem_is_a_service_lost_now`, `tests/ops_page.test.mjs` (the page's script in Node, ci.yml job test).
+- **A workspace delete refused** (15.4) is a caution (`watch`) in the verdict while the refusal is younger than
   `recentMinutes` (15 min): magpie's outbox retries the delete, so a lasting cause keeps the finding; 18.6 does not
   say how long it shows.
 - **"Not reporting"** (18.6 watch) is a ready sandbox whose last activity report is older than three report periods

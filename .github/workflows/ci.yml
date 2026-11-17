@@ -69,6 +69,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: hermit's operator page (its state colours; the page's own script run in the runner's Node)
+        run: node --test crates/hermit/tests/ops_page.test.mjs
       - name: toolchain (rust-toolchain.toml, exactly)
         run: rustup toolchain install && rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
