@@ -16,14 +16,20 @@ echo '{}' > "$out"
 # release.sh reads hermit-sandbox's labels from the local image, so it is loaded even when its tag exists (a re-run)
 [ -s "$dir/hermit-sandbox.tar" ] || { echo "publish-images: no $dir/hermit-sandbox.tar" >&2; exit 1; }
 docker load -q -i "$dir/hermit-sandbox.tar" >/dev/null
-push() { # push <local image> <remote>: prints the pushed manifest's digest
+push() { # push <local image> <remote>: prints the pushed manifest's digest. The registry fails a push now and then
+  # ("unknown blob" from GHCR, 2026-11-17: that commit got no release); a push is idempotent, so it is tried 3 times
   docker tag "$1" "$2"
-  local log digest
-  log=$(docker push "$2")
-  echo "$log" | tail -1 >&2
-  digest=$(grep -o 'digest: sha256:[0-9a-f]\{64\}' <<< "$log" | tail -1 | cut -d' ' -f2)
-  [ -n "$digest" ] || { echo "publish-images: no digest for $2" >&2; exit 1; }
-  echo "$digest"
+  local log digest try
+  for try in 1 2 3; do
+    log=$(docker push "$2" 2>&1) || true
+    echo "$log" | tail -1 >&2
+    digest=$(grep -o 'digest: sha256:[0-9a-f]\{64\}' <<< "$log" | tail -1 | cut -d' ' -f2) || true
+    [ -n "$digest" ] && { echo "$digest"; return; }
+    echo "publish-images: push $try of $2 gave no digest" >&2
+    [ "$try" = 3 ] || sleep "${PUBLISH_PUSH_WAIT:-15}"
+  done
+  echo "publish-images: no digest for $2" >&2
+  exit 1
 }
 for name in pigeon magpie hermit herald sandboxd aviary-testing hermit-sandbox; do
   remote=ghcr.io/de0ch/$name:$sha12

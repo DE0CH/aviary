@@ -65,6 +65,8 @@ jobs:
         run: bash .github/ci/test-pin-dispatch.sh
       - name: ci.yml's publish runs for every gated main commit (push or dispatch), never a pull request
         run: bash .github/ci/test-publish-gate.sh
+      - name: .github/ci/publish-images.sh against a stand-in docker (a failed push is tried again)
+        run: bash .github/ci/test-publish-images.sh
 
   test:
     runs-on: ubuntu-24.04
