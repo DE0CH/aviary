@@ -26,6 +26,11 @@ Jarvis 4 session machine (harness aviary)                                     �
   `/v1/deployment` `conversations.peopleCreate: false` → pigeon's `/api/jarvis/me` `newConversations: false`).
 - Claude Code loads the session's workspace CLAUDE.md, skills and settings itself (the descriptor's
   `claude.projectSettings`: `--setting-sources=project`); YYC AI's hermit leaves it off.
+- The chat's iPhone app, Jarvis Chat (DE0CH/claudecodeui docs/paseo-ui.md "The iOS app", the same app as the site
+  built natively), signs in through pigeon's `/api/jarvis/app-signin`, which hands the person's Access token to the
+  app's URL scheme. The scheme is the deployment's (`signIn.appScheme` in the settings file → `/v1/deployment`
+  `signIn.appScheme`); it is read from the file only and never sent to a machine (`skip_serializing`: a session on
+  an older image refuses a settings member it does not know).
 - The models are the deployment's settings (`HERMIT_SETTINGS`, DE0CH/deyao-ai `k8s/chat/settings.json`,
   `src/settings.rs`: the product name, the menu, each model's thinking levels, context window and OpenRouter hosts;
   hermit-jarvis refuses to start on a file that cannot work and hands the settings to each machine's gateway in the

@@ -69,7 +69,7 @@ impl Server for App {
                     team_domain: self.access_team.clone(),
                     audience: self.access_aud.clone(),
                 }],
-                app_scheme: None,
+                app_scheme: self.settings.sign_in.app_scheme.clone(),
             },
             // sessions start only in the Jarvis 4 app (Deyao, 2026-11-11); in a conversation, the composer's menu
             // picks its model and thinking level from then on (Deyao, 2026-11-12: as on YYC AI)

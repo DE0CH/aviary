@@ -22,6 +22,21 @@ pub struct Settings {
     /// The models a conversation's menu offers, the default first. A session starts on the model picked in the
     /// Jarvis 4 app.
     pub models: Vec<Model>,
+    /// How people sign in beyond the browser. Read here and answered to pigeon (`/v1/deployment`); a machine's
+    /// gateway has no use for it and never gets it: a session on an older image refuses a member it does not
+    /// know, and a change here must not reach running sessions.
+    #[serde(default, skip_serializing)]
+    pub sign_in: SignIn,
+}
+
+/// `signIn`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SignIn {
+    /// The URL scheme of the deployment's phone app (its bundle id): pigeon's `/api/jarvis/app-signin` hands the
+    /// person's Access token back to `<scheme>://signed-in`. None: the deployment has no app, and the route is 404.
+    #[serde(default)]
+    pub app_scheme: Option<String>,
 }
 
 /// `product`.
@@ -84,6 +99,10 @@ impl Settings {
             !s.models.is_empty(),
             "models is empty: a conversation needs one"
         );
+        anyhow::ensure!(
+            s.sign_in.app_scheme.as_deref().is_none_or(url_scheme),
+            "signIn.appScheme is not a URL scheme (a letter, then letters, digits, `+`, `-`, `.`)"
+        );
         for (i, m) in s.models.iter().enumerate() {
             anyhow::ensure!(
                 !m.id.trim().is_empty() && !m.label.trim().is_empty(),
@@ -139,6 +158,13 @@ impl Settings {
                 .collect(),
         }
     }
+}
+
+/// Whether `s` can be a URL's scheme (RFC 3986).
+fn url_scheme(s: &str) -> bool {
+    let mut chars = s.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
 /// Whether a model id is OpenRouter's (`maker/model`); a Claude id has no `/`.
@@ -223,5 +249,27 @@ mod tests {
         );
         // a key this build does not know is a mistake in the file, not something to skip
         assert!(bad(&|v| v["modles"] = serde_json::json!([])).contains("unknown field"));
+    }
+
+    #[test]
+    fn the_apps_sign_in_scheme_is_the_files_and_never_a_machines() {
+        let s = Settings::parse(FILE).unwrap();
+        assert_eq!(
+            s.sign_in.app_scheme.as_deref(),
+            Some("dev.de0ch.jarvis4chat")
+        );
+        // what the boot reply hands a machine's gateway: a session on an older image refuses an unknown member
+        let sent = serde_json::to_value(&s).unwrap();
+        assert!(sent.get("signIn").is_none(), "{sent}");
+
+        // a deployment with no app names none
+        let mut file: serde_json::Value = serde_json::from_str(FILE).unwrap();
+        file.as_object_mut().unwrap().remove("signIn");
+        let none = Settings::parse(&file.to_string()).unwrap();
+        assert_eq!(none.sign_in.app_scheme, None);
+
+        // something that cannot be a URL's scheme is refused at the start, not at somebody's sign-in
+        file["signIn"] = serde_json::json!({ "appScheme": "not a scheme://" });
+        assert!(Settings::parse(&file.to_string()).is_err());
     }
 }
