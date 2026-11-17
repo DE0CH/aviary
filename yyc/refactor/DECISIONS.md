@@ -86,7 +86,7 @@ E5. (2026-11-04) The A1 ui gate (DESIGN 9.6) waits only on running work in the p
     The old Claude Artifact copy of the Talos plan stays. Nothing destructive or irreversible without asking Deyao
     first (Discord ping); reversible steps need no ask: deleting a server after taking its snapshot, releasing a
     stateless pod.
-17. (Deyao, 2026-11-05) **A question nobody answers never holds a sandbox, and the person never sees it time out.**
+17. (Deyao, 2026-11-05; replaced by 19) **A question nobody answers never holds a sandbox, and the person never sees it time out.**
     Freezing a sandbox (gVisor/runsc checkpoint or pause) to wait for an answer is the wrong layer and is not used in
     any case: YYC sandboxes stay disposable (hermit 3.6.4: pause/resume/snapshot answer 501). Instead, while a run waits
     only on an open question (AskUserQuestion, ExitPlanMode; no tool or background task running), the supervisor
@@ -102,3 +102,16 @@ E5. (2026-11-04) The A1 ui gate (DESIGN 9.6) waits only on running work in the p
 18. (Deyao, 2026-11-07) **"Stop waiting": P4 has no soak.** The 72 h soak after A5 was the plan's own margin, not his
     rule (a permission is not a restriction). P4's checks are read once after A5, then `cutover import-done` and A6
     follow; `import-done` has no `--now` flag and no time check (spec-cutover D11, 10.4).
+19. (Deyao, 2026-11-17; replaces 17) **A question is a command that blocks until the person answers.** The model asks
+    with the `ask` shell command (aviary 80420311): it opens the question with magpie through the supervisor's
+    agent.sock and long-polls until the answer, then prints it. The question belongs to the command, not to the turn:
+    it shows in `Conversation.asks` (tool `ask`) with or without a turn, and only the person's answer resolves it;
+    nothing in the harness or the stack dismisses it. A cancelled or backgrounded command leaves it open (`ask wait
+    ID`, `ask status ID`). A message the person sends meanwhile is delivered as during any long command. The
+    harnesses' own question tools (`AskUserQuestion`, `ask_user_question`, plan mode's `ExitPlanMode`) are not
+    offered; one that still asks is denied with a pointer to `ask`. The minimal rule replaces 17's machinery (the
+    supervisor's relay, the `asking` state, parked turns): a run waiting on `ask` is busy like any running command,
+    so its sandbox stays while the question waits (17's "never holds a sandbox" no longer holds), and each question
+    poll counts as the run's output, so a held run is not silent. magpie's parked turns and the old sandbox routes
+    stay only until no sandbox of the previous image is left (aviary 746d247f). Same in Jarvis 4, whose time machine
+    can freeze a session that waits on an answer.
