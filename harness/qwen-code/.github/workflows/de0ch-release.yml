@@ -64,6 +64,8 @@ jobs:
         run: node de0ch/upstream-refusal.e2e.mjs "$RUNNER_TEMP/qwen/bin/qwen"
       - name: the packed CLI goes on from a turn that was cut off when its host asks
         run: node de0ch/continue-last-turn.e2e.mjs "$RUNNER_TEMP/qwen/bin/qwen"
+      - name: the packed CLI goes on from a turn its host cut off by losing the machine
+        run: node de0ch/continue-after-lost-host.e2e.mjs "$RUNNER_TEMP/qwen/bin/qwen"
       - name: the packed CLI's stream names a reply as its transcript records it
         run: node de0ch/stream-record-ids.e2e.mjs "$RUNNER_TEMP/qwen/bin/qwen"
       - name: the packed CLI names the thinking level its host set, "none" included

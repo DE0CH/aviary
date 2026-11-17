@@ -115,6 +115,9 @@ refs/tags/vX.Y.Z` and `git merge`, never a rebase), tested against aviary's supe
   do not come back with the next message, a second request is not accepted, and data the provider refuses on the
   way is replaced as above. The release build runs it, so a merge of upstream that changes any of this fails here
   and not in a conversation.
+  `de0ch/continue-after-lost-host.e2e.mjs` checks the same for a turn cut during a running command the way a
+  released sandbox cuts it (stdin closed, then SIGTERM to the process group): the next process accepts the request
+  and sends the cut call's result.
 - `de0ch/` and `.github/workflows/de0ch-release.yml`: this file, the end-to-end checks and the release build.
 
 Everything else aviary needs is configuration, not a change here: the system settings file
