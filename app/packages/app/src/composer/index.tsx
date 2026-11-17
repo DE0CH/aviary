@@ -38,6 +38,7 @@ import { useHasFinePointer } from "@/hooks/use-fine-pointer";
 import { useShallow } from "zustand/shallow";
 import {
   ArrowUp,
+  X,
   Square,
   Pencil,
   AudioLines,
@@ -72,12 +73,9 @@ import {
 import type { ImageAttachment, MessagePayload, TextReplacement } from "./types";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { DraftCommandTarget } from "@/hooks/use-agent-commands-query";
-import { encodeImages } from "@/utils/encode-images";
 import { focusWithRetries } from "@/utils/web-focus";
 import {
   cancelComposerAgent,
-  dispatchComposerAgentMessage,
-  queuedMessageSubmissionWriter,
   editQueuedComposerMessage,
   findForgeItemByOption,
   isAttachmentSelectedForForgeItem,
@@ -132,7 +130,14 @@ import {
   type SentMidTurn,
   type ServerQueueItem,
 } from "@/yyc/server-queue";
-import { generateMessageId } from "@/types/stream";
+import { createUserMessage, generateMessageId } from "@/types/stream";
+import {
+  addToOutbox,
+  cancelOutboxEntry,
+  subscribeOutboxReturns,
+  useOutboxEntries,
+} from "@/yyc/outbox-store";
+import { PENDING_BUBBLE_OPACITY, PendingSendLine } from "@/yyc/pending-send";
 import { chatSendBehavior, resolveActiveSendBehavior } from "./input/state";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
@@ -155,7 +160,10 @@ import type {
   WorkspaceComposerAttachment,
 } from "@/attachments/types";
 import type { SelectedFile } from "@/attachments/selected-file";
-import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
+import {
+  resolveComposerAttachmentSubmitFormat,
+  splitComposerAttachmentsForSubmit,
+} from "@/composer/attachments/submit";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useWorkspaceAttachmentsForScopes } from "@/attachments/workspace-attachments-store";
 import { droppedItemsToSelectedFiles } from "@/composer/attachments/drop";
@@ -422,6 +430,7 @@ interface RenderQueueTrackArgs {
   handleTakeBack: (id: string) => void;
   handleStopForQueue: () => void;
   takeBackLabel: string;
+  cancelPendingLabel: string;
   queuedMessages: readonly QueuedMessage[];
   handleEditQueuedMessage: (id: string) => void;
   handleSendQueuedNow: (id: string) => Promise<void>;
@@ -443,6 +452,7 @@ function renderQueueTrack(args: RenderQueueTrackArgs): ReactElement | null {
           onSendNow={args.handleStopForQueue}
           takeBackLabel={args.takeBackLabel}
           sendNowLabel={sendNowLabel}
+          cancelLabel={args.cancelPendingLabel}
         />
       ))}
       {queuedMessages.map((item) => (
@@ -722,16 +732,51 @@ interface ServerQueuedRowProps {
   onSendNow: () => void;
   takeBackLabel: string;
   sendNowLabel: string;
+  cancelLabel: string;
 }
 
 /**
  * A message of the server's queue: its text, "send now" (the reply stops, so the queue's first message runs), and
  * for one the server holds until the reply ends, taking it back.
  */
-function ServerQueuedRow({ item, onTakeBack, onSendNow, takeBackLabel, sendNowLabel }: ServerQueuedRowProps) {
+function ServerQueuedRow({
+  item,
+  onTakeBack,
+  onSendNow,
+  takeBackLabel,
+  sendNowLabel,
+  cancelLabel,
+}: ServerQueuedRowProps) {
   const handleTakeBack = useCallback(() => {
     onTakeBack(item.id);
   }, [onTakeBack, item.id]);
+  const handleCancelPending = useCallback(() => {
+    cancelOutboxEntry(item.id);
+  }, [item.id]);
+  if (item.pendingSinceMs !== undefined) {
+    // the server has not confirmed it (yyc/outbox.ts): faded, its line under the text, and 取消 takes it back
+    return (
+      <View style={styles.queueItem} testID="server-queue-item" aria-busy>
+        <View style={styles.queueBody}>
+          <Text style={[styles.queueText, styles.queueTextPending]} numberOfLines={2} ellipsizeMode="tail">
+            {item.text}
+          </Text>
+          <PendingSendLine sinceMs={item.pendingSinceMs} compact />
+        </View>
+        <View style={styles.queueActions}>
+          <Pressable
+            onPress={handleCancelPending}
+            style={styles.queueActionButton}
+            accessibilityLabel={cancelLabel}
+            accessibilityRole="button"
+            testID="server-queue-cancel-pending"
+          >
+            <ThemedX size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
   return (
     <View style={styles.queueItem} testID="server-queue-item">
       <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
@@ -1574,44 +1619,56 @@ function ComposerContentImpl({
       sendAttachments: ComposerAttachment[],
       activeTurnBehavior: "interrupt" | "steer",
     ) => {
-      if (!client) {
-        throw new Error(t("workspace.terminal.hostDisconnected"));
-      }
       // a message sent while a reply runs, to a server that keeps the queue: it shows in the queue above the
       // message box (the server's list), not in the conversation, until the server's row for it comes
       const queued = midTurnRef.current && isAgentRunningRef.current;
       const clientMessageId = generateMessageId();
+      const createdAtMs = Date.now();
       if (queued) {
         sentMidTurnRef.current({
           id: clientMessageId,
           text,
           attachments: sendAttachments.length,
-          sentAtMs: Date.now(),
+          sentAtMs: createdAtMs,
         });
       }
-      await dispatchComposerAgentMessage({
-        client,
+      const wirePayload = splitComposerAttachmentsForSubmit(sendAttachments, {
+        format: resolveComposerAttachmentSubmitFormat({ supportsForgeAttachments: supportsForgeSearch }),
+      });
+      if (!queued) {
+        const activeTurnId =
+          activeTurnBehavior === "steer"
+            ? (selectAgentTurnPresentation(useSessionStore.getState().sessions[serverId], targetAgentId)
+                .turnId ?? undefined)
+            : undefined;
+        createMessageSubmissionWriter(serverId).begin(
+          targetAgentId,
+          createUserMessage({
+            clientMessageId,
+            text,
+            timestamp: new Date(createdAtMs),
+            images: wirePayload.images,
+            attachments: wirePayload.attachments,
+            ...(activeTurnId ? { turnId: activeTurnId } : {}),
+          }),
+        );
+      }
+      // The outbox sends it (yyc/outbox-store.ts): the message box is free again at once, the chat shows the
+      // message faded until the server confirms it, and a message the connection failed is sent again when it is back.
+      addToOutbox({
+        id: clientMessageId,
+        serverId,
         agentId: targetAgentId,
         text,
-        attachments: sendAttachments,
-        attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({
-          supportsForgeAttachments: supportsForgeSearch,
-        }),
-        encodeImages,
-        clientMessageId,
-        submission: queued ? queuedMessageSubmissionWriter : createMessageSubmissionWriter(serverId),
+        images: wirePayload.images,
+        attachments: wirePayload.attachments,
         activeTurnBehavior,
-        activeTurnId:
-          activeTurnBehavior === "steer"
-            ? (selectAgentTurnPresentation(
-                useSessionStore.getState().sessions[serverId],
-                targetAgentId,
-              ).turnId ?? undefined)
-            : undefined,
+        queued,
+        createdAtMs,
       });
       onAttentionPromptSend?.();
     };
-  }, [client, onAttentionPromptSend, serverId, supportsForgeSearch, t]);
+  }, [onAttentionPromptSend, serverId, supportsForgeSearch]);
 
   useEffect(() => {
     onSubmitMessageRef.current = onSubmitMessage;
@@ -1678,13 +1735,36 @@ function ComposerContentImpl({
   // (yyc/server-queue.ts). `leaving`: the messages the list has dropped whose row has not come yet.
   const [leavingQueue, setLeavingQueue] = useState<readonly LeavingQueueItem[]>([]);
   const withdrawnQueueIdsRef = useRef<Set<string>>(new Set());
+  // the outbox's messages sent during a reply (yyc/outbox.ts): listed as pending until the server confirms them, also
+  // after a reload (when this page's own list of sent messages is empty)
+  const outboxEntries = useOutboxEntries(serverId, agentId);
+  const { queuedSent, unconfirmedQueued } = useMemo(() => {
+    const queuedEntries = outboxEntries.filter((e) => e.queued);
+    const known = new Set(sentMidTurn.map((m) => m.id));
+    return {
+      queuedSent: [
+        ...sentMidTurn,
+        ...queuedEntries
+          .filter((e) => !known.has(e.id))
+          .map((e) => ({
+            id: e.id,
+            text: e.text,
+            attachments: e.images.length + e.attachments.length,
+            sentAtMs: e.createdAtMs,
+          })),
+      ],
+      unconfirmedQueued: new Set(
+        queuedEntries.filter((e) => e.deliveredAtMs === undefined).map((e) => e.id),
+      ),
+    };
+  }, [outboxEntries, sentMidTurn]);
   const queuedIds = useMemo(
     () => [
       ...(serverQueue ?? []).map((m) => m.messageId),
       ...leavingQueue.map((m) => m.id),
-      ...sentMidTurn.map((m) => m.id),
+      ...queuedSent.map((m) => m.id),
     ],
-    [leavingQueue, sentMidTurn, serverQueue],
+    [leavingQueue, queuedSent, serverQueue],
   );
   const queuedOnTimeline = useSessionStore((state) => {
     const session = state.sessions[serverId];
@@ -1723,8 +1803,15 @@ function ComposerContentImpl({
   }, [leavingQueue]);
   const serverQueueList = useMemo(
     () =>
-      serverQueueItems(serverQueue, sentMidTurn, queueClock, queuedOnTimelineIds, leavingQueue),
-    [leavingQueue, queueClock, queuedOnTimelineIds, sentMidTurn, serverQueue],
+      serverQueueItems(
+        serverQueue,
+        queuedSent,
+        queueClock,
+        queuedOnTimelineIds,
+        leavingQueue,
+        unconfirmedQueued,
+      ),
+    [leavingQueue, queueClock, queuedOnTimelineIds, queuedSent, serverQueue, unconfirmedQueued],
   );
   // a refused send's message says how things stood then ("still replying"): it goes when the reply ends or starts
   useEffect(() => {
@@ -2069,6 +2156,30 @@ function ComposerContentImpl({
       setSelectedAttachments(result.attachments);
     },
     [agentId, queueWriter, replaceUserInput, setSelectedAttachments],
+  );
+
+  // A message of the outbox that left it without reaching the server (yyc/outbox-store.ts): refused by the server (its
+  // error under the message box, as a send that failed always showed) or taken back with 取消. Its text and images go
+  // into the message box again when the box is empty, so nothing typed is lost and nothing typed since is overwritten.
+  const textSourceRef = useRef(textSource);
+  textSourceRef.current = textSource;
+  useEffect(
+    () =>
+      subscribeOutboxReturns(({ entry, reason, error }) => {
+        if (entry.serverId !== serverId || entry.agentId !== agentId) return;
+        if (reason === "refused") {
+          setSendError(error?.message ?? t("composer.errors.failedToSend"));
+        }
+        if (textSourceRef.current.getSnapshot().trim().length > 0) return;
+        replaceUserInput(entry.text);
+        if (entry.images.length > 0) {
+          setSelectedAttachments((current) => [
+            ...current,
+            ...entry.images.map((metadata) => ({ kind: "image" as const, metadata })),
+          ]);
+        }
+      }),
+    [agentId, replaceUserInput, serverId, setSelectedAttachments, t],
   );
 
   // a message the server holds until the reply ends: taken back, and its text put into the message box again
@@ -2515,6 +2626,7 @@ function ComposerContentImpl({
         handleTakeBack,
         handleStopForQueue: handleCancelAgent,
         takeBackLabel: t("composer.attachments.editQueuedMessage"),
+        cancelPendingLabel: t("message.pending.cancel"),
         queuedMessages,
         handleEditQueuedMessage,
         handleSendQueuedNow,
@@ -2858,6 +2970,13 @@ const styles = StyleSheet.create((theme: Theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
   },
+  queueBody: {
+    flex: 1,
+    minWidth: 0,
+  },
+  queueTextPending: {
+    opacity: PENDING_BUBBLE_OPACITY,
+  },
   queueActions: {
     flexDirection: "row",
     alignItems: "center",
@@ -2883,6 +3002,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
 const ThemedAttachmentSpinner = withUnistyles(LoadingSpinner);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedArrowUp = withUnistyles(ArrowUp);
+const ThemedX = withUnistyles(X);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedCircleDot = withUnistyles(CircleDot);
 // The pull request / issue picker is its own chunk, fetched when it first opens (composer/forge-picker.tsx)

@@ -20,6 +20,8 @@ import { StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { shallow, useShallow } from "zustand/shallow";
+import { outboxRows, unconfirmedIds } from "@/yyc/outbox";
+import { useOutboxEntries } from "@/yyc/outbox-store";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useAgentStreamTail } from "@/agent-stream/use-agent-stream-tail";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/lazy-view";
@@ -1376,7 +1378,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
     ? resolveComposerTrackControlClearance(isCompactFormFactor)
     : 0;
   const streamItemsRaw = useAgentStreamTail(serverId, agentId);
-  const pendingMessageSubmissions = useSessionStore(
+  const pendingMessageSubmissionsRaw = useSessionStore(
     useShallow((state) =>
       agentId
         ? getActiveMessageSubmissions(state.sessions[serverId]?.messageSubmissions.get(agentId))
@@ -1390,7 +1392,25 @@ const AgentStreamSection = memo(function AgentStreamSection({
         : { isActive: false, isCancelling: false, startedAt: null, turnId: null },
     ),
   );
-  const streamItems = streamItemsRaw ?? EMPTY_STREAM_ITEMS;
+  // the outbox (yyc/outbox.ts): a message the server has not confirmed is drawn faded, also when the chat has lost
+  // its row (a reload, the history loaded again after a reconnect)
+  const outboxEntries = useOutboxEntries(serverId, agentId);
+  const streamHead = useSessionStore((state) =>
+    agentId ? state.sessions[serverId]?.agentStreamHead.get(agentId) : undefined,
+  );
+  const streamItems = useMemo(() => {
+    const tail = streamItemsRaw ?? EMPTY_STREAM_ITEMS;
+    if (!agentId || outboxEntries.length === 0) return tail;
+    const missing = outboxRows(outboxEntries, serverId, agentId, Date.now(), tail, streamHead);
+    return missing.length === 0 ? tail : [...tail, ...missing];
+  }, [agentId, outboxEntries, serverId, streamHead, streamItemsRaw]);
+  const pendingMessageSubmissions = useMemo(() => {
+    if (!agentId) return pendingMessageSubmissionsRaw;
+    const ids = unconfirmedIds(outboxEntries, serverId, agentId);
+    const known = new Set(pendingMessageSubmissionsRaw.map((s) => s.clientMessageId));
+    const more = ids.filter((id) => !known.has(id)).map((clientMessageId) => ({ clientMessageId }));
+    return more.length === 0 ? pendingMessageSubmissionsRaw : [...pendingMessageSubmissionsRaw, ...more];
+  }, [agentId, outboxEntries, pendingMessageSubmissionsRaw, serverId]);
   const pendingPermissionList = useStoreWithEqualityFn(
     useSessionStore,
     (state) => {

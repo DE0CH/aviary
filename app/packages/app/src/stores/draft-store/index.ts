@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { referencedImageIds } from "@/yyc/outbox";
+import { useOutboxStore } from "@/yyc/outbox-store";
 import type { AttachmentMetadata, WorkspaceFileComposerAttachment } from "@/attachments/types";
 import { appendWorkspaceFileAttachment } from "@/attachments/workspace-file";
 import {
@@ -148,6 +150,10 @@ async function runAttachmentGc(): Promise<void> {
     referencedIds.add(id);
   }
   for (const id of collectRetainedAttachmentIds()) {
+    referencedIds.add(id);
+  }
+  // images of messages the server has not confirmed: the outbox sends them later (yyc/outbox-store.ts)
+  for (const id of referencedImageIds(useOutboxStore.getState().entries)) {
     referencedIds.add(id);
   }
 

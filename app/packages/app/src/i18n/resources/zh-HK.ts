@@ -348,6 +348,11 @@ export const zhHK: TranslationResources = {
       openFile: "開啟檔案",
       copied: "已複製",
     },
+    pending: {
+      sending: "傳送中",
+      waiting: "等待網絡，連線後自動傳送",
+      cancel: "取消",
+    },
     attachments: {
       dismissImage: "關閉圖片",
       closeImage: "關閉圖片",

@@ -78,4 +78,16 @@ describe("the conversation's queue, kept by the server", () => {
     expect(queuedIdsOnTimeline(["m2", "m4", "m3", "m9"], tail, head, undefined)).toBe("m4 m3");
     expect(queuedIdsOnTimeline([], tail)).toBe("");
   });
+  // Deyao, 2026-11-17: a third state, "pending": the app has the message, the server has not confirmed it
+  it("keeps a message the server has not confirmed listed, marked pending, however long it waits", () => {
+    const sent = [{ id: "m4", text: "one more", attachments: 0, sentAtMs: 1000 }];
+    const unconfirmed = new Set(["m4"]);
+    const later = 1000 + SENDING_SHOWN_MS * 10;
+    expect(serverQueueItems(server, sent, later, undefined, [], unconfirmed).filter((m) => m.id === "m4")).toEqual([
+      { id: "m4", text: "one more", held: false, attachments: 0, sending: true, pendingSinceMs: 1000 },
+    ]);
+    // confirmed: no longer pending, and listed by the usual rule again
+    expect(serverQueueItems(server, sent, 1200).find((m) => m.id === "m4")?.pendingSinceMs).toBeUndefined();
+    expect(serverQueueItems(server, sent, later).map((m) => m.id)).toEqual(["m2", "m3"]);
+  });
 });

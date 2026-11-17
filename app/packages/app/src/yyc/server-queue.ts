@@ -17,6 +17,8 @@ export interface ServerQueueItem {
   attachments: number;
   /** Sent from this page and not in the server's list yet (shown at once, so nothing blinks). */
   sending: boolean;
+  /** The server has not confirmed it (yyc/outbox.ts): drawn faded with the time it was sent. */
+  pendingSinceMs?: number;
 }
 
 /** A message this page has just sent mid-reply. */
@@ -45,8 +47,9 @@ const NONE: ReadonlySet<string> = new Set();
 
 /**
  * The queue to show: the server's list, then the messages that have just left it and are not in the chat yet, then
- * the messages this page sent that the server's list does not hold yet (for at most `SENDING_SHOWN_MS`: after that
- * the message has been taken into the reply, or the send failed and its error is shown).
+ * the messages this page sent that the server's list does not hold yet (for at most `SENDING_SHOWN_MS` once the
+ * server has confirmed them: after that the message has been taken into the reply; one the server has not confirmed
+ * (`unconfirmed`, the outbox) stays listed as pending until it is confirmed or taken back).
  *
  * The server's list and the chat's rows reach the page on two feeds, in either order. So a message is listed until
  * its row is in the chat (`onTimeline`: the ids of the chat's user messages) and not after: it leaves the queue at
@@ -58,6 +61,8 @@ export function serverQueueItems(
   nowMs: number,
   onTimeline: ReadonlySet<string> = NONE,
   leaving: readonly LeavingQueueItem[] = [],
+  /** Sent messages the server has not confirmed (the outbox): listed however long they wait. */
+  unconfirmed: ReadonlySet<string> = NONE,
 ): ServerQueueItem[] {
   const listed = new Set((server ?? []).map((m) => m.messageId));
   const items: ServerQueueItem[] = (server ?? [])
@@ -75,8 +80,17 @@ export function serverQueueItems(
     listed.add(m.id);
   }
   for (const m of sent) {
-    if (listed.has(m.id) || onTimeline.has(m.id) || nowMs - m.sentAtMs >= SENDING_SHOWN_MS) continue;
-    items.push({ id: m.id, text: m.text, held: false, attachments: m.attachments, sending: true });
+    if (listed.has(m.id) || onTimeline.has(m.id)) continue;
+    const pending = unconfirmed.has(m.id);
+    if (!pending && nowMs - m.sentAtMs >= SENDING_SHOWN_MS) continue;
+    items.push({
+      id: m.id,
+      text: m.text,
+      held: false,
+      attachments: m.attachments,
+      sending: true,
+      ...(pending ? { pendingSinceMs: m.sentAtMs } : {}),
+    });
   }
   return items;
 }

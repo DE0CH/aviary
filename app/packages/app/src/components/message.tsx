@@ -80,6 +80,7 @@ import Animated, {
 } from "react-native-reanimated";
 import Svg, { Defs, Rect, Stop, LinearGradient as SvgLinearGradient } from "react-native-svg";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { PENDING_BUBBLE_OPACITY, PendingSendLine } from "@/yyc/pending-send";
 import { capAssistantMessageForRender, getUtf8ByteLength } from "./assistant-message-render-limit";
 import { getTurnDurationLabel } from "./assistant-turn-footer-label";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
@@ -102,6 +103,8 @@ interface UserMessageProps {
   isFirstInGroup?: boolean;
   isLastInGroup?: boolean;
   isPending?: boolean;
+  /** Takes back a message the server has not confirmed (yyc/outbox-store.ts); absent once it is on its way. */
+  onCancelPending?: () => void;
   disableOuterSpacing?: boolean;
 }
 
@@ -383,6 +386,8 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
 }
 
 const MESSAGE_TEXT_DATASET = { messageText: "true" };
+// a message the server has not confirmed: the bubble at half strength (design A, yyc/pending-send.tsx)
+const pendingBubbleStyle = [userMessageStylesheet.bubble, { opacity: PENDING_BUBBLE_OPACITY }];
 
 export const UserMessage = memo(function UserMessage({
   serverId,
@@ -397,6 +402,7 @@ export const UserMessage = memo(function UserMessage({
   isFirstInGroup = true,
   isLastInGroup = true,
   isPending = false,
+  onCancelPending,
   disableOuterSpacing,
 }: UserMessageProps) {
   const isCompact = useIsCompactFormFactor();
@@ -471,7 +477,7 @@ export const UserMessage = memo(function UserMessage({
         onPointerEnter={handlePointerEnter}
         onPointerLeave={handlePointerLeave}
       >
-        <View style={userMessageStylesheet.bubble}>
+        <View style={isPending ? pendingBubbleStyle : userMessageStylesheet.bubble} testID="user-message-bubble">
           {hasImages ? (
             <View style={imagePreviewContainerStyle}>
               {images.map((image) => (
@@ -508,7 +514,8 @@ export const UserMessage = memo(function UserMessage({
             </Text>
           ) : null}
         </View>
-        {hasText ? (
+        {isPending ? <PendingSendLine sinceMs={timestamp} onCancel={onCancelPending} /> : null}
+        {hasText && !isPending ? (
           <View
             style={trailingRowStyle}
             pointerEvents={showTrailingRow ? "auto" : "none"}

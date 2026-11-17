@@ -16,6 +16,7 @@ import React, {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { cancelOutboxEntry, useOutboxEntries } from "@/yyc/outbox-store";
 import {
   View,
   Text,
@@ -358,6 +359,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const pendingClientMessageIds = useMemo(
       () => new Set(pendingMessageSubmissions.map((submission) => submission.clientMessageId)),
       [pendingMessageSubmissions],
+    );
+    // the outbox's messages not sent yet can be taken back (yyc/outbox-store.ts)
+    const outboxEntries = useOutboxEntries(serverId ?? context.serverId ?? "", agentId);
+    const cancellableIds = useMemo(
+      () => new Set(outboxEntries.filter((e) => e.deliveredAtMs === undefined).map((e) => e.id)),
+      [outboxEntries],
     );
     const isMobile = useIsCompactFormFactor();
     const streamRenderStrategy = useMemo(
@@ -767,6 +774,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               item.clientMessageId !== undefined &&
               pendingClientMessageIds.has(item.clientMessageId)
             }
+            onCancelPending={
+              item.clientMessageId !== undefined && cancellableIds.has(item.clientMessageId)
+                ? () => cancelOutboxEntry(item.clientMessageId as string)
+                : undefined
+            }
           />
         );
         if (!collapsedTurn) {
@@ -783,6 +795,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         context.capabilities,
         agentId,
         client,
+        cancellableIds,
         getCollapsedTurn,
         pendingClientMessageIds,
         resolvedServerId,

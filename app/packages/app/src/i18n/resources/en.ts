@@ -346,6 +346,11 @@ export const en = {
       openFile: "Open file",
       copied: "Copied",
     },
+    pending: {
+      sending: "Sending",
+      waiting: "Waiting for the network, sends when connected",
+      cancel: "Cancel",
+    },
     attachments: {
       dismissImage: "Dismiss image",
       closeImage: "Close image",
