@@ -67,6 +67,14 @@ server (`server/`) serves no deployment.
   elsewhere a message waits in the app's own queue until the reply ends; 外觀 is 淺色 /
   深色 / 系統, the two text sizes and the content width (`SHOW_DEVELOPER_APPEARANCE`: no code fonts, syntax theme, diff
   preview, CSS font stack, brand or plugin themes).
+- **A message the server has not confirmed** (Deyao, 2026-11-17, design A): every send goes into the outbox
+  (`yyc/outbox.ts`, `yyc/outbox-store.ts`), kept on the device (AsyncStorage `yyc-outbox`) until the server answers;
+  the message box is free again at once. The chat draws it at half strength with a clock and 「傳送中」, after 5 s
+  「等待網絡，連線後自動傳送」 with 取消 (`yyc/pending-send.tsx`); one sent during a reply is drawn the same way in the
+  queue above the message box. A failed connection keeps it, and it is sent again, in order and with the same
+  `clientMessageId` (magpie admits an id once), when the host comes online, when the outbox loads after a reload,
+  and 15 s after a failed try; the server's refusal or 取消 takes it out of the chat and puts its text back into an
+  empty message box (a refusal also shows its error there).
 - **One sidebar row**: the items at the top of the sidebar (新對話 / 最近刪除 / 搜尋), the conversation rows and the
   settings list share one geometry: `density.rowHeight` tall, 8 + 8 px inset, a 14 px label on
   `SIDEBAR_ROW_LINE_HEIGHT` (`styles/density.ts`), the icon in a conversation status slot; the settings items are
