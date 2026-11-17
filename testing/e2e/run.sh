@@ -110,6 +110,9 @@ ENV
     docker exec aviary-e2e-pg psql -q -h /var/run/postgresql -U postgres -v ON_ERROR_STOP=1 \
       -c "create role $db login password '$pg_password'" -c "create database $db owner $db" >/dev/null
   done
+  # pgvector in magpie's database, as a deployment's superuser creates it (magpie's role cannot; migration 0042)
+  docker exec aviary-e2e-pg psql -q -h /var/run/postgresql -U postgres -d magpie -v ON_ERROR_STOP=1 \
+    -c "create extension if not exists vector" >/dev/null
   # S3 (versitygw over a directory; a bucket is a directory)
   local s3dir=$work/s3
   mkdir -p "$s3dir/magpie" "$s3dir/jfs"
