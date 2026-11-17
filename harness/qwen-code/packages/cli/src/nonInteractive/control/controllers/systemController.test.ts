@@ -6,14 +6,14 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from 'vitest';
-import { InputFormat } from '@qwen-code/qwen-code-core';
+import { InputFormat, SkillManager } from '@qwen-code/qwen-code-core';
 import { createMinimalSettings } from '../../../config/settings.js';
 import { getAvailableCommands } from '../../../nonInteractiveCliCommands.js';
 import { CommandKind } from '../../../ui/commands/types.js';
 import type { StreamJsonOutputAdapter } from '../../io/StreamJsonOutputAdapter.js';
 import type { IControlContext } from '../ControlContext.js';
 import type { IPendingRequestRegistry } from './baseController.js';
-import { SystemController } from './systemController.js';
+import { SystemController, withSkillManager } from './systemController.js';
 
 const { mockDebugLogger } = vi.hoisted(() => ({
   mockDebugLogger: {
@@ -804,6 +804,10 @@ describe('SystemController', () => {
   describe('initialize names the slash commands (DE0CH fork)', () => {
     it('lists each command with its description and argument hint, sorted by name', async () => {
       const context = createContext();
+      const skills = {};
+      (
+        context.config as unknown as { getSkillManager: () => unknown }
+      ).getSkillManager = vi.fn().mockReturnValue(skills);
       const controller = new SystemController(
         context,
         createRegistry(),
@@ -843,6 +847,39 @@ describe('SystemController', () => {
         'non_interactive',
         context.settings,
       );
+    });
+
+    // An SDK host's initialize is answered before the config initialises, when
+    // it has no skill manager yet: the skills were missing from the answer.
+    it('lists the skills before the config has a skill manager', async () => {
+      const context = createContext();
+      (
+        context.config as unknown as { getSkillManager: () => unknown }
+      ).getSkillManager = vi.fn().mockReturnValue(null);
+      const controller = new SystemController(
+        context,
+        createRegistry(),
+        'SystemController',
+      );
+      vi.mocked(getAvailableCommands).mockResolvedValueOnce([]);
+
+      await controller.handleRequest(
+        { subtype: 'initialize' },
+        'init-commands-2',
+      );
+
+      const listed = vi.mocked(getAvailableCommands).mock.calls.at(-1)![0];
+      expect(listed.getSkillManager()).toBeInstanceOf(SkillManager);
+      // everything else is the config's own
+      expect(listed.getSessionId()).toBe('test-session-id');
+    });
+
+    it('keeps the config as it is once it has a skill manager', () => {
+      const skills = {};
+      const config = {
+        getSkillManager: () => skills,
+      } as unknown as Parameters<typeof withSkillManager>[0];
+      expect(withSkillManager(config)).toBe(config);
     });
 
     it('answers with an empty list when the commands cannot be loaded', async () => {

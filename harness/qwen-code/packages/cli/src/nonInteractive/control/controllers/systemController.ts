@@ -33,6 +33,8 @@ import {
   applyReasoningEffort,
   normalizeReasoningEffort,
   loadUsageDashboard,
+  SkillManager,
+  type Config,
   type MCPOAuthConfig,
   type ReasoningEffortOverride,
 } from '@qwen-code/qwen-code-core';
@@ -46,6 +48,23 @@ const debugLogger = createDebugLogger('SYSTEM_CONTROLLER');
  * such edge cases while still allowing reasonable timeout values.
  */
 const MAX_CAN_USE_TOOL_TIMEOUT_MS = 600_000;
+
+/**
+ * DE0CH fork: an SDK host's `initialize` is answered before the config
+ * initialises (Session.initializeSdkMode dispatches it first), when the config
+ * has no skill manager yet, so the skill loaders found nothing and the answer
+ * named no skill. The answer is listed with a skill manager of its own then;
+ * the config makes its own when it initialises.
+ */
+export function withSkillManager(config: Config): Config {
+  if (config.getSkillManager?.()) {
+    return config;
+  }
+  const skills = new SkillManager(config);
+  return Object.assign(Object.create(config) as Config, {
+    getSkillManager: () => skills,
+  });
+}
 
 export class SystemController extends BaseController {
   /**
@@ -401,7 +420,7 @@ export class SystemController extends BaseController {
     }
     try {
       const commands = await getAvailableCommands(
-        this.context.config,
+        withSkillManager(this.context.config),
         signal,
         'non_interactive',
         this.context.settings,
