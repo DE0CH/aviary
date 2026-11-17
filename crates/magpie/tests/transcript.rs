@@ -217,3 +217,63 @@ async fn an_admin_reads_any_transcript_without_view_as_and_the_read_is_audited()
     assert_eq!((reads[0].admin.as_str(), reads[0].user.as_str()), (admin, ALICE));
     assert_eq!(reads[0].conversation_id, Some(cid));
 }
+
+#[tokio::test]
+async fn a_transcript_page_fetches_only_the_text_blobs_of_the_lines_it_sends() {
+    // the page is cut at 8 MiB; it fetched every text blob of up to 500 lines first and cut afterwards (audit of
+    // 2026-11-16, finding 6). Three lines of 5 MiB of text: the page sends the first, and needs only its blob, so it
+    // answers with the others' blobs gone from staging, the bucket and every cache
+    let db = common::fresh_db("raw_transcript_cut").await;
+    let t = common::Tokens::new();
+    let r = common::replica(&db.url, &t).await;
+    let s = Sandbox::leased(&r, ALICE).await;
+    s.mkdirs("projects/-workspace").await;
+    set_main(r.pool(), s.conversation, &main_path()).await;
+    let n = 5 << 20;
+    let texts: Vec<String> = ["a", "b", "c"].iter().map(|c| c.repeat(n)).collect();
+    let mut at = 0u64;
+    for (i, text) in texts.iter().enumerate() {
+        let l = line(
+            &json!({"type": "user", "uuid": format!("u{i}"), "message": {"role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": format!("c{i}"), "content": text}]}}),
+        );
+        s.write(&main_path(), at, &l).await.unwrap();
+        at += l.len() as u64;
+    }
+    let keep = magpie::blobs::sha256(texts[0].as_bytes());
+    let gone: Vec<Vec<u8>> = r
+        .pool()
+        .get()
+        .await
+        .unwrap()
+        .query(
+            "select sha256 from blobs where kind = 'text' and sha256 <> $1",
+            &[&keep.as_slice()],
+        )
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(gone.len(), 2, "the second and third lines' text blobs");
+    let sql = r.pool().get().await.unwrap();
+    for sha in &gone {
+        sql.execute("delete from blob_staging where sha256 = $1", &[sha])
+            .await
+            .unwrap();
+        let hex = magpie::blobs::to_hex(&magpie::blobs::Sha::try_from(sha.as_slice()).unwrap());
+        let _ = r.app().blobs.bucket.delete(&magpie::blobs::store::blob_key(&hex)).await;
+    }
+    // a replica of its own: nothing in its caches
+    let fresh = common::replica(&db.url, &t).await;
+    let p = fresh
+        .pigeon()
+        .service(Some("root@example.com"))
+        .admin_transcript(s.conversation, &TranscriptQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(p.lines.len(), 1);
+    assert!(p.more);
+    let first: Value = serde_json::from_str(&p.lines[0].line).unwrap();
+    assert_eq!(first["message"]["content"][0]["content"], texts[0].as_str());
+}

@@ -20,6 +20,7 @@ use super::lines::spans_of;
 use super::reconstruct::blob_bytes;
 use crate::app::Magpie;
 use crate::conversations::{self, Person};
+use crate::db::Db;
 use crate::error::{Error, Result};
 
 /// Lines per page by default.
@@ -114,26 +115,19 @@ async fn read(app: &Magpie, owner: Option<&str>, id: Uuid, q: &TranscriptQuery) 
     let mut shas: Vec<Sha> = lines.iter().flat_map(|l| l.2.iter().map(|s| s.1)).collect();
     shas.sort_unstable();
     shas.dedup();
-    // media blobs are never fetched: their placeholder stands in
-    let mut media: HashMap<Sha, Bytes> = HashMap::new();
-    if !shas.is_empty() {
-        let keys: Vec<&[u8]> = shas.iter().map(<[u8; 32]>::as_slice).collect();
-        for r in conn
-            .query(
-                "select sha256, mime, size from blobs where sha256 = any($1) and kind = 'media'",
-                &[&keys],
-            )
-            .await?
-        {
-            let sha: Vec<u8> = r.get(0);
-            if let Ok(sha) = Sha::try_from(sha.as_slice()) {
-                let mime: Option<String> = r.get(1);
-                media.insert(sha, Bytes::from(media_placeholder(mime.as_deref(), r.get(2))));
-            }
-        }
-    }
+    // media blobs are never fetched: their placeholder stands in. Every blob's size is known from its row, so the
+    // page is cut at MAX_PAGE_BYTES before a text blob is fetched (only those of the lines sent)
+    let (media, sizes) = blob_meta(&conn, &shas).await?;
     drop(conn);
-    let text_shas: Vec<Sha> = shas.into_iter().filter(|s| !media.contains_key(s)).collect();
+    let fits = page_cut(&lines, &sizes, &mut more);
+    lines.truncate(fits);
+    let mut text_shas: Vec<Sha> = lines
+        .iter()
+        .flat_map(|l| l.2.iter().map(|s| s.1))
+        .filter(|s| !media.contains_key(s))
+        .collect();
+    text_shas.sort_unstable();
+    text_shas.dedup();
     let mut bytes = if text_shas.is_empty() {
         HashMap::new()
     } else {
@@ -165,6 +159,56 @@ async fn read(app: &Magpie, owner: Option<&str>, id: Uuid, q: &TranscriptQuery) 
         person: None,
         title: None,
     })
+}
+
+/// The placeholders of the media blobs among `shas`, and every blob's size as a page holds it (a media blob's
+/// placeholder, a text blob's bytes).
+async fn blob_meta(conn: &impl Db, shas: &[Sha]) -> Result<(HashMap<Sha, Bytes>, HashMap<Sha, usize>)> {
+    let mut media: HashMap<Sha, Bytes> = HashMap::new();
+    let mut sizes: HashMap<Sha, usize> = HashMap::new();
+    if shas.is_empty() {
+        return Ok((media, sizes));
+    }
+    let keys: Vec<&[u8]> = shas.iter().map(<[u8; 32]>::as_slice).collect();
+    for r in conn
+        .query(
+            "select sha256, mime, size, kind from blobs where sha256 = any($1)",
+            &[&keys],
+        )
+        .await?
+    {
+        let sha: Vec<u8> = r.get(0);
+        if let Ok(sha) = Sha::try_from(sha.as_slice()) {
+            let size: i64 = r.get(2);
+            if r.get::<_, String>(3) == "media" {
+                let mime: Option<String> = r.get(1);
+                let p = Bytes::from(media_placeholder(mime.as_deref(), size));
+                sizes.insert(sha, p.len());
+                media.insert(sha, p);
+            } else {
+                sizes.insert(sha, usize::try_from(size).unwrap_or(usize::MAX));
+            }
+        }
+    }
+    Ok((media, sizes))
+}
+
+/// How many of `lines` fit a page of [`MAX_PAGE_BYTES`] (the first whatever its size); sets `more` when not all do.
+fn page_cut(lines: &[Stored], sizes: &HashMap<Sha, usize>, more: &mut bool) -> usize {
+    let mut planned = 0usize;
+    let mut fits = 0usize;
+    for (_, stub, spans) in lines {
+        let len = spans.iter().fold(stub.len(), |n, s| {
+            n.saturating_add(sizes.get(&s.1).copied().unwrap_or(0))
+        });
+        if fits > 0 && planned.saturating_add(len) > MAX_PAGE_BYTES {
+            *more = true;
+            break;
+        }
+        planned = planned.saturating_add(len);
+        fits += 1;
+    }
+    fits
 }
 
 #[cfg(test)]
