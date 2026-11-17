@@ -48,6 +48,9 @@ fi
   echo "supervisor: $supervisor ($changed)"
 } > "$work/body.md"
 cat "$work/body.md"
-gh release create "$tag" -R "$repo" --target "$sha" --title "$tag" --notes-file "$work/body.md" --latest=false \
+# on the tag the step before pushed, with no target commit: a GITHUB_TOKEN may not name a commit whose workflow files
+# differ from main's ("HTTP 403: Resource not accessible by integration"), which is every commit published after a
+# later one changed .github/workflows (aviary-20bfea738955, 2026-11-17)
+gh release create "$tag" -R "$repo" --verify-tag --title "$tag" --notes-file "$work/body.md" --latest=false \
   "$assets"/*
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat "$work/body.md" >> "$GITHUB_STEP_SUMMARY"; fi
