@@ -22,7 +22,7 @@ void testI18n;
 /**
  * The message box's `/` list, as a conversation's composer mounts it: the real binding, hook and
  * popover in a real browser, over a server that answers `list_commands_request` the way the chat's
- * does (every entry of kind "command", the agent's own `clear` among them).
+ * does (the agent's own commands of kind "command", its `clear` among them; a skill of kind "skill").
  */
 
 const server = vi.hoisted(() => ({
@@ -44,7 +44,7 @@ beforeEach(() => {
     { name: "clear", description: "Clear the conversation", argumentHint: "", kind: "command" },
     { name: "compact", description: "Summarise the conversation", argumentHint: "", kind: "command" },
     { name: "context", description: "Show what fills the context", argumentHint: "", kind: "command" },
-    { name: "retire-session", description: "End this session", argumentHint: "", kind: "command" },
+    { name: "retire-session", description: "End this session", argumentHint: "", kind: "skill" },
   ];
   server.listCommands.mockReset();
   server.listCommands.mockImplementation(async ({ agentId }: { agentId: string }) => ({
@@ -200,6 +200,31 @@ describe("the chat's slash command list", () => {
     expect(row).toBeDefined();
     act(() => row?.click());
     expect(composer.text()).toBe("/context ");
+  });
+
+  // "then /retire-session": a message names a skill anywhere, and the agent reads the name.
+  it("completes a skill named inside a message", async () => {
+    const composer = mountComposer("chat");
+    await composer.type("write the record, then /ret");
+    await expect.poll(composer.listed).toEqual(["/retire-session"]);
+
+    expect(await composer.press("Enter")).toBe(true);
+    expect(composer.text()).toBe("write the record, then /retire-session ");
+    await expect.poll(composer.listed).toBeNull();
+  });
+
+  // The agent reads its own commands (`/compact`, `/context`) only at a message's start: inside
+  // one they are text, so the list does not offer them there.
+  it("offers only skills inside a message", async () => {
+    const composer = mountComposer("chat");
+    await composer.type("then /");
+    await expect.poll(composer.listed).toEqual(["/retire-session"]);
+
+    await composer.type("then /com");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await composer.type("then /com");
+    expect(composer.listed()).toBeNull();
+    expect(await composer.press("Enter")).toBe(false);
   });
 
   // The app runs `/clear` itself when it is sent (it ends the conversation): a click in a list is
