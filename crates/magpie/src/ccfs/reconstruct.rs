@@ -115,10 +115,17 @@ struct Batch {
 async fn plan(db: &impl Db, f: &File, off: i64, to: i64) -> Result<Batch> {
     let tail_start = f.size - n64(f.tail.len());
     let rows: Vec<Row> = if off < tail_start {
+        let mut bytes = 0i64;
         rows_from(db, f.id, off, Some(limits::CC_READ_BATCH))
             .await?
             .into_iter()
-            .take_while(|r| r.start_off < to)
+            .take_while(|r| {
+                let take = r.start_off < to && (bytes == 0 || bytes + r.len <= limits::CC_READ_BATCH_BYTES);
+                if take {
+                    bytes += r.len;
+                }
+                take
+            })
             .collect()
     } else {
         Vec::new()

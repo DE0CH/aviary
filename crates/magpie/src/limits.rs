@@ -65,8 +65,12 @@ pub const CC_SHA_SAMPLE: u64 = 1000;
 /// A byte file is read and streamed this many bytes at a time (16 pages): a whole file of up to [`CC_FILE_MAX`] read
 /// in one statement was alive three times over (its rows, its pages, the answer), outside every memory budget.
 pub const CC_BYTES_SLICE: i64 = 4 << 20;
-/// A file read streams lines in batches of this many.
+/// A file read streams lines in batches of this many, and of at most [`CC_READ_BATCH_BYTES`].
 pub const CC_READ_BATCH: i64 = 256;
+/// …and of lines totalling at most this many bytes as the file holds them (their blobs put back), a batch's first line
+/// whatever its size. Cut by count alone, a batch of image lines (up to [`CC_LINE_MAX`] each) had its blobs and its
+/// spliced copy alive together, outside the budgets: three reads of a 384 MiB transcript peaked at 3.7 GiB.
+pub const CC_READ_BATCH_BYTES: i64 = 8 << 20;
 /// Blobs fetched from the bucket at a time by one request (a read batch, a write's [`crate::error::Error::NeedBlobs`];
 /// magpie 6.11).
 pub const BLOB_FETCH_CONCURRENCY: usize = 16;
