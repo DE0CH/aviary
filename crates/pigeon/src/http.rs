@@ -829,7 +829,7 @@ async fn warm(app: &App, body: Body, id: &Identity) -> Response {
     ok
 }
 
-/// `POST` [`compat::SEARCH`] `{query, limit?}`: the conversation search (Deyao, 2026-11-17), the person's messages across
+/// `POST` [`compat::SEARCH`] `{query, limit?, meaning?}`: the conversation search (Deyao, 2026-11-17), the person's messages across
 /// their conversations by their words and, where the deployment has an embedding model, by their meaning (the query
 /// embedded here, [`query_embedding`]). 200 `{query, hits: [{conversationId, title, epoch, seq, kind, at, snippet,
 /// matched}], semantic}`, best first; an empty query answers no hits without asking magpie.
@@ -859,8 +859,14 @@ async fn search(app: &App, body: Body, id: &Identity) -> Response {
     let Some(calls) = person_calls(&app.0.magpie, id) else {
         return api_error(StatusCode::UNAUTHORIZED, "SIGNED_OUT", "Sign in to search.");
     };
+    // `meaning: false`: by words alone, at once (the app asks so first, while the query's vector is being made)
+    let meaning = v.get("meaning").and_then(Value::as_bool).unwrap_or(true);
     let req = magpie_api::search::ConversationSearchRequest {
-        embedding: query_embedding(app, &query).await,
+        embedding: if meaning {
+            query_embedding(app, &query).await
+        } else {
+            None
+        },
         q: query.clone(),
         limit: Some(limit),
     };

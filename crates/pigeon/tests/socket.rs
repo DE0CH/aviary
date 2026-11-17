@@ -270,10 +270,15 @@ async fn the_conversation_search_sends_the_query_and_its_vector() {
     let emb = sent[0].embedding.as_ref().expect("the query's vector");
     assert_eq!(emb.model, "vendor/embed");
     assert_eq!(emb.vector, mock_model::mock_embedding("Query: shuttle"));
+    // by words alone (the app's first, quick ask): no vector is made or sent
+    let r = body_json(search(json!({"query": "shuttle", "meaning": false})).await.unwrap()).await;
+    assert_eq!(r["semantic"], false);
+    assert_eq!(r["hits"].as_array().unwrap().len(), 1);
+    assert!(e.m.st().searches[1].embedding.is_none());
     // nothing typed: no search
     let r = body_json(search(json!({"query": "  "})).await.unwrap()).await;
     assert_eq!(r["hits"], json!([]));
-    assert_eq!(e.m.st().searches.len(), 1);
+    assert_eq!(e.m.st().searches.len(), 2);
     // not JSON
     let r =
         e.h.as_token(e.h.post(pigeon::paseo::compat::SEARCH), &e.h.token(STAFF))
