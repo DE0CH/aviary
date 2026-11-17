@@ -1557,6 +1557,7 @@ it("fills every cached workspace beneath live updates received during the SQLite
           name: "Live",
           activityAt: null,
           statusEnteredAt: null,
+          nextScheduleAt: null,
         },
       },
     });
