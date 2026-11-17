@@ -168,31 +168,41 @@ pub async fn todo(pool: &Pool, caller: &Sandbox, q: EmbeddingsTodoQuery) -> Resu
         .await?
         .ok_or_else(Error::not_found)?;
     caller::check(&row, caller)?;
-    let rows = conn
-        .query(
-            &format!(
-                "select e.seq, e.text from events e
-                 where e.conversation_id = $1 and e.text ~ '\\S' and {IS_MESSAGE}
-                   and not exists (select 1 from embeddings m
-                                   where m.conversation_id = e.conversation_id and m.seq = e.seq and m.model = $2)
-                 order by e.seq limit $3"
-            ),
-            &[&caller.conversation, &model, &i64::from(limit)],
-        )
-        .await?;
+    // a message whose text Postgres sees as more than whitespace and Rust does not (a lone no-break space) has no
+    // piece and never gets a vector: the next page is read past it, so it can never hold the others back
     let mut items = Vec::new();
-    for r in rows {
-        if items.len() >= limit as usize {
-            break;
+    let mut after: i64 = 0;
+    loop {
+        let rows = conn
+            .query(
+                &format!(
+                    "select e.seq, e.text from events e
+                     where e.conversation_id = $1 and e.seq > $4 and e.text ~ '\\S' and {IS_MESSAGE}
+                       and not exists (select 1 from embeddings m
+                                       where m.conversation_id = e.conversation_id and m.seq = e.seq and m.model = $2)
+                     order by e.seq limit $3"
+                ),
+                &[&caller.conversation, &model, &i64::from(limit), &after],
+            )
+            .await?;
+        let full = rows.len() == limit as usize;
+        for r in rows {
+            if items.len() >= limit as usize {
+                break;
+            }
+            let seq: i64 = r.get(0);
+            after = seq;
+            let text: String = r.get(1);
+            for (chunk, (a, b)) in pieces(&text).into_iter().enumerate() {
+                items.push(EmbeddingPiece {
+                    seq: u64::try_from(seq).unwrap_or(0),
+                    chunk: u32::try_from(chunk).unwrap_or(0),
+                    text: text[a..b].to_owned(),
+                });
+            }
         }
-        let seq: i64 = r.get(0);
-        let text: String = r.get(1);
-        for (chunk, (a, b)) in pieces(&text).into_iter().enumerate() {
-            items.push(EmbeddingPiece {
-                seq: u64::try_from(seq).unwrap_or(0),
-                chunk: u32::try_from(chunk).unwrap_or(0),
-                text: text[a..b].to_owned(),
-            });
+        if !items.is_empty() || !full {
+            break;
         }
     }
     Ok(EmbeddingsTodo { items })

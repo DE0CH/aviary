@@ -2140,7 +2140,7 @@ async fn the_deployment_sends_an_image_it_uploaded_for_the_person() {
         join_running: true,
     };
     let turn = hermit.hermit_send_turn(conv, &send(m)).await.unwrap().get().turn.id;
-    let sent: serde_json::Value = w
+    let stored: serde_json::Value = w
         .pool()
         .get()
         .await
@@ -2152,8 +2152,8 @@ async fn the_deployment_sends_an_image_it_uploaded_for_the_person() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(sent["text"], "This page is broken");
-    assert_eq!(sent["images"][0]["path"], "uploads/Screenshot 17.06.png");
+    assert_eq!(stored["text"], "This page is broken");
+    assert_eq!(stored["images"][0]["path"], "uploads/Screenshot 17.06.png");
     assert!(w.state_is(turn, "starting").await);
     let sup = w.supervisor(conv).await;
     let cmds = sup.poll(0, 0).await;

@@ -179,6 +179,34 @@ async fn a_conversations_messages_are_embedded_in_its_sandbox_and_found_by_words
             .len(),
         4
     );
+    // a page of messages with no piece (a lone no-break space: text to Postgres, whitespace to Rust) holds nothing back
+    let blank: Vec<_> = (0..3).map(|i| ev::user_sent(&format!("nb{i}"), "\u{a0}")).collect();
+    ev::append(a.pool(), ALICE, id, blank).await;
+    let later = ev::append1(a.pool(), ALICE, id, ev::user_sent("c9", "and the ferry?")).await;
+    let page = s
+        .calls()
+        .embeddings_todo(&EmbeddingsTodoQuery {
+            model: MODEL.into(),
+            limit: Some(2),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        page.items.iter().map(|i| i.seq).collect::<Vec<_>>(),
+        vec![later as u64],
+        "{page:?}"
+    );
+    s.calls()
+        .embeddings_put(&EmbeddingsPut {
+            model: MODEL.into(),
+            items: vec![EmbeddingVector {
+                seq: later as u64,
+                chunk: 0,
+                vector: unit(40, None),
+            }],
+        })
+        .await
+        .unwrap();
 
     let pigeon = a.pigeon();
     let alice = pigeon.person(ALICE);
