@@ -271,13 +271,19 @@ describe('image views with EXIF orientation', () => {
 
     const view = await renderImageOverview(filePath, signal);
 
+    // Rendered, not handed over: only the renderer applies the orientation.
     expect(view).toMatchObject({
+      mimeType: 'image/jpeg',
       sourceWidth: 60,
       sourceHeight: 100,
       selectedWidth: 60,
       selectedHeight: 100,
       outputWidth: 60,
       outputHeight: 100,
+    });
+    expect(await sharp(view.bytes).metadata()).toMatchObject({
+      width: 60,
+      height: 100,
     });
   });
 

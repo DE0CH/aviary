@@ -1831,9 +1831,8 @@ export async function processSingleFileContent(
             // model is told what it got, as Claude Code tells it, and neither
             // "overview" nor a zoom hint sends it looking for detail that is
             // already there.
-            const atSourceSize =
-              view.outputWidth === view.sourceWidth &&
-              view.outputHeight === view.sourceHeight;
+            // (the renderer only writes JPEG, so a PNG here is the file itself)
+            const atSourceSize = view.mimeType === 'image/png';
             return {
               llmContent: [
                 {

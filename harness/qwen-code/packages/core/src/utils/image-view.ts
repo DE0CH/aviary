@@ -331,21 +331,22 @@ async function renderFullFrameView(
   const { width: sourceWidth, height: sourceHeight } = orientedSize(
     prepared.metadata,
   );
-  // An image already inside the budget is handed over as it is. Re-encoding a
+  // A PNG already inside the budget is handed over as it is. Re-encoding a
   // page render to JPEG softened its type, and the model judged a report's
   // layout from the softer picture (YYC AI, 2026-11-18): Claude Code, which
   // sends the PNG, designed noticeably fuller reports from the same model.
-  // An EXIF-rotated frame still goes through the renderer, which applies it.
+  // Only a PNG whose stored axes are its oriented axes: a photo's EXIF
+  // orientation is applied by the renderer, which a pass-through would skip.
   if (
-    (prepared.metadata.format === 'png' ||
-      prepared.metadata.format === 'jpeg') &&
+    prepared.metadata.format === 'png' &&
     (prepared.metadata.orientation ?? 1) === 1 &&
+    prepared.metadata.width === sourceWidth &&
+    prepared.metadata.height === sourceHeight &&
     fitsVisualBudget({ width: sourceWidth, height: sourceHeight })
   ) {
     return {
       bytes: prepared.bytes,
-      mimeType:
-        prepared.metadata.format === 'png' ? 'image/png' : 'image/jpeg',
+      mimeType: 'image/png',
       sourceWidth,
       sourceHeight,
       selectedWidth: sourceWidth,
