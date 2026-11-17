@@ -82,6 +82,10 @@ pub struct Conversation {
     pub context_window: Option<u64>,
     /// How the conversation came to be.
     pub origin: Origin,
+    /// When the soonest of its active schedules fires next ([`crate::schedules`]): what the app's conversation list
+    /// shows as a clock. Absent while none will fire (none set, or each paused, done or deleted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_schedule_at: Option<Timestamp>,
 }
 
 /// A message sent while a turn ran, still waiting.

@@ -123,7 +123,8 @@ pub const SELECT: &str = "select c.id, c.title, c.name_source, c.created_at, c.a
     c.origin, c.person, c.picked_model, c.picked_thinking, c.picked_harness, c.closed_reason,
     t.id as t_id, t.created_at as t_at, t.origin as t_origin, t.model as t_model,
     l.id as l_id, l.state as l_state, l.ended_at as l_ended, l.created_at as l_created, l.error_code as l_code,
-    l.error_detail as l_detail
+    l.error_detail as l_detail,
+    (select min(s.next_at) from schedules s where s.conversation_id = c.id and s.state = 'active') as next_schedule_at
   from conversations c
   left join turns t on t.id = c.active_turn
   left join turns l on l.id = c.last_turn";
@@ -239,6 +240,7 @@ pub fn conversation_from_row(row: &Row) -> Result<Conversation> {
             .get::<_, Option<i32>>("context_window")
             .and_then(|n| u64::try_from(n).ok()),
         origin,
+        next_schedule_at: row.get::<_, Option<OffsetDateTime>>("next_schedule_at").map(ts),
     })
 }
 

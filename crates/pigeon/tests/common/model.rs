@@ -182,6 +182,7 @@ impl Model {
                 kind: OriginKind::New,
                 share_id: None,
             },
+            next_schedule_at: None,
         }
     }
 

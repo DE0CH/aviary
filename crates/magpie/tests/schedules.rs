@@ -756,3 +756,180 @@ async fn pause_all_and_deleted_conversations_skip_and_record() {
     let e = admin.service(None).admin_schedules().await.unwrap_err();
     assert_eq!(code(&e), ErrorCode::BadRequest);
 }
+
+/// The conversation's `nextScheduleAt` (the app's clock in the conversation list; Deyao, 2026-11-17): the soonest next
+/// fire of its active schedules, none for a paused, done or deleted one; and each change of a schedule is a change of
+/// its conversation on the person's feed, so the list redraws without a reload.
+#[tokio::test]
+async fn the_conversation_says_when_its_next_schedule_fires() {
+    use magpie_api::changes::{After, ChangeBody, ChangesQuery};
+    let w = World::new("sched_next").await;
+    let conv = w.conversation(ALICE).await;
+    let other = w.conversation(ALICE).await;
+    let ai = w.ai(conv, ALICE);
+    let pigeon = w.a.pigeon();
+    let person = pigeon.person(ALICE);
+    let app = &person;
+    let next_of = |c: magpie_api::conversations::Conversation| c.next_schedule_at.map(|t| t.0.unix_timestamp());
+    let head = |r: magpie_api::changes::ChangesResponse| r.head_seq;
+    let upserts_of = |r: &magpie_api::changes::ChangesResponse, id: Uuid| {
+        r.changes
+            .iter()
+            .filter(|c| c.conversation_id == id && matches!(c.body, ChangeBody::ConversationUpserted { .. }))
+            .count()
+    };
+    let feed = |after: u64| {
+        async move {
+            app.changes(&ChangesQuery {
+                after: After::Seq(after),
+                limit: None,
+                wait_ms: None,
+            })
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(next_of(app.get_conversation(conv).await.unwrap()), None);
+    let mut seq = head(
+        app.changes(&ChangesQuery {
+            after: After::Latest,
+            limit: None,
+            wait_ms: None,
+        })
+        .await
+        .unwrap(),
+    );
+
+    // a one-off in two minutes and a daily rule: the sooner one
+    let once = ai.sandbox(None).create_schedule(&soon("提醒我發稿。")).await.unwrap();
+    let r = feed(seq).await;
+    assert_eq!(upserts_of(&r, conv), 1, "arming is a change of the conversation");
+    seq = r.head_seq;
+    let daily = ai.sandbox(None).create_schedule(&cron("早報", "30 8 * * *")).await.unwrap();
+    seq = feed(seq).await.head_seq;
+    let at = |s: &magpie_api::schedules::Schedule| {
+        time::OffsetDateTime::parse(s.next.as_deref().unwrap(), &time::format_description::well_known::Rfc3339)
+            .unwrap()
+            .unix_timestamp()
+    };
+    let soonest = at(&once).min(at(&daily));
+    assert_eq!(next_of(app.get_conversation(conv).await.unwrap()), Some(soonest));
+    // the list says it too, and another conversation of the person has none
+    let list = app.list_conversations(&magpie_api::conversations::ListQuery::default()).await.unwrap();
+    let in_list = |id: Uuid| list.conversations.iter().find(|c| c.id == id).cloned().unwrap();
+    assert_eq!(next_of(in_list(conv)), Some(soonest));
+    assert_eq!(next_of(in_list(other)), None);
+
+    // the one-off paused: the daily rule's time; a change of the conversation
+    ai.sandbox(None)
+        .update_schedule(
+            &once.id,
+            &UpdateSchedule {
+                paused: Some(true),
+                ..UpdateSchedule::default()
+            },
+        )
+        .await
+        .unwrap();
+    let r = feed(seq).await;
+    assert_eq!(upserts_of(&r, conv), 1, "a change of a schedule is a change of the conversation");
+    seq = r.head_seq;
+    assert_eq!(next_of(app.get_conversation(conv).await.unwrap()), Some(at(&daily)));
+
+    // the daily one deleted: none left that will fire
+    ai.sandbox(None).delete_schedule(&daily.id).await.unwrap();
+    let r = feed(seq).await;
+    assert_eq!(upserts_of(&r, conv), 1, "deleting is a change of the conversation");
+    seq = r.head_seq;
+    assert_eq!(next_of(app.get_conversation(conv).await.unwrap()), None);
+
+    // the one-off resumed, then fired: done, none left; the fire is a change of the conversation
+    ai.sandbox(None)
+        .update_schedule(
+            &once.id,
+            &UpdateSchedule {
+                paused: Some(false),
+                ..UpdateSchedule::default()
+            },
+        )
+        .await
+        .unwrap();
+    seq = feed(seq).await.head_seq;
+    w.due(&once.id, Duration::ZERO).await;
+    assert_eq!(w.pass().await, 1);
+    assert!(upserts_of(&feed(seq).await, conv) >= 1, "a fire is a change of the conversation");
+    assert_eq!(next_of(app.get_conversation(conv).await.unwrap()), None);
+}
+
+/// A repeating rule may start later (`from`, Deyao 2026-11-17: an aviary session's wakeup "first at 1 December 14:00,
+/// then hourly"): its first fire is the rule's first time at or after `from`, its reading says from when, and a one-off
+/// takes none. An empty `from` in a change removes it.
+#[tokio::test]
+async fn a_repeating_schedule_can_start_later() {
+    let w = World::new("sched_from").await;
+    let conv = w.conversation(ALICE).await;
+    let ai = w.ai(conv, ALICE);
+    let rfc = |t: time::OffsetDateTime| t.format(&time::format_description::well_known::Rfc3339).unwrap();
+    let parse = |s: &str| {
+        time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
+            .unwrap()
+            .unix_timestamp()
+    };
+    // three days ahead, on the hour (UTC)
+    let now = time::OffsetDateTime::now_utc();
+    let start = (now + time::Duration::days(3)).replace_minute(0).unwrap().replace_second(0).unwrap().replace_nanosecond(0).unwrap();
+    let s = ai
+        .sandbox(None)
+        .create_schedule(&CreateSchedule {
+            prompt: "check".into(),
+            cron: Some("0 * * * *".into()),
+            tz: Some("UTC".into()),
+            from: Some(rfc(start)),
+            ..CreateSchedule::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(parse(s.next.as_deref().unwrap()), start.unix_timestamp(), "the first fire is at from");
+    assert_eq!(parse(s.from.as_deref().unwrap()), start.unix_timestamp());
+    assert!(s.describe.contains("起"), "{}", s.describe);
+    // fired: the next is an hour later
+    w.due(&s.id, Duration::ZERO).await;
+    assert_eq!(w.pass().await, 1);
+    let g = ai.sandbox(None).get_schedule(&s.id).await.unwrap();
+    assert!(parse(g.next.as_deref().unwrap()) <= now.unix_timestamp() + 3600 + 60, "after a fire the rule goes on hourly");
+    // from removed: the next on-the-hour time from now
+    let s2 = ai
+        .sandbox(None)
+        .create_schedule(&CreateSchedule {
+            prompt: "later".into(),
+            cron: Some("30 * * * *".into()),
+            tz: Some("UTC".into()),
+            from: Some(rfc(start)),
+            ..CreateSchedule::default()
+        })
+        .await
+        .unwrap();
+    let u = ai
+        .sandbox(None)
+        .update_schedule(
+            &s2.id,
+            &UpdateSchedule {
+                from: Some(String::new()),
+                ..UpdateSchedule::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(parse(u.next.as_deref().unwrap()) <= now.unix_timestamp() + 3600 + 60, "{:?}", u.next);
+    assert_eq!(u.from, None);
+    // a one-off takes no from
+    let e = ai
+        .sandbox(None)
+        .create_schedule(&CreateSchedule {
+            from: Some(rfc(start)),
+            ..soon("x")
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(code(&e), ErrorCode::BadRequest);
+}

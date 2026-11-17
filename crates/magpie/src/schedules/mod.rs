@@ -40,7 +40,7 @@ const AT_MAX_AHEAD: i64 = 2 * 366 * 86_400;
 
 /// The columns [`Row::of`] reads.
 const COLUMNS: &str = "s.id, s.person, s.conversation_id, s.kind, s.prompt, s.at, s.cron, s.tz, s.until, s.describe, \
-                       s.next_at, s.state, s.created_at, s.created_by, c.title";
+                       s.next_at, s.state, s.created_at, s.created_by, c.title, s.starts_at";
 
 /// A schedule row.
 #[derive(Debug, Clone)]
@@ -75,6 +75,8 @@ pub struct Row {
     pub created_by: String,
     /// The conversation's title.
     pub title: Option<String>,
+    /// A repeating rule's start.
+    pub starts_at: Option<OffsetDateTime>,
 }
 
 impl Row {
@@ -95,6 +97,7 @@ impl Row {
             created_at: r.get(12),
             created_by: r.get(13),
             title: r.get(14),
+            starts_at: r.get(15),
         }
     }
 
@@ -118,6 +121,7 @@ impl Row {
             cron: self.cron.clone(),
             tz: self.tz.clone(),
             until: self.until.map(|t| self.local(t)),
+            from: self.starts_at.map(|t| self.local(t)),
             describe: self.describe.clone(),
             next: self.next_at.map(|t| self.local(t)),
             state: self.state.clone(),
@@ -142,6 +146,8 @@ pub struct Spec {
     pub tz: String,
     /// The end (Unix seconds).
     pub until: Option<i64>,
+    /// A repeating rule's start (Unix seconds).
+    pub from: Option<i64>,
     /// The reading.
     pub describe: String,
     /// The next fire (Unix seconds).
@@ -152,12 +158,20 @@ pub struct Spec {
 ///
 /// # Errors
 /// 400 `bad_request` saying what is wrong, in words the AI can repeat.
-pub fn spec(at: Option<&str>, rule: Option<&str>, tz: Option<&str>, until: Option<&str>, now: i64) -> Result<Spec> {
+pub fn spec(
+    at: Option<&str>,
+    rule: Option<&str>,
+    tz: Option<&str>,
+    until: Option<&str>,
+    from: Option<&str>,
+    now: i64,
+) -> Result<Spec> {
     let tz_name = tz.map(str::trim).filter(|t| !t.is_empty()).unwrap_or(cron::DEFAULT_TZ);
     let zone = cron::zone(tz_name).map_err(Error::bad_request)?;
     let at = at.map(str::trim).filter(|a| !a.is_empty());
     let rule = rule.map(str::trim).filter(|c| !c.is_empty());
     let until = until.map(str::trim).filter(|u| !u.is_empty());
+    let from = from.map(str::trim).filter(|f| !f.is_empty());
     match (at, rule) {
         (Some(_), Some(_)) => Err(Error::bad_request(
             "give either at (once) or cron (repeating), not both",
@@ -166,8 +180,10 @@ pub fn spec(at: Option<&str>, rule: Option<&str>, tz: Option<&str>, until: Optio
             "give at (a one-off time like 2026-11-07T09:00+08:00) or cron (five fields, like 30 8 * * 1-5)",
         )),
         (Some(a), None) => {
-            if until.is_some() {
-                return Err(Error::bad_request("until is only for a repeating schedule (cron)"));
+            if until.is_some() || from.is_some() {
+                return Err(Error::bad_request(
+                    "until and from are only for a repeating schedule (cron)",
+                ));
             }
             let t = cron::parse_time(a, zone).map_err(Error::bad_request)?;
             if t < now - 60 {
@@ -186,6 +202,7 @@ pub fn spec(at: Option<&str>, rule: Option<&str>, tz: Option<&str>, until: Optio
                 cron: None,
                 tz: tz_name.to_owned(),
                 until: None,
+                from: None,
                 describe: cron::describe_once(t, zone, now),
                 next: t.max(now),
             })
@@ -199,8 +216,16 @@ pub fn spec(at: Option<&str>, rule: Option<&str>, tz: Option<&str>, until: Optio
             if until.is_some_and(|u| u <= now) {
                 return Err(Error::bad_request("until is in the past"));
             }
+            // a start already past is no start: the rule runs from now
+            let from = from
+                .map(|f| cron::parse_time(f, zone).map_err(Error::bad_request))
+                .transpose()?
+                .filter(|f| *f > now);
+            if from.is_some_and(|f| f > now + AT_MAX_AHEAD) {
+                return Err(Error::bad_request("from can be at most two years ahead"));
+            }
             let next = r
-                .next_after(zone, now)
+                .next_after(zone, from.map_or(now, |f| f - 1))
                 .filter(|n| until.is_none_or(|u| *n <= u))
                 .ok_or_else(|| Error::bad_request(format!("`{expr}` never fires (before until)")))?;
             let min = i64::try_from(MIN_GAP.as_secs()).unwrap_or(900);
@@ -209,10 +234,15 @@ pub fn spec(at: Option<&str>, rule: Option<&str>, tz: Option<&str>, until: Optio
                     "a repeating schedule fires at most every 15 minutes",
                 ));
             }
+            let mut describe = cron::describe_cron(&r, &expr, tz_name);
+            if let Some(f) = from {
+                describe = format!("{}起，{describe}", cron::describe_once(f, zone, now));
+            }
             Ok(Spec {
                 kind: "cron",
                 at: None,
-                describe: cron::describe_cron(&r, &expr, tz_name),
+                from,
+                describe,
                 cron: Some(expr),
                 tz: tz_name.to_owned(),
                 until,
@@ -316,12 +346,14 @@ pub async fn create(pool: &Pool, ctx: &Ctx, req: &CreateSchedule) -> Result<Sche
         req.cron.as_deref(),
         req.tz.as_deref(),
         req.until.as_deref(),
+        req.from.as_deref(),
         now,
     )?;
     let id = new_id();
-    let (at, until, next) = (
+    let (at, until, from, next) = (
         s.at.map(instant).transpose()?,
         s.until.map(instant).transpose()?,
+        s.from.map(instant).transpose()?,
         instant(s.next)?,
     );
     let who = &who; // borrowed: the transaction may run more than once (aviary_pg::tx!)
@@ -346,8 +378,8 @@ pub async fn create(pool: &Pool, ctx: &Ctx, req: &CreateSchedule) -> Result<Sche
         }
         t.execute(
             "insert into schedules (id, person, conversation_id, kind, prompt, at, cron, tz, until, describe, next_at,
-                                    state, created_by)
-             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active', $2)",
+                                    state, created_by, starts_at)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active', $2, $12)",
             &[
                 &id,
                 &who.person,
@@ -360,9 +392,11 @@ pub async fn create(pool: &Pool, ctx: &Ctx, req: &CreateSchedule) -> Result<Sche
                 &until,
                 &s.describe,
                 &next,
+                &from,
             ],
         )
         .await?;
+        crate::changes::upserted(t, &who.person, who.conversation).await?;
         tracing::info!(schedule = %id, conversation = %who.conversation, kind = s.kind, "schedule armed");
         let row = one(t, id, &who.person).await?.ok_or_else(Error::not_found)?;
         Ok(row.api(None, false))
@@ -441,7 +475,8 @@ pub async fn update(pool: &Pool, ctx: &Ctx, id: &str, req: &UpdateSchedule) -> R
             .as_ref()
             .map(Row::of)
             .ok_or_else(Error::not_found)?;
-        let rule_changed = req.at.is_some() || req.cron.is_some() || req.tz.is_some() || req.until.is_some();
+        let rule_changed =
+            req.at.is_some() || req.cron.is_some() || req.tz.is_some() || req.until.is_some() || req.from.is_some();
         let mut state = row.state.clone();
         if let Some(p) = req.paused {
             state = match (p, state.as_str()) {
@@ -455,6 +490,7 @@ pub async fn update(pool: &Pool, ctx: &Ctx, id: &str, req: &UpdateSchedule) -> R
         let zone = row.zone();
         let stored_at = row.at.map(|a| cron::local(a.unix_timestamp(), zone));
         let stored_until = row.until.map(|u| cron::local(u.unix_timestamp(), zone));
+        let stored_from = row.starts_at.map(|f| cron::local(f.unix_timestamp(), zone));
         let (at, rule) = match (&req.at, &req.cron) {
             (Some(a), _) => (Some(a.clone()), None),
             (None, Some(c)) => (None, Some(c.clone())),
@@ -465,6 +501,11 @@ pub async fn update(pool: &Pool, ctx: &Ctx, id: &str, req: &UpdateSchedule) -> R
             None if at.is_none() => stored_until,
             None => None,
         };
+        let from = match &req.from {
+            Some(f) => Some(f.clone()),
+            None if at.is_none() => stored_from,
+            None => None,
+        };
         let tz = req.tz.clone().unwrap_or_else(|| row.tz.clone());
         if rule_changed && state == "done" {
             "active".clone_into(&mut state);
@@ -472,7 +513,14 @@ pub async fn update(pool: &Pool, ctx: &Ctx, id: &str, req: &UpdateSchedule) -> R
         let mut next = None;
         let mut s = None;
         if state == "active" {
-            let checked = spec(at.as_deref(), rule.as_deref(), Some(tz.as_str()), until.as_deref(), now)?;
+            let checked = spec(
+                at.as_deref(),
+                rule.as_deref(),
+                Some(tz.as_str()),
+                until.as_deref(),
+                from.as_deref(),
+                now,
+            )?;
             next = Some(instant(checked.next)?);
             s = Some(checked);
         } else if rule_changed {
@@ -482,16 +530,21 @@ pub async fn update(pool: &Pool, ctx: &Ctx, id: &str, req: &UpdateSchedule) -> R
                 rule.as_deref(),
                 Some(tz.as_str()),
                 until.as_deref(),
+                from.as_deref(),
                 now,
             )?);
         }
         let prompt = req.prompt.clone().unwrap_or_else(|| row.prompt.clone());
         match s {
             Some(s) => {
-                let (at, until) = (s.at.map(instant).transpose()?, s.until.map(instant).transpose()?);
+                let (at, until, from) = (
+                    s.at.map(instant).transpose()?,
+                    s.until.map(instant).transpose()?,
+                    s.from.map(instant).transpose()?,
+                );
                 t.execute(
                     "update schedules set prompt = $2, kind = $3, at = $4, cron = $5, tz = $6, until = $7,
-                                          describe = $8, next_at = $9, state = $10, updated_at = now()
+                                          describe = $8, next_at = $9, state = $10, starts_at = $11, updated_at = now()
                      where id = $1",
                     &[
                         &id,
@@ -504,6 +557,7 @@ pub async fn update(pool: &Pool, ctx: &Ctx, id: &str, req: &UpdateSchedule) -> R
                         &s.describe,
                         &next,
                         &state,
+                        &from,
                     ],
                 )
                 .await?;
@@ -516,6 +570,7 @@ pub async fn update(pool: &Pool, ctx: &Ctx, id: &str, req: &UpdateSchedule) -> R
                 .await?;
             }
         }
+        conversation_changed(t, &who.person, row.conversation).await?;
         tracing::info!(schedule = %id, state = %state, "schedule changed");
         let row = one(t, id, &who.person).await?.ok_or_else(Error::not_found)?;
         Ok(row.api(None, true))
@@ -529,20 +584,40 @@ pub async fn update(pool: &Pool, ctx: &Ctx, id: &str, req: &UpdateSchedule) -> R
 /// 404 when it is not the person's; a statement error.
 pub async fn delete(pool: &Pool, ctx: &Ctx, id: &str) -> Result<()> {
     let who = Sandbox::from_ctx(ctx)?;
-    let n = pool
-        .get()
-        .await?
-        .execute(
-            "update schedules set state = 'deleted', next_at = null, deleted_at = now(), updated_at = now()
-             where id = $1 and person = $2 and state <> 'deleted'",
-            &[&id, &who.person],
-        )
-        .await?;
-    if n == 0 {
-        return Err(Error::not_found());
+    let who = &who; // borrowed: the transaction may run more than once (aviary_pg::tx!)
+    aviary_pg::tx!(pool, |t| -> Result<()> {
+        let conversation: Uuid = t
+            .query_opt(
+                "update schedules set state = 'deleted', next_at = null, deleted_at = now(), updated_at = now()
+                 where id = $1 and person = $2 and state <> 'deleted' returning conversation_id",
+                &[&id, &who.person],
+            )
+            .await?
+            .ok_or_else(Error::not_found)?
+            .get(0);
+        conversation_changed(t, &who.person, conversation).await?;
+        tracing::info!(schedule = %id, "schedule deleted");
+        Ok(())
+    })
+    .await
+}
+
+/// A change of one of `conversation`'s schedules is a change of the conversation on `person`'s feed (its
+/// `nextScheduleAt`), so the app's list redraws. The schedule's row is taken first, then the conversation's (the
+/// order a fire takes them in); a conversation gone or in Recently deleted has nothing to redraw.
+///
+/// # Errors
+/// A statement error.
+pub async fn conversation_changed(t: &aviary_pg::Tx<'_>, person: &str, conversation: Uuid) -> Result<()> {
+    match crate::conversations::lock(t, person, conversation).await {
+        Ok(c) if c.deleted_at.is_none() => {
+            crate::changes::upserted(t, person, conversation).await?;
+            Ok(())
+        }
+        Ok(_) => Ok(()),
+        Err(e) if e.is(&magpie_api::errors::ErrorCode::NotFound) => Ok(()),
+        Err(e) => Err(e),
     }
-    tracing::info!(schedule = %id, "schedule deleted");
-    Ok(())
 }
 
 /// `GET /v1/conversations/{id}/schedules`: the panel's list (live ones, and ones done in the last day), each with

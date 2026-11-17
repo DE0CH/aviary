@@ -102,7 +102,19 @@ pub fn workspace_descriptor(c: &Conversation, v: &View<'_>) -> Value {
         "status": if running { "running" } else { "done" }, "statusEnteredAt": c.updated_at,
         "activityAt": c.updated_at, "createdAt": c.created_at, "lastUserMessageAt": last_user, "diffStat": null,
         "scripts": [], "project": project_placement(c, v),
+        "backgroundTasks": background_tasks(c), "nextScheduleAt": c.next_schedule_at,
     })
+}
+
+/// The background tasks still running after the conversation's turn ended (magpie's `held`): the list's blue dot
+/// (Deyao, 2026-11-17). 0 while a turn runs (the spinner says it) or nothing is held.
+#[must_use]
+pub fn background_tasks(c: &Conversation) -> usize {
+    if c.turn.is_none() && c.run.state == magpie_api::conversations::RunState::Held {
+        c.run.background.len()
+    } else {
+        0
+    }
 }
 
 /// The ask kind the app shows (7.5.9).
@@ -1042,6 +1054,36 @@ impl RowProjector for PaseoProjector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The conversation list's marks (Deyao, 2026-11-17): a conversation idle with background tasks still running
+    /// (magpie's `held`) says how many, and one with a schedule armed says when it fires next; neither while nothing
+    /// is held or set, and no background count while a turn runs (the spinner says that).
+    #[test]
+    fn the_workspace_says_its_background_tasks_and_next_schedule() {
+        let view = View {
+            product: "Chat",
+            locale: Locale::En,
+            model: None,
+        };
+        let conv = |run: Value, turn: Value, next: Value| -> Conversation {
+            serde_json::from_value(json!({"id": uuid::Uuid::nil(), "title": "t", "titleSource": "user",
+                "createdAt": "2026-11-17T04:00:00Z", "updatedAt": "2026-11-17T04:00:00Z", "lastUserMessageAt": null,
+                "deletedAt": null, "purgeAt": null, "claudeSessionId": null, "lastTurn": null, "sandbox": null,
+                "model": null, "contextTokens": null, "turn": turn, "run": run, "origin": {"kind": "new"},
+                "nextScheduleAt": next}))
+            .unwrap()
+        };
+        let task = |id: &str| json!({"taskId": id, "type": "local_bash", "description": "cargo test"});
+        let held = json!({"state": "held", "background": [task("a"), task("b")]});
+        let w = workspace_descriptor(&conv(held.clone(), Value::Null, Value::Null), &view);
+        assert_eq!((&w["status"], &w["backgroundTasks"], &w["nextScheduleAt"]), (&json!("done"), &json!(2), &Value::Null));
+        let idle = json!({"state": "idle", "background": []});
+        let w = workspace_descriptor(&conv(idle, Value::Null, json!("2026-11-17T06:30:00Z")), &view);
+        assert_eq!((&w["backgroundTasks"], &w["nextScheduleAt"]), (&json!(0), &json!("2026-11-17T06:30:00.000Z")));
+        let turn = json!({"id": uuid::Uuid::nil(), "startedAt": "2026-11-17T04:00:00Z", "origin": "person"});
+        let w = workspace_descriptor(&conv(held, turn, Value::Null), &view);
+        assert_eq!((&w["status"], &w["backgroundTasks"]), (&json!("running"), &json!(0)));
+    }
 
     /// Qwen Code's tools show as the same kinds of card as Claude Code's of the same job.
     #[test]

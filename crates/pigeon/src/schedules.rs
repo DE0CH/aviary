@@ -239,6 +239,7 @@ mod tests {
             cron: Some("30 8 * * 1-5".into()),
             tz: "Asia/Hong_Kong".into(),
             until: None,
+            from: None,
             describe: "每個工作日 08:30".into(),
             next: Some("2026-11-09T08:30:00+08:00".into()),
             state: "active".into(),

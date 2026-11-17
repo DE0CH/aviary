@@ -237,6 +237,7 @@ async fn due_one(pool: &Pool) -> Result<Option<Option<Uuid>>> {
             &[&row.id, &state, &next],
         )
         .await?;
+        super::conversation_changed(t, &row.person, row.conversation).await?;
         tracing::info!(schedule = %row.id, conversation = %row.conversation, outcome = d.outcome, "schedule fired");
         Ok(Some(d.new_turn))
     })

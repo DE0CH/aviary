@@ -34,6 +34,9 @@ pub struct Schedule {
     /// `cron`: no fire after this time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until: Option<String>,
+    /// `cron`: no fire before this time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
     /// The rule in plain Hong Kong Chinese.
     pub describe: String,
     /// The next fire, local with its offset; `null` when none is due (paused, done, deleted).
@@ -89,6 +92,9 @@ pub struct CreateSchedule {
     /// A repeating rule's end.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until: Option<String>,
+    /// A repeating rule's start: its first fire is the rule's first time at or after this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
 }
 
 /// `PATCH /v1/sandbox/schedules/{scheduleId}`: the fields to change (an empty `until` removes the end).
@@ -113,6 +119,9 @@ pub struct UpdateSchedule {
     /// A new end (`""`: none).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until: Option<String>,
+    /// A new start (`""`: none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
 }
 
 /// A list of schedules.
