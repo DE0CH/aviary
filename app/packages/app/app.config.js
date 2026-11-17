@@ -152,7 +152,8 @@ export default {
         {
           cameraPermission: variant.cameraPermission,
           photosPermission: variant.photosPermission,
-          microphonePermission: false,
+          // no `microphonePermission: false`: it deletes NSMicrophoneUsageDescription, which the app's audio code
+          // needs in the Info.plist (Apple refuses the upload without it: error 90683)
         },
       ],
       [
