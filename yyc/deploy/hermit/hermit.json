@@ -27,6 +27,7 @@
     "openFiles": 65536,
     "maxActive": 10,
     "maxActiveByPerson": {"bot@deyaochen.com": 3},
+    "notifyPersonLimit": {"bot@deyaochen.com": false},
     "idleMinutes": 30,
     "maxLifetimeHours": 8,
     "lifetimeGraceMinutes": 60,
