@@ -198,12 +198,18 @@ async fn do_boot(app: &App, machine: &str, req: &BootRequest) -> anyhow::Result<
         .filter(|(k, _)| wire::BOOT_ENV_NAMES.contains(&k.as_str()))
         .map(|(k, v)| (k.clone(), Value::String(v.clone())))
         .collect();
-    let boot = json!({
+    let mut boot = json!({
         "env": env,
         "memoryBytes": req.memory_bytes,
         "cpus": req.cpus,
         "proxy": gateway_api::credential::proxy_url(&token, MACHINE_PROXY),
     });
+    // a machine on aviary's fabric (src/fabric.rs): the fabric hermit's control hashes for its sandbox go into the
+    // descriptor beside this hermit's, so the session's one supervisor answers both
+    if let (Some(f), Some(sandbox)) = (&app.fabric, crate::fabric::sandbox_of_machine(machine)) {
+        let hashes = f.control_hashes(&app.http, sandbox).await?;
+        boot["fabricControl"] = json!(hashes);
+    }
     let image = req.image.clone();
     let machine = machine.to_owned();
     db::update(&app.pool, row.id, |r| {

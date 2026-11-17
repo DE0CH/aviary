@@ -408,6 +408,16 @@ impl App {
     }
 }
 
+/// The descriptor's control hashes: this hermit's for the sandbox, and on a fabric machine the fabric hermit's too
+/// (its boot recorded them: src/fabric.rs).
+fn control_hashes(app: &App, row: &SandboxRow) -> Vec<String> {
+    let mut out = app.keys.control_hashes(row.id);
+    if let Some(list) = row.boot.get("fabricControl").and_then(Value::as_array) {
+        out.extend(list.iter().filter_map(Value::as_str).map(str::to_owned));
+    }
+    out
+}
+
 /// The descriptor of one boot (hermit 3.7.1).
 #[must_use]
 pub fn descriptor(app: &App, row: &SandboxRow) -> SandboxSelf {
@@ -452,7 +462,7 @@ pub fn descriptor(app: &App, row: &SandboxRow) -> SandboxSelf {
         },
         control: Control {
             port: supervisor_api::CONTROL_PORT,
-            token_sha256: app.keys.control_hashes(row.id),
+            token_sha256: control_hashes(app, row),
         },
         claude: Claude {
             managed_claude_md: MANAGED_CLAUDE_MD.to_owned(),

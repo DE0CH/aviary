@@ -8,6 +8,7 @@
 pub mod app;
 pub mod central;
 pub mod db;
+pub mod fabric;
 pub mod hermit;
 pub mod jarvis;
 pub mod machine;

@@ -40,6 +40,8 @@ pub struct Inner {
     pub http: reqwest::Client,
     /// The deployment's settings (the product, the model menu, how each model is routed).
     pub settings: crate::settings::Settings,
+    /// The fabric hermit, for session machines on aviary's fabric (src/fabric.rs); `None`: none
+    pub fabric: Option<crate::fabric::FabricHermit>,
 }
 
 impl std::ops::Deref for App {

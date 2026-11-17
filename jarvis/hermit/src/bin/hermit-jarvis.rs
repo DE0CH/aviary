@@ -80,6 +80,7 @@ async fn main() -> anyhow::Result<()> {
         gateway_to_hermit: aviary_core::auth::outbound_token("GATEWAY", "HERMIT"),
         http,
         settings: jarvis_aviary::settings::Settings::load(&env.settings)?,
+        fabric: jarvis_aviary::fabric::FabricHermit::from_env(),
     }));
     let models_route = app.settings.models_route();
     let api = guarded_router(Arc::new(app.clone()), RouteGuard::new(callers));
