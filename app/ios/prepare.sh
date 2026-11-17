@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export CI=1
-: "${YYC_SITE:?YYC_SITE (the app's server) is required}"
+: "${YYC_SITE:?YYC_SITE (the server of the app) is required}"
 
 npm run build:app-deps
 
