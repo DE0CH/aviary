@@ -11,6 +11,20 @@
       "thinking": ["low", "medium", "high", "xhigh", "max"],
       "contextTokens": 1000000,
       "openrouter": { "providers": ["z-ai/fp8"] }
+    },
+    {
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "label": "DeepSeek V4.1 Flash",
+      "thinking": ["none", "low", "medium", "high", "xhigh", "max"],
+      "contextTokens": 1000000,
+      "openrouter": { "providers": ["deepseek"] }
+    },
+    {
+      "id": "moonshotai/kimi-k3.1-pro",
+      "label": "Kimi K3.1 Pro",
+      "thinking": ["none", "low", "medium", "high", "xhigh", "max"],
+      "contextTokens": 1000000,
+      "openrouter": { "providers": ["moonshotai/mxfp4"] }
     }
   ]
 }
