@@ -42,7 +42,9 @@ server (`server/`) serves no deployment.
   level and opens a menu (`yyc/model-menu.tsx`, its state in `yyc/model-menu-state.ts`): the models of the provider
   snapshot with an (i) beside the title (ask the admin for more), then a thinking row with one position for every
   level any model has. The row is the same for every model, so nothing moves when the model changes: a level the
-  chosen model lacks is disabled in place, and a model with no levels greys the whole row. A conversation keeps its
+  chosen model lacks is disabled in place, and a model with no levels greys the whole row. The web menu widens
+  with the row (`menuWidth`): its 272 px fits four positions, and a longer row gets a 58 px cell or the labels
+  clip. A conversation keeps its
   own choice (`setAgentModel`, `setAgentThinkingOption`; used from its next reply on: while a reply still runs on
   another model the button says both, 「Fable 5.2 → Opus 5.5」, from the snapshot's `runtimeInfo.model`); a new conversation starts
   on the default model at that model's own level, whatever was chosen last. A model may run in another agent
