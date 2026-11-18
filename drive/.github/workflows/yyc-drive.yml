@@ -3,8 +3,7 @@
 # one image for amd64 and arm64, ghcr.io/de0ch/yyc-drive:<sha12> (the edge at /srv/edge), only when all three passed.
 name: yyc-drive
 on:
-  push:
-    branches: [main]
+  push:  # every branch: the gate merges a branch when this is green
   pull_request:
   workflow_dispatch:
 concurrency:
