@@ -978,3 +978,58 @@ async fn the_view_as_log_pages_without_losing_entries() {
         .unwrap();
     assert!(none.view_as.is_empty());
 }
+
+/// The question cards' index (rule 11) is built concurrently (migration 0046: a deployment with many rows keeps
+/// writing them meanwhile) and valid; a database that recorded the 0045 it replaces (the same index built in a
+/// transaction) starts this build and keeps its index.
+#[tokio::test]
+async fn the_person_cards_index_is_built_concurrently_and_a_recorded_0045_still_starts() {
+    let list = magpie::db::migrations().unwrap();
+    let m = list
+        .iter()
+        .find(|m| m.name == "person_cards_index")
+        .expect("migration 0046");
+    assert!(
+        m.sql.starts_with("-- aviary-pg: no-transaction\n"),
+        "built outside a transaction"
+    );
+    assert!(
+        m.sql
+            .contains("create index concurrently if not exists rows_person_unread")
+    );
+    assert!(list.iter().all(|m| m.version != 45), "0045 is replaced, not embedded");
+
+    let valid = async |url: &str| -> bool {
+        common::sql(url)
+            .get()
+            .await
+            .unwrap()
+            .query_one(
+                "select i.indisvalid from pg_index i join pg_class c on c.oid = i.indexrelid
+                 where c.relname = 'rows_person_unread'",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0)
+    };
+    let t = common::Tokens::new();
+    let fresh = common::fresh_db("cards_index_fresh").await;
+    let r = common::replica(&fresh.url, &t).await;
+    assert!(r.readiness.is_ready());
+    assert!(valid(&fresh.url).await);
+
+    // a database as 0045 left it: the index, and its record
+    let old = common::fresh_db("cards_index_0045").await;
+    drop(common::replica(&old.url, &t).await);
+    let sql = common::sql(&old.url).get().await.unwrap();
+    sql.batch_execute(
+        "delete from _migrations where version = 46;
+         insert into _migrations (version, name, sha256, applied_at) values (45, 'person_cards', 'an older sha', now());",
+    )
+    .await
+    .unwrap();
+    let again = common::replica(&old.url, &t).await;
+    assert!(again.readiness.is_ready(), "a recorded 0045 does not stop the start");
+    assert!(valid(&old.url).await);
+}

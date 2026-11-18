@@ -202,7 +202,7 @@ reads and their once-a-day audit. `tests/legacy_paths.rs`: the legacy-path set (
     `(answer to <askId>)`, which the `ask` command prints on every line of an answer and never before one (the id
     alone, "Question q-… is open", reads nothing); a wait's is the command's own (`(Inbox <id>)`). A retract of the
     reading line makes the card unread again where it was asked (rule 9 rebuilds the reading row from its line, without
-    the card). `rows_person_unread` keeps the lookup to the cards not read yet. DERIVATION 3: rows made before have no
+    the card). `rows_person_unread` (migration 0046, built concurrently) keeps the lookup to the cards not read yet. DERIVATION 3: rows made before have no
     cards and are not rebuilt (a card row made now would land at the end of the timeline, not where it was asked).
   - No `derivationVersion` lazy rebuild (pigeon 14.1.18 item 3): magpie 7.3 changes the epoch only under rule 9.
     Each row records the derivation version it was made or last updated by (`rows.derivation`,
