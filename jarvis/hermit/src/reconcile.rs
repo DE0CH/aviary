@@ -26,7 +26,7 @@ use time::OffsetDateTime;
 
 use crate::app::{App, RESUME_DEADLINE};
 use crate::db::{self, SandboxRow};
-use crate::jarvis::{APPROVAL, is_up};
+use crate::jarvis::{APPROVAL, FROZEN, is_up};
 
 /// How often the router is asked.
 pub const EVERY: Duration = Duration::from_secs(10);
@@ -178,7 +178,8 @@ pub const NOT_APPROVED: &str = "the new session was not approved";
 pub fn verdict(row: &SandboxRow, state: Option<&str>, now: OffsetDateTime) -> Verdict {
     if row.machine.is_some() {
         return match state {
-            Some(s) if is_up(s) => Verdict::Keep,
+            // a frozen session's machine is kept, supervisor and all: its sandbox lives on, frozen with it
+            Some(s) if is_up(s) || s == FROZEN => Verdict::Keep,
             Some("paused" | "pausing") => {
                 Verdict::End(ReleaseReason::Idle, "Jarvis 4 paused the session")
             }
@@ -250,8 +251,9 @@ pub const NOT_RUNNING: &str = "This session is not running. Start it in the Jarv
 #[must_use]
 pub fn chat_of(state: Option<&str>) -> Chat {
     match state {
-        // a new session waiting for its approval: its conversation's first message waits with it, and more may join
-        Some(s) if is_up(s) || s == APPROVAL => Chat::Open,
+        // a new session waiting for its approval: its conversation's first message waits with it, and more may join; a
+        // frozen one takes messages too, and the first thaws it (hermit's get-or-start resumes it through the router)
+        Some(s) if is_up(s) || s == APPROVAL || s == FROZEN => Chat::Open,
         Some("paused" | "pausing") => Chat::Closed(PAUSED),
         None | Some("destroyed" | "destroying") => Chat::Ended,
         Some(_) => Chat::Closed(NOT_RUNNING),
@@ -333,6 +335,8 @@ mod tests {
         let now = OffsetDateTime::now_utc();
         let booted = row(Some("m1"), SandboxPhase::Supervisor, now);
         assert_eq!(verdict(&booted, Some("started"), now), Verdict::Keep);
+        // a session in the time machine keeps its sandbox: it is frozen with the machine
+        assert_eq!(verdict(&booted, Some("frozen"), now), Verdict::Keep);
         assert!(matches!(
             verdict(&booted, Some("paused"), now),
             Verdict::End(ReleaseReason::Idle, _)
@@ -360,6 +364,8 @@ mod tests {
         assert_eq!(chat_of(Some("failed")), Chat::Closed(NOT_RUNNING));
         // a new session waiting for its approval: its conversation takes more messages behind the first
         assert_eq!(chat_of(Some("approval")), Chat::Open);
+        // one in the time machine takes messages: the first thaws it
+        assert_eq!(chat_of(Some("frozen")), Chat::Open);
         assert_eq!(chat_of(Some("destroyed")), Chat::Ended);
         assert_eq!(chat_of(None), Chat::Ended);
     }

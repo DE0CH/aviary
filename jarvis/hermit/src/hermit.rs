@@ -134,6 +134,8 @@ impl Server for App {
         if let Some(row) = db::newest(&self.pool, cid).await.map_err(internal)?
             && row.state != SandboxState::Gone
         {
+            // a use of a session waiting in the time machine (a message, an answer) thaws it: the router's resume
+            self.thaw_if_frozen(&session.session_id);
             return Ok(answer(row.sandbox()));
         }
         // the session's machine is not up: resume it, and wait for its boot (central::boot adopts this row)
@@ -395,6 +397,29 @@ pub fn liveness(row: &SandboxRow, owner: &str) -> TokenLiveness {
 }
 
 impl App {
+    /// When the router lists `session` as frozen (the time machine), resumes it, which thaws it; in the background:
+    /// the use (a turn, an answer) is answered with the live sandbox and goes in once the supervisor is back.
+    fn thaw_if_frozen(&self, session: &str) {
+        let (app, sid) = (self.clone(), session.to_owned());
+        tokio::spawn(async move {
+            let frozen = match app.jarvis.sessions().await {
+                Ok(list) => list
+                    .iter()
+                    .any(|r| r.id == sid && r.state == crate::jarvis::FROZEN),
+                Err(e) => {
+                    tracing::warn!(session = %sid, error = %e, "the session list for a use was not read");
+                    return;
+                }
+            };
+            if frozen {
+                tracing::info!(session = %sid, "a use of a frozen session: thawing it");
+                if let Err(e) = app.jarvis.resume(&sid).await {
+                    tracing::warn!(session = %sid, error = %e, "the thaw was refused");
+                }
+            }
+        });
+    }
+
     /// The first get-or-start of a conversation begun in the chat: its session is proposed through the router (the
     /// defaults, idempotent by the conversation), recorded, and its start waits in the phase the router's state gives
     /// (`approval` until Deyao approves it in the Inbox; `reconcile` moves it on, or ends it when the session is

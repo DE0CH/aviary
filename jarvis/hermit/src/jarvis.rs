@@ -67,6 +67,10 @@ struct Remotes {
 /// The router's state of a new session waiting for Deyao's approval.
 pub const APPROVAL: &str = "approval";
 
+/// The router's state of a fabric session waiting in the time machine (jarvis4 router/timemachine.go): its machine,
+/// supervisor and all, is frozen as it was, and anything that would resume a paused session thaws it.
+pub const FROZEN: &str = "frozen";
+
 /// A session state in which its machine is (or is about to be) up.
 #[must_use]
 pub fn is_up(state: &str) -> bool {
