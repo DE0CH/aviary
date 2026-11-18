@@ -10,12 +10,12 @@ publish = false
 # One aviary commit for every contract crate; bumped together with the images Jarvis 4's sessions and the services
 # tenant run (aviary/README.md "Bumping aviary").
 [dependencies]
-aviary-core = { git = "https://github.com/DE0CH/aviary", rev = "b11d8f6da8fe1da9e3363e62e68a4e9b6d66710e" }
-aviary-pg = { git = "https://github.com/DE0CH/aviary", rev = "b11d8f6da8fe1da9e3363e62e68a4e9b6d66710e" }
-hermit-api = { git = "https://github.com/DE0CH/aviary", rev = "b11d8f6da8fe1da9e3363e62e68a4e9b6d66710e" }
-gateway-api = { git = "https://github.com/DE0CH/aviary", rev = "b11d8f6da8fe1da9e3363e62e68a4e9b6d66710e" }
-magpie-api = { git = "https://github.com/DE0CH/aviary", rev = "b11d8f6da8fe1da9e3363e62e68a4e9b6d66710e" }
-supervisor-api = { git = "https://github.com/DE0CH/aviary", rev = "b11d8f6da8fe1da9e3363e62e68a4e9b6d66710e" }
+aviary-core = { git = "https://github.com/DE0CH/aviary", rev = "9e8957783a45aea50417d78788e66b7f933457d8" }
+aviary-pg = { git = "https://github.com/DE0CH/aviary", rev = "9e8957783a45aea50417d78788e66b7f933457d8" }
+hermit-api = { git = "https://github.com/DE0CH/aviary", rev = "9e8957783a45aea50417d78788e66b7f933457d8" }
+gateway-api = { git = "https://github.com/DE0CH/aviary", rev = "9e8957783a45aea50417d78788e66b7f933457d8" }
+magpie-api = { git = "https://github.com/DE0CH/aviary", rev = "9e8957783a45aea50417d78788e66b7f933457d8" }
+supervisor-api = { git = "https://github.com/DE0CH/aviary", rev = "9e8957783a45aea50417d78788e66b7f933457d8" }
 anyhow = "=1.0.104"
 axum = "=0.8.9"
 base64 = "=0.23.1"
@@ -37,7 +37,7 @@ tracing = { version = "=0.1.44", features = ["release_max_level_info"] }
 uuid = { version = "=1.29.0", features = ["v4", "v7", "serde"] }
 
 [dev-dependencies]
-aviary-fakes = { git = "https://github.com/DE0CH/aviary", rev = "b11d8f6da8fe1da9e3363e62e68a4e9b6d66710e" }
+aviary-fakes = { git = "https://github.com/DE0CH/aviary", rev = "9e8957783a45aea50417d78788e66b7f933457d8" }
 
 [profile.release]
 lto = "thin"
