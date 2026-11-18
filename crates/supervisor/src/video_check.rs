@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn no_endpoint_for_the_media_is_a_no() {
-        // OpenRouter's answer for DeepSeek V4.1 Flash, 2026-11-18
+        // a model route's answer for a model without sound or video, as seen on 2026-11-18
         let body = br#"{"error":{"message":"No endpoints found that support input audio","code":404}}"#;
         assert_eq!(
             verdict(404, body),
