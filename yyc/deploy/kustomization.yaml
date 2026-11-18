@@ -25,14 +25,14 @@ resources:
 # one aviary commit for pigeon, magpie, hermit and sandboxd (check item 4); sandboxd's tag is hermit.json's
 # fabric.sandboxd; the sandbox image is pinned by digest in hermit/hermit.json
 images:
-  - {name: pigeon, newName: ghcr.io/de0ch/pigeon, newTag: "604ce6a9a0cb"}
-  - {name: magpie, newName: ghcr.io/de0ch/magpie, newTag: "604ce6a9a0cb"}
-  - {name: hermit, newName: ghcr.io/de0ch/hermit, newTag: "604ce6a9a0cb"}
-  - {name: sandboxd, newName: ghcr.io/de0ch/sandboxd, newTag: "604ce6a9a0cb"}
+  - {name: pigeon, newName: ghcr.io/de0ch/pigeon, newTag: "b3596c5b90bf"}
+  - {name: magpie, newName: ghcr.io/de0ch/magpie, newTag: "b3596c5b90bf"}
+  - {name: hermit, newName: ghcr.io/de0ch/hermit, newTag: "b3596c5b90bf"}
+  - {name: sandboxd, newName: ghcr.io/de0ch/sandboxd, newTag: "b3596c5b90bf"}
   # herald (aviary crates/herald): its own aviary commit, released with the others' CI
   - {name: herald, newName: ghcr.io/de0ch/herald, newTag: "e90075c4fcc1"}
   # the app bundle (DE0CH/claudecodeui pigeon-app.yml)
-  - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "22585fdaa91a"}
+  - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "6dc7f49b0089"}
   # YYC Drive: the page and its server in one image (DE0CH/yyc-drive yyc-drive.yml)
   - {name: yyc-drive, newName: ghcr.io/de0ch/yyc-drive, newTag: "b94118a3bca0"}
   # egress and tools (DE0CH/jarvis3 chat.yml); the ZDR guard reads this tag (yyc-ai/tests/test_zdr.py)
