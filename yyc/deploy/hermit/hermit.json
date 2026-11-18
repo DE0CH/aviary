@@ -20,7 +20,7 @@
     "skills": "/etc/hermit/skills"
   },
   "sandbox": {
-    "image": "ghcr.io/de0ch/hermit-sandbox@sha256:5adfdc8c24d73076df02fd1089c8a7868490bfba44409b7c13d9acaed88cda9f",
+    "image": "ghcr.io/de0ch/hermit-sandbox@sha256:d6e3fd35c0ca285b345afdc7ccce926657df5a6ab70cd65c17a7d75e8239bf9f",
     "cpu": 1,
     "memory": "7Gi",
     "pids": 4096,
