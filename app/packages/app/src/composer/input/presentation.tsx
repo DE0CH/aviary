@@ -7,12 +7,14 @@ import { ComposerFullscreenBody, ComposerFullscreenFooter } from "@/composer/doc
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { isWeb } from "@/constants/platform";
 import { ICON_SIZE } from "@/styles/theme";
+import { TOUCH_TARGET } from "@/components/ui/control-geometry";
 import { StyleSheet } from "react-native-unistyles";
 import { useComposerFullscreenExit } from "./fullscreen-exit";
 import { resolveGlyphRailOffset } from "./state";
 
-const CONTROL_SIZE = 28;
-const FULLSCREEN_GLYPH_SIZE = ICON_SIZE.md;
+// The fullscreen glyph shows only on a phone, where every button is a finger's 44 px and its icon a size up
+const CONTROL_SIZE = TOUCH_TARGET;
+const FULLSCREEN_GLYPH_SIZE = ICON_SIZE.lg;
 
 function keepEditorFocused(event: import("react-native").PointerEvent) {
   if (isWeb) event.preventDefault();
@@ -74,8 +76,8 @@ export function ComposerInputPresentation({
     (color: string) => <Minimize2 color={color} size={FULLSCREEN_GLYPH_SIZE} />,
     [],
   );
-  // The toolbar row bleeds 6px past the input padding; the inline glyph sits on that edge.
-  const enterStyle = useMemo(() => [styles.enterButton, { right: -6 + railOffset }], [railOffset]);
+  // The toolbar row bleeds 8px past the input padding on its right on a phone; the inline glyph sits on that edge.
+  const enterStyle = useMemo(() => [styles.enterButton, { right: -8 + railOffset }], [railOffset]);
   const exitStyle = useMemo(() => [styles.iconButton, { marginRight: railOffset }], [railOffset]);
   return (
     <View
@@ -149,7 +151,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   enterButton: {
     position: "absolute",
-    top: 0,
+    // Centred on the first line of text, as the 28 px glyph was
+    top: -8,
     width: CONTROL_SIZE,
     height: CONTROL_SIZE,
     padding: 0,

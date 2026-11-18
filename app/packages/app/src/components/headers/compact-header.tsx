@@ -9,8 +9,7 @@ import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import { SidebarMenuToggle } from "@/components/headers/sidebar-menu-toggle";
 import {
   IconButtonChromeProvider,
-  iconButtonChromeGlyphSize,
-  mutedIconColorMapping,
+  mutedLargeGlyphProps,
 } from "@/components/ui/icon-button-chrome";
 import { HEADER_INNER_HEIGHT_MOBILE, HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
 import type { ShortcutKey } from "@/utils/format-shortcut";
@@ -129,11 +128,7 @@ function BackButton({ onBack }: { onBack?: () => void }) {
       accessibilityRole="button"
       accessibilityLabel={t("common.actions.back")}
     >
-      <ThemedArrowLeft
-        size={iconButtonChromeGlyphSize("large")}
-        strokeWidth={1.5}
-        uniProps={mutedIconColorMapping}
-      />
+      <ThemedArrowLeft strokeWidth={1.5} uniProps={mutedLargeGlyphProps} />
     </HeaderToggleButton>
   );
 }

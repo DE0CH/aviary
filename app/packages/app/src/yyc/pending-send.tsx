@@ -1,4 +1,5 @@
 import { Clock, WifiOff } from "lucide-react-native";
+import { TOUCH_TARGET } from "@/components/ui/control-geometry";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";
@@ -48,7 +49,7 @@ export function PendingSendLine({
         <Pressable
           onPress={onCancel}
           accessibilityRole="button"
-          hitSlop={8}
+          style={styles.cancelTarget}
           testID="pending-send-cancel"
         >
           <Text style={styles.cancel}>{t("message.pending.cancel")}</Text>
@@ -79,6 +80,14 @@ const styles = StyleSheet.create((theme) => ({
   text: {
     color: theme.colors.foregroundMuted,
     fontSize: 13,
+  },
+  // a finger's 44 px around the word on a phone, without making the line taller
+  cancelTarget: {
+    minHeight: { xs: TOUCH_TARGET, md: 0 },
+    minWidth: { xs: TOUCH_TARGET, md: 0 },
+    alignItems: "center",
+    justifyContent: "center",
+    marginVertical: { xs: -12, md: 0 },
   },
   cancel: {
     color: theme.colors.accent,

@@ -1,7 +1,9 @@
 import { createContext, useCallback, useContext } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
+import { HEADER_CONTROL_HEIGHT, TOUCH_TARGET } from "@/components/ui/control-geometry";
+import { extraMutedIconColorMapping, mutedIconColorMapping } from "@/components/ui/icon-color";
+import { densityIconProps } from "@/styles/density";
 import { ICON_SIZE } from "@/styles/theme";
 
 export { extraMutedIconColorMapping, mutedIconColorMapping } from "@/components/ui/icon-color";
@@ -9,9 +11,9 @@ export { extraMutedIconColorMapping, mutedIconColorMapping } from "@/components/
 export type IconButtonChromeSize = "large" | "small";
 
 const SMALL_ICON_BUTTON_SIZE = 20;
-/** Width and height of a large icon button on compact layouts. */
-export const COMPACT_LARGE_ICON_BUTTON_SIZE = 32;
-const COMPACT_SMALL_ICON_BUTTON_SIZE = 32;
+/** Width and height of a large icon button on compact layouts: a finger's size. */
+export const COMPACT_LARGE_ICON_BUTTON_SIZE = TOUCH_TARGET;
+const COMPACT_SMALL_ICON_BUTTON_SIZE = TOUCH_TARGET;
 
 export interface IconButtonChromeState {
   hovered?: boolean;
@@ -92,9 +94,13 @@ export function iconButtonChromeFrameStyle(
 }
 
 export function iconButtonChromeGlyphSize(size: IconButtonChromeSize, compact = false): number {
-  if (size === "large") return ICON_SIZE.md;
+  if (size === "large") return compact ? 20 : ICON_SIZE.md;
   return compact ? 18 : 14;
 }
+
+/** `uniProps` for a large icon button's glyph: its colour and its size, a size up on a phone (20, 16 from md). */
+export const mutedLargeGlyphProps = densityIconProps("md", mutedIconColorMapping);
+export const extraMutedLargeGlyphProps = densityIconProps("md", extraMutedIconColorMapping);
 
 export function smallIconButtonChromeFrameSize(compact = false): number {
   return compact ? COMPACT_SMALL_ICON_BUTTON_SIZE : SMALL_ICON_BUTTON_SIZE;

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
+import { touchSize } from "@/components/ui/control-geometry";
 import {
   ScrollView,
   Text,
@@ -323,8 +324,8 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   container: {
     flexShrink: 1,
-    // Keep a complete selectable row (36), list padding (8), and borders (2).
-    minHeight: 46,
+    // Keep a complete selectable row (36, a finger's 44 on a phone), list padding (8), and borders (2).
+    minHeight: { xs: 54, md: 46 },
     backgroundColor: theme.colors.surface1,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
@@ -342,7 +343,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
   item: {
     flexDirection: "row",
     alignItems: "center",
-    minHeight: 36,
+    minHeight: touchSize(36),
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
   },

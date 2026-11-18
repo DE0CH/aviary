@@ -1,4 +1,5 @@
 import { useCallback, useRef } from "react";
+import { touchSize } from "@/components/ui/control-geometry";
 import { Pressable, Text, View, type LayoutChangeEvent } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import {
@@ -106,7 +107,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   levelCell: {
     flex: 1,
-    minHeight: 32,
+    minHeight: touchSize(32),
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.borderRadius.md,

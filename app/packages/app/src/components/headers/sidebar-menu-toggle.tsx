@@ -23,8 +23,9 @@ interface SidebarMenuToggleProps {
   nativeID?: string;
 }
 
-const MOBILE_MENU_LINE_WIDTH = 16;
-const MOBILE_MENU_LINE_SHORT_WIDTH = 8;
+// A size up from the desktop's 16 px glyph, like every icon of a phone's 44 px buttons
+const MOBILE_MENU_LINE_WIDTH = 20;
+const MOBILE_MENU_LINE_SHORT_WIDTH = 10;
 const MOBILE_MENU_LINE_HEIGHT = 1.5;
 
 function MobileMenuIcon({ extraMuted }: { extraMuted: boolean }) {
@@ -142,7 +143,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   mobileMenuIcon: {
     width: MOBILE_MENU_LINE_WIDTH,
-    height: 12,
+    height: 14,
     justifyContent: "space-between",
     alignItems: "flex-start",
   },

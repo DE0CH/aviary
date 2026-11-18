@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { TOUCH_TARGET } from "@/components/ui/control-geometry";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -177,6 +178,8 @@ const styles = StyleSheet.create((theme) => ({
   input: {
     backgroundColor: theme.colors.surface0,
     color: theme.colors.foreground,
+    // at least a finger's 44 px on a phone, whatever the font's line height
+    minHeight: { xs: TOUCH_TARGET, md: 0 },
     paddingVertical: theme.spacing[3],
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.md,

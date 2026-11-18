@@ -96,21 +96,18 @@ describe("control geometry", () => {
   it("derives field padding from content and border without changing the control height", () => {
     const geometry = createControlGeometry(theme);
     const borderWidth = theme.borderWidth[1];
-
-    expect(geometry.fieldControlXs.minHeight).toBe(28);
-    expect(
-      geometry.fieldTextXs.lineHeight +
-        geometry.fieldControlXs.paddingVertical * 2 +
-        borderWidth * 2,
-    ).toBe(geometry.fieldControlXs.minHeight);
-
-    expect(geometry.fieldControlSm.minHeight).toBe(32);
-    expect(geometry.fieldControlSm.paddingVertical).toBe(5);
-    expect(
-      geometry.fieldTextSm.lineHeight +
-        geometry.fieldControlSm.paddingVertical * 2 +
-        borderWidth * 2,
-    ).toBe(geometry.fieldControlSm.minHeight);
+    // xs is the phone (at least 44, a finger's size), md the desktop size
+    for (const bp of ["xs", "md"] as const) {
+      expect(
+        geometry.fieldTextXs.lineHeight + geometry.fieldControlXs.paddingVertical[bp] * 2 + borderWidth * 2,
+      ).toBe(geometry.fieldControlXs.minHeight[bp]);
+      expect(
+        geometry.fieldTextSm.lineHeight + geometry.fieldControlSm.paddingVertical[bp] * 2 + borderWidth * 2,
+      ).toBe(geometry.fieldControlSm.minHeight[bp]);
+    }
+    expect(geometry.fieldControlXs.minHeight).toEqual({ xs: 44, md: 28 });
+    expect(geometry.fieldControlSm.minHeight).toEqual({ xs: 44, md: 32 });
+    expect(geometry.fieldControlSm.paddingVertical).toEqual({ xs: 11, md: 5 });
 
     expect(geometry.fieldControlMd.minHeight).toBe(44);
     expect(geometry.fieldControlMd.paddingVertical).toBe(11);
@@ -120,8 +117,24 @@ describe("control geometry", () => {
         borderWidth * 2,
     ).toBe(geometry.fieldControlMd.minHeight);
 
-    expect(geometry.formTextInputSm.paddingVertical).toBe(5);
+    expect(geometry.formTextInputSm.paddingVertical).toEqual({ xs: 11, md: 5 });
     expect(geometry.formTextInputMd.paddingVertical).toBe(11);
+  });
+
+  it("makes every control at least 44 px on a phone and keeps the desktop sizes from md up", () => {
+    const geometry = createControlGeometry(theme);
+    const phone = (v: number | { xs: number; md: number }) => (typeof v === "number" ? v : v.xs);
+    for (const control of [
+      geometry.buttonXs, geometry.buttonSm, geometry.buttonMd, geometry.buttonLg,
+      geometry.fieldControlXs, geometry.fieldControlSm, geometry.fieldControlMd,
+      geometry.segmentedContainerXs, geometry.segmentedContainerSm, geometry.segmentedContainerMd,
+      geometry.switchControl,
+    ]) {
+      expect(phone(control.minHeight)).toBeGreaterThanOrEqual(44);
+    }
+    expect(phone(geometry.switchControl.minWidth)).toBeGreaterThanOrEqual(44);
+    expect(geometry.buttonXs.minHeight).toEqual({ xs: 44, md: 28 });
+    expect(geometry.buttonSm.minHeight).toEqual({ xs: 44, md: 32 });
   });
 
   it("keeps segmented controls ghost with button-radius segments in a button-sized track", () => {
@@ -133,23 +146,23 @@ describe("control geometry", () => {
     expect(geometry.segmentedSegmentXs.borderRadius).toBe(geometry.buttonXs.borderRadius);
     expect(geometry.segmentedSegmentSm.borderRadius).toBe(geometry.buttonSm.borderRadius);
     expect(geometry.segmentedSegmentMd.borderRadius).toBe(geometry.buttonMd.borderRadius);
-    expect(geometry.segmentedContainerXs.minHeight).toBe(geometry.buttonXs.minHeight);
-    expect(geometry.segmentedContainerSm.minHeight).toBe(geometry.buttonSm.minHeight);
+    expect(geometry.segmentedContainerXs.minHeight).toEqual(geometry.buttonXs.minHeight);
+    expect(geometry.segmentedContainerSm.minHeight).toEqual(geometry.buttonSm.minHeight);
     expect(geometry.segmentedContainerMd.minHeight).toBe(geometry.buttonMd.minHeight);
-    expect(geometry.segmentedSegmentXs.minHeight).toBe(24);
-    expect(geometry.segmentedSegmentSm.minHeight).toBe(28);
+    expect(geometry.segmentedSegmentXs.minHeight).toEqual({ xs: 40, md: 24 });
+    expect(geometry.segmentedSegmentSm.minHeight).toEqual({ xs: 40, md: 28 });
     expect(geometry.segmentedSegmentMd.minHeight).toBe(38);
   });
 
   it("keeps one size contract across buttons and segmented controls", () => {
     const geometry = createControlGeometry(theme);
 
-    // xs is a genuinely smaller tier, not sm with a different font.
-    expect(geometry.buttonXs.minHeight).toBe(28);
-    expect(geometry.buttonSm.minHeight).toBe(32);
+    // xs is a genuinely smaller tier on desktop, not sm with a different font.
+    expect(geometry.buttonXs.minHeight.md).toBe(28);
+    expect(geometry.buttonSm.minHeight.md).toBe(32);
     expect(geometry.buttonMd.minHeight).toBe(44);
-    expect(geometry.buttonXs.minHeight).toBe(buttonControlHeight.xs);
-    expect(geometry.buttonSm.minHeight).toBe(buttonControlHeight.sm);
+    expect(geometry.buttonXs.minHeight.md).toBe(buttonControlHeight.xs);
+    expect(geometry.buttonSm.minHeight.md).toBe(buttonControlHeight.sm);
     expect(geometry.buttonMd.minHeight).toBe(buttonControlHeight.md);
 
     // Same size name means the same label size on every control kind.

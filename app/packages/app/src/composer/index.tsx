@@ -75,6 +75,7 @@ import {
 } from "./input/input";
 import type { ImageAttachment, MessagePayload, TextReplacement } from "./types";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { touchSize } from "@/components/ui/control-geometry";
 import type { DraftCommandTarget } from "@/hooks/use-agent-commands-query";
 import { focusWithRetries } from "@/utils/web-focus";
 import {
@@ -224,8 +225,9 @@ const EMPTY_ATTACHMENT_SCOPE_KEYS: readonly string[] = [];
 function noop() {}
 const noopCallback = () => {};
 
-function resolveComposerButtonIconSize(): number {
-  return isWeb ? ICON_SIZE.md : ICON_SIZE.lg;
+function resolveComposerButtonIconSize(isCompact: boolean): number {
+  // A size up on a phone, where the buttons are a finger's 44 px
+  return isCompact || !isWeb ? ICON_SIZE.lg : ICON_SIZE.md;
 }
 
 function resolveIsComposerLocked(
@@ -1079,7 +1081,7 @@ function ComposerCancelButton({
         accessibilityRole="button"
         style={cancelButtonStyle}
       >
-        {icon}
+        <View style={styles.cancelDisc}>{icon}</View>
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
         <View style={styles.tooltipRow}>
@@ -1245,7 +1247,6 @@ function ComposerContentImpl({
 }: ComposerContentProps) {
   const mode = resolveComposerInputMode(inputMode);
   const { t } = useTranslation();
-  const buttonIconSize = resolveComposerButtonIconSize();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const agentDirectoryStatus = useHostRuntimeAgentDirectoryStatus(serverId);
@@ -1274,6 +1275,7 @@ function ComposerContentImpl({
 
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
+  const buttonIconSize = resolveComposerButtonIconSize(isCompactFormFactor);
   const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isCompactFormFactor);
   const hasFinePointer = useHasFinePointer();
   const isDesktopLayout = resolveIsDesktopWebBreakpoint(isCompactLayout);
@@ -2321,7 +2323,7 @@ function ComposerContentImpl({
     ],
   );
 
-  const contextWindowMeterGlyphSize = isCompactLayout ? ICON_SIZE.md : buttonIconSize;
+  const contextWindowMeterGlyphSize = buttonIconSize;
   const beforeVoiceContent = useMemo(
     () =>
       hasAgent ? (
@@ -2866,14 +2868,31 @@ const styles = StyleSheet.create((theme: Theme) => ({
     width: "100%",
     gap: theme.spacing[3],
   },
+  // The target: 44 px on a phone around the drawn disc, the disc itself from md up (as the send button)
   cancelButton: {
-    width: 28,
-    height: 28,
+    width: touchSize(28),
+    height: touchSize(28),
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: {
+      xs: 0,
+      md: theme.spacing[1],
+    },
+  },
+  cancelDisc: {
+    width: {
+      xs: 36,
+      md: 28,
+    },
+    height: {
+      xs: 36,
+      md: 28,
+    },
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.palette.red[600],
     alignItems: "center",
     justifyContent: "center",
-    marginLeft: theme.spacing[1],
   },
   rightControls: {
     flexDirection: "row",
@@ -2881,15 +2900,15 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: theme.spacing[1],
   },
   contextWindowMeterSlot: {
-    width: 28,
-    height: 28,
+    width: touchSize(28),
+    height: touchSize(28),
     flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
   },
   realtimeVoiceButton: {
-    width: 28,
-    height: 28,
+    width: touchSize(28),
+    height: touchSize(28),
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",

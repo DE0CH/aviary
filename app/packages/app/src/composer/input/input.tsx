@@ -26,6 +26,7 @@ import {
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { touchSize } from "@/components/ui/control-geometry";
 import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import { useDictation } from "@/hooks/use-dictation";
@@ -825,12 +826,14 @@ function SendButtonTooltip({
         testID={submitButtonTestID}
         style={sendButtonCombinedStyle}
       >
-        <SendButtonContent
-          isSubmitLoading={isSubmitLoading}
-          submitIcon={submitIcon}
-          submitLabel={submitLabel}
-          buttonIconSize={buttonIconSize}
-        />
+        <View style={submitLabel ? [styles.sendDisc, styles.sendDiscLabeled] : styles.sendDisc}>
+          <SendButtonContent
+            isSubmitLoading={isSubmitLoading}
+            submitIcon={submitIcon}
+            submitLabel={submitLabel}
+            buttonIconSize={buttonIconSize}
+          />
+        </View>
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
         <SendTooltipBody label={sendTooltipLabel} sendKeys={sendKeys} />
@@ -1273,7 +1276,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const isFullscreen = useComposerFullscreen(editingSession);
     const [renderedLines, setRenderedLines] = useState(1);
     const maxInputHeight = resolveMaxInputHeight(windowHeight, isCompact);
-    const buttonIconSize = isWeb ? ICON_SIZE.md : ICON_SIZE.lg;
+    // A size up on a phone, where the buttons are a finger's 44 px
+    const buttonIconSize = isCompact || !isWeb ? ICON_SIZE.lg : ICON_SIZE.md;
     const toast = useToast();
     const voice = useVoiceOptional();
     const voiceMuteToggleKeys = useShortcutKeys("voice-mute-toggle");
@@ -2285,7 +2289,11 @@ const styles = StyleSheet.create((theme: Theme) => ({
   inputWrapper: {
     flexShrink: 1,
     flexDirection: "column",
-    gap: theme.spacing[3],
+    // A phone's 44 px buttons take the space the gap and the bottom padding gave, so the box barely grows
+    gap: {
+      xs: theme.spacing[1],
+      md: theme.spacing[3],
+    },
     backgroundColor: theme.colors.surface1,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
@@ -2296,7 +2304,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     },
     // The button row bleeds 6px horizontally, so match its corner inset at the bottom.
     paddingBottom: {
-      xs: theme.spacing[2],
+      xs: theme.spacing[1],
       md: theme.spacing[3],
     },
     paddingHorizontal: {
@@ -2381,7 +2389,16 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-between",
-    marginHorizontal: -6,
+    // On a phone the 44 px buttons bleed into the box's padding: the + glyph lines up with the text (12 px), the send
+    // disc sits as far from the box's side as from its bottom (8 px)
+    marginLeft: {
+      xs: -12,
+      md: -6,
+    },
+    marginRight: {
+      xs: -8,
+      md: -6,
+    },
   },
   leftButtonGroup: {
     minWidth: 0,
@@ -2398,21 +2415,21 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: theme.spacing[1],
   },
   attachButton: {
-    width: 28,
-    height: 28,
+    width: touchSize(28),
+    height: touchSize(28),
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
   },
   attachButtonAnchor: {
-    width: 28,
-    height: 28,
+    width: touchSize(28),
+    height: touchSize(28),
     alignItems: "center",
     justifyContent: "center",
   },
   voiceButton: {
-    width: 28,
-    height: 28,
+    width: touchSize(28),
+    height: touchSize(28),
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
@@ -2420,20 +2437,40 @@ const styles = StyleSheet.create((theme: Theme) => ({
   voiceButtonRecording: {
     backgroundColor: theme.colors.destructive,
   },
+  // The target: 44 px on a phone around the drawn disc, the disc itself from md up
   sendButton: {
-    width: 28,
-    height: 28,
+    width: touchSize(28),
+    height: touchSize(28),
+    borderRadius: theme.borderRadius.full,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: {
+      xs: 0,
+      md: theme.spacing[1],
+    },
+  },
+  sendButtonLabeled: {
+    width: "auto",
+    minWidth: touchSize(28),
+  },
+  sendDisc: {
+    width: {
+      xs: 36,
+      md: 28,
+    },
+    height: {
+      xs: 36,
+      md: 28,
+    },
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.accent,
     alignItems: "center",
     justifyContent: "center",
-    marginLeft: theme.spacing[1],
   },
-  sendButtonLabeled: {
+  sendDiscLabeled: {
     width: "auto",
     minWidth: 28,
     paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.full,
   },
   sendButtonLabel: {
     fontSize: theme.fontSize.base,

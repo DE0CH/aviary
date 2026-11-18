@@ -9,6 +9,7 @@
  * The panel reads GET /api/jarvis/sessions/<id>/tasks and stops one with POST …/tasks/<taskId>/stop (aviary's
  * pigeon). A server without the route has no chip.
  */
+import { TOUCH_TARGET } from "@/components/ui/control-geometry";
 import React, { useCallback, useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -99,10 +100,12 @@ export function ActivityChip({ sessionId }: { sessionId: string | null }) {
       accessibilityState={{ expanded: open }}
       accessibilityLabel={label}
       onPress={() => toggle(sessionId)}
-      style={[styles.chip, open ? styles.chipOpen : null]}
+      style={styles.chipTarget}
     >
-      <ThemedList size={13} uniProps={mutedColor} />
-      <Text style={styles.chipText}>{label}</Text>
+      <View style={[styles.chip, open ? styles.chipOpen : null]}>
+        <ThemedList size={13} uniProps={mutedColor} />
+        <Text style={styles.chipText}>{label}</Text>
+      </View>
     </Pressable>
   );
 }
@@ -152,9 +155,11 @@ function TaskSection({
             accessibilityLabel={w.stop}
             disabled={stopping}
             onPress={handleStop}
-            style={styles.stop}
+            style={styles.stopTarget}
           >
-            <Text style={styles.stopText}>{stopping ? w.stopping : w.stop}</Text>
+            <View style={styles.stop}>
+              <Text style={styles.stopText}>{stopping ? w.stopping : w.stop}</Text>
+            </View>
           </Pressable>
         ) : null}
       </View>
@@ -278,6 +283,12 @@ export function ActivityPanel({ sessionId, compact }: { sessionId: string | null
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // the tap target: a finger's 44 px tall on a phone around the drawn pill, the pill itself from md up
+  chipTarget: {
+    minHeight: { xs: TOUCH_TARGET, md: 0 },
+    justifyContent: "center",
+    marginVertical: { xs: -10, md: 0 },
+  },
   chip: {
     flexDirection: "row",
     alignItems: "center",
@@ -323,6 +334,14 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.base,
     backgroundColor: theme.colors.surface2,
     overflow: "hidden",
+  },
+  // a finger's 44 px on a phone around the drawn button, which keeps its place on the title's line
+  stopTarget: {
+    minHeight: { xs: TOUCH_TARGET, md: 0 },
+    minWidth: { xs: TOUCH_TARGET, md: 0 },
+    alignItems: "flex-end",
+    justifyContent: "center",
+    marginVertical: { xs: -12, md: 0 },
   },
   stop: {
     paddingHorizontal: theme.spacing[2],

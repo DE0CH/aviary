@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { touchSize } from "@/components/ui/control-geometry";
 import { Pressable, Text, View, useWindowDimensions } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -314,15 +315,17 @@ export function ContextWindowMeter({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // a finger's 44 px on a phone (the composer's buttons), 28 from md up
   container: {
-    width: 28,
-    height: 28,
+    width: touchSize(28),
+    height: touchSize(28),
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
   },
   containerWithLabel: {
-    height: 28,
+    height: touchSize(28),
+    minWidth: touchSize(28),
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",

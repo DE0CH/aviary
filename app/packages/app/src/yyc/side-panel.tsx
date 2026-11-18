@@ -102,7 +102,8 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[3],
+    // the 44 px back button sets the height on a phone
+    paddingVertical: { xs: theme.spacing[1], md: theme.spacing[3] },
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
@@ -112,8 +113,10 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
   },
+  // a finger's 44 px on a phone (the 20 px arrow + 12 px each side), the glyph where it was
   iconButton: {
-    padding: theme.spacing[1],
+    padding: { xs: 12, md: theme.spacing[1] },
+    marginHorizontal: { xs: -8, md: 0 },
   },
   panelBody: {
     flex: 1,

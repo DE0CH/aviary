@@ -12,6 +12,7 @@
  * The panel reads GET /api/jarvis/sessions/<id>/schedules (the same shape on both stacks). Staff text is Chinese for
  * everyone (staff pages are in Chinese, CLAUDE.md "Staff preference").
  */
+import { TOUCH_TARGET } from "@/components/ui/control-geometry";
 import React, { useEffect } from "react";
 import { useProductName, withProductName } from "@/yyc/product";
 import { Pressable, Text, View } from "react-native";
@@ -86,10 +87,12 @@ export function ScheduleChip({ sessionId }: { sessionId: string | null }) {
       accessibilityState={{ expanded: open }}
       accessibilityLabel={label}
       onPress={() => toggle(sessionId)}
-      style={[styles.chip, open ? styles.chipOpen : null]}
+      style={styles.chipTarget}
     >
-      <ThemedClock size={13} uniProps={mutedColor} />
-      <Text style={styles.chipText}>{label}</Text>
+      <View style={[styles.chip, open ? styles.chipOpen : null]}>
+        <ThemedClock size={13} uniProps={mutedColor} />
+        <Text style={styles.chipText}>{label}</Text>
+      </View>
     </Pressable>
   );
 }
@@ -238,6 +241,12 @@ export function ScheduledMessage({ prompt, timestamp }: { rule: string; prompt: 
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // the tap target: a finger's 44 px tall on a phone around the drawn pill, the pill itself from md up
+  chipTarget: {
+    minHeight: { xs: TOUCH_TARGET, md: 0 },
+    justifyContent: "center",
+    marginVertical: { xs: -10, md: 0 },
+  },
   chip: {
     flexDirection: "row",
     alignItems: "center",

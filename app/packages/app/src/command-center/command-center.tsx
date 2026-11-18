@@ -1113,15 +1113,17 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
+  // on a phone the field itself is a finger's 44 px and the header's padding gives way to it
   bottomSheetHeader: {
     paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
+    paddingVertical: { xs: theme.spacing[1], md: theme.spacing[3] },
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
   input: {
     fontSize: theme.fontSize.base,
-    paddingVertical: theme.spacing[1],
+    paddingVertical: { xs: theme.spacing[3], md: theme.spacing[1] },
+    minHeight: { xs: 44, md: 0 },
     color: theme.colors.foreground,
     outlineWidth: 0,
   },

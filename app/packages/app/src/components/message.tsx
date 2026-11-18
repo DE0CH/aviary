@@ -1,4 +1,5 @@
 import { useStableEvent } from "@/hooks/use-stable-event";
+import { TOUCH_TARGET } from "@/components/ui/control-geometry";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
 import { AttachmentLightbox } from "@/components/lazy-attachment-lightbox";
@@ -87,6 +88,11 @@ import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { PlanCard } from "./plan-card";
 import { ToolCallDetailsContent } from "./tool-call-details";
 import { useToolCallSheet } from "./tool-call-sheet";
+
+/** The copy glyph on a phone, and the padding that makes its button a finger's 44 px. */
+const COPY_GLYPH_COMPACT = 18;
+const COPY_TOUCH_PADDING = (TOUCH_TARGET - COPY_GLYPH_COMPACT) / 2;
+
 export type { InlinePathTarget } from "@/assistant-file-links";
 export type { AssistantForkTarget };
 
@@ -303,8 +309,9 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     maxWidth: "100%",
     cursor: "auto",
   },
+  // on a phone the rows are a finger's 44 px tall and sit edge to edge
   containerSpacing: {
-    marginBottom: theme.spacing[1],
+    marginBottom: { xs: 0, md: theme.spacing[1] },
   },
   containerFirstInGroup: {
     marginTop: theme.spacing[4],
@@ -341,12 +348,13 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   imagePreviewSpacing: {
     marginBottom: theme.spacing[2],
   },
+  // A finger's 44 px on a phone around the glyph, which stays where it was: the margins give the padding back so the
+  // row keeps its height and the glyph its edge
   copyButton: {
     alignSelf: "center",
-    padding: theme.spacing[1],
-    paddingTop: theme.spacing[1],
-    marginTop: 0,
-    marginRight: -theme.spacing[1],
+    padding: { xs: COPY_TOUCH_PADDING, md: theme.spacing[1] },
+    marginVertical: { xs: -(COPY_TOUCH_PADDING - theme.spacing[1]) - 2, md: 0 },
+    marginRight: { xs: -COPY_TOUCH_PADDING, md: -theme.spacing[1] },
   },
   trailingRow: {
     alignSelf: "flex-end",
@@ -558,12 +566,18 @@ const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
+  // As the person's message's copy button: 44 px on a phone, the glyph and the row where they were
   copyButton: {
     alignSelf: "center",
-    padding: theme.spacing[1],
-    paddingTop: theme.spacing[1],
-    marginTop: 0,
-    marginLeft: -theme.spacing[1],
+    padding: { xs: COPY_TOUCH_PADDING, md: theme.spacing[1] },
+    marginVertical: { xs: -(COPY_TOUCH_PADDING - theme.spacing[1]) - 2, md: 0 },
+    marginLeft: { xs: -COPY_TOUCH_PADDING, md: -theme.spacing[1] },
+  },
+  // the duration (it swaps to the time it ended): 44 px tall on a phone without making the footer taller
+  label: {
+    justifyContent: "center",
+    minHeight: { xs: TOUCH_TARGET, md: 0 },
+    marginVertical: { xs: -12, md: 0 },
   },
   labelWrapper: {
     position: "relative",
@@ -658,6 +672,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
           onHoverOut={handleHoverOut}
           accessibilityRole={canSwap ? "button" : undefined}
           accessibilityLabel={canSwap ? `${durationLabel}, ended ${timestampLabel}` : primaryLabel}
+          style={assistantTurnFooterStylesheet.label}
         >
           <View style={assistantTurnFooterStylesheet.labelWrapper}>
             {/* Sizer reserves space for whichever label is longer so the
@@ -812,6 +827,8 @@ export const TurnCopyButton = memo(function TurnCopyButton({
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // a size up on a phone, where the button is a finger's 44 px
+  const glyphSize = useIsCompactFormFactor() ? COPY_GLYPH_COMPACT : ICON_SIZE.sm;
 
   const handleCopy = useCallback(async () => {
     const content = getContent();
@@ -861,9 +878,9 @@ export const TurnCopyButton = memo(function TurnCopyButton({
           ? turnCopyButtonStylesheet.iconHoveredColor.color
           : turnCopyButtonStylesheet.iconColor.color;
         return copied ? (
-          <Check size={ICON_SIZE.sm} color={iconColor} />
+          <Check size={glyphSize} color={iconColor} />
         ) : (
-          <Copy size={ICON_SIZE.sm} color={iconColor} />
+          <Copy size={glyphSize} color={iconColor} />
         );
       }}
     </Pressable>
@@ -885,7 +902,8 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     borderColor: "transparent",
     paddingHorizontal: theme.spacing[2],
-    paddingVertical: theme.spacing[1],
+    // 22 px header + padding + border: 44 on a phone (a finger), 32 from md up
+    paddingVertical: { xs: (TOUCH_TARGET - 22 - 2) / 2, md: theme.spacing[1] },
     overflow: "hidden",
   },
   pressablePressed: {

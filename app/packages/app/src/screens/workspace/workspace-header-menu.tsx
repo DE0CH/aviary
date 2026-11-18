@@ -14,8 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  extraMutedIconColorMapping,
-  iconButtonChromeGlyphSize,
+  extraMutedLargeGlyphProps,
   iconButtonChromeStyle,
   useIconButtonChromeStyle,
 } from "@/components/ui/icon-button-chrome";
@@ -51,10 +50,7 @@ const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
 const MENU_SETTINGS_ICON = <ThemedSettings size={16} uniProps={mutedColorMapping} />;
 function WorkspaceHeaderMenuTriggerIcon() {
   return (
-    <ThemedEllipsis
-      size={iconButtonChromeGlyphSize("large")}
-      uniProps={extraMutedIconColorMapping}
-    />
+    <ThemedEllipsis uniProps={extraMutedLargeGlyphProps} />
   );
 }
 

@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { touchSize } from "@/components/ui/control-geometry";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
@@ -756,9 +757,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   // The DropdownTrigger's chrome (control-geometry sm): 32 tall, borderAccent, no fill.
+  // a finger's 44 px tall on a phone, the DropdownTrigger's 32 from md up
   sizeInput: {
     width: 64,
-    height: 32,
+    height: touchSize(32),
     paddingVertical: 0,
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.md,
@@ -772,7 +774,7 @@ const styles = StyleSheet.create((theme) => ({
   // The DropdownTrigger's chrome (control-geometry sm): 32 tall, borderAccent, no fill.
   widthInput: {
     width: 80,
-    height: 32,
+    height: touchSize(32),
     paddingVertical: 0,
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.md,

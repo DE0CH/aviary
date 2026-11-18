@@ -133,8 +133,11 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
   },
+  // A finger's 44 px on a phone (a 20 px glyph and 12 px around it); the 4 px it gains on each side is given back
+  // with margins, so the glyph keeps its rail and the header its height.
   closeButton: {
-    padding: theme.spacing[SHEET_HEADER_CLOSE_PADDING_SCALE],
+    padding: { xs: 12, md: theme.spacing[SHEET_HEADER_CLOSE_PADDING_SCALE] },
+    margin: { xs: -(12 - theme.spacing[SHEET_HEADER_CLOSE_PADDING_SCALE]) - 2, md: 0 },
     borderRadius: theme.borderRadius.lg,
   },
   searchRow: {
@@ -318,6 +321,8 @@ export function SheetHeaderIconButton({
   testID?: string;
 }) {
   const { theme } = useUnistyles();
+  // a size up on a phone, where the button is a finger's 44 px
+  const glyphSize = useIsCompactFormFactor() ? 20 : 16;
   return (
     <Pressable
       accessibilityRole="button"
@@ -327,7 +332,7 @@ export function SheetHeaderIconButton({
       testID={testID}
     >
       {({ pressed }) => (
-        <Icon size={16} color={pressed ? theme.colors.foreground : theme.colors.foregroundMuted} />
+        <Icon size={glyphSize} color={pressed ? theme.colors.foreground : theme.colors.foregroundMuted} />
       )}
     </Pressable>
   );

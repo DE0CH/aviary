@@ -16,7 +16,9 @@ import { isWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useSessionStore } from "@/stores/session-store";
-import { ICON_SIZE } from "@/styles/theme";
+import type { Theme } from "@/styles/theme";
+import { densityIconProps } from "@/styles/density";
+import { touchSize } from "@/components/ui/control-geometry";
 import { toErrorMessage } from "@/utils/error-messages";
 import { useHarnessSwitchStore } from "@/yyc/harness-switch-store";
 import { useModelPickAvailable } from "@/yyc/me";
@@ -40,6 +42,8 @@ import { LevelLabelProbe, ThinkingLevels } from "@/yyc/model-menu-levels";
 const ThemedInfo = withUnistyles(Info);
 const ThemedChevron = withUnistyles(ChevronDown);
 const mutedColor = (theme: { colors: { foregroundMuted: string } }) => ({ color: theme.colors.foregroundMuted });
+// a size up on a phone, where the button and the (i) are a finger's 44 px
+const mutedSmGlyph = densityIconProps("sm", mutedColor as (theme: Theme) => { color: string });
 
 interface Choice {
   models: MenuModel[];
@@ -217,6 +221,13 @@ function ModelMenu({ choice }: { choice: Choice }) {
   const [labelWidth, setLabelWidth] = useState<number | null>(null);
   const rowKey = state.row.join(" ");
   const rowLabels = useMemo(() => (rowKey ? rowKey.split(" ").map(levelLabel) : []), [rowKey, levelLabel]);
+  // A question about the pick (another harness) closes the menu: left open, its backdrop lay over the question and the
+  // first tap on 繼續 or 取消 only closed the menu (seen on a phone, 2026-11-18).
+  const [open, setOpen] = useState(false);
+  const asking = useHarnessSwitchStore((store) => store.question !== null);
+  useEffect(() => {
+    if (asking) setOpen(false);
+  }, [asking]);
   if (!state.model) return null;
   const model = state.model;
   if (!canPick) {
@@ -233,7 +244,7 @@ function ModelMenu({ choice }: { choice: Choice }) {
   const picked = state.level ? `${model.label} · ${levelLabel(state.level)}` : model.label;
   const summary = running ? t("conversation.model.runningThenPicked", { running: running.label, picked }) : picked;
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger
         testID="yyc-model-menu"
         style={styles.trigger}
@@ -253,7 +264,7 @@ function ModelMenu({ choice }: { choice: Choice }) {
             {`· ${levelLabel(state.level)}`}
           </Text>
         ) : null}
-        <ThemedChevron size={ICON_SIZE.sm} uniProps={mutedColor} />
+        <ThemedChevron uniProps={mutedSmGlyph} />
       </DropdownMenuTrigger>
       {rowLabels.length > 0 ? <LevelLabelProbe labels={rowLabels} onWidest={setLabelWidth} /> : null}
       <DropdownMenuContent
@@ -265,8 +276,13 @@ function ModelMenu({ choice }: { choice: Choice }) {
         <View style={styles.heading}>
           <Text style={styles.headingText}>{t("conversation.model.title")}</Text>
           <Tooltip delayDuration={150} enabledOnDesktop enabledOnMobile>
-            <TooltipTrigger accessibilityRole="button" accessibilityLabel={t("conversation.model.infoLabel")} hitSlop={8}>
-              <ThemedInfo size={isWeb ? ICON_SIZE.sm : ICON_SIZE.md} uniProps={mutedColor} />
+            <TooltipTrigger
+              accessibilityRole="button"
+              accessibilityLabel={t("conversation.model.infoLabel")}
+              hitSlop={isWeb ? undefined : 8}
+              style={styles.info}
+            >
+              <ThemedInfo uniProps={mutedSmGlyph} />
             </TooltipTrigger>
             <TooltipContent side="top">
               <Text style={styles.tooltipText}>{t("conversation.model.info")}</Text>
@@ -318,8 +334,8 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
     paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius.md,
-    // The composer's control size (composer/input/presentation.tsx CONTROL_SIZE).
-    minHeight: 28,
+    // The composer's control size (composer/input/presentation.tsx CONTROL_SIZE): a finger's 44 px on a phone.
+    minHeight: touchSize(28),
     minWidth: 0,
     flexShrink: 1,
   },
@@ -351,8 +367,17 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
-    paddingTop: theme.spacing[2],
-    paddingBottom: theme.spacing[1],
+    // on a phone the (i)'s 44 px box sets the heading's height
+    paddingTop: { xs: 0, md: theme.spacing[2] },
+    paddingBottom: { xs: 0, md: theme.spacing[1] },
+  },
+  // the (i): a finger's 44 px box on a phone, its glyph kept beside the heading's word
+  info: {
+    width: touchSize(18),
+    height: touchSize(18),
+    marginLeft: { xs: -13, md: 0 },
+    alignItems: "center",
+    justifyContent: "center",
   },
   headingText: {
     color: theme.colors.foregroundMuted,

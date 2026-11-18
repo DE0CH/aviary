@@ -221,8 +221,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     flex: 1,
   },
+  // a finger's 44 px on a phone (the 20 px glyph and 12 px around it), the glyph where it was
   closeButton: {
-    padding: theme.spacing[2],
+    padding: { xs: 12, md: theme.spacing[2] },
+    margin: { xs: -4, md: 0 },
   },
   content: {
     flex: 1,

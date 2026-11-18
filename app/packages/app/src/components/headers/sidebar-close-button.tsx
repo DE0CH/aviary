@@ -4,8 +4,7 @@ import { withUnistyles } from "react-native-unistyles";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
 import {
   IconButtonChromeProvider,
-  iconButtonChromeGlyphSize,
-  mutedIconColorMapping,
+  mutedLargeGlyphProps,
 } from "@/components/ui/icon-button-chrome";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 
@@ -48,11 +47,7 @@ export function SidebarCloseButton({
         accessibilityLabel={label}
         accessibilityState={accessibilityState}
       >
-        <ThemedX
-          size={iconButtonChromeGlyphSize("large")}
-          strokeWidth={1.5}
-          uniProps={mutedIconColorMapping}
-        />
+        <ThemedX strokeWidth={1.5} uniProps={mutedLargeGlyphProps} />
       </HeaderToggleButton>
     </IconButtonChromeProvider>
   );

@@ -42,6 +42,18 @@ const FIELD_TEXT_LINE_HEIGHT_RATIO = 1.4;
  * Exported so a row that hosts one of those controls can size itself from the same
  * numbers instead of guessing a height the control then outgrows.
  */
+/**
+ * The smallest control a finger hits reliably (Apple's HIG, WCAG 2.5.5): on a phone (the compact layout) every
+ * button, field, switch and segmented control is at least this tall, and an icon button this wide (Deyao,
+ * 2026-11-18, design B: the drawn control grows, icons a size up). From `md` up controls keep their desktop sizes.
+ */
+export const TOUCH_TARGET = 44;
+
+/** A Unistyles breakpoint value: at least TOUCH_TARGET on a phone, `desktop` from `md` up. */
+export function touchSize(desktop: number): { xs: number; md: number } {
+  return { xs: Math.max(TOUCH_TARGET, desktop), md: desktop };
+}
+
 export const CONTROL_HEIGHTS = {
   tight: TIGHT_CONTROL_HEIGHT,
   compact: COMPACT_CONTROL_HEIGHT,
@@ -85,6 +97,15 @@ function fieldVerticalPadding(
   borderWidth: number,
 ): number {
   return (controlHeight - lineHeight - borderWidth * 2) / 2;
+}
+
+/** The vertical padding that centres a field's text line at its touch size on a phone and its own size above. */
+function touchFieldPadding(controlHeight: number, lineHeight: number, borderWidth: number) {
+  const size = touchSize(controlHeight);
+  return {
+    xs: fieldVerticalPadding(size.xs, lineHeight, borderWidth),
+    md: fieldVerticalPadding(size.md, lineHeight, borderWidth),
+  };
 }
 
 /**
@@ -192,9 +213,9 @@ export function createControlGeometry(theme: Theme) {
   const fieldTextSmLineHeight = fieldLineHeight(theme.fontSize.base);
   const fieldTextMdLineHeight = fieldLineHeight(theme.fontSize.base);
   const fieldControlXs = {
-    minHeight: CONTROL_HEIGHTS.tight,
+    minHeight: touchSize(CONTROL_HEIGHTS.tight),
     paddingHorizontal: theme.spacing[2],
-    paddingVertical: fieldVerticalPadding(
+    paddingVertical: touchFieldPadding(
       CONTROL_HEIGHTS.tight,
       fieldTextXsLineHeight,
       controlBorderWidth,
@@ -202,9 +223,9 @@ export function createControlGeometry(theme: Theme) {
     borderRadius: theme.borderRadius.md,
   };
   const fieldControlSm = {
-    minHeight: CONTROL_HEIGHTS.compact,
+    minHeight: touchSize(CONTROL_HEIGHTS.compact),
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: fieldVerticalPadding(
+    paddingVertical: touchFieldPadding(
       CONTROL_HEIGHTS.compact,
       fieldTextSmLineHeight,
       controlBorderWidth,
@@ -235,18 +256,25 @@ export function createControlGeometry(theme: Theme) {
   };
   const alert = createAlertGeometry(theme);
   const switchControl = {
-    minHeight: CONTROL_HEIGHTS.compact,
+    minHeight: touchSize(CONTROL_HEIGHTS.compact),
+    minWidth: touchSize(SWITCH_TRACK_WIDTH),
+    alignItems: "center" as const,
     justifyContent: CONTROL_CENTER_JUSTIFY_CONTENT,
-  } satisfies { minHeight: number; justifyContent: "center" };
+  } satisfies {
+    minHeight: { xs: number; md: number };
+    minWidth: { xs: number; md: number };
+    alignItems: "center";
+    justifyContent: "center";
+  };
 
   return {
     buttonXs: {
-      minHeight: buttonControlHeight.xs,
+      minHeight: touchSize(buttonControlHeight.xs),
       paddingHorizontal: theme.spacing[3],
       borderRadius: theme.borderRadius.xl,
     },
     buttonSm: {
-      minHeight: buttonControlHeight.sm,
+      minHeight: touchSize(buttonControlHeight.sm),
       paddingHorizontal: theme.spacing[3],
       borderRadius: theme.borderRadius.xl,
     },
@@ -313,11 +341,11 @@ export function createControlGeometry(theme: Theme) {
     },
     switchControl,
     segmentedContainerXs: {
-      minHeight: CONTROL_HEIGHTS.tight,
+      minHeight: touchSize(CONTROL_HEIGHTS.tight),
       padding: 0,
     },
     segmentedContainerSm: {
-      minHeight: CONTROL_HEIGHTS.compact,
+      minHeight: touchSize(CONTROL_HEIGHTS.compact),
       padding: 0,
     },
     segmentedContainerMd: {
@@ -325,12 +353,18 @@ export function createControlGeometry(theme: Theme) {
       padding: 0,
     },
     segmentedSegmentXs: {
-      minHeight: CONTROL_HEIGHTS.tight - SEGMENTED_TIGHT_INSET * 2,
+      minHeight: {
+        xs: TOUCH_TARGET - SEGMENTED_TIGHT_INSET * 2,
+        md: CONTROL_HEIGHTS.tight - SEGMENTED_TIGHT_INSET * 2,
+      },
       paddingHorizontal: theme.spacing[2],
       borderRadius: theme.borderRadius.xl,
     },
     segmentedSegmentSm: {
-      minHeight: CONTROL_HEIGHTS.compact - SEGMENTED_COMPACT_INSET * 2,
+      minHeight: {
+        xs: TOUCH_TARGET - SEGMENTED_COMPACT_INSET * 2,
+        md: CONTROL_HEIGHTS.compact - SEGMENTED_COMPACT_INSET * 2,
+      },
       paddingHorizontal: theme.spacing[2],
       borderRadius: theme.borderRadius.xl,
     },

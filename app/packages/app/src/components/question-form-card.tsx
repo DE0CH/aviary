@@ -1,4 +1,5 @@
 import { Alert } from "@/components/ui/alert";
+import { TOUCH_TARGET, touchSize } from "@/components/ui/control-geometry";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useState, useCallback, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import {
@@ -824,7 +825,7 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
-    minHeight: 28,
+    minHeight: touchSize(28),
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[1],
     borderRadius: theme.borderRadius.md,
@@ -877,17 +878,20 @@ const styles = StyleSheet.create((theme) => ({
     height: 8,
     borderRadius: 999,
   },
+  // the 「其他」 row: a finger's 44 px on a phone
   otherRowControl: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
+    paddingVertical: { xs: 11, md: theme.spacing[2] },
   },
   otherRowLabel: {
     fontSize: theme.fontSize.base,
     lineHeight: 22,
   },
   otherInput: {
+    // at least a finger's 44 px on a phone, whatever the font's line height
+    minHeight: { xs: TOUCH_TARGET, md: 0 },
     borderWidth: 1,
     borderRadius: theme.borderRadius.lg,
     paddingHorizontal: theme.spacing[3],
@@ -902,7 +906,10 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "flex-start",
     alignItems: "center",
   },
+  // 關閉 / 提交: a finger's 44 px on a phone
   actionButton: {
+    minHeight: { xs: TOUCH_TARGET, md: 0 },
+    justifyContent: "center",
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.md,

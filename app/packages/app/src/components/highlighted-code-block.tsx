@@ -210,6 +210,8 @@ const CopyButton = React.memo(function CopyButton({ getCode, visible }: CopyButt
     () => [copyButtonStyles.container, visibilityStyle],
     [visibilityStyle],
   );
+  // a size up on a phone, where the button is a finger's 44 px
+  const glyphSize = useIsCompactFormFactor() ? 18 : 14;
 
   return (
     <Pressable
@@ -218,7 +220,6 @@ const CopyButton = React.memo(function CopyButton({ getCode, visible }: CopyButt
       pointerEvents={visible ? "auto" : "none"}
       accessibilityRole="button"
       accessibilityLabel={copied ? t("message.actions.copied") : t("message.actions.copyCode")}
-      hitSlop={8}
       dataSet={markdownCopyDataSet.ignore}
     >
       {({ hovered }) => {
@@ -226,9 +227,9 @@ const CopyButton = React.memo(function CopyButton({ getCode, visible }: CopyButt
           ? copyButtonStyles.iconHoveredColor.color
           : copyButtonStyles.iconColor.color;
         return copied ? (
-          <Check size={14} color={iconColor} />
+          <Check size={glyphSize} color={iconColor} />
         ) : (
-          <Copy size={14} color={iconColor} />
+          <Copy size={glyphSize} color={iconColor} />
         );
       }}
     </Pressable>
@@ -236,11 +237,12 @@ const CopyButton = React.memo(function CopyButton({ getCode, visible }: CopyButt
 });
 
 const copyButtonStyles = StyleSheet.create((theme) => ({
+  // 44 px on a phone (18 px glyph + 13 px padding), the glyph where the 14 px one was
   container: {
     position: "absolute",
-    top: theme.spacing[2],
-    right: theme.spacing[2],
-    padding: theme.spacing[1],
+    top: { xs: -1, md: theme.spacing[2] },
+    right: { xs: -1, md: theme.spacing[2] },
+    padding: { xs: 13, md: theme.spacing[1] },
   },
   containerVisible: {
     opacity: 1,
