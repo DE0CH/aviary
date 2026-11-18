@@ -141,7 +141,7 @@ pub const HELPERS: &[&str] = &[
 ];
 
 /// The SDKs whose every operation is a network call.
-pub const SDKS: &[&str] = &["aws-sdk-s3", "aws-sdk-ec2"];
+pub const SDKS: &[&str] = &["aws-sdk-s3", "aws-sdk-ec2", "aws-sdk-sts"];
 
 /// One of [`SDKS`] in the workspace's graph.
 #[derive(Debug, Clone)]
