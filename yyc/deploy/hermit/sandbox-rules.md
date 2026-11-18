@@ -5,6 +5,9 @@ You work on a sandboxed Linux computer. Your working folder is /workspace.
 - **What lasts:** the sandbox is released after a while without use, and a new one is made when the conversation
   continues. Only /workspace and this conversation carry over. Installed packages, running processes and every file
   outside /workspace are gone after a release; install again what you need.
+- **/drive is YYC Drive**, the company's one shared folder (the same files staff see at https://drive.yyc-internal.com):
+  it lasts, and everyone at YYC reads and changes it. Read footage and documents there and save results there when the
+  person asks; never put scratch or cache files in it, and never delete what you did not make there unless asked.
 - **/workspace holds at most {workspaceGiB} GiB and {workspaceFiles} files.** A write past that fails with "Disk quota exceeded". Keep only
   results in /workspace: put caches, installs and bulk files (.npm, node_modules, virtualenvs, unpacked archives,
   thousands of small files) in /tmp or your home folder. Each file write in /workspace is a network round trip, so

@@ -43,6 +43,7 @@
       "quotaInodes": 1000
     },
     "tmpGiB": 100,
+    "drive": "drive",
     "compactAtImages": 30,
     "proxy": "http://sbx:{token}@{vip}:3128",
     "env": {

@@ -48,6 +48,9 @@ Each failure prints one line `<item> <object>: <why>`; exit 1 on any. What it as
   L  the balancer (a Service of type LoadBalancer): each port's targetPort is a name, and exactly one of the
      workloads its selector takes declares a container port of that name: the ports of one balancer lead to
      different workloads (the proxy to egress, the hosts' database port to pg-forward), never to both or to none
+  F  the drive (YYC Drive): hermit.json sandbox.drive is the folder of the JuiceFS volume Deployment drive serves (the
+     subPath mounted at its --root), so every sandbox's /drive is the folder staff see; a managed skill or the
+     sandbox rules name /drive
   A  addresses: the access catalogue is people's mail addresses, so it is a Secret sealed from the store
      (infra/secrets.txt, YYC_CATALOGUE_JSON), never a file or a ConfigMap of this folder: a workload's volume
      `catalogue` is a Secret, no ConfigMap of the render and no .json file of the folder is a catalogue (JSON with a
@@ -467,6 +470,27 @@ def check_branding(folder, objs):
             fail("B", sid(dep), f"container {c['name']} mounts the branding (the initContainer copies it into the bundle)")
 
 
+def check_drive(folder, objs, h):
+    d = next((o for o in objs if o["kind"] == "Deployment" and o["metadata"]["name"] == "drive"), None)
+    if d is None:
+        return
+    c = next(c for c in pod_spec(d)["containers"] if c["name"] == "drive")
+    args = c.get("args", [])
+    root = args[args.index("--root") + 1] if "--root" in args else None
+    serves = next((m.get("subPath") for m in c.get("volumeMounts", []) if m["mountPath"] == root), None)
+    have = h["sandbox"].get("drive")
+    if have is None:
+        fail("F", "hermit.json", f"no sandbox.drive: the sandboxes lack the drive's folder {serves} at /drive")
+    elif have != serves:
+        fail("F", "hermit.json", f"sandbox.drive {have}, but Deployment drive serves {serves}")
+    texts = list(skill_files(folder).values())
+    rules = os.path.join(folder, "hermit", "sandbox-rules.md")
+    if os.path.exists(rules):
+        texts.append(open(rules, encoding="utf-8").read())
+    if have and not any(re.search(r"(?<![\w/.-])/drive\b", t) for t in texts):
+        fail("F", "hermit/skills", "no managed skill and not the sandbox rules names /drive: the model never looks there")
+
+
 def check_hosts(h):
     s, f = h["sandbox"], h["fabric"]
     fb = f["aws"]["fallbackHost"]
@@ -681,6 +705,7 @@ def main():
     check_skills(folder, objs, h)
     check_gateway(folder, h, a.online)
     check_hosts(h)
+    check_drive(folder, objs, h)
     check_disk(objs)
     check_branding(folder, objs)
     check_catalogue(folder, objs)

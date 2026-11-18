@@ -2,7 +2,7 @@
 """check_deploy.py catches seeded violations (stdlib only; yyc-ai.yml check runs it after the render): each test
 mutates one object of the real render and expects that check's failure. Needs render.json from
 `kustomize build yyc-ai/deploy | yq ea -o=json '[.]'` (RENDER env, default the working directory)."""
-import copy, json, os, subprocess, sys, tempfile, unittest
+import copy, json, os, re, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FOLDER = os.environ.get("FOLDER", "yyc-ai/deploy")
@@ -127,6 +127,37 @@ class Seeded(unittest.TestCase):
         r = self.hermit_json(lambda h: h["sandbox"]["maxActiveByPerson"].update({"*": 11}))
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("above sandbox.maxActive", r.stdout)
+
+    def test_sandboxes_see_the_drive(self):
+        # YYC Drive's folder is the one every sandbox has at /drive (the video skill reads footage there): hermit.json
+        # sandbox.drive names the folder of the JuiceFS volume the drive's Deployment serves
+        r = self.hermit_json(lambda h: h["sandbox"].pop("drive", None))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("::error::F ", r.stdout)
+        self.assertIn("sandbox.drive", r.stdout)
+        r = self.hermit_json(lambda h: h["sandbox"].update(drive="other"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("serves drive", r.stdout)
+
+    def test_the_model_is_told_about_the_drive(self):
+        # a /drive that no managed skill and not the sandbox rules name is a folder the model never looks in
+        import shutil
+        with tempfile.TemporaryDirectory() as d:
+            folder = os.path.join(d, "deploy")
+            shutil.copytree(FOLDER, folder)
+            for root, _, files in os.walk(os.path.join(folder, "hermit")):
+                for f in files:
+                    if f.endswith(".md"):
+                        p = os.path.join(root, f)
+                        text = open(p).read()
+                        open(p, "w").write(re.sub(r"(?<![\w/.-])/drive\b", "/elsewhere", text))
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                json.dump(RENDER, f)
+            r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "check_deploy.py"), "--folder", folder,
+                                "--render", f.name], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("::error::F ", r.stdout)
+        self.assertIn("names /drive", r.stdout)
 
     def test_hosts_hold_the_sandboxes(self):
         # 7Gi sandboxes: 2 a host. 3 hosts hold 6, fewer than maxActive 10; and two 100 GiB scratch filesystems
