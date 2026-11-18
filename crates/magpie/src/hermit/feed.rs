@@ -156,6 +156,17 @@ async fn gone(
         &[&conversation, &sandbox],
     )
     .await?;
+    // nothing waits on the person in a sandbox that is gone (its commands went with it)
+    if tx
+        .execute(
+            "update conversations set waiting_on_person = false where id = $1 and waiting_on_person",
+            &[&conversation],
+        )
+        .await?
+        > 0
+    {
+        changes::upserted(tx, &c.person, conversation).await?;
+    }
     if let Some(turn) = active(tx, conversation).await?.filter(|t| !t.state.is_ended()) {
         // a parked turn has no sandbox: the one that went is the one it let go (DECISIONS 17)
         if turn.state == crate::turns::State::Parked || turn.sandbox != Some(sandbox) {

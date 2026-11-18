@@ -92,18 +92,33 @@ pub fn project_placement(c: &Conversation, v: &View<'_>) -> Value {
 /// `WorkspaceDescriptor(c)` (7.7).
 #[must_use]
 pub fn workspace_descriptor(c: &Conversation, v: &View<'_>) -> Value {
-    let running = c.turn.is_some();
     let last_user = c.last_user_message_at.unwrap_or(c.updated_at);
+    let (status, entered) = workspace_status(c);
     json!({
         "id": workspace_id(&c.id), "projectId": PROJECT_ID, "projectDisplayName": v.product,
         "projectCustomName": null, "projectCustomIconRevision": null, "projectRootPath": CWD,
         "workspaceDirectory": CWD, "setupStatus": null, "projectKind": "directory", "workspaceKind": "directory",
         "name": name_of(c, v), "title": c.title, "pinnedAt": null, "background": false, "archivingAt": null,
-        "status": if running { "running" } else { "done" }, "statusEnteredAt": c.updated_at,
+        "status": status, "statusEnteredAt": entered,
         "activityAt": c.updated_at, "createdAt": c.created_at, "lastUserMessageAt": last_user, "diffStat": null,
         "scripts": [], "project": project_placement(c, v),
         "backgroundTasks": background_tasks(c), "nextScheduleAt": c.next_schedule_at,
     })
+}
+
+/// The list's status of a conversation and since when: `needs_input` (the yellow mark) while it waits on the person,
+/// an open question or a command in its sandbox that waits on the person (an Inbox request: magpie's
+/// `waitingOnPerson`), turn or no turn (Deyao, 2026-11-18); else `running` while a turn runs, `done` otherwise.
+fn workspace_status(c: &Conversation) -> (&'static str, magpie_api::Timestamp) {
+    if let Some(a) = c.asks.first() {
+        ("needs_input", a.created_at)
+    } else if c.waiting_on_person {
+        ("needs_input", c.updated_at)
+    } else if c.turn.is_some() {
+        ("running", c.updated_at)
+    } else {
+        ("done", c.updated_at)
+    }
 }
 
 /// The background tasks still running after the conversation's turn ended (magpie's `held`): the list's blue dot
@@ -1090,6 +1105,50 @@ mod tests {
         let turn = json!({"id": uuid::Uuid::nil(), "startedAt": "2026-11-17T04:00:00Z", "origin": "person"});
         let w = workspace_descriptor(&conv(held, turn, Value::Null), &view);
         assert_eq!((&w["status"], &w["backgroundTasks"]), (&json!("running"), &json!(0)));
+    }
+
+    /// A conversation waiting on the person (an open question of the `ask` command) is `needs_input` in the list,
+    /// the yellow mark, whether a turn runs (a foreground `ask`) or not (Deyao, 2026-11-18: what waits on the person
+    /// shows yellow); without one it is running or done as before.
+    #[test]
+    fn a_conversation_waiting_on_the_person_needs_input() {
+        let view = View {
+            product: "Chat",
+            locale: Locale::En,
+            model: None,
+        };
+        let conv = |turn: Value, asks: Value| -> Conversation {
+            serde_json::from_value(json!({"id": uuid::Uuid::nil(), "title": "t", "titleSource": "user",
+                "createdAt": "2026-11-18T04:00:00Z", "updatedAt": "2026-11-18T04:00:00Z", "lastUserMessageAt": null,
+                "deletedAt": null, "purgeAt": null, "claudeSessionId": null, "lastTurn": null, "sandbox": null,
+                "model": null, "contextTokens": null, "turn": turn, "run": {"state": "held", "background": []},
+                "origin": {"kind": "new"}, "asks": asks}))
+            .unwrap()
+        };
+        let ask = json!([{"id": "q-1", "toolName": magpie_api::sandbox::QUESTION_TOOL, "toolUseId": null,
+            "input": {"questions": []}, "createdAt": "2026-11-18T04:01:00Z"}]);
+        let turn = json!({"id": uuid::Uuid::nil(), "startedAt": "2026-11-18T04:00:00Z", "origin": "person"});
+        for t in [turn.clone(), Value::Null] {
+            let w = workspace_descriptor(&conv(t, ask.clone()), &view);
+            assert_eq!(
+                (&w["status"], &w["statusEnteredAt"]),
+                (&json!("needs_input"), &json!("2026-11-18T04:01:00.000Z"))
+            );
+        }
+        // a command in the sandbox that waits on the person (an Inbox request): no card, the same mark
+        for t in [turn.clone(), Value::Null] {
+            let mut c = conv(t, json!([]));
+            c.waiting_on_person = true;
+            assert_eq!(workspace_descriptor(&c, &view)["status"], json!("needs_input"));
+        }
+        assert_eq!(
+            workspace_descriptor(&conv(turn, json!([])), &view)["status"],
+            json!("running")
+        );
+        assert_eq!(
+            workspace_descriptor(&conv(Value::Null, json!([])), &view)["status"],
+            json!("done")
+        );
     }
 
     /// Qwen Code's tools show as the same kinds of card as Claude Code's of the same job.

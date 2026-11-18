@@ -386,6 +386,9 @@ struct St {
     last_output: OffsetDateTime,
     /// The same on the monotonic clock (the hold's silence ceiling).
     last_output_mono: Instant,
+    /// The commands waiting on the person (an `ask` by its question, a person wait by its key) and until when each
+    /// counts without another call: the heartbeat's `waiting` (Deyao, 2026-11-18: the list's needs-you mark).
+    person_waits: HashMap<String, Instant>,
     idle_since: Option<OffsetDateTime>,
     crashes: VecDeque<Instant>,
     failing_until: Option<Instant>,
@@ -431,6 +434,7 @@ impl St {
             last_turn: None,
             last_output: OffsetDateTime::now_utc(),
             last_output_mono: Instant::now(),
+            person_waits: HashMap::new(),
             idle_since: Some(OffsetDateTime::now_utc()),
             crashes: VecDeque::new(),
             failing_until: None,
@@ -534,6 +538,8 @@ pub struct Driver {
     poll: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Commands in execution in this process.
     inflight: Mutex<HashSet<u64>>,
+    /// A heartbeat now rather than at the next period (a wait on the person began or ended).
+    heartbeat_now: tokio::sync::Notify,
     /// Every task the driver started (tests end a driver for good with [`Driver::abort_all`]).
     tasks: Mutex<Vec<tokio::task::AbortHandle>>,
     me: Weak<Driver>,
@@ -819,6 +825,7 @@ impl Driver {
             gen_lane: tokio::sync::Mutex::new(()),
             poll: Mutex::new(None),
             inflight: Mutex::new(HashSet::new()),
+            heartbeat_now: tokio::sync::Notify::new(),
             tasks: Mutex::new(Vec::new()),
             me: me.clone(),
             #[cfg(test)]
@@ -3157,6 +3164,7 @@ impl Driver {
                 (None, RunKind::Idle) => HeartbeatState::Idle,
             },
             tasks: u32::try_from(st.tracker.len()).unwrap_or(u32::MAX),
+            waiting: waiting_on_person(&st.person_waits, Instant::now()),
             last_turn: st.last_turn.as_ref().and_then(|l| {
                 Some(HeartbeatLastTurn {
                     id: Uuid::parse_str(&l.id).ok()?,
@@ -3185,7 +3193,10 @@ impl Driver {
                 Ok(()) => self.transcript.heartbeat_ok(),
                 Err(e) => tracing::debug!(error = %e, "heartbeat failed"),
             }
-            tokio::time::sleep(HEARTBEAT_EVERY).await;
+            tokio::select! {
+                () = tokio::time::sleep(HEARTBEAT_EVERY) => {}
+                () = self.heartbeat_now.notified() => {}
+            }
         }
     }
 
@@ -3714,10 +3725,31 @@ impl Agent for Driver {
         Some(self.reporter.calls())
     }
 
-    fn waiting_on_the_person(&self) {
-        // a command that waits on the person is the run's output: a held run is not silent while it waits
-        self.with(Change::Progress, |st, _| st.last_output_mono = Instant::now());
+    fn waiting_on_the_person(&self, key: &str, waiting: bool) {
+        // a command that waits on the person is the run's output: a held run is not silent while it waits; magpie
+        // learns at once when the first wait begins or the last one ends (the list's needs-you mark)
+        let flipped = self.with(Change::Progress, |st, _| {
+            let now = Instant::now();
+            st.last_output_mono = now;
+            let before = waiting_on_person(&st.person_waits, now);
+            st.person_waits.retain(|_, until| *until > now);
+            if waiting {
+                st.person_waits
+                    .insert(key.to_owned(), now + magpie_api::sandbox::PERSON_WAIT_WINDOW);
+            } else {
+                st.person_waits.remove(key);
+            }
+            before != waiting_on_person(&st.person_waits, now)
+        });
+        if flipped {
+            self.heartbeat_now.notify_one();
+        }
     }
+}
+
+/// Whether a command waits on the person: one of `waits` still counts at `now`.
+fn waiting_on_person(waits: &HashMap<String, Instant>, now: Instant) -> bool {
+    waits.values().any(|until| *until > now)
 }
 
 #[cfg(test)]

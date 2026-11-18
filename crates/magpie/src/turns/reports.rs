@@ -664,6 +664,16 @@ pub async fn heartbeat(pool: &Pool, caller: &Sandbox, hb: Heartbeat) -> Result<(
             &[&c.id, facts],
         )
         .await?;
+        // a command in the sandbox waits on the person: the list's needs-you mark (Deyao, 2026-11-18)
+        let flipped = t
+            .execute(
+                "update conversations set waiting_on_person = $2 where id = $1 and waiting_on_person <> $2",
+                &[&c.id, &hb.waiting],
+            )
+            .await?;
+        if flipped > 0 {
+            changes::upserted(t, &c.person, c.id).await?;
+        }
         if let Some(turn) = active(t, c.id).await?.filter(|a| !a.state.is_ended()) {
             return reconcile_active(t, &c, caller, hb, &turn).await;
         }

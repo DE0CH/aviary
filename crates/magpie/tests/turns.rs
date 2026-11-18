@@ -248,11 +248,23 @@ impl Sup {
     }
 
     async fn heartbeat(&self, turn: Option<Uuid>, state: HeartbeatState, last: Option<HeartbeatLastTurn>) {
+        self.heartbeat_waiting(turn, state, last, false).await;
+    }
+
+    /// A heartbeat that says whether a command waits on the person.
+    async fn heartbeat_waiting(
+        &self,
+        turn: Option<Uuid>,
+        state: HeartbeatState,
+        last: Option<HeartbeatLastTurn>,
+        waiting: bool,
+    ) {
         self.calls()
             .heartbeat(&Heartbeat {
                 turn_id: turn,
                 state,
                 tasks: 0,
+                waiting,
                 last_turn: last,
                 generation: 1,
                 supervisor: SupervisorFacts {
@@ -1217,6 +1229,16 @@ async fn heartbeats_reconcile_lost_reports() {
     sup.heartbeat(None, HeartbeatState::Idle, None).await;
     let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
     assert_eq!(c.run.state, RunState::Idle);
+    // 5: a command waits on the person (Deyao, 2026-11-18: the list's needs-you mark), held or idle, then no longer
+    sup.heartbeat_waiting(None, HeartbeatState::Held, None, true).await;
+    let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
+    assert!(
+        c.waiting_on_person,
+        "a heartbeat saying a command waits on the person marks the conversation"
+    );
+    sup.heartbeat(None, HeartbeatState::Idle, None).await;
+    let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
+    assert!(!c.waiting_on_person, "the next heartbeat without it clears it");
 }
 
 #[tokio::test]

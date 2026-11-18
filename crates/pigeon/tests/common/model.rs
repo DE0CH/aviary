@@ -185,6 +185,7 @@ impl Model {
                 share_id: None,
             },
             next_schedule_at: None,
+            waiting_on_person: false,
         }
     }
 

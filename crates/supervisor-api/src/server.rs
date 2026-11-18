@@ -20,7 +20,7 @@ use serde::de::DeserializeOwned;
 
 use crate::control::{Health, PrepareAnswer, PrepareRequest, ReleaseAnswer, ReleaseRequest, Resumed, StateReport};
 use crate::local::{
-    QUESTION, QUESTIONS, QuestionAnswer, QuestionOpen, QuestionOpened, QuestionWait, ReceivedFds, SECRET,
+    PERSON_WAIT, QUESTION, QUESTIONS, QuestionAnswer, QuestionOpen, QuestionOpened, QuestionWait, ReceivedFds, SECRET,
     SEND_USER_FILE, SendUserFileReply, SendUserFileRequest,
 };
 use crate::{ExecRequest, ExecResult, SecretValue, routes};
@@ -84,10 +84,27 @@ pub trait LocalServer: Send + Sync + 'static {
     ) -> impl Future<Output = Answer<QuestionAnswer>> + Send {
         unsupported()
     }
+    /// `POST /v1/person-waits/{key}` (`waiting`, held up to `q.wait_ms`) and `DELETE` (not `waiting`).
+    fn person_wait(
+        &self,
+        ctx: Ctx,
+        key: String,
+        waiting: bool,
+        q: QuestionWait,
+    ) -> impl Future<Output = Answer<()>> + Send {
+        unsupported()
+    }
 }
 
 fn json<T: Serialize>(status: StatusCode, v: &T) -> Response {
     aviary_core::http::json(status, v)
+}
+
+fn no_content(r: Answer<()>) -> Response {
+    match r {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => e.into_response(),
+    }
 }
 
 fn reply<T: Serialize>(r: Answer<T>) -> Response {
@@ -225,6 +242,35 @@ pub fn local_router<S: LocalServer>(server: Arc<S>) -> Router {
                         }
                         .await,
                     )
+                },
+            ),
+        )
+        .route(
+            PERSON_WAIT,
+            post(
+                |State(s): St<S>,
+                 m: Method,
+                 h: HeaderMap,
+                 p: Result<Path<String>, PathRejection>,
+                 q: Result<Query<QuestionWait>, QueryRejection>| async move {
+                    let r = async {
+                        let key = p.map(|Path(k)| k).map_err(|e| ApiError::bad_request(e.body_text()))?;
+                        let Query(q) = q.map_err(|e| ApiError::bad_request(e.body_text()))?;
+                        s.person_wait(Ctx::new(m, PERSON_WAIT, h), key, true, q).await
+                    }
+                    .await;
+                    no_content(r)
+                },
+            )
+            .delete(
+                |State(s): St<S>, m: Method, h: HeaderMap, p: Result<Path<String>, PathRejection>| async move {
+                    let r = async {
+                        let key = p.map(|Path(k)| k).map_err(|e| ApiError::bad_request(e.body_text()))?;
+                        s.person_wait(Ctx::new(m, PERSON_WAIT, h), key, false, QuestionWait::default())
+                            .await
+                    }
+                    .await;
+                    no_content(r)
                 },
             ),
         );

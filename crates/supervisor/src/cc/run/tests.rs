@@ -1911,9 +1911,39 @@ async fn a_question_poll_keeps_a_held_run_from_the_silence_ceiling() {
     let sup = w.attach(None, crate::start::Reattach::Nothing).await;
     let before = lock(&sup.driver.st).last_output_mono;
     tokio::time::sleep(Duration::from_millis(50)).await;
-    crate::lifecycle::Agent::waiting_on_the_person(&*sup.driver);
+    crate::lifecycle::Agent::waiting_on_the_person(&*sup.driver, "q-1", true);
     assert!(lock(&sup.driver.st).last_output_mono > before);
     w.idle(&sup).await;
+}
+
+/// A command waiting on the person (an `ask`'s question, an Inbox request's person wait) is the heartbeat's
+/// `waiting` (Deyao, 2026-11-18: the list's needs-you mark) until the last one ends; each wait is its own, so one
+/// ending leaves another standing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_heartbeat_says_a_command_waits_on_the_person() {
+    use crate::lifecycle::Agent as _;
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    assert!(!sup.driver.heartbeat().waiting);
+    sup.driver.waiting_on_the_person("q-1", true);
+    sup.driver.waiting_on_the_person("inbox-1", true);
+    assert!(sup.driver.heartbeat().waiting);
+    sup.driver.waiting_on_the_person("q-1", false);
+    assert!(sup.driver.heartbeat().waiting, "another wait still stands");
+    sup.driver.waiting_on_the_person("inbox-1", false);
+    assert!(!sup.driver.heartbeat().waiting);
+    w.idle(&sup).await;
+}
+
+/// A wait whose command stopped calling lapses after the window.
+#[test]
+fn a_person_wait_lapses_after_its_window() {
+    let now = Instant::now();
+    let w = magpie_api::sandbox::PERSON_WAIT_WINDOW;
+    let waits = HashMap::from([("k".to_owned(), now + w)]);
+    assert!(super::waiting_on_person(&waits, now));
+    assert!(!super::waiting_on_person(&waits, now + w));
+    assert!(!super::waiting_on_person(&HashMap::new(), now));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

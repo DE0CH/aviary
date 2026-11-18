@@ -86,6 +86,11 @@ pub struct Conversation {
     /// shows as a clock. Absent while none will fire (none set, or each paused, done or deleted).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_schedule_at: Option<Timestamp>,
+    /// A command in its sandbox waits on the person (the supervisor's heartbeat `waiting`: an `ask` waiting for its
+    /// answer, a deployment's request waiting for the person's approval): with an open ask, what the app's
+    /// conversation list shows as needing the person (Deyao, 2026-11-18).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub waiting_on_person: bool,
 }
 
 /// A message sent while a turn ran, still waiting.

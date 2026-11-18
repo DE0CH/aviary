@@ -158,8 +158,11 @@ pub trait Agent: Send + Sync + 'static {
     fn magpie_calls(&self) -> Option<magpie_api::client::SandboxCalls<'_>> {
         None
     }
-    /// A command waits on the person (an `ask` poll): the run is not silent meanwhile.
-    fn waiting_on_the_person(&self) {}
+    /// A command waits on the person (`key`: an `ask`'s question, a person wait's own key) or, `waiting` false, no
+    /// longer does: the run is not silent meanwhile, and the heartbeat says whether any still waits.
+    fn waiting_on_the_person(&self, key: &str, waiting: bool) {
+        let _ = (key, waiting);
+    }
 }
 
 /// What the `~/.claude` filesystem (WP-22) reports for `GET /v1/state`.
