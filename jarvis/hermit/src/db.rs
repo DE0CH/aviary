@@ -215,6 +215,8 @@ impl SandboxRow {
             image: self.image.clone(),
             supervisor: self.supervisor.clone(),
             release: self.release.clone(),
+            // a session's sandbox is never frozen here: Jarvis 4 pauses the session instead (hermit contract freeze: 501)
+            frozen_until: None,
         }
     }
 
