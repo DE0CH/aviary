@@ -84,7 +84,8 @@ server (`server/`) serves no deployment.
   `agent-stream/turn-collapse/model.ts`), paths in replies download through the server, uploads through
   `/api/assets/files` (`composer/actions.ts`), the "preparing the workspace" chip (`sandbox-status.ts`,
   `sandbox-chip.tsx`; only while a sent message waits on the sandbox, the hub never shows it for a turn nobody sent:
-  Deyao, 2026-11-03), typing warms a host (`warm.ts`), the greeting with the person's first name (`greeting.ts`,
+  Deyao, 2026-11-03; a start that waits for the person's approval elsewhere, hermit's phase `approval`, says
+  "waiting for your approval" instead: the message's `waiting`, `nextPreparing`), typing warms a host (`warm.ts`), the greeting with the person's first name (`greeting.ts`,
   `me.ts`), sharing (`share.tsx`, and the read-only page `app/s/[id].tsx`: the server sends the snapshot as timeline
   rows built by the same `SessionTimeline`, the page hydrates them like a conversation's history and renders the chat's
   own `AgentStreamView` read only, its files read through the share via `ConversationFilesContext`), the conversation menu
