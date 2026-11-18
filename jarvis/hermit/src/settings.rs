@@ -216,6 +216,73 @@ impl Settings {
     }
 }
 
+/// Between a Claude model's id and the Claude account it runs on, in the chat's menu (`claude-opus-5-5+chendeyao-uk`):
+/// one entry per model and account (Deyao, 2026-11-18: "Opus 5.5 · chendeyao000 or Opus 5.5 · chendeyao-uk" in the
+/// model menu). Claude Code takes such an id as the model it starts with (2.1.325 sends the same body for it as for
+/// `claude-opus-5-5`, but for the id), and the machine's gateway takes the account off before Anthropic sees it
+/// (machine.rs). Not `@`: that is a version in Vertex's model ids. An account's name never has a `+`
+/// (the router's `claude-[a-z0-9]+(-[a-z0-9]+)*` stores).
+pub const ACCOUNT_SEP: char = '+';
+
+/// A menu id's model and the Claude account it names (`None`: a plain id, which runs on whatever account the session
+/// is on). OpenRouter's ids never name one.
+#[must_use]
+pub fn split_account(id: &str) -> (&str, Option<&str>) {
+    if openrouter(id) {
+        return (id, None);
+    }
+    match id.rsplit_once(ACCOUNT_SEP) {
+        Some((model, account)) if !model.is_empty() && account_name(account) => {
+            (model, Some(account))
+        }
+        _ => (id, None),
+    }
+}
+
+/// Whether `s` can be an account's name: the router's store name without `claude-`.
+#[must_use]
+pub fn account_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 41
+        && s.split('-').all(|p| {
+            !p.is_empty()
+                && p.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+}
+
+impl Settings {
+    /// The menu with each Claude model once per account, in the order given (the first account's entries come first
+    /// of each model's, so the first model on the first account is the default): `claude-opus-5-5+chendeyao000`,
+    /// labelled "Opus 5.5 · chendeyao000". OpenRouter's models are as they were. No accounts: the menu as the file has
+    /// it (the router not read yet), whose plain ids run on the session's own account.
+    #[must_use]
+    pub fn for_accounts(&self, accounts: &[String]) -> Self {
+        if accounts.is_empty() {
+            return self.clone();
+        }
+        let mut out = self.clone();
+        out.models = self
+            .models
+            .iter()
+            .flat_map(|m| {
+                if openrouter(&m.id) {
+                    return vec![m.clone()];
+                }
+                accounts
+                    .iter()
+                    .map(|a| Model {
+                        id: format!("{}{ACCOUNT_SEP}{a}", m.id),
+                        label: format!("{} · {a}", m.label),
+                        ..m.clone()
+                    })
+                    .collect()
+            })
+            .collect();
+        out
+    }
+}
+
 /// Whether `s` can be a URL's scheme (RFC 3986).
 fn url_scheme(s: &str) -> bool {
     let mut chars = s.chars();
@@ -378,5 +445,72 @@ mod tests {
         // something that cannot be a URL's scheme is refused at the start, not at somebody's sign-in
         file["signIn"] = serde_json::json!({ "appScheme": "not a scheme://" });
         assert!(Settings::parse(&file.to_string()).is_err());
+    }
+
+    #[test]
+    fn each_claude_model_is_offered_once_per_account() {
+        let s = Settings::parse(FILE).unwrap();
+        let accounts = vec!["chendeyao000".to_owned(), "chendeyao-uk".to_owned()];
+        let menu = s.for_accounts(&accounts).models_route();
+        let ids: Vec<(&str, &str)> = menu
+            .models
+            .iter()
+            .map(|m| (m.id.as_str(), m.label.as_str()))
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                ("claude-opus-5-5+chendeyao000", "Opus 5.5 · chendeyao000"),
+                ("claude-opus-5-5+chendeyao-uk", "Opus 5.5 · chendeyao-uk"),
+                ("claude-fable-5-2+chendeyao000", "Fable 5.2 · chendeyao000"),
+                ("claude-fable-5-2+chendeyao-uk", "Fable 5.2 · chendeyao-uk"),
+                ("z-ai/glm-5.3", "GLM 5.3"),
+            ]
+        );
+        assert_eq!(
+            menu.default, "claude-opus-5-5+chendeyao000",
+            "the first model on the first account"
+        );
+        assert_eq!(
+            menu.small, "claude-haiku-5-5",
+            "the small model runs on the account the session is on"
+        );
+        // each entry keeps its model's own level and thinking row
+        let expanded = s.for_accounts(&accounts);
+        assert_eq!(
+            expanded
+                .reasoning()
+                .get("claude-fable-5-2+chendeyao-uk")
+                .map(String::as_str),
+            Some("medium")
+        );
+        assert_eq!(menu.models[1].thinking, menu.models[0].thinking);
+        // the router not read yet: the file's menu, whose plain ids run on the session's own account
+        assert_eq!(s.for_accounts(&[]), s);
+        // and what a machine's gateway gets back from the boot reply parses as settings
+        let sent = serde_json::to_string(&expanded).unwrap();
+        let back: Settings = serde_json::from_str(&sent).unwrap();
+        assert_eq!(back.models.len(), 5);
+    }
+
+    #[test]
+    fn a_menu_id_names_its_model_and_account() {
+        assert_eq!(
+            split_account("claude-opus-5-5+chendeyao-uk"),
+            ("claude-opus-5-5", Some("chendeyao-uk"))
+        );
+        assert_eq!(split_account("claude-opus-5-5"), ("claude-opus-5-5", None));
+        // OpenRouter's ids never name an account, whatever they hold
+        assert_eq!(split_account("z-ai/glm-5.3+x"), ("z-ai/glm-5.3+x", None));
+        // nothing that cannot be an account's name
+        for id in [
+            "claude-opus-5-5+",
+            "+uk",
+            "claude-opus-5-5+UK",
+            "claude-opus-5-5+a--b",
+            "claude-opus-5-5+a b",
+        ] {
+            assert_eq!(split_account(id), (id, None), "{id}");
+        }
     }
 }

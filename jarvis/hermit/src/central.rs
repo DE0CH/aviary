@@ -27,7 +27,10 @@ use time::OffsetDateTime;
 use crate::app::{App, LIFETIME};
 use crate::db::{self, SandboxRow, SessionRow};
 use crate::jarvis::{HARNESS, VerifyRequest};
-use crate::wire::{self, BootReply, BootRequest, DeliverRequest, HealthReport, TOKEN_HEADER};
+use crate::wire::{
+    self, AccountReply, AccountRequest, BootReply, BootRequest, DeliverRequest, HealthReport,
+    TOKEN_HEADER,
+};
 
 /// The machine gateway's proxy address, which the descriptor's proxy variables name.
 pub const MACHINE_PROXY: &str = "127.0.0.1:3128";
@@ -39,6 +42,7 @@ pub fn router(app: App) -> Router {
         .route(wire::HEALTH, post(health))
         .route(wire::DELIVER, post(deliver))
         .route(wire::UPLOAD, post(upload))
+        .route(wire::ACCOUNT, post(account))
         .route("/magpie/{*rest}", any(forward_magpie))
         .route("/hermit/{*rest}", any(forward_hermit))
         .with_state(app)
@@ -113,18 +117,49 @@ async fn boot(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Respon
     }
 }
 
-/// The session's model as the chat's menu names it (`SESSION_MODEL` is `aviary/<model id>`); none when the menu does
-/// not hold it (the conversation then starts on the menu's default).
+/// The session's model as the chat's menu names it (`SESSION_MODEL` is `aviary/<model id>`), on the session's Claude
+/// account where the menu offers one entry per account (`claude-opus-5-5+chendeyao-uk`); none when the menu does not
+/// hold it (the conversation then starts on the menu's default).
 fn session_model(
     settings: &crate::settings::Settings,
     env: &std::collections::BTreeMap<String, String>,
+    account: Option<&str>,
 ) -> Option<String> {
     let model = env.get("SESSION_MODEL")?;
     let id = model.strip_prefix("aviary/").unwrap_or(model);
-    settings.model(id).map(|m| m.id.clone())
+    account
+        .and_then(|a| settings.model(&format!("{id}{}{a}", crate::settings::ACCOUNT_SEP)))
+        .or_else(|| settings.model(id))
+        .map(|m| m.id.clone())
+}
+
+/// The menu a booting machine gets, and the name of its session's Claude account: one entry per model and account,
+/// the session's account first (so the menu's default is on the account the session has), when its gateway switches
+/// accounts (`accounts` in its boot); the file's menu otherwise, or while the router cannot be read.
+async fn boot_menu(app: &App, req: &BootRequest) -> (crate::settings::Settings, Option<String>) {
+    if !req.accounts {
+        return (app.settings.clone(), None);
+    }
+    let listing = match app.listing().await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::warn!(error = %e, session = %req.session, "the router's account list at a boot: the file's menu");
+            return (app.settings.clone(), None);
+        }
+    };
+    let own = listing
+        .sessions
+        .iter()
+        .find(|s| s.id == req.session)
+        .map(|s| s.account.trim_start_matches("claude-").to_owned())
+        .filter(|a| !a.is_empty());
+    let names = listing.account_names(own.as_deref());
+    let account = own.filter(|a| names.contains(a));
+    (app.settings.for_accounts(&names), account)
 }
 
 async fn do_boot(app: &App, machine: &str, req: &BootRequest) -> anyhow::Result<BootReply> {
+    let (menu, account) = boot_menu(app, req).await;
     let session = match db::session(&app.pool, &req.session).await? {
         Some(s) => s,
         None => {
@@ -143,7 +178,7 @@ async fn do_boot(app: &App, machine: &str, req: &BootRequest) -> anyhow::Result<
                     },
                     // the model the session was made on in the Jarvis 4 app: the conversation starts on it, and
                     // from then on the chat's menu is the one place it is changed (Deyao, 2026-11-16)
-                    model: session_model(&app.settings, &req.env),
+                    model: session_model(&menu, &req.env, account.as_deref()),
                     // the name the session was given on the New session page: the conversation's title, kept as a
                     // rename so the title model leaves it alone (Deyao, 2026-11-17)
                     title: req.env.get("SESSION_LABEL").cloned(),
@@ -230,10 +265,92 @@ async fn do_boot(app: &App, machine: &str, req: &BootRequest) -> anyhow::Result<
         conversation_id: row.conversation_id,
         token,
         control_token: app.keys.control_token(row.id),
-        settings: Some(app.settings.clone()),
-        reasoning: app.settings.reasoning(),
-        embedding: app.settings.embedding.clone(),
+        reasoning: menu.reasoning(),
+        embedding: menu.embedding.clone(),
+        settings: Some(menu),
+        account,
     })
+}
+
+/// `POST /jarvis/account`: a model call of the sandbox's names a Claude account (the chat's menu: "Opus 5.5 ·
+/// chendeyao-uk"). The session is switched to it only when its conversation's pick names it: the pick is Deyao's, made
+/// in the chat (magpie's `pickedModel`), so a sandbox gets no other account's login by naming it. An account the pick
+/// does not name is one the session must be on already (a reply that began before another pick), which needs nothing;
+/// a pick that names no account runs on whatever account the session has.
+async fn account(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Response {
+    let (_, row) = match sandbox_of(&app, &headers).await {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let Ok(req) = serde_json::from_slice::<AccountRequest>(&body) else {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "not an account request",
+        );
+    };
+    if !crate::settings::account_name(&req.account) {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "not an account's name",
+        );
+    }
+    match switch_for(&app, &row, &req.account).await {
+        Ok(switched) => {
+            tracing::info!(session = %row.session_id, account = %req.account, switched, "a model call's Claude account");
+            (StatusCode::OK, axum::Json(AccountReply { switched })).into_response()
+        }
+        Err(r) => r,
+    }
+}
+
+#[allow(clippy::result_large_err)] // a refusal is the answer as it is sent, as sandbox_of's
+async fn switch_for(app: &App, row: &SandboxRow, name: &str) -> Result<bool, Response> {
+    let conversation = app
+        .magpie
+        .service(None)
+        .hermit_conversation(row.conversation_id)
+        .await
+        .map_err(unavailable)?;
+    let picked = conversation
+        .picked_model
+        .as_deref()
+        .and_then(|m| crate::settings::split_account(m).1)
+        .map(str::to_owned);
+    match picked.as_deref() {
+        Some(p) if p == name => {}
+        None => return Ok(false),
+        Some(_) => {
+            let listing = app.listing().await.map_err(unavailable)?;
+            let on = listing
+                .sessions
+                .iter()
+                .any(|s| s.id == row.session_id && s.account.trim_start_matches("claude-") == name);
+            return if on {
+                Ok(false)
+            } else {
+                Err(refuse(
+                    StatusCode::FORBIDDEN,
+                    "not_allowed",
+                    "the conversation's pick names another Claude account",
+                ))
+            };
+        }
+    }
+    match app.jarvis.switch_account(&row.session_id, name).await {
+        Ok(crate::jarvis::Switch::Unchanged) => Ok(false),
+        Ok(crate::jarvis::Switch::Switched) => Ok(true),
+        Ok(crate::jarvis::Switch::Refused(words)) => {
+            Err(refuse(StatusCode::BAD_REQUEST, "bad_request", &words))
+        }
+        Ok(crate::jarvis::Switch::Busy(words)) => Err(refuse(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            &words,
+        )),
+        Err(e) => Err(unavailable(e)),
+    }
 }
 
 /// The caller's verified token and its live row (a refusal is the answer as it is sent).

@@ -82,8 +82,9 @@ async fn main() -> anyhow::Result<()> {
         settings: jarvis_aviary::settings::Settings::load(&env.settings)?,
         fabric: jarvis_aviary::fabric::FabricHermit::from_env(),
         chat_schedules: std::sync::Mutex::default(),
+        listing: tokio::sync::Mutex::default(),
     }));
-    let models_route = app.settings.models_route();
+    let menu_app = app.clone();
     let openrouter_key = env.openrouter_key.clone();
     let api = guarded_router(Arc::new(app.clone()), RouteGuard::new(callers));
     let gw = jarvis_aviary::central::router(app.clone());
@@ -119,10 +120,12 @@ async fn main() -> anyhow::Result<()> {
         gateway_api::models::MODELS,
         axum::routing::get(move |headers: axum::http::HeaderMap| {
             let ok = model_callers.identify_headers(&headers).is_some();
-            let models_route = models_route.clone();
+            let app = menu_app.clone();
             async move {
                 if ok {
-                    axum::response::IntoResponse::into_response(axum::Json(models_route))
+                    // each Claude model once per Claude account ("Opus 5.5 · chendeyao-uk"; settings.rs for_accounts)
+                    let menu = app.settings.for_accounts(&app.menu_accounts().await).models_route();
+                    axum::response::IntoResponse::into_response(axum::Json(menu))
                 } else {
                     axum::response::IntoResponse::into_response((
                         axum::http::StatusCode::UNAUTHORIZED,

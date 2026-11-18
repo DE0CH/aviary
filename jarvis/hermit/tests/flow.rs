@@ -187,6 +187,7 @@ async fn a_session_boots_turns_pauses_and_resumes() {
         settings: jarvis_aviary::settings::Settings::parse(include_str!("settings.json")).unwrap(),
         fabric: None,
         chat_schedules: std::sync::Mutex::default(),
+        listing: tokio::sync::Mutex::default(),
     }));
     let hermit_router = hermit_api::server::router(Arc::new(app.clone()));
     tokio::spawn(async move { axum::serve(hermit_l, hermit_router).await.unwrap() });
@@ -215,6 +216,7 @@ async fn a_session_boots_turns_pauses_and_resumes() {
                 ]
                 .into_iter()
                 .collect(),
+                accounts: true,
             })
             .unwrap();
             c.post(format!("{gw}/jarvis/boot"))
@@ -638,6 +640,7 @@ async fn hermit_jarvis(router_url: &str, magpie_url: &str) -> (App, String, Stri
         settings: jarvis_aviary::settings::Settings::parse(include_str!("settings.json")).unwrap(),
         fabric: None,
         chat_schedules: std::sync::Mutex::default(),
+        listing: tokio::sync::Mutex::default(),
     }));
     let hermit_router = hermit_api::server::router(Arc::new(app.clone()));
     tokio::spawn(async move { axum::serve(hermit_l, hermit_router).await.unwrap() });
@@ -810,6 +813,7 @@ async fn a_conversation_begun_in_the_chat_proposes_its_session() {
         env: [("SESSION_ID".into(), session.clone())]
             .into_iter()
             .collect(),
+        accounts: false,
     })
     .unwrap();
     let r = c

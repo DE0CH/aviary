@@ -64,6 +64,17 @@ Jarvis 4 session machine (harness aviary)                                     â”
   Anthropic takes a subscription login's call only when its system prompt begins with Claude Code's identity line,
   so aviary-gateway puts that line first on a call that is not Claude Code's own (the supervisor's title call:
   `machine.rs` `with_identity`).
+- The Claude account is picked in the same menu (Deyao, 2026-11-18; docs/DECISIONS.md 274): each Claude model once per
+  Claude account the router has signed in (`GET /api/remotes` `accounts`, the default first), id
+  `claude-opus-5-5+chendeyao-uk`, label "Opus 5.5 Â· chendeyao-uk" (`src/settings.rs` `for_accounts`, `split_account`).
+  pigeon's menu (:8082) re-reads the accounts every minute; a machine's boot gets them with its session's account
+  first (its default) and that account's name (`BootReply.account`), but only when its gateway says it switches
+  accounts (`BootRequest.accounts`; an older one gets the file's menu). A new conversation starts on the session's
+  model on the session's account. The gateway (`src/machine.rs` `take_account`, `settle_account`) sends Anthropic the
+  model alone; an account the session isn't known to be on (60 s) it asks of hermit (`POST /jarvis/account`), which
+  switches the session through the router (`POST /api/remotes/{id}/account`) only when the conversation's pick in
+  magpie names that account, and the call waits until the machine has the account's login. A plain id (the small
+  model, the title, a conversation's pick from before) runs on whatever account the session has.
 - The conversation search (Deyao, 2026-11-17): the settings' `embedding` (`{"id", "queryInstruction"}`; OpenRouter's
   `qwen/qwen3-embedding-8b`) is the models route's embedding model. Each session's supervisor embeds its own
   conversation's messages through the machine's gateway, which sends `POST /v1/embeddings` to OpenRouter's embeddings

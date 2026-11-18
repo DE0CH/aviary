@@ -8,7 +8,10 @@
 //!   body's `model`. A Claude model: to Anthropic with the session's CURRENT Claude login, read from
 //!   `~/.claude/.credentials.json` per request (as api-proxy.js does: the router refreshes it, an account switch takes
 //!   effect at the next request) and the OAuth beta that Claude Code sends only with its own OAuth login (the
-//!   supervisor gives it a placeholder API token). An OpenRouter model (`maker/model`, app.rs): to OpenRouter's
+//!   supervisor gives it a placeholder API token). A model id naming a Claude account (`claude-opus-5-5+chendeyao-uk`,
+//!   the chat's menu: settings.rs `split_account`) goes to Anthropic as the model alone, on that account: when the
+//!   session is not known to be on it, hermit switches it (`POST /jarvis/account`) and the call waits until the
+//!   machine has the account's login ([`settle_account`]). An OpenRouter model (`maker/model`, app.rs): to OpenRouter's
 //!   Messages API with `OPENROUTER_API` (store `openrouter`), the body as [`for_openrouter`] makes it.
 //!   `POST /v1/embeddings` (the conversation search's vectors, which the supervisor makes): to OpenRouter's
 //!   embeddings API with the same key, the body as it came.
@@ -39,7 +42,9 @@ use serde_json::json;
 use tokio::io::AsyncWriteExt as _;
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::wire::{self, BootReply, BootRequest, HealthReport, TOKEN_HEADER};
+use crate::wire::{
+    self, AccountReply, AccountRequest, BootReply, BootRequest, HealthReport, TOKEN_HEADER,
+};
 
 type Body = BoxBody<Bytes, std::io::Error>;
 
@@ -83,6 +88,24 @@ struct State {
     health: std::sync::Mutex<Option<HealthReport>>,
     /// The conversation's title as hermit last said it (for the shim: the session's card in the Jarvis 4 app).
     title: std::sync::Mutex<Option<String>>,
+    /// The Claude account the session was last found on, and when ([`settle_account`]); one switch at a time.
+    account: tokio::sync::Mutex<Option<(String, std::time::Instant)>>,
+}
+
+/// How long the account a session was found on stands before a model call naming it asks hermit again. The chat's
+/// pick owns a conversation's account as it owns its model (Deyao, 2026-11-16): a switch made elsewhere (the Jarvis 4
+/// app's More → Switch Claude account) is undone by the next call after this.
+const ACCOUNT_SETTLED: Duration = Duration::from_secs(60);
+/// How long a switched session's machine may take to have the new account's login (the router answers the machine's
+/// long poll at once: seconds).
+const ACCOUNT_LOGIN_WAIT: Duration = Duration::from_secs(120);
+
+/// Anthropic's error shape, which Claude Code shows (4xx) or retries (529).
+fn api_error(status: u16, kind: &str, message: &str) -> Response<Body> {
+    full(
+        StatusCode::from_u16(status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
+        json!({"type": "error", "error": {"type": kind, "message": message}}),
+    )
 }
 
 fn full(status: StatusCode, body: serde_json::Value) -> Response<Body> {
@@ -158,6 +181,8 @@ async fn boot(cfg: &Config, http: &reqwest::Client) -> BootReply {
             .filter(|(k, _)| wire::BOOT_ENV_NAMES.contains(&k.as_str()))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
+        // a model's id may name a Claude account (model() takes it off and switches to it)
+        accounts: true,
     };
     let body = serde_json::to_vec(&req).unwrap_or_default();
     let mut wait = Duration::from_secs(1);
@@ -240,6 +265,8 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     write_private(&cfg.boot_file, boot_env(&b).as_bytes())?;
     let state = Arc::new(State {
         settings: settings_of(&b),
+        // the account the session had at the boot: a call naming it needs no switch
+        account: tokio::sync::Mutex::new(b.account.clone().map(|a| (a, std::time::Instant::now()))),
         cfg,
         boot: b,
         http,
@@ -472,6 +499,12 @@ async fn model(state: &State, pq: &str, req: Request<Incoming>) -> Response<Body
     if model_of(&body).is_some_and(|m| crate::settings::openrouter(&m)) {
         return openrouter(state, method, pq, &parts.headers, &body).await;
     }
+    let (body, account) = take_account(body);
+    if let Some(account) = account
+        && let Err(r) = settle_account(state, &account).await
+    {
+        return r;
+    }
     let Some(token) = claude_token(&state.cfg.credentials) else {
         return refuse(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -521,6 +554,111 @@ async fn model(state: &State, pq: &str, req: Request<Incoming>) -> Response<Body
         .header("anthropic-beta", betas.join(","))
         .body(body);
     relay(r.send().await).await
+}
+
+/// A Messages body whose `model` names a Claude account (`claude-opus-5-5+chendeyao-uk`): the body with the model
+/// alone, and the account. Any other body as it came.
+fn take_account(body: Bytes) -> (Bytes, Option<String>) {
+    let Some(model) = model_of(&body) else {
+        return (body, None);
+    };
+    let (alone, Some(account)) = crate::settings::split_account(&model) else {
+        return (body, None);
+    };
+    let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&body) else {
+        return (body, None);
+    };
+    v["model"] = json!(alone);
+    match serde_json::to_vec(&v) {
+        Ok(b) => (Bytes::from(b), Some(account.to_owned())),
+        Err(_) => (body, None),
+    }
+}
+
+/// Puts the session on the Claude account `name` before a call that names it: nothing while it was found on it within
+/// [`ACCOUNT_SETTLED`]; else hermit is asked (it switches the session when the conversation's pick names the account)
+/// and, when the session switched, the call waits until the machine has the account's login (the credentials file's
+/// token changes: the machine's login sync writes it, then the account record). An error is the call's answer: hermit's
+/// refusal as Claude Code shows it, anything passing as 529 (Claude Code tries again).
+#[allow(clippy::result_large_err)] // an error is the call's answer as it is sent
+async fn settle_account(state: &State, name: &str) -> Result<(), Response<Body>> {
+    let mut settled = state.account.lock().await;
+    if let Some((on, at)) = &*settled
+        && on == name
+        && at.elapsed() < ACCOUNT_SETTLED
+    {
+        return Ok(());
+    }
+    let before = claude_token(&state.cfg.credentials);
+    let sent = state
+        .http
+        .post(format!("{}{}", state.cfg.gateway_url, wire::ACCOUNT))
+        .header("CF-Access-Client-Id", &state.cfg.access_id)
+        .header("CF-Access-Client-Secret", &state.cfg.access_secret)
+        .header(TOKEN_HEADER, &state.boot.token)
+        .timeout(Duration::from_secs(30))
+        .json(&AccountRequest {
+            account: name.to_owned(),
+        })
+        .send()
+        .await;
+    let r = sent.map_err(|e| {
+        api_error(
+            529,
+            "overloaded_error",
+            &format!("switching to the Claude account {name}: {e}"),
+        )
+    })?;
+    let status = r.status();
+    if !status.is_success() {
+        let v: serde_json::Value = r.json().await.unwrap_or_default();
+        let words = v["message"].as_str().unwrap_or("refused");
+        let message = format!("the Claude account {name}: {words}");
+        tracing::warn!(
+            account = name,
+            status = status.as_u16(),
+            message,
+            "a model call's Claude account"
+        );
+        return Err(match status.as_u16() {
+            403 => api_error(403, "permission_error", &message),
+            s if s < 500 => api_error(400, "invalid_request_error", &message),
+            _ => api_error(529, "overloaded_error", &message),
+        });
+    }
+    let reply: AccountReply = r.json().await.map_err(|e| {
+        api_error(
+            529,
+            "overloaded_error",
+            &format!("switching to the Claude account {name}: {e}"),
+        )
+    })?;
+    if reply.switched {
+        tracing::info!(
+            account = name,
+            "the session switched Claude account: waiting for its login on the machine"
+        );
+        let end = std::time::Instant::now() + ACCOUNT_LOGIN_WAIT;
+        loop {
+            let now = claude_token(&state.cfg.credentials);
+            if now.is_some() && now != before {
+                break;
+            }
+            if std::time::Instant::now() > end {
+                return Err(api_error(
+                    529,
+                    "overloaded_error",
+                    &format!(
+                        "the Claude account {name}'s login did not reach the machine within 2 min"
+                    ),
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        tracing::info!(account = name, "the machine has the account's login");
+    }
+    *settled = Some((name.to_owned(), std::time::Instant::now()));
+    Ok(())
 }
 
 /// A Messages body's `model`.
@@ -976,6 +1114,18 @@ mod tests {
     /// The gateway's proxy on a free port over two stand-ins (Anthropic, OpenRouter), and a client that uses it as
     /// its proxy, as Claude Code does.
     async fn gateway(openrouter_key: Option<&str>) -> (reqwest::Client, Seen, Seen) {
+        let (client, seen_a, seen_o, _) =
+            gateway_on(openrouter_key, "http://127.0.0.1:1", None).await;
+        (client, seen_a, seen_o)
+    }
+
+    /// [`gateway`] whose central half is at `central` (a stand-in hermit), on the menu of `account` (the boot reply's
+    /// account: the session's); also the credentials file, which a test writes as the machine's login sync does.
+    async fn gateway_on(
+        openrouter_key: Option<&str>,
+        central: &str,
+        account: Option<&str>,
+    ) -> (reqwest::Client, Seen, Seen, std::path::PathBuf) {
         let (anthropic, seen_a) = upstream().await;
         let (openrouter, seen_o) = upstream().await;
         let dir = std::env::temp_dir().join(format!("aviary-gw-test-{}", uuid::Uuid::new_v4()));
@@ -996,17 +1146,18 @@ mod tests {
                 settings: Some(settings()),
                 reasoning: settings().reasoning(),
                 embedding: settings().embedding,
+                account: account.map(str::to_owned),
             })
             .unwrap(),
         )
         .unwrap();
         let state = Arc::new(State {
             cfg: Config {
-                gateway_url: "http://127.0.0.1:1".to_owned(),
+                gateway_url: central.to_owned(),
                 access_id: String::new(),
                 access_secret: String::new(),
                 session: "s".to_owned(),
-                credentials,
+                credentials: credentials.clone(),
                 boot_file: dir.join("boot.env"),
                 image: String::new(),
                 env: BTreeMap::new(),
@@ -1015,6 +1166,9 @@ mod tests {
                 openrouter_key: openrouter_key.map(str::to_owned),
             },
             settings: settings_of(&boot),
+            account: tokio::sync::Mutex::new(
+                boot.account.clone().map(|a| (a, std::time::Instant::now())),
+            ),
             boot,
             http: http_client().unwrap(),
             health: std::sync::Mutex::new(None),
@@ -1028,7 +1182,7 @@ mod tests {
             .proxy(reqwest::Proxy::http(proxy).unwrap())
             .build()
             .unwrap();
-        (client, seen_a, seen_o)
+        (client, seen_a, seen_o, credentials)
     }
 
     async fn call(client: &reqwest::Client, body: &serde_json::Value) -> reqwest::StatusCode {
@@ -1042,6 +1196,102 @@ mod tests {
             .await
             .unwrap()
             .status()
+    }
+
+    /// "Opus 5.5 · chendeyao-uk" in the chat's menu (Deyao, 2026-11-18): a call naming an account goes to Anthropic as
+    /// the model alone, on that account. The account the session booted on needs nobody; another one is asked of
+    /// hermit once, and the call waits until the machine has its login; hermit's refusal is the call's answer.
+    #[tokio::test]
+    async fn a_call_naming_an_account_runs_on_it() {
+        type Asked = Arc<std::sync::Mutex<Vec<(String, String)>>>;
+        let asked: Asked = Arc::default();
+        let creds: Arc<std::sync::Mutex<Option<std::path::PathBuf>>> = Arc::default();
+        let (a2, c2) = (asked.clone(), creds.clone());
+        let hermit = axum::Router::new().route(
+            wire::ACCOUNT,
+            axum::routing::post(move |h: axum::http::HeaderMap, axum::Json(r): axum::Json<AccountRequest>| {
+                let (asked, creds) = (a2.clone(), c2.clone());
+                async move {
+                    let token = h.get(TOKEN_HEADER).and_then(|v| v.to_str().ok()).unwrap_or_default().to_owned();
+                    asked.lock().unwrap().push((token, r.account.clone()));
+                    if r.account != "chendeyao-uk" {
+                        return (
+                            axum::http::StatusCode::FORBIDDEN,
+                            axum::Json(json!({"code": "not_allowed", "message": "the conversation's pick names another Claude account"})),
+                        );
+                    }
+                    // the machine's login sync writes the new pair a moment after the router's switch
+                    let path = creds.lock().unwrap().clone().unwrap();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        std::fs::write(path, r#"{"claudeAiOauth": {"accessToken": "uk-login"}}"#).unwrap();
+                    });
+                    (axum::http::StatusCode::OK, axum::Json(json!({"switched": true})))
+                }
+            }),
+        );
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let central = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(l, hermit).await });
+        let (client, seen_a, _, path) = gateway_on(None, &central, Some("chendeyao000")).await;
+        *creds.lock().unwrap() = Some(path);
+        let on = |model: &str| json!({"model": model, "max_tokens": 64, "messages": [{"role": "user", "content": "hi"}]});
+
+        // the account the session booted on: nobody asked
+        assert_eq!(
+            call(&client, &on("claude-opus-5-5+chendeyao000")).await,
+            StatusCode::OK
+        );
+        assert!(asked.lock().unwrap().is_empty());
+        // another: hermit asked once (with the sandbox's token), the call goes out on the new login
+        assert_eq!(
+            call(&client, &on("claude-opus-5-5+chendeyao-uk")).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            call(&client, &on("claude-opus-5-5+chendeyao-uk")).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            *asked.lock().unwrap(),
+            [("hst1.test".to_owned(), "chendeyao-uk".to_owned())]
+        );
+        // a plain id (the small model, the title) runs on whatever account the session has
+        assert_eq!(call(&client, &on("claude-haiku-5-5")).await, StatusCode::OK);
+        let a = seen_a.lock().unwrap().clone();
+        let seen: Vec<(&str, &str)> = a
+            .iter()
+            .map(|(auth, _, b)| (auth.as_str(), b["model"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("Bearer claude-login", "claude-opus-5-5"),
+                ("Bearer uk-login", "claude-opus-5-5"),
+                ("Bearer uk-login", "claude-opus-5-5"),
+                ("Bearer uk-login", "claude-haiku-5-5"),
+            ],
+            "Anthropic never sees the account in the model"
+        );
+        // hermit's refusal is the call's answer, as Claude Code shows it; Anthropic is not reached
+        let r = client
+            .post("http://model/v1/messages")
+            .json(&on("claude-opus-5-5+chendeyao-x"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        let e: serde_json::Value = r.json().await.unwrap();
+        assert_eq!(e["type"], "error");
+        assert_eq!(e["error"]["type"], "permission_error");
+        assert!(
+            e["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("chendeyao-x"),
+            "{e}"
+        );
+        assert_eq!(seen_a.lock().unwrap().len(), 4);
     }
 
     /// The models route a machine's supervisor reads is the chat's menu, its default included. The machine used to

@@ -44,9 +44,46 @@ pub struct Inner {
     pub fabric: Option<crate::fabric::FabricHermit>,
     /// The next chat schedule this replica last told the router of, per session ([`App::report_chat_schedule`]).
     pub chat_schedules: std::sync::Mutex<std::collections::HashMap<String, Option<i64>>>,
+    /// The router's last listing and when it was read: the Claude accounts the chat's menu offers ([`App::menu_accounts`]).
+    pub listing: tokio::sync::Mutex<Option<(std::time::Instant, crate::jarvis::Listing)>>,
 }
 
+/// How long the router's account list stands before it is read again: as long as pigeon keeps the menu, so an account
+/// added or re-logged in Settings is in the chat's menu within two minutes.
+pub const LISTING_FRESH: std::time::Duration = std::time::Duration::from_secs(60);
+
 impl App {
+    /// The router's listing, read now (and kept for the menu).
+    ///
+    /// # Errors
+    /// The router unreachable or refusing.
+    pub async fn listing(&self) -> anyhow::Result<crate::jarvis::Listing> {
+        let l = self.jarvis.listing().await?;
+        *self.listing.lock().await = Some((std::time::Instant::now(), l.clone()));
+        Ok(l)
+    }
+
+    /// The names of the Claude accounts the chat's menu offers, the default first: the last listing while it is fresh,
+    /// else read again; the last one while the router cannot be reached, none before the first.
+    pub async fn menu_accounts(&self) -> Vec<String> {
+        if let Some((at, l)) = &*self.listing.lock().await
+            && at.elapsed() < LISTING_FRESH
+        {
+            return l.account_names(None);
+        }
+        match self.listing().await {
+            Ok(l) => l.account_names(None),
+            Err(e) => {
+                tracing::warn!(error = %e, "the router's account list: kept the last one");
+                self.listing
+                    .lock()
+                    .await
+                    .as_ref()
+                    .map(|(_, l)| l.account_names(None))
+                    .unwrap_or_default()
+            }
+        }
+    }
     /// Tells the router when `session`'s soonest chat schedule fires next, when it differs from what this replica
     /// told it last (a failure is told again at the next report).
     pub async fn report_chat_schedule(&self, session: &str, next: Option<magpie_api::Timestamp>) {

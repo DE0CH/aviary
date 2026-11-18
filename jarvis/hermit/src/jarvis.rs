@@ -57,11 +57,57 @@ pub struct Remote {
     pub state: String,
     #[serde(default)]
     pub model: String,
+    /// The session's Claude account (`claude-<name>`; empty: none, or a router from before accounts were listed).
+    #[serde(default)]
+    pub account: String,
 }
 
-#[derive(Deserialize)]
-struct Remotes {
-    sessions: Vec<Remote>,
+/// One Claude account the chat's menu offers (`GET /api/remotes` `accounts`, the router's signed-in ones, the default
+/// first).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Account {
+    /// `claude-<name>`.
+    pub store: String,
+    /// The store without `claude-`: what the menu shows and an entry's id names.
+    pub name: String,
+}
+
+/// `GET /api/remotes?harness=aviary`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+pub struct Listing {
+    pub sessions: Vec<Remote>,
+    /// Absent from a router from before the chat offered accounts: none, and the menu is the file's.
+    #[serde(default)]
+    pub accounts: Vec<Account>,
+}
+
+impl Listing {
+    /// The names of the accounts, `first` (the session's own, `claude-<name>` or its name) moved to the front.
+    #[must_use]
+    pub fn account_names(&self, first: Option<&str>) -> Vec<String> {
+        let first = first.map(|f| f.strip_prefix("claude-").unwrap_or(f));
+        let mut names: Vec<String> = self.accounts.iter().map(|a| a.name.clone()).collect();
+        if let Some(f) = first
+            && let Some(i) = names.iter().position(|n| n == f)
+        {
+            let n = names.remove(i);
+            names.insert(0, n);
+        }
+        names
+    }
+}
+
+/// The router's word on a switch of a session's Claude account.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Switch {
+    /// The session is on it already: nothing changes on its machine.
+    Unchanged,
+    /// The session's account changed; its machine is getting the new account's login.
+    Switched,
+    /// Refused for good (an account the router does not have, one with no login): its words.
+    Refused(String),
+    /// Not now (another change of the session runs): its words.
+    Busy(String),
 }
 
 /// The router's state of a new session waiting for Deyao's approval.
@@ -122,6 +168,14 @@ impl Jarvis {
     /// # Errors
     /// The router unreachable or answering anything but 200.
     pub async fn sessions(&self) -> anyhow::Result<Vec<Remote>> {
+        Ok(self.listing().await?.sessions)
+    }
+
+    /// Every aviary session the router lists, and the Claude accounts the chat's menu offers.
+    ///
+    /// # Errors
+    /// The router unreachable or answering anything but 200.
+    pub async fn listing(&self) -> anyhow::Result<Listing> {
         let r = self
             .req(
                 reqwest::Method::GET,
@@ -132,7 +186,40 @@ impl Jarvis {
         if !r.status().is_success() {
             anyhow::bail!("router answered {} to the session list", r.status());
         }
-        Ok(r.json::<Remotes>().await?.sessions)
+        Ok(r.json::<Listing>().await?)
+    }
+
+    /// Switches `session` to the Claude account `name` (`POST /api/remotes/{id}/account`: the chat's menu picked it),
+    /// as the app's More → Switch Claude account does: the router answers at once, the machine gets the login after.
+    ///
+    /// # Errors
+    /// The router unreachable or failing (5xx).
+    pub async fn switch_account(&self, session: &str, name: &str) -> anyhow::Result<Switch> {
+        let r = self
+            .req(
+                reqwest::Method::POST,
+                &format!("/api/remotes/{session}/account"),
+            )
+            .json(&serde_json::json!({"account": name}))
+            .send()
+            .await?;
+        let status = r.status();
+        let body: serde_json::Value = r.json().await.unwrap_or_default();
+        let words = || {
+            body.get("error")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("the router refused the switch")
+                .to_owned()
+        };
+        Ok(match status.as_u16() {
+            200 if body.get("unchanged") == Some(&serde_json::Value::Bool(true)) => {
+                Switch::Unchanged
+            }
+            200 | 202 => Switch::Switched,
+            409 => Switch::Busy(words()),
+            s if s < 500 => Switch::Refused(words()),
+            s => anyhow::bail!("router answered {s} to an account switch: {}", words()),
+        })
     }
 
     /// Tells the router when the soonest of a session's chat schedules fires next (`None`: none armed). An aviary

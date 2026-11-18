@@ -10,6 +10,8 @@
 //!   for the session's person (magpie's M13 headers, body and answer); the delivery names it by its `uploadId`.
 //! - `POST /jarvis/deliver`: a prompt Jarvis delivers into the session's conversation (the first prompt, wakeups,
 //!   watches, peer messages): a turn as the session's person, with the images uploaded for it.
+//! - `POST /jarvis/account`: a model call names a Claude account ("Opus 5.5 · chendeyao-uk" in the chat's menu): the
+//!   session switched to it, when the conversation's pick names it (settings.rs `split_account`).
 //! - `ANY /magpie/<path>`, `ANY /hermit/<path>`: the sandbox's fixed names, forwarded as the contract's gateway does.
 //!
 //! All but the boot carry the sandbox token in [`TOKEN_HEADER`].
@@ -26,6 +28,7 @@ pub const BOOT: &str = "/jarvis/boot";
 pub const HEALTH: &str = "/jarvis/health";
 pub const DELIVER: &str = "/jarvis/deliver";
 pub const UPLOAD: &str = "/jarvis/upload";
+pub const ACCOUNT: &str = "/jarvis/account";
 
 /// The environment names a machine may hand to its sandbox's descriptor: Jarvis 4's own non-secret values, which
 /// Jarvis's scripts read. Anything else is refused (no secret ever travels to hermit).
@@ -58,6 +61,11 @@ pub struct BootRequest {
     /// Values from [`BOOT_ENV_NAMES`] only.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// The gateway takes a Claude account off a model's id and switches to it ([`ACCOUNT`]): its menu may offer one
+    /// entry per account. A gateway from before says nothing, and gets the menu's plain ids (its Anthropic call would
+    /// name a model Anthropic does not have).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub accounts: bool,
 }
 
 /// `POST /jarvis/boot` answer.
@@ -82,6 +90,27 @@ pub struct BootReply {
     /// reason as `reasoning`: the machine's models route names it to the supervisor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding: Option<gateway_api::models::Embedding>,
+    /// The session's Claude account's name at the boot (`chendeyao-uk`): the account its machine has, which a model
+    /// call naming it needs no switch for. Absent: not known (the router not reached), or no accounts offered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+}
+
+/// `POST /jarvis/account` body.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountRequest {
+    /// The account's name, as the model's id names it.
+    pub account: String,
+}
+
+/// `POST /jarvis/account` answer (200).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountReply {
+    /// The session's account changed: the machine is getting its login (the gateway waits for it). `false`: the
+    /// session runs on the account it has.
+    pub switched: bool,
 }
 
 impl std::fmt::Debug for BootReply {
