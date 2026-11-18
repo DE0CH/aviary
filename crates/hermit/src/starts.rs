@@ -556,9 +556,14 @@ impl Start {
             open_files: s.open_files,
             workspace: row.conversation_id,
         };
-        // a frozen sandbox is thawed in place of a create (jarvis4 docs/PLAN-fabric.md); once it runs it is frozen no
-        // more
+        // a frozen sandbox is thawed in place of a create (jarvis4 docs/PLAN-fabric.md); one still paused on its host
+        // (frozen.host: the placement kept that host and its address) is resumed there, an evicted one restored from
+        // the bucket. Once it runs it is frozen no more.
         let made = match &row.frozen {
+            Some(f) if f.host.is_some() => match row.host.as_deref() {
+                Some(h) => self.core.providers.fabric.resume(h, &spec.name).await,
+                None => self.core.providers.fabric.thaw(&spec, f).await,
+            },
             Some(f) => self.core.providers.fabric.thaw(&spec, f).await,
             None => self.core.providers.fabric.create(&spec).await,
         };

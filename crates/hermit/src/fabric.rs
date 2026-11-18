@@ -13,6 +13,7 @@ pub mod images;
 pub mod migrate;
 pub mod network;
 pub mod packing;
+pub mod pausing;
 pub mod placement;
 pub mod sandboxd;
 pub mod scaler;
@@ -181,6 +182,16 @@ pub trait Fabric: Send + Sync + 'static {
         Box::pin(async move {
             tracing::warn!(sandbox = %claim.id, "freeze task on a fabric that does not freeze: claim cleared");
             let _ = crate::tasks::clear(&core, &claim).await;
+        })
+    }
+    /// A thaw's create step for a frozen sandbox still paused on its host: `runsc resume` there, its processes going
+    /// on where they stopped. A fabric that does not freeze answers `Failed`.
+    fn resume<'a>(&'a self, _host: &'a str, _name: &'a str) -> Fut<'a, Result<(), CreateError>> {
+        Box::pin(async {
+            Err(CreateError::Failed {
+                class: "not_supported".into(),
+                message: "this fabric does not freeze".into(),
+            })
         })
     }
     /// A thaw's create step: the frozen sandbox `frozen` brought back as `spec` describes it (its name and address

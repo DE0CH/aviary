@@ -303,6 +303,37 @@ impl Fabric for Gvisor {
         })
     }
 
+    fn freezes(&self) -> bool {
+        self.core().is_ok_and(|c| c.cfg.file.fabric.freeze.is_some())
+    }
+
+    fn freeze(&self, core: Arc<Core>, claim: Claim) -> Fut<'static, ()> {
+        Box::pin(async move {
+            let clients = self.clients.clone();
+            crate::fabric::pausing::freeze(&core, &claim, &clients).await;
+        })
+    }
+
+    fn resume<'a>(&'a self, host: &'a str, name: &'a str) -> Fut<'a, Result<(), CreateError>> {
+        Box::pin(async move {
+            let core = self.core().map_err(|e| CreateError::Unreachable(e.0))?;
+            let h = hosts::get(&core.pool, host)
+                .await
+                .map_err(|e| CreateError::Unreachable(e.to_string()))?
+                .filter(|h| h.status != HostStatus::Gone)
+                .ok_or_else(|| CreateError::Failed {
+                    class: "host_gone".into(),
+                    message: format!("the host it was paused on ({host}) is gone"),
+                })?;
+            self.client(&h)
+                .map_err(|e| sandboxd::create_error(&e))?
+                .resume(name)
+                .await
+                .map(|_| ())
+                .map_err(|e| sandboxd::create_error(&e))
+        })
+    }
+
     fn create<'a>(&'a self, spec: &'a CreateSpec) -> Fut<'a, Result<(), CreateError>> {
         Box::pin(async move {
             let core = self.core().map_err(|e| CreateError::Unreachable(e.0))?;

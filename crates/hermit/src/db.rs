@@ -250,6 +250,9 @@ pub struct SandboxRow {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Frozen {
+    /// Where it was paused, while it is still there (a thaw resumes it in place); absent once evicted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub object: String,
     pub key: String,
     /// When the freeze finished (absent while it runs).
