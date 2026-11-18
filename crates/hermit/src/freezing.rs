@@ -1,8 +1,9 @@
 //! Freezing (jarvis4 docs/PLAN-fabric.md, "Next: freeze and the time machine"): `POST …/sandbox/freeze {until?}` and
 //! `…/thaw`. A freeze keeps the sandbox, RAM and processes included, off any host (`frozen`: no host, no slot, its
 //! address kept for its restored network); a thaw, a get-or-start, or `until` passing brings the same sandbox back.
-//! Both are the fabric's resumable row tasks ([`crate::fabric::Fabric::freeze`], [`crate::fabric::Fabric::thaw`]),
-//! claimed here. A deployment whose fabric does not freeze answers 501 `not_supported`, as before.
+//! A freeze is the fabric's resumable row task ([`crate::fabric::Fabric::freeze`]); a thaw is a start whose create
+//! step thaws (`starts.rs`: a slot, a host, the same address, then [`crate::fabric::Fabric::thaw`]), so it waits for
+//! capacity and a host as any start does. A deployment whose fabric does not freeze answers 501 `not_supported`, as before.
 
 use std::sync::Arc;
 
@@ -29,8 +30,8 @@ fn busy(what: &str) -> ApiError {
     error::api(409, codes::SANDBOX_BUSY, what)
 }
 
-/// Inside a transaction holding the row: a frozen row with no task becomes `starting` (phase `placing`) under this
-/// replica's thaw claim. `true` when the claim is this replica's (spawn the task).
+/// Inside a transaction holding the row: a frozen row with no task becomes `starting` (phase `capacity`) under this
+/// replica's start claim (spawn the start).
 ///
 /// # Errors
 /// A database error.
@@ -38,12 +39,17 @@ pub async fn begin_thaw(t: &Tx<'_>, core: &Core, row: &SandboxRow) -> Result<Opt
     if row.status != SandboxState::Frozen || row.task.is_some() {
         return Ok(None);
     }
-    if !tasks::take_in(t, core, row.id, Kind::Thaw).await? {
+    if !tasks::take_in(t, core, row.id, Kind::Start).await? {
         return Ok(None);
     }
     t.execute(
-        "update sandboxes set status = 'starting', phase = 'placing', frozen_until = null where id = $1",
-        &[&row.id],
+        "update sandboxes set status = 'starting', phase = 'capacity', frozen_until = null,
+           start_deadline = now() + $2::bigint * interval '1 millisecond'
+         where id = $1",
+        &[
+            &row.id,
+            &crate::ms(crate::config::Config::secs(core.cfg.sandbox().start_deadline_seconds)),
+        ],
     )
     .await?;
     Ok(Some(bump(t, row.id).await?))
@@ -147,7 +153,7 @@ pub async fn thaw(core: &Arc<Core>, cid: Uuid) -> Result<Sandbox, ApiError> {
     core.live.apply(&row);
     if owned {
         tracing::info!(sandbox = %row.id, conversation = %cid, "sandbox thaw requested");
-        tasks::run(core, Claim::adopt(core, row.id, Kind::Thaw));
+        tasks::run(core, Claim::adopt(core, row.id, Kind::Start));
     }
     Ok(row.to_sandbox())
 }

@@ -97,7 +97,7 @@ enum PutStep {
     WaitRelease(Uuid, bool),
     /// A new row with this replica's start claim (spawn the start).
     Started(PutSandbox, Uuid, bool),
-    /// A frozen row now `starting` under this replica's thaw claim (spawn the thaw).
+    /// A frozen row now `starting` under this replica's start claim (spawn the start: it thaws).
     Thawing(PutSandbox, Uuid),
 }
 
@@ -143,7 +143,7 @@ pub async fn put(core: &Arc<Core>, cid: Uuid, body: &PutSandboxRequest) -> Resul
                     core.live.apply(&row);
                 }
                 tracing::info!(sandbox = %id, conversation = %cid, "sandbox thaw requested by a get-or-start");
-                tasks::run(core, Claim::adopt(core, id, Kind::Thaw));
+                tasks::run(core, Claim::adopt(core, id, Kind::Start));
                 return Ok(a);
             }
             PutStep::WaitGone(id) => {

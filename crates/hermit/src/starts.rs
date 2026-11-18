@@ -424,10 +424,11 @@ impl Start {
         {
             Ok(Place::Placed(p)) => {
                 self.place_failing_since = None;
+                // a row that has its address keeps it (a frozen sandbox's restored network expects it): only the host
                 let r = self
                     .advance(
                         SandboxPhase::Image,
-                        "host = $4, ip = $5",
+                        "host = $4, ip = coalesce(ip, $5)",
                         vec![Param::Text(p.host), Param::Ip(p.ip)],
                     )
                     .await;
@@ -554,8 +555,14 @@ impl Start {
             open_files: s.open_files,
             workspace: row.conversation_id,
         };
-        match self.core.providers.fabric.create(&spec).await {
-            Ok(()) => self.next(SandboxPhase::Supervisor, "", vec![]).await,
+        // a frozen sandbox is thawed in place of a create (jarvis4 docs/PLAN-fabric.md); once it runs it is frozen no
+        // more
+        let made = match &row.frozen {
+            Some(f) => self.core.providers.fabric.thaw(&spec, f).await,
+            None => self.core.providers.fabric.create(&spec).await,
+        };
+        match made {
+            Ok(()) => self.next(SandboxPhase::Supervisor, "frozen = null", vec![]).await,
             Err(CreateError::Busy) => {
                 tokio::time::sleep(self.core.timings.busy_retry).await;
                 Step::Next

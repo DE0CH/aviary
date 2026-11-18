@@ -183,11 +183,15 @@ pub trait Fabric: Send + Sync + 'static {
             let _ = crate::tasks::clear(&core, &claim).await;
         })
     }
-    /// The `thaw` task of a claim this replica holds. A fabric that does not freeze clears the claim.
-    fn thaw(&self, core: Arc<crate::Core>, claim: crate::tasks::Claim) -> Fut<'static, ()> {
-        Box::pin(async move {
-            tracing::warn!(sandbox = %claim.id, "thaw task on a fabric that does not freeze: claim cleared");
-            let _ = crate::tasks::clear(&core, &claim).await;
+    /// A thaw's create step: the frozen sandbox `frozen` brought back as `spec` describes it (its name and address
+    /// as before; a start places it on any host). Like [`Fabric::create`], plus deleting the frozen objects once it
+    /// runs. A fabric that does not freeze answers `Failed`.
+    fn thaw<'a>(&'a self, _spec: &'a CreateSpec, _frozen: &'a crate::db::Frozen) -> Fut<'a, Result<(), CreateError>> {
+        Box::pin(async {
+            Err(CreateError::Failed {
+                class: "not_supported".into(),
+                message: "this fabric does not freeze".into(),
+            })
         })
     }
     /// What the operator page shows of the fabric (hermit 18.3, 18.6): the scaler's plan, the egress targets, the

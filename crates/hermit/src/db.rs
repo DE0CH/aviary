@@ -241,6 +241,20 @@ pub struct SandboxRow {
     pub release_message: Option<String>,
     /// While frozen with an `until` (migration 0009).
     pub frozen_until: Option<OffsetDateTime>,
+    /// Where a frozen sandbox is (migration 0009; set from the freeze's start until the thaw has it back).
+    pub frozen: Option<Frozen>,
+}
+
+/// Where a frozen sandbox is: its memory is `object`, its scratch file `object` + `.scratch`, both sealed under a key
+/// of the freeze's own, kept here sealed under hermit's freeze key (`key`: base64 of nonce ‖ ciphertext).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Frozen {
+    pub object: String,
+    pub key: String,
+    /// When the freeze finished (absent while it runs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frozen_at: Option<String>,
 }
 
 fn wire<T: serde::de::DeserializeOwned>(s: &str) -> Option<T> {
@@ -298,6 +312,9 @@ impl SandboxRow {
             release_code: r.try_get("release_code")?,
             release_message: r.try_get("release_message")?,
             frozen_until: r.try_get("frozen_until")?,
+            frozen: r
+                .try_get::<_, Option<Value>>("frozen")?
+                .and_then(|v| serde_json::from_value(v).ok()),
         })
     }
 
