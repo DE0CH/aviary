@@ -65,7 +65,7 @@ pub struct Config {
     pub boot_file: PathBuf,
     pub image: String,
     pub env: BTreeMap<String, String>,
-    /// Where model calls go: [`ANTHROPIC`], or `AVIARY_MODEL_URL` (the e2e's stand-in model, infra/e2e-aviary.sh).
+    /// Where model calls go: [`ANTHROPIC`], or `AVIARY_MODEL_URL` (the e2e's stand-in model, rust/e2e-kernel E2E_HARNESS=aviary).
     pub model_url: String,
     /// Where an OpenRouter model's calls go: [`OPENROUTER`], or `AVIARY_OPENROUTER_URL` (the e2e's stand-in).
     pub openrouter_url: String,

@@ -205,26 +205,33 @@ the hour, before YYC AI (whose pins move by hand).
 - Pitfall: `reqwest` here has no default TLS provider (`rustls-no-provider`, as in aviary): every client takes
   `aviary_core::http::tls_config()`, or it panics at build.
 
-## End to end, with no Inbox: `infra/e2e-aviary.sh`
+## End to end, with no Inbox: `rust/e2e-kernel` with `E2E_HARNESS=aviary`
 
-The whole harness on a replica, run from a session (needs `JARVIS2_FLY_TOKEN`, store `infra`; sudo):
-`session-secret --keys JARVIS2_FLY_TOKEN --exec infra/e2e-aviary.sh` (about 6 minutes; logs in
-`/tmp/jarvis4-e2e-aviary-logs`). A throwaway kernel line and router on the session (the TEST master key, a root key
-of its own, e2e/aviary playing the iPhone: roster, Reset, unlock, approval), the chat stack beside them (this tree's
+The whole harness on a replica: aviary-pin.yml's `replica` job on every aviary release before it is pinned, and by
+hand from a session (needs `JARVIS2_FLY_TOKEN`, store `infra`; sudo, crane, flyctl):
+`(cd rust && cargo build --release -p e2e-kernel)`, then `session-secret --keys JARVIS2_FLY_TOKEN --exec env
+E2E_HARNESS=aviary rust/target/release/e2e-kernel` (about 8 minutes; logs in `$E2E_LOGS`, default
+`/tmp/jarvis2-e2e-kernel-logs`). A throwaway kernel line and router on the session (the TEST master key, a root key of
+its own, e2e/aviary playing the iPhone: roster, Reset, unlock, approval), the chat stack beside them (this tree's
 hermit-jarvis, magpie of the pinned aviary release from its image, a TLS Postgres, `rclone serve s3`), a stand-in
-model (Claude Code's calls arrive with the account's token as on a real machine), and a real Fly machine on the
+model (Claude Code's calls arrive with the account's token as on a real machine), and real Fly machines on the
 current session image. Checked: the machine boots a sandbox through hermit-jarvis, the supervisor runs Claude Code on
 magpie's ~/.claude, the first prompt arrives, a Bash tool call runs in the sandbox and its output comes back in the
-answer (and ran in aviary's sandbox image, with Jarvis's session commands there), Claude Code runs the conversation at a 1M context window (the window Claude Code states, read from magpie; not the variable the supervisor sets), the wakeup that command armed through the session's Jarvis API arrives as a later turn (all read back
-through magpie's admin API), and destroy burns the source. Nothing of production's is touched; the machine is
-destroyed with its volume at the end (or on Ctrl-C).
+answer (and ran in aviary's sandbox image, with Jarvis's session commands there), Claude Code runs the conversation at
+a 1M context window (the window Claude Code states, read from magpie; not the variable the supervisor sets), the
+wakeup that command armed through the session's Jarvis API arrives as a later turn (all read back through magpie's
+admin API); a conversation begun in the chat (made in magpie as pigeon does) gets the session hermit-jarvis proposes
+through the router, waits in `sandboxWaiting: approval` until the phone approves it, and its held message is answered
+on that session's machine, while a denied one's conversation leaves the chat; and destroy burns the sources. Nothing
+of production's is touched; the machines are destroyed with their volumes at the end (or on Ctrl-C).
 
-- The test machine reaches the run over Fly's private network straight to the session's own 6PN address; off Fly the
-  script makes two WireGuard peers of the org served by `router m-gateway` (that path did not connect from a Fly
-  machine, 2026-11-11).
+- The test machines reach the run over Fly's private network straight to this machine's own 6PN address when it runs
+  on a Fly machine; off Fly it makes two WireGuard peers of the org (the router's and the chat front's) served by
+  `router m-gateway` (that path did not connect from a Fly machine, 2026-11-11).
 - The session image under test is `ghcr.io/de0ch/jarvis4-session:latest` (`E2E_SESSION_IMAGE` for another): a
   harness change is tested once images.yml has built it. hermit-jarvis is always this tree's.
-- `E2E_ONLY=chat` brings up only the chat stack and keeps it (debugging hermit-jarvis against a real magpie).
+- `E2E_ONLY=chat` brings up only the chat stack and keeps it (debugging hermit-jarvis against a real magpie; no Fly
+  token).
 - The test store `aviary-gw` names the run's chat front (`AVIARY_GW_URL`) and the stand-in models (`AVIARY_MODEL_URL`,
   `AVIARY_OPENROUTER_URL` with its `OPENROUTER_API`): the same keys a production store leaves unset
   (chat-gw.deyaochen.com, api.anthropic.com, openrouter.ai).
