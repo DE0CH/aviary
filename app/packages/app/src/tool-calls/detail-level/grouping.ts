@@ -1,4 +1,5 @@
 import { isScheduleCallDetail } from "@/yyc/schedules-text";
+import { isPersonCardCall } from "@/yyc/person-cards-text";
 import { isSentFilesCall } from "@/yyc/sent-files-text";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { StreamItem, ToolCallItem } from "@/types/stream";
@@ -74,6 +75,8 @@ export function isGroupableToolCall(item: StreamItem): item is ToolCallItem {
   if (isSentFilesCall(descriptor.name, descriptor.metadata)) return false;
   // nor the schedules call that set one (its card, yyc/schedules.tsx)
   if (isScheduleCallDetail(descriptor.detail)) return false;
+  // nor a question or wait card (yyc/person-cards.tsx)
+  if (isPersonCardCall(descriptor.metadata)) return false;
   return descriptor.detail.type !== "plan" && name !== "speak";
 }
 

@@ -1,4 +1,5 @@
 import { isScheduleCallDetail } from "@/yyc/schedules-text";
+import { isPersonCardCall } from "@/yyc/person-cards-text";
 import { isSentFilesCall } from "@/yyc/sent-files-text";
 import { getStreamItemMessageId, type StreamItem, type ToolCallItem } from "@/types/stream";
 import { summarizeToolCalls, type OverviewSummary } from "@/tool-calls/detail-level/overview/model";
@@ -58,7 +59,11 @@ function summarizeTurn(
 function isSentFileCall(item: StreamItem): boolean {
   if (item.kind !== "tool_call" || item.payload.source !== "agent") return false;
   const { name, metadata, detail } = item.payload.data;
-  return isSentFilesCall(name, metadata) || isScheduleCallDetail(detail);
+  return isSentFilesCall(name, metadata) || isScheduleCallDetail(detail) || isPersonCardCall(metadata);
+}
+
+function isPersonCardItem(item: StreamItem): boolean {
+  return item.kind === "tool_call" && item.payload.source === "agent" && isPersonCardCall(item.payload.data.metadata);
 }
 
 function hasWork(summary: TurnSummary): boolean {
@@ -124,8 +129,11 @@ export function collapseTurns(input: CollapseTurnsInput): TurnCollapse {
       if (expanded) nestedItemIds.add(item.id);
     }
     if (expanded) output.push(...folded);
+    // a question or wait card stays where it was asked or read, above the reply; files and schedules go under it
+    const cards = pinned.filter(isPersonCardItem);
+    output.push(...cards);
     output.push(...tail.slice(replyIndex, runEnd));
-    output.push(...pinned);
+    output.push(...pinned.filter((item) => !isPersonCardItem(item)));
     if (pinned.length > 0) reordered = true;
   };
 

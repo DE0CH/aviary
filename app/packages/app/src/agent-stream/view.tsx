@@ -1,6 +1,8 @@
 import { isSentFilesCall, openConversationFile, readSentCaption, readSentFiles, SentFilesCards, useConversationFileUrl } from "@/yyc/sent-files";
 import { useSummarisingLabel } from "@/yyc/harness-switch-label";
 import { parseScheduledMessage, readScheduleCall, ScheduledMessage, ScheduleToolCard } from "@/yyc/schedules";
+import { PersonCardView } from "@/yyc/person-cards";
+import { cardViewWhereAsked, readPersonAsk, readPersonRead } from "@/yyc/person-cards-text";
 import { ChatFind, ChatFindExpansion } from "@/agent-stream/chat-find";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
@@ -883,6 +885,24 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           if (data.detail.type === "shell") {
             const call = readScheduleCall(data.detail.command, data.detail.output);
             if (call) return <ScheduleToolCard sessionId={agentId} call={call} />;
+          }
+
+          // a question to the person or a wait on the person (yyc/person-cards.tsx): where it was asked until the AI
+          // has read the answer, then on the call that read it
+          const asked = readPersonAsk(data.metadata);
+          if (asked) {
+            const view = cardViewWhereAsked(asked);
+            return view ? <PersonCardView card={asked} view={view} /> : null;
+          }
+          const read = readPersonRead(data.metadata);
+          if (read.length > 0) {
+            return (
+              <>
+                {read.map((card) => (
+                  <PersonCardView key={card.id} card={card} view="read" />
+                ))}
+              </>
+            );
           }
 
           // files sent to the person: the SendUserFile call, or whichever call sent them (a harness without

@@ -72,6 +72,21 @@ describe("collapseTurns", () => {
     expect(result.turnsByHostId.get("u1")?.summary.tools).toEqual(expect.objectContaining({ commandCount: 1 }));
   });
 
+  it("keeps question and wait cards where they were asked or read, above the reply, when the turn folds", () => {
+    const card = { kind: "question", id: "q-1", input: {}, marker: "(answer to q-1)", state: "answered", askedAt: "x" };
+    const withMeta = (id: string, metadata: Record<string, unknown>): ToolCallItem => {
+      const base = shell(id);
+      const data = (base.payload as { data: object }).data;
+      return { ...base, payload: { source: "agent", data: { ...data, metadata } } } as ToolCallItem;
+    };
+    const asked = withMeta("q-1", { personAsk: { ...card, readBy: "c2" } });
+    const read = withMeta("c2", { personRead: [{ ...card, readBy: "c2" }] });
+    const result = collapse([user("u1"), shell("c1"), asked, read, reply("final")]);
+    expect(ids(result.tail)).toEqual(["u1", "q-1", "c2", "final"]);
+    // neither card's call counts as a step of the folded turn
+    expect(result.turnsByHostId.get("u1")?.summary.tools).toEqual(expect.objectContaining({ commandCount: 1 }));
+  });
+
   it("keeps a call that sent files (its cards) under the reply when the turn folds", () => {
     const file = { path: "out/report.pdf", name: "report.pdf", size: 1024, mediaType: "application/pdf", isImage: false };
     // the tool that sends files, and a shell command that sent some: its files are on the call's metadata
