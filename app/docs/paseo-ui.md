@@ -88,14 +88,15 @@ server (`server/`) serves no deployment.
   `agent-stream/turn-collapse/model.ts`), paths in replies download through the server, uploads through
   `/api/assets/files` the moment a file or a picture is attached (`yyc/asset-upload.ts`, XMLHttpRequest for the bytes
   sent: the chip draws a bar along its foot, `components/attachment-pill.tsx` `UploadOverlay`, and the send waits for it;
-  Deyao, 2026-11-18). A picture goes up as an image (`?kind=image`, `yyc/image-upload.ts`) and the send names it by
+  Deyao, 2026-11-18). A picture goes up as an image (`?kind=image`, `uploadAttachedImage`) and the send names it by
   `images[].uploadId` (an empty `data` beside it, so every listed app build accepts the frame) instead of carrying its
   bytes, so a send between replies and one during a reply carry the same small message and never wait on the store.
   A picture that fails to upload leaves the message box with the server's sentence, as a file does (sending its bytes
   instead waited on the same store and showed only as 「等待網絡」: Jarvis's chat, 2026-11-18, its bucket unreachable);
   one uploaded over 23 h ago (magpie keeps an unsent upload a day), or to a pigeon before `?kind=image` (its answer
   names no upload: YYC AI and the Jarvis chat move their pins apart), is sent with its bytes (`attachments/service.ts`
-  `encodeAttachmentsForSend`, `yyc/image-upload.ts`), the "preparing the workspace" chip (`sandbox-status.ts`,
+  `encodeAttachmentsForSend`, `uploadAttachedImage`). The uploader is a chunk of its own, fetched when something is
+  attached; the entry keeps only `yyc/upload-progress.ts` (the entry had 7 KB of room under its budget), the "preparing the workspace" chip (`sandbox-status.ts`,
   `sandbox-chip.tsx`; only while a sent message waits on the sandbox, the hub never shows it for a turn nobody sent:
   Deyao, 2026-11-03; a start that waits for the person's approval elsewhere, hermit's phase `approval`, says
   "waiting for your approval" instead: the message's `waiting`, `nextPreparing`; a socket that connects again starts
