@@ -45,6 +45,10 @@ impl SandboxState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SandboxPhase {
+    /// The start waits for its person to approve it outside the chat (a deployment where a new conversation's
+    /// sandbox is only made once its person has said yes elsewhere). The turn waiting for it spends none of its
+    /// admission time meanwhile (magpie), and the chat says it waits for the person's approval.
+    Approval,
     Capacity,
     Workspace,
     Placing,
@@ -57,6 +61,7 @@ pub enum SandboxPhase {
 }
 
 wire_enum!(SandboxPhase {
+    Approval => "approval",
     Capacity => "capacity",
     Workspace => "workspace",
     Placing => "placing",

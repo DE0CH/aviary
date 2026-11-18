@@ -123,6 +123,9 @@ pub enum ChangeBody {
     Sandbox {
         /// `preparing` or `ready`.
         state: crate::conversations::SandboxPhase,
+        /// While `preparing`: what the start waits for (`Conversation::sandbox_waiting`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        waiting: Option<crate::conversations::SandboxWaiting>,
     },
     /// An ask opened.
     Ask {

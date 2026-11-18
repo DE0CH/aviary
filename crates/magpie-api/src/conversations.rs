@@ -45,6 +45,10 @@ pub struct Conversation {
     pub last_turn: Option<LastTurn>,
     /// `preparing` while acquisition shows the chip, `ready` once ready during that turn, null otherwise.
     pub sandbox: Option<SandboxPhase>,
+    /// While `sandbox` is `preparing`: what the start waits for, when the chip says more than that it is being
+    /// prepared (hermit's phase `approval`: its person's approval outside the chat). Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_waiting: Option<SandboxWaiting>,
     /// The open asks (at most one today).
     #[serde(default)]
     pub asks: Vec<Ask>,
@@ -170,6 +174,28 @@ pub enum SandboxPhase {
     Preparing,
     /// Ready during this turn.
     Ready,
+}
+
+/// What a preparing sandbox waits for (the chip's words).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SandboxWaiting {
+    /// Its person's approval outside the chat (hermit's phase `approval`).
+    Approval,
+    /// A value this build does not know (the chip then says it is being prepared).
+    #[serde(other)]
+    Unknown,
+}
+
+impl SandboxWaiting {
+    /// The column value (`conversations.sandbox_waiting`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Approval => "approval",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 /// An open ask (`AskUserQuestion` and similar).

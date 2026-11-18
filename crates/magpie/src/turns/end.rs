@@ -187,6 +187,7 @@ pub async fn end(tx: &Tx<'_>, person: &str, turn: &Turn, ending: Ending) -> Resu
             turn.conversation,
             &ChangeBody::Sandbox {
                 state: SandboxPhase::Ready,
+                waiting: None,
             },
         )
         .await?;

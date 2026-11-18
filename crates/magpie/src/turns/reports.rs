@@ -59,6 +59,7 @@ async fn running(tx: &Tx<'_>, c: &Locked, caller: &Sandbox, turn: &Turn, r: &Tur
             c.id,
             &ChangeBody::Sandbox {
                 state: SandboxPhase::Ready,
+                waiting: None,
             },
         )
         .await?;

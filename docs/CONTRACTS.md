@@ -282,7 +282,11 @@ What an implementation must do, beyond the shapes:
   (`{reason: "disabled", retryAfterS}` with `retry-after`). It never runs the start inside the request, never answers
   402 or 429. `GET …/sandbox?waitMs=1..25000&afterVersion=` holds until the version passes `afterVersion` or the
   state leaves `starting`, then answers the current object; 404 `no_sandbox`, except that a sandbox gone less than
-  10 min ago is still answered. A new sandbox of a conversation has a new `id`.
+  10 min ago is still answered. A new sandbox of a conversation has a new `id`. A `starting` sandbox's `phase` says
+  where the start is; `approval` means it waits for its person to approve it outside the chat (a deployment where a
+  new conversation's sandbox is only made once its person has said yes elsewhere): magpie's turn waiting for it spends none of its admission time meanwhile, and the chat says
+  it waits for the person's approval (magpie's `Conversation.sandboxWaiting` and change `sandbox.waiting`,
+  pigeon's `yyc.sandbox_status` `waiting`). A hermit that never needs one never reports it.
 - **Release.** `POST …/sandbox/release {"reason": "deleted" | "offboarded" | "requested"}` → `{"released": 0|1,
   "sandbox"}` at once; `deleted` and `offboarded` are forced, `requested` waits for the next idle point. Every end
   carries `release {reason, note, code, message}`: `reason` is one `ReleaseReason` and `code` follows from it

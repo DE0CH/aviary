@@ -2,7 +2,7 @@
 //! without it and spliced per socket ([`super::messages::session_with_subscription`]), so a poller serialises a row
 //! once for every socket it reaches (8.5).
 
-use magpie_api::conversations::{Ask, Conversation};
+use magpie_api::conversations::{Ask, Conversation, SandboxWaiting};
 use magpie_api::errors::ErrorInfo;
 use magpie_api::turns::{AgentPermissionResponse, TurnPhase};
 use serde_json::{Map, Value, json};
@@ -106,10 +106,16 @@ pub fn workspace_remove(id: &Uuid, generation: &str, seq: u64) -> Value {
     json!({"kind": "remove", "id": workspace_id(id), "generation": generation, "seq": seq})
 }
 
-/// The sandbox chip message (`compat::SANDBOX_STATUS`, 7.6.5).
+/// The sandbox chip message (`compat::SANDBOX_STATUS`, 7.6.5). `waiting`: while `preparing`, what the start waits
+/// for (`approval`: its person's approval outside the chat), which the chip says instead of "preparing"; an app that
+/// does not know the member shows "preparing".
 #[must_use]
-pub fn sandbox_status(agent: &Uuid, state: &str) -> Value {
-    json!({"agentId": agent, "state": state})
+pub fn sandbox_status(agent: &Uuid, state: &str, waiting: Option<SandboxWaiting>) -> Value {
+    let mut v = json!({"agentId": agent, "state": state});
+    if let Some(w) = waiting.filter(|w| *w != SandboxWaiting::Unknown) {
+        v["waiting"] = json!(w.as_str());
+    }
+    v
 }
 
 /// `agent_permission_request` (7.5.9).

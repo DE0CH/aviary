@@ -447,6 +447,22 @@ impl FakeHermit {
         self.changed.notify_waiters();
     }
 
+    /// Move `cid`'s starting sandbox to `phase` now (a start waiting for its person's approval, then going on).
+    pub fn set_phase(&self, cid: Uuid, phase: SandboxPhase) {
+        let mut m = self.lock();
+        if let Some(i) = Self::live_index(&m, cid)
+            && m.sandboxes[i].s.state == SandboxState::Starting
+        {
+            let s = &mut m.sandboxes[i];
+            s.s.phase = Some(phase);
+            s.s.version += 1;
+            let snap = s.s.clone();
+            Self::event(&mut m, &snap);
+        }
+        drop(m);
+        self.changed.notify_waiters();
+    }
+
     /// End `cid`'s live sandbox now (`releasing` then `gone` with `reason`), as hermit's janitor or a host loss
     /// would.
     pub fn end(&self, cid: Uuid, reason: ReleaseReason, message: &str) {

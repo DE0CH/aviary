@@ -11,7 +11,7 @@ use common::model::{self, Model};
 use common::ws::Ws;
 use common::{ADMIN, Harness, Opts, STAFF, STAFF2, body_json};
 use magpie_api::changes::ChangeBody;
-use magpie_api::conversations::{Ask, SandboxPhase};
+use magpie_api::conversations::{Ask, SandboxPhase, SandboxWaiting};
 use magpie_api::errors::{DataCode, ErrorCode, ErrorInfo, Refusal};
 use magpie_api::rows::{AssistantItem, ErrorItem, RowItem, ToolItem, ToolResult, ToolStatus};
 use magpie_api::turns::{TurnOrigin, TurnPhase};
@@ -872,6 +872,29 @@ async fn sandbox_status_goes_to_every_socket_and_is_replayed_on_connect() {
         a.next_session(pigeon::paseo::compat::SANDBOX_STATUS).await["state"],
         "ready"
     );
+}
+
+/// A start that waits for its person's approval elsewhere (hermit's phase `approval`): the chip message says so,
+/// live and to a tab that connects meanwhile, and says nothing more once the start goes on.
+#[tokio::test]
+async fn sandbox_status_says_a_start_waits_for_an_approval() {
+    let e = env().await;
+    let c = e.m.add(STAFF, None);
+    let mut a = e.ws(STAFF).await;
+    a.rpc("fetch_agents_request", json!({})).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    e.m.sandbox_waiting(c, SandboxPhase::Preparing, Some(SandboxWaiting::Approval));
+    let v = a.next_session(pigeon::paseo::compat::SANDBOX_STATUS).await;
+    assert_eq!(v, json!({"agentId": c, "state": "preparing", "waiting": "approval"}));
+    tokio::time::sleep(model_cache()).await;
+    let mut b = e.ws(STAFF).await;
+    let (_, _) = b.rpc("fetch_agents_request", json!({"subscribe": {}})).await;
+    let v = b.next_session(pigeon::paseo::compat::SANDBOX_STATUS).await;
+    assert_eq!(v, json!({"agentId": c, "state": "preparing", "waiting": "approval"}));
+    // approved: preparing, with nothing about an approval
+    e.m.sandbox_waiting(c, SandboxPhase::Preparing, None);
+    let v = a.next_session(pigeon::paseo::compat::SANDBOX_STATUS).await;
+    assert_eq!(v, json!({"agentId": c, "state": "preparing"}));
 }
 
 #[tokio::test]

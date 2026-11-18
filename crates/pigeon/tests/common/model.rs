@@ -19,7 +19,7 @@ use axum::body::Body;
 use magpie_api::changes::{After, Change, ChangeBody, ChangesQuery, ChangesResponse, RemovedReason, TurnChange};
 use magpie_api::conversations::{
     Ask, Conversation, CreateRequest, CreateResponse, ListPosition, ListQuery, ListResponse, ListState, Origin,
-    OriginKind, RenameRequest, RunInfo, RunState, SandboxPhase, TitleSource, TurnRef,
+    OriginKind, RenameRequest, RunInfo, RunState, SandboxPhase, SandboxWaiting, TitleSource, TurnRef,
 };
 use magpie_api::errors::{ErrorCode, ErrorInfo, Refusal};
 use magpie_api::rows::{Prompt, PromptsResponse, Row, RowItem, TimelinePage, TimelineQuery, UserItem};
@@ -167,6 +167,7 @@ impl Model {
             turn: None,
             last_turn: None,
             sandbox: None,
+            sandbox_waiting: None,
             asks: Vec::new(),
             run: RunInfo {
                 state: RunState::Idle,
@@ -365,8 +366,16 @@ impl Model {
     }
 
     pub fn sandbox(&self, id: Uuid, phase: SandboxPhase) {
-        self.edit(id, |c| c.sandbox = Some(phase));
-        self.change(id, ChangeBody::Sandbox { state: phase });
+        self.sandbox_waiting(id, phase, None);
+    }
+
+    /// The chip, with what the start waits for.
+    pub fn sandbox_waiting(&self, id: Uuid, phase: SandboxPhase, waiting: Option<SandboxWaiting>) {
+        self.edit(id, |c| {
+            c.sandbox = Some(phase);
+            c.sandbox_waiting = waiting;
+        });
+        self.change(id, ChangeBody::Sandbox { state: phase, waiting });
     }
 
     pub fn open_ask(&self, id: Uuid, ask: Ask) {

@@ -25,7 +25,7 @@ use magpie::turns::driver::Driver;
 use magpie::turns::sweeper;
 use magpie_api::changes::{After, ChangeBody, ChangesQuery};
 use magpie_api::client::{Client, ClientError};
-use magpie_api::conversations::{CreateRequest, RunState, SandboxPhase};
+use magpie_api::conversations::{CreateRequest, RunState, SandboxPhase, SandboxWaiting};
 use magpie_api::errors::{DataCode, ErrorCode};
 use magpie_api::sandbox::{
     AckRequest, AckResult, AgentTurnRequest, AskOutcome, AskReport, AskResolvedReport, CcFacts, CommandBody,
@@ -443,7 +443,7 @@ async fn a_slow_sandbox_shows_preparing_then_ready() {
         .await
         .into_iter()
         .filter_map(|c| match c {
-            ChangeBody::Sandbox { state } => Some(state),
+            ChangeBody::Sandbox { state, .. } => Some(state),
             _ => None,
         })
         .collect();
@@ -842,9 +842,81 @@ async fn admission_and_preparing_time_out_after_15_minutes() {
             .rev()
             .find(|c| matches!(c, ChangeBody::Sandbox { .. })),
         Some(ChangeBody::Sandbox {
-            state: SandboxPhase::Ready
+            state: SandboxPhase::Ready,
+            waiting: None
         })
     ));
+}
+
+/// A start that waits for its person's approval elsewhere (hermit's phase `approval`: a deployment that makes a new
+/// conversation's sandbox only once its person has said yes outside the chat): the chip says so, the turn spends none
+/// of its admission time meanwhile, and the chip says preparing again once the start goes on.
+#[tokio::test]
+async fn a_start_waiting_for_approval_says_so_and_spends_no_admission_time() {
+    let w = World::new("turn_approval", None).await;
+    let conv = w.conversation().await;
+    let turn = w.send(conv, "m1", "hi").await;
+    assert!(w.state_is(turn, "preparing").await, "no ready within 1 s");
+    let deadline = || async {
+        w.pool()
+            .get()
+            .await
+            .unwrap()
+            .query_one("select deadline from turns where id = $1", &[&turn])
+            .await
+            .unwrap()
+            .get::<_, Option<time::OffsetDateTime>>(0)
+    };
+    let admitted = deadline().await;
+    let waiting = || async {
+        w.a.pigeon()
+            .person(ALICE)
+            .get_conversation(conv)
+            .await
+            .unwrap()
+            .sandbox_waiting
+    };
+    w.fake().set_phase(conv, hermit_api::sandbox::SandboxPhase::Approval);
+    assert!(
+        common::eventually(Duration::from_secs(10), async || waiting().await
+            == Some(SandboxWaiting::Approval))
+        .await,
+        "the chip says it waits for an approval"
+    );
+    // the deadline stays ADMIT_TIMEOUT ahead while hermit says so
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    w.fake().set_phase(conv, hermit_api::sandbox::SandboxPhase::Approval);
+    assert!(
+        common::eventually(Duration::from_secs(10), async || deadline().await > admitted).await,
+        "the admission clock stands still while the start waits for an approval"
+    );
+    w.fake().set_phase(conv, hermit_api::sandbox::SandboxPhase::Host);
+    assert!(
+        common::eventually(Duration::from_secs(10), async || waiting().await.is_none()).await,
+        "approved: the chip says preparing"
+    );
+    let c = w.a.pigeon().person(ALICE).get_conversation(conv).await.unwrap();
+    assert_eq!(c.sandbox, Some(SandboxPhase::Preparing));
+    w.fake().make_ready(conv);
+    assert!(w.state_is(turn, "starting").await);
+    let chips: Vec<_> = w
+        .changes()
+        .await
+        .into_iter()
+        .filter_map(|c| match c {
+            ChangeBody::Sandbox { state, waiting } => Some((state, waiting)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        chips,
+        [
+            (SandboxPhase::Preparing, None),
+            (SandboxPhase::Preparing, Some(SandboxWaiting::Approval)),
+            (SandboxPhase::Preparing, None),
+            (SandboxPhase::Ready, None),
+        ]
+    );
 }
 
 #[tokio::test]
@@ -2941,7 +3013,7 @@ async fn a_drivers_answer_never_records_another_sandbox_over_the_feeds() {
         let pool = w.pool().clone();
         async move {
             aviary_pg::tx!(&pool, |t| -> magpie::error::Result<()> {
-                record_sandbox(t, conv, sandbox, state, version, seen).await
+                record_sandbox(t, conv, sandbox, state, None, version, seen).await
             })
             .await
             .unwrap();

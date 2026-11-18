@@ -293,14 +293,14 @@ impl Poller {
                 if ended && self.preparing.remove(&c) {
                     let f = session(
                         crate::paseo::messages::sandbox_status_type(),
-                        &pushes::sandbox_status(&c, "ready"),
+                        &pushes::sandbox_status(&c, "ready", None),
                     );
                     for conn in conns {
                         conn.send(crate::paseo::messages::sandbox_status_type(), f.clone());
                     }
                 }
             }
-            ChangeBody::Sandbox { state } => {
+            ChangeBody::Sandbox { state, waiting } => {
                 let state = match state {
                     magpie_api::conversations::SandboxPhase::Preparing => {
                         self.preparing.insert(c);
@@ -313,7 +313,7 @@ impl Poller {
                 };
                 let f = session(
                     crate::paseo::messages::sandbox_status_type(),
-                    &pushes::sandbox_status(&c, state),
+                    &pushes::sandbox_status(&c, state, *waiting),
                 );
                 for conn in conns {
                     conn.send(crate::paseo::messages::sandbox_status_type(), f.clone());

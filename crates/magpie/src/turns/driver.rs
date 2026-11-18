@@ -5,7 +5,8 @@
 //! long-poll `GET …?waitMs=25000&afterVersion=<v>`, so the turn moves the moment hermit's state changes. No answer
 //! that says ready within 1 s of admission shows the preparing chip (`sandbox.preparing`). Errors and timeouts retry
 //! with backoff (0.5 s doubling to 10 s) until the turn's deadline (`turns.deadline`: admission + 15 min, and a fresh
-//! 15 min from a re-acquire, below, capped at admission + 45 min).
+//! 15 min from a re-acquire, below, capped at admission + 45 min; kept 15 min ahead while hermit says the start waits
+//! for its person's approval, phase `approval`, which the chip then says instead of "preparing").
 //!
 //! A replica that dies stops renewing; the sweeper of any replica then claims the turn ([`super::sweeper`]) and
 //! continues it from its state (hermit's `PUT` is idempotent). A drain hands its claims back at once. Every write of
@@ -24,10 +25,13 @@ use std::time::Duration;
 use aviary_pg::{Pool, Tx};
 use hermit_api::client::ClientError;
 use hermit_api::error::codes;
-use hermit_api::sandbox::{PutSandbox, PutSandboxRequest, Release, ReleaseCode, Sandbox, SandboxQuery, SandboxState};
+use hermit_api::sandbox::{
+    PutSandbox, PutSandboxRequest, Release, ReleaseCode, Sandbox, SandboxPhase as HermitPhase, SandboxQuery,
+    SandboxState,
+};
 use magpie_api::Empty;
 use magpie_api::changes::ChangeBody;
-use magpie_api::conversations::SandboxPhase;
+use magpie_api::conversations::{SandboxPhase, SandboxWaiting};
 use magpie_api::errors::{DataCode, ErrorInfo};
 use magpie_api::events::EventBody;
 use time::OffsetDateTime;
@@ -141,25 +145,77 @@ pub async fn record_sandbox(
     conversation: Uuid,
     sandbox: Uuid,
     state: SandboxState,
+    phase: Option<HermitPhase>,
     version: u64,
     seen: Seen,
 ) -> Result<()> {
     let version = i64::try_from(version).unwrap_or(i64::MAX);
-    tx.execute(
-        "update conversations set hermit_sandbox = $2, hermit_state = $3, hermit_version = $4
-         where id = $1
-           and ((hermit_sandbox is distinct from $2 and $3 <> 'gone' and ($5 or hermit_sandbox is null))
-                or (hermit_sandbox = $2 and coalesce(hermit_version, -1) < $4))",
-        &[
-            &conversation,
-            &sandbox,
-            &state.as_str(),
-            &version,
-            &(seen == Seen::Feed),
-        ],
-    )
-    .await?;
+    let phase = phase
+        .filter(|_| state == SandboxState::Starting)
+        .map(HermitPhase::as_str);
+    let row = tx
+        .query_opt(
+            "with old as (select hermit_state, hermit_phase from conversations where id = $1)
+             update conversations c set hermit_sandbox = $2, hermit_state = $3, hermit_version = $4, hermit_phase = $6
+             from old
+             where c.id = $1
+               and ((c.hermit_sandbox is distinct from $2 and $3 <> 'gone' and ($5 or c.hermit_sandbox is null))
+                    or (c.hermit_sandbox = $2 and coalesce(c.hermit_version, -1) < $4))
+             returning old.hermit_state, old.hermit_phase, c.sandbox_phase, c.person",
+            &[
+                &conversation,
+                &sandbox,
+                &state.as_str(),
+                &version,
+                &(seen == Seen::Feed),
+                &phase,
+            ],
+        )
+        .await?;
+    // the chip shows what the start waits for: a change of it while the chip shows is pushed
+    if let Some(r) = row {
+        let before = waiting_for(r.get(0), r.get(1));
+        let after = waiting_for(Some(state.as_str()), phase);
+        let shown = r.get::<_, Option<String>>(2).as_deref() == Some("preparing");
+        // a sandbox past starting ends the chip itself (ready, or gone)
+        if before != after && shown && state == SandboxState::Starting {
+            let person: String = r.get(3);
+            changes::emit(
+                tx,
+                &person,
+                conversation,
+                &ChangeBody::Sandbox {
+                    state: SandboxPhase::Preparing,
+                    waiting: after,
+                },
+            )
+            .await?;
+            changes::upserted(tx, &person, conversation).await?;
+        }
+    }
     Ok(())
+}
+
+/// What a preparing sandbox waits for, from hermit's view of it as recorded (`hermit_state`, `hermit_phase`): its
+/// person's approval while hermit says the start is in phase `approval`; nothing to say otherwise.
+#[must_use]
+pub fn waiting_for(state: Option<&str>, phase: Option<&str>) -> Option<SandboxWaiting> {
+    (state == Some(SandboxState::Starting.as_str()) && phase == Some(HermitPhase::Approval.as_str()))
+        .then_some(SandboxWaiting::Approval)
+}
+
+/// What the conversation's preparing sandbox waits for ([`waiting_for`] on its recorded view).
+///
+/// # Errors
+/// When a statement fails.
+pub async fn waiting(tx: &Tx<'_>, conversation: Uuid) -> Result<Option<SandboxWaiting>> {
+    let r = tx
+        .query_opt(
+            "select hermit_state, hermit_phase from conversations where id = $1",
+            &[&conversation],
+        )
+        .await?;
+    Ok(r.and_then(|r| waiting_for(r.get(0), r.get(1))))
 }
 
 /// What a sandbox that went away means for a turn that has not ended.
@@ -254,6 +310,7 @@ async fn show_preparing(tx: &Tx<'_>, person: &str, c: &Conv, conversation: Uuid,
             conversation,
             &ChangeBody::Sandbox {
                 state: SandboxPhase::Preparing,
+                waiting: waiting(tx, conversation).await?,
             },
         )
         .await?;
@@ -475,7 +532,8 @@ async fn acquire(d: &Driver, c: &Claimed, turn: Uuid) -> Result<()> {
                         }
                     }
                     Ok(Ok(s)) => {
-                        if still_waiting(d, turn).await? {
+                        // the same sandbox, still starting: recorded (its phase may have moved)
+                        if still_waiting(d, turn).await? && step_starting(d, c.conversation, turn, &s).await? {
                             Next::Wait(sandbox, s.version, 0)
                         } else {
                             Next::Done
@@ -579,12 +637,21 @@ async fn step_preparing(d: &Driver, conversation: Uuid, turn: Uuid) -> Result<bo
     })
 }
 
-/// hermit answered `starting`: the sandbox is recorded; true while the turn still waits.
+/// hermit answered `starting`: the sandbox is recorded; true while the turn still waits. A start that waits for its
+/// person's approval (phase `approval`) spends none of the turn's admission time: the deadline stays
+/// [`limits::ADMIT_TIMEOUT`] ahead while hermit says so (each long-poll answers within 25 s).
 async fn step_starting(d: &Driver, conversation: Uuid, turn: Uuid, s: &Sandbox) -> Result<bool> {
     waiting_step!(d, conversation, turn, |t, _c, tr| {
         t.execute("update turns set sandbox_id = $2 where id = $1", &[&tr.id, &s.id])
             .await?;
-        record_sandbox(t, conversation, s.id, s.state, s.version, Seen::Answer).await?;
+        record_sandbox(t, conversation, s.id, s.state, s.phase, s.version, Seen::Answer).await?;
+        if s.phase == Some(HermitPhase::Approval) {
+            t.execute(
+                "update turns set deadline = greatest(deadline, now() + make_interval(secs => $2)) where id = $1",
+                &[&tr.id, &secs(limits::ADMIT_TIMEOUT)],
+            )
+            .await?;
+        }
         Ok(true)
     })
 }
@@ -611,7 +678,7 @@ pub async fn mark_ready(tx: &Tx<'_>, c: &Conv, turn: &Turn, s: &Sandbox) -> Resu
         &[&turn.id, &s.id, &secs(limits::START_ACK_TIMEOUT)],
     )
     .await?;
-    record_sandbox(tx, turn.conversation, s.id, s.state, s.version, Seen::Answer).await?;
+    record_sandbox(tx, turn.conversation, s.id, s.state, s.phase, s.version, Seen::Answer).await?;
     if c.sandbox_phase.as_deref() == Some("preparing") {
         events::append(
             tx,
@@ -625,6 +692,7 @@ pub async fn mark_ready(tx: &Tx<'_>, c: &Conv, turn: &Turn, s: &Sandbox) -> Resu
             turn.conversation,
             &ChangeBody::Sandbox {
                 state: SandboxPhase::Ready,
+                waiting: None,
             },
         )
         .await?;
@@ -646,7 +714,7 @@ async fn step_gone(d: &Driver, conversation: Uuid, turn: Uuid, s: &Sandbox) -> R
     let again = &again_flag;
     waiting_step!(d, conversation, turn, |t, c, tr| {
         again.store(false, std::sync::atomic::Ordering::Relaxed);
-        record_sandbox(t, conversation, s.id, s.state, s.version, Seen::Answer).await?;
+        record_sandbox(t, conversation, s.id, s.state, s.phase, s.version, Seen::Answer).await?;
         let (_, acked) = start_turn_status(t, &tr).await?;
         match gone_verdict(&tr, acked, c.deleted, s.release.as_ref()) {
             Gone::Fail(e) => end::end(t, &c.person, &tr, Ending::failed(e)).await?,

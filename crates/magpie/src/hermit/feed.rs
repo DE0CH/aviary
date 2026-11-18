@@ -137,7 +137,16 @@ pub async fn apply(tx: &Tx<'_>, ev: &SandboxEvent) -> Result<()> {
     let Some(c) = lock_id(tx, ev.conversation_id).await? else {
         return Ok(());
     };
-    record_sandbox(tx, ev.conversation_id, ev.sandbox_id, ev.state, ev.version, Seen::Feed).await?;
+    record_sandbox(
+        tx,
+        ev.conversation_id,
+        ev.sandbox_id,
+        ev.state,
+        ev.phase,
+        ev.version,
+        Seen::Feed,
+    )
+    .await?;
     if ev.state != SandboxState::Gone {
         return Ok(());
     }

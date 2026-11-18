@@ -158,7 +158,8 @@ impl Start {
             let step = match row.phase.unwrap_or(SandboxPhase::Capacity) {
                 SandboxPhase::Capacity => self.capacity(&row).await,
                 SandboxPhase::Workspace => self.workspace(&row).await,
-                SandboxPhase::Placing | SandboxPhase::Unknown => self.placing(&row).await,
+                // this hermit never waits for an approval: a row in one (none is ever written) is placed as an unknown one is
+                SandboxPhase::Placing | SandboxPhase::Approval | SandboxPhase::Unknown => self.placing(&row).await,
                 SandboxPhase::Host => self.host(&row).await,
                 SandboxPhase::Image => self.image(&row).await,
                 SandboxPhase::Creating => self.creating(&row).await,

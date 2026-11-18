@@ -780,7 +780,7 @@ async fn takeover_in(phase: SandboxPhase) {
         }
         SandboxPhase::Creating => h.fabric.hold_create.store(true, Ordering::SeqCst),
         SandboxPhase::Supervisor => *h.fabric.ready_delay.lock().unwrap() = Duration::from_secs(3),
-        SandboxPhase::Unknown => unreachable!(),
+        SandboxPhase::Approval | SandboxPhase::Unknown => unreachable!(),
     }
     let cid = Uuid::now_v7();
     assert_eq!(put(&h, &a, cid, STAFF).await.status, 202);

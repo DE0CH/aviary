@@ -401,7 +401,7 @@ impl Handler {
             {
                 self.reply(
                     messages::sandbox_status_type(),
-                    &pushes::sandbox_status(&c.id, "preparing"),
+                    &pushes::sandbox_status(&c.id, "preparing", c.sandbox_waiting),
                 );
             }
         }

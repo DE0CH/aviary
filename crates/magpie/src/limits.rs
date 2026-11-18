@@ -196,7 +196,8 @@ pub const BLOB_GC_BATCH: i64 = 500;
 /// The bucket reconcile: how often.
 pub const BUCKET_RECONCILE_EVERY: Duration = Duration::from_hours(7 * 24);
 /// Turns (magpie 8.8): an admitted or preparing turn whose sandbox is not ready this long after admission fails
-/// `sandbox.timeout`.
+/// `sandbox.timeout`. A start in hermit's phase `approval` (it waits for its person's approval elsewhere) keeps the
+/// deadline this far ahead: the wait is the person's, not the sandbox's.
 pub const ADMIT_TIMEOUT: Duration = Duration::from_mins(15);
 /// A turn whose sandboxes keep going away before its `start_turn` is acknowledged gets a fresh [`ADMIT_TIMEOUT`] at
 /// each re-acquire, but never past this long after admission (then `sandbox.timeout`).

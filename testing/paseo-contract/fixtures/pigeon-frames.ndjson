@@ -234,6 +234,7 @@
 {"case":"send, stop, asks","dir":"out","frame":{"message":{"payload":{"agentId":"00000000-0000-4000-8000-000000000000","requestId":"ask-1","resolution":{"behavior":"deny","message":"canceled"}},"type":"agent_permission_resolved"},"type":"session"}}
 {"case":"rename, delete, restore","dir":"out","frame":{"message":{"payload":{"agentId":"00000000-0000-4000-8000-000000000000","requestId":"req-48","status":"agent_refreshed"},"type":"status"},"type":"session"}}
 {"case":"rename, delete, restore","dir":"out","frame":{"message":{"payload":{"agentId":"00000000-0000-4000-8000-000000000000","requestId":"req-51"},"type":"agent_deleted"},"type":"session"}}
+{"case":"","dir":"out","frame":{"message":{"payload":{"agentId":"00000000-0000-4000-8000-000000000000","state":"preparing","waiting":"approval"},"type":"yyc.sandbox_status"},"type":"session"}}
 {"case":"lists","dir":"out","frame":{"message":{"payload":{"agentId":"00000000-0000-4000-8000-000000000000","state":"preparing"},"type":"yyc.sandbox_status"},"type":"session"}}
 {"case":"new conversation","dir":"out","frame":{"message":{"payload":{"agentId":"00000000-0000-4000-8000-000000000000","state":"ready"},"type":"yyc.sandbox_status"},"type":"session"}}
 {"case":"timeline","dir":"out","frame":{"message":{"payload":{"agentIds":["00000000-0000-4000-8000-000000000000"],"requestId":"req-28","subscriptionId":"00000000-0000-4000-8000-000000000000"},"type":"agent.timeline.set_subscription.response"},"type":"session"}}
