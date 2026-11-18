@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, useWindowDimensions, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, Info } from "lucide-react-native";
@@ -25,6 +25,7 @@ import {
   menuDefaults,
   menuModels,
   menuState,
+  menuWidth,
   movesHarness,
   pickSettled,
   rememberLevel,
@@ -208,6 +209,7 @@ export function YycModelMenu(props: { serverId: string; agentId: string; draft: 
 function ModelMenu({ choice }: { choice: Choice }) {
   const { t } = useTranslation();
   const canPick = useModelPickAvailable();
+  const { width: windowWidth } = useWindowDimensions();
   const state = menuState(choice.models, choice.modelId, choice.level);
   const levelLabel = useCallback((level: string) => t(`conversation.model.level.${level}`, { defaultValue: level }), [t]);
   if (!state.model) return null;
@@ -248,7 +250,7 @@ function ModelMenu({ choice }: { choice: Choice }) {
         ) : null}
         <ThemedChevron size={ICON_SIZE.sm} uniProps={mutedColor} />
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="start" width={272} sheetTitle={t("conversation.model.title")}>
+      <DropdownMenuContent side="top" align="start" width={menuWidth(state.row.length, windowWidth)} sheetTitle={t("conversation.model.title")}>
         <View style={styles.heading}>
           <Text style={styles.headingText}>{t("conversation.model.title")}</Text>
           <Tooltip delayDuration={150} enabledOnDesktop enabledOnMobile>

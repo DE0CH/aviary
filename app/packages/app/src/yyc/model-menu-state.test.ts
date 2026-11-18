@@ -4,6 +4,7 @@ import {
   menuDefaults,
   menuModels,
   menuState,
+  menuWidth,
   movesHarness,
   runningModel,
   pickSettled,
@@ -59,6 +60,18 @@ describe("the model menu", () => {
     const plain = menuModels([{ provider: "claude", id: "a", label: "A", isDefault: true }]);
     expect(menuState(plain, null, null)).toMatchObject({ row: [], level: null });
     expect(menuState([], null, null)).toEqual({ models: [], model: null, row: [], level: null });
+  });
+
+  // A six-position row (Claude's five efforts and none) at 272 px gave each cell 42 px, and the English labels
+  // clipped: Medium is 44 px, Standard 48.5, Extended 50 at 12 px. The menu widens with the row.
+  it("widens with the row so six labels fit, never past the window", () => {
+    expect(menuWidth(0, 1200)).toBe(272);
+    expect(menuWidth(4, 1200)).toBe(272);
+    expect(menuWidth(5, 1200)).toBe(290);
+    expect(menuWidth(6, 1200)).toBe(344);
+    // a window narrower than the menu: the menu takes what the window has
+    expect(menuWidth(6, 300)).toBe(284);
+    expect(menuWidth(6, 0)).toBe(0);
   });
 
   // Deyao, 2026-11-13: a click on a thinking level lagged (it showed only once the server had answered).
