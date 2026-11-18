@@ -351,8 +351,8 @@ fn entry_xml(s: &S, base: &str, user: &str, rel: &Path, m: &std::fs::Metadata) -
     } else {
         let mime = mime_guess::from_path(rel).first_or_octet_stream();
         x.push_str(&format!(
-            "<d:resourcetype/><d:getcontentlength>{}</d:getcontentlength><oc:size>{}</oc:size><d:getcontenttype>{}</d:getcontenttype><oc:has-preview>0</oc:has-preview><oc:downloadURL>{}{}</oc:downloadURL>",
-            m.len(), m.len(), mime, esc(base), esc(&href(rel, false))
+            "<d:resourcetype/><d:getcontentlength>{}</d:getcontentlength><oc:size>{}</oc:size><d:getcontenttype>{}</d:getcontenttype><oc:has-preview>{}</oc:has-preview><oc:downloadURL>{}{}</oc:downloadURL>",
+            m.len(), m.len(), mime, u8::from(previewable(rel)), esc(base), esc(&href(rel, false))
         ));
     }
     x.push_str("</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>");
@@ -371,6 +371,57 @@ fn multistatus(body: String) -> Res {
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?><d:multistatus xmlns:s=\"http://sabredav.org/ns\" xmlns:d=\"DAV:\" xmlns:oc=\"http://owncloud.org/ns\">{body}</d:multistatus>"
         )))
         .unwrap()
+}
+
+// ------------------------------------------------------------------------------------------------------- previews
+
+/// Pictures ffmpeg draws a preview of: every video, and the common still images.
+fn previewable(rel: &Path) -> bool {
+    let mime = mime_guess::from_path(rel).first_or_octet_stream();
+    mime.type_() == "video" || matches!(mime.essence_str(), "image/jpeg" | "image/png" | "image/gif" | "image/webp" | "image/bmp" | "image/tiff")
+}
+
+/// At most this many ffmpeg runs at once in one server (each decodes one frame on one thread).
+static PREVIEWS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
+/// The page's preview of a file: one frame (a second in, for a video) as a JPEG that fits in `x` by `y`, its shape
+/// kept; 404 when there is none, so the page shows the file's icon.
+async fn preview(full: &Path, rel: &Path, q: &[(String, String)]) -> Result<Res, Res> {
+    if !previewable(rel) {
+        return Err(status(StatusCode::NOT_FOUND));
+    }
+    let dim = |k: &str| q.iter().find(|(n, _)| n == k).and_then(|(_, v)| v.parse::<u32>().ok()).unwrap_or(256).clamp(16, 1024);
+    let (x, y) = (dim("x"), dim("y"));
+    let video = mime_guess::from_path(rel).first_or_octet_stream().type_() == "video";
+    let _turn = PREVIEWS.acquire().await.map_err(|_| status(StatusCode::SERVICE_UNAVAILABLE))?;
+    let mut jpeg = frame(full, x, y, video.then_some("1")).await;
+    if jpeg.is_none() && video {
+        // shorter than a second: the first frame
+        jpeg = frame(full, x, y, None).await;
+    }
+    let jpeg = jpeg.ok_or_else(|| status(StatusCode::NOT_FOUND))?;
+    // the page puts the file's etag in the address (`c`), so a preview it asked for that way never goes stale
+    let cache = if q.iter().any(|(k, _)| k == "c") { "private, max-age=31536000, immutable" } else { "no-cache" };
+    Ok(Response::builder()
+        .header(header::CONTENT_TYPE, "image/jpeg")
+        .header(header::CACHE_CONTROL, cache)
+        .body(Body::from(jpeg))
+        .unwrap())
+}
+
+/// One frame of `file` at `at` seconds (keyframes only, one thread: little memory), scaled to fit `x` by `y`.
+async fn frame(file: &Path, x: u32, y: u32, at: Option<&str>) -> Option<Vec<u8>> {
+    let mut cmd = tokio::process::Command::new("ffmpeg");
+    cmd.args(["-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "1"]);
+    if let Some(t) = at {
+        cmd.args(["-skip_frame", "nokey", "-ss", t]);
+    }
+    cmd.arg("-i").arg(file);
+    cmd.args(["-frames:v", "1", "-vf", &format!("scale={x}:{y}:force_original_aspect_ratio=decrease"), "-q:v", "5"]);
+    cmd.args(["-f", "image2pipe", "-c:v", "mjpeg", "pipe:1"]);
+    cmd.stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true);
+    let out = tokio::time::timeout(std::time::Duration::from_secs(30), cmd.output()).await.ok()?.ok()?;
+    (out.status.success() && out.stdout.starts_with(&[0xff, 0xd8])).then_some(out.stdout)
 }
 
 async fn dav(s: &S, user: &str, rest: &str, req: Request) -> Result<Res, Res> {
@@ -407,6 +458,10 @@ async fn dav(s: &S, user: &str, rest: &str, req: Request) -> Result<Res, Res> {
             let m = tokio::fs::metadata(&full).await.map_err(|_| status(StatusCode::NOT_FOUND))?;
             if m.is_dir() {
                 return Err(status(StatusCode::METHOD_NOT_ALLOWED));
+            }
+            let q = parse_query(req.uri().query().unwrap_or(""));
+            if req.method() == Method::GET && q.iter().any(|(k, v)| k == "preview" && v == "1") {
+                return preview(&full, &rel, &q).await;
             }
             let mut res = send_file(&full, &h).await?;
             res.headers_mut().insert("oc-fileid", HeaderValue::from_str(&file_id(&rel)).unwrap());

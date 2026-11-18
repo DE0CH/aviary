@@ -15,6 +15,8 @@ COPY server/src src
 RUN cargo build --release --locked
 
 FROM debian:bookworm-slim
+# ffmpeg draws the previews (a frame of a video, a picture scaled down)
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 COPY --from=server /src/target/release/yyc-drive /usr/local/bin/yyc-drive
 COPY --from=page /src/dist /srv/web
 ENV DRIVE_WEB=/srv/web DRIVE_LISTEN=0.0.0.0:8080

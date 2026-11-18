@@ -356,3 +356,62 @@ fn asked_to_stop_it_finishes_the_transfer_in_flight_and_exits_cleanly() {
     }
     assert_eq!(code, Some(0));
 }
+
+/// Runs ffmpeg (the image carries it; CI installs it).
+fn ffmpeg(args: &[&str]) {
+    let ok = Command::new("ffmpeg").args(["-hide_banner", "-loglevel", "error", "-y"]).args(args).status().unwrap().success();
+    assert!(ok, "ffmpeg {args:?}");
+}
+
+/// Width and height of an image's bytes, by ffprobe.
+fn size_of(bytes: &[u8]) -> (u32, u32) {
+    let f = tempfile::NamedTempFile::new().unwrap();
+    fs::write(f.path(), bytes).unwrap();
+    let out = Command::new("ffprobe")
+        .args(["-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0"])
+        .arg(f.path())
+        .output()
+        .unwrap();
+    let t = String::from_utf8(out.stdout).unwrap();
+    let (w, h) = t.trim().split_once(',').unwrap();
+    (w.parse().unwrap(), h.parse().unwrap())
+}
+
+#[test]
+fn a_video_or_a_picture_shows_a_preview() {
+    let s = Server::start(Some("amy@example.com"));
+    let root = s.root.to_str().unwrap().to_string();
+    ffmpeg(&["-f", "lavfi", "-i", "testsrc=size=640x360:rate=10:duration=3", "-pix_fmt", "yuv420p", &format!("{root}/v.mp4")]);
+    // shorter than the second the preview is taken at
+    ffmpeg(&["-f", "lavfi", "-i", "testsrc=size=320x240:rate=10:duration=0.5", "-pix_fmt", "yuv420p", &format!("{root}/short.mov")]);
+    ffmpeg(&["-f", "lavfi", "-i", "color=c=red:s=300x200", "-frames:v", "1", &format!("{root}/p.png")]);
+    fs::write(s.root.join("notes.txt"), b"words").unwrap();
+    fs::write(s.root.join("broken.mp4"), b"not a video").unwrap();
+
+    // the page asks for a preview only of what says it has one
+    let xml = text(s.dav("PROPFIND", "").header("depth", "1").send().unwrap());
+    let has = |name: &str| {
+        let at = xml.find(&format!("<oc:name>{name}</oc:name>")).unwrap();
+        let end = xml[at..].find("</d:response>").unwrap();
+        xml[at..at + end].contains("<oc:has-preview>1</oc:has-preview>")
+    };
+    assert!(has("v.mp4") && has("short.mov") && has("p.png"), "{xml}");
+    assert!(!has("notes.txt"));
+
+    // the page's own request: /dav/spaces/…?scalingup=0&preview=1&c=<etag>&x=…&y=…
+    for (name, x, y, want) in [("v.mp4", 128, 128, (128, 72)), ("short.mov", 96, 96, (96, 72)), ("p.png", 150, 150, (150, 100))] {
+        let r = s.dav("GET", &format!("{name}?scalingup=0&preview=1&c=abc&x={x}&y={y}")).send().unwrap();
+        assert_eq!(r.status(), StatusCode::OK, "{name}");
+        assert_eq!(r.headers()["content-type"], "image/jpeg");
+        // the address carries the file's etag, so a preview never goes stale in the browser's cache
+        assert!(r.headers()["cache-control"].to_str().unwrap().contains("immutable"));
+        let b = r.bytes().unwrap();
+        assert_eq!(&b[..2], &[0xff, 0xd8], "{name}: a JPEG");
+        assert_eq!(size_of(&b), want, "{name}: fits in x by y, the shape kept");
+    }
+    // no preview: the page shows the file's icon
+    assert_eq!(s.dav("GET", "notes.txt?preview=1&x=64&y=64").send().unwrap().status(), StatusCode::NOT_FOUND);
+    assert_eq!(s.dav("GET", "broken.mp4?preview=1&x=64&y=64").send().unwrap().status(), StatusCode::NOT_FOUND);
+    // and the file itself is still the file
+    assert_eq!(text(s.dav("GET", "broken.mp4").send().unwrap()), "not a video");
+}

@@ -27,6 +27,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: server
+      - name: ffmpeg (the previews' tests)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: clippy
         working-directory: server
         run: cargo clippy --locked --all-targets -- -D warnings

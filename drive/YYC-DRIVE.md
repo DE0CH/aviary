@@ -25,6 +25,8 @@ One program and one folder. No database, no per-person folders, no sharing.
 - WebDAV on the folder: list, read (byte ranges, so video seeks), write, new folder, rename, move, copy, delete.
 - Uploads in 10 MB pieces (tus), kept in `<folder>/.drive-uploads` until the last piece is in.
 - Search by name.
+- Previews of videos and pictures: one frame (a second in) as a JPEG the size the page asks, drawn by ffmpeg (in the
+  image) two at a time, cached by the browser under the file's etag; none for anything else (the page shows the icon).
 - Names that start with a dot are hidden and refused; a path cannot leave the folder.
 
 Each setting is a flag or, without it, an environment variable:
