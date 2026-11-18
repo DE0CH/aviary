@@ -43,10 +43,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useHasFinePointer } from "@/hooks/use-fine-pointer";
 import { useShallow } from "zustand/shallow";
 import {
-  ArrowUp,
-  X,
   Square,
-  Pencil,
   AudioLines,
   CircleDot,
   FileText,
@@ -139,11 +136,9 @@ import {
 import { createUserMessage, generateMessageId } from "@/types/stream";
 import {
   addToOutbox,
-  cancelOutboxEntry,
   subscribeOutboxReturns,
   useOutboxEntries,
 } from "@/yyc/outbox-store";
-import { PENDING_BUBBLE_OPACITY } from "@/yyc/outbox";
 import { chatSendBehavior, resolveActiveSendBehavior } from "./input/state";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
@@ -325,15 +320,21 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
   };
 }
 
-// The forge's brand icon in the attach menu (only where the server searches a forge; never in YYC) is its own chunk
-// The line under a queued message the server has not confirmed lives in the reply chunk, which has arrived before
-// anything can be sent (loading/stages.ts), so it draws offline too and adds nothing to the first load.
-const PendingSendLine = lazyArea(
-  "pending-send",
-  loadReplyChunk,
-  (module) => module.PendingSendLine,
+// The queue's rows (the server's queue and the app's own) are their own chunk, composer/queue-rows.tsx: a queue shows
+// only after a message is sent during a reply, so they stay out of the first load (docs/paseo-ui.md "Budgets").
+const ServerQueuedRow = lazyArea(
+  "queue-rows",
+  () => import("./queue-rows"),
+  (module) => module.ServerQueuedRow,
   null,
 );
+const QueuedMessageRow = lazyArea(
+  "queue-rows",
+  () => import("./queue-rows"),
+  (module) => module.QueuedMessageRow,
+  null,
+);
+// The forge's brand icon in the attach menu (only where the server searches a forge; never in YYC) is its own chunk
 const ForgeBrandIcon = lazyArea(
   "forge-icon",
   () => import("@/git/forge-icon"),
@@ -767,135 +768,6 @@ function resolveMessageInputPassthroughAction(
   }
 }
 
-interface ServerQueuedRowProps {
-  item: ServerQueueItem;
-  onTakeBack: (id: string) => void;
-  onSendNow: () => void;
-  takeBackLabel: string;
-  sendNowLabel: string;
-  cancelLabel: string;
-}
-
-/**
- * A message of the server's queue: its text, "send now" (the reply stops, so the queue's first message runs), and
- * for one the server holds until the reply ends, taking it back.
- */
-function ServerQueuedRow({
-  item,
-  onTakeBack,
-  onSendNow,
-  takeBackLabel,
-  sendNowLabel,
-  cancelLabel,
-}: ServerQueuedRowProps) {
-  const handleTakeBack = useCallback(() => {
-    onTakeBack(item.id);
-  }, [onTakeBack, item.id]);
-  const handleCancelPending = useCallback(() => {
-    cancelOutboxEntry(item.id);
-  }, [item.id]);
-  if (item.pendingSinceMs !== undefined) {
-    // the server has not confirmed it (yyc/outbox.ts): faded, its line under the text, and 取消 takes it back
-    return (
-      <View style={styles.queueItem} testID="server-queue-item" aria-busy>
-        <View style={styles.queueBody}>
-          <Text style={[styles.queueText, styles.queueTextPending]} numberOfLines={2} ellipsizeMode="tail">
-            {item.text}
-          </Text>
-          <PendingSendLine sinceMs={item.pendingSinceMs} compact />
-        </View>
-        <View style={styles.queueActions}>
-          <Pressable
-            onPress={handleCancelPending}
-            style={styles.queueActionButton}
-            accessibilityLabel={cancelLabel}
-            accessibilityRole="button"
-            testID="server-queue-cancel-pending"
-          >
-            <ThemedX size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
-          </Pressable>
-        </View>
-      </View>
-    );
-  }
-  return (
-    <View style={styles.queueItem} testID="server-queue-item">
-      <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
-        {item.text}
-      </Text>
-      <View style={styles.queueActions}>
-        {item.held ? (
-          <Pressable
-            onPress={handleTakeBack}
-            style={styles.queueActionButton}
-            accessibilityLabel={takeBackLabel}
-            accessibilityRole="button"
-            testID="server-queue-take-back"
-          >
-            <ThemedPencil size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
-          </Pressable>
-        ) : null}
-        <Pressable
-          onPress={onSendNow}
-          style={[styles.queueActionButton, styles.queueSendButton]}
-          accessibilityLabel={sendNowLabel}
-          accessibilityRole="button"
-          testID="server-queue-send-now"
-        >
-          <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-interface QueuedMessageRowProps {
-  item: QueuedMessage;
-  onEdit: (id: string) => void;
-  onSendNow: (id: string) => void;
-  editLabel: string;
-  sendNowLabel: string;
-}
-
-function QueuedMessageRow({
-  item,
-  onEdit,
-  onSendNow,
-  editLabel,
-  sendNowLabel,
-}: QueuedMessageRowProps) {
-  const handleEdit = useCallback(() => {
-    onEdit(item.id);
-  }, [onEdit, item.id]);
-  const handleSendNow = useCallback(() => {
-    onSendNow(item.id);
-  }, [onSendNow, item.id]);
-  return (
-    <View style={styles.queueItem}>
-      <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
-        {item.text}
-      </Text>
-      <View style={styles.queueActions}>
-        <Pressable
-          onPress={handleEdit}
-          style={styles.queueActionButton}
-          accessibilityLabel={editLabel}
-          accessibilityRole="button"
-        >
-          <ThemedPencil size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
-        </Pressable>
-        <Pressable
-          onPress={handleSendNow}
-          style={[styles.queueActionButton, styles.queueSendButton]}
-          accessibilityLabel={sendNowLabel}
-          accessibilityRole="button"
-        >
-          <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
-        </Pressable>
-      </View>
-    </View>
-  );
-}
 
 interface ImageAttachmentPillProps {
   attachment: Extract<ComposerAttachment, { kind: "image" }>;
@@ -3053,46 +2925,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexDirection: "column",
     gap: theme.spacing[2],
   },
-  queueItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    backgroundColor: theme.colors.surface1,
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    gap: theme.spacing[2],
-  },
-  queueText: {
-    flex: 1,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-  },
-  queueBody: {
-    flex: 1,
-    minWidth: 0,
-  },
-  queueTextPending: {
-    opacity: PENDING_BUBBLE_OPACITY,
-  },
-  queueActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-  },
-  queueActionButton: {
-    width: 32,
-    height: 32,
-    borderRadius: theme.borderRadius.full,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: theme.colors.surface2,
-  },
-  queueSendButton: {
-    backgroundColor: theme.colors.accent,
-  },
   sendErrorText: {
     color: theme.colors.palette.red[500],
     fontSize: theme.fontSize.base,
@@ -3100,9 +2932,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
 })) as unknown as Record<string, object>;
 
 const ThemedAttachmentSpinner = withUnistyles(LoadingSpinner);
-const ThemedPencil = withUnistyles(Pencil);
-const ThemedArrowUp = withUnistyles(ArrowUp);
-const ThemedX = withUnistyles(X);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedCircleDot = withUnistyles(CircleDot);
 // The pull request / issue picker is its own chunk, fetched when it first opens (composer/forge-picker.tsx)
@@ -3119,7 +2948,6 @@ const ThemedCamera = withUnistyles(Camera);
 const ThemedFileText = withUnistyles(FileText);
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const iconAccentForegroundMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });
 
 function renderForgeAttachmentIcon(icon: string): ReactElement {
   return (

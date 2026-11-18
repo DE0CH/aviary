@@ -7,6 +7,16 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import type { Theme } from "@/styles/theme";
+import { lazyArea } from "@/components/lazy-area";
+
+// The bar and share an upload draws on its chip are their own chunk (components/upload-overlay.tsx), fetched with the
+// uploader when something is attached: out of the first load (docs/paseo-ui.md "Budgets").
+const UploadOverlay = lazyArea(
+  "upload-overlay",
+  () => import("./upload-overlay"),
+  (module) => module.UploadOverlay,
+  null,
+);
 import { serverImageSource } from "@/yyc/open-file";
 
 // Every attachment pill body — image thumbnail or labelled — renders at this
@@ -149,33 +159,6 @@ export function AttachmentLabel({ icon, title, subtitle }: AttachmentLabelProps)
   );
 }
 
-/**
- * How far an attachment's upload has come: a bar along the chip's foot, filled to the share sent, and the share said
- * over the body when the chip has no text of its own (a picture's thumbnail).
- */
-export function UploadOverlay({ fraction, label }: { fraction: number; label?: string }) {
-  const percent = Math.round(Math.min(1, Math.max(0, fraction)) * 100);
-  const fillStyle = useMemo(() => [styles.uploadFill, { width: `${percent}%` as const }], [percent]);
-  return (
-    <View style={styles.uploadScrim} pointerEvents="none">
-      {label && fraction < 1 ? (
-        <View style={styles.uploadLabelWrap}>
-          <Text style={styles.uploadLabelText} numberOfLines={1}>
-            {label}
-          </Text>
-        </View>
-      ) : null}
-      <View
-        testID="attachment-upload-progress"
-        accessibilityRole="progressbar"
-        accessibilityValue={{ min: 0, max: 100, now: percent }}
-        style={styles.uploadTrack}
-      >
-        <View style={fillStyle} />
-      </View>
-    </View>
-  );
-}
 
 /** Square image preview pill body. */
 export function AttachmentThumbnail({ metadata }: { metadata: AttachmentMetadata }) {
@@ -250,38 +233,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     zIndex: 1,
-  },
-  uploadScrim: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  uploadLabelWrap: {
-    paddingHorizontal: theme.spacing[1],
-    paddingVertical: 1,
-    borderRadius: theme.borderRadius.sm,
-    backgroundColor: theme.colors.surface1,
-    opacity: 0.9,
-  },
-  uploadLabelText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-  },
-  uploadTrack: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 3,
-    backgroundColor: theme.colors.surface2,
-  },
-  uploadFill: {
-    height: 3,
-    backgroundColor: theme.colors.accent,
   },
   closeButtonHidden: {
     opacity: 0,
