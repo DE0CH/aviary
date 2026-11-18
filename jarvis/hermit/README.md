@@ -100,8 +100,8 @@ Jarvis 4 session machine (harness aviary)                                     â”
 
 Deyao opens New chat and types. pigeon makes the conversation in magpie with the message; magpie asks hermit for a
 sandbox (`PUT /v1/conversations/{cid}/sandbox`), and hermit-jarvis, finding no session for the conversation, proposes
-one through the router (`POST /api/remotes {harness: aviary, requestId: chat:<cid>}`: the New session with the
-defaults, in the Inbox as "Deyao, from the chat (a new conversation)"; the router's own path, no kernel change) and
+one through the router (`POST /api/remotes {harness: aviary, requestId: chat:<cid>}`: the New session the app makes
+with nothing touched, claude-env and the default store included, in the Inbox as "Deyao, from the chat (a new conversation)"; the router's own path, no kernel change) and
 records it (`sessions`). Its start (a sandbox row with no machine) follows the router's state of the session
 (`src/reconcile.rs` `verdict`, a pure function; the pass every 10 s carries it out):
 
