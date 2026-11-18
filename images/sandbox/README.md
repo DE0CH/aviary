@@ -27,7 +27,9 @@ owned by uid 1000; Docker (dockerd started on demand); Claude Code 2.1.325 root-
 supervisor runs `/opt/claude-code/bin/claude` by that path; `/usr/local/bin/claude` links to it for shells);
 Qwen Code (a release of DE0CH/qwen-code pinned by sha256: `QWEN_CODE_RELEASE`, `QWEN_CODE_SHA256`) root-owned at
 `/opt/qwen-code` (`/opt/qwen-code/bin/qwen`, `/usr/local/bin/qwen`); the video edit engine, its tools and its asset
-library; `/usr/local/bin/supervisor`, `supervisor-keeper`, and `sandbox-secret` and `send-file`, both `-> supervisor`.
+library; `/usr/local/bin/supervisor`, `supervisor-keeper`, and `sandbox-secret`, `send-file`, `ask` and `video-check`, all `-> supervisor`
+(`video-check`: whether the generation's model, `$AVIARY_MODEL`, watches video and hears sound, asked of the model
+route with a 4 KB clip; a deployment's video skill runs it first).
 `ENTRYPOINT ["/usr/local/bin/supervisor-keeper"]`, no CMD, no tini: the keeper is PID 1. `/home/sandbox/.harness` is
 an empty directory (the supervisor's FUSE mount point); `/home/sandbox/.claude` and `/home/sandbox/.qwen` link to
 `.harness/claude` and `.harness/qwen`; `/var/lib/supervisor` is root's, 0700.

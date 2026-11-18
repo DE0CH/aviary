@@ -202,6 +202,7 @@ pub fn fixed_env(harness: Harness, models: &Models) -> Vec<(&'static str, String
             ("no_proxy", "localhost,127.0.0.1,::1".to_owned()),
             (QWEN_KEY_ENV, "sandbox".to_owned()),
             ("QWEN_CODE_SUPPRESS_YOLO_WARNING", "1".to_owned()),
+            (crate::video_check::MODEL_ENV, models.default.clone()),
         ];
     }
     let mut v: Vec<(&'static str, String)> = vec![
@@ -225,6 +226,8 @@ pub fn fixed_env(harness: Harness, models: &Models) -> Vec<(&'static str, String
         ("BASH_MAX_OUTPUT_LENGTH", "30000".to_owned()),
         ("MAX_MCP_OUTPUT_TOKENS", "25000".to_owned()),
         ("API_TIMEOUT_MS", "600000".to_owned()),
+        // the generation's model for the shell's commands (`video-check`)
+        (crate::video_check::MODEL_ENV, models.default.clone()),
     ];
     // the window of the model this Claude Code runs (`models.default`: the conversation's picked model, else the
     // route's default): its own when the route names one for it. Claude Code takes the variable for a model id it
@@ -474,6 +477,11 @@ mod tests {
         assert_eq!(get("HOME").as_deref(), Some("/home/sandbox"));
         assert_eq!(get("HTTPS_PROXY").as_deref(), Some("http://sbx:x@p:3128"));
         assert_eq!(get(QWEN_KEY_ENV).as_deref(), Some("sandbox"));
+        assert_eq!(
+            get("AVIARY_MODEL").as_deref(),
+            Some(models().default.as_str()),
+            "video-check's model"
+        );
         assert_eq!(get("NO_PROXY").as_deref(), Some("localhost,127.0.0.1,::1"));
         for absent in [
             "ANTHROPIC_BASE_URL",
@@ -510,6 +518,11 @@ mod tests {
         assert_eq!(get("NO_PROXY").as_deref(), Some("localhost,127.0.0.1,::1"));
         assert_eq!(get("ANTHROPIC_BASE_URL").as_deref(), Some("http://model"));
         assert_eq!(get("ANTHROPIC_MODEL").as_deref(), Some(m.default.as_str()));
+        assert_eq!(
+            get("AVIARY_MODEL").as_deref(),
+            Some(m.default.as_str()),
+            "video-check's model"
+        );
         assert_eq!(get("ANTHROPIC_SMALL_FAST_MODEL").as_deref(), Some(m.small.as_str()));
         assert_eq!(
             get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"),

@@ -36,6 +36,9 @@ fn main() {
     if argv0 == "ask" {
         std::process::exit(supervisor::ask::cli(&args[1..]));
     }
+    if argv0 == "video-check" {
+        std::process::exit(supervisor::video_check::cli(&args[1..], &build()));
+    }
     if argv0 == "sandbox-secret" {
         std::process::exit(supervisor::local::secret_cli(&args[1..]));
     }

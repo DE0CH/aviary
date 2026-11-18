@@ -23,3 +23,4 @@ pub mod sent_files;
 pub mod start;
 pub mod state;
 pub mod uploads;
+pub mod video_check;

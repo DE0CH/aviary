@@ -188,11 +188,12 @@ COPY Dockerfile apt-wrapper.sh docker-wrapper.sh reportlab-cjk.py line-buffered.
 
 # The supervisor and the keeper of this commit (static musl, root 0755), and `sandbox-secret`, which the supervisor
 # binary answers by argv[0] (supervisor spec 3), as it does `send-file` (files to the person from a shell command:
-# Qwen Code's way) and `ask` (a question for the person, blocking until the answer: every harness's way). Last, so a
+# Qwen Code's way), `ask` (a question for the person, blocking until the answer: every harness's way) and
+# `video-check` (whether the generation's model watches video and hears sound, asked of the model route). Last, so a
 # new commit rebuilds only this layer.
 COPY --chmod=755 dist/supervisor dist/supervisor-keeper /usr/local/bin/
 RUN ln -s supervisor /usr/local/bin/sandbox-secret && ln -s supervisor /usr/local/bin/send-file \
-    && ln -s supervisor /usr/local/bin/ask
+    && ln -s supervisor /usr/local/bin/ask && ln -s supervisor /usr/local/bin/video-check
 
 ARG REVISION=dev
 ARG VERSION=dev

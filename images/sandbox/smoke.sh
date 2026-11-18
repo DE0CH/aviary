@@ -66,12 +66,14 @@ check "label supervisor is the binary's sha256 ($image_sum)" test -n "$image_sum
 
 check "no tini, no /opt/agent, no /run/sbx-docker" \
   img_run "$img" -c '! command -v tini && ! test -e /usr/bin/tini && ! test -e /opt/agent && ! test -e /run/sbx-docker'
-check "supervisor, supervisor-keeper root 0755, sandbox-secret and send-file -> supervisor" img_run "$img" -c '
+check "supervisor, supervisor-keeper root 0755, sandbox-secret, send-file, ask and video-check -> supervisor" img_run "$img" -c '
   for b in supervisor supervisor-keeper; do
     test "$(stat -c "%U %a" /usr/local/bin/$b)" = "root 755" || exit 1
   done
   test "$(readlink /usr/local/bin/sandbox-secret)" = supervisor
-  test "$(readlink /usr/local/bin/send-file)" = supervisor'
+  test "$(readlink /usr/local/bin/send-file)" = supervisor
+  test "$(readlink /usr/local/bin/ask)" = supervisor
+  test "$(readlink /usr/local/bin/video-check)" = supervisor'
 check "supervisor --version" img_run "$img" -c '/usr/local/bin/supervisor --version | grep -q "^supervisor "'
 # Claude Code: the path the supervisor executes resolves inside /opt/claude-code, and nothing on the way (every
 # directory from / down, the link, the binary) nor anything under /opt/claude-code is uid 1000's or writable by it
