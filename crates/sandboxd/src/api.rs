@@ -15,6 +15,8 @@
 //!                                          min after the sandbox ended)
 //!   POST   /v1/sandboxes/{name}/send {to, downtimeMs?, maxRounds?, maxDowntimeMs?}   migration source (scratch
 //!                                          rounds, memory pre-copy, final scratch delta; returns {ms, scratch})
+//!   POST   /v1/sandboxes/{name}/pause    suspended here, memory and processes kept (runsc pause; a resume goes on)
+//!   POST   /v1/sandboxes/{name}/resume   its processes continue where the pause stopped them
 //!   POST   /v1/sandboxes/{name}/freeze {object, region, accessKeyId, secretAccessKey, sessionToken, key}   its
 //!                                          memory and scratch, sealed, to S3, then gone; returns {ms, memoryMs,
 //!                                          scratchMs} (freeze.rs)
@@ -378,6 +380,16 @@ fn route(app: &App, req: &Req, w: &mut W, sc: &mut Scratch) -> Res<u16> {
                 .unwrap_or(0.0);
             let wait = wait.clamp(0.0, 120_000.0) as u64;
             app.sbx.receive_result(name, wait, w);
+            return Ok(200);
+        }
+        if np == 4 && parts[3] == "pause" && m == "POST" {
+            app.sbx.pause(name, sc)?;
+            app.sbx.write_one(w, name);
+            return Ok(200);
+        }
+        if np == 4 && parts[3] == "resume" && m == "POST" {
+            app.sbx.resume(name, sc)?;
+            app.sbx.write_one(w, name);
             return Ok(200);
         }
         if np == 4 && parts[3] == "freeze" && m == "POST" {

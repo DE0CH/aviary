@@ -88,6 +88,11 @@ pub mod routes {
     pub const SANDBOX_SEND: &str = "/v1/sandboxes/{name}/send";
     /// The axum path of `GET …/log?tail=<bytes>`.
     pub const SANDBOX_LOG: &str = "/v1/sandboxes/{name}/log";
+    /// The axum path of `POST …/pause`: no body → [`Listed`](crate::Listed). The sandbox keeps its memory and
+    /// processes here, suspended (`runsc pause`); a resume continues them, a freeze records them off the host.
+    pub const SANDBOX_PAUSE: &str = "/v1/sandboxes/{name}/pause";
+    /// The axum path of `POST …/resume`: no body → [`Listed`](crate::Listed).
+    pub const SANDBOX_RESUME: &str = "/v1/sandboxes/{name}/resume";
     /// The axum path of `POST …/freeze`: [`Frozen`](crate::Frozen) → [`FreezeResult`](crate::FreezeResult).
     pub const SANDBOX_FREEZE: &str = "/v1/sandboxes/{name}/freeze";
     /// The axum path of `POST …/thaw`: [`ThawRequest`](crate::ThawRequest) → [`Listed`](crate::Listed).

@@ -214,6 +214,19 @@ pub struct FabricJson {
     pub jfs_retire_seconds: u32,
     pub migration: MigrationJson,
     pub aws: AwsJson,
+    /// This fabric freezes sandboxes (jarvis4 docs/PLAN-fabric.md): a freeze pauses the sandbox on its host and the
+    /// repacking evicts frozen ones to the bucket when their slot is needed. Absent: the freeze and thaw routes
+    /// answer 501 and no row is ever `frozen` (YYC AI's fabric, which keeps release).
+    #[serde(default)]
+    pub freeze: Option<FreezeJson>,
+}
+
+/// The freeze settings ([`FabricJson::freeze`]).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FreezeJson {
+    /// The bucket frozen images go to (in the hosts' region), with `frozen/<sandbox>/<freeze id>` keys.
+    pub bucket: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

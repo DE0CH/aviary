@@ -1343,15 +1343,61 @@ fn multipart(parts: &[(&str, &str, &[u8])]) -> (String, Vec<u8>) {
     (format!("multipart/form-data; boundary={boundary}"), body)
 }
 
+/// `?kind=image`: a picture uploaded when it is attached goes up as an image (magpie keeps its model copy), and the
+/// answer gives the `uploadId` the send names it by.
 #[tokio::test]
-async fn uploads_stream_to_magpie_with_their_limits() {
+async fn an_image_uploads_as_an_image_with_its_id() {
     let h = Harness::start().await;
     let t = h.token(STAFF);
+    let id = uuid::Uuid::new_v4();
     h.magpie.fake.script().always(
         "upload",
         Reply::json(
             201,
-            json!({"uploadId": uuid::Uuid::new_v4(), "path": "uploads/7c9e/report.xlsx", "name": "report.xlsx",
+            json!({"uploadId": id, "path": format!("uploads/{id}/photo.png"), "name": "photo.png", "size": 5,
+                   "mimeType": "image/png", "width": 2, "height": 2}),
+        ),
+    );
+    let (ct, body) = multipart(&[("files", "photo.png", b"hello")]);
+    let r = h
+        .as_token(h.post("/api/assets/files?kind=image"), &t)
+        .header("content-type", ct)
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    assert_eq!(
+        body_json(r).await,
+        json!({"attachments": [{"path": format!("uploads/{id}/photo.png"), "name": "photo.png", "size": 5,
+               "mimeType": "image/png", "uploadId": id}]})
+    );
+    let call = h.magpie.fake.script().calls_to("upload").pop().unwrap();
+    assert_eq!(call.header("aviary-upload-kind"), Some("image"));
+    // without the query it stays a file
+    let (ct, body) = multipart(&[("files", "photo.png", b"hello")]);
+    let r = h
+        .as_token(h.post("/api/assets/files"), &t)
+        .header("content-type", ct)
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 201);
+    let call = h.magpie.fake.script().calls_to("upload").pop().unwrap();
+    assert_eq!(call.header("aviary-upload-kind"), Some("file"));
+}
+
+#[tokio::test]
+async fn uploads_stream_to_magpie_with_their_limits() {
+    let h = Harness::start().await;
+    let t = h.token(STAFF);
+    let up = uuid::Uuid::new_v4();
+    h.magpie.fake.script().always(
+        "upload",
+        Reply::json(
+            201,
+            json!({"uploadId": up, "path": "uploads/7c9e/report.xlsx", "name": "report.xlsx",
                    "size": 5, "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}),
         ),
     );
@@ -1367,7 +1413,7 @@ async fn uploads_stream_to_magpie_with_their_limits() {
     assert_eq!(
         body_json(r).await,
         json!({"attachments": [{"path": "uploads/7c9e/report.xlsx", "name": "report.xlsx", "size": 5,
-               "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}]})
+               "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "uploadId": up}]})
     );
     let call = h.magpie.fake.script().calls_to("upload").pop().unwrap();
     assert_eq!(call.bytes.as_deref(), Some(&b"hello"[..]));

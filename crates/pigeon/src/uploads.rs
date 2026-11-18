@@ -1,5 +1,7 @@
 //! `POST /api/assets/files` (spec 5.7): one file per request, its bytes streamed straight to magpie's M13 with at
-//! most one chunk in flight (backpressure to the client), never buffered whole.
+//! most one chunk in flight (backpressure to the client), never buffered whole. `?kind=image` uploads an image (magpie
+//! keeps a model copy and refuses what is not one, 415): the app uploads a picture when it is attached, showing the
+//! upload's progress, and the send names it by `images[].uploadId` (paseo/dispatch.rs), as a file by its path.
 
 use std::time::Duration;
 
@@ -60,9 +62,17 @@ fn error(app: &App, status: StatusCode, name: &str) -> Response {
     json(status, &json!({"error": text}))
 }
 
+/// What the upload is, from the query: `kind=image` an image, anything else a file.
+#[must_use]
+pub fn kind_of(query: Option<&str>) -> UploadKind {
+    let image = query.unwrap_or("").split('&').any(|pair| pair == "kind=image");
+    if image { UploadKind::Image } else { UploadKind::File }
+}
+
 /// Handles the upload.
 #[allow(clippy::too_many_lines)] // one request's steps in order: the body, magpie's answer
 pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
+    let kind = kind_of(req.uri().query());
     let headers = req.headers().clone();
     let declared = headers
         .get(header::CONTENT_LENGTH)
@@ -104,7 +114,7 @@ pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
     // one chunk in flight: the client is read only as fast as magpie takes the bytes
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(1);
     let stream = futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|c| (c, rx)) });
-    let upstream = calls_upload(calls, &name, &content_type, reqwest::Body::wrap_stream(stream));
+    let upstream = calls_upload(calls, kind, &name, &content_type, reqwest::Body::wrap_stream(stream));
     tokio::pin!(upstream);
     let feeding = feed(field, parts, tx, idle);
     tokio::pin!(feeding);
@@ -154,7 +164,9 @@ pub async fn upload(app: &App, req: Request, id: &Identity) -> Response {
         Ok(u) => {
             let mut r = json(
                 StatusCode::CREATED,
-                &json!({"attachments": [{"path": u.path, "name": u.name, "size": u.size, "mimeType": u.mime_type}]}),
+                // `uploadId`: what a send names an uploaded image by (`images[].uploadId`)
+                &json!({"attachments": [{"path": u.path, "name": u.name, "size": u.size, "mimeType": u.mime_type,
+                                         "uploadId": u.upload_id}]}),
             );
             r.headers_mut()
                 .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -258,11 +270,12 @@ fn close(mut r: Response) -> Response {
 
 async fn calls_upload(
     calls: magpie_api::client::PersonCalls<'_>,
+    kind: UploadKind,
     name: &str,
     content_type: &str,
     body: reqwest::Body,
 ) -> Result<magpie_api::uploads::UploadResponse, StatusCode> {
-    match calls.upload(name, UploadKind::File, content_type, body).await {
+    match calls.upload(name, kind, content_type, body).await {
         Ok(u) => Ok(u),
         Err(e) => {
             let status = e.api().map(|r| r.status);

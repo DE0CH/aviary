@@ -25,6 +25,8 @@ pub struct Pass {
     pub retried: Vec<Uuid>,
     pub stuck_starts: Vec<Uuid>,
     pub stuck_releases: Vec<Uuid>,
+    /// Frozen sandboxes whose `until` passed (a start each).
+    pub woken: Vec<Uuid>,
 }
 
 async fn rows(
@@ -193,6 +195,8 @@ pub async fn pass(core: &Arc<Core>) -> Result<Pass, aviary_pg::Error> {
             out.stuck_releases.push(r.id);
         }
     }
+    // 8. a frozen sandbox whose until has passed comes back (thawed as a person's message would)
+    out.woken = crate::freezing::wake_due(core).await?;
     Ok(out)
 }
 

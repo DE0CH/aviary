@@ -55,6 +55,51 @@ pub async fn begin_thaw(t: &Tx<'_>, core: &Core, row: &SandboxRow) -> Result<Opt
     Ok(Some(bump(t, row.id).await?))
 }
 
+/// Frozen sandboxes whose `until` has passed come back (a start each; the janitor calls this every pass). The
+/// thaw's own rules apply (a claim, a placement): one already starting is left alone.
+///
+/// # Errors
+/// A database error.
+pub async fn wake_due(core: &Arc<Core>) -> Result<Vec<Uuid>, aviary_pg::Error> {
+    let c = core.clone();
+    let c = &c;
+    let rows: Vec<Uuid> = core
+        .pool
+        .get()
+        .await?
+        .query(
+            "select id from sandboxes where status = 'frozen' and frozen_until < now() and task is null",
+            &[],
+        )
+        .await?
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    let mut woken = Vec::new();
+    for id in rows {
+        let started = aviary_pg::tx!(&core.pool, |t| -> Result<bool, aviary_pg::Error> {
+            let Some(r) = t
+                .query_opt(
+                    "select * from sandboxes where id = $1 and status = 'frozen' for update",
+                    &[&id],
+                )
+                .await?
+            else {
+                return Ok(false);
+            };
+            let row = SandboxRow::from_row(&r)?;
+            Ok(begin_thaw(t, c, &row).await?.is_some())
+        })
+        .await?;
+        if started {
+            tracing::info!(sandbox = %id, "frozen until passed: thawing");
+            tasks::run(core, Claim::adopt(core, id, Kind::Start));
+            woken.push(id);
+        }
+    }
+    Ok(woken)
+}
+
 /// `POST …/sandbox/freeze`: a ready sandbox gets this replica's freeze claim and is answered as it is (202; it shows
 /// `frozen` once the fabric has it). A frozen one only takes the new `until`.
 ///
