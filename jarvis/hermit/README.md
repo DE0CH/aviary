@@ -22,8 +22,9 @@ Jarvis 4 session machine (harness aviary)                                     �
 
 ## Decisions (Deyao, 2026-11-11)
 
-- Sessions start only in the Jarvis 4 app; one session is one conversation. The chat app offers no New chat (hermit's
-  `/v1/deployment` `conversations.peopleCreate: false` → pigeon's `/api/jarvis/me` `newConversations: false`).
+- One session is one conversation. A session starts in the Jarvis 4 app, or from the chat's New chat (Deyao,
+  2026-11-18: start one and type at once; hermit's `/v1/deployment` `conversations.peopleCreate: true`): see "A
+  conversation begun in the chat" below.
 - Claude Code loads the session's workspace CLAUDE.md, skills and settings itself (the descriptor's
   `claude.projectSettings`: `--setting-sources=project`); YYC AI's hermit leaves it off.
 - The chat's iPhone app, Jarvis Chat (DE0CH/claudecodeui docs/paseo-ui.md "The iOS app", the same app as the site
@@ -94,6 +95,27 @@ Jarvis 4 session machine (harness aviary)                                     �
 | the sandbox: supervisor, keeper, Claude Code, the agent's tools | DE0CH/aviary's sandbox image `ghcr.io/de0ch/hermit-sandbox`, pinned by digest in `session-image/aviary.json`, unpacked on the session's volume and entered by `aviary-sandbox` | the image YYC AI's sandboxes run, unmodified |
 | pigeon, magpie, pigeon-app | DE0CH/deyao-ai `k8s/chat/` | pinned by DE0CH/deyao-ai `chat-pin.yml` |
 | router | `router/machinesig.go`, harness `aviary` in `router/harness.go`, `router/remote.go` | |
+
+## A conversation begun in the chat (Deyao, 2026-11-18)
+
+Deyao opens New chat and types. pigeon makes the conversation in magpie with the message; magpie asks hermit for a
+sandbox (`PUT /v1/conversations/{cid}/sandbox`), and hermit-jarvis, finding no session for the conversation, proposes
+one through the router (`POST /api/remotes {harness: aviary, requestId: chat:<cid>}`: the New session with the
+defaults, in the Inbox as "Deyao, from the chat (a new conversation)"; the router's own path, no kernel change) and
+records it (`sessions`). Its start (a sandbox row with no machine) follows the router's state of the session
+(`src/reconcile.rs` `verdict`, a pure function; the pass every 10 s carries it out):
+
+| The router lists the session | The start | The chat shows |
+|---|---|---|
+| `approval` (waiting in the Inbox) | phase `approval`, however long it takes | "Waiting for your approval…" |
+| up (`starting`, `resuming`, `started`) | phase `host`, then the boot's `supervisor`, then ready; ten minutes for the machine to boot from the approval | "Preparing the workspace…", then the message goes in |
+| not at all (denied, or its approval lapsed after 10 minutes) | ends `not_allowed` | the conversation leaves the chat, its message with it |
+
+magpie holds the message meanwhile (its queue); a start in phase `approval` spends none of the turn's admission time
+(aviary magpie `step_starting`), and the chip's words follow hermit's phase (magpie `waiting_for` → pigeon's
+`yyc.sandbox_status` `waiting` → the app's `nextPreparing`). The machine's boot finds the conversation recorded and
+makes none (`central::do_boot`); its title is magpie's, from the first message. YYC AI's hermit never reports
+`approval`, so the same builds run there unchanged.
 
 ## A session's life
 

@@ -1,7 +1,7 @@
 //! hermit-jarvis's calls to Jarvis 4's router, with its own Access service token (admitted by client id on the "Jarvis 4 devices"
-//! app, router/devices.go): whose machine signed a boot, which aviary sessions exist and in what state, and resuming a
-//! paused one when its conversation gets a turn. hermit-jarvis never starts a new session (Deyao, 2026-11-11: sessions
-//! start only in the Jarvis 4 app).
+//! app, router/devices.go): whose machine signed a boot, which aviary sessions exist and in what state, resuming a
+//! paused one when its conversation gets a turn, and proposing a new one for a conversation begun in the chat (Deyao,
+//! 2026-11-18), which starts only once Deyao approves it in the Inbox as any New session.
 
 use std::time::Duration;
 
@@ -63,6 +63,9 @@ pub struct Remote {
 struct Remotes {
     sessions: Vec<Remote>,
 }
+
+/// The router's state of a new session waiting for Deyao's approval.
+pub const APPROVAL: &str = "approval";
 
 /// A session state in which its machine is (or is about to be) up.
 #[must_use]
@@ -154,6 +157,31 @@ impl Jarvis {
             anyhow::bail!("router answered {} to a chat schedule", r.status());
         }
         Ok(())
+    }
+
+    /// Proposes a new aviary session with the defaults (`POST /api/remotes`), idempotent by `request_id` while the
+    /// session exists: `Ok(Ok(session))` with its id and state (`approval` until Deyao approves it), `Ok(Err(why))`
+    /// when the router refuses it.
+    ///
+    /// # Errors
+    /// The router unreachable or failing (5xx).
+    pub async fn propose(&self, request_id: &str) -> anyhow::Result<Result<Remote, String>> {
+        let r = self
+            .req(reqwest::Method::POST, "/api/remotes")
+            .json(&serde_json::json!({ "harness": HARNESS, "requestId": request_id }))
+            .send()
+            .await?;
+        let s = r.status();
+        if s.is_success() {
+            return Ok(Ok(r.json().await?));
+        }
+        let body = r.text().await.unwrap_or_default();
+        let why = format!("{s}: {}", body.chars().take(300).collect::<String>());
+        if s.is_client_error() {
+            Ok(Err(why))
+        } else {
+            anyhow::bail!("router answered {why} to a new session")
+        }
     }
 
     /// Resumes a paused session (no prompt, no Face ID, as the Jarvis 4 Chat app did).

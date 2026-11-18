@@ -1,7 +1,9 @@
 //! The hermit contract on Jarvis 4 sessions (DE0CH/aviary docs/CONTRACTS.md "The hermit contract").
 //!
-//! A conversation is one Jarvis 4 session (harness `aviary`), made when the session's machine first boots
-//! (`central::boot`); a sandbox is one boot of that machine. Get-or-start answers the live boot, or resumes the paused
+//! A conversation is one Jarvis 4 session (harness `aviary`). One made in the Jarvis 4 app gets its conversation when
+//! its machine first boots (`central::boot`); a conversation begun in the chat gets its session at its first
+//! get-or-start, which proposes one through the router (Deyao, 2026-11-18: the chat's New chat; it waits in Deyao's
+//! Inbox, `reconcile`). A sandbox is one boot of that machine. Get-or-start answers the live boot, or resumes the paused
 //! session through the router and waits for its machine to boot; a release rides on the supervisor's next activity
 //! reply (hermit never calls into a machine); the router's session list ends a sandbox whose machine is gone
 //! (`reconcile`). People: Deyao alone, an admin. Workspaces live on the session machine (its `~/workspace`), so the
@@ -29,8 +31,8 @@ use serde_json::Value;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::app::{App, RESUME_DEADLINE};
-use crate::db::{self, SandboxRow};
+use crate::app::App;
+use crate::db::{self, SandboxRow, SessionRow};
 
 /// What every descriptor says to Claude Code itself: the session's own CLAUDE.md, skills and settings come from its
 /// workspace (`claude.projectSettings`), so this is only the frame.
@@ -71,10 +73,11 @@ impl Server for App {
                 }],
                 app_scheme: self.settings.sign_in.app_scheme.clone(),
             },
-            // sessions start only in the Jarvis 4 app (Deyao, 2026-11-11); in a conversation, the composer's menu
+            // a new conversation in the chat proposes its own session (Deyao, 2026-11-18: start one and type at
+            // once; its first message waits for his approval in the Inbox); in a conversation, the composer's menu
             // picks its model and thinking level from then on (Deyao, 2026-11-12: as on YYC AI)
             conversations: Conversations {
-                people_create: false,
+                people_create: true,
                 people_pick_model: true,
                 // a session ends in the Jarvis 4 app, and its conversation with it (reconcile.rs)
                 people_delete: false,
@@ -115,10 +118,12 @@ impl Server for App {
         cid: Uuid,
         body: PutSandboxRequest,
     ) -> Answer<PutSandbox> {
-        let session = db::session_of_conversation(&self.pool, cid)
+        let Some(session) = db::session_of_conversation(&self.pool, cid)
             .await
             .map_err(internal)?
-            .ok_or_else(error::not_allowed)?;
+        else {
+            return self.propose(cid, &body.person).await;
+        };
         if body.person.trim().to_lowercase() != session.person {
             return Err(error::api(
                 409,
@@ -390,6 +395,57 @@ pub fn liveness(row: &SandboxRow, owner: &str) -> TokenLiveness {
 }
 
 impl App {
+    /// The first get-or-start of a conversation begun in the chat: its session is proposed through the router (the
+    /// defaults, idempotent by the conversation), recorded, and its start waits in the phase the router's state gives
+    /// (`approval` until Deyao approves it in the Inbox; `reconcile` moves it on, or ends it when the session is
+    /// denied). Only the owner's conversation gets one.
+    async fn propose(&self, cid: Uuid, person: &str) -> Answer<PutSandbox> {
+        let person = person.trim().to_lowercase();
+        if person != self.owner {
+            return Err(error::not_allowed());
+        }
+        let remote = match self.jarvis.propose(&format!("chat:{cid}")).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(refused)) => {
+                tracing::warn!(conversation = %cid, refused, "the router refused the new session");
+                return Err(error::not_allowed());
+            }
+            Err(e) => return Err(internal(e)),
+        };
+        db::put_session(
+            &self.pool,
+            &SessionRow {
+                session_id: remote.id.clone(),
+                conversation_id: cid,
+                person,
+            },
+        )
+        .await
+        .map_err(internal)?;
+        // another replica's get-or-start of the same conversation may have started it already: that start is the one
+        if let Some(row) = db::newest(&self.pool, cid).await.map_err(internal)?
+            && row.state != SandboxState::Gone
+        {
+            return Ok(answer(row.sandbox()));
+        }
+        let session = db::session_of_conversation(&self.pool, cid)
+            .await
+            .map_err(internal)?
+            .ok_or_else(error::not_allowed)?;
+        let row = db::start(
+            &self.pool,
+            &session,
+            None,
+            crate::reconcile::start_phase(&remote.state),
+            crate::app::LIFETIME,
+            ReleaseReason::Vanished,
+        )
+        .await
+        .map_err(internal)?;
+        tracing::info!(conversation = %cid, session = %remote.id, state = %remote.state, "a new session proposed for the chat");
+        Ok(PutSandbox::Starting(row.sandbox()))
+    }
+
     /// The calling sandbox's live row, from the gateway's identity headers (404 `no_sandbox` otherwise).
     async fn own(&self, ctx: &Ctx) -> Answer<SandboxRow> {
         let id = ctx
@@ -499,13 +555,4 @@ pub fn descriptor(app: &App, row: &SandboxRow) -> SandboxSelf {
         etag: String::new(),
     }
     .with_etag()
-}
-
-/// A starting sandbox the router never booted in time ends `start_timed_out` (`reconcile`).
-#[must_use]
-pub fn resume_overdue(row: &SandboxRow) -> bool {
-    row.state == SandboxState::Starting
-        && row.machine.is_none()
-        && OffsetDateTime::now_utc() - row.created_at
-            > time::Duration::try_from(RESUME_DEADLINE).unwrap_or_default()
 }
