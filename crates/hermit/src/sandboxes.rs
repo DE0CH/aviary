@@ -488,6 +488,11 @@ pub async fn request_in(
         return Ok(false);
     };
     let row = SandboxRow::from_row(&r)?;
+    // a frozen sandbox has no supervisor to agree: its release is forced
+    let mut pending = pending;
+    if row.status == SandboxState::Frozen {
+        pending.force = true;
+    }
     let keep_old = row.release_pending.as_ref().is_some_and(|old| keeps(old, &pending));
     if !keep_old {
         let mut pending = pending.clone();
@@ -985,6 +990,10 @@ pub async fn destroy_and_record(
         return Ok(());
     };
     destroy(core, row).await;
+    // an evicted frozen sandbox's image goes with it (nothing will thaw it now)
+    if let Some(f) = &row.frozen {
+        core.providers.fabric.drop_frozen(row.id, f).await;
+    }
     let (id, owner, kind) = (row.id, claim.owner.clone(), claim.kind.as_str());
     let (reason, code) = (end.reason, end.code);
     let (reason_s, code_s, msg) = (txt(reason), txt(code), db::message(end.message));

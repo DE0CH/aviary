@@ -77,6 +77,16 @@ pub trait Server: Send + Sync + 'static {
     fn receive_result(&self, name: String, wait_ms: u64) -> impl Future<Output = Answer<ReceiveResult>> + Send;
     /// `POST /v1/sandboxes/{name}/send`.
     fn send(&self, name: String, req: SendRequest) -> impl Future<Output = Answer<SendResult>> + Send;
+    /// `POST /v1/sandboxes/{name}/pause`: suspended here, memory and processes kept. 501 where unsupported.
+    fn pause(&self, name: String) -> impl Future<Output = Answer<Listed>> + Send {
+        let _ = name;
+        async { Err(ApiError::new(501, "pausing is not supported here")) }
+    }
+    /// `POST /v1/sandboxes/{name}/resume`: its processes go on. 501 where unsupported.
+    fn resume(&self, name: String) -> impl Future<Output = Answer<Listed>> + Send {
+        let _ = name;
+        async { Err(ApiError::new(501, "pausing is not supported here")) }
+    }
     /// `POST /v1/sandboxes/{name}/freeze`. A server that cannot freeze answers 501.
     fn freeze(&self, name: String, frozen: Frozen) -> impl Future<Output = Answer<FreezeResult>> + Send {
         let _ = (name, frozen);
@@ -234,6 +244,18 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
                     s.send(name_ok(name)?, body::<SendRequest>(b)?).await.map(Json)
                 },
             ),
+        )
+        .route(
+            routes::SANDBOX_PAUSE,
+            post(|State(s): State<Arc<S>>, Path(name): Path<String>| async move {
+                s.pause(name_ok(name)?).await.map(Json)
+            }),
+        )
+        .route(
+            routes::SANDBOX_RESUME,
+            post(|State(s): State<Arc<S>>, Path(name): Path<String>| async move {
+                s.resume(name_ok(name)?).await.map(Json)
+            }),
         )
         .route(
             routes::SANDBOX_FREEZE,

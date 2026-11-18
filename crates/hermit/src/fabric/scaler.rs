@@ -21,7 +21,7 @@ use crate::fabric::gvisor::{Gvisor, bare_digest, now_ms};
 use crate::fabric::hosts::{self, HostInfo, HostKind, HostRow, HostStatus, Sizing, Slot};
 use crate::fabric::packing::{PackHost, PackSandbox, plan_packing};
 use crate::fabric::placement::{self, LOCK_PLACE, Rules};
-use crate::fabric::{FabricError, Launch, images, network};
+use crate::fabric::{Fabric as _, FabricError, Launch, images, network};
 use crate::sandboxes;
 use crate::tasks::{self, Claim, Kind};
 use crate::{Core, ms};
@@ -413,7 +413,12 @@ async fn steps(g: &Gvisor, core: &Arc<Core>) -> Result<Report, FabricError> {
         }
     }
 
-    // 10. release one empty host
+    // 10. a host that holds only frozen sandboxes is empty in the repacking (they take no capacity): they are
+    // evicted, and the next pass finds the host empty and releases it
+    if g.freezes() {
+        evict_lone_frozen(core).await?;
+    }
+    // release one empty host
     if let Some(name) = release_empty(g, core).await? {
         report.terminated.push(name);
         return Ok(report);
@@ -538,7 +543,7 @@ async fn vanished(
         .await?
         .query(
             "select s.id, s.name, s.host from sandboxes s
-             where s.status = 'ready' and s.host = any($1) and s.migrating_to is null
+             where s.status in ('ready', 'frozen') and s.host = any($1) and s.migrating_to is null
                and (s.task is null or s.task_until < now()) and s.ready_at < $2
                and not exists (select 1 from host_events e where e.sandbox_id = s.id
                                and e.kind in ('migration', 'migration-adopted') and e.at >= $2)",
@@ -1191,6 +1196,49 @@ async fn release_empty(g: &Gvisor, core: &Core) -> Result<Option<String>, Fabric
     tracing::info!(host = %h.name, reason = %reason, "AWS host released");
     terminate_instance(g, core, &h, &reason).await;
     Ok(Some(h.name))
+}
+
+/// Step 10 on a fabric that freezes: every frozen sandbox paused on an AWS host (past `minHostLifetimeSeconds`)
+/// whose other rows are all frozen too gets its eviction (a `freeze` claim and task each). Decided under the
+/// placement lock, so no placement lands on that host meanwhile.
+async fn evict_lone_frozen(core: &Arc<Core>) -> Result<(), FabricError> {
+    let min_life = ms(secs(core.cfg.file.fabric.min_host_lifetime_seconds));
+    let c = core.clone();
+    let c = &c;
+    let claimed = aviary_pg::tx!(&core.pool, |t| -> Result<Vec<Uuid>, aviary_pg::Error> {
+        t.execute(
+            "select pg_advisory_xact_lock($1::int4, $2::int4)",
+            &[&LOCK_CLASS, &LOCK_PLACE],
+        )
+        .await?;
+        let ids: Vec<Uuid> = t
+            .query(
+                "select s.id from sandboxes s join hosts h on h.name = s.host
+                 where s.status = 'frozen' and s.task is null
+                   and h.kind = 'aws' and h.status in ('active', 'retiring')
+                   and h.created_at < now() - $1::bigint * interval '1 millisecond'
+                   and not exists (select 1 from sandboxes o where o.status not in ('gone', 'frozen')
+                                   and (o.host = h.name or o.migrating_to = h.name))",
+                &[&min_life],
+            )
+            .await?
+            .iter()
+            .map(|r| r.get(0))
+            .collect();
+        let mut out = Vec::new();
+        for id in ids {
+            if tasks::take_in(t, c, id, Kind::Freeze).await? {
+                out.push(id);
+            }
+        }
+        Ok(out)
+    })
+    .await?;
+    for id in claimed {
+        tracing::info!(sandbox = %id, "evicting a frozen sandbox: its host holds nothing running");
+        tasks::run(core, Claim::adopt(core, id, Kind::Freeze));
+    }
+    Ok(())
 }
 
 /// A `ready` row the scaler may move.

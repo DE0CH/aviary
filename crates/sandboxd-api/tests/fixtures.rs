@@ -101,11 +101,19 @@ fn migration() {
 }
 
 #[test]
+fn a_paused_sandbox_is_listed_paused() {
+    let mut listed: Value = serde_json::from_str(&fixture("listed.json")).unwrap();
+    listed["state"] = Value::from("paused");
+    let listed: Listed = serde_json::from_value(listed).unwrap();
+    assert_eq!(listed.state, sandboxd_api::SandboxState::Paused);
+}
+
+#[test]
 fn answers_of_a_newer_sandboxd_still_parse() {
     // expand-only (lib.rs): a field or state an older client does not know is ignored, not an error
     let mut listed: Value = serde_json::from_str(&fixture("listed.json")).unwrap();
     listed["alive"] = Value::Bool(true);
-    listed["state"] = Value::from("paused");
+    listed["state"] = Value::from("hibernating");
     let listed: Listed = serde_json::from_value(listed).unwrap();
     assert_eq!(listed.state, sandboxd_api::SandboxState::Unknown);
     let mut host: Value = serde_json::from_str(&fixture("host.json")).unwrap();

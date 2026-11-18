@@ -63,6 +63,8 @@ pub struct Deps {
     /// `None`: launches answer `off` (a host could not join).
     pub host_secrets: Option<HostSecrets>,
     pub control: Arc<dyn ControlUrl>,
+    /// Hermit's freeze key (`HERMIT_FREEZE_KEY`); `None`: the fabric does not freeze, whatever hermit.json says.
+    pub freeze_key: Option<crate::fabric::freezekey::FreezeKey>,
 }
 
 impl std::fmt::Debug for Deps {
@@ -92,6 +94,7 @@ pub struct Gvisor {
     pub(crate) egress: Arc<dyn EgressSource>,
     pub(crate) host_secrets: Option<HostSecrets>,
     control: Arc<dyn ControlUrl>,
+    pub(crate) freeze_key: Option<crate::fabric::freezekey::FreezeKey>,
     /// Since when the gateway has answered every heartbeat (unix ms), 0 while it does not: the leader's own view,
     /// and every other replica's copy of it from the gateway's row.
     pub(crate) gateway_up_since: AtomicI64,
@@ -124,6 +127,7 @@ impl Gvisor {
             egress: d.egress,
             host_secrets: d.host_secrets,
             control: d.control,
+            freeze_key: d.freeze_key,
             gateway_up_since: AtomicI64::new(0),
             gateway_lost_reported: AtomicBool::new(false),
             last_reconcile: Mutex::new(None),
@@ -147,6 +151,29 @@ impl Gvisor {
     /// When the client cannot be built.
     pub fn client(&self, h: &HostRow) -> Result<Client, sandboxd_api::Error> {
         self.clients.of(h)
+    }
+
+    /// The sandboxd spec of a create or a thaw.
+    fn sandboxd_spec(core: &Core, spec: &CreateSpec) -> Spec {
+        Spec {
+            name: spec.name.clone(),
+            ip: spec.ip.to_string(),
+            image: bare_digest(&spec.image).to_owned(),
+            image_ref: Some(spec.image_ref.clone()),
+            env: Env(spec.env.clone()),
+            cpu: f64::from(spec.cpu),
+            memory: spec.memory_bytes,
+            cpu_features: core.cfg.file.fabric.cpu_features.clone(),
+            workspace: Some(spec.workspace.to_string()),
+            // named only when the deployment has one (a host on an older sandboxd refuses the field)
+            drive: core.cfg.file.sandbox.drive.clone(),
+            pids: Some(spec.pids),
+            // named only when it is not sandboxd's default, so a host still on a sandboxd that predates the
+            // field (and refuses unknown ones) keeps taking default-sized sandboxes
+            scratch_bytes: Some(core.cfg.tmp_bytes).filter(|b| *b != sandboxd_api::DEFAULT_SCRATCH_BYTES),
+            // named only when the deployment has some (a host on an older sandboxd refuses the field)
+            mounts: spec_mounts(&core.cfg.file.sandbox.mounts, spec.workspace),
+        }
     }
 
     /// The slot sizes from the configuration.
@@ -235,15 +262,23 @@ impl Fabric for Gvisor {
         Box::pin(async move {
             let core = self.core()?;
             let f = &core.cfg.file.fabric;
-            placement::place(
-                &core.pool,
+            let (place, evicting) = placement::place(
+                &core,
                 Self::sizing(&core.cfg),
                 Config::secs(f.host_dead_seconds),
                 &f.sandbox_cidr,
                 id,
                 memory_bytes,
+                self.freezes(),
             )
-            .await
+            .await?;
+            // the frozen sandboxes whose slot this placement took: their evictions (the start's create waits for
+            // the room: sandboxd answers busy until the memory is free)
+            for e in evicting {
+                tracing::info!(sandbox = %e, for_sandbox = %id, "evicting a frozen sandbox for a placement");
+                crate::tasks::run(&core, crate::tasks::Claim::adopt(&core, e, crate::tasks::Kind::Freeze));
+            }
+            Ok(place)
         })
     }
 
@@ -304,13 +339,85 @@ impl Fabric for Gvisor {
     }
 
     fn freezes(&self) -> bool {
-        self.core().is_ok_and(|c| c.cfg.file.fabric.freeze.is_some())
+        self.freeze_key.is_some() && self.core().is_ok_and(|c| c.cfg.file.fabric.freeze.is_some())
     }
 
     fn freeze(&self, core: Arc<Core>, claim: Claim) -> Fut<'static, ()> {
-        let clients = self.clients.clone();
+        let parts = crate::fabric::pausing::Parts {
+            clients: self.clients.clone(),
+            ec2: self.ec2.clone(),
+            key: self.freeze_key.clone(),
+        };
         Box::pin(async move {
-            crate::fabric::pausing::freeze(&core, &claim, &clients).await;
+            crate::fabric::pausing::freeze(&core, &claim, &parts).await;
+        })
+    }
+
+    fn drop_frozen<'a>(&'a self, id: Uuid, frozen: &'a crate::db::Frozen) -> Fut<'a, ()> {
+        Box::pin(async move {
+            let (Ok(core), Some(ec2)) = (self.core(), &self.ec2) else {
+                return;
+            };
+            let Some(cfg) = &core.cfg.file.fabric.freeze else {
+                return;
+            };
+            if frozen.object.is_empty() {
+                return;
+            }
+            for o in crate::fabric::pausing::objects(&frozen.object) {
+                if let Err(e) = ec2.delete_object(&cfg.bucket, &o).await {
+                    tracing::warn!(sandbox = %id, object = %o, error = %e, "frozen object not deleted");
+                }
+            }
+        })
+    }
+
+    fn thaw<'a>(&'a self, spec: &'a CreateSpec, frozen: &'a crate::db::Frozen) -> Fut<'a, Result<(), CreateError>> {
+        Box::pin(async move {
+            let core = self.core().map_err(|e| CreateError::Unreachable(e.0))?;
+            let fail = |class: &str, message: String| CreateError::Failed {
+                class: class.into(),
+                message,
+            };
+            let (Some(cfg), Some(key), Some(ec2)) = (&core.cfg.file.fabric.freeze, &self.freeze_key, &self.ec2) else {
+                return Err(fail("not_supported", "this fabric does not freeze".into()));
+            };
+            let host = hosts::get(&core.pool, &spec.host)
+                .await
+                .map_err(|e| CreateError::Unreachable(e.to_string()))?
+                .filter(|h| h.status != HostStatus::Gone)
+                .ok_or_else(|| fail("host_gone", format!("host {} is gone", spec.host)))?;
+            let client = self.client(&host).map_err(|e| sandboxd::create_error(&e))?;
+            let objects = crate::fabric::pausing::objects(&frozen.object);
+            let creds = ec2
+                .object_credentials(&cfg.bucket, &objects, false)
+                .await
+                .map_err(|e| CreateError::Unreachable(format!("credentials for the frozen image: {e}")))?;
+            let hex = key
+                .open(spec.sandbox_id, &frozen.key)
+                .map_err(|e| fail("frozen_key", e))?;
+            let req = sandboxd_api::ThawRequest {
+                spec: Self::sandboxd_spec(&core, spec),
+                frozen: sandboxd_api::Frozen {
+                    object: format!("s3://{}/{}", cfg.bucket, frozen.object),
+                    region: core.cfg.file.fabric.aws.region.clone(),
+                    access_key_id: creds.access_key_id,
+                    secret_access_key: creds.secret_access_key,
+                    session_token: creds.session_token,
+                    key: hex,
+                },
+            };
+            client.thaw(&req).await.map_err(|e| sandboxd::create_error(&e))?;
+            if let Err(e) = self.push_gateway_peers(&core).await {
+                tracing::warn!(sandbox = %spec.sandbox_id, error = %e, "gateway peers after a thaw (the next pass pushes them)");
+            }
+            // it runs: the frozen image goes (the row's frozen is cleared by the start's next step)
+            for o in &objects {
+                if let Err(e) = ec2.delete_object(&cfg.bucket, o).await {
+                    tracing::warn!(sandbox = %spec.sandbox_id, object = %o, error = %e, "frozen object not deleted");
+                }
+            }
+            Ok(())
         })
     }
 
@@ -346,25 +453,7 @@ impl Fabric for Gvisor {
                     message: format!("host {} is gone", spec.host),
                 })?;
             let client = self.client(&host).map_err(|e| sandboxd::create_error(&e))?;
-            let s = Spec {
-                name: spec.name.clone(),
-                ip: spec.ip.to_string(),
-                image: bare_digest(&spec.image).to_owned(),
-                image_ref: Some(spec.image_ref.clone()),
-                env: Env(spec.env.clone()),
-                cpu: f64::from(spec.cpu),
-                memory: spec.memory_bytes,
-                cpu_features: core.cfg.file.fabric.cpu_features.clone(),
-                workspace: Some(spec.workspace.to_string()),
-                // named only when the deployment has one (a host on an older sandboxd refuses the field)
-                drive: core.cfg.file.sandbox.drive.clone(),
-                pids: Some(spec.pids),
-                // named only when it is not sandboxd's default, so a host still on a sandboxd that predates the
-                // field (and refuses unknown ones) keeps taking default-sized sandboxes
-                scratch_bytes: Some(core.cfg.tmp_bytes).filter(|b| *b != sandboxd_api::DEFAULT_SCRATCH_BYTES),
-                // named only when the deployment has some (a host on an older sandboxd refuses the field)
-                mounts: spec_mounts(&core.cfg.file.sandbox.mounts, spec.workspace),
-            };
+            let s = Self::sandboxd_spec(&core, spec);
             client.create(&s).await.map_err(|e| sandboxd::create_error(&e))?;
             // the gateway routes the new /32 to its host
             if let Err(e) = self.push_gateway_peers(&core).await {

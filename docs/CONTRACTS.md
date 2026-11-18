@@ -245,7 +245,10 @@ is switched with `set_effort` to the level, `none` included, and its model calls
 **In-cluster API.** On the implementation's in-cluster port (YYC: egress 8082): the models route for pigeon's pair
 bearer, and `GET /v1/ops/summary?tz=&recentMinutes=` for hermit's (`ops::OpsSummary`, platform 15.3's shape:
 `budget`, `egress`, `recent`; each `egress.recent[]` row says whether it is `quiet`, expected noise or a provider glitch
-the agent retries); without a known bearer 401. hermit's snapshot passes `budget` and `egress` through as they come.
+the agent retries; each `recent.list[]` row that is a model, tools or route call may carry the call's `kind`, `host`,
+`path`, `status`, `decision`, `conversationId`, `reason` and `asked`, which the operator page shows as what failed, why
+and with what); without a known bearer 401. hermit's snapshot passes `budget` and `egress` through as they come, and
+`recent.list` with every field it names.
 
 ## The hermit contract
 

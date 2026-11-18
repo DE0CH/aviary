@@ -125,6 +125,7 @@ impl HostInfo {
                     state: match s.state {
                         sandboxd_api::SandboxState::Running => "running".into(),
                         sandboxd_api::SandboxState::Receiving => "receiving".into(),
+                        sandboxd_api::SandboxState::Paused => "paused".into(),
                         sandboxd_api::SandboxState::Unknown => "unknown".into(),
                     },
                     memory: s.memory,

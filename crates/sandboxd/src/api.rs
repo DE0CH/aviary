@@ -452,7 +452,9 @@ pub fn parse_peers(o: &[u8], peers: &mut [Peer; MAX_PEERS]) -> Res<usize> {
         if let (true, Val::Arr(a)) = (k.is("peers"), v) {
             is_list = true;
             json::array::<Error>(a, |e| {
-                let Val::Obj(po) = e else { return Err(Error::new(400, "peers must be a list of objects")) };
+                let Val::Obj(po) = e else {
+                    return Err(Error::new(400, "peers must be a list of objects"));
+                };
                 if n == MAX_PEERS {
                     return Err(Error::new(400, "too many peers"));
                 }
@@ -483,9 +485,11 @@ fn write_peers(w: &mut W, sc: &mut Scratch) -> Res<()> {
     Ok(())
 }
 
-fn meminfo() -> (u64, u64) {
+pub(crate) fn meminfo() -> (u64, u64) {
     let mut b = [0u8; 4096];
-    let Ok(t) = crate::util::read_file("/proc/meminfo", &mut b) else { return (0, 0) };
+    let Ok(t) = crate::util::read_file("/proc/meminfo", &mut b) else {
+        return (0, 0);
+    };
     let t = core::str::from_utf8(t).unwrap_or("");
     let kb = |k: &str| -> u64 {
         t.lines()
@@ -501,7 +505,9 @@ fn meminfo() -> (u64, u64) {
 /// This process's resident memory (VmRSS), bytes.
 pub fn rss() -> u64 {
     let mut b = [0u8; 2048];
-    let Ok(t) = crate::util::read_file("/proc/self/status", &mut b) else { return 0 };
+    let Ok(t) = crate::util::read_file("/proc/self/status", &mut b) else {
+        return 0;
+    };
     let t = core::str::from_utf8(t).unwrap_or("");
     t.lines()
         .find_map(|l| l.strip_prefix("VmRSS:"))
@@ -640,7 +646,9 @@ fn serve_image(app: &App, sock: &mut TcpStream, from: &str, buf: &mut [u8], head
     }
     let digest =
         req.path.strip_prefix("/images/").and_then(|p| p.strip_suffix(".tar.zst")).filter(|d| images::valid_digest(d));
-    let Some(d) = digest.filter(|d| req.method == "GET" && images::have_image(d)) else { return empty(sock, 404) };
+    let Some(d) = digest.filter(|d| req.method == "GET" && images::have_image(d)) else {
+        return empty(sock, 404);
+    };
     let dir = crate::path!("/var/lib/sbx/images/{d}");
     let Ok(c) = crate::proc::spawn(
         &["tar", "--zstd", "-C", dir.as_str(), "--exclude=./rootfs/.gvisor.filestore.*", "-cf", "-", "."],
