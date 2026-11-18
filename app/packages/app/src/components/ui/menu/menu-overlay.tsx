@@ -299,12 +299,29 @@ export function AnchoredSurface({
   // The surface takes focus when it opens, not its first row: a focused row is painted as the hovered one, so the
   // first row looked hovered under a pointer that was elsewhere (Deyao, 2026-11-18). The keys still work from here:
   // with no row focused, ArrowDown goes to the first and ArrowUp to the last (handleWebOverlayKeyDown).
+  //
+  // The placed surface stays `visibility: hidden` until its entering animation starts (Reanimated hides an entering
+  // element at its first render and shows it on `animationstart`), and a hidden element ignores focus(): one try in
+  // the next frame could come too early and leave focus on the page, so the arrow keys did nothing (seen on CI). It
+  // is tried in the next frame and again in the frame after the animation starts, unless focus is already in it.
   useEffect(() => {
     if (!isWeb || !open || !placed || typeof document === "undefined") return undefined;
-    const frame = requestAnimationFrame(() => {
-      document.getElementById(surfaceNativeID)?.focus();
-    });
-    return () => cancelAnimationFrame(frame);
+    const surface = document.getElementById(surfaceNativeID);
+    if (!surface) return undefined;
+    const frames: number[] = [];
+    const focusSoon = () => {
+      frames.push(
+        requestAnimationFrame(() => {
+          if (!surface.contains(document.activeElement)) surface.focus();
+        }),
+      );
+    };
+    focusSoon();
+    surface.addEventListener("animationstart", focusSoon);
+    return () => {
+      surface.removeEventListener("animationstart", focusSoon);
+      frames.forEach(cancelAnimationFrame);
+    };
   }, [open, placed, surfaceNativeID]);
 
   const frameStyle = useMemo<StyleProp<ViewStyle>>(() => {
