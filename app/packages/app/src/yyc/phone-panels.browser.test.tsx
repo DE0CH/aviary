@@ -53,3 +53,10 @@ it("the panel beside the chat has no status bar to leave room for", () => {
   render(<ActivityPanel sessionId="s1" compact={false} />);
   expect(top("activity-close")).toBeLessThan(INSETS.top);
 });
+
+it("a phone panel's last line scrolls clear of the home indicator", () => {
+  useSchedulesPanel.getState().toggle("s1");
+  render(<SchedulesPanel sessionId="s1" compact />);
+  const spacer = document.querySelector<HTMLElement>('[data-testid="schedules-home-indicator"]');
+  expect(spacer?.getBoundingClientRect().height).toBe(INSETS.bottom);
+});

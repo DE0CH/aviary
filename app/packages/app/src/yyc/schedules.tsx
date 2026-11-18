@@ -14,10 +14,10 @@
  */
 import React, { useEffect } from "react";
 import { useProductName, withProductName } from "@/yyc/product";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ChevronLeft, Clock, X } from "lucide-react-native";
+import { Clock } from "lucide-react-native";
+import { SidePanel } from "@/yyc/side-panel";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
 import { api } from "@/yyc/api";
@@ -64,8 +64,6 @@ const isLive = (s: Schedule) => s.state === "active" || s.state === "paused";
 // ---- the chip ----
 
 const ThemedClock = withUnistyles(Clock);
-const ThemedX = withUnistyles(X);
-const ThemedBack = withUnistyles(ChevronLeft);
 const mutedColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const foregroundColor = (theme: Theme) => ({ color: theme.colors.foreground });
 // the 排程訊息 colours are theme tokens (styles/theme.ts): a colorScheme check here never sees dark on web
@@ -141,7 +139,7 @@ function ScheduleSection({ s, name }: { s: Schedule; name: string | null }) {
 
 /**
  * The panel beside the chat (it takes its width from the chat column, which gets narrower); on a phone it covers the
- * chat, with a back arrow, and its header sits below the status bar (the safe area's top).
+ * chat, with a back arrow. Its shell, the safe area included, is `SidePanel`.
  */
 export function SchedulesPanel({ sessionId, compact }: { sessionId: string | null; compact: boolean }) {
   const open = useSchedulesPanel((s) => (sessionId ? s.openFor === sessionId : false));
@@ -149,7 +147,6 @@ export function SchedulesPanel({ sessionId, compact }: { sessionId: string | nul
   const { data } = useConversationSchedules(open ? sessionId : null);
   const name = useFirstName();
   const product = useProductName();
-  const insets = useSafeAreaInsets();
   useEffect(() => {
     // a conversation left with its panel open: closed, so the next one starts without it
     return () => {
@@ -159,31 +156,20 @@ export function SchedulesPanel({ sessionId, compact }: { sessionId: string | nul
   if (!open || !sessionId) return null;
   const schedules = data ?? [];
   return (
-    <View
-      style={compact ? [styles.panelPhone, { paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right }] : styles.panelDock}
-      testID="schedules-panel"
+    <SidePanel
+      id="schedules"
+      title="排程"
+      compact={compact}
+      onClose={close}
+      backLabel="返回"
+      closeLabel="關閉"
     >
-      <View style={styles.panelHeader}>
-        {compact ? (
-          <Pressable onPress={close} accessibilityRole="button" accessibilityLabel="返回" style={styles.iconButton} testID="schedules-back">
-            <ThemedBack size={20} uniProps={foregroundColor} />
-          </Pressable>
-        ) : null}
-        <Text style={styles.panelTitle}>排程</Text>
-        {compact ? null : (
-          <Pressable onPress={close} accessibilityRole="button" accessibilityLabel="關閉" style={styles.iconButton} testID="schedules-close">
-            <ThemedX size={16} uniProps={mutedColor} />
-          </Pressable>
-        )}
-      </View>
-      <ScrollView style={styles.panelBody} contentContainerStyle={styles.panelContent}>
-        {schedules.length === 0 ? <Text style={styles.runNone}>這個對話沒有排程。</Text> : null}
-        {schedules.map((s) => (
-          <ScheduleSection key={s.id} s={s} name={name ?? null} />
-        ))}
-        <Text style={styles.footer}>{withProductName("在對話中告訴 YYC AI 即可修改或取消。", product)}</Text>
-      </ScrollView>
-    </View>
+      {schedules.length === 0 ? <Text style={styles.runNone}>這個對話沒有排程。</Text> : null}
+      {schedules.map((s) => (
+        <ScheduleSection key={s.id} s={s} name={name ?? null} />
+      ))}
+      <Text style={styles.footer}>{withProductName("在對話中告訴 YYC AI 即可修改或取消。", product)}</Text>
+    </SidePanel>
   );
 }
 
@@ -269,47 +255,6 @@ const styles = StyleSheet.create((theme) => ({
   chipText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-  },
-  panelDock: {
-    width: 340,
-    flexShrink: 0,
-    borderLeftWidth: 1,
-    borderLeftColor: theme.colors.border,
-    backgroundColor: theme.colors.surface0,
-    minHeight: 0,
-  },
-  panelPhone: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 50,
-    backgroundColor: theme.colors.surface0,
-  },
-  panelHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[3],
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  panelTitle: {
-    flex: 1,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  iconButton: {
-    padding: theme.spacing[1],
-  },
-  panelBody: {
-    flex: 1,
-  },
-  panelContent: {
-    paddingBottom: theme.spacing[6],
   },
   section: {
     paddingHorizontal: theme.spacing[4],

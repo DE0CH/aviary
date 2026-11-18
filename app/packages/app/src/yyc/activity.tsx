@@ -10,11 +10,11 @@
  * pigeon). A server without the route has no chip.
  */
 import React, { useCallback, useEffect, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
-import { ChevronLeft, ListTodo, X } from "lucide-react-native";
+import { ListTodo } from "lucide-react-native";
+import { SidePanel } from "@/yyc/side-panel";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
 import { api } from "@/yyc/api";
@@ -81,10 +81,7 @@ function useActivityLocale(): ActivityLocale {
 // ---- the chip ----
 
 const ThemedList = withUnistyles(ListTodo);
-const ThemedX = withUnistyles(X);
-const ThemedBack = withUnistyles(ChevronLeft);
 const mutedColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const foregroundColor = (theme: Theme) => ({ color: theme.colors.foreground });
 
 /** 「n running」 in the conversation's header (nothing when it never ran a task); opens the panel. */
 export function ActivityChip({ sessionId }: { sessionId: string | null }) {
@@ -200,7 +197,7 @@ function TaskSection({
 
 /**
  * The panel beside the chat (it takes its width from the chat column, which gets narrower); on a phone it covers the
- * chat, with a back arrow, and its header sits below the status bar (the safe area's top).
+ * chat, with a back arrow. Its shell, the safe area included, is `SidePanel`.
  */
 export function ActivityPanel({ sessionId, compact }: { sessionId: string | null; compact: boolean }) {
   const open = useActivityPanel((s) => (sessionId ? s.openFor === sessionId : false));
@@ -209,7 +206,6 @@ export function ActivityPanel({ sessionId, compact }: { sessionId: string | null
   const locale = useActivityLocale();
   const readOnly = useViewAsReadOnly();
   const queryClient = useQueryClient();
-  const insets = useSafeAreaInsets();
   const [now, setNow] = useState(() => Date.now());
   const [stopping, setStopping] = useState<ReadonlySet<string>>(() => new Set());
   const tasks = data ?? [];
@@ -256,51 +252,28 @@ export function ActivityPanel({ sessionId, compact }: { sessionId: string | null
   if (!open || !sessionId) return null;
   const w = activityWords(locale);
   return (
-    <View
-      style={compact ? [styles.panelPhone, { paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right }] : styles.panelDock}
-      testID="activity-panel"
+    <SidePanel
+      id="activity"
+      title={w.title}
+      compact={compact}
+      onClose={close}
+      backLabel={w.back}
+      closeLabel={w.close}
     >
-      <View style={styles.panelHeader}>
-        {compact ? (
-          <Pressable
-            onPress={close}
-            accessibilityRole="button"
-            accessibilityLabel={w.back}
-            style={styles.iconButton}
-            testID="activity-back"
-          >
-            <ThemedBack size={20} uniProps={foregroundColor} />
-          </Pressable>
-        ) : null}
-        <Text style={styles.panelTitle}>{w.title}</Text>
-        {compact ? null : (
-          <Pressable
-            onPress={close}
-            accessibilityRole="button"
-            accessibilityLabel={w.close}
-            style={styles.iconButton}
-            testID="activity-close"
-          >
-            <ThemedX size={16} uniProps={mutedColor} />
-          </Pressable>
-        )}
-      </View>
-      <ScrollView style={styles.panelBody} contentContainerStyle={styles.panelContent}>
-        {tasks.length === 0 ? <Text style={styles.none}>{w.none}</Text> : null}
-        {tasks.map((task) => (
-          <TaskSection
-            key={task.taskId}
-            task={task}
-            now={now}
-            locale={locale}
-            canStop={!readOnly}
-            stopping={stopping.has(task.taskId)}
-            onStop={handleStop}
-          />
-        ))}
-        {tasks.length > 0 ? <Text style={styles.footer}>{w.footer}</Text> : null}
-      </ScrollView>
-    </View>
+      {tasks.length === 0 ? <Text style={styles.none}>{w.none}</Text> : null}
+      {tasks.map((task) => (
+        <TaskSection
+          key={task.taskId}
+          task={task}
+          now={now}
+          locale={locale}
+          canStop={!readOnly}
+          stopping={stopping.has(task.taskId)}
+          onStop={handleStop}
+        />
+      ))}
+      {tasks.length > 0 ? <Text style={styles.footer}>{w.footer}</Text> : null}
+    </SidePanel>
   );
 }
 
@@ -322,47 +295,6 @@ const styles = StyleSheet.create((theme) => ({
   chipText: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
-  },
-  panelDock: {
-    width: 340,
-    flexShrink: 0,
-    borderLeftWidth: 1,
-    borderLeftColor: theme.colors.border,
-    backgroundColor: theme.colors.surface0,
-    minHeight: 0,
-  },
-  panelPhone: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 50,
-    backgroundColor: theme.colors.surface0,
-  },
-  panelHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[3],
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  panelTitle: {
-    flex: 1,
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
-  },
-  iconButton: {
-    padding: theme.spacing[1],
-  },
-  panelBody: {
-    flex: 1,
-  },
-  panelContent: {
-    paddingBottom: theme.spacing[6],
   },
   section: {
     paddingHorizontal: theme.spacing[4],

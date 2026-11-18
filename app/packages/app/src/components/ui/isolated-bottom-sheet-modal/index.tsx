@@ -12,6 +12,7 @@ import {
   createBottomSheetVisibilityTracker,
 } from "./visibility-tracker";
 import { BottomSheetScope } from "@/components/ui/bottom-sheet-scope";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SheetBackdrop } from "./sheet-backdrop";
 
 type GorhomBottomSheetModalMethods = ElementRef<typeof GorhomBottomSheetModal>;
@@ -61,6 +62,12 @@ type IsolatedBottomSheetModalProps = Omit<
    * inside the sheet and it throws on device only.
    */
   contextBridge: ContextBridge | null;
+  /**
+   * Where the sheet's room ends at the top. Defaults to the safe area's top (the status bar, the Dynamic Island), so
+   * every sheet stops below it without asking: percentage snap points ("95%") and dynamic sizing are measured in the
+   * room below this line. Gorhom's own default is 0, the screen's edge.
+   */
+  topInset?: number;
 };
 
 export type IsolatedBottomSheetModalRef = GorhomBottomSheetModalMethods;
@@ -92,8 +99,10 @@ export const IsolatedBottomSheetModal = forwardRef<
     contextBridge,
     backdropOpacity,
     enableDismissOnClose = true,
+    topInset,
     ...bottomSheetProps
   } = props;
+  const safeAreaInsets = useSafeAreaInsets();
   const renderBackdrop = useCallback(
     (backdropProps: BottomSheetBackdropProps) => (
       <SheetBackdrop
@@ -108,6 +117,7 @@ export const IsolatedBottomSheetModal = forwardRef<
     <GorhomBottomSheetModal
       {...bottomSheetProps}
       ref={modalRef}
+      topInset={topInset ?? safeAreaInsets.top}
       enableDismissOnClose={enableDismissOnClose}
       stackBehavior={presentation}
       backdropComponent={backdropOpacity === undefined ? undefined : renderBackdrop}

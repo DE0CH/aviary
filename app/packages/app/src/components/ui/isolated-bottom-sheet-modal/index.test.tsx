@@ -41,24 +41,42 @@ vi.mock("@gorhom/portal", () => ({
   PortalHost: () => React.createElement("div", { "data-host": true }),
 }));
 
+/** What the wrapper hands Gorhom, for the layout tests below to feed into Gorhom's own geometry. */
+const sheetProps = vi.hoisted(() => ({ topInset: undefined as number | undefined }));
+
+/** An iPhone with a Dynamic Island: 852 pt tall, the status bar 59 pt. */
+const IPHONE = vi.hoisted(() => ({ height: 852, insets: { top: 59, right: 0, bottom: 34, left: 0 } }));
+vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => IPHONE.insets }));
+
 vi.mock("@gorhom/bottom-sheet", async () => {
   const { Portal } = await import("@gorhom/portal");
   return {
     BottomSheetModalProvider: ({ children }: { children?: React.ReactNode }) =>
       React.createElement("div", { "data-bottom-sheet-provider": true }, children),
     BottomSheetModal: React.forwardRef(
-      ({ children, stackBehavior }: { children?: React.ReactNode; stackBehavior?: string }, _ref) =>
-        React.createElement(
+      (
+        {
+          children,
+          stackBehavior,
+          topInset,
+        }: { children?: React.ReactNode; stackBehavior?: string; topInset?: number },
+        _ref,
+      ) => {
+        sheetProps.topInset = topInset;
+        return React.createElement(
           Portal,
           null,
           React.createElement("div", { "data-stack-behavior": stackBehavior }, children),
-        ),
+        );
+      },
     ),
   };
 });
 
 import { IsolatedBottomSheetModal, type ContextBridge } from ".";
 import { useAnimatedLayout } from "@gorhom/bottom-sheet/src/hooks/useAnimatedLayout";
+import { normalizeSnapPoint } from "@gorhom/bottom-sheet/src/utilities/normalizeSnapPoint";
+import { makeMutable } from "react-native-reanimated";
 import { useIsInsideBottomSheet } from "@/components/ui/bottom-sheet-scope";
 
 /** Renders whatever the portal is currently holding, from its own place in the tree. */
@@ -231,5 +249,69 @@ describe("bottom sheet layout subscription", () => {
       if (originalWidth) Object.defineProperty(viewport, "clientWidth", originalWidth);
       else Reflect.deleteProperty(viewport, "clientWidth");
     }
+  });
+});
+
+// Deyao, 2026-11-18: the Thinking sheet, opened tall on an iPhone, ran up under the status bar. Every sheet goes
+// through this wrapper, so the wrapper is where a sheet learns where the safe area starts.
+describe("IsolatedBottomSheetModal and the safe area", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    sheetProps.topInset = undefined;
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    portalStore.reset();
+  });
+
+  /** Where Gorhom puts the top of a sheet at `snapPoint`, in a window-tall host, with the inset the wrapper gave it. */
+  function sheetTop(snapPoint: string): number {
+    const topInset = sheetProps.topInset ?? 0;
+    let containerHeight = -1;
+    function LayoutProbe() {
+      const containerLayoutState = React.useMemo(
+        () =>
+          makeMutable({ height: IPHONE.height, offset: { top: 0, bottom: 0, left: 0, right: 0 } }),
+        [],
+      );
+      containerHeight = useAnimatedLayout(containerLayoutState, topInset, 0, true).get()
+        .containerHeight;
+      return null;
+    }
+    const probeRoot = createRoot(document.createElement("div"));
+    act(() => probeRoot.render(<LayoutProbe />));
+    act(() => probeRoot.unmount());
+    // Gorhom places a detent from the top of its room and offsets the room by the inset.
+    return topInset + normalizeSnapPoint(snapPoint, containerHeight);
+  }
+
+  it("keeps a tall sheet below the status bar without the sheet asking", () => {
+    act(() => {
+      root.render(
+        <IsolatedBottomSheetModal contextBridge={null} snapPoints={["60%", "95%"]}>
+          Thinking
+        </IsolatedBottomSheetModal>,
+      );
+    });
+    expect(sheetTop("95%")).toBeGreaterThanOrEqual(IPHONE.insets.top);
+    expect(sheetTop("100%")).toBe(IPHONE.insets.top);
+  });
+
+  it("lets a sheet that knows better set its own top inset", () => {
+    act(() => {
+      root.render(
+        <IsolatedBottomSheetModal contextBridge={null} topInset={0}>
+          Full height
+        </IsolatedBottomSheetModal>,
+      );
+    });
+    expect(sheetTop("100%")).toBe(0);
   });
 });
