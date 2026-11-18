@@ -3205,6 +3205,7 @@ export const en = {
     preparing: {
       title: "Preparing the workspace…",
       slow: "This can take a minute or two.",
+      approval: "Waiting for your approval…",
     },
     shared: {
       loadFailed: "Couldn't open this conversation.",

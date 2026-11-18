@@ -6991,12 +6991,15 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
 });
 
 // YYC AI (docs/paseo-ui.md): the conversation's sandbox is being made (a host may be booting); the app shows
-// a "preparing the workspace" chip until `ready`.
+// a "preparing the workspace" chip until `ready`. `waiting` (while preparing): what the start waits for, which the
+// chip says instead ("approval": its person's approval outside the chat); a value the app does not know reads as
+// preparing.
 export const YycSandboxStatusMessageSchema = z.object({
   type: z.literal("yyc.sandbox_status"),
   payload: z.object({
     agentId: z.string(),
     state: z.enum(["preparing", "ready"]),
+    waiting: z.string().optional(),
   }),
 });
 

@@ -3151,6 +3151,7 @@ export const zhHK: TranslationResources = {
     preparing: {
       title: "正在準備工作環境…",
       slow: "可能需要一至兩分鐘，請稍候。",
+      approval: "正在等待你的批准…",
     },
     shared: {
       loadFailed: "未能開啟此對話。",
