@@ -48,14 +48,39 @@ Each setting is a flag or, without it, an environment variable:
 `GET /healthz` answers 200 while the program runs; `GET /readyz` answers 200 while the folder is there. On SIGTERM
 it takes no new connections, lets the transfers in flight finish, and exits 0.
 
+## The edge (`edge/`, a Cloudflare Worker)
+
+The page loads from Cloudflare's edge, near whoever opens it, and only the folder's own calls travel to the server.
+Before the page shows a folder it asks about twenty questions in a row (its files, its settings, its sign-in, who is
+signed in, which drive there is); from Hong Kong to a server in Germany each was a quarter of a second.
+
+- The built page is the Worker's static assets (`assets/`: `dist/` with the theme at `themes/opencloud/`, and
+  `_headers`, which keeps the hashed files for good). Cloudflare serves them before the Worker runs.
+- The Worker answers the page's settings and sign-in calls itself (`src/settings.js`) for the person in Access's token
+  (`src/access.js`: signed by the team's keys, for the drive's Access app). Without a good token it answers 403.
+- The folder's calls (`/dav/`, `/data/`) go on to the server, with the person's email in the header the server reads
+  (`cf-access-authenticated-user-email`, set from the token, never a value the browser sent) and Access's token for
+  the tunnel's own check.
+- A preview asked for by the file's etag (`?preview=1&c=…`) is one picture for that version of the file, so the
+  edge keeps it in its cache for whoever asks next; the browser gets its own private copy.
+
+Its settings are vars: `ACCESS_TEAM`, `ACCESS_AUD` (the Access app's audience tag) and `DRIVE_NAME` (the same name
+as the server's `--name`). The image carries the edge at `/srv/edge`; YYC's deploy takes it out of the image it pins,
+so the page at the edge and the server are always one commit. Tests: `cd edge && npm test`.
+
 ## Run it locally
 
 ```sh
 pnpm install && pnpm build && mkdir -p dist/themes && cp -r server/theme dist/themes/opencloud
-cd server && cargo build --release
-DRIVE_ROOT=/some/folder DRIVE_WEB=../dist DRIVE_NAME="YYC Drive" DRIVE_DEV_USER=me@example.com \
-  DRIVE_LISTEN=127.0.0.1:8201 ./target/release/yyc-drive
+(cd server && cargo build --release)
+DRIVE_ROOT=/some/folder DRIVE_WEB=dist DRIVE_NAME="YYC Drive" DRIVE_DEV_USER=me@example.com \
+  DRIVE_LISTEN=127.0.0.1:8201 server/target/release/yyc-drive &
+mkdir -p edge/assets && cp -r dist/. edge/assets/ && cp edge/_headers edge/assets/
+cd edge && npx wrangler dev --var DEV_USER:me@example.com --var ORIGIN:http://127.0.0.1:8201 --var "DRIVE_NAME:YYC Drive"
 ```
+
+The page is then at http://127.0.0.1:8787. `DEV_USER` is the person a local run assumes; it is taken only when
+`ACCESS_AUD` is not set, so a deployed Worker never has one.
 
 ## Following upstream
 

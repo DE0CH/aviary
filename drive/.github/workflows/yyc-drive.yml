@@ -1,6 +1,6 @@
 # YYC Drive (YYC-DRIVE.md). server: clippy and the server's tests (the real program on a temporary folder).
-# page: the page's unit tests. image + index: both in one image for amd64 and arm64, ghcr.io/de0ch/yyc-drive:<sha12>,
-# only when both passed.
+# page: the page's unit tests. edge: the Worker's tests and its bundle (wrangler's dry run). image + index: all of it in
+# one image for amd64 and arm64, ghcr.io/de0ch/yyc-drive:<sha12> (the edge at /srv/edge), only when all three passed.
 name: yyc-drive
 on:
   push:
@@ -49,10 +49,27 @@ jobs:
       - name: unit tests
         run: pnpm test:unit run
 
+  edge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: edge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      - name: the bundle (with a stand-in for the page)
+        run: |
+          mkdir -p assets && echo "<html></html>" > assets/index.html && cp _headers assets/
+          npx --yes wrangler@4.151.0 deploy --dry-run --outdir /tmp/bundle
+
   # One image per architecture on its own kind of runner (YYC's app nodes are arm64, its other pools amd64), then one
   # tag naming both.
   image:
-    needs: [server, page]
+    needs: [server, page, edge]
     if: github.event_name != 'pull_request'
     strategy:
       matrix:
