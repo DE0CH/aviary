@@ -79,6 +79,20 @@ server (`server/`) serves no deployment.
   `clientMessageId` (magpie admits an id once), when the host comes online, when the outbox loads after a reload,
   and 15 s after a failed try; the server's refusal or 取消 takes it out of the chat and puts its text back into an
   empty message box (a refusal also shows its error there).
+- **Touch targets** (Deyao, 2026-11-18, design B): on a phone (the compact layout, below `md`) every control is at least
+  a finger's 44 px either way; from `md` up controls keep their desktop sizes. One number, `TOUCH_TARGET`, and
+  `touchSize(desktop)` (a Unistyles breakpoint value, `components/ui/control-geometry.ts`) size the shared buttons, fields,
+  switches and segmented controls; icon buttons (`components/ui/icon-button-chrome.ts`) are 44 x 44 with their glyph a
+  size up (16 to 20, 14 to 18); menu rows (`MENU_ITEM_HEIGHT`), the "/" list, tool and step rows are 44 tall. The
+  message box's +, model button and send are 44 tall and send/stop draw a 36 px disc inside their 44 px target (the box
+  grows 4 px). Small things that sit on a line of text (copy buttons, 「工作了」, the schedule and activity chips,
+  「取消」) are 44 px targets drawn as before: negative margins give the space back, so no line moves. The check is
+  `scripts/touch-targets/check.mjs DIST [OUT]` (run by `pigeon-app.yml` on every export): the export served with a
+  stand-in for pigeon (`stand-in.mjs`, pigeon's recorded answers in `pigeon-answers.json`, the sample conversations of
+  `content.mjs`), every screen and state opened on a 390 px touch phone in Chromium and every control measured; one
+  under 44 px fails it by screen, label and size. A new screen or state is a new entry in its `STATES`. An inline link
+  inside running text is exempt (WCAG 2.5.8). A question asked about a model pick (the harness switch) closes the model
+  menu first: left open, its backdrop took the first tap on 繼續 or 取消.
 - **One sidebar row**: the items at the top of the sidebar (新對話 / 最近刪除 / 搜尋), the conversation rows and the
   settings list share one geometry: `density.rowHeight` tall, 8 + 8 px inset, a 14 px label on
   `SIDEBAR_ROW_LINE_HEIGHT` (`styles/density.ts`), the icon in a conversation status slot; the settings items are
