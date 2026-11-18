@@ -599,11 +599,19 @@ impl Handler {
         }
     }
 
-    /// Uploads a send's images (7.5.4 step 1); the error sentence when one fails.
+    /// Uploads a send's images (7.5.4 step 1); the error sentence when one fails. An image the app uploaded when it
+    /// was attached (`POST /api/assets/files?kind=image`) comes with its `uploadId` (and an empty `data`, which every
+    /// listed app build's schema requires) and is named as it is.
     async fn upload_images(&self, images: Option<&Value>) -> Result<Vec<ImageRef>, String> {
         let locale = self.locale();
         let mut out = Vec::new();
         for (i, img) in images.and_then(Value::as_array).into_iter().flatten().enumerate() {
+            if let Some(id) = str_field(img, "uploadId") {
+                // one that is not the person's unattached upload is magpie's `unknown_upload` at the send
+                let upload_id = Uuid::parse_str(id).map_err(|_| locale.upload_failed().to_owned())?;
+                out.push(ImageRef { upload_id });
+                continue;
+            }
             let data = str_field(img, "data").unwrap_or("");
             let mime = str_field(img, "mimeType")
                 .unwrap_or("application/octet-stream")
@@ -661,6 +669,8 @@ impl Handler {
                 ErrorCode::ViewAsNotRecorded => l.view_as_not_recorded().to_owned(),
                 ErrorCode::TooLarge => l.too_large().to_owned(),
                 ErrorCode::UnsupportedType => l.unsupported_type().to_owned(),
+                // an attachment uploaded when it was attached that magpie no longer holds (unsent for 24 h)
+                ErrorCode::UnknownUpload => l.upload_failed().to_owned(),
                 _ => l.unreachable().to_owned(),
             },
             Fail::Unreachable => l.unreachable().to_owned(),

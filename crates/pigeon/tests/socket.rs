@@ -961,6 +961,50 @@ async fn the_drain_closes_request_free_sockets_first() {
     assert_eq!(Ws::open(&e.h.url, &e.h.token(STAFF), "").await.err(), Some(503));
 }
 
+/// A picture the app uploaded when it was attached (`POST /api/assets/files?kind=image`, with its progress) is sent by
+/// its `uploadId`: nothing is uploaded again, mid-reply or not; an id magpie no longer holds is the upload sentence.
+#[tokio::test]
+async fn a_send_names_an_image_uploaded_when_attached() {
+    let e = env().await;
+    let c = e.m.add(STAFF, None);
+    let mut ws = e.ws(STAFF).await;
+    let up = uuid::Uuid::new_v4();
+    let (_, r) = ws
+        .rpc(
+            "send_agent_message_request",
+            json!({"agentId": c, "text": "look", "messageId": "m1",
+                   "images": [{"data": "", "uploadId": up, "mimeType": "image/png"}]}),
+        )
+        .await;
+    assert_eq!(r["accepted"], true, "{r}");
+    assert_eq!(e.m.st().uploads, Vec::<(String, usize)>::new(), "no upload at the send");
+    {
+        let st = e.m.st();
+        let (_, req) = st.sent.last().unwrap();
+        assert_eq!(req.images.len(), 1);
+        assert_eq!(req.images[0].upload_id, up);
+    }
+    e.m.refuse_once("send_turn", Refusal::new(ErrorCode::UnknownUpload, "gone"));
+    let (_, r) = ws
+        .rpc(
+            "send_agent_message_request",
+            json!({"agentId": c, "text": "again", "messageId": "m2",
+                   "images": [{"data": "", "uploadId": uuid::Uuid::new_v4(), "mimeType": "image/png"}]}),
+        )
+        .await;
+    assert_eq!(r["accepted"], false);
+    assert_eq!(r["error"], "未能上載圖片，訊息未有傳送，請再試一次。");
+    let (_, r) = ws
+        .rpc(
+            "send_agent_message_request",
+            json!({"agentId": c, "text": "bad", "messageId": "m3",
+                   "images": [{"data": "", "uploadId": "not-an-id", "mimeType": "image/png"}]}),
+        )
+        .await;
+    assert_eq!(r["accepted"], false);
+    assert_eq!(r["error"], "未能上載圖片，訊息未有傳送，請再試一次。");
+}
+
 #[tokio::test]
 async fn sends_creates_and_cancels() {
     let e = env().await;
