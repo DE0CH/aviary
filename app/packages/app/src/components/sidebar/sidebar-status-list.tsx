@@ -31,14 +31,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { density, densityIconBox, densityIconProps } from "@/styles/density";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import { withUnistyles } from "react-native-unistyles";
-import {
-  ChevronDown,
-  ChevronRight,
-  CircleAlert,
-  CircleCheck,
-  CircleDot,
-  CircleX,
-} from "lucide-react-native";
+import { ChevronDown, ChevronRight, CircleCheck, CircleDot, CircleX } from "lucide-react-native";
 import { useToast } from "@/contexts/toast-context";
 import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
 import { useWorkspaceClipboardActions } from "@/hooks/use-workspace-clipboard-actions";
@@ -102,7 +95,6 @@ const runningGroupIconProps = densityIconProps("sm", (theme) => ({
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedChevronRight = withUnistyles(ChevronRight);
-const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedCircleX = withUnistyles(CircleX);
@@ -489,7 +481,8 @@ function StatusGroupLeadingVisual({
 function StatusGroupIcon({ bucket }: { bucket: StatusBucket }) {
   switch (bucket) {
     case "needs_input":
-      return <ThemedCircleAlert uniProps={needsInputGroupIconProps} />;
+      // the amber dot, like every other state (Deyao, 2026-11-18: no glyph)
+      return <ThemedCircleDot uniProps={needsInputGroupIconProps} />;
     case "failed":
       return <ThemedCircleX uniProps={failedGroupIconProps} />;
     case "attention":

@@ -1,10 +1,10 @@
-// The status spot at the start of a conversation's row in the sidebar: the ring while it works, the alert while it
+// The status spot at the start of a conversation's row in the sidebar: the ring while it works, the amber dot while it
 // waits for an answer, and (Deyao, 2026-11-17, the chat's design A) the blue dot while background tasks run after the
 // reply, the clock while a schedule is armed, the grey dot otherwise. Its own module so a test can draw it without the
 // row's hooks (lessons/116: a browser test that reaches the host runtime breaks Vite's dependency scan).
 import { View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { CircleAlert, Clock, Folder, FolderGit2, Monitor } from "lucide-react-native";
+import { Clock, Folder, FolderGit2, Monitor } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import type { SidebarWorkspaceEntry } from "@/hooks/sidebar-workspaces-view-model";
 import { densityIconBox, SIDEBAR_ROW_LINE_HEIGHT } from "@/styles/density";
@@ -23,12 +23,6 @@ import { DensityIcon } from "@/components/ui/density-icon";
 
 const TITLE_LINE_HEIGHT = SIDEBAR_ROW_LINE_HEIGHT;
 
-const needsInputColorMapping = (theme: Theme) => ({
-  color: theme.colors.surface0,
-  fill: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
-});
-
-const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedClock = withUnistyles(Clock);
 const scheduledColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -81,9 +75,10 @@ export function WorkspaceStatusIndicator({
   }
 
   if (bucket === "needs_input") {
+    // just a dot: the amber says "someone must act" without a glyph (Deyao, 2026-11-18)
     return (
       <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-needs_input">
-        <ThemedCircleAlert size={STATUS_INDICATOR_ALERT_SIZE} uniProps={needsInputColorMapping} />
+        <View style={styles.needsInputDot} />
       </View>
     );
   }
@@ -194,6 +189,12 @@ const styles = StyleSheet.create((theme) => ({
     height: STATUS_INDICATOR_FILLED_DOT_SIZE,
     borderRadius: theme.borderRadius.full,
     backgroundColor: getStatusDotColor({ theme, bucket: "attention" }) ?? undefined,
+  },
+  needsInputDot: {
+    width: STATUS_INDICATOR_FILLED_DOT_SIZE,
+    height: STATUS_INDICATOR_FILLED_DOT_SIZE,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
   },
   backgroundStatusDot: {
     width: STATUS_INDICATOR_BACKGROUND_DOT_SIZE,

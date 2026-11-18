@@ -53,6 +53,19 @@ describe("the conversation list's status spot", () => {
     expect(slot.getAttribute("aria-label")).toMatch(/^Next wakeup .*\d\d:\d\d/);
   });
 
+  it("is a plain amber dot while it waits for an answer", () => {
+    const slot = mount(<WorkspaceStatusIndicator bucket="needs_input" workspaceKind="directory" />);
+    expect(slot.dataset.testid).toBe("workspace-status-indicator-needs_input");
+    // a dot, not a glyph: the mark is one element and no icon (Deyao, 2026-11-18)
+    expect(slot.querySelector("svg")).toBeNull();
+    const dot = slot.firstElementChild as HTMLElement;
+    expect(dot.children).toHaveLength(0);
+    const [r, g, b] = (getComputedStyle(dot).backgroundColor.match(/\d+/g) ?? []).map(Number);
+    // amber: red leads blue, green sits between
+    expect(r).toBeGreaterThan(b + 60);
+    expect(g).toBeGreaterThan(b);
+  });
+
   it("shows background tasks over the clock when both", () => {
     const slot = mount(
       <WorkspaceStatusIndicator bucket="done" backgroundTasks={1} nextScheduleAt={inTwoHours()} workspaceKind="directory" />,

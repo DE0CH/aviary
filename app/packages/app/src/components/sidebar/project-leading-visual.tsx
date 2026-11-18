@@ -1,7 +1,7 @@
 import { ActivityIndicator, View, type ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react-native";
+import { ChevronDown, ChevronRight } from "lucide-react-native";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { getStatusBucketLabel } from "@/hooks/sidebar-status-view-model";
 import { densityIconBox, densityIconProps } from "@/styles/density";
@@ -14,10 +14,7 @@ import {
 } from "@/utils/project-status-badge-content";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { getStatusDotColor } from "@/utils/status-dot-color";
-import {
-  STATUS_INDICATOR_ALERT_SIZE,
-  STATUS_INDICATOR_FILLED_DOT_SIZE,
-} from "@/utils/status-indicator-geometry";
+import { STATUS_INDICATOR_FILLED_DOT_SIZE } from "@/utils/status-indicator-geometry";
 import { StatusRing } from "@/components/status-ring";
 import { getStatusRingOffset } from "@/components/status-ring/geometry";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
@@ -37,20 +34,15 @@ const STATUS_BADGE_OFFSET = -4;
 // odd size measured 1.5 device px right and down at 3x, ~3px of asymmetry between opposite gaps).
 // Even sizes divide the shell into whole pixels and land dead center with no correction.
 //
-// The filled alert occupies the full badge shell so needs-input remains more prominent than
-// the passive status dots.
+// Every surfaced bucket is a dot in the shell, needs_input's amber one included (Deyao, 2026-11-18:
+// no glyph).
 const DensityProjectIconView = withUnistyles(ProjectIconView);
 const projectIconProps = densityIconProps("md", () => ({}));
 
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
-const ThemedCircleAlert = withUnistyles(CircleAlert);
 
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
-});
-const needsInputColorMapping = (theme: Theme) => ({
-  color: theme.colors.surface0,
-  fill: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
 });
 
 /**
@@ -107,9 +99,9 @@ export function ProjectLeadingVisual({
 
 // The project icon (the lettered box) is what marks a row as a *project* rather than a
 // workspace, so it always stays and status annotates it instead of replacing it. Every
-// surfaced bucket lands in the identical corner badge — an amber alert glyph for needs_input,
-// a colored disc for the rest, nothing for done — so the badge reads as one fixed shell and
-// only its contents change.
+// surfaced bucket lands in the identical corner badge — a colored disc, needs_input's amber
+// one included, nothing for done — so the badge reads as one fixed shell and only its colour
+// changes.
 export function ProjectStatusIndicator({
   iconDataUri,
   displayName,
@@ -197,11 +189,7 @@ function ProjectStatusBadge({
       style={[styles.statusBadge, getStatusBadgeBackdropStyle(backdrop)]}
       testID="project-status-badge"
     >
-      {content.kind === "alert" ? (
-        <ThemedCircleAlert size={STATUS_INDICATOR_ALERT_SIZE} uniProps={needsInputColorMapping} />
-      ) : (
-        <ProjectStatusDot bucket={content.bucket} />
-      )}
+      <ProjectStatusDot bucket={content.bucket} />
     </View>
   );
 }
@@ -256,14 +244,15 @@ function ProjectInlineChevron({ chevron }: { chevron: "expand" | "collapse" | nu
 function getStatusDotColorStyle(bucket: ProjectStatusBadgeDotBucket): ViewStyle {
   if (bucket === "failed") return styles.statusDotFailed;
   if (bucket === "running") return styles.statusDotRunning;
+  if (bucket === "needs_input") return styles.statusDotNeedsInput;
   return styles.statusDotAttention;
 }
 
 const styles = StyleSheet.create((theme) => {
-  // Dot statuses sit *inside* the shell rather than replacing it, so they carry the same ring
-  // the alert does. The geometry is shared here and baked into each colored variant so the
-  // style prop stays a single stable object; the colors come from the one bucket-to-color map
-  // so this badge can't drift from the status dots everywhere else.
+  // The dots sit *inside* the shell rather than replacing it. The geometry is shared here and
+  // baked into each colored variant so the style prop stays a single stable object; the colors
+  // come from the one bucket-to-color map so this badge can't drift from the status dots
+  // everywhere else.
   const statusDot = (bucket: ProjectStatusBadgeDotBucket) =>
     ({
       width: STATUS_INDICATOR_FILLED_DOT_SIZE,
@@ -293,7 +282,7 @@ const styles = StyleSheet.create((theme) => {
     projectIconFallbackText: {
       fontSize: 9,
     },
-    // The shell the alert and dot statuses share. It straddles the icon's bottom-right corner
+    // The shell every status dot sits in. It straddles the icon's bottom-right corner
     // (half in, half out) so the lettered project box stays readable. The shell is a knockout:
     // it is filled with the colour of the row behind it, which is what makes the ring around the
     // dot read as a gap in the icon rather than as a white halo drawn on top of it.
@@ -321,5 +310,6 @@ const styles = StyleSheet.create((theme) => {
     statusDotRunning: statusDot("running"),
     statusDotFailed: statusDot("failed"),
     statusDotAttention: statusDot("attention"),
+    statusDotNeedsInput: statusDot("needs_input"),
   };
 });
