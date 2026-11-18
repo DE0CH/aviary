@@ -5,6 +5,15 @@ import os, sys, unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import live_chat as e  # noqa: E402
+import live_drive  # noqa: E402
+
+
+class Drive(unittest.TestCase):
+    def test_the_page_from_the_edge(self):
+        # the Worker's static assets carry Cloudflare's own Cache-Control; the drive's server said no-cache
+        self.assertTrue(live_drive.from_edge({"cache-control": "public, max-age=0, must-revalidate"}))
+        self.assertFalse(live_drive.from_edge({"cache-control": "no-cache"}))
+        self.assertFalse(live_drive.from_edge({}))
 
 
 class Code(unittest.TestCase):
