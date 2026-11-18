@@ -391,7 +391,11 @@ describe("processTimelineResponse", () => {
     });
 
     expect(
-      result.tail.map((item) => (item.kind === "tool_call" ? item.payload.data.callId : item.id)),
+      result.tail.map((item) =>
+        item.kind === "tool_call" && item.payload.source === "agent"
+          ? item.payload.data.callId
+          : item.id,
+      ),
     ).toEqual(["reply", "call-late"]);
     expect(result.cursor).toMatchObject({ startSeq: 758, endSeq: 828 });
   });
