@@ -88,7 +88,8 @@ Jarvis 4 session machine (harness aviary)                                     â”
 |---|---|---|
 | `hermit-jarvis` | `src/bin/hermit-jarvis.rs`, image `ghcr.io/de0ch/hermit-jarvis` | :8080 the hermit contract (`src/hermit.rs`), :8081 the gateway listener (`src/central.rs`), :8082 pigeon's models route, :9090 ops; the router as the sessions' truth (`src/reconcile.rs`, `src/jarvis.rs`) |
 | `aviary-gateway` | `src/bin/aviary-gateway.rs` â†’ `src/machine.rs`, in the session image | the machine's half of the gateway, the signed boot, the supervisor's health, deliveries |
-| `harness-aviary.sh`, `aviary-sandbox` | `session-image/base/` | the harness launcher and the supervisor's namespace |
+| `harness-aviary.sh` | `session-image/base/` | the harness launcher |
+| `aviary-sandbox` | `session-image/tools/` (jarvis-tools) | the supervisor's namespace, with Jarvis's session commands in it |
 | the session's tunnel agent | `harness-aviary.sh` `run_tunnel` (`cf-tunnel-agent.js`) | `https://<session id>-s.deyaochen.com/` â†’ 127.0.0.1:8899 on the machine, which the sandbox shares: its drop pages and content. The agent runs on the machine's side because the tunnel proof never enters the sandbox |
 | the sandbox: supervisor, keeper, Claude Code, the agent's tools | DE0CH/aviary's sandbox image `ghcr.io/de0ch/hermit-sandbox`, pinned by digest in `session-image/aviary.json`, unpacked on the session's volume and entered by `aviary-sandbox` | the image YYC AI's sandboxes run, unmodified |
 | pigeon, magpie, pigeon-app | DE0CH/deyao-ai `k8s/chat/` | pinned by DE0CH/deyao-ai `chat-pin.yml` |
@@ -139,8 +140,12 @@ Jarvis 4 session machine (harness aviary)                                     â”
    `PUT /v1/hermit/conversations/{id}/closed`): the chat's message box says the session is paused and takes nothing
    until the session is up again, when the same pass opens it (Deyao, 2026-11-12: a session is resumed in the
    Jarvis 4 app). A turn magpie admitted just before the close still resumes the session
-   (`POST /api/sessions/:id/start`) and the new machine's boot takes the waiting sandbox; Jarvis's own wakeups and
-   crons resume the session in the router, as for every harness. A destroyed session's
+   (`POST /api/sessions/:id/start`) and the new machine's boot takes the waiting sandbox; Jarvis's crons and watches
+   resume the session in the router, as for every harness. A wakeup is magpie's (Deyao, 2026-11-17: dogfooding YYC
+   AI's schedules): `schedule-wakeup` in the sandbox arms a schedule through `http://magpie/v1/sandbox/schedules`
+   (session-image/tools/src/aviary.rs: a UTC cron rule from the first time, the name in the prompt), the chat's list
+   shows a clock on the conversation, magpie's fire is a turn like any other, and hermit's pass tells the router the
+   next fire (`PUT /api/sessions/:id/chat-schedule`), which counts it as an armed wakeup. A destroyed session's
    conversation leaves the chat (`POST /v1/hermit/conversations/{id}/delete`); the chat offers no Delete and no
    Recently deleted (`conversations.peopleDelete: false`), since a session's life is managed in the Jarvis 4 app.
    A session the router lists again after its conversation left the chat was not destroyed (its list had left it
