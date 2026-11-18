@@ -20,7 +20,7 @@ spec:
       initContainers:
         # the app bundle (pigeon 17.1): the pigeon-app image's files, copied into the emptyDir pigeon serves
         - name: app
-          image: ghcr.io/de0ch/pigeon-app:6dc7f49b0089@sha256:491e98cd71033d4bf285908afdf8b5052b0f7d1efd0ee941410fabd7191a31aa
+          image: ghcr.io/de0ch/pigeon-app:82b9f62edd5f@sha256:604aeb37f96b3e2230241c240532d82910faee3fba94ca2c3fe19d0d2cbe423e
           command: [/cp, -a, /app/., /srv/app/]
           volumeMounts: [{ name: app, mountPath: /srv/app }]
           resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
@@ -31,14 +31,14 @@ spec:
         # files are links). Not mounted over it in pigeon: the bundle is read-only there, and a mount point that does
         # not exist cannot be made (2026-11-13)
         - name: branding
-          image: ghcr.io/de0ch/pigeon-app:6dc7f49b0089@sha256:491e98cd71033d4bf285908afdf8b5052b0f7d1efd0ee941410fabd7191a31aa
+          image: ghcr.io/de0ch/pigeon-app:82b9f62edd5f@sha256:604aeb37f96b3e2230241c240532d82910faee3fba94ca2c3fe19d0d2cbe423e
           command: [/cp, -rL, /branding, /srv/app/]
           volumeMounts: [{ name: app, mountPath: /srv/app }, { name: branding, mountPath: /branding, readOnly: true }]
           resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
           securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: pigeon
-          image: ghcr.io/de0ch/pigeon:b3596c5b90bf@sha256:5a22d023d0eae60158dce155dcfa88772d9905df064fd1c66d9156a61735a01c
+          image: ghcr.io/de0ch/pigeon:e874f3de3530@sha256:c9611d6fbf6a535440f74fe60baf1897200634ce97e3bd4645c2147bdf79b979
           envFrom: [{ secretRef: { name: chat-pigeon } }]
           env: [{ name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }]
           ports: [{ containerPort: 8080 }, { containerPort: 9090 }]
