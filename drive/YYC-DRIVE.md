@@ -28,6 +28,10 @@ One program and one folder. No database, no per-person folders, no sharing.
 - Previews of videos and pictures: one frame (a second in) as a JPEG the size the page asks, drawn by ffmpeg (in the
   image) two at a time, cached by the browser under the file's etag; none for anything else (the page shows the icon).
 - Names that start with a dot are hidden and refused; a path cannot leave the folder.
+- A request's body is read to its end before the answer (at most 1 MiB), except an upload's, which is streamed to disk:
+  answered with its body still arriving, a connection is closed after the answer, and the proxy in front may already
+  be sending its next request there (cloudflared answered that request 502; on the page's sign-in POSTs that was
+  "access denied", about one fresh load in 140).
 
 Each setting is a flag or, without it, an environment variable:
 

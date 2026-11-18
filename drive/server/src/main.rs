@@ -86,9 +86,27 @@ async fn main() {
     axum::serve(listener, app).with_graceful_shutdown(stop).await.expect("serve");
 }
 
+/// The largest body read whole before an answer (the page's settings, sign-in and WebDAV calls are small).
+const SMALL_BODY: usize = 1 << 20;
+
 async fn handle(State(s): State<S>, req: Request) -> Res {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
+    // A body is read to its end before the answer, except an upload's (PUT, tus POST and PATCH), which its handler
+    // streams to disk. Answered
+    // with its body still arriving, a connection is closed after the answer, under the proxy in front, which may
+    // already be sending its next request there (cloudflared: a 502 on that request when it is a POST, the page's
+    // "access denied" after sign-in).
+    let streams = (matches!(method, Method::PUT | Method::POST) && path.starts_with("/dav/")) || path.starts_with("/data/tus/");
+    let req = if streams {
+        req
+    } else {
+        let (parts, body) = req.into_parts();
+        match axum::body::to_bytes(body, SMALL_BODY).await {
+            Ok(b) => Request::from_parts(parts, Body::from(b)),
+            Err(_) => return status(StatusCode::PAYLOAD_TOO_LARGE),
+        }
+    };
     let res = route(&s, req).await.unwrap_or_else(|e| e);
     if res.status().is_client_error() || res.status().is_server_error() {
         eprintln!("{} {} -> {}", method, path, res.status().as_u16());

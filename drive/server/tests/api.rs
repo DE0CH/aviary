@@ -415,3 +415,53 @@ fn a_video_or_a_picture_shows_a_preview() {
     // and the file itself is still the file
     assert_eq!(text(s.dav("GET", "broken.mp4").send().unwrap()), "not a video");
 }
+
+/// Sends `head` and, `delay` later, `body` on one connection, then a second request on the same connection; the
+/// second answer's status line ("" when the connection was closed under it).
+fn answered_then_reused(base: &str, head: &str, body: &[u8], delay: Duration) -> String {
+    use std::io::{Read, Write};
+    let addr = base.trim_start_matches("http://");
+    let mut s = std::net::TcpStream::connect(addr).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    s.write_all(head.as_bytes()).unwrap();
+    std::thread::sleep(delay);
+    let _ = s.write_all(body);
+    // the first answer
+    let mut buf = [0u8; 4096];
+    let n = s.read(&mut buf).unwrap();
+    assert!(String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 2"), "{}", String::from_utf8_lossy(&buf[..n]));
+    std::thread::sleep(Duration::from_millis(200));
+    if s.write_all(b"GET /healthz HTTP/1.1\r\nHost: x\r\n\r\n").is_err() {
+        return String::new();
+    }
+    let n = s.read(&mut buf).unwrap_or(0);
+    String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or("").to_string()
+}
+
+#[test]
+fn a_connection_stays_usable_when_a_body_arrives_after_its_headers() {
+    // cloudflared sends the next request on a kept connection; one the server closed because it answered before the
+    // body had arrived fails that request (a 502 on the page's POSTs: "access denied" after sign-in)
+    let s = Server::start(Some("amy@example.com"));
+    let body = br#"{"account_uuid":"me"}"#;
+    for (method, path) in [
+        ("POST", "/api/v0/settings/permissions-list"),
+        ("POST", "/oidc/token"),
+        ("PROPFIND", &*format!("/dav/spaces/{DRIVE}/")),
+    ] {
+        let head = format!("{method} {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\nDepth: 1\r\n\r\n", body.len());
+        let second = answered_then_reused(&s.base, &head, body, Duration::from_millis(300));
+        assert_eq!(second, "HTTP/1.1 200 OK", "{method} {path}: the connection was closed under the next request");
+    }
+}
+
+#[test]
+fn an_upload_s_first_piece_is_a_whole_piece() {
+    // the page sends up to 10 MB on the request that starts an upload: it is streamed, not held to a small body
+    let s = Server::start(Some("amy@example.com"));
+    let piece = vec![7u8; 10_000_000];
+    let r = s.dav("POST", "").header("upload-length", "10000000").header("upload-metadata", meta("big.bin")).header("tus-resumable", "1.0.0").body(piece).send().unwrap();
+    assert_eq!(r.status(), StatusCode::CREATED);
+    assert_eq!(r.headers()["upload-offset"], "10000000");
+    assert_eq!(fs::metadata(s.root.join("big.bin")).unwrap().len(), 10_000_000);
+}
