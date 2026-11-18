@@ -308,8 +308,8 @@ impl Fabric for Gvisor {
     }
 
     fn freeze(&self, core: Arc<Core>, claim: Claim) -> Fut<'static, ()> {
+        let clients = self.clients.clone();
         Box::pin(async move {
-            let clients = self.clients.clone();
             crate::fabric::pausing::freeze(&core, &claim, &clients).await;
         })
     }
