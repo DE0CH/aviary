@@ -87,7 +87,7 @@ server (`server/`) serves no deployment.
 - **YYC features** (`src/yyc/`): sent-file cards (`sent-files.tsx`; kept visible when a turn folds,
   `agent-stream/turn-collapse/model.ts`), paths in replies download through the server, uploads through
   `/api/assets/files` the moment a file or a picture is attached (`yyc/asset-upload.ts`, XMLHttpRequest for the bytes
-  sent: the chip draws a bar along its foot, `components/attachment-pill.tsx` `UploadOverlay`, and the send waits for it;
+  sent: the chip draws a bar along its foot, `components/upload-overlay.tsx`, its own chunk, and the send waits for it;
   Deyao, 2026-11-18). A picture goes up as an image (`?kind=image`, `uploadAttachedImage`) and the send names it by
   `images[].uploadId` (an empty `data` beside it, so every listed app build accepts the frame) instead of carrying its
   bytes, so a send between replies and one during a reply carry the same small message and never wait on the store.
@@ -96,7 +96,9 @@ server (`server/`) serves no deployment.
   one uploaded over 23 h ago (magpie keeps an unsent upload a day), or to a pigeon before `?kind=image` (its answer
   names no upload: YYC AI and the Jarvis chat move their pins apart), is sent with its bytes (`attachments/service.ts`
   `encodeAttachmentsForSend`, `uploadAttachedImage`). The uploader is a chunk of its own, fetched when something is
-  attached; the entry keeps only `yyc/upload-progress.ts` (the entry had 7 KB of room under its budget), the "preparing the workspace" chip (`sandbox-status.ts`,
+  attached; the entry keeps only `yyc/upload-progress.ts`. The entry was at 1,099.5 KB of its 1,100 KB budget
+  (2026-11-18): the upload's 1.6 KB went over it, so the uploader, the chip's upload overlay and the queue's rows
+  (`composer/queue-rows.tsx`: a queue shows only after a send during a reply) are their own chunks, the "preparing the workspace" chip (`sandbox-status.ts`,
   `sandbox-chip.tsx`; only while a sent message waits on the sandbox, the hub never shows it for a turn nobody sent:
   Deyao, 2026-11-03; a start that waits for the person's approval elsewhere, hermit's phase `approval`, says
   "waiting for your approval" instead: the message's `waiting`, `nextPreparing`; a socket that connects again starts
