@@ -885,7 +885,8 @@ impl Sandboxes {
         if o.code != 0 {
             mem.abort();
             let tail = tail_chars(o.err.as_str().trim(), 300);
-            if self.status(name, sc.big).as_str() == "running" {
+            // a paused one (a frozen sandbox's eviction) that is still paused is still here, as a running one is
+            if matches!(self.status(name, sc.big).as_str(), "running" | "paused") {
                 return Err(err!(409, "the freeze failed before the sandbox stopped; it still runs here: {tail}"));
             }
             self.cleanup(&lk, name, Some(e.spec.ip.as_str()));
@@ -899,6 +900,12 @@ impl Sandboxes {
         };
         if let Err(x) = mem.finish(5 * 60_000) {
             return Err(lost(self, x.msg.as_str()));
+        }
+        // a checkpoint of a paused sandbox leaves it paused (runsc precopy-20261102.1; a running one it stops): it is
+        // recorded, so it goes before its filesystems come off
+        if e.paused {
+            let mut a = [""; 40];
+            quiet(runsc::argv(&mut a, &["delete", "-force", name])?);
         }
         // stopped: its root and scratch filesystems come off, and the scratch file follows the memory
         let t1 = mono_ms();
