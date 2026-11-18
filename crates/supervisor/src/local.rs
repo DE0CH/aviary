@@ -6,7 +6,9 @@
 //! - `POST /v1/hooks/send-user-file`: the `SendUserFile` hook, with its descriptors, handed to the driver
 //!   ([`crate::lifecycle::Agent::send_user_file`]); 502 `upstream_failed` with the reason when the files were not kept.
 //! - `POST /v1/questions`, `GET /v1/questions/{askId}`: the `ask` command's question, passed to magpie with the
-//!   lease ([`crate::ask`]).
+//!   lease ([`crate::ask`]); each poll is a wait on the person until the answer.
+//! - `POST`/`DELETE /v1/person-waits/{key}`: a command that waits on the person for anything else (Jarvis 4's Inbox
+//!   requests): the heartbeat's `waiting` while it calls (Deyao, 2026-11-18: the list's needs-you mark).
 
 use std::io::Write as _;
 use std::path::Path;
@@ -59,19 +61,44 @@ impl LocalServer for Local {
     }
 
     async fn question_get(&self, _ctx: Ctx, ask_id: String, q: QuestionWait) -> Answer<QuestionAnswer> {
-        self.agent.waiting_on_the_person();
+        let key = format!("question:{ask_id}");
+        self.agent.waiting_on_the_person(&key, true);
         let calls = self.agent.magpie_calls().ok_or_else(no_magpie)?;
         let r = calls
             .question_get(&ask_id, &magpie_api::sandbox::QuestionQuery { wait_ms: q.wait_ms })
             .await
             .map_err(|e| match e.api().map(|r| r.status) {
-                Some(404) => aviary_core::http::ApiError::not_found("no such question"),
+                Some(404) => {
+                    self.agent.waiting_on_the_person(&key, false);
+                    aviary_core::http::ApiError::not_found("no such question")
+                }
                 _ => upstream(&e),
             })?;
+        if r.answer.is_some() {
+            // answered: the command no longer waits on the person
+            self.agent.waiting_on_the_person(&key, false);
+        }
         Ok(QuestionAnswer {
             ask_id: r.ask_id,
             answer: r.answer.and_then(|a| serde_json::to_value(a).ok()),
         })
+    }
+
+    async fn person_wait(&self, _ctx: Ctx, key: String, waiting: bool, q: QuestionWait) -> Answer<()> {
+        if !supervisor_api::local::valid_wait_key(&key) {
+            return Err(aviary_core::http::ApiError::bad_request(
+                "a wait key is 1 to 100 of A-Za-z0-9._:-",
+            ));
+        }
+        self.agent.waiting_on_the_person(&format!("wait:{key}"), waiting);
+        if waiting {
+            let max = supervisor_api::local::QUESTION_WAIT_MAX;
+            let hold = q
+                .wait_ms
+                .map_or(max, |ms| std::time::Duration::from_millis(u64::from(ms)).min(max));
+            tokio::time::sleep(hold).await;
+        }
+        Ok(())
     }
 
     async fn secret(&self, _ctx: Ctx, key: String) -> Answer<SecretValue> {

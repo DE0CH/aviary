@@ -11,6 +11,12 @@
 //!   supervisor passes it to magpie with its lease and takes no other part: the question belongs to the command.
 //! - `GET /v1/questions/{askId}?waitMs=`: the question's state ([`QuestionAnswer`]), held up to `waitMs` (at most
 //!   [`QUESTION_WAIT_MAX`]) while it waits; 404 `not_found` for an id no `ask` opened.
+//! - `POST /v1/person-waits/{key}?waitMs=`: a command that waits on the person for something other than a question
+//!   (a deployment's request waiting for the person's approval, e.g. Jarvis 4's Inbox) says so, held up to `waitMs`
+//!   (at most [`QUESTION_WAIT_MAX`]) and called again while it waits; `DELETE` the same when its wait ends. 204.
+//!   Like a question poll, it keeps the run from being silent and sets the heartbeat's `waiting` (Deyao,
+//!   2026-11-18: the conversation list shows the conversation as needing the person). `key`: 1 to 100 of
+//!   `A-Za-z0-9._:-`, the command's own.
 
 use std::os::fd::OwnedFd;
 use std::sync::{Arc, Mutex};
@@ -27,6 +33,7 @@ pub const SEND_USER_FILE: &str = "/v1/hooks/send-user-file";
 pub const SECRET: &str = "/v1/secrets/{key}";
 pub const QUESTIONS: &str = "/v1/questions";
 pub const QUESTION: &str = "/v1/questions/{askId}";
+pub const PERSON_WAIT: &str = "/v1/person-waits/{key}";
 
 /// The longest a question poll is held.
 pub const QUESTION_WAIT_MAX: Duration = Duration::from_secs(25);
@@ -119,6 +126,15 @@ pub struct QuestionOpened {
 pub struct QuestionWait {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_ms: Option<u32>,
+}
+
+/// Whether `key` names a person wait (1 to 100 of `A-Za-z0-9._:-`).
+#[must_use]
+pub fn valid_wait_key(key: &str) -> bool {
+    (1..=100).contains(&key.len())
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
 }
 
 /// 200 of `GET /v1/questions/{askId}`: `answer` is magpie's resolution (`{"behavior", "updatedInput", "message"}`),

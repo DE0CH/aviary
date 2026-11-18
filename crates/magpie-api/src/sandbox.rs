@@ -866,6 +866,11 @@ pub enum HeartbeatState {
     Idle,
 }
 
+/// How long one call that waits on the person keeps a heartbeat's `waiting` set after it began: longer than the
+/// longest poll a waiting command holds ([`crate::sandbox`]'s question wait, the person wait), so a command polling
+/// again keeps it set without a gap.
+pub const PERSON_WAIT_WINDOW: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// `POST /v1/sandbox/heartbeat` every 15 s → 204.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -876,6 +881,10 @@ pub struct Heartbeat {
     pub state: HeartbeatState,
     /// Background tasks.
     pub tasks: u32,
+    /// A command waits on the person (the supervisor's local socket: an `ask` poll, a held person wait) within the
+    /// last [`PERSON_WAIT_WINDOW`]. Absent from an older supervisor: false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub waiting: bool,
     /// The last turn whose end report magpie answered.
     pub last_turn: Option<HeartbeatLastTurn>,
     /// Claude Code generation.
