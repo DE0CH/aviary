@@ -99,6 +99,7 @@ moka = { version = "=0.12.16", features = ["future"] }
 aws-config = { version = "=1.13.0", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
 aws-sdk-s3 = { version = "=1.157.0", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
 aws-sdk-ec2 = { version = "=1.274.0", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
+aws-sdk-sts = { version = "=1.124.0", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
 # the SDKs' HTTPS client: rustls on ring, hyper 1 (`rustls-ring`; the default `rustls-aws-lc` would add aws-lc-sys).
 # Crates using the SDK pass `Builder::new().tls_provider(Rustls(Ring)).build_https()` as `http_client`, as in
 # testing/tls-canary.

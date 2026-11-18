@@ -45,6 +45,62 @@ pub trait Ec2: Send + Sync + 'static {
     fn describe<'a>(&'a self, tags: &'a [(String, String)]) -> Fut<'a, Result<Vec<Instance>, Ec2Error>>;
     /// Whether S3 object `key` of `bucket` is there (`HeadObject`): a sandbox image in the hosts' image bucket.
     fn has_object<'a>(&'a self, bucket: &'a str, key: &'a str) -> Fut<'a, Result<bool, Ec2Error>>;
+    /// Credentials for objects `keys` of `bucket` and nothing else, for an hour (STS `GetFederationToken` with a
+    /// session policy naming them): writing them (`write`) or reading them. A frozen sandbox's two objects travel
+    /// with these (jarvis4 docs/PLAN-fabric.md).
+    fn object_credentials<'a>(
+        &'a self,
+        _bucket: &'a str,
+        _keys: &'a [String],
+        _write: bool,
+    ) -> Fut<'a, Result<ObjectCredentials, Ec2Error>> {
+        Box::pin(async {
+            Err(Ec2Error {
+                code: "not_supported".into(),
+                message: "no STS here".into(),
+            })
+        })
+    }
+    /// Deletes object `key` of `bucket` (a missing one is fine).
+    fn delete_object<'a>(&'a self, _bucket: &'a str, _key: &'a str) -> Fut<'a, Result<(), Ec2Error>> {
+        Box::pin(async {
+            Err(Ec2Error {
+                code: "not_supported".into(),
+                message: "no S3 here".into(),
+            })
+        })
+    }
+}
+
+/// Short-lived credentials ([`Ec2::object_credentials`]).
+#[derive(Clone, PartialEq, Eq)]
+pub struct ObjectCredentials {
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    pub session_token: String,
+}
+
+impl std::fmt::Debug for ObjectCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // never the secrets
+        f.debug_struct("ObjectCredentials")
+            .field("access_key_id", &self.access_key_id)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The session policy of [`Ec2::object_credentials`]: these objects only, to write (with aborting a multipart
+/// upload) or to read.
+#[must_use]
+pub fn object_policy(bucket: &str, keys: &[String], write: bool) -> String {
+    let actions: &[&str] = if write {
+        &["s3:PutObject", "s3:AbortMultipartUpload"]
+    } else {
+        &["s3:GetObject"]
+    };
+    let resources: Vec<String> = keys.iter().map(|k| format!("arn:aws:s3:::{bucket}/{k}")).collect();
+    serde_json::json!({"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": actions, "Resource": resources}]})
+        .to_string()
 }
 
 /// The real client.
@@ -52,6 +108,7 @@ pub trait Ec2: Send + Sync + 'static {
 pub struct Aws {
     client: aws_sdk_ec2::Client,
     s3: aws_sdk_s3::Client,
+    sts: aws_sdk_sts::Client,
 }
 
 impl Aws {
@@ -103,9 +160,34 @@ impl Aws {
                     .build(),
             )
             .build();
+        // the same user's federation tokens (a frozen sandbox's objects), with the same bounds
+        let sts = aws_sdk_sts::Config::builder()
+            .behavior_version(aws_sdk_sts::config::BehaviorVersion::latest())
+            .region(aws_sdk_sts::config::Region::new(region.to_owned()))
+            .credentials_provider(aws_sdk_sts::config::Credentials::new(
+                access_key_id,
+                secret_access_key,
+                None,
+                None,
+                "hermit",
+            ))
+            .http_client(
+                aws_smithy_http_client::Builder::new()
+                    .tls_provider(tls::Provider::Rustls(tls::rustls_provider::CryptoMode::Ring))
+                    .build_https(),
+            )
+            .timeout_config(
+                TimeoutConfig::builder()
+                    .connect_timeout(Duration::from_millis(3100))
+                    .operation_attempt_timeout(Duration::from_secs(20))
+                    .operation_timeout(Duration::from_secs(60))
+                    .build(),
+            )
+            .build();
         Self {
             client: aws_sdk_ec2::Client::from_conf(conf),
             s3: aws_sdk_s3::Client::from_conf(s3),
+            sts: aws_sdk_sts::Client::from_conf(sts),
         }
     }
 }
@@ -252,6 +334,81 @@ impl Ec2 for Aws {
                 }),
             }
         })
+    }
+
+    fn object_credentials<'a>(
+        &'a self,
+        bucket: &'a str,
+        keys: &'a [String],
+        write: bool,
+    ) -> Fut<'a, Result<ObjectCredentials, Ec2Error>> {
+        use aws_sdk_sts::error::ProvideErrorMetadata as _;
+        Box::pin(async move {
+            let r = self
+                .sts
+                .get_federation_token()
+                .name("hermit-freeze")
+                .policy(object_policy(bucket, keys, write))
+                .duration_seconds(3600)
+                .send()
+                .await
+                .map_err(|e| Ec2Error {
+                    code: e.code().unwrap_or("unknown").to_owned(),
+                    message: e.message().map_or_else(
+                        || aws_sdk_sts::error::DisplayErrorContext(&e).to_string(),
+                        str::to_owned,
+                    ),
+                })?;
+            let c = r.credentials().ok_or_else(|| Ec2Error {
+                code: "no_credentials".into(),
+                message: "GetFederationToken answered without credentials".into(),
+            })?;
+            Ok(ObjectCredentials {
+                access_key_id: c.access_key_id().to_owned(),
+                secret_access_key: c.secret_access_key().to_owned(),
+                session_token: c.session_token().to_owned(),
+            })
+        })
+    }
+
+    fn delete_object<'a>(&'a self, bucket: &'a str, key: &'a str) -> Fut<'a, Result<(), Ec2Error>> {
+        use aws_sdk_s3::error::ProvideErrorMetadata as _;
+        Box::pin(async move {
+            self.s3
+                .delete_object()
+                .bucket(bucket)
+                .key(key)
+                .send()
+                .await
+                .map(|_| ())
+                .map_err(|e| Ec2Error {
+                    code: e.code().unwrap_or("unknown").to_owned(),
+                    message: e
+                        .message()
+                        .map_or_else(|| aws_sdk_s3::error::DisplayErrorContext(&e).to_string(), str::to_owned),
+                })
+        })
+    }
+}
+
+#[cfg(test)]
+mod object_policy_tests {
+    use super::*;
+
+    #[test]
+    fn a_freezes_credentials_name_its_two_objects_and_nothing_else() {
+        let keys = vec!["frozen/s1/f1".to_owned(), "frozen/s1/f1.scratch".to_owned()];
+        let w: serde_json::Value = serde_json::from_str(&object_policy("b", &keys, true)).unwrap();
+        assert_eq!(
+            w["Statement"][0]["Action"],
+            serde_json::json!(["s3:PutObject", "s3:AbortMultipartUpload"])
+        );
+        assert_eq!(
+            w["Statement"][0]["Resource"],
+            serde_json::json!(["arn:aws:s3:::b/frozen/s1/f1", "arn:aws:s3:::b/frozen/s1/f1.scratch"])
+        );
+        let r: serde_json::Value = serde_json::from_str(&object_policy("b", &keys, false)).unwrap();
+        assert_eq!(r["Statement"][0]["Action"], serde_json::json!(["s3:GetObject"]));
     }
 }
 
