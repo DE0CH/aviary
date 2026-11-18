@@ -8,8 +8,10 @@ description: Edit videos — watch and hear footage, cut, join, caption, add tit
 Tools on this computer: `clip`, `speech-times`, `edit`. **Read `/opt/engine/GUIDE.md` in full first**: it is their
 manual.
 
-Seeing and hearing footage needs a model that takes video and sound; if a clip shows you nothing, say so (the
-person can pick such a model in the model menu).
+**First, run `video-check`.** It says whether this conversation's model watches video and hears sound. If it does not
+(exit 3), your first reply says so in one or two sentences, names the model it lists that does, and that the person
+picks it in the model menu. Without seeing, you can still cut at times the person gives, join, caption from
+`speech-times`, and render; you cannot judge what is in the footage. If `clip`'s pictures show you nothing, say so.
 
 **Footage lives in YYC Drive**, the company's shared folder, at `/drive` on this computer: the same files staff see
 at https://drive.yyc-internal.com. Look there first; attached files are in `/workspace/uploads/`.

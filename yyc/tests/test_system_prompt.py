@@ -71,5 +71,23 @@ class SandboxInternet(unittest.TestCase):
         self.assertIn("A site that is blocked there is read with `web_fetch`", text)
 
 
+class VideoSkill(unittest.TestCase):
+    """The video skill (Deyao, 2026-11-18): a model that cannot watch footage says so in its first reply instead of
+    editing blind, because the skill runs video-check first (the sandbox image of aviary 47ab1726ce92 on: exit 3 and
+    the models that can, seen live on DeepSeek V4.1 Flash; exit 0 on MiMo v2.6 Pro); footage lives in YYC Drive."""
+
+    def setUp(self):
+        with open(os.path.join(HERMIT, "skills", "video", "SKILL.md"), encoding="utf-8") as f:
+            self.text = " ".join(f.read().split())
+
+    def test_video_check_comes_first(self):
+        self.assertIn("**First, run `video-check`.**", self.text)
+        self.assertIn("your first reply says so", self.text)
+
+    def test_footage_lives_in_the_drive(self):
+        self.assertIn("at `/drive` on this computer", self.text)
+        self.assertIn("never write work files into `/drive`", self.text)
+
+
 if __name__ == "__main__":
     unittest.main()
