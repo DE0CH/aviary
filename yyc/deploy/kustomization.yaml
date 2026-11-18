@@ -36,7 +36,7 @@ images:
   # YYC Drive: its server, and its edge at /srv/edge (job drive-edge), in one image (DE0CH/yyc-drive yyc-drive.yml)
   - {name: yyc-drive, newName: ghcr.io/de0ch/yyc-drive, newTag: "6b0f098ab09d"}
   # egress and tools (DE0CH/jarvis3 chat.yml); the ZDR guard reads this tag (yyc-ai/tests/test_zdr.py)
-  - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "c2fa23bc4cba"}
+  - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "7b4c2aff7bd3"}
 configMapGenerator:
   # hermit's YYC configuration (hermit spec 9): hashed, so a change rolls hermit
   - name: hermit-config
