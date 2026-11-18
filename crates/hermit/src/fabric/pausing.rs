@@ -97,6 +97,12 @@ pub async fn freeze(core: &Arc<Core>, claim: &Claim, parts: &Parts) {
     }
 }
 
+/// sandboxd's 404 for a sandbox it does not run, as opposed to a host on a sandboxd that predates the route (its 404
+/// says nothing of the sandbox: the sandbox is kept as it is, never ended for it).
+fn not_here(body: &str) -> bool {
+    body.contains("is not running here")
+}
+
 fn unreachable(e: impl std::fmt::Display) -> CreateError {
     CreateError::Unreachable(e.to_string())
 }
@@ -147,7 +153,7 @@ async fn pause(core: &Arc<Core>, claim: &Claim, parts: &Parts, row: &SandboxRow)
     let client = client_of(core, &parts.clients, &host).await?;
     match client.pause(&row.name).await {
         Ok(_) => {}
-        Err(sandboxd_api::Error::Status { status: 404, body }) => return Ok(Done::Lost(body)),
+        Err(sandboxd_api::Error::Status { status: 404, body }) if not_here(&body) => return Ok(Done::Lost(body)),
         Err(e) => return Ok(Done::Kept(e.to_string())),
     }
     let frozen = Frozen {
@@ -206,10 +212,8 @@ async fn evict(
         }
         // 409: not recorded, still paused there
         Err(sandboxd_api::Error::Status { status: 409, body }) => return Ok(Done::Kept(body)),
-        Err(sandboxd_api::Error::Status {
-            status: 404 | 502,
-            body,
-        }) => return Ok(Done::Lost(body)),
+        Err(sandboxd_api::Error::Status { status: 404, body }) if not_here(&body) => return Ok(Done::Lost(body)),
+        Err(sandboxd_api::Error::Status { status: 502, body }) => return Ok(Done::Lost(body)),
         // no answer: it may have gone either way; the row stays as it was and the next eviction asks again (a
         // sandbox no longer listed by its host is then found vanished)
         Err(e) => return Ok(Done::Kept(e.to_string())),
@@ -242,6 +246,14 @@ async fn evict(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_sandboxds_own_not_here_is_a_lost_sandbox() {
+        assert!(not_here("sbx-1 is not running here"));
+        // an older sandboxd without the route answers a bare 404: the sandbox is not ended for that
+        assert!(!not_here("not found"));
+        assert!(!not_here(""));
+    }
 
     #[test]
     fn a_frozen_image_is_two_objects_under_its_sandbox() {
