@@ -93,10 +93,9 @@ async fn handle(State(s): State<S>, req: Request) -> Res {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
     // A body is read to its end before the answer, except an upload's (PUT, tus POST and PATCH), which its handler
-    // streams to disk. Answered
-    // with its body still arriving, a connection is closed after the answer, under the proxy in front, which may
-    // already be sending its next request there (cloudflared: a 502 on that request when it is a POST, the page's
-    // "access denied" after sign-in).
+    // streams to disk. Answered with its body still arriving, a connection is closed after the answer, under the
+    // proxy in front, which may already be sending its next request there (cloudflared: a 502 on that request when
+    // it is a POST, the page's "access denied" after sign-in).
     let streams = (matches!(method, Method::PUT | Method::POST) && path.starts_with("/dav/")) || path.starts_with("/data/tus/");
     let req = if streams {
         req
