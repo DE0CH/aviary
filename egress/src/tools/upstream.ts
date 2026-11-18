@@ -112,7 +112,9 @@ export class Upstream {
           const msg = (v as { error?: string })?.error ?? body.slice(0, 500);
           return { content: [{ type: "text", text: String(msg) }], isError: true };
         }
-        if (!r.ok) throw new Error(`${this.cfg.prefix} answered HTTP ${r.status}: ${body.slice(0, 300)}`);
+        // the upstream failing: in its own words (its `error`) when it gave them, else the start of its answer
+        const said = (v as { error?: unknown })?.error;
+        if (!r.ok) throw new Error(`${this.cfg.prefix} answered HTTP ${r.status}: ${typeof said === "string" && said ? said.slice(0, 300) : body.slice(0, 300)}`);
         // the API's JSON as it is (no text: the REST answer is that JSON)
         return typeof v === "string" ? { content: [{ type: "text", text: v }] } : { content: [], structuredContent: v };
       },

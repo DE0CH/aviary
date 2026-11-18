@@ -121,6 +121,7 @@ export async function startFakes(): Promise<Fakes> {
     if (u.pathname.startsWith("/rest-up/")) {
       const name = u.pathname.slice("/rest-up/".length);
       if (name === "posts_search" && !parsed?.query) return json(400, { error: "query is required" });
+      if (name === "posts_search" && parsed?.query === "slow") return json(500, { error: "the search ran past the database's 30 s limit and was stopped" });
       return json(200, { called: name, for: req.headers["x-yyc-user"], query: parsed?.query });
     }
     json(404, { error: "no fake for " + u.pathname });

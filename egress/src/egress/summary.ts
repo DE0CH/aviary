@@ -134,7 +134,8 @@ async function lately(db: Db, minutes: number): Promise<Row> {
               (select count(*) from egress_log where at > ${win} and kind not in ${CALLS} and decision like 'deny%')::int as "blocked"`,
     ),
     db.query(
-      `select e.at, e.kind || ' ' || coalesce(e.status::text, '–') as what, e.decision || ' ' || coalesce(e.host, '') as detail, ${OWNER("e.")} as owner
+      `select e.at, e.kind || ' ' || coalesce(e.status::text, '–') as what, e.decision || ' ' || coalesce(e.host, '') as detail, ${OWNER("e.")} as owner,
+              e.kind, e.host, e.path, e.status, e.decision, e.conversation_id as "conversationId", e.reason, e.asked
          from egress_log e
         where e.at > ${win} and e.kind in ${CALLS} and (e.status >= 400 or e.decision like 'deny%') and not ${QUIET("e.")}
         order by e.at desc limit 20`,

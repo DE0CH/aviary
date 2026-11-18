@@ -46,6 +46,12 @@ create unique index egress_log_row_id on egress_log (row_id);
 alter table egress_log add column source_id bigint;
 create unique index egress_log_source_id on egress_log (source_id);
 `,
+  // a tools or route call that did not succeed keeps why (from its answer) and what it was asked, each at most 300
+  // characters: the ops page's current errors name the tool and the reason (Deyao, 2026-11-18). Null on every other row.
+  `
+alter table egress_log add column reason text;
+alter table egress_log add column asked text;
+`,
 ];
 
 export function connect(url: string | undefined): Db {

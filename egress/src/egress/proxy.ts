@@ -582,6 +582,11 @@ export class Egress {
     const sniff = new CostSniffer();
     let bytesUp = 0;
     let bytesDown = 0;
+    // a tools or route call: the start of what it was asked and of its answer, so that one that fails is logged with
+    // why and with what (the ops page's current errors); at most FAILED_HEAD bytes of each, kept only for the row
+    const asked = new Head();
+    const answer = new Head();
+    let own: string | null = null; // the message of egress's own answer (the upstream unreachable or silent)
     await new Promise<void>((resolve) => {
       let logged = false;
       // one log row per call, whichever way it ends
@@ -589,7 +594,9 @@ export class Egress {
         if (logged) return;
         logged = true;
         const cost = sniff.cost();
-        this.log.add({ ...row, status, bytes_up: bytesUp, bytes_down: bytesDown, ms: Date.now() - t0, cost_usd: cost });
+        const failed = !isModel && (status === null || status >= 400);
+        const why = failed ? { reason: own ?? reasonOf(answer.bytes()), asked: askedOf(asked.bytes(), query) } : {};
+        this.log.add({ ...row, status, bytes_up: bytesUp, bytes_down: bytesDown, ms: Date.now() - t0, cost_usd: cost, ...why });
         // a model call's cost counts toward the budget at once (Claude Code's next call is usually < 1 s away)
         if (isModel) this.#o.budget?.noteCost(cost);
         resolve();
@@ -606,10 +613,12 @@ export class Egress {
           sniff.contentType = String(ures.headers["content-type"] || "");
           this.#head(res, ures.statusCode ?? 502, stripHop(ures.headers));
           res.flushHeaders();
+          const failing = !isModel && (ures.statusCode ?? 502) >= 400;
           ures.on("data", (c: Buffer) => {
             bytesDown += c.length;
-            // only a model's answer carries a cost; any other route's is passed on unread
+            // only a model's answer carries a cost; any other route's is passed on unread (a failed one's start kept)
             if (isModel) sniff.push(c);
+            else if (failing) answer.push(c);
             // at the reader's pace: what the caller has not taken stays with the upstream, never in egress's memory
             if (!res.write(c)) {
               ures.pause();
@@ -634,9 +643,13 @@ export class Egress {
           if (dropped) return;
           logError("egress route upstream", e, { route: route.name, request: caller.request, conversation: caller.claims.conversationId, person_key: personKey(caller.claims.person) });
           if (!res.headersSent) {
-            if (/timeout|idle/.test(e.message)) this.#json(res, 504, "upstream_timeout", `${route.name} did not answer in time`);
-            else this.#json(res, 502, "upstream_unreachable", `${route.name} could not be reached`);
-          } else res.destroy();
+            own = /timeout|idle/.test(e.message) ? `${route.name} did not answer in time` : `${route.name} could not be reached`;
+            if (/timeout|idle/.test(e.message)) this.#json(res, 504, "upstream_timeout", own);
+            else this.#json(res, 502, "upstream_unreachable", own);
+          } else {
+            own = `${route.name}'s answer broke off`;
+            res.destroy();
+          }
           finish(res.statusCode);
         });
         return o;
@@ -648,7 +661,10 @@ export class Egress {
       });
       if (!rewrite) {
         out = open();
-        req.on("data", (c: Buffer) => (bytesUp += c.length));
+        req.on("data", (c: Buffer) => {
+          bytesUp += c.length;
+          if (!isModel) asked.push(c);
+        });
         req.pipe(out);
         return;
       }
@@ -1247,6 +1263,65 @@ export function replacer(needle: string, put: string): Transform {
 
 /** Collects usage.cost from a model response, a JSON body or the SSE events of a streamed one: the Messages API's
  * (`usage.cost`, `message.usage.cost`) and a chat completion's (`usage.cost` on the answer or on the stream's last chunk). */
+/** How much of a failed tools or route call's request and answer egress keeps to say why and with what it failed. */
+export const FAILED_HEAD = 4096;
+/** The reason and the arguments a log row keeps, in characters. */
+const SHORT = 300;
+
+/** The first FAILED_HEAD bytes of a stream, the rest dropped. */
+class Head {
+  readonly #parts: Buffer[] = [];
+  #n = 0;
+  push(c: Buffer): void {
+    if (this.#n >= FAILED_HEAD) return;
+    const part = c.subarray(0, FAILED_HEAD - this.#n);
+    this.#parts.push(part);
+    this.#n += part.length;
+  }
+  bytes(): Buffer {
+    return Buffer.concat(this.#parts);
+  }
+}
+
+const short = (s: string): string | null => {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t ? Array.from(t).slice(0, SHORT).join("") : null;
+};
+
+/** Why a call failed, from its answer: a JSON answer's `message` (tools' and egress's own `{code, message}`), else its
+ *  `error` (a string, or an object's `message`), else the text; at most 300 characters; null for an empty answer. */
+export function reasonOf(body: Buffer): string | null {
+  const text = body.toString("utf8");
+  try {
+    const v = JSON.parse(text) as Record<string, unknown> | null;
+    if (v && typeof v === "object") {
+      const e = v.error && typeof v.error === "object" ? (v.error as Record<string, unknown>).message : v.error;
+      const m = [v.message, e, v.code].find((x) => typeof x === "string" && x.trim());
+      if (typeof m === "string") return short(m);
+    }
+  } catch {
+    // not JSON (or cut at FAILED_HEAD): the text itself
+  }
+  return short(text);
+}
+
+/** What a call was asked: a JSON object body's members as `name: value`, else the body's text, else the query's
+ *  parameters; at most 300 characters; null when it was asked nothing. */
+export function askedOf(body: Buffer, query: string): string | null {
+  const pairs = (es: [string, unknown][]) => es.map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`).join(", ");
+  if (body.length) {
+    const text = body.toString("utf8");
+    try {
+      const v = JSON.parse(text) as unknown;
+      if (v && typeof v === "object" && !Array.isArray(v)) return short(pairs(Object.entries(v)));
+    } catch {
+      // not JSON (or cut at FAILED_HEAD)
+    }
+    return short(text);
+  }
+  return query.length > 1 ? short(pairs([...new URLSearchParams(query)])) : null;
+}
+
 export class CostSniffer {
   contentType = "";
   #buf = "";

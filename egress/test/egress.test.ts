@@ -22,7 +22,7 @@ import { allowedModels, modelPlan, modelsAnswer, parseEgressConfig, type EgressC
 import { EgressLog } from "../src/egress/egresslog.ts";
 import { isRequestId, uuidv7 } from "../src/egress/ids.ts";
 import { AddressGuard } from "../src/egress/netguard.ts";
-import { CostSniffer, denyText, Egress, FIXED_BODY_MAX, MODEL_BODY_MAX, parseTarget, replacer, routed, routedOn, SNIFF_MAX, type EgressOptions } from "../src/egress/proxy.ts";
+import { askedOf, CostSniffer, denyText, reasonOf, Egress, FIXED_BODY_MAX, MODEL_BODY_MAX, parseTarget, replacer, routed, routedOn, SNIFF_MAX, type EgressOptions } from "../src/egress/proxy.ts";
 import { DnsRefusal, ThreatResolver } from "../src/egress/threatdns.ts";
 import { exitConnect, ExitHttpsAgent, ExitRefusal, internalHost, parseExit } from "../src/egress/exit.ts";
 import { createServer as createNetServer } from "node:net";
@@ -236,6 +236,12 @@ before(async () => {
         };
         res.on("close", () => (left = 0));
         return pump();
+      }
+      // x-fail: <status> plays a tool or route of ours that failed, answering as tools does ({code, message})
+      const fail = Number(req.headers["x-fail"] ?? 0);
+      if (fail) {
+        res.writeHead(fail, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ code: "tool_failed", message: `data_posts_search failed: data answered HTTP 500: the search ran past the database's 30 s limit and was stopped ${"…".repeat(400)}` }));
       }
       if (p.startsWith("/v1/tools") || p === "/v1/openapi.json" || p.startsWith("/labels-up/") || p.startsWith("/code-up/")) {
         res.writeHead(200, { "content-type": "application/json" });
@@ -1015,6 +1021,40 @@ test("sandbox route (labels): its credential injected, the conversation header s
   assert.deepEqual(lr.map((x) => [x.method, x.status, x.decision]).slice(0, 2), [["PATCH", 200, "allow"], ["GET", 200, "allow"]]);
   assert.equal(lr.filter((x) => x.decision === "deny:path").length, 5);
   assert.ok(lr.every((x) => x.host === "127.0.0.1" && x.conversation_id === sb.claims.conversationId));
+});
+
+test("tools route: a failed call keeps why it failed and what was asked, shortened; a call that worked keeps neither", async () => {
+  const asked = JSON.stringify({ query: "深圳 峰會", from: "2026-11-17", to: "2026-11-18", page_size: 50, sort: "date", note: "x".repeat(2000) });
+  const r = await http("http://tools/v1/tools/data_posts_search", { method: "POST", headers: { ...pa(), "content-type": "application/json", "x-fail": "502" }, body: asked });
+  assert.equal(r.status, 502);
+  assert.equal(JSON.parse(r.body).code, "tool_failed", "the agent still gets tools' own answer whole");
+  const ok = await http("http://tools/v1/tools/web_search", { method: "POST", headers: { ...pa(), "content-type": "application/json" }, body: '{"query":"施政報告"}' });
+  assert.equal(ok.status, 200);
+  // a sandbox route's GET: what it was asked is its query
+  const got = await http("http://labels/api/v1/designs?url=https%3A%2F%2Fexample.org%2Fa&max_chars=10", { headers: { ...pa(), "x-fail": "500" } });
+  assert.equal(got.status, 500);
+  const t2 = (await rows()).filter((x) => x.kind === "tools");
+  const failed = t2.find((x) => x.path === "/v1/tools/data_posts_search")!;
+  assert.ok(failed.reason!.startsWith("data_posts_search failed: data answered HTTP 500: the search ran past the database's 30 s limit"), failed.reason!);
+  assert.ok(failed.reason!.length <= 300, "the reason is shortened");
+  assert.ok(failed.asked!.startsWith('query: 深圳 峰會, from: 2026-11-17, to: 2026-11-18, page_size: 50, sort: date'), failed.asked!);
+  assert.ok(failed.asked!.length <= 300, "what was asked is shortened");
+  const route = (await rows()).find((x) => x.kind === "route" && x.path === "/api/v1/designs" && x.status === 500)!;
+  assert.equal(route.asked, "url: https://example.org/a, max_chars: 10", "a GET's arguments are its query");
+  const worked = t2.find((x) => x.path === "/v1/tools/web_search")!;
+  assert.equal(worked.reason, null);
+  assert.equal(worked.asked, null, "nothing of a call that worked is kept");
+});
+
+test("reasonOf and askedOf: JSON message or error, else the text; an object's members, else the text", () => {
+  assert.equal(reasonOf(Buffer.from('{"code":"upstream_unreachable","message":"tools could not be reached"}')), "tools could not be reached");
+  assert.equal(reasonOf(Buffer.from('{"error":"the tool failed on the server"}')), "the tool failed on the server");
+  assert.equal(reasonOf(Buffer.from("egress: upstream error\n")), "egress: upstream error");
+  assert.equal(reasonOf(Buffer.alloc(0)), null);
+  assert.equal(askedOf(Buffer.from('{"query":"a","tags":["x","y"]}'), ""), 'query: a, tags: ["x","y"]');
+  assert.equal(askedOf(Buffer.from("not json"), ""), "not json");
+  assert.equal(askedOf(Buffer.alloc(0), "?q=%E9%A6%99%E6%B8%AF"), "q: 香港");
+  assert.equal(askedOf(Buffer.alloc(0), ""), null);
 });
 
 test("sandbox route without identity (code): its credential injected, no Aviary-* header or caller credential reaches the upstream; git's paths pass", async () => {
@@ -1868,6 +1908,11 @@ test("in-cluster API: models for pigeon, the ops summary for hermit, the egress 
     const sum2 = JSON.parse((await get("/v1/ops/summary?tz=Asia%2FHong_Kong&recentMinutes=15", "her")).body);
     assert.equal(sum2.recent.modelErrors, before + 5, "only the five that are ours count");
     for (const what of ["tools 502", "route 503"]) assert.ok(sum2.recent.list.some((r: { what: string }) => r.what === what), what);
+    // a failed call carries what the ops page shows: which tool, why, what was asked, the conversation
+    await t.db.query("insert into egress_log (kind, host, path, decision, status, person, conversation_id, reason, asked) values ('tools', 'tools', '/v1/tools/data_posts_search', 'allow', 502, 'staff@example.org', $1, 'the search ran past its 30 s limit', 'query: 深圳 峰會')", [sb.claims.conversationId]);
+    const sum3 = JSON.parse((await get("/v1/ops/summary?tz=Asia%2FHong_Kong&recentMinutes=15", "her")).body);
+    const row3 = sum3.recent.list.find((r: { path: string }) => r.path === "/v1/tools/data_posts_search");
+    assert.deepEqual([row3.kind, row3.host, row3.status, row3.reason, row3.asked, row3.conversationId, row3.what], ["tools", "tools", 502, "the search ran past its 30 s limit", "query: 深圳 峰會", sb.claims.conversationId, "tools 502"]);
     assert.ok(sum2.recent.glitches >= 1 && sum2.recent.list.every((r: { what: string }) => r.what !== "model 429"), "a busy provider is a glitch");
     assert.ok(sum2.egress.byStatus.every((x: { kind: string; status: number }) => !(x.kind === "model" && x.status === 404)), "the token count is not an error by kind");
     assert.ok(sum2.egress.byStatus.some((x: { kind: string; status: number }) => x.kind === "tools" && x.status === 502));

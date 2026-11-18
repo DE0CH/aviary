@@ -758,6 +758,10 @@ test("upstream REST: listed tools are proxied with the staff member's identity; 
   const refused = await call("yyc_posts_search", { query: "" });
   assert.equal(refused.isError, true);
   assert.equal(textOf(refused), "query is required");
+  // the upstream failing (500 {error}): the tool failed, in the upstream's own words, not its JSON
+  const failed = await call("yyc_posts_search", { query: "slow" });
+  assert.equal(failed.isError, true);
+  assert.equal(textOf(failed), "yyc_posts_search failed: yyc answered HTTP 500: the search ran past the database's 30 s limit and was stopped");
 
   // not listed (send_mail, stream_items): never offered, never run
   const before = fakes.seen.filter((s) => s.path.startsWith("/rest-up/") && s.path !== "/rest-up/openapi.json").length;

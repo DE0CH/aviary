@@ -38,17 +38,21 @@ export interface EgressRow {
   person?: string | null;
   /** the Aviary-Request id */
   request?: string | null;
+  /** a tools or route call that did not succeed: why, from its answer (the message of a JSON one, else its text) */
+  reason?: string | null;
+  /** a tools or route call that did not succeed: what it was asked (its JSON body's members, or its query) */
+  asked?: string | null;
   /** the row's own id, made once in add() and kept through retries (the insert's idempotency key) */
   row_id?: string;
 }
 
-const COLS = ["at", "conversation_id", "sandbox_id", "kind", "method", "host", "port", "path", "status", "decision", "bytes_up", "bytes_down", "ms", "cost_usd", "model", "person", "request", "row_id"] as const;
+const COLS = ["at", "conversation_id", "sandbox_id", "kind", "method", "host", "port", "path", "status", "decision", "bytes_up", "bytes_down", "ms", "cost_usd", "model", "person", "request", "reason", "asked", "row_id"] as const;
 /** About 15 MB of rows. */
 export const MAX_BUFFERED = 50_000;
 const BATCH = 500;
 
 /** Text columns and their caps (characters). */
-const TEXT_CAPS = { method: 32, host: 300, path: 2000, decision: 64, model: 200, person: 320, request: 64 } as const;
+const TEXT_CAPS = { method: 32, host: 300, path: 2000, decision: 64, model: 200, person: 320, request: 64, reason: 300, asked: 300 } as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const INT4_MAX = 2_147_483_647;
 
@@ -77,6 +81,8 @@ export function cleanRow(r: EgressRow): EgressRow {
     model: text(r.model, TEXT_CAPS.model),
     person: text(r.person, TEXT_CAPS.person),
     request: text(r.request, TEXT_CAPS.request),
+    reason: text(r.reason, TEXT_CAPS.reason),
+    asked: text(r.asked, TEXT_CAPS.asked),
     row_id: typeof r.row_id === "string" && UUID.test(r.row_id) ? r.row_id : randomUUID(),
   };
 }
