@@ -41,25 +41,21 @@ impl Server {
     fn start_with(dev_user: Option<&str>, flags: bool) -> Server {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("root");
-        let web = dir.path().join("web");
         fs::create_dir_all(&root).unwrap();
-        fs::create_dir_all(web.join("js")).unwrap();
-        fs::write(web.join("index.html"), "<html>page</html>").unwrap();
-        fs::write(web.join("js/app.js"), "js").unwrap();
         let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_yyc-drive"));
-        for k in ["DRIVE_ROOT", "DRIVE_WEB", "DRIVE_NAME", "DRIVE_LISTEN", "DRIVE_DEV_USER", "DRIVE_URL", "DRIVE_USER_HEADER"] {
+        for k in ["DRIVE_ROOT", "DRIVE_NAME", "DRIVE_LISTEN", "DRIVE_DEV_USER", "DRIVE_URL", "DRIVE_USER_HEADER"] {
             cmd.env_remove(k);
         }
         cmd.stderr(Stdio::null());
         let listen = format!("127.0.0.1:{port}");
         if flags {
-            cmd.args(["--root", root.to_str().unwrap(), "--web", web.to_str().unwrap(), "--name", "Test Drive", "--listen", &listen]);
+            cmd.args(["--root", root.to_str().unwrap(), "--name", "Test Drive", "--listen", &listen]);
             if let Some(u) = dev_user {
                 cmd.args(["--dev-user", u]);
             }
         } else {
-            cmd.env("DRIVE_ROOT", &root).env("DRIVE_WEB", &web).env("DRIVE_NAME", "Test Drive").env("DRIVE_LISTEN", &listen);
+            cmd.env("DRIVE_ROOT", &root).env("DRIVE_NAME", "Test Drive").env("DRIVE_LISTEN", &listen);
             if let Some(u) = dev_user {
                 cmd.env("DRIVE_DEV_USER", u);
             }
@@ -68,7 +64,7 @@ impl Server {
         let http = Client::builder().redirect(Policy::none()).timeout(Duration::from_secs(20)).build().unwrap();
         let base = format!("http://127.0.0.1:{port}");
         for _ in 0..100 {
-            if http.get(format!("{base}/config.json")).send().is_ok() {
+            if http.get(format!("{base}/healthz")).send().is_ok() {
                 return Server { child, base, root: root.canonicalize().unwrap(), _dir: dir, http };
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -96,53 +92,16 @@ fn text(r: Response) -> String {
 }
 
 #[test]
-fn the_page_and_its_settings() {
+fn only_the_folder_is_answered_here() {
+    // the page, its settings and its sign-in are the edge's (edge/): here only the folder, for a person named
     let s = Server::start(Some("amy@example.com"));
-    let config: String = text(s.req("GET", "/config.json").send().unwrap());
-    assert!(config.contains(&format!("\"server\":\"{}/\"", s.base)), "{config}");
-    assert!(config.contains("\"disableFeedbackLink\":true") && config.contains("\"disableSponsorLink\":true"));
-    // Any path that is not a built file is the page itself.
-    assert_eq!(text(s.req("GET", "/files/spaces/personal/drive").send().unwrap()), "<html>page</html>");
-    let js = s.req("GET", "/js/app.js").send().unwrap();
-    assert!(js.headers()["cache-control"].to_str().unwrap().contains("immutable"));
-    assert_eq!(s.req("GET", "/.env").send().unwrap().status(), StatusCode::BAD_REQUEST);
-}
-
-#[test]
-fn sign_in_is_answered_for_the_person_the_proxy_names() {
-    let s = Server::start(None);
-    let meta = text(s.req("GET", "/.well-known/openid-configuration").send().unwrap());
-    assert!(meta.contains(&format!("\"authorization_endpoint\":\"{}/oidc/authorize\"", s.base)));
-    let r = s.req("GET", "/oidc/authorize?redirect_uri=http%3A%2F%2Fx%2Foidc-callback.html&state=abc").send().unwrap();
-    assert_eq!(r.status(), StatusCode::FOUND);
-    assert_eq!(r.headers()["location"], "http://x/oidc-callback.html?code=drive&state=abc");
-    // No header, no person: refused.
-    assert_eq!(s.req("POST", "/oidc/token").send().unwrap().status(), StatusCode::UNAUTHORIZED);
-    assert_eq!(s.req("GET", "/graph/v1.0/me").send().unwrap().status(), StatusCode::UNAUTHORIZED);
-    assert_eq!(s.dav("PROPFIND", "").send().unwrap().status(), StatusCode::UNAUTHORIZED);
-    let who = "cf-access-authenticated-user-email";
-    let token = text(s.req("POST", "/oidc/token").header(who, "amy@example.com").send().unwrap());
-    assert!(token.contains("\"id_token\"") && token.contains("\"access_token\""));
-    let me = text(s.req("GET", "/graph/v1.0/me").header(who, "amy@example.com").send().unwrap());
-    assert!(me.contains("\"mail\":\"amy@example.com\"") && me.contains("\"displayName\":\"amy\""), "{me}");
-    let info = text(s.req("GET", "/oidc/userinfo").header(who, "amy@example.com").send().unwrap());
-    assert!(info.contains("\"sub\":\"amy@example.com\""));
-}
-
-#[test]
-fn one_drive_and_nothing_else_on_offer() {
-    let s = Server::start(Some("amy@example.com"));
-    let mine = text(s.req("GET", "/graph/v1beta1/me/drives?%24orderby=name+asc&%24filter=driveType+eq+personal").send().unwrap());
-    assert!(mine.contains("\"name\":\"Test Drive\"") && mine.contains("\"driveType\":\"personal\""), "{mine}");
-    let projects = text(s.req("GET", "/graph/v1beta1/me/drives?%24orderby=name+asc&%24filter=driveType+eq+project").send().unwrap());
-    assert_eq!(projects, "{\"value\":[]}");
-    let caps = text(s.req("GET", "/ocs/v1.php/cloud/capabilities?format=json").send().unwrap());
-    for off in ["\"api_enabled\":false", "\"projects\":false", "\"favorites\":false", "\"undelete\":false", "\"support-sse\":false"] {
-        assert!(caps.contains(off), "{off} missing in {caps}");
+    for (method, path) in [("GET", "/"), ("GET", "/index.html"), ("GET", "/config.json"), ("GET", "/.well-known/openid-configuration"),
+        ("POST", "/oidc/token"), ("GET", "/graph/v1.0/me"), ("GET", "/ocs/v1.php/cloud/capabilities")] {
+        assert_eq!(s.req(method, path).send().unwrap().status(), StatusCode::NOT_FOUND, "{method} {path}");
     }
-    assert!(caps.contains("\"max_chunk_size\":10000000"));
-    let key = text(s.req("GET", "/ocs/v1.php/cloud/user/signing-key").send().unwrap());
-    assert!(key.starts_with("<?xml") && key.contains("<signing-key>"), "{key}");
+    let none = Server::start(None);
+    assert_eq!(none.dav("PROPFIND", "").send().unwrap().status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(none.req("POST", "/data/tus/x").send().unwrap().status(), StatusCode::UNAUTHORIZED);
 }
 
 #[test]
@@ -312,8 +271,8 @@ fn search_finds_names_anywhere_in_the_folder() {
 #[test]
 fn settings_can_come_from_the_command_line() {
     let s = Server::start_with(Some("amy@example.com"), true);
-    let mine = text(s.req("GET", "/graph/v1beta1/me/drives").send().unwrap());
-    assert!(mine.contains("\"name\":\"Test Drive\""), "{mine}");
+    let top = text(s.dav("PROPFIND", "").header("depth", "0").send().unwrap());
+    assert!(top.contains("Test Drive"), "{top}");
     fs::write(s.root.join("a.txt"), b"a").unwrap();
     assert_eq!(text(s.dav("GET", "a.txt").send().unwrap()), "a");
 }
@@ -445,8 +404,7 @@ fn a_connection_stays_usable_when_a_body_arrives_after_its_headers() {
     let s = Server::start(Some("amy@example.com"));
     let body = br#"{"account_uuid":"me"}"#;
     for (method, path) in [
-        ("POST", "/api/v0/settings/permissions-list"),
-        ("POST", "/oidc/token"),
+        ("REPORT", "/dav/spaces"),
         ("PROPFIND", &*format!("/dav/spaces/{DRIVE}/")),
     ] {
         let head = format!("{method} {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\nDepth: 1\r\n\r\n", body.len());
