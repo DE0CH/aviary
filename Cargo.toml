@@ -13,6 +13,7 @@ members = [
   "testing/e2e",
   "testing/source-rules",
   "testing/tls-canary",
+  "testing/fabric-replica",
 ]
 # throwaway spikes are their own workspaces (crates/supervisor/GATE.md)
 exclude = ["crates/supervisor/spikes"]

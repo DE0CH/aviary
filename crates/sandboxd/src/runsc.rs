@@ -70,8 +70,18 @@ pub const FUSE_MINOR: u64 = 229;
 
 /// The OCI runtime spec of a sandbox (pure: tested). `image_env` is the image config's Env ("K=V" each), `args` its
 /// Entrypoint + Cmd (the first process, never empty: `images::image_config` refuses an image without an
-/// entrypoint); `root` is the sandbox's overlay root and `scratch` its scratch filesystem (storage.rs).
-pub fn bundle_spec(b: &mut Buf, spec: &Spec, image_env: &[&str], args: &[&str], root: &str, scratch: &str) {
+/// entrypoint); `root` is the sandbox's overlay root and `scratch` its scratch filesystem (storage.rs); `resolvers`
+/// the host's resolv.conf for a sandbox that reaches the internet itself (host.json `directEgress`; none otherwise:
+/// a sandbox behind the proxy has no DNS).
+pub fn bundle_spec(
+    b: &mut Buf,
+    spec: &Spec,
+    image_env: &[&str],
+    args: &[&str],
+    root: &str,
+    scratch: &str,
+    resolvers: Option<&str>,
+) {
     let mut w = W::new(b);
     w.obj().kstr("ociVersion", "1.0.0").key("annotations").obj();
     if !spec.cpu_features.is_empty() {
@@ -167,6 +177,11 @@ pub fn bundle_spec(b: &mut Buf, spec: &Spec, image_env: &[&str], args: &[&str], 
         let d = crate::storage::mount_dir(folder);
         mount(&mut w, path, "bind", d.as_str(), &["rbind", "rw"]);
     }
+    // direct egress reaches the internet by name, as a machine does: the host's resolvers (an image's own resolv.conf
+    // is the empty file its build left; 2026-11-18, a fabric session's snapshot upload could not resolve its bucket)
+    if let Some(r) = resolvers {
+        mount(&mut w, "/etc/resolv.conf", "bind", r, &["bind", "ro"]);
+    }
     w.end_arr();
     w.key("linux").obj().key("namespaces").arr();
     for t in ["pid", "ipc", "uts", "mount"] {
@@ -220,7 +235,7 @@ mod tests {
         let spec = Spec::parse(body, "10.98.0.0/16").ok().unwrap();
         let mut mem = [0u8; 16384];
         let mut b = Buf::new(&mut mem);
-        bundle_spec(&mut b, &spec, &[], &["/init"], "/r", "/s");
+        bundle_spec(&mut b, &spec, &[], &["/init"], "/r", "/s", None);
         let n = b.len;
         let s = core::str::from_utf8(&mem[..n]).unwrap();
         assert!(s.contains(r#""pids":{"limit":512}"#), "{s}");
@@ -237,6 +252,21 @@ mod tests {
     }
 
     #[test]
+    fn a_sandbox_with_direct_egress_has_the_hosts_resolvers() {
+        let body = br#"{"name":"sbx-abc","ip":"10.98.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{},"cpu":1,"memory":2147483648}"#;
+        let spec = Spec::parse(body, "10.98.0.0/16").ok().unwrap();
+        let mut mem = [0u8; 16384];
+        let mut b = Buf::new(&mut mem);
+        bundle_spec(&mut b, &spec, &[], &["/init"], "/r", "/s", Some("/run/sbx/resolv.conf"));
+        let s = b.as_str();
+        assert!(json::parse(s.as_bytes()).is_ok(), "{s}");
+        assert!(
+            s.contains(r#"{"destination":"/etc/resolv.conf","type":"bind","source":"/run/sbx/resolv.conf","options":["bind","ro"]}"#),
+            "{s}"
+        );
+    }
+
+    #[test]
     fn bundle_binds_the_specs_mounts() {
         let body = br#"{"name":"sbx-abc","ip":"10.98.0.10","image":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","env":{},"cpu":1,"memory":2147483648,"workspace":"c0ffee-1","mounts":[{"folder":"home/c0ffee-1","path":"/home/claude"},{"folder":"cache","path":"/var/cache/x"}]}"#;
         let spec = Spec::parse(body, "10.98.0.0/16").ok().unwrap();
@@ -249,10 +279,13 @@ mod tests {
             &["/init"],
             "/var/lib/sbx/root/sbx-abc",
             "/var/lib/sbx/scratch/sbx-abc",
+            None,
         );
         assert!(!b.full);
         let s = b.as_str();
         assert!(json::parse(s.as_bytes()).is_ok(), "{s}");
+        // behind the proxy: no DNS (the image's own resolv.conf, empty)
+        assert!(!s.contains("/etc/resolv.conf"), "{s}");
         // after /workspace, in the spec's order, each a read-write bind of its folder of the JuiceFS mount
         let ws =
             s.find(r#"{"destination":"/workspace","type":"bind","source":"/var/lib/sbx/jfs/ws/c0ffee-1""#).unwrap();
@@ -278,6 +311,7 @@ mod tests {
             &["/usr/bin/tini", "--", "/opt/keeper", "--serve"],
             "/var/lib/sbx/root/sbx-abc",
             "/var/lib/sbx/scratch/sbx-abc",
+            None,
         );
         assert!(!b.full);
         let s = b.as_str();
