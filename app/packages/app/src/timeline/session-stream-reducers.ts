@@ -610,8 +610,11 @@ function acceptIncrementalTimelineUnits(args: {
     };
   }
 
+  // A newer page carries every row changed since the cursor, also rows that begin before the loaded history (a
+  // command of earlier in the turn marked stopped at its end). Their place is above the loaded rows: they come there,
+  // at their newest, with the page before.
   return {
-    acceptedUnits: timelineUnits,
+    acceptedUnits: timelineUnits.filter((unit) => unit.seq >= currentCursor.startSeq),
     cursor: { ...currentCursor, endSeq: responseEndSeq },
     gapCursor: null,
   };

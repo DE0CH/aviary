@@ -360,6 +360,42 @@ const baseStreamInput: ProcessAgentStreamEventInput = {
 // ---------------------------------------------------------------------------
 
 describe("processTimelineResponse", () => {
+  // YYC AI's video conversation: seven background commands of earlier in the turn were marked stopped at its end,
+  // the catch-up after the tail brought their rows, and the chat drew them after the final reply ("Ran 7 commands").
+  it("leaves out a newer page's rows that begin before the loaded history", () => {
+    const reply = makeAssistantItem("All set", "reply");
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail: [reply],
+      currentCursor: { epoch: "epoch-1", startSeq: 758, endSeq: 821 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "after",
+        epoch: "epoch-1",
+        startCursor: { seq: 209 },
+        endCursor: { seq: 828 },
+        entries: [
+          {
+            ...makeToolCallTimelineEntry(209, "call-early", "completed", {
+              type: "read",
+              filePath: "/tmp/early.txt",
+            }),
+            seqEnd: 822,
+          },
+          makeToolCallTimelineEntry(825, "call-late", "completed", {
+            type: "read",
+            filePath: "/tmp/late.txt",
+          }),
+        ],
+      },
+    });
+
+    expect(
+      result.tail.map((item) => (item.kind === "tool_call" ? item.payload.data.callId : item.id)),
+    ).toEqual(["reply", "call-late"]);
+    expect(result.cursor).toMatchObject({ startSeq: 758, endSeq: 828 });
+  });
+
   it("discards an unchanged resume tail without replacing timeline state", () => {
     const canonical = createUserMessage({
       id: "canonical-prompt",
