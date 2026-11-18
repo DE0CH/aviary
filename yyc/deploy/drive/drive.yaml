@@ -1,8 +1,10 @@
 # YYC Drive (DE0CH/yyc-drive: a fork of OpenCloud's web page and its own small server, YYC-DRIVE.md): one shared
 # folder for the whole company at https://drive.yyc-internal.com, the same folder every YYC AI sandbox has at /drive.
 # The folder is `drive/` of the JuiceFS volume yyc-ai (PV drive-jfs below, the volume hermit's /jfs is). No database,
-# no secrets: its settings are flags. Sign-in is Cloudflare Access (app "YYC Drive", checked by cloudflared on the
-# tunnel's rule), which names the person in a header; only cloudflared reaches the pods (drive-in).
+# no secrets: its settings are flags. Sign-in is Cloudflare Access (app "YYC Drive"). The page, its settings and its
+# sign-in are the edge's: the Worker yyc-drive (job drive-edge of yyc-ai.yml, from this same image; its settings are
+# edge.json, whose DRIVE_NAME is this --name), which passes the folder's calls here naming the person in a header;
+# cloudflared checks Access's token on the tunnel's rule, and only cloudflared reaches the pods (drive-in).
 # Uploads arrive in 10 MB pieces kept in the folder's `.drive-uploads` until the last one, so any replica takes any
 # piece. On SIGTERM it finishes the transfers in flight; one longer than the grace period is cut (a large download
 # during a rollout: the browser asks again).

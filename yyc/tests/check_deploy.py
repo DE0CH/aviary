@@ -50,7 +50,8 @@ Each failure prints one line `<item> <object>: <why>`; exit 1 on any. What it as
      different workloads (the proxy to egress, the hosts' database port to pg-forward), never to both or to none
   F  the drive (YYC Drive): hermit.json sandbox.drive is the folder of the JuiceFS volume Deployment drive serves (the
      subPath mounted at its --root), so every sandbox's /drive is the folder staff see; a managed skill or the
-     sandbox rules name /drive
+     sandbox rules name /drive; the edge (drive/edge.json, the Worker's settings) names the drive
+     as the server's --name does
   A  addresses: the access catalogue is people's mail addresses, so it is a Secret sealed from the store
      (infra/secrets.txt, YYC_CATALOGUE_JSON), never a file or a ConfigMap of this folder: a workload's volume
      `catalogue` is a Secret, no ConfigMap of the render and no .json file of the folder is a catalogue (JSON with a
@@ -483,6 +484,11 @@ def check_drive(folder, objs, h):
         fail("F", "hermit.json", f"no sandbox.drive: the sandboxes lack the drive's folder {serves} at /drive")
     elif have != serves:
         fail("F", "hermit.json", f"sandbox.drive {have}, but Deployment drive serves {serves}")
+    name = args[args.index("--name") + 1] if "--name" in args else None
+    edge = json.load(open(os.path.join(folder, "drive", "edge.json"), encoding="utf-8"))
+    if edge.get("DRIVE_NAME") != name:
+        fail("F", "drive/edge.json", f"DRIVE_NAME {edge.get('DRIVE_NAME')!r}, but Deployment drive's --name is {name!r}: "
+                                     "the page would name the drive twice, differently")
     texts = list(skill_files(folder).values())
     rules = os.path.join(folder, "hermit", "sandbox-rules.md")
     if os.path.exists(rules):

@@ -210,6 +210,14 @@ class Seeded(unittest.TestCase):
     def test_literal_env(self):
         self.expect(lambda o: container(find(o, "Deployment", "pigeon"), "pigeon")["env"].append({"name": "PIGEON_X", "value": "1"}), 2, "literal env")
 
+    def test_the_edge_names_the_drive_as_the_server_does(self):
+        # the page's drive comes from the edge (drive/edge.json DRIVE_NAME), the folder's top from the server (--name):
+        # two names would show the drive under one name in the sidebar and another above its files
+        def m(o):
+            args = container(find(o, "Deployment", "drive"), "drive")["args"]
+            args[args.index("--name") + 1] = "Other Drive"
+        self.expect(m, "F", "DRIVE_NAME")
+
     def test_the_drive_takes_no_env(self):
         # YYC Drive's settings are flags: an env on it is a literal binding like any other
         self.expect(lambda o: container(find(o, "Deployment", "drive"), "drive").update(env=[{"name": "DRIVE_ROOT", "value": "/x"}]), 2, "literal env")

@@ -33,8 +33,8 @@ images:
   - {name: herald, newName: ghcr.io/de0ch/herald, newTag: "e90075c4fcc1"}
   # the app bundle (DE0CH/claudecodeui pigeon-app.yml)
   - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "6dc7f49b0089"}
-  # YYC Drive: the page and its server in one image (DE0CH/yyc-drive yyc-drive.yml)
-  - {name: yyc-drive, newName: ghcr.io/de0ch/yyc-drive, newTag: "b94118a3bca0"}
+  # YYC Drive: its server, and its edge at /srv/edge (job drive-edge), in one image (DE0CH/yyc-drive yyc-drive.yml)
+  - {name: yyc-drive, newName: ghcr.io/de0ch/yyc-drive, newTag: "15f2e109400c"}
   # egress and tools (DE0CH/jarvis3 chat.yml); the ZDR guard reads this tag (yyc-ai/tests/test_zdr.py)
   - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "c2fa23bc4cba"}
 configMapGenerator:
