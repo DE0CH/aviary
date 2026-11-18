@@ -1517,6 +1517,11 @@ async fn a_background_launch_whose_task_never_reports_ends_with_its_tracking() {
     assert_eq!(status("toolu_a").await, ToolStatus::Completed);
 }
 
+/// How many times hermit was asked for a sandbox.
+fn put_sandboxes(w: &World) -> usize {
+    w.fake().script().calls_to("put_sandbox").len()
+}
+
 /// A question the sandbox's `ask` command shows (Deyao, 2026-11-17): a component of that command, not of the turn. It
 /// is open, turn or no turn, until the person answers; the answer goes to the question (no command to the supervisor,
 /// no parked turn) and its long poll returns it; nothing dismisses it for the person.
@@ -1566,8 +1571,15 @@ async fn a_question_belongs_to_the_command_that_asked_it() {
         tokio::time::sleep(Duration::from_millis(300)).await;
         person.answer_ask(conv, &q.ask_id, &answer).await.unwrap();
     };
+    let puts = put_sandboxes(&w);
     let (got, ()) = tokio::join!(poll, answering);
     assert_eq!(got.unwrap().answer, Some(answer.clone()));
+    // an answer is a use of its conversation's sandbox: hermit is asked for it (a frozen one is thawed by that, so
+    // the command that asked reads the answer: jarvis4 docs/PLAN-fabric.md)
+    assert!(
+        common::eventually(Duration::from_secs(5), async || put_sandboxes(&w) > puts).await,
+        "an answered question did not ask hermit for its sandbox"
+    );
     // answered once; the answer stays readable (`ask status`); the question has left the conversation
     let e =
         w.a.pigeon()
