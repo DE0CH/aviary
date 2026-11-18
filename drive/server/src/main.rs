@@ -1,8 +1,8 @@
 //! yyc-drive: one shared folder behind OpenCloud's web page.
 //!
-//! One program: it serves the built page, says "you are signed in" to the page's OIDC client (the real sign-in is the
-//! proxy in front, which names the person in a header), and answers the page's WebDAV, upload and search calls on
-//! one folder of the disk. No database, no per-person folders, no sharing.
+//! One program: it answers the page's WebDAV, upload, search and preview calls on one folder of the disk, for the
+//! person the edge in front names in a header. The page itself, its settings and its sign-in are the edge's
+//! (`edge/`). No database, no per-person folders, no sharing.
 
 // A refusal is a whole response; boxing it would buy nothing here.
 #![allow(clippy::result_large_err)]
@@ -28,7 +28,6 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 const STORAGE: &str = "00000000-0000-4000-8000-000000000001";
 const UPLOADS: &str = ".drive-uploads";
-const CHUNK: u64 = 10_000_000;
 /// What stays unescaped in an href: unreserved characters and `/`.
 const HREF: &AsciiSet = &CONTROLS
     .add(b' ').add(b'"').add(b'#').add(b'%').add(b'<').add(b'>').add(b'?').add(b'`').add(b'{').add(b'}')
@@ -37,7 +36,6 @@ const HREF: &AsciiSet = &CONTROLS
 
 struct Cfg {
     root: PathBuf,
-    web: PathBuf,
     name: String,
     user_header: String,
     dev_user: Option<String>,
@@ -66,7 +64,6 @@ fn setting(flag: &str) -> Option<String> {
 async fn main() {
     let cfg = Arc::new(Cfg {
         root: PathBuf::from(setting("root").expect("--root or DRIVE_ROOT: the folder to serve")).canonicalize().expect("the folder to serve"),
-        web: PathBuf::from(setting("web").expect("--web or DRIVE_WEB: the built page")),
         name: setting("name").unwrap_or_else(|| "Drive".into()),
         user_header: setting("user-header").unwrap_or_else(|| "cf-access-authenticated-user-email".into()),
         dev_user: setting("dev-user"),
@@ -116,83 +113,20 @@ async fn handle(State(s): State<S>, req: Request) -> Res {
 async fn route(s: &S, req: Request) -> Result<Res, Res> {
     let method = req.method().as_str().to_string();
     let path = percent_decode_str(req.uri().path()).decode_utf8_lossy().to_string();
-    let query = req.uri().query().unwrap_or("").to_string();
-    let base = base_url(s, req.headers());
 
-    // The page and its settings: no person needed.
+    // for the cluster: alive, and ready while the folder is there (a lost mount takes the pod out of service)
     match (method.as_str(), path.as_str()) {
-        // for the cluster: alive, and ready while the folder is there (a lost mount takes the pod out of service)
         ("GET", "/healthz") => return Ok(status(StatusCode::OK)),
         ("GET", "/readyz") => {
             let there = tokio::fs::metadata(&s.root).await.map(|m| m.is_dir()).unwrap_or(false);
             return Ok(status(if there { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE }));
         }
-        ("GET", "/config.json") => return Ok(json_res(StatusCode::OK, config(&base))),
-        ("GET", "/.well-known/openid-configuration") => return Ok(json_res(StatusCode::OK, oidc_meta(&base))),
-        ("GET", "/oidc/jwks") => return Ok(json_res(StatusCode::OK, json!({"keys": []}))),
-        ("GET", "/oidc/authorize") => {
-            let q = parse_query(&query);
-            let to = q.iter().find(|(k, _)| k == "redirect_uri").map(|(_, v)| v.clone()).unwrap_or(base.clone());
-            let state = q.iter().find(|(k, _)| k == "state").map(|(_, v)| v.clone()).unwrap_or_default();
-            let sep = if to.contains('?') { '&' } else { '?' };
-            let loc = format!("{to}{sep}code=drive&state={}", utf8_percent_encode(&state, HREF));
-            return Ok(Response::builder().status(StatusCode::FOUND).header(header::LOCATION, loc).body(Body::empty()).unwrap());
-        }
-        ("GET", "/oidc/logout") => {
-            return Ok(Response::builder().status(StatusCode::FOUND).header(header::LOCATION, format!("{base}/")).body(Body::empty()).unwrap())
-        }
         _ => {}
-    }
-    let api = ["/oidc/", "/graph/", "/ocs/", "/api/", "/dav/", "/data/", "/app/", "/.well-known/", "/archiver"];
-    if !api.iter().any(|p| path.starts_with(p)) {
-        return if method == "GET" || method == "HEAD" { static_file(s, &path, req.headers()).await } else { Err(status(StatusCode::METHOD_NOT_ALLOWED)) };
     }
 
     let user = person(s, req.headers()).ok_or_else(|| status(StatusCode::UNAUTHORIZED))?;
-    let name = user.split('@').next().unwrap_or(&user).to_string();
-    let ocs = |data: Value| json!({"ocs": {"meta": {"status": "ok", "statuscode": 100, "message": "OK"}, "data": data}});
 
     match (method.as_str(), path.as_str()) {
-        ("POST", "/oidc/token") => {
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-            let claims = json!({"iss": base, "sub": user, "aud": "web", "iat": now, "exp": now + 31_536_000, "name": name, "email": user, "preferred_username": name});
-            let id_token = format!("{}.{}.", B64URL.encode(br#"{"alg":"none","typ":"JWT"}"#), B64URL.encode(claims.to_string()));
-            Ok(json_res(StatusCode::OK, json!({"access_token": "drive", "token_type": "Bearer", "expires_in": 31_536_000, "id_token": id_token, "scope": "openid profile email"})))
-        }
-        (_, "/oidc/userinfo") => Ok(json_res(StatusCode::OK, json!({"sub": user, "name": name, "email": user, "preferred_username": name}))),
-        ("GET", "/.well-known/webfinger") => Ok(json_res(StatusCode::OK, json!({
-            "subject": format!("{base}/"),
-            "properties": {"http://opencloud.eu/ns/oidc/client_id": "web", "http://opencloud.eu/ns/oidc/scopes": ["openid", "profile", "email"]},
-            "links": [{"rel": "http://openid.net/specs/connect/1.0/issuer", "href": base}]}))),
-        ("GET", "/ocs/v1.php/cloud/capabilities") | ("GET", "/ocs/v2.php/cloud/capabilities") => Ok(json_res(StatusCode::OK, ocs(capabilities()))),
-        ("GET", "/ocs/v1.php/cloud/user/signing-key") | ("GET", "/ocs/v2.php/cloud/user/signing-key") => {
-            // The page reads this one answer as XML. It signs links with the key; the proxy's sign-in is what guards them.
-            Ok(Response::builder()
-                .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
-                .body(Body::from(format!(
-                    "<?xml version=\"1.0\"?><ocs><meta><status>ok</status><statuscode>100</statuscode><message>OK</message></meta><data><user>{}</user><signing-key>drive</signing-key></data></ocs>",
-                    esc(&user)
-                )))
-                .unwrap())
-        }
-        ("GET", "/ocs/v2.php/apps/notifications/api/v1/notifications") => Ok(json_res(StatusCode::OK, ocs(json!([])))),
-        ("GET", "/graph/v1.0/me") => Ok(json_res(StatusCode::OK, json!({
-            "id": user, "displayName": name, "mail": user, "onPremisesSamAccountName": name, "preferredLanguage": "en", "userType": "Member",
-            "identities": [{"issuer": base, "issuerAssignedId": user}]}))),
-        ("PATCH", "/graph/v1.0/me") => Ok(json_res(StatusCode::OK, json!({"id": user, "displayName": name, "mail": user, "onPremisesSamAccountName": name}))),
-        ("GET", "/graph/v1.0/me/drives") | ("GET", "/graph/v1beta1/me/drives") | ("GET", "/graph/v1.0/drives") | ("GET", "/graph/v1beta1/drives") => {
-            let q = percent_decode_str(&query.replace('+', " ")).decode_utf8_lossy().to_string();
-            let list = if q.contains("driveType eq project") { vec![] } else { vec![drive(s, &base, &user)] };
-            Ok(json_res(StatusCode::OK, json!({"value": list})))
-        }
-        ("GET", p) if p.starts_with("/graph/v1.0/drives/") || p.starts_with("/graph/v1beta1/drives/") => Ok(json_res(StatusCode::OK, drive(s, &base, &user))),
-        ("GET", "/graph/v1beta1/roleManagement/permissions/roleDefinitions") => Ok(json_res(StatusCode::OK, json!([]))),
-        ("GET", "/graph/v1.0/extensions/org.libregraph/tags") => Ok(json_res(StatusCode::OK, json!({"value": []}))),
-        ("POST", "/api/v0/settings/roles-list") => Ok(json_res(StatusCode::CREATED, json!({"bundles": []}))),
-        ("POST", "/api/v0/settings/assignments-list") => Ok(json_res(StatusCode::CREATED, json!({"assignments": []}))),
-        ("POST", "/api/v0/settings/permissions-list") => Ok(json_res(StatusCode::CREATED, json!({"permissions": []}))),
-        ("POST", "/api/v0/settings/values-list") => Ok(json_res(StatusCode::CREATED, json!({"values": []}))),
-        ("GET", "/app/list") => Ok(json_res(StatusCode::OK, json!({"mime-types": []}))),
         ("REPORT", p) if p.starts_with("/dav/spaces") => search(s, req).await,
         (_, p) if p.starts_with("/dav/spaces/") => dav(s, &user, &p["/dav/spaces/".len()..], req).await,
         (_, p) if p.starts_with("/data/tus/") => tus_chunk(s, &p["/data/tus/".len()..], req).await,
@@ -200,7 +134,7 @@ async fn route(s: &S, req: Request) -> Result<Res, Res> {
     }
 }
 
-// ---------------------------------------------------------------------------------------------- settings the page reads
+// ---------------------------------------------------------------------------------------------- who is asking, and where
 
 fn base_url(s: &S, h: &HeaderMap) -> String {
     if let Some(u) = &s.url {
@@ -215,80 +149,6 @@ fn person(s: &S, h: &HeaderMap) -> Option<String> {
     h.get(s.user_header.as_str()).and_then(|v| v.to_str().ok()).map(str::to_string).filter(|v| !v.is_empty()).or_else(|| s.dev_user.clone())
 }
 
-fn config(base: &str) -> Value {
-    json!({
-        "server": format!("{base}/"),
-        "theme": format!("{base}/themes/opencloud/theme.json"),
-        "openIdConnect": {"metadata_url": format!("{base}/.well-known/openid-configuration"), "authority": base, "client_id": "web", "response_type": "code", "scope": "openid profile email"},
-        "apps": ["files", "search", "text-editor", "pdf-viewer", "preview"],
-        "options": {"tokenStorageLocal": true, "contextHelpersReadMore": false, "disableFeedbackLink": true, "disableSponsorLink": true, "embed": {}, "concurrentRequests": {"shares": {}}}
-    })
-}
-
-fn oidc_meta(base: &str) -> Value {
-    json!({
-        "issuer": base,
-        "authorization_endpoint": format!("{base}/oidc/authorize"),
-        "token_endpoint": format!("{base}/oidc/token"),
-        "userinfo_endpoint": format!("{base}/oidc/userinfo"),
-        "end_session_endpoint": format!("{base}/oidc/logout"),
-        "jwks_uri": format!("{base}/oidc/jwks"),
-        "scopes_supported": ["openid", "profile", "email"],
-        "response_types_supported": ["code"],
-        "subject_types_supported": ["public"],
-        "id_token_signing_alg_values_supported": ["none"],
-        "code_challenge_methods_supported": ["S256"]
-    })
-}
-
-/// What this server can do. Everything the page would offer beyond one folder is off.
-fn capabilities() -> Value {
-    let version = json!({"major": 0, "minor": 1, "micro": 0, "string": "0.1.0", "edition": "", "product": "yyc-drive", "productversion": "0.1.0", "channel": ""});
-    json!({
-        "capabilities": {
-            "core": {"pollinterval": 60, "webdav-root": "remote.php/webdav", "check-for-updates": false, "support-url-signing": true, "support-sse": false, "support-radicale": false,
-                "status": {"installed": true, "maintenance": false, "needsDbUpgrade": false, "version": "0.1.0.0", "versionstring": "0.1.0", "edition": "", "productname": "yyc-drive", "product": "yyc-drive", "productversion": "0.1.0"}},
-            "checksums": {"supportedTypes": [], "preferredUploadType": ""},
-            "files": {"privateLinks": false, "bigfilechunking": false, "undelete": false, "versioning": false, "favorites": false, "full_text_search": false, "tags": false, "blacklisted_files": [],
-                "tus_support": {"version": "1.0.0", "resumable": "1.0.0", "extension": "creation,creation-with-upload", "max_chunk_size": CHUNK, "http_method_override": ""},
-                "archivers": [], "app_providers": []},
-            "dav": {"chunking": "", "reports": ["search-files"], "chunkingParallelUploadDisabled": false},
-            "files_sharing": {"api_enabled": false, "group_sharing": false, "sharing_roles": false, "resharing": false, "public": {"enabled": false}, "user": {"send_mail": false, "profile_picture": false}, "federation": {"outgoing": false, "incoming": false}, "search_min_length": 3},
-            "spaces": {"version": "1.0.0", "enabled": true, "projects": false, "share_jail": false, "max_quota": 0, "default_quota": 0},
-            "graph": {"personal-data-export": false, "users": {"read_only_attributes": ["user.onPremisesSamAccountName", "user.displayName", "user.mail", "user.passwordProfile", "user.appRoleAssignments", "user.memberOf", "user.accountEnabled", "drive.quota"], "create_disabled": true, "delete_disabled": true, "change_password_self_disabled": true, "edit_login_allowed_disabled": true}},
-            "search": {"property": {"name": {"enabled": true}}},
-            "notifications": {"ocs-endpoints": [], "configurable": false}
-        },
-        "version": version
-    })
-}
-
-fn drive(s: &S, base: &str, user: &str) -> Value {
-    let id = drive_id();
-    json!({
-        "id": id, "driveAlias": "personal/drive", "driveType": "personal", "name": s.name,
-        "owner": {"user": {"displayName": "", "id": user}},
-        "quota": {"remaining": i64::MAX, "state": "normal", "total": 0, "used": 0},
-        "root": {"id": id, "eTag": "\"root\"", "webDavUrl": format!("{base}/dav/spaces/{id}")},
-        "webUrl": format!("{base}/f/{id}")
-    })
-}
-
-// ---------------------------------------------------------------------------------------------------------- the page
-
-async fn static_file(s: &S, path: &str, h: &HeaderMap) -> Result<Res, Res> {
-    let rel = clean(path).ok_or_else(|| status(StatusCode::BAD_REQUEST))?;
-    let mut file = s.web.join(&rel);
-    // Any path that is not a built file is a page of the single-page app.
-    if rel.as_os_str().is_empty() || !tokio::fs::metadata(&file).await.map(|m| m.is_file()).unwrap_or(false) {
-        file = s.web.join("index.html");
-    }
-    let hashed = rel.to_string_lossy().starts_with("js/") || rel.to_string_lossy().starts_with("assets/") || rel.to_string_lossy().starts_with("fonts/");
-    let mut res = send_file(&file, h).await?;
-    res.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static(if hashed { "public, max-age=31536000, immutable" } else { "no-cache" }));
-    Ok(res)
-}
-
 // --------------------------------------------------------------------------------------------------------- the folder
 
 /// A request path made safe: no `..`, no absolute parts, no hidden names.
@@ -297,7 +157,7 @@ fn clean(path: &str) -> Option<PathBuf> {
     for c in Path::new(path.trim_start_matches('/')).components() {
         match c {
             Component::Normal(p) => {
-                if p.to_string_lossy().starts_with('.') && !path.starts_with("/.well-known") {
+                if p.to_string_lossy().starts_with('.') {
                     return None;
                 }
                 out.push(p)
@@ -777,10 +637,6 @@ fn parse_query(q: &str) -> Vec<(String, String)> {
         .filter_map(|kv| kv.split_once('='))
         .map(|(k, v)| (k.to_string(), percent_decode_str(&v.replace('+', " ")).decode_utf8_lossy().to_string()))
         .collect()
-}
-
-fn json_res(code: StatusCode, v: Value) -> Res {
-    Response::builder().status(code).header(header::CONTENT_TYPE, "application/json").header(header::CACHE_CONTROL, "no-store").body(Body::from(v.to_string())).unwrap()
 }
 
 fn status(code: StatusCode) -> Res {

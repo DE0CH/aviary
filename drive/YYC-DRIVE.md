@@ -1,27 +1,28 @@
 # YYC Drive
 
 One shared folder for a whole company, opened in a browser. This repository is a fork of
-[opencloud-eu/web](https://github.com/opencloud-eu/web) (AGPL-3.0): the page is OpenCloud's, cut down, and the
-server is `server/`, a small program of its own. OpenCloud's server is not used.
+[opencloud-eu/web](https://github.com/opencloud-eu/web) (AGPL-3.0): the page is OpenCloud's, cut down; the edge
+(`edge/`, a Cloudflare Worker) serves it and answers its settings, and `server/`, a small program of its own, answers
+the folder's calls. OpenCloud's server is not used.
 
 ## What the fork changes in the page
 
-- The drive is shown under the name the server gives it, not "Personal" (`web-app-files/src/index.ts`,
+- The drive is shown under the name the edge gives it, not "Personal" (`web-app-files/src/index.ts`,
   `web-runtime/src/index.ts`, `web-pkg/src/composables/folderLink/useFolderLink.ts`,
   `web-runtime/src/components/UploadInfo.vue`).
 - The top bar has nothing on the right: no sidebar toggle, app menu or user menu
   (`web-runtime/src/components/Topbar/TopBar.vue`).
 
 Everything else that is gone (Favorites, Shares, Spaces, Deleted files, notifications, the feedback link, the support
-card) is gone because `server/` says it does not offer it (its capabilities and `config.json`).
+card) is gone because the edge says it does not offer it (its capabilities and `config.json`, `edge/src/settings.js`).
 
 ## The server (`server/`, Rust)
 
-One program and one folder. No database, no per-person folders, no sharing.
+One program and one folder. No database, no per-person folders, no sharing. The page, its settings and its sign-in
+are the edge's (below); the server answers only the folder's calls.
 
-- Serves the built page (`dist/`), `config.json` and the theme (`server/theme`, served at `/themes/opencloud/`).
-- Sign-in belongs to the proxy in front (Cloudflare Access), which names the person in a request header. The page's
-  own OIDC step is answered at once by `/oidc/*`, so nobody sees a second login.
+- Sign-in belongs to Cloudflare Access in front; the edge names the person in a request header, and a request without
+  one is refused.
 - WebDAV on the folder: list, read (byte ranges, so video seeks), write, new folder, rename, move, copy, delete.
 - Uploads in 10 MB pieces (tus), kept in `<folder>/.drive-uploads` until the last piece is in.
 - Search by name.
@@ -38,10 +39,9 @@ Each setting is a flag or, without it, an environment variable:
 | Flag | Variable | Meaning |
 |---|---|---|
 | `--root` | `DRIVE_ROOT` | the folder to serve |
-| `--web` | `DRIVE_WEB` | the built page (`dist/`, with the theme copied to `dist/themes/opencloud/`) |
-| `--name` | `DRIVE_NAME` | the drive's name in the page (default `Drive`) |
+| `--name` | `DRIVE_NAME` | the name of the folder's top (default `Drive`; the edge's `DRIVE_NAME` is the same) |
 | `--listen` | `DRIVE_LISTEN` | address to listen on (default `0.0.0.0:8080`) |
-| `--user-header` | `DRIVE_USER_HEADER` | the header that names the signed-in person (default `cf-access-authenticated-user-email`) |
+| `--user-header` | `DRIVE_USER_HEADER` | the header that names the signed-in person (default `cf-access-authenticated-user-email`, which the edge sets) |
 | `--dev-user` | `DRIVE_DEV_USER` | a person to assume when the header is absent: local runs only |
 | `--url` | `DRIVE_URL` | the public address, when it cannot be read from the request |
 
@@ -73,7 +73,7 @@ so the page at the edge and the server are always one commit. Tests: `cd edge &&
 ```sh
 pnpm install && pnpm build && mkdir -p dist/themes && cp -r server/theme dist/themes/opencloud
 (cd server && cargo build --release)
-DRIVE_ROOT=/some/folder DRIVE_WEB=dist DRIVE_NAME="YYC Drive" DRIVE_DEV_USER=me@example.com \
+DRIVE_ROOT=/some/folder DRIVE_NAME="YYC Drive" DRIVE_DEV_USER=me@example.com \
   DRIVE_LISTEN=127.0.0.1:8201 server/target/release/yyc-drive &
 mkdir -p edge/assets && cp -r dist/. edge/assets/ && cp edge/_headers edge/assets/
 cd edge && npx wrangler dev --var DEV_USER:me@example.com --var ORIGIN:http://127.0.0.1:8201 --var "DRIVE_NAME:YYC Drive"
@@ -85,5 +85,5 @@ The page is then at http://127.0.0.1:8787. `DEV_USER` is the person a local run 
 ## Following upstream
 
 Merge `opencloud-eu/web` `main` into this repository's `main`. The page's calls to the server were recorded from
-OpenCloud 9.1.0 with web 8.2.2; a newer page may ask for something `server/` does not answer yet (it logs every
-request it turns down).
+OpenCloud 9.1.0 with web 8.2.2; a newer page may ask for something the edge or `server/` does not answer yet (both
+log every request they turn down: the Worker's logs, the pods' output).

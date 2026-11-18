@@ -1,5 +1,5 @@
-# YYC Drive: the page (this repository's build) and the server (server/) in one image, with the edge (edge/: the
-# Worker, the page as its assets) at /srv/edge for the deploy to take out and hand to Cloudflare.
+# YYC Drive: the server (server/) and, at /srv/edge, the edge (edge/: the Worker, with this repository's page as its
+# assets) for the deploy to take out and hand to Cloudflare. One image, one commit for both.
 # Build from the repository's root: docker build -f server/Dockerfile .
 FROM node:22-bookworm AS page
 WORKDIR /src
@@ -19,12 +19,11 @@ FROM debian:bookworm-slim
 # ffmpeg draws the previews (a frame of a video, a picture scaled down)
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 COPY --from=server /src/target/release/yyc-drive /usr/local/bin/yyc-drive
-COPY --from=page /src/dist /srv/web
 COPY edge/wrangler.jsonc edge/package.json /srv/edge/
 COPY edge/src /srv/edge/src
 COPY --from=page /src/dist /srv/edge/assets
 COPY edge/_headers /srv/edge/assets/_headers
-ENV DRIVE_WEB=/srv/web DRIVE_LISTEN=0.0.0.0:8080
+ENV DRIVE_LISTEN=0.0.0.0:8080
 USER 1000:1000
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/yyc-drive"]
