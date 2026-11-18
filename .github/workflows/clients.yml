@@ -133,6 +133,7 @@ jobs:
     needs: build
     if: needs.build.outputs.changed == 'true'
     runs-on: ubuntu-24.04
+    environment: merge   # its deploy key pushes main (gate setup): the workflow token can't pass main's ruleset
     timeout-minutes: 10
     permissions:
       contents: write
@@ -142,6 +143,7 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          ssh-key: ${{ secrets.MERGE_DEPLOY_KEY }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: clients-change
@@ -157,7 +159,7 @@ jobs:
           cp testing/paseo-contract/ci/land.sh "$RUNNER_TEMP/land.sh"
           set +e
           "$RUNNER_TEMP/land.sh" "$RUNNER_TEMP/change/change.patch" "$(cat "$RUNNER_TEMP/change/base")" \
-            "paseo-contract: clients $(for item in $CLIENTS; do printf '%s ' "${item:0:12}${item:40}"; done | sed 's/ $//')"
+            "paseo-contract: clients $(for item in $CLIENTS; do printf '%s ' "${item:0:12}${item:40}"; done | sed 's/ $//') [skip ci]"
           rc=$?
           set -e
           if [ "$rc" = 3 ]; then
@@ -172,7 +174,7 @@ jobs:
           fi
           [ "$rc" = 0 ] || exit "$rc"
           echo "landed=true" >> "$GITHUB_OUTPUT"
-      - name: run ci on the new main (a push made with this token starts no workflow)
+      - name: run ci on the new main (its commit says [skip ci], so this dispatch is its one run)
         if: steps.land.outputs.landed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
