@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextPreparing } from "./sandbox-status";
+import { nextPreparing, withoutHost } from "./sandbox-status";
 
 describe("nextPreparing", () => {
   it("shows the chip on preparing and ends it on ready", () => {
@@ -26,5 +26,17 @@ describe("nextPreparing", () => {
   it("reads a waiting it does not know as plain preparing", () => {
     const shown = nextPreparing({}, "h:a", { state: "preparing", waiting: "something-new" }, 1000);
     expect(shown["h:a"]).toEqual({ since: 1000, waiting: null });
+  });
+});
+
+describe("withoutHost", () => {
+  it("drops one host's chips and keeps the others'", () => {
+    const state = {
+      "h:a": { since: 1, waiting: null },
+      "h:b": { since: 2, waiting: null },
+      "hx:a": { since: 3, waiting: null },
+    };
+    expect(withoutHost(state, "h")).toEqual({ "hx:a": { since: 3, waiting: null } });
+    expect(withoutHost(state, "other")).toBe(state);
   });
 });

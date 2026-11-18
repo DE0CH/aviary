@@ -7,6 +7,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import type { Theme } from "@/styles/theme";
+import { serverImageSource } from "@/yyc/open-file";
 
 // Every attachment pill body — image thumbnail or labelled — renders at this
 // height so mixed attachment trays line up.
@@ -136,7 +137,7 @@ export function AttachmentThumbnail({ metadata }: { metadata: AttachmentMetadata
   const full = useAttachmentPreviewUrl(metadata);
   // the server's small rendition when it sent one: a chip never needs the full image
   const uri = metadata.previewKey ?? full;
-  const source = useMemo(() => ({ uri: uri ?? "" }), [uri]);
+  const source = useMemo(() => serverImageSource(uri ?? ""), [uri]);
   if (!uri) {
     return <View style={styles.thumbnailPlaceholder} />;
   }

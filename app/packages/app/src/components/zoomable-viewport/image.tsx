@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { Image, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { isWeb } from "@/constants/platform";
+import { serverImageSource } from "@/yyc/open-file";
 import { provisionalContentSize, type ViewportFitOptions, type ViewportSize } from "./geometry";
 import { ZoomableViewport } from "./index";
 import type { ZoomableViewportAction, ZoomableViewportControls } from "./types";
@@ -33,15 +34,15 @@ function useImageSize(uri: string | null | undefined, onError?: () => void): Vie
     setSize(null);
     if (!uri) return undefined;
     let active = true;
-    Image.getSize(
-      uri,
-      (width, height) => {
-        if (active && width > 0 && height > 0) setSize({ width, height });
-      },
-      () => {
-        if (active) onError?.();
-      },
-    );
+    const source = serverImageSource(uri);
+    const done = (width: number, height: number) => {
+      if (active && width > 0 && height > 0) setSize({ width, height });
+    };
+    const failed = () => {
+      if (active) onError?.();
+    };
+    if (source.headers) Image.getSizeWithHeaders(source.uri, source.headers, done, failed);
+    else Image.getSize(source.uri, done, failed);
     return () => {
       active = false;
     };
@@ -81,9 +82,9 @@ export function ZoomableImage({
   }, [onLoad]);
   const resolvedSize =
     contentSize ?? fullSize ?? (smallSize ? provisionalContentSize(smallSize) : null);
-  const source = useMemo(() => ({ uri }), [uri]);
+  const source = useMemo(() => serverImageSource(uri), [uri]);
   const placeholder = useMemo(
-    () => (placeholderUri ? { uri: placeholderUri } : null),
+    () => (placeholderUri ? serverImageSource(placeholderUri) : null),
     [placeholderUri],
   );
   const fullStyle = loaded || !placeholder ? styles.full : styles.fullWaiting;

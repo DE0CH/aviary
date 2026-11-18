@@ -5,7 +5,10 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
  * Conversations whose sandbox is being made (DE0CH/claudecodeui docs/paseo-ui.md): the server's
  * `yyc.sandbox_status` messages, kept per host and agent so the chat can show "preparing the workspace" from the
  * moment the server says so, even before the chat screen has mounted. A start that waits for its person's
- * approval elsewhere (`waiting: "approval"`) shows "waiting for your approval" instead.
+ * approval elsewhere (`waiting: "approval"`) shows "waiting for your approval" instead. The chips of a host are what
+ * its current socket has said: a socket that (re)connects starts with none, and the server says again which
+ * sandboxes are still being made (pigeon, after the conversation list). A `ready` sent while the socket was down (an
+ * iPhone app in the background) is otherwise never heard, and the chip would stay.
  */
 
 /** What the chip says while the sandbox is made. */
@@ -22,11 +25,19 @@ type Preparing = Record<string, SandboxPreparing>;
 interface SandboxStatusState {
   preparing: Preparing;
   apply: (key: string, status: SandboxStatus, now: number) => void;
+  forgetHost: (serverId: string) => void;
 }
 
 export interface SandboxStatus {
   state: "preparing" | "ready";
   waiting?: string;
+}
+
+/** The chips without any of one host's (its socket connected again). Unchanged state is answered as the same object. */
+export function withoutHost(state: Preparing, serverId: string): Preparing {
+  const prefix = `${serverId}:`;
+  const kept = Object.entries(state).filter(([key]) => !key.startsWith(prefix));
+  return kept.length === Object.keys(state).length ? state : Object.fromEntries(kept);
 }
 
 /**
@@ -56,6 +67,11 @@ const useSandboxStatusStore = create<SandboxStatusState>((set) => ({
       const preparing = nextPreparing(state.preparing, key, status, now);
       return preparing === state.preparing ? state : { preparing };
     }),
+  forgetHost: (serverId) =>
+    set((state) => {
+      const preparing = withoutHost(state.preparing, serverId);
+      return preparing === state.preparing ? state : { preparing };
+    }),
 }));
 
 function statusKey(serverId: string, agentId: string): string {
@@ -70,9 +86,18 @@ export function useSandboxPreparing(serverId: string, agentId: string | null): S
 }
 
 export function mountSandboxStatusHandler(client: DaemonClient, serverId: string): () => void {
-  return client.on("yyc.sandbox_status", (message) => {
-    useSandboxStatusStore
-      .getState()
-      .apply(statusKey(serverId, message.payload.agentId), message.payload, Date.now());
+  const store = useSandboxStatusStore.getState();
+  const unsubscribeStatus = client.on("yyc.sandbox_status", (message) => {
+    store.apply(statusKey(serverId, message.payload.agentId), message.payload, Date.now());
   });
+  let connected = false;
+  const unsubscribeConnection = client.subscribeConnectionStatus((state) => {
+    const now = state.status === "connected";
+    if (now && !connected) store.forgetHost(serverId);
+    connected = now;
+  });
+  return () => {
+    unsubscribeStatus();
+    unsubscribeConnection();
+  };
 }
