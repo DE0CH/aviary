@@ -63,7 +63,8 @@ spec:
               sleep: {seconds: 10}
           resources:
             requests: {cpu: 20m, memory: 32Mi, ephemeral-storage: 16Mi}
-            limits: {cpu: "1", memory: 128Mi, ephemeral-storage: 64Mi}
+            # 512Mi: ffmpeg draws previews, two at a time (one frame, one thread each)
+            limits: {cpu: "1", memory: 512Mi, ephemeral-storage: 64Mi}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
