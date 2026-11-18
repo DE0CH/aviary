@@ -206,7 +206,7 @@ pub async fn build(core: &Arc<Core>, tz: &str) -> Value {
                 sm.recent
                     .list
                     .iter()
-                    .map(|e| json!({"at": e.at, "what": e.what, "detail": e.detail, "owner": e.owner}))
+                    .map(|e| serde_json::to_value(e).unwrap_or(Value::Null))
                     .collect(),
             )
         });

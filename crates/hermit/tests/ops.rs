@@ -504,6 +504,19 @@ async fn the_snapshot_now_and_history_from_every_source() {
         .collect();
     assert!(whats.contains(&"sandbox start failed"), "{whats:?}");
     assert!(whats.contains(&"host_lost"), "{whats:?}");
+    // egress's failed call reaches the page whole: which tool, why, what was asked, the conversation
+    let tool = d["recent"]["list"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["what"] == "tools 502")
+        .unwrap();
+    assert_eq!(tool["path"], "/v1/tools/data_posts_search");
+    assert_eq!(tool["kind"], "tools");
+    assert_eq!(tool["status"], 502);
+    assert_eq!(tool["conversationId"], "0190f6c2-4a0d-7b2c-8e1f-0a1b2c3d4e5f");
+    assert!(tool["reason"].as_str().unwrap().contains("30 s limit"), "{tool}");
+    assert_eq!(tool["asked"], "query: 深圳 峰會, from: 2026-11-17, to: 2026-11-18");
     // budget and egress: egress's numbers, unchanged
     let fixture = w.egress.summary.lock().unwrap().clone();
     assert_eq!(d["budget"], fixture["budget"]);

@@ -71,6 +71,8 @@ h4{font-size:13px;margin:12px 0 4px;color:var(--mut);font-weight:600}
 .mini{display:inline-block;width:70px;height:6px;border-radius:3px;background:var(--chip);overflow:hidden;vertical-align:middle}
 .mini i{display:block;height:100%;background:var(--bar)}
 .empty{color:var(--mut);font-size:13px}
+.why{width:100%;font-size:13px;min-width:0;overflow-wrap:anywhere}
+.lnk{color:var(--fg);font-weight:600;font-size:12.5px}
 .err{color:var(--blind);font-size:12.5px;margin-top:6px}
 .bad{color:var(--bad)}.okc{color:var(--ok)}.warmc{color:var(--warm)}.blindc{color:var(--blind)}
 code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
@@ -122,6 +124,20 @@ function card(title, sub, body, err){ return "<section><h3>" + esc(title) + (sub
 function rows(list, fn, empty){ return list && list.length ? list.map(fn).join("") : '<div class="empty">' + esc(empty) + "</div>"; }
 function kpi(v, label){ return '<div class="kpi"><b>' + v + "</b><span>" + esc(label) + "</span></div>"; }
 function t(at){ return '<span class="t">' + when(at) + "</span>"; }
+// a model, tools or route call that failed or was refused (egress's recent list): what failed, why, what it was
+// asked, who, and its conversation's raw view; never the proxy's own words ("tools 502 / allow tools")
+function callRow(x){
+  var refused = /^deny/.test(x.decision || ""), how = refused ? " was refused" : " failed";
+  var tool = x.kind === "tools" && /^\/v1\/tools\/[^/]+$/.test(x.path || "") ? x.path.slice(10) : "";
+  var what = x.kind === "tools" ? (tool ? "The tool " + tool : "The tools service") : x.kind === "route" ? "The route " + (x.host || "") : x.kind === "model" ? "A model call" : x.what;
+  var why = x.reason || (refused ? "egress refused it: " + String(x.decision).replace(/^deny:?/, "") : x.status ? "HTTP " + x.status : "no answer");
+  return '<div class="row">' + t(x.at) + '<span class="main warmc">' + esc(what + how) + "</span>"
+    + '<div class="why"><code>' + esc(why) + "</code></div>"
+    + (x.asked ? '<div class="why">' + f("asked", esc(x.asked)) + "</div>" : "")
+    + (x.owner ? f("who", who(x.owner)) : "")
+    + (x.conversationId ? '<a class="lnk" href="/raw/' + encodeURIComponent(x.conversationId) + '" target="_blank" rel="noopener">Open conversation</a>' : "")
+    + "</div>";
+}
 // a host not answering: red with a sandbox on it (someone is stopped), amber when empty
 function hostLevel(x){ if (x.status === "booting" || x.status === "retiring") return "warming"; return x.reachable ? "ok" : x.sandboxes ? "problem" : "watch"; }
 // a pod not ready: amber while its Deployment still serves, red when the Deployment is down
@@ -249,7 +265,7 @@ function renderNow(d){
   // 8. errors of the last 15 minutes
   var r = d.recent, rb = "";
   if (r) {
-    rb += rows(r.list, function(x){ return '<div class="row">' + t(x.at) + '<span class="main warmc">' + esc(x.what) + "</span>" + (x.detail ? f("", esc(x.detail)) : "") + (x.owner ? f("who", who(x.owner)) : "") + "</div>"; }, "No errors in the last " + d.recentMinutes + " minutes.");
+    rb += rows(r.list, function(x){ return x.kind ? callRow(x) : '<div class="row">' + t(x.at) + '<span class="main warmc">' + esc(x.what) + "</span>" + (x.detail ? f("", esc(x.detail)) : "") + (x.owner ? f("who", who(x.owner)) : "") + "</div>"; }, "No errors in the last " + d.recentMinutes + " minutes.");
     if (r.blocked) rb += '<div class="row">' + f("blocked internet requests (normal; listed in History)", r.blocked) + "</div>";
   }
   out.push(card("Current errors", "last " + d.recentMinutes + " min; the 24 h log is in History", rb, E["recent errors"]));

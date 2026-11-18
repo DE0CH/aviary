@@ -145,4 +145,25 @@ pub struct RecentEvent {
     pub what: String,
     pub detail: Option<String>,
     pub owner: Option<String>,
+    /// A model, tools or route call that failed or was refused: the call's parts, so the operator page names what
+    /// failed and why instead of `what` and `detail` (Deyao, 2026-11-18). All absent when an implementation does not
+    /// send them (the page then shows `what` and `detail`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<Uuid>,
+    /// Why it failed, in the answer's own words (at most 300 characters).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// What the call was asked: its arguments as `name: value, …` (at most 300 characters).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked: Option<String>,
 }

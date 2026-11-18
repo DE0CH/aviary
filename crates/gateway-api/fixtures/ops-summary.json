@@ -94,6 +94,20 @@
         "what": "blocked",
         "detail": "unlisted.example",
         "owner": "staff@example.org"
+      },
+      {
+        "at": "2026-11-02T04:03:06.789Z",
+        "what": "tools 502",
+        "detail": "allow tools",
+        "owner": "staff@example.org",
+        "kind": "tools",
+        "host": "tools",
+        "path": "/v1/tools/data_posts_search",
+        "status": 502,
+        "decision": "allow",
+        "conversationId": "0190f6c2-4a0d-7b2c-8e1f-0a1b2c3d4e5f",
+        "reason": "data_posts_search failed: data answered HTTP 500: the search ran past the database's 30 s limit and was stopped",
+        "asked": "query: 深圳 峰會, from: 2026-11-17, to: 2026-11-18"
       }
     ]
   }

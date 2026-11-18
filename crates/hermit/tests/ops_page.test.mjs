@@ -111,3 +111,30 @@ test("errors that are over are amber, and a busy sandbox is not a caution", () =
   assert.match(out, /chip s-none">busy/);
   assert.doesNotMatch(out, /class="main bad"/);
 });
+
+test("a failed tool call names the tool, why it failed, what was asked, who, and links its conversation", () => {
+  const { ctx } = page();
+  const failed = {
+    at: NOW, what: "tools 502", detail: "allow tools", owner: "aho@example.com",
+    kind: "tools", host: "tools", path: "/v1/tools/data_posts_search", status: 502, decision: "allow",
+    conversationId: "0190f6c2-4a0d-7b2c-8e1f-0a1b2c3d4e5f",
+    reason: "data_posts_search failed: data answered HTTP 500: the search ran past the database's 30 s limit and was stopped",
+    asked: "query: 深圳 <峰會>",
+  };
+  const refused = { at: NOW, what: "model 402", detail: "deny:budget model", owner: "a@example.com", kind: "model", host: "model", path: "/v1/messages", status: 402, decision: "deny:budget", conversationId: null, reason: null, asked: null };
+  const route = { at: NOW, what: "route –", detail: "allow labels", owner: null, kind: "route", host: "labels", path: "/api/v1/designs", status: null, decision: "allow", conversationId: null, reason: "labels could not be reached", asked: null };
+  const out = ctx.renderNow({ ...base(), recent: { list: [failed, refused, route], blocked: 0 } });
+  assert.match(out, /<span class="main warmc">The tool data_posts_search failed<\/span>/);
+  assert.match(out, /<code>data_posts_search failed: data answered HTTP 500: the search ran past the database&#39;s 30 s limit and was stopped<\/code>/);
+  assert.match(out, /asked <b>query: 深圳 &lt;峰會&gt;<\/b>/, "what was asked, escaped");
+  assert.match(out, /who <b>aho<span class="f">@example\.com<\/span><\/b>/);
+  assert.match(out, /<a class="lnk" href="\/raw\/0190f6c2-4a0d-7b2c-8e1f-0a1b2c3d4e5f" target="_blank" rel="noopener">Open conversation<\/a>/);
+  assert.doesNotMatch(out, /allow tools|tools 502/, "not the proxy's words");
+  assert.match(out, /<span class="main warmc">A model call was refused<\/span>/);
+  assert.match(out, /<code>egress refused it: budget<\/code>/);
+  assert.match(out, /<span class="main warmc">The route labels failed<\/span>/);
+  assert.match(out, /<code>labels could not be reached<\/code>/);
+  // a row from an egress that does not send the call's parts reads as before
+  const old = ctx.renderNow({ ...base(), recent: { list: [{ at: NOW, what: "tools 502", detail: "allow tools", owner: null }], blocked: 0 } });
+  assert.match(old, /<span class="main warmc">tools 502<\/span>/);
+});
