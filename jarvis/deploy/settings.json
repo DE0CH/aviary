@@ -13,7 +13,7 @@
       "id": "z-ai/glm-5.3",
       "label": "GLM 5.3",
       "reasoning": "high",
-      "thinking": ["low", "medium", "high", "xhigh", "max"],
+      "thinking": ["low", "high", "max"],
       "contextTokens": 1000000,
       "openrouter": { "providers": ["z-ai/fp8"] }
     },
@@ -21,7 +21,7 @@
       "id": "deepseek/deepseek-v4.1-flash-1017",
       "label": "DeepSeek V4.1 Flash",
       "reasoning": "high",
-      "thinking": ["none", "low", "medium", "high", "xhigh", "max"],
+      "thinking": ["none", "low", "high", "max"],
       "contextTokens": 1000000,
       "openrouter": { "providers": ["deepseek"] }
     },
@@ -29,7 +29,7 @@
       "id": "moonshotai/kimi-k3.1-pro",
       "label": "Kimi K3.1 Pro",
       "reasoning": "high",
-      "thinking": ["none", "low", "medium", "high", "xhigh", "max"],
+      "thinking": ["none", "low", "high", "max"],
       "contextTokens": 1000000,
       "openrouter": { "providers": ["moonshotai/mxfp4"] }
     }
