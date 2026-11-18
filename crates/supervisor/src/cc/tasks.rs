@@ -271,6 +271,21 @@ impl Tracker {
         before - self.tasks.len()
     }
 
+    /// The hold has been silent past the ceiling with no `until` ahead: the pseudo-tasks end (the supervisor can't see
+    /// theirs), Claude Code's own background tasks never do here (each has its timeout in Claude Code, which ends it
+    /// and says so; a silent command is one that waits: 2026-11-18, a CI watcher stopped after 30 min left the
+    /// session idle). The pseudo-tasks it ended; the hold ends when nothing is left.
+    pub fn on_silence(&mut self) -> Vec<String> {
+        let ended = self
+            .tasks
+            .iter()
+            .filter(|t| t.source == Source::Static)
+            .map(|t| t.task_id.clone())
+            .collect();
+        self.clear_static();
+        ended
+    }
+
     /// Drops the pseudo-tasks.
     pub fn clear_static(&mut self) {
         self.tasks.retain(|t| t.source != Source::Static);
@@ -391,6 +406,31 @@ mod tests {
             Change::Removed
         );
         assert!(t.is_empty());
+    }
+
+    #[test]
+    fn silence_ends_the_pseudo_tasks_never_claude_codes_own() {
+        let now = OffsetDateTime::now_utc();
+        let mut t = Tracker::default();
+        t.on_tool_use(&tu("toolu_c", "CronCreate", json!({})), now);
+        t.tasks.push(Task {
+            task_id: "b6gdz3ze7".into(),
+            tool_use_id: Some("toolu_bash".into()),
+            kind: "local_bash".into(),
+            description: "wait for CI".into(),
+            workflow_name: None,
+            started_at: now,
+            source: Source::Event,
+            until: None,
+            nested: false,
+        });
+        assert_eq!(t.on_silence(), ["static:toolu_c"]);
+        assert_eq!(t.event_ids(), ["b6gdz3ze7"], "a silent background command was ended");
+        assert!(!t.is_empty(), "the hold ended while a background command still runs");
+        let mut only = Tracker::default();
+        only.on_tool_use(&tu("toolu_d", "CronCreate", json!({})), now);
+        assert_eq!(only.on_silence().len(), 1);
+        assert!(only.is_empty());
     }
 
     #[test]

@@ -333,7 +333,7 @@ symlinked root refused by the hook (`sent_files::tests::only_regular_files_are_o
    dies on resume is the same budget loop; DESIGN 12 does not settle it, so this is recorded for the operator.
 6. **`ScheduleWakeup`'s fire time** is read from `delaySeconds`/`delay_seconds`/`seconds`/`delay`, `delayMs`/`delay_ms`
    or `at`/`fireAt`/`fire_at`/`time` (2.1.304's input shape is not in the inventory); an input with none of them
-   gives the pseudo-task no `until`, so only the silence ceiling ends it.
+   gives the pseudo-task no `until`, so only the silence ceiling ends it (30 min without output; it ends pseudo-tasks only, never one of Claude Code's background commands, which Claude Code ends at its own timeout).
 7. **The hook opens paths component by component** with `O_NOFOLLOW` from an fd of `/workspace` instead of
    `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)`, which not every sandbox runtime implements; the guarantee is the same.
 8. **A refused hook** is answered 502 `upstream_failed` with the reason as `message` (13 names no status).

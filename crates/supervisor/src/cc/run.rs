@@ -1429,14 +1429,16 @@ impl Driver {
                 && mono.duration_since(st.last_output_mono) > HOLD_SILENCE
                 && !st.tracker.until_ahead(t)
             {
-                let tasks: Vec<String> = st.tracker.tasks().iter().map(|x| x.task_id.clone()).collect();
-                tracing::warn!(tasks = ?tasks, reason = "silence ceiling", "hold ended");
-                for id in st.tracker.event_ids() {
-                    fx.push(Fx::Stdin(control::stop_task(&format!("stop-{}", Uuid::new_v4()), &id)));
+                // only the pseudo-tasks end on silence; Claude Code's background commands end by Claude Code
+                let ended = st.tracker.on_silence();
+                if !ended.is_empty() {
+                    tracing::warn!(tasks = ?ended, reason = "silence ceiling", "pseudo-tasks ended");
                 }
-                st.tracker.clear();
-                st.set_run(RunKind::Idle);
-                fx.push(Fx::IdlePoint);
+                if st.tracker.is_empty() {
+                    tracing::warn!(reason = "silence ceiling", "hold ended");
+                    st.set_run(RunKind::Idle);
+                    fx.push(Fx::IdlePoint);
+                }
             }
         });
     }
