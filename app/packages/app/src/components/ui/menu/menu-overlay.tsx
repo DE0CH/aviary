@@ -296,13 +296,13 @@ export function AnchoredSurface({
   // animation from the final position.
   const placed = position !== null;
 
+  // The surface takes focus when it opens, not its first row: a focused row is painted as the hovered one, so the
+  // first row looked hovered under a pointer that was elsewhere (Deyao, 2026-11-18). The keys still work from here:
+  // with no row focused, ArrowDown goes to the first and ArrowUp to the last (handleWebOverlayKeyDown).
   useEffect(() => {
     if (!isWeb || !open || !placed || typeof document === "undefined") return undefined;
     const frame = requestAnimationFrame(() => {
-      document
-        .getElementById(surfaceNativeID)
-        ?.querySelector<HTMLElement>('[data-menu-item="true"]:not([data-menu-disabled="true"])')
-        ?.focus();
+      document.getElementById(surfaceNativeID)?.focus();
     });
     return () => cancelAnimationFrame(frame);
   }, [open, placed, surfaceNativeID]);
@@ -539,6 +539,9 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.borderAccent,
     borderRadius: theme.borderRadius.lg,
     overflow: "hidden",
+    // it takes focus when it opens: no focus ring around the whole menu (its rows show where the keys are)
+    outlineWidth: 0,
+    outlineColor: "transparent",
     ...theme.shadow.md,
   },
 }));

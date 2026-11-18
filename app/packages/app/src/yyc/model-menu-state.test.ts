@@ -62,17 +62,21 @@ describe("the model menu", () => {
     expect(menuState([], null, null)).toEqual({ models: [], model: null, row: [], level: null });
   });
 
-  // A six-position row (Claude's five efforts and none) at 272 px gave each cell 42 px, and the English labels
-  // clipped: in common UI fonts Medium is 44 px, Standard 48.5-51, Extended 50-53 at 12 px. The menu widens with
-  // the row.
-  it("widens with the row so six labels fit, never past the window", () => {
-    expect(menuWidth(0, 1200)).toBe(272);
-    expect(menuWidth(4, 1200)).toBe(272);
-    expect(menuWidth(5, 1200)).toBe(310);
-    expect(menuWidth(6, 1200)).toBe(368);
+  // Deyao, 2026-11-18: a six-position row (Claude's five efforts and none) at 272 px clipped the English labels
+  // (Medium, Standard, Extended), and a fixed wider cell was still cramped. Each cell holds the widest label as it
+  // renders, with a menu row's 8 px each side: cell = label + 2 × (8 + 1 border); row = cells + 2 × (2 + 8).
+  it("is as wide as six cells that each hold the widest label with room, never past the window", () => {
+    expect(menuWidth(50, 6, 1200)).toBe(6 * 68 + 20);
+    // a fraction of a pixel rounds up, so the last cell never loses it
+    expect(menuWidth(50.2, 6, 1200)).toBe(430);
+    // short labels (zh-HK's two characters, or four positions) keep the menu's own width
+    expect(menuWidth(24, 4, 1200)).toBe(272);
+    expect(menuWidth(24, 6, 1200)).toBe(272);
+    // not measured yet: the menu's own width
+    expect(menuWidth(null, 6, 1200)).toBe(272);
     // a window narrower than the menu: the menu takes what the window has
-    expect(menuWidth(6, 300)).toBe(284);
-    expect(menuWidth(6, 0)).toBe(0);
+    expect(menuWidth(50, 6, 300)).toBe(284);
+    expect(menuWidth(50, 6, 0)).toBe(0);
   });
 
   // Deyao, 2026-11-13: a click on a thinking level lagged (it showed only once the server had answered).

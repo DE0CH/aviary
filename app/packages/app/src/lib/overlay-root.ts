@@ -155,11 +155,11 @@ function getFocusableElements(scope: HTMLElement): HTMLElement[] {
   );
 }
 
+// A menu's surface, not its first row: a focused row is painted as the hovered one (menu-overlay.tsx). From the
+// surface the arrow keys reach the rows.
 function focusFirstElement(scope: HTMLElement): void {
-  const firstMenuItem = scope.querySelector<HTMLElement>(
-    '[data-menu-item="true"]:not([data-menu-disabled="true"])',
-  );
-  const first = firstMenuItem ?? getFocusableElements(scope)[0];
+  const menu = scope.querySelector<HTMLElement>('[data-menu-surface="true"]');
+  const first = menu ?? getFocusableElements(scope)[0];
   (first ?? scope).focus();
 }
 
