@@ -3,13 +3,13 @@
 # run in this fork (Actions are enabled for this workflow only).
 name: de0ch-release
 on:
-  push:
-    branches: [de0ch]
+  push:  # every branch: the gate merges a branch when this is green; de0ch alone releases
+    branches: ['**']
   workflow_dispatch:
 permissions:
   contents: write
 concurrency:
-  group: de0ch-release
+  group: "de0ch-release-${{ github.ref }}"
   cancel-in-progress: false
 jobs:
   release:
@@ -71,6 +71,7 @@ jobs:
       - name: the packed CLI names the thinking level its host set, "none" included
         run: node de0ch/thinking-level.e2e.mjs "$RUNNER_TEMP/qwen/bin/qwen"
       - name: release
+        if: github.ref == 'refs/heads/de0ch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
