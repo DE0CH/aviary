@@ -355,7 +355,7 @@ fn model_cache() -> Duration {
 
 /// The app takes a page before its cursor only when the page ends right before it (`endCursor` = cursor - 1) and
 /// otherwise asks for the same page again. Row seqs have gaps (an update takes the next seq) and a row updated after
-/// a later row began ends past it: YYC AI's video conversation had row 699 at version 701 under row 700, the app
+/// a later row began ends past it: a video-editing conversation had row 699 at version 701 under row 700, the app
 /// asked "before 700" forever and could not scroll back above it.
 #[tokio::test]
 async fn a_page_before_a_cursor_ends_right_before_it() {
