@@ -203,6 +203,23 @@ A run's outcome in the panel: 已回覆 once the conversation answered the fired
 `answered_mid_turn`), 已送出，等待回覆 until then (`sent`, `sent_mid_turn`), 已送出，未有回覆 when that turn failed or
 was stopped (`unanswered`), and the skips (服務暫停，已略過 …).
 
+## Questions and waits in the chat (Deyao, 2026-11-18)
+
+A question the AI asked with `ask`, or a command's wait on the person for something outside the chat (Jarvis 4's
+Inbox requests), is one card in the history (`yyc/person-cards.tsx`, read by `yyc/person-cards-text.ts`; design: the
+approved three-state mock):
+
+- **Waiting on you:** yellow, where it was asked; a question's options are in the answer card at the bottom, which is
+  unchanged.
+- **Answered, not read yet:** still where it was asked, the answer filled in, a hollow mark and "Not read yet".
+- **Read:** on the tool call whose result first carried the answer into the AI's context (the asking command itself
+  when it waited; otherwise wherever the AI read it, e.g. a background task's output), its header saying when it was
+  asked when that was more than five minutes before.
+
+Where each shows is the server's (aviary magpie rule 11): the card's own row carries `metadata.personAsk` (nothing is
+drawn once its `readBy` is set) and the reading call carries `metadata.personRead`. Both are pinned like sent files: never
+grouped, and kept above the reply when a turn folds (`agent-stream/turn-collapse`).
+
 ## Loading
 
 Deyao's order (2026-10-29): a message box people can type in at once, then the connection, then the reply's display
