@@ -60,6 +60,8 @@ export const AttachmentMetadataSchema = z.strictObject({
   fileName: z.string().nullable().optional(),
   byteSize: z.number().nullable().optional(),
   createdAt: z.number(),
+  uploadId: z.string().optional(),
+  uploadedAtMs: z.number().optional(),
 }) satisfies z.ZodType<AttachmentMetadata>;
 export const LegacyDraftImageSchema: z.ZodType<LegacyDraftImage> = z.strictObject({
   uri: z.string(),

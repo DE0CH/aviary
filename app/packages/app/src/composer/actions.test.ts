@@ -1,3 +1,4 @@
+import type { SendImage } from "@/attachments/service";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentAttachment, ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type {
@@ -181,7 +182,7 @@ interface FakeSendCall {
   options: {
     messageId: string;
     activeTurnBehavior?: "interrupt" | "steer";
-    images: Array<{ data: string; mimeType: string }>;
+    images: SendImage[];
     attachments: AgentAttachment[];
   };
 }
@@ -1042,32 +1043,49 @@ describe("findForgeItemByOption / isAttachmentSelectedForForgeItem", () => {
 });
 
 describe("file upload preparation", () => {
-  it("posts the file to CloudCLI's upload route once its bytes are read", async () => {
+  it("uploads the file to the server's upload route once its bytes are read, with its progress", async () => {
     let resolveRead!: (bytes: Uint8Array) => void;
     const read = new Promise<Uint8Array>((resolve) => {
       resolveRead = resolve;
     });
     const requests: Array<{ url: string; name: string | undefined }> = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: string, init?: RequestInit) => {
-      const body = init?.body as FormData;
-      const file = body.get("files") as File;
-      requests.push({ url: String(url), name: file?.name });
-      return new Response(
-        JSON.stringify({
+    const progress: Array<[number, number, number]> = [];
+    const OriginalXhr = globalThis.XMLHttpRequest;
+    class StubXhr {
+      url = "";
+      withCredentials = false;
+      status = 0;
+      responseText = "";
+      upload: { onprogress: ((e: { loaded: number; total: number }) => void) | null } = { onprogress: null };
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+      open(_method: string, url: string) {
+        this.url = url;
+      }
+      setRequestHeader() {}
+      abort() {}
+      send(body: FormData) {
+        requests.push({ url: this.url, name: (body.get("files") as File)?.name });
+        this.upload.onprogress?.({ loaded: 1, total: 2 });
+        this.upload.onprogress?.({ loaded: 2, total: 2 });
+        this.status = 201;
+        this.responseText = JSON.stringify({
           attachments: [
             { path: "/assets/1-sample.bin", name: "sample.bin", size: 2, mimeType: "application/octet-stream" },
           ],
-        }),
-        { status: 200 },
-      );
-    }) as typeof fetch;
+        });
+        this.onload?.();
+      }
+    }
+    globalThis.XMLHttpRequest = StubXhr as unknown as typeof XMLHttpRequest;
     try {
       const upload = uploadFileAttachments({
         client: { sendAgentMessage: async () => {}, uploadFile: async () => ({}) as never },
         files: [
           { fileName: "sample.bin", mimeType: "application/octet-stream", readBytes: () => read },
         ],
+        onProgress: (index, p) => progress.push([index, p.sent, p.total]),
       });
       expect(requests).toEqual([]);
       resolveRead(new Uint8Array([1, 2]));
@@ -1087,8 +1105,12 @@ describe("file upload preparation", () => {
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url).toMatch(/\/api\/assets\/files$/);
       expect(requests[0]?.name).toBe("sample.bin");
+      expect(progress).toEqual([
+        [0, 1, 2],
+        [0, 2, 2],
+      ]);
     } finally {
-      globalThis.fetch = originalFetch;
+      globalThis.XMLHttpRequest = OriginalXhr;
     }
   });
 

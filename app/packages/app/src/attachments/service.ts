@@ -1,6 +1,7 @@
 import { collectRetainedAttachmentIds } from "@/attachments/gc-retention";
 import { getAttachmentStore } from "@/attachments/store";
 import type { AttachmentMetadata, SaveAttachmentInput } from "@/attachments/types";
+import { uploadStillKept } from "@/yyc/asset-upload";
 
 const activePersistence = new Set<Promise<AttachmentMetadata>>();
 const persistedDuringGarbageCollection = new Set<string>();
@@ -92,16 +93,27 @@ export async function persistAttachmentFromFileUri(input: {
   });
 }
 
+/**
+ * A picture as a send carries it: its bytes, or (`data` empty) the id of its upload when it was uploaded on being
+ * attached.
+ */
+export type SendImage = { data: string; mimeType: string; uploadId?: string };
+
 export async function encodeAttachmentsForSend(
   attachments: readonly AttachmentMetadata[] | undefined,
-): Promise<Array<{ data: string; mimeType: string }> | undefined> {
+  nowMs: number = Date.now(),
+): Promise<SendImage[] | undefined> {
   if (!attachments || attachments.length === 0) {
     return undefined;
   }
 
   const store = await getAttachmentStore();
   const encoded = await Promise.all(
-    attachments.map(async (attachment) => {
+    attachments.map(async (attachment): Promise<SendImage | null> => {
+      // uploaded when it was attached (yyc/asset-upload.ts): named, not sent again
+      if (attachment.uploadId && uploadStillKept(attachment.uploadedAtMs, nowMs)) {
+        return { data: "", uploadId: attachment.uploadId, mimeType: attachment.mimeType };
+      }
       try {
         const data =
           attachment.storageType === "remote-url"
@@ -121,9 +133,7 @@ export async function encodeAttachmentsForSend(
     }),
   );
 
-  const valid = encoded.filter(
-    (entry): entry is { data: string; mimeType: string } => entry !== null,
-  );
+  const valid = encoded.filter((entry): entry is SendImage => entry !== null);
   return valid.length > 0 ? valid : undefined;
 }
 

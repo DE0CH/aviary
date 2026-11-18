@@ -1276,6 +1276,10 @@ export const ChangeRequestCheckoutSourceSchema = z.object({
 const ImageAttachmentSchema = z.object({
   data: z.string(), // base64 encoded image
   mimeType: z.string(), // e.g., "image/jpeg", "image/png"
+  // YYC: the id of the picture's upload when the app uploaded it on being attached (`POST /api/assets/files?kind=image`,
+  // app yyc/asset-upload.ts); `data` is then empty (it stays, so every listed app build accepts the frame: pigeon's
+  // frame corpus)
+  uploadId: z.string().optional(),
 });
 
 export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer"]);

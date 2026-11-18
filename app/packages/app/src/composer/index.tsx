@@ -6,6 +6,8 @@ import {
 } from "@/loading/stages";
 import { ReplyDisplayLoadFailed } from "@/components/loading-frame";
 import { warmSandbox } from "@/yyc/warm";
+import { uploadFraction, type UploadProgress } from "@/yyc/asset-upload";
+import { uploadAttachedImage } from "@/yyc/image-upload";
 import {
   useComposerEditingSession,
   useComposerFullscreen,
@@ -382,12 +384,16 @@ function renderLeftContent(args: RenderLeftContentArgs): ReactElement | null {
 interface PendingFileAttachment {
   id: number;
   file: SelectedFile;
+  /** How far its upload has come (yyc/asset-upload.ts). */
+  progress?: UploadProgress;
 }
 
 interface RenderAttachmentTrayArgs {
   serverId: string;
   selectedAttachments: ComposerAttachment[];
   pendingFiles: PendingFileAttachment[];
+  /** The pictures still uploading (by attachment id): their chips draw the progress. */
+  imageUploads: Readonly<Record<string, UploadProgress>>;
   isComposerLocked: boolean;
   handleOpenAttachment: (attachment: ComposerAttachment) => void;
   handleRemoveAttachment: (index: number) => void;
@@ -395,6 +401,8 @@ interface RenderAttachmentTrayArgs {
     openImage: string;
     removeImage: string;
     removeFile: string;
+    /** "Uploading 45%" for a chip whose upload runs. */
+    uploading: (percent: number) => string;
     openGithub: (kind: string, numberLabel: string) => string;
     removeGithub: (kind: string, numberLabel: string) => string;
   };
@@ -405,6 +413,7 @@ function renderAttachmentTray(args: RenderAttachmentTrayArgs): ReactElement | nu
     serverId,
     selectedAttachments,
     pendingFiles,
+    imageUploads,
     isComposerLocked,
     handleOpenAttachment,
     handleRemoveAttachment,
@@ -422,14 +431,30 @@ function renderAttachmentTray(args: RenderAttachmentTrayArgs): ReactElement | nu
           onOpen: handleOpenAttachment,
           onRemove: handleRemoveAttachment,
           labels,
+          uploadProgress:
+            attachment.kind === "image" && imageUploads[attachment.metadata.id]
+              ? uploadFraction(imageUploads[attachment.metadata.id])
+              : undefined,
+          uploadLabel:
+            attachment.kind === "image" && imageUploads[attachment.metadata.id]
+              ? labels.uploading(Math.round(uploadFraction(imageUploads[attachment.metadata.id]) * 100))
+              : undefined,
         }),
       )}
-      {pendingFiles.map(({ id, file }) => (
-        <AttachmentFrame key={id} testID="composer-pending-file-attachment">
+      {pendingFiles.map(({ id, file, progress }) => (
+        <AttachmentFrame
+          key={id}
+          testID="composer-pending-file-attachment"
+          uploadProgress={uploadFraction(progress)}
+        >
           <AttachmentLabel
             icon={pendingFilePillIcon}
             title={file.fileName}
-            subtitle={getFileTypeLabel(file.fileName) ?? ""}
+            subtitle={
+              progress
+                ? labels.uploading(Math.round(uploadFraction(progress) * 100))
+                : (getFileTypeLabel(file.fileName) ?? "")
+            }
           />
         </AttachmentFrame>
       ))}
@@ -490,6 +515,8 @@ interface RenderComposerAttachmentPillArgs {
   onOpen: (attachment: ComposerAttachment) => void;
   onRemove: (index: number) => void;
   labels: RenderAttachmentTrayArgs["labels"];
+  uploadProgress?: number;
+  uploadLabel?: string;
 }
 
 function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): ReactElement {
@@ -505,6 +532,8 @@ function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): R
         onRemove={onRemove}
         openLabel={labels.openImage}
         removeLabel={labels.removeImage}
+        uploadProgress={args.uploadProgress}
+        uploadLabel={args.uploadLabel}
       />
     );
   }
@@ -877,6 +906,8 @@ interface ImageAttachmentPillProps {
   onRemove: (index: number) => void;
   openLabel: string;
   removeLabel: string;
+  uploadProgress?: number;
+  uploadLabel?: string;
 }
 
 function ImageAttachmentPill({
@@ -887,6 +918,8 @@ function ImageAttachmentPill({
   onRemove,
   openLabel,
   removeLabel,
+  uploadProgress,
+  uploadLabel,
 }: ImageAttachmentPillProps) {
   const handleOpen = useCallback(() => {
     onOpen(attachment);
@@ -902,6 +935,8 @@ function ImageAttachmentPill({
       openAccessibilityLabel={openLabel}
       removeAccessibilityLabel={removeLabel}
       disabled={disabled}
+      uploadProgress={uploadProgress}
+      uploadLabel={uploadLabel}
     >
       <AttachmentThumbnail metadata={attachment.metadata} />
     </AttachmentPill>
@@ -1444,7 +1479,9 @@ function ComposerContentImpl({
   const [isProcessing, setIsProcessing] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<PendingFileAttachment[]>([]);
   const nextPendingFileId = useRef(0);
-  const isUploadingFile = pendingFiles.length > 0;
+  // pictures upload when they are attached (yyc/asset-upload.ts); the send waits for them as for files
+  const [imageUploads, setImageUploads] = useState<Readonly<Record<string, UploadProgress>>>({});
+  const isUploadingFile = pendingFiles.length > 0 || Object.keys(imageUploads).length > 0;
   const [pendingNativeImagePastes, setPendingNativeImagePastes] = useState(0);
   const editingSession = useComposerEditingSession(inputMode, providedEditingSession);
   const isFullscreen = useComposerFullscreen(editingSession);
@@ -1564,8 +1601,44 @@ function ComposerContentImpl({
         ...prev,
         ...images.map((metadata) => ({ kind: "image" as const, metadata })),
       ]);
+      // each picture goes up now, with its progress on its chip; the send names it by its upload. One that fails to
+      // upload leaves the message box with the server's sentence, as a file does: sending its bytes instead would wait
+      // on the same store and show only as a message that never leaves (「等待網絡」).
+      for (const image of images) {
+        if (image.uploadId || image.storageType === "remote-url") continue;
+        setImageUploads((prev) => ({ ...prev, [image.id]: { sent: 0, total: 0 } }));
+        void uploadAttachedImage(image, (progress) =>
+          setImageUploads((prev) => (prev[image.id] ? { ...prev, [image.id]: progress } : prev)),
+        )
+          .then((uploaded) => {
+            if (!uploaded) return;
+            setSelectedAttachments((prev) =>
+              prev.map((a) =>
+                a.kind === "image" && a.metadata.id === image.id
+                  ? { ...a, metadata: { ...a.metadata, ...uploaded } }
+                  : a,
+              ),
+            );
+          })
+          .catch((error) => {
+            console.error("[Composer] Failed to upload a picture:", error);
+            setSelectedAttachments((prev) =>
+              prev.filter((a) => !(a.kind === "image" && a.metadata.id === image.id)),
+            );
+            toastErrorRef.current(
+              error instanceof Error ? error.message : t("composer.errors.uploadFailed"),
+            );
+          })
+          .finally(() => {
+            setImageUploads((prev) => {
+              const next = { ...prev };
+              delete next[image.id];
+              return next;
+            });
+          });
+      }
     },
-    [setSelectedAttachments],
+    [setSelectedAttachments, t],
   );
 
   const addFiles = useCallback(
@@ -2033,7 +2106,16 @@ function ComposerContentImpl({
       const placeholders = files.map((file) => ({ id: nextPendingFileId.current++, file }));
       setPendingFiles((pending) => [...pending, ...placeholders]);
       try {
-        const uploaded = await uploadFileAttachments({ client, files });
+        const uploaded = await uploadFileAttachments({
+          client,
+          files,
+          onProgress: (index, progress) => {
+            const id = placeholders[index]?.id;
+            setPendingFiles((pending) =>
+              pending.map((entry) => (entry.id === id ? { ...entry, progress } : entry)),
+            );
+          },
+        });
         addFiles(uploaded);
       } catch (error) {
         console.error("[Composer] Failed to upload file:", error);
@@ -2608,6 +2690,7 @@ function ComposerContentImpl({
         serverId,
         selectedAttachments,
         pendingFiles,
+        imageUploads,
         isComposerLocked,
         handleOpenAttachment,
         handleRemoveAttachment,
@@ -2615,6 +2698,7 @@ function ComposerContentImpl({
           openImage: t("composer.attachments.openImage"),
           removeImage: t("composer.attachments.removeImage"),
           removeFile: t("composer.attachments.removeFile"),
+          uploading: (percent: number) => t("composer.attachments.uploading", { percent }),
           openGithub: (kind: string, numberLabel: string) =>
             t("composer.attachments.openGithub", { kind, number: numberLabel }),
           removeGithub: (kind: string, numberLabel: string) =>
@@ -2628,6 +2712,7 @@ function ComposerContentImpl({
       serverId,
       selectedAttachments,
       pendingFiles,
+      imageUploads,
       t,
     ],
   );

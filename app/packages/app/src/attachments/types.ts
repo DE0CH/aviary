@@ -24,6 +24,12 @@ export interface AttachmentMetadata {
   createdAt: number;
   /** remote-url: the URL of a small rendition of the image, when the server sent one (drawn first, and in chips). */
   previewKey?: string;
+  /**
+   * The server's upload of this picture, made when it was attached (yyc/asset-upload.ts): a send names it by this id
+   * instead of carrying its bytes, while the server keeps it (`uploadedAtMs`).
+   */
+  uploadId?: string;
+  uploadedAtMs?: number;
 }
 
 export interface BrowserElementAttachment {

@@ -1,10 +1,8 @@
 import type { AttachmentMetadata } from "@/attachments/types";
-import { encodeAttachmentsForSend } from "@/attachments/service";
+import { encodeAttachmentsForSend, type SendImage } from "@/attachments/service";
 
 type ImageInput = AttachmentMetadata;
 
-export async function encodeImages(
-  images?: ImageInput[],
-): Promise<Array<{ data: string; mimeType: string }> | undefined> {
+export async function encodeImages(images?: ImageInput[]): Promise<SendImage[] | undefined> {
   return await encodeAttachmentsForSend(images);
 }

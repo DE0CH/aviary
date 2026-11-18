@@ -99,6 +99,23 @@ describe("attachment service", () => {
     ]);
   });
 
+  it("names a picture uploaded when it was attached by its upload, while the server keeps it", async () => {
+    const store = createRecordingStore();
+    __setAttachmentStoreForTests(store);
+    const uploaded = {
+      ...createAttachment({ id: "att_up", mimeType: "image/png" }),
+      uploadId: "11111111-1111-4111-8111-111111111111",
+      uploadedAtMs: 1_000,
+    };
+    await expect(encodeAttachmentsForSend([uploaded], 2_000)).resolves.toEqual([
+      { data: "", uploadId: "11111111-1111-4111-8111-111111111111", mimeType: "image/png" },
+    ]);
+    // after a day the server has dropped an unsent upload: its bytes go instead
+    await expect(
+      encodeAttachmentsForSend([uploaded], 1_000 + 24 * 60 * 60 * 1000),
+    ).resolves.toEqual([{ data: "att_up:base64", mimeType: "image/png" }]);
+  });
+
   it("does not collect an attachment persisted while garbage collection is starting", async () => {
     let releaseSave: () => void = () => undefined;
     let reportSaveStarted: () => void = () => undefined;

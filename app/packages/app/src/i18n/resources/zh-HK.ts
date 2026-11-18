@@ -172,6 +172,7 @@ export const zhHK: TranslationResources = {
       sendQueuedMessageNow: "立即傳送排隊訊息",
       openImage: "開啟圖片附件",
       removeImage: "移除圖片附件",
+      uploading: "上載中 {{percent}}%",
       removeFile: "Remove file attachment",
       openGithub: "開啟 {{kind}} {{number}}",
       removeGithub: "移除 {{kind}} {{number}}",

@@ -1,8 +1,7 @@
-import { apiUrl } from "@/yyc/api";
-import { accessHeaders } from "@/yyc/access-token";
-import type { UploadedFileAttachment } from "@getpaseo/protocol/messages";
+import { uploadAsset, type UploadProgress } from "@/yyc/asset-upload";
 import type { SelectedFile } from "@/attachments/selected-file";
 import { FILE_UPLOAD_MAX_BYTES } from "@/attachments/upload-limit";
+import type { SendImage } from "@/attachments/service";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type {
@@ -55,7 +54,7 @@ export interface ComposerSendClient {
     options: {
       messageId: string;
       activeTurnBehavior?: ActiveTurnBehavior;
-      images: Array<{ data: string; mimeType: string }>;
+      images: SendImage[];
       attachments: ReturnType<typeof splitComposerAttachmentsForSubmit>["attachments"];
     },
   ) => Promise<unknown>;
@@ -126,38 +125,11 @@ export async function pickAndPersistImages(input: {
   );
 }
 
-async function uploadToCloudCli(file: {
-  fileName: string;
-  mimeType: string;
-  bytes: Uint8Array;
-}): Promise<UploadedFileAttachment> {
-  const form = new FormData();
-  form.append("files", new Blob([file.bytes as Uint8Array<ArrayBuffer>], { type: file.mimeType }), file.fileName);
-  const response = await fetch(apiUrl("/api/assets/files"), {
-    method: "POST",
-    credentials: "include",
-    headers: accessHeaders(),
-    body: form,
-  });
-  const body = (await response.json().catch(() => null)) as {
-    attachments?: Array<{ path: string; name: string; size: number; mimeType: string }>;
-    error?: string;
-  } | null;
-  const stored = body?.attachments?.[0];
-  if (!response.ok || !stored) throw new Error(body?.error ?? "Upload failed.");
-  return {
-    type: "uploaded_file",
-    id: stored.path,
-    fileName: stored.name,
-    mimeType: stored.mimeType,
-    size: stored.size,
-    path: stored.path,
-  };
-}
-
 export async function uploadFileAttachments(input: {
   client: ComposerSendClient;
   files: SelectedFile[];
+  /** Each file's upload progress, by its index in `files` (the message box draws it). */
+  onProgress?: (index: number, progress: UploadProgress) => void;
 }): Promise<Extract<ComposerAttachment, { kind: "file" }>[]> {
   const result: Extract<ComposerAttachment, { kind: "file" }>[] = [];
   const prepared: Array<{ fileName: string; mimeType: string; bytes: Uint8Array }> = [];
@@ -176,9 +148,24 @@ export async function uploadFileAttachments(input: {
     });
   }
 
-  // Files go to CloudCLI's upload route, which keeps them for the turn that sends them (docs/paseo-ui.md)
-  for (const file of prepared) {
-    result.push({ kind: "file", attachment: await uploadToCloudCli(file) });
+  // Files go to the server's upload route, which keeps them for the turn that sends them (docs/paseo-ui.md)
+  for (const [index, file] of prepared.entries()) {
+    const stored = await uploadAsset({
+      ...file,
+      kind: "file",
+      onProgress: (progress) => input.onProgress?.(index, progress),
+    });
+    result.push({
+      kind: "file",
+      attachment: {
+        type: "uploaded_file",
+        id: stored.path,
+        fileName: stored.name,
+        mimeType: stored.mimeType,
+        size: stored.size,
+        path: stored.path,
+      },
+    });
   }
 
   return result;
@@ -222,7 +209,7 @@ export interface DispatchComposerAgentMessageInput {
   attachmentSubmitFormat?: ComposerAttachmentSubmitFormat;
   encodeImages: (
     images: AttachmentMetadata[],
-  ) => Promise<Array<{ data: string; mimeType: string }> | undefined>;
+  ) => Promise<SendImage[] | undefined>;
   submission: MessageSubmissionWriter;
   activeTurnBehavior?: ActiveTurnBehavior;
   activeTurnId?: string;
