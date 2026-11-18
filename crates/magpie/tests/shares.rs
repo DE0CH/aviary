@@ -879,14 +879,15 @@ async fn rows_made_before_rule_6_kept_the_caption_get_it_from_the_send() {
         let caption = caption.map(str::to_owned);
         (id.to_owned(), caption.clone(), caption, derivation)
     };
-    // rule 6 as this build applies it
+    // rule 6 as this build applies it (rows made now carry this build's derivation)
+    let now = magpie::rows::DERIVATION;
     assert_eq!(
         captions().await,
         vec![
-            call("call_shell", Some("the report"), 2),
-            call("call_tool", Some("the totals"), 2),
-            call("call_bare", None, 2),
-            call("call_none", None, 2),
+            call("call_shell", Some("the report"), now),
+            call("call_tool", Some("the totals"), now),
+            call("call_bare", None, now),
+            call("call_none", None, now),
         ]
     );
 
