@@ -8,7 +8,9 @@
 //!   `scaler::user_data` makes from that `hermit.json`, from a stand-in of the cloud's metadata service on
 //!   169.254.169.254, then `sbx-jfs` and `sandboxd` start as on an instance;
 //! - what only the cloud has is stood in for: `JuiceFS`'s metadata and data local (the deployment's are a Postgres and
-//!   an object store), an S3 for frozen images (versitygw, signatures checked), the gateway (nothing answers its
+//!   an object store), an S3 for frozen images with STS session credentials (moto's server: signatures and tokens
+//!   checked; its `AssumeRole` stands in for hermit's `GetFederationToken`, both an opaque token to sandboxd), the
+//!   gateway (nothing answers its
 //!   `WireGuard` endpoint), the PKI (`fabric/host/make-certs.sh`).
 //!
 //! Then the checks go through sandboxd's API with hermit's client certificate, on the deployment's image, with
@@ -34,7 +36,8 @@ use uuid::Uuid;
 
 /// the replica's own state (PKI, the stand-ins' data, the user data)
 const DIR: &str = "/var/lib/fabric-replica";
-const VERSITYGW: &str = "1.9.0";
+/// moto, the S3 and STS stand-in (its server, pinned)
+const MOTO: &str = "5.2.5";
 const S3_PORT: u16 = 19000;
 const BUCKET: &str = "frozen";
 const IMDS: &str = "169.254.169.254";
@@ -236,33 +239,191 @@ fn boot_wait() -> Result<()> {
     }
 }
 
-/// the S3 frozen images go to: versitygw on loopback, signatures checked against the replica's own key
+/// the S3 frozen images go to: moto's server on loopback, which checks every signature and session token after the
+/// three unsigned calls that make its one user (`INITIAL_NO_AUTH_ACTION_COUNT`); that user then makes the role whose
+/// sessions `creds` hands out, and the bucket. Its state is in memory: every `up` makes it anew.
 fn s3(dir: &Path) -> Result<()> {
-    fs::create_dir_all(dir.join("s3").join(BUCKET))?;
-    if !Path::new("/usr/local/bin/versitygw").exists() {
-        let t = dir.join("versitygw");
-        fs::create_dir_all(&t)?;
-        sh(&format!(
-            "cd {t} && curl -fsSL -o v.tgz https://github.com/versity/versitygw/releases/download/v{VERSITYGW}/versitygw_v{VERSITYGW}_Linux_x86_64.tar.gz \
-             && tar -xzf v.tgz && install -m755 $(find . -name versitygw -type f | head -1) /usr/local/bin/",
-            t = t.display()
-        ))?;
+    let venv = dir.join("moto");
+    if !venv.join("bin/moto_server").exists() {
+        // venv makes its pip with ensurepip, which Ubuntu ships apart (python3-venv)
+        if Command::new("python3")
+            .args(["-c", "import ensurepip"])
+            .output()
+            .map_or(true, |o| !o.status.success())
+        {
+            sh("DEBIAN_FRONTEND=noninteractive apt-get install -y -q python3-venv")?;
+        }
+        let _ = fs::remove_dir_all(&venv);
+        run(Command::new("python3").args(["-m", "venv"]).arg(&venv))?;
+        run(Command::new(venv.join("bin/pip")).args(["install", "-q", &format!("moto[server]=={MOTO}")]))?;
     }
     quiet("systemctl stop fabric-replica-s3; systemctl reset-failed fabric-replica-s3");
     run(Command::new("systemd-run")
-        .args(["--unit", "fabric-replica-s3"])
-        .args([
-            "--setenv=ROOT_ACCESS_KEY=replica",
-            "--setenv=ROOT_SECRET_KEY=replica-secret",
-        ])
-        .args([
-            "/usr/local/bin/versitygw",
-            "--port",
-            &format!("127.0.0.1:{S3_PORT}"),
-            "posix",
-        ])
-        .arg(dir.join("s3")))?;
+        .args(["--unit", "fabric-replica-s3", "--setenv=INITIAL_NO_AUTH_ACTION_COUNT=3"])
+        .arg(venv.join("bin/moto_server"))
+        .args(["-H", "127.0.0.1", "-p", &S3_PORT.to_string()]))?;
+    let t = Instant::now();
+    while sh(&format!(
+        "curl -s -o /dev/null -w %{{http_code}} http://127.0.0.1:{S3_PORT}/moto-api/"
+    ))
+    .map_or(true, |c| c.trim() != "200")
+    {
+        if t.elapsed() > Duration::from_secs(60) {
+            bail!("moto did not answer in 60 s (journalctl -u fabric-replica-s3)");
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    let anyone = ("bootstrap", "unsigned");
+    aws(
+        "iam",
+        anyone,
+        None,
+        &[("Action", "CreateUser"), ("UserName", "replica")],
+    )?;
+    aws(
+        "iam",
+        anyone,
+        None,
+        &[
+            ("Action", "PutUserPolicy"),
+            ("UserName", "replica"),
+            ("PolicyName", "all"),
+            ("PolicyDocument", ALLOW_ALL),
+        ],
+    )?;
+    let k = aws(
+        "iam",
+        anyone,
+        None,
+        &[("Action", "CreateAccessKey"), ("UserName", "replica")],
+    )?;
+    let (id, secret) = (tag(&k, "AccessKeyId")?, tag(&k, "SecretAccessKey")?);
+    fs::write(dir.join("s3-user"), format!("{id}\n{secret}\n"))?;
+    let user = (id.as_str(), secret.as_str());
+    let trust = r#"{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"*"},"Action":"sts:AssumeRole"}]}"#;
+    aws(
+        "iam",
+        user,
+        None,
+        &[
+            ("Action", "CreateRole"),
+            ("RoleName", "freeze"),
+            ("AssumeRolePolicyDocument", trust),
+        ],
+    )?;
+    aws(
+        "iam",
+        user,
+        None,
+        &[
+            ("Action", "PutRolePolicy"),
+            ("RoleName", "freeze"),
+            ("PolicyName", "all"),
+            ("PolicyDocument", ALLOW_ALL),
+        ],
+    )?;
+    let code = s3_call(user, None, "PUT", BUCKET)?;
+    if code != "200" {
+        bail!("the bucket: HTTP {code}");
+    }
     Ok(())
+}
+
+const ALLOW_ALL: &str = r#"{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"}]}"#;
+
+/// an IAM or STS call to the stand-in, signed (`SigV4` by curl); the body form-encoded as the AWS SDKs encode it (moto
+/// checks the signature over its own re-encoding of the form)
+fn aws(service: &str, key: (&str, &str), token: Option<&str>, params: &[(&str, &str)]) -> Result<String> {
+    let version = if service == "sts" { "2011-06-15" } else { "2010-05-08" };
+    let body = params
+        .iter()
+        .chain(&[("Version", version)])
+        .map(|(k, v)| format!("{}={}", form(k), form(v)))
+        .collect::<Vec<_>>()
+        .join("&");
+    let mut cmd = Command::new("curl");
+    cmd.args([
+        "-sS",
+        "--aws-sigv4",
+        &format!("aws:amz:us-east-1:{service}"),
+        "--user",
+        &format!("{}:{}", key.0, key.1),
+    ]);
+    if let Some(t) = token {
+        cmd.args(["-H", &format!("x-amz-security-token: {t}")]);
+    }
+    let out = run(cmd.args(["--data", &body, &format!("http://127.0.0.1:{S3_PORT}/")]))?;
+    if out.contains("<ErrorResponse") {
+        bail!("{service} {}: {out}", params.first().map_or("", |p| p.1));
+    }
+    Ok(out)
+}
+
+/// an S3 request to the stand-in, signed; its HTTP status
+fn s3_call(key: (&str, &str), token: Option<&str>, method: &str, path: &str) -> Result<String> {
+    let mut cmd = Command::new("curl");
+    cmd.args([
+        "-s",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "--aws-sigv4",
+        "aws:amz:us-east-1:s3",
+    ])
+    .args(["--user", &format!("{}:{}", key.0, key.1)]);
+    if method == "HEAD" {
+        cmd.arg("-I");
+    } else {
+        cmd.args(["-X", method]);
+    }
+    if let Some(t) = token {
+        cmd.args(["-H", &format!("x-amz-security-token: {t}")]);
+    }
+    run(cmd.arg(format!("http://127.0.0.1:{S3_PORT}/{path}")))
+}
+
+/// session credentials for the frozen images (hermit's are an hour's federation token): (id, secret, token)
+fn creds() -> Result<(String, String, String)> {
+    let u = fs::read_to_string(Path::new(DIR).join("s3-user")).context("the stand-in's user (fabric-replica up)")?;
+    let mut l = u.lines();
+    let user = (l.next().unwrap_or_default(), l.next().unwrap_or_default());
+    let r = aws(
+        "sts",
+        user,
+        None,
+        &[
+            ("Action", "AssumeRole"),
+            ("RoleArn", "arn:aws:iam::123456789012:role/freeze"),
+            ("RoleSessionName", "replica"),
+            ("DurationSeconds", "3600"),
+        ],
+    )?;
+    Ok((
+        tag(&r, "AccessKeyId")?,
+        tag(&r, "SecretAccessKey")?,
+        tag(&r, "SessionToken")?,
+    ))
+}
+
+fn form(s: &str) -> String {
+    s.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}
+
+/// the text of the first `<name>` element of an XML answer
+fn tag(xml: &str, name: &str) -> Result<String> {
+    let open = format!("<{name}>");
+    let i = xml.find(&open).with_context(|| format!("no <{name}> in {xml}"))? + open.len();
+    let j = xml[i..].find('<').map_or(xml.len(), |j| i + j);
+    Ok(xml[i..j].to_owned())
 }
 
 /// the cloud's metadata service, as much of it as `sbx-userdata` asks: a token, then the user data
@@ -418,53 +579,79 @@ async fn check_pause(c: &Client, cfg: &hermit::config::Config) -> Result<String>
     Ok(format!("paused 5 s, went on after the resume ({a} -> {b})"))
 }
 
+/// The tries the sandbox's init has logged on its console (its stderr: /var/log/sbx/<name>.log), from byte `from`
+fn init_tries(name: &str, from: usize) -> Result<Vec<u64>> {
+    let log = fs::read(format!("/var/log/sbx/{name}.log"))?;
+    Ok(String::from_utf8_lossy(log.get(from..).unwrap_or_default())
+        .lines()
+        .filter_map(|l| l.split("(try ").nth(1)?.split(')').next()?.parse().ok())
+        .collect())
+}
+
+async fn wait_tries(name: &str, from: usize, secs: u64) -> Result<Vec<u64>> {
+    let t = Instant::now();
+    loop {
+        let v = init_tries(name, from)?;
+        if !v.is_empty() || t.elapsed() > Duration::from_secs(secs) {
+            return Ok(v);
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+/// Evicted to the S3 while paused (as a frozen session is), thawed from it: the same processes go on. The process is
+/// the sandbox's init, as a session's are its init's: gVisor does not bring back what `runsc exec` started (they come
+/// back killed). The image's init (fabric-entrypoint) given a token but no router fetches its env every 5 s and logs
+/// each try on its console: the tries after the thaw go on from the count before it.
 async fn check_freeze(c: &Client, cfg: &hermit::config::Config) -> Result<String> {
-    create(c, cfg, "sbx-f4ee2e", 12).await?;
-    start_counter("sbx-f4ee2e")?;
-    let before = counter("sbx-f4ee2e")?;
-    c.pause("sbx-f4ee2e").await.context("pause")?;
-    // a fixed key: the replica's frozen image is test data
-    let key = "0a".repeat(32);
+    let name = "sbx-f4ee2e";
+    let _ = c.delete(name).await;
+    let _ = fs::remove_file(format!("/var/log/sbx/{name}.log"));
+    let mut sp = spec(cfg, name, 12)?;
+    // nothing listens on port 9: each try fails at once
+    sp.env = Env(vec![(
+        "HTTP_PROXY".into(),
+        "http://sbx:hst1.replica@127.0.0.1:9".into(),
+    )]);
+    c.create(&sp).await.with_context(|| format!("create {name}"))?;
+    if wait_tries(name, 0, 30).await?.is_empty() {
+        bail!("the init logged no try in 30 s (/var/log/sbx/{name}.log)");
+    }
+    c.pause(name).await.context("pause")?;
+    let before = init_tries(name, 0)?.into_iter().max().unwrap_or(0);
+    let key = "0a".repeat(32); // a fixed key: the replica's frozen image is test data
+    let (id, secret, token) = creds()?;
+    let path = format!("{BUCKET}/frozen/{name}/{}", Uuid::new_v4());
     let frozen = Frozen {
-        object: format!("s3://{BUCKET}/frozen/sbx-f4ee2e/{before}"),
+        object: format!("s3://{path}"),
         region: "us-east-1".into(),
-        access_key_id: "replica".into(),
-        secret_access_key: "replica-secret".into(),
-        session_token: "replica-session".into(),
+        access_key_id: id.clone(),
+        secret_access_key: secret.clone(),
+        session_token: token.clone(),
         key,
     };
-    let st = c
-        .freeze("sbx-f4ee2e", &frozen)
-        .await
-        .context("freeze (evict to the S3)")?;
-    if c.list().await?.sandboxes.iter().any(|s| s.name == "sbx-f4ee2e") {
+    let st = c.freeze(name, &frozen).await.context("freeze (evict to the S3)")?;
+    if c.list().await?.sandboxes.iter().any(|s| s.name == name) {
         bail!("evicted, still listed on the host");
     }
-    let stored = Path::new(DIR)
-        .join("s3")
-        .join(BUCKET)
-        .join(format!("frozen/sbx-f4ee2e/{before}"));
-    let bytes = fs::metadata(&stored).map_or(0, |m| m.len());
-    if bytes == 0 {
-        bail!("no object at {}", stored.display());
+    let stored = s3_call((&id, &secret), Some(&token), "HEAD", &path)?;
+    if stored != "200" {
+        bail!("no object at s3://{path} (HEAD: {stored})");
     }
-    c.thaw(&ThawRequest {
-        spec: spec(cfg, "sbx-f4ee2e", 12)?,
-        frozen,
-    })
-    .await
-    .context("thaw (restore from the S3)")?;
-    let a = counter("sbx-f4ee2e")?;
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    let b = counter("sbx-f4ee2e")?;
-    let _ = c.delete("sbx-f4ee2e").await;
-    if a < before || b <= a {
-        bail!("not the frozen process going on ({before} before, {a} then {b} after the thaw)");
+    let mark = fs::metadata(format!("/var/log/sbx/{name}.log")).map_or(0, |m| usize::try_from(m.len()).unwrap_or(0));
+    c.thaw(&ThawRequest { spec: sp, frozen })
+        .await
+        .context("thaw (restore from the S3)")?;
+    let after = wait_tries(name, mark, 15).await?;
+    let _ = c.delete(name).await;
+    match after.first() {
+        Some(&n) if n > before => Ok(format!(
+            "evicted to the S3 in {} ms, thawed from it: the init's tries went on {before} -> {n}",
+            st.ms
+        )),
+        Some(&n) => bail!("a new init, not the frozen one: try {n} after the thaw, {before} before"),
+        None => bail!("the init logged nothing in 15 s after the thaw ({before} tries before)"),
     }
-    Ok(format!(
-        "evicted in {} ms ({bytes} bytes in the S3), thawed: {before} -> {a} -> {b}",
-        st.ms
-    ))
 }
 
 async fn check_delete_paused(c: &Client, cfg: &hermit::config::Config) -> Result<String> {
