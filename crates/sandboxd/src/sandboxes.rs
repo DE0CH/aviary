@@ -53,6 +53,9 @@ pub struct Entry {
     /// a send's checkpoint stopped it here (the final scratch delta and the hand-over follow): listed `alive:false`
     /// from that moment, not after the next sample, so hermit never reads a stopped source as still running it
     stopped: bool,
+    /// `runsc pause` suspended it here: its memory and processes stay, and a resume goes on where they stopped
+    /// (jarvis4 docs/PLAN-fabric.md). Kept on disk too (`<name>.paused`), so a sandboxd restart reads it again.
+    pub paused: bool,
     /// a send of it runs here (from its first scratch round until the entry goes, or the send leaves it running):
     /// listed `sending: true`, so hermit's settle decides nothing on the source while a send may still switch it
     /// (hermit spec 13.10 step 6). Kept on disk too (`<name>.sending`, `sending_file`) for the length of the send.
@@ -218,6 +221,11 @@ impl Sandboxes {
         path!("/var/lib/sbx/sandboxes/{name}.sending")
     }
 
+    /// Present while `name` is paused here (read at `init`; removed with the entry and by a resume).
+    fn paused_file(name: &str) -> paths::P {
+        path!("/var/lib/sbx/sandboxes/{name}.paused")
+    }
+
     /// Stores the entry (in the table, under the op lock's slot) and its state file.
     fn save(&self, lk: &OpLock, e: &Entry, buf: &mut [u8]) -> Res<()> {
         {
@@ -236,8 +244,7 @@ impl Sandboxes {
         let mut w = W::new(&mut b);
         w.obj().key("spec");
         e.spec.write(&mut w);
-        w.kstr("state", if e.state == RUNNING { "running" } else { "receiving" })
-            .kstr("createdAt", e.created_at.as_str());
+        w.kstr("state", listed_state(e)).kstr("createdAt", e.created_at.as_str());
         if e.port != 0 {
             w.ku64("port", u64::from(e.port));
         }
@@ -260,6 +267,7 @@ impl Sandboxes {
         }
         crate::util::remove_file(Self::state_file(name).as_str());
         crate::util::remove_file(Self::sending_file(name).as_str());
+        crate::util::remove_file(Self::paused_file(name).as_str());
     }
 
     fn parse_state(text: &[u8], sandbox_cidr: &str) -> Res<Entry> {
@@ -376,6 +384,7 @@ impl Sandboxes {
                     e.port = 0;
                     net::route_sandbox(name, e.spec.ip.as_str())?;
                 }
+                e.paused = crate::util::exists(Self::paused_file(name).as_str());
                 if self.count() >= self.max {
                     Log::error("more sandboxes than limits.maxSandboxes; not managing").s("sandbox", name).emit();
                     continue;
@@ -475,13 +484,22 @@ impl Sandboxes {
         }
     }
 
+    /// What a listing says it is: paused, running, or still receiving.
+    fn listed_state(e: &Entry) -> &'static str {
+        match (e.state == RUNNING, e.paused) {
+            (true, true) => "paused",
+            (true, false) => "running",
+            _ => "receiving",
+        }
+    }
+
     fn write_listed(w: &mut W, e: &Entry, scratch: Option<u64>) {
         let mem = paths::sbx_cgroup(e.spec.name.as_str(), "memory.current");
         let cur: u64 = crate::util::read_small::<32>(mem.as_str()).and_then(|s| s.as_str().parse().ok()).unwrap_or(0);
         w.obj()
             .kstr("name", e.spec.name.as_str())
             .kstr("ip", e.spec.ip.as_str())
-            .kstr("state", if e.state == RUNNING { "running" } else { "receiving" })
+            .kstr("state", listed_state(e))
             .kstr("createdAt", e.created_at.as_str())
             .kf64("cpu", e.spec.cpu)
             .ku64("memory", e.spec.memory)
@@ -735,6 +753,68 @@ impl Sandboxes {
         (PORT_MIN..=PORT_MAX)
             .find(|p| !t.iter().any(|s| s.used && s.entry.port == *p))
             .ok_or_else(|| Error::new(503, "no free migration port"))
+    }
+
+    /// `POST …/pause` (jarvis4 docs/PLAN-fabric.md): `runsc pause` suspends it here, its memory and processes kept;
+    /// a `resume` continues them, a `freeze` then records them off the host. 404 when it is not running here, 409
+    /// while a send of it runs.
+    pub fn pause(&self, name: &str, sc: &mut Scratch) -> Res<()> {
+        let lk = self.lock(name)?;
+        let e = match self.get(name) {
+            Some(e) if e.state == RUNNING => e,
+            _ => return Err(err!(404, "{name} is not running here")),
+        };
+        if e.paused {
+            return Ok(());
+        }
+        if e.orphan || e.sending {
+            return Err(err!(409, "a send of {name} runs here"));
+        }
+        let mut a = [""; 40];
+        let argv = runsc::argv(&mut a, &["pause", name])?;
+        let o = run(argv, sc.small, 60_000)?;
+        if o.code != 0 {
+            return Err(err!(502, "the pause failed: {}", tail_chars(o.err.as_str().trim(), 300)));
+        }
+        let f = Self::paused_file(name);
+        if let Err(x) = crate::util::write_file_atomic(f.as_str(), b"", 0o600) {
+            Log::error("pause marker not written").s("sandbox", name).s("error", x.msg.as_str()).emit();
+        }
+        let mut t = self.table();
+        if t[lk.idx].used {
+            t[lk.idx].entry.paused = true;
+        }
+        Log::info("sandbox paused").s("sandbox", name).emit();
+        Ok(())
+    }
+
+    /// `POST …/resume`: its processes go on where the pause stopped them. 404 when it is not running here, 409 when
+    /// it is not paused, or a send of it runs.
+    pub fn resume(&self, name: &str, sc: &mut Scratch) -> Res<()> {
+        let lk = self.lock(name)?;
+        let e = match self.get(name) {
+            Some(e) if e.state == RUNNING => e,
+            _ => return Err(err!(404, "{name} is not running here")),
+        };
+        if !e.paused {
+            return Err(err!(409, "{name} is not paused"));
+        }
+        if e.orphan || e.sending {
+            return Err(err!(409, "a send of {name} runs here"));
+        }
+        let mut a = [""; 40];
+        let argv = runsc::argv(&mut a, &["resume", name])?;
+        let o = run(argv, sc.small, 60_000)?;
+        if o.code != 0 {
+            return Err(err!(502, "the resume failed: {}", tail_chars(o.err.as_str().trim(), 300)));
+        }
+        crate::util::remove_file(Self::paused_file(name).as_str());
+        let mut t = self.table();
+        if t[lk.idx].used {
+            t[lk.idx].entry.paused = false;
+        }
+        Log::info("sandbox resumed").s("sandbox", name).emit();
+        Ok(())
     }
 
     /// `POST …/freeze` (jarvis4 docs/PLAN-fabric.md, "How a frozen image travels"): the sandbox's memory recorded as

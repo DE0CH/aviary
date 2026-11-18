@@ -411,6 +411,36 @@ impl Client {
         .await
     }
 
+    /// `POST /v1/sandboxes/{name}/pause`: suspended here, memory and processes kept (a resume continues it).
+    ///
+    /// # Errors
+    /// [`Error`] (404: not running here; 409: a send of it runs).
+    pub async fn pause(&self, name: &str) -> Result<Listed, Error> {
+        self.call(
+            Pool::Control,
+            Method::POST,
+            &routes::sandbox_part(name, "pause"),
+            None::<&()>,
+            CREATE_TIMEOUT,
+        )
+        .await
+    }
+
+    /// `POST /v1/sandboxes/{name}/resume`: its processes go on where the pause stopped them.
+    ///
+    /// # Errors
+    /// [`Error`] (404: not here; 409: it is not paused).
+    pub async fn resume(&self, name: &str) -> Result<Listed, Error> {
+        self.call(
+            Pool::Control,
+            Method::POST,
+            &routes::sandbox_part(name, "resume"),
+            None::<&()>,
+            CREATE_TIMEOUT,
+        )
+        .await
+    }
+
     /// `POST /v1/sandboxes/{name}/freeze`: its memory and scratch to `frozen`, then gone from the host.
     ///
     /// # Errors
