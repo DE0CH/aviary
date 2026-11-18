@@ -1393,3 +1393,223 @@ async fn an_answered_questions_row_records_when_it_was_answered() {
         "{wire}"
     );
 }
+
+fn card(r: &Row) -> &magpie_api::rows::PersonCard {
+    tool(r).person.as_ref().expect("a card row")
+}
+
+fn find<'a>(p: &'a TimelinePage, call_id: &str) -> &'a Row {
+    p.rows
+        .iter()
+        .find(|r| tool(r).call_id == call_id)
+        .unwrap_or_else(|| panic!("no row {call_id}: {:?}", items(p)))
+}
+
+/// Rule 11 (the chat's question card, Deyao 2026-11-18): a question of the `ask` command is a card row where it was
+/// asked; the answer settles it there; the first tool result that carries the answer's marker is where the AI read
+/// it, so that call's row takes the card (`personRead`) and the card's own row says so (`readBy`). The id alone
+/// ("Question q-1 is open") is no answer, a second read moves nothing, and a retract of the reading line makes the
+/// card unread again where it was asked.
+#[tokio::test]
+async fn a_question_card_sits_where_it_was_asked_until_the_ai_reads_the_answer() {
+    let db = common::fresh_db("person_card_question").await;
+    let t = common::Tokens::new();
+    let a = common::replica(&db.url, &t).await;
+    let pigeon = a.pigeon();
+    let alice = pigeon.person(ALICE);
+    let id = ev::conversation(&pigeon, ALICE).await;
+    let pool = a.pool();
+    let turn = Uuid::new_v4();
+    let input = json!({"questions": [{"question": "Which?", "options": [{"label": "A"}, {"label": "B"}]}]});
+    ev::append(
+        pool,
+        ALICE,
+        id,
+        vec![
+            ev::turn_started(turn),
+            ev::in_turn(ev::assistant("m1", json!([ev::tool_use("toolu_ask", "Bash")])), turn),
+            ev::in_turn(
+                ev::ev(
+                    "ask.pending",
+                    json!({"askId": "q-1", "toolName": "ask", "input": input}),
+                ),
+                turn,
+            ),
+            // the command went to the background: its call returns at once, with the id only
+            ev::in_turn(
+                ev::results(&[("toolu_ask", "Question q-1 is open; waiting for the answer.", false)]),
+                turn,
+            ),
+        ],
+    )
+    .await;
+    let p = alice.timeline(id, &ev::tail(10)).await.unwrap();
+    let q = find(&p, "q-1");
+    assert_eq!((tool(q).name.as_str(), tool(q).status), ("ask", ToolStatus::Running));
+    assert_eq!(tool(q).input, input);
+    assert_eq!(
+        (
+            card(q).kind.as_str(),
+            card(q).state.as_str(),
+            card(q).marker.as_str(),
+            card(q).read_by.as_deref()
+        ),
+        ("question", "open", "(answer to q-1)", None)
+    );
+    assert!(
+        tool(find(&p, "toolu_ask")).person_read.is_none(),
+        "the id alone is no answer"
+    );
+    let resolution = json!({"behavior": "allow", "updatedInput": {"answers": {"Which?": "B"}}});
+    ev::append1(
+        pool,
+        ALICE,
+        id,
+        ev::ev("ask.resolved", json!({"askId": "q-1", "resolution": resolution})),
+    )
+    .await;
+    let p = alice.timeline(id, &ev::tail(10)).await.unwrap();
+    let q = find(&p, "q-1");
+    assert_eq!(
+        (card(q).state.as_str(), tool(q).status),
+        ("answered", ToolStatus::Completed)
+    );
+    assert_eq!(card(q).answer.as_ref(), Some(&resolution));
+    assert!(card(q).answered_at.is_some());
+    assert_eq!(card(q).read_by, None, "answered, not read yet");
+    // a later look that names the id only reads nothing; the output with the marker is the read
+    let turn2 = Uuid::new_v4();
+    let read_line = ev::append(
+        pool,
+        ALICE,
+        id,
+        vec![
+            ev::turn_started(turn2),
+            ev::in_turn(
+                ev::assistant(
+                    "m2",
+                    json!([ev::tool_use("toolu_status", "Bash"), ev::tool_use("toolu_cat", "Bash")]),
+                ),
+                turn2,
+            ),
+            ev::in_turn(ev::results(&[("toolu_status", "ask: question q-1", false)]), turn2),
+            ev::in_turn(
+                ev::results(&[("toolu_cat", "Which?\n→ B (answer to q-1)", false)]),
+                turn2,
+            ),
+        ],
+    )
+    .await;
+    let p = alice.timeline(id, &ev::tail(20)).await.unwrap();
+    assert!(tool(find(&p, "toolu_status")).person_read.is_none());
+    let reader = tool(find(&p, "toolu_cat"));
+    let carried = reader.person_read.as_ref().expect("the reading call carries the card");
+    assert_eq!(
+        (carried.len(), carried[0].id.as_str(), carried[0].read_by.as_deref()),
+        (1, "q-1", Some("toolu_cat"))
+    );
+    assert_eq!(card(find(&p, "q-1")).read_by.as_deref(), Some("toolu_cat"));
+    // read once: another result with the marker moves nothing
+    ev::append(
+        pool,
+        ALICE,
+        id,
+        vec![
+            ev::in_turn(ev::assistant("m3", json!([ev::tool_use("toolu_again", "Bash")])), turn2),
+            ev::in_turn(ev::results(&[("toolu_again", "→ B (answer to q-1)", false)]), turn2),
+        ],
+    )
+    .await;
+    let p = alice.timeline(id, &ev::tail(20)).await.unwrap();
+    assert!(tool(find(&p, "toolu_again")).person_read.is_none());
+    assert_eq!(card(find(&p, "q-1")).read_by.as_deref(), Some("toolu_cat"));
+    // the reading line leaves the transcript: the card is unread again where it was asked
+    let cat_line = *read_line.last().unwrap();
+    ev::append1(pool, ALICE, id, ev::retract(&[cat_line])).await;
+    let p = alice.timeline(id, &ev::tail(20)).await.unwrap();
+    assert_eq!(card(find(&p, "q-1")).read_by, None);
+    assert_eq!(card(find(&p, "q-1")).state, "answered");
+    assert!(tool(find(&p, "toolu_cat")).person_read.is_none());
+}
+
+/// Rule 11 for a declined question and for a command's wait on the person (`wait.pending`, Jarvis 4's Inbox): the
+/// card says the outcome, and the result carrying the wait's own marker is where the AI read it.
+#[tokio::test]
+async fn a_declined_question_and_a_wait_are_cards_too() {
+    let db = common::fresh_db("person_card_wait").await;
+    let t = common::Tokens::new();
+    let a = common::replica(&db.url, &t).await;
+    let pigeon = a.pigeon();
+    let alice = pigeon.person(ALICE);
+    let id = ev::conversation(&pigeon, ALICE).await;
+    let pool = a.pool();
+    let turn = Uuid::new_v4();
+    ev::append(
+        pool,
+        ALICE,
+        id,
+        vec![
+            ev::ev("ask.pending", json!({"askId": "q-2", "toolName": "ask", "input": {"questions": [{"question": "Now?"}]}})),
+            ev::ev("ask.resolved", json!({"askId": "q-2", "resolution": {"behavior": "deny", "message": "later"}})),
+            ev::ev(
+                "wait.pending",
+                json!({"waitId": "w-1", "key": "inbox-r1", "label": "Inbox request", "title": "Deploy key for DE0CH/aviary", "why": "Push it.",
+                       "marker": "(Inbox r1)"}),
+            ),
+        ],
+    )
+    .await;
+    let p = alice.timeline(id, &ev::tail(10)).await.unwrap();
+    assert_eq!(card(find(&p, "q-2")).state, "declined");
+    let w = find(&p, "w-1");
+    assert_eq!(tool(w).name, "wait");
+    assert_eq!(
+        (card(w).kind.as_str(), card(w).state.as_str(), &card(w).input),
+        (
+            "wait",
+            "open",
+            &json!({"label": "Inbox request", "title": "Deploy key for DE0CH/aviary", "why": "Push it."})
+        )
+    );
+    ev::append1(
+        pool,
+        ALICE,
+        id,
+        ev::ev("wait.ended", json!({"waitId": "w-1", "outcome": "approved"})),
+    )
+    .await;
+    ev::append(
+        pool,
+        ALICE,
+        id,
+        vec![
+            ev::turn_started(turn),
+            ev::in_turn(ev::assistant("m1", json!([ev::tool_use("toolu_req", "Bash")])), turn),
+            ev::in_turn(
+                ev::results(&[(
+                    "toolu_req",
+                    "APPROVED: a deploy key for DE0CH/aviary (Inbox r1).",
+                    false,
+                )]),
+                turn,
+            ),
+        ],
+    )
+    .await;
+    let p = alice.timeline(id, &ev::tail(10)).await.unwrap();
+    let w = find(&p, "w-1");
+    assert_eq!(
+        (card(w).state.as_str(), card(w).read_by.as_deref()),
+        ("approved", Some("toolu_req"))
+    );
+    assert_eq!(
+        tool(find(&p, "toolu_req"))
+            .person_read
+            .as_ref()
+            .map(|r| r[0].id.clone())
+            .as_deref(),
+        Some("w-1")
+    );
+    // the declined question was never read by a result: it stays where it was asked
+    assert_eq!(card(find(&p, "q-2")).read_by, None);
+}

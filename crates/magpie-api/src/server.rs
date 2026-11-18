@@ -52,9 +52,10 @@ use crate::routes::{
     PROMPTS, SANDBOX_ASK_RESOLVED, SANDBOX_ASKS, SANDBOX_BLOB, SANDBOX_CC_FILE, SANDBOX_CC_MKDIR, SANDBOX_CC_RENAME,
     SANDBOX_CC_RMDIR, SANDBOX_CC_SETATTR, SANDBOX_CC_TREE, SANDBOX_CC_TRUNCATE, SANDBOX_CC_UNLINK, SANDBOX_CC_WRITE,
     SANDBOX_COMMAND_ACK, SANDBOX_COMMANDS, SANDBOX_EARLIER, SANDBOX_EMBEDDINGS, SANDBOX_EMBEDDINGS_TODO,
-    SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_QUESTION, SANDBOX_QUESTIONS, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES,
-    SANDBOX_SENT_FILES, SANDBOX_SENT_FILES_COMMIT, SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS,
-    SEARCH, SHARE, SHARE_CONTINUE, SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
+    SANDBOX_HEARTBEAT, SANDBOX_LEASE, SANDBOX_PERSON_WAIT, SANDBOX_PERSON_WAIT_ENDED, SANDBOX_QUESTION,
+    SANDBOX_QUESTIONS, SANDBOX_SCHEDULE, SANDBOX_SCHEDULES, SANDBOX_SENT_FILES, SANDBOX_SENT_FILES_COMMIT,
+    SANDBOX_TASKS, SANDBOX_TURN_LIVE, SANDBOX_TURN_STATE, SANDBOX_TURNS, SEARCH, SHARE, SHARE_CONTINUE,
+    SHARE_FILES_RAW, TIMELINE, TRANSCRIPT, TURNS, UPLOAD_LEGACY_PATH, UPLOADS, VIEW_AS,
 };
 use crate::rows::{
     PromptsResponse, SearchQuery, SearchResponse, TimelinePage, TimelineQuery, TranscriptPage, TranscriptQuery,
@@ -62,8 +63,9 @@ use crate::rows::{
 use crate::sandbox::{
     AckRequest, AgentTurnRequest, AskReport, AskResolvedReport, CcFileQuery, CcMkdir, CcPathOp, CcRename, CcSetattr,
     CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery, CommandsQuery, CommandsResponse, EarlierQuery,
-    Heartbeat, LeaseResponse, QuestionCreated, QuestionQuery, QuestionRequest, QuestionState, SentFilesCommitted,
-    SentFilesRequest, SentFilesResponse, TasksReport, TurnStateReport,
+    Heartbeat, LeaseResponse, PersonWaitEnd, PersonWaitOpen, PersonWaitOpened, QuestionCreated, QuestionQuery,
+    QuestionRequest, QuestionState, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport,
+    TurnStateReport,
 };
 use crate::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
 use crate::search::{
@@ -660,6 +662,26 @@ pub trait Server: Send + Sync + 'static {
         query: QuestionQuery,
     ) -> impl Future<Output = Result<QuestionState, ApiError>> + Send {
         async move { Err(not_implemented("question_get")) }
+    }
+
+    /// Route `person_wait_open`.
+    fn person_wait_open(
+        &self,
+        ctx: Ctx,
+        key: String,
+        body: PersonWaitOpen,
+    ) -> impl Future<Output = Result<PersonWaitOpened, ApiError>> + Send {
+        async move { Err(not_implemented("person_wait_open")) }
+    }
+
+    /// Route `person_wait_ended`.
+    fn person_wait_ended(
+        &self,
+        ctx: Ctx,
+        key: String,
+        body: PersonWaitEnd,
+    ) -> impl Future<Output = Result<(), ApiError>> + Send {
+        async move { Err(not_implemented("person_wait_ended")) }
     }
 
     /// Route `ask_resolved`.
@@ -1264,6 +1286,24 @@ async fn h_question_get<S: Server>(
     reply("question_get", s.question_get(ctx, ask_id, query).await)
 }
 
+async fn h_person_wait_open<S: Server>(
+    State(s): State<Arc<S>>,
+    ctx: Ctx,
+    P(key): P<String>,
+    J(body): J<PersonWaitOpen>,
+) -> Response {
+    reply("person_wait_open", s.person_wait_open(ctx, key, body).await)
+}
+
+async fn h_person_wait_ended<S: Server>(
+    State(s): State<Arc<S>>,
+    ctx: Ctx,
+    P(key): P<String>,
+    J(body): J<PersonWaitEnd>,
+) -> Response {
+    reply_empty(s.person_wait_ended(ctx, key, body).await)
+}
+
 async fn h_ask_resolved<S: Server>(
     State(s): State<Arc<S>>,
     ctx: Ctx,
@@ -1521,6 +1561,7 @@ async fn h_admin_transcript<S: Server>(
 }
 
 /// Serve `server` on every route of the contract (fallback: 404 `not_found` as the envelope).
+#[allow(clippy::too_many_lines)] // one entry per route
 pub fn router<S: Server>(server: Arc<S>) -> Router {
     Router::new()
         .route(
@@ -1576,6 +1617,8 @@ pub fn router<S: Server>(server: Arc<S>) -> Router {
         .route(SANDBOX_ASK_RESOLVED, post(h_ask_resolved::<S>))
         .route(SANDBOX_QUESTIONS, post(h_question_open::<S>))
         .route(SANDBOX_QUESTION, get(h_question_get::<S>))
+        .route(SANDBOX_PERSON_WAIT, post(h_person_wait_open::<S>))
+        .route(SANDBOX_PERSON_WAIT_ENDED, post(h_person_wait_ended::<S>))
         .route(SANDBOX_HEARTBEAT, post(h_heartbeat::<S>))
         .route(SANDBOX_BLOB, get(h_sandbox_blob_get::<S>).put(h_sandbox_blob_put::<S>))
         .route(SANDBOX_EARLIER, get(h_earlier::<S>))

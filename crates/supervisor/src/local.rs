@@ -8,7 +8,9 @@
 //! - `POST /v1/questions`, `GET /v1/questions/{askId}`: the `ask` command's question, passed to magpie with the
 //!   lease ([`crate::ask`]); each poll is a wait on the person until the answer.
 //! - `POST`/`DELETE /v1/person-waits/{key}`: a command that waits on the person for anything else (Jarvis 4's Inbox
-//!   requests): the heartbeat's `waiting` while it calls (Deyao, 2026-11-18: the list's needs-you mark).
+//!   requests): the heartbeat's `waiting` while it calls (Deyao, 2026-11-18: the list's needs-you mark). Its card
+//!   (what is asked, why, the marker) is passed to magpie once per key, and the outcome when the wait ends with one
+//!   (magpie rule 11: the chat shows the wait where it was asked until the AI has read the outcome).
 
 use std::io::Write as _;
 use std::path::Path;
@@ -20,7 +22,8 @@ use http_body_util::{BodyExt as _, Empty};
 use hyper::body::Bytes;
 use hyper_util::rt::TokioIo;
 use supervisor_api::local::{
-    AGENT_SOCKET, QuestionAnswer, QuestionOpen, QuestionOpened, QuestionWait, SECRET_NOT_GRANTED_EXIT,
+    AGENT_SOCKET, PersonWaitCard, PersonWaitEnded, QuestionAnswer, QuestionOpen, QuestionOpened, QuestionWait,
+    SECRET_NOT_GRANTED_EXIT,
 };
 use supervisor_api::server::LocalServer;
 
@@ -31,6 +34,8 @@ use crate::hermit::Hermit;
 pub struct Local {
     pub hermit: Hermit,
     pub agent: std::sync::Arc<dyn crate::lifecycle::Agent>,
+    /// The person waits whose card magpie has (opened once per key by this process).
+    pub carded: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 impl std::fmt::Debug for Local {
@@ -84,13 +89,33 @@ impl LocalServer for Local {
         })
     }
 
-    async fn person_wait(&self, _ctx: Ctx, key: String, waiting: bool, q: QuestionWait) -> Answer<()> {
+    async fn person_wait(
+        &self,
+        _ctx: Ctx,
+        key: String,
+        waiting: bool,
+        q: QuestionWait,
+        card: Option<PersonWaitCard>,
+        ended: PersonWaitEnded,
+    ) -> Answer<()> {
         if !supervisor_api::local::valid_wait_key(&key) {
             return Err(aviary_core::http::ApiError::bad_request(
                 "a wait key is 1 to 100 of A-Za-z0-9._:-",
             ));
         }
         self.agent.waiting_on_the_person(&format!("wait:{key}"), waiting);
+        if let Some(card) = card.filter(|_| waiting) {
+            self.open_card(&key, card).await;
+        }
+        if !waiting {
+            self.carded
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&key);
+            if let Some(outcome) = ended.outcome {
+                self.end_card(key.clone(), outcome);
+            }
+        }
         if waiting {
             let max = supervisor_api::local::QUESTION_WAIT_MAX;
             let hold = q
@@ -113,6 +138,56 @@ impl LocalServer for Local {
             Some(404) => hermit_api::error::api(404, hermit_api::error::codes::NOT_GRANTED, "not granted"),
             _ => aviary_core::http::ApiError::unavailable("hermit unavailable", 1),
         })
+    }
+}
+
+impl Local {
+    /// Passes a wait's card to magpie once per key; a failure is retried at the command's next call.
+    async fn open_card(&self, key: &str, card: PersonWaitCard) {
+        if self
+            .carded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(key)
+        {
+            return;
+        }
+        let Some(calls) = self.agent.magpie_calls() else { return };
+        let open = magpie_api::sandbox::PersonWaitOpen {
+            label: card.label,
+            title: card.title,
+            why: card.why,
+            marker: card.marker,
+        };
+        match calls.person_wait_open(key, &open).await {
+            Ok(_) => {
+                self.carded
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(key.to_owned());
+            }
+            Err(e) => tracing::warn!(key, error = %e, "a person wait's card was not opened; the next call tries again"),
+        }
+    }
+
+    /// Passes a wait's outcome to magpie (a few tries, in the background: the command's `DELETE` does not wait).
+    fn end_card(&self, key: String, outcome: String) {
+        let agent = self.agent.clone();
+        tokio::spawn(async move {
+            let Some(calls) = agent.magpie_calls() else { return };
+            let end = magpie_api::sandbox::PersonWaitEnd { outcome };
+            for attempt in 0..5u32 {
+                match calls.person_wait_ended(&key, &end).await {
+                    Ok(()) => return,
+                    // no card was opened for it (a command that gave none): nothing to end
+                    Err(e) if e.api().map(|r| r.status) == Some(404) => return,
+                    Err(e) => {
+                        tracing::warn!(key, error = %e, attempt, "a person wait's outcome did not reach magpie");
+                        tokio::time::sleep(std::time::Duration::from_secs(1u64 << attempt)).await;
+                    }
+                }
+            }
+        });
     }
 }
 

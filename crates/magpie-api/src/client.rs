@@ -40,8 +40,9 @@ use crate::rows::{
 use crate::sandbox::{
     AckRequest, AgentTurnRequest, AskReport, AskResolvedReport, CcFileQuery, CcMkdir, CcPathOp, CcRename, CcSetattr,
     CcSizeVersion, CcTree, CcTruncate, CcVersion, CcWriteQuery, CommandsQuery, CommandsResponse, EarlierQuery,
-    Heartbeat, LeaseResponse, QuestionCreated, QuestionQuery, QuestionRequest, QuestionState, SentFilesCommitted,
-    SentFilesRequest, SentFilesResponse, TasksReport, TurnStateReport,
+    Heartbeat, LeaseResponse, PersonWaitEnd, PersonWaitOpen, PersonWaitOpened, QuestionCreated, QuestionQuery,
+    QuestionRequest, QuestionState, SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport,
+    TurnStateReport,
 };
 use crate::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
 use crate::search::{
@@ -918,6 +919,16 @@ impl SandboxCalls<'_> {
         self.client
             .exec_json(&self.scope, route("question_get"), &[ask_id], Some(q), Body::None)
             .await
+    }
+
+    /// A command's wait on the person for something outside the chat (idempotent per key while open).
+    pub async fn person_wait_open(&self, key: &str, req: &PersonWaitOpen) -> Result<PersonWaitOpened, ClientError> {
+        self.post("person_wait_open", &[key], req).await
+    }
+
+    /// That wait ended with `req.outcome`.
+    pub async fn person_wait_ended(&self, key: &str, req: &PersonWaitEnd) -> Result<(), ClientError> {
+        self.post_empty("person_wait_ended", &[key], req).await
     }
 
     /// The heartbeat.

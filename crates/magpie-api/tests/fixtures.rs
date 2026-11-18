@@ -83,6 +83,8 @@ fn check_route(id: &str, f: &serde_json::Value) {
         "ask_resolved" => check::<NoQuery, Json<AskResolvedReport>, NoContent>(id, f),
         "question_open" => check::<NoQuery, Json<QuestionRequest>, Json<QuestionCreated>>(id, f),
         "question_get" => check::<Json<QuestionQuery>, NoBody, Json<QuestionState>>(id, f),
+        "person_wait_open" => check::<NoQuery, Json<PersonWaitOpen>, Json<PersonWaitOpened>>(id, f),
+        "person_wait_ended" => check::<NoQuery, Json<PersonWaitEnd>, NoContent>(id, f),
         "heartbeat" => check::<NoQuery, Json<Heartbeat>, NoContent>(id, f),
         "sandbox_blob_get" => check::<Json<SandboxBlobQuery>, NoBody, RawBytes>(id, f),
         "earlier" => check::<Json<EarlierQuery>, NoBody, RawBytes>(id, f),

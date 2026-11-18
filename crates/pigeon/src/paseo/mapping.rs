@@ -833,6 +833,19 @@ pub fn tool_call_item(t: &ToolItem, locale: Locale) -> Option<Value> {
     }
     let call_id = t.call_id.clone();
     let mut metadata = sent_metadata(t);
+    // magpie rule 11: a question to the person or a wait on the person, where it was asked
+    // (`personAsk`, the app shows nothing there once `readBy` is set), and the answers this call's result carried
+    // into the AI's context first (`personRead`)
+    if let Some(card) = &t.person {
+        metadata
+            .get_or_insert_with(Map::new)
+            .insert("personAsk".into(), json!(card));
+    }
+    if let Some(read) = t.person_read.as_ref().filter(|r| !r.is_empty()) {
+        metadata
+            .get_or_insert_with(Map::new)
+            .insert("personRead".into(), json!(read));
+    }
     if let Some(at) = &t.answered_at {
         // when the person answered the question this call asked: the app leaves the wait out of the turn's working
         // time (DECISIONS 17)
@@ -1387,6 +1400,8 @@ mod tests {
             task: None,
             error: None,
             answered_at: None,
+            person: None,
+            person_read: None,
         }
     }
 
@@ -1436,6 +1451,50 @@ mod tests {
         )
         .unwrap();
         assert!(other.get("metadata").is_none(), "{other}");
+    }
+
+    /// Magpie rule 11: a question's row carries its card (`personAsk`), and a call whose result carried an answer
+    /// into the AI's context first carries that card too (`personRead`); a call with none carries neither.
+    #[test]
+    fn a_question_card_reaches_the_app_where_it_was_asked_and_where_it_was_read() {
+        let card = magpie_api::rows::PersonCard {
+            kind: "question".into(),
+            id: "q-1".into(),
+            input: json!({"questions": [{"question": "Which?"}]}),
+            marker: "(answer to q-1)".into(),
+            state: "answered".into(),
+            answer: Some(json!({"behavior": "allow", "updatedInput": {"answers": {"Which?": "B"}}})),
+            asked_at: magpie_api::Timestamp(time::OffsetDateTime::UNIX_EPOCH),
+            answered_at: Some(magpie_api::Timestamp(time::OffsetDateTime::UNIX_EPOCH)),
+            read_by: Some("toolu_1".into()),
+        };
+        let mut asked = tool(
+            "ask",
+            json!({"questions": [{"question": "Which?"}]}),
+            ToolStatus::Completed,
+            None,
+        );
+        asked.person = Some(card.clone());
+        let m = tool_call_item(&asked, Locale::En).unwrap()["metadata"].clone();
+        assert_eq!(m["personAsk"]["state"], "answered");
+        assert_eq!(m["personAsk"]["readBy"], "toolu_1");
+        assert_eq!(m["personAsk"]["marker"], "(answer to q-1)");
+        let mut read = tool(
+            "Bash",
+            json!({"command": "cat out"}),
+            ToolStatus::Completed,
+            Some("→ B (answer to q-1)"),
+        );
+        read.person_read = Some(vec![card]);
+        let m = tool_call_item(&read, Locale::En).unwrap()["metadata"].clone();
+        assert_eq!(m["personRead"][0]["id"], "q-1");
+        assert!(m.get("personAsk").is_none());
+        let plain = tool_call_item(
+            &tool("Bash", json!({"command": "ls"}), ToolStatus::Completed, Some("a")),
+            Locale::En,
+        )
+        .unwrap();
+        assert!(plain.get("metadata").is_none(), "{plain}");
     }
 
     /// The files a call sent reach the app in the row's metadata with the send's caption, whichever tool sent them

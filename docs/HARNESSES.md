@@ -34,6 +34,9 @@ ran before, for a pick back.
   question belongs to the command, not to the turn: it shows in `Conversation.asks` (tool `ask`) with or without a
   turn, nothing but the person's answer resolves it, and a cancelled or backgrounded command leaves it open
   (`ask wait ID`, `ask status ID`). A message the person sends meanwhile is delivered as during any long command.
+  Every line of a printed answer ends with `(answer to <askId>)`: the chat shows the question as a card where it was
+  asked until the first tool result carrying that marker, then on that call (magpie rule 11), so it shows where the
+  AI actually read the answer, whether the command waited, went to the background or was picked up later.
 - **One driver.** Both speak stream-json on stdin and stdout, so `cc/run.rs` runs either; `supervisor::harness` and
   `cc/launch.rs` hold what differs: the binary and its arguments, the environment, the managed files
   (`/etc/claude-code`; `/etc/qwen-code/settings.json` with the model route and the managed skills' folder), the main

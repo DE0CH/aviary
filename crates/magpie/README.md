@@ -17,7 +17,7 @@ Postgres) and `magpie --version`. Its REST contract is `crates/magpie-api`; this
 | `src/db/` | the migrations (`0001_init.sql`: every table of magpie 4 and the importer's of cutover 7.3, which `0028_a6_contraction.sql` drops but for the legacy-path set; `0005_timeline.sql`: the projection's lookups; `0008_timeline_derivation.sql`: `rows.derivation`, `line_pos`, the live delta index; `0040_sent_caption.sql`: a send's caption on the tool rows made before rule 6 kept it) and `Db` |
 | `src/conversations/` | the Conversation object, the person row, the row lock; create, list, rename, delete, restore, purge |
 | `src/events/` | `events::append` (seq allocation), which calls the projection |
-| `src/rows/` | the timeline projection (magpie 7.3): `project` (rules 1-10, row seqs, the epoch), `derive` (what each event makes of a row, pure), `read` (M9 pages and the long-poll, M10, search) |
+| `src/rows/` | the timeline projection (magpie 7.3): `project` (rules 1-11, row seqs, the epoch), `derive` (what each event makes of a row, pure), `read` (M9 pages and the long-poll, M10, search) |
 | `src/live.rs` | live frames (magpie 7.5): receiving, the `LiveState`, `GET …/live`, the cleanup run by every replica |
 | `src/changes.rs` | the per-person change feed (M12): `emit`/`upserted` in a transaction, `read` with its long-poll |
 | `src/fanout.rs` | the LISTEN hub (four channels) and the long-poll loop every held request uses |
@@ -192,9 +192,21 @@ reads and their once-a-day audit. `tests/legacy_paths.rs`: the legacy-path set (
     failed (no result) sets it back to `running`, until one of the ends above.
   - A rebuilt tool row (rule 9) is made from its surviving source events in the order they first landed on it, and
     keeps its `row_id` and block index.
+  - Rule 11 (Deyao, 2026-11-18: the chat's question card): a question of the `ask` command (`ask.pending` of tool
+    `ask`, no call of its own) and a command's wait on the person (`wait.pending`, from
+    `POST /v1/sandbox/person-waits/{key}`, e.g. Jarvis 4's Inbox) are tool rows of their own (name `ask` or `wait`,
+    call id the ask's or wait's id) carrying the card `person` (`state` `open`, then `answered`/`declined` at
+    `ask.resolved`, or the outcome at `wait.ended`). The first tool result, after that, whose preview carries the card's
+    `marker` is where the AI read the answer: that call's row takes the card (`personRead`) and the card's row says
+    which call (`readBy`), so the app shows the card there and nothing where it was asked. A question's marker is
+    `(answer to <askId>)`, which the `ask` command prints on every line of an answer and never before one (the id
+    alone, "Question q-… is open", reads nothing); a wait's is the command's own (`(Inbox <id>)`). A retract of the
+    reading line makes the card unread again where it was asked (rule 9 rebuilds the reading row from its line, without
+    the card). `rows_person_unread` keeps the lookup to the cards not read yet. DERIVATION 3: rows made before have no
+    cards and are not rebuilt (a card row made now would land at the end of the timeline, not where it was asked).
   - No `derivationVersion` lazy rebuild (pigeon 14.1.18 item 3): magpie 7.3 changes the epoch only under rule 9.
     Each row records the derivation version it was made or last updated by (`rows.derivation`,
-    `rows::DERIVATION`, now 2): a release that changes the rules raises it and ships a job that rebuilds the rows
+    `rows::DERIVATION`, now 3): a release that changes the rules raises it and ships a job that rebuilds the rows
     below it from their events (the importer and shares project with the same code, so they carry the version too).
     Version 2 is rule 6 keeping the send's caption on the row (`sentCaption`, beside `sentFiles`, on the row of
     whichever call sent the files): its job is migration `0040_sent_caption.sql`, which puts the caption the send

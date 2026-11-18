@@ -511,6 +511,7 @@ impl Start {
         let local = Arc::new(Local {
             hermit: hermit.clone(),
             agent: agent.clone(),
+            carded: Arc::default(),
         });
         if let Err(e) = crate::sent_files::serve_with_fds(&paths.agent_socket, 0o666, local_router(local)) {
             tracing::error!(error = %e, "agent socket");

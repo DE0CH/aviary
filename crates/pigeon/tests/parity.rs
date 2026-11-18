@@ -130,6 +130,8 @@ fn row_of(call: &Value, status: ToolStatus) -> ToolItem {
         task: None,
         error: None,
         answered_at: None,
+        person: None,
+        person_read: None,
     }
 }
 

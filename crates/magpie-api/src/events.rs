@@ -75,6 +75,13 @@ pub enum EventBody {
     /// An ask was answered or canceled.
     #[serde(rename = "ask.resolved")]
     AskResolved(AskResolved),
+    /// A command waits on the person for something outside the chat (a deployment's approval, e.g. Jarvis 4's
+    /// Inbox).
+    #[serde(rename = "wait.pending")]
+    WaitPending(WaitPending),
+    /// That wait ended with an outcome.
+    #[serde(rename = "wait.ended")]
+    WaitEnded(WaitEnded),
     /// Earlier events left the main transcript (magpie 6.7).
     #[serde(rename = "retract")]
     Retract(Retract),
@@ -114,6 +121,8 @@ impl<'de> Deserialize<'de> for EventBody {
             "task.status" => EventBody::TaskStatus(data(raw.data)?),
             "ask.pending" => EventBody::AskPending(data(raw.data)?),
             "ask.resolved" => EventBody::AskResolved(data(raw.data)?),
+            "wait.pending" => EventBody::WaitPending(data(raw.data)?),
+            "wait.ended" => EventBody::WaitEnded(data(raw.data)?),
             "retract" => EventBody::Retract(data(raw.data)?),
             "cc.user" => EventBody::CcUser(raw.data),
             "cc.assistant" => EventBody::CcAssistant(raw.data),
@@ -139,6 +148,8 @@ impl EventBody {
             EventBody::TaskStatus(_) => "task.status",
             EventBody::AskPending(_) => "ask.pending",
             EventBody::AskResolved(_) => "ask.resolved",
+            EventBody::WaitPending(_) => "wait.pending",
+            EventBody::WaitEnded(_) => "wait.ended",
             EventBody::Retract(_) => "retract",
             EventBody::CcUser(_) => "cc.user",
             EventBody::CcAssistant(_) => "cc.assistant",
@@ -161,6 +172,8 @@ pub const EVENT_KINDS: &[&str] = &[
     "task.status",
     "ask.pending",
     "ask.resolved",
+    "wait.pending",
+    "wait.ended",
     "retract",
     "cc.user",
     "cc.assistant",
@@ -330,6 +343,38 @@ pub struct AskResolved {
     pub ask_id: String,
     /// The person's answer, or the cancel resolution.
     pub resolution: AgentPermissionResponse,
+}
+
+/// `wait.pending`: a command (the sandbox's) waits on the person for something outside the chat, which the chat
+/// shows as a card (`ToolItem::person`) until the AI has read the outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaitPending {
+    /// The wait (`w-…`).
+    pub wait_id: String,
+    /// The command's own key for it (one open wait per key).
+    pub key: String,
+    /// What the card calls the wait; empty: the app's own word.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    /// What is asked, in a line.
+    pub title: String,
+    /// Why, as the command gave it.
+    #[serde(default)]
+    pub why: String,
+    /// The text the command's output carries once it has the outcome: the first tool result with it is where the
+    /// AI read the outcome.
+    pub marker: String,
+}
+
+/// `wait.ended`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaitEnded {
+    /// The wait.
+    pub wait_id: String,
+    /// The outcome, one word (`approved`, `denied`, `lapsed`, …).
+    pub outcome: String,
 }
 
 /// `retract`.

@@ -1,0 +1,71 @@
+{
+  "seqStart": 20,
+  "seqEnd": 22,
+  "seqs": [
+    20,
+    22
+  ],
+  "sourceSeqRanges": [
+    {
+      "startSeq": 20,
+      "endSeq": 20
+    },
+    {
+      "startSeq": 22,
+      "endSeq": 22
+    }
+  ],
+  "updated": true,
+  "timestamp": "2026-11-02T03:46:12.345Z",
+  "turnId": "0190f6c2-7a3b-7c4d-8e5f-6a7b8c9d0e1f",
+  "item": {
+    "kind": "tool",
+    "callId": "toolu_01Cat",
+    "messageId": "msg_01HQ7Y3Z9K2M4N6P8R0T2V4X6Z",
+    "blockIndex": 0,
+    "name": "Bash",
+    "input": {
+      "command": "cat /tmp/claude/tasks/b1.output"
+    },
+    "status": "completed",
+    "result": {
+      "text": "邊個日期？\n→ 今日 (answer to q-019a8f2e-7c41-7d3e-9b2a-5f6e7d8c9b0a)",
+      "truncated": false,
+      "bytes": 64,
+      "isError": false
+    },
+    "personRead": [
+      {
+        "kind": "question",
+        "id": "q-019a8f2e-7c41-7d3e-9b2a-5f6e7d8c9b0a",
+        "input": {
+          "questions": [
+            {
+              "question": "邊個日期？",
+              "header": "日期",
+              "multiSelect": false,
+              "options": [
+                {
+                  "label": "今日"
+                }
+              ]
+            }
+          ]
+        },
+        "marker": "(answer to q-019a8f2e-7c41-7d3e-9b2a-5f6e7d8c9b0a)",
+        "state": "answered",
+        "answer": {
+          "behavior": "allow",
+          "updatedInput": {
+            "answers": {
+              "邊個日期？": "今日"
+            }
+          }
+        },
+        "askedAt": "2026-11-02T03:46:12.345Z",
+        "answeredAt": "2026-11-02T03:50:12.345Z",
+        "readBy": "toolu_01Cat"
+      }
+    ]
+  }
+}

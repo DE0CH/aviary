@@ -1,0 +1,72 @@
+{
+  "seqStart": 20,
+  "seqEnd": 22,
+  "seqs": [
+    20,
+    22
+  ],
+  "sourceSeqRanges": [
+    {
+      "startSeq": 20,
+      "endSeq": 20
+    },
+    {
+      "startSeq": 22,
+      "endSeq": 22
+    }
+  ],
+  "updated": true,
+  "timestamp": "2026-11-02T03:46:12.345Z",
+  "item": {
+    "kind": "tool",
+    "callId": "q-019a8f2e-7c41-7d3e-9b2a-5f6e7d8c9b0a",
+    "messageId": "",
+    "blockIndex": 0,
+    "name": "ask",
+    "input": {
+      "questions": [
+        {
+          "question": "邊個日期？",
+          "header": "日期",
+          "multiSelect": false,
+          "options": [
+            {
+              "label": "今日"
+            }
+          ]
+        }
+      ]
+    },
+    "status": "completed",
+    "person": {
+      "kind": "question",
+      "id": "q-019a8f2e-7c41-7d3e-9b2a-5f6e7d8c9b0a",
+      "input": {
+        "questions": [
+          {
+            "question": "邊個日期？",
+            "header": "日期",
+            "multiSelect": false,
+            "options": [
+              {
+                "label": "今日"
+              }
+            ]
+          }
+        ]
+      },
+      "marker": "(answer to q-019a8f2e-7c41-7d3e-9b2a-5f6e7d8c9b0a)",
+      "state": "answered",
+      "answer": {
+        "behavior": "allow",
+        "updatedInput": {
+          "answers": {
+            "邊個日期？": "今日"
+          }
+        }
+      },
+      "askedAt": "2026-11-02T03:46:12.345Z",
+      "answeredAt": "2026-11-02T03:50:12.345Z"
+    }
+  }
+}

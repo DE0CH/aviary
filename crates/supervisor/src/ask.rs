@@ -80,30 +80,31 @@ pub fn questions(text: &str) -> Result<Map<String, Value>, String> {
     Ok(input)
 }
 
-/// What the command prints for an answer, and its exit code.
+/// What the command prints for the answer of question `id`, and its exit code. Every line of the answer ends with
+/// its marker ([`magpie_api::sandbox::answer_marker`]): the chat shows the question where the AI first read it, and
+/// a partial read (`tail -1` of a background task's output) still carries it.
 #[must_use]
-pub fn render(answer: &Value) -> (String, i32) {
+pub fn render(id: &str, answer: &Value) -> (String, i32) {
+    let marker = magpie_api::sandbox::answer_marker(id);
     if answer.get("behavior").and_then(Value::as_str) == Some("deny") {
         let why = answer.get("message").and_then(Value::as_str).unwrap_or("");
-        return (
-            format!("The question was declined. {why}").trim_end().to_owned(),
-            EXIT_DECLINED,
-        );
+        let line = format!("The question was declined. {why}");
+        return (format!("{} {marker}", line.trim_end()), EXIT_DECLINED);
     }
     let input = answer.get("updatedInput");
     let answers = input.and_then(|i| i.get("answers")).and_then(Value::as_object);
     let Some(answers) = answers else {
-        return (format!("Answer: {}", input.unwrap_or(answer)), 0);
+        return (format!("Answer: {} {marker}", input.unwrap_or(answer)), 0);
     };
     let mut out = String::new();
     for (q, a) in answers {
         let a = a.as_str().map_or_else(|| a.to_string(), str::to_owned);
-        let _ = writeln!(out, "{q}\n→ {a}");
+        let _ = writeln!(out, "{q}\n→ {a} {marker}");
     }
     if let Some(notes) = input.and_then(|i| i.get("annotations")).and_then(Value::as_object) {
         for (q, n) in notes {
             if let Some(n) = n.get("notes").and_then(Value::as_str).filter(|n| !n.is_empty()) {
-                let _ = writeln!(out, "Notes on \"{q}\": {n}");
+                let _ = writeln!(out, "Notes on \"{q}\": {n} {marker}");
             }
         }
     }
@@ -111,7 +112,12 @@ pub fn render(answer: &Value) -> (String, i32) {
 }
 
 /// One HTTP request on agent.sock.
-async fn call(socket: &Path, method: hyper::Method, path: &str, body: Option<Vec<u8>>) -> Result<(u16, Bytes), String> {
+pub(crate) async fn call(
+    socket: &Path,
+    method: hyper::Method,
+    path: &str,
+    body: Option<Vec<u8>>,
+) -> Result<(u16, Bytes), String> {
     let stream = tokio::net::UnixStream::connect(socket)
         .await
         .map_err(|e| format!("the supervisor's socket: {e}"))?;
@@ -190,8 +196,8 @@ pub(crate) async fn wait(socket: &Path, id: &str) -> Result<Value, String> {
     }
 }
 
-fn print_answer(answer: &Value) -> i32 {
-    let (text, code) = render(answer);
+fn print_answer(id: &str, answer: &Value) -> i32 {
+    let (text, code) = render(id, answer);
     let _ = writeln!(std::io::stdout(), "{text}");
     code
 }
@@ -226,12 +232,12 @@ pub fn cli(args: &[String]) -> i32 {
                      open: `ask wait {id}` waits again, `ask status {id}` looks once."
                 );
                 let _ = out.flush();
-                wait(socket, &id).await.map(|a| print_answer(&a))
+                wait(socket, &id).await.map(|a| print_answer(&id, &a))
             }
-            Command::Wait(id) => wait(socket, &id).await.map(|a| print_answer(&a)),
+            Command::Wait(id) => wait(socket, &id).await.map(|a| print_answer(&id, &a)),
             Command::Status(id) => {
                 if let Some(a) = poll(socket, &id, 0).await? {
-                    Ok(print_answer(&a))
+                    Ok(print_answer(&id, &a))
                 } else {
                     let _ = writeln!(std::io::stdout(), "Question {id} is still waiting for the answer.");
                     Ok(EXIT_WAITING)
@@ -284,18 +290,22 @@ mod tests {
         let a = json!({"behavior": "allow", "updatedInput": {
             "questions": [], "answers": {"Which colour?": "Blue"},
             "annotations": {"Which colour?": {"notes": "navy if possible"}}}});
-        let (text, code) = render(&a);
+        let (text, code) = render("q-1", &a);
         assert_eq!(code, 0);
         assert_eq!(
             text,
-            "Which colour?\n→ Blue\nNotes on \"Which colour?\": navy if possible"
+            "Which colour?\n→ Blue (answer to q-1)\nNotes on \"Which colour?\": navy if possible (answer to q-1)"
         );
+        // every line that carries the answer carries its marker; the question's own line is not the answer
+        for line in text.lines().filter(|l| l.starts_with('→') || l.starts_with("Notes")) {
+            assert!(line.ends_with("(answer to q-1)"), "{line}");
+        }
     }
 
     #[test]
     fn a_declined_question_exits_apart() {
-        let (text, code) = render(&json!({"behavior": "deny", "message": "not now"}));
+        let (text, code) = render("q-1", &json!({"behavior": "deny", "message": "not now"}));
         assert_eq!(code, EXIT_DECLINED);
-        assert_eq!(text, "The question was declined. not now");
+        assert_eq!(text, "The question was declined. not now (answer to q-1)");
     }
 }

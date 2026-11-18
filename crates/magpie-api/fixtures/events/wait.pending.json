@@ -1,0 +1,16 @@
+{
+  "seq": 16,
+  "kind": "wait.pending",
+  "data": {
+    "waitId": "w-019a8f2e-7c41-7d3e-9b2a-5f6e7d8c9b0b",
+    "key": "inbox-s9c80ac92497f4087",
+    "label": "Inbox request",
+    "title": "Deploy key for DE0CH/aviary",
+    "why": "Push the card work.",
+    "marker": "(Inbox s9c80ac92497f4087)"
+  },
+  "at": "2026-11-02T03:46:12.345Z",
+  "turnId": null,
+  "meta": {},
+  "viewer": null
+}

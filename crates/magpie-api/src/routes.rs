@@ -163,6 +163,10 @@ pub const SANDBOX_ASK_RESOLVED: &str = "/v1/sandbox/asks/{askId}/resolved";
 pub const SANDBOX_QUESTIONS: &str = "/v1/sandbox/questions";
 /// `GET` a question's state and answer (`?waitMs=` long-polls for the answer).
 pub const SANDBOX_QUESTION: &str = "/v1/sandbox/questions/{askId}";
+/// `POST` a command's wait on the person for something outside the chat (idempotent per key while open).
+pub const SANDBOX_PERSON_WAIT: &str = "/v1/sandbox/person-waits/{key}";
+/// `POST` that wait's end, with its outcome.
+pub const SANDBOX_PERSON_WAIT_ENDED: &str = "/v1/sandbox/person-waits/{key}/ended";
 /// `POST` heartbeat.
 pub const SANDBOX_HEARTBEAT: &str = "/v1/sandbox/heartbeat";
 /// `GET` and `PUT` a blob.
@@ -396,6 +400,8 @@ pub const ROUTES: &[Route] = &[
     sandbox("ask_resolved", Post, SANDBOX_ASK_RESOLVED, &[204], true),
     sandbox("question_open", Post, SANDBOX_QUESTIONS, &[201], true),
     sandbox("question_get", Get, SANDBOX_QUESTION, &[200], true),
+    sandbox("person_wait_open", Post, SANDBOX_PERSON_WAIT, &[200], true),
+    sandbox("person_wait_ended", Post, SANDBOX_PERSON_WAIT_ENDED, &[204], true),
     sandbox("heartbeat", Post, SANDBOX_HEARTBEAT, &[204], true),
     sandbox("sandbox_blob_get", Get, SANDBOX_BLOB, &[200], false),
     sandbox("sandbox_blob_put", Put, SANDBOX_BLOB, &[201, 200], true),
@@ -613,7 +619,7 @@ mod tests {
                 assert!(r.path.starts_with("/v1/sandbox/"), "{}", r.id);
             }
         }
-        assert_eq!(ROUTES.len(), 89);
+        assert_eq!(ROUTES.len(), 91);
     }
 
     #[test]

@@ -29,8 +29,9 @@ use magpie_api::conversations::{CreateRequest, RunState, SandboxPhase, SandboxWa
 use magpie_api::errors::{DataCode, ErrorCode};
 use magpie_api::sandbox::{
     AckRequest, AckResult, AgentTurnRequest, AskOutcome, AskReport, AskResolvedReport, CcFacts, CommandBody,
-    CommandsQuery, CommandsResponse, Heartbeat, HeartbeatLastTurn, HeartbeatState, KillReason, QuestionQuery,
-    QuestionRequest, ReportError, ReportedState, SupervisorFacts, TaskReportEvent, TasksReport, TurnStateReport,
+    CommandsQuery, CommandsResponse, Heartbeat, HeartbeatLastTurn, HeartbeatState, KillReason, PersonWaitEnd,
+    PersonWaitOpen, QuestionQuery, QuestionRequest, ReportError, ReportedState, SupervisorFacts, TaskReportEvent,
+    TasksReport, TurnStateReport,
 };
 use magpie_api::turns::{AgentPermissionResponse, Behavior, SendRequest, TurnOrigin, TurnOutcome, TurnPhase};
 use magpie_api::{Admitted, Timestamp};
@@ -1520,6 +1521,82 @@ async fn a_background_launch_whose_task_never_reports_ends_with_its_tracking() {
 /// How many times hermit was asked for a sandbox.
 fn put_sandboxes(w: &World) -> usize {
     w.fake().script().calls_to("put_sandbox").len()
+}
+
+/// A command's wait on the person for something outside the chat (rule 11's `wait.pending`): opening a key twice while
+/// it is open is one wait; its end records the outcome; a key with no open wait is 404; the key, the title, the
+/// marker and the outcome are checked; a key whose wait ended opens a new one.
+#[tokio::test]
+async fn a_person_wait_is_one_card_per_open_key() {
+    let w = World::new("person_waits", Some(Duration::ZERO)).await;
+    let conv = w.conversation().await;
+    let turn = w.send(conv, "m1", "ask the inbox").await;
+    let sup = w.supervisor(conv).await;
+    sup.run(turn).await;
+    let open = PersonWaitOpen {
+        label: "Inbox request".into(),
+        title: "Deploy key for DE0CH/aviary".into(),
+        why: "Push it.".into(),
+        marker: "(Inbox r1)".into(),
+    };
+    let calls = sup.calls();
+    let a = calls.person_wait_open("inbox-r1", &open).await.unwrap();
+    let b = calls.person_wait_open("inbox-r1", &open).await.unwrap();
+    assert_eq!(a, b, "one wait while the key is open");
+    let bad = |e: magpie_api::client::ClientError| e.api().map(|r| r.status);
+    assert_eq!(
+        bad(calls.person_wait_open("no spaces", &open).await.unwrap_err()),
+        Some(400)
+    );
+    let untitled = PersonWaitOpen {
+        title: " ".into(),
+        ..open.clone()
+    };
+    assert_eq!(
+        bad(calls.person_wait_open("inbox-r9", &untitled).await.unwrap_err()),
+        Some(400)
+    );
+    let end = |o: &str| PersonWaitEnd { outcome: o.into() };
+    assert_eq!(
+        bad(calls
+            .person_wait_ended("inbox-r1", &end("two words"))
+            .await
+            .unwrap_err()),
+        Some(400)
+    );
+    calls.person_wait_ended("inbox-r1", &end("approved")).await.unwrap();
+    assert_eq!(
+        bad(calls.person_wait_ended("inbox-r1", &end("approved")).await.unwrap_err()),
+        Some(404)
+    );
+    assert_eq!(
+        bad(calls
+            .person_wait_ended("inbox-none", &end("approved"))
+            .await
+            .unwrap_err()),
+        Some(404)
+    );
+    let again = calls.person_wait_open("inbox-r1", &open).await.unwrap();
+    assert_ne!(again, a, "an ended key opens a new wait");
+    // the cards: the first approved, the second waiting
+    let q = magpie_api::rows::TimelineQuery {
+        tail: true,
+        limit: Some(50),
+        ..Default::default()
+    };
+    let p = w.a.pigeon().person(ALICE).timeline(conv, &q).await.unwrap();
+    let cards: Vec<(String, String)> = p
+        .rows
+        .iter()
+        .filter_map(|r| match &r.item {
+            magpie_api::rows::RowItem::Tool(t) => t.person.as_ref().map(|c| (c.id.clone(), c.state.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        cards,
+        vec![(a.wait_id, "approved".into()), (again.wait_id, "open".into())]
+    );
 }
 
 /// A question the sandbox's `ask` command shows (Deyao, 2026-11-17): a component of that command, not of the turn. It

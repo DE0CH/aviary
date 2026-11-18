@@ -20,8 +20,8 @@ use serde::de::DeserializeOwned;
 
 use crate::control::{Health, PrepareAnswer, PrepareRequest, ReleaseAnswer, ReleaseRequest, Resumed, StateReport};
 use crate::local::{
-    PERSON_WAIT, QUESTION, QUESTIONS, QuestionAnswer, QuestionOpen, QuestionOpened, QuestionWait, ReceivedFds, SECRET,
-    SEND_USER_FILE, SendUserFileReply, SendUserFileRequest,
+    PERSON_WAIT, PersonWaitCard, PersonWaitEnded, QUESTION, QUESTIONS, QuestionAnswer, QuestionOpen, QuestionOpened,
+    QuestionWait, ReceivedFds, SECRET, SEND_USER_FILE, SendUserFileReply, SendUserFileRequest,
 };
 use crate::{ExecRequest, ExecResult, SecretValue, routes};
 
@@ -84,13 +84,16 @@ pub trait LocalServer: Send + Sync + 'static {
     ) -> impl Future<Output = Answer<QuestionAnswer>> + Send {
         unsupported()
     }
-    /// `POST /v1/person-waits/{key}` (`waiting`, held up to `q.wait_ms`) and `DELETE` (not `waiting`).
+    /// `POST /v1/person-waits/{key}` (`waiting`, held up to `q.wait_ms`, with its card when the command gave one)
+    /// and `DELETE` (not `waiting`, with the outcome when it has one).
     fn person_wait(
         &self,
         ctx: Ctx,
         key: String,
         waiting: bool,
         q: QuestionWait,
+        card: Option<PersonWaitCard>,
+        ended: PersonWaitEnded,
     ) -> impl Future<Output = Answer<()>> + Send {
         unsupported()
     }
@@ -193,6 +196,7 @@ pub fn control_router<S: ControlServer>(server: Arc<S>) -> Router {
 
 /// Serves `server` on the local socket's routes. The acceptor attaches the received descriptors as a
 /// [`ReceivedFds`] request extension.
+#[allow(clippy::too_many_lines)] // one entry per route
 pub fn local_router<S: LocalServer>(server: Arc<S>) -> Router {
     type St<S> = State<Arc<S>>;
     type B = Result<Bytes, BytesRejection>;
@@ -252,22 +256,52 @@ pub fn local_router<S: LocalServer>(server: Arc<S>) -> Router {
                  m: Method,
                  h: HeaderMap,
                  p: Result<Path<String>, PathRejection>,
-                 q: Result<Query<QuestionWait>, QueryRejection>| async move {
+                 q: Result<Query<QuestionWait>, QueryRejection>,
+                 body: Bytes| async move {
                     let r = async {
                         let key = p.map(|Path(k)| k).map_err(|e| ApiError::bad_request(e.body_text()))?;
                         let Query(q) = q.map_err(|e| ApiError::bad_request(e.body_text()))?;
-                        s.person_wait(Ctx::new(m, PERSON_WAIT, h), key, true, q).await
+                        // the card is optional: a command that gives none (or an older one) sends no body
+                        let card = if body.iter().all(u8::is_ascii_whitespace) {
+                            None
+                        } else {
+                            Some(
+                                serde_json::from_slice::<PersonWaitCard>(&body)
+                                    .map_err(|e| ApiError::bad_request(e.to_string()))?,
+                            )
+                        };
+                        s.person_wait(
+                            Ctx::new(m, PERSON_WAIT, h),
+                            key,
+                            true,
+                            q,
+                            card,
+                            PersonWaitEnded::default(),
+                        )
+                        .await
                     }
                     .await;
                     no_content(r)
                 },
             )
             .delete(
-                |State(s): St<S>, m: Method, h: HeaderMap, p: Result<Path<String>, PathRejection>| async move {
+                |State(s): St<S>,
+                 m: Method,
+                 h: HeaderMap,
+                 p: Result<Path<String>, PathRejection>,
+                 q: Result<Query<PersonWaitEnded>, QueryRejection>| async move {
                     let r = async {
                         let key = p.map(|Path(k)| k).map_err(|e| ApiError::bad_request(e.body_text()))?;
-                        s.person_wait(Ctx::new(m, PERSON_WAIT, h), key, false, QuestionWait::default())
-                            .await
+                        let Query(ended) = q.map_err(|e| ApiError::bad_request(e.body_text()))?;
+                        s.person_wait(
+                            Ctx::new(m, PERSON_WAIT, h),
+                            key,
+                            false,
+                            QuestionWait::default(),
+                            None,
+                            ended,
+                        )
+                        .await
                     }
                     .await;
                     no_content(r)

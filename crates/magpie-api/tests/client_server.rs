@@ -520,6 +520,33 @@ impl Server for FixtureServer {
         self.answer_json("question_get")
     }
 
+    async fn person_wait_open(
+        &self,
+        ctx: Ctx,
+        key: String,
+        body: PersonWaitOpen,
+    ) -> Result<PersonWaitOpened, ApiError> {
+        self.received(
+            "person_wait_open",
+            &ctx,
+            &json!({"key": key}),
+            None,
+            Some(serde_json::to_value(&body).unwrap()),
+        );
+        self.answer_json("person_wait_open")
+    }
+
+    async fn person_wait_ended(&self, ctx: Ctx, key: String, body: PersonWaitEnd) -> Result<(), ApiError> {
+        self.received(
+            "person_wait_ended",
+            &ctx,
+            &json!({"key": key}),
+            None,
+            Some(serde_json::to_value(&body).unwrap()),
+        );
+        self.answer_empty("person_wait_ended")
+    }
+
     async fn heartbeat(&self, ctx: Ctx, body: Heartbeat) -> Result<(), ApiError> {
         self.received(
             "heartbeat",
@@ -1194,6 +1221,16 @@ async fn call(c: &Client, id: &str) -> Result<Value, ClientError> {
             .question_get(&param_str(&f, "askId"), &query::<QuestionQuery>(&f))
             .await
             .map(|v| serde_json::to_value(v).unwrap()),
+        "person_wait_open" => c
+            .sandbox(Some(LEASE))
+            .person_wait_open(&param_str(&f, "key"), &request::<PersonWaitOpen>(&f))
+            .await
+            .map(|v| serde_json::to_value(v).unwrap()),
+        "person_wait_ended" => c
+            .sandbox(Some(LEASE))
+            .person_wait_ended(&param_str(&f, "key"), &request::<PersonWaitEnd>(&f))
+            .await
+            .map(|()| Value::Null),
         "heartbeat" => c
             .sandbox(Some(LEASE))
             .heartbeat(&request::<Heartbeat>(&f))

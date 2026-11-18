@@ -1,0 +1,28 @@
+{
+  "route": "person_wait_ended",
+  "params": {
+    "key": "inbox-s9c80ac92497f4087"
+  },
+  "request": {
+    "outcome": "approved"
+  },
+  "responses": [
+    {
+      "status": 204
+    },
+    {
+      "status": 404,
+      "body": {
+        "code": "not_found",
+        "message": "not found"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

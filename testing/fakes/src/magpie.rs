@@ -79,8 +79,9 @@ use magpie_api::sandbox::{
     AckRequest, AckResult, AgentTurnRequest, AskReport, AskResolvedReport, CC_FILE_MAX_BYTES, CC_QUOTA_BYTES,
     CC_WRITE_MAX_BYTES, CcEntry, CcFileQuery, CcKind, CcMkdir, CcPathOp, CcRename, CcSetattr, CcSizeVersion, CcTree,
     CcTruncate, CcVersion, CcWriteQuery, Command, CommandBody, CommandsQuery, CommandsResponse, EarlierQuery,
-    Heartbeat, LeaseResponse, QuestionCreated, QuestionQuery, QuestionRequest, QuestionState, ReportedState,
-    SentFilesCommitted, SentFilesRequest, SentFilesResponse, TasksReport, TurnStateReport,
+    Heartbeat, LeaseResponse, PersonWaitEnd, PersonWaitOpen, PersonWaitOpened, QuestionCreated, QuestionQuery,
+    QuestionRequest, QuestionState, ReportedState, SentFilesCommitted, SentFilesRequest, SentFilesResponse,
+    TasksReport, TurnStateReport,
 };
 use magpie_api::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
 use magpie_api::server::{Ctx, Server};
@@ -211,6 +212,8 @@ struct Conv {
     sent_seq: u64,
     /// The `ask` command's questions, by `askId`: the input and the answer once given.
     questions: BTreeMap<String, (serde_json::Map<String, Value>, Option<AgentPermissionResponse>)>,
+    /// The command waits on the person, by key: what was opened and the outcome once it ended.
+    waits: BTreeMap<String, (PersonWaitOpen, Option<String>)>,
 }
 
 impl Conv {
@@ -602,6 +605,16 @@ impl FakeMagpie {
             .convs
             .get(&conversation)
             .map(|c| c.questions.clone())
+            .unwrap_or_default()
+    }
+
+    /// The command waits on the person, by key: what each opened and its outcome once it ended.
+    #[must_use]
+    pub fn person_waits(&self, conversation: Uuid) -> BTreeMap<String, (PersonWaitOpen, Option<String>)> {
+        self.lock()
+            .convs
+            .get(&conversation)
+            .map(|c| c.waits.clone())
             .unwrap_or_default()
     }
 
@@ -1528,6 +1541,39 @@ impl Server for FakeMagpie {
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+    }
+
+    async fn person_wait_open(
+        &self,
+        ctx: Ctx,
+        key: String,
+        body: PersonWaitOpen,
+    ) -> Result<PersonWaitOpened, ApiError> {
+        if let Some(r) = self.record("person_wait_open", &ctx, json!({"key": key}), None, ser(&body), None) {
+            return r.typed("person_wait_open");
+        }
+        self.with_conv(&ctx, true, |c, _| {
+            let open = matches!(c.waits.get(&key), Some((_, None)));
+            if !open {
+                c.waits.insert(key.clone(), (body, None));
+            }
+            Ok(PersonWaitOpened {
+                wait_id: format!("w-{key}"),
+            })
+        })
+    }
+
+    async fn person_wait_ended(&self, ctx: Ctx, key: String, body: PersonWaitEnd) -> Result<(), ApiError> {
+        if let Some(r) = self.record("person_wait_ended", &ctx, json!({"key": key}), None, ser(&body), None) {
+            return r.unit();
+        }
+        self.with_conv(&ctx, true, |c, _| match c.waits.get_mut(&key) {
+            Some((_, o @ None)) => {
+                *o = Some(body.outcome);
+                Ok(())
+            }
+            _ => Err(ApiError::not_found("no open wait")),
+        })
     }
 
     async fn heartbeat(&self, ctx: Ctx, body: Heartbeat) -> Result<(), ApiError> {

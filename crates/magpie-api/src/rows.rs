@@ -301,6 +301,40 @@ pub struct ToolItem {
     /// `ask.resolved`. The time from the call to this is waiting, not working (DECISIONS 17).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answered_at: Option<crate::Timestamp>,
+    /// The row of a question the `ask` command put to the person, or of a command's wait on the person (rule 11):
+    /// the card where it was asked, while it waits and until the AI has read the answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person: Option<PersonCard>,
+    /// The answers this call's result carried into the AI's context first (rule 11): their cards, here from then on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person_read: Option<Vec<PersonCard>>,
+}
+
+/// What a question to the person or a wait on the person shows (rule 11).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonCard {
+    /// `question` (the `ask` command) or `wait` (`wait.pending`).
+    pub kind: String,
+    /// The ask's or wait's id.
+    pub id: String,
+    /// A question's input (`AskUserQuestion`'s shape); a wait's `{"label", "title", "why"}`.
+    pub input: Value,
+    /// What the AI's tool result carries once it has the answer.
+    pub marker: String,
+    /// `open`, `answered`, `declined`, or a wait's outcome.
+    pub state: String,
+    /// A question's answer (the resolution, as `ask.resolved` carries it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<Value>,
+    /// When it was asked.
+    pub asked_at: crate::Timestamp,
+    /// When the person answered (a wait: when it ended).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answered_at: Option<crate::Timestamp>,
+    /// The call whose result first carried the answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_by: Option<String>,
 }
 
 /// A tool result's preview.

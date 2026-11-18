@@ -3,7 +3,8 @@
 
 use magpie_api::sandbox::{
     AckRequest, AgentTurnRequest, AskReport, AskResolvedReport, CommandsQuery, CommandsResponse, Heartbeat,
-    QuestionCreated, QuestionQuery, QuestionRequest, QuestionState, TasksReport, TurnStateReport,
+    PersonWaitEnd, PersonWaitOpen, PersonWaitOpened, QuestionCreated, QuestionQuery, QuestionRequest, QuestionState,
+    TasksReport, TurnStateReport,
 };
 use magpie_api::server::Ctx;
 use magpie_api::{Admitted, Empty};
@@ -60,6 +61,16 @@ pub async fn question_open(app: &Magpie, ctx: Ctx, body: QuestionRequest) -> Ans
 /// `GET /v1/sandbox/questions/{askId}`.
 pub async fn question_get(app: &Magpie, ctx: Ctx, ask_id: String, q: QuestionQuery) -> Answer<QuestionState> {
     answer(async { reports::question_get(&app.pool, &Sandbox::from_ctx(&ctx)?, &ask_id, q).await }.await)
+}
+
+/// `POST /v1/sandbox/person-waits/{key}`.
+pub async fn person_wait_open(app: &Magpie, ctx: Ctx, key: String, body: PersonWaitOpen) -> Answer<PersonWaitOpened> {
+    answer(async { reports::person_wait_open(&app.pool, &Sandbox::from_ctx(&ctx)?, &key, body).await }.await)
+}
+
+/// `POST /v1/sandbox/person-waits/{key}/ended`.
+pub async fn person_wait_ended(app: &Magpie, ctx: Ctx, key: String, body: PersonWaitEnd) -> Answer<()> {
+    answer(async { reports::person_wait_ended(&app.pool, &Sandbox::from_ctx(&ctx)?, &key, body).await }.await)
 }
 
 /// `POST /v1/sandbox/asks/{askId}/resolved`.

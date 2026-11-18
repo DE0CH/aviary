@@ -83,6 +83,8 @@ fn tool(call: &str, name: &str, input: Value) -> RowItem {
         task: None,
         error: None,
         answered_at: None,
+        person: None,
+        person_read: None,
     })
 }
 

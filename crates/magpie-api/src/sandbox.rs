@@ -796,6 +796,47 @@ pub struct AskReport {
 /// The tool name a question of the `ask` command carries in `ask.pending` and `Conversation.asks`.
 pub const QUESTION_TOOL: &str = "ask";
 
+/// What the `ask` command prints on every line of an answer: the first tool result with it is where the AI read
+/// the answer (rule 11). Never printed before there is an answer (the id alone is: "Question q-… is open").
+#[must_use]
+pub fn answer_marker(ask_id: &str) -> String {
+    format!("(answer to {ask_id})")
+}
+
+/// `POST /v1/sandbox/person-waits/{key}` → 200: a command waits on the person for something outside the chat
+/// (`wait.pending`); an open wait of the same key is that wait (idempotent).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonWaitOpen {
+    /// What the card calls the wait ("Inbox request"); empty: the app's own word.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    /// What is asked, in a line.
+    pub title: String,
+    /// Why.
+    #[serde(default)]
+    pub why: String,
+    /// What the command's output carries once it has the outcome.
+    pub marker: String,
+}
+
+/// The answer of `POST /v1/sandbox/person-waits/{key}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonWaitOpened {
+    /// The wait's id.
+    pub wait_id: String,
+}
+
+/// `POST /v1/sandbox/person-waits/{key}/ended` → 204: the open wait of `key` ended (`wait.ended`); 404 when none is
+/// open.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonWaitEnd {
+    /// One word: `approved`, `denied`, `lapsed`, ….
+    pub outcome: String,
+}
+
 /// `POST /v1/sandbox/questions` → 201: a question the sandbox's `ask` command shows the person. It is a component of
 /// that command, not of the turn: it stays open, turn or no turn, until the person answers it; nothing dismisses it
 /// for the person.

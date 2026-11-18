@@ -2396,6 +2396,7 @@ async fn the_hook_passes_descriptors_and_magpie_keeps_the_files() {
     let local = Arc::new(crate::local::Local {
         hermit: sup.driver.hermit.clone(),
         agent: sup.driver.clone(),
+        carded: Arc::default(),
     });
     let sock = w.dir.join("agent.sock");
     let _srv = crate::sent_files::serve_with_fds(&sock, 0o666, supervisor_api::server::local_router(local)).unwrap();
@@ -2444,6 +2445,74 @@ async fn the_hook_passes_descriptors_and_magpie_keeps_the_files() {
     assert_eq!(r, crate::sent_files::HookOutcome::Skip);
 }
 
+/// A person wait with a card (magpie rule 11): its first call opens the card with magpie, once; calling again while it
+/// waits opens nothing more; the end with an outcome passes the outcome; an end without one (a cancelled command)
+/// leaves the card waiting; a call with no body (an older command) opens none.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_person_waits_card_opens_once_and_ends_with_its_outcome() {
+    let w = world().await;
+    let sup = w.attach(None, crate::start::Reattach::Nothing).await;
+    let local = Arc::new(crate::local::Local {
+        hermit: sup.driver.hermit.clone(),
+        agent: sup.driver.clone(),
+        carded: Arc::default(),
+    });
+    let sock = w.dir.join("agent.sock");
+    let _srv = crate::sent_files::serve_with_fds(&sock, 0o666, supervisor_api::server::local_router(local)).unwrap();
+    let card = json!({"title": "Deploy key for DE0CH/aviary", "why": "Push it.", "marker": "(Inbox r1)"});
+    let post = |key: &'static str, body: Option<Value>| {
+        let sock = sock.clone();
+        async move {
+            crate::ask::call(
+                &sock,
+                hyper::Method::POST,
+                &format!("/v1/person-waits/{key}?waitMs=10"),
+                body.map(|b| serde_json::to_vec(&b).unwrap()),
+            )
+            .await
+            .unwrap()
+            .0
+        }
+    };
+    let delete = |path: String| {
+        let sock = sock.clone();
+        async move {
+            crate::ask::call(&sock, hyper::Method::DELETE, &path, None)
+                .await
+                .unwrap()
+                .0
+        }
+    };
+    assert_eq!(post("inbox-r1", Some(card.clone())).await, 204);
+    assert_eq!(post("inbox-r1", Some(card.clone())).await, 204);
+    assert_eq!(
+        w.magpie.script().calls_to("person_wait_open").len(),
+        1,
+        "opened once per key"
+    );
+    let waits = w.magpie.person_waits(w.cid);
+    assert_eq!(
+        (waits["inbox-r1"].0.marker.as_str(), waits["inbox-r1"].1.as_deref()),
+        ("(Inbox r1)", None)
+    );
+    assert_eq!(delete("/v1/person-waits/inbox-r1?outcome=approved".into()).await, 204);
+    until("the outcome reached magpie", || {
+        w.magpie.person_waits(w.cid)["inbox-r1"].1.is_some()
+    })
+    .await;
+    assert_eq!(w.magpie.person_waits(w.cid)["inbox-r1"].1.as_deref(), Some("approved"));
+    // ended without an outcome: the card keeps waiting
+    assert_eq!(post("inbox-r2", Some(card.clone())).await, 204);
+    assert_eq!(delete("/v1/person-waits/inbox-r2".into()).await, 204);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(w.magpie.person_waits(w.cid)["inbox-r2"].1, None);
+    // no body: no card
+    assert_eq!(post("inbox-r3", None).await, 204);
+    assert!(!w.magpie.person_waits(w.cid).contains_key("inbox-r3"));
+    // a body that is no card is refused
+    assert_eq!(post("inbox-r4", Some(json!({"nope": 1}))).await, 400);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_ask_command_blocks_until_the_person_answers() {
     let w = world().await;
@@ -2451,6 +2520,7 @@ async fn the_ask_command_blocks_until_the_person_answers() {
     let local = Arc::new(crate::local::Local {
         hermit: sup.driver.hermit.clone(),
         agent: sup.driver.clone(),
+        carded: Arc::default(),
     });
     let sock = w.dir.join("agent.sock");
     let _srv = crate::sent_files::serve_with_fds(&sock, 0o666, supervisor_api::server::local_router(local)).unwrap();
@@ -2482,7 +2552,10 @@ async fn the_ask_command_blocks_until_the_person_answers() {
             .unwrap()
             .unwrap()
             .unwrap();
-        assert_eq!(crate::ask::render(&a), ("Which colour?\n→ Blue".to_owned(), 0));
+        assert_eq!(
+            crate::ask::render(&id, &a),
+            (format!("Which colour?\n→ Blue (answer to {id})"), 0)
+        );
     }
     // an id no `ask` opened
     let unknown = crate::ask::wait(&sock, "q-unknown").await;
@@ -3312,6 +3385,7 @@ async fn sent_files_refuse_oversized_files_at_once_and_wait_out_a_migration() {
     let local = Arc::new(crate::local::Local {
         hermit: sup.driver.hermit.clone(),
         agent: sup.driver.clone(),
+        carded: Arc::default(),
     });
     let sock = w.dir.join("agent.sock");
     let _srv = crate::sent_files::serve_with_fds(&sock, 0o666, supervisor_api::server::local_router(local)).unwrap();

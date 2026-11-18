@@ -16,7 +16,10 @@
 //!   (at most [`QUESTION_WAIT_MAX`]) and called again while it waits; `DELETE` the same when its wait ends. 204.
 //!   Like a question poll, it keeps the run from being silent and sets the heartbeat's `waiting` (Deyao,
 //!   2026-11-18: the conversation list shows the conversation as needing the person). `key`: 1 to 100 of
-//!   `A-Za-z0-9._:-`, the command's own.
+//!   `A-Za-z0-9._:-`, the command's own. The `POST` may carry [`PersonWaitCard`] (what is asked, why, and the text
+//!   the command's output carries once it has the outcome): the chat then shows the wait as a card where it was
+//!   asked until the AI has read the outcome (magpie rule 11). The `DELETE` may carry `?outcome=WORD`, the outcome
+//!   the card shows; without one the wait ended for another reason (the command was cancelled) and the card waits.
 
 use std::os::fd::OwnedFd;
 use std::sync::{Arc, Mutex};
@@ -126,6 +129,31 @@ pub struct QuestionOpened {
 pub struct QuestionWait {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_ms: Option<u32>,
+}
+
+/// The card of a person wait (`POST /v1/person-waits/{key}` body, optional).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonWaitCard {
+    /// What the card calls the wait ("Inbox request"); empty: the app's own word.
+    #[serde(default)]
+    pub label: String,
+    /// What is asked, in a line.
+    pub title: String,
+    /// Why.
+    #[serde(default)]
+    pub why: String,
+    /// The text the command's output carries once it has the outcome.
+    pub marker: String,
+}
+
+/// `DELETE /v1/person-waits/{key}` query.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonWaitEnded {
+    /// The outcome, one word (`approved`, `denied`, `lapsed`, …); none when the wait ended without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
 }
 
 /// Whether `key` names a person wait (1 to 100 of `A-Za-z0-9._:-`).

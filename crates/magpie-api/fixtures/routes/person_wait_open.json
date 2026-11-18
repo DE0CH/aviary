@@ -1,0 +1,34 @@
+{
+  "route": "person_wait_open",
+  "params": {
+    "key": "inbox-s9c80ac92497f4087"
+  },
+  "request": {
+    "label": "Inbox request",
+    "title": "Deploy key for DE0CH/aviary",
+    "why": "Push the card work.",
+    "marker": "(Inbox s9c80ac92497f4087)"
+  },
+  "responses": [
+    {
+      "status": 200,
+      "body": {
+        "waitId": "w-019a8f2e-7c41-7d3e-9b2a-5f6e7d8c9b0b"
+      }
+    },
+    {
+      "status": 400,
+      "body": {
+        "code": "bad_request",
+        "message": "a wait needs a title and a marker"
+      }
+    },
+    {
+      "status": 409,
+      "body": {
+        "code": "lease_lost",
+        "message": "the lease is not current"
+      }
+    }
+  ]
+}

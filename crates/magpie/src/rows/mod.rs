@@ -24,7 +24,7 @@ use std::collections::HashSet;
 use aviary_pg::Tx;
 use magpie_api::changes::ChangeBody;
 use magpie_api::events::{EventBody, EventMeta};
-use magpie_api::rows::{RowItem, ToolItem};
+use magpie_api::rows::{PersonCard, RowItem, ToolItem, ToolStatus};
 use serde_json::{Value, json};
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -53,7 +53,7 @@ pub fn meta_of(meta: Option<&Value>) -> EventMeta {
 /// from their events (the projection never re-derives stored rows by itself; magpie 7.3 changes them only on an
 /// event). Version 2 added the send's caption to rule 6 (`sentCaption`): migration `0040_sent_caption.sql` put it
 /// on the rows made before, so a row still at 1 is the same under 2.
-pub const DERIVATION: i16 = 2;
+pub const DERIVATION: i16 = 3;
 
 /// A new row.
 struct NewRow {
@@ -241,12 +241,121 @@ async fn update_tool(
         if new_source {
             row.sources.push(ev.seq);
         }
+        if row.item.result != before.result {
+            let reader = row.item.call_id.clone();
+            read_answers(tx, w, ev, &reader, &mut row.item).await?;
+        }
         if row.item != before {
             w.update(tx, row.row_id, &row.item, &row.sources).await?;
         } else if new_source {
             // nothing visible changed (a repeated progress report, result or snapshot): no row seq
             w.set_sources(tx, row.row_id, &row.sources).await?;
         }
+    }
+    Ok(())
+}
+
+/// Rule 11: the row of a question the `ask` command put to the person (`ask.pending` of tool `ask`, no call of its
+/// own) or of a command's wait on the person (`wait.pending`): the card where it was asked.
+async fn person_opened(tx: &Tx<'_>, w: &mut Writer, ev: &Stored, card: PersonCard, name: &str) -> Result<()> {
+    if tool_row(tx, w.conversation, &card.id).await?.is_some() {
+        return Ok(());
+    }
+    let id = card.id.clone();
+    let item = ToolItem {
+        call_id: id.clone(),
+        message_id: String::new(),
+        block_index: 0,
+        name: name.to_owned(),
+        input: card.input.clone(),
+        status: ToolStatus::Running,
+        result: None,
+        sent_files: None,
+        sent_caption: None,
+        task: None,
+        error: None,
+        answered_at: None,
+        person: Some(card),
+        person_read: None,
+    };
+    w.insert(
+        tx,
+        NewRow {
+            item: RowItem::Tool(item),
+            at: ev.event.at,
+            turn_id: ev.event.turn_id,
+            sources: vec![ev.seq],
+            tool_use_id: Some(id),
+            message_id: None,
+            block_index: None,
+            is_prompt: false,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+/// Rule 11: the person answered the question, or the wait ended: its card says so (once).
+async fn person_settled(
+    tx: &Tx<'_>,
+    w: &mut Writer,
+    ev: &Stored,
+    id: &str,
+    state: &str,
+    answer: Option<Value>,
+) -> Result<()> {
+    let Some(mut row) = tool_row(tx, w.conversation, id).await? else {
+        return Ok(());
+    };
+    let Some(card) = row.item.person.as_mut() else {
+        return Ok(());
+    };
+    if card.state != "open" {
+        return Ok(());
+    }
+    state.clone_into(&mut card.state);
+    card.answer = answer;
+    card.answered_at = Some(magpie_api::Timestamp(ev.event.at));
+    row.item.status = ToolStatus::Completed;
+    if !row.sources.contains(&ev.seq) {
+        row.sources.push(ev.seq);
+    }
+    w.update(tx, row.row_id, &row.item, &row.sources).await
+}
+
+/// Rule 11: a tool result that carries the marker of an answer the AI has not read yet is where it read it: that
+/// call's row takes the card (`personRead`), and the card's own row says which call (`readBy`), so it shows there no
+/// longer. Only the result's preview is read (the markers are on the answer's own lines).
+async fn read_answers(tx: &Tx<'_>, w: &mut Writer, ev: &Stored, reader: &str, item: &mut ToolItem) -> Result<()> {
+    if item.person.is_some() {
+        return Ok(());
+    }
+    let Some(text) = item.result.as_ref().map(|r| r.text.clone()) else {
+        return Ok(());
+    };
+    let unread = tx
+        .query(
+            "select row_id, item, source_seqs from rows
+             where conversation_id = $1 and kind = 'tool' and item ? 'person'
+               and item->'person'->>'state' <> 'open' and item->'person'->'readBy' is null
+             order by row_id",
+            &[&w.conversation],
+        )
+        .await?;
+    for r in unread {
+        let row_id: i64 = r.get(0);
+        let mut person = tool_of(r.get(1))?;
+        let mut sources: Vec<i64> = r.get(2);
+        let Some(card) = person.person.as_mut() else { continue };
+        if !derive::carries(&text, &card.marker) {
+            continue;
+        }
+        card.read_by = Some(reader.to_owned());
+        item.person_read.get_or_insert_with(Vec::new).push(card.clone());
+        if !sources.contains(&ev.seq) {
+            sources.push(ev.seq);
+        }
+        w.update(tx, row_id, &person, &sources).await?;
     }
     Ok(())
 }
@@ -450,7 +559,26 @@ pub async fn project(tx: &Tx<'_>, ev: &Stored) -> Result<()> {
         }
         // an answered (or canceled) question: its tool row records when, so the shown working time leaves the wait
         // out (DECISIONS 17)
-        EventBody::AskResolved(r) => answered(tx, &mut w, ev, &r.ask_id).await?,
+        EventBody::AskResolved(r) => {
+            answered(tx, &mut w, ev, &r.ask_id).await?;
+            let state = if r.resolution.behavior == magpie_api::turns::Behavior::Deny {
+                "declined"
+            } else {
+                "answered"
+            };
+            let answer = serde_json::to_value(&r.resolution)?;
+            person_settled(tx, &mut w, ev, &r.ask_id, state, Some(answer)).await?;
+        }
+        // rule 11
+        EventBody::AskPending(p) if p.tool_name == magpie_api::sandbox::QUESTION_TOOL && p.tool_use_id.is_none() => {
+            let card = derive::question_card(p, ev.event.at);
+            person_opened(tx, &mut w, ev, card, magpie_api::sandbox::QUESTION_TOOL).await?;
+        }
+        EventBody::WaitPending(p) => {
+            let card = derive::wait_card(p, ev.event.at);
+            person_opened(tx, &mut w, ev, card, "wait").await?;
+        }
+        EventBody::WaitEnded(e) => person_settled(tx, &mut w, ev, &e.wait_id, &e.outcome, None).await?,
         // rule 9
         EventBody::Retract(r) => {
             let seqs = r.seqs.iter().filter_map(|s| i64::try_from(*s).ok()).collect();
@@ -740,6 +868,15 @@ async fn insert_block(tx: &Tx<'_>, w: &mut Writer, ev: &Stored, mid: &str, b: de
 }
 
 /// Rule 9 (`by`: the retract event's seq).
+/// A card's row (rule 11) after a retract of one of its sources (only the line that read it can leave): unread
+/// again, without that source. `None` for any other row.
+fn person_unread(mut item: ToolItem, sources: &[i64], gone: &HashSet<i64>) -> Option<(ToolItem, Vec<i64>)> {
+    let card = item.person.as_mut()?;
+    card.read_by = None;
+    let surviving = sources.iter().copied().filter(|s| !gone.contains(s)).collect();
+    Some((item, surviving))
+}
+
 async fn retract(tx: &Tx<'_>, w: &mut Writer, seqs: Vec<i64>, by: i64) -> Result<()> {
     if seqs.is_empty() {
         return Ok(());
@@ -768,6 +905,15 @@ async fn retract(tx: &Tx<'_>, w: &mut Writer, seqs: Vec<i64>, by: i64) -> Result
         let sources: Vec<i64> = r.get(3);
         let gone = gone_among(tx, w.conversation, &sources).await?;
         let identifying_gone = sources.first().is_none_or(|s| gone.contains(s));
+        if kind == "tool"
+            && let Some((item, surviving)) = person_unread(tool_of(r.get(2))?, &sources, &gone)
+        {
+            // rule 11: the result that carried the answer left the transcript; the card is unread again where it
+            // was asked (the reading row, rebuilt from its line below, no longer carries it)
+            w.update(tx, row_id, &item, &surviving).await?;
+            changed = true;
+            continue;
+        }
         let rebuilt = if identifying_gone || kind != "tool" {
             None
         } else {

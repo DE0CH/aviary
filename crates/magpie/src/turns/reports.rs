@@ -17,10 +17,13 @@ use aviary_pg::{Pool, Tx};
 use magpie_api::changes::{AskResolvedChange, ChangeBody};
 use magpie_api::conversations::{Ask, BackgroundTask, SandboxPhase};
 use magpie_api::errors::{DataCode, ErrorCode, ErrorInfo, Refusal};
-use magpie_api::events::{AskPending, AskResolved, EventBody, TaskState, TaskStatus, TurnStartedData};
+use magpie_api::events::{
+    AskPending, AskResolved, EventBody, TaskState, TaskStatus, TurnStartedData, WaitEnded, WaitPending,
+};
 use magpie_api::sandbox::{
-    AgentTurnRequest, AskOutcome, AskReport, AskResolvedReport, Heartbeat, HeartbeatState, QuestionCreated,
-    QuestionQuery, QuestionRequest, QuestionState, ReportedState, TasksReport, TurnStateReport,
+    AgentTurnRequest, AskOutcome, AskReport, AskResolvedReport, Heartbeat, HeartbeatState, PersonWaitEnd,
+    PersonWaitOpen, PersonWaitOpened, QuestionCreated, QuestionQuery, QuestionRequest, QuestionState, ReportedState,
+    TasksReport, TurnStateReport,
 };
 use magpie_api::turns::{AgentPermissionResponse, TurnOrigin, TurnOutcome, TurnPhase};
 use magpie_api::{Admitted, Empty, Timestamp};
@@ -463,6 +466,90 @@ pub async fn question_open(pool: &Pool, caller: &Sandbox, r: QuestionRequest) ->
         changes::emit(t, &c.person, c.id, &ChangeBody::Ask { ask }).await?;
         changes::upserted(t, &c.person, c.id).await?;
         Ok(QuestionCreated { ask_id: ask_id.clone() })
+    })
+    .await
+}
+
+/// A wait key: 1 to 100 of `A-Za-z0-9._:-` (the supervisor's own rule for its person waits).
+fn valid_wait_key(key: &str) -> bool {
+    (1..=100).contains(&key.len()) && key.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+}
+
+/// The open wait of `key` in this conversation (its `wait.pending` with no `wait.ended`), if any.
+async fn open_wait(t: &Tx<'_>, conversation: Uuid, key: &str) -> Result<Option<String>> {
+    Ok(t.query_opt(
+        "select p.data->>'waitId' from events p
+         where p.conversation_id = $1 and p.kind = 'wait.pending' and p.data->>'key' = $2
+           and not exists (select 1 from events e where e.conversation_id = p.conversation_id
+                           and e.kind = 'wait.ended' and e.data->>'waitId' = p.data->>'waitId')
+         order by p.seq desc limit 1",
+        &[&conversation, &key],
+    )
+    .await?
+    .map(|r| r.get(0)))
+}
+
+/// `POST /v1/sandbox/person-waits/{key}`: a command waits on the person for something outside the chat
+/// (`wait.pending`, its card, rule 11). While a wait of `key` is open, that wait answers (the command calls again
+/// while it waits); a key whose wait ended opens a new one.
+///
+/// # Errors
+/// 400 for a bad key or an empty title or marker; 409 `lease_lost`; a statement error.
+pub async fn person_wait_open(pool: &Pool, caller: &Sandbox, key: &str, r: PersonWaitOpen) -> Result<PersonWaitOpened> {
+    if !valid_wait_key(key) {
+        return Err(Error::bad_request("a wait key is 1 to 100 of A-Za-z0-9._:-"));
+    }
+    if r.title.trim().is_empty() || r.marker.trim().is_empty() {
+        return Err(Error::bad_request("a wait needs a title and a marker"));
+    }
+    let r = &r;
+    aviary_pg::tx!(pool, |t| -> Result<PersonWaitOpened> {
+        let c = caller::lock(t, caller).await?;
+        if let Some(wait_id) = open_wait(t, c.id, key).await? {
+            return Ok(PersonWaitOpened { wait_id });
+        }
+        let wait_id = format!("w-{}", Uuid::now_v7());
+        let body = EventBody::WaitPending(WaitPending {
+            wait_id: wait_id.clone(),
+            key: key.to_owned(),
+            label: r.label.trim().chars().take(40).collect(),
+            title: r.title.trim().to_owned(),
+            why: r.why.trim().to_owned(),
+            marker: r.marker.clone(),
+        });
+        events::append(t, c.id, NewEvent::of(&body)?).await?;
+        changes::upserted(t, &c.person, c.id).await?;
+        Ok(PersonWaitOpened { wait_id })
+    })
+    .await
+}
+
+/// `POST /v1/sandbox/person-waits/{key}/ended`: the open wait of `key` ended with an outcome (`wait.ended`).
+///
+/// # Errors
+/// 400 for a bad key or outcome; 404 when no wait of `key` is open; 409 `lease_lost`; a statement error.
+pub async fn person_wait_ended(pool: &Pool, caller: &Sandbox, key: &str, r: PersonWaitEnd) -> Result<()> {
+    let outcome = r.outcome.trim().to_ascii_lowercase();
+    if !valid_wait_key(key)
+        || outcome.is_empty()
+        || outcome.len() > 40
+        || !outcome.bytes().all(|b| b.is_ascii_lowercase())
+    {
+        return Err(Error::bad_request("a wait key, and an outcome of one word"));
+    }
+    let outcome = &outcome;
+    aviary_pg::tx!(pool, |t| -> Result<()> {
+        let c = caller::lock(t, caller).await?;
+        let Some(wait_id) = open_wait(t, c.id, key).await? else {
+            return Err(Error::not_found());
+        };
+        let body = EventBody::WaitEnded(WaitEnded {
+            wait_id,
+            outcome: outcome.clone(),
+        });
+        events::append(t, c.id, NewEvent::of(&body)?).await?;
+        changes::upserted(t, &c.person, c.id).await?;
+        Ok(())
     })
     .await
 }

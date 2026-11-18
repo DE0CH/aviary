@@ -35,8 +35,8 @@ use magpie_api::sandbox::{
     LeaseResponse, TasksReport, TurnStateReport,
 };
 use magpie_api::sandbox::{
-    QuestionCreated, QuestionQuery, QuestionRequest, QuestionState, SentFilesCommitted, SentFilesRequest,
-    SentFilesResponse,
+    PersonWaitEnd, PersonWaitOpen, PersonWaitOpened, QuestionCreated, QuestionQuery, QuestionRequest, QuestionState,
+    SentFilesCommitted, SentFilesRequest, SentFilesResponse,
 };
 use magpie_api::schedules::{AdminSchedules, CreateSchedule, PauseAll, Schedule, SchedulesList, UpdateSchedule};
 use magpie_api::server::{Ctx, Server};
@@ -487,6 +487,14 @@ impl Server for Magpie {
 
     async fn question_get(&self, ctx: Ctx, ask_id: String, query: QuestionQuery) -> Answer<QuestionState> {
         http::sandbox_turns::question_get(self, ctx, ask_id, query).await
+    }
+
+    async fn person_wait_open(&self, ctx: Ctx, key: String, body: PersonWaitOpen) -> Answer<PersonWaitOpened> {
+        http::sandbox_turns::person_wait_open(self, ctx, key, body).await
+    }
+
+    async fn person_wait_ended(&self, ctx: Ctx, key: String, body: PersonWaitEnd) -> Answer<()> {
+        http::sandbox_turns::person_wait_ended(self, ctx, key, body).await
     }
 
     async fn ask_resolved(&self, ctx: Ctx, ask_id: String, body: AskResolvedReport) -> Answer<()> {

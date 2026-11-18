@@ -4,14 +4,15 @@
 
 use magpie_api::errors::{DataCode, ErrorInfo};
 use magpie_api::events::{
-    EventBody, EventMeta, FilesSent, TaskNotification, TaskState, TaskStatus, TurnEnded, UserSent,
+    AskPending, EventBody, EventMeta, FilesSent, TaskNotification, TaskState, TaskStatus, TurnEnded, UserSent,
+    WaitPending,
 };
 use magpie_api::rows::{
-    AssistantItem, ErrorItem, RESULT_PREVIEW_CHARS, ReasoningItem, ResultImage, RowFile, RowImage, RowItem,
+    AssistantItem, ErrorItem, PersonCard, RESULT_PREVIEW_CHARS, ReasoningItem, ResultImage, RowFile, RowImage, RowItem,
     RowSentFile, TaskInfo, ToolItem, ToolResult, ToolStatus, UserItem,
 };
 use magpie_api::turns::TurnOutcome;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// The `$blob` reference of a value, if it is one: `(blobId, bytes, mime, width, height, preview)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -318,6 +319,8 @@ pub fn assistant(line: &Value, meta: &EventMeta, first: u32) -> Vec<BlockRow> {
                         task: None,
                         error: None,
                         answered_at: None,
+                        person: None,
+                        person_read: None,
                     }),
                     tool_use_id: Some(id.to_owned()),
                 });
@@ -628,6 +631,8 @@ pub fn tool_from_line(line: &Value, call_id: &str, block_index: u32) -> Option<T
         task: None,
         error: None,
         answered_at: None,
+        person: None,
+        person_read: None,
     })
 }
 
@@ -640,6 +645,45 @@ pub fn row_text(item: &RowItem) -> Option<&str> {
         RowItem::Reasoning(r) => Some(&r.text),
         _ => None,
     }
+}
+
+/// Rule 11: the card of a question the `ask` command put to the person, open.
+#[must_use]
+pub fn question_card(p: &AskPending, at: time::OffsetDateTime) -> PersonCard {
+    PersonCard {
+        kind: "question".into(),
+        id: p.ask_id.clone(),
+        input: Value::Object(p.input.clone()),
+        marker: magpie_api::sandbox::answer_marker(&p.ask_id),
+        state: "open".into(),
+        answer: None,
+        asked_at: magpie_api::Timestamp(at),
+        answered_at: None,
+        read_by: None,
+    }
+}
+
+/// Rule 11: the card of a command's wait on the person, open.
+#[must_use]
+pub fn wait_card(p: &WaitPending, at: time::OffsetDateTime) -> PersonCard {
+    PersonCard {
+        kind: "wait".into(),
+        id: p.wait_id.clone(),
+        input: json!({"label": p.label, "title": p.title, "why": p.why}),
+        marker: p.marker.clone(),
+        state: "open".into(),
+        answer: None,
+        asked_at: magpie_api::Timestamp(at),
+        answered_at: None,
+        read_by: None,
+    }
+}
+
+/// Rule 11: whether a tool result carries an answer into the AI's context: its marker is in the text. An empty
+/// marker is in no text.
+#[must_use]
+pub fn carries(text: &str, marker: &str) -> bool {
+    !marker.is_empty() && text.contains(marker)
 }
 
 #[cfg(test)]
@@ -902,5 +946,18 @@ mod tests {
         t.status = ToolStatus::Canceled;
         apply_task(&mut t, &s);
         assert_eq!(t.status, ToolStatus::Canceled);
+    }
+
+    /// Rule 11: only the answer's marker counts as read, never the id alone ("Question q-1 is open").
+    #[test]
+    fn a_result_carries_an_answer_only_with_its_marker() {
+        let m = magpie_api::sandbox::answer_marker("q-1");
+        assert!(carries("Which?\n→ B (answer to q-1)", &m));
+        assert!(!carries("Question q-1 is open; waiting for the answer.", &m));
+        assert!(!carries(
+            "(answer to q-12)",
+            &magpie_api::sandbox::answer_marker("q-123")
+        ));
+        assert!(!carries("anything", ""));
     }
 }
