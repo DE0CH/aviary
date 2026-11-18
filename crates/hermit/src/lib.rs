@@ -19,6 +19,7 @@ pub mod db;
 pub mod deployment;
 pub mod fabric;
 pub mod feed;
+pub mod freezing;
 pub mod health_verdict;
 pub mod janitor;
 pub mod legacy;

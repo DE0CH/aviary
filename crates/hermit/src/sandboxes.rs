@@ -97,6 +97,8 @@ enum PutStep {
     WaitRelease(Uuid, bool),
     /// A new row with this replica's start claim (spawn the start).
     Started(PutSandbox, Uuid, bool),
+    /// A frozen row now `starting` under this replica's thaw claim (spawn the thaw).
+    Thawing(PutSandbox, Uuid),
 }
 
 /// `PUT /v1/conversations/{cid}/sandbox` (3.6.2): never waits for a start.
@@ -134,6 +136,14 @@ pub async fn put(core: &Arc<Core>, cid: Uuid, body: &PutSandboxRequest) -> Resul
                     tracing::info!(sandbox = %id, conversation = %cid, person_key = %aviary_core::log::person_key(&person), "sandbox start requested");
                     tasks::run(core, Claim::adopt(core, id, Kind::Start));
                 }
+                return Ok(a);
+            }
+            PutStep::Thawing(a, id) => {
+                if let Some(row) = db::load(&core.pool, id).await.ok().flatten() {
+                    core.live.apply(&row);
+                }
+                tracing::info!(sandbox = %id, conversation = %cid, "sandbox thaw requested by a get-or-start");
+                tasks::run(core, Claim::adopt(core, id, Kind::Thaw));
                 return Ok(a);
             }
             PutStep::WaitGone(id) => {
@@ -262,6 +272,10 @@ async fn put_once(core: &Arc<Core>, cid: Uuid, person: &str) -> Result<PutStep, 
                         )
                         .await?;
                     let row = SandboxRow::from_row(&r)?;
+                    // a frozen sandbox is thawed by its use (jarvis4 docs/PLAN-fabric.md)
+                    if c.providers.fabric.freezes() && let Some(t2) = crate::freezing::begin_thaw(t, c, &row).await? {
+                        return Ok(PutStep::Thawing(PutSandbox::Starting(t2.to_sandbox()), t2.id));
+                    }
                     if mark && row.status == SandboxState::Ready {
                         // a sent release no task runs: this PUT runs it (the supervisor is asked again)
                         let took = !release_task && tasks::take_in(t, c, row.id, Kind::Release).await?;

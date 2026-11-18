@@ -171,6 +171,25 @@ pub trait Fabric: Send + Sync + 'static {
             let _ = crate::tasks::clear(&core, &claim).await;
         })
     }
+    /// Whether this fabric freezes sandboxes (jarvis4 docs/PLAN-fabric.md): without it the freeze and thaw routes
+    /// answer 501 `not_supported` and no row is ever `frozen`.
+    fn freezes(&self) -> bool {
+        false
+    }
+    /// The `freeze` task of a claim this replica holds. A fabric that does not freeze clears the claim.
+    fn freeze(&self, core: Arc<crate::Core>, claim: crate::tasks::Claim) -> Fut<'static, ()> {
+        Box::pin(async move {
+            tracing::warn!(sandbox = %claim.id, "freeze task on a fabric that does not freeze: claim cleared");
+            let _ = crate::tasks::clear(&core, &claim).await;
+        })
+    }
+    /// The `thaw` task of a claim this replica holds. A fabric that does not freeze clears the claim.
+    fn thaw(&self, core: Arc<crate::Core>, claim: crate::tasks::Claim) -> Fut<'static, ()> {
+        Box::pin(async move {
+            tracing::warn!(sandbox = %claim.id, "thaw task on a fabric that does not freeze: claim cleared");
+            let _ = crate::tasks::clear(&core, &claim).await;
+        })
+    }
     /// What the operator page shows of the fabric (hermit 18.3, 18.6): the scaler's plan, the egress targets, the
     /// slots per host. Nothing known by default. An error is the snapshot's `errors.fabricOps`.
     fn ops(&self) -> Fut<'_, Result<FabricOps, String>> {

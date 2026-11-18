@@ -20,6 +20,10 @@ pub enum Kind {
     Start,
     Migrate,
     Release,
+    /// A freeze (jarvis4 docs/PLAN-fabric.md): the fabric's task.
+    Freeze,
+    /// A thaw: the fabric's task.
+    Thaw,
 }
 
 impl Kind {
@@ -29,6 +33,8 @@ impl Kind {
             Self::Start => "start",
             Self::Migrate => "migrate",
             Self::Release => "release",
+            Self::Freeze => "freeze",
+            Self::Thaw => "thaw",
         }
     }
 
@@ -38,6 +44,8 @@ impl Kind {
             "start" => Some(Self::Start),
             "migrate" => Some(Self::Migrate),
             "release" => Some(Self::Release),
+            "freeze" => Some(Self::Freeze),
+            "thaw" => Some(Self::Thaw),
             _ => None,
         }
     }
@@ -338,6 +346,9 @@ pub fn run(core: &Arc<Core>, claim: Claim) {
         Kind::Release => core.tasks.spawn(id, kind, crate::sandboxes::run_release(c, claim)),
         // live migration is the fabric's task (hermit 13.10)
         Kind::Migrate => core.tasks.spawn(id, kind, core.providers.fabric.migrate(c, claim)),
+        // freezing too (jarvis4 docs/PLAN-fabric.md)
+        Kind::Freeze => core.tasks.spawn(id, kind, core.providers.fabric.freeze(c, claim)),
+        Kind::Thaw => core.tasks.spawn(id, kind, core.providers.fabric.thaw(c, claim)),
     }
 }
 

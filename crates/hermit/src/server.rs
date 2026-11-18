@@ -17,8 +17,8 @@ use hermit_api::exec::{ExecRequest, ExecResult};
 use hermit_api::ops::SnapshotQuery;
 use hermit_api::people::{People, Person, WarmReply, WarmRequest};
 use hermit_api::sandbox::{
-    PutSandbox, PutSandboxRequest, ReleaseReason, ReleaseSandboxReply, ReleaseSandboxRequest, Sandbox, SandboxEvents,
-    SandboxEventsQuery, SandboxQuery, SandboxState,
+    FreezeSandboxRequest, PutSandbox, PutSandboxRequest, ReleaseReason, ReleaseSandboxReply, ReleaseSandboxRequest,
+    Sandbox, SandboxEvents, SandboxEventsQuery, SandboxQuery, SandboxState,
 };
 use hermit_api::sandbox_surface::{ActivityReply, ActivityReport, SecretKeys, SecretValue};
 use hermit_api::server::{Ctx, SelfAnswer, Server};
@@ -116,7 +116,16 @@ impl Server for Hermit {
         sandboxes::release_conversation(self.core(), cid, body).await
     }
 
-    // pause, resume and snapshot: YYC sandboxes are disposable (3.6.4): 501 `not_supported`, the trait's default
+    async fn freeze_sandbox(&self, _ctx: Ctx, cid: Uuid, body: FreezeSandboxRequest) -> Result<Sandbox, ApiError> {
+        crate::freezing::freeze(self.core(), cid, &body).await
+    }
+
+    async fn thaw_sandbox(&self, _ctx: Ctx, cid: Uuid) -> Result<Sandbox, ApiError> {
+        crate::freezing::thaw(self.core(), cid).await
+    }
+
+    // snapshot: 501 `not_supported`, the trait's default (freezing answers 501 too where the fabric does not freeze:
+    // YYC AI's sandboxes stay disposable)
 
     async fn sandbox_events(&self, _ctx: Ctx, q: SandboxEventsQuery) -> Result<SandboxEvents, ApiError> {
         feed::events(self.core(), q).await
