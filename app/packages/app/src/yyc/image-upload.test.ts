@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { __setAttachmentStoreForTests } from "@/attachments/store";
 import type { AttachmentMetadata, AttachmentStore } from "@/attachments/types";
-import { uploadAttachedImage } from "./image-upload";
+import { uploadAttachedImage } from "./asset-upload";
 
 const picture: AttachmentMetadata = {
   id: "att_1",

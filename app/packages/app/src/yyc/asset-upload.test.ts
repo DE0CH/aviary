@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  UPLOAD_KEPT_MS,
-  uploadAsset,
-  uploadFraction,
-  uploadStillKept,
-  type UploadXhr,
-} from "./asset-upload";
+import { uploadAsset, type UploadXhr } from "./asset-upload";
+import { UPLOAD_KEPT_MS, uploadFraction, uploadStillKept } from "./upload-progress";
 
 class FakeXhr implements UploadXhr {
   method = "";

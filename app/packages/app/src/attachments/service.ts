@@ -1,7 +1,7 @@
 import { collectRetainedAttachmentIds } from "@/attachments/gc-retention";
 import { getAttachmentStore } from "@/attachments/store";
 import type { AttachmentMetadata, SaveAttachmentInput } from "@/attachments/types";
-import { uploadStillKept } from "@/yyc/asset-upload";
+import { uploadStillKept } from "@/yyc/upload-progress";
 
 const activePersistence = new Set<Promise<AttachmentMetadata>>();
 const persistedDuringGarbageCollection = new Set<string>();

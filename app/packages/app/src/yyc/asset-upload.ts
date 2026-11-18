@@ -1,5 +1,9 @@
 import { apiUrl } from "@/yyc/api";
 import { accessHeaders } from "@/yyc/access-token";
+import { getAttachmentStore } from "@/attachments/store";
+import type { AttachmentMetadata } from "@/attachments/types";
+import { base64ToBytes } from "@/utils/bytes";
+import type { UploadProgress } from "@/yyc/upload-progress";
 
 /**
  * An upload to the server's `POST /api/assets/files` (pigeon `uploads.rs`), made when a file or a picture is attached:
@@ -7,7 +11,8 @@ import { accessHeaders } from "@/yyc/access-token";
  * its `uploadId`). A picture goes up as an image (`?kind=image`: the server keeps the copy the model sees), so a
  * message sent during a reply and one sent between replies carry the same references.
  *
- * XMLHttpRequest, not fetch: only it reports the bytes sent (web and React Native alike).
+ * XMLHttpRequest, not fetch: only it reports the bytes sent (web and React Native alike). Fetched with import() when
+ * something is attached (composer/index.tsx, composer/actions.ts): a chunk of its own, out of the entry.
  */
 
 export type AssetKind = "file" | "image";
@@ -19,26 +24,6 @@ export interface UploadedAsset {
   mimeType: string;
   /** The server's id of the upload; what a send names an uploaded picture by. */
   uploadId?: string;
-}
-
-/** How far an upload has come: bytes sent of the whole request body. */
-export interface UploadProgress {
-  sent: number;
-  total: number;
-}
-
-/** The share of an upload done, 0 to 1 (0 before the first report). */
-export function uploadFraction(progress: UploadProgress | undefined): number {
-  if (!progress || progress.total <= 0) return 0;
-  return Math.min(1, Math.max(0, progress.sent / progress.total));
-}
-
-/** The server keeps an unsent upload this long (magpie `UNATTACHED_UPLOAD`, 24 h); a send names it only within this. */
-export const UPLOAD_KEPT_MS = 23 * 60 * 60 * 1000;
-
-/** Whether a picture uploaded at `uploadedAtMs` can still be named by its id at `nowMs`. */
-export function uploadStillKept(uploadedAtMs: number | undefined, nowMs: number): boolean {
-  return uploadedAtMs !== undefined && nowMs - uploadedAtMs < UPLOAD_KEPT_MS;
 }
 
 /** The part of XMLHttpRequest an upload uses (a test gives its own). */
@@ -111,4 +96,31 @@ export function uploadAsset(input: UploadAssetInput): Promise<UploadedAsset> {
     input.signal?.addEventListener("abort", () => xhr.abort(), { once: true });
     xhr.send(form);
   });
+}
+
+/** The bytes of a picture kept in the app's attachment store. */
+async function attachmentBytes(attachment: AttachmentMetadata): Promise<Uint8Array> {
+  const store = await getAttachmentStore();
+  return base64ToBytes(await store.encodeBase64({ attachment }));
+}
+
+/**
+ * Uploads a picture just attached to the message box (yyc/asset-upload.ts); what its metadata keeps so the send
+ * names the upload instead of carrying the bytes. Null when the server names no upload: a pigeon before
+ * `?kind=image` (YYC AI and the Jarvis chat move their pins apart) took it as a file, and the send carries the bytes.
+ */
+export async function uploadAttachedImage(
+  image: AttachmentMetadata,
+  onProgress: (progress: UploadProgress) => void,
+): Promise<Pick<AttachmentMetadata, "uploadId" | "uploadedAtMs"> | null> {
+  const bytes = await attachmentBytes(image);
+  const extension = image.mimeType.split("/")[1]?.replace("jpeg", "jpg") ?? "png";
+  const uploaded = await uploadAsset({
+    fileName: image.fileName ?? `image.${extension}`,
+    mimeType: image.mimeType,
+    bytes,
+    kind: "image",
+    onProgress,
+  });
+  return uploaded.uploadId ? { uploadId: uploaded.uploadId, uploadedAtMs: Date.now() } : null;
 }

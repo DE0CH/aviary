@@ -6,8 +6,7 @@ import {
 } from "@/loading/stages";
 import { ReplyDisplayLoadFailed } from "@/components/loading-frame";
 import { warmSandbox } from "@/yyc/warm";
-import { uploadFraction, type UploadProgress } from "@/yyc/asset-upload";
-import { uploadAttachedImage } from "@/yyc/image-upload";
+import { uploadFraction, type UploadProgress } from "@/yyc/upload-progress";
 import {
   useComposerEditingSession,
   useComposerFullscreen,
@@ -1607,9 +1606,12 @@ function ComposerContentImpl({
       for (const image of images) {
         if (image.uploadId || image.storageType === "remote-url") continue;
         setImageUploads((prev) => ({ ...prev, [image.id]: { sent: 0, total: 0 } }));
-        void uploadAttachedImage(image, (progress) =>
-          setImageUploads((prev) => (prev[image.id] ? { ...prev, [image.id]: progress } : prev)),
-        )
+        void import("@/yyc/asset-upload")
+          .then(({ uploadAttachedImage }) =>
+            uploadAttachedImage(image, (progress) =>
+              setImageUploads((prev) => (prev[image.id] ? { ...prev, [image.id]: progress } : prev)),
+            ),
+          )
           .then((uploaded) => {
             if (!uploaded) return;
             setSelectedAttachments((prev) =>

@@ -1,4 +1,4 @@
-import { uploadAsset, type UploadProgress } from "@/yyc/asset-upload";
+import type { UploadProgress } from "@/yyc/upload-progress";
 import type { SelectedFile } from "@/attachments/selected-file";
 import { FILE_UPLOAD_MAX_BYTES } from "@/attachments/upload-limit";
 import type { SendImage } from "@/attachments/service";
@@ -149,6 +149,7 @@ export async function uploadFileAttachments(input: {
   }
 
   // Files go to the server's upload route, which keeps them for the turn that sends them (docs/paseo-ui.md)
+  const { uploadAsset } = await import("@/yyc/asset-upload");
   for (const [index, file] of prepared.entries()) {
     const stored = await uploadAsset({
       ...file,
