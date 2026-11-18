@@ -63,12 +63,13 @@ describe("the model menu", () => {
   });
 
   // A six-position row (Claude's five efforts and none) at 272 px gave each cell 42 px, and the English labels
-  // clipped: Medium is 44 px, Standard 48.5, Extended 50 at 12 px. The menu widens with the row.
+  // clipped: in common UI fonts Medium is 44 px, Standard 48.5-51, Extended 50-53 at 12 px. The menu widens with
+  // the row.
   it("widens with the row so six labels fit, never past the window", () => {
     expect(menuWidth(0, 1200)).toBe(272);
     expect(menuWidth(4, 1200)).toBe(272);
-    expect(menuWidth(5, 1200)).toBe(290);
-    expect(menuWidth(6, 1200)).toBe(344);
+    expect(menuWidth(5, 1200)).toBe(310);
+    expect(menuWidth(6, 1200)).toBe(368);
     // a window narrower than the menu: the menu takes what the window has
     expect(menuWidth(6, 300)).toBe(284);
     expect(menuWidth(6, 0)).toBe(0);

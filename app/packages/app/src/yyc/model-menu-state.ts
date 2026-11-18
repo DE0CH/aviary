@@ -70,12 +70,12 @@ export function menuState(
 
 /**
  * The menu's width for a row of `positions` levels. Four positions fit the composer's 272 px; a longer row
- * (none/low/medium/high/xhigh/max is six) needs a wider cell or the labels clip: a cell is 54 px — the widest
- * English label, "Extended", is about 50 px at 12 px — and the row's margins and padding take 20 more. It never
- * grows past the window.
+ * (none/low/medium/high/xhigh/max is six) needs a wider cell or the labels clip: a cell is 58 px — the widest
+ * English label, "Extended", runs to about 53 px at 12 px in a common UI font — and the row's margins and padding
+ * take 20 more. It never grows past the window.
  */
 export function menuWidth(positions: number, windowWidth: number): number {
-  const fitting = Math.max(272, 20 + 54 * positions);
+  const fitting = Math.max(272, 20 + 58 * positions);
   return Math.min(fitting, Math.max(0, windowWidth - 16));
 }
 
