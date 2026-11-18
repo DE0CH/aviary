@@ -66,6 +66,15 @@ pub struct Entry {
     /// (its final delta and SBXDONE ran in the sandboxd that is gone), so then the source is kept or, stopped, lost.
     orphan: bool,
 }
+/// What a listing says a sandbox is: paused, running, or still receiving.
+fn listed_state(e: &Entry) -> &'static str {
+    match (e.state == RUNNING, e.paused) {
+        (true, true) => "paused",
+        (true, false) => "running",
+        _ => "receiving",
+    }
+}
+
 // SAFETY: Entry is only fixed strings, numbers and bools, for which all zeros is a valid value.
 unsafe impl Zeroed for Entry {}
 
@@ -309,6 +318,7 @@ impl Sandboxes {
             created_at: created,
             port,
             migrated,
+            paused: false,
             cpu_at: 0,
             cpu_usec: 0,
             cpu_rate: 0.0,
@@ -484,15 +494,6 @@ impl Sandboxes {
         }
     }
 
-    /// What a listing says it is: paused, running, or still receiving.
-    fn listed_state(e: &Entry) -> &'static str {
-        match (e.state == RUNNING, e.paused) {
-            (true, true) => "paused",
-            (true, false) => "running",
-            _ => "receiving",
-        }
-    }
-
     fn write_listed(w: &mut W, e: &Entry, scratch: Option<u64>) {
         let mem = paths::sbx_cgroup(e.spec.name.as_str(), "memory.current");
         let cur: u64 = crate::util::read_small::<32>(mem.as_str()).and_then(|s| s.as_str().parse().ok()).unwrap_or(0);
@@ -664,6 +665,7 @@ impl Sandboxes {
                 cpu_have: false,
                 alive: true,
                 stopped: false,
+                paused: false,
                 sending: false,
                 orphan: false,
             };
@@ -1001,6 +1003,7 @@ impl Sandboxes {
                 cpu_have: false,
                 alive: true,
                 stopped: false,
+                paused: false,
                 sending: false,
                 orphan: false,
             };
@@ -1070,6 +1073,7 @@ impl Sandboxes {
                 cpu_have: false,
                 alive: true,
                 stopped: false,
+                paused: false,
                 sending: false,
                 orphan: false,
             };
