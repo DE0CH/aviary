@@ -12,6 +12,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 import { ChevronLeft, ListTodo, X } from "lucide-react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -199,7 +200,7 @@ function TaskSection({
 
 /**
  * The panel beside the chat (it takes its width from the chat column, which gets narrower); on a phone it covers the
- * chat, with a back arrow.
+ * chat, with a back arrow, and its header sits below the status bar (the safe area's top).
  */
 export function ActivityPanel({ sessionId, compact }: { sessionId: string | null; compact: boolean }) {
   const open = useActivityPanel((s) => (sessionId ? s.openFor === sessionId : false));
@@ -208,6 +209,7 @@ export function ActivityPanel({ sessionId, compact }: { sessionId: string | null
   const locale = useActivityLocale();
   const readOnly = useViewAsReadOnly();
   const queryClient = useQueryClient();
+  const insets = useSafeAreaInsets();
   const [now, setNow] = useState(() => Date.now());
   const [stopping, setStopping] = useState<ReadonlySet<string>>(() => new Set());
   const tasks = data ?? [];
@@ -254,7 +256,10 @@ export function ActivityPanel({ sessionId, compact }: { sessionId: string | null
   if (!open || !sessionId) return null;
   const w = activityWords(locale);
   return (
-    <View style={compact ? styles.panelPhone : styles.panelDock} testID="activity-panel">
+    <View
+      style={compact ? [styles.panelPhone, { paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right }] : styles.panelDock}
+      testID="activity-panel"
+    >
       <View style={styles.panelHeader}>
         {compact ? (
           <Pressable

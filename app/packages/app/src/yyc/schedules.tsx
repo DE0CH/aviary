@@ -16,6 +16,7 @@ import React, { useEffect } from "react";
 import { useProductName, withProductName } from "@/yyc/product";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ChevronLeft, Clock, X } from "lucide-react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
@@ -140,7 +141,7 @@ function ScheduleSection({ s, name }: { s: Schedule; name: string | null }) {
 
 /**
  * The panel beside the chat (it takes its width from the chat column, which gets narrower); on a phone it covers the
- * chat, with a back arrow.
+ * chat, with a back arrow, and its header sits below the status bar (the safe area's top).
  */
 export function SchedulesPanel({ sessionId, compact }: { sessionId: string | null; compact: boolean }) {
   const open = useSchedulesPanel((s) => (sessionId ? s.openFor === sessionId : false));
@@ -148,6 +149,7 @@ export function SchedulesPanel({ sessionId, compact }: { sessionId: string | nul
   const { data } = useConversationSchedules(open ? sessionId : null);
   const name = useFirstName();
   const product = useProductName();
+  const insets = useSafeAreaInsets();
   useEffect(() => {
     // a conversation left with its panel open: closed, so the next one starts without it
     return () => {
@@ -157,7 +159,10 @@ export function SchedulesPanel({ sessionId, compact }: { sessionId: string | nul
   if (!open || !sessionId) return null;
   const schedules = data ?? [];
   return (
-    <View style={compact ? styles.panelPhone : styles.panelDock} testID="schedules-panel">
+    <View
+      style={compact ? [styles.panelPhone, { paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right }] : styles.panelDock}
+      testID="schedules-panel"
+    >
       <View style={styles.panelHeader}>
         {compact ? (
           <Pressable onPress={close} accessibilityRole="button" accessibilityLabel="返回" style={styles.iconButton} testID="schedules-back">

@@ -182,15 +182,13 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
     onKeyDown: handleWebOverlayKeyDown,
   });
 
+  // The layer is the safe area itself, not a full-screen layer padded by it: the close button and the loading bar are
+  // placed absolutely, and an absolute child is placed from its parent's edge, padding or not (the close button sat
+  // over the status bar on an iPhone).
   const contentLayerStyle = useMemo(
     () => [
       styles.contentLayer,
-      {
-        paddingTop: insets.top,
-        paddingRight: insets.right,
-        paddingBottom: insets.bottom,
-        paddingLeft: insets.left,
-      },
+      { top: insets.top, right: insets.right, bottom: insets.bottom, left: insets.left },
     ],
     [insets.bottom, insets.left, insets.right, insets.top],
   );
