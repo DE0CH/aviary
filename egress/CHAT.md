@@ -139,7 +139,10 @@ pages) goes to the caller piece by piece at the caller's pace, so a download's s
 things kept are a model answer's JSON or one event-stream line for its cost, each at most 4 MiB (`SNIFF_MAX`).
 
 Every request except the magpie and hermit calls → one `egress_log` row (kind `connect`, `http`, `mirror`, `model`,
-`tools`; decision `allow`, `allow:cache` or `deny:<reason>`; the sandbox, conversation, `person` and `request`).
+`tools`, `route`; decision `allow`, `allow:cache` or `deny:<reason>`; the sandbox, conversation, `person` and
+`request`). A tools or route call that did not succeed (no answer, or 400 and up) also keeps `reason` (its answer's
+`message`/`error`, else its text) and `asked` (its JSON body's members, else its query), each at most 300 characters,
+from at most 4 KiB of each it held; no other row keeps any content.
 
 **In-cluster API (8082)**, callers by pair token (`EGRESS_ACCEPT_PIGEON`, `_HERMIT`, `_ADMIN`; comma lists, current
 first; 401 without one, 403 `wrong_caller` for the wrong one): `GET /v1/aviary/models` (pigeon, admin; Service
@@ -147,7 +150,8 @@ first; 401 without one, 403 `wrong_caller` for the wrong one): `GET /v1/aviary/m
 the same answer sandboxes get at `http://model/v1/aviary/models`; `GET /v1/ops/summary?tz=&recentMinutes=` (hermit,
 admin): spend and the budget, refusals and errors (aviary platform spec 15.3; owners are emails; a tools or route
 call turned down for what the agent sent (400, 404, 405, 409, 413, 415, 422) is the caller's mistake: not counted as
-a failed call, its own count `recent.callerErrors`);
+a failed call, its own count `recent.callerErrors`; each row of `recent.list` carries `kind`, `host`, `path`, `status`,
+`decision`, `conversationId`, `reason` and `asked` beside `what` and `detail`);
 `GET /v1/admin/egress-log?conversation=&since=&limit=` (admin): one conversation's rows.
 
 **Health (9090):** `/healthz`; `/readyz` 503 until migrations are verified, the host lists are loaded and tokens can be
