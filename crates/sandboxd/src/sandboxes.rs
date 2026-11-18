@@ -66,6 +66,12 @@ pub struct Entry {
     /// (its final delta and SBXDONE ran in the sandboxd that is gone), so then the source is kept or, stopped, lost.
     orphan: bool,
 }
+/// Whether a sandbox of `need` bytes fits beside `used` bytes of sandboxes in `total` less `reserve`; an unknown
+/// `total` (0) refuses nothing.
+fn memory_fits(total: u64, reserve: u64, used: u64, need: u64) -> bool {
+    total == 0 || used.saturating_add(need) <= total.saturating_sub(reserve)
+}
+
 /// What a listing says a sandbox is: paused, running, or still receiving.
 fn listed_state(e: &Entry) -> &'static str {
     match (e.state == RUNNING, e.paused) {
@@ -285,7 +291,9 @@ impl Sandboxes {
         let mut created: Str<24> = Str::new();
         let mut port = 0u16;
         let mut migrated: Str<1024> = Str::new();
-        let Val::Obj(o) = json::parse(text)? else { return Err(Error::new(500, "bad state")) };
+        let Val::Obj(o) = json::parse(text)? else {
+            return Err(Error::new(500, "bad state"));
+        };
         json::object::<Error>(o, |k, v| {
             if k.is("spec") {
                 if let Val::Obj(so) = v {
@@ -333,7 +341,9 @@ impl Sandboxes {
     #[allow(clippy::unused_self)] // one of the sandbox table's operations, beside the ones that use it
     pub fn status(&self, name: &str, out: &mut [u8]) -> Str<16> {
         let mut a = [""; 40];
-        let Ok(argv) = runsc::argv(&mut a, &["state", name]) else { return Str::lossy("unknown") };
+        let Ok(argv) = runsc::argv(&mut a, &["state", name]) else {
+            return Str::lossy("unknown");
+        };
         match run(argv, out, 10_000) {
             Ok(o) if o.code == 0 => status_of(o.out_str()),
             Ok(_) => Str::lossy("missing"),
@@ -475,7 +485,9 @@ impl Sandboxes {
             }
             let p = paths::sbx_cgroup(sl.entry.spec.name.as_str(), "cpu.stat");
             let mut b = [0u8; 1024];
-            let Ok(text) = read_file(p.as_str(), &mut b) else { continue };
+            let Ok(text) = read_file(p.as_str(), &mut b) else {
+                continue;
+            };
             let text = core::str::from_utf8(text).unwrap_or("");
             let usec: u64 = text
                 .lines()
@@ -548,9 +560,17 @@ impl Sandboxes {
         Ok(())
     }
 
-    fn check_capacity(&self) -> Res<()> {
+    /// Room for one more sandbox of `need` bytes: under `limits.maxSandboxes`, and its memory beside the memory of
+    /// every sandbox here (paused ones included) within the host's memory less `reserveMemory` (the slot hermit
+    /// counts). A 503 is `busy`: hermit retries the start until an eviction or a release frees the room.
+    fn check_capacity(&self, need: u64) -> Res<()> {
         if self.count() >= self.max {
             return Err(err!(503, "this host has limits.maxSandboxes ({}) sandboxes", self.max));
+        }
+        let used: u64 = self.table().iter().filter(|s| s.used).map(|s| s.entry.spec.memory).sum();
+        let (total, _) = crate::api::meminfo();
+        if !memory_fits(total, self.cfg.reserve_memory, used, need) {
+            return Err(err!(503, "no memory here for {need} bytes beside {used} bytes of sandboxes"));
         }
         Ok(())
     }
@@ -637,7 +657,7 @@ impl Sandboxes {
             return Err(err!(409, "{name} exists ({})", if cur.state == RUNNING { "running" } else { "receiving" }));
         }
         self.check_ip(spec)?;
-        self.check_capacity()?;
+        self.check_capacity(spec.memory)?;
         let t0 = mono_ms();
         let r = (|| -> Res<()> {
             let bundle = self.prepare(spec, true, sc)?;
@@ -919,7 +939,7 @@ impl Sandboxes {
             return Err(err!(409, "{name} is already here"));
         }
         self.check_ip(spec)?;
-        self.check_capacity()?;
+        self.check_capacity(spec.memory)?;
         let t0 = mono_ms();
         let aws_env = t.aws_env();
         let aws: [&str; 4] = [aws_env[0].as_str(), aws_env[1].as_str(), aws_env[2].as_str(), aws_env[3].as_str()];
@@ -1030,7 +1050,7 @@ impl Sandboxes {
             return Err(err!(409, "{name} is already here"));
         }
         self.check_ip(spec)?;
-        self.check_capacity()?;
+        self.check_capacity(spec.memory)?;
         // a migration slot (a finished one older than 60 s, or any finished one, may be reused)
         let mi = {
             let mut m = self.migt();
@@ -1468,7 +1488,9 @@ impl Sandboxes {
     /// Removes runsc containers that have no state (left by a crash between run and save).
     pub fn sweep(&self, sc: &mut Scratch) {
         let mut a = [""; 40];
-        let Ok(argv) = runsc::argv(&mut a, &["list", "-format", "json"]) else { return };
+        let Ok(argv) = runsc::argv(&mut a, &["list", "-format", "json"]) else {
+            return;
+        };
         let o = match run(argv, sc.big, 30_000) {
             Ok(o) if o.code == 0 && !o.truncated => o,
             Ok(o) if o.truncated => {
@@ -1567,7 +1589,9 @@ impl SendStats {
 #[allow(clippy::trivially_copy_pass_by_ref)] // the two 8-byte wire words, passed as the constants they are
 fn notify_relay(to: &str, msg: &[u8; 8]) -> bool {
     use std::io::{Read, Write};
-    let Ok(addr) = to.parse::<std::net::SocketAddr>() else { return false };
+    let Ok(addr) = to.parse::<std::net::SocketAddr>() else {
+        return false;
+    };
     let Ok(mut c) = std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(10)) else {
         return false;
     };
@@ -1618,7 +1642,9 @@ fn log_file(name: &str, restore_out: bool) -> Res<std::fs::File> {
 /// The stream statistics line ({"from"...) the restore printed.
 fn restore_stats(name: &str, buf: &mut [u8]) -> Str<1024> {
     let p = path!("/var/log/sbx/{name}.restore.out");
-    let Ok(text) = read_file(p.as_str(), buf) else { return Str::lossy("null") };
+    let Ok(text) = read_file(p.as_str(), buf) else {
+        return Str::lossy("null");
+    };
     let text = core::str::from_utf8(text).unwrap_or("");
     match text.lines().find(|l| l.starts_with("{\"from\"")) {
         Some(l) if json::parse(l.as_bytes()).is_ok() => Str::from(l).unwrap_or_else(|| Str::lossy("null")),
@@ -1769,6 +1795,16 @@ fn listed_alive(e: &Entry) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_sandbox_fits_only_beside_what_the_host_holds() {
+        const G: u64 = 1 << 30;
+        // a 16 GiB host less 1.5 GiB: four 3.5 GiB sandboxes fit, a fifth does not (a paused one holds its memory)
+        assert!(super::memory_fits(16 * G, 3 * G / 2, 7 * G, 7 * G / 2));
+        assert!(super::memory_fits(16 * G, 3 * G / 2, 21 * G / 2, 7 * G / 2));
+        assert!(!super::memory_fits(16 * G, 3 * G / 2, 14 * G, 7 * G / 2));
+        assert!(super::memory_fits(0, 3 * G / 2, 99 * G, G), "an unknown total refuses nothing");
+    }
+
     use super::*;
 
     #[test]

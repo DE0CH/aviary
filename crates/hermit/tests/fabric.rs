@@ -320,6 +320,56 @@ impl Server for HostSim {
     async fn log(&self, name: String, _tail: usize) -> Answer<Vec<u8>> {
         Ok(format!("console of {name}\n").into_bytes())
     }
+    async fn pause(&self, name: String) -> Answer<Listed> {
+        self.saw(format!("pause {name}"));
+        {
+            let mut s = self.sandboxes.lock().unwrap();
+            let Some(o) = s.get_mut(&name).filter(|o| o.state != HostState::Receiving) else {
+                return Err(ApiError::new(404, format!("{name} is not running here")));
+            };
+            o.state = HostState::Paused;
+        }
+        Ok(self.listed().into_iter().find(|l| l.name == name).unwrap())
+    }
+    async fn resume(&self, name: String) -> Answer<Listed> {
+        self.saw(format!("resume {name}"));
+        {
+            let mut s = self.sandboxes.lock().unwrap();
+            let Some(o) = s.get_mut(&name).filter(|o| o.state == HostState::Paused) else {
+                return Err(ApiError::new(409, format!("{name} is not paused")));
+            };
+            o.state = HostState::Running;
+        }
+        Ok(self.listed().into_iter().find(|l| l.name == name).unwrap())
+    }
+    async fn freeze(&self, name: String, frozen: sandboxd_api::Frozen) -> Answer<sandboxd_api::FreezeResult> {
+        self.saw(format!("freeze {name} {}", frozen.object));
+        if self.sandboxes.lock().unwrap().remove(&name).is_none() {
+            return Err(ApiError::new(404, format!("{name} is not running here")));
+        }
+        Ok(sandboxd_api::FreezeResult {
+            ms: 3,
+            memory_ms: 2,
+            scratch_ms: 1,
+        })
+    }
+    async fn thaw(&self, req: sandboxd_api::ThawRequest) -> Answer<Listed> {
+        self.saw(format!("thaw {} {}", req.spec.name, req.frozen.object));
+        let fleet = self.fleet.upgrade().unwrap();
+        fleet.supervisor_for(&req.spec).await;
+        self.sandboxes.lock().unwrap().insert(
+            req.spec.name.clone(),
+            OnHost {
+                spec: req.spec.clone(),
+                state: HostState::Running,
+                alive: Some(true),
+                sending: false,
+                scratch_used: Some(0),
+                created_at: iso_now(),
+            },
+        );
+        Ok(self.listed().into_iter().find(|l| l.name == req.spec.name).unwrap())
+    }
 }
 
 /// A fake host served on a local port; `down` closes its listener and its connections.
@@ -504,6 +554,10 @@ struct FakeEc2 {
     n: AtomicU32,
     /// `bucket/key` of the objects S3 holds (the image bucket).
     objects: Mutex<Vec<String>>,
+    /// The STS credentials asked for ("write|read bucket key,key").
+    credentials: Mutex<Vec<String>>,
+    /// `bucket/key` of the objects deleted.
+    deleted: Mutex<Vec<String>>,
 }
 
 impl FakeEc2 {
@@ -517,6 +571,8 @@ impl FakeEc2 {
             unmounted: AtomicBool::new(false),
             n: AtomicU32::new(0),
             objects: Mutex::default(),
+            credentials: Mutex::default(),
+            deleted: Mutex::default(),
         })
     }
 
@@ -604,6 +660,33 @@ impl Ec2 for FakeEc2 {
     fn has_object<'a>(&'a self, bucket: &'a str, key: &'a str) -> Fut<'a, Result<bool, Ec2Error>> {
         Box::pin(async move { Ok(self.objects.lock().unwrap().contains(&format!("{bucket}/{key}"))) })
     }
+
+    fn object_credentials<'a>(
+        &'a self,
+        bucket: &'a str,
+        keys: &'a [String],
+        write: bool,
+    ) -> Fut<'a, Result<::hermit::fabric::ec2::ObjectCredentials, Ec2Error>> {
+        Box::pin(async move {
+            self.credentials.lock().unwrap().push(format!(
+                "{} {bucket} {}",
+                if write { "write" } else { "read" },
+                keys.join(",")
+            ));
+            Ok(::hermit::fabric::ec2::ObjectCredentials {
+                access_key_id: "ASIAFAKE".into(),
+                secret_access_key: "secret".into(),
+                session_token: "token".into(),
+            })
+        })
+    }
+
+    fn delete_object<'a>(&'a self, bucket: &'a str, key: &'a str) -> Fut<'a, Result<(), Ec2Error>> {
+        Box::pin(async move {
+            self.deleted.lock().unwrap().push(format!("{bucket}/{key}"));
+            Ok(())
+        })
+    }
 }
 
 fn now_ms() -> i64 {
@@ -653,6 +736,10 @@ impl Rig {
                 juicefs_meta_password: "pw".into(),
             }),
             control: self.fleet.clone(),
+            // a deployment that freezes has its key
+            freeze_key: self.h.config.file.fabric.freeze.as_ref().map(|_| {
+                ::hermit::fabric::freezekey::FreezeKey::parse("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap()
+            }),
         }))
     }
 
@@ -2310,4 +2397,155 @@ async fn the_scratch_size_reaches_the_host() {
         .spec
         .clone();
     assert_eq!(spec.scratch_bytes, Some(100 << 30));
+}
+
+/// The `until` of a freeze `secs` from now.
+fn until_in(secs: i64) -> hermit_api::sandbox::FreezeSandboxRequest {
+    hermit_api::sandbox::FreezeSandboxRequest {
+        until: hermit_api::time::Timestamp::from_unix_millis(now_ms() + secs * 1000),
+    }
+}
+
+async fn row(rig: &Rig, id: Uuid) -> db::SandboxRow {
+    db::load(&rig.h.pool(), id).await.unwrap().unwrap()
+}
+
+/// Frozen, paused where it ran (its host kept), no task under way.
+async fn frozen_here(rig: &Rig, id: Uuid) -> bool {
+    let r = row(rig, id).await;
+    r.status == SandboxState::Frozen && r.task.is_none() && r.host.is_some()
+}
+
+/// Frozen, evicted to the bucket (no host), no task under way.
+async fn evicted(rig: &Rig, id: Uuid) -> bool {
+    let r = row(rig, id).await;
+    r.status == SandboxState::Frozen && r.host.is_none() && r.task.is_none()
+}
+
+/// Freezing (jarvis4 docs/PLAN-fabric.md, Deyao 2026-11-18): a freeze pauses the sandbox where it runs and its row
+/// keeps the host; a frozen sandbox's slot is free to a placement, which evicts the frozen sandbox with the most time
+/// left to the bucket (no host launched); one with less time left stays paused; a host left with only frozen
+/// sandboxes has them evicted and is then released; an evicted image's objects go with its row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn frozen_sandboxes_are_evicted_only_when_their_slot_is_needed() {
+    let rig = Rig::new(
+        "fabric_freeze",
+        |v| v["fabric"]["freeze"] = json!({"bucket": "frozen-images"}),
+        manual(),
+    )
+    .await;
+    let (r, g) = rig.replica("hermit-a").await;
+    assert!(g.freezes());
+    let a = one_host(&rig, &g, &r).await;
+    rig.sql(&format!("update hosts set max_sandboxes = 2 where name = '{a}'"))
+        .await;
+    let launched = rig.ec2.launched();
+    let (x, x_name) = rig.ready_on(&a, "198.18.0.20").await;
+    let (y, y_name) = rig.ready_on(&a, "198.18.0.21").await;
+
+    // a freeze pauses each where it runs: the row is frozen with its host kept, nothing goes to the bucket
+    ::hermit::freezing::freeze(r.core(), row(&rig, x).await.conversation_id, &until_in(86_400))
+        .await
+        .unwrap();
+    ::hermit::freezing::freeze(r.core(), row(&rig, y).await.conversation_id, &until_in(600))
+        .await
+        .unwrap();
+    assert!(eventually(|| frozen_here(&rig, x)).await && eventually(|| frozen_here(&rig, y)).await);
+    let sim = rig.fleet.sim(&a);
+    assert!(sim.calls().contains(&format!("pause {x_name}")) && sim.calls().contains(&format!("pause {y_name}")));
+    assert_eq!(
+        db::load(&rig.h.pool(), x)
+            .await
+            .unwrap()
+            .unwrap()
+            .frozen
+            .unwrap()
+            .host
+            .as_deref(),
+        Some(a.as_str())
+    );
+    assert!(
+        rig.ec2.credentials.lock().unwrap().is_empty(),
+        "a freeze uploaded something"
+    );
+    // the scaler leaves a host holding running sandboxes alone, frozen ones beside them included
+    pass(&g, &r).await;
+    assert!(!sim.calls().iter().any(|c| c.starts_with("freeze ")));
+
+    // a new sandbox finds no free slot: it takes the slot of the frozen one with the most time left (x), which is
+    // evicted to the bucket; y (less time left) stays paused; no host is launched
+    let s = starting(&rig).await;
+    let Place::Placed(pl) = g.place(s, 2 * GIB).await.unwrap() else {
+        panic!("not placed on a frozen sandbox's slot")
+    };
+    assert_eq!(pl.host, a);
+    assert!(eventually(|| evicted(&rig, x)).await, "x was not evicted");
+    let fx = db::load(&rig.h.pool(), x).await.unwrap().unwrap().frozen.unwrap();
+    assert!(fx.object.starts_with(&format!("frozen/{x}/")), "{}", fx.object);
+    assert!(!fx.key.is_empty() && fx.host.is_none());
+    assert!(
+        sim.calls()
+            .contains(&format!("freeze {x_name} s3://frozen-images/{}", fx.object))
+    );
+    assert!(!sim.sandboxes.lock().unwrap().contains_key(&x_name));
+    assert_eq!(
+        rig.ec2.credentials.lock().unwrap().clone(),
+        vec![format!("write frozen-images {o},{o}.scratch", o = fx.object)],
+        "the eviction's credentials name its two objects only, to write"
+    );
+    assert!(frozen_here(&rig, y).await, "y (less time left) was evicted too");
+    assert_eq!(
+        rig.ec2.launched(),
+        launched,
+        "a host was launched though a frozen slot was free"
+    );
+
+    // the new sandbox goes; the host holds only y, frozen: the scaler evicts it, then releases the host
+    rig.sql(&format!("update sandboxes set status = 'gone' where id = '{s}'"))
+        .await;
+    rig.sql(&format!(
+        "update hosts set created_at = now() - interval '16 minutes' where name = '{a}'"
+    ))
+    .await;
+    pass(&g, &r).await;
+    assert!(
+        eventually(|| evicted(&rig, y)).await,
+        "y was not evicted from a host holding nothing running"
+    );
+    let p = pass(&g, &r).await;
+    assert_eq!(p.terminated, vec![a.clone()]);
+
+    // an evicted image goes with its row's release
+    let fy = db::load(&rig.h.pool(), y).await.unwrap().unwrap().frozen.unwrap();
+    ::hermit::sandboxes::request(r.core(), y, hermit_api::sandbox::ReleaseReason::Requested, false, None)
+        .await
+        .unwrap();
+    assert!(
+        eventually(|| async { db::load(&rig.h.pool(), y).await.unwrap().unwrap().status == SandboxState::Gone }).await
+    );
+    let deleted = rig.ec2.deleted.lock().unwrap().clone();
+    assert!(
+        deleted.contains(&format!("frozen-images/{}", fy.object))
+            && deleted.contains(&format!("frozen-images/{}.scratch", fy.object)),
+        "{deleted:?}"
+    );
+}
+
+/// A deployment that names no `fabric.freeze` keeps release: the routes answer 501, and a full host is no slot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_fabric_without_freeze_never_freezes() {
+    let rig = Rig::new("fabric_nofreeze", |_| {}, manual()).await;
+    let (r, g) = rig.replica("hermit-a").await;
+    assert!(!g.freezes());
+    let a = one_host(&rig, &g, &r).await;
+    rig.sql(&format!("update hosts set max_sandboxes = 1 where name = '{a}'"))
+        .await;
+    let (x, _) = rig.ready_on(&a, "198.18.0.20").await;
+    let cid = db::load(&rig.h.pool(), x).await.unwrap().unwrap().conversation_id;
+    let e = ::hermit::freezing::freeze(r.core(), cid, &until_in(60))
+        .await
+        .unwrap_err();
+    assert_eq!(e.status().as_u16(), 501);
+    let s = starting(&rig).await;
+    assert_eq!(g.place(s, 2 * GIB).await.unwrap(), Place::NoSlot);
 }

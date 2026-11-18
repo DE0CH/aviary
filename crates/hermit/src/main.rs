@@ -339,6 +339,17 @@ async fn serve() -> ExitCode {
         egress,
         host_secrets: Some(host_secrets),
         control: Arc::new(Port7070),
+        // a deployment that freezes (hermit.json fabric.freeze) names its key; one that does not, none
+        freeze_key: match env::try_required("HERMIT_FREEZE_KEY") {
+            Ok(k) => match hermit::fabric::freezekey::FreezeKey::parse(&k) {
+                Ok(k) => Some(k),
+                Err(e) => {
+                    tracing::error!(name = "HERMIT_FREEZE_KEY", error = %e, "invalid env");
+                    return ExitCode::FAILURE;
+                }
+            },
+            Err(_) => None,
+        },
     }));
 
     let app = loop {

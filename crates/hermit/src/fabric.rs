@@ -7,6 +7,7 @@
 //! The fabric itself is [`gvisor::Gvisor`] with its parts in the submodules.
 
 pub mod ec2;
+pub mod freezekey;
 pub mod gvisor;
 pub mod hosts;
 pub mod images;
@@ -183,6 +184,10 @@ pub trait Fabric: Send + Sync + 'static {
             tracing::warn!(sandbox = %claim.id, "freeze task on a fabric that does not freeze: claim cleared");
             let _ = crate::tasks::clear(&core, &claim).await;
         })
+    }
+    /// A gone row's frozen image (its objects in the bucket), once nothing will thaw it. Nothing to drop by default.
+    fn drop_frozen<'a>(&'a self, _id: Uuid, _frozen: &'a crate::db::Frozen) -> Fut<'a, ()> {
+        Box::pin(async {})
     }
     /// A thaw's create step for a frozen sandbox still paused on its host: `runsc resume` there, its processes going
     /// on where they stopped. A fabric that does not freeze answers `Failed`.

@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::db::LOCK_CLASS;
 use crate::fabric::hosts::{self, HostRow, HostStatus, Sizing, Slot};
-use crate::fabric::{FabricError, Place, Placement};
+use crate::fabric::{FabricError, Place, Placement, packing};
 
 /// Lock 7300/5: placement (host + ip).
 pub const LOCK_PLACE: i32 = 5;
@@ -142,23 +142,98 @@ pub async fn slots_in(t: &Tx<'_>, rules: &Rules) -> Result<Vec<Slot>, aviary_pg:
         .collect())
 }
 
+/// Where a placement goes when no host has a free slot, on a fabric that freezes (jarvis4 docs/PLAN-fabric.md): the
+/// repacking over the placeable hosts, a paused frozen sandbox taking no capacity ([`packing::place`]), and the
+/// frozen sandboxes that placement forces out ([`packing::evictions`]), each claimed here for its eviction (the
+/// caller runs the claims once this transaction commits). `None`: no frozen sandbox makes room (a host is launched).
+///
+/// # Errors
+/// A database error.
+async fn reclaim(
+    t: &Tx<'_>,
+    core: &crate::Core,
+    rules: &Rules,
+    slots: &[Slot],
+    need: u32,
+) -> Result<Option<(String, Vec<Uuid>)>, aviary_pg::Error> {
+    let names: Vec<String> = slots.iter().map(|s| s.host.name.clone()).collect();
+    let rows = t
+        .query(
+            "select id, host, memory_bytes, frozen_until, frozen from sandboxes
+             where status = 'frozen' and host = any($1) and task is null",
+            &[&names],
+        )
+        .await?;
+    let mut frozen = Vec::new();
+    for r in rows {
+        let at = r
+            .try_get::<_, Option<serde_json::Value>>(4)?
+            .and_then(|v| serde_json::from_value::<crate::db::Frozen>(v).ok())
+            .and_then(|f| f.frozen_at)
+            .and_then(|s| OffsetDateTime::parse(&s, &time::format_description::well_known::Rfc3339).ok())
+            .map_or(0, |t| i64::try_from(t.unix_timestamp_nanos() / 1_000_000).unwrap_or(0));
+        frozen.push(packing::PackFrozen {
+            id: r.try_get::<_, Uuid>(0)?.to_string(),
+            host: r.try_get(1)?,
+            size: rules.sizing.size(u64::try_from(r.try_get::<_, i64>(2)?).unwrap_or(0)),
+            until: r
+                .try_get::<_, Option<OffsetDateTime>>(3)?
+                .map(|u| i64::try_from(u.unix_timestamp_nanos() / 1_000_000).unwrap_or(0)),
+            frozen_at: at,
+        });
+    }
+    if frozen.is_empty() {
+        return Ok(None);
+    }
+    // a frozen sandbox's memory is why a host can look short of it: its slots are counted, never the pressure
+    let hosts: Vec<packing::PackHost> = slots
+        .iter()
+        .map(|s| packing::PackHost {
+            name: s.host.name.clone(),
+            slots: rules.sizing.host_slots(&s.host),
+            open: true,
+        })
+        .collect();
+    let mut load: std::collections::BTreeMap<String, u32> = slots
+        .iter()
+        .map(|s| {
+            let held: u32 = frozen.iter().filter(|f| f.host == s.host.name).map(|f| f.size).sum();
+            (s.host.name.clone(), s.used.saturating_sub(held))
+        })
+        .collect();
+    let Some(host) = packing::place(&hosts, &load, &frozen, need) else {
+        return Ok(None);
+    };
+    *load.entry(host.clone()).or_default() += need;
+    let mut claimed = Vec::new();
+    for id in packing::evictions(&hosts, &load, &frozen) {
+        let Ok(id) = id.parse::<Uuid>() else { continue };
+        if crate::tasks::take_in(t, core, id, crate::tasks::Kind::Freeze).await? {
+            claimed.push(id);
+        }
+    }
+    Ok(Some((host, claimed)))
+}
+
 /// Places starting sandbox `id` (start step 3): under lock 7300/5, the fullest placeable host with room for
 /// `memory` and the lowest free address of `sandbox_cidr`, recorded on the row in the same transaction, so the
-/// next placement on any replica counts it.
+/// next placement on any replica counts it. On a fabric that `freezes`, a frozen sandbox's slot is room too (its
+/// eviction is the second value: the claims to run once this commits).
 ///
 /// # Errors
 /// A database error, or no free address left.
 pub async fn place(
-    pool: &aviary_pg::Pool,
+    core: &crate::Core,
     sizing: Sizing,
     dead: std::time::Duration,
     sandbox_cidr: &str,
     id: Uuid,
     memory: u64,
-) -> Result<Place, FabricError> {
+    freezes: bool,
+) -> Result<(Place, Vec<Uuid>), FabricError> {
     let cidr = sandbox_cidr.to_owned();
     let cidr = &cidr; // borrowed: the transaction may run more than once (aviary_pg::tx!)
-    aviary_pg::tx!(pool, |t| -> Result<Place, FabricError> {
+    aviary_pg::tx!(&core.pool, |t| -> Result<(Place, Vec<Uuid>), FabricError> {
         t.execute(
             "select pg_advisory_xact_lock($1::int4, $2::int4)",
             &[&LOCK_CLASS, &LOCK_PLACE],
@@ -172,15 +247,24 @@ pub async fn place(
             )
             .await?
         {
-            return Ok(Place::Placed(Placement {
-                host: r.try_get(0)?,
-                ip: r.try_get(1)?,
-            }));
+            return Ok((
+                Place::Placed(Placement {
+                    host: r.try_get(0)?,
+                    ip: r.try_get(1)?,
+                }),
+                Vec::new(),
+            ));
         }
         let rules = rules_in(t, sizing, dead).await?;
         let slots = slots_in(t, &rules).await?;
-        let Some(s) = hosts::pick(&slots, None, sizing.size(memory)) else {
-            return Ok(Place::NoSlot);
+        let need = sizing.size(memory);
+        let (host, evicting) = match hosts::pick(&slots, None, need) {
+            Some(s) => (s.host.name.clone(), Vec::new()),
+            None if freezes => match reclaim(t, core, &rules, &slots, need).await? {
+                Some(x) => x,
+                None => return Ok((Place::NoSlot, Vec::new())),
+            },
+            None => return Ok((Place::NoSlot, Vec::new())),
         };
         let used: BTreeSet<IpAddr> = t
             .query(
@@ -197,16 +281,13 @@ pub async fn place(
         let n = t
             .execute(
                 "update sandboxes set host = $2, ip = $3 where id = $1 and status = 'starting'",
-                &[&id, &s.host.name, &ip],
+                &[&id, &host, &ip],
             )
             .await?;
         if n == 0 {
             return Err(FabricError("the sandbox is not starting".into()));
         }
-        Ok(Place::Placed(Placement {
-            host: s.host.name.clone(),
-            ip,
-        }))
+        Ok((Place::Placed(Placement { host, ip }), evicting))
     })
     .await
 }

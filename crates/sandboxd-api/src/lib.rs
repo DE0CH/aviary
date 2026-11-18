@@ -426,6 +426,8 @@ pub enum SandboxState {
     Running,
     /// A migration target waiting for its sandbox.
     Receiving,
+    /// Suspended here, memory and processes kept (`POST …/pause`; a resume goes on).
+    Paused,
     /// A state this version does not know (a newer sandboxd).
     #[serde(other)]
     Unknown,
