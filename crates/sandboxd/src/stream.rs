@@ -3,9 +3,9 @@
 //! it, and it only ever flows that one way. Two pipeline stages record and replay it:
 //!
 //! - `sandboxd stream-sink <listen ip:port> <timeout s>`: takes the one connection the checkpoint makes and copies the
-//!   stream to stdout (a freeze: `stream-sink | sandboxd seal | aws s3 cp - <key>`);
+//!   stream to stdout (a freeze: `stream-sink | sandboxd seal | sandboxd s3-put <object>`);
 //! - `sandboxd stream-source <restore ip:port> <timeout s>`: connects to the waiting restore and writes stdin to it (a
-//!   thaw: `aws s3 cp <key> - | sandboxd open | stream-source`).
+//!   thaw: `sandboxd s3-get <object> | sandboxd open | stream-source`).
 //!
 //! Each checks the framing as it passes (relay.rs [`Parser`]): exit 0 only when the stream ended exactly at its End
 //! record, so a cut or foreign stream never passes for a whole one.

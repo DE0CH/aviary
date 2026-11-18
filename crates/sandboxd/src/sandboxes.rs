@@ -738,8 +738,8 @@ impl Sandboxes {
     }
 
     /// `POST …/freeze` (jarvis4 docs/PLAN-fabric.md, "How a frozen image travels"): the sandbox's memory recorded as
-    /// a migration would send it (`runsc checkpoint --migrate-to` into `stream-sink | seal | aws s3 cp - <object>`),
-    /// then, stopped, its scratch file (`tar --sparse | seal | aws s3 cp - <object>.scratch`), then the sandbox is
+    /// a migration would send it (`runsc checkpoint --migrate-to` into `stream-sink | seal | s3-put <object>`),
+    /// then, stopped, its scratch file (`tar --sparse | seal | s3-put <object>.scratch`), then the sandbox is
     /// gone from this host. 409 with it still running when the freeze failed before it stopped; 502 when it failed
     /// after (the sandbox is lost; its persistent folders are not).
     pub fn freeze(&self, name: &str, t: &crate::freeze::Transfer, sc: &mut Scratch) -> Res<FreezeStats> {
@@ -760,24 +760,10 @@ impl Sandboxes {
         let aws_env = t.aws_env();
         let aws: [&str; 4] = [aws_env[0].as_str(), aws_env[1].as_str(), aws_env[2].as_str(), aws_env[3].as_str()];
         let seal_env = t.seal_env();
-        let mut expected: Str<24> = Str::new();
-        let _ = write!(expected, "{}", e.spec.memory + (64 << 20));
         let mem = proc::start_pipeline(&[
             (&["/proc/self/exe", "stream-sink", sink_at.as_str(), RELAY_TIMEOUT], &[]),
             (&["/proc/self/exe", "seal"], &[seal_env.as_str()]),
-            (
-                &[
-                    "aws",
-                    "s3",
-                    "cp",
-                    "-",
-                    t.object.as_str(),
-                    "--only-show-errors",
-                    "--expected-size",
-                    expected.as_str(),
-                ],
-                &aws,
-            ),
+            (&["/proc/self/exe", "s3-put", t.object.as_str()], &aws),
         ])?;
         let mut a = [""; 40];
         let argv = runsc::argv(
@@ -824,7 +810,7 @@ impl Sandboxes {
         let up = proc::start_pipeline(&[
             (&["tar", "--sparse", "-C", scratch_root.as_str(), "-cf", "-", file], &[]),
             (&["/proc/self/exe", "seal"], &[seal_env.as_str()]),
-            (&["aws", "s3", "cp", "-", scratch_obj.as_str(), "--only-show-errors"], &aws),
+            (&["/proc/self/exe", "s3-put", scratch_obj.as_str()], &aws),
         ])
         .and_then(|p| p.finish(30 * 60_000));
         if let Err(x) = up {
@@ -842,9 +828,8 @@ impl Sandboxes {
         Ok(st)
     }
 
-    /// `POST …/thaw`: a frozen sandbox back, here: its scratch file first (`aws s3 cp <object>.scratch - | open |
-    /// tar -x`), then its network, bundle and storage as for a create, then `runsc restore --migrate-listen` with the
-    /// recorded memory replayed into it (`aws s3 cp <object> - | open | stream-source`). Nothing is left on a failure.
+    /// `POST …/thaw`: a frozen sandbox back, here: its scratch file first (`s3-get <object>.scratch | open | tar -x`), then its network, bundle and storage as for a create, then `runsc restore --migrate-listen` with the
+    /// recorded memory replayed into it (`s3-get <object> | open | stream-source`). Nothing is left on a failure.
     pub fn thaw(&self, spec: &Spec, t: &crate::freeze::Transfer, sc: &mut Scratch) -> Res<()> {
         let name = spec.name.as_str();
         let lk = self.lock(name)?;
@@ -862,7 +847,7 @@ impl Sandboxes {
             crate::util::mkdir(scratch_root.as_str(), 0o700)?;
             let scratch_obj = t.scratch_object();
             proc::start_pipeline(&[
-                (&["aws", "s3", "cp", scratch_obj.as_str(), "-", "--only-show-errors"], &aws),
+                (&["/proc/self/exe", "s3-get", scratch_obj.as_str()], &aws),
                 (&["/proc/self/exe", "open"], &[seal_env.as_str()]),
                 (&["tar", "--sparse", "-C", scratch_root.as_str(), "-xf", "-"], &[]),
             ])?
@@ -900,7 +885,7 @@ impl Sandboxes {
             let restore = spawn(argv, &[], Io::Null, Io::Fd(out.as_raw_fd()), Io::Fd(errf.as_raw_fd()))?;
             drop((out, errf));
             let replay = proc::start_pipeline(&[
-                (&["aws", "s3", "cp", t.object.as_str(), "-", "--only-show-errors"], &aws),
+                (&["/proc/self/exe", "s3-get", t.object.as_str()], &aws),
                 (&["/proc/self/exe", "open"], &[seal_env.as_str()]),
                 (&["/proc/self/exe", "stream-source", listen.as_str(), RELAY_TIMEOUT], &[]),
             ]);

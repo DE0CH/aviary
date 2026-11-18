@@ -219,15 +219,16 @@ deployment's bucket, hermit `fabric.aws.imageBucket`; the proxy is balanced by a
 
 - `POST /v1/sandboxes/{name}/freeze` keeps a sandbox, RAM and processes included, off any host (jarvis4
   docs/PLAN-fabric.md, "How a frozen image travels"). Its memory is recorded as a migration would send it: `runsc
-  checkpoint --migrate-to 127.0.0.1:<port>` into `sandboxd stream-sink | sandboxd seal | aws s3 cp - <object>`. Once
-  it stopped, its scratch file follows (`tar --sparse | sandboxd seal | aws s3 cp - <object>.scratch`) and it is
+  checkpoint --migrate-to 127.0.0.1:<port>` into `sandboxd stream-sink | sandboxd seal | sandboxd s3-put <object>`. Once
+  it stopped, its scratch file follows (`tar --sparse | sandboxd seal | sandboxd s3-put <object>.scratch`) and it is
   deleted here. Nothing of its memory is written on the host.
 - `POST /v1/sandboxes/{name}/thaw` brings it back on any host: the scratch file first, then network, bundle and
-  storage as for a create, then `runsc restore --migrate-listen` with the recording replayed into it (`aws s3 cp
-  <object> - | sandboxd open | sandboxd stream-source`). A failure leaves nothing here.
+  storage as for a create, then `runsc restore --migrate-listen` with the recording replayed into it (`sandboxd
+  s3-get <object> | sandboxd open | sandboxd stream-source`). A failure leaves nothing here.
 - Both objects are sealed (seal.rs: AES-256-GCM in 1 MiB frames under the freeze's own key). The request carries the
   key and short-lived credentials for those objects only; each reaches only its own pipeline stage (`seal`/`open`,
-  `aws`). The host needs the AWS CLI; it holds no credentials of its own.
+  `s3-put`/`s3-get`: SigV4 signed in sandboxd, sent with curl, 64 MiB parts in the stage's own memory, s3.rs). The
+  host needs no AWS CLI and holds no credentials of its own.
 
 ## Capacity
 

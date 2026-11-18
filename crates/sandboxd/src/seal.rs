@@ -8,7 +8,7 @@
 //! ends before a frame marked last does not open ([`Opener::finish`]).
 //!
 //! `sandboxd seal` and `sandboxd open` ([`main`]) run it as a stage of a pipeline (stdin to stdout, the key in
-//! `SBX_SEAL_KEY` as 64 hex digits): a freeze is `tar | sandboxd seal | aws s3 cp - …`, a thaw the reverse, so no byte
+//! `SBX_SEAL_KEY` as 64 hex digits): a freeze is `stream-sink | sandboxd seal | sandboxd s3-put …`, a thaw the reverse, so no byte
 //! of an image passes through the daemon's fixed memory.
 
 use crate::err;

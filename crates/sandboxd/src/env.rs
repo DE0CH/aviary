@@ -29,3 +29,15 @@ pub fn config() -> Option<String> {
 pub fn seal_key() -> Option<String> {
     std::env::var("SBX_SEAL_KEY").ok()
 }
+
+/// The S3 stages' credentials (s3.rs): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
+/// `AWS_DEFAULT_REGION`, and `SBX_S3_ENDPOINT` (tests: another endpoint, path-style).
+pub fn s3_env() -> [Option<String>; 5] {
+    [
+        std::env::var("AWS_ACCESS_KEY_ID").ok(),
+        std::env::var("AWS_SECRET_ACCESS_KEY").ok(),
+        std::env::var("AWS_SESSION_TOKEN").ok(),
+        std::env::var("AWS_DEFAULT_REGION").ok(),
+        std::env::var("SBX_S3_ENDPOINT").ok(),
+    ]
+}

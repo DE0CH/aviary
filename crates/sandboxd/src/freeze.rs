@@ -102,7 +102,7 @@ impl Transfer {
         o
     }
 
-    /// The `aws` stage's environment (the credentials go to that stage only).
+    /// The `s3-put`/`s3-get` stage's environment (the credentials go to that stage only).
     pub fn aws_env(&self) -> [Str<4160>; 4] {
         let mut e = [Str::<4160>::new(); 4];
         let _ = write!(e[0], "AWS_ACCESS_KEY_ID={}", self.access_key_id.as_str());

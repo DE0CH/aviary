@@ -58,6 +58,8 @@ mod proc;
 #[allow(unsafe_code)] // syscalls and fixed memory; every block has a SAFETY comment
 mod relay;
 mod runsc;
+#[allow(unsafe_code)] // the stage's own part buffer; every block has a SAFETY comment
+mod s3;
 #[allow(unsafe_code)] // syscalls and fixed memory; every block has a SAFETY comment
 mod sandboxes;
 #[allow(unsafe_code)] // the stage's own frame buffer and fds; every block has a SAFETY comment
@@ -356,6 +358,9 @@ fn main() {
     }
     if let Some(stage @ ("seal" | "open")) = args.get(1).map(String::as_str) {
         std::process::exit(seal::main(stage == "open"));
+    }
+    if let Some(stage @ ("s3-put" | "s3-get")) = args.get(1).map(String::as_str) {
+        std::process::exit(s3::main(stage == "s3-get", &args[2..]));
     }
     if args.get(1).map(String::as_str) == Some("stream-sink") {
         std::process::exit(stream::sink_main(&args[2..]));

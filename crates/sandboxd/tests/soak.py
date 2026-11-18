@@ -11,7 +11,7 @@ Runs two daemons (A on 127.0.0.1, B on 127.0.0.2) and a gateway (G on 127.0.0.3,
 Usage: sudo -E python3 tests/soak.py BINARY [--seconds N] [--dump DIR] [--node ../src/main.ts]   (--node: run the same load
 against the Node sandboxd for comparison, RSS only)
 """
-import argparse, http.client, json, os, random, shutil, signal, socket, ssl, stat, subprocess, sys, tempfile, threading, time
+import argparse, http.client, http.server, json, os, random, shutil, signal, socket, ssl, stat, subprocess, sys, tempfile, threading, time, urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FAKE = os.path.join(HERE, "fake")
@@ -52,7 +52,7 @@ class Daemon:
         json.dump({"name": name, "wgAddress": ip, **addrs, "apiPort": 17443, **role,
                    "tls": {"ca": f"{pki}/ca.crt", "cert": f"{pki}/gateway.crt", "key": f"{pki}/gateway.key"}, "limits": lim}, open(self.cfg, "w"))
         self.env = dict(SBX_ROOT=self.root, SBX_CONFIG=self.cfg, SBX_RUNSC=f"{FAKE}/runsc", SBX_FAKE=f"{self.base}/fake",
-                        FAKE_S3=f"{base}/s3", PATH=f"{FAKE}:{os.environ['PATH']}", **(env_extra or {}))
+                        SBX_S3_ENDPOINT=f"http://127.0.0.1:{S3_PORT}", PATH=f"{FAKE}:{os.environ['PATH']}", **(env_extra or {}))
         self.binary, self.node, self.proc = binary, node, None
         self.log = open(f"{self.base}/log", "a")
 
@@ -127,6 +127,68 @@ class Client:
                    "response": out[1] if isinstance(out[1], (dict, list)) else None}
             json.dump(rec, open(os.path.join(self.dump, f"{self.n:04d}.json"), "w"))
         return out
+
+
+S3_PORT = 17480
+
+
+def fake_s3(root):
+    """A stand-in for S3 as sandboxd's s3-put/s3-get use it (path-style, multipart): objects are files under `root`
+    (whole or not at all, as S3 shows them). Every request must be signed (SigV4) with a session token: a freeze's
+    credentials are short-lived ones."""
+    uploads = {}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def reply(self, code, body=b"", headers=()):
+            self.send_response(code)
+            for k, v in headers:
+                self.send_header(k, v)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def handle_one(self):
+            if not self.headers.get("Authorization", "").startswith("AWS4-HMAC-SHA256 Credential=") \
+                    or not self.headers.get("x-amz-security-token"):
+                return self.reply(403, b"<Error><Code>AccessDenied</Code><Message>unsigned</Message></Error>")
+            u = urllib.parse.urlsplit(self.path)
+            q = urllib.parse.parse_qs(u.query, keep_blank_values=True)
+            path = os.path.join(root, urllib.parse.unquote(u.path).lstrip("/"))
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0)) if self.command in ("PUT", "POST") else b""
+            if self.command == "POST" and "uploads" in q:
+                uid = os.urandom(8).hex(); uploads[uid] = {}
+                return self.reply(200, f"<InitiateMultipartUploadResult><UploadId>{uid}</UploadId></InitiateMultipartUploadResult>".encode())
+            if self.command == "PUT" and "uploadId" in q:
+                parts = uploads.get(q["uploadId"][0])
+                if parts is None:
+                    return self.reply(404, b"<Error><Code>NoSuchUpload</Code></Error>")
+                parts[int(q["partNumber"][0])] = body
+                return self.reply(200, headers=[("ETag", f'"{len(body):x}-{int(q["partNumber"][0])}"')])
+            if self.command == "POST" and "uploadId" in q:
+                parts = uploads.pop(q["uploadId"][0], None)
+                if parts is None:
+                    return self.reply(404, b"<Error><Code>NoSuchUpload</Code></Error>")
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                open(path + ".part", "wb").write(b"".join(parts[n] for n in sorted(parts)))
+                os.replace(path + ".part", path)
+                return self.reply(200, b"<CompleteMultipartUploadResult></CompleteMultipartUploadResult>")
+            if self.command == "DELETE" and "uploadId" in q:
+                uploads.pop(q["uploadId"][0], None)
+                return self.reply(204)
+            if self.command == "GET":
+                if not os.path.exists(path):
+                    return self.reply(404, b"<Error><Code>NoSuchKey</Code></Error>")
+                return self.reply(200, open(path, "rb").read())
+            return self.reply(400, b"<Error><Code>BadRequest</Code></Error>")
+
+        do_GET = do_PUT = do_POST = do_DELETE = handle_one
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", S3_PORT), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
 
 
 def spec(n, ip, mem=1 << 30):
@@ -476,6 +538,7 @@ def main():
     budget = subprocess.run([a.budget_binary or a.binary, "budget"], capture_output=True, text=True).stdout
     rss_bound = float([l for l in budget.splitlines() if "resident (RSS) bound" in l][0].split()[-2]) * 2**20
     cl, intruder = Client(pki), Client(pki, "intruder")
+    fake_s3(f"{base}/s3")
     A = Daemon(base, "a", "127.0.0.1", a.binary, pki, {"FAKE_MIGRATE_MS": "200"}).start()
     B = Daemon(base, "b", "127.0.0.2", a.binary, pki, {"FAKE_MIGRATE_MS": "200"}).start()
     G = Daemon(base, "g", "127.0.0.3", a.binary, pki, gateway=True).start()
