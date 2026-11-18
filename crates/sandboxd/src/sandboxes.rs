@@ -633,7 +633,21 @@ impl Sandboxes {
         let mut b = Buf::new(sc.big);
         let root = crate::storage::setup(spec)?;
         let scratch = crate::storage::scratch_dir(spec.name.as_str());
-        runsc::bundle_spec(&mut b, spec, &env[..n], &args[..na], root.as_str(), scratch.as_str());
+        // a sandbox that reaches the internet itself resolves names as its host's sandboxes do (net.rs `RESOLVERS`)
+        let resolv = crate::paths::join(crate::paths::run_dir().as_str(), "/resolv.conf");
+        let direct = self.cfg.direct_egress && !self.cfg.hub;
+        if direct {
+            crate::util::write_file_atomic(resolv.as_str(), net::RESOLVERS.as_bytes(), 0o644)?;
+        }
+        runsc::bundle_spec(
+            &mut b,
+            spec,
+            &env[..n],
+            &args[..na],
+            root.as_str(),
+            scratch.as_str(),
+            direct.then_some(resolv.as_str()),
+        );
         if b.full {
             return Err(Error::new(500, "bundle too large"));
         }

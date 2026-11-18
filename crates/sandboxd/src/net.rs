@@ -98,6 +98,10 @@ table inet {t} {{
     let _ = write!(b, "    oifname \"{v}\" counter drop\n  }}\n}}\n");
 }
 
+/// The resolv.conf of a sandbox with direct egress (runsc.rs `bundle_spec`): public resolvers, which its table lets it
+/// reach (the cloud's own resolver is a link-local or VPC address, which it does not).
+pub const RESOLVERS: &str = "nameserver 1.1.1.1\nnameserver 8.8.8.8\noptions timeout:2 attempts:2\n";
+
 /// IPv4 ranges that are never the internet (RFC 6890's private, shared, loopback, link-local, benchmark, multicast
 /// and reserved space; link-local holds the cloud's metadata address): a sandbox with direct egress reaches none.
 const NOT_INTERNET: &str = "0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, \

@@ -1658,6 +1658,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fabric-replica"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hermit",
+ "sandboxd-api",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "fake-access"
 version = "0.0.0"
 dependencies = [
