@@ -353,6 +353,55 @@ fn model_cache() -> Duration {
     pigeon::feeds::LIST_CACHE + Duration::from_millis(100)
 }
 
+/// The app takes a page before its cursor only when the page ends right before it (`endCursor` = cursor - 1) and
+/// otherwise asks for the same page again. Row seqs have gaps (an update takes the next seq) and a row updated after
+/// a later row began ends past it: YYC AI's video conversation had row 699 at version 701 under row 700, the app
+/// asked "before 700" forever and could not scroll back above it.
+#[tokio::test]
+async fn a_page_before_a_cursor_ends_right_before_it() {
+    let e = env().await;
+    let c = e.m.add(STAFF, Some("t"));
+    for i in 1..=5 {
+        e.m.row(c, None, assistant(&format!("a{i}")));
+    }
+    let call = e.m.row(c, None, tool("t6", "Bash", json!({"command": "ls"})));
+    e.m.row(c, None, assistant("a7"));
+    // the call (row 6) completed after row 7 began: seq 8, a gap in the row seqs
+    e.m.update(c, call, |i| complete(i, "a.txt\n"));
+    e.m.row(c, None, assistant("a9"));
+    e.m.row(c, None, assistant("a10"));
+    let epoch = e.m.epoch(c);
+    let mut ws = e.ws(STAFF).await;
+    let (_, p) = ws
+        .rpc(
+            "fetch_agent_timeline_request",
+            json!({"agentId": c, "direction": "tail", "limit": 2}),
+        )
+        .await;
+    assert_eq!(p["startCursor"]["seq"], 9);
+    let mut start = 9;
+    let mut seen = vec![9, 10];
+    while start > 1 {
+        let (_, p) = ws
+            .rpc(
+                "fetch_agent_timeline_request",
+                json!({"agentId": c, "direction": "before", "cursor": {"epoch": epoch, "seq": start}, "limit": 2}),
+            )
+            .await;
+        assert_eq!(p["endCursor"]["seq"], start - 1, "the page before {start}");
+        let page: Vec<u64> = p["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["seqStart"].as_u64().unwrap())
+            .collect();
+        start = p["startCursor"]["seq"].as_u64().unwrap();
+        assert_eq!(page.first(), Some(&start));
+        seen.splice(0..0, page);
+    }
+    assert_eq!(seen, vec![1, 2, 3, 4, 5, 6, 7, 9, 10]);
+}
+
 #[tokio::test]
 async fn timeline_pages_stale_epochs_prompts_and_not_found() {
     let e = env().await;

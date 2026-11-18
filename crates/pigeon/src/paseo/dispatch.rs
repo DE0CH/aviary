@@ -547,7 +547,15 @@ impl Handler {
             .collect();
         let epoch = page.epoch.clone();
         let start = page.rows.first().map(|r| json!({"epoch": epoch, "seq": r.seq_start}));
-        let end = page.rows.last().map(|r| json!({"epoch": epoch, "seq": r.seq_end}));
+        // A page before a cursor covers every row up to the cursor: row seqs have gaps (an update takes the next seq,
+        // a rolled-back row leaves its own) and a row's end is its newest version, so its last row's end is not where
+        // the app's history continues (the app took a page that ended past its cursor as a gap and asked again).
+        let end = match (direction, cursor_seq, stale) {
+            ("before", Some(s), false) if !page.rows.is_empty() => {
+                Some(json!({"epoch": epoch, "seq": s.saturating_sub(1)}))
+            }
+            _ => page.rows.last().map(|r| json!({"epoch": epoch, "seq": r.seq_end})),
+        };
         let mut payload = json!({
             "requestId": self.rid, "agentId": id, "agent": agent_snapshot(&conv, &o.view()), "direction": direction,
             "projection": "projected", "epoch": epoch, "reset": stale, "staleCursor": stale, "gap": false,
