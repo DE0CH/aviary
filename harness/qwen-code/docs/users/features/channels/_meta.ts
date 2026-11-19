@@ -1,0 +1,16 @@
+export default {
+  overview: 'Overview',
+  telegram: 'Telegram',
+  weixin: 'WeChat',
+  dingtalk: 'DingTalk',
+  'dingtalk-webhook': 'DingTalk Webhook Sending',
+  dws: 'DingTalk Workspace',
+  wecom: 'WeCom',
+  'wecom-callback': 'WeCom Callback',
+  feishu: 'Feishu',
+  qqbot: 'QQ Bot',
+  email: 'Email',
+  github: 'GitHub',
+  gitlab: 'GitLab',
+  plugins: 'Plugins',
+};

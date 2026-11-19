@@ -1,0 +1,119 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { SettingScope, type LoadedSettings } from './settings.js';
+import type { Config } from '@qwen-code/qwen-code-core';
+import { AuthType } from '@qwen-code/qwen-code-core/utils/auth-type.js';
+
+export function hasOwnModelProviders(settingsObj: unknown): boolean {
+  if (!settingsObj || typeof settingsObj !== 'object') {
+    return false;
+  }
+  const obj = settingsObj as Record<string, unknown>;
+  // Treat an explicitly configured empty object (modelProviders: {}) as "owned"
+  // by this scope: ownership is keyed on presence of the setting, not on
+  // whether it has any entries.
+  return Object.prototype.hasOwnProperty.call(obj, 'modelProviders');
+}
+
+/**
+ * Returns which writable scope (Workspace/User) owns the effective modelProviders
+ * configuration.
+ *
+ * Note: Workspace scope is only considered when the workspace is trusted.
+ */
+export function getModelProvidersOwnerScope(
+  settings: LoadedSettings,
+): SettingScope | undefined {
+  if (settings.isTrusted && hasOwnModelProviders(settings.workspace.settings)) {
+    return SettingScope.Workspace;
+  }
+
+  if (hasOwnModelProviders(settings.user.settings)) {
+    return SettingScope.User;
+  }
+
+  return undefined;
+}
+
+/**
+ * Choose the settings scope to persist a model selection.
+ * Prefer persisting back to the scope that contains the effective modelProviders
+ * config, otherwise fall back to the legacy trust-based heuristic.
+ */
+export function getPersistScopeForModelSelection(
+  settings: LoadedSettings,
+): SettingScope {
+  // Subscription activation owns workspace auth/model settings without a
+  // modelProviders entry; writing to User would be shadowed on restart.
+  if (
+    settings.isTrusted &&
+    settings.workspace.settings.security?.auth?.selectedType ===
+      AuthType.QWEN_SUBSCRIPTION
+  ) {
+    return SettingScope.Workspace;
+  }
+  return getModelProvidersOwnerScope(settings) ?? SettingScope.User;
+}
+
+export function getSubscriptionStartupFallbackModel(
+  settings: LoadedSettings,
+  authType: AuthType | undefined,
+  config: Pick<Config, 'getModel'>,
+): string | undefined {
+  if (
+    authType !== AuthType.QWEN_SUBSCRIPTION ||
+    !settings.isTrusted ||
+    !settings.workspaceSettingsActive
+  ) {
+    return undefined;
+  }
+  const { user, workspace, system } = settings;
+  const enforcedType = settings.merged.security?.auth?.enforcedType;
+  const projectModel = workspace.settings.model;
+  if (
+    projectModel?.name &&
+    projectModel.name === config.getModel() &&
+    user.settings.security?.auth?.selectedType === authType &&
+    (!enforcedType || enforcedType === authType) &&
+    workspace.settings.security?.auth?.selectedType === undefined &&
+    !projectModel.baseUrl &&
+    workspace.settings.modelProviders === undefined &&
+    system.settings.security?.auth?.selectedType === undefined &&
+    system.settings.model?.name === undefined
+  ) {
+    return user.settings.model?.name;
+  }
+  return undefined;
+}
+
+/**
+ * The writable scopes that contribute to the effective (merged) config, highest
+ * precedence first. Workspace is only writable/honored when trusted.
+ */
+export function getWritableScopes(settings: LoadedSettings): SettingScope[] {
+  return settings.isTrusted
+    ? [SettingScope.Workspace, SettingScope.User]
+    : [SettingScope.User];
+}
+
+/**
+ * Returns the highest-precedence writable scope that explicitly owns `key`
+ * (top-level settings key), or `undefined` when no writable scope sets it.
+ * Used to persist an edit to a key back to the same scope it lives in, since
+ * keys like `modelFallbacks` / `model` are independently scoped from
+ * `modelProviders`.
+ */
+export function getOwnKeyScope(
+  settings: LoadedSettings,
+  key: string,
+): SettingScope | undefined {
+  for (const scope of getWritableScopes(settings)) {
+    const obj = settings.forScope(scope).settings as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(obj, key)) return scope;
+  }
+  return undefined;
+}
