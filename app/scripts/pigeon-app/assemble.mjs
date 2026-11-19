@@ -8,7 +8,7 @@
 //                     [--pins FILE [--growth-days 7]]
 //
 // --dist          the export (scripts/build-paseo-ui.mjs writes dist/)
-// --sw            public/sw.js, served at /sw.js (the old service worker's kill switch)
+// --sw            app/public/sw.js, served at /sw.js (the old service worker's kill switch)
 // --previous      the filesystem of the previous pigeon-app image (its app/ and meta/), absent on the first build
 // --seeds         a directory of fetch-seeds.mjs output, one <tag>/ per yyc-ai-ui image; --seed names each image served
 //                 within the Access session lifetime with its claudecodeui commit
