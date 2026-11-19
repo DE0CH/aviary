@@ -24,6 +24,8 @@ if (!dist || !fs.existsSync(path.join(dist, "index.html"))) {
 if (out) fs.mkdirSync(out, { recursive: true });
 
 const workspace = (n) => `/h/srv_conversations/workspace/wks_0000000${n}-0000-4000-8000-000000000000`;
+// a view-as tab (paseo yyc/view-as.ts): the app reads the token's claims from the address; the stand-in checks nothing
+const VIEW_AS = `#jarvis-view-as=${Buffer.from(JSON.stringify({ a: "admin@yyc.hk", u: "yoyo.ma@yyc.hk", e: 4102444800 })).toString("base64url")}.sig`;
 
 // One entry per screen or state: where it starts, what a person does to get there and (optional `check`) what must
 // then be on the screen.
@@ -70,6 +72,7 @@ const STATES = [
   { name: "schedules", at: workspace(3), run: (p) => p.tap('[data-testid="schedules-chip"]') },
   { name: "activity chip", at: workspace(4) },
   { name: "activity", at: workspace(4), run: (p) => p.tap('[data-testid="activity-chip"]') },
+  { name: "view as, raw transcript chip", at: workspace(4) + VIEW_AS, run: (p) => p.see('[data-testid="raw-transcript-chip"]') },
   { name: "a question from the AI", at: workspace(5), run: (p) => p.scroll(1) },
   { name: "a message waiting for the network", at: workspace(1), run: async (p) => { await p.type("多謝！"); await p.tap('[aria-label="傳送"]'); await p.wait(6500); } },
   { name: "a shared conversation", at: "/s/sh1" },
@@ -129,6 +132,7 @@ async function walk(browser, base, state) {
   const problems = [];
   const helpers = {
     wait: (ms) => page.waitForTimeout(ms),
+    see: (selector) => page.locator(selector).first().waitFor({ state: "visible", timeout: 8000 }),
     tap: async (selector) => {
       await page.locator(selector).first().click({ timeout: 8000 });
       await page.waitForTimeout(900);
