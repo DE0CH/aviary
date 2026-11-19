@@ -17,7 +17,7 @@ notes in `/home/claude/artifacts/refactor/` and is the place to read the system 
 | `spec-supervisor.md` | supervisor and keeper: process model, FUSE, stream-json driver, lifecycle API |
 | `spec-cutover.md` | the importer (sync, byte-exact verification, release transaction), the one-off copies, the front door's tofu, the P0-P2 work, deletion lists; its switch-over sections follow section 9 here |
 | `switch-final.md` | the mechanisms section 9 keeps and cites (the legacy upstream's contract, tickets on an outcome, fence and release, upload ingestion, reverse-export completeness); its observer, move rule, person states, remap and in-place upgrade are superseded by section 9 (decision 11). Its section 23 overrides its earlier sections, and "as A §n" imports `switch-A.md` section n |
-| `deploy-workflows.md` | how `yyc-ai/deploy` is applied: workflow `yyc-ai.yml`, applier `yyc-apply`, OIDC identity, tunnel `yyc-deploy`, the new cluster as its target with no Flux hand-over (decisions 1 and 13; its 12) |
+| `deploy-workflows.md` | how `yyc/deploy` is applied: workflow `yyc-ai.yml`, applier `yyc-apply`, OIDC identity, tunnel `yyc-deploy`, the new cluster as its target with no Flux hand-over (decisions 1 and 13; its 12) |
 | `pg-ha.md` | section 4 only: `magpie-pg` (decision 2) and the `db` NetworkPolicies; its plan for an HA Cluster `pg` is dropped (decision 10) |
 
 Precedence: `DECISIONS.md`, then this document (section 9 for the switch, section 15 for the two clusters), then `switch-final.md` for the switch
@@ -56,7 +56,7 @@ Contents
 | Rust | pigeon, magpie, hermit, supervisor, keeper, sandboxd, the importer, the cutover runner, the test fakes. egress and tools stay TypeScript in jarvis3 (they keep their names and role). The Paseo web and iOS apps stay in DE0CH/claudecodeui. |
 | Clean-cut migrations | per conversation: owned by the old system, then by magpie, never both (section 9). No dual reads, no mirror after the hand-over, no alias routes. The window code (the importer, pigeon's legacy upstream, tickets and fence, the router's switch module, `migrating`) is deleted in A6; the legacy-path resolution of attachments (`import_uploads`, `uploads.legacy_path`) in A7 (9.7). |
 | Zero downtime | every service runs at least 2 replicas, surge-first rolling updates, readiness that never depends on a shared dependency, ordered drains, leader locks for singletons, resumable work (section 8); magpie's own Postgres cluster is highly available (11). Stated gaps: the single gateway node and the single-instance shared Cluster `pg` (7.3, decision 10). The switch-over allows only decision 11's brief reconnects (section 9). |
-| GitOps through workflows | a push to DE0CH/YYC applies `yyc-ai/deploy` (the new stack) to the new Talos cluster through workflow `yyc-ai.yml` (decision 1, `deploy-workflows.md`): plan against the live state, deletions only when a commit names them, every rollout waited for. The new cluster's cluster-level objects and databases are applied by that cluster's own workflow. The old stack stays on the old cluster's Flux, from `yyc-ai/legacy/`, until A6 (decision 13, 15.3). |
+| GitOps through workflows | a push to DE0CH/YYC applies `yyc/deploy` (the new stack) to the new Talos cluster through workflow `yyc-ai.yml` (decision 1, `deploy-workflows.md`): plan against the live state, deletions only when a commit names them, every rollout waited for. The new cluster's cluster-level objects and databases are applied by that cluster's own workflow. The old stack stays on the old cluster's Flux, from `yyc-ai/legacy/`, until A6 (decision 13, 15.3). |
 | Read-only data-analysis product | no confirmations and no outward actions are added anywhere. The agent's AskUserQuestion/ExitPlanMode is relayed only because an unanswerable question would hang the turn. |
 | YYC-specific logic only in hermit, egress, tools | the YYC hermit implementation (gVisor on AWS, scaler, packing, migration, JuiceFS, ops page), YYC egress (allowlist, threat DNS, upload cap, OpenRouter with ZDR, budget), YYC tools (yyc-mcp, Exa, TikHub, AnyAPI, capture). |
 | Jarvis 4 stays open | not designed here. What is built so another deployment can plug in: the hermit contract with its conformance suite, the gateway contract with its conformance suite, the `model` contract, static binaries in every `aviary-<sha12>` release. |
@@ -132,7 +132,7 @@ names, never resolved by DNS:
 | DE0CH/aviary (new, public, AGPL-3.0-or-later, decision 3) | one Cargo workspace: `crates/{aviary-core, aviary-pg, magpie-api, hermit-api, supervisor-api, gateway-api, sandboxd-api, pigeon, magpie, magpie-import (until A6), hermit, supervisor, sandboxd}`, `fabric/{host,aws,gvisor-patches}`, `images/{pigeon,magpie,hermit,sandboxd,sandbox}`, `testing/{fakes, mock-model, fake-tools, test-gateway, fake-sandboxd, fake-access, conformance, e2e, paseo-contract}`, `docs/{CONTRACTS.md, HARNESS.md}`, `.github/workflows/{ci.yml, nightly.yml, clients.yml}` |
 | DE0CH/jarvis3 | egress and tools only (image `jarvis3-chat`), with their own databases and the gateway contract; loses `chat/src/web`, `chat/sandbox`, `chat/sandboxd`, `deploy/chat`, the E2B and Kubernetes providers |
 | DE0CH/claudecodeui | the Paseo apps; new workflow `pigeon-app.yml` builds the web bundle image; for the window, the router's switch module in `jarvis/router.mjs`, shipped by one ordinary ui rollout in A1 (9.6); loses `jarvis/router.mjs` and the sandbox form of Jarvis mode in A6 (Jarvis 4's local mode stays untouched) |
-| DE0CH/YYC | `yyc-ai/deploy` (new layout, section 11), `catalogue.json`, tofu, workflow `yyc-ai.yml` with the applier `tools/yyc-apply`, the `cutover` runner (until A6); the old stack in `yyc-ai/legacy/` (Flux on the old cluster, until A6); the new cluster's cluster-level objects in `news-stream/deploy/clusters/talos/` (`yyc-ai-access.yaml`, `deploy-access.yaml`, `juicefs-csi.yaml`) and `magpie-pg`, `pg-shared` in its `db/`; the roles and databases `hermit`, `egress`, `tools` in `news-stream/deploy/db/postgres.yaml` (Cluster `pg`, old cluster); `yyc-ai/infra/{talos-ready.sh, bridges.sh}` (15.2, 15.5) |
+| DE0CH/YYC | `yyc/deploy` (new layout, section 11), `catalogue.json`, tofu, workflow `yyc-ai.yml` with the applier `tools/yyc-apply`, the `cutover` runner (until A6); the old stack in `yyc-ai/legacy/` (Flux on the old cluster, until A6); the new cluster's cluster-level objects in `news-stream/deploy/clusters/talos/` (`yyc-ai-access.yaml`, `deploy-access.yaml`, `juicefs-csi.yaml`) and `magpie-pg`, `pg-shared` in its `db/`; the roles and databases `hermit`, `egress`, `tools` in `news-stream/deploy/db/postgres.yaml` (Cluster `pg`, old cluster); `yyc/infra/{talos-ready.sh, bridges.sh}` (15.2, 15.5) |
 
 One aviary commit is one release of everything: `ghcr.io/de0ch/<name>:<sha12>` images pushed only after the
 integration harness passes on `main`, and one GitHub release `aviary-<sha12>` with every static binary and
@@ -1146,10 +1146,10 @@ What is left to state to Deyao is in 14 (residual risks), not an exception.
 | DE0CH/claudecodeui | `jarvis/router.mjs` (with its switch module), `jarvis/Dockerfile`, router tests, `jarvis-image.yml`, the sandbox form of Jarvis mode in `server/modules/jarvis/*` (guard sandbox branch, view-as, shares, sent files, clone, purge, sandbox process), the Paseo bridge `server/modules/paseo` as a server for YYC; the gap-recorder flag of the web build unless kept as a generic test aid; Jarvis 4's local mode stays | A6 |
 | DE0CH/jarvis3 | `chat/src/web/**`, `chat/sandbox/**`, `chat/sandboxd/**` (moved), `deploy/chat/**`, web parts of `chat/src/common`, `kv` announcements, `/x/<route>` paths, `/wire`, E2B code, `/x/sent-files`, `JARVIS_ROLE`, `JARVIS_CONFIG`, `JARVIS_SENT_FILES_TOKEN`, `sandboxd.yml`, the `import-jarvis` and export commands, docs of the removed parts | A6 (egress/tools changes land in A0; from then until A6 `deploy/chat/egress.yaml` pins the old stack's egress to `jarvis3-chat:f91907d349e6`, the last image of the old egress, and from WP-26 on `deploy/chat/tools.yaml` pins the old stack's tools to the same image (`src/main.ts` refuses `JARVIS_ROLE=tools` and `egress`); only web still starts from `JARVIS_ROLE`, so an old-stack jarvis3 bump ships web fixes only, no egress or tools change, the weekly allowlist refresh included; the pin rolls nothing back: `chat/src/tools` and `chat/src/common` are unchanged between YYC's tag 52c9b8c and f91907d; WP-25 and WP-26 reviews) |
 | DE0CH/aviary | at A6: `crates/magpie-import`, `magpie import …`, `migrating` and its 409, pigeon's LU, tickets, fence, the copy-at-send of attachments into the old child, the legacy view-as key, the LU contract rig, the persona rig's switch personas and legacy-in-a-box nightly, hermit `import-jarvis`, `legacy-down.sh`; at P6 `legacy-cleanup`; at A7 the legacy-path set (`import_uploads`, `uploads.legacy_path`, the resolution in M3/M7) | A6, P6, A7 |
-| DE0CH/YYC | `yyc-ai/deploy/legacy/`, `config.json`, top-level `system-prompt.md`, `jobs/`, `yyc-ai-ami.yml`, the ZDR guard's old half, `yyc-ai/cutover/` (runner, patches, `freeze-check`), `infra/gvisor-node.sh`, old Secret rows, README sections on ui; the deployer's `jarvis` RoleBinding, the `kube-system` Role and the `gvisor`/`yyc-ai-jfs` names in `clusters/hetzner/yyc-ai-access.yaml` | A6 |
+| DE0CH/YYC | `yyc/deploy/legacy/`, `config.json`, top-level `system-prompt.md`, `jobs/`, `yyc-ai-ami.yml`, the ZDR guard's old half, `yyc-ai/cutover/` (runner, patches, `freeze-check`), `infra/gvisor-node.sh`, old Secret rows, README sections on ui; the deployer's `jarvis` RoleBinding, the `kube-system` Role and the `gvisor`/`yyc-ai-jfs` names in `clusters/hetzner/yyc-ai-access.yaml` | A6 |
 | GHCR | `yyc-ai-ui`, later `jarvis3-sandbox` | A6 |
 | Relay (staff's own Claude Code on the model route; YYC README "Relay", jarvis3 650f6ff, live since 2026-11-02) | **Decision 14: disrupted (Deyao is its only user); no WP-58 in this plan.** Before decision 14: the new egress has no relay listener, no `relay_tokens` and no token page (web is deleted; egress.json routes are exactly `model` and `tools`). Keep = its own work package, WP-58 (an egress-owned token table, an admin API, a pigeon page, the `ai-relay` tunnel route to the new egress) landing before A3; drop = relay users told before A3, then `relay: true`, `relay.tf` and the `YYC_AI_RELAY_*` keys go in A6 | A3 (the old stack's relay works until A5) |
-| Sandbox routes (decision 15; was "route MCP servers": an old-stack egress route with `sandbox: true`, jarvis3 adcd983, docs/CLAUDE-CODE.md "Skills and sandbox routes"; YYC's label store: route `labels` to `https://labels.yyc-internal.com`, the Access service token `yyc-labels-ai` injected, `X-Jarvis-Conversation` added, path `/api/v1/`, the REST API the `labels` skill teaches) | **Not deleted, carried by WP-61** (Deyao, 2026-11-03: YYC AI may change YYC's own internal data): the new egress has no `/x/<name>` paths, so the label store is the configured route `labels` (WP-61's choice: a generic configured route kind, platform 3.11.8; egress.json route `labels` with `inject`, `allowPaths: ["/api/v1/"]`, `identityHeaders` `X-Jarvis-Conversation`), the `labels` skill among the managed skills (WP-62, `yyc-ai/deploy/hermit/skills/`), landing before A3; at A6 the old route, `JARVIS_ROUTE_*` and `JARVIS_EGRESS_TOKEN` go with web | A6 (the old stack's route works until A5) |
+| Sandbox routes (decision 15; was "route MCP servers": an old-stack egress route with `sandbox: true`, jarvis3 adcd983, docs/CLAUDE-CODE.md "Skills and sandbox routes"; YYC's label store: route `labels` to `https://labels.yyc-internal.com`, the Access service token `yyc-labels-ai` injected, `X-Jarvis-Conversation` added, path `/api/v1/`, the REST API the `labels` skill teaches) | **Not deleted, carried by WP-61** (Deyao, 2026-11-03: YYC AI may change YYC's own internal data): the new egress has no `/x/<name>` paths, so the label store is the configured route `labels` (WP-61's choice: a generic configured route kind, platform 3.11.8; egress.json route `labels` with `inject`, `allowPaths: ["/api/v1/"]`, `identityHeaders` `X-Jarvis-Conversation`), the `labels` skill among the managed skills (WP-62, `yyc/deploy/hermit/skills/`), landing before A3; at A6 the old route, `JARVIS_ROUTE_*` and `JARVIS_EGRESS_TOKEN` go with web | A6 (the old stack's route works until A5) |
 | Store `yyc` | `YYC_JARVIS_CC_TOKEN`, `YYC_JARVIS_SENT_FILES_TOKEN`, `YYC_CLOUDCLI_*`, `YYC_PG_CLOUDCLI_PASSWORD`, `YYC_JARVIS_DATABASE_URL`, `YYC_PG_JARVIS_PASSWORD`, `YYC_SBX_*`, `YYC_CF_AI_TUNNEL_TOKEN`, `YYC_SANDBOX_GHCR_DOCKERCONFIGJSON`, `YYC_AI_AMI_AWS_*`, the old scaler key, `YYC_TOKEN_PIGEON_UI`, `YYC_TOKEN_MAGPIE_IMPORT_UI`, `YYC_PIGEON_LEGACY_VIEW_AS_KEY` | A6 |
 | claude-env | skill `yyc-ai` rewritten (names, runbooks, rollback, ops, the deploy workflow); scripts driving ui pods replaced by the ported probes; a lesson for the switch | A6 |
 | Behaviour that goes | per-person CloudCLI processes and their LRU, rendezvous placement and peer holds, the `/proc` socket to the sandbox, the 60 s UI touch as idle signal, the shared per-person `~/.claude` (and with it the shared per-person auto-memory, decision 6), JuiceFS-backed `~/.claude`, the shared `JARVIS_CC_TOKEN`, egress reading hermit's tables, `kv` announcements, history folding at read time, failed-turn tables | with the old stack |
@@ -1203,7 +1203,7 @@ until A6, Cluster `pg` on the old cluster until T5.
 - **Secrets**: Sealed Secrets from store `yyc` (`infra/seal.py` gains `A|B` lists for rotation and picks the cert by
   folder: `infra/sealed-secrets-talos.pem` for the new cluster, `infra/sealed-secrets.pem` for the old; 15.9), one
   Secret per component named after it; every image public, no pull Secret.
-- **GitOps** (decision 1, `deploy-workflows.md`, decision 13): `yyc-ai/deploy` is applied to the new cluster by
+- **GitOps** (decision 1, `deploy-workflows.md`, decision 13): `yyc/deploy` is applied to the new cluster by
   workflow `DE0CH/YYC/.github/workflows/yyc-ai.yml`. Job `check` on every PR and push (render, `kubeconform`, the
   no-switch, zero-downtime, pin, secret, policy, catalogue and gateway-config checks, the ZDR guard, the deployer's
   RBAC table, the one-cluster check of 15.4, and during the switch window `cutover freeze-check`, which also watches
@@ -1257,7 +1257,7 @@ and `WORK-PACKAGES.md`; rows D26-D35 hold over any text that still describes one
 | D12 | The target design's `GET /conversations/{id}/events?after=` | — | realised as M9 `/v1/conversations/{id}/timeline` over rows (R27); events stay the record (admin routes) |
 | D13 | Readiness | any spec text that gates readiness on Postgres or LISTEN being up after start | platform 3.2 |
 | D14 | Migrating conversations | pigeon 7.10 (retry 409 `conversation_migrating` for 45 s, then "being moved"), pigeon 7.9 `legacy.cut`, magpie 16.1/8.2 refusing every mutation of a migrating conversation, magpie 19's synthetic import turn | switch-final 4.1, 4.3, 8, 23 (9.2-9.5 here): a legacy conversation's writes go through LU with a ticket; native mutations of a fenced conversation wait ≤ 3 s; 409 `conversation_migrating` carries `route: "legacy"` and only re-routes a stale pigeon cache, never reaches a tab; no `legacy.cut`, no synthetic import turn, no "being moved" sentence. pigeon gains `crates/pigeon/src/legacy/` (A6) and the request-free-first drain (kept); magpie gains the window routes and tables of 9 (tickets, fence, `import_uploads`, `uploads.legacy_path`), not switch-final's anchors, presence or person states |
-| D15 | How `yyc-ai/deploy` is applied | any spec text saying Flux applies, reconciles or prunes `yyc-ai/deploy`, `flux reconcile kustomization yyc-ai`, a `rollout restart` being undone by Flux | `deploy-workflows.md` (section 11 here): `yyc-ai.yml` applies; prune by trailer; a `kubectl rollout restart` now stays |
+| D15 | How `yyc/deploy` is applied | any spec text saying Flux applies, reconciles or prunes `yyc/deploy`, `flux reconcile kustomization yyc-ai`, a `rollout restart` being undone by Flux | `deploy-workflows.md` (section 11 here): `yyc-ai.yml` applies; prune by trailer; a `kubectl rollout restart` now stays |
 | D16 | magpie-pg manifest | magpie 18.2 | as written plus pg-ha 4: `imageName` = `pg`'s image, `enableSuperuserAccess: false`, priority `serving`, `failoverQuorum: true`, `nodeSelector pool=apps`, ScheduledBackup `magpie-pg-nightly` 03:15 HKT from a standby; ingress by address (`10.244.0.0/16` only), `pg-ingress` excludes `magpie-pg` |
 | D17 | The hosts' JuiceFS metadata address | pg-ha 6: `10.0.0.5:30432` through `pg-hosts` with `externalTrafficPolicy: Cluster` | decision 10: `10.0.0.2:30432` as hermit 13.5 and platform `YYC_HERMIT_JUICEFS_META_URL` say; `pg-hosts` unchanged; the old fabric's `YYC_JUICEFS_HOST_META_URL` unchanged |
 | D18 | Claude Code's auto-memory | magpie 6.1/19.1, cutover 7.4.2 (before this revision): `plan` fails on a memory file pending Deyao | decision 6: per conversation. A memory file found at import is copied into the cc scope of each of that person's imported conversations at its import and again at its release (each copy then diverges); nothing blocks the importer; a reverse export writes a conversation's memory to `/jfs/users/<key>/claude/aviary-memory/<conversation id>/`, which the old stack does not read |
@@ -1276,7 +1276,7 @@ and `WORK-PACKAGES.md`; rows D26-D35 hold over any text that still describes one
 | D31 | The new hosts' JuiceFS metadata address | D17 and hermit 13.5: `10.0.0.2:30432` | `<gw private IP>:30433` (15.6); the old fabric's `10.0.0.2:30432` unchanged |
 | D32 | Databases | `magpie-pg` in Flux `yyc-db` on the one cluster; `pg-ingress` admitting 10.202.0.0/24 and excluding `magpie-pg`; URLs naming `pg-rw.db` | 15.8: `magpie-pg` on the new cluster (its workflow); `hermit`, `egress`, `tools` on `pg` (old cluster) through `db/pg-shared`; `pg-ingress` admits 10.0.0.0/16 |
 | D33 | Sealed Secrets | one controller cert for everything | 15.9: a cert per cluster, chosen by folder |
-| D34 | Repository layout | `yyc-ai/deploy/legacy/`, `config.json` and `system-prompt.md` at `yyc-ai/deploy/` until A6, the `yyc-catalogue` generator in `legacy/` | 15.4: `yyc-ai/legacy/` (Flux), `yyc-ai/deploy/` new stack only, `legacy/catalogue/` until yyc-mcp's move |
+| D34 | Repository layout | `yyc/deploy/legacy/`, `config.json` and `system-prompt.md` at `yyc/deploy/` until A6, the `yyc-catalogue` generator in `legacy/` | 15.4: `yyc-ai/legacy/` (Flux), `yyc/deploy/` new stack only, `legacy/catalogue/` until yyc-mcp's move |
 | D35 | Node work during the window | 9.6's "no node drain is scheduled in A3-A5" for one cluster; `cluster.sh` as the only node tool | 15.2 N8: the Talos upgrade workflow and `upgrade-k8s` hold every node of both clusters and the Descheduler is suspended while `window.json` says `"nodeWork": "hold"`; the Descheduler never evicts in `db` and `yyc-ai-fabric`; N10-N11 keep the old cluster's footing until A6 |
 | D36 | Where egress may run and how the new cluster leaves (Deyao, 2026-11-05: no primary IP limit raise) | 15.7 and N5 before 2026-11-05: egress requires fsn1, at least two workers in fsn1, every node with its own WARP `warp0` | 15.7: workers without public IP or WARP leave through yyc-nat1 (fsn1) via network `yyc`'s 0.0.0.0/0; egress requires network `yyc` only; the socks pool runs IPv4 only on the workers; `warp0` only on nodes with a public IP (control, gateway) |
 
@@ -1398,7 +1398,7 @@ The operator phase (WP-39, WP-40 onward; decision 13) starts only after T1 and T
 first workers) are done and every item below holds on the live clusters. Items N1-N9 and N12 are what the new cluster
 provides; N10-N11 are what the old cluster and the order of the Talos steps keep. Most of them can only be set when the
 cluster is first built (the Pod and Service CIDRs, the CNI, the API server's flags and SANs, the network attachment
-and node labels): they reach the builder before T1 as the build inputs of 15.2.1, and `yyc-ai/infra/talos-ready.sh`
+and node labels): they reach the builder before T1 as the build inputs of 15.2.1, and `yyc/infra/talos-ready.sh`
 (WP-59, read-only, output in the task record) verifies afterwards that the built cluster has them. A mismatch found
 then means rebuilding T1, which is why the inputs go first.
 
@@ -1456,7 +1456,7 @@ Text to forward (Deyao to the builder):
 
 ### 15.3 Deploys on two clusters
 
-- **The new stack**: `yyc-ai.yml` (deploy-workflows 5-6) applies `yyc-ai/deploy/` to the new cluster. The runner
+- **The new stack**: `yyc-ai.yml` (deploy-workflows 5-6) applies `yyc/deploy/` to the new cluster. The runner
   reaches the new API through tunnel `yyc-deploy`, whose connector runs on the new cluster; the identity is the same
   GitHub OIDC `gha:yyc-ai` (N1); the kubeconfig's CA is `infra/yyc-talos-ca.pem`. The cluster starts empty, so the
   first run's plan is creates only and the inventory starts empty: there is nothing to seed and nothing to adopt.
@@ -1491,12 +1491,12 @@ Text to forward (Deyao to the builder):
 
 ### 15.4 Repository layout
 
-- `yyc-ai/deploy/`: the new stack only (platform 9.1's tree without `legacy/`), applied by `yyc-ai.yml` to the new
+- `yyc/deploy/`: the new stack only (platform 9.1's tree without `legacy/`), applied by `yyc-ai.yml` to the new
   cluster. A `check` step refuses any object in namespaces `jarvis`, `kube-system` or `flux-system` in its render.
-- `yyc-ai/legacy/`: the old stack, today's `yyc-ai/deploy/` files verbatim (with `sealed/`, `config.json`,
+- `yyc-ai/legacy/`: the old stack, today's `yyc/deploy/` files verbatim (with `sealed/`, `config.json`,
   `system-prompt.md`, `sealed-secrets-rbac.yaml`), applied by Flux on the old cluster. WP-39 moves it without
   touching a live object: `prune: false` on both Kustomizations; a commit adds the copy; a CI step shows
-  `kustomize build yyc-ai/legacy` equal to `kustomize build yyc-ai/deploy` byte for byte; `flux-sync.yaml`'s paths
+  `kustomize build yyc-ai/legacy` equal to `kustomize build yyc/deploy` byte for byte; `flux-sync.yaml`'s paths
   change to `./yyc-ai/legacy` and `./yyc-ai/legacy/sealed` (and its GitRepository include line), re-applied with
   `cluster.sh flux`; Flux's reconcile shows no change (ReplicaSet hashes and pod ages unchanged); a commit deletes the
   old copy, which Flux no longer reads; `prune: true` again. The window's old-side objects (the bridge Services and
@@ -1510,7 +1510,7 @@ Text to forward (Deyao to the builder):
   from it (Flux's kustomize-controller builds with kustomize's load restrictor off; WP-31 checks this against the
   deployed v1.9.6 with `flux build kustomization yyc-ai`, and if it refuses, a copy kept byte-identical by a `check`
   step replaces the relative path). The ConfigMap's name, key and mount path never change. When yyc-mcp moves (T4,
-  after A5), that move's commit adds the generator to `yyc-ai/deploy/` (namespace `yyc` on the new cluster; the
+  after A5), that move's commit adds the generator to `yyc/deploy/` (namespace `yyc` on the new cluster; the
   deployer's Role there) and deletes `legacy/catalogue/`.
 
 ### 15.5 Cross-cluster links (the bridges)
@@ -1526,7 +1526,7 @@ gives the address a cluster-local name, so no component's code or configuration 
 
 The two bridges, `yyc-bridge-old` (10.0.255.1, targets: the servers with Hetzner label `yyc-cluster=k3s`) and
 `yyc-bridge-new` (10.0.255.2, targets `yyc-cluster=talos`), both minus servers that are no Kubernetes node (label
-`role=nat`: yyc-nat1), live on one server, **`yyc-bridge1`** (`yyc-ai/infra/bridges.sh up|check|down`, definitions
+`role=nat`: yyc-nat1), live on one server, **`yyc-bridge1`** (`yyc/infra/bridges.sh up|check|down`, definitions
 in `bridges.json`, Hetzner API with `YYC_HETZNER_API`, idempotent; WP-60). Not Hetzner load balancers: Hetzner
 refuses to create one while the account's primary IP limit (16) is full, even with the public interface off at
 create, and the limit stays (Deyao, 2026-11-05). yyc-bridge1 is a cax11 (ARM) in fsn1, Debian 13,
@@ -1715,7 +1715,7 @@ Talos has no shell, no SSH and no systemd units, so the gateway is a pod, as dec
 ### 15.9 Sealed Secrets on two clusters
 
 The new cluster's controller has its own key; its public cert is `infra/sealed-secrets-talos.pem` (N6).
-`infra/seal.py` picks the cert by the sealed file's folder: `yyc-ai/deploy/sealed/` and
+`infra/seal.py` picks the cert by the sealed file's folder: `yyc/deploy/sealed/` and
 `news-stream/deploy/clusters/talos/**` get the new cert, every other folder (`yyc-ai/legacy/sealed/`,
 `news-stream/deploy/apps/sealed/` and the rest) the old `infra/sealed-secrets.pem`; `--check` refuses a sealed file
 whose recorded cert does not match its folder. Every new-stack Secret of platform 12.2 is sealed for the new cluster

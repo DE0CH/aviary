@@ -42,7 +42,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: tools
-          image: jarvis3-chat
+          image: egress
           args: [tools]
           ports:
             - {name: http, containerPort: 8080}

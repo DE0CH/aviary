@@ -1,5 +1,5 @@
 # YYC AI's new stack (aviary: pigeon, magpie, hermit; jarvis3: egress, tools), applied to the new Talos cluster by
-# .github/workflows/yyc-ai.yml (yyc-ai/refactor DESIGN 15, spec-platform 9 and 25). Its Secrets are SealedSecrets in
+# .github/workflows/yyc-ai.yml (yyc/refactor DESIGN 15, spec-platform 9 and 25). Its Secrets are SealedSecrets in
 # ./sealed/ (sealed with infra/sealed-secrets-talos.pem), applied by the same workflow's fenced step.
 #
 # Namespaces yyc-ai and yyc-ai-fabric, the deployer's rights and the JuiceFS CSI driver are cluster-level
@@ -21,22 +21,23 @@ resources:
   - herald/herald.yaml
   - drive/drive.yaml
   # the one-shot Jobs (hermit-jfs-owner) are not here: a Job's image is immutable, so each re-pin of the tags below
-  # would refuse them; they run from yyc-ai/oneshot/ with oneshot/run.sh, on the images pinned here, outside the inventory
-# one aviary commit for pigeon, magpie, hermit and sandboxd (check item 4); sandboxd's tag is hermit.json's
-# fabric.sandboxd; the sandbox image is pinned by digest in hermit/hermit.json
+  # would refuse them; they run from yyc/oneshot/ with oneshot/run.sh, on the images pinned here, outside the inventory
+# The tags are written by the deploy run (docs/DEPLOY.md: aviary-deploy yyc, from deploy/images.json): each image's tag
+# is the last commit that changed its part. `deploy` below is a placeholder and never what runs. pigeon, magpie,
+# hermit, herald and sandboxd share aviary's tag (check item 4); hermit.json's fabric.sandboxd and sandbox.image and
+# hermit/gateway.release follow it.
 images:
-  - {name: pigeon, newName: ghcr.io/de0ch/pigeon, newTag: "786c854071e0"}
-  - {name: magpie, newName: ghcr.io/de0ch/magpie, newTag: "786c854071e0"}
-  - {name: hermit, newName: ghcr.io/de0ch/hermit, newTag: "786c854071e0"}
-  - {name: sandboxd, newName: ghcr.io/de0ch/sandboxd, newTag: "786c854071e0"}
-  # herald (aviary crates/herald): its own aviary commit, released with the others' CI
-  - {name: herald, newName: ghcr.io/de0ch/herald, newTag: "e90075c4fcc1"}
-  # the app bundle (DE0CH/claudecodeui pigeon-app.yml)
-  - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "b663c206055a"}
-  # YYC Drive: its server, and its edge at /srv/edge (job drive-edge), in one image (DE0CH/yyc-drive yyc-drive.yml)
-  - {name: yyc-drive, newName: ghcr.io/de0ch/yyc-drive, newTag: "6b0f098ab09d"}
-  # egress and tools (DE0CH/jarvis3 chat.yml); the ZDR guard reads this tag (yyc-ai/tests/test_zdr.py)
-  - {name: jarvis3-chat, newName: ghcr.io/de0ch/jarvis3-chat, newTag: "7b4c2aff7bd3"}
+  - {name: pigeon, newName: ghcr.io/de0ch/pigeon, newTag: "deploy"}
+  - {name: magpie, newName: ghcr.io/de0ch/magpie, newTag: "deploy"}
+  - {name: hermit, newName: ghcr.io/de0ch/hermit, newTag: "deploy"}
+  - {name: sandboxd, newName: ghcr.io/de0ch/sandboxd, newTag: "deploy"}
+  - {name: herald, newName: ghcr.io/de0ch/herald, newTag: "deploy"}
+  # the app bundle (app/, app.yml)
+  - {name: pigeon-app, newName: ghcr.io/de0ch/pigeon-app, newTag: "deploy"}
+  # YYC Drive: its server, and its edge at /srv/edge (the deploy run's drive-edge), in one image (drive/, drive.yml)
+  - {name: yyc-drive, newName: ghcr.io/de0ch/yyc-drive, newTag: "deploy"}
+  # egress and tools (egress/, egress.yml)
+  - {name: egress, newName: ghcr.io/de0ch/egress, newTag: "deploy"}
 configMapGenerator:
   # hermit's YYC configuration (hermit spec 9): hashed, so a change rolls hermit
   - name: hermit-config

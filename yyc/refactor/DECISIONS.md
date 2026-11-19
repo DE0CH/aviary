@@ -74,7 +74,7 @@ E5. (2026-11-04) The A1 ui gate (DESIGN 9.6) waits only on running work in the p
     - The label store is a REST API (`/api/v1`) the sandbox calls through a fixed name with credential injection
       (WP-61), not an MCP server.
     - The old stack runs this today (jarvis3 adcd983: the old stack's tools behind its egress-token front door,
-      skills from ConfigMap `jarvis-skills`); YYC's skills are `yyc-ai/deploy/skills/` (their addresses differ on the
+      skills from ConfigMap `jarvis-skills`); YYC's skills are `yyc/deploy/skills/` (their addresses differ on the
       new stack: `http://tools/v1/tools/<name>` through the proxy, no egress token, which WP-62 settles).
     WP-62 builds it on the new stack. (Restored 2026-11-04: commit 8b6caaa1 dropped this entry by accident while
     adding decision 16.) The skills reach the new stack through hermit's descriptor (`managedSkills`), not an image;

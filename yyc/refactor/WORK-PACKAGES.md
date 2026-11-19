@@ -403,7 +403,7 @@ Effort of decision 13 (Claude working days, estimates):
 
 ### WP-37 Deploy workflow and applier (M)
 
-- **Goal**: the path by which a push to DE0CH/YYC applies `yyc-ai/deploy` (decision 1), built and tested; applied
+- **Goal**: the path by which a push to DE0CH/YYC applies `yyc/deploy` (decision 1), built and tested; applied
   live by WP-39.
 - **Repo, paths**: DE0CH/YYC `tools/yyc-apply/` (Rust: `check`, `plan [--trailers]`, `apply`, `seed --from-flux`,
   `snapshot [--compare]`, `adopt --from-manager`; inventory ConfigMap, deletion gate, apply order, rollout waits),
@@ -755,7 +755,7 @@ change)`; `fanout::notify(tx, channel, key, head)`. WP-11 ships them with the sc
   650f6ff) does: an egress-owned token table (the old `relay_tokens` rows carried over), an admin API to issue and
   revoke tokens, a pigeon page for a person's own token, the relay listener with the model route's ZDR, shortlist and
   budget, and the `ai-relay` tunnel route pointed at it.
-- **Repos, paths**: DE0CH/jarvis3 `chat/src/egress/**` (a relay listener and migration), DE0CH/YYC `yyc-ai/deploy`
+- **Repos, paths**: DE0CH/jarvis3 `chat/src/egress/**` (a relay listener and migration), DE0CH/YYC `yyc/deploy`
   (`ai-relay` route), the pigeon page (repo per DESIGN 10).
 - **Inputs**: DESIGN 10 "Relay"; YYC README "Relay"; WP-25.
 - **Acceptance**: a carried-over token works through `ai-relay` to the mock model with ZDR forced and the budget
@@ -771,7 +771,7 @@ change)`; `fanout::notify(tx, channel, key, head)`. WP-11 ships them with the sc
   (`managedSkills`, in the etag); `supervisor/src/cc/managed.rs` (skills written, no `managed-mcp.json`, GATE.md);
   `images/sandbox/smoke.sh` (Claude Code runs `curl http://tools/v1/tools/echo` through the proxy instead of
   `mcp__tools__echo`); a release, then DE0CH/jarvis3 `chat/aviary.ref` and `chat/src/egress/proxy.ts` `routed()` (the
-  REST paths). DE0CH/YYC: the new stack's skills (the old stack's `yyc-ai/deploy/skills` with the new stack's
+  REST paths). DE0CH/YYC: the new stack's skills (the old stack's `yyc/deploy/skills` with the new stack's
   addresses: `http://tools/…` through the proxy, no `JARVIS_EGRESS_TOKEN`).
 - **Inputs**: decision 15; jarvis3 adcd983 (tools REST, done); spec-supervisor "managed files"; spec-platform 7.6.
 - **Acceptance**: conformance green with REST `route.tools`; the sandbox smoke's Claude Code calls a fake tool with
@@ -780,7 +780,7 @@ change)`; `fanout::notify(tx, channel, key, head)`. WP-11 ships them with the sc
 - **Built** (2026-11-04): aviary 8b1338d3 (gateway-api REST `tools` paths, fake-tools REST, conformance
   `route.tools`/`route.tools-paths`, hermit `prompt.skills` → descriptor `managedSkills`, supervisor writes the skills
   and no `managed-mcp.json`, smoke via the `echo` skill's `curl`); jarvis3 egress `routed()` REST paths and
-  `chat/aviary.ref`; YYC `yyc-ai/deploy/hermit/skills/` (the old skills with `http://tools/…` and `http://labels/…`),
+  `chat/aviary.ref`; YYC `yyc/deploy/hermit/skills/` (the old skills with `http://tools/…` and `http://labels/…`),
   ConfigMap `hermit-skills`, check_deploy item K. The skills ride hermit's descriptor (this package), not an image.
 
 #### WP-61 The label store on the new stack: a sandbox route (M)
@@ -793,8 +793,8 @@ change)`; `fanout::notify(tx, channel, key, head)`. WP-11 ships them with the sc
   skills (the `labels` skill, from configuration so other deployments add none);
   DE0CH/jarvis3 `chat/src/egress/**` (the route in egress.json with `inject`, `allowPaths` and the conversation
   header the label store reads, `X-Jarvis-Conversation` from `Aviary-Sandbox-Conversation`), tests; DE0CH/YYC
-  `yyc-ai/deploy` (the route and the `yyc-labels-ai` keys on the new egress).
-- **Inputs**: decision 15; YYC `yyc-ai/deploy/config.json` route `labels`; WP-25; WP-62 (managed skills).
+  `yyc/deploy` (the route and the `yyc-labels-ai` keys on the new egress).
+- **Inputs**: decision 15; YYC `yyc/deploy/config.json` route `labels`; WP-25; WP-62 (managed skills).
 - **Acceptance**: from a sandbox on the new stack, `curl` to the label store's fixed name lists the designs and
   saves a design change at the fake upstream with the Access service token injected and the conversation header set;
   a path outside `allowPaths` (`/api/v1/` only) is refused; cutover 11.2's label store preflight check passes; lands
@@ -925,11 +925,11 @@ change)`; `fanout::notify(tx, channel, key, head)`. WP-11 ships them with the sc
 
 - **Goal**: the P1 tree of `YYC/yyc-ai/deploy/` with the old stack moved unchanged under `legacy/`, every new
   manifest, ConfigMaps, NetworkPolicies, and the YYC checks as steps of `yyc-ai.yml`'s `check` job.
-- **Repo, paths**: DE0CH/YYC `yyc-ai/deploy/**` (platform 9.1 layout: no `namespace.yaml`, no `juicefs-csi.yaml`,
+- **Repo, paths**: DE0CH/YYC `yyc/deploy/**` (platform 9.1 layout: no `namespace.yaml`, no `juicefs-csi.yaml`,
   both cluster-level from WP-37), `catalogue.json`, `hermit/{hermit.json, system-prompt.md, sandbox-rules.md,
   title-system.md}`, `egress/egress.json`, `tools/tools.json`, `jobs/` (suspended), the `check` steps of
   `.github/workflows/yyc-ai.yml` (render, platform 13.3 items 1-8, the render-parity diff), `yyc-ai-zdr.yml`,
-  `yyc-ai/tests/test_zdr.py`, `yyc-ai/infra/openrouter.py`; the window pieces of cutover 10.1 commit 7 prepared.
+  `yyc/tests/test_zdr.py`, `yyc/infra/openrouter.py`; the window pieces of cutover 10.1 commit 7 prepared.
 - **Inputs**: platform 9, 10, 13; hermit 9, 21; cutover 10.0-10.1, D15-D18; deploy-workflows 6.6; WP-37.
 - **Carried from WP-51**: magpie requires `MAGPIE_TOKEN_IMPORT` at start (P1 to A6) and the import Deployment's
   `export-server` accepts it as `MAGPIE_IMPORT_ACCEPT_MAGPIE` (platform 3.7's pair table, 9.5, 12.2,
@@ -970,7 +970,7 @@ change)`; `fanout::notify(tx, channel, key, head)`. WP-11 ships them with the sc
   Secret `yyc-ai-fabric/hermit-gateway` wired to `/etc/sbx/tls/{ca.crt,host.crt,host.key}` and `/etc/sbx/wg.key`, and
   the `hermit-overlay-route` DaemonSet (hermit 21.1); a `check` step asserts the ConfigMap has those fields.
 
-- **Decision 13** (DESIGN 15.4, 15.7; platform 25): the tree is `yyc-ai/deploy/` with the new stack only (no
+- **Decision 13** (DESIGN 15.4, 15.7; platform 25): the tree is `yyc/deploy/` with the new stack only (no
   `legacy/`, which WP-39 moves to `yyc-ai/legacy/`); `bridges.yaml` (WP-60's new-side objects); generator
   `legacy-kube-ca`; every Deployment, DaemonSet and the gateway pinned to nodes in network `yyc` (label `yyc.hetzner/network=yyc`,
   fsn1 preferred), egress required in fsn1, `magpie-pg` in one location, two-replica spreads `DoNotSchedule`, all
@@ -987,7 +987,7 @@ change)`; `fanout::notify(tx, channel, key, head)`. WP-11 ships them with the sc
 - **Repo, paths**: DE0CH/YYC `news-stream/deploy/db/postgres.yaml` (roles, `Database` CRs `hermit`, `egress`,
   `tools`), `news-stream/deploy/db/magpie-pg.yaml` (Cluster `magpie-pg` with database `magpie`, decision 2: magpie
   18.2 plus pg-ha 4 — `failoverQuorum: true`, `pg`'s image, `pool=apps`, priority `serving`, ScheduledBackup
-  `magpie-pg-nightly` 03:15 HKT, `magpie-pg-ingress` by selector, DESIGN 15.8), `pg-dump-daily.yaml`, `yyc-ai/deploy/sealed/`
+  `magpie-pg-nightly` 03:15 HKT, `magpie-pg-ingress` by selector, DESIGN 15.8), `pg-dump-daily.yaml`, `yyc/deploy/sealed/`
   (including the window keys of platform 12.2-12.3), `infra/seal.py` (`A|B` lists), `infra/secrets.txt`; store
   `yyc` keys via `scripts/store-put.py … --explain`.
 - **Cost**: `magpie-pg`'s three 10 GB volumes, EUR 2.0592 a month with VAT (EUR 1.716 net).
@@ -1067,7 +1067,7 @@ change)`; `fanout::notify(tx, channel, key, head)`. WP-11 ships them with the sc
 - **Acceptance**: every subcommand resumable from `~/artifacts/cutover/state.json` (killed mid-step and re-run in a
   test); patches apply with `git am --check` on current `main`; `freeze-check` refuses each frozen path on a seeded
   commit and passes the commit that adds `window.json`; `freeze-check` refuses a change of the `pigeon-app` `newTag`
-  in `yyc-ai/deploy/` between A1 and A5 unless the new tag's claudecodeui commit differs from the A1 commit only in
+  in `yyc/deploy/` between A1 and A5 unless the new tag's claudecodeui commit differs from the A1 commit only in
   `scripts/pigeon-app/` and `.github/workflows/pigeon-app.yml` (DESIGN 9.6; from WP-27's review), shown on a seeded
   commit of each kind; such a fix is a commit on a claudecodeui `pigeon-app-fix/<name>` branch cut from the A1
   commit (pigeon-app.yml builds those branches and refuses one that changes anything else; main itself moves on), so
@@ -1217,14 +1217,14 @@ Size: 9.5 days (effort table), all of it switch machinery with no base part; abo
 
 ### WP-39 `legacy/` folder move under the old cluster's Flux (S, live)
 
-- **Goal**: the old stack applied by Flux on the old cluster from `yyc-ai/legacy/`, so `yyc-ai/deploy/` holds only the
+- **Goal**: the old stack applied by Flux on the old cluster from `yyc-ai/legacy/`, so `yyc/deploy/` holds only the
   new stack, with no live object changed (decision 13, DESIGN 15.4). Replaces the Flux hand-over, which decision 13
   drops: the old cluster keeps Flux until the builder removes it.
 - **Depends on**: WP-31 (the layout); T1-T2 (decision 13 starts the operator phase, "WP-39/40 onward", only after
   them, although the move itself touches only the old cluster).
 - **Repo**: DE0CH/YYC; live work in a session with `cluster.sh` access to the old cluster.
 - **Steps**: `prune: false` on Kustomizations `yyc-ai` and `yyc-ai-secrets` (`flux-sync.yaml`, `cluster.sh flux`); a
-  commit adds `yyc-ai/legacy/` as a copy of today's `yyc-ai/deploy/` (with `sealed/`, `config.json`,
+  commit adds `yyc-ai/legacy/` as a copy of today's `yyc/deploy/` (with `sealed/`, `config.json`,
   `system-prompt.md`, `sealed-secrets-rbac.yaml`) and moves every `config.json` reader (tofu `access.tf`,
   `cloudflare.yml`, `mcp-image.yml`, `catalogue.test.ts`, `yyc-ai-ami.yml`, `openrouter.py`, the ZDR guard) to the new
   path; a `check` step shows the two renders byte-identical; `flux-sync.yaml` paths to `./yyc-ai/legacy` and
@@ -1233,7 +1233,7 @@ Size: 9.5 days (effort table), all of it switch machinery with no base part; abo
 - **Inputs**: DESIGN 15.4; platform 25.2; `news-stream/deploy/clusters/hetzner/flux-sync.yaml`.
 - **Acceptance**: the render check green; `kubectl -n jarvis get rs,pods` hashes and ages unchanged across the switch of
   path (recorded before and after); `flux get kustomizations` Ready; Flux's events for `yyc-ai` show no created,
-  configured or deleted object; `yyc-ai/deploy/` contains nothing of the old stack.
+  configured or deleted object; `yyc/deploy/` contains nothing of the old stack.
 
 ### WP-59 The new cluster's footing for YYC AI (M; build inputs before T1, live part after T1-T2)
 
@@ -1250,7 +1250,7 @@ Size: 9.5 days (effort table), all of it switch machinery with no base part; abo
 - **Repo, paths**: DE0CH/YYC `news-stream/deploy/clusters/talos/{yyc-ai-access,deploy-access,juicefs-csi}.yaml`
   (namespaces `yyc-ai`, `yyc-ai-fabric`, `yyc-deploy`; the deployer's RBAC of deploy-workflows 4.2; the fence's
   bindings to `yyc-deploy/sealed-secrets-applier`; the deploy connector; the JuiceFS CSI driver), `infra/yyc-talos-ca.pem`,
-  `infra/sealed-secrets-talos.pem`, `yyc-ai/infra/talos-ready.sh` (read-only verification on both clusters that
+  `infra/sealed-secrets-talos.pem`, `yyc/infra/talos-ready.sh` (read-only verification on both clusters that
   N1-N12 hold, including that each build input of 15.2.1 is what was built),
   tofu `deploy.tf` on, `yyc-ai.yml`'s deploy job on; the authenticator file of deploy-workflows 4.1 handed to the Talos
   session for its control nodes' machine config.
@@ -1276,11 +1276,11 @@ Size: 9.5 days (effort table), all of it switch machinery with no base part; abo
   `bridges.sh` against a fake Hetzner API and R6's probe script) is done before WP-40 and needs no cluster; the live
   part is not a separate step: WP-40 step 2 runs `bridges.sh up` and lands the files (cutover 10.1), and R6 in WP-41
   is this package's acceptance.
-- **Repo, paths**: DE0CH/YYC `yyc-ai/infra/bridges.sh` (`up|check|down [name]`, Hetzner API with `YYC_HETZNER_API`,
+- **Repo, paths**: DE0CH/YYC `yyc/infra/bridges.sh` (`up|check|down [name]`, Hetzner API with `YYC_HETZNER_API`,
   idempotent: one cax11 in fsn1, `yyc-bridge1`, with no public IP, on network `yyc` with alias IPs 10.0.255.1/.2,
   HAProxy in TCP mode with the services, targets from Hetzner labels by private IP, health checks; `bridges.json`), `yyc-ai/legacy/` (`ui-bridge`, `ui-from-bridge`, `pigeon-bridge`,
   `ui-to-pigeon`, the importer's ServiceAccount/Role/token), `news-stream/deploy/apps/` (`yyc-mcp-bridge`,
-  `web-bridge`, `yyc/hermit-bridge`, their policies), `yyc-ai/deploy/bridges.yaml` (`ui-legacy`, `pigeon-bridge`,
+  `web-bridge`, `yyc/hermit-bridge`, their policies), `yyc/deploy/bridges.yaml` (`ui-legacy`, `pigeon-bridge`,
   `hermit-bridge`, the `yyc/yyc-mcp` and `yyc/web` placeholders); EXPENSES.md's Hetzner line (the bridge server).
 - **Cost**: EUR 7.188 gross a month for yyc-bridge1 (cax11 fsn1, EUR 0.01152 an hour; Hetzner API 2026-11-05) while it
   exists; it replaces the approved EUR 16.776 of two lb11, which Hetzner refused (primary IP limit, 2026-11-05).

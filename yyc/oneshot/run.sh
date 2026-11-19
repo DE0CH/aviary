@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # One-shot Jobs of the switch (hermit-jfs-owner, A2 and A6):
-# applied by hand on the new cluster, never by yyc-ai.yml. A Job is immutable, so one in yyc-ai/deploy/ blocked every
+# applied by hand on the new cluster, never by yyc-ai.yml. A Job is immutable, so one in yyc/deploy/ blocked every
 # re-pin of the image tags until someone added Deploy-Replace/Deploy-Prune trailers; here each runs on the images
-# yyc-ai/deploy/kustomization.yaml pins now, outside yyc-apply's inventory.
-#   KUBECONFIG=<new cluster operator kubeconfig> yyc-ai/oneshot/run.sh <file.yaml> [--replace]
+# yyc/deploy/kustomization.yaml pins now, outside yyc-apply's inventory.
+#   KUBECONFIG=<new cluster operator kubeconfig> yyc/oneshot/run.sh <file.yaml> [--replace]
 # Prints the Job names it created. A Job of the same name that exists is kept (exit 1) unless --replace deletes it
 # first (its pods and logs go with it: record what it printed before).
 set -euo pipefail

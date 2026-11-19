@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The ZDR guard (test_zdr.py) catches its seeded mutations (a pinned non-ZDR endpoint among them) (spec-cutover 10.0's checklist), offline: a fake
-network answers OpenRouter's ZDR list and GitHub; the stacks are copies of the tree's in a temporary folder."""
+network answers OpenRouter's ZDR list; the stacks (and egress's sources) are copies of the tree's in a temporary folder."""
 import json, os, shutil, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -19,12 +19,22 @@ GOOD = {
 
 
 def tree():
+    """a copy of the stack in root/next, and egress's forcing literals in root/egress"""
     root = tempfile.mkdtemp()
     shutil.copytree(test_zdr.stack(YYC_AI), os.path.join(root, "next"))
+    for rel, body in GOOD.items():
+        os.makedirs(os.path.dirname(os.path.join(root, "egress") + rel), exist_ok=True)
+        open(os.path.join(root, "egress") + rel, "w").write(body)
     return root
 
 
 EFFORTS = ["max", "high", "low", "none"]
+
+
+def _run_in(root, get):
+    """the guard on the copy, with the copy's egress"""
+    return test_zdr.run(root, get, egress=os.path.join(root, "egress"))
+
 
 
 def fake(zdr_models, bad_sha=None, tags=None, text_only=(), efforts=None):
@@ -38,11 +48,6 @@ def fake(zdr_models, bad_sha=None, tags=None, text_only=(), efforts=None):
             return json.dumps({"data": [{"id": m, "architecture": {"input_modalities": ["text"] if m in text_only else ["text", "image"]},
                                          "reasoning": {"supported_efforts": (efforts or {}).get(m, EFFORTS)}}
                                         for m in set(zdr_models) | set(text_only)]})
-        if url.startswith("https://api.github.com/repos/DE0CH/jarvis3/commits/"):
-            return json.dumps({"sha": url.rsplit("/", 1)[1] + "0" * 28})
-        for suffix, body in GOOD.items():
-            if url.endswith(suffix):
-                return body.replace("FORCED_PROVIDER", "PROVIDER") if bad_sha and bad_sha in url else body
         raise RuntimeError(f"unexpected {url}")
     return get
 
@@ -68,32 +73,32 @@ def edit(root, f):
 class Seeded(unittest.TestCase):
     def test_clean(self):
         root = tree()
-        self.assertEqual(test_zdr.run(root, fake(models(root), tags=pins(root))), [])
+        self.assertEqual(_run_in(root, fake(models(root), tags=pins(root))), [])
 
     def test_non_zdr_small_model(self):
         root = tree()
         edit(root, lambda e: e.update(smallModel="vendor/no-zdr"))
-        fails = test_zdr.run(root, fake(models(root) - {"vendor/no-zdr"}))
+        fails = _run_in(root, fake(models(root) - {"vendor/no-zdr"}))
         self.assertTrue(any("vendor/no-zdr" in f for f in fails), fails)
 
     def test_non_zdr_embedding_model(self):
         # the conversation search's model sees every message: ZDR like the others (it takes no images)
         root = tree()
         edit(root, lambda e: e.update(embedding={"id": "vendor/embed-no-zdr"}))
-        fails = test_zdr.run(root, fake(models(root) - {"vendor/embed-no-zdr"}, tags=pins(root)))
+        fails = _run_in(root, fake(models(root) - {"vendor/embed-no-zdr"}, tags=pins(root)))
         self.assertTrue(any("vendor/embed-no-zdr" in f for f in fails), fails)
         self.assertFalse(any("embed-no-zdr takes images" in f for f in fails), fails)
 
     def test_pinned_endpoint_not_zdr(self):
         root = tree()
         edit(root, lambda e: e["models"][0].update(providers=["vendor/no-zdr"]))
-        fails = test_zdr.run(root, fake(models(root), tags={}))
+        fails = _run_in(root, fake(models(root), tags={}))
         self.assertTrue(any("vendor/no-zdr" in f for f in fails), fails)
 
     def test_text_only_model(self):
         root = tree()
         edit(root, lambda e: e["models"].append({"id": "vendor/text-only", "label": "T", "reasoning": "high", "thinking": ["high"]}))
-        fails = test_zdr.run(root, fake(models(root), tags=pins(root), text_only={"vendor/text-only"}))
+        fails = _run_in(root, fake(models(root), tags=pins(root), text_only={"vendor/text-only"}))
         self.assertTrue(any("vendor/text-only takes images" in f for f in fails), fails)
 
     def test_thinking_level_the_model_lacks(self):
@@ -101,21 +106,20 @@ class Seeded(unittest.TestCase):
         root = tree()
         edit(root, lambda e: e["models"].append({"id": "vendor/three-levels", "label": "L", "reasoning": "high",
                                                  "thinking": ["none", "low", "high", "max"]}))
-        fails = test_zdr.run(root, fake(models(root), tags=pins(root), efforts={"vendor/three-levels": ["low", "high", "max"]}))
+        fails = _run_in(root, fake(models(root), tags=pins(root), efforts={"vendor/three-levels": ["low", "high", "max"]}))
         self.assertTrue(any("vendor/three-levels takes every thinking level" in f and "'none'" in f for f in fails), fails)
 
     def test_openrouter_route_without_model(self):
         root = tree()
         edit(root, lambda e: e["routes"][1].update(upstream="https://openrouter.ai/api"))
-        fails = test_zdr.run(root, fake(models(root)))
+        fails = _run_in(root, fake(models(root)))
         self.assertTrue(any("route tools" in f for f in fails), fails)
 
-    def test_pin_without_forced_provider(self):
+    def test_egress_without_forced_provider(self):
         root = tree()
-        k = open(os.path.join(root, "next", "kustomization.yaml")).read()
-        import re
-        tag = re.search(r"name: jarvis3-chat, newName: [^,]+, newTag: \"?([0-9a-f]+)", k).group(1)
-        fails = test_zdr.run(root, fake(models(root), bad_sha=tag))
+        p = os.path.join(root, "egress", "src", "egress", "modelbody.ts")
+        open(p, "w").write(open(p).read().replace("FORCED_PROVIDER", "PROVIDER"))
+        fails = _run_in(root, fake(models(root)))
         self.assertTrue(any("FORCED_PROVIDER" in f for f in fails), fails)
 
 

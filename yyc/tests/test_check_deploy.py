@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """check_deploy.py catches seeded violations (stdlib only; yyc-ai.yml check runs it after the render): each test
 mutates one object of the real render and expects that check's failure. Needs render.json from
-`kustomize build yyc-ai/deploy | yq ea -o=json '[.]'` (RENDER env, default the working directory)."""
+`kustomize build yyc/deploy | yq ea -o=json '[.]'` (RENDER env, default the working directory)."""
 import copy, json, os, re, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FOLDER = os.environ.get("FOLDER", "yyc-ai/deploy")
+FOLDER = os.environ.get("FOLDER", "yyc/deploy")
 RENDER = json.load(open(os.environ.get("RENDER", "render.json")))
 
 

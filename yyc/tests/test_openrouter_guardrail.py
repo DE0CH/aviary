@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The guardrail yyc-chat (yyc-ai/infra/openrouter.py) lets through every model egress.json sends to OpenRouter on the
+"""The guardrail yyc-chat (yyc/infra/openrouter.py) lets through every model egress.json sends to OpenRouter on the
 key yyc-chat: the chat models, the default, small and title models, and the conversation search's embedding model.
 A model left off is refused by OpenRouter with a 404 ("Model blocked by guardrail"): the sandboxes' embeddings failed
 so on 2026-11-17 and the search found no message by its meaning. Stdlib only, no network."""

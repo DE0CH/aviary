@@ -14,7 +14,7 @@ the tools owner header), the ZDR guard and the OpenRouter guardrail script are r
 disposition for every inventory feature no component spec owns, section 23 says where each review point landed and
 section 24 lists the points not taken.
 
-Revision 2026-11-02 (Deyao's decisions, `DECISIONS.md`): `yyc-ai/deploy` is applied by GitHub workflow `yyc-ai.yml`
+Revision 2026-11-02 (Deyao's decisions, `DECISIONS.md`): `yyc/deploy` is applied by GitHub workflow `yyc-ai.yml`
 and Kustomizations `yyc-ai` and `yyc-ai-secrets` go (decision 1; text of record `deploy-workflows.md`, which replaced
 13.1, 13.2's reconcile step and 13.4 here); `magpie-pg` is decided (decision 2; manifest pg-ha 4); Cluster `pg` stays
 single-instance (decision 10, which revised decision 8: 11.5 is the stated gap again and the HA plan's cost is gone
@@ -27,7 +27,7 @@ old stack stays on the old k3s cluster, so YYC AI moves between clusters at the 
 platform's side (where each object lives, who applies it, the cross-cluster bridges and their NetworkPolicies,
 databases, the two Sealed Secrets certs, sizes); 9.1, 9.11, 10.2, 11, 12, 13.1, 16.2 and 18 are edited for it. Where
 any other text here still names the old cluster's nodes, `10.0.0.3:6443`, Flux `yyc-apps`/`yyc-db` for a new-stack
-object, `legacy/` inside `yyc-ai/deploy/`, a pod selector across the two stacks, `pg-rw.db` as a new-stack database
+object, `legacy/` inside `yyc/deploy/`, a pod selector across the two stacks, `pg-rw.db` as a new-stack database
 host (it is `pg-shared.db`), 10.244.0.0/16 as the new cluster's pod CIDR, an `ipBlock` for an address inside the new
 cluster (pods, nodes, the API server: selectors and entities instead, DESIGN 15.2 N3), or fsn1 as required for every
 new-stack pod (only egress requires it, DESIGN 15.7), section 25 holds.
@@ -47,7 +47,7 @@ Contents
 6. CI workflows (aviary)
 7. Integration harness (all services + Postgres + fake sandboxes in CI)
 8. Conformance suites (contracts other repos implement)
-9. YYC deployment (DE0CH/YYC `yyc-ai/deploy`)
+9. YYC deployment (DE0CH/YYC `yyc/deploy`)
 10. NetworkPolicies
 11. Databases (Clusters `magpie-pg` and `pg`)
 12. Secrets (Sealed Secrets, `infra/secrets.txt`, store `yyc`)
@@ -974,12 +974,12 @@ The models route shape (R18), a Messages API round trip (non-streaming and strea
 credentials, and `count_tokens` passthrough.
 
 ---
-## 9. YYC deployment (DE0CH/YYC `yyc-ai/deploy`)
+## 9. YYC deployment (DE0CH/YYC `yyc/deploy`)
 
 ### 9.1 Layout
 
 ```
-yyc-ai/deploy/
+yyc/deploy/
   kustomization.yaml        resources, image pins, ConfigMap generators, secrets-rev annotations (9.2)
   limits.yaml               LimitRange in yyc-ai (as jarvis3's limits.yaml, same numbers)
   network.yaml              the namespace-wide NetworkPolicies (10.1)
@@ -991,7 +991,7 @@ yyc-ai/deploy/
     fabric.yaml             hermit-gateway DaemonSet + ConfigMap (yyc-ai-fabric), hermit-overlay-route DaemonSet
     juicefs.yaml            static PV hermit-jfs + PVC yyc-ai/hermit-jfs (same JuiceFS volume yyc-ai)
     hermit.json             hermit's YYC configuration (hermit spec 9)
-    system-prompt.md        moved from yyc-ai/deploy/system-prompt.md
+    system-prompt.md        moved from yyc/deploy/system-prompt.md
     sandbox-rules.md        hermit spec 9
   catalogue.json            who may use YYC AI and every YYC app, and admins (hermit spec 3.4.1); also read by tofu,
                             yyc-mcp (as ConfigMap yyc/yyc-catalogue, key config.json) and the mcp-image smoke test
@@ -1007,7 +1007,7 @@ yyc-ai/deploy/
   sealed/                   SealedSecrets (section 12), sealed for the new cluster, applied by the deploy workflow's
                             fenced step (impersonating yyc-deploy/sealed-secrets-applier)
 
-yyc-ai/legacy/              the old stack, today's yyc-ai/deploy/ files moved unchanged (kustomization.yaml with the
+yyc-ai/legacy/              the old stack, today's yyc/deploy/ files moved unchanged (kustomization.yaml with the
                             jarvis3 remote base and patches, ui.yaml, sandbox-vm.yaml, sandbox.yaml, ops.yaml, db.yaml,
                             the jarvis PV/PVC, config.json, system-prompt.md, sealed/, sealed-secrets-rbac.yaml), applied
                             by Flux Kustomizations yyc-ai / yyc-ai-secrets on the OLD cluster (25.2); gains the
@@ -1024,7 +1024,7 @@ HelmRelease (`juicefs-csi.yaml`, moved unchanged); the deploy path itself (`depl
 
 Moving today's files to `yyc-ai/legacy/` (WP-39, DESIGN 15.4: copy, identical render, Flux path switch with
 `prune: false`, delete the old copy) renders the same objects, so Flux applies no change to the running old stack,
-and `yyc-ai/deploy/` holds only the new stack. The `yyc-catalogue` generator (namespace `yyc`) stays in `legacy/`
+and `yyc/deploy/` holds only the new stack. The `yyc-catalogue` generator (namespace `yyc`) stays in `legacy/`
 reading `config.json` until the switch commit (A3, 18 here), which moves it to the top level as
 `files: [config.json=catalogue.json]` (R40): the ConfigMap's name, its key `config.json` and the path
 `/etc/yyc-catalogue/config.json` never change, so neither Deployment `yyc-mcp` nor CronJob `mcp-cleanup`
@@ -1554,19 +1554,19 @@ pair token during a rotation (3.7) with no hand-edited value. `--check` treats o
 ### 12.2 New lines in `infra/secrets.txt`
 
 ```
-yyc-ai/pigeon        Opaque  yyc-ai/deploy/sealed/pigeon.yaml        PIGEON_TOKEN_UI=YYC_TOKEN_PIGEON_UI PIGEON_LEGACY_VIEW_AS_KEY=YYC_PIGEON_LEGACY_VIEW_AS_KEY PIGEON_TOKEN_MAGPIE=YYC_TOKEN_PIGEON_MAGPIE PIGEON_TOKEN_HERMIT=YYC_TOKEN_PIGEON_HERMIT PIGEON_TOKEN_MODEL=YYC_TOKEN_PIGEON_MODEL PIGEON_VIEW_AS_KEYS=YYC_PIGEON_VIEW_AS_KEY|YYC_PIGEON_VIEW_AS_KEY_PREV? PIGEON_BLOB_KEYS=YYC_PIGEON_BLOB_KEY|YYC_PIGEON_BLOB_KEY_PREV?
-yyc-ai/magpie        Opaque  yyc-ai/deploy/sealed/magpie.yaml        MAGPIE_DATABASE_URL=YYC_MAGPIE_DATABASE_URL MAGPIE_S3_ENDPOINT=YYC_S3_ENDPOINT MAGPIE_S3_REGION='fsn1' MAGPIE_S3_BUCKET='yyc-ai-magpie' MAGPIE_S3_ACCESS_KEY_ID=YYC_S3_ACCESS_KEY MAGPIE_S3_SECRET_ACCESS_KEY=YYC_S3_SECRET_KEY MAGPIE_ACCEPT_PIGEON=YYC_TOKEN_PIGEON_MAGPIE|YYC_TOKEN_PIGEON_MAGPIE_NEXT? MAGPIE_ACCEPT_GATEWAY=YYC_TOKEN_GATEWAY_MAGPIE|YYC_TOKEN_GATEWAY_MAGPIE_NEXT? MAGPIE_ACCEPT_HERMIT=YYC_TOKEN_HERMIT_MAGPIE|YYC_TOKEN_HERMIT_MAGPIE_NEXT? MAGPIE_ACCEPT_ADMIN=YYC_TOKEN_ADMIN_MAGPIE|YYC_TOKEN_ADMIN_MAGPIE_NEXT? MAGPIE_TOKEN_HERMIT=YYC_TOKEN_MAGPIE_HERMIT MAGPIE_TOKEN_IMPORT=YYC_TOKEN_MAGPIE_IMPORT
-yyc-ai/hermit        Opaque  yyc-ai/deploy/sealed/hermit.yaml        HERMIT_DATABASE_URL=YYC_HERMIT_DATABASE_URL HERMIT_TOKEN_KEYS=YYC_HERMIT_TOKEN_KEYS HERMIT_ACCEPT_PIGEON=YYC_TOKEN_PIGEON_HERMIT|YYC_TOKEN_PIGEON_HERMIT_NEXT? HERMIT_ACCEPT_MAGPIE=YYC_TOKEN_MAGPIE_HERMIT|YYC_TOKEN_MAGPIE_HERMIT_NEXT? HERMIT_ACCEPT_GATEWAY=YYC_TOKEN_GATEWAY_HERMIT|YYC_TOKEN_GATEWAY_HERMIT_NEXT? HERMIT_ACCEPT_TOOLS=YYC_TOKEN_TOOLS_HERMIT|YYC_TOKEN_TOOLS_HERMIT_NEXT? HERMIT_ACCEPT_MONITOR=YYC_TOKEN_MONITOR_HERMIT|YYC_TOKEN_MONITOR_HERMIT_NEXT? HERMIT_ACCEPT_ADMIN=YYC_TOKEN_ADMIN_HERMIT|YYC_TOKEN_ADMIN_HERMIT_NEXT? HERMIT_TOKEN_MAGPIE=YYC_TOKEN_HERMIT_MAGPIE HERMIT_TOKEN_EGRESS=YYC_TOKEN_HERMIT_EGRESS HERMIT_FABRIC_CA=YYC_HERMIT_FABRIC_CA HERMIT_FABRIC_CLIENT_CERT=YYC_HERMIT_FABRIC_CLIENT_CERT HERMIT_FABRIC_CLIENT_KEY=YYC_HERMIT_FABRIC_CLIENT_KEY HERMIT_FABRIC_HOST_CERT=YYC_HERMIT_FABRIC_HOST_CERT HERMIT_FABRIC_HOST_KEY=YYC_HERMIT_FABRIC_HOST_KEY HERMIT_AWS_ACCESS_KEY_ID=YYC_HERMIT_AWS_ACCESS_KEY_ID HERMIT_AWS_SECRET_ACCESS_KEY=YYC_HERMIT_AWS_SECRET_ACCESS_KEY HERMIT_JUICEFS_META_URL=YYC_HERMIT_JUICEFS_META_URL HERMIT_JUICEFS_META_PASSWORD=YYC_PG_JUICEFS_PASSWORD
-yyc-ai/hermit-juicefs Opaque yyc-ai/deploy/sealed/hermit-juicefs.yaml name=YYC_JUICEFS_VOLUME_NAME metaurl=YYC_JUICEFS_META_URL envs=YYC_JUICEFS_CSI_ENVS
-yyc-ai/egress        Opaque  yyc-ai/deploy/sealed/egress.yaml        EGRESS_DATABASE_URL=YYC_EGRESS_DATABASE_URL OPENROUTER_API_KEY=YYC_AI_OPENROUTER_KEY EGRESS_ACCEPT_PIGEON=YYC_TOKEN_PIGEON_MODEL|YYC_TOKEN_PIGEON_MODEL_NEXT? EGRESS_ACCEPT_HERMIT=YYC_TOKEN_HERMIT_EGRESS|YYC_TOKEN_HERMIT_EGRESS_NEXT? EGRESS_ACCEPT_ADMIN=YYC_TOKEN_ADMIN_EGRESS|YYC_TOKEN_ADMIN_EGRESS_NEXT? EGRESS_TOKEN_MAGPIE=YYC_TOKEN_GATEWAY_MAGPIE EGRESS_TOKEN_HERMIT=YYC_TOKEN_GATEWAY_HERMIT EGRESS_TOKEN_TOOLS=YYC_TOKEN_GATEWAY_TOOLS
-yyc-ai/tools         Opaque  yyc-ai/deploy/sealed/tools.yaml         TOOLS_DATABASE_URL=YYC_TOOLS_DATABASE_URL EXA_API_KEY=YYC_EXA_API TIKHUB_API=YYC_TIKHUB_API YYC_MCP_TOKEN=YYC_JARVIS_MCP_TOKEN WEB_FETCH_TOKEN=YYC_WEB_FETCH_TOKEN ANYAPI_API_KEY=YYC_ANYAPI_API_KEY TOOLS_ACCEPT_GATEWAY=YYC_TOKEN_GATEWAY_TOOLS|YYC_TOKEN_GATEWAY_TOOLS_NEXT? TOOLS_TOKEN_HERMIT=YYC_TOKEN_TOOLS_HERMIT
-yyc-ai/tunnel        Opaque  yyc-ai/deploy/sealed/tunnel.yaml        token=YYC_CF_PIGEON_TUNNEL_TOKEN
-yyc-ai/magpie-import Opaque  yyc-ai/deploy/sealed/magpie-import.yaml MAGPIE_IMPORT_CLOUDCLI_URL=YYC_CLOUDCLI_DATABASE_URL MAGPIE_IMPORT_JARVIS_URL=YYC_JARVIS_DATABASE_URL MAGPIE_IMPORT_TOKEN_UI=YYC_TOKEN_MAGPIE_IMPORT_UI MAGPIE_IMPORT_ACCEPT_MAGPIE=YYC_TOKEN_MAGPIE_IMPORT|YYC_TOKEN_MAGPIE_IMPORT_NEXT?
+yyc-ai/pigeon        Opaque  yyc/deploy/sealed/pigeon.yaml        PIGEON_TOKEN_UI=YYC_TOKEN_PIGEON_UI PIGEON_LEGACY_VIEW_AS_KEY=YYC_PIGEON_LEGACY_VIEW_AS_KEY PIGEON_TOKEN_MAGPIE=YYC_TOKEN_PIGEON_MAGPIE PIGEON_TOKEN_HERMIT=YYC_TOKEN_PIGEON_HERMIT PIGEON_TOKEN_MODEL=YYC_TOKEN_PIGEON_MODEL PIGEON_VIEW_AS_KEYS=YYC_PIGEON_VIEW_AS_KEY|YYC_PIGEON_VIEW_AS_KEY_PREV? PIGEON_BLOB_KEYS=YYC_PIGEON_BLOB_KEY|YYC_PIGEON_BLOB_KEY_PREV?
+yyc-ai/magpie        Opaque  yyc/deploy/sealed/magpie.yaml        MAGPIE_DATABASE_URL=YYC_MAGPIE_DATABASE_URL MAGPIE_S3_ENDPOINT=YYC_S3_ENDPOINT MAGPIE_S3_REGION='fsn1' MAGPIE_S3_BUCKET='yyc-ai-magpie' MAGPIE_S3_ACCESS_KEY_ID=YYC_S3_ACCESS_KEY MAGPIE_S3_SECRET_ACCESS_KEY=YYC_S3_SECRET_KEY MAGPIE_ACCEPT_PIGEON=YYC_TOKEN_PIGEON_MAGPIE|YYC_TOKEN_PIGEON_MAGPIE_NEXT? MAGPIE_ACCEPT_GATEWAY=YYC_TOKEN_GATEWAY_MAGPIE|YYC_TOKEN_GATEWAY_MAGPIE_NEXT? MAGPIE_ACCEPT_HERMIT=YYC_TOKEN_HERMIT_MAGPIE|YYC_TOKEN_HERMIT_MAGPIE_NEXT? MAGPIE_ACCEPT_ADMIN=YYC_TOKEN_ADMIN_MAGPIE|YYC_TOKEN_ADMIN_MAGPIE_NEXT? MAGPIE_TOKEN_HERMIT=YYC_TOKEN_MAGPIE_HERMIT MAGPIE_TOKEN_IMPORT=YYC_TOKEN_MAGPIE_IMPORT
+yyc-ai/hermit        Opaque  yyc/deploy/sealed/hermit.yaml        HERMIT_DATABASE_URL=YYC_HERMIT_DATABASE_URL HERMIT_TOKEN_KEYS=YYC_HERMIT_TOKEN_KEYS HERMIT_ACCEPT_PIGEON=YYC_TOKEN_PIGEON_HERMIT|YYC_TOKEN_PIGEON_HERMIT_NEXT? HERMIT_ACCEPT_MAGPIE=YYC_TOKEN_MAGPIE_HERMIT|YYC_TOKEN_MAGPIE_HERMIT_NEXT? HERMIT_ACCEPT_GATEWAY=YYC_TOKEN_GATEWAY_HERMIT|YYC_TOKEN_GATEWAY_HERMIT_NEXT? HERMIT_ACCEPT_TOOLS=YYC_TOKEN_TOOLS_HERMIT|YYC_TOKEN_TOOLS_HERMIT_NEXT? HERMIT_ACCEPT_MONITOR=YYC_TOKEN_MONITOR_HERMIT|YYC_TOKEN_MONITOR_HERMIT_NEXT? HERMIT_ACCEPT_ADMIN=YYC_TOKEN_ADMIN_HERMIT|YYC_TOKEN_ADMIN_HERMIT_NEXT? HERMIT_TOKEN_MAGPIE=YYC_TOKEN_HERMIT_MAGPIE HERMIT_TOKEN_EGRESS=YYC_TOKEN_HERMIT_EGRESS HERMIT_FABRIC_CA=YYC_HERMIT_FABRIC_CA HERMIT_FABRIC_CLIENT_CERT=YYC_HERMIT_FABRIC_CLIENT_CERT HERMIT_FABRIC_CLIENT_KEY=YYC_HERMIT_FABRIC_CLIENT_KEY HERMIT_FABRIC_HOST_CERT=YYC_HERMIT_FABRIC_HOST_CERT HERMIT_FABRIC_HOST_KEY=YYC_HERMIT_FABRIC_HOST_KEY HERMIT_AWS_ACCESS_KEY_ID=YYC_HERMIT_AWS_ACCESS_KEY_ID HERMIT_AWS_SECRET_ACCESS_KEY=YYC_HERMIT_AWS_SECRET_ACCESS_KEY HERMIT_JUICEFS_META_URL=YYC_HERMIT_JUICEFS_META_URL HERMIT_JUICEFS_META_PASSWORD=YYC_PG_JUICEFS_PASSWORD
+yyc-ai/hermit-juicefs Opaque yyc/deploy/sealed/hermit-juicefs.yaml name=YYC_JUICEFS_VOLUME_NAME metaurl=YYC_JUICEFS_META_URL envs=YYC_JUICEFS_CSI_ENVS
+yyc-ai/egress        Opaque  yyc/deploy/sealed/egress.yaml        EGRESS_DATABASE_URL=YYC_EGRESS_DATABASE_URL OPENROUTER_API_KEY=YYC_AI_OPENROUTER_KEY EGRESS_ACCEPT_PIGEON=YYC_TOKEN_PIGEON_MODEL|YYC_TOKEN_PIGEON_MODEL_NEXT? EGRESS_ACCEPT_HERMIT=YYC_TOKEN_HERMIT_EGRESS|YYC_TOKEN_HERMIT_EGRESS_NEXT? EGRESS_ACCEPT_ADMIN=YYC_TOKEN_ADMIN_EGRESS|YYC_TOKEN_ADMIN_EGRESS_NEXT? EGRESS_TOKEN_MAGPIE=YYC_TOKEN_GATEWAY_MAGPIE EGRESS_TOKEN_HERMIT=YYC_TOKEN_GATEWAY_HERMIT EGRESS_TOKEN_TOOLS=YYC_TOKEN_GATEWAY_TOOLS
+yyc-ai/tools         Opaque  yyc/deploy/sealed/tools.yaml         TOOLS_DATABASE_URL=YYC_TOOLS_DATABASE_URL EXA_API_KEY=YYC_EXA_API TIKHUB_API=YYC_TIKHUB_API YYC_MCP_TOKEN=YYC_JARVIS_MCP_TOKEN WEB_FETCH_TOKEN=YYC_WEB_FETCH_TOKEN ANYAPI_API_KEY=YYC_ANYAPI_API_KEY TOOLS_ACCEPT_GATEWAY=YYC_TOKEN_GATEWAY_TOOLS|YYC_TOKEN_GATEWAY_TOOLS_NEXT? TOOLS_TOKEN_HERMIT=YYC_TOKEN_TOOLS_HERMIT
+yyc-ai/tunnel        Opaque  yyc/deploy/sealed/tunnel.yaml        token=YYC_CF_PIGEON_TUNNEL_TOKEN
+yyc-ai/magpie-import Opaque  yyc/deploy/sealed/magpie-import.yaml MAGPIE_IMPORT_CLOUDCLI_URL=YYC_CLOUDCLI_DATABASE_URL MAGPIE_IMPORT_JARVIS_URL=YYC_JARVIS_DATABASE_URL MAGPIE_IMPORT_TOKEN_UI=YYC_TOKEN_MAGPIE_IMPORT_UI MAGPIE_IMPORT_ACCEPT_MAGPIE=YYC_TOKEN_MAGPIE_IMPORT|YYC_TOKEN_MAGPIE_IMPORT_NEXT?
 yyc-deploy/tunnel    Opaque  news-stream/deploy/apps/sealed/yyc-deploy-tunnel.yaml  token=YYC_CF_DEPLOY_TUNNEL_TOKEN
-yyc-ai/hermit-import Opaque  yyc-ai/deploy/sealed/hermit-import.yaml HERMIT_IMPORT_JARVIS_URL=YYC_JARVIS_DATABASE_URL
-yyc-ai/egress-import Opaque  yyc-ai/deploy/sealed/egress-import.yaml EGRESS_IMPORT_JARVIS_URL=YYC_JARVIS_DATABASE_URL
-yyc-ai/tools-import  Opaque  yyc-ai/deploy/sealed/tools-import.yaml  TOOLS_IMPORT_JARVIS_URL=YYC_JARVIS_DATABASE_URL
-yyc-ai-fabric/hermit-gateway Opaque yyc-ai/deploy/sealed/hermit-gateway.yaml host.crt=YYC_HERMIT_FABRIC_GATEWAY_CERT host.key=YYC_HERMIT_FABRIC_GATEWAY_KEY ca.crt=YYC_HERMIT_FABRIC_CA wg.key=YYC_HERMIT_GATEWAY_WG_KEY
+yyc-ai/hermit-import Opaque  yyc/deploy/sealed/hermit-import.yaml HERMIT_IMPORT_JARVIS_URL=YYC_JARVIS_DATABASE_URL
+yyc-ai/egress-import Opaque  yyc/deploy/sealed/egress-import.yaml EGRESS_IMPORT_JARVIS_URL=YYC_JARVIS_DATABASE_URL
+yyc-ai/tools-import  Opaque  yyc/deploy/sealed/tools-import.yaml  TOOLS_IMPORT_JARVIS_URL=YYC_JARVIS_DATABASE_URL
+yyc-ai-fabric/hermit-gateway Opaque yyc/deploy/sealed/hermit-gateway.yaml host.crt=YYC_HERMIT_FABRIC_GATEWAY_CERT host.key=YYC_HERMIT_FABRIC_GATEWAY_KEY ca.crt=YYC_HERMIT_FABRIC_CA wg.key=YYC_HERMIT_GATEWAY_WG_KEY
 db/pg-role-magpie    kubernetes.io/basic-auth  news-stream/deploy/apps/sealed/pg-role-magpie.yaml  username='magpie' password=YYC_PG_MAGPIE_PASSWORD
 db/pg-role-hermit    kubernetes.io/basic-auth  news-stream/deploy/apps/sealed/pg-role-hermit.yaml  username='hermit' password=YYC_PG_HERMIT_PASSWORD
 db/pg-role-egress    kubernetes.io/basic-auth  news-stream/deploy/apps/sealed/pg-role-egress.yaml  username='egress' password=YYC_PG_EGRESS_PASSWORD
@@ -1621,7 +1621,7 @@ store at teardown (18.4): `YYC_JARVIS_CC_TOKEN`, `YYC_JARVIS_SENT_FILES_TOKEN`, 
 
 Two clusters (decision 13, 25): on the old cluster Kustomizations `yyc-ai` and `yyc-ai-secrets` keep applying the
 old stack from `yyc-ai/legacy/` (Flux, until the Talos session removes that cluster; there is no hand-over). On the
-new cluster `yyc-ai/deploy` is applied by workflow `DE0CH/YYC/.github/workflows/yyc-ai.yml`
+new cluster `yyc/deploy` is applied by workflow `DE0CH/YYC/.github/workflows/yyc-ai.yml`
 (deploy-workflows 5-6): job `check` on every PR and push touching YYC AI, job `deploy` on push to `main`, every 3 h
 against drift and on `workflow_dispatch`. The runner reaches the API server through tunnel `yyc-deploy` (Access
 service token, `cloudflared access tcp` to `127.0.0.1:6443`) and authenticates with a GitHub OIDC token minted per
@@ -1650,7 +1650,7 @@ supervisor or image changed; bump fabric.sandboxd only if sandboxd changed
 job `deploy` (minutes after the push): plan, deletion gate, apply in order, `rollout status` of every workload
       │
       ▼  Deployments roll one surge Pod at a time (maxUnavailable 0); the AMI workflow bakes in parallel if pinned
-verify: ops page verdict `ok`; `yyc-ai/tests/live_check.py` (15.6) green (the run already waited for every rollout)
+verify: ops page verdict `ok`; `yyc/tests/live_check.py` (15.6) green (the run already waited for every rollout)
       │
       ├─ green ─► done (task record: the pins, the run link)
       └─ red ───► revert the YYC commit (the previous pins; a revert that removes objects carries its `Deploy-Prune`
@@ -1661,12 +1661,12 @@ Order inside one YYC commit does not matter to the services: every component acc
 (3.4); one run applies the whole set in the order of deploy-workflows 6.4. A protocol bump that drops an old number
 ships in a later aviary release than the one that added the new number.
 
-### 13.3 Job `check` of `yyc-ai.yml` (DE0CH/YYC; on pull_request and push touching `yyc-ai/deploy/**`, `news-stream/deploy/db/**`, `infra/secrets.txt`, `tools/yyc-apply/**`, the workflow)
+### 13.3 Job `check` of `yyc-ai.yml` (DE0CH/YYC; on pull_request and push touching `yyc/deploy/**`, `news-stream/deploy/db/**`, `infra/secrets.txt`, `tools/yyc-apply/**`, the workflow)
 
 No cluster credentials; it reads the repo and public registries only. (The former `yyc-ai-check.yml` and
 `yyc-ai-render.yml` are this job; the ZDR guard runs in it too, and keeps its own daily `yyc-ai-zdr.yml`.)
 
-1. `kustomize build yyc-ai/deploy` and `kustomize build news-stream/deploy/db`, then `kubeconform -strict` (v0.8.0)
+1. `kustomize build yyc/deploy` and `kustomize build news-stream/deploy/db`, then `kubeconform -strict` (v0.8.0)
    with schemas for SealedSecret, CNPG Cluster/Database, HelmRelease, HPA.
 2. **No switches:** containers named `pigeon`, `magpie` have only `secretKeyRef`/`fieldRef` env, no `envFrom`, no
    ConfigMap volume, args exactly `[serve]`; every `yyc-ai` Deployment's env names match `^[A-Z0-9_]+$` and appear in
@@ -1716,7 +1716,7 @@ name: hermit-ami
 on:
   push:
     branches: [main]
-    paths: ["yyc-ai/deploy/hermit/hermit.json", ".github/workflows/hermit-ami.yml"]
+    paths: ["yyc/deploy/hermit/hermit.json", ".github/workflows/hermit-ami.yml"]
   workflow_dispatch:
     inputs: {force: {description: "bake even when the AMI already holds the pins", type: boolean, default: false}}
 concurrency: {group: hermit-ami, cancel-in-progress: false}
@@ -1732,11 +1732,11 @@ jobs:
         id: pins
         run: |
           set -euo pipefail
-          f=yyc-ai/deploy/hermit/hermit.json
+          f=yyc/deploy/hermit/hermit.json
           now=$(jq -c '[.sandbox.image, .fabric.sandboxd, .fabric.runsc]' "$f")
           before=$(git show HEAD^:"$f" 2>/dev/null | jq -c '[.sandbox.image, .fabric.sandboxd, .fabric.runsc]' || echo null)
           echo "changed=$([ "$now" != "$before" ] && echo 1 || echo 0)" >> "$GITHUB_OUTPUT"
-          echo "aviary=$(yq '.images[] | select(.name=="hermit") | .newTag' yyc-ai/deploy/kustomization.yaml)" >> "$GITHUB_OUTPUT"
+          echo "aviary=$(yq '.images[] | select(.name=="hermit") | .newTag' yyc/deploy/kustomization.yaml)" >> "$GITHUB_OUTPUT"
       - name: aviary at the pinned commit
         if: steps.pins.outputs.changed == '1' || inputs.force
         run: |
@@ -1754,8 +1754,8 @@ jobs:
         run: |
           set -euo pipefail
           a="$RUNNER_TEMP/aviary/fabric/aws/infra.sh"
-          bash "$a" --config yyc-ai/deploy/hermit/hermit.json sync     # bakes when the template's AMI tags differ
-          bash "$a" --config yyc-ai/deploy/hermit/hermit.json check    # exit 0 = the template's AMI holds all three
+          bash "$a" --config yyc/deploy/hermit/hermit.json sync     # bakes when the template's AMI tags differ
+          bash "$a" --config yyc/deploy/hermit/hermit.json check    # exit 0 = the template's AMI holds all three
 ```
 
 `infra.sh` reads the three pins from `hermit.json` (no image argument), tags AMIs `image`, `sandboxd`, `runsc`, bakes
@@ -1766,17 +1766,17 @@ the gateway (about 45 s more), as today.
 ### 13.6 The ZDR guard and the OpenRouter guardrail (DE0CH/YYC; A7.F51, A7.F52, A19.F21, A19.F26, A20.F15)
 
 Both read `config.json` today, which the teardown deletes, and the guard finds the jarvis3 commit through the remote
-base that R41 removes. Both are rewritten in the YYC commit that adds `yyc-ai/deploy/egress/egress.json` (cutover P1),
+base that R41 removes. Both are rewritten in the YYC commit that adds `yyc/deploy/egress/egress.json` (cutover P1),
 so they pass against the new stack before the switch; while `legacy/` exists they check both stacks.
 
-**`yyc-ai/tests/test_zdr.py`** (stdlib only, as today), run by `yyc-ai-zdr.yml` (unchanged triggers: push to
-`yyc-ai/**`, which covers `yyc-ai/deploy/egress/**`, daily 03:17 UTC, dispatch; the workflow passes its
+**`yyc/tests/test_zdr.py`** (stdlib only, as today), run by `yyc-ai-zdr.yml` (unchanged triggers: push to
+`yyc-ai/**`, which covers `yyc/deploy/egress/**`, daily 03:17 UTC, dispatch; the workflow passes its
 `GITHUB_TOKEN` as `GH_TOKEN` for the API call below). It fails when, for the new stack:
 1. a model in `egress.json` `models[].id`, `defaultModel`, `smallModel` or `titleModel` has no endpoint in
    `GET https://openrouter.ai/api/v1/endpoints/zdr`;
 2. `egress.json` `routes` has no route named `model` whose `upstream` contains `openrouter.ai` with `model: true`, or
    any route whose upstream contains `openrouter.ai` lacks `model: true`;
-3. the jarvis3 commit cannot be found: the tag of image `jarvis3-chat` in `yyc-ai/deploy/kustomization.yaml`'s
+3. the jarvis3 commit cannot be found: the tag of image `jarvis3-chat` in `yyc/deploy/kustomization.yaml`'s
    `images:` (a `<sha12>`) is resolved to the full sha with `GET https://api.github.com/repos/DE0CH/jarvis3/commits/<sha12>`;
 4. at that commit (raw.githubusercontent.com by full sha) the same three literals are missing: in
    `chat/src/egress/modelbody.ts` `export const FORCED_PROVIDER = { zdr: true, data_collection: "deny" }`; in
@@ -1784,10 +1784,10 @@ so they pass against the new stack before the switch; while `legacy/` exists the
    `chat/test/egress.test.ts` the string `zero data retention is forced into every request body`. egress keeps these
    literals in these files (17.2 item 9); a jarvis3 change that moves them updates this guard in the YYC commit that
    pins it.
-While `yyc-ai/deploy/legacy/config.json` exists, the guard also runs today's three checks against it and the legacy
+While `yyc/deploy/legacy/config.json` exists, the guard also runs today's three checks against it and the legacy
 remote base's `?ref=` (the old stack serves until it drains); the teardown commit deletes that half.
 
-**`yyc-ai/infra/openrouter.py`**: `MODELS` = `egress.json` `models[].id` ∪ `defaultModel` ∪ `smallModel` ∪ `titleModel`,
+**`yyc/infra/openrouter.py`**: `MODELS` = `egress.json` `models[].id` ∪ `defaultModel` ∪ `smallModel` ∪ `titleModel`,
 plus, while `legacy/config.json` exists, its `models`, `defaultModel` and `titleModel` (so the draining old stack keeps
 its models); the guardrail `yyc-chat`'s `allowed_models` follows on the next run. The key keeps the name `yyc-chat`, and
 a rotation's temporary key `yyc-chat-next`, so the monitor's balances panel (every key whose name starts with `yyc-`,
@@ -2135,7 +2135,7 @@ egress (the YYC implementation of 3.11's HTTP part):
    route's OpenRouter go out by name through YYC's yyc-socks pool (news-stream/deploy/apps/socks.yaml), whose `sandbox`
    profile does the threat DNS and the public-address check over the nodes' IPv6; egress then resolves nothing itself
    (the threat-DNS and AddressGuard steps of 3 below are the exit's). The egress pods' NetworkPolicy needs
-   `10.0.0.0/16` on TCP 1080 (the pool's endpoints are node addresses), as yyc-ai/deploy/db.yaml `tools-to-socks`.
+   `10.0.0.0/16` on TCP 1080 (the pool's endpoints are node addresses), as yyc/deploy/db.yaml `tools-to-socks`.
 3. **The gateway contract** of 3.11, in its order (3.11.1): credential (signed token checked locally, liveness from
    `GET http://hermit/v1/sandbox-tokens/{sandboxId}` with `EGRESS_TOKEN_HERMIT`, cached 30 s, stale on error, 3.11.2;
    today's direct read of `sandboxes` goes), then the fixed names, then `selfHosts`, then today's internet chain
@@ -2408,15 +2408,15 @@ this table is complete. Rows already covered in another spec's table point there
 | A6.F38 | tools zero-downtime drain | `chat/src/tools/main.ts:27-39` | kept (150 s drain, grace 180); egress's route waits 180 s (3.11.4) |
 | A6.F40 | Network isolation around egress/tools | `deploy/chat/network.yaml:1-58` | changed: section 10 (default deny both ways in `yyc-ai`, per-component policies, 3128 the only sandbox port) |
 | A6.F41 | Logging | `chat/src/common/log.ts` | kept (JSON lines, `redact`, `safeUrl`), plus the 15.1 field names |
-| A7.F0 | Flux GitOps for YYC AI (Kustomization yyc-ai) | `news-stream/deploy/clusters/hetzner/flux-sync.yaml:8-56` | changed: `yyc-ai.yml` applies `yyc-ai/deploy` (13.1, deploy-workflows); Kustomizations `yyc-ai`, `yyc-ai-secrets` deleted with `deletionPolicy: Orphan`; job `check` (13.3) checks every PR and push |
-| A7.F1 | Remote base pinned to a jarvis3 commit | `yyc-ai/deploy/kustomization.yaml:9,26-33` | dropped: YYC writes egress's and tools' manifests and pins only the `jarvis3-chat` image (R41, 9.7) |
-| A7.F2 | Instance ConfigMap jarvis-config (hashed name) | `yyc-ai/deploy/kustomization.yaml:34-37` | dropped: per-implementation ConfigMaps `hermit-config`, `egress-config`, `tools-config`; none for pigeon or magpie (9.10) |
-| A7.F3 | Access catalogue ConfigMap yyc/yyc-catalogue (unhashed) | `yyc-ai/deploy/kustomization.yaml:38-43` | kept: `yyc/yyc-catalogue`, key `config.json`, sourced from `catalogue.json` in the switch commit (R40, 9.2, hermit 21.5) |
-| A7.F9 | config.json: tools | `yyc-ai/deploy/config.json:51-66` | moved to `tools.json` (17.2 tools item 1) |
-| A7.F10 | config.json: budget | `yyc-ai/deploy/config.json:67` | moved to `egress.json` `budget`; an edit rolls egress only (17.2 item 2) |
+| A7.F0 | Flux GitOps for YYC AI (Kustomization yyc-ai) | `news-stream/deploy/clusters/hetzner/flux-sync.yaml:8-56` | changed: `yyc-ai.yml` applies `yyc/deploy` (13.1, deploy-workflows); Kustomizations `yyc-ai`, `yyc-ai-secrets` deleted with `deletionPolicy: Orphan`; job `check` (13.3) checks every PR and push |
+| A7.F1 | Remote base pinned to a jarvis3 commit | `yyc/deploy/kustomization.yaml:9,26-33` | dropped: YYC writes egress's and tools' manifests and pins only the `jarvis3-chat` image (R41, 9.7) |
+| A7.F2 | Instance ConfigMap jarvis-config (hashed name) | `yyc/deploy/kustomization.yaml:34-37` | dropped: per-implementation ConfigMaps `hermit-config`, `egress-config`, `tools-config`; none for pigeon or magpie (9.10) |
+| A7.F3 | Access catalogue ConfigMap yyc/yyc-catalogue (unhashed) | `yyc/deploy/kustomization.yaml:38-43` | kept: `yyc/yyc-catalogue`, key `config.json`, sourced from `catalogue.json` in the switch commit (R40, 9.2, hermit 21.5) |
+| A7.F9 | config.json: tools | `yyc/deploy/config.json:51-66` | moved to `tools.json` (17.2 tools item 1) |
+| A7.F10 | config.json: budget | `yyc/deploy/config.json:67` | moved to `egress.json` `budget`; an edit rolls egress only (17.2 item 2) |
 | A7.F24 | egress Deployment zero-downtime + VIP announcement | `deploy/chat/egress.yaml:1-103` | changed: drain 3.11.6; announcement replaced by hermit's EndpointSlice watch (hermit 13.8) |
 | A7.F25 | tools Deployment zero-downtime | `deploy/chat/tools.yaml:1-192` | kept (9.3), readiness on `/readyz` |
-| A7.F27 | Secrets rollout annotation yyc/secrets-rev | `yyc-ai/deploy/kustomization.yaml:74-83` | kept, one annotation per Deployment (9.2, 13.4) |
+| A7.F27 | Secrets rollout annotation yyc/secrets-rev | `yyc/deploy/kustomization.yaml:74-83` | kept, one annotation per Deployment (9.2, 13.4) |
 | A7.F35 | NetworkPolicies (live: 14) | `deploy/chat/network.yaml:1-58` | changed: section 10 |
 | A7.F36 | Namespace, LimitRange, PriorityClass | `deploy/chat/namespace.yaml` | kept for namespace `yyc-ai`, same LimitRange numbers and PriorityClass `serving`; plus `yyc-ai-fabric` (9.9) |
 | A7.F39 | Structured logging | `chat/src/common/log.ts:1-25` | changed: 15.1 (one format, `redact` in the logger) |
@@ -2424,9 +2424,9 @@ this table is complete. Rows already covered in another spec's table point there
 | A7.F45 | jarvis3 chat workflow (images) | `.github/workflows/chat.yml:1-169` | changed: `chat.yml` keeps tests and the `jarvis3-chat` image, adds the aviary conformance job, loses the sandbox image and E2B jobs (17.3) |
 | A7.F46 | jarvis3 egress-allowlist weekly refresh | `.github/workflows/egress-allowlist.yml:1-55` | kept unchanged; reaches YYC with the next `jarvis3-chat` pin (13.2) |
 | A7.F49 | yyc-ios workflow (TestFlight) | `.github/workflows/yyc-ios.yml:1-126` | kept in claudecodeui (pigeon 21, A4.F56) |
-| A7.F51 | Zero-data-retention guard (test + workflow) | `yyc-ai/tests/test_zdr.py:1-67` | changed: rewritten against `egress.json` and the image tag (13.6) |
-| A7.F52 | OpenRouter key and guardrail script | `yyc-ai/infra/openrouter.py:1-125` | changed: reads `egress.json` with `smallModel`; key name `yyc-chat` kept (13.6) |
-| A7.F53 | gVisor node script and inert RuntimeClass | `yyc-ai/infra/gvisor-node.sh:1-56` | dropped: `infra/gvisor-node.sh` and the inert RuntimeClass deleted at teardown (18.4) |
+| A7.F51 | Zero-data-retention guard (test + workflow) | `yyc/tests/test_zdr.py:1-67` | changed: rewritten against `egress.json` and the image tag (13.6) |
+| A7.F52 | OpenRouter key and guardrail script | `yyc/infra/openrouter.py:1-125` | changed: reads `egress.json` with `smallModel`; key name `yyc-chat` kept (13.6) |
+| A7.F53 | gVisor node script and inert RuntimeClass | `yyc/infra/gvisor-node.sh:1-56` | dropped: `infra/gvisor-node.sh` and the inert RuntimeClass deleted at teardown (18.4) |
 | A7.F54 | Deploy-a-new-version runbook | `README.md:74-90` | changed: the deploy flow of 13.2; YYC README and the yyc-ai skill rewritten at teardown (18.4) |
 | A10.F2 | /api/auth/* (status, user, refresh, logout) | `server/modules/auth/auth.routes.ts:18,44,48,52 (register …` | dropped: unknown `/api` paths answer 404 JSON (pigeon 5.12) |
 | A10.F3 | GET /api/projects (+ /:projectId/sessions, toggle-star, … | `server/modules/projects/projects.routes.ts:61-76 (GET …` | dropped: the one project is a pigeon constant |
@@ -2459,15 +2459,15 @@ this table is complete. Rows already covered in another spec's table point there
 | A17.F21 | Client replica caches | `paseo/packages/app/src/runtime/replica-cache/index.ts:72- …` | apps unchanged (pigeon 21) |
 | A18.F5 | Top folders ws/ and users/ owned by uid 1000 | `storage.rs:144-151` | changed: everything under `ws/` uid 1000 by the PV's `all-squash=1000:1000` (9.6) and hermit's fix-up Job (hermit 15.4) |
 | A18.F13 | Client background jobs: session cleanup, slice cleanup, compaction | `.config NoBGJob false, Heartbeat 12 s` | kept on hermit's mount clients (hermit 15.3) |
-| A18.F16 | JuiceFS CSI driver HelmRelease | `yyc-ai/deploy/juicefs.yaml:13-65 (HelmRepository …` | moved to `clusters/hetzner/juicefs-csi.yaml`, unchanged (9.1, deploy-workflows 8 H3.a) |
+| A18.F16 | JuiceFS CSI driver HelmRelease | `yyc/deploy/juicefs.yaml:13-65 (HelmRepository …` | moved to `clusters/hetzner/juicefs-csi.yaml`, unchanged (9.1, deploy-workflows 8 H3.a) |
 | A18.F17 | Static PV/PVC of the whole volume | `juicefs.yaml:66-106 (PV yyc-ai-jfs 1Pi RWX Retain, …` | changed: PV/PVC `hermit-jfs` (9.6); `yyc-ai-jfs` deleted after teardown (18.4) |
 | A18.F18 | Mount pods (one per UI node, shared by UI pods) | `live pod …` | changed: mount pods for `hermit-jfs` on hermit's nodes (hermit 15.2) |
 | A18.F19 | Mount-pod restart / upgrade under a running UI pod | `mount pod env JFS_SUPER_COMM + label …` | changed: hermit's `/jfs` mount has `mountPropagation: HostToContainer` (9.6, hermit 15.6) |
 | A19.F2 | Snapshot fields read by ai_activity (event diff contract) | `YYC news-stream/monitor.py:1956-2006, 2112-2121` | kept: hermit 18.3 contract 2, golden test, E16 (7.8), cursor carried over (15.5) |
 | A19.F3 | Live dashboard panels 9 YYC AI and 10 Systems (/app/live) | `YYC news-stream/web-app/src/routes/-LivePage.tsx:1-21, …` | kept: `live:sys` unchanged because `ai_slim` is unchanged (15.5); fixtures follow (hermit 21.4) |
-| A19.F5 | NetworkPolicy web-from-news-monitor | `YYC yyc-ai/deploy/ops.yaml:64-79 (cat -n of …` | changed: `hermit-in` admits `yyc/monitor` on 8080 (10.2); the old policy goes with `legacy/` |
+| A19.F5 | NetworkPolicy web-from-news-monitor | `YYC yyc/deploy/ops.yaml:64-79 (cat -n of …` | changed: `hermit-in` admits `yyc/monitor` on 8080 (10.2); the old policy goes with `legacy/` |
 | A19.F7 | Monitor rollout and singleton behaviour (consumer side) | `YYC news-stream/deploy/apps/monitor.yaml:1-9, 58-67, …` | kept unchanged in the news stream |
-| A19.F9 | YYC AI tools -> yyc-mcp upstream (service token + X-YYC-User) | `YYC yyc-ai/deploy/config.json:57-65` | changed: tools maps `Aviary-Sandbox-Person` (email) to `X-YYC-User` (17.2 tools item 2) |
+| A19.F9 | YYC AI tools -> yyc-mcp upstream (service token + X-YYC-User) | `YYC yyc/deploy/config.json:57-65` | changed: tools maps `Aviary-Sandbox-Person` (email) to `X-YYC-User` (17.2 tools item 2) |
 | A19.F10 | Mcp-Session-Id handling between tools and yyc-mcp | `news-stream/mcp-edge/src/index.ts:120-130, 154-156` | kept unchanged |
 | A19.F11 | Shared rate limit for all YYC AI staff on yyc-mcp | `news-stream/mcp-edge/src/registry.ts:38-47` | kept: one shared 120/min bucket, recorded decision (17.2 tools item 3) |
 | A19.F12 | CronJob mcp-cleanup (yyc) | `news-stream/deploy/apps/yyc-mcp.yaml:89-130` | kept: the ConfigMap key `config.json` never disappears, so `mcp-cleanup` is untouched (R40) |
@@ -2477,7 +2477,7 @@ this table is complete. Rows already covered in another spec's table point there
 | A19.F23 | CI: mcp-image smoke test mounts config.json as the catalogue | `YYC .github/workflows/mcp-image.yml:10-13, 58-69` | changed: mount source `catalogue.json` in the switch commit (R40, hermit 21.5) |
 | A19.F25 | Live-dashboard and MCP contract tests in the news stream | `YYC news-stream/tests/test_live_dashboard.py:18-23, 229-360` | changed: fixtures updated in the switch commit (15.5, hermit 21.4) |
 | A19.F26 | OpenRouter key yyc-chat usage shown by the monitor | `YYC news-stream/monitor.py:934-962, 2016-2025 …` | kept: the key stays `yyc-chat` (13.6) |
-| A20.F15 | ZDR guard (YYC) | `yyc-ai/tests/test_zdr.py:1-77` | changed: 13.6 |
+| A20.F15 | ZDR guard (YYC) | `yyc/tests/test_zdr.py:1-77` | changed: 13.6 |
 | A20.F16 | iOS simulator smoke (Maestro) | `.github/workflows/yyc-ios.yml:80-88` | kept in claudecodeui (pigeon 21) |
 
 ## 23. Review round 2: where each point landed
@@ -2548,7 +2548,7 @@ Text of record: DESIGN 15. This section is the platform's side of it, in the ter
 
 | Object | Cluster | Applied by |
 |---|---|---|
-| `yyc-ai/deploy/` (pigeon, magpie, hermit, egress, tools, cloudflared of tunnel `pigeon`, `magpie-import`, `jobs/`, `hermit-gateway`, `hermit-overlay-route`, `bridges.yaml`, `sealed/`) | new | `yyc-ai.yml` |
+| `yyc/deploy/` (pigeon, magpie, hermit, egress, tools, cloudflared of tunnel `pigeon`, `magpie-import`, `jobs/`, `hermit-gateway`, `hermit-overlay-route`, `bridges.yaml`, `sealed/`) | new | `yyc-ai.yml` |
 | `clusters/talos/` (namespaces `yyc-ai`, `yyc-ai-fabric`, `yyc-deploy`, the deployer's RBAC, the fence, the deploy connector, the JuiceFS CSI driver) | new | the new cluster's workflow (Talos session) |
 | `clusters/talos/db/` (`magpie-pg` with its backup and `pg-dump-magpie`, `pg-shared`) | new | the same workflow |
 | `yyc-ai/legacy/` (namespace `jarvis`, PV `yyc-ai-jfs`, RuntimeClass `gvisor`, `kube-system/sbx-overlay-route`, `catalogue/`, the window's old-side objects) | old | Flux Kustomizations `yyc-ai`, `yyc-ai-secrets` |
@@ -2558,11 +2558,11 @@ Text of record: DESIGN 15. This section is the platform's side of it, in the ter
 ### 25.2 The `legacy/` move and Flux on the old cluster
 
 WP-39 (DESIGN 15.4): `prune: false` on Kustomizations `yyc-ai` and `yyc-ai-secrets` (`flux-sync.yaml`, applied by
-`cluster.sh flux`); a commit adds `yyc-ai/legacy/` as a copy of today's `yyc-ai/deploy/`; a CI step shows the two
+`cluster.sh flux`); a commit adds `yyc-ai/legacy/` as a copy of today's `yyc/deploy/`; a CI step shows the two
 renders equal byte for byte after sorting; `flux-sync.yaml`'s `path`s change to `./yyc-ai/legacy` and
 `./yyc-ai/legacy/sealed` and the GitRepository's include line to `!/yyc-ai/legacy/`, re-applied; both Kustomizations
 Ready at the new revision with no object changed (ReplicaSet hashes and pod ages unchanged, `flux events` shows no
-apply other than the unchanged set); a commit deletes the old copy from `yyc-ai/deploy/`; `prune: true` again. From
+apply other than the unchanged set); a commit deletes the old copy from `yyc/deploy/`; `prune: true` again. From
 then on every old-stack change is a Flux commit under `yyc-ai/legacy/`, and the runner waits on the Kustomization
 (cutover 11.1).
 
@@ -2572,7 +2572,7 @@ Bridges `yyc-bridge-old` (10.0.255.1) and `yyc-bridge-new` (10.0.255.2): Hetzner
 server, `yyc-bridge1` (cax11 fsn1, Debian, no public IP), running HAProxy in TCP mode; targets by Hetzner server label
 (`yyc-cluster=k3s` / `talos`, minus `role=nat`) through their private IPs, connections and health checks from the
 bridge's address, TCP health checks (3 s, timeout 2 s, 2 retries); made, checked and removed by
-`yyc-ai/infra/bridges.sh` (WP-60; DESIGN 15.5). EUR 7.188 gross a month (EUR 0.01152 an hour; Hetzner API
+`yyc/infra/bridges.sh` (WP-60; DESIGN 15.5). EUR 7.188 gross a month (EUR 0.01152 an hour; Hetzner API
 2026-11-05).
 
 | Link | bridge port → NodePort (`Local`) | Callee policy admits | Caller-side Service (selector-less + EndpointSlice) | Caller egress rule |
@@ -2594,7 +2594,7 @@ the bridge Services pointing at a test proxy, so E9/E19 fail on a missing bridge
 - Connection strings of the new stack name `pg-shared.db.svc.cluster.local:5432` (12.2's `*_DATABASE_URL` values,
   the `hermit-juicefs` `metaurl`) and `magpie-pg-rw.db.svc.cluster.local:5432` (magpie, the importer). 11.4's
   connection budget is unchanged.
-- `infra/seal.py`: the cert by folder (`yyc-ai/deploy/sealed/`, `news-stream/deploy/clusters/talos/**` →
+- `infra/seal.py`: the cert by folder (`yyc/deploy/sealed/`, `news-stream/deploy/clusters/talos/**` →
   `infra/sealed-secrets-talos.pem`; everything else → `infra/sealed-secrets.pem`), `--check` refuses a mismatch
   (DESIGN 15.9). 12.2's lines for the new stack are sealed with the new cert; `jarvis/ui-env` and `db/pg-role-*` with
   the old.

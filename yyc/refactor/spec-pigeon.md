@@ -1689,7 +1689,7 @@ switch's cleanup, cutover 15.2). The web export is heavy (A4.F57), so the job is
   (`sizeLimit: 512Mi`) mounted read-only into pigeon at `/srv/app`.
 - So a tab loaded from build N keeps fetching N's chunks from any replica of build N+1 (fixes A15.F0, A15.F4, A15.F7,
   A15.F8, A15.F9 in practice; the app's retry/reload logic, A15.F5-F6, stays as the backstop).
-- YYC's `yyc-ai/deploy/kustomization.yaml` pins both `pigeon` and `pigeon-app` tags, changed together when a change
+- YYC's `yyc/deploy/kustomization.yaml` pins both `pigeon` and `pigeon-app` tags, changed together when a change
   spans both (the 1.2 rename is one such change).
 - The iOS app has no chunks; its builds (`yyc-ios` workflow, `YYC_SITE` secret) are unchanged apart from step 5's
   contract check and step 9's dispatch (A4.F56).

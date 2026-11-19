@@ -1,6 +1,6 @@
 #!/bin/bash
 # talos-ready.sh: read-only check that the new Talos cluster yyc-talos and the old k3s cluster `yyc` give YYC AI what
-# DESIGN 15.2 N1-N12 require, including that each build input of 15.2.1 (I1-I9) is what was built (yyc-ai/refactor
+# DESIGN 15.2 N1-N12 require, including that each build input of 15.2.1 (I1-I9) is what was built (yyc/refactor
 # DESIGN.md 15.2, WORK-PACKAGES WP-59). It changes nothing on either cluster or in Hetzner: kubectl get/auth can-i,
 # talosctl get, Hetzner GETs, a TLS handshake, and the Descheduler's own --dry-run.
 #
@@ -12,7 +12,7 @@
 #   TALOSCONFIG       its talosconfig (default ~/talos/talosconfig)
 #   OLD_MASTER        IPv6 of yyc-master1 (the old cluster; `cluster.sh ip`), SECRETS its admin key dir (~/.yyc-cluster)
 #   YYC_HETZNER_READ  optional: a read token of Hetzner project yyc, for the server labels, routes and firewall checks
-#                     (run under `session-secret --keys YYC_HETZNER_READ --exec yyc-ai/infra/talos-ready.sh`)
+#                     (run under `session-secret --keys YYC_HETZNER_READ --exec yyc/infra/talos-ready.sh`)
 # Prints no secret: only selected fields are read (never a Secret, a machine config or KubeSpan's keys).
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)

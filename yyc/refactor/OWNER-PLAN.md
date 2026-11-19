@@ -23,7 +23,7 @@ Order (each item: code on main, tests on the runner, CI green, then the next):
 ## Progress 2026-11-04 (afternoon)
 - DONE: WP-52 (c8da93ca), WP-35 (YYC ea1f2f44, 7a965aa2), WP-31/32/33/36 (YYC 42bea902..bdf5cf8e), WP-37 (3007f1f8),
   WP-60 code (d3d95fa7; LBs not created: wait until new workers exist), WP-39 LIVE (Flux reads yyc-ai/legacy, prune on,
-  pods unchanged; yyc-ai/next promoted to yyc-ai/deploy), old servers labelled yyc-cluster=k3s, cloudflare custom
+  pods unchanged; yyc/next promoted to yyc/deploy), old servers labelled yyc-cluster=k3s, cloudflare custom
   hostname drift fixed, pigeon LU-drop write fix (aviary c425c1ad), Talos T1 + WP-59 pieces live.
 - RUNNING (agents): WP-28, WP-54 rest (legacy-in-a-box, personas), WP-61/62.
 - WAITING on Deyao: window workers A/B; Grafana stack for logs; rotate the discovery secret?
@@ -59,7 +59,7 @@ Order (each item: code on main, tests on the runner, CI green, then the next):
   hermit/tunnel/magpie-import/gateway; bridges = yyc-bridge1 HAProxy (no public IP, 10.0.255.1/.2, EUR 7.188 gross;
   LBs impossible under the primary IP limit); magpie-pg -> nbg1; gateway pool=gateway; talos.sh roles news/db;
   fabric PKI + gateway WG key + YYC_HERMIT_JUICEFS_META_URL in store; Postgres HA plan (EUR 19.11 with magpie-pg)
-  and app moves plan: yyc-ai/refactor/talos-apps-move.md. talos-ready: only N10 fails (surge slots, timing).
+  and app moves plan: yyc/refactor/talos-apps-move.md. talos-ready: only N10 fails (surge slots, timing).
   Running: aviary rule priority + re-pin; WP-34 (AWS IAM/SG/AMI workflow, runbook, sealing hermit + gateway).
   NEXT: WP-35 patches remade after the re-pin; then A1 (operator phase, 04:00 HKT quiet hour).
 - 2026-11-05: another session (s2023a296073179ae) is patching the old stack's out-of-memory (CloudCLI per-person cap

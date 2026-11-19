@@ -49,7 +49,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: egress
-          image: jarvis3-chat
+          image: egress
           args: [egress]
           ports:
             - {name: proxy, containerPort: 3128}

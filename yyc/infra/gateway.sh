@@ -14,7 +14,7 @@
 #   gateway.sh move OLD         replace the Hetzner server OLD as the gateway by this one (aviary gateway-move.sh: OLD's
 #                               primary IPv6 and the route 10.202.0.0/15 move here; 38 to 67 s without the gateway on
 #                               the replica, 2026-11-17). Run as the node work of the maintenance runbook:
-#                               hermit-admin.sh gateway-maintenance --node-work "yyc-ai/infra/gateway.sh move OLD"
+#                               hermit-admin.sh gateway-maintenance --node-work "yyc/infra/gateway.sh move OLD"
 #
 # The server is reached over network yyc through the jump host (as clusters/talos/talos.sh tunnel): no public SSH.
 # Env: SECRETS (default ~/.yyc-cluster: the admin key `admin`, known_hosts); TUNNEL_SERVICE_TOKEN_ID/_SECRET (the

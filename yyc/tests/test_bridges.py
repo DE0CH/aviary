@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""yyc-ai/infra/bridges.sh against a fake Hetzner Cloud API, fake kubectls and a fake box that runs a REAL HAProxy
+"""yyc/infra/bridges.sh against a fake Hetzner Cloud API, fake kubectls and a fake box that runs a REAL HAProxy
 (WP-60's harness case; DESIGN 15.5). Stdlib only plus the haproxy binary (the yyc-ai.yml job check installs it); no
 cloud, no cluster.
 
@@ -24,8 +24,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SH = os.path.join(ROOT, "yyc-ai", "infra", "bridges.sh")
-DEF = os.path.join(ROOT, "yyc-ai", "infra", "bridges.json")
+SH = os.path.join(ROOT, "yyc", "infra", "bridges.sh")
+DEF = os.path.join(ROOT, "yyc", "infra", "bridges.json")
 NET = 12754993
 HAPROXY = shutil.which("haproxy") or shutil.which("haproxy", path="/usr/sbin:/usr/local/sbin")
 

@@ -2,7 +2,7 @@
 
 Status: design, 2026-11-02, for Deyao's decision 1 ("a push to DE0CH/YYC applies yyc-ai through a workflow; the Flux
 Kustomization yyc-ai is removed"). It replaces spec-platform 13.1, 13.2's reconcile step and 13.4, and every place in
-spec-platform and spec-cutover that says "Flux applies / reconciles / prunes" for `yyc-ai/deploy` (section 10 lists
+spec-platform and spec-cutover that says "Flux applies / reconciles / prunes" for `yyc/deploy` (section 10 lists
 them). claude-env CLAUDE.md "GitOps runs in GitHub workflows" and "Deploy means zero downtime" are the rules it
 follows. Writing only: nothing here is applied yet.
 
@@ -35,7 +35,7 @@ Contents
 
 - **One workflow, `DE0CH/YYC/.github/workflows/yyc-ai.yml`.** Job `check` (every PR and push that touches YYC AI:
   today's planned `yyc-ai-check` and `yyc-ai-render`, plus the ZDR guard as a gate) and job `deploy` (push to `main`,
-  every 3 hours against drift, and `workflow_dispatch`), which needs `check`. `deploy` renders `yyc-ai/deploy`, prints
+  every 3 hours against drift, and `workflow_dispatch`), which needs `check`. `deploy` renders `yyc/deploy`, prints
   the plan against the live state, refuses deletions the commits did not name, applies with server-side apply in a
   fixed order, waits for every rollout to finish, prunes, and records what it applied. The run log and a green or red
   check sit on the commit; a red run (and the first green after it) goes to YYC's Discord channel, as `cloudflare.yml`
@@ -80,13 +80,13 @@ Contents
 |---|---|---|
 | No YYC or DE0CH/deyao-ai k8s folder is applied by a workflow yet; `cloudflare.yml` (tofu) is the only workflow-applied infra in DE0CH/YYC, with the plan/apply/Discord pattern this design copies | `YYC/.github/workflows/cloudflare.yml`; skills `yyc-news-stream`, `transcript-search` (Flux) | this is the first kubectl-applying workflow; the applier is written for reuse by the other folders later (11) |
 | API server only from the private network 10.0.0.0/16; every server IPv6-only; outgoing IPv4 through WARP | `news-stream/deploy/cluster/README.md` lines 3-7, `hetzner-k3s.yaml` `allowed_networks.api` | a GitHub-hosted runner (IPv4 only, no route into the private network) needs a relay: section 3 |
-| `kubernetes` endpoint = 10.0.0.3:6443 (the master's private IP) | `yyc-ai/deploy/ops.yaml` (`web-to-apiserver`) | the connector's egress NetworkPolicy names exactly that address and port |
+| `kubernetes` endpoint = 10.0.0.3:6443 (the master's private IP) | `yyc/deploy/ops.yaml` (`web-to-apiserver`) | the connector's egress NetworkPolicy names exactly that address and port |
 | k3s v1.36.5+k3s1, one control-plane node | `kubectl version`; cluster README | `AuthenticationConfiguration` (structured JWT authenticators with CEL rules) is GA and reloads the file without a restart; enabling it once restarts k3s on `yyc-master1` |
 | Flux v2.9.6, kustomize-controller v1.9.6; Kustomization `yyc-ai` prune true, `yyc-ai-secrets` fenced (`serviceAccountName: sealed-secrets-applier`), both Ready at `main@c0d8e5c8` | `flux get kustomizations`; `clusters/hetzner/flux-sync.yaml` | kustomize-controller ≥ v1.4 has `spec.deletionPolicy` (`Orphan` leaves every inventory object on deletion); `flux-sync.yaml` is applied by hand (`cluster.sh flux`), not by Flux |
 | `yyc-ai`'s inventory: 46 objects, among them Namespace `jarvis`, PV `yyc-ai-jfs`, RuntimeClass `gvisor`, `kube-system/sbx-overlay-route`, `yyc/yyc-catalogue`, HelmRelease `flux-system/juicefs-csi-driver`, HelmRepository `flux-system/juicefs`, RoleBinding `jarvis/sealed-secrets-applier`, hashed ConfigMap `jarvis-config-tdc5d62c24` | `kubectl get kustomization yyc-ai -o jsonpath={.status.inventory}` | the seed inventory and the RBAC of section 4 cover exactly these plus the new stack |
 | Objects carry field manager `kustomize-controller` (Apply) and labels `kustomize.toolkit.fluxcd.io/{name,namespace}` | `kubectl get deploy web -o jsonpath={.metadata.managedFields}` | the hand-over transfers field ownership (8, step H3.c), or later field removals would silently stay |
 | Repo secrets are set with `gh secret set` and `YYC_CI_SECRETS_TOKEN` | `news-stream/deploy/README.md` "Cloudflare (tofu)" | the same path for the two new environment secrets |
-| A resealed Secret once rolled Pods before the controller decrypted it ("bumped twice") | `yyc-ai/deploy/kustomization.yaml` secrets-rev comment | the applier waits for each changed SealedSecret's `Synced` condition before it applies workloads (6.4) |
+| A resealed Secret once rolled Pods before the controller decrypted it ("bumped twice") | `yyc/deploy/kustomization.yaml` secrets-rev comment | the applier waits for each changed SealedSecret's `Synced` condition before it applies workloads (6.4) |
 
 ---
 
@@ -235,8 +235,8 @@ on:
   push:
     branches: [main]
     paths: &p
-      - yyc-ai/deploy/**
-      - yyc-ai/tests/test_zdr.py
+      - yyc/deploy/**
+      - yyc/tests/test_zdr.py
       - infra/secrets.txt
       - infra/yyc-talos-ca.pem
       - yyc-ai/legacy/**                         # check only (freeze-check, ZDR guard's old half); never deployed
@@ -262,8 +262,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with: {workspaces: tools/yyc-apply}
       - run: cargo build --release --locked --manifest-path tools/yyc-apply/Cargo.toml
-      - run: tools/yyc-apply/target/release/yyc-apply check --folder yyc-ai/deploy     # spec-platform 13.3 + 6.6
-      - run: python3 yyc-ai/tests/test_zdr.py
+      - run: tools/yyc-apply/target/release/yyc-apply check --folder yyc/deploy     # spec-platform 13.3 + 6.6
+      - run: python3 yyc/tests/test_zdr.py
         env: {GITHUB_TOKEN: "${{ github.token }}"}
   deploy:
     needs: check
@@ -289,8 +289,8 @@ jobs:
                                                    # yyc-cluster), retries `kubectl version` 3 x 20 s
       - name: plan
         run: |
-          tools/yyc-apply/target/release/yyc-apply plan --folder yyc-ai/deploy --inventory yyc-deploy/inventory-yyc-ai \
-            --sealed yyc-ai/deploy/sealed --out plan.md
+          tools/yyc-apply/target/release/yyc-apply plan --folder yyc/deploy --inventory yyc-deploy/inventory-yyc-ai \
+            --sealed yyc/deploy/sealed --out plan.md
           cat plan.md >> "$GITHUB_STEP_SUMMARY"
       - name: apply
         if: github.event_name != 'workflow_dispatch' || inputs.mode == 'apply'
@@ -408,7 +408,7 @@ hashed ConfigMap).
 11. Trailers in the pushed commits are well-formed and `Deploy-Replace` is not used on the refused kinds.
 12. The render contains no `Namespace` object and no RBAC outside `yyc-ai`, `yyc-ai-fabric`.
 13. One cluster: the render contains no object in `jarvis`, `kube-system` or `flux-system`, and nothing under
-    `yyc-ai/legacy/` is referenced from `yyc-ai/deploy/` (DESIGN 15.4).
+    `yyc-ai/legacy/` is referenced from `yyc/deploy/` (DESIGN 15.4).
 
 Tests (`tools/yyc-apply/tests`, against a kind cluster in the `check` job when the applier changes): prune gate (an
 unnamed removal fails before any write), inventory superset after a killed run, stale-run skip, SealedSecret wait,
@@ -464,7 +464,7 @@ The hand-over this section specified (H0-H4: seeding the inventory from Flux's, 
 done. Decision 13 puts the new stack on the new cluster, which `yyc-ai.yml` creates from empty, and leaves the old
 stack on the old cluster, where Flux keeps applying it until the Talos session removes that cluster (T6). The only
 change on the old cluster's Flux is the folder move of DESIGN 15.4 (WP-39): Kustomizations `yyc-ai` and
-`yyc-ai-secrets` read `yyc-ai/legacy/` and `yyc-ai/legacy/sealed/` instead of `yyc-ai/deploy/`, proven by an
+`yyc-ai-secrets` read `yyc-ai/legacy/` and `yyc-ai/legacy/sealed/` instead of `yyc/deploy/`, proven by an
 identical render before `flux-sync.yaml` changes, with `prune: false` held over the move. The bring-up of the deploy
 path on the new cluster is 12.5.
 
@@ -505,7 +505,7 @@ path on the new cluster is 12.5.
 | 12.2 | new line `yyc-deploy/tunnel  Opaque  news-stream/deploy/apps/sealed/yyc-deploy-tunnel.yaml  token=YYC_CF_DEPLOY_TUNNEL_TOKEN` |
 | 12.3 | new store keys `YYC_CF_DEPLOY_TUNNEL_TOKEN`, `YYC_DEPLOY_ACCESS_CLIENT_ID`, `YYC_DEPLOY_ACCESS_CLIENT_SECRET` (section 7's explanations) |
 | 12.4 | DE0CH/YYC environment `yyc-ai` (branch `main` only): `YYC_DEPLOY_ACCESS_CLIENT_ID`, `YYC_DEPLOY_ACCESS_CLIENT_SECRET`; no cluster credential (OIDC) |
-| 13.1 | replaced: "Kustomizations `yyc-ai` and `yyc-ai-secrets` no longer exist (deploy-workflows 8). `yyc-ai/deploy` is applied by `yyc-ai.yml` (deploy-workflows 5-6). `yyc-db` (Flux, prune false) still carries 11.1." |
+| 13.1 | replaced: "Kustomizations `yyc-ai` and `yyc-ai-secrets` no longer exist (deploy-workflows 8). `yyc/deploy` is applied by `yyc-ai.yml` (deploy-workflows 5-6). `yyc-db` (Flux, prune false) still carries 11.1." |
 | 13.2 diagram | "yyc-ai-check.yml (13.3) on the push; red = fix forward, Flux has applied nothing invalid" → "`yyc-ai.yml` job `check`; red = nothing applied"; "Flux reconcile (≤ 10 min; or …)" → "job `deploy`: plan, gate, apply, `rollout status` of every workload (minutes after the push)"; the verify box keeps the ops page verdict and `live_check.py`, drops the separate `rollout status` (the run did it); red → "revert the YYC commit (with its `Deploy-Prune` trailers if the revert removes objects)"; "Flux applies the whole set at once" → "one run applies the whole set in the order of deploy-workflows 6.4" |
 | 13.3 | it becomes job `check` of `yyc-ai.yml` (not its own file; WP-31's `yyc-ai-render.yml` folds in too); "No cluster credentials" stays true for this job; add items 9-12 of 6.6 |
 | 13.4 | replaced by deploy-workflows 6.5: a `rollout restart` now stays; rolls that must persist still go through git |
@@ -513,13 +513,13 @@ path on the new cluster is 12.5.
 | 18.4 | "delete `legacy/` (Flux prunes namespace `jarvis`: …)" → "delete `legacy/`; the commit carries `Deploy-Prune-Namespace: jarvis` and `Deploy-Prune:` for PV `yyc-ai-jfs`, RuntimeClass `gvisor`, `kube-system/sbx-overlay-route`; the deploy deletes them after its rollout check; then a `clusters/hetzner` commit removes Namespace `jarvis` and its RoleBindings (Flux `yyc-apps` deletes the now-empty namespace) and the deployer's `jarvis` RoleBinding, the `kube-system` Role and the `gvisor`/`yyc-ai-jfs` names in 4.2" |
 | 19 rows | "before Flux sees the pin" → "before `deploy` runs"; row "Flux stuck" → "`deploy` red (connect, gate, rollout)": nothing new applies, running state fine; the run summary names the step; re-run after the fix. Row "A resealed Secret not yet decrypted": now prevented (6.4 step 2) |
 | 21 Q1 | removed (decided: workflows, Deyao 2026-11-02) |
-| Appendix A7.F0 | "kept: Flux Kustomizations…" → "changed: `yyc-ai.yml` applies `yyc-ai/deploy` (deploy-workflows); Kustomizations `yyc-ai`, `yyc-ai-secrets` deleted with `deletionPolicy: Orphan`"; A18.F16 (JuiceFS CSI HelmRelease) → "moved to `clusters/hetzner/juicefs-csi.yaml`, unchanged" |
+| Appendix A7.F0 | "kept: Flux Kustomizations…" → "changed: `yyc-ai.yml` applies `yyc/deploy` (deploy-workflows); Kustomizations `yyc-ai`, `yyc-ai-secrets` deleted with `deletionPolicy: Orphan`"; A18.F16 (JuiceFS CSI HelmRelease) → "moved to `clusters/hetzner/juicefs-csi.yaml`, unchanged" |
 
 ### 10.2 spec-cutover.md
 
 | Where | Change |
 |---|---|
-| 1, GitOps row (line 52) | "`yyc-ai/deploy` applied by workflow `yyc-ai.yml` (server-side apply, prune by trailer, waits for rollouts); tofu by `cloudflare.yml`; Flux keeps `yyc-apps`, `yyc-db` (prune false), `yyc-aiwatch`" |
+| 1, GitOps row (line 52) | "`yyc/deploy` applied by workflow `yyc-ai.yml` (server-side apply, prune by trailer, waits for rollouts); tofu by `cloudflare.yml`; Flux keeps `yyc-apps`, `yyc-db` (prune false), `yyc-aiwatch`" |
 | D16 (line 138) and 11.1 `flip` | "Kustomization `yyc`" → "Kustomization `yyc-apps`" (no Kustomization is called `yyc`) |
 | P0 checklist | add: the deploy path works (H0-H4 done; a no-op commit gives a green run; `kubectl auth can-i --list --as=gha:yyc-ai` matches deploy-workflows 4.2) |
 | 10.1 commit order | a commit 0 before commit 2: nothing to add for namespaces (created in H0.b); commit 3's "the fenced applier's RoleBindings in `yyc-ai` and `yyc-ai-fabric`" moves to H0.b (cluster level) |
@@ -538,7 +538,7 @@ path on the new cluster is 12.5.
 
 ### 10.3 DESIGN.md
 
-- 11 "GitOps" bullet → "`yyc-ai/deploy` is applied by workflow `yyc-ai.yml` (deploy-workflows.md): GitHub OIDC
+- 11 "GitOps" bullet → "`yyc/deploy` is applied by workflow `yyc-ai.yml` (deploy-workflows.md): GitHub OIDC
   identity `gha:yyc-ai`, tunnel `yyc-deploy` behind Access, server-side apply, prune only by commit trailer, waits for
   every rollout; `yyc-db` (Flux, prune off) owns databases and roles; tofu by `cloudflare.yml`."
 - 11 Layout: drop `namespace.yaml`, `juicefs-csi.yaml`.
@@ -562,7 +562,7 @@ On the **old cluster** everything stays on Flux until the Talos session removes 
 `yyc-apps-secrets`, `yyc-db`, `yyc-aiwatch(-secrets)` and, for the old stack, `yyc-ai` and `yyc-ai-secrets` (from
 `yyc-ai/legacy/`). On the **new cluster** there is no Flux (the Talos plan deploys by GitHub workflows): its
 cluster-level objects, YYC AI's namespaces and RBAC, the deploy path itself and the databases are applied by that
-cluster's own workflow (the Talos session's), and `yyc-ai/deploy` by `yyc-ai.yml`. The reason is the one decision 1
+cluster's own workflow (the Talos session's), and `yyc/deploy` by `yyc-ai.yml`. The reason is the one decision 1
 gave: the deploy path must not be deployed by the workflow it carries (a bad push could cut the path its own fix
 needs), and the deployer's rights must not be granted by the deployer. `yyc-apply` and the tunnel are built so that
 another folder on the new cluster is another environment in the authenticator, another inventory ConfigMap and
@@ -632,7 +632,7 @@ Each step is checked before the next; none touches the old cluster or YYC AI's r
 4. The authenticator in the control nodes' machine config (the builder applies 4.1's patch, one node at a time);
    a `workflow_dispatch` of `yyc-ai.yml` in plan mode authenticates as `gha:yyc-ai` and `kubectl auth can-i --list`
    matches 12.3.
-5. `yyc-ai.yml`'s deploy job on; a no-op commit (an empty `yyc-ai/deploy/` render plus a comment) gives a green run
+5. `yyc-ai.yml`'s deploy job on; a no-op commit (an empty `yyc/deploy/` render plus a comment) gives a green run
    with an empty plan and an inventory ConfigMap at phase `done`.
 
 Then WP-40 applies the new stack through it (cutover 10.1).

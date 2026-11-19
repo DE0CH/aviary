@@ -8,7 +8,7 @@ YYC paths are relative to the YYC repo; `tofu/` means `news-stream/deploy/cloudf
 
 - **There is no `yyc-ai/edge/` and no `cloudflare.py` any more.** YYC commit 29660229 (2026-10-23, "Clean cut of the
   Cloudflare move") deleted `yyc-ai/edge/{worker.js,wrangler.jsonc}` (Worker `yyc-ai` on Deyao's account, the one with
-  `UNDER_CONSTRUCTION`), `yyc-ai/infra/cloudflare.py` (the one with `UI_CUTOVER` and `--dns`) and
+  `UNDER_CONSTRUCTION`), `yyc/infra/cloudflare.py` (the one with `UI_CUTOVER` and `--dns`) and
   `news-stream/infra/cloudflare.py`. Everything on Cloudflare is now OpenTofu on YYC's own account, plus one Worker
   deployed by hand.
 - **The 301 for ai.yyc.deyaochen.com** is the `MOVED` map in the news stream's router Worker **`yyc-edge`**,
@@ -66,14 +66,14 @@ Live probes (2026-11-02, no credentials):
 | 7 | **Custom hostnames** | `tofu/saas.tf:26-32` (+ `test_hostnames` `:25` for throwaway flip tests) | Which deyaochen.com names reach YYC's account | Valid |
 | 8 | **Deyao's hand-set CNAMEs** (5 names) | outside git, `news-stream/deploy/README.md:170-185` | Taking one down takes the name off YYC's account | Valid. Monitor alerts on drift (`monitor.py:1830-1864`) |
 | 9 | **Test host `ai-yyc-ui.deyaochen.com`** | `tofu/access.tf:64`, `tofu/saas.tf:31`, tunnel rules via `staff_ai_hosts` | A second name on the same `ui`. It was the pre-cut-over test name (old `cloudflare.py` `UI_TEST_HOST`) | Live, but serves nothing different now (3.4) |
-| 10 | **Staff allowlist** | `yyc-ai/deploy/config.json:5-6` → tofu (`access.tf:56-60, 85-102`; workflow `.github/workflows/cloudflare.yml` triggers on this file, `:121-126`) and the router (ConfigMap, `router.mjs:591-596`) | Who can sign in, at both layers | Valid. A push applies both (the tofu run plus the ConfigMap hash rolling `ui`) |
+| 10 | **Staff allowlist** | `yyc/deploy/config.json:5-6` → tofu (`access.tf:56-60, 85-102`; workflow `.github/workflows/cloudflare.yml` triggers on this file, `:121-126`) and the router (ConfigMap, `router.mjs:591-596`) | Who can sign in, at both layers | Valid. A push applies both (the tofu run plus the ConfigMap hash rolling `ui`) |
 | 11 | **iOS sign-in on/off**: `JARVIS_APP_SCHEME` | `YYC/yyc-ai/deploy/ui.yaml:84` (`dev.de0ch.yycai`); `router.mjs:621-622, 1074-1075` (unset → 404) | `/api/jarvis/app-signin` | Valid |
-| 12 | **Access audience in config** | `yyc-ai/deploy/config.json:4` (`access.teamDomain`, `access.audience`) must equal tofu output `aud.staff_ai` (`tofu/outputs.tf:99-108`) | Router rejects every token if they differ | Valid. Copied by hand; nothing checks it |
+| 12 | **Access audience in config** | `yyc/deploy/config.json:4` (`access.teamDomain`, `access.audience`) must equal tofu output `aud.staff_ai` (`tofu/outputs.tf:99-108`) | Router rejects every token if they differ | Valid. Copied by hand; nothing checks it |
 | 13 | **`access.also`** (second team) | `router.mjs:67-68, 322-345, 586-589`; test `jarvis/test/router.test.mjs:553-566` | Accepts tokens of more than one Access team | Code present, **unused**. Live ConfigMap `jarvis-config-tdc5d62c24` has only `yyc-hk` (3.5) |
 | 14 | **Drift revert**: cloudflare.yml every 30 min | `.github/workflows/cloudflare.yml:127-128`; `tofu/main.tf:2-3` | Any switch flipped in the dashboard (an emergency offline, say) is undone within 30 min | Valid. An operator must flip in git, not in the dashboard |
 | 15 | `UNDER_CONSTRUCTION` | was `yyc-ai/edge/worker.js:14` (`git show 29660229^:yyc-ai/edge/worker.js`) | 503 page 「YYC AI 正在升級」 / API 503 JSON | **Gone** (deleted 29660229) |
-| 16 | `UI_CUTOVER` | was `yyc-ai/infra/cloudflare.py:43-44` | tunnel origin `ui` vs `web` | **Gone**. Replaced by #3 |
-| 17 | `cloudflare.py … --dns` | was `yyc-ai/infra/cloudflare.py:19-24, 87` | `wrangler deploy` of `yyc-ai/edge`, DNS cleanup | **Gone** |
+| 16 | `UI_CUTOVER` | was `yyc/infra/cloudflare.py:43-44` | tunnel origin `ui` vs `web` | **Gone**. Replaced by #3 |
+| 17 | `cloudflare.py … --dns` | was `yyc/infra/cloudflare.py:19-24, 87` | `wrangler deploy` of `yyc-ai/edge`, DNS cleanup | **Gone** |
 | 18 | `wrangler rollback` of `yyc-ai/edge` | skill `yyc-ai` SKILL.md:334 | Front-door rollback | **Gone** (Worker `yyc-ai` lived on Deyao's account `ee3b4dee…`. Whether the script still exists there could not be checked, because neither `CLOUDFLARE_API` nor `YYC_CF_API_TOKEN` is in this session) |
 | 19 | Sandboxes off (not front door, but staff-visible) | skill `yyc-ai` SKILL.md:338 (`vm_hosts.max_sandboxes = 0`, `aws.maxHosts` 0) | Conversations can't start | Valid. Today it lives in hermit's tables |
 

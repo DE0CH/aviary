@@ -2,7 +2,7 @@
 # 1000:1000 (lchown, a symlink's target untouched). Runs once in A2 before the first hermit-import, again in A6 after
 # legacy-down.sh (a new Job name then). Root on a mount WITHOUT squashing: its own PV hermit-jfs-owner (the same JuiceFS
 # volume yyc-ai, its own volumeHandle, so its own mount pods; hermit-jfs squashes every caller to 1000:1000). The pod
-# itself needs no network: the CSI mount pod reaches the metadata. Run with yyc-ai/oneshot/run.sh (never applied by yyc-ai.yml); deleted in the teardown.
+# itself needs no network: the CSI mount pod reaches the metadata. Run with yyc/oneshot/run.sh (never applied by yyc-ai.yml); deleted in the teardown.
 apiVersion: v1
 kind: PersistentVolume
 metadata:

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""YYC AI's own checks of the new stack's render (yyc-ai.yml job check; yyc-ai/refactor spec-platform 13.3 items 2-4,
+"""YYC AI's own checks of the new stack's render (yyc-ai.yml job check; yyc/refactor spec-platform 13.3 items 2-4,
 6, 8, 13 and 25.5, WP-31). Stdlib only. Reads the render as JSON (`kustomize build F | yq ea -o=json '[.]'`), the
 folder's files and infra/secrets.txt; network checks (item 4's registry and release lookups) only with --online.
 
-  check_deploy.py --folder yyc-ai/deploy --render render.json [--online]
+  check_deploy.py --folder yyc/deploy --render render.json [--online]
 
 Each failure prints one line `<item> <object>: <why>`; exit 1 on any. What it asserts:
   2  no switches: pigeon and magpie take env only from Secrets and the downward API, no envFrom, no ConfigMap volume,
@@ -60,6 +60,9 @@ Each failure prints one line `<item> <object>: <why>`; exit 1 on any. What it as
 import argparse, json, os, re, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# YYC's cluster and its Secrets list are DE0CH/yyc-code's (infra/secrets.txt, news-stream/deploy/clusters/talos): a
+# checkout of it, YYC_CODE (yyc.yml and deploy.yml check it out), default ./yyc-code beside this repository's root
+YYC_CODE = os.environ.get("YYC_CODE", os.path.join(ROOT, "yyc-code"))
 GRACE = {"pigeon": 320, "magpie": 75, "hermit": 90, "egress": 625, "tools": 180, "herald": 330, "drive": 120, "cloudflared": 200,
          "pg-forward": 60}
 NO_PRESTOP = {"cloudflared"}
@@ -84,7 +87,7 @@ def qty(v):
 
 def secrets_map():
     out = {}
-    for ln in open(os.path.join(ROOT, "infra", "secrets.txt")):
+    for ln in open(os.path.join(YYC_CODE, "infra", "secrets.txt")):
         ln = ln.strip()
         if not ln or ln.startswith("#"):
             continue
@@ -614,7 +617,7 @@ def check_pins(folder, objs, online):
     if not online:
         return
     labels = {}
-    for n in ("pigeon", "magpie", "hermit", "sandboxd", "pigeon-app", "jarvis3-chat"):
+    for n in ("pigeon", "magpie", "hermit", "sandboxd", "pigeon-app", "egress"):
         ref = f"ghcr.io/de0ch/{n}:{tags[n]}"
         r = crane_config(ref)
         if r.returncode:
@@ -666,7 +669,7 @@ def check_catalogue(folder, objs):
 
 
 def check_wal():
-    p = os.path.join(ROOT, "news-stream/deploy/clusters/talos/db/magpie-pg.yaml")
+    p = os.path.join(YYC_CODE, "news-stream/deploy/clusters/talos/db/magpie-pg.yaml")
     if not os.path.exists(p):
         return
     s = open(p).read()

@@ -2033,7 +2033,7 @@ service container and a MinIO container; the image `ghcr.io/de0ch/magpie:<sha12>
 `debian:bookworm-slim` with libheif and ca-certificates only, non-root uid 10001), public (R21). Never cancelled
 mid-run.
 
-### 18.2 YYC manifests (DE0CH/YYC `yyc-ai/deploy/magpie.yaml` and `magpie-pg.yaml`, applied by Flux)
+### 18.2 YYC manifests (DE0CH/YYC `yyc/deploy/magpie.yaml` and `magpie-pg.yaml`, applied by Flux)
 
 - Deployment `magpie`, namespace `yyc-ai` (R14), as platform 9.5: `args: [serve]`, 2 replicas, HPA 2-6 on CPU 70%;
   RollingUpdate `maxSurge 1`, `maxUnavailable 0`; PDB `minAvailable 1`; topology spread by hostname; readiness `GET

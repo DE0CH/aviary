@@ -5,15 +5,13 @@ description: Read the source code and the deployment of YYC's own systems (YYC A
 
 # YYC's source code and deployment
 
-Everything YYC runs is in four git repositories. You can clone and read all of them; none can be changed from here
+Everything YYC runs is in two git repositories. You can clone and read both; neither can be changed from here
 (a push is refused).
 
 | Repository | What it holds | Clone |
 |---|---|---|
-| `DE0CH/yyc-code` | YYC's deployment and its own systems: `yyc-ai/` (YYC AI's deploy tree `yyc-ai/deploy/`, runbook `yyc-ai/README.md`, design `yyc-ai/refactor/`), `news-stream/` (the news stream, yyc-mcp, the clusters and Cloudflare under `news-stream/deploy/`), `labels/`, `nametags/`, `feishu-index/`, `socks/`, `tools/`, `infra/`, `.github/workflows/` (what deploys each part) | `git clone --depth 1 http://code/DE0CH/yyc-code /tmp/code/yyc-code` |
-| `DE0CH/aviary` | YYC AI's services, in Rust: `crates/pigeon` (gateway), `magpie` (conversations), `hermit` (sandboxes), `sandboxd`, `supervisor` (runs Claude Code in the sandbox), `herald` (Telegram channels); the sandbox image `images/sandbox/` | `git clone --depth 1 https://github.com/DE0CH/aviary /tmp/code/aviary` |
-| `DE0CH/jarvis3` | `chat/src/egress` (the sandbox's proxy and the routes `http://tools/`, `http://labels/`, …) and `chat/src/tools` (the web, social and data tools) | `git clone --depth 1 https://github.com/DE0CH/jarvis3 /tmp/code/jarvis3` |
-| `DE0CH/claudecodeui` | the web and iOS apps staff use: `paseo/` (on Android the site is installed from Chrome; there is no Android app) | `git clone --depth 1 https://github.com/DE0CH/claudecodeui /tmp/code/claudecodeui` |
+| `DE0CH/aviary` | YYC AI and everything it runs on: `crates/` (the services, in Rust: `pigeon` the gateway, `magpie` the conversations, `hermit` the sandboxes, `sandboxd`, `supervisor` which runs Claude Code in the sandbox, `herald` the Telegram channels), `images/sandbox/` (the sandbox image), `app/` (the web and iOS apps staff use; on Android the site is installed from Chrome), `egress/` (the sandbox's proxy and the routes `http://tools/`, `http://labels/`, …, and the web, social and data tools), `harness/qwen-code/` (the second agent), `drive/` (YYC Drive), `yyc/` (YYC AI's deployment: `yyc/deploy/`, runbook `yyc/README.md`, design `yyc/refactor/`) | `git clone --depth 1 https://github.com/DE0CH/aviary /tmp/code/aviary` |
+| `DE0CH/yyc-code` | YYC's other systems and its servers: `news-stream/` (the news stream, yyc-mcp, the clusters and Cloudflare under `news-stream/deploy/`), `labels/`, `nametags/`, `feishu-index/`, `socks/`, `tools/`, `infra/`, `.github/workflows/` (what deploys each part) | `git clone --depth 1 http://code/DE0CH/yyc-code /tmp/code/yyc-code` |
 
 - **Clone into `/tmp/code/`, never into /workspace:** a repository has thousands of files, more than /workspace
   holds. A clone is gone when the sandbox is released; clone again when you need it.
@@ -23,21 +21,18 @@ Everything YYC runs is in four git repositories. You can clone and read all of t
 
 ## What is running now
 
-The `main` branch of `DE0CH/yyc-code` is what is deployed: a push there is applied by the workflows in
-`.github/workflows/` (YYC AI: `yyc-ai.yml`). The versions of the other three repositories that YYC AI runs are the
-image tags in `yyc-ai/deploy/kustomization.yaml`, each the first 12 characters of a commit:
+The `main` branch of each repository is what is deployed: a push there is applied by the workflows in its
+`.github/workflows/` (YYC AI: `aviary`'s `deploy.yml`, described in `docs/DEPLOY.md`). Each image's tag is the first 12
+characters of the last commit that changed its part; `deploy/images.json` lists each part's folders, so the running
+version of a part is:
 
 ```sh
-grep -n 'newTag' /tmp/code/yyc-code/yyc-ai/deploy/kustomization.yaml
-# pigeon, magpie, hermit, sandboxd and herald: DE0CH/aviary; pigeon-app: DE0CH/claudecodeui; jarvis3-chat: DE0CH/jarvis3
-git -C /tmp/code/aviary fetch --depth 1 origin <full commit> && git -C /tmp/code/aviary checkout FETCH_HEAD
+git -C /tmp/code/aviary fetch --unshallow   # history is needed
+git -C /tmp/code/aviary log -1 --format='%h %cs %s' origin/main -- app   # e.g. the app; use a part's folders
 ```
 
-A 12-character tag is not enough for `git fetch`; get the full commit with a full clone (`git rev-parse <tag>`), or
-read `main` when the exact version does not matter.
-
-Your own instructions and skills are files there too: `yyc-ai/deploy/hermit/system-prompt.md`, `sandbox-rules.md`
-and `skills/`. The models, the budget and what the sandbox may reach are in `yyc-ai/deploy/egress/egress.json`. The
+Your own instructions and skills are files there too: `yyc/deploy/hermit/system-prompt.md`, `sandbox-rules.md`
+and `skills/`. The models, the budget and what the sandbox may reach are in `yyc/deploy/egress/egress.json`. The
 list of who may use YYC AI is not in the repository.
 
 ## Answering from the code

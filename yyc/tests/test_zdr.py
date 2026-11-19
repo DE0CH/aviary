@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
 """YYC AI's zero-data-retention guard (Deyao, 2026-10-20: staff get a fixed shortlist, none of it non-ZDR, and every
-request forces ZDR itself; yyc-ai/refactor spec-cutover 10.1.1, spec-platform 13.6). It checks
-yyc-ai/deploy/egress/egress.json (staged: yyc-ai/next/): `models[].id`, `defaultModel`, `smallModel`, `titleModel`,
+request forces ZDR itself; yyc/refactor spec-cutover 10.1.1, spec-platform 13.6). It checks
+yyc/deploy/egress/egress.json (staged: yyc/next/): `models[].id`, `defaultModel`, `smallModel`, `titleModel`,
 `embedding.id` (the conversation search's model), and
 each slug in `models[].providers` (the endpoints egress pins the model to) being a ZDR endpoint of that model; the
-route `model` goes to openrouter.ai with `model: true` and no other route names openrouter.ai; the egress source is the
-`jarvis3-chat` tag of that folder's kustomization.yaml (a sha12, resolved to the full commit through the GitHub API; a
-404 or an ambiguous prefix fails).
+route `model` goes to openrouter.ai with `model: true` and no other route names openrouter.ai; the egress source is
+this repository's egress/ (deployed with the folder, docs/DEPLOY.md).
 
 Every model staff can pick (`models[].id`) must also take images (OpenRouter's public GET /api/v1/models,
 `architecture.input_modalities`): the agent reads images (staff uploads, pictures it makes), and a text-only model
 then fails every call of the conversation with "No endpoints found that support image input" (GLM 5.3, 2026-11-13).
 
 Fails when a listed model has no Zero Data Retention endpoint on OpenRouter (public GET /api/v1/endpoints/zdr), when
-OpenRouter is reachable other than through a forced-ZDR model route, or when a pinned jarvis3 commit lacks the forcing
-literals (chat/src/egress/modelbody.ts FORCED_PROVIDER, proxy.ts `isModel` and `ModelBodyRewriter`, and the egress test).
+OpenRouter is reachable other than through a forced-ZDR model route, or when egress lacks the forcing literals
+(egress/src/egress/modelbody.ts FORCED_PROVIDER, proxy.ts `isModel` and `ModelBodyRewriter`, and the egress test).
 
-  python3 yyc-ai/tests/test_zdr.py   (stdlib only; needs internet; GITHUB_TOKEN or GH_TOKEN for the commit lookup)
+  python3 yyc/tests/test_zdr.py   (stdlib only; needs internet)
 """
 import json, os, re, sys, urllib.request
 
@@ -39,23 +38,28 @@ def stack(root=YYC_AI):
     return next((os.path.join(root, d) for d in ("deploy", "next") if os.path.exists(os.path.join(root, d, "egress", "egress.json"))), None)
 
 
-def jarvis3_literals(sha, get, check):
-    raw = f"https://raw.githubusercontent.com/DE0CH/jarvis3/{sha}/chat"
-    short = sha[:12]
+# the egress deployed with the folder: this repository's egress/ (docs/DEPLOY.md)
+EGRESS = os.path.join(os.path.dirname(YYC_AI), "egress")
+
+
+def egress_literals(src, check):
+    """egress's sources at `src` force ZDR on every model call"""
     try:
-        body, proxy, test = get(raw + "/src/egress/modelbody.ts"), get(raw + "/src/egress/proxy.ts"), get(raw + "/test/egress.test.ts")
-    except Exception as e:  # noqa: BLE001 - a missing file is the failure
-        check(False, f"jarvis3 {short}: the egress sources ({e})")
+        body = open(os.path.join(src, "src/egress/modelbody.ts")).read()
+        proxy = open(os.path.join(src, "src/egress/proxy.ts")).read()
+        test = open(os.path.join(src, "test/egress.test.ts")).read()
+    except OSError as e:
+        check(False, f"egress: the sources ({e})")
         return
     check('export const FORCED_PROVIDER = { zdr: true, data_collection: "deny" }' in body,
-          f"jarvis3 {short}: FORCED_PROVIDER = zdr true, data_collection deny")
+          "egress: FORCED_PROVIDER = zdr true, data_collection deny")
     # the body of a model call has one way upstream: through the streaming rewriter, whose end() writes the forced options
     check("const isModel = route.model === true;" in proxy
           and 'const rewrite = isModel && req.method !== "GET" && req.method !== "HEAD" ? new ModelBodyRewriter(' in proxy
           and "rewrite.push(chunk)" in proxy and "rewrite.end()" in proxy and "if (!rewrite) {" in proxy
           and re.search(r"\.\.\.FORCED_PROVIDER,\n\s*};", body) is not None,
-          f"jarvis3 {short}: every route flagged model rewrites each request body with ModelBodyRewriter")
-    check("zero data retention is forced into every request body" in test, f"jarvis3 {short}: its egress test covers the forcing")
+          "egress: every route flagged model rewrites each request body with ModelBodyRewriter")
+    check("zero data retention is forced into every request body" in test, "egress: its egress test covers the forcing")
 
 
 def routes_ok(where, routes, check):
@@ -64,7 +68,7 @@ def routes_ok(where, routes, check):
             check(r.get("model") is True, f"{where}: route {r['name']} -> {r['upstream']} is a forced-ZDR model route")
 
 
-def run(root=YYC_AI, get=http_get):
+def run(root=YYC_AI, get=http_get, egress=EGRESS):
     fails = []
 
     def check(ok, msg):
@@ -108,18 +112,7 @@ def run(root=YYC_AI, get=http_get):
         check(len(model) == 1 and "openrouter.ai" in model[0]["upstream"] and model[0].get("model") is True,
               "new stack: route model goes to openrouter.ai with model: true")
         routes_ok("new stack", routes, check)
-        kust = open(os.path.join(new, "kustomization.yaml")).read()
-        tag = re.search(r"\{name: jarvis3-chat, newName: [^,]+, newTag: \"?([0-9a-f]{7,40})\"?\}", kust)
-        check(bool(tag), "new stack: kustomization.yaml pins jarvis3-chat by a commit")
-        if tag:
-            try:
-                sha = json.loads(get(f"https://api.github.com/repos/DE0CH/jarvis3/commits/{tag.group(1)}"))["sha"]
-            except Exception as ex:  # noqa: BLE001
-                sha = None
-                check(False, f"new stack: jarvis3 commit {tag.group(1)} resolves ({ex})")
-            if sha:
-                check(sha.startswith(tag.group(1)), f"new stack: jarvis3 {tag.group(1)} is {sha}")
-                jarvis3_literals(sha, get, check)
+        egress_literals(egress, check)
     print(f"\n{len(fails)} failure(s)")
     return fails
 

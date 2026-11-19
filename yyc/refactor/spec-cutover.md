@@ -14,7 +14,7 @@ remap, in-place router upgrade and 72 h tab wait are gone (DESIGN 9.11). Phases 
 importer's sync code, byte-exact verification and release transaction (7), the one-off copies (8), the front door's
 tofu (9), the P0-P2 work (10.0-10.2), the P4 checklist (10.4), the deletion steps (10.5-10.7, 15) and the reverse
 export (14.3). Sections 2-6, 7.1-7.5, 7.8-7.12, 8.2-8.3, 9.2, 10, 11-14, 16 and 20 were rewritten to match DESIGN 9;
-where any text here still disagrees with it, DESIGN 9 wins. Decision 1: `yyc-ai/deploy` is applied by workflow
+where any text here still disagrees with it, DESIGN 9 wins. Decision 1: `yyc/deploy` is applied by workflow
 `yyc-ai.yml` (`deploy-workflows.md`), not by Flux. Decisions 5 and 6 settle 15.4 and 7.4.2. Decision 10: Cluster
 `pg` stays one instance (1.1, 1.2, 10.0). Phase names: P0 = A0, P1 = A1 (with the one ordinary ui rollout carrying
 the router's switch module, DESIGN 9.6), P2 = A2, P3 = A3-A5, P4 = P4 (after A5), P5 = A6, P6 = P6, and A7 (the
@@ -72,7 +72,7 @@ Contents
 | `web` | Deployment `web` (2 pods, `jarvis3-chat:3f7499a9ddd0`): `/internal/cc/*`, scaler, janitor, ops page | old fabric: gateway `yyc-sbx-gw` on `yyc-pool-apps-worker2`, 10.200/15, EC2 tag `app=yyc-ai-sandbox` |
 | `egress`, `tools` | Deployments in `jarvis`, both on database `jarvis` (`egress_log`, `tool_calls`, `kv`, `sandboxes` lookups) | egress announces itself in `kv egress_pod:*` |
 | Conversation state | CloudCLI's `cc_u<key>` schemas in database `cloudcli` (sessions, failed turns), `cc_shared.shares`; Claude Code's JSONL under `/jfs/users/<key>/claude/projects/-workspace/`; sent files `/jfs/sent/<conv>/`; shares `/jfs/users/<key>/shares/<id>/`; workspaces `/jfs/ws/<conv>` | JuiceFS volume `yyc-ai`, metadata in `jfs_yyc_ai` |
-| GitOps | Flux Kustomizations `yyc-ai` (`./yyc-ai/deploy`, prune) and `yyc-ai-secrets` (`./yyc-ai/deploy/sealed`, fenced applier); tofu by the `cloudflare.yml` workflow (drift revert every 30 min) | `yyc-db` (`prune: false`) owns databases and roles; from A0 `yyc-ai/deploy` is applied by `yyc-ai.yml` instead (deploy-workflows 8) |
+| GitOps | Flux Kustomizations `yyc-ai` (`./yyc-ai/deploy`, prune) and `yyc-ai-secrets` (`./yyc-ai/deploy/sealed`, fenced applier); tofu by the `cloudflare.yml` workflow (drift revert every 30 min) | `yyc-db` (`prune: false`) owns databases and roles; from A0 `yyc/deploy` is applied by `yyc-ai.yml` instead (deploy-workflows 8) |
 | Postgres | Cluster `pg`, one instance | stays one instance (decision 10) |
 
 ### 1.2 End state
@@ -83,9 +83,9 @@ Contents
 | Namespaces | `yyc-ai`: `pigeon`, `magpie`, `hermit`, `egress`, `tools`, `cloudflared` (connectors of tunnel `pigeon`); `yyc-ai-fabric` (PSS privileged): the `hermit-gateway` and `hermit-overlay-route` DaemonSets (platform R24) |
 | Fabric | hermit's: gateway DaemonSet `hermit-gateway` (ns `yyc-ai-fabric`, the new cluster's gateway node, DESIGN 15.6), 10.202/15, EC2 tag `app=hermit-host` |
 | Databases | `magpie` on Cluster `magpie-pg` (3 instances, synchronous); `hermit`, `egress`, `tools` (plus `jfs_yyc_ai`, unchanged) on Cluster `pg`, one instance as today (decisions 2 and 10); `jarvis` and `cloudcli` dropped, the old chat UI's data archived (decision 5) |
-| GitOps | `yyc-ai/deploy` applied by workflow `yyc-ai.yml` (server-side apply, prune by trailer, waits for rollouts); tofu by `cloudflare.yml`; Flux keeps `yyc-apps`, `yyc-db` (prune false), `yyc-aiwatch` |
+| GitOps | `yyc/deploy` applied by workflow `yyc-ai.yml` (server-side apply, prune by trailer, waits for rollouts); tofu by `cloudflare.yml`; Flux keeps `yyc-apps`, `yyc-db` (prune false), `yyc-aiwatch` |
 | Storage | bucket `yyc-ai-magpie` (blobs), JuiceFS `ws/` only (`users/` and `sent/` removed 30 days after the switch) |
-| Code | aviary: pigeon, magpie, hermit, supervisor, sandboxd; jarvis3: egress, tools; claudecodeui: the Paseo apps (and whatever Jarvis 4's local mode keeps, which stays open); YYC: `yyc-ai/deploy` with only the new stack (platform 9.1 layout), `catalogue.json` the one access catalogue of every YYC app |
+| Code | aviary: pigeon, magpie, hermit, supervisor, sandboxd; jarvis3: egress, tools; claudecodeui: the Paseo apps (and whatever Jarvis 4's local mode keeps, which stays open); YYC: `yyc/deploy` with only the new stack (platform 9.1 layout), `catalogue.json` the one access catalogue of every YYC app |
 
 Nothing named `ui`, `web`, `jarvis` (as a YYC AI namespace or database), `cloudcli` or `JARVIS_*` remains in YYC AI's
 cluster objects, databases, secrets or code paths after phase A6 (section 15).
@@ -160,8 +160,8 @@ The proof is DESIGN 9.9's zero counters and persona rig.
 | D14 | `ai-yyc-ui.deyaochen.com` stays on both tunnels until A6, then goes (tofu, the hand-set CNAME in Deyao's zone, `monitor.py` `SAAS_NAMES`) | it is an origin alias of `origin_ai`; dropping it earlier would make it 404 at the flip for no gain |
 | D15 | **One switch commit** (`patches/10-flip.patch`, one YYC push): the tofu DNS flip (platform 14.2), every catalogue reader moved to `catalogue.json` (hermit 21.5), the news-stream monitor on hermit's snapshot (hermit 21.4); the signed-in path shrink (`ws`, `__jarvis`) waits for A6, since old pages may exist until A5 | hermit 21.4/21.5 and platform 18.2 call this "the cut commit"; one commit is one revert |
 | D16 | The ConfigMap `yyc/yyc-catalogue` **keeps its key `config.json`**, sourced from the new file (`files: [config.json=catalogue.json]`), so yyc-mcp, CronJob `mcp-cleanup` and their `CATALOGUE=/etc/yyc-catalogue/config.json` never change | renaming the key would delete the file from running yyc-mcp Pods before Kustomization `yyc-apps` could roll them (A7.F3, A19.F12) |
-| D17 | `config.json` and `system-prompt.md` **stay at `yyc-ai/deploy/`** (with the two generators that read them) until A6 (10.5 step 4); only the old stack's other files move into `legacy/` | tofu, `cloudflare.yml`, `mcp-image.yml`, `catalogue.test.ts`, `yyc-ai-ami.yml` and `openrouter.py` read that path; moving the file in P1 would break them weeks before their readers move in the switch commit |
-| D18 | The **ZDR guard** (`yyc-ai/tests/test_zdr.py`) is rewritten in A1 to check both stacks while both exist (10.1.1), and loses its legacy half in A6 | the P1 layout moves the jarvis3 remote base the old guard parses; both stacks call the model during the overlap |
+| D17 | `config.json` and `system-prompt.md` **stay at `yyc/deploy/`** (with the two generators that read them) until A6 (10.5 step 4); only the old stack's other files move into `legacy/` | tofu, `cloudflare.yml`, `mcp-image.yml`, `catalogue.test.ts`, `yyc-ai-ami.yml` and `openrouter.py` read that path; moving the file in P1 would break them weeks before their readers move in the switch commit |
+| D18 | The **ZDR guard** (`yyc/tests/test_zdr.py`) is rewritten in A1 to check both stacks while both exist (10.1.1), and loses its legacy half in A6 | the P1 layout moves the jarvis3 remote base the old guard parses; both stacks call the model during the overlap |
 
 ---
 
@@ -843,7 +843,7 @@ locals {
 # resource "cloudflare_dns_record" "pigeon_test" deleted
 ```
 
-and, in the same commit, `access.tf:58` reads `yyc-ai/deploy/catalogue.json` (hermit 21.5). A revert of the commit
+and, in the same commit, `access.tf:58` reads `yyc/deploy/catalogue.json` (hermit 21.5). A revert of the commit
 restores all of it at once.
 
 The custom hostname `ai-yyc-ui.deyaochen.com` uses `origin_ai`, so it moves with it; `ai.yyc.deyaochen.com` stays a
@@ -925,7 +925,7 @@ Checklist:
       `http://tools/v1/tools/web_search` with `curl` as the `web` skill says.
 - [ ] `pigeon-app` image contains every file of `ghcr.io/de0ch/yyc-ai-ui:<live tag>`'s `/app/dist/_expo/static/**`
       with identical bytes (`crane export` both, `sha256sum` compare; the runner's `preflight` repeats it).
-- [ ] The `legacy/` move renders identically: `kustomize build yyc-ai/legacy` equals `kustomize build yyc-ai/deploy`
+- [ ] The `legacy/` move renders identically: `kustomize build yyc-ai/legacy` equals `kustomize build yyc/deploy`
       of its parent, byte for byte after sorting (a CI step in `yyc-ai.yml`'s `check` job, diff must be empty); after
       the Flux path switch both Kustomizations are Ready with no ReplicaSet hash or pod age in `jarvis` changed.
 - [ ] The rewritten ZDR guard (10.1.1) passes on the prepared P1 tree, and fails on three seeded mutations: a
@@ -934,7 +934,7 @@ Checklist:
 - [ ] Legacy-in-a-box green on the claudecodeui commit A1 will deploy (the ui image with the switch module) and the
       aviary commit it will pin; the switch module's byte-identity and request-tracking cases green; a `move` in the
       box closed every non-LU socket only while it had no request outstanding.
-- [ ] The builder's steps 1-2 are done, built with DESIGN 15.2.1's inputs, and `yyc-ai/infra/talos-ready.sh` is green
+- [ ] The builder's steps 1-2 are done, built with DESIGN 15.2.1's inputs, and `yyc/infra/talos-ready.sh` is green
       on DESIGN 15.2's N1-N12 (its output in the task record); the three cpx32 of N12 are workers in network `yyc`.
 - [ ] The deploy path to the new cluster works (deploy-workflows 12.5 done; a no-op commit gives a green run with an
       empty plan; `kubectl auth can-i --list --as=gha:yyc-ai` on the new cluster matches deploy-workflows 4.2).
@@ -959,26 +959,26 @@ Commits and steps, in order:
    30432, and the manual EndpointSlice `pg-shared-manual` to 10.0.0.2:30432, labels `kubernetes.io/service-name:
    pg-shared` and `endpointslice.kubernetes.io/managed-by: yyc-manual`; T5 replaces both, DESIGN 15.8);
    applied by the new cluster's workflow.
-2. **The bridges** (DESIGN 15.5): `yyc-ai/infra/bridges.sh up` (the bridge server yyc-bridge1, up since
+2. **The bridges** (DESIGN 15.5): `yyc/infra/bridges.sh up` (the bridge server yyc-bridge1, up since
    2026-11-05; re-run so its targets are current; health checks red until the NodePorts exist); old cluster (Flux): `jarvis/ui-bridge` in `yyc-ai/legacy/`, `yyc/yyc-mcp-bridge`, `yyc/web-bridge`
    and their ingress rules from 10.0.255.1/32 in `news-stream/deploy/apps/`, `yyc/hermit-bridge` (selector-less) and
    the monitor's egress; new cluster (`yyc-ai.yml`, in the same push as 3): `bridges.yaml`. `bridges.sh check` green
    for every target that runs a callee pod.
-3. **YYC `yyc-ai/deploy/`** (platform 9.1's layout, the new stack only; `yyc-ai/legacy/` untouched):
+3. **YYC `yyc/deploy/`** (platform 9.1's layout, the new stack only; `yyc-ai/legacy/` untouched):
    ```
-   yyc-ai/deploy/kustomization.yaml   resources: the new stack's files; image pins of the new stack;
+   yyc/deploy/kustomization.yaml   resources: the new stack's files; image pins of the new stack;
                                       generators: catalogue (yyc-ai), hermit-config, egress-config, tools-config,
                                       legacy-kube-ca (from infra/yyc-cluster-ca.pem, until A6)
-   yyc-ai/deploy/                     limits.yaml, network.yaml, cloudflared.yaml, pigeon.yaml, magpie.yaml, bridges.yaml,
+   yyc/deploy/                     limits.yaml, network.yaml, cloudflared.yaml, pigeon.yaml, magpie.yaml, bridges.yaml,
                                       hermit/ (hermit.yaml, fabric.yaml in yyc-ai-fabric, juicefs.yaml with PV/PVC
                                       hermit-jfs, hermit.json, system-prompt.md, sandbox-rules.md), egress/, tools/,
                                       catalogue.json, jobs/ (the import CronJobs, `suspend: true`)
    ```
    `config.json`, `system-prompt.md` and the `jarvis-config` and `yyc-catalogue` generators stay in `yyc-ai/legacy/`
-   (DESIGN 15.4). In the same commit: the ZDR guard rewrite (10.1.1); `yyc-ai/infra/openrouter.py` allows the union of
+   (DESIGN 15.4). In the same commit: the ZDR guard rewrite (10.1.1); `yyc/infra/openrouter.py` allows the union of
    `legacy/config.json`'s and `egress/egress.json`'s models while both exist. The deploy creates the new objects on the
    new cluster (its plan: creates only, an empty prune set); the old cluster is not touched.
-4. YYC `yyc-ai/deploy/sealed/`: the new Sealed Secrets of platform 12.2 for ns `yyc-ai` (`pigeon`, `magpie`,
+4. YYC `yyc/deploy/sealed/`: the new Sealed Secrets of platform 12.2 for ns `yyc-ai` (`pigeon`, `magpie`,
    `hermit`, `hermit-juicefs`, `egress`, `tools`, `tunnel`, `magpie-import`, `hermit-import`, `egress-import`,
    `tools-import`) and `yyc-ai-fabric/hermit-gateway`, sealed with `infra/sealed-secrets-talos.pem`; no pull Secret
    (platform R21); rows in `infra/secrets.txt`.
@@ -1010,13 +1010,13 @@ Commits and steps, in order:
 
 #### 10.1.1 The ZDR guard, rewritten (A7.F51, A19.F21, A20.F15)
 
-`yyc-ai/tests/test_zdr.py` (stdlib only) and `.github/workflows/yyc-ai-zdr.yml` (push to `main` under `yyc-ai/**`,
-which covers `yyc-ai/deploy/egress/**` and `legacy/`, plus the workflow file; daily `17 3 * * *`; a failure mails the
+`yyc/tests/test_zdr.py` (stdlib only) and `.github/workflows/yyc-ai-zdr.yml` (push to `main` under `yyc-ai/**`,
+which covers `yyc/deploy/egress/**` and `legacy/`, plus the workflow file; daily `17 3 * * *`; a failure mails the
 owner as today). It checks every stack present in the tree:
 
 | Stack | Present while | Model lists | Routes | Pinned egress source |
 |---|---|---|---|---|
-| new | always | `yyc-ai/deploy/egress/egress.json`: `models[].id`, `defaultModel`, `smallModel`, `titleModel` (each must have an OpenRouter ZDR endpoint, `GET https://openrouter.ai/api/v1/endpoints/zdr`) | `routes.model.upstream` must contain `openrouter.ai` and have `model: true`; no other route may name `openrouter.ai` | the `jarvis3-chat` tag in `yyc-ai/deploy/kustomization.yaml` `images` (a sha12), resolved to the full commit with `GET https://api.github.com/repos/DE0CH/jarvis3/commits/<sha12>` (the workflow's `GITHUB_TOKEN`; a 404 or ambiguous prefix fails) |
+| new | always | `yyc/deploy/egress/egress.json`: `models[].id`, `defaultModel`, `smallModel`, `titleModel` (each must have an OpenRouter ZDR endpoint, `GET https://openrouter.ai/api/v1/endpoints/zdr`) | `routes.model.upstream` must contain `openrouter.ai` and have `model: true`; no other route may name `openrouter.ai` | the `jarvis3-chat` tag in `yyc/deploy/kustomization.yaml` `images` (a sha12), resolved to the full commit with `GET https://api.github.com/repos/DE0CH/jarvis3/commits/<sha12>` (the workflow's `GITHUB_TOKEN`; a 404 or ambiguous prefix fails) |
 | old | `yyc-ai/legacy/` exists | `yyc-ai/legacy/config.json`: `models[].id`, `defaultModel`, `titleModel` | `egress.routes` as today | the remote base `github.com/DE0CH/jarvis3//deploy/chat?ref=<sha>` in `yyc-ai/legacy/kustomization.yaml` |
 
 At each pinned commit it fetches `chat/src/egress/modelbody.ts`, `chat/src/egress/proxy.ts` and
@@ -1069,8 +1069,8 @@ until a `clusters/talos` commit removes them; leave the databases.
 ### 10.2 P2 (A2): bulk import and rehearsals (still dark for staff)
 
 The one-shot Jobs of this phase and of A6 (`hermit-jfs-owner`, `magpie-import-plan`, the bulk import and its re-runs,
-`magpie import holds`, render parity) live in `yyc-ai/oneshot/` and run with `yyc-ai/oneshot/run.sh <file>
-[--replace]` on the images `yyc-ai/deploy/kustomization.yaml` pins at that moment, never through `yyc-ai.yml`: a Job's
+`magpie import holds`, render parity) live in `yyc/oneshot/` and run with `yyc/oneshot/run.sh <file>
+[--replace]` on the images `yyc/deploy/kustomization.yaml` pins at that moment, never through `yyc-ai.yml`: a Job's
 pod template is immutable, so a Job in the applied folder refused every re-pin of the tags until a commit named it in
 `Deploy-Replace`/`Deploy-Prune` (2026-11-05). Before `preflight` and `start-handover` (which read the plan Job,
 `config.json` `planJob`), `run.sh import-plan.yaml --replace` runs the plan on the current images; `oneshot/` is
@@ -1216,12 +1216,12 @@ Order matters (each step's check before the next):
    `yyc-ai-sandbox-scaler`, `yyc-ai-sandbox-ami-ci`; security group `yyc-ai-sandbox-host`. Then Job
    `hermit-jfs-owner` again (hermit 15.4).
 4. **Cluster (one YYC commit, planned from the session first with `yyc-apply plan --trailers`):** `legacy` leaves
-   `resources` of `yyc-ai/deploy/kustomization.yaml`; `legacy/` is deleted. The commit carries
+   `resources` of `yyc/deploy/kustomization.yaml`; `legacy/` is deleted. The commit carries
    `Deploy-Prune-Namespace: jarvis` and `Deploy-Prune:` lines for PV `yyc-ai-jfs`, RuntimeClass `gvisor`,
    `kube-system/sbx-overlay-route` and every other removed object; the deploy deletes, after its rollout check,
    everything in namespace `jarvis` (the importer's Role and RoleBinding and `jarvis/ui-from-bridge`
    included), the PV `yyc-ai-jfs` (Retain: the volume is untouched), `kube-system/sbx-overlay-route`,
-   RuntimeClass `gvisor`, the old Sealed Secrets (`yyc-ai/deploy/sealed/`: `ui-env`, `ui-juicefs`, `web-env`,
+   RuntimeClass `gvisor`, the old Sealed Secrets (`yyc/deploy/sealed/`: `ui-env`, `ui-juicefs`, `web-env`,
    `sandbox-vm`, old `egress-env`, `tools-env`, `tunnel`, `ghcr-pull` in `jarvis`), the import CronJobs (`jobs/` deleted) and Secrets `magpie-import`, `hermit-import`, `egress-import`,
    `tools-import`, and NetworkPolicy `magpie-import-egress`. Then a `clusters/hetzner` commit removes Namespace
    `jarvis`, the fenced applier's `jarvis` RoleBinding and the deployer's `jarvis` RoleBinding, `kube-system` Role
@@ -1561,7 +1561,7 @@ option (the only process that omits it, 7.2). Rehearsed in A2 (R3).
 | DE0CH/claudecodeui | `jarvis/router.mjs` (with its switch module), `jarvis/Dockerfile`, `jarvis/test/router.test.mjs`, `jarvis/test/fake-cloudcli.mjs`, `.github/workflows/jarvis-image.yml`; the sandbox form of Jarvis mode: `server/modules/jarvis/{sandbox-process,jarvis-guard (sandbox branch),jarvis-view-as,jarvis-shares,jarvis-shares.routes,jarvis-sent-files,jarvis-clone,jarvis-warm.routes,jarvis-purge (sandbox branch),jarvis-files.routes (sandbox branch),jarvis-title (sandbox branch),jarvis-history (legacy reset-note shim),jarvis-errors (sandbox codes)}.ts`, the `JARVIS_WEB_URL`/`JARVIS_CC_*`/`JARVIS_JFS_ROOT` paths and their tests (`jarvis-mode.test.ts`, `server/modules/jarvis/e2e`); `docs/paseo-ui.md` server parts; the `yyc-ai-ui` image | `paseo/` (the apps), `yyc-ios.yml`, `pigeon-app.yml`, `paseo-ui.yml` (path filter loses `server/modules/paseo/**` if that module goes); **everything Jarvis 4's local mode uses** (`jarvis/runtime-bundle.sh`, `jarvis4-runtime.yml`, `jarvis-local.routes.ts`, `jarvis-config.ts`'s local part, `server/modules/paseo/**` if local mode serves the Paseo UI): Jarvis 4 dogfooding is open, so the deletion PR must keep `jarvis4-runtime.yml`'s local-mode tests and bundle build green and must not touch local-mode code |
 | DE0CH/jarvis3 | `chat/src/web/**`, `chat/sandbox/**`, `chat/sandboxd/**` (moved to aviary), `deploy/chat/**` (YYC writes egress's, tools' and cloudflared's manifests itself, platform 9.7-9.8), web's parts of `chat/src/common/{config,schema,ops,tokens}.ts` and `kv`, `.github/workflows/sandboxd.yml`, the web/sandbox parts of `chat.yml`, docs `CLAUDE-CODE.md` (UI cut-over, `/internal/cc`), `SANDBOX-VM.md`, `SANDBOXD-MEMORY.md` (moved to aviary), `API.md`'s `/internal/cc` section, `CONFIG.md`'s web/sandbox/ui keys, `CHAT.md`'s web parts; the `import-jarvis` subcommands (after P5.1) | egress, tools, their docs and tests, the ZDR literals the guard greps (10.1.1) |
 | DE0CH/aviary | `crates/magpie-import` and the `magpie import` subcommands, pigeon's LU, magpie's window tables (A6, 10.5 step 7), the LU contract rig, the switch personas and legacy-in-a-box, hermit's `import-jarvis` and `legacy-down.sh` (after 10.5 step 3; `legacy-cleanup` after P6); the legacy-path set at A7 (10.7) | everything else, including pigeon's request-free-first drain |
-| DE0CH/YYC | `yyc-ai/deploy/legacy/`, `yyc-ai/deploy/config.json`, the top-level `system-prompt.md`, `yyc-ai/deploy/jobs/`, `.github/workflows/yyc-ai-ami.yml` (replaced by `hermit-ami.yml`), the ZDR guard's old half (all A6, 10.5 step 4); `yyc-ai/cutover/` (runner, patches, `freeze-check`, `window.json`), `yyc-ai/infra/gvisor-node.sh`, `infra/secrets.txt` rows of the old Secrets, README sections on ui, the per-person processes, `/jfs` in UI pods, the old-UI rollback, `UI_CUTOVER`-era notes (gap-1 6); the zero-downtime and runbook text rewritten for the new stack | — |
+| DE0CH/YYC | `yyc/deploy/legacy/`, `yyc/deploy/config.json`, the top-level `system-prompt.md`, `yyc/deploy/jobs/`, `.github/workflows/yyc-ai-ami.yml` (replaced by `hermit-ami.yml`), the ZDR guard's old half (all A6, 10.5 step 4); `yyc-ai/cutover/` (runner, patches, `freeze-check`, `window.json`), `yyc/infra/gvisor-node.sh`, `infra/secrets.txt` rows of the old Secrets, README sections on ui, the per-person processes, `/jfs` in UI pods, the old-UI rollback, `UI_CUTOVER`-era notes (gap-1 6); the zero-downtime and runbook text rewritten for the new stack | — |
 | claude-env | skill `yyc-ai` rewritten (names, runbooks, rollback, ops); its scripts that drive ui pods (`ui-pod-chat`, view-as checks in ui pods) replaced by the ported probes; `ios-app-record.sh`'s `pwa-shell-ios` trigger fixed; a lesson for this switch's pitfalls | — |
 
 ### 15.3 jarvis3's Kustomize base
@@ -1695,7 +1695,7 @@ paths and the literals the guard greps; `egress.json` keeps `routes.model` with 
    minute), tools is CronJob `tools-import` (P2 and P5 runs). All mount PVC `hermit-jfs` read-only except the export
    Job. Secrets as 12.2 already has them (`<service>-import` with the legacy URLs; the service's own Secret for its
    bindings); no `MAGPIE_IMPORT_UI_PEER` or RW URL. The "catch-up every 10 s until no ui Pod" Job of 18.2 goes.
-2. 9.1: `config.json` and `system-prompt.md` stay at `yyc-ai/deploy/` with the `jarvis-config` and `yyc-catalogue`
+2. 9.1: `config.json` and `system-prompt.md` stay at `yyc/deploy/` with the `jarvis-config` and `yyc-catalogue`
    generators until the switch commit (catalogue) and P5.4 (both files), not under `legacy/` (D17); the `yyc-catalogue`
    generator is `files: [config.json=catalogue.json]` (key `config.json`, D16), not `files: [catalogue.json]` as 9.2
    shows; `legacy/` also holds the importer's Role/RoleBinding in `jarvis` (7.2); `jobs/` holds the import CronJobs.
@@ -1764,7 +1764,7 @@ switch or deletion step; the rest of those homes are platform's to record, 17.6 
 | A7.F3 | Access catalogue ConfigMap `yyc/yyc-catalogue` | kept: same object, same key `config.json`, source `catalogue.json` from the switch commit (D16, hermit 21.5) |
 | A7.F44 | Cloudflare tofu workflow | kept; path filter to `catalogue.json` in the switch commit (hermit 21.5) |
 | A7.F51, A19.F21, A20.F15 | ZDR guard (test + workflow) | rewritten in P1.2 for both stacks, old half removed in P5.4 (10.1.1) |
-| A7.F52 | OpenRouter key guardrail script (`yyc-ai/infra/openrouter.py`) | changed in P1.2: allows the union of both stacks' models; `egress.json` only from P5.4 |
+| A7.F52 | OpenRouter key guardrail script (`yyc/infra/openrouter.py`) | changed in P1.2: allows the union of both stacks' models; `egress.json` only from P5.4 |
 | A7.F53 | gVisor node script and inert RuntimeClass | dropped: RuntimeClass pruned in P5.4, `infra/gvisor-node.sh` deleted in P5.8 |
 | A7.F54 | Deploy-a-new-version runbook | rewritten in P5.8 (README, skill `yyc-ai`) for platform 13.2's flow |
 | A8.F18 | Auto-memory dir `projects/-workspace/memory/` | per conversation (decision 6); empty today; a file that appears is copied into each of the person's conversations (7.4.2) |

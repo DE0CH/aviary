@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Make the new stack's store keys (yyc-ai/refactor spec-platform 12.3, 25.4; WP-32) into files, never printing a
+"""Make the new stack's store keys (yyc/refactor spec-platform 12.3, 25.4; WP-32) into files, never printing a
 value, and print the one `scripts/store-put.py yyc …` command (claude-env) that writes them with their explanations.
 
-  yyc-ai/infra/make-keys.py OUT                  the random keys (pair tokens, pigeon's and hermit's keys, role
+  yyc/infra/make-keys.py OUT                  the random keys (pair tokens, pigeon's and hermit's keys, role
                                                  passwords) and the URLs made from them; skips a key the env already
                                                  has (so a re-run never replaces a live value)
-  yyc-ai/infra/make-keys.py OUT --derived        the keys made from existing store keys (needs store yyc in the env):
+  yyc/infra/make-keys.py OUT --derived        the keys made from existing store keys (needs store yyc in the env):
                                                  YYC_PIGEON_LEGACY_VIEW_AS_KEY (YYC_JARVIS_CC_TOKEN), the pg-shared
                                                  forms of YYC_JARVIS_DATABASE_URL, YYC_CLOUDCLI_DATABASE_URL and
                                                  YYC_JUICEFS_META_URL
-  yyc-ai/infra/make-keys.py OUT --hosts-meta     YYC_HERMIT_JUICEFS_META_URL: YYC_JUICEFS_HOST_META_URL with the host
+  yyc/infra/make-keys.py OUT --hosts-meta     YYC_HERMIT_JUICEFS_META_URL: YYC_JUICEFS_HOST_META_URL with the host
                                                  the sandbox hosts dial, the balancer's database port 10.0.0.50:5432
                                                  (deploy/hermit/pg-forward.yaml)
-  yyc-ai/infra/make-keys.py OUT --fabric AVIARY  the fabric PKI (AVIARY/fabric/host/make-certs.sh: CA, gateway, host,
+  yyc/infra/make-keys.py OUT --fabric AVIARY  the fabric PKI (AVIARY/fabric/host/make-certs.sh: CA, gateway, host,
                                                  hermit; keys as PKCS#8) and the gateway's WireGuard key
 
 Made elsewhere: YYC_CF_PIGEON_TUNNEL_TOKEN (tofu output tunnel_token_pigeon after the A1 tofu apply),
@@ -144,7 +144,7 @@ def hosts_meta(o):
     o.put("YYC_HERMIT_JUICEFS_META_URL", rehost(need("YYC_JUICEFS_HOST_META_URL"), HOSTS_PG),
           "YYC AI hermit's JuiceFS metadata URL for the AWS sandbox hosts and hermit's juicefs CLI: "
           f"YYC_JUICEFS_HOST_META_URL with host {HOSTS_PG}, the balancer yyc-ai-egress's database port, which "
-          "pg-forward passes on to db/pg-shared (DE0CH/yyc-code yyc-ai/deploy/hermit/pg-forward.yaml)")
+          "pg-forward passes on to db/pg-shared (DE0CH/yyc-code yyc/deploy/hermit/pg-forward.yaml)")
 
 
 def fabric(o, aviary):

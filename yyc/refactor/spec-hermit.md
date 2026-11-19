@@ -98,7 +98,7 @@ running sandbox's model calls, tool calls and FUSE writes keep working while eve
 | `~/.claude` folder per person on JuiceFS (`users/<key>/claude`), bound into every sandbox | magpie (storage) + supervisor (FUSE) | target design |
 | sent-file snapshot route (`JARVIS_SENT_FILES_URL`, egress route `sent-files`, `send-file-hook.mjs`, `JARVIS_CLAUDE_SETTINGS`) | magpie + supervisor | target design ("sent-file snapshots") |
 | title generation (fork `jarvis-title.ts`, its `TITLE_SYSTEM` text) | the supervisor runs magpie's `title` command against `model`; the instructions text is hermit's descriptor content (`title.system`, 3.7.1) | titles are conversation state; the instructions are deployment content |
-| the managed MCP file (gone, decision 15) → the managed skills (`yyc-ai/deploy/skills`) | hermit's config → descriptor `managedSkills` → supervisor writes them | deployment content, like the CLAUDE.md |
+| the managed MCP file (gone, decision 15) → the managed skills (`yyc/deploy/skills`) | hermit's config → descriptor `managedSkills` → supervisor writes them | deployment content, like the CLAUDE.md |
 | Claude Code env (`ANTHROPIC_*`, `CLAUDE_CODE_*`, telemetry off) | supervisor (fixed), model ids from `model` | no model names in hermit |
 | uploads staged into the workspace before a turn | supervisor (materialises magpie's blobs into `/workspace/uploads`, supervisor 12.1) | one owner; hermit has no upload route |
 | the old chat UI tables in `jarvis` (users, conversations, messages, turns, events, claw_sessions, files, shares, blobs, blob_grants, confirmations, allowed_hosts) | archived, then dropped (Deyao, decision 5); egress backfills its person column first (A13.F5, section 22.4) | not hermit's |
@@ -408,7 +408,7 @@ The supervisor's first call (section 5). `If-None-Match` honoured (304). 200, at
   `{workspaceFiles}`, `{tmpGiB}` replaced by the values in `resources` (gap-2 2.4: the rules state what hermit
   actually provisions).
 - `title.system`: the instructions the supervisor sends with magpie's `title` command (supervisor 14). YYC: file
-  `yyc-ai/deploy/hermit/title-system.md`, today's `TITLE_SYSTEM` moved verbatim from claudecodeui
+  `yyc/deploy/hermit/title-system.md`, today's `TITLE_SYSTEM` moved verbatim from claudecodeui
   `server/modules/jarvis/jarvis-title.ts:23`.
 - The boot environment (5.1) already holds the proxy variables, set when the sandbox was created; the supervisor reads
   the proxy from its environment and hard-codes nothing (platform R13). `env` holds the further variables every process
@@ -1609,9 +1609,9 @@ privileged, nothing else in it, platform R24/9.6):
 ### 14.3 The AMI follows the pins
 
 YYC workflow `hermit-ami.yml` (platform 13.5; replaces `yyc-ai-ami.yml`): on a push touching
-`yyc-ai/deploy/hermit/hermit.json` where `sandbox.image`, `fabric.sandboxd` or `fabric.runsc` changed (a `jq` diff
+`yyc/deploy/hermit/hermit.json` where `sandbox.image`, `fabric.sandboxd` or `fabric.runsc` changed (a `jq` diff
 against the parent commit; allowlist, prompt or catalogue edits never bake), checks out **aviary at the commit pinned
-in `yyc-ai/deploy/kustomization.yaml`** (not `main`, gap-2 2.21), runs `fabric/aws/infra.sh --config hermit.json sync`,
+in `yyc/deploy/kustomization.yaml`** (not `main`, gap-2 2.21), runs `fabric/aws/infra.sh --config hermit.json sync`,
 then `check` must exit 0 (A19.F22, A20.F24, A7.F50). Hosts launched before the new AMI exists fetch the image from the
 gateway (:7444, about 45 s more).
 
@@ -1695,7 +1695,7 @@ format. The layout stays `ws/<id>` for every conversation (unchanged ids), so no
 
 - The JuiceFS CSI driver HelmRelease stays as it is today (chart 0.33.0 in `kube-system`, `mountMode mountpod`, mount
   image `juicedata/mount:ce-v1.4.1`, mount pods 50m/192Mi, node plugin on the cx33/cpx32 nodes; moved unchanged to
-  `yyc-ai/deploy/juicefs-csi.yaml`, platform 9.1; A18.F16). hermit's Pods therefore have node affinity to those nodes
+  `yyc/deploy/juicefs-csi.yaml`, platform 9.1; A18.F16). hermit's Pods therefore have node affinity to those nodes
   (platform 9.6). The old static PV `yyc-ai-jfs` and its mount pods for the `ui` pods go with `ui` at the teardown
   (A18.F17, A18.F18: same mechanism, now for `hermit-jfs`).
 - Mount pods are created at a node's first hermit Pod and removed when the last one leaves (the CSI driver's own
@@ -2111,7 +2111,7 @@ deleted with `legacy/` in cutover P5.4, read by nothing but the draining old sta
 | ConfigMap `yyc/yyc-catalogue` (yyc-mcp Deployment and CronJob `mcp-cleanup`, `news-stream/deploy/apps/yyc-mcp.yaml`, Kustomization `yyc`) | the generator sources the new file under the **old key**: `files: [config.json=catalogue.json]`, still `disableNameSuffixHash: true`. The object, its key `config.json` and the path `/etc/yyc-catalogue/config.json` do not change, so `CATALOGUE=/etc/yyc-catalogue/config.json` in Deployment `yyc-mcp` (line 39) and CronJob `mcp-cleanup` (line 119) stays as it is, no yyc-mcp Pod rolls, and the kubelet swaps the file content in place (the users and admins are identical; only `config.json`'s other keys disappear, which yyc-mcp never read). Because the key never disappears, no running yyc-mcp Pod or `mcp-cleanup` run can find the file missing, whatever order Kustomizations `yyc-ai` and `yyc` reconcile in. |
 | ConfigMap `yyc-ai/catalogue` (hermit, tools) | already from `catalogue.json` (key `catalogue.json`) since P1 |
 | tofu `news-stream/deploy/cloudflare/tofu/access.tf:58` | `jsondecode(file("${path.module}/../../../../yyc-ai/deploy/catalogue.json"))` (same `.users`, `.admins` rules; the comment at line 56 follows) |
-| `.github/workflows/cloudflare.yml` (path filter line 13, comment line 2) | `yyc-ai/deploy/catalogue.json` |
+| `.github/workflows/cloudflare.yml` (path filter line 13, comment line 2) | `yyc/deploy/catalogue.json` |
 | `.github/workflows/mcp-image.yml:62` (the yyc-mcp image smoke test) | mount source `$PWD/yyc-ai/deploy/catalogue.json:/etc/yyc-catalogue/config.json:ro` (the container path and `CATALOGUE` stay) |
 | `news-stream/mcp-edge/test/catalogue.test.ts:26` (reads the real file) | `../../../yyc-ai/deploy/catalogue.json` |
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""YYC AI's system prompt (yyc-ai/deploy/hermit/system-prompt.md) names the company: the agent is YYC AI, the
+"""YYC AI's system prompt (yyc/deploy/hermit/system-prompt.md) names the company: the agent is YYC AI, the
 assistant of the staff of YYC (元意顧問), and nothing tells it to withhold the name or to write a placeholder for it.
 The managed texts (sandbox rules and skills) say the same thing about the sandbox's internet. Stdlib only."""
 import glob, os, unittest

@@ -4,6 +4,8 @@
 //!   aviary-deploy ready SHA WORKFLOW,…                     go | wait | stale (stdout); red = exit 1
 //!   aviary-deploy digests TAGS.json                         image → {tag, digest}; a missing image = exit 1
 //!   aviary-deploy set KUSTOMIZATION TAGS.json               the tags written into its `images:`
+//!   aviary-deploy yyc DIR TAGS.json                         YYC's folder (yyc/deploy): its kustomization's tags, hermit.json's
+//!                                                           release and sandbox digest, gateway.release
 //!
 //! `ready` reads GitHub with `GITHUB_TOKEN` for `GITHUB_REPOSITORY` (`GITHUB_API_URL`, default api.github.com).
 
@@ -11,6 +13,7 @@ mod decide;
 mod kustomize;
 mod registry;
 mod tags;
+mod yyc;
 
 use std::collections::BTreeMap;
 
@@ -106,8 +109,23 @@ fn main() -> Result<()> {
             let text = std::fs::read_to_string(kustomization)?;
             std::fs::write(kustomization, kustomize::set_tags(&text, &read_tags(tags)?)?)?;
         }
+        ["yyc", dir, tags] => {
+            let t = read_tags(tags)?;
+            let dir = std::path::Path::new(dir);
+            let k = dir.join("kustomization.yaml");
+            std::fs::write(&k, kustomize::set_tags(&std::fs::read_to_string(&k)?, &t)?)?;
+            let Some(aviary) = t.get("sandboxd") else {
+                bail!("no tag for sandboxd")
+            };
+            let Some(digest) = registry::digest("hermit-sandbox", aviary)? else {
+                bail!("not built: ghcr.io/de0ch/hermit-sandbox:{aviary}")
+            };
+            let h = dir.join("hermit/hermit.json");
+            std::fs::write(&h, yyc::hermit_json(&std::fs::read_to_string(&h)?, aviary, &digest)?)?;
+            std::fs::write(dir.join("hermit/gateway.release"), format!("aviary-{aviary}\n"))?;
+        }
         _ => bail!(
-            "usage: aviary-deploy tags CONFIG [REV] | ready SHA WORKFLOWS | digests TAGS | set KUSTOMIZATION TAGS"
+            "usage: aviary-deploy tags CONFIG [REV] | ready SHA WORKFLOWS | digests TAGS | set KUSTOMIZATION TAGS | yyc DIR TAGS"
         ),
     }
     Ok(())

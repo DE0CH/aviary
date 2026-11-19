@@ -1,5 +1,5 @@
 #!/bin/bash
-# bridges.sh: the two cross-cluster bridges of YYC AI's switch window (yyc-ai/refactor DESIGN 15.5, WP-60), from their
+# bridges.sh: the two cross-cluster bridges of YYC AI's switch window (yyc/refactor DESIGN 15.5, WP-60), from their
 # definitions in bridges.json: one Debian server with no public IP (`server`, yyc-bridge1, project yyc) that carries
 # each bridge's address (10.0.255.1, 10.0.255.2) as a Hetzner alias IP on network yyc and runs HAProxy in TCP mode.
 # Prints no secret.
@@ -26,7 +26,7 @@
 # $SECRETS/admin (default ~/.yyc-cluster; hcloud key yyc-cluster-admin) through `server.jump` (yyc-master1). check reads
 # the callee pods: on the old cluster through $BRIDGES_OLD_KUBECTL (an argv prefix; default: $CUTOVER_OLD kubectl, else
 # news-stream/deploy/cluster/cluster.sh ssh kubectl, which needs SECRETS), on the new one with $BRIDGES_NEW_KUBECONFIG
-# (default $CUTOVER_NEW_KUBECONFIG). Tests only (yyc-ai/tests/test_bridges.py): HCLOUD_ENDPOINT (a fake API),
+# (default $CUTOVER_NEW_KUBECONFIG). Tests only (yyc/tests/test_bridges.py): HCLOUD_ENDPOINT (a fake API),
 # BRIDGES_SSH (an argv prefix run as `$BRIDGES_SSH <ip> <command>` instead of ssh), BRIDGES_BOX_ROOT (a folder the box's
 # paths live under), BRIDGES_DEF (another bridges.json).
 set -euo pipefail
@@ -122,7 +122,7 @@ write_files:
     permissions: '0755'
     content: |
       #!/bin/sh
-      # yyc-bridge1's network (yyc-ai/infra/bridges.sh): default route via network yyc, bridge addresses, resolver
+      # yyc-bridge1's network (yyc/infra/bridges.sh): default route via network yyc, bridge addresses, resolver
       set -eu
       dev=""
       for i in $(seq 1 60); do
@@ -144,7 +144,7 @@ write_files:
   - path: /etc/systemd/system/yyc-bridge-net.service
     content: |
       [Unit]
-      Description=yyc-bridge1 network: default route, bridge addresses, resolver (yyc-ai/infra/bridges.sh)
+      Description=yyc-bridge1 network: default route, bridge addresses, resolver (yyc/infra/bridges.sh)
       After=network.target
       Before=haproxy.service
       [Service]
@@ -196,7 +196,7 @@ targets_map() { # $1 state -> {bridge name: targets}
 # the HAProxy config for a state ({bridges: [bridge with the services the box carries]}) and its targets
 render() {
   jq -r --argjson t "$2" --argjson hc "$(g .healthCheck)" --arg r "$R" --arg sock "$SOCK" --arg box "$SERVER" '
-"# \($box): HAProxy for the cross-cluster bridges, written by yyc-ai/infra/bridges.sh up from bridges.json
+"# \($box): HAProxy for the cross-cluster bridges, written by yyc/infra/bridges.sh up from bridges.json
 # and the targets in the Hetzner API. Do not edit: the next up replaces it.
 global
 " + (if $r == "" then "  user haproxy\n  group haproxy\n" else "" end) + "  log /dev/log local0 notice
@@ -270,7 +270,7 @@ fi
 mkdir -p "$R/etc/yyc-bridge" "$R/etc/haproxy" "$R/run/haproxy" "$R/usr/local/sbin"
 cat > "$R/usr/local/sbin/yyc-bridge-stats.new" <<'P'
 #!/usr/bin/env python3
-# HAProxy's `show stat` CSV from its stats socket (yyc-ai/infra/bridges.sh check)
+# HAProxy's `show stat` CSV from its stats socket (yyc/infra/bridges.sh check)
 import socket, sys
 s = socket.socket(socket.AF_UNIX)
 s.settimeout(5)
@@ -310,7 +310,7 @@ apply() {
   render "$st" "$(targets_map "$st")" >"$tmp/cfg"
   box "cat $CFG 2>/dev/null || true" >"$tmp/old"
   if ! cmp -s "$tmp/old" "$tmp/cfg"; then
-    if grep -q 'written by yyc-ai/infra/bridges.sh' "$tmp/old"; then
+    if grep -q 'written by yyc/infra/bridges.sh' "$tmp/old"; then
       say "$SERVER: HAProxy config changed, reloading:"
       diff "$tmp/old" "$tmp/cfg" | grep '^[<>] ' | grep -v '^[<>] #' >&2 || true
     else

@@ -285,7 +285,7 @@ that is a capacity decision made then, from the room table, and said to Deyao.
    `tcp://pg-shared.db.svc.cluster.local:5432` (cloudflare.yml; both clusters answer). On yyc-talos: flagd starts
    (its 2 replicas serve nobody yet).
 2. **serving** (zero downtime): web 2, yyc-mcp 2 start on yyc-talos. One push with two commits: YYC AI's
-   (`yyc-ai/deploy`) releases its placeholders `yyc/yyc-mcp` and `yyc/web` (`Deploy-Release`), prunes their
+   (`yyc/deploy`) releases its placeholders `yyc/yyc-mcp` and `yyc/web` (`Deploy-Release`), prunes their
    EndpointSlices and moves tools' egress from 10.0.255.1:8081/8082 to the pods (B5, B6 end); ours deletes the
    overlay's two Service delete-patches, so the real Services take the names. Check tools' `web_fetch` and a yyc-mcp
    call from a sandbox. Then the yyc-stream connectors start on yyc-talos (requests now land on both clusters, every
@@ -308,7 +308,7 @@ that is a capacity decision made then, from the room table, and said to Deyao.
    including a push race), as MIGRATE.md states.
 9. **monitor**: the old one to 0, the new one starts (no lock; the page keeps the last published panels meanwhile);
    YYC AI's commit admits the monitor in `hermit-in` and removes bridge B4 (`yyc-bridge-new` then goes with its last
-   link). The catalogue generator `yyc/yyc-catalogue` moves to `yyc-ai/deploy` with yyc-mcp's step (DESIGN 15.4).
+   link). The catalogue generator `yyc/yyc-catalogue` moves to `yyc/deploy` with yyc-mcp's step (DESIGN 15.4).
 10. apps-worker2 empty of apps: T5-prep rebuilds it.
 
 ## 6. Secrets
@@ -357,7 +357,7 @@ After T5-ha. Deletes that need Deyao are marked (D).
 
 ## 9. For the other sessions (read from here, not messaged)
 
-- **YYC AI** (owner of `yyc-ai/deploy`, `clusters/talos/db/`): finding 4 (`magpie-pg` requires fsn1, workers are in
+- **YYC AI** (owner of `yyc/deploy`, `clusters/talos/db/`): finding 4 (`magpie-pg` requires fsn1, workers are in
   nbg1); T4b-serving's commit releasing `yyc/yyc-mcp` and `yyc/web` and moving tools' egress; T4b-monitor's
   `hermit-in` rule and B4's removal; `pg-shared`'s T5 commit (15.8) is the one in section 4.3 step 5.
 - **The builder** (`talos.sh`, `patches/`, `nat/`): a worker role with a public interface and WARP but without

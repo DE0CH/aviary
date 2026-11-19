@@ -1,13 +1,13 @@
 # Gap 2: admin and operator workflows beyond the ops page
 
 Researched 2026-11-02. Sources: DE0CH/YYC at 1775efc4, DE0CH/jarvis3 at 3f7499a (= the pinned base,
-`yyc-ai/deploy/kustomization.yaml:9`), DE0CH/claudecodeui at 3de3f5d8 (= the live `ui` image,
+`yyc/deploy/kustomization.yaml:9`), DE0CH/claudecodeui at 3de3f5d8 (= the live `ui` image,
 `kustomization.yaml:33`), claude-env `.claude/skills/yyc-ai/*`, and read-only queries on the live cluster
 (`kubectl get deploy`, SQL through a web pod). YYC paths are relative to the YYC repo, jarvis3 paths to jarvis3,
 fork paths to claudecodeui, `skill/` = `claude-env/.claude/skills/yyc-ai/`.
 
 Legend for the "kind" column, against the target design's rules:
-- **GIT-CFG**: a value in `yyc-ai/deploy/config.json` (shared ConfigMap `jarvis-config`), applied by a push and a pod
+- **GIT-CFG**: a value in `yyc/deploy/config.json` (shared ConfigMap `jarvis-config`), applied by a push and a pod
   roll. Fine only where the target owner is a YYC implementation (hermit, egress, tools); **forbidden** where today's
   reader becomes pigeon, magpie or supervisor (they must not carry deployment config).
 - **SQL-ONLY**: done by hand-written SQL on database `jarvis`; no API, no audit. The target needs an admin REST route
@@ -39,7 +39,7 @@ Legend for the "kind" column, against the target design's rules:
 | 17 | Rotate `JARVIS_SENT_FILES_TOKEN` | reseal egress-env + ui-env | SCRIPT | disappears (snapshots move into magpie) |
 | 18 | Rotate sandboxd PKI | `chat/sandboxd/host/make-certs.sh`, store, reseal `sandbox-vm`, gateway `/etc/sbx/tls` | SCRIPT (no runbook) | hermit |
 | 19 | Rotate scaler / AMI-CI AWS keys | `aws/infra.sh iam-key` / `ci-iam-key` | SCRIPT | hermit |
-| 20 | OpenRouter key: guardrail, cap, rotate, verify | `yyc-ai/infra/openrouter.py [--rotate|--finish-rotate|--verify]` | SCRIPT | egress (ops tooling) |
+| 20 | OpenRouter key: guardrail, cap, rotate, verify | `yyc/infra/openrouter.py [--rotate|--finish-rotate|--verify]` | SCRIPT | egress (ops tooling) |
 | 21 | AMI bake / template / prune / check | `aws/infra.sh ami|template|sync|check|current|prune-amis`, workflow `yyc-ai-ami` | SCRIPT + CI | hermit |
 | 22 | Gateway install / upgrade / move | `host/fetch-sandboxd.sh` + `host/gateway.sh` as root on the node | SCRIPT | hermit |
 | 23 | sandboxd / runsc upgrade | CI release → new AMI → cap old hosts | SCRIPT + SQL | hermit |
@@ -47,7 +47,7 @@ Legend for the "kind" column, against the target design's rules:
 | 25 | Take YYC AI offline | point tofu `staff_ai` at the admins policy | GIT (tofu) | front door (gap 1) |
 | 26 | Back to the old chat UI | pin jarvis3 2156d8a, tunnel → web | GIT | drop (clean cut) |
 | 27 | Switch to E2B | config `sandbox.provider: "e2b"` + keys + tofu | GIT-CFG behaviour switch | hermit implementation choice, or drop |
-| 28 | gVisor on a cluster node | `yyc-ai/infra/gvisor-node.sh` | SCRIPT (inert) | drop |
+| 28 | gVisor on a cluster node | `yyc/infra/gvisor-node.sh` | SCRIPT (inert) | drop |
 | 29 | Live dashboard feed | news-stream monitor polls `/internal/ops/snapshot` with `JARVIS_OPS_TOKEN` (= `JARVIS_CC_TOKEN`) | contract | the ops snapshot's new owner |
 | 30 | iOS app record / builds | `skill/ios-app-record.sh`, fork workflow `yyc-ios` | SCRIPT + CI | pigeon's client (unchanged) |
 
@@ -55,7 +55,7 @@ Legend for the "kind" column, against the target design's rules:
 
 ### 2.1 Staff and admins (allowlist)
 
-- **Today:** `users` and `admins` in `yyc-ai/deploy/config.json:5-6`. They are the access catalogue of every YYC app,
+- **Today:** `users` and `admins` in `yyc/deploy/config.json:5-6`. They are the access catalogue of every YYC app,
   not only YYC AI (`yyc-ai/README.md:254-261`). Edit, `git pull --rebase`, push. Five readers:
   1. Cloudflare Access policies `YYC users` / `YYC admins` (tofu reads the file:
      `news-stream/deploy/cloudflare/tofu/access.tf:53-66, 94-101`, applied by `.github/workflows/cloudflare.yml`);
@@ -64,7 +64,7 @@ Legend for the "kind" column, against the target design's rules:
      and `warm` 403 unless in `users` (`docs/CHAT.md:44-55`), `view-as` and `/internal/ops` 403 unless in `admins`
      (`web/app.ts:119, 144`);
   4. yyc-mcp in namespace `yyc` via ConfigMap `yyc/yyc-catalogue` (fixed name, re-read every 30 s;
-     `yyc-ai/deploy/kustomization.yaml:38-43`);
+     `yyc/deploy/kustomization.yaml:38-43`);
   5. tools: `config.admins[0]` is the identity tools uses to list upstream tools (`jarvis3 chat/src/tools/main.ts:21-22`,
      refresh every 10 min `tools/upstream.ts:153-160`) — an admin-list side effect nobody documents.
 - Because the ConfigMap `jarvis-config` is hashed, any edit of config.json (a user, a budget, a model) rolls **web,
@@ -76,7 +76,7 @@ Legend for the "kind" column, against the target design's rules:
   `"@yyc.hk"` = Access `email_domain` and the router's suffix rule (`README.md:43`).
 - **Stale doc:** `skill/SKILL.md:83` says "re-run `cloudflare.py` (no `--dns`)"; cloudflare.py was deleted
   (YYC 29660229, gap 1); tofu now follows the push by itself. The tracked bytecode
-  `yyc-ai/infra/__pycache__/cloudflare.cpython-312.pyc` is still in git (`git ls-files yyc-ai/infra`).
+  `yyc/infra/__pycache__/cloudflare.cpython-312.pyc` is still in git (`git ls-files yyc/infra`).
 - **Target:** hermit owns "who may use the deployment" and must also answer *roles* (admin vs staff): pigeon asks
   hermit at sign-in and per request (cacheable), magpie asks it for view-as checks, the ops view asks it for "people".
   The YYC hermit can keep reading the catalogue file, but it should re-read it (like yyc-mcp, 30 s) instead of
@@ -95,7 +95,7 @@ Legend for the "kind" column, against the target design's rules:
 - **Stale docs:** README says USD 100 in one place (`README.md:231`) but the refusal text example says 30 美元
   (`README.md:234`); `skill/SKILL.md:109-114` and `jarvis3 docs/CLAUDE-CODE.md:205` still say USD 30. The real message
   is built from `limitUsd` (`docs/CHAT.md:493`).
-- **Backstop:** OpenRouter key cap USD 50/month in `yyc-ai/infra/openrouter.py:25`, set at key creation/patch
+- **Backstop:** OpenRouter key cap USD 50/month in `yyc/infra/openrouter.py:25`, set at key creation/patch
   (`:93, :100`).
 - **Target:** egress (YYC gateway implementation) keeps the gate and the ledger. Nothing in pigeon/magpie may hold the
   limit; they only render egress's 402 (fork `jarvis-errors.ts:68, 106-108` today). A reset is a config value of egress,
@@ -107,10 +107,10 @@ Legend for the "kind" column, against the target design's rules:
 - **Today:** `config.json:7-12` (`models[]` with `id`, `label`, `reasoning`, `contextWindow`; `defaultModel`,
   `titleModel`, `titleReasoning`). Live: DeepSeek V4.1 Flash for both work and titles.
 - Procedure (`skill/SKILL.md:86-99`; `README.md:204-227`):
-  1. only models with OpenRouter ZDR endpoints: run `python3 yyc-ai/tests/test_zdr.py` locally first, because Flux
-     applies a push without waiting for CI (`README.md:215-217`; test `yyc-ai/tests/test_zdr.py:1-40`, CI
+  1. only models with OpenRouter ZDR endpoints: run `python3 yyc/tests/test_zdr.py` locally first, because Flux
+     applies a push without waiting for CI (`README.md:215-217`; test `yyc/tests/test_zdr.py:1-40`, CI
      `.github/workflows/yyc-ai-zdr.yml`);
-  2. run `YYC_OPENROUTER_MANAGEMENT_KEY=… yyc-ai/infra/openrouter.py OUT` **before** the pods roll (the guardrail's
+  2. run `YYC_OPENROUTER_MANAGEMENT_KEY=… yyc/infra/openrouter.py OUT` **before** the pods roll (the guardrail's
      `allowed_models` come from the local working tree's config.json, `openrouter.py:27-28, 103-125`), else calls
      get OpenRouter 404 "Model blocked by guardrail" (~1 min to apply);
   3. switch without breaking live chats: list old + new, run openrouter.py, deploy, drop old, run it again;
@@ -133,7 +133,7 @@ Legend for the "kind" column, against the target design's rules:
 
 ### 2.4 System prompt (managed CLAUDE.md)
 
-- **Today:** `yyc-ai/deploy/system-prompt.md` (config `systemPromptFile`, `config.json:13`) + jarvis3's
+- **Today:** `yyc/deploy/system-prompt.md` (config `systemPromptFile`, `config.json:13`) + jarvis3's
   `SANDBOX_RULES` (`chat/src/web/claude-code.ts:13-35`), sent base64 as `JARVIS_CLAUDE_MD` (`:61`), written to
   `/etc/claude-code` by `sbx-init.mjs`. Edit, push; new sandboxes only (`README.md:89-90`, `skill/SKILL.md:121-123`).
   `SANDBOX_RULES` carries YYC-shaped facts (the 1 GiB / 1,000-file quota, the temporary "check big writes" rule).
@@ -248,7 +248,7 @@ See section 3: every script there drives a per-person CloudCLI process inside a 
 
 - New value into store `yyc` (`jarvis put-key yyc KEY --explain …`), `infra/seal.py jarvis/<name>` (`--stdin KEY` for
   a value not in env), commit, push (`skill/SKILL.md:124-134`; `infra/seal.py:1-20`; map `infra/secrets.txt:21-28`).
-- A Secret change doesn't roll pods: bump `yyc/secrets-rev` (`yyc-ai/deploy/kustomization.yaml:74-83`, now
+- A Secret change doesn't roll pods: bump `yyc/secrets-rev` (`yyc/deploy/kustomization.yaml:74-83`, now
   `2026-10-28-sentfiles-2`), because "a kubectl rollout restart is undone by Flux" (`:75`). **Contradiction:**
   `skill/SKILL.md:130` says `kubectl -n jarvis rollout restart deploy/<role>`. Pitfall: pods can start before the
   controller decrypted a resealed Secret, so check the key inside the pod (`skill/SKILL.md:196-198`; bumped twice on
@@ -297,7 +297,7 @@ See section 3: every script there drives a per-person CloudCLI process inside a 
 
 ### 2.20 OpenRouter key and guardrail
 
-- `yyc-ai/infra/openrouter.py`: creates/patches key `yyc-chat` (USD 50/month, `:25, 90-101`), guardrail `yyc-chat`
+- `yyc/infra/openrouter.py`: creates/patches key `yyc-chat` (USD 50/month, `:25, 90-101`), guardrail `yyc-chat`
   (ZDR for every group, no training/publication, `allowed_models` from config.json, `:103-125`), `--rotate` makes
   `yyc-chat-next` (`:85-88`), `--finish-rotate` deletes the old and renames (`:77-84`), `--verify` (section 2.3).
   Needs `YYC_OPENROUTER_MANAGEMENT_KEY` (also in `yyc/monitor-keys`, `infra/secrets.txt:13`).
@@ -356,7 +356,7 @@ See section 3: every script there drives a per-person CloudCLI process inside a 
 - E2B: `README.md:175-198`, a `sandbox.provider` switch in config (`config.json:15, 29-35`), plus e2b keys, a tofu
   host and Access service token. That is a behaviour switch; in the target it is at most another hermit implementation.
   Not live; `web-env` lacks the keys.
-- `yyc-ai/infra/gvisor-node.sh` (install/activate/check runsc on a cluster node; header refers to the removed
+- `yyc/infra/gvisor-node.sh` (install/activate/check runsc on a cluster node; header refers to the removed
   `jarvis-sandbox` namespace and a README section that no longer exists). Inert; drop with the RuntimeClass.
 
 ### 2.29 Live dashboard feed (cross-namespace)
@@ -403,7 +403,7 @@ second pigeon Deployment/pod; the procedure must be rewritten.
 | Lines | Procedure | Status / note |
 |---|---|---|
 | 52-53 | Rollback of the app (previous jarvis3 commit + UI image) | valid; target: aviary pins |
-| 71-72 | Check a change: `kubectl kustomize yyc-ai/deploy` (and `/sealed`) | valid |
+| 71-72 | Check a change: `kubectl kustomize yyc/deploy` (and `/sealed`) | valid |
 | 74-87 | Deploy a new version (jarvis3, the fork, AMI follow-up) | valid; target rewrite |
 | 89-90 | Config or system prompt edits (push; ConfigMap hash rolls pods) | valid; rolls all four Deployments |
 | 97-102 | ui pin, per-person process caps (30 min idle, 4 per pod) | dies with pigeon |
