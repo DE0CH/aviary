@@ -4,6 +4,10 @@ name: ci
 on:
   push:
     branches: ['**']   # not tags: publish pushes the release tag aviary-<sha12>
+    # aviary's part (deploy/images.json "aviary") and its tests; app/, egress/, jarvis/, yyc/ have their own workflows
+    paths: [crates/**, images/**, fabric/**, testing/**, harness/qwen-code/**, tools/aviary-deploy/**, deploy/images.json,
+            Cargo.toml, Cargo.lock, rust-toolchain.toml, .cargo/**, .config/**, deny.toml, deny-hermit-only.toml,
+            clippy.toml, rustfmt.toml, .github/ci/**, .github/workflows/ci.yml]
   pull_request:
   workflow_dispatch:
 
@@ -21,6 +25,121 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  tags:
+    # docs/DEPLOY.md: each image is tagged by the last commit that changed its part's paths (deploy/images.json), so
+    # an unchanged part keeps its tag and is not rolled. aviary's images take `aviary`; the Qwen Code tarball the
+    # sandbox image installs takes the last commit of harness/qwen-code. The full history without file contents
+    # (about 35 MB) is enough for `git log -- PATHS`.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      aviary: ${{ steps.t.outputs.aviary }}
+      aviary_sha: ${{ steps.t.outputs.aviary_sha }}
+      qwen: ${{ steps.t.outputs.qwen }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {fetch-depth: 0, filter: "blob:none"}
+      - name: toolchain (rust-toolchain.toml, exactly)
+        run: rustup toolchain install && rustup show active-toolchain
+      - name: aviary-deploy's tests, and the tool
+        working-directory: tools/aviary-deploy
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+          cargo build --locked --release
+      - id: t
+        run: |
+          tools/aviary-deploy/target/release/aviary-deploy tags deploy/images.json "$GITHUB_SHA" > "$RUNNER_TEMP/tags.json"
+          cat "$RUNNER_TEMP/tags.json"
+          paths=$(jq -r '.aviary.paths | join(" ")' deploy/images.json)
+          # shellcheck disable=SC2086 # a list of paths
+          sha=$(git log -1 --format=%H "$GITHUB_SHA" -- $paths)
+          echo "aviary_sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "aviary=${sha::12}" >> "$GITHUB_OUTPUT"
+          test "$(jq -r .pigeon "$RUNNER_TEMP/tags.json")" = "${sha::12}"
+          echo "qwen=$(git log -1 --format=%h --abbrev=12 "$GITHUB_SHA" -- harness/qwen-code)" >> "$GITHUB_OUTPUT"
+
+  qwen:
+    # the Qwen Code fork's tarball, released once per change of harness/qwen-code as qwen-code-<sha12> with its
+    # sha256 (the sandbox image installs it, images/sandbox/Dockerfile). A release that exists is the tested build of
+    # that tree, so nothing runs again; otherwise the fork's own tests, the pack and its end-to-end checks run here
+    # first (they were DE0CH/qwen-code's de0ch-release.yml)
+    needs: tags
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    outputs:
+      sha256: ${{ steps.r.outputs.sha256 }}
+    env:
+      TAG: qwen-code-${{ needs.tags.outputs.qwen }}
+      GH_TOKEN: ${{ github.token }}
+      # corepack fetches the pinned pnpm without asking (a prompt nobody answers hangs the job)
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+      CI: 'true'
+    defaults: {run: {working-directory: harness/qwen-code}}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: have
+        run: |
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo "have=true" >> "$GITHUB_OUTPUT"; else echo "have=false" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.have.outputs.have == 'false'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: {node-version: '22'}
+      - name: install
+        if: steps.have.outputs.have == 'false'
+        run: corepack enable && corepack pnpm install --frozen-lockfile
+      - name: the tests of what the fork changes
+        if: steps.have.outputs.have == 'false'
+        run: |
+          (cd packages/core && corepack pnpm exec vitest run src/core/openaiContentGenerator/converter.test.ts src/core/openaiContentGenerator/media-budget.test.ts src/utils/image-view.test.ts src/utils/fileUtils.test.ts src/utils/pathReader.test.ts src/tools/read-file.test.ts src/tools/readManyFiles.test.ts src/core/upstream-refusal.test.ts src/utils/runtimeFetchOptions.test.ts src/telemetry/qwen-logger/no-usage-statistics.test.ts src/services/backgroundShellRegistry.test.ts src/tools/shell.test.ts)
+          (cd packages/core && corepack pnpm exec vitest run src/services/chatRecordingService.test.ts -t "de0ch")
+          (cd packages/core && corepack pnpm exec vitest run src/core/llm-chat.test.ts -t "DE0CH fork")
+          (cd packages/cli && corepack pnpm exec vitest run src/nonInteractive/control/controllers/permissionController.test.ts src/nonInteractive/control/controllers/systemController.test.ts src/nonInteractive/control/ControlDispatcher.test.ts src/nonInteractive/session.test.ts src/nonInteractive/io/StreamJsonOutputAdapter.recordIdentity.test.ts src/nonInteractive/io/StreamJsonOutputAdapter.test.ts src/nonInteractive/io/StreamJsonOutputAdapter.dualOutput.test.ts)
+      - name: build, bundle, pack
+        if: steps.have.outputs.have == 'false'
+        run: |
+          npm run build
+          npm run bundle
+          npm run prepare:package
+          (cd dist && npm pack)
+          mv dist/qwen-code-qwen-code-*.tgz "$RUNNER_TEMP/qwen-code.tgz"
+      - name: the packed CLI names no usage statistics endpoint, installs, starts and passes the fork's end-to-end checks
+        if: steps.have.outputs.have == 'false'
+        run: |
+          mkdir "$RUNNER_TEMP/packed" && tar -xzf "$RUNNER_TEMP/qwen-code.tgz" -C "$RUNNER_TEMP/packed"
+          if grep -rlE 'rum\.aliyuncs\.com' "$RUNNER_TEMP/packed"; then echo "the usage statistics upload is back (de0ch/README.md)"; exit 1; fi
+          npm install --no-audit --no-fund --prefix "$RUNNER_TEMP/qwen" -g "$RUNNER_TEMP/qwen-code.tgz"
+          q="$RUNNER_TEMP/qwen/bin/qwen"
+          "$q" --version
+          for t in background-tasks upstream-refusal continue-last-turn continue-after-lost-host stream-record-ids thinking-level; do
+            node "de0ch/$t.e2e.mjs" "$q"
+          done
+      - name: the release qwen-code-<sha12>
+        # the tag goes up with the release-tag deploy key, as aviary-<sha12>'s does (a workflow token may not make a ref
+        # whose commit's workflows differ from main's)
+        if: steps.have.outputs.have == 'false'
+        env:
+          RELEASE_TAG_KEY: ${{ secrets.RELEASE_TAG_KEY }}
+        run: |
+          sha=$(git log -1 --format=%H -- .)
+          sum=$(sha256sum "$RUNNER_TEMP/qwen-code.tgz" | cut -d' ' -f1)
+          printf '%s  qwen-code.tgz\n' "$sum" > "$RUNNER_TEMP/qwen-code.tgz.sha256"
+          key=$RUNNER_TEMP/release-tag-key
+          install -m 600 /dev/null "$key"
+          printf '%s\n' "$RELEASE_TAG_KEY" > "$key"
+          git tag "$TAG" "$sha"
+          GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+            git push "git@github.com:${GITHUB_REPOSITORY}.git" "refs/tags/$TAG"
+          rm -f "$key"
+          gh release create "$TAG" "$RUNNER_TEMP/qwen-code.tgz" "$RUNNER_TEMP/qwen-code.tgz.sha256" --verify-tag \
+            --title "$TAG" --notes "Qwen Code $(node -p "require('./package.json').version") + DE0CH changes (harness/qwen-code/de0ch/README.md). sha256 $sum"
+      - id: r
+        run: |
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p qwen-code.tgz.sha256 -O - | cut -d' ' -f1 > "$RUNNER_TEMP/sum"
+          echo "sha256=$(cat "$RUNNER_TEMP/sum")" >> "$GITHUB_OUTPUT"
+
   lint:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -59,10 +178,6 @@ jobs:
           shopt -s globstar nullglob
           files=(.github/ci/*.sh fabric/**/*.sh images/*.sh images/sandbox/*.sh testing/e2e/*.sh testing/paseo-contract/**/*.sh crates/hermit/scripts/*.sh)
           shellcheck "${files[@]}"
-      - name: .github/ci/pin-dispatch.sh against a stand-in gh
-        run: bash .github/ci/test-pin-dispatch.sh
-      - name: ci.yml's publish runs for every gated main commit (push or dispatch), never a pull request
-        run: bash .github/ci/test-publish-gate.sh
       - name: .github/ci/publish-images.sh against a stand-in docker (a failed push is tried again)
         run: bash .github/ci/test-publish-images.sh
 
@@ -209,8 +324,10 @@ jobs:
           - {arch: aarch64, runner: ubuntu-24.04-arm, dist: dist-aarch64}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    needs: tags
     env:
-      AVIARY_REVISION: ${{ github.sha }}
+      # the commit this part's source is (docs/DEPLOY.md): the binaries' /version and the images' labels
+      AVIARY_REVISION: ${{ needs.tags.outputs.aviary_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: toolchain (rust-toolchain.toml, exactly)
@@ -268,7 +385,7 @@ jobs:
     # own runner from that architecture's dist/ (artifacts `image-services`, `image-services-arm64`; publish joins
     # them into one index per tag). hermit-sandbox is linux/amd64 only (sandboxd's image service resolves and exports
     # it with no platform; images/sandbox/README.md)
-    needs: build
+    needs: [build, tags, qwen]
     strategy:
       fail-fast: false
       matrix:
@@ -278,7 +395,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     env:
-      AVIARY_REVISION: ${{ github.sha }}
+      AVIARY_REVISION: ${{ needs.tags.outputs.aviary_sha }}
+      PART_SHA: ${{ needs.tags.outputs.aviary_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -289,9 +407,9 @@ jobs:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: the cache service's token for buildx (type=gha)
         uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
-      - name: tags (<name>:<sha12>)
+      - name: tags (<name>:<the part's sha12>, docs/DEPLOY.md)
         run: |
-          echo "SHA12=${GITHUB_SHA::12}" >> "$GITHUB_ENV"
+          echo "SHA12=${PART_SHA::12}" >> "$GITHUB_ENV"
           echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/images"
       - name: images/sandboxd (the gateway pod's image)
@@ -369,9 +487,12 @@ jobs:
       - name: images/sandbox (hermit-sandbox)
         if: matrix.arch == 'amd64'
         env:
-          SANDBOX_BUILD_FLAGS: --cache-from type=gha,scope=hermit-sandbox --cache-to type=gha,scope=hermit-sandbox
+          SANDBOX_BUILD_FLAGS: >-
+            --cache-from type=gha,scope=hermit-sandbox --cache-to type=gha,scope=hermit-sandbox
+            --build-arg QWEN_CODE_TAG=qwen-code-${{ needs.tags.outputs.qwen }}
+            --build-arg QWEN_CODE_SHA256=${{ needs.qwen.outputs.sha256 }}
         run: |
-          images/sandbox/build.sh dist "hermit-sandbox:$SHA12" "$GITHUB_SHA"
+          images/sandbox/build.sh dist "hermit-sandbox:$SHA12" "$PART_SHA"
           docker save -o "$RUNNER_TEMP/images/hermit-sandbox.tar" "hermit-sandbox:$SHA12"
       - name: the labels (platform 5.3) and the architecture
         run: |
@@ -381,7 +502,7 @@ jobs:
             l=$(docker image inspect -f '{{json .Config.Labels}}' "$i:$SHA12")
             echo "$i $l"
             test "$(docker image inspect -f '{{.Os}}/{{.Architecture}}' "$i:$SHA12")" = "linux/${{ matrix.arch }}"
-            jq -e --arg rev "$GITHUB_SHA" --arg v "$SHA12" '."org.opencontainers.image.revision" == $rev
+            jq -e --arg rev "$PART_SHA" --arg v "$SHA12" '."org.opencontainers.image.revision" == $rev
               and ."org.opencontainers.image.version" == $v
               and ."org.opencontainers.image.source" == "https://github.com/DE0CH/aviary"
               and ."org.opencontainers.image.licenses" == "AGPL-3.0-or-later"' <<< "$l" >/dev/null
@@ -434,9 +555,11 @@ jobs:
     # platform 6.1 `sandbox-smoke` (WP-24): the images job's ghcr.io/de0ch/hermit-sandbox, then images/sandbox/smoke.sh
     # under runc: hermit spec 17's list and supervisor spec 22's image checks, with the image's own keeper and
     # supervisor running a Claude Code turn against the test gateway
-    needs: [build, images]
+    needs: [build, images, tags]
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    env:
+      SHA12: ${{ needs.tags.outputs.aviary }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -451,16 +574,18 @@ jobs:
       - name: load the image
         run: docker load -i "$RUNNER_TEMP/images/hermit-sandbox.tar"
       - name: images/sandbox/smoke.sh
-        run: images/sandbox/smoke.sh "hermit-sandbox:${GITHUB_SHA::12}" dist
+        run: images/sandbox/smoke.sh "hermit-sandbox:$SHA12" dist
 
   gvisor:
     # platform 6.1 `gvisor` (WP-28, WP-24's carried item): the images job's sandbox image under runsc of the DE0CH/gvisor
     # fork (release precopy-20261102.1, sha256-checked) as a Docker runtime with sandboxd's flags: the image's keeper
     # and supervisor mount ~/.claude through /dev/fuse in gVisor and run a Claude Code turn against the test gateway
     # (images/sandbox/smoke.sh part 2)
-    needs: [build, images]
+    needs: [build, images, tags]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      SHA12: ${{ needs.tags.outputs.aviary }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -492,7 +617,7 @@ jobs:
         env:
           SMOKE_RUNTIME: runsc
           SMOKE_PARTS: "2"
-        run: timeout 900 images/sandbox/smoke.sh "hermit-sandbox:${GITHUB_SHA::12}" dist
+        run: timeout 900 images/sandbox/smoke.sh "hermit-sandbox:$SHA12" dist
 
   paseo-contract:
     # testing/paseo-contract (pigeon spec 18.1): frames validated against every client build in clients.txt, and a
@@ -530,9 +655,11 @@ jobs:
   e2e:
     # platform 7 (WP-28): the harness, testing/e2e/run.sh, on the images of this commit; the driver's scenarios
     # (testing/e2e/src/scenarios.rs ALL). Artifacts on failure: every Pod's logs, events, Postgres/S3/JuiceFS logs
-    needs: [build, images]
+    needs: [build, images, tags]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      SHA12: ${{ needs.tags.outputs.aviary }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -549,7 +676,7 @@ jobs:
         run: for t in "$RUNNER_TEMP"/images/*.tar; do docker load -i "$t" && rm -f "$t"; done; df -h / | tail -1
       - name: up
         run: |
-          s=${GITHUB_SHA::12}
+          s=$SHA12
           timeout 1500 testing/e2e/run.sh up "pigeon:$s" "magpie:$s" "hermit:$s" "aviary-testing:$s" "hermit-sandbox:$s"
       - name: scenarios
         run: timeout 2500 testing/e2e/run.sh test
@@ -567,12 +694,14 @@ jobs:
         run: timeout 300 testing/e2e/run.sh down
 
   publish:
-    # platform 6.1 `publish` and 5.4 (WP-28): main only, after every gate. Pushes each image as <name>:<sha12> (never
-    # `latest`) with a build-provenance attestation, then the release aviary-<sha12>. Every tag that exists passed the
-    # harness, so YYC can pin any of them. A run started on main by workflow_dispatch publishes too: clients.yml's land
-    # job commits as github-actions[bot] (a push that starts no workflow) and dispatches this workflow on main.
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-    needs: [lint, test, magpie-perf, sandboxd-soak, build, images, conformance, sandbox-smoke, gvisor, paseo-contract, e2e]
+    # platform 6.1 `publish` and 5.4 (WP-28): every pushed branch, after every gate. Pushes each image as <name>:<sha12>
+    # (never `latest`; sha12 = the part's last commit, docs/DEPLOY.md) with a build-provenance attestation, then the
+    # release aviary-<sha12>. A tag names a source, so a branch's images are that source's: the replica runs on them
+    # before the merge, and main deploys them (deploy.yml) once its runs are green; a tag that exists is left as it is.
+    # A run started by workflow_dispatch publishes too: clients.yml's land job commits as github-actions[bot] (a push
+    # that starts no workflow) and dispatches this workflow on main.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [tags, lint, test, magpie-perf, sandboxd-soak, build, images, conformance, sandbox-smoke, gvisor, paseo-contract, e2e]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -580,8 +709,11 @@ jobs:
       packages: write
       attestations: write
       id-token: write
+    env:
+      PART_SHA: ${{ needs.tags.outputs.aviary_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {fetch-depth: 0, filter: "blob:none"}  # release.sh reads the part's commit
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
@@ -603,7 +735,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          .github/ci/publish-images.sh "$RUNNER_TEMP/images" "$RUNNER_TEMP/images-arm64" "${GITHUB_SHA::12}" "$RUNNER_TEMP/digests.json"
+          .github/ci/publish-images.sh "$RUNNER_TEMP/images" "$RUNNER_TEMP/images-arm64" "${PART_SHA::12}" "$RUNNER_TEMP/digests.json"
       - name: digests for the attestations
         id: digests
         run: |
@@ -631,22 +763,87 @@ jobs:
         env:
           RELEASE_TAG_KEY: ${{ secrets.RELEASE_TAG_KEY }}
         run: |
-          tag=aviary-${GITHUB_SHA::12}
+          tag=aviary-${PART_SHA::12}
           if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then echo "tag $tag exists"; exit 0; fi
           key=$RUNNER_TEMP/release-tag-key
           install -m 600 /dev/null "$key"
           printf '%s\n' "$RELEASE_TAG_KEY" > "$key"
-          git tag "$tag" "$GITHUB_SHA"
+          git tag "$tag" "$PART_SHA"
           GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
             git push "git@github.com:${GITHUB_REPOSITORY}.git" "refs/tags/$tag"
           rm -f "$key"
       - name: the release aviary-<sha12>
         env:
           GH_TOKEN: ${{ github.token }}
-        run: .github/ci/release.sh dist "${GITHUB_SHA}" "$RUNNER_TEMP/digests.json" "$RUNNER_TEMP/release"
-      - name: start the deployments' pin workflows (repo variable PIN_DISPATCH)
-        # each deployment that pins aviary releases tries this one now rather than on its schedule
+        run: .github/ci/release.sh dist "${PART_SHA}" "$RUNNER_TEMP/digests.json" "$RUNNER_TEMP/release"
+
+  replica:
+    # Jarvis 4's replica on these images, before the merge (Deyao, 2026-11-16 and 2026-11-19; it was DE0CH/jarvis4's
+    # aviary-pin.yml): Jarvis 4's session image with this release (DE0CH/jarvis4 at main, session-image/aviary.json
+    # written here) and rust/e2e-kernel with E2E_HARNESS=aviary on a real Fly machine: a turn with a tool call in the
+    # sandbox must reach magpie. aviary moved its mount once (2026-11-13) and a release without this check shipped
+    # sessions whose chat showed no tool calls (claude-env lessons/114). The Fly token is the `checks` environment's
+    # (the replica's token: app jarvis4-sessions and the org's WireGuard peers).
+    needs: [tags, publish]
+    environment: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TAG: aviary-${{ needs.tags.outputs.aviary }}
+      IMAGE: ghcr.io/de0ch/jarvis4-session:pin-aviary-${{ needs.tags.outputs.aviary }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {repository: DE0CH/jarvis4, path: jarvis4, persist-credentials: false}
+      - name: the release and its sandbox image, by digest, into the session image's aviary.json
+        working-directory: jarvis4
+        run: |
+          set -euo pipefail
+          token=$(curl -sSf "https://ghcr.io/token?scope=repository:de0ch/hermit-sandbox:pull" | jq -r .token)
+          digest=$(curl -sSfI -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json' \
+            "https://ghcr.io/v2/de0ch/hermit-sandbox/manifests/${TAG#aviary-}" | tr -d '\r' | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}')
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no sandbox image for $TAG"; exit 1; }
+          printf '{\n  "release": "%s",\n  "sandbox": "%s"\n}\n' "$TAG" "ghcr.io/de0ch/hermit-sandbox@$digest" > session-image/aviary.json
+          cat session-image/aviary.json
+      - name: free disk space (the base image is large)
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h / | tail -1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: the cache service's token for buildx (type=gha)
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      - name: the candidate's session image
+        working-directory: jarvis4
         env:
-          PIN_DISPATCH: ${{ vars.PIN_DISPATCH }}
-          GH_TOKEN: ${{ secrets.PIN_DISPATCH_TOKEN }}
-        run: .github/ci/pin-dispatch.sh
+          TOKEN: ${{ github.token }}
+        run: |
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$TOKEN"
+          docker buildx build . -f session-image/Dockerfile --push --tag "$IMAGE" \
+            --label "org.opencontainers.image.source=https://github.com/DE0CH/jarvis4" \
+            --cache-from type=gha,scope=session-pin --cache-to type=gha,mode=max,scope=session-pin
+      - name: tools (crane, flyctl, the Rust toolchain of jarvis4's rust/, WireGuard)
+        run: |
+          set -euo pipefail
+          curl -sSfL -o "$RUNNER_TEMP/crane.tgz" https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz
+          echo "0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0  $RUNNER_TEMP/crane.tgz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin" && tar -xzf "$RUNNER_TEMP/crane.tgz" -C "$RUNNER_TEMP/bin" crane
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          curl -fsSL https://fly.io/install.sh | sh > /dev/null
+          echo "$HOME/.fly/bin" >> "$GITHUB_PATH"
+          (cd jarvis4/rust && (rustup show active-toolchain || rustup toolchain install))
+          sudo apt-get update -qq && sudo apt-get install -y -qq wireguard-tools iproute2 iptables > /dev/null
+      - name: the replica (rust/e2e-kernel, E2E_HARNESS=aviary) on this release
+        working-directory: jarvis4
+        env:
+          JARVIS2_FLY_TOKEN: ${{ secrets.REPLICA_FLY_TOKEN }}
+          E2E_HARNESS: aviary
+          E2E_SESSION_IMAGE: ${{ env.IMAGE }}
+          E2E_LOGS: /tmp/e2e-aviary-logs
+        run: |
+          [ -n "$JARVIS2_FLY_TOKEN" ] || { echo "::error::secret REPLICA_FLY_TOKEN is missing from the GitHub environment 'checks'"; exit 1; }
+          (cd rust && cargo build --release --locked -p e2e-kernel)
+          rust/target/release/e2e-kernel
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: e2e-aviary-logs, path: /tmp/e2e-aviary-logs, retention-days: 7, if-no-files-found: ignore}

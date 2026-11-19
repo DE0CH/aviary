@@ -1,0 +1,88 @@
+# Connectors of tunnel yyc-ai-pigeon (tofu `pigeon`, spec-platform 14.1): the staff host ai.yyc-internal.com to
+# pigeon. On SIGTERM cloudflared stops taking requests and
+# waits for those in flight (--grace-period 3m, its maximum). Token: Secret tunnel, key token (YYC_CF_PIGEON_TUNNEL_TOKEN).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: yyc-ai
+  labels: {app: cloudflared}
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  minReadySeconds: 5
+  selector:
+    matchLabels: {app: cloudflared}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  template:
+    metadata:
+      labels: {app: cloudflared}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      priorityClassName: serving
+      terminationGracePeriodSeconds: 200
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms: [{matchExpressions: [{key: yyc.hetzner/network, operator: In, values: ["yyc"]}, {key: pool, operator: In, values: ["apps"]}]}]
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - {weight: 50, preference: {matchExpressions: [{key: topology.kubernetes.io/region, operator: In, values: [fsn1]}]}}
+      topologySpreadConstraints:
+        - {maxSkew: 1, topologyKey: kubernetes.io/hostname, whenUnsatisfiable: DoNotSchedule,
+           labelSelector: {matchLabels: {app: cloudflared}}, matchLabelKeys: [pod-template-hash]}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.10.0
+          args: [tunnel, --no-autoupdate, --edge-ip-version, auto, --metrics, "0.0.0.0:2000", --grace-period, 3m, run]
+          env:
+            - {name: TUNNEL_TOKEN, valueFrom: {secretKeyRef: {name: tunnel, key: token}}}
+          ports: [{name: metrics, containerPort: 2000}]
+          readinessProbe:
+            httpGet: {path: /ready, port: 2000}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /ready, port: 2000}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: cloudflared, namespace: yyc-ai}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: cloudflared}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: cloudflared-out, namespace: yyc-ai}
+spec:
+  podSelector: {matchLabels: {app: cloudflared}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: pigeon}}}]
+      ports: [{port: 8080, protocol: TCP}]
+    # YYC Drive (drive/drive.yaml), the tunnel's rule for drive.yyc-internal.com
+    - to: [{podSelector: {matchLabels: {app: drive}}}]
+      ports: [{port: 8080, protocol: TCP}]
+    # Cloudflare's edge
+    - to:
+        - ipBlock: {cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16]}
+        - ipBlock: {cidr: "::/0", except: ["fc00::/7", "fe80::/10", "::1/128"]}
+      ports: [{port: 7844, protocol: TCP}, {port: 7844, protocol: UDP}, {port: 443, protocol: TCP}]

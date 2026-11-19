@@ -1,0 +1,130 @@
+{
+  "product": {
+    "name": "YYC AI",
+    "locale": "zh-HK"
+  },
+  "signIn": {
+    "access": [
+      {
+        "teamDomain": "yyc-hk.cloudflareaccess.com",
+        "audience": "21cd5332d4d7d38dc7c97a90ec9de3b7bdf6e28098bfd49816639bb237349138"
+      }
+    ],
+    "appScheme": "dev.de0ch.yycai"
+  },
+  "catalogue": "/etc/hermit/catalogue/catalogue.json",
+  "prompt": {
+    "instructions": "/etc/hermit/config/system-prompt.md",
+    "rules": "/etc/hermit/config/sandbox-rules.md",
+    "title": "/etc/hermit/config/title-system.md",
+    "skills": "/etc/hermit/skills"
+  },
+  "sandbox": {
+    "image": "ghcr.io/de0ch/hermit-sandbox@sha256:d6e3fd35c0ca285b345afdc7ccce926657df5a6ab70cd65c17a7d75e8239bf9f",
+    "cpu": 1,
+    "memory": "7Gi",
+    "pids": 4096,
+    "openFiles": 65536,
+    "maxActive": 10,
+    "maxActiveByPerson": {"bot@deyaochen.com": 3},
+    "notifyPersonLimit": {"bot@deyaochen.com": false},
+    "idleMinutes": 30,
+    "maxLifetimeHours": 8,
+    "lifetimeGraceMinutes": 60,
+    "capacityWaitSeconds": 60,
+    "hostWaitSeconds": 170,
+    "supervisorWaitSeconds": 120,
+    "startDeadlineSeconds": 480,
+    "poolVictimIdleSeconds": 120,
+    "reserveSeconds": 120,
+    "activityEverySeconds": 15,
+    "workspace": {
+      "quotaGiB": 1,
+      "quotaInodes": 1000
+    },
+    "tmpGiB": 100,
+    "drive": "drive",
+    "compactAtImages": 30,
+    "proxy": "http://sbx:{token}@{vip}:3128",
+    "env": {
+      "HTTP_PROXY": "http://sbx:{token}@{vip}:3128",
+      "HTTPS_PROXY": "http://sbx:{token}@{vip}:3128",
+      "http_proxy": "http://sbx:{token}@{vip}:3128",
+      "https_proxy": "http://sbx:{token}@{vip}:3128",
+      "PIP_INDEX_URL": "http://sbx:{token}@{vip}:3128/mirror/pypi/simple",
+      "PIP_TRUSTED_HOST": "{vip}",
+      "npm_config_registry": "http://sbx:{token}@{vip}:3128/mirror/npm/"
+    }
+  },
+  "fabric": {
+    "sandboxCidr": "10.203.0.0/16",
+    "hostCidr": "10.202.0.0/24",
+    "egressVip": "10.202.1.1",
+    "controlCidr": "10.0.0.0/16",
+    "podCidr": "10.210.0.0/16",
+    "egressPorts": [
+      {
+        "vip": 3128,
+        "target": 3128
+      }
+    ],
+    "egressService": "egress",
+    "egressTarget": "10.0.0.50",
+    "gateway": {
+      "name": "hermit-gw",
+      "url": "https://10.202.0.1:7443",
+      "endpoint": "[2a01:4f8:c014:702d::1]:51821"
+    },
+    "sandboxd": "aviary-786c854071e0",
+    "runsc": "precopy-20261102.1",
+    "cpuFeatures": "3dnowprefetch,abm,adx,aes,apic,avx,avx2,bmi1,bmi2,clflush,clwb,cmov,cx16,cx8,de,f16c,fma,fpu,fsgsbase,fxsr,ht,hypervisor,lahf_lm,lm,mca,mce,mmx,movbe,msr,mtrr,nx,osxsave,pae,pat,pclmulqdq,pdpe1gb,pge,pni,popcnt,pse,pse36,rdrand,rdseed,rdtscp,sep,smap,smep,sse,sse2,sse4_1,sse4_2,ssse3,syscall,tsc,vme,x2apic,xgetbv1,xsave,xsavec,xsaveopt",
+    "cpuOvercommit": 3,
+    "spareSlots": 0,
+    "minAvailableMemory": "256Mi",
+    "minHostLifetimeSeconds": 900,
+    "hostDeadSeconds": 30,
+    "gatewayDeadSeconds": 120,
+    "gatewaySettleSeconds": 120,
+    "bootTimeoutSeconds": 480,
+    "orphanInstanceSeconds": 600,
+    "jfsRetireSeconds": 120,
+    "migration": {
+      "downtimeMs": 100,
+      "maxRounds": 20,
+      "maxDowntimeMs": 500,
+      "idleCpu": 0.05,
+      "minAgeSeconds": 30,
+      "maxScratchMib": 512
+    },
+    "aws": {
+      "region": "eu-central-1",
+      "launchTemplate": "hermit-host",
+      "imageBucket": "yyc-ai-sandbox-images-551897326524",
+      "maxHosts": 5,
+      "diskGiB": 220,
+      "subnet": "subnet-009eab323e09d6338",
+      "tags": {
+        "app": "hermit-host",
+        "hermit": "yyc-ai"
+      },
+      "fallbackHost": {
+        "memory": "15.5Gi",
+        "reserve": "1Gi",
+        "cpus": 4
+      }
+    }
+  },
+  "ops": {
+    "timeZone": "Asia/Hong_Kong",
+    "deployments": [
+      "pigeon",
+      "magpie",
+      "hermit",
+      "egress",
+      "tools",
+      "cloudflared"
+    ],
+    "podNodePrefix": "yyc-talos-",
+    "budgetWatch": 0.8
+  }
+}

@@ -1,0 +1,15 @@
+# The new stack's SealedSecrets (infra/seal.py, infra/secrets.txt; sealed with infra/sealed-secrets-talos.pem),
+# applied by yyc-ai.yml's fenced step as yyc-deploy/sealed-secrets-applier. seal.py lists each file here when it seals
+# it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - catalogue.yaml
+  - herald.yaml
+  - tunnel.yaml
+  - hermit.yaml
+  - tools.yaml
+  - egress.yaml
+  - hermit-juicefs.yaml
+  - magpie.yaml
+  - pigeon.yaml

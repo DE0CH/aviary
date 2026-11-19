@@ -1,0 +1,1235 @@
+{
+ "source": "DE0CH/aviary release aviary-f5e2ac93d9d9, pigeon-frames.ndjson: the first recorded answer of each type",
+ "status": {
+  "payload": {
+   "capabilities": {
+    "voice": {
+     "dictation": {
+      "enabled": false,
+      "reason": ""
+     },
+     "voice": {
+      "enabled": false,
+      "reason": ""
+     }
+    }
+   },
+   "desktopManaged": false,
+   "features": {
+    "agentRequestReceipts": true,
+    "agentTimelinePromptIndex": true,
+    "canonicalSubmittedPrompts": true,
+    "creationLifecycle": true,
+    "directorySync": true,
+    "explicitEventSubscriptions": true,
+    "ownedSubscriptions": true,
+    "projectList": true,
+    "providersSnapshot": true,
+    "providersSnapshotCwd": true,
+    "selectiveAgentTimeline": true,
+    "stableProjectIdentity": true,
+    "workspaceMultiplicity": true,
+    "workspaceRequestReceipts": true,
+    "workspaceSortTimes": true
+   },
+   "hostname": "Example AI",
+   "permissions": [
+    "daemon.read",
+    "workspace.read",
+    "workspace.write"
+   ],
+   "protocolVersion": 1,
+   "serverId": "srv_conversations",
+   "sourceId": "owner",
+   "status": "server_info",
+   "version": "0.13.2"
+  },
+  "type": "status"
+ },
+ "responses": {
+  "send_agent_message_response": {
+   "payload": {
+    "accepted": true,
+    "agentId": "00000000-0000-4000-8000-000000000000",
+    "error": null,
+    "requestId": "req-35"
+   },
+   "type": "send_agent_message_response"
+  },
+  "set_agent_model_response": {
+   "payload": {
+    "accepted": true,
+    "agentId": "00000000-0000-4000-8000-000000000000",
+    "error": null,
+    "requestId": "req-5"
+   },
+   "type": "set_agent_model_response"
+  },
+  "set_agent_thinking_response": {
+   "payload": {
+    "accepted": true,
+    "agentId": "00000000-0000-4000-8000-000000000000",
+    "error": null,
+    "requestId": "req-3"
+   },
+   "type": "set_agent_thinking_response"
+  },
+  "update_agent_response": {
+   "payload": {
+    "accepted": true,
+    "agentId": "00000000-0000-4000-8000-000000000000",
+    "error": null,
+    "requestId": "req-43"
+   },
+   "type": "update_agent_response"
+  },
+  "workspace.title.set.response": {
+   "payload": {
+    "accepted": true,
+    "error": null,
+    "requestId": "req-45",
+    "title": "Again",
+    "workspaceId": "wks_00000000-0000-4000-8000-000000000000"
+   },
+   "type": "workspace.title.set.response"
+  },
+  "workspace.create.response": {
+   "payload": {
+    "agent": {
+     "activeTurn": {
+      "startedAt": "2026-11-02T00:00:00.000Z",
+      "turnId": "00000000-0000-4000-8000-000000000000"
+     },
+     "archivedAt": null,
+     "attentionReason": null,
+     "attentionTimestamp": null,
+     "availableModes": [],
+     "capabilities": {
+      "supportsDynamicModes": false,
+      "supportsMcpServers": false,
+      "supportsReasoningStream": true,
+      "supportsRewindBoth": false,
+      "supportsRewindConversation": false,
+      "supportsRewindFiles": false,
+      "supportsSessionListing": false,
+      "supportsSessionPersistence": true,
+      "supportsStreaming": true,
+      "supportsToolInvocations": true
+     },
+     "closed": null,
+     "createdAt": "2026-11-02T00:00:00.000Z",
+     "currentModeId": null,
+     "cwd": "/workspace",
+     "effectiveThinkingOptionId": null,
+     "features": [],
+     "id": "00000000-0000-4000-8000-000000000000",
+     "labels": {},
+     "lastUserMessageAt": "2026-11-02T00:00:00.000Z",
+     "model": "vendor/model-a",
+     "pendingMessages": [],
+     "pendingPermissions": [],
+     "persistence": null,
+     "provider": "claude",
+     "requiresAttention": false,
+     "runtimeInfo": {
+      "modeId": null,
+      "model": "vendor/model-a",
+      "provider": "claude",
+      "sessionId": "00000000-0000-4000-8000-000000000000"
+     },
+     "status": "running",
+     "thinkingOptionId": null,
+     "title": "新對話",
+     "updatedAt": "2026-11-02T00:00:00.000Z",
+     "workspaceId": "wks_00000000-0000-4000-8000-000000000000"
+    },
+    "error": null,
+    "requestId": "req-1",
+    "setupTerminalId": null,
+    "workspace": {
+     "activityAt": "2026-11-02T00:00:00.000Z",
+     "archivingAt": null,
+     "background": false,
+     "backgroundTasks": 0,
+     "createdAt": "2026-11-02T00:00:00.000Z",
+     "diffStat": null,
+     "id": "wks_00000000-0000-4000-8000-000000000000",
+     "lastUserMessageAt": "2026-11-02T00:00:00.000Z",
+     "name": "新對話",
+     "nextScheduleAt": null,
+     "pinnedAt": null,
+     "project": {
+      "checkout": {
+       "currentBranch": null,
+       "cwd": "/workspace",
+       "isGit": false,
+       "isPaseoOwnedWorktree": false,
+       "mainRepoRoot": null,
+       "remoteUrl": null,
+       "worktreeRoot": null
+      },
+      "projectKey": "prj_conversations",
+      "projectName": "Example AI",
+      "workspaceName": "新對話"
+     },
+     "projectCustomIconRevision": null,
+     "projectCustomName": null,
+     "projectDisplayName": "Example AI",
+     "projectId": "prj_conversations",
+     "projectKind": "directory",
+     "projectRootPath": "/workspace",
+     "scripts": [],
+     "setupStatus": null,
+     "status": "running",
+     "statusEnteredAt": "2026-11-02T00:00:00.000Z",
+     "title": null,
+     "workspaceDirectory": "/workspace",
+     "workspaceKind": "directory"
+    }
+   },
+   "type": "workspace.create.response"
+  },
+  "fetch_agent_timeline_response": {
+   "payload": {
+    "agent": {
+     "activeTurn": null,
+     "archivedAt": null,
+     "attentionReason": null,
+     "attentionTimestamp": null,
+     "availableModes": [],
+     "capabilities": {
+      "supportsDynamicModes": false,
+      "supportsMcpServers": false,
+      "supportsReasoningStream": true,
+      "supportsRewindBoth": false,
+      "supportsRewindConversation": false,
+      "supportsRewindFiles": false,
+      "supportsSessionListing": false,
+      "supportsSessionPersistence": true,
+      "supportsStreaming": true,
+      "supportsToolInvocations": true
+     },
+     "closed": null,
+     "createdAt": "2026-11-02T00:00:00.000Z",
+     "currentModeId": null,
+     "cwd": "/workspace",
+     "effectiveThinkingOptionId": null,
+     "features": [],
+     "id": "00000000-0000-4000-8000-000000000000",
+     "labels": {},
+     "lastUserMessageAt": "2026-11-02T00:00:00.000Z",
+     "model": null,
+     "pendingMessages": [],
+     "pendingPermissions": [],
+     "persistence": null,
+     "provider": "claude",
+     "requiresAttention": false,
+     "runtimeInfo": {
+      "modeId": null,
+      "model": null,
+      "provider": "claude",
+      "sessionId": "00000000-0000-4000-8000-000000000000"
+     },
+     "status": "idle",
+     "thinkingOptionId": null,
+     "title": "新對話",
+     "updatedAt": "2026-11-02T00:00:00.000Z",
+     "workspaceId": "wks_00000000-0000-4000-8000-000000000000"
+    },
+    "agentId": "00000000-0000-4000-8000-000000000000",
+    "direction": "after",
+    "endCursor": {
+     "epoch": "e1",
+     "seq": 2
+    },
+    "entries": [
+     {
+      "collapsed": [],
+      "item": {
+       "messageId": "msg_r1",
+       "text": "r1",
+       "type": "assistant_message"
+      },
+      "provider": "claude",
+      "seqEnd": 1,
+      "seqStart": 1,
+      "sourceSeqRanges": [
+       {
+        "endSeq": 1,
+        "startSeq": 1
+       }
+      ],
+      "timestamp": "2026-11-02T00:00:00.000Z"
+     },
+     {
+      "collapsed": [],
+      "item": {
+       "messageId": "msg_r2",
+       "text": "r2",
+       "type": "assistant_message"
+      },
+      "provider": "claude",
+      "seqEnd": 2,
+      "seqStart": 2,
+      "sourceSeqRanges": [
+       {
+        "endSeq": 2,
+        "startSeq": 2
+       }
+      ],
+      "timestamp": "2026-11-02T00:00:00.000Z"
+     }
+    ],
+    "epoch": "e1",
+    "error": null,
+    "gap": false,
+    "hasNewer": false,
+    "hasOlder": false,
+    "projection": "projected",
+    "requestId": "req-2",
+    "reset": false,
+    "staleCursor": false,
+    "startCursor": {
+     "epoch": "e1",
+     "seq": 1
+    },
+    "window": {
+     "maxSeq": 2,
+     "minSeq": 1,
+     "nextSeq": 3
+    }
+   },
+   "type": "fetch_agent_timeline_response"
+  },
+  "cancel_agent_response": {
+   "payload": {
+    "agent": {
+     "activeTurn": null,
+     "archivedAt": null,
+     "attentionReason": null,
+     "attentionTimestamp": null,
+     "availableModes": [],
+     "capabilities": {
+      "supportsDynamicModes": false,
+      "supportsMcpServers": false,
+      "supportsReasoningStream": true,
+      "supportsRewindBoth": false,
+      "supportsRewindConversation": false,
+      "supportsRewindFiles": false,
+      "supportsSessionListing": false,
+      "supportsSessionPersistence": true,
+      "supportsStreaming": true,
+      "supportsToolInvocations": true
+     },
+     "closed": null,
+     "createdAt": "2026-11-02T00:00:00.000Z",
+     "currentModeId": null,
+     "cwd": "/workspace",
+     "effectiveThinkingOptionId": null,
+     "features": [],
+     "id": "00000000-0000-4000-8000-000000000000",
+     "labels": {},
+     "lastUserMessageAt": "2026-11-02T00:00:00.000Z",
+     "model": "vendor/model-a",
+     "pendingMessages": [],
+     "pendingPermissions": [],
+     "persistence": null,
+     "provider": "claude",
+     "requiresAttention": false,
+     "runtimeInfo": {
+      "modeId": null,
+      "model": "vendor/model-a",
+      "provider": "claude",
+      "sessionId": "00000000-0000-4000-8000-000000000000"
+     },
+     "status": "idle",
+     "thinkingOptionId": null,
+     "title": "A conversation",
+     "updatedAt": "2026-11-02T00:00:00.000Z",
+     "workspaceId": "wks_00000000-0000-4000-8000-000000000000"
+    },
+    "agentId": "00000000-0000-4000-8000-000000000000",
+    "error": null,
+    "requestId": "req-37"
+   },
+   "type": "cancel_agent_response"
+  },
+  "fetch_agent_response": {
+   "payload": {
+    "agent": {
+     "activeTurn": null,
+     "archivedAt": null,
+     "attentionReason": null,
+     "attentionTimestamp": null,
+     "availableModes": [],
+     "capabilities": {
+      "supportsDynamicModes": false,
+      "supportsMcpServers": false,
+      "supportsReasoningStream": true,
+      "supportsRewindBoth": false,
+      "supportsRewindConversation": false,
+      "supportsRewindFiles": false,
+      "supportsSessionListing": false,
+      "supportsSessionPersistence": true,
+      "supportsStreaming": true,
+      "supportsToolInvocations": true
+     },
+     "closed": null,
+     "createdAt": "2026-11-02T00:00:00.000Z",
+     "currentModeId": null,
+     "cwd": "/workspace",
+     "effectiveThinkingOptionId": null,
+     "features": [],
+     "id": "00000000-0000-4000-8000-000000000000",
+     "labels": {},
+     "lastUserMessageAt": "2026-11-02T00:00:00.000Z",
+     "model": "vendor/model-a",
+     "pendingMessages": [],
+     "pendingPermissions": [],
+     "persistence": null,
+     "provider": "claude",
+     "requiresAttention": false,
+     "runtimeInfo": {
+      "modeId": null,
+      "model": "vendor/model-a",
+      "provider": "claude",
+      "sessionId": "00000000-0000-4000-8000-000000000000"
+     },
+     "status": "idle",
+     "thinkingOptionId": null,
+     "title": "A conversation",
+     "updatedAt": "2026-11-02T00:00:00.000Z",
+     "workspaceId": "wks_00000000-0000-4000-8000-000000000000"
+    },
+    "error": null,
+    "project": {
+     "checkout": {
+      "currentBranch": null,
+      "cwd": "/workspace",
+      "isGit": false,
+      "isPaseoOwnedWorktree": false,
+      "mainRepoRoot": null,
+      "remoteUrl": null,
+      "worktreeRoot": null
+     },
+     "projectKey": "prj_conversations",
+     "projectName": "Example AI",
+     "workspaceName": "A conversation"
+    },
+    "requestId": "req-26"
+   },
+   "type": "fetch_agent_response"
+  },
+  "agent_archived": {
+   "payload": {
+    "agentId": "00000000-0000-4000-8000-000000000000",
+    "archivedAt": "2026-11-02T00:00:00.000Z",
+    "requestId": "req-49"
+   },
+   "type": "agent_archived"
+  },
+  "list_commands_response": {
+   "payload": {
+    "agentId": "00000000-0000-4000-8000-000000000000",
+    "commands": [
+     {
+      "argumentHint": "<instructions>",
+      "description": "Keep a summary",
+      "kind": "command",
+      "name": "compact"
+     },
+     {
+      "argumentHint": "",
+      "description": "End the session.",
+      "kind": "skill",
+      "name": "retire-session"
+     }
+    ],
+    "error": null,
+    "requestId": "req-2"
+   },
+   "type": "list_commands_response"
+  },
+  "agent.timeline.list_prompts.response": {
+   "payload": {
+    "agentId": "00000000-0000-4000-8000-000000000000",
+    "epoch": "e1",
+    "error": null,
+    "prompts": [
+     {
+      "preview": "Please read the sheet",
+      "seq": 1,
+      "timestamp": "2026-11-02T00:00:00.000Z"
+     }
+    ],
+    "requestId": "req-33"
+   },
+   "type": "agent.timeline.list_prompts.response"
+  },
+  "agent_permission_resolved": {
+   "payload": {
+    "agentId": "00000000-0000-4000-8000-000000000000",
+    "requestId": "ask-1",
+    "resolution": {
+     "behavior": "deny",
+     "message": "canceled"
+    }
+   },
+   "type": "agent_permission_resolved"
+  },
+  "status": {
+   "payload": {
+    "agentId": "00000000-0000-4000-8000-000000000000",
+    "requestId": "req-48",
+    "status": "agent_refreshed"
+   },
+   "type": "status"
+  },
+  "agent_deleted": {
+   "payload": {
+    "agentId": "00000000-0000-4000-8000-000000000000",
+    "requestId": "req-51"
+   },
+   "type": "agent_deleted"
+  },
+  "agent.timeline.set_subscription.response": {
+   "payload": {
+    "agentIds": [
+     "00000000-0000-4000-8000-000000000000"
+    ],
+    "requestId": "req-28",
+    "subscriptionId": "00000000-0000-4000-8000-000000000000"
+   },
+   "type": "agent.timeline.set_subscription.response"
+  },
+  "checkout_status_response": {
+   "payload": {
+    "aheadBehind": null,
+    "aheadOfOrigin": null,
+    "baseRef": null,
+    "behindOfOrigin": null,
+    "currentBranch": null,
+    "cwd": "/workspace",
+    "error": null,
+    "hasRemote": false,
+    "isDirty": null,
+    "isGit": false,
+    "isPaseoOwnedWorktree": false,
+    "remoteUrl": null,
+    "repoRoot": null,
+    "requestId": "req-11",
+    "upstreamRef": null
+   },
+   "type": "checkout_status_response"
+  },
+  "archive_workspace_response": {
+   "payload": {
+    "archivedAt": "2026-11-02T00:00:00.000Z",
+    "error": null,
+    "requestId": "req-46",
+    "workspaceId": "wks_00000000-0000-4000-8000-000000000000"
+   },
+   "type": "archive_workspace_response"
+  },
+  "checkout_pr_status_response": {
+   "payload": {
+    "authState": "no_remote",
+    "cwd": "/workspace",
+    "error": null,
+    "githubFeaturesEnabled": false,
+    "requestId": "req-12",
+    "status": null
+   },
+   "type": "checkout_pr_status_response"
+  },
+  "rpc_error": {
+   "payload": {
+    "code": "failed",
+    "error": "Conversation not found",
+    "requestId": "req-50",
+    "requestType": "archive_agent_request"
+   },
+   "type": "rpc_error"
+  },
+  "get_providers_snapshot_response": {
+   "payload": {
+    "compactSnapshot": {
+     "entries": [
+      {
+       "defaultModeId": null,
+       "description": "",
+       "enabled": true,
+       "label": "Model A",
+       "models": [
+        {
+         "description": "",
+         "id": "vendor/model-a",
+         "isDefault": true,
+         "label": "Model A",
+         "thinkingSet": 0
+        },
+        {
+         "description": "",
+         "id": "vendor/model-b",
+         "isDefault": false,
+         "label": "vendor/model-b"
+        },
+        {
+         "description": "",
+         "id": "vendor/model-c",
+         "isDefault": false,
+         "label": "Model C",
+         "thinkingSet": 1
+        },
+        {
+         "description": "",
+         "id": "vendor/video",
+         "isDefault": false,
+         "label": "Video",
+         "metadata": {
+          "harness": "qwen"
+         }
+        }
+       ],
+       "modes": [],
+       "provider": "claude",
+       "source": "builtin",
+       "status": "ready"
+      }
+     ],
+     "thinkingSets": [
+      {
+       "defaultOptionId": "high",
+       "options": [
+        {
+         "id": "none",
+         "isDefault": false,
+         "label": "none"
+        },
+        {
+         "id": "low",
+         "isDefault": false,
+         "label": "low"
+        },
+        {
+         "id": "high",
+         "isDefault": true,
+         "label": "high"
+        },
+        {
+         "id": "max",
+         "isDefault": false,
+         "label": "max"
+        }
+       ]
+      },
+      {
+       "defaultOptionId": "high",
+       "options": [
+        {
+         "id": "low",
+         "isDefault": false,
+         "label": "low"
+        },
+        {
+         "id": "high",
+         "isDefault": true,
+         "label": "high"
+        }
+       ]
+      }
+     ]
+    },
+    "cwd": "/workspace",
+    "entries": [],
+    "fetchedAt": {
+     "claude": "2026-11-02T00:00:00.000Z"
+    },
+    "generatedAt": "2026-11-02T00:00:00.000Z",
+    "requestId": "req-1",
+    "snapshotHash": "models:[\"vendor/model-a\",[{\"description\":\"\",\"id\":\"vendor/model-a\",\"isDefault\":true,\"label\":\"Model A\",\"thinkingSet\":0},{\"description\":\"\",\"id\":\"vendor/model-b\",\"isDefault\":false,\"label\":\"vendor/model-b\"},{\"description\":\"\",\"id\":\"vendor/model-c\",\"isDefault\":false,\"label\":\"Model C\",\"thinkingSet\":1},{\"description\":\"\",\"id\":\"vendor/video\",\"isDefault\":false,\"label\":\"Video\",\"metadata\":{\"harness\":\"qwen\"}}],[{\"defaultOptionId\":\"high\",\"options\":[{\"id\":\"none\",\"isDefault\":false,\"label\":\"none\"},{\"id\":\"low\",\"isDefault\":false,\"label\":\"low\"},{\"id\":\"high\",\"isDefault\":true,\"label\":\"high\"},{\"id\":\"max\",\"isDefault\":false,\"label\":\"max\"}]},{\"defaultOptionId\":\"high\",\"options\":[{\"id\":\"low\",\"isDefault\":false,\"label\":\"low\"},{\"id\":\"high\",\"isDefault\":true,\"label\":\"high\"}]}]]"
+   },
+   "type": "get_providers_snapshot_response"
+  },
+  "get_daemon_config_response": {
+   "payload": {
+    "config": {
+     "app": {
+      "baseUrl": ""
+     },
+     "appendSystemPrompt": "",
+     "autoArchiveAfterMerge": false,
+     "browserTools": {
+      "enabled": false
+     },
+     "cors": {
+      "allowedOrigins": []
+     },
+     "enableTerminalAgentHooks": false,
+     "envOverrides": {},
+     "features": {
+      "dictation": {
+       "enabled": false,
+       "stt": {
+        "provider": "local"
+       }
+      },
+      "voiceMode": {
+       "enabled": false,
+       "stt": {
+        "provider": "local"
+       },
+       "tts": {
+        "provider": "local"
+       }
+      }
+     },
+     "git": {
+      "maxProcessConcurrency": 1,
+      "maxProcessesPerSecond": 1
+     },
+     "hostnames": [],
+     "idleRuntimeCleanup": true,
+     "mcp": {
+      "enabled": false,
+      "injectIntoAgents": false
+     },
+     "metadataGeneration": {
+      "providers": []
+     },
+     "plugins": {},
+     "pluginsEnabled": false,
+     "providers": {},
+     "relay": {
+      "enabled": false,
+      "requireProtectedSecurity": false
+     },
+     "skills": {},
+     "trustedProxies": [
+      "loopback"
+     ]
+    },
+    "requestId": "req-10"
+   },
+   "type": "get_daemon_config_response"
+  },
+  "project_icon_response": {
+   "payload": {
+    "cwd": "/workspace",
+    "error": null,
+    "icon": null,
+    "requestId": "req-8"
+   },
+   "type": "project_icon_response"
+  },
+  "terminals_changed": {
+   "payload": {
+    "cwd": "/workspace",
+    "requestId": "req-4",
+    "subscriptionId": "00000000-0000-4000-8000-000000000000",
+    "terminals": [],
+    "workspaceId": "w"
+   },
+   "type": "terminals_changed"
+  },
+  "list_terminals_response": {
+   "payload": {
+    "cwd": "/workspace",
+    "requestId": "req-14",
+    "terminals": []
+   },
+   "type": "list_terminals_response"
+  },
+  "hosts.list.response": {
+   "payload": {
+    "directory": {
+     "hosts": [],
+     "self": {
+      "label": "Example AI",
+      "serverId": "srv_conversations"
+     }
+    },
+    "requestId": "req-4",
+    "subscriptionId": "00000000-0000-4000-8000-000000000000"
+   },
+   "type": "hosts.list.response"
+  },
+  "fetch_workspaces_response": {
+   "payload": {
+    "emptyProjects": [
+     {
+      "projectCustomIconRevision": null,
+      "projectCustomName": null,
+      "projectDisplayName": "Example AI",
+      "projectIconRevision": "automatic:none:v1",
+      "projectId": "prj_conversations",
+      "projectKey": "prj_conversations",
+      "projectKind": "directory",
+      "projectRootPath": "/workspace"
+     }
+    ],
+    "entries": [],
+    "pageInfo": {
+     "hasMore": false,
+     "nextCursor": null,
+     "prevCursor": null
+    },
+    "requestId": "req-22",
+    "subscriptionId": "00000000-0000-4000-8000-000000000000",
+    "sync": {
+     "generation": "gen-1",
+     "headSeq": 0,
+     "mode": "snapshot",
+     "reason": "no_cursor",
+     "removals": []
+    }
+   },
+   "type": "fetch_workspaces_response"
+  },
+  "fetch_agents_response": {
+   "payload": {
+    "entries": [
+     {
+      "agent": {
+       "activeTurn": {
+        "startedAt": "2026-11-02T00:00:00.000Z",
+        "turnId": "00000000-0000-4000-8000-000000000000"
+       },
+       "archivedAt": null,
+       "attentionReason": null,
+       "attentionTimestamp": null,
+       "availableModes": [],
+       "capabilities": {
+        "supportsDynamicModes": false,
+        "supportsMcpServers": false,
+        "supportsReasoningStream": true,
+        "supportsRewindBoth": false,
+        "supportsRewindConversation": false,
+        "supportsRewindFiles": false,
+        "supportsSessionListing": false,
+        "supportsSessionPersistence": true,
+        "supportsStreaming": true,
+        "supportsToolInvocations": true
+       },
+       "closed": null,
+       "createdAt": "2026-11-02T00:00:00.000Z",
+       "currentModeId": null,
+       "cwd": "/workspace",
+       "effectiveThinkingOptionId": null,
+       "features": [],
+       "id": "00000000-0000-4000-8000-000000000000",
+       "labels": {},
+       "lastUserMessageAt": "2026-11-02T00:00:00.000Z",
+       "model": "vendor/model-a",
+       "pendingMessages": [],
+       "pendingPermissions": [],
+       "persistence": null,
+       "provider": "claude",
+       "requiresAttention": false,
+       "runtimeInfo": {
+        "modeId": null,
+        "model": "vendor/model-a",
+        "provider": "claude",
+        "sessionId": "00000000-0000-4000-8000-000000000000"
+       },
+       "status": "running",
+       "thinkingOptionId": null,
+       "title": "New conversation",
+       "updatedAt": "2026-11-02T00:00:00.000Z",
+       "workspaceId": "wks_00000000-0000-4000-8000-000000000000"
+      },
+      "project": {
+       "checkout": {
+        "currentBranch": null,
+        "cwd": "/workspace",
+        "isGit": false,
+        "isPaseoOwnedWorktree": false,
+        "mainRepoRoot": null,
+        "remoteUrl": null,
+        "worktreeRoot": null
+       },
+       "projectKey": "prj_conversations",
+       "projectName": "Example AI",
+       "workspaceName": "New conversation"
+      }
+     },
+     {
+      "agent": {
+       "activeTurn": null,
+       "archivedAt": null,
+       "attentionReason": "permission",
+       "attentionTimestamp": "2026-11-02T00:00:00.000Z",
+       "availableModes": [],
+       "capabilities": {
+        "supportsDynamicModes": false,
+        "supportsMcpServers": false,
+        "supportsReasoningStream": true,
+        "supportsRewindBoth": false,
+        "supportsRewindConversation": false,
+        "supportsRewindFiles": false,
+        "supportsSessionListing": false,
+        "supportsSessionPersistence": true,
+        "supportsStreaming": true,
+        "supportsToolInvocations": true
+       },
+       "closed": null,
+       "createdAt": "2026-11-02T00:00:00.000Z",
+       "currentModeId": null,
+       "cwd": "/workspace",
+       "effectiveThinkingOptionId": null,
+       "features": [],
+       "id": "00000000-0000-4000-8000-000000000000",
+       "labels": {},
+       "lastUserMessageAt": "2026-11-02T00:00:00.000Z",
+       "model": "vendor/model-a",
+       "pendingMessages": [],
+       "pendingPermissions": [
+        {
+         "id": "ask-1",
+         "input": {
+          "questions": [
+           {
+            "allowOther": true,
+            "question": "Which?"
+           }
+          ]
+         },
+         "kind": "question",
+         "name": "AskUserQuestion",
+         "provider": "claude",
+         "title": "A question"
+        }
+       ],
+       "persistence": null,
+       "provider": "claude",
+       "requiresAttention": true,
+       "runtimeInfo": {
+        "modeId": null,
+        "model": "vendor/model-a",
+        "provider": "claude",
+        "sessionId": "00000000-0000-4000-8000-000000000000"
+       },
+       "status": "idle",
+       "thinkingOptionId": null,
+       "title": "Again",
+       "updatedAt": "2026-11-02T00:00:00.000Z",
+       "workspaceId": "wks_00000000-0000-4000-8000-000000000000"
+      },
+      "project": {
+       "checkout": {
+        "currentBranch": null,
+        "cwd": "/workspace",
+        "isGit": false,
+        "isPaseoOwnedWorktree": false,
+        "mainRepoRoot": null,
+        "remoteUrl": null,
+        "worktreeRoot": null
+       },
+       "projectKey": "prj_conversations",
+       "projectName": "Example AI",
+       "workspaceName": "Again"
+      }
+     }
+    ],
+    "pageInfo": {
+     "hasMore": false,
+     "nextCursor": null,
+     "prevCursor": null
+    },
+    "requestId": "req-23",
+    "subscriptionId": "00000000-0000-4000-8000-000000000000",
+    "sync": {
+     "generation": "gen-1",
+     "headSeq": 32,
+     "mode": "snapshot",
+     "reason": "no_cursor",
+     "removals": []
+    }
+   },
+   "type": "fetch_agents_response"
+  },
+  "fetch_agent_history_response": {
+   "payload": {
+    "entries": [
+     {
+      "agent": {
+       "activeTurn": null,
+       "archivedAt": "2026-11-02T00:00:00.000Z",
+       "attentionReason": null,
+       "attentionTimestamp": null,
+       "availableModes": [],
+       "capabilities": {
+        "supportsDynamicModes": false,
+        "supportsMcpServers": false,
+        "supportsReasoningStream": true,
+        "supportsRewindBoth": false,
+        "supportsRewindConversation": false,
+        "supportsRewindFiles": false,
+        "supportsSessionListing": false,
+        "supportsSessionPersistence": true,
+        "supportsStreaming": true,
+        "supportsToolInvocations": true
+       },
+       "closed": null,
+       "createdAt": "2026-11-02T00:00:00.000Z",
+       "currentModeId": null,
+       "cwd": "/workspace",
+       "effectiveThinkingOptionId": null,
+       "features": [],
+       "id": "00000000-0000-4000-8000-000000000000",
+       "labels": {},
+       "lastUserMessageAt": "2026-11-02T00:00:00.000Z",
+       "model": "vendor/model-a",
+       "pendingMessages": [],
+       "pendingPermissions": [],
+       "persistence": null,
+       "provider": "claude",
+       "requiresAttention": false,
+       "runtimeInfo": {
+        "modeId": null,
+        "model": "vendor/model-a",
+        "provider": "claude",
+        "sessionId": "00000000-0000-4000-8000-000000000000"
+       },
+       "status": "idle",
+       "thinkingOptionId": null,
+       "title": "新對話",
+       "updatedAt": "2026-11-02T00:00:00.000Z",
+       "workspaceId": "wks_00000000-0000-4000-8000-000000000000"
+      },
+      "project": {
+       "checkout": {
+        "currentBranch": null,
+        "cwd": "/workspace",
+        "isGit": false,
+        "isPaseoOwnedWorktree": false,
+        "mainRepoRoot": null,
+        "remoteUrl": null,
+        "worktreeRoot": null
+       },
+       "projectKey": "prj_conversations",
+       "projectName": "Example AI",
+       "workspaceName": "新對話"
+      }
+     }
+    ],
+    "pageInfo": {
+     "hasMore": false,
+     "nextCursor": null,
+     "prevCursor": null
+    },
+    "requestId": "req-47"
+   },
+   "type": "fetch_agent_history_response"
+  },
+  "list_provider_features_response": {
+   "payload": {
+    "error": null,
+    "features": [],
+    "fetchedAt": "2026-11-02T00:00:00.000Z",
+    "provider": "claude",
+    "requestId": "req-9"
+   },
+   "type": "list_provider_features_response"
+  },
+  "project.icon.get.response": {
+   "payload": {
+    "error": null,
+    "icon": null,
+    "projectId": "prj_conversations",
+    "requestId": "req-7"
+   },
+   "type": "project.icon.get.response"
+  },
+  "agent.provider_subagents.list.response": {
+   "payload": {
+    "error": null,
+    "parentAgentId": "a",
+    "requestId": "req-16",
+    "subagents": []
+   },
+   "type": "agent.provider_subagents.list.response"
+  },
+  "workspace.script.list.response": {
+   "payload": {
+    "error": null,
+    "requestId": "req-15",
+    "scripts": [],
+    "workspaceId": "wks_x"
+   },
+   "type": "workspace.script.list.response"
+  },
+  "creation.subscribe.response": {
+   "payload": {
+    "error": null,
+    "requestId": "req-40",
+    "snapshot": {
+     "agent": {
+      "activeTurn": {
+       "startedAt": "2026-11-02T00:00:00.000Z",
+       "turnId": "00000000-0000-4000-8000-000000000000"
+      },
+      "archivedAt": null,
+      "attentionReason": null,
+      "attentionTimestamp": null,
+      "availableModes": [],
+      "capabilities": {
+       "supportsDynamicModes": false,
+       "supportsMcpServers": false,
+       "supportsReasoningStream": true,
+       "supportsRewindBoth": false,
+       "supportsRewindConversation": false,
+       "supportsRewindFiles": false,
+       "supportsSessionListing": false,
+       "supportsSessionPersistence": true,
+       "supportsStreaming": true,
+       "supportsToolInvocations": true
+      },
+      "closed": null,
+      "createdAt": "2026-11-02T00:00:00.000Z",
+      "currentModeId": null,
+      "cwd": "/workspace",
+      "effectiveThinkingOptionId": null,
+      "features": [],
+      "id": "00000000-0000-4000-8000-000000000000",
+      "labels": {},
+      "lastUserMessageAt": "2026-11-02T00:00:00.000Z",
+      "model": "vendor/model-a",
+      "pendingMessages": [],
+      "pendingPermissions": [],
+      "persistence": null,
+      "provider": "claude",
+      "requiresAttention": false,
+      "runtimeInfo": {
+       "modeId": null,
+       "model": "vendor/model-a",
+       "provider": "claude",
+       "sessionId": "00000000-0000-4000-8000-000000000000"
+      },
+      "status": "running",
+      "thinkingOptionId": null,
+      "title": "新對話",
+      "updatedAt": "2026-11-02T00:00:00.000Z",
+      "workspaceId": "wks_00000000-0000-4000-8000-000000000000"
+     },
+     "agentId": "00000000-0000-4000-8000-000000000000",
+     "error": null,
+     "idempotencyKey": "k1",
+     "kind": "workspace",
+     "phase": "completed",
+     "revision": 4,
+     "workspace": {
+      "activityAt": "2026-11-02T00:00:00.000Z",
+      "archivingAt": null,
+      "background": false,
+      "backgroundTasks": 0,
+      "createdAt": "2026-11-02T00:00:00.000Z",
+      "diffStat": null,
+      "id": "wks_00000000-0000-4000-8000-000000000000",
+      "lastUserMessageAt": "2026-11-02T00:00:00.000Z",
+      "name": "新對話",
+      "nextScheduleAt": null,
+      "pinnedAt": null,
+      "project": {
+       "checkout": {
+        "currentBranch": null,
+        "cwd": "/workspace",
+        "isGit": false,
+        "isPaseoOwnedWorktree": false,
+        "mainRepoRoot": null,
+        "remoteUrl": null,
+        "worktreeRoot": null
+       },
+       "projectKey": "prj_conversations",
+       "projectName": "Example AI",
+       "workspaceName": "新對話"
+      },
+      "projectCustomIconRevision": null,
+      "projectCustomName": null,
+      "projectDisplayName": "Example AI",
+      "projectId": "prj_conversations",
+      "projectKind": "directory",
+      "projectRootPath": "/workspace",
+      "scripts": [],
+      "setupStatus": null,
+      "status": "running",
+      "statusEnteredAt": "2026-11-02T00:00:00.000Z",
+      "title": null,
+      "workspaceDirectory": "/workspace",
+      "workspaceKind": "directory"
+     },
+     "workspaceId": "wks_00000000-0000-4000-8000-000000000000"
+    },
+    "subscriptionId": "00000000-0000-4000-8000-000000000000"
+   },
+   "type": "creation.subscribe.response"
+  },
+  "usage.list_reports.response": {
+   "payload": {
+    "error": null,
+    "requestId": "req-5"
+   },
+   "type": "usage.list_reports.response"
+  },
+  "workspace.label.list.response": {
+   "payload": {
+    "labels": [],
+    "requestId": "req-2",
+    "subscriptionId": "00000000-0000-4000-8000-000000000000",
+    "sync": {
+     "generation": "",
+     "headSeq": 0,
+     "mode": "snapshot",
+     "removals": []
+    }
+   },
+   "type": "workspace.label.list.response"
+  },
+  "plugin.catalog.get.response": {
+   "payload": {
+    "plugins": [],
+    "requestId": "req-6"
+   },
+   "type": "plugin.catalog.get.response"
+  },
+  "project.list.response": {
+   "payload": {
+    "projects": [
+     {
+      "projectCustomIconRevision": null,
+      "projectCustomName": null,
+      "projectDisplayName": "Example AI",
+      "projectIconRevision": "automatic:none:v1",
+      "projectId": "prj_conversations",
+      "projectKey": "prj_conversations",
+      "projectKind": "directory",
+      "projectRootPath": "/workspace"
+     }
+    ],
+    "requestId": "req-19",
+    "sync": {
+     "generation": "gen-1",
+     "headSeq": 0,
+     "mode": "snapshot",
+     "reason": "cursor_expired",
+     "removals": []
+    }
+   },
+   "type": "project.list.response"
+  },
+  "session.events.set_subscription.response": {
+   "payload": {
+    "requestId": "req-1",
+    "subscriptionId": "00000000-0000-4000-8000-000000000000"
+   },
+   "type": "session.events.set_subscription.response"
+  },
+  "subscription.release.response": {
+   "payload": {
+    "requestId": "req-9",
+    "subscriptionId": "00000000-0000-4000-8000-000000000000"
+   },
+   "type": "subscription.release.response"
+  }
+ }
+}

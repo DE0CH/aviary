@@ -1,0 +1,434 @@
+{
+  "about": "The staff catalogue rules (hermit spec 3.4.1) as cases. hermit's catalogue tests run them; every other reader of the file (Jarvis 3's tools) keeps a byte-for-byte copy, checked against this one in its CI, and runs the same cases. `file` is the catalogue as JSON (`text`: the raw file); `allowed` and `denied` are addresses checked against the loaded catalogue; `admins` is the normalised admin set.",
+  "accept": [
+    {
+      "name": "domain, trimmed and lowercased address, admin",
+      "file": {
+        "users": [
+          "@example.org",
+          " Staff@Example.NET ",
+          "boss@example.com"
+        ],
+        "admins": [
+          "boss@example.com"
+        ]
+      },
+      "allowed": [
+        "a@example.org",
+        "staff@example.net",
+        "boss@example.com",
+        " Boss@Example.COM "
+      ],
+      "denied": [
+        "a@sub.example.org",
+        "x@example.com",
+        "a@b@example.org",
+        "@example.org",
+        "example.org",
+        ""
+      ],
+      "admins": [
+        "boss@example.com"
+      ]
+    },
+    {
+      "name": "an admin matched by domain",
+      "file": {
+        "users": [
+          "@example.org"
+        ],
+        "admins": [
+          "a@example.org"
+        ]
+      },
+      "allowed": [
+        "a@example.org",
+        "z@example.org"
+      ],
+      "denied": [],
+      "admins": [
+        "a@example.org"
+      ]
+    },
+    {
+      "name": "a local part over 64 characters",
+      "file": {
+        "users": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.org"
+        ],
+        "admins": []
+      },
+      "allowed": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.org"
+      ],
+      "denied": [
+        "a@example.org"
+      ],
+      "admins": []
+    },
+    {
+      "name": "an address of 254 bytes",
+      "file": {
+        "users": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb@example.org"
+        ],
+        "admins": []
+      },
+      "allowed": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb@example.org"
+      ],
+      "denied": [],
+      "admins": []
+    },
+    {
+      "name": "address domains are not checked as hostnames",
+      "file": {
+        "users": [
+          "x@host_name.com",
+          "x@localhost",
+          "x@b\u00fccher.example",
+          "x@-dash-.example"
+        ],
+        "admins": [
+          "x@localhost"
+        ]
+      },
+      "allowed": [
+        "x@host_name.com",
+        "x@localhost",
+        "X@B\u00dcCHER.example",
+        "x@-dash-.example"
+      ],
+      "denied": [
+        "y@localhost"
+      ],
+      "admins": [
+        "x@localhost"
+      ]
+    },
+    {
+      "name": "a domain entry with no dot, and one in capitals",
+      "file": {
+        "users": [
+          "@localhost",
+          " @Example.ORG "
+        ],
+        "admins": []
+      },
+      "allowed": [
+        "a@localhost",
+        "a@example.org"
+      ],
+      "denied": [
+        "a@example.net"
+      ],
+      "admins": []
+    },
+    {
+      "name": "duplicates are fine",
+      "file": {
+        "users": [
+          "a@example.org",
+          "A@example.org",
+          "@example.net",
+          "@example.net"
+        ],
+        "admins": [
+          "a@example.org",
+          "a@example.org"
+        ]
+      },
+      "allowed": [
+        "a@example.org"
+      ],
+      "denied": [],
+      "admins": [
+        "a@example.org"
+      ]
+    },
+    {
+      "name": "other keys are ignored",
+      "file": {
+        "users": [
+          "a@example.org"
+        ],
+        "admins": [],
+        "comment": "x"
+      },
+      "allowed": [
+        "a@example.org"
+      ],
+      "denied": [],
+      "admins": []
+    }
+  ],
+  "refuse": [
+    {
+      "name": "not JSON",
+      "text": "{\"users\": ["
+    },
+    {
+      "name": "not an object",
+      "file": []
+    },
+    {
+      "name": "users empty",
+      "file": {
+        "users": [],
+        "admins": []
+      }
+    },
+    {
+      "name": "users missing",
+      "file": {
+        "admins": []
+      }
+    },
+    {
+      "name": "admins missing",
+      "file": {
+        "users": [
+          "a@example.org"
+        ]
+      }
+    },
+    {
+      "name": "users not a list",
+      "file": {
+        "users": "a@example.org",
+        "admins": []
+      }
+    },
+    {
+      "name": "admins not a list",
+      "file": {
+        "users": [
+          "a@example.org"
+        ],
+        "admins": "a@example.org"
+      }
+    },
+    {
+      "name": "a user that is not a string",
+      "file": {
+        "users": [
+          3
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "an admin that is not a string",
+      "file": {
+        "users": [
+          "a@example.org"
+        ],
+        "admins": [
+          null
+        ]
+      }
+    },
+    {
+      "name": "an admin not in users",
+      "file": {
+        "users": [
+          "a@example.org"
+        ],
+        "admins": [
+          "z@example.org"
+        ]
+      }
+    },
+    {
+      "name": "an admin that is a domain",
+      "file": {
+        "users": [
+          "@example.org"
+        ],
+        "admins": [
+          "@example.org"
+        ]
+      }
+    },
+    {
+      "name": "no @",
+      "file": {
+        "users": [
+          "nope"
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "two @",
+      "file": {
+        "users": [
+          "a@b@example.org"
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "empty domain",
+      "file": {
+        "users": [
+          "a@"
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "empty string",
+      "file": {
+        "users": [
+          ""
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "only spaces",
+      "file": {
+        "users": [
+          "   "
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "whitespace inside an address",
+      "file": {
+        "users": [
+          "a b@example.org"
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "a tab inside an address",
+      "file": {
+        "users": [
+          "a\tb@example.org"
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "a no-break space inside an address",
+      "file": {
+        "users": [
+          "a\u00a0b@example.org"
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "a control character inside an address",
+      "file": {
+        "users": [
+          "a\u0001b@example.org"
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "a C1 control character inside an address",
+      "file": {
+        "users": [
+          "a\u0085b@example.org"
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "an address of 255 bytes",
+      "file": {
+        "users": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb@example.org"
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "@ alone",
+      "file": {
+        "users": [
+          "@"
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "a domain with a space",
+      "file": {
+        "users": [
+          "@bad domain"
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "a domain with an underscore",
+      "file": {
+        "users": [
+          "@host_name.com"
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "a non-ASCII domain entry",
+      "file": {
+        "users": [
+          "@b\u00fccher.example"
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "a domain with a leading dot",
+      "file": {
+        "users": [
+          "@.example.org"
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "a domain with a trailing dot",
+      "file": {
+        "users": [
+          "@example.org."
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "a domain with two dots in a row",
+      "file": {
+        "users": [
+          "@example..org"
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "a domain of 254 characters",
+      "file": {
+        "users": [
+          "@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.org"
+        ],
+        "admins": []
+      }
+    },
+    {
+      "name": "a domain entry with a second @",
+      "file": {
+        "users": [
+          "@a@example.org"
+        ],
+        "admins": []
+      }
+    }
+  ]
+}

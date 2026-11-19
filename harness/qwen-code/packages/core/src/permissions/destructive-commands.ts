@@ -1,0 +1,272 @@
+/**
+ * @license
+ * Copyright 2025 Qwen Team
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Deterministic pre-filter for destructive git and IaC commands in AUTO mode.
+ *
+ * Runs BEFORE the L5.3 LLM classifier as a Layer 0 guard. The classifier is
+ * non-deterministic and can fail due to API unavailability, timeout, or poor
+ * judgment on ambiguous prompts like "clean up the git state". This module
+ * provides deterministic regex-based blocking that cannot be bypassed by
+ * classifier failures on the denying call itself: the block is hard until
+ * denial tracking reaches the consecutive-block or session-total cap, at which
+ * point `applyAutoModeDecision` escalates to a confirmation only a human can
+ * give — it marks the escalation `requiresHumanDecision`, so a
+ * `PermissionRequest` hook returning `allow` cannot waive it.
+ *
+ * Only applies in AUTO mode — YOLO mode is an explicit opt-out of all guards.
+ */
+
+import type { Content, Part } from '@google/genai';
+import { execSync } from 'node:child_process';
+
+import { shellWords } from './shell-semantics.js';
+
+/**
+ * Destructive git commands that discard local work.
+ * These are blocked unless the user explicitly mentions discarding work.
+ */
+const DESTRUCTIVE_GIT_PATTERNS: readonly RegExp[] = Object.freeze([
+  /\bgit\s+reset\s+--hard\b/,
+  /\bgit\s+checkout\s+--\s+\./,
+  /\bgit\s+clean\s+-[a-zA-Z]*f/,
+  /\bgit\s+stash\s+drop\b/,
+]);
+
+const GIT_AMEND_MENTION =
+  /\bgit(?:\.exe)?\s+commit\s+--am(?:e(?:n(?:d)?)?)?\b/i;
+
+/**
+ * IaC destroy commands that tear down infrastructure.
+ * Blocked unless the user explicitly mentions the target stack/resource.
+ */
+const IAC_DESTROY_PATTERNS: readonly RegExp[] = Object.freeze([
+  /\bterraform\s+destroy\b/,
+  /\bpulumi\s+destroy\b/,
+  /\bcdk\s+destroy\b/,
+]);
+
+/**
+ * Keywords in the user prompt that indicate intentional discarding of work.
+ * Case-insensitive matching.
+ */
+const DISCARD_KEYWORDS: readonly RegExp[] = Object.freeze([
+  /\bdiscard\b/i,
+  /\bthrow\s+away\b/i,
+  /\bwipe\b/i,
+  /\bclean\s+up\b/i,
+  /\breset\s+everything\b/i,
+  /\bdrop\s+all\b/i,
+  /\bforce\s+reset\b/i,
+  /\bstart\s+over\b/i,
+  /\bstart\s+fresh\b/i,
+  /\bclean\s+slate\b/i,
+  /丢弃/,
+  /清除/,
+  /重置/,
+]);
+
+/**
+ * Check if the user prompt explicitly mentions discarding local work.
+ */
+export function userMentionsDiscard(userPrompt: string): boolean {
+  return DISCARD_KEYWORDS.some((kw) => kw.test(userPrompt));
+}
+
+/**
+ * Strip one layer of shell quoting from a command string so destructive
+ * patterns inside `bash -c "git reset --hard"` or `sh -c 'git clean -fd'`
+ * are still detected.
+ */
+function stripShellQuotes(command: string): string {
+  return command.replace(
+    /(?:^|\s)(?:bash|sh|zsh|fish|dash|ksh)\s+-[a-zA-Z]*c\s+(?:"([^"]*)"|'([^']*)')/g,
+    (_match, dq: string | undefined, sq: string | undefined) =>
+      ' ' + (dq ?? sq ?? ''),
+  );
+}
+
+/**
+ * Extract the last user-role text from the conversation messages.
+ * Used to determine whether the user explicitly requested destructive actions.
+ */
+export function extractLastUserPrompt(
+  messages: readonly Content[],
+): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]!;
+    if (msg.role !== 'user') continue;
+    const texts = (msg.parts ?? [])
+      .filter((p): p is Part => typeof (p as Part).text === 'string')
+      .map((p) => (p as Part).text!);
+    if (texts.length > 0) return texts.join(' ');
+  }
+  return undefined;
+}
+
+/** Result of a destructive command check. */
+export interface DestructiveCommandResult {
+  blocked: boolean;
+  reason: string;
+}
+
+// ─── Session commit tracking (for git commit --amend) ─────────────────────
+
+const sessionCommitShas = new Set<string>();
+
+/**
+ * Bumped by every `clearSessionCommits()` so a writer that decided to
+ * register *before* a clear can tell that the registry it is about to
+ * write into is not the one it decided against.
+ *
+ * The deferred writer this exists for is the Ctrl+B promote path in
+ * `shell.ts`: it registers when the backgrounded child exits,
+ * arbitrarily later than the promote, and an approval-mode transition
+ * in between clears the registry on purpose (`Config.setApprovalMode`,
+ * whose stated contract is that exemptions must not carry across that
+ * boundary). Without a generation check the settle writes the exemption
+ * straight back.
+ *
+ * Deliberately not `Config.getApprovalModeRevision()`: that counter
+ * moves on every mode change, including the AUTO → PLAN → AUTO
+ * excursion `clearSessionCommits()` is explicitly gated off, so it
+ * would drop registrations the clear never touched.
+ */
+let sessionCommitGeneration = 0;
+
+/** The registry generation counter; see `sessionCommitGeneration`. */
+export function getSessionCommitGeneration(): number {
+  return sessionCommitGeneration;
+}
+
+/**
+ * Register a commit SHA made by the agent during this session.
+ *
+ * @deprecated No longer read: every amend asks for approval (#13570), because
+ * the target repository is not knowable from the command text. Kept as a
+ * published export together with its shell/config wiring; removal is a
+ * separate follow-up.
+ */
+export function registerSessionCommit(sha: string): void {
+  sessionCommitShas.add(sha.trim());
+}
+
+/**
+ * Whether a command mentioning `git commit --amend` must be confirmed by a
+ * human instead of hard-blocked (#13570).
+ *
+ * Two mechanical readings, both fail-closed on a *mention*: the raw text, and
+ * the same text with quotes removed. The second is what keeps a quote-split
+ * spelling (`git com''mit --amend`) visible — the raw text does not contain
+ * `commit` there, and dropping this arm would let such an amend run unattended
+ * under an AUTO allow rule.
+ *
+ * Whether a mention is inert (a grep pattern, a commit message, a heredoc
+ * body) is not answerable without parsing bash, so an inert mention asks too.
+ * Encoded commands, git aliases and renamed binaries never spell the phrase
+ * and stay outside the contract. Deciding inertness from a real parse is
+ * #16604.
+ */
+export function amendNeedsApproval(command: string): boolean {
+  return (
+    GIT_AMEND_MENTION.test(command) ||
+    GIT_AMEND_MENTION.test(shellWords(command).join(' '))
+  );
+}
+
+/**
+ * Check whether a `git commit --amend` targets a commit made this session.
+ *
+ * @deprecated No longer read; see {@link registerSessionCommit}.
+ */
+export function isAmendOfSessionCommit(cwd: string): boolean {
+  if (sessionCommitShas.size === 0) return false;
+  try {
+    const headSha = execSync('git rev-parse HEAD', {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return sessionCommitShas.has(headSha);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Clear all session commit tracking. Called on session end or mode switch.
+ * Also bumps the generation counter, which is how a deferred writer
+ * learns that the registry it decided against no longer exists.
+ *
+ * @deprecated No longer read; see {@link registerSessionCommit}.
+ */
+export function clearSessionCommits(): void {
+  sessionCommitShas.clear();
+  sessionCommitGeneration++;
+}
+
+// ─── Main guard function ──────────────────────────────────────────────────
+
+/**
+ * Check whether a shell command is destructively blocked by the deterministic
+ * guard. Runs before the L5.3 classifier — failures here are hard blocks
+ * regardless of classifier availability, until denial tracking reaches the
+ * consecutive-block or session-total cap; at a cap `applyAutoModeDecision`
+ * escalates to a human-only confirmation instead (`requiresHumanDecision`).
+ *
+ * @param command - The raw shell command string
+ * @param userPrompt - The user's most recent prompt text
+ * @returns Block result if the command is destructive, null otherwise
+ */
+export function isDestructiveCommand(
+  command: string,
+  userPrompt: string,
+): DestructiveCommandResult | null {
+  const expanded = command + ' ' + stripShellQuotes(command);
+
+  for (const pattern of DESTRUCTIVE_GIT_PATTERNS) {
+    if (pattern.test(expanded) && !userMentionsDiscard(userPrompt)) {
+      // `git clean -[a-zA-Z]*f` matches an unbounded run, and the fallback is
+      // the whole model-authored command. Bound the echoed fragment: the reason
+      // is clamped to 200 chars at the permission boundary, and a longer match
+      // would push this template's own recovery instruction past the clamp.
+      const match = command.match(pattern)?.[0] ?? command;
+      const matched = match.length > 80 ? `${match.slice(0, 79)}…` : match;
+      return {
+        blocked: true,
+        reason: `Blocked destructive git command: "${matched}". To proceed, explicitly mention discarding local work in your prompt.`,
+      };
+    }
+  }
+
+  for (const pattern of IAC_DESTROY_PATTERNS) {
+    if (pattern.test(expanded)) {
+      const toolName =
+        command.match(pattern)?.[0]?.split(/\s+/)[0] ?? 'unknown';
+      if (!userMentionsStack(userPrompt, toolName)) {
+        return {
+          blocked: true,
+          reason: `Blocked infrastructure destroy command: "${toolName} destroy". To proceed, explicitly specify the target stack/resource in your prompt.`,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function userMentionsStack(userPrompt: string, toolName: string): boolean {
+  if (!userPrompt) return false;
+  const lower = userPrompt.toLowerCase();
+  return (
+    lower.includes(toolName) &&
+    (lower.includes('destroy') ||
+      lower.includes('tear down') ||
+      lower.includes('delete stack') ||
+      lower.includes('remove stack') ||
+      lower.includes('销毁') ||
+      lower.includes('删除'))
+  );
+}

@@ -1,0 +1,21 @@
+[package]
+name = "aviary-deploy"
+description = "The deploy run's decisions (docs/DEPLOY.md): which tag each image has, whether main's head is ready to deploy, whether the images exist, and the tags written into a kustomization."
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+publish = false
+
+# its own workspace (the root excludes it): a CI tool, not a service, so none of the services' rules apply
+[workspace]
+
+[dependencies]
+anyhow = "=1.0.104"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+ureq = { version = "3", features = ["json"] }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"

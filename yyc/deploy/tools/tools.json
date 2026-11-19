@@ -1,0 +1,67 @@
+{
+  "exa": {
+    "keyEnv": "EXA_API_KEY"
+  },
+  "anyapi": {
+    "keyEnv": "ANYAPI_API_KEY"
+  },
+  "tikhub": {
+    "keyEnv": "TIKHUB_API",
+    "platforms": [
+      "xiaohongshu",
+      "douyin",
+      "weibo",
+      "x",
+      "threads",
+      "youtube",
+      "instagram",
+      "reddit"
+    ]
+  },
+  "capture": {
+    "url": "http://web.yyc.svc.cluster.local/internal/web_fetch",
+    "tokenEnv": "WEB_FETCH_TOKEN",
+    "name": "The monitoring system"
+  },
+  "upstreams": [
+    {
+      "prefix": "data",
+      "url": "http://yyc-mcp.yyc.svc.cluster.local/api/v1",
+      "headers": {
+        "Authorization": "Bearer ${YYC_MCP_TOKEN}",
+        "X-YYC-User": "${USER_EMAIL}"
+      },
+      "tools": [
+        "streams_list",
+        "posts_search",
+        "post_get",
+        "stream_items",
+        "analysis_posts",
+        "analysis_hot_topics",
+        "analysis_topic",
+        "analysis_person",
+        "analysis_themes",
+        "analysis_overview",
+        "analysis_authors",
+        "analysis_sources",
+        "analysis_trend",
+        "analysis_terms",
+        "daily_summary",
+        "reports_list",
+        "report_file",
+        "sources_list",
+        "search",
+        "fetch",
+        "wisers_search",
+        "wisers_job",
+        "wisers_doc",
+        "wisers_facets",
+        "wisers_options",
+        "wisers_labels",
+        "wisers_media",
+        "wisers_log"
+      ],
+      "listAs": "chendeyao000@gmail.com"
+    }
+  ]
+}

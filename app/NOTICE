@@ -1,0 +1,5 @@
+This directory is the Paseo web app, copied from getpaseo/paseo at commit e3bbed3c73fac7cbd2b5e340037ff6a9201206b8
+(Copyright (c) 2025-present Mohamed Boudra, Apache License 2.0, see LICENSE) and changed into YYC AI's staff UI:
+the packages the web app needs (app, protocol, client, relay, highlight, plugin, expo-two-way-audio), with the
+native mobile, desktop, server and CLI parts left out. It is not kept in sync with upstream. What changed and why:
+../docs/paseo-ui.md.

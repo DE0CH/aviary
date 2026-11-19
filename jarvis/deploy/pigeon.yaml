@@ -1,0 +1,70 @@
+# pigeon (DE0CH/aviary crates/pigeon): Jarvis 4's chat web app at https://chat.deyaochen.com behind the Access app
+# "Jarvis 4 chat" (Deyao's email): the Paseo app (ghcr.io/de0ch/pigeon-app, DE0CH/claudecodeui; the same build as YYC
+# AI's) and its protocol, stateless. Its people and product come from hermit-jarvis (Deyao alone; "Jarvis 4", English;
+# New chat off: sessions start in the Jarvis 4 app). Env: Secret chat-pigeon.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: pigeon, namespace: services }
+spec:
+  replicas: 2
+  minReadySeconds: 5
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
+  selector: { matchLabels: { app: pigeon } }
+  template:
+    metadata: { labels: { app: pigeon }, annotations: { services/secrets-rev-chat-pigeon: "ce64243dcfb8", services/branding-rev: "e8b9c6b32d5f" } }
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector: { jarvis4/pool: services }
+      terminationGracePeriodSeconds: 60
+      initContainers:
+        # the app bundle (pigeon 17.1): the pigeon-app image's files, copied into the emptyDir pigeon serves
+        - name: app
+          image: ghcr.io/de0ch/pigeon-app:305be7e0b052@sha256:125fa142baf06bfd3ca1daeb7b454dde7717a09acca21c3b33d48ba1a7b2b314
+          command: [/cp, -a, /app/., /srv/app/]
+          volumeMounts: [{ name: app, mountPath: /srv/app }]
+          resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
+          securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
+        # this deployment's branding over the bundle's neutral files (ConfigMap pigeon-branding in branding.yaml, from
+        # k8s/chat/branding/ by infra/branding.py: the logo, the tab and home-screen icons, the manifest): copied into
+        # the bundle's /branding/, which a bundle from before the app had one does not have yet (-L: a ConfigMap's
+        # files are links). Not mounted over it in pigeon: the bundle is read-only there, and a mount point that does
+        # not exist cannot be made (2026-11-13)
+        - name: branding
+          image: ghcr.io/de0ch/pigeon-app:305be7e0b052@sha256:125fa142baf06bfd3ca1daeb7b454dde7717a09acca21c3b33d48ba1a7b2b314
+          command: [/cp, -rL, /branding, /srv/app/]
+          volumeMounts: [{ name: app, mountPath: /srv/app }, { name: branding, mountPath: /branding, readOnly: true }]
+          resources: { requests: { cpu: 10m, memory: 16Mi }, limits: { cpu: 200m, memory: 64Mi } }
+          securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: pigeon
+          image: ghcr.io/de0ch/pigeon:a14e0a9ae331@sha256:a27ab18ab1250fd6fbfc2fd651e17800217e21d0cf832e102c9ac9872126826f
+          envFrom: [{ secretRef: { name: chat-pigeon } }]
+          env: [{ name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }]
+          ports: [{ containerPort: 8080 }, { containerPort: 9090 }]
+          lifecycle: { preStop: { sleep: { seconds: 5 } } }
+          startupProbe: { httpGet: { path: /healthz, port: 9090 }, periodSeconds: 2, failureThreshold: 150 }
+          livenessProbe: { httpGet: { path: /healthz, port: 9090 }, periodSeconds: 10, failureThreshold: 6 }
+          readinessProbe: { httpGet: { path: /readyz, port: 9090 }, periodSeconds: 2, failureThreshold: 2 }
+          resources: { requests: { cpu: 30m, memory: 64Mi, ephemeral-storage: 768Mi }, limits: { cpu: 500m, memory: 256Mi, ephemeral-storage: 2176Mi } }
+          securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] }, seccompProfile: { type: RuntimeDefault } }
+          volumeMounts: [{ name: app, mountPath: /srv/app, readOnly: true }]
+      # the app volume is 2Gi, the size the bundle is built to (DE0CH/claudecodeui pigeon-app.yml --budget-mib 2016: it
+      # keeps every build served within 30 days; 711.6 MiB on 2026-11-17). kubelet evicts a pod whose emptyDir is over
+      # its sizeLimit (at 512Mi: both pods, every minute, Bad gateway), and counts it against the container's
+      # ephemeral-storage limit, which is therefore above it. A change of the budget changes both here
+      volumes: [{ name: app, emptyDir: { sizeLimit: 2Gi } }, { name: branding, configMap: { name: pigeon-branding } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: pigeon, namespace: services }
+spec:
+  selector: { app: pigeon }
+  ports: [{ name: http, port: 80, targetPort: 8080 }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: pigeon, namespace: services }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: pigeon } }

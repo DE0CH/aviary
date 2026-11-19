@@ -1,0 +1,217 @@
+/**
+ * @license
+ * Copyright 2025 Qwen
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import type {
+  ApprovalModeValue,
+  Config,
+  ToolArtifact,
+  ToolResultBoundaryArtifact,
+} from '@qwen-code/qwen-code-core';
+import type { Part } from '@google/genai';
+import type {
+  SessionUpdate,
+  ToolCallLocation,
+  ToolKind,
+} from '@agentclientprotocol/sdk';
+import type { MessageRewriteMiddleware } from './rewrite/index.js';
+import { DEFAULT_BUILTIN_SUBAGENT_TYPE } from '@qwen-code/qwen-code-core/subagents/builtin-agents.js';
+
+export type { ApprovalModeValue };
+
+/**
+ * Interface for sending session updates to the ACP client.
+ * Implemented by Session class and used by all emitters.
+ */
+export interface SessionUpdateSender {
+  sendUpdate(update: SessionUpdate): Promise<void>;
+}
+
+/**
+ * Running cumulative usage for the conversation, mutated in place as usage
+ * metadata is emitted (MessageEmitter) and snapshotted onto each plan/todo
+ * update (PlanEmitter). The web-shell diffs consecutive snapshots to show a
+ * finished task's token/time spend.
+ *
+ * `apiTimeMs` only advances on the live path: history replay re-emits usage
+ * metadata without per-turn durations, so on `/resume` it stays 0 — the
+ * intended "API time is live-only" behaviour. Tokens accumulate on both paths
+ * because replayed usage metadata carries the counts.
+ */
+export interface CumulativeUsage {
+  promptTokens: number;
+  cachedTokens: number;
+  candidateTokens: number;
+  apiTimeMs: number;
+}
+
+export interface SessionEmitterContext extends SessionUpdateSender {
+  readonly sessionId: string;
+  /** History replay hook used to correlate emitted updates with disk records. */
+  setActiveRecordId?: (id: string | null, timestamp?: string) => void;
+  /** Optional message rewrite middleware for ACP message transformation.
+   *  Installed after history replay to avoid rewriting historical messages. */
+  messageRewriter?: MessageRewriteMiddleware;
+  /**
+   * Running cumulative usage, when the context wants per-todo resource detail.
+   * Mutated by MessageEmitter as usage is emitted and read by PlanEmitter to
+   * stamp plan updates. Optional so contexts that don't need it (export, etc.)
+   * can omit it.
+   */
+  readonly cumulativeUsage?: CumulativeUsage;
+}
+
+/**
+ * Session context shared by live emitters that may resolve runtime metadata.
+ */
+export interface SessionContext extends SessionEmitterContext {
+  readonly config: Config;
+  isDisposed?(): boolean;
+}
+
+export function hasFullSessionContext(
+  context: SessionEmitterContext,
+): context is SessionContext {
+  return 'config' in context;
+}
+
+/**
+ * The agent associated with a frame.
+ *
+ * Mirrors the shape OpenAI's Responses multi-agent contract standardizes —
+ * every output item carries `agent: { agent_name }` with a path-style name
+ * (`/root`, `/root/security`) — so a client can attribute output and rebuild
+ * the tree without cross-frame association state. For ordinary output and
+ * activity frames this names the producer; for an inter-agent message it
+ * names the recipient, while `author` and `recipient` carry direction, matching
+ * OpenAI's `agent_message` semantics. Field names stay camelCase to match this
+ * wire's existing `_meta` keys (`subagentType`, `parentToolCallId`); it is the
+ * shape that is borrowed, not the spelling.
+ */
+export interface AgentIdentity {
+  /**
+   * Path-style name from the session's root agent, e.g. `/root/security`.
+   *
+   * Derived from the spawning agent's path plus the subagent type. This is a
+   * readable role path, not a unique execution id: concurrent subagents of the
+   * same type share it, and renaming the agent definition changes it. Use
+   * `parentToolCallId` when a consumer must distinguish subagent executions.
+   */
+  agentName: string;
+  /** 0 for the root agent, 1 for a direct subagent or teammate, and so on. */
+  depth: number;
+  kind: 'root' | 'subagent' | 'teammate';
+}
+
+/** The identity of the agent a session's own frames come from. */
+export const ROOT_AGENT_IDENTITY: AgentIdentity = {
+  agentName: '/root',
+  depth: 0,
+  kind: 'root',
+};
+
+/**
+ * Subagent metadata for tracking parent tool call context.
+ */
+export interface SubagentMeta {
+  /** ID of the parent AgentTool call that created this subagent */
+  parentToolCallId?: string;
+  /** Resolved definition name once the subagent starts. */
+  subagentType?: string;
+  /** The agent that produced this frame. Absent means the root agent. */
+  agent?: AgentIdentity;
+}
+
+/**
+ * Preserve definition casing: live tracking replaces the request with START's
+ * resolved name before emitting frames.
+ */
+export function deriveSubagentIdentity(
+  subagentType: string,
+  parent: AgentIdentity = ROOT_AGENT_IDENTITY,
+): AgentIdentity {
+  const segment = subagentType.trim() || DEFAULT_BUILTIN_SUBAGENT_TYPE;
+  return {
+    agentName: `${parent.agentName}/${segment}`,
+    depth: parent.depth + 1,
+    kind: 'subagent',
+  };
+}
+
+/**
+ * Parameters for emitting a tool call start event.
+ */
+export interface ToolCallStartParams {
+  /** Name of the tool being called */
+  toolName: string;
+  /** Unique identifier for this tool call */
+  callId: string;
+  /** Arguments passed to the tool */
+  args?: Record<string, unknown>;
+  /** Status of the tool call */
+  status?: 'pending' | 'in_progress' | 'completed' | 'failed';
+  /** Transient phase recognized by clients that support tool preparation. */
+  phase?: 'preparing';
+  /** Optional subagent metadata */
+  subagentMeta?: SubagentMeta;
+  /** Server-side timestamp (ISO string or ms) for message ordering */
+  timestamp?: string | number;
+  startedAt?: number;
+}
+
+/**
+ * Parameters for emitting a tool call result event.
+ */
+export interface ToolCallResultParams {
+  /** Name of the tool that was called */
+  toolName: string;
+  /** Unique identifier for this tool call */
+  callId: string;
+  /** Whether the tool execution succeeded */
+  success: boolean;
+  /** The response parts from tool execution (maps to content in update event) */
+  message: Part[];
+  /** Display result from tool execution (maps to rawOutput in update event) */
+  resultDisplay?: unknown;
+  /** Error if tool execution failed */
+  error?: Error;
+  /** Structured artifacts produced by the tool result. */
+  artifacts?: ToolArtifact[];
+  persistedOutputFiles?: string[];
+  boundaryArtifact?: ToolResultBoundaryArtifact;
+  /** Original args (fallback for TodoWriteTool todos extraction) */
+  args?: Record<string, unknown>;
+  /** Optional subagent metadata */
+  subagentMeta?: SubagentMeta;
+  /** Server-side timestamp (ISO string or ms) for message ordering */
+  timestamp?: string | number;
+  startedAt?: number;
+  durationMs?: number;
+}
+
+/**
+ * Todo item structure for plan updates.
+ */
+export interface TodoItem {
+  id: string;
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  blockedBy?: string[];
+}
+
+export interface TodoPlanSnapshot {
+  planId?: string;
+  sessionWorkflow?: boolean;
+  todos: TodoItem[];
+}
+
+/**
+ * Resolved tool metadata from the registry.
+ */
+export interface ResolvedToolMetadata {
+  title: string;
+  locations: ToolCallLocation[];
+  kind: ToolKind;
+}

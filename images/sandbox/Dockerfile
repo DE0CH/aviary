@@ -92,12 +92,14 @@ RUN npm install --prefix /opt/claude-code -g @anthropic-ai/claude-code@${CLAUDE_
  && mkdir -p /etc/claude-code \
  && /opt/claude-code/bin/claude --version | grep -qF "${CLAUDE_CODE_VERSION}"
 
-# Qwen Code, the second harness (the supervisor runs /opt/qwen-code/bin/qwen by that absolute path): the DE0CH fork's
-# release (github.com/DE0CH/qwen-code, de0ch/README.md), pinned by its sha256, root-owned like Claude Code. The
+# Qwen Code, the second harness (the supervisor runs /opt/qwen-code/bin/qwen by that absolute path): the fork in
+# harness/qwen-code, packed and released by ci.yml's `qwen` job as qwen-code-<sha12> (its last commit) and given here
+# by tag and sha256 (build args; no default: a build without them fails here), root-owned like Claude Code. The
 # managed files in /etc/qwen-code are the supervisor's, written at each Qwen Code start.
-ARG QWEN_CODE_RELEASE=de0ch-d781c42ebf20
-ARG QWEN_CODE_SHA256=630ec620307771d1f53cd6cde0d9c0f24b5945c23808721c8b8ec5bf61a5ef41
-RUN curl -fsSL -o /tmp/qwen-code.tgz "https://github.com/DE0CH/qwen-code/releases/download/${QWEN_CODE_RELEASE}/qwen-code-de0ch.tgz" \
+ARG QWEN_CODE_TAG
+ARG QWEN_CODE_SHA256
+RUN test -n "${QWEN_CODE_TAG}" -a -n "${QWEN_CODE_SHA256}" \
+ && curl -fsSL -o /tmp/qwen-code.tgz "https://github.com/DE0CH/aviary/releases/download/${QWEN_CODE_TAG}/qwen-code.tgz" \
  && printf '%s  %s\n' "${QWEN_CODE_SHA256}" /tmp/qwen-code.tgz | sha256sum -c - \
  && npm install --prefix /opt/qwen-code -g /tmp/qwen-code.tgz \
  && npm cache clean --force \

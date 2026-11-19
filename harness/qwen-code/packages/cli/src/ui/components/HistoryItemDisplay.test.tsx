@@ -1,0 +1,1115 @@
+/**
+ * @license
+ * Copyright 2025 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { describe, it, expect, vi } from 'vitest';
+import { createRequire } from 'node:module';
+import type chalk from 'chalk';
+import stripAnsi from 'strip-ansi';
+import { theme } from '../semantic-colors.js';
+import { subscriptionSuccessMessage } from '../auth/subscription-success.js';
+import { Box, Text } from 'ink';
+import stringWidth from 'string-width';
+import { HistoryItemDisplay } from './HistoryItemDisplay.js';
+import { type HistoryItem, ToolCallStatus } from '../types.js';
+import { MessageType } from '../types.js';
+import { SessionStatsProvider } from '../contexts/SessionContext.js';
+import type {
+  Config,
+  ToolExecuteConfirmationDetails,
+} from '@qwen-code/qwen-code-core';
+import { ToolGroupMessage } from './messages/ToolGroupMessage.js';
+import { renderWithProviders, withProviders } from '../../test-utils/render.js';
+import { LoadedSettings } from '../../config/settings.js';
+import { ConfigContext } from '../contexts/ConfigContext.js';
+import { ThoughtExpandedProvider } from '../contexts/ThoughtExpandedContext.js';
+import { VirtualViewportContext } from '../contexts/VirtualViewportContext.js';
+import * as modRowHooks from '../hooks/use-mod-row.js';
+import type { MouseEvent } from '../utils/mouse.js';
+import {
+  layoutRowForEvent,
+  measureElementPosition,
+} from '../utils/measure-element-position.js';
+
+// Mock child components
+vi.mock('./messages/ToolGroupMessage.js', () => ({
+  ToolGroupMessage: vi.fn(() => <div />),
+}));
+
+vi.mock('./TerminalImage.js', () => ({
+  TerminalImage: ({ image }: { image: { mimeType: string } }) => (
+    <Text>MockTerminalImage:{image.mimeType}</Text>
+  ),
+}));
+
+vi.mock('../hooks/useMouseEvents.js', () => ({
+  useMouseEvents: vi.fn(),
+}));
+
+vi.mock('../utils/measure-element-position.js', () => ({
+  layoutRowForEvent: vi.fn(),
+  measureElementPosition: vi.fn(),
+}));
+
+vi.mock('../utils/hyperlink-at.js', () => ({
+  hyperlinkAtCell: vi.fn(),
+}));
+
+import { hyperlinkAtCell } from '../utils/hyperlink-at.js';
+import { useMouseEvents } from '../hooks/useMouseEvents.js';
+
+import { toggleKeyHint } from './messages/ConversationMessages.js';
+
+describe('<HistoryItemDisplay />', () => {
+  const mockConfig = {
+    getChatRecordingService: () => undefined,
+  } as unknown as Config;
+  const baseItem = {
+    id: 1,
+    timestamp: 12345,
+    isPending: false,
+    terminalWidth: 80,
+    config: mockConfig,
+  };
+
+  it('renders UserMessage for "user" type', () => {
+    const item: HistoryItem = {
+      ...baseItem,
+      type: MessageType.USER,
+      text: 'Hello',
+    };
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay {...baseItem} item={item} />,
+    );
+    expect(lastFrame()).toContain('Hello');
+  });
+
+  it('renders UserMessage for "user" type with slash command', () => {
+    const item: HistoryItem = {
+      ...baseItem,
+      type: MessageType.USER,
+      text: '/theme',
+    };
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay {...baseItem} item={item} />,
+    );
+    expect(lastFrame()).toContain('/theme');
+  });
+
+  it('renders assistant replies with a leading spacer row', () => {
+    const item: HistoryItem = {
+      id: 1,
+      type: 'gemini',
+      text: 'Hello',
+    };
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay item={item} terminalWidth={100} isPending={false} />,
+    );
+
+    const output = lastFrame() ?? '';
+    expect(output.startsWith('\n')).toBe(true);
+    expect(output).toContain('◆\uFE0E Hello');
+  });
+
+  it.each(['gemini', 'gemini_content'] as const)(
+    'passes images from a %s history item to the assistant renderer',
+    (type) => {
+      const item: HistoryItem = {
+        id: 1,
+        type,
+        text: '',
+        images: [{ data: 'aW1hZ2U=', mimeType: 'image/png' }],
+        omittedImageCount: 2,
+      };
+      const { lastFrame } = renderWithProviders(
+        <HistoryItemDisplay
+          item={item}
+          terminalWidth={100}
+          isPending={false}
+        />,
+      );
+
+      expect(lastFrame()).toContain('MockTerminalImage:image/png');
+      expect(lastFrame()).toContain('[+2 more images]');
+    },
+  );
+
+  it.each([
+    { type: 'gemini' as const, offset: 0 },
+    { type: 'gemini_content' as const, offset: 2 },
+  ])(
+    'keeps only original source hints for rewritten $type rows',
+    ({ type, offset }) => {
+      const latex = (source: string) => `$$\n${source}\n$$`;
+      const mermaid = (source: string) =>
+        `\`\`\`mermaid\nflowchart LR\n  ${source}\n\`\`\``;
+      const keptMath = latex('y = 22');
+      const keptDiagram = mermaid('B[Middle] --> C[End]');
+      const duplicate = latex('z = 33');
+      const addedDiagram = mermaid('C[End] --> D[Added]');
+      const item: HistoryItem = {
+        type,
+        id: 1,
+        text: [
+          mermaid('A[Start] --> B[Middle]'),
+          latex('x = 11'),
+          keptDiagram,
+          keptMath,
+          duplicate,
+          duplicate,
+        ].join('\n\n'),
+      };
+      const modRow = vi.spyOn(modRowHooks, 'useModRow').mockReturnValue({
+        text: [keptMath, keptDiagram, duplicate, addedDiagram].join('\n\n'),
+        isFirstOfReply: type === 'gemini',
+      });
+      try {
+        const { lastFrame } = renderWithProviders(
+          <HistoryItemDisplay
+            item={item}
+            terminalWidth={100}
+            isPending={false}
+            modSessionId="session"
+            sourceCopyIndexOffsets={{
+              codeBlockLanguageCounts: new Map([['mermaid', offset]]),
+              mathBlockCount: offset,
+            }}
+          />,
+        );
+        const output = lastFrame() ?? '';
+        expect(output).toContain('y = 22');
+        expect(output).toContain('z = 33');
+        expect(output).toContain('Added');
+        expect(output.match(/source: \/copy (?:latex|mermaid) \d+/g)).toEqual([
+          `source: /copy latex ${offset + 2}`,
+          `source: /copy mermaid ${offset + 2}`,
+        ]);
+      } finally {
+        modRow.mockRestore();
+      }
+    },
+  );
+
+  it('renders tool summaries without a leading spacer row', () => {
+    const item: HistoryItem = {
+      id: 1,
+      type: 'tool_use_summary',
+      summary: 'Read txt files',
+      precedingToolUseIds: ['c1'],
+    };
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay item={item} terminalWidth={100} isPending={false} />,
+    );
+
+    const output = lastFrame() ?? '';
+    expect(output.startsWith('\n')).toBe(false);
+    expect(output).toContain('Read txt files');
+  });
+
+  it('renders the dim ◎ notice for "vision_notice" type', () => {
+    const item: HistoryItem = {
+      ...baseItem,
+      type: MessageType.VISION_NOTICE,
+      text: 'Converted 1 image(s) to text via vm.',
+    };
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay {...baseItem} item={item} />,
+    );
+    const output = lastFrame() ?? '';
+    expect(output).toContain('◎');
+    expect(output).toContain('Converted 1 image(s) to text via vm.');
+  });
+
+  it('renders AdvisorMessage for "advisor" type', () => {
+    const item: HistoryItem = {
+      ...baseItem,
+      type: MessageType.ADVISOR,
+      text: 'review body',
+      model: 'qwen3-max',
+    };
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay {...baseItem} item={item} />,
+    );
+    const output = lastFrame() ?? '';
+    expect(output).toContain('/advisor · qwen3-max');
+    expect(output).toContain('review body');
+  });
+
+  it('renders v2 goal_state history items through the lifecycle card', () => {
+    const item: HistoryItem = {
+      id: 1,
+      type: MessageType.GOAL_STATE,
+      snapshot: {
+        v: 2,
+        activity: 'idle',
+        goal: {
+          goalId: 'goal-1',
+          revision: 1,
+          objective: 'ship the release',
+          status: 'blocked',
+          evidenceCursor: { recordId: 'record-1' },
+          turnCount: 2,
+          activeTimeMs: 4_000,
+          tokensUsed: 0,
+          createdAt: 1_000,
+          updatedAt: 5_000,
+          lastReason: 'waiting for approval',
+        },
+      },
+    };
+
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay item={item} terminalWidth={80} isPending={false} />,
+    );
+
+    const output = lastFrame();
+    expect(output).toContain('Goal blocked');
+    expect(output).toContain('Goal: ship the release');
+    expect(output).toContain('2 turns');
+    expect(output).toContain('Reason: waiting for approval');
+  });
+
+  it('renders StatsDisplay for "stats" type', () => {
+    const item: HistoryItem = {
+      ...baseItem,
+      type: MessageType.STATS,
+      duration: '1s',
+    };
+    const { lastFrame } = renderWithProviders(
+      <SessionStatsProvider>
+        <HistoryItemDisplay {...baseItem} item={item} />
+      </SessionStatsProvider>,
+    );
+    expect(lastFrame()).toContain('Stats');
+  });
+
+  it('renders AboutBox for "about" type', () => {
+    const item: HistoryItem = {
+      id: 1,
+      type: MessageType.ABOUT,
+      systemInfo: {
+        cliVersion: '1.0.0',
+        osPlatform: 'test-os',
+        osArch: 'x64',
+        osRelease: '22.0.0',
+        nodeVersion: 'v20.0.0',
+        npmVersion: '10.0.0',
+        sandboxEnv: 'test-env',
+        modelVersion: 'test-model',
+        selectedAuthType: 'test-auth',
+        ideClient: 'test-ide',
+        sessionId: 'test-session-id',
+        memoryUsage: '100 MB',
+        baseUrl: undefined,
+        gitCommit: undefined,
+      },
+    };
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay {...baseItem} item={item} />,
+    );
+    expect(lastFrame()).toContain('Status');
+  });
+
+  it('renders ModelStatsDisplay for "model_stats" type', () => {
+    const item: HistoryItem = {
+      ...baseItem,
+      type: 'model_stats',
+    };
+    const { lastFrame } = renderWithProviders(
+      <SessionStatsProvider>
+        <HistoryItemDisplay {...baseItem} item={item} />
+      </SessionStatsProvider>,
+    );
+    expect(lastFrame()).toContain(
+      'No API calls have been made in this session.',
+    );
+  });
+
+  it('renders ToolStatsDisplay for "tool_stats" type', () => {
+    const item: HistoryItem = {
+      ...baseItem,
+      type: 'tool_stats',
+    };
+    const { lastFrame } = renderWithProviders(
+      <SessionStatsProvider>
+        <HistoryItemDisplay {...baseItem} item={item} />
+      </SessionStatsProvider>,
+    );
+    expect(lastFrame()).toContain(
+      'No tool calls have been made in this session.',
+    );
+  });
+
+  it('renders SkillStatsDisplay for "skill_stats" type', () => {
+    const item: HistoryItem = {
+      ...baseItem,
+      type: 'skill_stats',
+    };
+    const { lastFrame } = renderWithProviders(
+      <SessionStatsProvider>
+        <HistoryItemDisplay {...baseItem} item={item} />
+      </SessionStatsProvider>,
+    );
+    expect(lastFrame()).toContain(
+      'No skill calls have been made in this session.',
+    );
+  });
+
+  it('renders SessionSummaryDisplay for "quit" type', () => {
+    const item: HistoryItem = {
+      ...baseItem,
+      type: 'quit',
+      duration: '1s',
+    };
+    const { lastFrame } = renderWithProviders(
+      <ConfigContext.Provider value={mockConfig as never}>
+        <SessionStatsProvider>
+          <HistoryItemDisplay {...baseItem} item={item} />
+        </SessionStatsProvider>
+      </ConfigContext.Provider>,
+    );
+    expect(lastFrame()).toContain('Agent powering down. Goodbye!');
+  });
+
+  it('should escape ANSI codes in text content', () => {
+    const historyItem: HistoryItem = {
+      id: 1,
+      type: 'user',
+      text: 'Hello, \u001b[31mred\u001b[0m world!',
+    };
+
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay
+        item={historyItem}
+        terminalWidth={80}
+        isPending={false}
+      />,
+    );
+
+    // The ANSI codes should be escaped for display.
+    expect(lastFrame()).toContain('Hello, \\u001b[31mred\\u001b[0m world!');
+    // The raw ANSI codes should not be present.
+    expect(lastFrame()).not.toContain('Hello, \u001b[31mred\u001b[0m world!');
+  });
+
+  it('should escape ANSI codes in tool confirmation details', () => {
+    const historyItem: HistoryItem = {
+      id: 1,
+      type: 'tool_group',
+      tools: [
+        {
+          callId: '123',
+          name: 'run_shell_command',
+          description: 'Run a shell command',
+          resultDisplay: 'blank',
+          status: ToolCallStatus.Confirming,
+          confirmationDetails: {
+            type: 'exec',
+            title: 'Run Shell Command',
+            command: 'echo "\u001b[31mhello\u001b[0m"',
+            rootCommand: 'echo',
+            onConfirm: async () => {},
+          },
+        },
+      ],
+    };
+
+    renderWithProviders(
+      <HistoryItemDisplay
+        item={historyItem}
+        terminalWidth={80}
+        isPending={false}
+      />,
+    );
+
+    const passedProps = vi.mocked(ToolGroupMessage).mock.calls[0][0];
+    const confirmationDetails = passedProps.toolCalls[0]
+      .confirmationDetails as ToolExecuteConfirmationDetails;
+
+    expect(confirmationDetails.command).toBe(
+      'echo "\\u001b[31mhello\\u001b[0m"',
+    );
+  });
+
+  const longCode =
+    '# Example code block:\n' +
+    '```python\n' +
+    Array.from({ length: 50 }, (_, i) => `Line ${i + 1}`).join('\n') +
+    '\n```';
+
+  it('should render a truncated gemini item', () => {
+    const item: HistoryItem = {
+      id: 1,
+      type: 'gemini',
+      text: longCode,
+    };
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay
+        item={item}
+        isPending={false}
+        terminalWidth={80}
+        availableTerminalHeight={10}
+      />,
+    );
+
+    expect(lastFrame()).toMatchSnapshot();
+  });
+
+  it('should render a full gemini item when using availableTerminalHeightLlm', () => {
+    const item: HistoryItem = {
+      id: 1,
+      type: 'gemini',
+      text: longCode,
+    };
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay
+        item={item}
+        isPending={false}
+        terminalWidth={80}
+        availableTerminalHeight={10}
+        availableTerminalHeightLlm={Number.MAX_SAFE_INTEGER}
+      />,
+    );
+
+    expect(lastFrame()).toMatchSnapshot();
+  });
+
+  it('should render a truncated gemini_content item', () => {
+    const item: HistoryItem = {
+      id: 1,
+      type: 'gemini_content',
+      text: longCode,
+    };
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay
+        item={item}
+        isPending={false}
+        terminalWidth={80}
+        availableTerminalHeight={10}
+      />,
+    );
+
+    expect(lastFrame()).toMatchSnapshot();
+  });
+
+  it('should render a full gemini_content item when using availableTerminalHeightLlm', () => {
+    const item: HistoryItem = {
+      id: 1,
+      type: 'gemini_content',
+      text: longCode,
+    };
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay
+        item={item}
+        isPending={false}
+        terminalWidth={80}
+        availableTerminalHeight={10}
+        availableTerminalHeightLlm={Number.MAX_SAFE_INTEGER}
+      />,
+    );
+
+    expect(lastFrame()).toMatchSnapshot();
+  });
+
+  it('renders tool_use_summary as a dim badge line in full mode', () => {
+    const item: HistoryItem = {
+      id: 1,
+      type: 'tool_use_summary',
+      summary: 'Read txt files',
+      precedingToolUseIds: ['c1', 'c2', 'c3', 'c4'],
+    };
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay
+        {...baseItem}
+        item={item}
+        isPending={false}
+        terminalWidth={80}
+      />,
+    );
+    expect(lastFrame()).toContain('Read txt files');
+    expect(lastFrame()).toContain('●');
+  });
+
+  it('renders committed thinking collapsed by default', () => {
+    const item: HistoryItem = {
+      id: 1,
+      type: 'gemini_thought',
+      text: 'Inspecting the repository',
+      durationMs: 1200,
+    };
+
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay item={item} terminalWidth={100} isPending={false} />,
+    );
+
+    const output = lastFrame() ?? '';
+    expect(output).toContain('Thought for');
+    expect(output).toContain(`${toggleKeyHint} to expand`);
+    expect(output).not.toContain('Inspecting the repository');
+  });
+
+  it('renders a completed staged summary collapsed while later output is pending', () => {
+    const item: HistoryItem = {
+      id: 0,
+      type: 'gemini_thought',
+      text: 'Completed summary',
+      durationMs: 1200,
+      isStreaming: false,
+      thoughtGroupId: -1,
+    };
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay item={item} terminalWidth={100} isPending />,
+    );
+    expect(lastFrame()).toContain('Thought for');
+    expect(lastFrame()).toContain(`${toggleKeyHint} to expand`);
+    expect(lastFrame()).not.toContain('Thinking…');
+    expect(lastFrame()).not.toContain('Completed summary');
+  });
+
+  it('keeps staged summary groups separate and expanded across their history commit', () => {
+    const head: HistoryItem = {
+      id: 0,
+      type: 'gemini_thought',
+      text: 'Summary head',
+      durationMs: 1200,
+      isStreaming: false,
+      thoughtGroupId: -7,
+    };
+    const continuation: HistoryItem = {
+      id: 0,
+      type: 'gemini_thought_content',
+      text: 'Summary continuation',
+      isStreaming: false,
+      thoughtGroupId: -7,
+    };
+    const other: HistoryItem = {
+      ...head,
+      text: 'Other summary',
+      thoughtGroupId: -8,
+    };
+    const renderItems = (committed: boolean) => (
+      <ThoughtExpandedProvider
+        value={{
+          allExpanded: false,
+          expandedHeadIds: new Set([-7]),
+          toggle: () => {},
+        }}
+      >
+        {[head, continuation, other].map((item, index) => (
+          <HistoryItemDisplay
+            key={index}
+            item={{ ...item, id: committed ? index + 101 : 0 }}
+            terminalWidth={100}
+            isPending={!committed}
+            thoughtHeadId={committed ? 101 : undefined}
+          />
+        ))}
+      </ThoughtExpandedProvider>
+    );
+    const { lastFrame, rerender } = renderWithProviders(renderItems(false));
+    expect(lastFrame()).toContain('Summary head');
+    expect(lastFrame()).toContain('Summary continuation');
+    expect(lastFrame()).not.toContain('Other summary');
+    rerender(withProviders(renderItems(true)));
+    expect(lastFrame()).toContain('Summary head');
+    expect(lastFrame()).toContain('Summary continuation');
+    expect(lastFrame()).not.toContain('Other summary');
+  });
+
+  it('keeps an active staged summary in its thinking state', () => {
+    const item: HistoryItem = {
+      id: 0,
+      type: 'gemini_thought',
+      text: 'Active summary',
+      isStreaming: true,
+      thoughtGroupId: -9,
+    };
+    vi.mocked(useMouseEvents).mockClear();
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay item={item} terminalWidth={100} isPending />,
+    );
+    expect(lastFrame()).toContain('Thinking…');
+    expect(vi.mocked(useMouseEvents).mock.calls.at(-1)?.[1]?.isActive).toBe(
+      false,
+    );
+  });
+
+  it('renders committed thinking continuations hidden by default', () => {
+    const item: HistoryItem = {
+      id: 1,
+      type: 'gemini_thought_content',
+      text: 'Continuing the reasoning',
+    };
+
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay item={item} terminalWidth={100} isPending={false} />,
+    );
+
+    expect(lastFrame()).not.toContain('Continuing the reasoning');
+  });
+
+  it('renders committed thinking expanded when ThoughtExpandedProvider is true', () => {
+    const item: HistoryItem = {
+      id: 1,
+      type: 'gemini_thought',
+      text: 'Inspecting the repository',
+      durationMs: 1200,
+    };
+
+    const { lastFrame } = renderWithProviders(
+      <ThoughtExpandedProvider
+        value={{
+          allExpanded: true,
+          expandedHeadIds: new Set<number>(),
+          toggle: () => {},
+        }}
+      >
+        <HistoryItemDisplay item={item} terminalWidth={100} isPending={false} />
+      </ThoughtExpandedProvider>,
+    );
+
+    const output = lastFrame() ?? '';
+    expect(output).toContain('Thought for');
+    expect(output).toContain(`${toggleKeyHint} to collapse`);
+    expect(output).toContain('Inspecting the repository');
+  });
+
+  it('fullDetail forces a committed thought expanded even when context/prop are collapsed', () => {
+    const item: HistoryItem = {
+      id: 1,
+      type: 'gemini_thought',
+      text: 'Inspecting the repository',
+      durationMs: 1200,
+    };
+
+    // No ThoughtExpandedProvider (context defaults to false) and thoughtExpanded
+    // is not passed — fullDetail alone must win and show the full text. This is
+    // the transcript's forced-expansion path.
+    const { lastFrame } = renderWithProviders(
+      <HistoryItemDisplay
+        item={item}
+        terminalWidth={100}
+        isPending={false}
+        fullDetail
+      />,
+    );
+
+    const output = lastFrame() ?? '';
+    expect(output).toContain('Thought for');
+    expect(output).toContain('Inspecting the repository');
+  });
+
+  it('forwards fullDetail to ToolGroupMessage for tool_group items', () => {
+    vi.mocked(ToolGroupMessage).mockClear();
+    const item: HistoryItem = {
+      id: 1,
+      type: 'tool_group',
+      tools: [
+        {
+          callId: '123',
+          name: 'run_shell_command',
+          description: 'Run a shell command',
+          resultDisplay: 'done',
+          status: ToolCallStatus.Success,
+          confirmationDetails: undefined,
+        },
+      ],
+    };
+
+    renderWithProviders(
+      <HistoryItemDisplay
+        item={item}
+        terminalWidth={80}
+        isPending={false}
+        fullDetail
+      />,
+    );
+
+    const passedProps = vi.mocked(ToolGroupMessage).mock.calls[0][0];
+    expect(passedProps.fullDetail).toBe(true);
+  });
+
+  describe('showTimestamps', () => {
+    const timestampItem: HistoryItem = {
+      ...baseItem,
+      type: 'gemini',
+      text: 'Hello from assistant',
+      timestamp: new Date('2026-01-15T14:30:45').getTime(),
+    };
+
+    const makeTimestampSettings = () =>
+      new LoadedSettings(
+        { path: '', settings: {}, originalSettings: {} },
+        { path: '', settings: {}, originalSettings: {} },
+        {
+          path: '',
+          settings: { output: { showTimestamps: true } },
+          originalSettings: {},
+        },
+        { path: '', settings: {}, originalSettings: {} },
+        true,
+        new Set(),
+      );
+
+    it('does not render timestamp when showTimestamps is disabled', () => {
+      const { lastFrame } = renderWithProviders(
+        <HistoryItemDisplay
+          {...baseItem}
+          item={timestampItem}
+          isPending={false}
+        />,
+      );
+      expect(lastFrame()).not.toMatch(/\[\d{2}:\d{2}:\d{2}\]/);
+    });
+
+    it('renders [HH:MM:SS] timestamp when showTimestamps is enabled', () => {
+      const { lastFrame } = renderWithProviders(
+        <HistoryItemDisplay
+          {...baseItem}
+          item={timestampItem}
+          isPending={false}
+        />,
+        { settings: makeTimestampSettings() },
+      );
+      expect(lastFrame()).toMatch(/\[\d{2}:\d{2}:\d{2}\]/);
+    });
+
+    it('renders timestamp even when isPending is true (streaming)', () => {
+      const { lastFrame } = renderWithProviders(
+        <HistoryItemDisplay
+          {...baseItem}
+          item={timestampItem}
+          isPending={true}
+        />,
+        { settings: makeTimestampSettings() },
+      );
+      expect(lastFrame()).toMatch(/\[\d{2}:\d{2}:\d{2}\]/);
+    });
+
+    it('does not render timestamp when timestamp field is missing', () => {
+      const noTimestampItem: HistoryItem = {
+        id: 1,
+        type: 'gemini',
+        text: 'Hello',
+      };
+      const { lastFrame } = renderWithProviders(
+        <HistoryItemDisplay
+          {...baseItem}
+          item={noTimestampItem}
+          isPending={false}
+        />,
+        { settings: makeTimestampSettings() },
+      );
+      expect(lastFrame()).not.toMatch(/\[\d{2}:\d{2}:\d{2}\]/);
+    });
+  });
+
+  describe('thinking-block mouse tracking is VP-gated (non-VP scroll fix)', () => {
+    // A collapsed thinking block arms a click-to-expand mouse handler. The
+    // VP-gating itself lives in useMouseEvents (covered by its own test); here
+    // we pin the contract that the thinking block subscribes WITHOUT
+    // `bypassVpGate`, i.e. it is subject to the gate — so in non-VP it never
+    // turns on SGR mouse tracking and native terminal scrollback survives.
+    // (Alt+T still expands the block in non-VP.)
+    const thoughtItem: HistoryItem = {
+      id: 1,
+      type: 'gemini_thought',
+      text: 'Inspecting the repository',
+      durationMs: 1200,
+    };
+
+    const settingsWithVp = (enabled: boolean) =>
+      new LoadedSettings(
+        { path: '', settings: {}, originalSettings: {} },
+        { path: '', settings: {}, originalSettings: {} },
+        {
+          path: '',
+          settings: { ui: { useTerminalBuffer: enabled } },
+          originalSettings: {},
+        },
+        { path: '', settings: {}, originalSettings: {} },
+        true,
+        new Set(),
+      );
+
+    const mouseEvent = (name: MouseEvent['name'], col: number): MouseEvent => ({
+      name,
+      col,
+      row: 1,
+      shift: false,
+      meta: false,
+      ctrl: false,
+      button: 'left',
+    });
+
+    const renderThoughtWithToggle = (
+      toggle: (headId: number) => void,
+      item: HistoryItem = thoughtItem,
+      isPending = false,
+    ) => {
+      vi.mocked(measureElementPosition).mockReturnValue({
+        x: 0,
+        y: 0,
+        width: 80,
+        height: 3,
+      });
+      vi.mocked(layoutRowForEvent).mockImplementation((_node, row) => row - 1);
+      renderWithProviders(
+        <ThoughtExpandedProvider
+          value={{
+            allExpanded: false,
+            expandedHeadIds: new Set<number>(),
+            toggle,
+          }}
+        >
+          <HistoryItemDisplay
+            item={item}
+            terminalWidth={100}
+            isPending={isPending}
+          />
+        </ThoughtExpandedProvider>,
+      );
+      return vi.mocked(useMouseEvents).mock.calls.at(-1)?.[0];
+    };
+
+    it('subscribes the click handler without bypassVpGate (stays VP-gated)', () => {
+      vi.mocked(useMouseEvents).mockClear();
+      renderWithProviders(
+        <HistoryItemDisplay
+          item={thoughtItem}
+          terminalWidth={100}
+          isPending={false}
+        />,
+      );
+      expect(vi.mocked(useMouseEvents)).toHaveBeenCalled();
+      const opts = vi.mocked(useMouseEvents).mock.calls.at(-1)?.[1];
+      // Collapsed thought → the handler is "active", but it must NOT bypass the
+      // VP gate, so useMouseEvents only arms it in VP mode.
+      expect(opts?.isActive).toBe(true);
+      expect(opts?.bypassVpGate ?? false).toBe(false);
+    });
+
+    it('shows the click hint when raw settings are unset but startup VP is enabled', () => {
+      const { lastFrame } = renderWithProviders(
+        <VirtualViewportContext.Provider value={true}>
+          <HistoryItemDisplay
+            item={thoughtItem}
+            terminalWidth={100}
+            isPending={false}
+          />
+        </VirtualViewportContext.Provider>,
+      );
+
+      expect(lastFrame()).toContain(`click or ${toggleKeyHint} to expand`);
+    });
+
+    it('hides the click hint when startup VP overrides an enabled setting', () => {
+      const { lastFrame } = renderWithProviders(
+        <VirtualViewportContext.Provider value={false}>
+          <HistoryItemDisplay
+            item={thoughtItem}
+            terminalWidth={100}
+            isPending={false}
+          />
+        </VirtualViewportContext.Provider>,
+        { settings: settingsWithVp(true) },
+      );
+
+      expect(lastFrame()).not.toContain(`click or ${toggleKeyHint} to expand`);
+    });
+
+    it('toggles on a complete click', () => {
+      const toggle = vi.fn();
+      const handler = renderThoughtWithToggle(toggle);
+
+      handler?.(mouseEvent('left-press', 5));
+      expect(toggle).not.toHaveBeenCalled();
+      handler?.(mouseEvent('left-release', 5));
+      expect(toggle).toHaveBeenCalledWith(thoughtItem.id);
+    });
+
+    it('allows clicking a completed staged summary using its stable group id', () => {
+      const toggle = vi.fn();
+      const handler = renderThoughtWithToggle(
+        toggle,
+        { ...thoughtItem, id: 0, thoughtGroupId: -5, isStreaming: false },
+        true,
+      );
+      expect(vi.mocked(useMouseEvents).mock.calls.at(-1)?.[1]?.isActive).toBe(
+        true,
+      );
+      handler?.(mouseEvent('left-press', 5));
+      handler?.(mouseEvent('left-release', 5));
+      expect(toggle).toHaveBeenCalledWith(-5);
+    });
+
+    it('does not toggle when selecting text by dragging', () => {
+      const toggle = vi.fn();
+      const handler = renderThoughtWithToggle(toggle);
+
+      handler?.(mouseEvent('left-press', 5));
+      handler?.(mouseEvent('move', 20));
+      handler?.(mouseEvent('left-release', 20));
+
+      expect(toggle).not.toHaveBeenCalled();
+    });
+
+    it('does not toggle on a plain click over an OSC 8 hyperlink (reserved for the link gesture)', () => {
+      vi.mocked(hyperlinkAtCell).mockReturnValue('https://example.com');
+      const toggle = vi.fn();
+      const handler = renderThoughtWithToggle(toggle);
+
+      handler?.(mouseEvent('left-press', 5));
+      handler?.(mouseEvent('left-release', 5));
+
+      expect(toggle).not.toHaveBeenCalled();
+    });
+
+    it('hides the click hint when ui.mouseTracking is false despite VP being on', () => {
+      const settingsNoMouse = new LoadedSettings(
+        { path: '', settings: {}, originalSettings: {} },
+        { path: '', settings: {}, originalSettings: {} },
+        {
+          path: '',
+          settings: { ui: { useTerminalBuffer: true, mouseTracking: false } },
+          originalSettings: {},
+        },
+        { path: '', settings: {}, originalSettings: {} },
+        true,
+        new Set(),
+      );
+      const { lastFrame } = renderWithProviders(
+        <HistoryItemDisplay
+          item={thoughtItem}
+          terminalWidth={100}
+          isPending={false}
+        />,
+        { settings: settingsNoMouse },
+      );
+
+      expect(lastFrame()).not.toContain(`click or ${toggleKeyHint} to expand`);
+    });
+  });
+});
+
+it.each([
+  ['free', 'Free'],
+  ['lite', 'Lite'],
+  ['PRO', 'Pro'],
+  ['pLuS', 'Plus'],
+  ['future-plan', 'Future-plan'],
+])('uses backend membership %s as %s in the summary', (member_type, plan) => {
+  const text = subscriptionSuccessMessage(
+    {
+      sub: 'synthetic',
+      name: 'Builder',
+      email: 'builder@example.com',
+      member_type,
+    },
+    'server-model',
+  );
+  expect(text).toContain(`Current plan: Qwen ${plan}. Qwen Code is ready.`);
+});
+
+it.each([true, false])(
+  'renders subscription styling only with an explicit presentation flag (%s)',
+  async (subscriptionPresentation) => {
+    const inkRequire = createRequire(
+      createRequire(import.meta.url).resolve('ink'),
+    );
+    const inkChalk: typeof chalk = (await import(inkRequire.resolve('chalk')))
+      .default;
+    const previousLevel = inkChalk.level;
+    inkChalk.level = 3;
+    const text = subscriptionSuccessMessage(
+      {
+        sub: 'synthetic',
+        name: 'Builder',
+        email: 'builder@example.com',
+        member_type: 'pro',
+      },
+      'qwen3.8-max',
+    );
+    const ui = renderWithProviders(
+      <Box width={180}>
+        <HistoryItemDisplay
+          item={{
+            id: 1,
+            type: 'info',
+            text,
+            ...(subscriptionPresentation
+              ? { presentation: 'subscription-success' as const }
+              : {}),
+          }}
+          terminalWidth={180}
+          isPending={false}
+        />
+      </Box>,
+    );
+    try {
+      const frame = ui.lastFrame() ?? '';
+      const check = inkChalk.hex(theme.status.success)('✓');
+      if (subscriptionPresentation) {
+        expect(stripAnsi(frame)).not.toMatch(/[●•]/u);
+        expect(frame).toContain(
+          `${check} Signed in successfully · builder@example.com`,
+        );
+        expect(frame).toContain(
+          `${check} Current plan: Qwen Pro. Qwen Code is ready.`,
+        );
+        expect(frame).toContain(
+          inkChalk.hex(theme.text.secondary)(
+            'Model: qwen3.8-max. Run /upgrade to upgrade your plan, /usage to view usage, /model to switch models, or /effort to change reasoning effort.',
+          ),
+        );
+        expect(frame).toContain(
+          '/usage   /upgrade   /model   /effort   /status   /logout',
+        );
+      } else {
+        expect(stripAnsi(frame)).toMatch(/[●•]/u);
+        expect(frame).not.toContain(check);
+      }
+    } finally {
+      ui.unmount();
+      inkChalk.level = previousLevel;
+    }
+  },
+);
+
+it('keeps both checks and all subscription summary text at a narrow width', () => {
+  const text = subscriptionSuccessMessage(
+    {
+      sub: 'synthetic',
+      name: 'Builder',
+      email: 'builder@example.com',
+      member_type: 'pro',
+    },
+    'qwen3.8-max',
+  );
+  const ui = renderWithProviders(
+    <Box width={45}>
+      <HistoryItemDisplay
+        item={{
+          id: 1,
+          type: 'info',
+          text,
+          presentation: 'subscription-success',
+        }}
+        terminalWidth={45}
+        isPending={false}
+      />
+    </Box>,
+  );
+  try {
+    const frame = stripAnsi(ui.lastFrame() ?? '');
+    expect(frame.match(/✓/gu)).toHaveLength(2);
+    for (const line of frame.split('\n')) {
+      expect(stringWidth(line)).toBeLessThanOrEqual(45);
+    }
+    expect(frame.replace(/\s/gu, '')).toBe(text.replace(/\s/gu, ''));
+  } finally {
+    ui.unmount();
+  }
+});

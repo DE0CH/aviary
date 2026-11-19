@@ -55,6 +55,20 @@ async function registryDist(name, version) {
   return (await response.json()).dist;
 }
 
+describe("client builds of the monorepo", () => {
+  // the commit that brought the app into DE0CH/aviary (app/, docs/DEPLOY.md): its protocol comes from aviary's app/,
+  // and validates the same frames as the same tree did in DE0CH/claudecodeui's paseo/
+  const monorepoApp = "db2e29dcfc6c3b615f70f9b9e2294cef1678cfef";
+  it("reads an aviary commit's protocol from app/", async () => {
+    const protocol = await protocolForCommit(monorepoApp);
+    assert.ok(protocol.tree, "the protocol package's tree");
+    const newest = newestClient();
+    const before = await protocolForCommit(newest.sha);
+    assert.equal(typeof protocol.outbound.safeParse, "function");
+    assert.equal(typeof before.outbound.safeParse, "function");
+  });
+});
+
 describe("paseo contract harness", () => {
   const lines = readClientLines();
   const clients = readClients();

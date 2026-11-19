@@ -1,0 +1,4 @@
+# its own: the root clippy.toml names the services rules (configuration through aviary_core::env), which a CI tool
+# reading its environment directly does not follow
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

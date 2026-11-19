@@ -1,0 +1,21 @@
+{
+  "name": "hermit-gw",
+  "role": "hub",
+  "gateway": true,
+  "wgAddress": "10.202.0.1",
+  "hostCidr": "10.202.0.0/24",
+  "wgPort": 51821,
+  "wgKeyFile": "/etc/sbx/wg.key",
+  "apiPort": 7443,
+  "imagePort": 7444,
+  "tls": {"ca": "/etc/sbx/tls/ca.crt", "cert": "/etc/sbx/tls/host.crt", "key": "/etc/sbx/tls/host.key"},
+  "controlCidr": "10.0.0.0/16",
+  "sandboxCidr": "10.203.0.0/16",
+  "egressVip": "10.202.1.1",
+  "egressPorts": [[3128, 3128]],
+  "podCidr": "10.210.0.0/16",
+  "privateGateway": "10.0.0.1",
+  "reserveMemory": 0,
+  "gatewayMss": 1280,
+  "limits": {"cgroups": false}
+}

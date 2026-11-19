@@ -1,0 +1,131 @@
+# tools (DE0CH/jarvis3 chat, `args: [tools]`; spec-platform 9.7, 17.2 tools; jarvis3 docs/CHAT.md "tools"): YYC's
+# read-only tools, called by sandboxes through egress's fixed name `tools` only. Holds the tool keys. Configuration:
+# tools.json (ConfigMap tools-config, hashed: mounted by subPath, a change rolls the pods) and the staff catalogue
+# (Secret catalogue as a directory, updated in place). yyc-mcp and the news stream's capture are on the old cluster
+# until T4: the placeholder Services yyc/yyc-mcp and yyc/web (bridges.yaml) keep tools.json's URLs.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tools
+  namespace: yyc-ai
+  labels: {app: tools}
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  minReadySeconds: 5
+  selector:
+    matchLabels: {app: tools}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  template:
+    metadata:
+      labels: {app: tools}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      priorityClassName: serving
+      terminationGracePeriodSeconds: 180
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms: [{matchExpressions: [{key: yyc.hetzner/network, operator: In, values: ["yyc"]}, {key: pool, operator: In, values: ["apps"]}]}]
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - {weight: 50, preference: {matchExpressions: [{key: topology.kubernetes.io/region, operator: In, values: [fsn1]}]}}
+      topologySpreadConstraints:
+        - {maxSkew: 1, topologyKey: kubernetes.io/hostname, whenUnsatisfiable: DoNotSchedule,
+           labelSelector: {matchLabels: {app: tools}}, matchLabelKeys: [pod-template-hash]}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: tools
+          image: jarvis3-chat
+          args: [tools]
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: ops, containerPort: 9090}
+          env:
+            - {name: TOOLS_DATABASE_URL, valueFrom: {secretKeyRef: {name: tools, key: TOOLS_DATABASE_URL}}}
+            - {name: TOOLS_ACCEPT_GATEWAY, valueFrom: {secretKeyRef: {name: tools, key: TOOLS_ACCEPT_GATEWAY}}}
+            - {name: TOOLS_TOKEN_HERMIT, valueFrom: {secretKeyRef: {name: tools, key: TOOLS_TOKEN_HERMIT}}}
+            # the variables tools.json names (keyEnv, tokenEnv, ${VAR} in upstream headers)
+            - {name: EXA_API_KEY, valueFrom: {secretKeyRef: {name: tools, key: EXA_API_KEY}}}
+            - {name: TIKHUB_API, valueFrom: {secretKeyRef: {name: tools, key: TIKHUB_API}}}
+            - {name: ANYAPI_API_KEY, valueFrom: {secretKeyRef: {name: tools, key: ANYAPI_API_KEY}}}
+            - {name: YYC_MCP_TOKEN, valueFrom: {secretKeyRef: {name: tools, key: YYC_MCP_TOKEN}}}
+            - {name: WEB_FETCH_TOKEN, valueFrom: {secretKeyRef: {name: tools, key: WEB_FETCH_TOKEN}}}
+          readinessProbe:
+            httpGet: {path: /readyz, port: ops}
+            periodSeconds: 3
+            failureThreshold: 1
+          livenessProbe:
+            httpGet: {path: /healthz, port: ops}
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              sleep: {seconds: 10}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi, ephemeral-storage: 64Mi}
+            limits: {cpu: "1", memory: 128Mi, ephemeral-storage: 320Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/tools/tools.json, subPath: tools.json, readOnly: true}
+            - {name: catalogue, mountPath: /etc/tools/catalogue, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: config, configMap: {name: tools-config}}
+        - {name: catalogue, secret: {secretName: catalogue}}
+        - {name: tmp, emptyDir: {sizeLimit: 256Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: tools, namespace: yyc-ai}
+spec:
+  selector: {app: tools}
+  ports: [{name: http, port: 80, targetPort: http}]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: tools, namespace: yyc-ai}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: tools}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: tools-in, namespace: yyc-ai}
+spec:
+  podSelector: {matchLabels: {app: tools}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: egress}}}]
+      ports: [{port: 8080, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: tools-out, namespace: yyc-ai}
+spec:
+  podSelector: {matchLabels: {app: tools}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: hermit}}}]
+      ports: [{port: 8080, protocol: TCP}]
+    # yyc-mcp and the news stream's capture route (web), on this cluster since T4b
+    - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: yyc}}, podSelector: {matchLabels: {app: yyc-mcp}}},
+           {namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: yyc}}, podSelector: {matchLabels: {app: web}}}]
+      ports: [{port: 8080, protocol: TCP}]
+    # Exa, TikHub, AnyAPI (443), and the pages web_fetch reads itself when the capture and Exa cannot (jarvis3 chat
+    # tools/netguard.ts safeGet: http and https on 80, 443, 8080, 8443, public addresses only; check item 6)
+    - to:
+        - ipBlock: {cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16]}
+        - ipBlock: {cidr: "::/0", except: ["fc00::/7", "fe80::/10", "::1/128"]}
+      ports: [{port: 443, protocol: TCP}, {port: 80, protocol: TCP}, {port: 8080, protocol: TCP}, {port: 8443, protocol: TCP}]

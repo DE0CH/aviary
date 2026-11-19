@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Adds client builds to clients.txt (pigeon spec 17.1 step 9, cutover 13.1; run by .github/workflows/clients.yml).
 //
-//   node append-client.mjs <claudecodeui commit, 40 hex> <web|ios> [<commit> <kind>]... [--file CLIENTS]
+//   node append-client.mjs <client commit, 40 hex> <web|ios> [<commit> <kind>]... [--file CLIENTS]
 //
-// Each commit is fetched from DE0CH/claudecodeui. A commit already listed gains the kind if it lacks it; a new one is
+// Each commit is fetched from DE0CH/aviary (the app in app/) or, for builds before the monorepo, DE0CH/claudecodeui. A commit already listed gains the kind if it lacks it; a new one is
 // inserted at its place by commit time (the file stays sorted oldest first, whatever order builds finish in), so the
 // last line is always the newest build. Prints added / updated / unchanged for each build. Every build is checked
 // before the file is written: one bad build leaves the file as it was.
@@ -35,7 +35,7 @@ function addOne(text, sha, requested, scratchFile) {
   let kind = requested;
   if (!hasPaseo(sha)) {
     if (requested !== "web" || time >= FIRST_PASEO_TIME) {
-      throw new Error(`claudecodeui ${sha} has no paseo/packages/protocol: it is not a Paseo client build`);
+      throw new Error(`client commit ${sha} has no packages/protocol: it is not a Paseo client build`);
     }
     kind = "web-legacy";
   }

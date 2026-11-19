@@ -1,0 +1,20 @@
+[package]
+name = "check-frames"
+description = "The app build's contract check against pigeon (pigeon spec 17.1 step 5, 18.1): every frame of pigeon's frame corpus and of the harness's fixtures must pass this checkout's app/packages/protocol."
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+publish = false
+
+# its own workspace (the root excludes tools/): a CI tool
+[workspace]
+
+[dependencies]
+anyhow = "=1.0.104"
+serde_json = "=1.0.154"
+ureq = { version = "3", features = ["json"] }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
