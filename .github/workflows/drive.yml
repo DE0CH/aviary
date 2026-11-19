@@ -4,7 +4,8 @@
 # that changed drive/, docs/DEPLOY.md; the edge at /srv/edge), only when all three passed and the tag is not there yet.
 name: drive
 on:
-  push:  # every branch: the gate waits for it
+  push:
+    branches: ['**']  # every branch: the gate waits for it (not tags: jarvis.yml's releases push jarvis-<sha12>)
     paths: [drive/**, deploy/images.json, .github/workflows/drive.yml]
   workflow_dispatch:
 concurrency:
