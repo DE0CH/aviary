@@ -15,6 +15,14 @@ const CONVS = [
   { n: 8, title: "會議紀錄整理", min: -200 },
   { n: 9, title: "網站文字翻譯", min: -300 },
 ];
+// Nothing running: a running conversation's ring turns on a frame clock, and Android's uiautomator never sees a screen
+// with one go idle, so the Android app's emulator test (scripts/android-app) asks for a list where nothing runs.
+export function quiet() {
+  for (const c of CONVS) {
+    c.running = false;
+    c.attention = false;
+  }
+}
 export const wid = (n) => `wks_0000000${n}-0000-4000-8000-000000000000`;
 export const aid = (n) => `0000000${n}-0000-4000-8000-00000000000a`;
 function agent(c) {

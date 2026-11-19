@@ -194,6 +194,7 @@ async function main() {
     appDir: path.join(path.dirname(new URL(import.meta.url).pathname), "../../paseo/packages/app/public"),
     port: PORT,
     appScheme: pkg,
+    quiet: true,
   });
   try {
     adb("reverse", `tcp:${PORT}`, `tcp:${PORT}`);
