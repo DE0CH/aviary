@@ -70,72 +70,8 @@ fn run() -> Result<()> {
     }
     let work = PathBuf::from(work);
     let assets = work.join("assets");
-    std::fs::create_dir_all(&assets)?;
-    for b in BINARIES {
-        let from = Path::new(dist).join(b);
-        let to = assets.join(b);
-        std::fs::copy(&from, &to).with_context(|| format!("copying {}", from.display()))?;
-        std::fs::set_permissions(&to, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
-    }
-    std::fs::copy(
-        "testing/paseo-contract/fixtures/pigeon-frames.ndjson",
-        assets.join("pigeon-frames.ndjson"),
-    )?;
-    let mtime = output(Command::new("git").args(["log", "-1", "--format=%ct", sha]), "git log")?;
-    output(
-        Command::new("tar")
-            .args([
-                "--sort=name",
-                "--owner=0",
-                "--group=0",
-                "--numeric-owner",
-                &format!("--mtime=@{mtime}"),
-                "--exclude=node_modules",
-                "-czf",
-            ])
-            .arg(assets.join("paseo-contract.tgz"))
-            .args(["-C", "testing", "paseo-contract"]),
-        "tar of the contract harness",
-    )?;
-    let mut summed: Vec<&str> = BINARIES.to_vec();
-    summed.extend(["pigeon-frames.ndjson", "paseo-contract.tgz"]);
-    let sums = output(
-        Command::new("sha256sum").args(&summed).current_dir(&assets),
-        "sha256sum",
-    )?;
-    std::fs::write(assets.join("SHA256SUMS"), format!("{sums}\n"))?;
-    let supervisor = output(
-        Command::new("docker").args([
-            "image",
-            "inspect",
-            "-f",
-            r#"{{index .Config.Labels "dev.de0ch.aviary.supervisor"}}"#,
-            &format!("hermit-sandbox:{sha12}"),
-        ]),
-        "docker image inspect",
-    )?;
-    let list = output(
-        Command::new("gh").args([
-            "release",
-            "list",
-            "-R",
-            &repo,
-            "--limit",
-            "50",
-            "--json",
-            "tagName,createdAt",
-        ]),
-        "gh release list",
-    )?;
-    let prev = previous_release(&serde_json::from_str(&list)?);
-    let prev_body = match &prev {
-        Some(p) => Some(output(
-            Command::new("gh").args(["release", "view", p, "-R", &repo, "--json", "body", "--jq", ".body"]),
-            "gh release view",
-        )?),
-        None => None,
-    };
-    let changed = supervisor_change(&supervisor, prev.as_deref(), prev_body.as_deref());
+    let summed = assemble(Path::new(dist), sha, &assets)?;
+    let (supervisor, changed) = supervisor(sha12, &repo)?;
     let subject = output(Command::new("git").args(["log", "-1", "--format=%s", sha]), "git log")?;
     let digests: Value = serde_json::from_str(&std::fs::read_to_string(digests)?)?;
     let body_text = body(&subject, sha12, &digests, &supervisor, &changed);
@@ -169,6 +105,80 @@ fn run() -> Result<()> {
         f.write_all(body_text.as_bytes())?;
     }
     Ok(())
+}
+
+/// The release's files in `assets`: [`BINARIES`] from `dist`, the frame corpus, the contract harness and
+/// `SHA256SUMS`; the names `SHA256SUMS` covers.
+fn assemble(dist: &Path, sha: &str, assets: &Path) -> Result<Vec<&'static str>> {
+    std::fs::create_dir_all(assets)?;
+    for b in BINARIES {
+        let from = dist.join(b);
+        let to = assets.join(b);
+        std::fs::copy(&from, &to).with_context(|| format!("copying {}", from.display()))?;
+        std::fs::set_permissions(&to, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+    }
+    std::fs::copy(
+        "testing/paseo-contract/fixtures/pigeon-frames.ndjson",
+        assets.join("pigeon-frames.ndjson"),
+    )?;
+    let mtime = output(Command::new("git").args(["log", "-1", "--format=%ct", sha]), "git log")?;
+    output(
+        Command::new("tar")
+            .args([
+                "--sort=name",
+                "--owner=0",
+                "--group=0",
+                "--numeric-owner",
+                &format!("--mtime=@{mtime}"),
+                "--exclude=node_modules",
+                "-czf",
+            ])
+            .arg(assets.join("paseo-contract.tgz"))
+            .args(["-C", "testing", "paseo-contract"]),
+        "tar of the contract harness",
+    )?;
+    let mut summed: Vec<&str> = BINARIES.to_vec();
+    summed.extend(["pigeon-frames.ndjson", "paseo-contract.tgz"]);
+    let sums = output(Command::new("sha256sum").args(&summed).current_dir(assets), "sha256sum")?;
+    std::fs::write(assets.join("SHA256SUMS"), format!("{sums}\n"))?;
+    Ok(summed)
+}
+
+/// The sandbox image's supervisor (its label) and whether it changed against the previous release.
+fn supervisor(sha12: &str, repo: &str) -> Result<(String, String)> {
+    let supervisor = output(
+        Command::new("docker").args([
+            "image",
+            "inspect",
+            "-f",
+            r#"{{index .Config.Labels "dev.de0ch.aviary.supervisor"}}"#,
+            &format!("hermit-sandbox:{sha12}"),
+        ]),
+        "docker image inspect",
+    )?;
+    let list = output(
+        Command::new("gh").args([
+            "release",
+            "list",
+            "-R",
+            repo,
+            "--limit",
+            "50",
+            "--json",
+            "tagName,createdAt",
+        ]),
+        "gh release list",
+    )?;
+    let prev = previous_release(&serde_json::from_str(&list)?);
+    let prev_body = match &prev {
+        Some(p) => Some(output(
+            Command::new("gh").args(["release", "view", p, "-R", repo, "--json", "body", "--jq", ".body"]),
+            "gh release view",
+        )?),
+        None => None,
+    };
+    let changed = supervisor_change(&supervisor, prev.as_deref(), prev_body.as_deref());
+    Ok((supervisor, changed))
 }
 
 #[allow(clippy::disallowed_methods)] // a CI tool: the Actions environment is its configuration
