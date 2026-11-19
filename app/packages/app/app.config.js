@@ -3,6 +3,8 @@ const path = require("node:path");
 const withAndroidAsyncStorageSize = require("./plugins/with-android-async-storage-size");
 const withAndroidOptionalCamera = require("./plugins/with-android-optional-camera");
 const withAndroidProfileable = require("./plugins/with-android-profileable");
+const withAndroidFoldable = require("./plugins/with-android-foldable");
+const withAndroidReleaseSigning = require("./plugins/with-android-release-signing");
 const withFdroidAutolinking = require("./plugins/with-fdroid-autolinking");
 const withPasteInput = require("./plugins/with-paste-input");
 const withNoPushEntitlement = require("./plugins/with-no-push-entitlement");
@@ -74,6 +76,8 @@ function resolveSecretFile(params) {
 const yyc = {
   productName: "YYC AI",
   icon: "./assets/images/yyc-icon.png",
+  // Android's adaptive icon: the mark on its own layer, inside the middle 72 of 108 dp that every launcher's mask keeps
+  androidIcon: { foreground: "./assets/images/yyc-android-icon-foreground.png", background: "#1B2A3A" },
   splash: "./assets/images/yyc-splash.png",
   cameraPermission: "允許 $(PRODUCT_NAME) 使用相機，以拍攝相片並附加到訊息。",
   photosPermission: "允許 $(PRODUCT_NAME) 讀取相片，以將圖片附加到訊息。",
@@ -87,6 +91,7 @@ const variants = {
     packageId: "dev.de0ch.jarvis4chat",
     productName: "Jarvis 4",
     icon: "./assets/images/jarvis-chat-icon.png",
+    androidIcon: { foreground: "./assets/images/jarvis-chat-android-icon-foreground.png", background: "#080E1A" },
     splash: "./assets/images/jarvis-chat-splash.png",
     cameraPermission: "Allow $(PRODUCT_NAME) to use the camera to take photos for a message.",
     photosPermission: "Allow $(PRODUCT_NAME) to read your photos to attach images to a message.",
@@ -98,6 +103,12 @@ const variant = variants[appVariant] ?? variants.production;
 // (docs/paseo-ui.md), and a version below it reads as a downgrade. The web build keeps Paseo's package version.
 const YYC_APP_VERSION = "1.1.0";
 const nativeReleaseVersion = getNativeReleaseVersion(YYC_APP_VERSION);
+// The Android app is installed from its APK (docs/paseo-ui.md "The Android app"), so every CI build must install over
+// the one before: its versionCode is the version's plus the CI run (ANDROID_BUILD_NUMBER).
+const androidBuildNumber = Number(process.env.ANDROID_BUILD_NUMBER ?? 0);
+if (!Number.isSafeInteger(androidBuildNumber) || androidBuildNumber < 0 || androidBuildNumber > 999_999) {
+  throw new Error(`ANDROID_BUILD_NUMBER must be a whole number from 0 to 999999: ${process.env.ANDROID_BUILD_NUMBER}`);
+}
 
 export default {
   expo: {
@@ -120,8 +131,8 @@ export default {
     },
     android: {
       adaptiveIcon: {
-        backgroundColor: "#000000",
-        foregroundImage: "./assets/images/android-icon-foreground.png",
+        backgroundColor: variant.androidIcon.background,
+        foregroundImage: variant.androidIcon.foreground,
       },
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
@@ -130,7 +141,7 @@ export default {
       usesCleartextTraffic: true,
       permissions: buildProfile.androidPermissions,
       package: variant.packageId,
-      versionCode: nativeReleaseVersion.androidVersionCode,
+      versionCode: nativeReleaseVersion.androidVersionCode * 1000 + androidBuildNumber,
     },
     web: {
       output: "single",
@@ -188,6 +199,8 @@ export default {
           },
         },
       ],
+      withAndroidFoldable,
+      withAndroidReleaseSigning,
       ...buildProfile.fdroidPlugins,
       ...(isProfileBuild || isWatchdogBuild ? [withAndroidProfileable] : []),
     ],
