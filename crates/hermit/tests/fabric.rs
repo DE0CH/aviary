@@ -2515,14 +2515,49 @@ async fn frozen_sandboxes_are_evicted_only_when_their_slot_is_needed() {
     // a following pass releases it: one may still do nothing (a pass whose gateway heartbeat went unanswered returns
     // before any release; CI under load, 2026-11-19)
     let mut terminated = Vec::new();
+    let mut reports = Vec::new();
     for _ in 0..10 {
-        terminated = pass(&g, &r).await.terminated;
+        let p = pass(&g, &r).await;
+        terminated.clone_from(&p.terminated);
+        reports.push(format!("{p:?}"));
         if !terminated.is_empty() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    assert_eq!(terminated, vec![a.clone()]);
+    if terminated != vec![a.clone()] {
+        // what kept the host (it failed only in CI, 2026-11-19): the host's row and every row on it
+        let c = rig.h.pool().get().await.unwrap();
+        let host: Vec<String> = c
+            .query(
+                "select status, created_at::text, coalesce(gone_reason, '') from hosts where name = $1",
+                &[&a],
+            )
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| {
+                format!(
+                    "{} {} {}",
+                    r.get::<_, String>(0),
+                    r.get::<_, String>(1),
+                    r.get::<_, String>(2)
+                )
+            })
+            .collect();
+        let rows: Vec<String> = c
+            .query(
+                "select id::text, status, coalesce(host, ''), coalesce(task, ''), coalesce(migrating_to, '') from sandboxes
+                  where host = $1 or migrating_to = $1 or status <> 'gone'",
+                &[&a],
+            )
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| (0..5).map(|i| r.get::<_, String>(i)).collect::<Vec<_>>().join(" "))
+            .collect();
+        panic!("the host holding nothing was not released: host {host:?}; rows {rows:?}; passes {reports:#?}");
+    }
 
     // an evicted image goes with its row's release
     let fy = db::load(&rig.h.pool(), y).await.unwrap().unwrap().frozen.unwrap();
