@@ -3,10 +3,11 @@ name: deploy
 # images (once per tag); this run starts when one of them completes and deploys main's head once every part's newest
 # run on it is over and green (aviary-deploy ready: only main's head deploys, so a late run of an older commit never
 # rolls back a newer one). Then, in order, stopping at the first failure:
-#   1. jarvis: Jarvis chat and Jarvis 4's sessions, through DE0CH/jarvis4's git (its cluster takes changes only from git,
-#      jarvis4 DECISIONS 14): one commit writes session-image/aviary.json (the sessions' release, sandbox and gateway)
-#      and k8s/cluster/tenants/chat.yaml (the chat's source commit and image tags), with jarvis4's deploy key; Flux
-#      applies the chat, jarvis4's images.yml the session image. The site check waits until chat.deyaochen.com serves
+#   1. jarvis: Jarvis chat, Jarvis 4's sessions and its fabric, through DE0CH/jarvis4's git (its cluster takes changes
+#      only from git, jarvis4 DECISIONS 14): one commit writes session-image/aviary.json (the sessions' release,
+#      sandbox and gateway), k8s/cluster/tenants/chat.yaml (the chat's source commit and image tags) and
+#      k8s/cluster/fabric (hermit and sandboxd), with jarvis4's deploy key; Flux applies the chat and the fabric,
+#      jarvis4's images.yml builds the session image, its fabric-ami.yml bakes the hosts' AMI when sandboxd changed. The site check waits until chat.deyaochen.com serves
 #      this app build and pigeon's API answers (an Access service token; no chat turn, Deyao 2026-11-19).
 #   2. yyc: YYC AI on YYC's cluster (yyc-apply, through the Access-gated API, with this run's GitHub OIDC token; the
 #      control nodes trust DE0CH/aviary's deploy.yml in environment yyc-ai), then YYC Drive's edge, the host AMI (a
@@ -94,9 +95,14 @@ jobs:
           chmod +x "$d/aviary-deploy"
           aviary=$(jq -r .pigeon "$d/tags.json")
           sandbox=$(jq -r '."hermit-sandbox".digest' "$d/digests.json")
-          gateway=$(jq -r '."hermit-jarvis"' "$d/tags.json")
-          jq -n --arg r "aviary-$aviary" --arg s "ghcr.io/de0ch/hermit-sandbox@$sandbox" --arg g "jarvis-$gateway" \
-            '{release: $r, sandbox: $s, gateway: $g}' > session-image/aviary.json
+          gateway=jarvis-$(jq -r '."hermit-jarvis"' "$d/tags.json")
+          # aviary-gateway's sha256, pinned here (the session image checks the download against it)
+          gsum=$(curl -sSfL "https://github.com/$GITHUB_REPOSITORY/releases/download/$gateway/aviary-gateway.sha256" | cut -d' ' -f1)
+          [[ "$gsum" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::no aviary-gateway checksum in release $gateway"; exit 1; }
+          jq -n --arg r "aviary-$aviary" --arg s "ghcr.io/de0ch/hermit-sandbox@$sandbox" --arg g "$gateway" --arg gs "$gsum" \
+            '{release: $r, sandbox: $s, gateway: $g, gateway_sha256: $gs}' > session-image/aviary.json
+          # Jarvis 4's own fabric (k8s/cluster/fabric): hermit's tag and digest, hermit.json's sandboxd release
+          "$d/aviary-deploy" fabric k8s/cluster/fabric "$d/tags.json" "$d/digests.json"
           f=k8s/cluster/tenants/chat.yaml
           sed -i -E "s/^(    commit: \")[0-9a-f]{40}(\".*)$/\1$SHA\2/" "$f"
           grep -q "commit: \"$SHA\"" "$f" || { echo "::error::$f names no source commit to write"; exit 1; }

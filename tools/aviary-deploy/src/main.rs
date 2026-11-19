@@ -4,6 +4,8 @@
 //!   aviary-deploy ready SHA WORKFLOW,…                     go | wait | stale (stdout); red = exit 1
 //!   aviary-deploy digests TAGS.json                         image → {tag, digest}; a missing image = exit 1
 //!   aviary-deploy set KUSTOMIZATION TAGS.json               the tags written into its `images:`
+//!   aviary-deploy fabric DIR TAGS.json DIGESTS.json         Jarvis 4's fabric (DE0CH/jarvis4 k8s/cluster/fabric): hermit's tag and
+//!                                                           digest, hermit.json's fabric.sandboxd
 //!   aviary-deploy yyc DIR TAGS.json                         YYC's folder (yyc/deploy): its kustomization's tags, hermit.json's
 //!                                                           release and sandbox digest, gateway.release
 //!
@@ -108,6 +110,28 @@ fn main() -> Result<()> {
         ["set", kustomization, tags] => {
             let text = std::fs::read_to_string(kustomization)?;
             std::fs::write(kustomization, kustomize::set_tags(&text, &read_tags(tags)?)?)?;
+        }
+        ["fabric", dir, tags, digests] => {
+            let tag_of = read_tags(tags)?;
+            let digest_of: BTreeMap<String, String> =
+                serde_json::from_str::<BTreeMap<String, serde_json::Value>>(&std::fs::read_to_string(digests)?)?
+                    .into_iter()
+                    .filter_map(|(k, v)| v["digest"].as_str().map(|d| (k, d.to_string())))
+                    .collect();
+            let dir = std::path::Path::new(dir);
+            let kust = dir.join("kustomization.yaml");
+            std::fs::write(
+                &kust,
+                kustomize::set_images(&std::fs::read_to_string(&kust)?, &tag_of, &digest_of)?,
+            )?;
+            let Some(aviary) = tag_of.get("sandboxd") else {
+                bail!("no tag for sandboxd")
+            };
+            let h = dir.join("hermit.json");
+            std::fs::write(
+                &h,
+                yyc::set_string(&std::fs::read_to_string(&h)?, "sandboxd", &format!("aviary-{aviary}"))?,
+            )?;
         }
         ["yyc", dir, tags] => {
             let t = read_tags(tags)?;
