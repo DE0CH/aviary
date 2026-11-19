@@ -9,16 +9,18 @@ const running = (c) => c.running || (options.cardsLive && c.n === 6);
 const CONVS = [
   { n: 1, title: "季度銷售報告", min: 50 },
   { n: 2, title: "活動海報文案", min: 40, running: true },
-  { n: 3, title: "每朝新聞摘要", min: 30, schedule: true },
+  { n: 3, title: "每朝新聞摘要", min: 30, schedule: true, pinned: -2000 },
   { n: 4, title: "客戶電郵草稿", min: 20, background: 2 },
   { n: 5, title: "九龍灣倉庫租約比較", min: 10, attention: true },
-  { n: 6, title: "員工旅行行程", min: -60 },
+  { n: 6, title: "員工旅行行程", min: -60, pinned: -1000 },
   { n: 7, title: "新產品命名諗法", min: -120 },
   { n: 8, title: "會議紀錄整理", min: -200 },
   { n: 9, title: "網站文字翻譯", min: -300 },
+  { n: 10, title: "年終晚會場地", min: -400 },
+  { n: 11, title: "供應商報價整理", min: -500 },
 ];
-export const wid = (n) => `wks_0000000${n}-0000-4000-8000-000000000000`;
-export const aid = (n) => `0000000${n}-0000-4000-8000-00000000000a`;
+export const wid = (n) => `wks_${String(n).padStart(8, "0")}-0000-4000-8000-000000000000`;
+export const aid = (n) => `${String(n).padStart(8, "0")}-0000-4000-8000-00000000000a`;
 function agent(c) {
   return { activeTurn: running(c) || c.attention ? { startedAt: iso(c.min), turnId: `turn-${c.n}-r` } : null, archivedAt: null,
     attentionReason: c.attention ? "finished" : null, attentionTimestamp: c.attention ? iso(c.min) : null, availableModes: [],
@@ -28,9 +30,16 @@ function agent(c) {
     requiresAttention: !!c.attention, runtimeInfo: { modeId: null, model: "deepseek/deepseek-v4.1-flash-1017", provider: "claude", sessionId: aid(c.n) },
     status: running(c) || c.attention ? "running" : "idle", thinkingOptionId: "high", title: c.title, updatedAt: iso(c.min), workspaceId: wid(c.n) };
 }
+// pins made on this connection (置頂 / 取消置頂): conversation number -> pinnedAt or null; reset by each page's hello
+const pins = new Map();
+let workspaceSubscription = null;
+// the host assigns each list its own subscription (the recorded answers share one placeholder id across lists)
+const WORKSPACE_SUBSCRIPTION = "00000000-0000-4000-8000-0000000000a1";
+let listSeq = 1; // the workspace list's change position: the snapshot's headSeq, then one more per upsert
+const pinnedAt = (c) => (pins.has(c.n) ? pins.get(c.n) : c.pinned ? iso(c.pinned) : null);
 function workspace(c) {
   return { activityAt: iso(c.min), archivingAt: null, background: false, backgroundTasks: c.background || 0, createdAt: iso(c.min - 5), diffStat: null, id: wid(c.n),
-    lastUserMessageAt: iso(c.min), name: c.title, nextScheduleAt: c.schedule ? iso(24 * 60) : null, pinnedAt: null, project: project(c.title),
+    lastUserMessageAt: iso(c.min), name: c.title, nextScheduleAt: c.schedule ? iso(24 * 60) : null, pinnedAt: pinnedAt(c), project: project(c.title),
     projectCustomIconRevision: null, projectCustomName: null, projectDisplayName: "YYC AI", projectId: "prj_conversations", projectKind: "directory", projectRootPath: "/workspace",
     scripts: [], setupStatus: null, status: running(c) ? "running" : "done", statusEnteredAt: iso(c.min), title: c.title, workspaceDirectory: "/workspace", workspaceKind: "directory" };
 }
@@ -98,7 +107,13 @@ const SCHEDULES = [
   { id: "s1", conversationId: aid(3), kind: "cron", prompt: "整理今日香港財經新聞頭條，五點以內。", cron: "30 8 * * 1-5", tz: "Asia/Hong_Kong", describe: "每個工作日 08:30", next: iso(22 * 60 + 30), state: "active", createdBy: "Jackie", createdAt: iso(-3000), runs: [{ due: iso(-90), at: iso(-90), outcome: "sent" }, { due: iso(-1530), at: iso(-1530), outcome: "sent" }] },
   { id: "s2", conversationId: aid(3), kind: "once", prompt: "提醒我交季度報告。", at: iso(3 * 24 * 60), tz: "Asia/Hong_Kong", describe: "11 月 21 日 18:00", next: iso(3 * 24 * 60), state: "active", createdBy: "Jackie", createdAt: iso(-100), runs: [] },
 ];
-export function status(s) { s.payload.hostname = "YYC AI"; return s; }
+export function status(s) {
+  pins.clear();
+  listSeq = 1;
+  s.payload.hostname = "YYC AI";
+  s.payload.features.workspacePinning = true; // until pigeon-answers.json is recorded from a pigeon that pins
+  return s;
+}
 /** What a check turns on: `personCards` (the deployment's switch), `cardsLive` (conversation 6 gets the live pushes
  * of a question card, cards.mjs). */
 export const options = { personCards: false, cardsLive: false };
@@ -158,7 +173,18 @@ export function answer(m, send, tpl) {
   switch (m.type) {
     case "client_heartbeat": return true;
     case "send_agent_message_request": return true; // never confirmed: the outbox keeps it
-    case "fetch_workspaces_request": return p({ entries: CONVS.map(workspace), pageInfo: { hasMore: false, nextCursor: null, prevCursor: null }, emptyProjects: [], subscriptionId: m.subscriptionId ?? tpl.payload.subscriptionId, sync: { generation: "gen-1", headSeq: 1, mode: "snapshot", reason: "no_cursor", removals: [] } });
+    case "workspace.pin.set.request": {
+      // as pigeon answers it: the reply, then the list's upsert of the conversation
+      const c = CONVS.find((c) => wid(c.n) === m.workspaceId);
+      if (c) pins.set(c.n, m.pinned ? pinnedAt(c) ?? new Date().toISOString() : null);
+      send({ type: "workspace.pin.set.response", payload: { requestId: m.requestId, workspaceId: m.workspaceId, accepted: !!c, pinnedAt: c ? pinnedAt(c) : null, error: c ? null : "not found" } });
+      if (c && workspaceSubscription) {
+        listSeq += 1;
+        send({ type: "workspace_update", payload: { subscriptionId: workspaceSubscription, kind: "upsert", workspace: { ...workspace(c), syncSeq: listSeq }, generation: "gen-1", seq: listSeq } });
+      }
+      return true;
+    }
+    case "fetch_workspaces_request": workspaceSubscription = WORKSPACE_SUBSCRIPTION; return p({ entries: CONVS.map(workspace), pageInfo: { hasMore: false, nextCursor: null, prevCursor: null }, emptyProjects: [], subscriptionId: workspaceSubscription, sync: { generation: "gen-1", headSeq: listSeq, mode: "snapshot", reason: "no_cursor", removals: [] } });
     case "fetch_agents_request": return p({ entries: CONVS.map((c) => ({ agent: agent(c), project: project(c.title) })), pageInfo: { hasMore: false, nextCursor: null, prevCursor: null }, sync: { generation: "gen-1", headSeq: 1, mode: "snapshot", reason: "no_cursor", removals: [] } });
     case "fetch_agent_request": { const c = CONVS.find((c) => aid(c.n) === m.agentId) ?? CONVS[0]; return p({ agent: agent(c), project: project(c.title), error: null }); }
     case "fetch_agent_timeline_request": {

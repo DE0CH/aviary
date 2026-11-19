@@ -3118,6 +3118,8 @@ export const zhHK: TranslationResources = {
     emptyList: "你的對話會在這裏顯示。",
     signOut: "登出",
     menu: {
+      pin: "置頂",
+      unpin: "取消置頂",
       rename: "重新命名",
       share: "分享",
       delete: "刪除",

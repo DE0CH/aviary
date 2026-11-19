@@ -25,7 +25,8 @@ if (out) fs.mkdirSync(out, { recursive: true });
 
 const workspace = (n) => `/h/srv_conversations/workspace/wks_0000000${n}-0000-4000-8000-000000000000`;
 
-// One entry per screen or state: where it starts and what a person does to get there.
+// One entry per screen or state: where it starts, what a person does to get there and (optional `check`) what must
+// then be on the screen.
 const STATES = [
   { name: "new chat", at: "/new" },
   { name: "new chat, typing", at: "/new", run: (p) => p.type("幫我整理今日嘅會議紀錄。\n第二行\n第三行") },
@@ -39,6 +40,9 @@ const STATES = [
   { name: "tool details", at: workspace(1), run: async (p) => { await p.scroll(0); await p.tap('[data-testid="turn-summary"] >> nth=0'); await p.scroll(0.12); await p.tap("text=/^編輯了 1 個檔案/"); await p.tap("text=ls uploads"); } },
   { name: "picture viewer", at: workspace(1), run: async (p) => { await p.scroll(0); await p.tap("img >> nth=0"); } },
   { name: "conversation menu", at: workspace(1), run: (p) => p.tap('[data-testid="workspace-header-menu-trigger"]') },
+  { name: "pinning from the conversation menu", at: workspace(1),
+    run: async (p) => { await p.tap('[data-testid="workspace-header-menu-trigger"]'); await p.tap('[data-testid="conversation-menu-pin"]'); await p.wait(1000); await p.tap('[data-testid="menu-button"]'); },
+    check: async (page) => ((await page.locator('[data-testid="sidebar-pinned-section"]').innerText()).includes("季度銷售報告") ? null : "置頂 in the conversation menu left 季度銷售報告 outside 已置頂") },
   { name: "rename", at: workspace(1), run: async (p) => { await p.tap('[data-testid="workspace-header-menu-trigger"]'); await p.tap('[data-testid="conversation-menu-rename"]'); } },
   { name: "share", at: workspace(1), run: async (p) => { await p.tap('[data-testid="workspace-header-menu-trigger"]'); await p.tap('[data-testid="conversation-menu-share"]'); } },
   { name: "model menu", at: workspace(1), run: (p) => p.tap('[data-testid="yyc-model-menu"]') },
@@ -46,6 +50,13 @@ const STATES = [
   { name: "attachments", at: workspace(1), run: (p) => p.tap('[data-testid="message-input-attach-button"]') },
   { name: "sidebar", at: workspace(1), run: (p) => p.tap('[data-testid="menu-button"]') },
   { name: "sidebar, a conversation's menu", at: workspace(1), run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid^="sidebar-workspace-kebab-"] >> nth=1'); } },
+  // 置頂 (Deyao, 2026-11-19, design A): the conversation moves into the 已置頂 section above 對話
+  { name: "sidebar, pinning a conversation", at: workspace(1),
+    run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid^="sidebar-workspace-kebab-"][data-testid*="wks_00000004-"]'); await p.tap('[data-testid^="sidebar-workspace-menu-pin-"]'); await p.wait(1000); },
+    check: async (page) => ((await page.locator('[data-testid="sidebar-pinned-section"]').innerText()).includes("客戶電郵草稿") ? null : "置頂 left 客戶電郵草稿 outside 已置頂") },
+  { name: "sidebar, unpinning a conversation", at: workspace(1),
+    run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid^="sidebar-workspace-kebab-"][data-testid*="wks_00000006-"]'); await p.tap('[data-testid^="sidebar-workspace-menu-pin-"]'); await p.wait(1000); },
+    check: async (page) => ((await page.locator('[data-testid="sidebar-pinned-section"]').innerText()).includes("員工旅行行程") ? "取消置頂 left 員工旅行行程 in 已置頂" : null) },
   { name: "sidebar, more", at: workspace(1), run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid^="sidebar-project-show-more"]'); await p.scroll(1); } },
   { name: "search", at: workspace(1), run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid="sidebar-search"]'); } },
   { name: "recently deleted", at: workspace(1), run: async (p) => { await p.tap('[data-testid="menu-button"]'); await p.tap('[data-testid="sidebar-sessions"]'); } },
@@ -143,6 +154,9 @@ async function walk(browser, base, state) {
     await page.waitForTimeout(5000);
     if (state.run) await state.run(helpers);
     await page.waitForTimeout(700);
+    // a state may also say what must be true on the screen it reaches
+    const wrong = state.check ? await state.check(page) : null;
+    if (wrong) problems.push(wrong);
   } catch (error) {
     // a screen that could not be reached is a failure too: a control nobody can measure is not known to be big enough
     problems.push(`could not reach it: ${String(error.message ?? error).split("\n")[0]}`);

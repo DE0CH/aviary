@@ -3172,6 +3172,8 @@ export const en = {
     emptyList: "Your conversations will show here.",
     signOut: "Sign out",
     menu: {
+      pin: "Pin",
+      unpin: "Unpin",
       rename: "Rename",
       share: "Share",
       delete: "Delete",
