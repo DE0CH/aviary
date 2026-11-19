@@ -3,7 +3,7 @@
 # dev.de0ch.yycai, Jarvis Chat (Jarvis 4's chat) as dev.de0ch.jarvis4chat. A third build, the replica, is Jarvis Chat
 # with the stand-in for pigeon as its server, run on a foldable emulator by app/scripts/android-app/emulator-test.mjs
 # (sign-in, the message box on the keyboard, a flick to put it away, fold and unfold on the Galaxy Z Fold's screens).
-# This repo is public: YYC AI's server is the YYC_SITE secret, so its APK leaves CI only age-encrypted to
+# YYC AI's APK leaves CI only age-encrypted to
 # YYC_ANDROID_CI_AGE_KEY's recipient; Jarvis Chat's server is named in DE0CH/jarvis4, which is public too.
 name: app-android
 
@@ -39,6 +39,7 @@ jobs:
         include:
           - build: yyc-ai
             variant: production
+            site: https://ai.yyc-internal.com
             abi: arm64-v8a
             keystore: YYC_ANDROID_UPLOAD_KEYSTORE
           - build: jarvis-chat
@@ -53,7 +54,7 @@ jobs:
             abi: x86_64
     env:
       APP_VARIANT: ${{ matrix.variant }}
-      YYC_SITE: ${{ matrix.site || secrets.YYC_SITE }}
+      YYC_SITE: ${{ matrix.site }}
       ANDROID_BUILD_NUMBER: ${{ github.run_number }}
       CI: "1"
     defaults:

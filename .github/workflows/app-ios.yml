@@ -2,7 +2,7 @@
 # deployment (the matrix; app.config.js `variants`), checked on the simulator (it starts on its sign-in screen), then
 # archived unsigned, cloud-signed at export and uploaded to TestFlight (team S64YL394S3; each app's internal group
 # "Owner" gets every build): YYC AI as dev.de0ch.yycai, Jarvis Chat (Jarvis 4's chat) as dev.de0ch.jarvis4chat.
-# YYC AI's server is the YYC_SITE secret and Jarvis Chat's is named in jarvis/deploy.
+# Each app's server is in its matrix entry (YYC AI's and Jarvis Chat's are named in yyc/deploy and jarvis/deploy too).
 name: app-ios
 
 on:
@@ -46,13 +46,14 @@ jobs:
         include:
           - variant: production
             product: YYC AI
+            site: https://ai.yyc-internal.com
           - variant: jarvis-chat
             product: Jarvis 4
             site: https://chat.deyaochen.com
     env:
       # Every step, not just prebuild: Xcode's "Bundle React Native code" phase re-reads app.config.js
       APP_VARIANT: ${{ matrix.variant }}
-      YYC_SITE: ${{ matrix.site || secrets.YYC_SITE }}
+      YYC_SITE: ${{ matrix.site }}
       PRODUCT_NAME: ${{ matrix.product }}
       # the server's address may show in the simulator test's screenshots (ios/simulator-test.sh)
       SITE_IS_PUBLIC: ${{ matrix.site && '1' || '' }}

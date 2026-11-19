@@ -74,6 +74,14 @@ jobs:
         run: grep -q 'const commonChunk = undefined' app/node_modules/@expo/metro-config/build/serializer/serializeChunks.js
       - name: web export
         run: node app/scripts/build-paseo-ui.mjs
+      # uploaded before the checks, so a red check can be compared with the export it judged (the image job needs this
+      # whole job green, so a red build never ships)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-export
+          path: dist
+          retention-days: 7
+          if-no-files-found: error
       - name: chunk sizes and loading budgets
         run: node app/scripts/check-chunks.mjs dist --strict
       # every control of the phone layout is at least a finger's 44 px (docs/paseo-ui.md "Touch targets"): the export,
@@ -107,12 +115,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: check-frames --self-test "$RUNNER_TEMP/frames" app/scripts/pigeon-app/test/incompatible-frame.ndjson
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: web-export
-          path: dist
-          retention-days: 7
-          if-no-files-found: error
 
   part:
     # the app's tag (docs/DEPLOY.md): the last commit that changed app/ (deploy/images.json "pigeon-app"); main builds

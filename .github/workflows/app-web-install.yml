@@ -2,15 +2,13 @@
 # install the site from Chrome's menu. app/scripts/web-install/emulator_test.py does that on an emulator's own Chrome
 # against the deployed site and checks the installed app (its own window, rotation, the status bar's colour, sign-in).
 # It checks what is deployed: deploy.yml runs it after every YYC AI deploy. This repo is
-# public: the site is the YYC_SITE secret, so the screenshots leave CI only age-encrypted to YYC_ANDROID_CI_AGE_KEY's
+# The screenshots leave CI only age-encrypted to YYC_ANDROID_CI_AGE_KEY's
 # recipient (app/scripts/yyc-web-install-shots.sh downloads and decrypts them).
 name: app-web-install
 
 on:
   # deploy.yml runs it after each YYC AI deploy: it checks what is deployed
   workflow_call:
-    secrets:
-      YYC_SITE: {required: true}
   workflow_dispatch:
 concurrency:
   group: yyc-web-install
@@ -21,7 +19,7 @@ permissions:
 
 env:
   AGE_RECIPIENT: age12yv9zraqrhap54e0gqe6j38lcthysyhpz5x6c7dggxqkzjzdmeassp2849
-  YYC_SITE: ${{ secrets.YYC_SITE }}
+  YYC_SITE: https://ai.yyc-internal.com
 
 jobs:
   install:
