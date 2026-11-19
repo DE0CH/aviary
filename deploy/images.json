@@ -1,20 +1,70 @@
 {
   "aviary": {
-    "images": ["pigeon", "magpie", "hermit", "herald", "sandboxd", "hermit-sandbox"],
-    "paths": ["crates", "images", "fabric", "harness/qwen-code", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
-              ".cargo", ".config", "deny.toml", "deny-hermit-only.toml", ".github/ci", ".github/workflows/ci.yml"]
+    "images": [
+      "pigeon",
+      "magpie",
+      "hermit",
+      "herald",
+      "sandboxd",
+      "hermit-sandbox"
+    ],
+    "paths": [
+      "crates",
+      "images",
+      "fabric",
+      "harness/qwen-code",
+      "Cargo.toml",
+      "Cargo.lock",
+      "rust-toolchain.toml",
+      ".cargo",
+      ".config",
+      "deny.toml",
+      "deny-hermit-only.toml",
+      ".github/ci",
+      ".github/workflows/ci.yml"
+    ]
   },
   "pigeon-app": {
-    "images": ["pigeon-app"],
-    "paths": ["app", ".github/workflows/app.yml"]
+    "images": [
+      "pigeon-app"
+    ],
+    "paths": [
+      "app",
+      ".github/workflows/app.yml"
+    ]
   },
   "egress": {
-    "images": ["egress"],
-    "paths": ["egress", ".github/workflows/egress.yml"]
+    "images": [
+      "egress"
+    ],
+    "paths": [
+      "egress",
+      ".github/workflows/egress.yml"
+    ]
   },
   "hermit-jarvis": {
-    "images": ["hermit-jarvis"],
-    "paths": ["jarvis/hermit", "crates/aviary-core", "crates/aviary-pg", "crates/hermit-api", "crates/gateway-api",
-              "crates/magpie-api", "crates/supervisor-api", "rust-toolchain.toml", ".github/workflows/jarvis.yml"]
+    "images": [
+      "hermit-jarvis"
+    ],
+    "paths": [
+      "jarvis/hermit",
+      "crates/aviary-core",
+      "crates/aviary-pg",
+      "crates/hermit-api",
+      "crates/gateway-api",
+      "crates/magpie-api",
+      "crates/supervisor-api",
+      "rust-toolchain.toml",
+      ".github/workflows/jarvis.yml"
+    ]
+  },
+  "yyc-drive": {
+    "images": [
+      "yyc-drive"
+    ],
+    "paths": [
+      "drive",
+      ".github/workflows/drive.yml"
+    ]
   }
 }
